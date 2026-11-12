@@ -5,6 +5,21 @@ use crate::{
 };
 use std::f64::consts::TAU;
 
+fn profiled_options(
+    screw: &crate::profiled_screw::Screw,
+    options: Tessellation,
+) -> Result<Tessellation, MeshError> {
+    check_options(options)?;
+    let reserve = 4. * screw.profile().rounding_error_mm();
+    if options.deflection <= reserve {
+        return Err(MeshError::UnresolvedBoundary);
+    }
+    Ok(Tessellation {
+        deflection: options.deflection - reserve,
+        ..options
+    })
+}
+
 /// Retain the existing thread's indexed shoulder while sweeping every real
 /// head segment. No display envelope or mesh boolean enters the source shape.
 pub fn tessellate_profiled_screw(
@@ -12,7 +27,7 @@ pub fn tessellate_profiled_screw(
     options: Tessellation,
 ) -> Result<DisplayMesh, MeshError> {
     use crate::{head_profile::Curve, profiled_screw::Face};
-    check_options(options)?;
+    let options = profiled_options(screw, options)?;
     let radius = screw.profile().support([1., 0., 0.]);
     let max_angle = (options.angle * 0.5).min((options.deflection / radius).sqrt());
     let angular_steps = (TAU / (12. * max_angle)).ceil() * 12.;
@@ -88,7 +103,7 @@ pub fn profiled_screw_volume_error_bound(
     options: Tessellation,
 ) -> Result<f64, MeshError> {
     use crate::head_profile::{Curve, Segment};
-    check_options(options)?;
+    let options = profiled_options(screw, options)?;
     let radius = screw.profile().support([1., 0., 0.]);
     let angle = (options.angle * 0.5).min((options.deflection / radius).sqrt());
     let steps = (TAU / (12. * angle)).ceil() * 12.;
@@ -121,11 +136,19 @@ pub fn profiled_screw_volume_error_bound(
     let exact = screw.profile().volume_mm3();
     // Sum (angle - sin(angle)) <= max_angle² * sum(angle) / 6.
     // Extra thread cap stations only subdivide these angular intervals.
-    let roundoff = 256.
-        * f64::EPSILON
-        * (exact.abs()
-            + polygonal.abs()
-            + radius.powi(2) * (screw.profile().end()[1] - screw.profile().top()[1]));
+    let surfaces = screw
+        .profile()
+        .segments()
+        .map(Segment::area_mm2)
+        .sum::<f64>()
+        + std::f64::consts::PI
+            * (screw.profile().top()[0].powi(2) + screw.profile().end()[0].powi(2));
+    let roundoff = 4. * screw.profile().rounding_error_mm() * surfaces
+        + 256.
+            * f64::EPSILON
+            * (exact.abs()
+                + polygonal.abs()
+                + radius.powi(2) * (screw.profile().end()[1] - screw.profile().top()[1]));
     Ok(volume_error_bound(screw.thread(), options)
         + (polygonal - exact).abs()
         + polygonal * (TAU / steps).powi(2) / 6.

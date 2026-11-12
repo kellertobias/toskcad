@@ -135,6 +135,23 @@ fn sampled_real_profiles_share_the_original_shoulder_and_a_closed_oriented_shell
 fn malformed_options_and_excess_profile_refinement_fail_without_poisoning_source() {
     use crate::display::MeshError;
     let screw = Screw::new(thread(1, false), spec(false)).unwrap();
+    for deflection in [
+        screw.profile().rounding_error_mm() / 2.,
+        4. * screw.profile().rounding_error_mm(),
+    ] {
+        let tight = Tessellation {
+            deflection,
+            ..options()
+        };
+        assert_eq!(
+            tessellate_profiled_screw(&screw, tight),
+            Err(MeshError::UnresolvedBoundary)
+        );
+        assert_eq!(
+            profiled_screw_volume_error_bound(&screw, tight),
+            Err(MeshError::UnresolvedBoundary)
+        );
+    }
     assert_eq!(
         profiled_screw_volume_error_bound(
             &screw,
