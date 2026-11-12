@@ -5,11 +5,11 @@ use crate::chamfered_bores::Counterbore;
 mod tests;
 
 pub(super) struct Bore {
-    center: Point,
-    radius: f64,
-    seats: [Option<(f64, f64)>; 2],
-    faces: Vec<usize>,
-    middle: usize,
+    pub(super) center: Point,
+    pub(super) radius: f64,
+    pub(super) seats: [Option<(f64, f64)>; 2],
+    pub(super) faces: Vec<usize>,
+    pub(super) core_face: usize,
 }
 type Profile = (Vec<([f64; 2], f64)>, Vec<Counterbore>, Vec<Vec<u8>>);
 struct Cylinder {
@@ -64,7 +64,7 @@ impl Shell<'_, '_> {
         {
             return None;
         }
-        let keys = self.counterbore_source_keys(faces, edges)?;
+        let keys = self.seated_source_keys(faces, edges)?;
         self.planar_profile(
             &profile,
             lower,
@@ -186,13 +186,17 @@ impl Shell<'_, '_> {
             radius: core.radius,
             seats,
             faces: source_faces,
-            middle,
+            core_face: 2 * middle,
         })
     }
 }
 
 impl Shell<'_, '_> {
-    fn counterbore_source_keys(&self, faces: &[Face], edges: &[Vec<u32>]) -> Option<Vec<Vec<u8>>> {
+    pub(super) fn seated_source_keys(
+        &self,
+        faces: &[Face],
+        edges: &[Vec<u32>],
+    ) -> Option<Vec<Vec<u8>>> {
         let scalar = |bytes: &mut Vec<u8>, x: f64| {
             bytes.extend((if x == 0. { 0. } else { x }).to_le_bytes())
         };
@@ -212,6 +216,10 @@ impl Shell<'_, '_> {
                     Face::Cylindrical { seam, flux } if *flux < 0. => {
                         key.push(1);
                         Some(*seam)
+                    }
+                    Face::Conical(cone) if !cone.outward => {
+                        key.push(2);
+                        Some(cone.seam)
                     }
                     _ => return None,
                 };
@@ -310,7 +318,7 @@ impl Shell<'_, '_> {
         for (hole, (center, bore)) in ordered.into_iter().enumerate() {
             holes.push((center, bore.radius));
             for (i, &face) in bore.faces.iter().enumerate() {
-                let index = if i == 2 * bore.middle {
+                let index = if i == bore.core_face {
                     first + hole
                 } else {
                     let index = next;

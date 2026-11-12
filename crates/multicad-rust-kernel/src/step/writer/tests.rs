@@ -324,23 +324,25 @@ fn chamfered_through_bores_share_rims_with_analytic_cones_and_caps() {
         assert_eq!(source.matches("=CONICAL_SURFACE(").count(), 2);
         assert_eq!(source.matches("=CYLINDRICAL_SURFACE(").count(), 2);
         let (_, imported) = read_import_solid(&source, 1e-7).unwrap();
-        let ImportProfile::ChamferedPolygon {
+        let ImportProfile::CountersunkPolygon {
             rings,
             circular_holes,
-            chamfers,
+            countersinks,
+            ..
         } = imported.profile
         else {
             panic!("expected a polygon with countersunk bores");
         };
         assert_eq!(rings.len(), 1);
         assert_eq!(circular_holes.len(), 2);
-        assert_eq!(chamfers.len(), 2);
+        assert_eq!(countersinks.len(), 2);
         assert!((imported.height_mm - 8.).abs() < 1e-7);
         let sizes = if reverse { [1., 2.] } else { [2., 1.] };
-        for (i, chamfer) in chamfers.iter().enumerate() {
+        for (i, chamfer) in countersinks.iter().enumerate() {
             assert_eq!(chamfer.end, i == 1);
-            assert!((chamfer.size_mm - sizes[i]).abs() < 1e-7);
+            assert!((chamfer.depth_mm - sizes[i]).abs() < 1e-7);
             assert!((circular_holes[chamfer.hole].1 - 2.).abs() < 1e-7);
+            assert!((chamfer.radius_mm - circular_holes[chamfer.hole].1 - sizes[i]).abs() < 1e-7);
         }
 
         let cone = source

@@ -1,7 +1,6 @@
 //! Recognize swept solids by their complete, already validated boundaries.
 use super::*;
 use crate::{
-    chamfered_bores::BoreChamfer,
     circular_pockets::CircularPocket,
     linear_sweep::Sweep,
     normal_sweep,
@@ -14,9 +13,8 @@ use crate::{
 use std::cmp::Ordering;
 
 mod axial_profile_stack;
-mod chamfered;
-use chamfered::{Bore, canonical_bores};
 mod counterbored;
+mod countersunk;
 mod cylindrical_revolution;
 #[path = "helical_cut.rs"]
 pub(super) mod helical_cut;
@@ -84,17 +82,17 @@ pub enum ImportProfile {
         circular_holes: Vec<([f64; 2], f64)>,
         pockets: Vec<CircularPocket>,
     },
-    ChamferedPolygon {
-        /// Exterior counterclockwise, followed by clockwise straight holes.
-        rings: Vec<Vec<[f64; 2]>>,
-        circular_holes: Vec<([f64; 2], f64)>,
-        chamfers: Vec<BoreChamfer>,
-    },
     CounterboredPolygon {
         rings: Vec<Vec<[f64; 2]>>,
         circular_holes: Vec<([f64; 2], f64)>,
         counterbores: Vec<crate::chamfered_bores::Counterbore>,
         /// Complete finite keys derived from validated source faces, in reconstructed face order.
+        source_faces: Vec<Vec<u8>>,
+    },
+    CountersunkPolygon {
+        rings: Vec<Vec<[f64; 2]>>,
+        circular_holes: Vec<([f64; 2], f64)>,
+        countersinks: Vec<crate::chamfered_bores::Countersink>,
         source_faces: Vec<Vec<u8>>,
     },
     LinearSweep {
@@ -297,7 +295,7 @@ pub(super) fn recognize_member(
     let readback = shell.readback(faces)?;
     if faces.iter().any(|face| matches!(face, Face::Conical(_))) {
         let solid = shell
-            .chamfered_polygon(faces)
+            .countersunk_polygon(faces)
             .or_else(|| shell.conical_revolution(faces, &readback))
             .ok_or(ReadError::Unsupported)?;
         return Ok((readback, solid));
@@ -361,8 +359,8 @@ struct Wall {
 
 enum PlanarMatch<'a> {
     Straight(f64, &'a [PocketRim]),
-    Chamfered(f64, &'a [Bore]),
     Counterbored(f64, &'a [counterbored::Bore], &'a [Vec<u8>], [usize; 2]),
+    Countersunk(f64, &'a [counterbored::Bore], &'a [Vec<u8>], [usize; 2]),
     Ruled(f64, &'a BTreeMap<u32, u32>),
     Trimmed {
         direction: Point,
@@ -883,17 +881,6 @@ impl Shell<'_, '_> {
                 .ok()?;
                 (height_mm, ImportProfile::LinearSweep { base, top })
             }
-            PlanarMatch::Chamfered(height_mm, bores) => {
-                let (circular_holes, chamfers) = canonical_bores(bores, project);
-                (
-                    height_mm,
-                    ImportProfile::ChamferedPolygon {
-                        rings: rings.map(|(ring, _)| ring).collect(),
-                        circular_holes,
-                        chamfers,
-                    },
-                )
-            }
             PlanarMatch::Counterbored(height_mm, bores, keys, caps) => {
                 let rings: Vec<_> = rings.map(|(ring, _)| ring).collect();
                 let (circular_holes, counterbores, source_faces) =
@@ -904,6 +891,29 @@ impl Shell<'_, '_> {
                         rings,
                         circular_holes,
                         counterbores,
+                        source_faces,
+                    },
+                )
+            }
+            PlanarMatch::Countersunk(height_mm, bores, keys, caps) => {
+                let rings: Vec<_> = rings.map(|(ring, _)| ring).collect();
+                let (circular_holes, seats, source_faces) =
+                    self.counterbore_profile(&rings, bores, project, lower, edges, keys, caps)?;
+                let countersinks = seats
+                    .into_iter()
+                    .map(|s| crate::chamfered_bores::Countersink {
+                        hole: s.hole,
+                        end: s.end,
+                        radius_mm: s.radius_mm,
+                        depth_mm: s.depth_mm,
+                    })
+                    .collect();
+                (
+                    height_mm,
+                    ImportProfile::CountersunkPolygon {
+                        rings,
+                        circular_holes,
+                        countersinks,
                         source_faces,
                     },
                 )

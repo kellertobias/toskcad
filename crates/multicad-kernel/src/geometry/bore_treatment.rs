@@ -34,11 +34,9 @@ impl Solid {
             .polygon_prism()
             .filter(|stock| stock.pockets.is_empty())
             .ok_or_else(unsupported)?;
-        if stock
-            .bore_treatments
-            .as_ref()
-            .is_some_and(|t| !t.geometry.counterbores().is_empty())
-        {
+        if stock.bore_treatments.as_ref().is_some_and(|t| {
+            !t.geometry.counterbores().is_empty() || !t.geometry.countersinks().is_empty()
+        }) {
             return Err(error(
                 OPERATION,
                 GeometryErrorKind::Unsupported,
@@ -88,11 +86,9 @@ impl Solid {
             .ok_or_else(|| {
                 input("Circular bore chamfers require polygon stock without blind cuts")
             })?;
-        if stock
-            .bore_treatments
-            .as_ref()
-            .is_some_and(|t| !t.geometry.counterbores().is_empty())
-        {
+        if stock.bore_treatments.as_ref().is_some_and(|t| {
+            !t.geometry.counterbores().is_empty() || !t.geometry.countersinks().is_empty()
+        }) {
             return Err(error(
                 OPERATION,
                 GeometryErrorKind::Unsupported,
@@ -183,7 +179,67 @@ impl Solid {
             .zip(origins)
             .map(|(cut, origin)| ((cut.hole, cut.end), origin.clone()))
             .collect();
-        let mut stock = stock.clone();
+        self.install_polygon_seats(geometry, cut_origins, origins, policy, opaque_faces)
+    }
+
+    /// Retain a conical seat with independent mouth radius and axial depth.
+    pub fn rust_countersink_polygon(
+        &self,
+        cuts: &[multicad_rust_kernel::chamfered_bores::Countersink],
+        origins: &[Origin],
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        self.with_polygon_countersinks(cuts, origins, policy, None)
+    }
+
+    pub(super) fn with_polygon_countersinks(
+        &self,
+        cuts: &[multicad_rust_kernel::chamfered_bores::Countersink],
+        origins: &[Origin],
+        policy: GeometryPolicy,
+        opaque_faces: Option<Vec<Vec<u8>>>,
+    ) -> Result<Self, GeometryError> {
+        if self.policy != policy {
+            return Err(input("Countersinks require the stock geometry policy"));
+        }
+        circular_pocket_body::check_origins(cuts.len(), origins)?;
+        let stock = self
+            .polygon_prism()
+            .filter(|s| s.pockets.is_empty() && s.bore_treatments.is_none())
+            .ok_or_else(|| input("Countersinks require untreated polygonal through-bore stock"))?;
+        let geometry = ChamferedBores::countersunk(
+            &stock.prism,
+            cuts,
+            policy.linear_tolerance_mm,
+            policy.minimum_feature_mm,
+        )
+        .map_err(|cause| {
+            error(
+                "Rust countersink",
+                GeometryErrorKind::InvalidResult,
+                format!("Invalid countersink: {cause:?}"),
+            )
+        })?;
+        let cut_origins = cuts
+            .iter()
+            .zip(origins)
+            .map(|(cut, origin)| ((cut.hole, cut.end), origin.clone()))
+            .collect();
+        self.install_polygon_seats(geometry, cut_origins, origins, policy, opaque_faces)
+    }
+
+    fn install_polygon_seats(
+        &self,
+        geometry: ChamferedBores,
+        cut_origins: BTreeMap<(usize, bool), Origin>,
+        origins: &[Origin],
+        policy: GeometryPolicy,
+        opaque_faces: Option<Vec<Vec<u8>>>,
+    ) -> Result<Self, GeometryError> {
+        let mut stock = self
+            .polygon_prism()
+            .expect("validated untreated seat stock")
+            .clone();
         stock.bore_treatments = Some(Rc::new(BoreTreatments {
             geometry,
             origins: cut_origins,

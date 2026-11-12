@@ -91,7 +91,7 @@ fn complete_chain_recognition_refuses_untrusted_missing_extra_and_displaced_boun
             }
             3 => {
                 faces[wall] = Face::Cylindrical { seam: 0, flux: 1. };
-                assert!(shell.counterbore_source_keys(&faces, &edges).is_none());
+                assert!(shell.seated_source_keys(&faces, &edges).is_none());
             }
             4 => faces[shoulder] = Face::Cylindrical { seam: 0, flux: -1. },
             5 => {
@@ -257,7 +257,7 @@ fn extra_faces_unsupported_curves_and_duplicate_profile_edges_never_disappear() 
         .unwrap();
     let mut duplicated = edges[lower].clone();
     duplicated.push(edge);
-    let keys = shell.counterbore_source_keys(&faces, &edges).unwrap();
+    let keys = shell.seated_source_keys(&faces, &edges).unwrap();
     let (_, body) = read_import_solid(&source, 1e-7).unwrap();
     let ImportProfile::CounterboredPolygon { rings, .. } = &body.profile else {
         unreachable!()
@@ -313,7 +313,7 @@ fn extra_faces_unsupported_curves_and_duplicate_profile_edges_never_disappear() 
         radius_mm: 1.,
         radial_mid: [1., 0., 0.],
     });
-    assert!(shell.counterbore_source_keys(&faces, &edges).is_none());
+    assert!(shell.seated_source_keys(&faces, &edges).is_none());
 }
 
 pub(crate) fn reverse_shell_faces(source: &str) -> String {

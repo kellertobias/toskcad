@@ -599,40 +599,6 @@ impl Solid {
                 policy,
                 true,
             ),
-            ImportProfile::ChamferedPolygon {
-                rings,
-                circular_holes,
-                chamfers,
-            } => {
-                let stock = Self::from_imported_polygon(
-                    &rings,
-                    &circular_holes,
-                    height_mm,
-                    frame,
-                    feature,
-                    policy,
-                    false,
-                )?;
-                let origins = chamfers
-                    .iter()
-                    .map(|chamfer| {
-                        let (center, radius) = circular_holes[chamfer.hole];
-                        (
-                            (chamfer.hole, chamfer.end),
-                            feature_origin(
-                                feature,
-                                "bore-chamfer",
-                                frame.point(center).into_iter().chain([
-                                    radius,
-                                    chamfer.size_mm,
-                                    f64::from(chamfer.end),
-                                ]),
-                            ),
-                        )
-                    })
-                    .collect();
-                stock.with_polygon_bore_treatments(&chamfers, origins, policy)
-            }
             ImportProfile::CounterboredPolygon {
                 rings,
                 circular_holes,
@@ -665,6 +631,39 @@ impl Solid {
                     })
                     .collect::<Vec<_>>();
                 stock.with_polygon_counterbores(&counterbores, &origins, policy, Some(source_faces))
+            }
+            ImportProfile::CountersunkPolygon {
+                rings,
+                circular_holes,
+                countersinks,
+                source_faces,
+            } => {
+                let stock = Self::from_imported_polygon(
+                    &rings,
+                    &circular_holes,
+                    height_mm,
+                    frame,
+                    feature,
+                    policy,
+                    false,
+                )?;
+                let origins = countersinks
+                    .iter()
+                    .map(|cut| {
+                        let (center, radius) = circular_holes[cut.hole];
+                        feature_origin(
+                            feature,
+                            "countersink",
+                            frame.point(center).into_iter().chain([
+                                radius,
+                                cut.radius_mm,
+                                cut.depth_mm,
+                                f64::from(cut.end),
+                            ]),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                stock.with_polygon_countersinks(&countersinks, &origins, policy, Some(source_faces))
             }
             ImportProfile::PocketedPolygon {
                 rings,

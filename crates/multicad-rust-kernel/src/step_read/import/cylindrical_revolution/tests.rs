@@ -1,4 +1,5 @@
 use super::*;
+use crate::chamfered_bores::BoreChamfer;
 use crate::step::{Writer, write_cylindrical_revolution, write_placed_annulus};
 
 const TOLERANCE: f64 = 1e-7;
