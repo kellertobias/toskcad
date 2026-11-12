@@ -34,7 +34,9 @@ pub(super) struct Junction {
 }
 
 pub(super) fn admission(screw: &Screw, origin: Point, tolerance: f64) -> Result<(), StepError> {
-    if screw.profile().end()[1] != screw.spec().shank_length_mm {
+    if screw.profile().end()[1] != screw.spec().shank_length_mm
+        || screw.profile().end()[0] != screw.thread().spec().major_radius_mm
+    {
         return Err(StepError::Unsupported);
     }
     if !tolerance.is_finite() || tolerance <= 0. || !origin.into_iter().all(f64::is_finite) {
@@ -116,6 +118,7 @@ pub(super) fn placement(screw: &Screw, p: &Placement, tolerance: f64) -> Result<
     let residual = (error(p.u, u) + error(p.v, v)) * radial + error(p.normal, n) * axial;
     let scale = p.origin.into_iter().map(f64::abs).fold(0., f64::max) + radial + axial + 1.;
     if !residual.is_finite()
+        || residual > 4. * screw.profile().rounding_error_mm()
         || residual + 128. * f64::EPSILON * scale + 4. * screw.profile().rounding_error_mm()
             > tolerance.min(MAX_ERROR_MM) / 4.
     {

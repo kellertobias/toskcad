@@ -106,6 +106,13 @@ fn transport(shell: &Shell<'_, '_>, head: &[u32], frame: Frame) -> Result<Transp
     Ok(error)
 }
 
+pub(super) fn volume_scale_error(frame: Frame) -> Result<f64> {
+    let matrix = ChartEnclosure::new(frame, true)?;
+    let error = (matrix.determinant - I::point(1.)).magnitude();
+    require(error.is_finite())?;
+    Ok(error)
+}
+
 pub(in super::super::super) fn read(
     shell: &mut Shell<'_, '_>,
     faces: &[u32],
@@ -275,6 +282,21 @@ pub(in super::super::super) fn read(
     };
     let floor = shell.placement(reference(axis)?)?;
     let depth = frame.local(floor.origin)[2] - top.z;
+    // This is a certified physical wall, not an inferred author's minimum.
+    // Keep a real dimensional lower bound for downstream feature policy;
+    // using a precision epsilon here would spuriously reject a sound head.
+    let corner = across / 3_f64.sqrt();
+    let mut wall = 4. * reserve;
+    require(profile.admits_socket(corner, depth, wall))?;
+    let mut upper = profile.support([1., 0., 0.]);
+    for _ in 0..52 {
+        let candidate = wall + (upper - wall) * 0.5;
+        if profile.admits_socket(corner, depth, candidate) {
+            wall = candidate;
+        } else {
+            upper = candidate;
+        }
+    }
     Screw::from_source(
         *thread,
         profile,
@@ -283,7 +305,7 @@ pub(in super::super::super) fn read(
             shank_length_mm: 0.,
             socket_across_flats_mm: across,
             socket_depth_mm: depth,
-            minimum_wall_mm: 4. * reserve,
+            minimum_wall_mm: wall,
         },
     )
     .map_err(|_| ReadError::Invalid)

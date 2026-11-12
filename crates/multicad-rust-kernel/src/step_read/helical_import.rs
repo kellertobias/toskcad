@@ -467,6 +467,7 @@ pub(super) fn read_member(
                 ImportProfile::ProfiledScrew {
                     head_volume_error_mm3: helical::profiled_screw_head_volume_error_bound_mm3(
                         &screw,
+                        [origin, u, v],
                     )
                     .ok_or(ReadError::Invalid)?,
                     screw: Box::new(screw),

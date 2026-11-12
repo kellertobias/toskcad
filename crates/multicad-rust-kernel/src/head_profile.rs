@@ -292,7 +292,7 @@ impl Profile {
     }
 
     /// Retain literal physical supports after a separately bounded coordinate
-    /// transport. The caller must derive `transport_error_mm` from arithmetic
+    /// transport. The caller must derive both `transport_error` components from
     /// enclosures of that transport; a requested geometric tolerance is not a
     /// transport error. This uncertainty remains part of every source query's
     /// exposed precision reserve and must fit downstream manufacturing budgets.

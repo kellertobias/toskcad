@@ -10,27 +10,41 @@ pub(in super::super) use decode::read;
 
 /// Absolute head/drive mass uncertainty from the retained source precision.
 /// The separately integrated thread spline error is an additional budget.
-pub fn profiled_screw_head_volume_error_bound_mm3(screw: &Screw) -> Option<f64> {
+pub fn profiled_screw_head_volume_error_bound_mm3(
+    screw: &Screw,
+    placement: [Point; 3],
+) -> Option<f64> {
     use crate::tapered_thread::interval::I;
     let profile = screw.profile();
     let error = profile.rounding_error_mm();
-    let mut length = profile.top()[0] + profile.end()[0] + profile.end()[1] - profile.top()[1];
+    let mut length =
+        I::point(profile.top()[0]) + I::point(profile.end()[0]) + I::point(profile.end()[1])
+            - I::point(profile.top()[1]);
+    let mut radial = I::point(0.);
     let mut count = 3.;
     for segment in profile.segments() {
         let part = match segment.curve {
             HeadCurve::Line => {
-                (segment.end[0] - segment.start[0]).hypot(segment.end[1] - segment.start[1])
+                radial.hi = radial.hi.max(segment.start[0]).max(segment.end[0]);
+                ((I::point(segment.end[0]) - I::point(segment.start[0])).square()
+                    + (I::point(segment.end[1]) - I::point(segment.start[1])).square())
+                .sqrt()
             }
             HeadCurve::Arc {
-                radius_mm, sweep, ..
+                radius_mm,
+                sweep,
+                center,
             } => {
                 if radius_mm <= 32. * error {
                     return None;
                 }
-                (radius_mm * sweep.abs()).next_up()
+                radial.hi = radial
+                    .hi
+                    .max((I::point(center[0].abs()) + I::point(radius_mm)).hi);
+                I::point(radius_mm) * I::point(sweep.abs())
             }
         };
-        length = (length + part.next_up()).next_up();
+        length = length + part;
         count += 1.;
     }
     // Support-center and trim-angle conversion each spend source error. With
@@ -41,11 +55,9 @@ pub fn profiled_screw_head_volume_error_bound_mm3(screw: &Screw) -> Option<f64> 
     // concave necks, without assuming a convex parallel-body formula.
     let d = I::point(16.) * I::point(error);
     let pi = I::new(PI.next_down(), PI.next_up());
-    let r = I::point(profile.support([1., 0., 0.]).next_up()) + d;
-    let outer = I::point(2.)
-        * pi
-        * r
-        * (I::point(2.) * I::point(length) * d + I::point(count) * pi * d.square());
+    let r = radial + d;
+    let outer =
+        I::point(2.) * pi * r * (I::point(2.) * length * d + I::point(count) * pi * d.square());
     let af = screw.spec().socket_across_flats_mm;
     let depth = screw.spec().socket_depth_mm;
     let width = I::new(
@@ -58,7 +70,11 @@ pub fn profiled_screw_head_volume_error_bound_mm3(screw: &Screw) -> Option<f64> 
     );
     let root3 = I::point(3.).sqrt();
     let void = root3 * I::point(0.5) * width.square() * depth;
-    let result = (outer.hi + void.width()).next_up();
+    let frame = Frame::new(placement).ok()?;
+    let scale = decode::volume_scale_error(frame).ok()?;
+    let height = I::point(profile.end()[1]) - I::point(profile.top()[1]) + I::point(2.) * d;
+    let jacobian = pi * r.square() * height * I::point(scale);
+    let result = (outer.hi + void.width() + jacobian.hi).next_up();
     (result.is_finite() && result > 0.).then_some(result)
 }
 
@@ -1126,6 +1142,46 @@ mod tests {
     }
 
     #[test]
+    fn rounded_metric_thread_roots_keep_the_actual_head_and_original_thread() {
+        let old = screw(false, 1, false);
+        for left_hand in [false, true] {
+            let thread = Thread::new(helical_thread::Spec {
+                length_mm: 0.5,
+                root_radius_mm: Some(0.05),
+                depth_mm: (0.5 - 0.0625) * 3_f64.sqrt() / 2. - 0.05,
+                left_hand,
+                ..old.thread().spec()
+            })
+            .unwrap();
+            let body = Screw::from_source(
+                thread,
+                *old.profile(),
+                crate::profiled_screw::SourceSpec {
+                    head: None,
+                    ..old.spec()
+                },
+            )
+            .unwrap();
+            let text = step::write_profiled_screw(&body, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
+                .unwrap();
+            let (_, imported) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+            assert!(crate::step_read::profiled_screw_import_matches(
+                &imported,
+                &body,
+                [[0.; 3], [1., 0., 0.], [0., 1., 0.]],
+                1e-7
+            ));
+            assert!(
+                matches!(&imported.profile,ImportProfile::ProfiledScrew { screw,.. } if screw.thread().spec().root_radius_mm.is_some())
+            );
+            assert!(
+                verify_profiled_screw(&text, &body, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
+                    .is_ok()
+            );
+        }
+    }
+
+    #[test]
     fn physical_terminal_bearings_and_toroidal_crowns_roundtrip() {
         let old = screw(true, 1, false);
         let thread = Thread::new(helical_thread::Spec {
@@ -1433,7 +1489,13 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(profiled_screw_head_volume_error_bound_mm3(&loose).is_none());
+        assert!(
+            profiled_screw_head_volume_error_bound_mm3(
+                &loose,
+                [[0.; 3], [1., 0., 0.], [0., 1., 0.]]
+            )
+            .is_none()
+        );
         assert!(!step::supports_profiled_screw(&loose, [0.; 3], 1e-7));
     }
 }
