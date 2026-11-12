@@ -470,3 +470,105 @@ fn unresolved_near_tangent_ray_and_polar_trims_are_refused_without_radius_clampi
     }
     assert!(unresolved > 0);
 }
+
+#[test]
+fn authored_tangent_authority_is_explicit_and_never_inferred_from_retained_arcs() {
+    let spec = TangentSpec {
+        major_diameter_mm: 2.8,
+        minor_diameter_mm: 2.05,
+        outer_lobe_radius_mm: 0.28,
+    };
+    let source = Drive::from_authored_tangent(spec, drive().cone()).unwrap();
+    assert_eq!(
+        source.boundary_source(),
+        BoundarySource::AuthoredTangent(spec)
+    );
+    assert_eq!(drive().boundary_source(), BoundarySource::RetainedFamily);
+    let replay = Drive::from_retained(*source.arcs(), source.cone(), TransportError::ZERO).unwrap();
+    assert_eq!(replay.boundary_source(), BoundarySource::RetainedFamily);
+    for (arc, old) in source.arcs().iter().zip(fixture()) {
+        for (a, b) in [arc.center_mm, arc.start_mm, arc.end_mm].into_iter().zip([
+            old.center_mm,
+            old.start_mm,
+            old.end_mm,
+        ]) {
+            assert!((a[0] - b[0]).hypot(a[1] - b[1]) < source.source_error_mm());
+        }
+        assert!((arc.radius_mm - old.radius_mm).abs() < source.source_error_mm());
+    }
+    let actual = source.volume_bounds_mm3(1e-7, 100_000).unwrap();
+    let previous = drive().volume_bounds_mm3(1e-7, 100_000).unwrap();
+    assert!(actual[0] <= previous[1] && previous[0] <= actual[1]);
+    for bad in [
+        TangentSpec {
+            major_diameter_mm: f64::NAN,
+            ..spec
+        },
+        TangentSpec {
+            minor_diameter_mm: 3.,
+            ..spec
+        },
+        TangentSpec {
+            outer_lobe_radius_mm: 1.4,
+            ..spec
+        },
+        TangentSpec {
+            major_diameter_mm: 1e8,
+            minor_diameter_mm: 1e7,
+            ..spec
+        },
+        TangentSpec {
+            minor_diameter_mm: 0.1,
+            ..spec
+        },
+        TangentSpec {
+            minor_diameter_mm: 2.8 * 2. * (0.4 * (3_f64.sqrt() / 2.) + 0.1),
+            ..spec
+        },
+    ] {
+        assert!(Drive::from_authored_tangent(bad, source.cone()).is_err());
+    }
+    assert_eq!(
+        Drive::from_authored_tangent(
+            spec,
+            Cone {
+                tip_depth_mm: -1.,
+                depth_per_radius: 1.
+            }
+        ),
+        Err(Error::Invalid)
+    );
+}
+
+#[test]
+fn finite_support_lower_bounds_cover_outward_nodes_at_adjacent_endpoint_cells() {
+    for (a, sweep) in fixture()
+        .map(|arc| (arc.start_angle_rad, arc.sweep_rad))
+        .into_iter()
+        .chain([
+            (0., 1e-10),
+            (-f64::MIN_POSITIVE, 2. * f64::MIN_POSITIVE),
+            (TAU, PI - 1e-6),
+            (-TAU, -PI + 1e-6),
+        ])
+    {
+        let domain = calculation_domain(a, sweep);
+        let b = a + sweep;
+        let lo = a.min(b);
+        let hi = a.max(b);
+        let end = I::point(a) + I::point(sweep);
+        assert!(domain.lo <= end.lo.min(b) && end.hi.max(b) <= domain.hi);
+        let mid = lo + (hi - lo) * 0.5;
+        for (lo, hi) in [
+            (lo, hi),
+            (lo, lo.next_up()),
+            (hi.next_down(), hi),
+            (mid, mid.next_up()),
+        ] {
+            let (_, nodes) = gauss_nodes(lo, hi);
+            for node in nodes {
+                assert!(domain.lo <= node.lo && node.hi <= domain.hi);
+            }
+        }
+    }
+}

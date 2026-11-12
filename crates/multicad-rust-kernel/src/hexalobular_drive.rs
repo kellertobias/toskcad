@@ -3,8 +3,18 @@
 use crate::{head_profile::TransportError, tapered_thread::interval::I};
 use std::f64::consts::{PI, TAU};
 
+mod authoring;
 #[cfg(test)]
 mod tests;
+pub use authoring::TangentSpec;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BoundarySource {
+    /// A bounded circular family; not an exact support-intersection receipt.
+    RetainedFamily,
+    /// Exact tangent-construction authority; arcs are its bounded evaluation.
+    AuthoredTangent(TangentSpec),
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Arc {
@@ -40,6 +50,7 @@ pub struct Drive {
     radial_min_squared: [f64; 12],
     radius: f64,
     error: f64,
+    boundary_source: BoundarySource,
 }
 
 fn dot([ax, ay]: [f64; 2], [bx, by]: [f64; 2]) -> f64 {
@@ -76,6 +87,29 @@ fn volume_receipt(result: I, width_mm3: f64) -> Result<[f64; 2], Error> {
         return Err(Error::Unresolved);
     }
     Ok([result.lo, result.hi])
+}
+
+fn calculation_domain(start: f64, sweep: f64) -> I {
+    let end = I::point(start) + I::point(sweep);
+    let scale = 1. + start.abs().max(end.magnitude());
+    let pad = (I::point(64. * f64::EPSILON) * I::point(scale)).hi;
+    // Directed Gauss coordinates use subtraction, binary half scaling, one
+    // midpoint addition, sqrt(3), reciprocal/multiplication and one final
+    // addition/subtraction. Their accumulated absolute endpoint error is
+    // below16eps*(1+max|endpoint|), including subnormals. The64eps proof
+    // domain covers every representable subdivision cell and rounded-end
+    // tail. It changes no literal support or finite trim.
+    I::new(
+        (start.min(end.lo) - pad).next_down(),
+        (start.max(end.hi) + pad).next_up(),
+    )
+}
+
+fn gauss_nodes(lo: f64, hi: f64) -> (I, [I; 2]) {
+    let half = (I::point(hi) - I::point(lo)) * I::point(0.5);
+    let midpoint = I::point(lo) + half;
+    let offset = half / I::point(3.).sqrt();
+    (half, [midpoint - offset, midpoint + offset])
 }
 
 impl Arc {
@@ -187,8 +221,7 @@ impl Drive {
                     return Err(Error::Unresolved);
                 }
             }
-            let end = I::point(a) + I::point(arc.sweep_rad);
-            let domain = I::new(a.min(end.lo), a.max(end.hi));
+            let domain = calculation_domain(a, arc.sweep_rad);
             let r = I::point(arc.radius_mm);
             let center = arc.center_projection(domain);
             let derivative = (r.square() + r * center) * I::point(arc.sweep_rad.signum());
@@ -219,14 +252,21 @@ impl Drive {
             radial_min_squared,
             radius,
             error,
+            boundary_source: BoundarySource::RetainedFamily,
         })
     }
 
+    /// Literal descriptors for a retained family, or bounded evaluated
+    /// descriptors for an authored tangent source. Shared vertex coordinates
+    /// alone do not prove literal circles intersect exactly.
     pub fn arcs(&self) -> &[Arc; 12] {
         &self.arcs
     }
     pub fn cone(&self) -> Cone {
         self.cone
+    }
+    pub fn boundary_source(&self) -> BoundarySource {
+        self.boundary_source
     }
     pub fn source_error_mm(&self) -> f64 {
         self.error
@@ -332,15 +372,9 @@ impl Drive {
                 }
                 remaining -= 1;
                 let span = I::point(hi) - I::point(lo);
-                let half = span * I::point(0.5);
-                let midpoint = I::point(lo) + half;
-                let offset = half / I::point(3.).sqrt();
-                let values = arc
-                    .moment(midpoint - offset, self.radial_min_squared[index])
-                    .0[0]
-                    + arc
-                        .moment(midpoint + offset, self.radial_min_squared[index])
-                        .0[0];
+                let (half, [first, last]) = gauss_nodes(lo, hi);
+                let values = arc.moment(first, self.radial_min_squared[index]).0[0]
+                    + arc.moment(last, self.radial_min_squared[index]).0[0];
                 let fourth =
                     arc.moment(I::new(lo, hi), self.radial_min_squared[index]).0[4].magnitude();
                 // Two-node Gauss error: |f''''|*h^5/4320. Jet coefficients
