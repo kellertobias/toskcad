@@ -341,6 +341,17 @@ impl Profile {
     }
 
     pub fn new(head: Head, shank: f64, plain: f64) -> Result<Self, ThreadError> {
+        Self::construct(head, shank, plain, false)
+    }
+
+    /// Retain the complete neck even when it overlaps the authored thread.
+    /// The screw union factory must separately prove that hidden thread material
+    /// is covered by this actual profile.
+    pub fn new_for_thread_union(head: Head, shank: f64, plain: f64) -> Result<Self, ThreadError> {
+        Self::construct(head, shank, plain, true)
+    }
+
+    fn construct(head: Head, shank: f64, plain: f64, union: bool) -> Result<Self, ThreadError> {
         let (radius, height, neck) = match head {
             Head::Countersunk {
                 radius_mm,
@@ -411,6 +422,8 @@ impl Profile {
                 let theta = included_angle_deg.to_radians() / 2.;
                 let rim = height - (radius - shank) / theta.tan();
                 let neck_z = neck * (theta / 2.).tan();
+                let plain = if union { plain.max(neck_z) } else { plain };
+                result.end[1] = plain;
                 let center = [shank + neck, neck_z];
                 let tangent = [
                     center[0] - neck * theta.cos(),
@@ -450,6 +463,8 @@ impl Profile {
                 top_land_radius_mm: land,
                 ..
             } => {
+                let plain = if union { plain.max(neck) } else { plain };
+                result.end[1] = plain;
                 if !crown.is_finite()
                     || !land.is_finite()
                     || crown < radius
@@ -501,6 +516,9 @@ impl Profile {
                 }
                 push([shank, neck], [shank, plain], Curve::Line, Role::Shank);
             }
+        }
+        if height + result.end[1] > 1e7 {
+            return Err(ThreadError::Limit);
         }
         result.rounding_error_mm = reserve;
         let extra = match head {

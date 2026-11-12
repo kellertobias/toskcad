@@ -1,6 +1,6 @@
 //! Actual helical screws with a retained, variable-section head and hex drive.
 use crate::{
-    head_profile::{Head, Profile},
+    head_profile::{Curve, Head, Profile},
     headed_screw::{hex_area, hex_radius},
     helical_thread::{Thread, ThreadError},
 };
@@ -53,6 +53,7 @@ pub struct Screw {
     thread: Thread,
     spec: SourceSpec,
     profile: Profile,
+    visible_start_mm: f64,
 }
 
 impl Screw {
@@ -62,7 +63,7 @@ impl Screw {
             thread.spec().major_radius_mm,
             spec.shank_length_mm,
         )?;
-        Self::admit_source(thread, profile, spec.into())
+        Self::admit_source(thread, profile, spec.into(), false)
     }
 
     /// Physical meridian/drive admission without guessing an authoring recipe.
@@ -74,15 +75,68 @@ impl Screw {
         if spec.head.is_some() {
             return Err(ThreadError::Invalid);
         }
-        Self::admit_source(thread, profile, spec)
+        Self::admit_source(thread, profile, spec, false)
+    }
+
+    /// Opt in to the actual head/thread union; the original thread law and
+    /// authored length remain unchanged, including the covered prefix.
+    pub fn new_with_head_thread_union(thread: Thread, spec: Spec) -> Result<Self, ThreadError> {
+        let profile = Profile::new_for_thread_union(
+            spec.head,
+            thread.spec().major_radius_mm,
+            spec.shank_length_mm,
+        )?;
+        Self::admit_source(thread, profile, spec.into(), true)
+    }
+
+    pub fn from_source_with_union(
+        thread: Thread,
+        profile: Profile,
+        spec: SourceSpec,
+    ) -> Result<Self, ThreadError> {
+        if spec.head.is_some() {
+            return Err(ThreadError::Invalid);
+        }
+        Self::admit_source(thread, profile, spec, true)
     }
 
     fn admit_source(
         thread: Thread,
         profile: Profile,
         spec: SourceSpec,
+        union: bool,
     ) -> Result<Self, ThreadError> {
-        if profile.end() != [thread.spec().major_radius_mm, spec.shank_length_mm] {
+        let major = thread.spec().major_radius_mm;
+        let visible_start_mm = profile.end()[1] - spec.shank_length_mm;
+        if !spec.shank_length_mm.is_finite()
+            || spec.shank_length_mm < 0.
+            || profile.end()[0] != major
+            || visible_start_mm < 0.
+            || (!union && visible_start_mm != 0.)
+            || thread.spec().length_mm - visible_start_mm <= 4. * profile.rounding_error_mm()
+        {
+            return Err(ThreadError::Invalid);
+        }
+        if visible_start_mm > 0.
+            && profile.segments().any(|segment| {
+                if segment.end[1] <= spec.shank_length_mm {
+                    return false;
+                }
+                match segment.curve {
+                    Curve::Line => segment.start[0].min(segment.end[0]) < major,
+                    Curve::Arc {
+                        center, radius_mm, ..
+                    } => {
+                        // Error-free subtraction: comparing the rounded result to a
+                        // distinct f64 is decisive; equality needs its exact residual.
+                        let d = center[0] - radius_mm;
+                        let b = d - center[0];
+                        let residual = (center[0] - (d - b)) - (radius_mm + b);
+                        d < major || (d == major && residual < 0.)
+                    }
+                }
+            })
+        {
             return Err(ThreadError::Invalid);
         }
         if spec.socket_across_flats_mm <= 2. * profile.rounding_error_mm()
@@ -100,11 +154,24 @@ impl Screw {
             thread,
             spec,
             profile,
+            visible_start_mm,
         })
     }
 
     pub fn thread(&self) -> &Thread {
         &self.thread
+    }
+    /// Original source coordinates, retaining helical phase at the junction.
+    pub fn visible_thread_interval_mm(&self) -> [f64; 2] {
+        [self.visible_start_mm, self.thread.spec().length_mm]
+    }
+    pub fn has_head_thread_overlap(&self) -> bool {
+        self.visible_start_mm > 0.
+    }
+    pub fn visible_thread_volume_mm3(&self) -> f64 {
+        self.thread.volume_mm3()
+            * ((self.thread.spec().length_mm - self.visible_start_mm)
+                / self.thread.spec().length_mm)
     }
     pub fn spec(&self) -> SourceSpec {
         self.spec
@@ -130,7 +197,7 @@ impl Screw {
     }
 
     pub fn volume_mm3(&self) -> f64 {
-        self.thread.volume_mm3() + self.profile.volume_mm3()
+        self.visible_thread_volume_mm3() + self.profile.volume_mm3()
             - hex_area(self.spec.socket_across_flats_mm) * self.spec.socket_depth_mm
     }
 

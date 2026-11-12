@@ -256,6 +256,7 @@ struct Builder<'a> {
     limit: usize,
     lead: f64,
     length: f64,
+    lower: f64,
     pitch: f64,
     snap: f64,
     vertex_ids: HashMap<VertexKey, u32>,
@@ -286,6 +287,7 @@ impl<'a> Builder<'a> {
             limit: options.triangle_limit,
             lead,
             length: spec.length_mm,
+            lower: 0.,
             pitch: spec.pitch_mm,
             snap: (64. * f64::EPSILON * spec.length_mm.max(lead.abs()))
                 .min(smallest_strip / 8.)
@@ -320,14 +322,16 @@ impl<'a> Builder<'a> {
             let b = self.advance(column + 1);
             // Include the periodic cells straddling either end; the
             // actual axial planes clip them before adding any mesh data.
-            let first = (-a.max(b) / self.pitch).floor() as i64;
+            let first = ((self.lower - a.max(b)) / self.pitch).floor() as i64;
             let last = ((self.length - a.min(b)) / self.pitch).floor() as i64;
             for period in first..=last {
                 for strip in 0..self.strips.len() {
                     let rail = period * per_period + strip as i64;
                     let lo = self.rail_position(rail);
                     let hi = self.rail_position(rail + 1);
-                    if hi + a.max(b) <= self.snap || lo + a.min(b) >= self.length - self.snap {
+                    if hi + a.max(b) <= self.lower + self.snap
+                        || lo + a.min(b) >= self.length - self.snap
+                    {
                         continue;
                     }
                     let corners = [
@@ -474,12 +478,12 @@ impl<'a> Builder<'a> {
     }
 
     fn cap_z(&self, cap: usize) -> f64 {
-        if cap == 0 { 0. } else { self.length }
+        if cap == 0 { self.lower } else { self.length }
     }
 
     fn corner(&self, column: usize, rail: i64, z: f64) -> Corner {
-        let z = if z.abs() <= self.snap {
-            0.
+        let z = if (z - self.lower).abs() <= self.snap {
+            self.lower
         } else if (z - self.length).abs() <= self.snap {
             self.length
         } else {
@@ -490,11 +494,11 @@ impl<'a> Builder<'a> {
 
     fn corner_key(&self, corner: Corner) -> Option<VertexKey> {
         let column = corner.column % self.steps;
-        if corner.z == 0. {
+        if corner.z == self.lower {
             Some(VertexKey::CapColumn(column, 0))
         } else if corner.z == self.length {
             Some(VertexKey::CapColumn(column, 1))
-        } else if (0. ..self.length).contains(&corner.z) {
+        } else if (self.lower..self.length).contains(&corner.z) {
             // At one full revolution the phase changes by exactly one lead,
             // so use the corresponding zero-angle rail identity.
             let shift = if corner.column == self.steps {

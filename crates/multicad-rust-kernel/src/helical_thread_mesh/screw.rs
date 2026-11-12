@@ -37,6 +37,7 @@ pub fn tessellate_profiled_screw(
     let thread = screw.thread();
     let strips = phase_strips(thread, TAU / angular_steps, options)?;
     let mut builder = Builder::new(thread, angular_steps as usize, strips, options);
+    builder.lower = screw.visible_thread_interval_mm()[0];
     builder.build_wall()?;
     let [mut shoulder, tip] = std::mem::take(&mut builder.caps);
     builder.add_cap(1, tip)?;
@@ -289,14 +290,14 @@ impl HeadMesh<'_, '_> {
             .iter()
             .enumerate()
             .map(|(index, &id)| {
-                let [x, y, _] = self.builder.mesh.vertices.as_chunks::<3>().0[id as usize];
+                let [x, y, z] = self.builder.mesh.vertices.as_chunks::<3>().0[id as usize];
                 if (radius - x.hypot(y)).abs() <= 64. * f64::EPSILON * radius {
                     // A full crest may coincide with a nominal-diameter shank.
                     // Give those stations one vertex identity on both walls.
                     id
                 } else {
                     let (sin, cos) = self.angles[index].sin_cos();
-                    self.push([radius * cos, radius * sin, 0.])
+                    self.push([radius * cos, radius * sin, z])
                 }
             })
             .collect()

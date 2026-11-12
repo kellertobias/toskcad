@@ -383,3 +383,200 @@ fn physical_profile_and_drive_need_no_authored_head_recipe() {
         Err(ThreadError::Invalid)
     );
 }
+
+#[test]
+fn opt_in_union_retains_full_thread_phase_and_actual_neck_material() {
+    for major in [1.5, 3.] {
+        for crowned in [false, true] {
+            for (starts, left) in [(1, false), (1, true), (2, false), (2, true)] {
+                for plain in [0., 0.01] {
+                    let t = Thread::new(helical_thread::Spec {
+                        major_radius_mm: major,
+                        ..thread(starts, left).spec()
+                    })
+                    .unwrap();
+                    let mut s = spec(crowned);
+                    s.head = match s.head {
+                        Head::Countersunk {
+                            included_angle_deg,
+                            edge_chamfer_mm,
+                            neck_radius_mm,
+                            ..
+                        } => Head::Countersunk {
+                            radius_mm: 2. * major,
+                            height_mm: major + 0.15,
+                            included_angle_deg,
+                            edge_chamfer_mm,
+                            neck_radius_mm,
+                        },
+                        Head::Crowned { neck_radius_mm, .. } => Head::Crowned {
+                            radius_mm: 2. * major,
+                            height_mm: major + 1.,
+                            crown_radius_mm: 3. * major,
+                            top_land_radius_mm: major,
+                            neck_radius_mm,
+                        },
+                    };
+                    s.shank_length_mm = plain;
+                    assert!(Screw::new(t, s).is_err());
+                    let screw = Screw::new_with_head_thread_union(t, s).unwrap();
+                    assert_eq!(*screw.thread(), t);
+                    assert_eq!(screw.spec(), s.into());
+                    assert!(screw.has_head_thread_overlap());
+                    let [lo, hi] = screw.visible_thread_interval_mm();
+                    assert!(lo > 0. && hi == t.spec().length_mm);
+                    assert!(screw.contains([major, 0., lo / 2.], 0.));
+                    assert!(screw.visible_thread_volume_mm3() < t.volume_mm3());
+                    let expected = screw.profile().volume_mm3() + t.volume_mm3() * (hi - lo) / hi
+                        - hex_area(s.socket_across_flats_mm) * s.socket_depth_mm;
+                    assert!((screw.volume_mm3() - expected).abs() < 1e-12);
+                    let mesh = tessellate_profiled_screw(&screw, options()).unwrap();
+                    let proof = certify(&mesh).unwrap();
+                    assert!(
+                        (proof.signed_volume_mm3 - screw.volume_mm3()).abs()
+                            <= profiled_screw_volume_error_bound(&screw, options()).unwrap()
+                    );
+                    let faces = screw.faces();
+                    let vertices = mesh.vertices.as_chunks::<3>().0;
+                    let mut phase_changed = false;
+                    for (triangle, &face) in mesh
+                        .indices
+                        .as_chunks::<3>()
+                        .0
+                        .iter()
+                        .zip(&mesh.face_indices)
+                    {
+                        if let Face::ThreadWall(_) = faces[face as usize] {
+                            for &id in triangle {
+                                let [x, y, z] = vertices[id as usize];
+                                assert!(z >= lo);
+                                if z == lo {
+                                    let theta = y.atan2(x);
+                                    assert!((x.hypot(y) - t.radius(theta, lo)).abs() < 1e-12);
+                                    phase_changed |=
+                                        (t.radius(theta, lo) - t.radius(theta, 0.)).abs() > 1e-4;
+                                }
+                            }
+                        }
+                    }
+                    assert!(phase_changed);
+                    let mut source = screw.spec();
+                    source.head = None;
+                    assert!(Screw::from_source(t, *screw.profile(), source).is_err());
+                    let imported =
+                        Screw::from_source_with_union(t, *screw.profile(), source).unwrap();
+                    assert_eq!(imported.visible_thread_interval_mm(), [lo, hi]);
+                    assert_eq!(imported.volume_mm3(), screw.volume_mm3());
+                    assert!(Screw::from_source_with_union(t, *screw.profile(), s.into()).is_err());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn union_refuses_real_crescents_and_exhausted_thread_without_mutating_retry() {
+    let t = thread(1, false);
+    let mut s = spec(true);
+    s.shank_length_mm = 0.;
+    s.head = Head::Crowned {
+        radius_mm: 3.,
+        height_mm: 2.5,
+        crown_radius_mm: 4.,
+        top_land_radius_mm: 1.5,
+        neck_radius_mm: 0.2,
+    };
+    // Literal 1.7 - 0.2 is strictly smaller than literal 1.5.
+    assert!(Screw::new_with_head_thread_union(t, s).is_err());
+    assert!(
+        Screw::new(
+            t,
+            Spec {
+                shank_length_mm: 1.,
+                ..s
+            }
+        )
+        .is_ok()
+    );
+    s.head = Head::Crowned {
+        radius_mm: 3.,
+        height_mm: 2.5,
+        crown_radius_mm: 4.,
+        top_land_radius_mm: 1.5,
+        neck_radius_mm: 0.125,
+    };
+    let good = Screw::new_with_head_thread_union(t, s).unwrap();
+    let short_spec = helical_thread::Spec {
+        pitch_mm: 0.05,
+        depth_mm: 0.02,
+        crest_width_mm: 0.00625,
+        ..t.spec()
+    };
+    for length_mm in [0.1, 0.125, 0.125 + 1e-14] {
+        let short = Thread::new(helical_thread::Spec {
+            length_mm,
+            ..short_spec
+        })
+        .unwrap();
+        assert!(Screw::new_with_head_thread_union(short, s).is_err());
+    }
+    let short = Thread::new(helical_thread::Spec {
+        length_mm: 0.1251,
+        ..short_spec
+    })
+    .unwrap();
+    assert!(Screw::new_with_head_thread_union(short, s).is_ok());
+    let mut source = good.spec();
+    source.head = None;
+    for plain in [-1., f64::NAN, 0.25] {
+        source.shank_length_mm = plain;
+        assert!(Screw::from_source_with_union(t, *good.profile(), source).is_err());
+    }
+    let old = Screw::new(t, spec(false)).unwrap();
+    assert_eq!(
+        old,
+        Screw::new_with_head_thread_union(t, spec(false)).unwrap()
+    );
+    assert!(!old.has_head_thread_overlap());
+    assert_eq!(old.visible_thread_volume_mm3(), t.volume_mm3());
+    assert!(certify(&tessellate_profiled_screw(&good, options()).unwrap()).is_ok());
+}
+
+#[test]
+fn retained_union_proves_actual_cylindrical_overlap_and_bounds_complete_head() {
+    let t = thread(1, false);
+    let old = Screw::new(t, spec(false)).unwrap();
+    let source = SourceSpec {
+        head: None,
+        shank_length_mm: 0.,
+        ..old.spec()
+    };
+    let union = Screw::from_source_with_union(t, *old.profile(), source).unwrap();
+    assert_eq!(union.visible_thread_interval_mm(), [1., 7.5]);
+    assert!(union.contains([1.5, 0., 0.9], 0.));
+    assert!(certify(&tessellate_profiled_screw(&union, options()).unwrap()).is_ok());
+    assert!(
+        Screw::new_with_head_thread_union(
+            t,
+            Spec {
+                shank_length_mm: -1.,
+                ..spec(false)
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(
+        Profile::new_for_thread_union(
+            Head::Crowned {
+                radius_mm: 4.,
+                height_mm: 9_999_999.,
+                crown_radius_mm: 5.,
+                top_land_radius_mm: 1.,
+                neck_radius_mm: 2.,
+            },
+            1.,
+            0.
+        ),
+        Err(ThreadError::Limit)
+    );
+}
