@@ -1,7 +1,7 @@
 //! Typed physical recesses: shape and floor remain geometry, never size labels.
 use crate::{
     hex_drive::HexDrive,
-    hexalobular_drive::{Cone, Drive, Error},
+    hexalobular_drive::{Cone, Drive, Error, FiniteBinding},
     tapered_thread::interval::I,
 };
 use std::sync::Arc;
@@ -22,6 +22,7 @@ pub struct FlatHex {
 pub struct ConicalHexalobular {
     source: Arc<Drive>,
     volume_bounds_mm3: [f64; 2],
+    finite_binding: Option<Arc<FiniteBinding>>,
 }
 impl FlatHex {
     pub fn geometry(&self) -> (&HexDrive, f64) {
@@ -31,6 +32,9 @@ impl FlatHex {
 impl ConicalHexalobular {
     pub fn source(&self) -> &Drive {
         &self.source
+    }
+    pub fn finite_binding(&self) -> Option<&FiniteBinding> {
+        self.finite_binding.as_deref()
     }
 }
 impl Recess {
@@ -69,6 +73,45 @@ impl Recess {
         Ok(Self::ConicalHexalobular(ConicalHexalobular {
             source: Arc::new(source),
             volume_bounds_mm3,
+            finite_binding: None,
+        }))
+    }
+    pub fn conical_hexalobular_from_binding(
+        binding: FiniteBinding,
+        width_mm3: f64,
+        work_limit: usize,
+    ) -> Result<Self, Error> {
+        Self::conical_hexalobular_from_binding_with_cancel(binding, width_mm3, work_limit, &|| {
+            false
+        })
+    }
+    pub fn conical_hexalobular_from_binding_with_cancel(
+        binding: FiniteBinding,
+        width_mm3: f64,
+        work_limit: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Self, Error> {
+        if !width_mm3.is_finite() || width_mm3 <= 0. {
+            return Err(Error::Invalid);
+        }
+        let trim = binding
+            .additional_volume_error_bound_mm3()
+            .ok_or(Error::Unresolved)?;
+        let available = (I::point(width_mm3) - I::point(2.) * I::point(trim)).lo;
+        if available <= 0. {
+            return Err(Error::Unresolved);
+        }
+        let [lo, hi] = binding
+            .source()
+            .volume_bounds_with_cancel(available, work_limit, cancelled)?;
+        let volume = I::new(lo, hi) + I::new(-trim, trim);
+        if !volume.valid() || volume.lo <= 0. || volume.width() > width_mm3 {
+            return Err(Error::Unresolved);
+        }
+        Ok(Self::ConicalHexalobular(ConicalHexalobular {
+            source: binding.source_handle(),
+            volume_bounds_mm3: [volume.lo, volume.hi],
+            finite_binding: Some(Arc::new(binding)),
         }))
     }
     pub fn flat_hex_geometry(&self) -> Option<(&HexDrive, f64)> {
@@ -86,7 +129,10 @@ impl Recess {
     pub fn source_error_mm(&self) -> f64 {
         match self {
             Self::FlatHex(_) => 0.,
-            Self::ConicalHexalobular(h) => h.source.spatial_source_error_bound_mm(),
+            Self::ConicalHexalobular(h) => h.finite_binding().map_or_else(
+                || h.source.spatial_source_error_bound_mm(),
+                FiniteBinding::spatial_source_error_bound_mm,
+            ),
         }
     }
     pub fn maximum_radius_bound_mm(&self) -> f64 {

@@ -29,7 +29,7 @@ fn norm(value: [I; 3]) -> I {
         .sqrt()
 }
 impl Drive {
-    fn intersection_state(&self, index: usize, u: f64) -> ([I; 3], [I; 3]) {
+    pub(super) fn intersection_state(&self, index: usize, u: f64) -> ([I; 3], [I; 3]) {
         let arc = self.arcs[index];
         let angle = I::point(arc.start_angle_rad) + I::point(arc.sweep_rad) * I::point(u);
         let radial = arc.radial(angle, self.radial_min_squared[index]);

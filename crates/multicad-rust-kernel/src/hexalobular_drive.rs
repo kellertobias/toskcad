@@ -4,11 +4,13 @@ use crate::{head_profile::TransportError, tapered_thread::interval::I};
 use std::f64::consts::{PI, TAU};
 
 mod authoring;
+mod binding;
 mod intersection;
 mod properties;
 #[cfg(test)]
 mod tests;
 pub use authoring::TangentSpec;
+pub use binding::{FiniteBinding, FiniteVertices};
 pub use intersection::{CubicIntersectionSpan, IntersectionErrorBound};
 pub use properties::{NominalSurfaceEvaluation, NominalSurfaceEvaluations};
 
