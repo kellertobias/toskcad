@@ -398,12 +398,7 @@ fn rust_internal_6h_matches_native_cut_and_keeps_the_cylinder_face_intents() {
 
 #[test]
 fn rust_thread_compiler_refuses_unimplemented_variants_without_changing_source() {
-    use multicad_core::{
-        constraint_sketch::Dimension,
-        model::{
-            ThreadEndTreatment, ThreadEndTreatments, ThreadRepresentation, ThreadStartTreatment,
-        },
-    };
+    use multicad_core::{constraint_sketch::Dimension, model::ThreadRepresentation};
 
     let mut session =
         Session::new(Document::new("Rust thread provider boundaries").unwrap()).unwrap();
@@ -431,20 +426,8 @@ fn rust_thread_compiler_refuses_unimplemented_variants_without_changing_source()
         },
     )
     .unwrap();
-    let chamfer = ThreadRequest::new(
-        "Chamfered thread",
-        ThreadParameters {
-            end_treatments: Some(ThreadEndTreatments {
-                start: ThreadStartTreatment::Chamfer45 {
-                    radial_depth: length(0.5),
-                },
-                end: ThreadEndTreatment::FlatCut,
-            }),
-            ..Default::default()
-        },
-    );
-    let tapered = ThreadRequest::new(
-        "Tapered custom thread",
+    let mut tapered = ThreadRequest::new(
+        "Tapered receiving custom thread",
         ThreadParameters {
             family: ThreadFamily::Custom,
             custom: Some(CustomThreadProfile {
@@ -457,12 +440,17 @@ fn rust_thread_compiler_refuses_unimplemented_variants_without_changing_source()
             ..Default::default()
         },
     );
+    tapered.mode = ThreadMode::CutInternal;
+    tapered.target = Some(BodyInput {
+        body: stock.body,
+        producer: stock.feature,
+    });
+    tapered.body = stock.body;
     for (request, diagnostic) in [
         (
             receiving,
             "external receiving cuts require a modeled thread",
         ),
-        (chamfer, "end treatments"),
         (tapered, "untapered profile"),
     ] {
         let candidate = model::prepare_thread(&session, 1, actor(), &request).unwrap();

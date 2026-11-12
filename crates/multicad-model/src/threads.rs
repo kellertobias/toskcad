@@ -269,6 +269,31 @@ pub(crate) fn build_rust(
         )
         .map_err(|cause| error(Some(feature), cause));
     }
+    if source.mode == ThreadMode::NewExternal
+        && source.parameters.family == ThreadFamily::Custom
+        && thread.representation == ThreadRepresentation::Modeled
+        && thread.profile.radial_taper != 0.
+        && thread.profile.rounding_radius_mm.is_none()
+    {
+        return Solid::rust_retained_helical_thread_with_interrupt(
+            helical_spec(&thread),
+            feature,
+            PlaneFrame {
+                origin: thread.frame.origin,
+                u: thread.frame.u,
+                v: thread.frame.v,
+            },
+            policy,
+            interrupt,
+        )
+        .map_err(|cause| {
+            if cause.kind == multicad_kernel::GeometryErrorKind::Cancelled {
+                error(Some(feature), "Model evaluation superseded")
+            } else {
+                error(Some(feature), cause)
+            }
+        });
+    }
     let (spec, root_radius, frame) = rust_profile(feature, &thread)?;
     let solid = if source.mode == ThreadMode::CutInternal {
         let target = receiving_target(feature, source, solids)?
