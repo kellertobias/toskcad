@@ -25,7 +25,7 @@ fn options() -> Tessellation {
 fn real_source_mesh_is_cache_independent_and_failed_requests_are_atomic() {
     let body = cam();
     let original = body.input().clone();
-    let regular = build(&body, options(), None).unwrap();
+    let regular = body.tessellate_with_interrupt(options(), None).unwrap();
     let uncached = build_with_limits(
         &body,
         options(),

@@ -89,7 +89,9 @@ fn actual_spline_and_circle_edges_keep_source_endpoints_and_whole_curve_chord() 
         }
         let body = qualify(input);
         for (i, edge) in body.input().edges.iter().enumerate() {
-            let line = sample(&body, i, 0.01, 10000, None).unwrap();
+            let line = body
+                .sample_edge_with_interrupt(i, 0.01, 10000, None)
+                .unwrap();
             assert_eq!(line[0], body.input().vertices[edge.vertices[0]]);
             assert_eq!(
                 *line.last().unwrap(),
@@ -128,7 +130,12 @@ fn actual_spline_and_circle_edges_keep_source_endpoints_and_whole_curve_chord() 
         .unwrap()
         .boundary;
     for i in 0..body.input().edges.len() {
-        assert!(sample(&body, i, 0.025, 10000, None).unwrap().len() >= 2);
+        assert!(
+            body.sample_edge_with_interrupt(i, 0.025, 10000, None)
+                .unwrap()
+                .len()
+                >= 2
+        );
     }
 }
 
@@ -142,7 +149,8 @@ fn source_edge_requests_cancel_atomically_and_keep_explicit_resource_limits() {
             count.set(count.get() + 1);
             false
         };
-        sample(&body, i, 0.1, 10000, Some(&observe)).unwrap();
+        body.sample_edge_with_interrupt(i, 0.1, 10000, Some(&observe))
+            .unwrap();
         let total = count.get();
         for at in 1..=total {
             count.set(0);
@@ -151,29 +159,33 @@ fn source_edge_requests_cancel_atomically_and_keep_explicit_resource_limits() {
                 count.get() >= at
             };
             assert_eq!(
-                sample(&body, i, 0.1, 10000, Some(&cancel)).err(),
+                body.sample_edge_with_interrupt(i, 0.1, 10000, Some(&cancel))
+                    .err(),
                 Some(Error::Cancelled)
             );
         }
     }
     for deflection in [0., -1., f64::NAN, f64::INFINITY] {
         assert_eq!(
-            sample(&body, 0, deflection, 100, None).err(),
+            body.sample_edge_with_interrupt(0, deflection, 100, None)
+                .err(),
             Some(Error::Invalid)
         );
     }
     for limit in [0, 1] {
         assert_eq!(
-            sample(&body, 0, 0.01, limit, None).err(),
+            body.sample_edge_with_interrupt(0, 0.01, limit, None).err(),
             Some(Error::Invalid)
         );
     }
     assert_eq!(
-        sample(&body, 0, 0.01, 1_000_001, None).err(),
+        body.sample_edge_with_interrupt(0, 0.01, 1_000_001, None)
+            .err(),
         Some(Error::Limit)
     );
     assert_eq!(
-        sample(&body, usize::MAX, 0.01, 100, None).err(),
+        body.sample_edge_with_interrupt(usize::MAX, 0.01, 100, None)
+            .err(),
         Some(Error::Invalid)
     );
     let circle = body
@@ -183,7 +195,8 @@ fn source_edge_requests_cancel_atomically_and_keep_explicit_resource_limits() {
         .position(|e| matches!(body.input().curves[e.curve], Curve::Circle { .. }))
         .unwrap();
     assert_eq!(
-        sample(&body, circle, 0.001, 2, None).err(),
+        body.sample_edge_with_interrupt(circle, 0.001, 2, None)
+            .err(),
         Some(Error::Limit)
     );
     assert_eq!(
@@ -191,5 +204,8 @@ fn source_edge_requests_cancel_atomically_and_keep_explicit_resource_limits() {
         Err(Error::Unresolved)
     );
     assert_eq!(body.input(), &original);
-    assert!(sample(&body, circle, 0.001, 10000, None).is_ok());
+    assert!(
+        body.sample_edge_with_interrupt(circle, 0.001, 10000, None)
+            .is_ok()
+    );
 }
