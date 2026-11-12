@@ -156,15 +156,15 @@ impl Solid {
             u: direction(u),
             v: direction(v),
         };
-        if let Some(seat) = &counterbore {
-            stock_frame::certify_tool_domain(
-                cut.entry,
-                placed,
-                seat.radius_mm(),
-                cut.profile.length_mm,
-                policy,
-            )?;
-        }
+        stock_frame::certify_tool_domain(
+            cut.entry,
+            placed,
+            counterbore
+                .as_ref()
+                .map_or(cut.profile.major_radius_mm, |seat| seat.radius_mm()),
+            cut.profile.length_mm,
+            policy,
+        )?;
         let stock_in_thread = stock_frame::store(
             placed,
             stock_frame,
