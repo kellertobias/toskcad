@@ -396,8 +396,6 @@ pub(super) fn verify(
     plane_at(proof, shell, surface, previous, frame, false)?;
     let top = previous;
     let socket_mouth = bounds[1];
-    let mut decoded = Vec::new();
-    let mut before_z = None;
     for (i, source) in segments.iter().enumerate() {
         require(
             previous.radius == source.start[0]
@@ -461,29 +459,6 @@ pub(super) fn verify(
             end.radius == source.end[0]
                 && proof.equal(end.center, frame.world([0.; 2], source.end[1] - shift)),
         )?;
-        let start_z = before_z.unwrap_or(previous.z);
-        let curve = match source.curve {
-            HeadCurve::Line => HeadCurve::Line,
-            HeadCurve::Arc {
-                center,
-                radius_mm,
-                sweep,
-            } => HeadCurve::Arc {
-                radius_mm,
-                center: [
-                    center[0],
-                    frame.local(frame.world([0.; 2], center[1] - shift))[2],
-                ],
-                sweep,
-            },
-        };
-        decoded.push(Segment {
-            start: [previous.radius, start_z],
-            end: [end.radius, end.z],
-            curve,
-            role: source.role,
-        });
-        before_z = Some(end.z);
         previous = end;
     }
     let (floor_surface, forward, bounds) = face(shell, faces[segments.len() + 1])?;
@@ -492,7 +467,7 @@ pub(super) fn verify(
         [0.; 2],
         expected.head_top_z() + expected.spec().socket_depth_mm,
     );
-    let floor = proof.axis(
+    proof.axis(
         shell,
         hex_head::plane(shell, floor_surface)?,
         floor_origin,
@@ -516,7 +491,7 @@ pub(super) fn verify(
         false,
         points.map(|p| frame.world(p, expected.head_top_z() + expected.spec().socket_depth_mm)),
     )?;
-    let area = hex_head::walls_area(
+    hex_head::walls_area(
         proof,
         shell,
         &faces[segments.len() + 2..],
@@ -525,21 +500,14 @@ pub(super) fn verify(
         frame.n,
         true,
     )?;
-    if proof.error.is_none() {
-        // A source-known proof above checks every literal support, trim,
-        // drive point and shared edge against the original source. Evaluate
-        // that source directly: a WCS inverse projection would introduce a
-        // second, avoidable precision domain for a known meridian. Independent
-        // physical imports take the transported decoded branch below.
-        return Ok(expected.profile().volume_mm3()
-            - expected.drive().area_mm2() * expected.spec().socket_depth_mm);
-    }
-    let profile =
-        Profile::from_transported_segments(&decoded, expected.profile().transport_error())
-            .map_err(|_| ReadError::Invalid)?;
-    let depth = frame.local(floor.origin)[2] - top.z;
-    require(depth > 0.)?;
-    Ok(profile.volume_mm3() - area * depth)
+    // The complete support/trim/incidence proof above binds this source to
+    // the file. On physical import, `expected` is the independently decoded
+    // source and already carries its WCS-to-chart transport reserve. Evaluate
+    // it in that same chart; reprojecting its centers through WCS a second
+    // time would introduce a different, unbudgeted source geometry. Direct
+    // source-known callers retain their separately documented provenance.
+    Ok(expected.profile().volume_mm3()
+        - expected.drive().area_mm2() * expected.spec().socket_depth_mm)
 }
 
 fn line_surface(
@@ -1113,6 +1081,98 @@ mod tests {
                 &second, &source, frame, 1e-7
             ));
         }
+    }
+
+    #[test]
+    fn posed_metric_left_hand_union_retains_one_independently_decoded_source_chart() {
+        let thread = Thread::new(helical_thread::Spec {
+            major_radius_mm: 1.4635,
+            pitch_mm: 0.5,
+            length_mm: 9.,
+            depth_mm: 0.29908756729740676,
+            crest_width_mm: 0.07131009168581062,
+            lower_flank_deg: 30.,
+            upper_flank_deg: 30.,
+            starts: 1,
+            left_hand: true,
+            root_radius_mm: Some(0.07216878364870323),
+        })
+        .unwrap();
+        let source = Screw::new_with_shank_thread_union(
+            thread,
+            1.5,
+            Spec {
+                head: Head::Countersunk {
+                    radius_mm: 3.,
+                    height_mm: 1.65,
+                    included_angle_deg: 90.,
+                    edge_chamfer_mm: 0.1,
+                    neck_radius_mm: 0.1,
+                },
+                shank_length_mm: 0.,
+                socket_across_flats_mm: 2.5,
+                socket_depth_mm: 0.8,
+                minimum_wall_mm: 1e-5,
+            },
+        )
+        .unwrap();
+        let frame = [
+            [105.4080000120003, -20.544000016000386, 59.26000001500036],
+            [
+                0.8000001131000105,
+                0.5999998491999037,
+                -2.5133344449321634e-7,
+            ],
+            [
+                0.3599997486665377,
+                -0.48000018850005965,
+                -0.7999999999999605,
+            ],
+        ];
+        let text = step::write_profiled_screw(&source, frame[0], frame[1], frame[2], 1e-7).unwrap();
+        let (receipt, imported) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+        let (decoded, mass_error) = imported.profiled_screw_geometry().unwrap();
+        assert!(decoded.profile().transport_error_mm() > 0. && mass_error > 0.);
+        assert!((decoded.thread().spec().length_mm - 9.).abs() < 1e-12);
+        assert!((decoded.visible_thread_interval_mm()[0] - 0.04142135623730951).abs() < 1e-12);
+        // The head reserve is separate from the thread's certified Hermite
+        // approximation. This scalar regression includes both contributions.
+        assert!((receipt.volume_mm3 - source.volume_mm3()).abs() < 1e-6);
+        assert!(crate::step_read::profiled_screw_import_matches(
+            &imported, &source, frame, 1e-7
+        ));
+        let data = parse_entities(&text, 1e-7).unwrap();
+        let shell = Shell::new(&data, 1e-7, true);
+        let faces = shell
+            .member_faces(shell.represented_solids(true).unwrap()[0])
+            .unwrap();
+        let mut changed = BTreeSet::new();
+        for &id in &faces[6..] {
+            let (support, _, _) = face(&shell, id).unwrap();
+            changed.insert(support);
+            let entity = shell.simple(support).unwrap();
+            let name = entity.name;
+            let axis = reference(&entity.args[1]).unwrap();
+            let axis_args = shell.args(axis, "AXIS2_PLACEMENT_3D").unwrap();
+            let point = reference(&axis_args[1]).unwrap();
+            let p = shell.point(point).unwrap();
+            let line = text
+                .lines()
+                .find(|line| line.starts_with(&format!("#{point}=")))
+                .unwrap();
+            let replacement = format!(
+                "#{point}=CARTESIAN_POINT('',({},{},{}));",
+                p[0] + 0.001,
+                p[1],
+                p[2]
+            );
+            let displaced = text.replacen(line, &replacement, 1);
+            assert!(
+                crate::step_read::read_import_solid(&displaced, 1e-7).is_err(),
+                "actual {name} support must bind to its finite edges"
+            );
+        }
+        assert!(changed.len() >= 10);
     }
 
     fn topology(input: &str) -> Result<()> {
