@@ -205,3 +205,144 @@ fn precision_and_invalid_drive_edits_preserve_the_previous_source() {
     let box_solid = Solid::box_solid([1.; 3], GeometryPolicy::default()).unwrap();
     assert!(box_solid.rust_profiled_screw_geometry().is_none());
 }
+
+#[test]
+fn covered_thread_prefix_keeps_actual_visible_faces_rims_and_phase() {
+    for crown in [false, true] {
+        for left_hand in [false, true] {
+            let mut thread = thread();
+            thread.left_hand = left_hand;
+            thread.starts = 2;
+            let owner = EntityId::new();
+            let frame = PlaneFrame::default();
+            let full = Solid::rust_profiled_machine_screw(
+                thread,
+                None,
+                spec(crown),
+                owner,
+                frame,
+                GeometryPolicy::default(),
+            )
+            .unwrap();
+            for plain in [0., 0.03125] {
+                let mut spec = spec(crown);
+                spec.shank_length_mm = plain;
+                let solid = Solid::rust_profiled_machine_screw_with_head_thread_union(
+                    thread,
+                    None,
+                    spec,
+                    owner,
+                    frame,
+                    GeometryPolicy::default(),
+                )
+                .unwrap();
+                let (source, at) = solid.rust_profiled_screw_geometry().unwrap();
+                let [start, end] = source.visible_thread_interval_mm();
+                assert!(start > 0. && start < end);
+                assert_eq!(source.thread().spec().length_mm, thread.length_mm);
+                assert_eq!(at.origin[2], plain);
+                let faces = solid.faces().unwrap();
+                let full_faces = full.faces().unwrap();
+                assert!((faces[0].center_mm[2] - plain - start).abs() < 1e-12);
+                assert!((faces[1].center_mm[2] - plain - end).abs() < 1e-12);
+                for i in 2..2 + 4 * thread.starts as usize {
+                    let ratio = (end - start) / end;
+                    assert!((faces[i].area_mm2 / full_faces[i].area_mm2 - ratio).abs() < 1e-12);
+                    assert!((faces[i].center_mm[2] - plain - start.midpoint(end)).abs() < 1e-12);
+                }
+                let topology = solid.topology_snapshot(owner, 1).unwrap();
+                topology.validate().unwrap();
+                let shoulder = topology
+                    .elements
+                    .iter()
+                    .find(|e| {
+                        e.key.kind == TopologyKind::Face
+                            && e.origins.iter().any(|o| o.role == "screw.thread/start")
+                    })
+                    .unwrap();
+                let Some(AnalyticGeometry::Plane { frame: cap }) = shoulder.geometry else {
+                    panic!("actual shoulder plane")
+                };
+                assert!((cap.origin_mm[2] - plain - start).abs() < 1e-12);
+                let count = 4 * thread.starts as usize;
+                let edges = solid.display_edges(0.01).unwrap();
+                for edge in &edges[..count] {
+                    assert!((edge.points_mm.first().unwrap()[2] - plain - start).abs() < 1e-12);
+                    assert!((edge.points_mm.last().unwrap()[2] - plain - end).abs() < 1e-12);
+                }
+                for element in topology.elements.iter().filter(|e| {
+                    e.key.kind == TopologyKind::Vertex && e.key.ordinal < 2 * count as u32
+                }) {
+                    let Some(AnalyticGeometry::Point { position_mm: p }) = element.geometry else {
+                        panic!("actual helical rim vertex")
+                    };
+                    assert!(p[2] >= plain + start - 1e-12);
+                    let z = p[2] - plain;
+                    let radius = p[0].hypot(p[1]);
+                    assert!((radius - source.thread().radius(p[1].atan2(p[0]), z)).abs() < 1e-10);
+                }
+                assert_eq!(solid.volume_mm3().unwrap(), source.volume_mm3());
+                if plain == 0. && !left_hand {
+                    let mesh = solid
+                        .manufacturing_mesh_with_receipt(MeshOptions::default())
+                        .unwrap();
+                    assert_eq!(mesh.edge_pairs as usize * 2, mesh.mesh.indices.len());
+                }
+                assert!(!solid.supports_step_export());
+            }
+        }
+    }
+}
+
+#[test]
+fn hidden_prefix_cannot_leave_a_subminimum_visible_thread() {
+    let owner = EntityId::new();
+    let policy = GeometryPolicy::default();
+    let mut t = thread();
+    t.pitch_mm = 0.05;
+    t.depth_mm = 0.02;
+    t.crest_width_mm = 0.00625;
+    t.length_mm = 0.5;
+    let mut spec = spec(true);
+    spec.shank_length_mm = 0.;
+    if let Head::Crowned {
+        ref mut neck_radius_mm,
+        ..
+    } = spec.head
+    {
+        *neck_radius_mm = 0.125;
+    }
+    let make = |t| {
+        Solid::rust_profiled_machine_screw_with_head_thread_union(
+            t,
+            None,
+            spec,
+            owner,
+            PlaneFrame::default(),
+            policy,
+        )
+    };
+    let previous = make(t).unwrap();
+    let volume = previous.volume_mm3().unwrap();
+    let start = previous
+        .rust_profiled_screw_geometry()
+        .unwrap()
+        .0
+        .visible_thread_interval_mm()[0];
+    t.length_mm = start + policy.minimum_feature_mm / 2.;
+    assert!(t.length_mm > policy.minimum_feature_mm);
+    assert!(make(t).is_err());
+    t.length_mm = start + 2. * policy.minimum_feature_mm;
+    assert!(make(t).is_ok());
+    assert_eq!(previous.volume_mm3().unwrap(), volume);
+    assert_eq!(
+        previous
+            .rust_profiled_screw_geometry()
+            .unwrap()
+            .0
+            .thread()
+            .spec()
+            .length_mm,
+        0.5
+    );
+}

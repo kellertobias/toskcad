@@ -29,6 +29,48 @@ impl Solid {
         underhead: PlaneFrame,
         policy: GeometryPolicy,
     ) -> Result<Self, GeometryError> {
+        Self::rust_profiled_machine_screw_impl(
+            thread,
+            root_radius_mm,
+            screw,
+            feature,
+            underhead,
+            policy,
+            false,
+        )
+    }
+
+    /// Retain the original thread phase while the true head covers its prefix.
+    /// Exchange remains gated until finite trimmed-surface readback is available.
+    pub fn rust_profiled_machine_screw_with_head_thread_union(
+        thread: HelicalThread,
+        root_radius_mm: Option<f64>,
+        screw: ScrewSpec,
+        feature: EntityId,
+        underhead: PlaneFrame,
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        Self::rust_profiled_machine_screw_impl(
+            thread,
+            root_radius_mm,
+            screw,
+            feature,
+            underhead,
+            policy,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn rust_profiled_machine_screw_impl(
+        thread: HelicalThread,
+        root_radius_mm: Option<f64>,
+        screw: ScrewSpec,
+        feature: EntityId,
+        underhead: PlaneFrame,
+        policy: GeometryPolicy,
+        union: bool,
+    ) -> Result<Self, GeometryError> {
         policy.validate()?;
         underhead.checked(policy)?;
         policy.length(screw.socket_across_flats_mm)?;
@@ -42,7 +84,12 @@ impl Solid {
             ..underhead
         };
         Self::rust_helical_body(thread, root_radius_mm, feature, frame, policy, |thread| {
-            let screw = Screw::new(thread, screw).map_err(|cause| match cause {
+            let screw = if union {
+                Screw::new_with_head_thread_union(thread, screw)
+            } else {
+                Screw::new(thread, screw)
+            }
+            .map_err(|cause| match cause {
                 ThreadError::Invalid => {
                     input("Invalid profiled screw head, neck, shank or hex drive")
                 }
@@ -53,6 +100,10 @@ impl Solid {
                 ),
             })?;
             let reserve = screw.profile().rounding_error_mm();
+            if screw.has_head_thread_overlap() {
+                let [start, end] = screw.visible_thread_interval_mm();
+                policy.length(((end - start).next_down() - 2. * reserve).next_down())?;
+            }
             if reserve > policy.linear_tolerance_mm / 8. {
                 return Err(input(
                     "Head source arithmetic exceeds the requested geometry precision",
@@ -106,7 +157,11 @@ pub(super) fn extend_face_properties(screw: &Screw, faces: &mut Vec<(Point, f64)
     let (removed_center, removed_area) = faces[0];
     let shoulder = PI * radius.powi(2) - removed_area;
     faces[0] = (
-        removed_center.map(|x| -x * removed_area / shoulder),
+        [
+            -removed_center[0] * removed_area / shoulder,
+            -removed_center[1] * removed_area / shoulder,
+            removed_center[2],
+        ],
         shoulder,
     );
     let top = screw.head_top_z();
@@ -216,6 +271,7 @@ pub(super) fn extend_topology(
     let last = ScrewFace::ProfileWall(segments.len() as u32 - 1);
     let shoulder = ScrewFace::ThreadShoulder;
     let rate = screw.thread().helical_rate();
+    let start = screw.visible_thread_interval_mm()[0];
     for i in 0..count {
         if (body.band(i) - 2) % 4 == 1 {
             let edge = body.rim_origin(0, i);
@@ -225,9 +281,9 @@ pub(super) fn extend_topology(
             let phase = body.rails[i];
             add.arc(
                 format!("screw.head/thread.junction/{}", body.rail_name(i)),
-                0.,
+                start,
                 screw.thread().spec().major_radius_mm,
-                [-phase / rate, (phase - body.next_phase(i)) / rate],
+                [(start - phase) / rate, (phase - body.next_phase(i)) / rate],
                 &[shoulder, last],
             );
         }

@@ -888,7 +888,12 @@ impl HelicalBody {
             HelicalForm::Nut(nut) => nut.outer_area_mm2() - hole_area,
             _ => hole_area,
         };
-        let half_twist = height / (2. * rate);
+        let start = match &form {
+            HelicalForm::ProfiledScrew(screw) => screw.visible_thread_interval_mm()[0],
+            _ => 0.,
+        };
+        let visible_height = height - start;
+        let half_twist = visible_height / (2. * rate);
         let spin_average = half_twist.sin() / half_twist;
         let mut cap_moment = [0.; 2];
         let mut walls = vec![[0.; 3]; 4 * spec.starts as usize];
@@ -925,7 +930,7 @@ impl HelicalBody {
             let (sin, cos) = (z / rate).sin_cos();
             [x * cos - y * sin, x * sin + y * cos, z]
         };
-        let (sin, cos) = half_twist.sin_cos();
+        let (sin, cos) = ((height + start) / (2. * rate)).sin_cos();
         let partial =
             matches!(&form,HelicalForm::Bore(stock) if stock.receiver(geometry).is_some());
         let end_cap = if partial {
@@ -937,11 +942,14 @@ impl HelicalBody {
         } else {
             (cap_center(height), cap_area)
         };
-        let mut local_faces = vec![(cap_center(0.), cap_area), end_cap];
+        let mut local_faces = vec![(cap_center(start), cap_area), end_cap];
         local_faces.extend(walls.into_iter().map(|[area, x, y]| {
             let x_mid = (x * cos - y * sin) * spin_average / area;
             let y_mid = (x * sin + y * cos) * spin_average / area;
-            ([x_mid, y_mid, height / 2.], area * height / rate.abs())
+            (
+                [x_mid, y_mid, start.midpoint(height)],
+                area * visible_height / rate.abs(),
+            )
         }));
         match &form {
             HelicalForm::Bore(stock) => {
@@ -1206,8 +1214,15 @@ impl HelicalBody {
         }
     }
 
+    fn cap_z(&self, index: usize) -> f64 {
+        match &self.form {
+            HelicalForm::ProfiledScrew(screw) => screw.visible_thread_interval_mm()[index],
+            _ => index as f64 * self.geometry.spec().length_mm,
+        }
+    }
+
     fn cap_frame(&self, frame: PlaneFrame, index: usize) -> ReferenceFrame {
-        let z = index as f64 * self.geometry.spec().length_mm;
+        let z = self.cap_z(index);
         ReferenceFrame {
             origin_mm: position(frame, [0., 0., z]),
             u: frame.u,
@@ -1348,7 +1363,7 @@ impl HelicalBody {
         if band != 1 && (band != 3 || spec.root_radius_mm.is_some()) {
             return None;
         }
-        let z = cap as f64 * spec.length_mm;
+        let z = self.cap_z(cap);
         let a = self.rails[rail];
         let b = self.next_phase(rail);
         let rate = self.geometry.helical_rate();
@@ -1446,7 +1461,7 @@ impl HelicalBody {
         }
         for cap in 0..2 {
             let name = self.cap_name(cap);
-            let z = cap as f64 * self.geometry.spec().length_mm;
+            let z = self.cap_z(cap);
             for (i, &phase) in self.rails.iter().enumerate() {
                 elements.push(TopologyElement {
                     key: TopologyKey {
@@ -1569,6 +1584,8 @@ impl HelicalBody {
         let step =
             |second_derivative: f64| (8. * deflection / second_derivative).sqrt().min(TAU / 8.);
         let count = self.rails.len();
+        let start = self.cap_z(0);
+        let span = self.cap_z(1) - start;
         let mut used = 0usize;
         let mut edges = Vec::with_capacity(3 * count);
         for index in 0..3 * count {
@@ -1576,17 +1593,17 @@ impl HelicalBody {
             let phase = self.rails[i];
             let (segments, phase_span, z, depth_span) = if index < count {
                 (
-                    (spec.length_mm / (rate * step(spec.major_radius_mm))).ceil(),
+                    (span / (rate * step(spec.major_radius_mm))).ceil(),
                     0.,
-                    0.,
-                    spec.length_mm,
+                    start,
+                    span,
                 )
             } else {
                 let span = self.next_phase(i) - phase;
                 (
                     (span / (rate * step(cap_curvature_bound))).ceil(),
                     span,
-                    (index / count - 1) as f64 * spec.length_mm,
+                    self.cap_z(index / count - 1),
                     0.,
                 )
             };
