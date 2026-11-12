@@ -111,6 +111,54 @@ fn actual_heads_export_and_import_through_default_rust_facade() {
 }
 
 #[test]
+fn fitted_shank_annular_step_exports_and_imports_without_losing_nominal_radius() {
+    let scratch = tempfile::tempdir().unwrap();
+    for crown in [false, true] {
+        for (starts, left_hand) in [(1, false), (2, true)] {
+            let policy = GeometryPolicy::default();
+            let solid = Solid::rust_profiled_machine_screw_with_shank(
+                HelicalThread {
+                    major_radius_mm: 1.48,
+                    starts,
+                    left_hand,
+                    ..thread()
+                },
+                None,
+                1.5,
+                spec(crown),
+                EntityId::new(),
+                PlaneFrame {
+                    origin: [30., -20., 10.],
+                    u: [0.6, 0.8, 0.],
+                    v: [0., 0., 1.],
+                },
+                policy,
+            )
+            .unwrap();
+            assert!(solid.supports_step_export());
+            let path = scratch.path().join(format!("fitted-{crown}-{starts}.step"));
+            solid.write_step(&path).unwrap();
+            let text = std::fs::read_to_string(path).unwrap();
+            let imported = Solid::import_rust_step(&text, EntityId::new(), policy).unwrap();
+            let (source, _) = imported.rust_profiled_screw_geometry().unwrap();
+            assert_eq!(source.profile().end()[0], 1.5);
+            assert_eq!(source.thread().spec().major_radius_mm, 1.48);
+            assert!(source.spec().head.is_none());
+            assert!((solid.volume_mm3().unwrap() - imported.volume_mm3().unwrap()).abs() < 1e-6);
+            let mesh = imported
+                .manufacturing_mesh_with_receipt(MeshOptions::default())
+                .unwrap();
+            assert_eq!(mesh.edge_pairs as usize * 2, mesh.mesh.indices.len());
+            imported
+                .topology_snapshot(EntityId::new(), 0)
+                .unwrap()
+                .validate()
+                .unwrap();
+        }
+    }
+}
+
+#[test]
 fn typed_source_and_finite_faces_survive_rotated_placement() {
     for crown in [false, true] {
         let owner = EntityId::new();
