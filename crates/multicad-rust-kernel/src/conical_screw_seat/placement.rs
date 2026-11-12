@@ -1,5 +1,7 @@
 //! Actual finite placement admission for a retained axisymmetric head.
 use super::*;
+mod between;
+pub use between::{BetweenFrameCertificate, Frame, certify_between_frames};
 type Vector = [I; 3];
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placement {
@@ -85,37 +87,55 @@ fn extents(segments: &[Segment], reserve: f64) -> Result<(I, I), Error> {
         I::point(axial) + I::point(reserve),
     ))
 }
-/// Prove the actual supplied frame and source origin against the receiving
-/// axis, then rerun whole-head clearance at every enclosed neck station.
-/// No input frame is normalized or translated in the retained geometry.
-pub fn certify_placement(
-    profile: &Profile,
-    seat: Seat,
-    options: Options,
-    placement: Placement,
-    axis: Axis,
-) -> Result<PlacementCertificate, Error> {
-    let proposal = propose(profile, seat, options)?;
+#[derive(Clone, Copy)]
+struct IntervalPlacement {
+    origin: Vector,
+    axes: [Vector; 3],
+    offset: I,
+}
+fn interval(placement: Placement) -> Result<IntervalPlacement, Error> {
     if !placement
         .origin_mm
         .into_iter()
         .chain(placement.axes.into_iter().flatten())
         .chain([placement.axial_offset_mm])
-        .chain(axis.origin_mm)
-        .chain(axis.direction)
         .all(f64::is_finite)
     {
         return Err(Error::Invalid);
     }
-    let direction_scale = axis.direction.into_iter().map(f64::abs).fold(0., f64::max);
-    if direction_scale == 0. {
-        return Err(Error::Placement);
+    Ok(IntervalPlacement {
+        origin: placement.origin_mm.map(I::point),
+        axes: placement.axes.map(|a| a.map(I::point)),
+        offset: I::point(placement.axial_offset_mm),
+    })
+}
+
+fn floating_bound(placement: IntervalPlacement, radius: I, height: I) -> Result<I, Error> {
+    // Eight-operation gamma includes source-coordinate offset plus ordinary
+    // affine evaluation (including FMA/reassociation), with underflow reserve.
+    let unit_roundoff = I::point(f64::EPSILON * 0.5);
+    let gamma = I::point(8.) * unit_roundoff / (I::point(1.) - I::point(8.) * unit_roundoff);
+    let z = height + I::point(magnitude(placement.offset)?);
+    let mut floating = I::point(0.);
+    for i in 0..3 {
+        let bound = I::point(magnitude(placement.origin[i])?)
+            + I::point(magnitude(placement.axes[0][i])?) * radius
+            + I::point(magnitude(placement.axes[1][i])?) * radius
+            + I::point(magnitude(placement.axes[2][i])?) * z;
+        floating = floating + gamma * bound + I::point(8. * f64::from_bits(1));
     }
-    let direction = unit(
-        axis.direction
-            .map(|v| I::point(v) / I::point(direction_scale)),
-    )?;
-    let axes = placement.axes.map(|a| a.map(I::point));
+    checked(floating)
+}
+fn admit(
+    proposal: Proposal,
+    seat: Seat,
+    options: Options,
+    placement: IntervalPlacement,
+    axis_origin: Vector,
+    direction: Vector,
+    extra: I,
+) -> Result<PlacementCertificate, Error> {
+    let axes = placement.axes;
     let gram = frame(axes)?;
     if checked(dot(axes[2], direction))?.lo <= 0. {
         return Err(Error::Placement);
@@ -134,26 +154,12 @@ pub fn certify_placement(
     // The outward world evaluation contains the exact affine neck and its
     // rounded multiply/add variants. Subtract stock origin before projection.
     let relative = std::array::from_fn(|i| {
-        I::point(placement.origin_mm[i]) + axes[2][i] * I::point(placement.axial_offset_mm)
-            - I::point(axis.origin_mm[i])
+        placement.origin[i] + axes[2][i] * placement.offset - axis_origin[i]
     });
     let neck = checked(dot(relative, direction))?;
     let radial_offset = length(std::array::from_fn(|i| relative[i] - direction[i] * neck))?;
-    // Seven elementary affine evaluation operations, plus one reserved step.
-    // gamma_8 bounds every ordinary f64/FMA ordering of the stated expression;
-    // source local meridian/trigonometric uncertainty is separately reserved.
-    let unit_roundoff = I::point(f64::EPSILON * 0.5);
-    let gamma = I::point(8.) * unit_roundoff / (I::point(1.) - I::point(8.) * unit_roundoff);
-    let z = height + I::point(placement.axial_offset_mm.abs());
-    let mut floating = I::point(0.);
-    for (i, &origin) in placement.origin_mm.iter().enumerate() {
-        let bound = I::point(origin.abs())
-            + I::point(placement.axes[0][i].abs()) * radius
-            + I::point(placement.axes[1][i].abs()) * radius
-            + I::point(placement.axes[2][i].abs()) * z;
-        floating = floating + gamma * bound + I::point(8. * f64::from_bits(1));
-    }
-    let deviation = checked(radial_offset + deformation + floating)?.hi;
+    let floating = floating_bound(placement, radius, height)?;
+    let deviation = checked(radial_offset + deformation + floating + extra)?.hi;
     if deviation > options.tolerance_mm {
         return Err(Error::Placement);
     }
@@ -165,6 +171,45 @@ pub fn certify_placement(
         maximum_point_deviation_mm: deviation,
         frame_gram_error: gram,
     })
+}
+
+/// Prove the actual supplied head frame against an actual axisymmetric cavity.
+/// Axis must describe the cavity itself; this does not infer receiving shear.
+/// No retained input geometry is normalized or translated by this admission.
+pub fn certify_placement(
+    profile: &Profile,
+    seat: Seat,
+    options: Options,
+    placement: Placement,
+    axis: Axis,
+) -> Result<PlacementCertificate, Error> {
+    let proposal = propose(profile, seat, options)?;
+    let placement = interval(placement)?;
+    if !axis
+        .origin_mm
+        .into_iter()
+        .chain(axis.direction)
+        .all(f64::is_finite)
+    {
+        return Err(Error::Invalid);
+    }
+    let direction_scale = axis.direction.into_iter().map(f64::abs).fold(0., f64::max);
+    if direction_scale == 0. {
+        return Err(Error::Placement);
+    }
+    let direction = unit(
+        axis.direction
+            .map(|v| I::point(v) / I::point(direction_scale)),
+    )?;
+    admit(
+        proposal,
+        seat,
+        options,
+        placement,
+        axis.origin_mm.map(I::point),
+        direction,
+        I::point(0.),
+    )
 }
 
 #[cfg(test)]

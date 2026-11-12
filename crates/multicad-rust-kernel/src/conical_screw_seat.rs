@@ -1,12 +1,15 @@
 //! Source-proven proposed seating of an actual retained screw-head meridian.
 //!
-//! This constructs a conservative local placement; it does not validate an
-//! arbitrary existing pose. The positive bearing interval matches within the
+//! `certify` proposes a conservative local placement; actual-pose entrypoints
+//! independently check supplied frames. The positive bearing interval matches within the
 //! reported radial gap. Clearance never spends that gap as intrusion tolerance.
 use crate::head_profile::{Curve, Profile, Role, Segment};
 use crate::tapered_thread::interval::I;
 mod placement;
-pub use placement::{Axis, Placement, PlacementCertificate, certify_placement};
+pub use placement::{
+    Axis, BetweenFrameCertificate, Frame, Placement, PlacementCertificate, certify_between_frames,
+    certify_placement,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Seat {
@@ -37,6 +40,8 @@ pub enum Error {
     NoCone,
     IncompatibleCone,
     InsufficientLand,
+    /// The required conservative clearance envelope penetrates the cavity.
+    /// This does not assert penetration for every uncertainty realization.
     Interference,
     Unresolved,
     Placement,
