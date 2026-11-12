@@ -1,0 +1,217 @@
+//! Transfer a certified local tessellation without spending its world error budget twice.
+use super::*;
+use crate::geometry::arithmetic::{difference_with_error, dot_error, sum_error};
+use multicad_rust_kernel::display::Tessellation;
+
+pub(super) fn up(a: f64, b: f64) -> f64 {
+    (a + b).next_up()
+}
+pub(super) fn product(a: f64, b: f64) -> f64 {
+    (a * b).next_up()
+}
+fn refused() -> GeometryError {
+    error(
+        "Entry chamfer mesh placement",
+        GeometryErrorKind::Unsupported,
+        "Requested world mesh accuracy cannot be certified",
+    )
+}
+pub(super) fn cross_error(a: Point, ae: Point, b: Point, be: Point) -> (Point, Point) {
+    let pairs = [(1, 2), (2, 0), (0, 1)];
+    let mut value = [0.; 3];
+    let mut error = [0.; 3];
+    for (i, (j, k)) in pairs.into_iter().enumerate() {
+        let (v, mut e) = dot_error([a[j], a[k], 0.], [b[k], -b[j], 0.]);
+        for (j, k) in [(j, k), (k, j)] {
+            e = up(e, product(a[j].abs(), be[k]));
+            e = up(e, product(b[k].abs(), ae[j]));
+            e = up(e, product(ae[j], be[k]));
+        }
+        value[i] = v;
+        error[i] = e;
+    }
+    (value, error)
+}
+fn chart(axes: [Point; 3]) -> Result<(), GeometryError> {
+    // ||AᵀA-I||₂ <= its entrywise L1 norm. This proves ||A||<2,
+    // sigma_min²>1/2, ||A||<1.00001 and condition(A)<1.00001, without normalizing A.
+    let mut gram = 0.;
+    for (i, a) in axes.iter().enumerate() {
+        for (j, b) in axes.iter().enumerate() {
+            let (v, e) = dot_error(*a, *b);
+            let (v, d) = sum_error(v, if i == j { -1. } else { 0. });
+            gram = up(gram, up(v.abs(), up(e, d)));
+        }
+    }
+    let (normal, ne) = cross_error(axes[0], [0.; 3], axes[1], [0.; 3]);
+    let (det, mut de) = dot_error(normal, axes[2]);
+    for i in 0..3 {
+        de = up(de, product(ne[i], axes[2][i].abs()));
+    }
+    if !gram.is_finite() || gram > 1e-6 || (det - de).next_down() <= 0. {
+        return Err(refused());
+    }
+    Ok(())
+}
+fn placed(frame: PlaneFrame, axes: [Point; 3], p: Point) -> (Point, f64) {
+    let point = position(frame, p);
+    let mut error = 0.;
+    for i in 0..3 {
+        let (d, de) = dot_error(axes.map(|a| a[i]), p);
+        let (v, ve) = sum_error(frame.origin[i], d);
+        let (delta, residual) = sum_error(point[i], -v);
+        error = up(error, up(delta.abs(), up(residual, up(de, ve))));
+    }
+    (point, error)
+}
+// Compare exact affine and actual emitted facet normals directly. This keeps
+// the shared translation out of the error bound for small, distant facets.
+fn normal_transfer(
+    axes: [Point; 3],
+    a: Point,
+    ae: Point,
+    b: Point,
+    be: Point,
+    world: [Point; 3],
+    angle: f64,
+) -> bool {
+    let linear = |v: Point, e: Point| {
+        let mut value = [0.; 3];
+        let mut error = [0.; 3];
+        for i in 0..3 {
+            let (d, mut de) = dot_error(axes.map(|a| a[i]), v);
+            for j in 0..3 {
+                de = up(de, product(axes[j][i].abs(), e[j]));
+            }
+            value[i] = d;
+            error[i] = de;
+        }
+        (value, error)
+    };
+    let (a, ae) = linear(a, ae);
+    let (b, be) = linear(b, be);
+    let (exact, ee) = cross_error(a, ae, b, be);
+    let (a, ae) = difference_with_error(world[1], world[0]);
+    let (b, be) = difference_with_error(world[2], world[0]);
+    let (actual, me) = cross_error(a, ae, b, be);
+    let (d, mut de) = dot_error(exact, actual);
+    for i in 0..3 {
+        de = up(de, product(exact[i].abs(), me[i]));
+        de = up(de, product(actual[i].abs(), ee[i]));
+        de = up(de, product(ee[i], me[i]));
+    }
+    let lower = (d - de).next_down();
+    let (c, ce) = cross_error(exact, ee, actual, me);
+    let upper = (0..3).fold(0., |sum, i| up(sum, up(c[i].abs(), ce[i])));
+    lower > 0. && (upper / lower).next_up() <= angle
+}
+pub(super) fn mesh(
+    source: &Chamfer,
+    frame: PlaneFrame,
+    options: Tessellation,
+) -> Result<Mesh, GeometryError> {
+    if frame == PlaneFrame::default() {
+        return crate::rust_display::mesh(source::tessellate(source, options));
+    }
+    let axes = [frame.u, frame.v, frame.normal()];
+    chart(axes)?;
+    let local = Tessellation {
+        deflection: options.deflection / 2.,
+        angle: options.angle * 0.75,
+        ..options
+    };
+    if local.angle < 0.01 {
+        return Err(refused());
+    }
+    let mut mesh = crate::rust_display::mesh(source::tessellate(source, local))?;
+    let points = mesh.vertices.as_chunks::<3>().0;
+    let world = points
+        .iter()
+        .map(|p| placed(frame, axes, *p))
+        .collect::<Vec<_>>();
+    if world.iter().any(|(p, e)| {
+        !e.is_finite() || p.iter().any(|v| !v.is_finite()) || *e > options.deflection / 4.
+    }) {
+        return Err(refused());
+    }
+    // The exact affine image has normal A^-T n. Its source/facet angle is
+    // <= condition(A)*local.angle. Half the chord budget plus point rounding
+    // uses less than 0.751 of the request; 3/4 of the angle plus 1/5
+    // rounding reserve uses less than 0.951. Certify the additional emitted-point error
+    // triangle by triangle, relative to a lower bound on the exact local area.
+    for ids in mesh.indices.as_chunks::<3>().0 {
+        let [i, j, k] = ids.map(|i| i as usize);
+        let (a, ae) = difference_with_error(points[j], points[i]);
+        let (b, be) = difference_with_error(points[k], points[i]);
+        let (n, ne) = cross_error(a, ae, b, be);
+        let lower = (0..3)
+            .map(|i| (n[i].abs() - ne[i]).next_down().max(0.))
+            .fold(0., f64::max);
+        let length = |v: Point, e: Point| (0..3).fold(0., |sum, i| up(sum, up(v[i].abs(), e[i])));
+        let e = world[i].1.max(world[j].1).max(world[k].1);
+        let perturbation = up(
+            product(product(4., e), up(length(a, ae), length(b, be))),
+            product(4., product(e, e)),
+        );
+        let ratio = (perturbation / (0.5 * lower).next_down()).next_up();
+        // asin(ratio) <= 2 ratio for ratio <= 1/4. The reserved 1/5
+        // angle plus the conditioned 3/4-angle is strictly below the request.
+        if (!ratio.is_finite() || ratio > 0.25 || product(2., ratio) > options.angle / 5.)
+            && !normal_transfer(
+                axes,
+                a,
+                ae,
+                b,
+                be,
+                [world[i].0, world[j].0, world[k].0],
+                options.angle / 5.,
+            )
+        {
+            return Err(refused());
+        }
+    }
+    mesh.vertices = world.into_iter().flat_map(|(p, _)| p).collect();
+    super::embedding::certify(&mesh)?;
+    Ok(mesh)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn proper_chart_and_actual_normals_are_required_without_normalizing_away_errors() {
+        let axes = [[0., 1., 0.], [-1., 0., 0.], [0., 0., 1.]];
+        chart(axes).unwrap();
+        assert!(chart([[1., 0., 0.], [0., 1., 0.], [0., 0., -1.]]).is_err());
+        assert!(chart([[1.01, 0., 0.], [0., 1., 0.], [0., 0., 1.]]).is_err());
+        let a = [1., 0., 0.];
+        let b = [0., 1., 0.];
+        assert!(normal_transfer(
+            axes,
+            a,
+            [0.; 3],
+            b,
+            [0.; 3],
+            [[1e6, 1e6, 1e6], [1e6, 1e6 + 1., 1e6], [1e6 - 1., 1e6, 1e6]],
+            0.01
+        ));
+        assert!(!normal_transfer(
+            axes,
+            a,
+            [0.; 3],
+            b,
+            [0.; 3],
+            [[0.; 3], [0., 1., 0.], [1., 0., 0.]],
+            0.01
+        ));
+        assert!(!normal_transfer(
+            axes,
+            a,
+            [0.; 3],
+            b,
+            [0.; 3],
+            [[0.; 3]; 3],
+            0.01
+        ));
+    }
+}

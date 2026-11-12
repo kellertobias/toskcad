@@ -137,6 +137,7 @@ pub(crate) fn build_rust(
     parameters: &EvaluatedParameters,
     solids: &BTreeMap<EntityId, Solid>,
     policy: GeometryPolicy,
+    interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<Solid, ModelError> {
     let fail = |message| error(Some(feature), message);
     let thread = source
@@ -226,13 +227,37 @@ pub(crate) fn build_rust(
     if let Some(ends) = terminal {
         if source.mode != ThreadMode::NewExternal
             || source.parameters.family != ThreadFamily::IsoMetric
-            || ends.start_chamfer_radial_depth_mm != 0.
         {
             return Err(fail(
-                "Rust end treatments currently support only ISO metric NewExternal terminal cylindrical relief with a flat entry",
+                "Rust end treatments currently support only modeled ISO metric NewExternal entry chamfer and terminal relief",
             ));
         }
         let (spec, root_radius, frame) = rust_profile_geometry(feature, &thread)?;
+        if ends.start_chamfer_radial_depth_mm != 0. {
+            let terminal = (ends.end_relief_length_mm != 0.).then_some(
+                multicad_kernel::rust_kernel::thread_end_relief::Intent {
+                    width_mm: ends.end_relief_length_mm,
+                    radial_depth_mm: ends.end_relief_radial_depth_mm,
+                },
+            );
+            return Solid::rust_helical_thread_entry_chamfer_with_interrupt(
+                spec,
+                root_radius,
+                ends.start_chamfer_radial_depth_mm,
+                terminal,
+                feature,
+                frame,
+                policy,
+                interrupt,
+            )
+            .map_err(|cause| {
+                if cause.kind == multicad_kernel::GeometryErrorKind::Cancelled {
+                    error(Some(feature), "Model evaluation superseded")
+                } else {
+                    error(Some(feature), cause)
+                }
+            });
+        }
         return Solid::rust_helical_thread_end_relief(
             spec,
             root_radius,

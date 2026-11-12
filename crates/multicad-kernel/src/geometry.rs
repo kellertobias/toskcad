@@ -18,6 +18,7 @@ pub(crate) mod bore_treatment;
 pub(crate) mod circular_pocket_body;
 pub(crate) mod construction;
 mod cosmetic_fastener_body;
+mod entry_chamfer_body;
 mod helical_body;
 mod helical_tube_body;
 mod herringbone_body;
@@ -47,6 +48,8 @@ use axial_stack_body::AxialStackBody;
 use bevel_body::BevelBody;
 pub use circular_pocket_body::CircularPocketTool;
 use cosmetic_fastener_body::CosmeticFastenerBody;
+use entry_chamfer_body::EntryChamferBody;
+pub use entry_chamfer_body::{EntryChamferBoundaryProof, EntryChamferData, EntryChamferEdge};
 use helical_body::HelicalBody;
 pub use helical_body::{BlindThreadCut, BlindThreadMating, ReceivingThreadIntervals};
 pub use helical_tube_body::HelicalTube;
@@ -681,6 +684,7 @@ enum SolidBody {
     CosmeticFastener(Rc<CosmeticFastenerBody>, PlaneFrame),
     Helical(Rc<HelicalBody>, PlaneFrame),
     RoundedThread(Rc<RoundedThreadBody>, PlaneFrame),
+    EntryChamfer(Rc<EntryChamferBody>, PlaneFrame),
     RoundedThreadBore(Rc<RoundedThreadBoreBody>, PlaneFrame),
     HelicalTubeCut(Rc<HelicalTubeBody>, PlaneFrame),
     Linear(Rc<LinearBody>, PlaneFrame),
@@ -1135,6 +1139,9 @@ impl Solid {
             SolidBody::CosmeticFastener(body, frame) => {
                 SolidBody::CosmeticFastener(Rc::clone(body), *frame)
             }
+            SolidBody::EntryChamfer(body, frame) => {
+                SolidBody::EntryChamfer(Rc::clone(body), *frame)
+            }
             SolidBody::Helical(body, frame) => SolidBody::Helical(Rc::clone(body), *frame),
             SolidBody::RoundedThreadBore(body, frame) => {
                 SolidBody::RoundedThreadBore(Rc::clone(body), *frame)
@@ -1505,6 +1512,15 @@ impl Solid {
                     )?;
                     SolidBody::RoundedThread(Rc::clone(body), frame)
                 }
+                SolidBody::EntryChamfer(body, frame) => {
+                    let frame = transform.frame(*frame);
+                    let spec = body.geometry.source_thread().spec();
+                    frame.checked_metric_extent(
+                        [spec.major_radius_mm, spec.major_radius_mm, spec.length_mm],
+                        self.policy,
+                    )?;
+                    SolidBody::EntryChamfer(Rc::clone(body), frame)
+                }
                 SolidBody::Helical(body, frame) => {
                     let frame = transform.frame(*frame);
                     frame.checked_metric_bounds(body.bounds(PlaneFrame::default()), self.policy)?;
@@ -1708,6 +1724,9 @@ impl Solid {
         if let Some((body, _)) = self.rounded_thread_body() {
             return Ok(body.geometry.volume_mm3());
         }
+        if let Some((body, _)) = self.entry_chamfer_body() {
+            return Ok(body.volume());
+        }
         if let Some((body, _)) = self.helical_body() {
             return Ok(body.volume_mm3());
         }
@@ -1823,6 +1842,9 @@ impl Solid {
             return body.bounds(frame);
         }
         if let Some((body, frame)) = self.rounded_thread_body() {
+            return body.bounds(frame);
+        }
+        if let Some((body, frame)) = self.entry_chamfer_body() {
             return body.bounds(frame);
         }
         if let Some((body, frame)) = self.helical_body() {
@@ -1988,6 +2010,9 @@ impl Solid {
         if let Some((body, frame)) = self.rounded_thread_body() {
             return body.faces(frame);
         }
+        if let Some((body, frame)) = self.entry_chamfer_body() {
+            return Ok(body.faces(frame));
+        }
         if let Some((body, frame)) = self.helical_body() {
             return Ok(body.faces(frame));
         }
@@ -2098,6 +2123,7 @@ impl Solid {
                 *frame,
                 false,
             ),
+            SolidBody::EntryChamfer(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::Helical(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::RoundedThreadBore(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::RoundedThread(body, frame) => body.mesh(*frame, rust_options),
@@ -2363,6 +2389,8 @@ impl Solid {
                     body.display_edges(frame, deflection)?
                 } else if let Some((body, frame)) = self.rounded_thread_body() {
                     body.display_edges(frame, deflection)?
+                } else if let Some((body, frame)) = self.entry_chamfer_body() {
+                    body.display_edges(frame, deflection)?
                 } else if let Some((body, frame)) = self.helical_body() {
                     body.display_edges(frame, deflection)?
                 } else if let Some(compound) = self.rust_compound() {
@@ -2397,6 +2425,9 @@ impl Solid {
             return body.display_edges(frame, deflection_mm);
         }
         if let Some((body, frame)) = self.rounded_thread_body() {
+            return body.display_edges(frame, deflection_mm);
+        }
+        if let Some((body, frame)) = self.entry_chamfer_body() {
             return body.display_edges(frame, deflection_mm);
         }
         if let Some((body, frame)) = self.helical_body() {
@@ -2482,6 +2513,7 @@ impl Solid {
             SolidBody::Prism(prism, _) => EntityId::from_uuid_bits(prism.feature()),
             SolidBody::AxialCylinder(cylinder, ..) => EntityId::from_uuid_bits(cylinder.feature()),
             SolidBody::Annulus(body, _) => body.feature,
+            SolidBody::EntryChamfer(body, _) => body.feature,
             SolidBody::Helical(body, _) => body.feature,
             SolidBody::RoundedThreadBore(body, _) => body.feature,
             SolidBody::RoundedThread(body, _) => body.feature,
@@ -2541,6 +2573,7 @@ impl Solid {
             SolidBody::RustCompound(compound) => compound
                 .members()
                 .all(|member| member.supports_step_shell(false)),
+            SolidBody::EntryChamfer(..) => standalone,
             SolidBody::Helical(body, frame) => {
                 (standalone || body.has_importable_step_closure())
                     && body.supports_step(*frame, self.policy)
@@ -2737,6 +2770,7 @@ impl Solid {
                 }
                 Ok(())
             }
+            SolidBody::EntryChamfer(body, frame) => body.append_step(writer, *frame, self.policy),
             SolidBody::Helical(body, frame) => body.append_step(writer, *frame, self.policy),
             SolidBody::RoundedThreadBore(body, frame) => {
                 body.append_step(writer, *frame, self.policy)

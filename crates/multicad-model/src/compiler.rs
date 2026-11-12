@@ -1187,6 +1187,7 @@ impl Compiler {
                             context.parameters(),
                             &solids,
                             self.policy,
+                            interrupt,
                         )?
                     } else {
                         crate::threads::build(

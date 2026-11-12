@@ -1057,6 +1057,8 @@ impl Solid {
                 body.topology(frame, owner, revision)?
             } else if let Some((body, frame)) = self.rounded_thread_body() {
                 body.topology(frame, owner, revision)?
+            } else if let Some((body, frame)) = self.entry_chamfer_body() {
+                body.topology(frame, owner, revision)?
             } else if let Some((body, frame)) = self.helical_body() {
                 body.topology(frame, owner, revision)?
             } else if let Some((body, frame)) = self.helical_tube_cut_body() {

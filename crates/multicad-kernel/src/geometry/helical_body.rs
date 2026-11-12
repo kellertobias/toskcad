@@ -35,6 +35,12 @@ type Point = [f64; 3];
 const OPERATION: &str = "Rust helical thread";
 const CAP_NAMES: [&str; 2] = ["cap.start", "cap.end"];
 const BAND_NAMES: [&str; 4] = ["lower", "crest", "upper", "root"];
+/// Original support ownership derived from the authored phase law, including
+/// handedness and the cross-period crest support.
+pub(super) fn phase_role(thread: &Thread, period: u32, band: usize) -> String {
+    let face = (thread.face_index(i64::from(period), band) - 2) as usize;
+    format!("start/{}/{}", face / 4, BAND_NAMES[face % 4])
+}
 const MAX_DISPLAY_EDGE_POINTS: usize = 500_000;
 
 fn imported_request(spec: Spec) -> HelicalThread {
@@ -764,6 +770,9 @@ impl Solid {
         if let Some((body, frame)) = self.rounded_thread_body() {
             return Ok(body.contains(frame, point_mm));
         }
+        if let Some((body, frame)) = self.entry_chamfer_body() {
+            return Ok(body.contains(frame, point_mm));
+        }
         let (body, frame) = self.helical_body().ok_or_else(|| {
             error(
                 OPERATION,
@@ -811,7 +820,7 @@ fn integral<const N: usize>(a: f64, b: f64, function: impl Fn(f64) -> [f64; N]) 
     result
 }
 
-fn checked_thread(
+pub(super) fn checked_thread(
     spec: HelicalThread,
     root_radius_mm: Option<f64>,
     policy: GeometryPolicy,
@@ -1293,8 +1302,7 @@ impl HelicalBody {
     }
 
     fn rail_name(&self, rail: usize) -> String {
-        let band = (self.band(rail) - 2) as usize;
-        format!("start/{}/{}", band / 4, BAND_NAMES[band % 4])
+        phase_role(&self.geometry, (rail / 4) as u32, rail % 4 + 1)
     }
 
     fn next_phase(&self, rail: usize) -> f64 {

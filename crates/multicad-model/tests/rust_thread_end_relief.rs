@@ -174,7 +174,7 @@ fn canonical_metric_relief_preserves_source_saved_edits_history_and_far_cap() {
     }
 }
 #[test]
-fn explicit_flat_flat_is_noop_and_entry_chamfer_remains_an_honest_failure() {
+fn explicit_flat_flat_is_noop_and_prepared_entry_preserves_the_original_source() {
     let mut s = Session::new(Document::new("Explicit flat cuts").unwrap()).unwrap();
     let mut p = ThreadParameters {
         end_treatments: Some(ThreadEndTreatments {
@@ -204,7 +204,7 @@ fn explicit_flat_flat_is_noop_and_entry_chamfer_remains_an_honest_failure() {
             ..Default::default()
         }
         .compile_with_backend(prepared.prepared.document(), 2, GeometryBackend::Rust, None)
-        .is_err()
+        .is_ok()
     );
     assert_eq!(s.revision(), 1);
     assert_eq!(

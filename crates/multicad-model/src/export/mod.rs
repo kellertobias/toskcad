@@ -10,7 +10,10 @@ pub use planar::DevelopedContourProvider;
 pub mod print;
 pub use print::PrintWorker;
 mod publish;
-pub use publish::verify_rust_step_shape;
+pub use publish::{
+    StepVerificationMethod, StepVerificationReceipt, verify_rust_step_shape,
+    verify_rust_step_shape_receipt,
+};
 mod schedule;
 pub use schedule::ScheduleTarget;
 pub mod sheet_dxf;

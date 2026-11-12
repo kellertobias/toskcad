@@ -447,7 +447,7 @@ tools! {
         "Save the document to the project file in scope, if expected_revision is current. Never writes elsewhere.",
         save_project;
     "export_step" => ExportStep, "Export STEP", true,
-        "Write one current Part definition as a STEP B-rep into the export folder in scope (bare file name ending .step or .stp), including definition-only Parts of an Assembly. Uses definition coordinates; export sets with occurrence paths select posed members. Consumed Parts remain unavailable. The file is read back and its volume reported. Does not change the document.",
+        "Write one current Part definition as a STEP B-rep into the export folder in scope (bare file name ending .step or .stp), including definition-only Parts of an Assembly. Uses definition coordinates; export sets with occurrence paths select posed members. Consumed Parts remain unavailable. The receipt distinguishes decoded boundary mass from complete source-known boundary verification: readback_volume_mm3 is null when file mass was not independently decoded, with source mass bounds reported separately. Does not change the document.",
         export_step;
     "set_level" => LevelArgs, "Create or edit level", false,
         "Create a building level (elevation, floor-to-floor height, slab thickness) or edit one by ID. Every hosted slab, pedestal, stair and wall rebuilds and is evaluated natively before commit.",
@@ -2218,14 +2218,14 @@ fn export_step(host: &dyn Host, call: &Request, args: ExportStep) -> ToolResult 
     })?;
     let path: PathBuf = directory.join(name);
     let partial = directory.join(format!(".{name}.partial.step"));
-    let verify = || -> Result<f64, ToolError> {
+    let verify = || -> Result<multicad_model::export::StepVerificationReceipt, ToolError> {
         let policy = solid.geometry_policy();
         if call.backend == GeometryBackend::Rust {
             let shape = model.snapshot().shapes.get(&feature).ok_or_else(|| {
                 ToolError::new("export_failed", "The Rust solid has no evaluated topology")
                     .involving(feature)
             })?;
-            multicad_model::export::verify_rust_step_shape(
+            multicad_model::export::verify_rust_step_shape_receipt(
                 &partial,
                 solid,
                 shape,
@@ -2235,6 +2235,7 @@ fn export_step(host: &dyn Host, call: &Request, args: ExportStep) -> ToolResult 
         } else {
             multicad_kernel::Solid::read_step(&partial, policy)
                 .and_then(|s| s.volume_mm3())
+                .map(multicad_model::export::StepVerificationReceipt::decoded)
                 .map_err(|e| ToolError::new("export_failed", format!("STEP readback failed: {e}")))
         }
     };
@@ -2265,7 +2266,8 @@ fn export_step(host: &dyn Host, call: &Request, args: ExportStep) -> ToolResult 
         "sha256": sketch_import::provenance::sha256_hex(&bytes),
         "units": "mm",
         "model_volume_mm3": model.snapshot().shapes.get(&feature).map(|s| s.volume_mm3),
-        "readback_volume_mm3": volume,
+        "readback_volume_mm3": volume.decoded_volume_mm3,
+        "step_verification": volume,
     }))
 }
 

@@ -14,6 +14,39 @@ use std::{
     path::Path,
 };
 const MANIFEST: &str = "multicad-export.json";
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepVerificationMethod {
+    DecodedBoundary,
+    SourceKnownBoundary,
+}
+/// Distinguishes decoded file mass from certified authored-source mass.
+/// Missing decoded mass is explicit; source support tolerance is not a
+/// substitute for an independently integrated file-volume error bound.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StepVerificationReceipt {
+    pub method: StepVerificationMethod,
+    pub decoded_volume_mm3: Option<f64>,
+    pub source_volume_bounds_mm3: Option<[f64; 2]>,
+    /// Actual full-checker parameter, not a measured combined boundary error.
+    pub verified_tolerance_mm: Option<f64>,
+    /// Measured polynomial trim-to-support binding only.
+    pub maximum_polynomial_trim_error_mm: Option<f64>,
+    /// Separate analytic-closure check budget; not added to source mass.
+    pub analytic_closure_tolerance_mm: Option<f64>,
+}
+impl StepVerificationReceipt {
+    pub fn decoded(volume: f64) -> Self {
+        Self {
+            method: StepVerificationMethod::DecodedBoundary,
+            decoded_volume_mm3: Some(volume),
+            source_volume_bounds_mm3: None,
+            verified_tolerance_mm: None,
+            maximum_polynomial_trim_error_mm: None,
+            analytic_closure_tolerance_mm: None,
+        }
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
@@ -98,13 +131,21 @@ fn verify(
             .as_ref()
             .ok_or_else(|| io("Missing source model"))?;
         let topology = rust_step_topology(model, artifact)?;
-        read_rust_step(
+        let solid = artifact_solid(model, artifact)?;
+        if let Some(proof) = verify_source_known_step(
             path,
-            artifact_solid(model, artifact)?,
-            topology,
+            solid,
+            (
+                artifact.solid_count,
+                artifact.volume_mm3,
+                artifact.bounds_mm,
+            ),
             artifact.producer,
             tolerance,
-        )?
+        ) {
+            return proof.map(|_| ());
+        }
+        read_rust_step(path, solid, topology, artifact.producer, tolerance)?
     } else {
         let read = Solid::read_step(path, exporter.compiler.policy).map_err(io)?;
         let bounds = read.bounds().map_err(io)?;
@@ -153,14 +194,21 @@ fn verify_step_dimensions(
     Ok(())
 }
 
-/// Check the member topology and aggregate bounds, volume and solid count
-/// of a Rust-authored STEP against the exact source shape.
+/// Decoded-mass compatibility helper. Source-known-only verification requires
+/// the discriminated receipt API and never returns expected mass here.
 pub fn verify_rust_step_shape(
     path: &Path,
     solid: &Solid,
     shape: &crate::ShapeSnapshot,
     tolerance: f64,
 ) -> Result<f64, ExportError> {
+    if solid.rust_thread_entry_chamfer_data().is_some() {
+        return Err(failure(
+            ErrorKind::Unsupported,
+            Some(shape.producer),
+            "This authored STEP has a source-known boundary proof; decoded file mass is unavailable. Use the verification receipt API",
+        ));
+    }
     let actual = read_rust_step(path, solid, &shape.topology, shape.producer, tolerance)?;
     verify_step_dimensions(
         shape.producer,
@@ -173,6 +221,122 @@ pub fn verify_rust_step_shape(
         tolerance,
     )?;
     Ok(actual.1)
+}
+
+/// Authored export verification with an explicit mass provenance contract.
+pub fn verify_rust_step_shape_receipt(
+    path: &Path,
+    solid: &Solid,
+    shape: &crate::ShapeSnapshot,
+    tolerance: f64,
+) -> Result<StepVerificationReceipt, ExportError> {
+    if !tolerance.is_finite() || tolerance <= 0. {
+        return Err(failure(
+            ErrorKind::Invalid,
+            Some(shape.producer),
+            "STEP verification needs a finite positive tolerance",
+        ));
+    }
+    if let Some(proof) = verify_source_known_step(
+        path,
+        solid,
+        (
+            shape.solid_count,
+            shape.volume_mm3,
+            [shape.bounds.min, shape.bounds.max],
+        ),
+        shape.producer,
+        tolerance,
+    ) {
+        return proof;
+    }
+    verify_rust_step_shape(path, solid, shape, tolerance).map(StepVerificationReceipt::decoded)
+}
+fn verify_source_known_step(
+    path: &Path,
+    solid: &Solid,
+    expected: StepMetrics,
+    producer: EntityId,
+    tolerance: f64,
+) -> Option<Result<StepVerificationReceipt, ExportError>> {
+    solid.rust_thread_entry_chamfer_data()?;
+    Some((|| {
+        if !tolerance.is_finite() || tolerance <= 0. {
+            return Err(failure(
+                ErrorKind::Invalid,
+                Some(producer),
+                "STEP verification needs a finite positive tolerance",
+            ));
+        }
+        let source = read_step_source(path, producer)?;
+        let proof = solid
+            .verify_entry_chamfer_step_with_tolerance(&source, tolerance)
+            .expect("typed entry source")
+            .map_err(|cause| {
+                failure(
+                    if cause.kind == multicad_kernel::GeometryErrorKind::Limit {
+                        ErrorKind::Budget
+                    } else {
+                        ErrorKind::Invalid
+                    },
+                    Some(producer),
+                    format!("STEP authored boundary proof failed: {cause}"),
+                )
+            })?;
+        if proof.verified_tolerance_mm > tolerance
+            || !proof.maximum_polynomial_trim_error_mm.is_finite()
+            || proof.maximum_polynomial_trim_error_mm > tolerance
+        {
+            return Err(failure(
+                ErrorKind::Invalid,
+                Some(producer),
+                "STEP boundary binding exceeds the requested tolerance",
+            ));
+        }
+        let (count, volume, bounds) = expected;
+        let current = solid.bounds().map_err(io)?;
+        if count != 1
+            || !volume.is_finite()
+            || volume < proof.source_volume_bounds_mm3[0]
+            || volume > proof.source_volume_bounds_mm3[1]
+            || bounds
+                .into_iter()
+                .flatten()
+                .zip(current.min.into_iter().chain(current.max))
+                .any(|(a, b)| !a.is_finite() || (a - b).abs() > tolerance * 2.)
+        {
+            return Err(failure(
+                ErrorKind::Invalid,
+                Some(producer),
+                "Current source snapshot differs from the certified authored STEP source",
+            ));
+        }
+        Ok(StepVerificationReceipt {
+            method: StepVerificationMethod::SourceKnownBoundary,
+            decoded_volume_mm3: None,
+            source_volume_bounds_mm3: Some(proof.source_volume_bounds_mm3),
+            verified_tolerance_mm: Some(proof.verified_tolerance_mm),
+            maximum_polynomial_trim_error_mm: Some(proof.maximum_polynomial_trim_error_mm),
+            analytic_closure_tolerance_mm: Some(proof.analytic_closure_tolerance_mm),
+        })
+    })())
+}
+
+fn read_step_source(path: &Path, producer: EntityId) -> Result<String, ExportError> {
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .map_err(io)?
+        .take(step_read::MAX_PLANAR_STEP_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(io)?;
+    if bytes.len() > step_read::MAX_PLANAR_STEP_BYTES {
+        return Err(failure(
+            ErrorKind::Budget,
+            Some(producer),
+            "STEP readback exceeds the file budget",
+        ));
+    }
+    String::from_utf8(bytes).map_err(|e| failure(ErrorKind::Invalid, Some(producer), e.to_string()))
 }
 
 fn rust_step_topology<'a>(

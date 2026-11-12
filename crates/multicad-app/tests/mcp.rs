@@ -3581,7 +3581,7 @@ fn rust_stdio_metric_terminal_relief_edit_history_export_and_reopen() {
     client.ok("redo", json!({"expected_revision":revision}));
     close(client.part_volume(), edited);
     let revision = client.revision();
-    client.fail("set_thread",json!({"expected_revision":revision,"thread":created["thread"],"end_treatments":{"start":{"chamfer45":{"radial_depth":length(0.2)}},"end":"flat_cut"}}));
+    client.fail("set_thread",json!({"expected_revision":revision,"thread":created["thread"],"end_treatments":{"start":{"chamfer45":{"radial_depth":length(6.6)}},"end":"flat_cut"}}));
     assert_eq!(client.revision(), revision);
     close(client.part_volume(), edited);
     let receipt = client.ok(
@@ -3599,6 +3599,64 @@ fn rust_stdio_metric_terminal_relief_edit_history_export_and_reopen() {
         json!({"part":created["part"],"file_name":"relief-again.step"}),
     );
     close(receipt["readback_volume_mm3"].as_f64().unwrap(), edited);
+}
+
+#[test]
+fn default_stdio_metric_entry_keeps_source_known_export_receipt_and_saved_material() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("metric-entry.tcd");
+    let args = [
+        "--project",
+        project.to_str().unwrap(),
+        "--export-dir",
+        directory.path().to_str().unwrap(),
+    ];
+    let mut client = Client::start(&args);
+    let ends = |c: f64, w: f64| json!({"start":{"chamfer45":{"radial_depth":length(c)}},"end":if w>0. {json!({"cylindrical_relief":{"length":length(w),"radial_depth":length(0.1)}})}else{json!("flat_cut")}});
+    let revision = client.revision();
+    let created=client.ok("set_thread",json!({"expected_revision":revision,"name":"M6 entry","major_diameter":length(6.),"pitch":length(1.),"length":length(6.6),"fit":"metric_6g_external","hand":"left","end_treatments":ends(0.3,0.)}));
+    let first = client.part_volume();
+    let revision = client.revision();
+    client.ok("set_thread",json!({"expected_revision":revision,"thread":created["thread"],"end_treatments":ends(0.4,0.6)}));
+    let edited = client.part_volume();
+    assert!(edited < first);
+    let report = client.ok("inspect_thread", json!({"thread":created["thread"]}));
+    close(
+        report["resolved"]["physical_length_mm"].as_f64().unwrap(),
+        6.6,
+    );
+    let revision = client.revision();
+    client.ok("undo", json!({"expected_revision":revision}));
+    close(client.part_volume(), first);
+    let revision = client.revision();
+    client.ok("redo", json!({"expected_revision":revision}));
+    close(client.part_volume(), edited);
+    let receipt = client.ok(
+        "export_step",
+        json!({"part":created["part"],"file_name":"entry.step"}),
+    );
+    assert!(receipt["readback_volume_mm3"].is_null());
+    assert_eq!(
+        receipt["step_verification"]["method"],
+        "source_known_boundary"
+    );
+    assert!(receipt["step_verification"]["decoded_volume_mm3"].is_null());
+    let range = &receipt["step_verification"]["source_volume_bounds_mm3"];
+    assert!(range[0].as_f64().unwrap() <= edited && edited <= range[1].as_f64().unwrap());
+    let revision = client.revision();
+    client.ok("save_project", json!({"expected_revision":revision}));
+    drop(client);
+    let mut reopened = Client::start(&args);
+    close(reopened.part_volume(), edited);
+    let receipt = reopened.ok(
+        "export_step",
+        json!({"part":created["part"],"file_name":"entry-again.step"}),
+    );
+    assert_eq!(
+        receipt["step_verification"]["method"],
+        "source_known_boundary"
+    );
+    assert!(receipt["readback_volume_mm3"].is_null());
 }
 
 #[test]

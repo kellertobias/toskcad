@@ -42,6 +42,19 @@ fn extract_sourced(
     frame: PlaneFrame,
     policy: GeometryPolicy,
 ) -> Result<SourcedPlanarContours, GeometryError> {
+    fn entry_face(solid: &Solid, face: u32) -> bool {
+        solid.rust_thread_entry_chamfer_data().is_some()
+            || solid
+                .rust_compound()
+                .and_then(|c| c.face_source(face))
+                .is_some_and(|(child, face, _)| entry_face(child, face))
+    }
+    if entry_face(solid, face) {
+        return Err(error(
+            GeometryErrorKind::Unsupported,
+            "Exact finite contours of conical-entry thread caps are not yet supported",
+        ));
+    }
     let native = frame.checked(policy)?;
     if let Some(topology) = solid.rust_topology() {
         return crate::rust_display::planar_contours(solid, topology?, face, frame, policy);
