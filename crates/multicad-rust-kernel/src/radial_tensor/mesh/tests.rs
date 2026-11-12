@@ -1175,3 +1175,131 @@ fn loose_actual_twisted_sources_still_require_literal_embedding() {
         assert!(crate::manufacturing::certify(&mesh).is_ok());
     }
 }
+
+#[test]
+fn authored_pipe_normal_cache_preserves_literal_npt_bytes_and_bspt_resource_semantics() {
+    use crate::axial_pipe_thread::authored::{AuthoredSection, AuthoredSpec, AuthoredThread};
+    for rounded in [false, true] {
+        let p = if rounded { 25.4 / 28. } else { 1.25 };
+        let source = AuthoredThread::new(
+            AuthoredSpec {
+                major_radius_mm: if rounded { 9.728 / 2. - 4. / 32. } else { 4. },
+                pitch_mm: p,
+                length_mm: if rounded { 6.5 } else { 2.5 },
+                radial_taper: 1. / 32.,
+                section: if rounded {
+                    AuthoredSection::BsptRounded {
+                        depth_mm: p / (3. * 27.5_f64.to_radians().tan()),
+                    }
+                } else {
+                    AuthoredSection::NptFlat {
+                        depth_mm: 0.5,
+                        flat_width_mm: p / 8.,
+                    }
+                },
+                crest_radius_limit_mm: None,
+            },
+            1e-7,
+            1e-6,
+        )
+        .unwrap();
+        let body = source
+            .raw_boundary_ownership(1e-7, None)
+            .unwrap()
+            .ownership
+            .bind_surfaces(1e-7, None)
+            .unwrap()
+            .certify_axial(1e-7, 1e-6, None)
+            .unwrap()
+            .certify_caps(None)
+            .unwrap()
+            .certify_ordering(None)
+            .unwrap()
+            .certify_material(1e-7, None)
+            .unwrap();
+        let original = body.input().clone();
+        let opts = Tessellation {
+            deflection: 0.1,
+            angle: 0.3,
+            triangle_limit: 1_000_000,
+        };
+        let mut result = None;
+        for enabled in [false, true] {
+            let calls = Cell::new(0u64);
+            let probe = || {
+                calls.set(calls.get() + 1);
+                false
+            };
+            let started = std::time::Instant::now();
+            let current = build_with_limits(
+                &body,
+                opts,
+                Some(&probe),
+                Limits {
+                    normal_strips: enabled,
+                    ..DEFAULT_LIMITS
+                },
+            );
+            println!(
+                "actual pipe rounded={rounded} normal_cache={enabled} elapsed={:?} callbacks={} facets={:?} error={:?}",
+                started.elapsed(),
+                calls.get(),
+                current.as_ref().ok().map(|m| m.indices.len() / 3),
+                current.as_ref().err()
+            );
+            if rounded {
+                assert_eq!(current.as_ref().err(), Some(&Error::Limit));
+            } else {
+                assert!(current.is_ok());
+            }
+            if let Some(previous) = &result {
+                assert_eq!(&current, previous);
+            }
+            result = Some(current);
+            assert_eq!(body.input(), &original);
+        }
+    }
+}
+
+#[test]
+fn uncached_normal_fallback_keeps_mid_certificate_cancellation() {
+    let body = cam();
+    assert!(body.tessellate_with_interrupt(options(), None).is_ok());
+    let mut work = Work {
+        remaining: 10_000_000,
+        interrupt: None,
+    };
+    let prepared = Prepared::new(
+        &body,
+        options(),
+        Limits {
+            normal_strips: false,
+            ..DEFAULT_LIMITS
+        },
+        &mut work,
+    )
+    .unwrap();
+    let side = prepared
+        .sides
+        .iter()
+        .position(|s| matches!(s, Side::Tensor(_)))
+        .unwrap();
+    let mut corners = [[0.; 3]; 4];
+    for (i, [u, v]) in [[0., 0.], [1., 0.], [1., 1.], [0., 1.]]
+        .into_iter()
+        .enumerate()
+    {
+        corners[i] = prepared.point(side, u, v, None, &mut work).unwrap();
+    }
+    every_cancellation(|work| {
+        prepared.cell_matches(
+            side,
+            [[0., 1.]; 2],
+            corners,
+            [[2, 1, 0], [3, 2, 0]],
+            None,
+            None,
+            work,
+        )
+    });
+}

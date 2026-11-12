@@ -256,3 +256,97 @@ fn bounded_cache_caps_and_cold_hot_cancellation_leave_no_failed_entries() {
     cache.cell(patch, range, &mut w).unwrap();
     assert_eq!(cache.entries.len(), 1);
 }
+
+#[test]
+fn actual_normal_strips_retain_each_coefficient_and_each_facet_orientation() {
+    let body = super::super::tests::cam();
+    let mut w = work();
+    let p = Prepared::new(
+        &body,
+        super::super::tests::options(),
+        DEFAULT_LIMITS,
+        &mut w,
+    )
+    .unwrap();
+    let owner = tensor(&p);
+    let patch = owner.patches([[0., 1.]; 2], &mut w).unwrap()[0];
+    let mut cache = Cache::new(owner, 1);
+    for r in [range(patch, [0.11, 0.13]), range(patch, [0.61, 0.63])] {
+        let coefficients = cache.normal_coefficients(patch, r, &mut w).unwrap();
+        let direct = certificate::SourceStrip::new(&patch.normal, patch.domain, r[0], &mut w)
+            .unwrap()
+            .normal_coefficients(r[1], &mut w)
+            .unwrap();
+        for (a, b) in coefficients.iter().flatten().zip(direct.iter().flatten()) {
+            for k in 0..3 {
+                assert_eq!(
+                    [a[k].lo.to_bits(), a[k].hi.to_bits()],
+                    [b[k].lo.to_bits(), b[k].hi.to_bits()]
+                );
+            }
+        }
+        let n = patch
+            .taylor_normal_box(r, &mut w)
+            .unwrap()
+            .map(|i| I::point(i.midpoint()));
+        for facet in [n, n.map(|x| -x)] {
+            assert_eq!(
+                certificate::normal_coefficients_match(&coefficients, facet, 0.5, &mut w),
+                certificate::normal_matches(
+                    patch.normal.clone(),
+                    patch.domain,
+                    r,
+                    facet,
+                    0.5,
+                    &mut w
+                )
+            );
+        }
+        assert!(
+            !certificate::normal_coefficients_match(&coefficients, n.map(|x| -x), 0.5, &mut w)
+                .unwrap()
+        );
+    }
+    let other = Prepared::new(
+        &body,
+        super::super::tests::options(),
+        DEFAULT_LIMITS,
+        &mut w,
+    )
+    .unwrap();
+    let foreign = tensor(&other).patches([[0., 1.]; 2], &mut w).unwrap()[0];
+    assert_eq!(
+        cache
+            .normal_coefficients(foreign, range(foreign, [0.2, 0.3]), &mut w)
+            .err(),
+        Some(Error::Invalid)
+    );
+    let r = range(patch, [0.2, 0.3]);
+    let mut uncached = Cache::new(owner, 0);
+    assert!(uncached.normal_coefficients(patch, r, &mut w).is_ok());
+    assert!(uncached.normals.is_empty());
+    for budget in [0, 100] {
+        let mut limited = Work {
+            remaining: budget,
+            interrupt: None,
+        };
+        assert_eq!(
+            uncached.normal_coefficients(patch, r, &mut limited).err(),
+            Some(Error::Limit)
+        );
+        assert!(uncached.normals.is_empty());
+    }
+    let mut cancelled = Work {
+        remaining: 100_000_000,
+        interrupt: Some(&|| true),
+    };
+    assert_eq!(
+        uncached.normal_coefficients(patch, r, &mut cancelled).err(),
+        Some(Error::Cancelled)
+    );
+    assert!(uncached.normals.is_empty());
+    assert_eq!(cache.normals.len(), 1);
+    cache.advance(patch.domain[1][1].next_up(), &mut w).unwrap();
+    assert!(cache.normals.is_empty());
+    assert!(cache.normal_coefficients(patch, r, &mut w).is_ok());
+}

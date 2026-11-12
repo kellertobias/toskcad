@@ -23,6 +23,7 @@ struct Limits {
     points: usize,
     certificates: usize,
     strips: usize,
+    normal_strips: bool,
 }
 const DEFAULT_LIMITS: Limits = Limits {
     work: 512_000_000,
@@ -30,6 +31,7 @@ const DEFAULT_LIMITS: Limits = Limits {
     points: 131072,
     certificates: 65536,
     strips: 128,
+    normal_strips: true,
 };
 enum Side {
     Tensor(Tensor),
@@ -530,13 +532,13 @@ impl<'a> Prepared<'a> {
                 let mut patches = t
                     .patches(range, work)?
                     .into_iter()
-                    .map(|patch| (patch, None, None))
+                    .map(|patch| (patch, None, None, None))
                     .collect::<Vec<_>>();
                 for indices in actual {
                     let triangle = indices.map(|i| vertices[i]);
                     let affine = certificate::Affine::new(indices.map(|i| uv[i]), triangle)?;
                     let normal = certificate::facet_normal(triangle);
-                    for (patch, source_normal, source_cell) in &mut patches {
+                    for (patch, source_normal, source_cell, normal_coefficients) in &mut patches {
                         let cell = if let Some(cell) = source_cell {
                             cell
                         } else {
@@ -587,17 +589,44 @@ impl<'a> Prepared<'a> {
                                 work,
                             )
                         }))?;
-                        if !fast
-                            && !certificate::normal_matches(
-                                patch.normal.clone(),
-                                patch.domain,
-                                range,
-                                normal,
-                                options.angle,
-                                work,
-                            )?
-                        {
-                            return Ok(false);
+                        if !fast {
+                            let matches = if self.limits.normal_strips {
+                                let coefficients = if let Some(coefficients) = normal_coefficients {
+                                    coefficients
+                                } else {
+                                    normal_coefficients.insert(
+                                        if let Some(cache) = strips.as_deref_mut() {
+                                            cache.normal_coefficients(patch, range, work)?
+                                        } else {
+                                            certificate::SourceStrip::new(
+                                                &patch.normal,
+                                                patch.domain,
+                                                range[0],
+                                                work,
+                                            )?
+                                            .normal_coefficients(range[1], work)?
+                                        },
+                                    )
+                                };
+                                certificate::normal_coefficients_match(
+                                    coefficients,
+                                    normal,
+                                    options.angle,
+                                    work,
+                                )?
+                            } else {
+                                certificate::normal_matches(
+                                    patch.normal.clone(),
+                                    patch.domain,
+                                    range,
+                                    normal,
+                                    options.angle,
+                                    work,
+                                )?
+                            };
+                            if !matches {
+                                return Ok(false);
+                            }
                         }
                     }
                 }

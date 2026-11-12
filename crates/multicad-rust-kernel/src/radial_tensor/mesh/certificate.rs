@@ -119,6 +119,9 @@ impl SourceStrip {
             u: transfer(domain[0], local),
         })
     }
+    pub fn normal_coefficients(&self, v: [f64; 2], work: &mut Work<'_>) -> Result<Grid, Error> {
+        Ok(self.cell(v, work)?.poles)
+    }
     pub fn cell(&self, v: [f64; 2], work: &mut Work<'_>) -> Result<SourceCell, Error> {
         work.charge(self.poles.len() * self.poles[0].len())?;
         let local = local_range(self.original, [self.original[0], v])?[1];
@@ -186,6 +189,14 @@ pub(super) fn normal_matches(
     work: &mut Work<'_>,
 ) -> Result<bool, Error> {
     let normals = restrict(normals, local_range(domain, range)?, work)?;
+    normal_coefficients_match(&normals, facet, angle, work)
+}
+pub(super) fn normal_coefficients_match(
+    normals: &Grid,
+    facet: [I; 3],
+    angle: f64,
+    work: &mut Work<'_>,
+) -> Result<bool, Error> {
     // For positive projection the actual angle is atan(cross/dot),
     // which is <=cross/dot. This sufficient bound preserves arbitrarily
     // small requests without a separate absolute-libm preparation error.
