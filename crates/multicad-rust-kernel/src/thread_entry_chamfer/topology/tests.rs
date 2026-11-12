@@ -1,5 +1,66 @@
 use super::*;
 #[test]
+fn whole_analytic_chord_certificates_cover_curvature_emitted_rounding_and_straight_seams() {
+    for (left, starts, c) in [(false, 1, 0.3), (true, 2, 0.8)] {
+        let body = Chamfer::new(
+            super::super::tests::tool(left, starts, true),
+            c,
+            Some(TerminalIntent {
+                width_mm: 0.6,
+                radial_depth_mm: 0.1,
+            }),
+        )
+        .unwrap();
+        let graph = body.boundary_topology(QueryOptions::default()).unwrap();
+        for (id, edge) in graph.edges().iter().enumerate() {
+            for range in [[0., 1.], [0.13, 0.19], [0.5, 0.5]] {
+                let ends = range.map(|t| graph.curve_sample(id, t).unwrap().nominal_mm);
+                let bound = graph.curve_chord_error(id, range, ends).unwrap();
+                assert!(bound.is_finite() && bound >= 0.);
+                for i in 0..=16 {
+                    let u = i as f64 / 16.;
+                    let t = range[0] + (range[1] - range[0]) * u;
+                    let p = graph.curve_sample(id, t).unwrap();
+                    let line = std::array::from_fn::<_, 3, _>(|k| {
+                        ends[0][k] + u * (ends[1][k] - ends[0][k])
+                    });
+                    let distance = (0..3)
+                        .map(|k| (p.nominal_mm[k] - line[k]).abs())
+                        .sum::<f64>();
+                    assert!(distance <= bound + p.maximum_error_mm + 1e-12);
+                }
+                if matches!(edge.source(), SourceCurve::NeckSeam { .. }) {
+                    assert!(bound < 1e-11);
+                }
+            }
+            let mut ends = [
+                graph.curve_sample(id, 0.).unwrap().nominal_mm,
+                graph.curve_sample(id, 1.).unwrap().nominal_mm,
+            ];
+            ends[0][0] += 0.1;
+            assert!(graph.curve_chord_error(id, [0., 1.], ends).unwrap() >= 0.099999999999);
+        }
+        for range in [[-0.1, 1.], [0., 1.1], [1., 0.], [0., f64::NAN]] {
+            assert_eq!(
+                graph.curve_chord_error(0, range, [[0.; 3]; 2]),
+                Err(Error::Invalid)
+            );
+        }
+        assert_eq!(
+            graph.curve_chord_error(usize::MAX, [0., 1.], [[0.; 3]; 2]),
+            Err(Error::Invalid)
+        );
+        assert_eq!(
+            graph.curve_chord_error(0, [0., 1.], [[f64::NAN; 3]; 2]),
+            Err(Error::Invalid)
+        );
+        assert_eq!(
+            graph.curve_chord_error(0, [0., 1.], [[f64::MAX; 3]; 2]),
+            Err(Error::Unresolved)
+        );
+    }
+}
+#[test]
 fn direct_source_topology_has_all_semantic_faces_closed_wires_and_real_neck_holes() {
     for (left, starts, rounded, c, neck) in [
         (false, 1, false, 0.3, false),

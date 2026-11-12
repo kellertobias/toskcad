@@ -5,6 +5,7 @@
 use super::{interval::I, *};
 use std::collections::{BTreeMap, BTreeSet};
 mod builder;
+mod chord;
 mod coupling;
 mod curve;
 mod validate;
@@ -173,6 +174,17 @@ impl BoundaryTopology {
     pub fn curve_sample(&self, edge: usize, fraction: f64) -> Result<PointSample, Error> {
         let edge = self.edges.get(edge).ok_or(Error::Invalid)?;
         sample(curve::bounds(&self.source, edge.source, [fraction; 2])?)
+    }
+    /// Whole source-curve to emitted-segment bound, including actual endpoint
+    /// rounding. This is a second-derivative remainder, never a sample fit.
+    pub fn curve_chord_error(
+        &self,
+        edge: usize,
+        fraction: [f64; 2],
+        points: [Point; 2],
+    ) -> Result<f64, Error> {
+        let edge = self.edges.get(edge).ok_or(Error::Invalid)?;
+        chord::error(&self.source, edge.source, fraction, points)
     }
 }
 fn enclosure(v: I) -> Enclosure {

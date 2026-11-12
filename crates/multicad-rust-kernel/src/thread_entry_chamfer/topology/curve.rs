@@ -1,6 +1,6 @@
 //! Interval evaluation of unchanged analytic source curves.
 use super::*;
-fn interpolate(ends: [I; 2], t: I) -> I {
+pub(super) fn interpolate(ends: [I; 2], t: I) -> I {
     if t == I::point(0.) {
         ends[0]
     } else if t == I::point(1.) {
@@ -29,7 +29,7 @@ fn join(body: &Chamfer, band: usize, q: I, active: bool) -> Result<(I, I), Error
     };
     Ok((r, z.checked()?))
 }
-fn endpoint_join(
+pub(super) fn endpoint_join(
     body: &Chamfer,
     band: usize,
     end: PhaseEndpoint,
