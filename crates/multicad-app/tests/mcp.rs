@@ -4400,3 +4400,89 @@ fn default_stdio_all_twelve_box_chamfers_rebuild_rollback_export_and_reopen() {
     let mut reopened = Client::start(&arguments);
     close(reopened.part_volume(), expected(2.));
 }
+
+#[test]
+fn default_stdio_profiled_metric_heads_keep_fit_history_and_independent_reopen() {
+    for kind in ["countersunk", "button"] {
+        let directory = tempfile::tempdir().unwrap();
+        let project = directory.path().join("profiled.tcd");
+        let args = [
+            "--project",
+            project.to_str().unwrap(),
+            "--export-dir",
+            directory.path().to_str().unwrap(),
+        ];
+        let mut client = Client::start(&args);
+        let head = if kind == "countersunk" {
+            json!({"kind":kind,"diameter":length(6.),"height":length(1.65),"included_angle":{"value":90.,"unit":"deg"},"edge_chamfer":length(0.1),"neck_radius":length(0.1)})
+        } else {
+            json!({"kind":kind,"diameter":length(6.),"height":length(1.8),"crown_radius":length(4.),"top_land_diameter":length(3.),"neck_radius":length(0.1)})
+        };
+        let mut recipe = json!({"kind":"machine_screw","underhead_length":length(3.),"shank_diameter":length(3.),"head":head,
+            "drive":{"kind":"hex_socket","across_flats":length(2.),"depth":length(0.6)},
+            "thread":{"family":"iso_metric","fit":"metric_6g_external","major_diameter":length(3.),"pitch":length(0.5),"length":length(2.),"representation":"modeled"}});
+        let created = client.ok(
+            "set_mechanical_part",
+            json!({"expected_revision":0,"name":"Metric profiled screw","recipe":recipe}),
+        );
+        let first = client.part_volume();
+        let inspected = client.ok(
+            "inspect_mechanical_part",
+            json!({"feature":created["feature"]}),
+        );
+        assert_eq!(inspected["source"]["parameters"]["head"]["kind"], kind);
+        assert_eq!(
+            inspected["source"]["parameters"]["thread"]["fit"],
+            "metric_6g_external"
+        );
+        recipe["underhead_length"] = length(4.);
+        client.ok(
+            "set_mechanical_part",
+            json!({"expected_revision":1,"feature":created["feature"],"recipe":recipe}),
+        );
+        let edited = client.part_volume();
+        assert!(edited > first);
+        let revision = client.revision();
+        client.ok("undo", json!({"expected_revision":revision}));
+        close(client.part_volume(), first);
+        let revision = client.revision();
+        client.ok("redo", json!({"expected_revision":revision}));
+        close(client.part_volume(), edited);
+        let revision = client.revision();
+        client.ok("save_project", json!({"expected_revision":revision}));
+        let saved = std::fs::read(&project).unwrap();
+        recipe["drive"]["depth"] = length(-1.);
+        client.fail(
+            "set_mechanical_part",
+            json!({"expected_revision":revision,"feature":created["feature"],"recipe":recipe}),
+        );
+        assert_eq!(client.revision(), revision);
+        close(client.part_volume(), edited);
+        assert_eq!(std::fs::read(&project).unwrap(), saved);
+        drop(client);
+        let mut reopened = Client::start(&args);
+        close(reopened.part_volume(), edited);
+        let receipt = reopened.ok(
+            "export_step",
+            json!({"part":created["part"],"file_name":"profiled.step"}),
+        );
+        close(receipt["readback_volume_mm3"].as_f64().unwrap(), edited);
+        let text = std::fs::read_to_string(directory.path().join("profiled.step")).unwrap();
+        let physical = multicad_kernel::Solid::import_rust_step(
+            &text,
+            multicad_core::document::EntityId::new(),
+            multicad_kernel::GeometryPolicy::default(),
+        )
+        .unwrap();
+        assert!(
+            physical
+                .rust_profiled_screw_geometry()
+                .unwrap()
+                .0
+                .spec()
+                .head
+                .is_none()
+        );
+        close(physical.volume_mm3().unwrap(), edited);
+    }
+}
