@@ -69,7 +69,7 @@ fn typed_source_and_finite_faces_survive_rotated_placement() {
         )
         .unwrap();
         let (source, at_thread) = solid.rust_profiled_screw_geometry().unwrap();
-        assert_eq!(source.spec(), spec(crown));
+        assert_eq!(source.spec(), spec(crown).into());
         assert_eq!(at_thread.origin, [8., -3., 4.]);
         assert_eq!(at_thread.u, frame.u);
         assert_eq!(at_thread.v, frame.v);

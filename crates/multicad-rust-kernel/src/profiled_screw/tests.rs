@@ -63,7 +63,7 @@ fn real_head_neck_drive_and_unchanged_thread_have_one_material_domain() {
         let spec = spec(crowned);
         let screw = Screw::new(thread, spec).unwrap();
         assert_eq!(*screw.thread(), thread);
-        assert_eq!(screw.spec(), spec);
+        assert_eq!(screw.spec(), spec.into());
         assert_eq!(screw.profile().end(), [1.5, 1.]);
         let top = screw.head_top_z();
         assert!(!screw.contains([0., 0., top + 0.1], 0.));
@@ -331,4 +331,51 @@ fn profile_triangles_track_real_cone_crown_neck_and_bearing_geometry() {
             }
         }
     }
+}
+
+#[test]
+fn physical_profile_and_drive_need_no_authored_head_recipe() {
+    let original = Screw::new(thread(1, false), spec(false)).unwrap();
+    let profile =
+        Profile::from_retained_segments(&original.profile().segments().collect::<Vec<_>>())
+            .unwrap();
+    let mut data = original.spec();
+    assert_eq!(
+        Screw::from_source(*original.thread(), profile, data),
+        Err(ThreadError::Invalid)
+    );
+    data.head = None;
+    let physical = Screw::from_source(*original.thread(), profile, data).unwrap();
+    assert_eq!(physical.spec().head, None);
+    assert_eq!(physical.volume_mm3(), original.volume_mm3());
+    assert_eq!(physical.faces(), original.faces());
+    assert_eq!(
+        physical.profile().segments().collect::<Vec<_>>(),
+        original.profile().segments().collect::<Vec<_>>()
+    );
+    assert!(certify(&tessellate_profiled_screw(&physical, options()).unwrap()).is_ok());
+    for bad in [
+        SourceSpec {
+            shank_length_mm: 0.,
+            ..data
+        },
+        SourceSpec {
+            socket_depth_mm: 100.,
+            ..data
+        },
+    ] {
+        assert_eq!(
+            Screw::from_source(*original.thread(), profile, bad),
+            Err(ThreadError::Invalid)
+        );
+    }
+    let different = Thread::new(helical_thread::Spec {
+        major_radius_mm: 1.6,
+        ..thread(1, false).spec()
+    })
+    .unwrap();
+    assert_eq!(
+        Screw::from_source(different, profile, data),
+        Err(ThreadError::Invalid)
+    );
 }

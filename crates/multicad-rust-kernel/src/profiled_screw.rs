@@ -14,6 +14,29 @@ pub struct Spec {
     pub minimum_wall_mm: f64,
 }
 
+/// Actual drive/junction data; authored head metadata is absent on a physical
+/// import. Shape decisions always use the retained profile, never this hint.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SourceSpec {
+    pub head: Option<Head>,
+    pub shank_length_mm: f64,
+    pub socket_across_flats_mm: f64,
+    pub socket_depth_mm: f64,
+    pub minimum_wall_mm: f64,
+}
+
+impl From<Spec> for SourceSpec {
+    fn from(spec: Spec) -> Self {
+        Self {
+            head: Some(spec.head),
+            shank_length_mm: spec.shank_length_mm,
+            socket_across_flats_mm: spec.socket_across_flats_mm,
+            socket_depth_mm: spec.socket_depth_mm,
+            minimum_wall_mm: spec.minimum_wall_mm,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Face {
     ThreadShoulder,
@@ -28,7 +51,7 @@ pub enum Face {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Screw {
     thread: Thread,
-    spec: Spec,
+    spec: SourceSpec,
     profile: Profile,
 }
 
@@ -39,6 +62,29 @@ impl Screw {
             thread.spec().major_radius_mm,
             spec.shank_length_mm,
         )?;
+        Self::admit_source(thread, profile, spec.into())
+    }
+
+    /// Physical meridian/drive admission without guessing an authoring recipe.
+    pub fn from_source(
+        thread: Thread,
+        profile: Profile,
+        spec: SourceSpec,
+    ) -> Result<Self, ThreadError> {
+        if spec.head.is_some() {
+            return Err(ThreadError::Invalid);
+        }
+        Self::admit_source(thread, profile, spec)
+    }
+
+    fn admit_source(
+        thread: Thread,
+        profile: Profile,
+        spec: SourceSpec,
+    ) -> Result<Self, ThreadError> {
+        if profile.end() != [thread.spec().major_radius_mm, spec.shank_length_mm] {
+            return Err(ThreadError::Invalid);
+        }
         if spec.socket_across_flats_mm <= 2. * profile.rounding_error_mm()
             || spec.socket_depth_mm <= 2. * profile.rounding_error_mm()
             || !profile.admits_socket(
@@ -60,7 +106,7 @@ impl Screw {
     pub fn thread(&self) -> &Thread {
         &self.thread
     }
-    pub fn spec(&self) -> Spec {
+    pub fn spec(&self) -> SourceSpec {
         self.spec
     }
     pub fn profile(&self) -> &Profile {
