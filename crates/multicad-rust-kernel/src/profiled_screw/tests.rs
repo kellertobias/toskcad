@@ -580,3 +580,54 @@ fn retained_union_proves_actual_cylindrical_overlap_and_bounds_complete_head() {
         Err(ThreadError::Limit)
     );
 }
+
+#[test]
+fn nominal_shank_preserves_fitted_thread_shoulders_round_roots_and_head_unions() {
+    for crowned in [false, true] {
+        for left in [false, true] {
+            for starts in [1, 2] {
+                for rounded in [false, true] {
+                    for plain in [0., 1.] {
+                        let mut data = thread(starts, left).spec();
+                        data.major_radius_mm = 1.48;
+                        if rounded {
+                            data.root_radius_mm = Some(0.05);
+                            data.depth_mm =
+                                (data.pitch_mm - data.crest_width_mm) * 3_f64.sqrt() / 2. - 0.05;
+                        }
+                        let t = Thread::new(data).unwrap();
+                        let mut s = spec(crowned);
+                        s.shank_length_mm = plain;
+                        let screw = Screw::new_with_shank_thread_union(t, 1.5, s).unwrap();
+                        assert_eq!(*screw.thread(), t);
+                        assert_eq!(screw.profile().end()[0], 1.5);
+                        let [start, end] = screw.visible_thread_interval_mm();
+                        assert_eq!(end, data.length_mm);
+                        assert!(!screw.contains([1.49, 0., start + data.pitch_mm], 0.));
+                        assert!(screw.contains([1.49, 0., start - 0.0001], 0.));
+                        if plain > 0. {
+                            assert_eq!(Screw::new_with_shank_radius(t, 1.5, s).unwrap(), screw);
+                        }
+                        let mesh = tessellate_profiled_screw(&screw, options()).unwrap();
+                        let receipt = certify(&mesh).unwrap();
+                        assert!(
+                            (receipt.signed_volume_mm3 - screw.volume_mm3()).abs()
+                                <= profiled_screw_volume_error_bound(&screw, options()).unwrap()
+                        );
+                        let mut physical = screw.spec();
+                        physical.head = None;
+                        assert_eq!(
+                            Screw::from_source_with_union(t, *screw.profile(), physical)
+                                .unwrap()
+                                .profile(),
+                            screw.profile()
+                        );
+                        for r in [1.47, f64::NAN, f64::INFINITY] {
+                            assert!(Screw::new_with_shank_thread_union(t, r, s).is_err());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

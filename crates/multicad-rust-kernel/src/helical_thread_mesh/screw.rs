@@ -54,7 +54,14 @@ pub fn tessellate_profiled_screw(
         angles: shoulder.iter().map(|&(angle, _)| angle).collect(),
     };
     let shaft_rim: Vec<_> = shoulder.into_iter().map(|(_, id)| id).collect();
-    let join = shell.shank_join(&shaft_rim, thread.spec().major_radius_mm);
+    let shank_radius = screw.profile().end()[0];
+    let join = if shank_radius == thread.spec().major_radius_mm {
+        shell.shank_join(&shaft_rim, shank_radius)
+    } else {
+        // Distinct physical circles keep distinct source identities, even
+        // when their positive separation is below a display chord request.
+        shell.ring(screw.visible_thread_interval_mm()[0], |_| shank_radius)
+    };
     shell.annulus(&shaft_rim, &join, face(Face::ThreadShoulder), false)?;
     let top_z = screw.head_top_z();
     let top = shell.ring(top_z, |_| screw.profile().top()[0]);

@@ -58,11 +58,16 @@ pub struct Screw {
 
 impl Screw {
     pub fn new(thread: Thread, spec: Spec) -> Result<Self, ThreadError> {
-        let profile = Profile::new(
-            spec.head,
-            thread.spec().major_radius_mm,
-            spec.shank_length_mm,
-        )?;
+        Self::new_with_shank_radius(thread, thread.spec().major_radius_mm, spec)
+    }
+
+    /// The nominal plain shank may exceed the fitted thread's major radius.
+    pub fn new_with_shank_radius(
+        thread: Thread,
+        shank_radius_mm: f64,
+        spec: Spec,
+    ) -> Result<Self, ThreadError> {
+        let profile = Profile::new(spec.head, shank_radius_mm, spec.shank_length_mm)?;
         Self::admit_source(thread, profile, spec.into(), false)
     }
 
@@ -81,11 +86,17 @@ impl Screw {
     /// Opt in to the actual head/thread union; the original thread law and
     /// authored length remain unchanged, including the covered prefix.
     pub fn new_with_head_thread_union(thread: Thread, spec: Spec) -> Result<Self, ThreadError> {
-        let profile = Profile::new_for_thread_union(
-            spec.head,
-            thread.spec().major_radius_mm,
-            spec.shank_length_mm,
-        )?;
+        Self::new_with_shank_thread_union(thread, thread.spec().major_radius_mm, spec)
+    }
+
+    /// Retain the true shank and the original fitted thread beneath the head.
+    pub fn new_with_shank_thread_union(
+        thread: Thread,
+        shank_radius_mm: f64,
+        spec: Spec,
+    ) -> Result<Self, ThreadError> {
+        let profile =
+            Profile::new_for_thread_union(spec.head, shank_radius_mm, spec.shank_length_mm)?;
         Self::admit_source(thread, profile, spec.into(), true)
     }
 
@@ -110,7 +121,7 @@ impl Screw {
         let visible_start_mm = profile.end()[1] - spec.shank_length_mm;
         if !spec.shank_length_mm.is_finite()
             || spec.shank_length_mm < 0.
-            || profile.end()[0] != major
+            || profile.end()[0] < major
             || visible_start_mm < 0.
             || (!union && visible_start_mm != 0.)
             || thread.spec().length_mm - visible_start_mm <= 4. * profile.rounding_error_mm()
