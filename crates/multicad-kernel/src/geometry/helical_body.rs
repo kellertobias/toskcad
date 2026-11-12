@@ -23,6 +23,7 @@ use std::{
 mod blind;
 mod end_relief;
 mod external;
+pub(super) mod full_height;
 use external::ExternalStock;
 mod boundary;
 mod nut;
@@ -77,6 +78,7 @@ pub(crate) struct HelicalBody {
     local_faces: Vec<(Point, f64)>,
     rails: Vec<f64>,
     import_identity: Option<Origin>,
+    receiving: Option<end_relief::ReceivingStock>,
 }
 
 enum HelicalForm {
@@ -467,6 +469,9 @@ impl Solid {
             });
         }
         let (body, frame) = self.helical_body()?;
+        if let Some(stock) = &body.receiving {
+            return Some(stock.intervals(body.geometry, frame));
+        }
         if let HelicalForm::External(stock) = &body.form {
             return Some(stock.intervals(body.geometry, frame));
         }
@@ -658,12 +663,22 @@ impl Solid {
         policy: GeometryPolicy,
         form: impl FnOnce(Thread) -> Result<HelicalForm, GeometryError>,
     ) -> Result<Self, GeometryError> {
+        Self::publish_helical_geometry_with_receiving(geometry, feature, frame, policy, form, None)
+    }
+    fn publish_helical_geometry_with_receiving(
+        geometry: Thread,
+        feature: EntityId,
+        frame: PlaneFrame,
+        policy: GeometryPolicy,
+        form: impl FnOnce(Thread) -> Result<HelicalForm, GeometryError>,
+        receiving: Option<end_relief::ReceivingStock>,
+    ) -> Result<Self, GeometryError> {
         policy.validate()?;
         frame.checked(policy)?;
         if feature.is_nil() {
             return Err(input("Thread feature identity must not be nil"));
         }
-        let placed = HelicalBody::new(geometry, feature, form(geometry)?);
+        let placed = HelicalBody::new(geometry, feature, form(geometry)?, receiving);
         frame.checked_metric_bounds(placed.bounds(PlaneFrame::default()), policy)?;
         let bounds = placed.bounds(frame);
         policy.point(bounds.min)?;
@@ -888,7 +903,12 @@ pub(super) fn checked_thread(
 }
 
 impl HelicalBody {
-    fn new(geometry: Thread, feature: EntityId, form: HelicalForm) -> Self {
+    fn new(
+        geometry: Thread,
+        feature: EntityId,
+        form: HelicalForm,
+        receiving: Option<end_relief::ReceivingStock>,
+    ) -> Self {
         let spec = geometry.spec();
         let breaks = geometry.profile_breaks();
         let height = spec.length_mm;
@@ -1002,6 +1022,7 @@ impl HelicalBody {
             local_faces,
             rails,
             import_identity: None,
+            receiving,
         }
     }
 
@@ -1571,6 +1592,9 @@ impl HelicalBody {
         }
         if let HelicalForm::EndRelief(relief) = &self.form {
             end_relief::extend_topology(self, relief, frame, &mut elements);
+        }
+        if let Some(stock) = &self.receiving {
+            stock.extend_topology(frame, &mut elements);
         }
         if let Some(identity) = &self.import_identity {
             let stamp = |old: &Origin| Origin {

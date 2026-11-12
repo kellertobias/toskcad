@@ -2,6 +2,22 @@
 use super::*;
 use multicad_rust_kernel::thread_end_relief::Relief;
 
+pub(super) struct ReceivingStock {
+    caps: full_height::FullHeightStock,
+    far_cap: u32,
+}
+impl ReceivingStock {
+    pub(super) fn intervals(
+        &self,
+        material: Thread,
+        frame: PlaneFrame,
+    ) -> ReceivingThreadIntervals {
+        self.caps.intervals(frame, material.spec().length_mm)
+    }
+    pub(super) fn extend_topology(&self, frame: PlaneFrame, elements: &mut [TopologyElement]) {
+        self.caps.extend_caps(frame, [0, self.far_cap], elements);
+    }
+}
 fn relief_error(cause: ThreadError) -> GeometryError {
     error(
         OPERATION,
@@ -62,6 +78,28 @@ impl Solid {
         frame: PlaneFrame,
         policy: GeometryPolicy,
     ) -> Result<Self, GeometryError> {
+        Self::make_end_relief(
+            spec,
+            root_radius_mm,
+            width_mm,
+            radial_depth_mm,
+            feature,
+            frame,
+            policy,
+            None,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn make_end_relief(
+        spec: HelicalThread,
+        root_radius_mm: Option<f64>,
+        width_mm: f64,
+        radial_depth_mm: f64,
+        feature: EntityId,
+        frame: PlaneFrame,
+        policy: GeometryPolicy,
+        receiving: Option<full_height::FullHeightStock>,
+    ) -> Result<Self, GeometryError> {
         policy.validate()?;
         frame.checked(policy)?;
         let tool = checked_thread(spec, root_radius_mm, policy)?;
@@ -78,9 +116,56 @@ impl Solid {
             Relief::new(tool, width_mm, radial_depth_mm).map_err(relief_error)?,
             policy,
         )?;
-        Self::publish_helical_geometry(*relief.material_thread(), feature, frame, policy, |_| {
-            Ok(HelicalForm::EndRelief(relief))
-        })
+        let receiving = receiving.map(|caps| ReceivingStock {
+            caps,
+            far_cap: relief.far_cap_face(),
+        });
+        Self::publish_helical_geometry_with_receiving(
+            *relief.material_thread(),
+            feature,
+            frame,
+            policy,
+            |_| Ok(HelicalForm::EndRelief(relief)),
+            receiving,
+        )
+    }
+    /// Actual terminal neck over an entire qualified cylindrical stock height.
+    /// Partial stock tails and overrun tools require separate boundary proofs.
+    #[allow(clippy::too_many_arguments)]
+    pub fn rust_cut_external_thread_end_relief_with_interrupt(
+        &self,
+        spec: HelicalThread,
+        root_radius_mm: Option<f64>,
+        width_mm: f64,
+        radial_depth_mm: f64,
+        feature: EntityId,
+        frame: PlaneFrame,
+        policy: GeometryPolicy,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Self, GeometryError> {
+        let (caps, placed) = full_height::FullHeightStock::qualify(
+            self,
+            spec,
+            root_radius_mm,
+            feature,
+            frame,
+            policy,
+            interrupt,
+        )?;
+        let solid = Self::make_end_relief(
+            spec,
+            root_radius_mm,
+            width_mm,
+            radial_depth_mm,
+            feature,
+            placed,
+            policy,
+            Some(caps),
+        )?;
+        if interrupt.is_some_and(|f| f()) {
+            return Err(full_height::cancelled());
+        }
+        Ok(solid)
     }
     pub(in crate::geometry) fn import_thread_end_relief(
         spec: Spec,
