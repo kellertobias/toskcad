@@ -75,7 +75,20 @@ pub(super) fn encode(
             if let Some(binding) = binding {
                 post_edge(file, p, binding.post_lines()[i], [mouth[i], floor[i]], top)
             } else {
-                line_edge(file, mouth[i], floor[i])
+                // Authored generators share the cylinder's actual support
+                // axis. Subtracting rounded world vertices would introduce a
+                // real tilt at far placements, unrelated to STEP precision.
+                post_edge(
+                    file,
+                    p,
+                    FinitePost {
+                        origin_mm: vertices.mouth_mm[i],
+                        direction_mm_per_parameter: [0., 0., 1.],
+                        parameters: [0., vertices.floor_mm[i][2] - vertices.mouth_mm[i][2]],
+                    },
+                    [mouth[i], floor[i]],
+                    top,
+                )
             }
         })
         .collect::<Result<Vec<_>, _>>()?;

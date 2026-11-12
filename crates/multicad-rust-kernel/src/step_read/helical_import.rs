@@ -58,7 +58,8 @@ pub(super) fn read_member(
         bounds.len() == 2
             && shell.simple(surface)?.name == "PLANE"
             && matches!(entry_bounds, 1 | 2)
-            && (9..=13).contains(&(faces.len() - head_index))
+            && ((9..=13).contains(&(faces.len() - head_index))
+                || (15..=19).contains(&(faces.len() - head_index)))
             && !(entry_bounds == 2
                 && faces.len() - head_index == 9
                 && shell.simple(face(shell, faces[head_index + 1])?.0)?.name

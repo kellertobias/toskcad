@@ -71,7 +71,14 @@ pub fn profiled_screw_import_matches(
         a.role == b.role && station(a.start, b.start) && station(a.end, b.end) && curve
     });
     let Some((source_drive, source_depth)) = source.recess().flat_hex_geometry() else {
-        return false;
+        return meridian
+            && helical::profiled::torx_recess_matches(
+                source.recess(),
+                other.recess(),
+                [frame, other_frame],
+                [source.head_top_z(), other.head_top_z()],
+                tolerance,
+            );
     };
     let Some((other_drive, other_depth)) = other.recess().flat_hex_geometry() else {
         return false;

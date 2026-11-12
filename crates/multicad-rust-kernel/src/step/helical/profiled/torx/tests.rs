@@ -252,6 +252,570 @@ fn retained_pan_head_bundle_uses_curved_cavity_while_public_screw_export_stays_g
     );
 }
 
+fn full_fixture() -> (String, Screw) {
+    full_fixture_with(false, 1., [[0.; 3], [1., 0., 0.], [0., 1., 0.]])
+}
+fn full_fixture_with(left: bool, plain: f64, pose: [Point; 3]) -> (String, Screw) {
+    let (_, original) = head_fixture();
+    let mut spec = original.thread().spec();
+    spec.left_hand = left;
+    spec.starts = if left { 2 } else { 1 };
+    if left {
+        spec.major_radius_mm = 1.4635;
+        spec.depth_mm = 0.29908756729740676;
+        spec.crest_width_mm = 0.07131009168581062;
+        spec.root_radius_mm = Some(0.07216878364870323);
+    }
+    let thread = crate::helical_thread::Thread::new(spec).unwrap();
+    let mut head = original.spec().head.unwrap();
+    if let crate::head_profile::Head::Crowned {
+        ref mut neck_radius_mm,
+        ..
+    } = head
+    {
+        *neck_radius_mm = 0.125;
+    }
+    let screw =
+        Screw::new_with_recess(thread, 1.5, head, plain, 0.1, original.recess().clone()).unwrap();
+    let hex = Screw::new_with_shank_thread_union(
+        *screw.thread(),
+        1.5,
+        crate::profiled_screw::Spec {
+            head,
+            shank_length_mm: screw.spec().shank_length_mm,
+            socket_across_flats_mm: 2.,
+            socket_depth_mm: 1.,
+            minimum_wall_mm: 0.1,
+        },
+    )
+    .unwrap();
+    let mut text =
+        crate::step::write_profiled_screw(&hex, pose[0], pose[1], pose[2], 1e-7).unwrap();
+    let shell = text
+        .lines()
+        .find(|line| line.contains("=CLOSED_SHELL("))
+        .unwrap()
+        .to_owned();
+    let mut faces = references(&shell)[1..].to_vec();
+    let head_index = faces.len() - hex.profile().segments().count() - 8;
+    let top = entity(&text, &faces[head_index]).to_owned();
+    let old_mouth = references(&top)[2].clone();
+    let mut file = StepFile::new();
+    file.data.clear();
+    file.next = text
+        .lines()
+        .filter_map(|line| {
+            line.strip_prefix('#')?
+                .split_once('=')?
+                .0
+                .parse::<usize>()
+                .ok()
+        })
+        .max()
+        .unwrap()
+        + 1;
+    let crate::screw_recess::Recess::ConicalHexalobular(recess) = screw.recess() else {
+        panic!("actual Torx cavity");
+    };
+    let (mouth, new_faces) = encode(
+        &mut file,
+        &Placement::new(pose[0], pose[1], pose[2]).unwrap(),
+        recess,
+        screw.head_top_z(),
+        1e-7,
+    )
+    .unwrap();
+    text = text.replacen(
+        &top,
+        &top.replace(&format!(",#{old_mouth})"), &format!(",{mouth})")),
+        1,
+    );
+    faces.truncate(faces.len() - 7);
+    let mut all_faces = faces.iter().map(|id| format!("#{id}")).collect::<Vec<_>>();
+    all_faces.extend(new_faces.iter().map(ToString::to_string));
+    let replacement = format!(
+        "{}=CLOSED_SHELL('',({}));",
+        shell.split_once('=').unwrap().0,
+        all_faces.join(",")
+    );
+    text = text.replacen(&shell, &replacement, 1);
+    let end = text.rfind("ENDSEC;").unwrap();
+    text.insert_str(end, &file.data);
+    // The fixture replaces an existing cavity. Remove its now-unreferenced
+    // topological entities; production ownership checks must still see one
+    // complete shell with no orphaned legacy cavity.
+    let solid = text
+        .lines()
+        .find(|line| line.contains("=MANIFOLD_SOLID_BREP("))
+        .unwrap();
+    let mut pending = vec![references(solid)[0].clone()];
+    let mut reachable = std::collections::BTreeSet::new();
+    let entities: std::collections::HashMap<_, _> = text
+        .lines()
+        .filter_map(|line| {
+            let id = line.strip_prefix('#')?.split_once('=')?.0;
+            Some((id, line))
+        })
+        .collect();
+    while let Some(id) = pending.pop() {
+        if reachable.insert(id.clone()) {
+            pending.extend(references(entities[id.as_str()]).into_iter().skip(1));
+        }
+    }
+    text = text
+        .lines()
+        .filter(|line| {
+            let topology = [
+                "ADVANCED_FACE(",
+                "FACE_OUTER_BOUND(",
+                "FACE_BOUND(",
+                "EDGE_LOOP(",
+                "ORIENTED_EDGE(",
+                "EDGE_CURVE(",
+                "VERTEX_POINT(",
+            ]
+            .into_iter()
+            .any(|kind| line.contains(&format!("={kind}")));
+            !topology || reachable.contains(&references(line)[0])
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    (text, screw)
+}
+
+#[test]
+fn independent_torx_cavity_reader_retains_complete_actual_supports_and_curves() {
+    let (text, source) = full_fixture();
+    let decoded = crate::step_read::read_torx_cavity_fixture(
+        &text,
+        source.thread(),
+        [[0.; 3], [1., 0., 0.], [0., 1., 0.]],
+    )
+    .unwrap();
+    let crate::screw_recess::Recess::ConicalHexalobular(recess) = decoded.recess() else {
+        panic!("physical Torx cavity");
+    };
+    let binding = recess.finite_binding().unwrap();
+    assert_eq!(binding.carriers().len(), 12);
+    assert!(binding.literal_cone_semi_angle_rad().is_some());
+    assert!(binding.carriers().iter().all(|c| !c.is_empty()));
+    assert!(decoded.spec().head.is_none());
+    assert!(decoded.recess().volume_bounds_mm3()[0] > 0.);
+    let (readback, imported) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+    assert!(readback.volume_mm3 > 0.);
+    assert!(crate::step_read::profiled_screw_import_matches(
+        &imported,
+        &source,
+        [[0.; 3], [1., 0., 0.], [0., 1., 0.]],
+        1e-7
+    ));
+    for (tip_shift, transport) in [(0.01, 0.), (0., 2e-8)] {
+        let source_drive = source.recess().hexalobular_geometry().unwrap();
+        let mut cone = source_drive.cone();
+        cone.tip_depth_mm += tip_shift;
+        let drive = Drive::from_retained(
+            *source_drive.arcs(),
+            cone,
+            crate::head_profile::TransportError {
+                numeric_conversion_mm: 0.,
+                arithmetic_mm: transport,
+            },
+        )
+        .unwrap();
+        let recess = crate::screw_recess::Recess::conical_hexalobular(drive, 0.1, 100_000).unwrap();
+        let changed = Screw::new_with_recess(
+            *source.thread(),
+            source.profile().end()[0],
+            source.spec().head.unwrap(),
+            source.spec().shank_length_mm,
+            0.1,
+            recess,
+        )
+        .unwrap();
+        assert!(!crate::step_read::profiled_screw_import_matches(
+            &imported,
+            &changed,
+            [[0.; 3], [1., 0., 0.], [0., 1., 0.]],
+            1e-7
+        ));
+    }
+}
+
+#[test]
+fn independent_torx_readback_rejects_changed_supports_carriers_and_finite_uses() {
+    let (text, source) = full_fixture();
+    let intersection = text
+        .lines()
+        .find(|line| line.contains("=INTERSECTION_CURVE("))
+        .unwrap();
+    let ir = references(intersection);
+    let spline = entity(&text, &ir[1]);
+    let poles = references(spline);
+    let interior = entity(&text, &poles[2]);
+    let cylinder = entity(&text, &ir[2]);
+    let cr = references(cylinder);
+    let cylinder_axis = entity(&text, &cr[1]);
+    let axis_refs = references(cylinder_axis);
+    let cylinder_origin = entity(&text, &axis_refs[1]);
+    let cylinder_normal = entity(&text, &axis_refs[2]);
+    let cone = entity(&text, &ir[3]);
+    let cone_axis = entity(&text, &references(cone)[1]);
+    let cone_origin = entity(&text, &references(cone_axis)[1]);
+    let seam_use = text
+        .lines()
+        .find(|line| line.contains("=SEAM_EDGE("))
+        .unwrap();
+    let seam_refs = references(seam_use);
+    let seam = entity(&text, &references(entity(&text, &seam_refs[1]))[3]);
+    let selected = entity(&text, &seam_refs[2]);
+    let definition = entity(&text, &references(selected)[2]);
+    let polyline = entity(&text, &references(definition)[1]);
+    let uv = entity(&text, &references(polyline)[1]);
+    let replace_entity =
+        |line: &str, body: &str| format!("{}={body};", line.split_once('=').unwrap().0);
+    let point_shift = |line: &str, index: usize, delta: f64| {
+        let coordinates = line
+            .split_once("('',(")
+            .unwrap()
+            .1
+            .split_once(')')
+            .unwrap()
+            .0;
+        let mut values = coordinates
+            .split(',')
+            .map(|v| v.parse::<f64>().unwrap())
+            .collect::<Vec<_>>();
+        values[index] += delta;
+        replace_entity(
+            line,
+            &format!(
+                "CARTESIAN_POINT('',({}))",
+                values
+                    .iter()
+                    .map(|v| format!("{v:.16E}"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        )
+    };
+    let mut cases = vec![
+        edited(&text, interior, point_shift(interior, 2, 1e-4)),
+        edited(
+            &text,
+            cylinder_origin,
+            point_shift(cylinder_origin, 0, 1e-8),
+        ),
+        edited(&text, cone_origin, point_shift(cone_origin, 0, 1e-8)),
+        edited(
+            &text,
+            cylinder_normal,
+            replace_entity(cylinder_normal, "DIRECTION('',(1.E-8,0.,1.))"),
+        ),
+        edited(
+            &text,
+            intersection,
+            intersection.replace(
+                &format!("(#{},#{})", ir[2], ir[3]),
+                &format!("(#{0},#{0})", ir[3]),
+            ),
+        ),
+        edited(&text, spline, spline.replacen("('',3,", "('',2,", 1)),
+        edited(&text, spline, spline.replace(".F.,.F.", ".T.,.F.")),
+        edited(&text, spline, spline.replace(",3,3,", ",2,3,")),
+        edited(&text, seam_use, seam_use.replace(",.T.,", ",.F.,")),
+        edited(&text, seam, seam.replace(".PCURVE_S1.", ".PCURVE_S2.")),
+        edited(&text, uv, point_shift(uv, 1, 1e-8)),
+    ];
+    let mut wall = None;
+    for line in text.lines().filter(|line| line.contains("=ADVANCED_FACE(")) {
+        if references(line).last() == Some(&ir[2]) {
+            wall = Some(line);
+            break;
+        }
+    }
+    let wall = wall.unwrap();
+    let wall_bound = entity(&text, &references(wall)[1]);
+    let wall_loop = entity(&text, &references(wall_bound)[1]);
+    let post_use = entity(&text, &references(wall_loop)[1]);
+    let post_edge = entity(&text, &references(post_use)[1]);
+    let post_line = entity(&text, &references(post_edge)[3]);
+    let post_vector = entity(&text, &references(post_line)[2]);
+    let post_direction = entity(&text, &references(post_vector)[1]);
+    let lower_use = entity(&text, &references(wall_loop)[2]);
+    let lower_edge = entity(&text, &references(lower_use)[1]);
+    let lower_refs = references(lower_edge);
+    let lower_spline_first = references(spline)[1].clone();
+    let seam_line = entity(&text, &references(seam)[1]);
+    let shell = text
+        .lines()
+        .find(|line| line.contains("=CLOSED_SHELL("))
+        .unwrap();
+    let faces = references(shell);
+    let top_face = entity(
+        &text,
+        &faces[faces.len() - source.profile().segments().count() - 14],
+    );
+    // Actual support/parser failures must remain distinct from a broad file
+    // tolerance; these are the literal geometric entities in a closed shell.
+    cases.extend([
+        edited(
+            &text,
+            spline,
+            spline.replacen(
+                &format!("(#{lower_spline_first},"),
+                &format!("(#{},", poles[2]),
+                1,
+            ),
+        ),
+        edited(&text, seam_line, seam_line.replace("('',", "(0.,")),
+        edited(
+            &text,
+            lower_edge,
+            lower_edge.replacen(
+                &format!(",#{},", lower_refs[1]),
+                &format!(",#{},", lower_refs[2]),
+                1,
+            ),
+        ),
+        edited(&text, cylinder, cylinder.replace("('',", "(0.,")),
+        edited(&text, post_line, post_line.replace("('',", "(0.,")),
+        edited(&text, post_vector, post_vector.replace("('',", "(0.,")),
+        edited(
+            &text,
+            post_direction,
+            post_direction.replace("('',", "(0.,"),
+        ),
+        edited(
+            &text,
+            post_vector,
+            replace_entity(
+                post_vector,
+                &format!("VECTOR('',#{},1.E13)", references(post_vector)[1]),
+            ),
+        ),
+        edited(&text, selected, selected.replace("('',", "(0.,")),
+        edited(
+            &text,
+            intersection,
+            intersection.replace(".CURVE_3D.", ".PCURVE_S1."),
+        ),
+        edited(&text, spline, spline.replace("),(0.,", "),('',")),
+        edited(&text, spline, spline.replace("),(0.,", "),(0.5,")),
+        edited(&text, cone, cone.replace(",0.,", ",1.,")),
+        edited(&text, post_edge, post_edge.replace(",.T.);", ",.F.);")),
+    ]);
+    let top_surface = entity(&text, references(top_face).last().unwrap());
+    cases.push(edited(
+        &text,
+        top_surface,
+        top_surface.replace("('',", "(0.,"),
+    ));
+    let flipped = if wall.ends_with(",.F.);") {
+        wall.replace(",.F.);", ",.T.);")
+    } else {
+        wall.replace(",.T.);", ",.F.);")
+    };
+    let mouth_use = entity(&text, &references(wall_loop)[4]);
+    let mouth_edge = entity(&text, &references(mouth_use)[1]);
+    let mut invalid_contour = edited(&text, mouth_edge, mouth_edge.replace(",.T.);", ",.F.);"));
+    invalid_contour = invalid_contour.replacen(wall, &flipped, 1);
+    cases.push(invalid_contour);
+    let evaluated = text
+        .lines()
+        .find(|line| line.contains("=EVALUATED_DEGENERATE_PCURVE("))
+        .unwrap();
+    let evaluated_refs = references(evaluated);
+    let apex_vertex = text
+        .lines()
+        .find(|line| {
+            line.contains("=VERTEX_POINT(") && references(line).get(1) == Some(&evaluated_refs[0])
+        })
+        .unwrap();
+    let mut nonzero_reference_cone = edited(&text, cone, cone.replace(",0.,", ",1.,"));
+    nonzero_reference_cone = nonzero_reference_cone.replacen(
+        apex_vertex,
+        &apex_vertex.replace(
+            &format!("#{}", evaluated_refs[0]),
+            &format!("#{}", evaluated_refs[3]),
+        ),
+        1,
+    );
+    cases.push(nonzero_reference_cone);
+    cases.push(edited(
+        &text,
+        wall,
+        if wall.ends_with(",.F.);") {
+            wall.replace(",.F.);", ",.T.);")
+        } else {
+            wall.replace(",.T.);", ",.F.);")
+        },
+    ));
+    let mouth_circle = text
+        .lines()
+        .filter(|line| line.contains("=CIRCLE("))
+        .find(|line| {
+            let axis = entity(&text, &references(line)[1]);
+            let point = entity(&text, &references(axis)[1]);
+            point == cylinder_origin
+        })
+        .unwrap();
+    let mouth_axis = entity(&text, &references(mouth_circle)[1]);
+    let mouth_edge_id = references(mouth_edge)[0].clone();
+    let mouth_top_use = text
+        .lines()
+        .find(|line| {
+            line.contains("=ORIENTED_EDGE(")
+                && references(line).get(1) == Some(&mouth_edge_id)
+                && line.ends_with(",.T.);")
+        })
+        .unwrap();
+    let top_loop = text
+        .lines()
+        .find(|line| {
+            line.contains("=EDGE_LOOP(") && references(line).contains(&references(mouth_top_use)[0])
+        })
+        .unwrap();
+    let loop_refs = references(top_loop);
+    let mut reordered = loop_refs[1..].to_vec();
+    reordered.swap(0, 1);
+    cases.push(edited(
+        &text,
+        top_loop,
+        replace_entity(
+            top_loop,
+            &format!(
+                "EDGE_LOOP('',({}))",
+                reordered
+                    .iter()
+                    .map(|id| format!("#{id}"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        ),
+    ));
+    let floor_use = text
+        .lines()
+        .find(|line| {
+            line.contains("=ORIENTED_EDGE(")
+                && references(line).get(1) == Some(&lower_refs[0])
+                && line.ends_with(",.F.);")
+        })
+        .unwrap();
+    cases.push(edited(
+        &text,
+        floor_use,
+        floor_use.replace(",.F.);", ",.T.);"),
+    ));
+    // Duplicate a circle origin so the shift cannot also move the cylinder.
+    let new_point = "#1900000=CARTESIAN_POINT('',(0.,0.,0.));";
+    let shifted = point_shift(cylinder_origin, 2, 1e-8).replacen(
+        cylinder_origin.split_once('=').unwrap().0,
+        "#1900000",
+        1,
+    );
+    let modified_axis = mouth_axis.replace(&format!(",#{},", axis_refs[1]), ",#1900000,");
+    let mut circle_offset = edited(&text, mouth_axis, modified_axis);
+    circle_offset.insert_str(
+        circle_offset.rfind("ENDSEC;").unwrap(),
+        &format!("{new_point}\n"),
+    );
+    circle_offset = circle_offset.replace(new_point, &shifted);
+    cases.push(circle_offset);
+    for (i, case) in cases.iter().enumerate() {
+        assert!(case != &text, "fixture {i} must change actual data");
+        assert!(
+            crate::step_read::read_import_solid(case, 1e-7).is_err(),
+            "changed support/carrier/use {i}"
+        );
+        assert!(
+            crate::step_read::read_torx_cavity_fixture(
+                case,
+                source.thread(),
+                [[0.; 3], [1., 0., 0.], [0., 1., 0.]]
+            )
+            .is_err(),
+            "local cavity must reject malformed data {i}"
+        );
+    }
+    assert!(crate::step_read::read_import_solid(&text, 1e-7).is_ok());
+    let mouth_refs = references(mouth_edge);
+    let changed_edge = replace_entity(
+        mouth_edge,
+        &format!(
+            "EDGE_CURVE('',#{},#{},#{},.F.)",
+            mouth_refs[2], mouth_refs[1], mouth_refs[3]
+        ),
+    );
+    let mut equivalent = edited(&text, mouth_edge, changed_edge);
+    equivalent = equivalent.replacen(mouth_top_use, &mouth_top_use.replace(",.T.);", ",.F.);"), 1);
+    equivalent = equivalent.replacen(mouth_use, &mouth_use.replace(",.F.);", ",.T.);"), 1);
+    let (_, imported) = crate::step_read::read_import_solid(&equivalent, 1e-7).unwrap();
+    assert!(crate::step_read::profiled_screw_import_matches(
+        &imported,
+        &source,
+        [[0.; 3], [1., 0., 0.], [0., 1., 0.]],
+        1e-7
+    ));
+}
+
+#[test]
+fn independently_decoded_torx_heads_keep_original_hands_datums_and_proper_world_frames() {
+    for left in [false, true] {
+        for plain in [0., 1.] {
+            let pose = [
+                [105.4080000120003, -20.544000016000386, 59.26000001500036],
+                [
+                    0.8000001131000105,
+                    0.5999998491999037,
+                    -2.5133344449321634e-7,
+                ],
+                [
+                    0.3599997486665377,
+                    -0.48000018850005965,
+                    -0.7999999999999605,
+                ],
+            ];
+            let (text, source) = full_fixture_with(left, plain, pose);
+            let (_, decoded) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+            assert!(
+                crate::step_read::profiled_screw_import_matches(&decoded, &source, pose, 1e-7),
+                "left={left} plain={plain}"
+            );
+            let (physical, error) = decoded.profiled_screw_geometry().unwrap();
+            assert!(error > 0.);
+            assert_eq!(physical.thread().spec().left_hand, left);
+            assert_eq!(physical.has_head_thread_overlap(), plain == 0.);
+            assert!(physical.recess().hexalobular_geometry().is_some());
+        }
+    }
+}
+
+#[test]
+fn far_placed_metric_torx_import_preserves_its_literal_finite_reexport_data() {
+    let pose = [[100000., -100000., 100000.], [0.6, 0.8, 0.], [0., 0., 1.]];
+    let (text, source) = full_fixture_with(true, 0., pose);
+    let (_, decoded) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+    assert!(crate::step_read::profiled_screw_import_matches(
+        &decoded, &source, pose, 1e-7
+    ));
+    let (physical, _) = decoded.profiled_screw_geometry().unwrap();
+    let crate::screw_recess::Recess::ConicalHexalobular(recess) = physical.recess() else {
+        panic!("actual finite Torx");
+    };
+    let binding = recess.finite_binding().unwrap();
+    assert!(binding.source().source_error_mm() > source.recess().source_error_mm());
+    let mut file = StepFile::new();
+    encode(
+        &mut file,
+        &Placement::new(decoded.origin_mm, decoded.u, decoded.v).unwrap(),
+        recess,
+        physical.head_top_z(),
+        1e-7,
+    )
+    .unwrap();
+    assert_eq!(file.data.matches("INTERSECTION_CURVE(").count(), 12);
+}
+
 fn entity<'a>(text: &'a str, id: &str) -> &'a str {
     text.lines()
         .find(|line| line.starts_with(&format!("#{id}=")))

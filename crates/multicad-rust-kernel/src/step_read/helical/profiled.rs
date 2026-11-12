@@ -7,7 +7,9 @@ use crate::{
 use std::f64::consts::{PI, TAU};
 mod decode;
 mod finite_graph;
+mod torx;
 pub(in super::super) use decode::read;
+pub(in super::super) use torx::matches as torx_recess_matches;
 
 /// Absolute head/drive mass uncertainty from the retained source precision.
 /// The separately integrated thread spline error is an additional budget.
@@ -372,10 +374,7 @@ pub(super) fn verify(
     corners: &[[[u32; 2]; 2]],
     placement: [Point; 3],
 ) -> Result<f64> {
-    let (drive, socket_depth) = expected
-        .recess()
-        .flat_hex_geometry()
-        .ok_or(ReadError::Unsupported)?;
+    let hex = expected.recess().flat_hex_geometry();
     closed_incidence(shell, all_faces)?;
     // The generic tensor proof has its own approximation budget. Reconstructing
     // an analytic head may use only its intrinsic source arithmetic reserve.
@@ -397,11 +396,16 @@ pub(super) fn verify(
         (frame, expected.visible_thread_interval_mm()[0]),
     )?;
     let faces = &tail[join.shoulders + 1..];
-    if let Some(error) = proof.error {
-        head_edge_residuals(shell, faces, frame, error)?;
-    }
     let segments: Vec<_> = expected.profile().segments().collect();
-    require(faces.len() == segments.len() + 8)?;
+    require(faces.len() == segments.len() + if hex.is_some() { 8 } else { 14 })?;
+    if let Some(error) = proof.error {
+        let analytic = if hex.is_some() {
+            faces
+        } else {
+            &faces[..segments.len() + 1]
+        };
+        head_edge_residuals(shell, analytic, frame, error)?;
+    }
     let shift = expected.spec().shank_length_mm;
     let (surface, forward, bounds) = face(shell, faces[0])?;
     require(forward && bounds.len() == 2)?;
@@ -474,6 +478,18 @@ pub(super) fn verify(
         )?;
         previous = end;
     }
+    let Some((drive, socket_depth)) = hex else {
+        let actual = torx::read(shell, all_faces, faces, segments.len(), frame, count, top)?;
+        let limit = shell.tolerance.min(1e-7);
+        require(torx::matches(
+            expected.recess(),
+            &actual,
+            [placement, placement],
+            [expected.head_top_z(), top.z],
+            limit,
+        ))?;
+        return Ok(expected.profile().volume_mm3() - actual.nominal_volume_mm3());
+    };
     let (floor_surface, forward, bounds) = face(shell, faces[segments.len() + 1])?;
     require(forward && bounds.len() == 1)?;
     let floor_origin = frame.world([0.; 2], expected.head_top_z() + socket_depth);
@@ -742,6 +758,19 @@ pub(crate) fn verify_finite_graph_fixture(input: &str) -> Result<()> {
         closed_incidence(shell, &faces)
     })
     .map(|_| ())
+}
+
+#[cfg(test)]
+pub(crate) fn read_torx_cavity_fixture(
+    input: &str,
+    thread: &crate::helical_thread::Thread,
+    placement: [Point; 3],
+) -> Result<Screw> {
+    compound::read_members_by(input, 1e-7, true, true, |shell, id, _| {
+        let faces = shell.member_faces(id)?;
+        decode::read(shell, &faces, thread, placement, 0.)
+    })
+    .map(|mut sources| sources.remove(0))
 }
 
 // A source reconstructed from trims must also retain the literal carriers.

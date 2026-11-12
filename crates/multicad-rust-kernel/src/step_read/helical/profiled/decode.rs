@@ -163,8 +163,9 @@ pub(in super::super::super) fn read(
         (frame, visible_start),
     )?;
     let head = &tail[join.shoulders + 1..];
-    require((9..=13).contains(&head.len()))?;
-    let segment_count = head.len() - 8;
+    let torx = (15..=19).contains(&head.len());
+    require(torx || (9..=13).contains(&head.len()))?;
+    let segment_count = head.len() - if torx { 14 } else { 8 };
     let (_, forward, bounds) = face(shell, head[0])?;
     require(forward && bounds.len() == 2)?;
     let mouth = bounds[1];
@@ -265,6 +266,25 @@ pub(in super::super::super) fn read(
     let profile =
         Profile::from_transported_segments(&segments, error).map_err(|_| ReadError::Invalid)?;
     let reserve = profile.rounding_error_mm();
+    if torx {
+        let recess = super::torx::read(shell, faces, head, segment_count, frame, count, top)?;
+        let error = recess.source_error_mm();
+        let radius = (recess.maximum_radius_bound_mm() + error).next_up();
+        let depth = (recess.maximum_depth_mm() + error).next_up();
+        let wall = 4. * (reserve + error);
+        require(profile.admits_socket(radius, depth, wall))?;
+        return Screw::from_source_with_union(
+            *thread,
+            profile,
+            SourceSpec {
+                head: None,
+                shank_length_mm: 0.,
+                minimum_wall_mm: wall,
+            },
+            recess,
+        )
+        .map_err(|_| ReadError::Invalid);
+    }
     let edges = ring(shell, mouth, false)?;
     require(edges.len() == 6)?;
     let mut corners = [[0.; 2]; 6];

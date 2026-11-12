@@ -5,6 +5,7 @@ use super::*;
 pub(super) struct Wire {
     pub(super) edges: Vec<EdgeRef>,
     pub(super) uses: Vec<u32>,
+    pub(super) seam_pcurves: Vec<Option<u32>>,
 }
 pub(super) fn wire(shell: &Shell<'_, '_>, bound: u32, outside: bool) -> Result<Wire> {
     let (outer, loop_id, forward) = shell.bound(bound, false)?;
@@ -14,9 +15,10 @@ pub(super) fn wire(shell: &Shell<'_, '_>, bound: u32, outside: bool) -> Result<W
     };
     let mut uses = refs(edges)?;
     let mut result = Vec::new();
+    let mut seam_pcurves = Vec::new();
     for &id in &uses {
         let entity = shell.simple(id)?;
-        let (edge, sense) = match (entity.name, entity.args.as_slice()) {
+        let (edge, sense, pcurve) = match (entity.name, entity.args.as_slice()) {
             (
                 "ORIENTED_EDGE",
                 [
@@ -26,7 +28,7 @@ pub(super) fn wire(shell: &Shell<'_, '_>, bound: u32, outside: bool) -> Result<W
                     edge,
                     forward,
                 ],
-            ) => (reference(edge)?, sense(forward)?),
+            ) => (reference(edge)?, sense(forward)?, None),
             (
                 "SEAM_EDGE",
                 [
@@ -57,22 +59,25 @@ pub(super) fn wire(shell: &Shell<'_, '_>, bound: u32, outside: bool) -> Result<W
                         && curves.contains(&pcurve)
                         && shell.simple(pcurve)?.name == "PCURVE",
                 )?;
-                (edge, sense(forward)?)
+                (edge, sense(forward)?, Some(pcurve))
             }
             _ => return Err(ReadError::Unsupported),
         };
         result.push((edge, sense));
+        seam_pcurves.push(pcurve);
     }
     if !forward {
         uses.reverse();
+        seam_pcurves.reverse();
     }
     Ok(Wire {
         edges: orient(&result, forward),
         uses,
+        seam_pcurves,
     })
 }
 
-fn uv_polyline(shell: &Shell<'_, '_>, id: u32) -> Result<[[f64; 2]; 2]> {
+pub(super) fn uv_polyline(shell: &Shell<'_, '_>, id: u32) -> Result<[[f64; 2]; 2]> {
     let [Value::String(_), items, context] = shell.args(id, "DEFINITIONAL_REPRESENTATION")? else {
         return Err(ReadError::Invalid);
     };
