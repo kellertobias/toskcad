@@ -403,6 +403,41 @@ fn member_signature(readback: &Readback, imported: &ImportSolid) -> ContentHash 
                 for value in [source.cone().tip_depth_mm, source.cone().depth_per_radius] {
                     bytes.extend(value.to_le_bytes());
                 }
+                if let Some(binding) = recess.finite_binding() {
+                    bytes.extend(b"retained-finite-recess");
+                    let vertices = binding.vertices();
+                    for value in vertices
+                        .mouth_mm
+                        .into_iter()
+                        .chain(vertices.floor_mm)
+                        .chain([vertices.apex_mm])
+                        .flatten()
+                    {
+                        bytes.extend(if value == 0. { 0. } else { value }.to_le_bytes());
+                    }
+                    for post in binding.post_lines() {
+                        for value in post
+                            .origin_mm
+                            .into_iter()
+                            .chain(post.direction_mm_per_parameter)
+                            .chain(post.parameters)
+                        {
+                            bytes.extend(if value == 0. { 0. } else { value }.to_le_bytes());
+                        }
+                    }
+                    for spans in binding.carriers() {
+                        bytes.extend((spans.len() as u64).to_le_bytes());
+                        for span in spans {
+                            for value in span
+                                .parameters
+                                .into_iter()
+                                .chain(span.poles_mm.into_iter().flatten())
+                            {
+                                bytes.extend(if value == 0. { 0. } else { value }.to_le_bytes());
+                            }
+                        }
+                    }
+                }
                 vec![]
             }
         };

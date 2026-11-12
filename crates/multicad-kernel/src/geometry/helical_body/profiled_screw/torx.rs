@@ -115,13 +115,44 @@ pub(super) fn extend_boundary(screw: &Screw, add: &mut Boundary<'_, ScrewFace>) 
         let wall = ScrewFace::SocketWall(i as u32);
         let previous = ScrewFace::SocketWall(((i + 11) % 12) as u32);
         let [x, y] = arc.start_mm;
-        let a = [x, y, top];
-        let b = [
-            x,
-            y,
-            top + source.cone().tip_depth_mm - x.hypot(y) * source.cone().depth_per_radius,
+        let binding = match screw.recess() {
+            multicad_rust_kernel::screw_recess::Recess::ConicalHexalobular(recess) => {
+                recess.finite_binding()
+            }
+            _ => unreachable!("curved recess source"),
+        };
+        let nominal = [
+            [x, y, 0.],
+            [
+                x,
+                y,
+                source.cone().tip_depth_mm - x.hypot(y) * source.cone().depth_per_radius,
+            ],
         ];
-        add.line(format!("screw.drive/post/{i}"), a, b, &[previous, wall]);
+        let [a, b] = binding
+            .map_or(nominal, |bound| {
+                [bound.vertices().mouth_mm[i], bound.vertices().floor_mm[i]]
+            })
+            .map(|mut p| {
+                p[2] += top;
+                p
+            });
+        let [line_a, line_b] = binding.map_or([a, b], |bound| {
+            let post = bound.post_lines()[i];
+            post.parameters.map(|t| {
+                let mut p = std::array::from_fn(|k| {
+                    post.origin_mm[k] + t * post.direction_mm_per_parameter[k]
+                });
+                p[2] += top;
+                p
+            })
+        });
+        add.line(
+            format!("screw.drive/post/{i}"),
+            line_a,
+            line_b,
+            &[previous, wall],
+        );
         add.circle_at(
             format!("screw.drive/rim/0/{i}"),
             [arc.center_mm[0], arc.center_mm[1], top],
@@ -197,6 +228,129 @@ mod tests {
             recess,
         )
         .unwrap()
+    }
+    #[test]
+    fn retained_curves_vertices_and_post_supports_keep_literal_native_identity() {
+        use multicad_rust_kernel::hexalobular_drive::{FiniteBinding, FinitePost, FiniteVertices};
+        let original = source(false, 0.);
+        let drive = original.recess().hexalobular_geometry().unwrap().clone();
+        let mouth = drive.arcs().map(|a| [a.start_mm[0], a.start_mm[1], 0.]);
+        let floor = mouth.map(|[x, y, _]| {
+            [
+                x,
+                y,
+                drive.cone().tip_depth_mm - drive.cone().depth_per_radius * x.hypot(y) + 1e-9,
+            ]
+        });
+        let mut carriers =
+            std::array::from_fn(|i| drive.intersection_carrier(i, 1e-10, 10_000).unwrap());
+        for spans in &mut carriers {
+            for span in spans {
+                for p in &mut span.poles_mm {
+                    p[2] += 1e-9;
+                }
+            }
+        }
+        let mut posts = std::array::from_fn(|i| FinitePost {
+            origin_mm: mouth[i],
+            direction_mm_per_parameter: std::array::from_fn(|k| floor[i][k] - mouth[i][k]),
+            parameters: [0., 1.],
+        });
+        posts[0].origin_mm[0] += 2e-10;
+        let actual_line = posts[0];
+        let binding = FiniteBinding::new_with_posts(
+            drive.clone(),
+            FiniteVertices {
+                mouth_mm: mouth,
+                floor_mm: floor,
+                apex_mm: [0., 0., drive.cone().tip_depth_mm + 1e-9],
+            },
+            posts,
+            carriers,
+            1e-8,
+        )
+        .unwrap();
+        let recess = Recess::conical_hexalobular_from_binding(binding, 1e-5, 100_000).unwrap();
+        let screw = Screw::new_with_recess(
+            *original.thread(),
+            original.profile().end()[0],
+            original.spec().head.unwrap(),
+            0.,
+            0.1,
+            recess,
+        )
+        .unwrap();
+        let body = HelicalBody::new(
+            *screw.thread(),
+            EntityId::new(),
+            HelicalForm::ProfiledScrew(Box::new(screw.clone())),
+            GeometryPolicy::default(),
+        )
+        .unwrap();
+        let snapshot = body
+            .topology(PlaneFrame::default(), body.feature, 0)
+            .unwrap();
+        for (i, expected_floor) in floor.iter().enumerate() {
+            let vertex = snapshot
+                .elements
+                .iter()
+                .find(|e| {
+                    e.key.kind == TopologyKind::Vertex
+                        && e.origins
+                            .contains(&body.origin(format!("screw.drive/corner/1/{i}")))
+                })
+                .unwrap();
+            let Some(AnalyticGeometry::Point { position_mm: p }) = vertex.geometry else {
+                panic!("literal floor vertex")
+            };
+            assert_eq!(
+                p,
+                [
+                    expected_floor[0],
+                    expected_floor[1],
+                    expected_floor[2] + screw.head_top_z()
+                ]
+            );
+        }
+        let post = snapshot
+            .elements
+            .iter()
+            .find(|e| {
+                e.key.kind == TopologyKind::Edge
+                    && e.origins
+                        .contains(&body.origin("screw.drive/post/0".into()))
+            })
+            .unwrap();
+        let Some(AnalyticGeometry::Line { a_mm, b_mm }) = post.geometry else {
+            panic!("retained post support")
+        };
+        let expected = actual_line.parameters.map(|t| {
+            let mut p = std::array::from_fn(|k| {
+                actual_line.origin_mm[k] + t * actual_line.direction_mm_per_parameter[k]
+            });
+            p[2] += screw.head_top_z();
+            p
+        });
+        assert_eq!([a_mm, b_mm], expected);
+        assert_ne!(a_mm[0], mouth[0][0]);
+        let mut remaining = MAX_DISPLAY_EDGE_POINTS;
+        let edges =
+            display::edges(&body, &screw, PlaneFrame::default(), 0.01, &mut remaining).unwrap();
+        for (i, edge) in edges.iter().enumerate() {
+            assert_eq!(
+                edge.points_mm[0],
+                [floor[i][0], floor[i][1], floor[i][2] + screw.head_top_z()]
+            );
+        }
+        assert!(
+            Solid::rust_profiled_screw_from_source(
+                screw,
+                EntityId::new(),
+                PlaneFrame::default(),
+                GeometryPolicy::default()
+            )
+            .is_err()
+        );
     }
     #[test]
     fn nominal_curved_faces_preserve_actual_cone_and_circles_without_planar_reclassification() {

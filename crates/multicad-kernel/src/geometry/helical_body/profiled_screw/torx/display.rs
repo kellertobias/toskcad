@@ -38,15 +38,23 @@ pub(in crate::geometry::helical_body) fn edges(
             .expect("retained cone intersection edge")
             .key
             .ordinal;
-        let local = source
-            .intersection_polyline(i, request, (*remaining).min(100_000))
-            .map_err(|cause| {
-                error(
-                    OPERATION,
-                    GeometryErrorKind::Limit,
-                    format!("Unresolved curved drive display source: {cause:?}"),
-                )
-            })?;
+        let binding = match screw.recess() {
+            multicad_rust_kernel::screw_recess::Recess::ConicalHexalobular(recess) => {
+                recess.finite_binding()
+            }
+            _ => unreachable!("curved recess source"),
+        };
+        let local = match binding {
+            Some(binding) => binding.intersection_polyline(i, request, (*remaining).min(100_000)),
+            None => source.intersection_polyline(i, request, (*remaining).min(100_000)),
+        }
+        .map_err(|cause| {
+            error(
+                OPERATION,
+                GeometryErrorKind::Limit,
+                format!("Unresolved curved drive display source: {cause:?}"),
+            )
+        })?;
         // Account for every actual coordinate and for cancellation in adding
         // the head offset; the placement reserve is independent of source shape.
         let local_extent = (local
