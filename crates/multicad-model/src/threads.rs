@@ -225,11 +225,13 @@ pub(crate) fn build_rust(
         .as_ref()
         .filter(|ends| ends.start_chamfer_radial_depth_mm != 0. || ends.end_relief_length_mm != 0.);
     if let Some(ends) = terminal {
-        if source.mode != ThreadMode::NewExternal
-            || source.parameters.family != ThreadFamily::IsoMetric
+        if !matches!(
+            source.mode,
+            ThreadMode::NewExternal | ThreadMode::CutExternal
+        ) || source.parameters.family != ThreadFamily::IsoMetric
         {
             return Err(fail(
-                "Rust end treatments currently support only modeled ISO metric NewExternal entry chamfer and terminal relief",
+                "Rust end treatments require modeled ISO metric external material; receiving cuts need a full-height cylindrical entry",
             ));
         }
         let (spec, root_radius, frame) = rust_profile_geometry(feature, &thread)?;
@@ -240,16 +242,31 @@ pub(crate) fn build_rust(
                     radial_depth_mm: ends.end_relief_radial_depth_mm,
                 },
             );
-            return Solid::rust_helical_thread_entry_chamfer_with_interrupt(
-                spec,
-                root_radius,
-                ends.start_chamfer_radial_depth_mm,
-                terminal,
-                feature,
-                frame,
-                policy,
-                interrupt,
-            )
+            return if source.mode == ThreadMode::CutExternal {
+                let target = receiving_target(feature, source, solids)?
+                    .ok_or_else(|| fail("Receiving entry thread has no target predecessor"))?;
+                target.rust_cut_external_thread_entry_chamfer_with_interrupt(
+                    spec,
+                    root_radius,
+                    ends.start_chamfer_radial_depth_mm,
+                    terminal,
+                    feature,
+                    frame,
+                    policy,
+                    interrupt,
+                )
+            } else {
+                Solid::rust_helical_thread_entry_chamfer_with_interrupt(
+                    spec,
+                    root_radius,
+                    ends.start_chamfer_radial_depth_mm,
+                    terminal,
+                    feature,
+                    frame,
+                    policy,
+                    interrupt,
+                )
+            }
             .map_err(|cause| {
                 if cause.kind == multicad_kernel::GeometryErrorKind::Cancelled {
                     error(Some(feature), "Model evaluation superseded")
@@ -257,6 +274,11 @@ pub(crate) fn build_rust(
                     error(Some(feature), cause)
                 }
             });
+        }
+        if source.mode == ThreadMode::CutExternal {
+            return Err(fail(
+                "Receiving terminal relief without an entry chamfer is not yet certified",
+            ));
         }
         return Solid::rust_helical_thread_end_relief(
             spec,
