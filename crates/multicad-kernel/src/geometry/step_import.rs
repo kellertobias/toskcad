@@ -264,6 +264,15 @@ impl Solid {
         };
         frame.checked(policy)?;
         match profile {
+            ImportProfile::ProfiledScrew {
+                screw,
+                head_volume_error_mm3,
+            } => {
+                if !head_volume_error_mm3.is_finite() || head_volume_error_mm3 <= 0. {
+                    return Err(invalid("Profiled screw mass uncertainty is invalid"));
+                }
+                Self::rust_profiled_screw_from_source(*screw, feature, frame, policy)
+            }
             ImportProfile::RoundedThreadBore {
                 spec,
                 stock_radius_mm,

@@ -413,6 +413,14 @@ impl Solid {
                 tolerance,
             );
         }
+        if let HelicalForm::ProfiledScrew(screw) = &body.form {
+            return multicad_rust_kernel::step_read::profiled_screw_import_matches(
+                imported,
+                screw,
+                [frame.origin, frame.u, frame.v],
+                tolerance,
+            );
+        }
         if let HelicalForm::Nut(nut) = &body.form {
             return multicad_rust_kernel::step_read::helical_nut_import_matches(
                 imported,
@@ -1027,6 +1035,13 @@ impl HelicalBody {
             })
     }
     pub(super) fn supports_step(&self, frame: PlaneFrame, policy: GeometryPolicy) -> bool {
+        if let HelicalForm::ProfiledScrew(screw) = &self.form {
+            return multicad_rust_kernel::step::supports_profiled_screw(
+                screw,
+                frame.origin,
+                policy.linear_tolerance_mm,
+            );
+        }
         if let HelicalForm::External(stock) = &self.form
             && let Some(shaft) = &stock.partial
         {
@@ -1082,6 +1097,15 @@ impl HelicalBody {
         frame: PlaneFrame,
         policy: GeometryPolicy,
     ) -> Result<(), multicad_rust_kernel::step::StepError> {
+        if let HelicalForm::ProfiledScrew(screw) = &self.form {
+            return writer.append_profiled_screw(
+                screw,
+                frame.origin,
+                frame.u,
+                frame.v,
+                policy.linear_tolerance_mm,
+            );
+        }
         if let HelicalForm::External(stock) = &self.form
             && let Some(shaft) = &stock.partial
         {

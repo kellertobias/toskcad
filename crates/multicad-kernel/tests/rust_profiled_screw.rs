@@ -51,6 +51,66 @@ fn spec(crown: bool) -> Spec {
 }
 
 #[test]
+fn actual_heads_export_and_import_through_default_rust_facade() {
+    let scratch = tempfile::tempdir().unwrap();
+    for crown in [false, true] {
+        for (starts, left_hand) in [(1, false), (2, true)] {
+            let policy = GeometryPolicy::default();
+            let owner = EntityId::new();
+            let solid = Solid::rust_profiled_machine_screw(
+                HelicalThread {
+                    starts,
+                    left_hand,
+                    ..thread()
+                },
+                None,
+                spec(crown),
+                owner,
+                PlaneFrame {
+                    origin: [30., -20., 10.],
+                    u: [0.6, 0.8, 0.],
+                    v: [0., 0., 1.],
+                },
+                policy,
+            )
+            .unwrap();
+            assert!(solid.supports_step_export());
+            let path = scratch.path().join(format!("head-{crown}-{starts}.step"));
+            solid.write_step(&path).unwrap();
+            let text = std::fs::read_to_string(&path).unwrap();
+            let (read, imported) = multicad_kernel::rust_kernel::step_read::read_import_solid(
+                &text,
+                policy.linear_tolerance_mm,
+            )
+            .unwrap();
+            let (source, frame) = solid.rust_profiled_screw_geometry().unwrap();
+            assert!(
+                multicad_kernel::rust_kernel::step_read::profiled_screw_import_matches(
+                    &imported,
+                    source,
+                    [frame.origin, frame.u, frame.v],
+                    policy.linear_tolerance_mm
+                )
+            );
+            let reopened = Solid::import_rust_step(&text, EntityId::new(), policy).unwrap();
+            let (retained, _) = reopened.rust_profiled_screw_geometry().unwrap();
+            assert!(retained.spec().head.is_none());
+            assert!((solid.volume_mm3().unwrap() - reopened.volume_mm3().unwrap()).abs() < 1e-6);
+            assert!((read.volume_mm3 - reopened.volume_mm3().unwrap()).abs() < 1e-6);
+            let mesh = reopened
+                .manufacturing_mesh_with_receipt(MeshOptions::default())
+                .unwrap();
+            assert_eq!(mesh.edge_pairs as usize * 2, mesh.mesh.indices.len());
+            reopened
+                .topology_snapshot(EntityId::new(), 0)
+                .unwrap()
+                .validate()
+                .unwrap();
+        }
+    }
+}
+
+#[test]
 fn typed_source_and_finite_faces_survive_rotated_placement() {
     for crown in [false, true] {
         let owner = EntityId::new();
@@ -142,8 +202,7 @@ fn typed_source_and_finite_faces_survive_rotated_placement() {
             [10., 0., 8.]
         );
         assert_eq!(shifted.volume_mm3().unwrap(), solid.volume_mm3().unwrap());
-        // Exchange is deliberately gated until finite surface readback lands.
-        assert!(!solid.supports_step_export());
+        assert!(solid.supports_step_export());
     }
 }
 

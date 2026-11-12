@@ -372,6 +372,54 @@ fn member_signature(readback: &Readback, imported: &ImportSolid) -> ContentHash 
             bytes.extend(if value == 0. { 0. } else { value }.to_le_bytes());
         }
     }
+    if let ImportProfile::ProfiledScrew {
+        screw,
+        head_volume_error_mm3,
+    } = &imported.profile
+    {
+        bytes.extend(b"profiled-screw-physical");
+        let spec = screw.thread().spec();
+        for value in imported
+            .origin_mm
+            .into_iter()
+            .chain(imported.u)
+            .chain(imported.v)
+            .chain([
+                spec.major_radius_mm,
+                spec.pitch_mm,
+                spec.length_mm,
+                spec.depth_mm,
+                spec.crest_width_mm,
+                spec.lower_flank_deg,
+                spec.upper_flank_deg,
+                spec.starts as f64,
+                f64::from(spec.left_hand),
+                spec.root_radius_mm.unwrap_or(0.),
+                screw.spec().shank_length_mm,
+                screw.spec().socket_across_flats_mm,
+                screw.spec().socket_depth_mm,
+                screw.profile().transport_error().numeric_conversion_mm,
+                screw.profile().transport_error().arithmetic_mm,
+                *head_volume_error_mm3,
+            ])
+        {
+            bytes.extend(if value == 0. { 0. } else { value }.to_le_bytes());
+        }
+        for segment in screw.profile().segments() {
+            bytes.extend(segment.role.source_role().as_bytes());
+            let curve = match segment.curve {
+                multicad_rust_kernel::head_profile::Curve::Line => [0.; 5],
+                multicad_rust_kernel::head_profile::Curve::Arc {
+                    center,
+                    radius_mm,
+                    sweep,
+                } => [1., center[0], center[1], radius_mm, sweep],
+            };
+            for value in segment.start.into_iter().chain(segment.end).chain(curve) {
+                bytes.extend(if value == 0. { 0. } else { value }.to_le_bytes());
+            }
+        }
+    }
     ContentHash::of(&bytes)
 }
 
