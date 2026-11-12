@@ -1,6 +1,6 @@
 use super::*;
 use crate::head_profile::Head;
-fn head(radius: f64, angle: f64, neck: f64) -> Profile {
+pub(super) fn head(radius: f64, angle: f64, neck: f64) -> Profile {
     let shank = radius * 0.5;
     Profile::new(
         Head::Countersunk {
@@ -15,7 +15,7 @@ fn head(radius: f64, angle: f64, neck: f64) -> Profile {
     )
     .unwrap()
 }
-fn seat(radius: f64, angle: f64) -> Seat {
+pub(super) fn seat(radius: f64, angle: f64) -> Seat {
     let bore = radius * 0.5 + 0.2;
     Seat {
         bore_radius_mm: bore,
@@ -23,7 +23,7 @@ fn seat(radius: f64, angle: f64) -> Seat {
         depth_mm: (radius - bore) / (angle.to_radians() * 0.5).tan(),
     }
 }
-fn options() -> Options {
+pub(super) fn options() -> Options {
     Options {
         tolerance_mm: 1e-7,
         minimum_land_mm: 0.1,

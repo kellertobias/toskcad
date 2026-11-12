@@ -5,6 +5,8 @@
 //! reported radial gap. Clearance never spends that gap as intrusion tolerance.
 use crate::head_profile::{Curve, Profile, Role, Segment};
 use crate::tapered_thread::interval::I;
+mod placement;
+pub use placement::{Axis, Placement, PlacementCertificate, certify_placement};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Seat {
@@ -37,6 +39,7 @@ pub enum Error {
     InsufficientLand,
     Interference,
     Unresolved,
+    Placement,
 }
 fn checked(v: I) -> Result<I, Error> {
     v.checked().map_err(|_| Error::Unresolved)
