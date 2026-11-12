@@ -56,6 +56,7 @@ fn coarse(body: &Chamfer, options: Tessellation) -> Plan {
     Plan {
         leaves,
         angular_step: cycle / 48.,
+        angular_origin: 0.,
         angular_count: 48,
     }
 }
@@ -230,6 +231,7 @@ fn an_empty_surface_proposal_cannot_become_a_successful_manufacturing_solid() {
     let plan = Plan {
         leaves: Vec::new(),
         angular_step: 0.1,
+        angular_origin: 0.,
         angular_count: 63,
     };
     assert_eq!(
@@ -383,5 +385,49 @@ fn unrepresentable_extra_phase_rails_fail_instead_of_publishing_degenerate_facet
     assert_eq!(
         build_adaptive(&body, plan, options, &mut work, 8),
         Err(Error::Unresolved)
+    );
+}
+
+#[test]
+fn periodic_sampling_phase_preserves_authored_root_knots_and_avoids_the_m6_top_sliver() {
+    let body = Chamfer::new(super::super::tests::tool(true, 1, true), 0.3, None).unwrap();
+    let options = Tessellation {
+        deflection: 0.05,
+        angle: 0.225,
+        triangle_limit: 1_000_000,
+    };
+    let mut work = Work {
+        remaining: 16_000_000,
+        interrupt: None,
+    };
+    let plan = make_plan(
+        &body,
+        &mesh_segments(&body, options).unwrap(),
+        options,
+        1.,
+        &mut work,
+    )
+    .unwrap();
+    assert!(plan.leaves.iter().any(|leaf| {
+        leaf.ends
+            .iter()
+            .any(|e| e.nominal == 0.5 && e.phase == I::point(0.5))
+    }));
+    let row = ((body.material_length_mm() - 0.5) / body.tool.helical_rate().abs()
+        - plan.angular_origin)
+        / plan.angular_step;
+    assert!((row - row.round()).abs() > 0.01);
+    assert!(plan.angular_origin > 0. && plan.angular_origin < plan.angular_step);
+    let mut bands = [0; 5];
+    for leaf in &plan.leaves {
+        bands[leaf.segment.band] += 1;
+    }
+    eprintln!(
+        "M6 source plan leaves={} bands={bands:?} angular_count={} step={} origin={} height_rows={}",
+        plan.leaves.len(),
+        plan.angular_count,
+        plan.angular_step,
+        plan.angular_origin,
+        body.material_length_mm() / body.tool.helical_rate().abs() / plan.angular_step
     );
 }

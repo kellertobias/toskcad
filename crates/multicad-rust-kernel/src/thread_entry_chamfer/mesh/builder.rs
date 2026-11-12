@@ -228,7 +228,7 @@ impl Builder<'_> {
             return Ok(self.endpoint(strip, end, v));
         }
         let node = &self.nodes[node_index];
-        let w = local_row as f64 * self.plan.angular_step;
+        let w = (local_row as f64 * self.plan.angular_step) + self.plan.angular_origin;
         let bounds = if cone { [0, 1] } else { [1, 2] };
         let alias = bounds
             .into_iter()
@@ -384,8 +384,8 @@ impl Builder<'_> {
         let low = lower.ends[0].min(lower.ends[1]);
         let high = upper.ends[0].max(upper.ends[1]);
         let step = self.plan.angular_step;
-        let lo = (low / step).floor();
-        let hi = (high / step).ceil();
+        let lo = ((low - self.plan.angular_origin) / step).floor();
+        let hi = ((high - self.plan.angular_origin) / step).ceil();
         if lo.abs().max(hi.abs()) > 4_503_599_627_370_496. {
             return Err(Error::Unresolved.into());
         }
@@ -413,7 +413,7 @@ impl Builder<'_> {
         let mut emitted = 0;
         for row in lo as i64 - 1..=hi as i64 + 1 {
             work.step()?;
-            let polygon = cell::polygon(row, step, lower, upper)?;
+            let polygon = cell::polygon(row, step, self.plan.angular_origin, lower, upper)?;
             let mut vertices = Vec::with_capacity(6);
             for corner in polygon {
                 let v = self.corner(strip, corner, cone)?;
@@ -753,6 +753,7 @@ mod tests {
         let plan = Plan {
             leaves: Vec::new(),
             angular_step: 0.1,
+            angular_origin: 0.,
             angular_count: 63,
         };
         let options = Tessellation {
@@ -950,6 +951,7 @@ mod tests {
         let mut invalid_grid = Plan {
             leaves: plan.leaves.clone(),
             angular_step: 1e-300,
+            angular_origin: 0.,
             angular_count: plan.angular_count,
         };
         let mut b = fresh(&body, &invalid_grid, options);
@@ -969,6 +971,7 @@ mod tests {
         let mut absent = Plan {
             leaves: plan.leaves.clone(),
             angular_step: plan.angular_step,
+            angular_origin: 0.,
             angular_count: plan.angular_count,
         };
         let leaf = &mut absent.leaves[root];

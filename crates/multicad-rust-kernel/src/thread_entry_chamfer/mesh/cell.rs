@@ -26,10 +26,11 @@ impl Bound {
 pub(super) fn polygon(
     row: i64,
     step: f64,
+    origin: f64,
     lower: Bound,
     upper: Bound,
 ) -> Result<Vec<Corner>, Error> {
-    let w = [row as f64 * step, (row + 1) as f64 * step];
+    let w = [row as f64 * step + origin, (row + 1) as f64 * step + origin];
     let mut p = vec![
         Corner {
             u: 0.,
@@ -128,7 +129,7 @@ mod tests {
             ends: [0.75, 0.875],
             kind: Kind::Top,
         };
-        let p = polygon(0, 1., lower, upper).unwrap();
+        let p = polygon(0, 1., 0., lower, upper).unwrap();
         assert_eq!(p.len(), 4);
         assert_eq!(area(&p), 0.4375);
         assert!(p.iter().all(|v| v.boundary.is_some()));
@@ -140,13 +141,14 @@ mod tests {
             ends: [0.5, 1.25],
             kind: Kind::Top,
         };
-        let p = polygon(0, 1., lower, upper).unwrap();
+        let p = polygon(0, 1., 0., lower, upper).unwrap();
         assert!(area(&p) > 0.);
         assert!(p.iter().any(|v| v.row.is_some() && v.boundary.is_some()));
         assert!(
             polygon(
                 0,
                 1.,
+                0.,
                 Bound {
                     ends: [2., 3.],
                     kind: Kind::Entry
@@ -163,6 +165,7 @@ mod tests {
             polygon(
                 0,
                 1.,
+                0.,
                 Bound {
                     ends: [f64::NAN, 0.],
                     kind: Kind::Entry
@@ -195,6 +198,7 @@ mod tests {
             polygon(
                 0,
                 f64::MAX,
+                0.,
                 Bound {
                     ends: [0., f64::MAX],
                     kind: Kind::Entry

@@ -29,6 +29,7 @@ struct Leaf {
 struct Plan {
     leaves: Vec<Leaf>,
     angular_step: f64,
+    angular_origin: f64,
     angular_count: usize,
 }
 impl Segment {
@@ -286,9 +287,39 @@ fn make_plan(
     if !count.is_finite() || count > options.triangle_limit as f64 {
         return Err(Error::Limit);
     }
+    let angular_step = cycle / count;
+    // The angular grid is a sampling proposal, not a source boundary. Select
+    // its phase to avoid near-coincident artificial cuts at real source knots.
+    // Every resulting facet still passes the same full source certificates.
+    let mut angular_origin = 0.;
+    let mut best = -1.;
+    for fraction in [
+        0.123456789,
+        0.3819660112501051,
+        0.6180339887498949,
+        0.876543211,
+    ] {
+        let mut clearance = 0.5_f64;
+        for period in 0..body.tool.spec().starts {
+            for leaf in &leaves {
+                work.step()?;
+                let q = leaf.ends[0].nominal + f64::from(period) * body.tool.spec().pitch_mm;
+                let seam = body.seam_station(leaf.ends[0].nominal);
+                for z in [0., seam, body.material_length_mm()] {
+                    let row = (z - q) / body.tool.helical_rate().abs() / angular_step - fraction;
+                    clearance = clearance.min((row - row.round()).abs());
+                }
+            }
+        }
+        if clearance > best {
+            best = clearance;
+            angular_origin = fraction * angular_step;
+        }
+    }
     Ok(Plan {
         leaves,
-        angular_step: cycle / count,
+        angular_step,
+        angular_origin,
         angular_count: count as usize,
     })
 }
