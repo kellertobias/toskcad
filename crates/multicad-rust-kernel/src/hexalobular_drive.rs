@@ -4,10 +4,12 @@ use crate::{head_profile::TransportError, tapered_thread::interval::I};
 use std::f64::consts::{PI, TAU};
 
 mod authoring;
+mod intersection;
 mod properties;
 #[cfg(test)]
 mod tests;
 pub use authoring::TangentSpec;
+pub use intersection::{CubicIntersectionSpan, IntersectionErrorBound};
 pub use properties::{NominalSurfaceEvaluation, NominalSurfaceEvaluations};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -281,6 +283,14 @@ impl Drive {
     }
     pub fn maximum_radius_bound_mm(&self) -> f64 {
         self.radius
+    }
+    /// Spatial reserve after lifting a contour point to the literal cone.
+    pub fn spatial_source_error_bound_mm(&self) -> f64 {
+        ((I::point(1.) + I::point(self.cone.depth_per_radius)) * I::point(self.error)
+            + I::point(64. * f64::EPSILON)
+                * (I::point(self.cone.tip_depth_mm)
+                    + I::point(self.radius) * I::point(self.cone.depth_per_radius)))
+        .hi
     }
 
     pub fn radius_at_angle_mm(&self, angle: f64) -> Option<f64> {
