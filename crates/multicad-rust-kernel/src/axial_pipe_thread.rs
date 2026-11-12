@@ -4,6 +4,7 @@
 pub use crate::tapered_thread::Error;
 use crate::tapered_thread::interval::I;
 use std::f64::consts::PI;
+pub mod authored;
 #[cfg(test)]
 mod boundary;
 mod properties;
