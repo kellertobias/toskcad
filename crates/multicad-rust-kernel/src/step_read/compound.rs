@@ -7,71 +7,71 @@ pub(super) fn read_import_members(
     tolerance: f64,
     single: bool,
 ) -> Result<Vec<(Readback, ImportSolid)>> {
-    read_members_by(
-        input,
-        tolerance,
-        true,
-        single,
-        |shell, id, may_be_warped| {
-            if let Some(member) = box_void::read_member(shell, id)? {
-                return Ok(member);
+    read_members_by(input, tolerance, true, single, read_import_member)
+}
+
+pub(super) fn read_import_member(
+    shell: &mut Shell<'_, '_>,
+    id: u32,
+    may_be_warped: bool,
+) -> Result<(Readback, ImportSolid)> {
+    if let Some(member) = box_void::read_member(shell, id)? {
+        return Ok(member);
+    }
+    let face_ids = shell.member_faces(id)?;
+    if let Some(sphere) = sphere::read_member(shell, &face_ids)? {
+        return Ok(sphere);
+    }
+    if let Some(torus) = torus::read_member(shell, &face_ids)? {
+        return Ok(torus);
+    }
+    if let Some(rounded) = rounded_cylinder::recognize_member(shell, id, &face_ids)? {
+        return Ok(rounded);
+    }
+    if let Some(thread) = helical_import::read_member(shell, id, &face_ids)? {
+        return Ok(thread);
+    }
+    if let Some(thread) = rounded_thread::recognize_member(shell, id, &face_ids)? {
+        return Ok(thread);
+    }
+    if let Some(bore) = rounded_thread_bore::recognize_member(shell, id, &face_ids)? {
+        return Ok(bore);
+    }
+    if let Some(cut) = import::read_helical_cut_member(shell, &face_ids)? {
+        return Ok(cut);
+    }
+    if let Some((proof, loft)) = nonplanar_loft::read_member(shell, &face_ids)? {
+        return Ok(import::recognize_nonplanar_loft(proof, loft));
+    }
+    if face_ids
+        .iter()
+        .any(|&face| spline_sweep::has_extrusion_support(shell, face))
+    {
+        return match spline_sweep::import_member(shell, face_ids) {
+            Ok((proof, body)) => Ok(import::recognize_spline(proof, body)),
+            Err(error @ (ReadError::Invalid | ReadError::Unsupported)) => {
+                spline_cap_relief::recognize_member(shell, id)
+                    .map_err(|cause| spline_error(cause, error))
             }
-            let face_ids = shell.member_faces(id)?;
-            if let Some(sphere) = sphere::read_member(shell, &face_ids)? {
-                return Ok(sphere);
-            }
-            if let Some(torus) = torus::read_member(shell, &face_ids)? {
-                return Ok(torus);
-            }
-            if let Some(rounded) = rounded_cylinder::recognize_member(shell, id, &face_ids)? {
-                return Ok(rounded);
-            }
-            if let Some(thread) = helical_import::read_member(shell, id, &face_ids)? {
-                return Ok(thread);
-            }
-            if let Some(thread) = rounded_thread::recognize_member(shell, id, &face_ids)? {
-                return Ok(thread);
-            }
-            if let Some(bore) = rounded_thread_bore::recognize_member(shell, id, &face_ids)? {
-                return Ok(bore);
-            }
-            if let Some(cut) = import::read_helical_cut_member(shell, &face_ids)? {
-                return Ok(cut);
-            }
-            if let Some((proof, loft)) = nonplanar_loft::read_member(shell, &face_ids)? {
-                return Ok(import::recognize_nonplanar_loft(proof, loft));
-            }
-            if face_ids
-                .iter()
-                .any(|&face| spline_sweep::has_extrusion_support(shell, face))
-            {
-                return match spline_sweep::import_member(shell, face_ids) {
-                    Ok((proof, body)) => Ok(import::recognize_spline(proof, body)),
-                    Err(error @ (ReadError::Invalid | ReadError::Unsupported)) => {
-                        spline_cap_relief::recognize_member(shell, id)
-                            .map_err(|cause| spline_error(cause, error))
-                    }
-                    Err(error) => Err(error),
-                };
-            }
-            let regular = shell
-                .validate_faces(face_ids)
-                .and_then(|faces| import::recognize_member(shell, &faces));
-            let regular = match regular {
-                Err(error @ (ReadError::Invalid | ReadError::Unsupported)) if may_be_warped => {
-                    fallback_warped(shell, id, error)
-                        .map(|(readback, import)| import::recognize_warped(readback, import))
-                }
-                _ => regular,
-            };
-            match regular {
-                Err(ReadError::Unsupported) => {
-                    normal_relief::read_member(shell, id)?.ok_or(ReadError::Unsupported)
-                }
-                other => other,
-            }
-        },
-    )
+            Err(error) => Err(error),
+        };
+    }
+    let regular = shell
+        .validate_faces(face_ids)
+        .and_then(|faces| import::recognize_member(shell, &faces));
+    let regular = match regular {
+        Err(error @ (ReadError::Invalid | ReadError::Unsupported)) if may_be_warped => {
+            fallback_warped(shell, id, error)
+                .map(|(readback, import)| import::recognize_warped(readback, import))
+        }
+        _ => regular,
+    };
+    match regular {
+        Err(ReadError::Unsupported) => {
+            normal_relief::read_member(shell, id)?.ok_or(ReadError::Unsupported)
+        }
+        other => other,
+    }
 }
 
 pub(super) fn read_analytic(input: &str, tolerance: f64, single: bool) -> Result<Vec<Readback>> {

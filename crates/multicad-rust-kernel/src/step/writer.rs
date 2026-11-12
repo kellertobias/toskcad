@@ -55,7 +55,7 @@ impl Writer {
     }
 
     /// A rejected append leaves all previously accepted members intact.
-    fn append(
+    pub(super) fn append(
         &mut self,
         encode: impl FnOnce(&mut StepFile) -> Result<Entity, StepError>,
     ) -> Result<(), StepError> {

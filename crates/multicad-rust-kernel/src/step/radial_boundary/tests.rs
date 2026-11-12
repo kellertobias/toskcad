@@ -1,5 +1,39 @@
 use super::*;
 #[test]
+fn actual_retained_writer_append_preserves_source_and_refuses_bad_precision_transactionally() {
+    let body = crate::radial_tensor::BoundaryOwnership::new(
+        crate::radial_tensor::tests::cam::wedge(&[1, 2]),
+        1e-7,
+        None,
+    )
+    .unwrap()
+    .bind_surfaces(1e-7, None)
+    .unwrap()
+    .certify_axial(1e-7, 1e-6, None)
+    .unwrap()
+    .certify_caps(None)
+    .unwrap()
+    .certify_ordering(None)
+    .unwrap()
+    .certify_material(1e-7, None)
+    .unwrap();
+    let mut writer = Writer::new();
+    for tolerance in [0., f64::NAN, -1., f64::INFINITY] {
+        assert_eq!(
+            write_radial_boundary(&body, tolerance),
+            Err(StepError::InvalidGeometry)
+        );
+        assert_eq!(
+            writer.append_radial_boundary(&body, tolerance),
+            Err(StepError::InvalidGeometry)
+        );
+    }
+    writer.append_radial_boundary(&body, 1e-7).unwrap();
+    let text = writer.finish().unwrap();
+    verify_candidate(&text, &body, 1e-7).unwrap();
+    assert_eq!(text, write_radial_boundary(&body, 1e-7).unwrap());
+}
+#[test]
 fn retained_export_requires_the_complete_unchanged_finite_source() {
     let body = crate::radial_tensor::tests::material();
     let text = write_radial_boundary(&body, 1e-7).unwrap();

@@ -13,6 +13,16 @@ pub struct RadialBoundary {
     pub(super) error_mm: f64,
     pub(super) inner_z: [f64; 2],
 }
+impl std::fmt::Debug for RadialBoundary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RadialBoundary")
+            .field("vertices", &self.input().vertices.len())
+            .field("edges", &self.input().edges.len())
+            .field("faces", &self.input().faces.len())
+            .field("boundary_error_mm", &self.error_mm)
+            .finish_non_exhaustive()
+    }
+}
 impl RadialBoundary {
     pub fn input(&self) -> &BoundaryInput {
         self.ordered.input()

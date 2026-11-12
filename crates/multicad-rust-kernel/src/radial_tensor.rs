@@ -6,6 +6,7 @@ mod authored;
 pub use authored::AuthoredBoundary;
 mod axial;
 mod topology;
+mod transport;
 pub use axial::AxialBoundary;
 mod caps;
 mod material;

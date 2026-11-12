@@ -18,6 +18,57 @@ fn failure(error: crate::tapered_thread::Error) -> ReadError {
         _ => ReadError::Unsupported,
     }
 }
+
+fn exchange_failure(cause: crate::step::StepError) -> ReadError {
+    if cause == crate::step::StepError::Limit {
+        ReadError::Limit
+    } else {
+        ReadError::Unsupported
+    }
+}
+
+pub(super) fn verify_member(
+    shell: &mut Shell<'_, '_>,
+    id: u32,
+    expected: &radial::RadialBoundary,
+    tolerance: f64,
+    minimum: f64,
+) -> Result<(radial::MassProperties, [Point; 2])> {
+    let restored = read_member(shell, id)?
+        .bind_surfaces(tolerance, None)
+        .map_err(failure)?
+        .certify_axial(tolerance, minimum, None)
+        .map_err(failure)?
+        .certify_caps(None)
+        .map_err(failure)?
+        .certify_ordering(None)
+        .map_err(failure)?
+        .certify_material(tolerance, None)
+        .map_err(failure)?;
+    // Stable first-use table order removes entity-number differences only.
+    // Every actual coordinate, pole, support, sense and incidence must match.
+    if crate::step::write_radial_boundary(&restored, tolerance).map_err(exchange_failure)?
+        != crate::step::write_radial_boundary(expected, tolerance).map_err(exchange_failure)?
+    {
+        return Err(ReadError::Unsupported);
+    }
+    let properties = restored
+        .properties_with_interrupt(1e-4, None)
+        .map_err(failure)?;
+    let mut bounds = [[0.; 3]; 2];
+    for (k, direction) in [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]]
+        .into_iter()
+        .enumerate()
+    {
+        bounds[1][k] = restored
+            .support_bounds(direction, tolerance * 64., None)
+            .map_err(failure)?[1];
+        bounds[0][k] = -restored
+            .support_bounds(direction.map(|v| -v), tolerance * 64., None)
+            .map_err(failure)?[1];
+    }
+    Ok((properties, bounds))
+}
 fn axis(shell: &Shell<'_, '_>, id: u32) -> Result<radial::Axis> {
     let [Value::String(_), origin, normal, reference_axis] =
         shell.args(id, "AXIS2_PLACEMENT_3D")?
@@ -124,7 +175,7 @@ fn surface(shell: &Shell<'_, '_>, id: u32) -> Result<radial::Surface> {
         _ => Err(ReadError::Unsupported),
     }
 }
-fn read_member(shell: &mut Shell<'_, '_>, id: u32) -> Result<radial::BoundaryOwnership> {
+pub(super) fn read_member(shell: &mut Shell<'_, '_>, id: u32) -> Result<radial::BoundaryOwnership> {
     let faces = shell.member_faces(id)?;
     if faces.len() > 34 {
         return Err(ReadError::Limit);
@@ -251,6 +302,41 @@ fn read_member(shell: &mut Shell<'_, '_>, id: u32) -> Result<radial::BoundaryOwn
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn actual_writer_failures_keep_distinct_exchange_resource_and_geometry_results() {
+        let owned = error_boundary();
+        let unsupported = crate::step::write_radial_boundary(&owned, 0.).unwrap_err();
+        assert_eq!(exchange_failure(unsupported), ReadError::Unsupported);
+        let mut writer = crate::step::Writer::new();
+        for _ in 0..crate::step::MAX_COMPOUND_SOLIDS {
+            writer
+                .append_box(
+                    [1; 3].map(|v| crate::Rational::new(v, 1).unwrap()),
+                    [0.; 3],
+                    [1., 0., 0.],
+                    [0., 1., 0.],
+                )
+                .unwrap();
+        }
+        let limit = writer.append_radial_boundary(&owned, 1e-7).unwrap_err();
+        assert_eq!(exchange_failure(limit), ReadError::Limit);
+        assert!(writer.finish().is_ok());
+    }
+
+    fn error_boundary() -> radial::RadialBoundary {
+        radial::BoundaryOwnership::new(crate::radial_tensor::tests::cam::wedge(&[1]), 1e-7, None)
+            .unwrap()
+            .bind_surfaces(1e-7, None)
+            .unwrap()
+            .certify_axial(1e-7, 1e-6, None)
+            .unwrap()
+            .certify_caps(None)
+            .unwrap()
+            .certify_ordering(None)
+            .unwrap()
+            .certify_material(1e-7, None)
+            .unwrap()
+    }
     fn replace_record(text: &str, name: &str, replacement: &str) -> String {
         let needle = format!("={name}(");
         let line = text.lines().find(|line| line.contains(&needle)).unwrap();

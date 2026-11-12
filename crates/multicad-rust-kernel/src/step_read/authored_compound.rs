@@ -11,6 +11,10 @@ use crate::{
 #[derive(Clone, Copy, Debug)]
 pub enum ExpectedStepMember<'a> {
     Analytic,
+    RetainedRadial {
+        boundary: &'a crate::radial_tensor::RadialBoundary,
+        minimum_feature_mm: f64,
+    },
     NormalRelief {
         relief: &'a crate::normal_relief::Relief,
         origin: Point,
@@ -46,6 +50,10 @@ pub enum ExpectedStepMember<'a> {
 /// Independently decoded geometry or an integrated authored-surface proof.
 #[derive(Clone, Debug, PartialEq)]
 pub enum VerifiedStepMember {
+    RetainedRadial {
+        properties: Box<crate::radial_tensor::MassProperties>,
+        bounds_mm: [Point; 2],
+    },
     Analytic {
         readback: Box<Readback>,
         imported: Option<Box<ImportSolid>>,
@@ -81,6 +89,22 @@ pub fn verify_authored_compound(
     let members =
         compound::read_members_by(input, tolerance, true, false, |shell, solid, warped| {
             match expected.next().ok_or(ReadError::Invalid)? {
+                ExpectedStepMember::RetainedRadial {
+                    boundary,
+                    minimum_feature_mm,
+                } => {
+                    let (properties, bounds_mm) = radial_boundary::verify_member(
+                        shell,
+                        solid,
+                        boundary,
+                        tolerance,
+                        *minimum_feature_mm,
+                    )?;
+                    Ok(VerifiedStepMember::RetainedRadial {
+                        properties: Box::new(properties),
+                        bounds_mm,
+                    })
+                }
                 ExpectedStepMember::Analytic => {
                     let (readback, imported) =
                         compound::read_analytic_member(shell, solid, warped)?;

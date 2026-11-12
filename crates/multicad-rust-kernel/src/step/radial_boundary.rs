@@ -4,6 +4,22 @@ use crate::radial_tensor::{Axis, BoundaryInput, Curve, RadialBoundary, Surface};
 #[cfg(test)]
 mod tests;
 
+impl Writer {
+    /// Append one already qualified finite boundary, preserving every actual
+    /// source value and its closed shell. Rejected appends are transactional.
+    pub fn append_radial_boundary(
+        &mut self,
+        boundary: &RadialBoundary,
+        tolerance: f64,
+    ) -> Result<(), StepError> {
+        if !tolerance.is_finite() || tolerance <= 0. {
+            return Err(StepError::InvalidGeometry);
+        }
+        let input = canonical(boundary.input());
+        self.append(|file| encode(file, &input))
+    }
+}
+
 pub fn write_radial_boundary(
     boundary: &RadialBoundary,
     tolerance: f64,

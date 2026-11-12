@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 mod cap;
 mod certificate;
 mod cone;
+mod edge;
 mod embedding;
 mod spline;
 mod tensor;
@@ -53,6 +54,17 @@ struct Refinement {
     v: BTreeSet<u64>,
 }
 impl RadialBoundary {
+    /// Sample an actual finite source edge with whole-curve chord bounds to
+    /// the emitted world-space segments, including source-owned endpoints.
+    pub fn sample_edge_with_interrupt(
+        &self,
+        edge: usize,
+        deflection: f64,
+        point_limit: usize,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Vec<Point>, Error> {
+        edge::sample(self, edge, deflection, point_limit, interrupt)
+    }
     pub fn tessellate_with_interrupt(
         &self,
         options: Tessellation,
