@@ -102,6 +102,7 @@ fn immutable_source_jet_cache_refuses_partial_construction_and_retries_cleanly()
     // chart cannot make an unresolved fast enclosure authoritative. Remember
     // its numerical refusal; callers must retain their original fallback.
     let narrow = Patch {
+        index: patch.index,
         controls: patch.controls.clone(),
         normal: patch.normal.clone(),
         domain: [[0., 1e-300], [0., 1.]],

@@ -93,6 +93,42 @@ pub(super) struct SourceCell {
     poles: Grid,
     domain: [[I; 2]; 2],
 }
+/// A restriction in U only, owned by one immutable source patch.
+/// Its V coordinate still uses the original patch chart.
+pub(super) struct SourceStrip {
+    poles: Grid,
+    original: [[f64; 2]; 2],
+    u: [I; 2],
+}
+fn transfer(domain: [f64; 2], range: [f64; 2]) -> [I; 2] {
+    range.map(|t| I::point(domain[0]) + (I::point(domain[1]) - I::point(domain[0])) * I::point(t))
+}
+impl SourceStrip {
+    pub fn new(
+        poles: &Grid,
+        domain: [[f64; 2]; 2],
+        u: [f64; 2],
+        work: &mut Work<'_>,
+    ) -> Result<Self, Error> {
+        work.charge(poles.len() * poles[0].len())?;
+        let local = local_range(domain, [u, domain[1]])?[0];
+        let poles = restrict_axis(poles.clone(), 0, local, work)?;
+        Ok(Self {
+            poles,
+            original: domain,
+            u: transfer(domain[0], local),
+        })
+    }
+    pub fn cell(&self, v: [f64; 2], work: &mut Work<'_>) -> Result<SourceCell, Error> {
+        work.charge(self.poles.len() * self.poles[0].len())?;
+        let local = local_range(self.original, [self.original[0], v])?[1];
+        let poles = restrict_axis(self.poles.clone(), 1, local, work)?;
+        Ok(SourceCell {
+            poles,
+            domain: [self.u, transfer(self.original[1], local)],
+        })
+    }
+}
 impl SourceCell {
     pub fn new(
         poles: &Grid,
@@ -106,12 +142,7 @@ impl SourceCell {
         // local_range rounds outwards. Use those actual retained restriction
         // endpoints, including the original chart's interval transfer, rather
         // than replacing them with the requested rectangle's rounded bounds.
-        let domain = std::array::from_fn(|axis| {
-            local[axis].map(|t| {
-                I::point(domain[axis][0])
-                    + (I::point(domain[axis][1]) - I::point(domain[axis][0])) * I::point(t)
-            })
-        });
+        let domain = std::array::from_fn(|axis| transfer(domain[axis], local[axis]));
         Ok(Self {
             poles: source,
             domain,
@@ -215,21 +246,30 @@ fn local_range(domain: [[f64; 2]; 2], range: [[f64; 2]; 2]) -> Result<[[f64; 2];
     Ok(result)
 }
 fn restrict(mut grid: Grid, range: [[f64; 2]; 2], work: &mut Work<'_>) -> Result<Grid, Error> {
-    for (axis, &[a, b]) in range.iter().enumerate() {
-        if axis == 0 {
-            grid = transpose(grid);
+    for (axis, &range) in range.iter().enumerate() {
+        grid = restrict_axis(grid, axis, range, work)?;
+    }
+    Ok(grid)
+}
+fn restrict_axis(
+    mut grid: Grid,
+    axis: usize,
+    [a, b]: [f64; 2],
+    work: &mut Work<'_>,
+) -> Result<Grid, Error> {
+    if axis == 0 {
+        grid = transpose(grid);
+    }
+    for row in &mut grid {
+        if b < 1. {
+            *row = split(row, I::point(b), work)?.0;
         }
-        for row in &mut grid {
-            if b < 1. {
-                *row = split(row, I::point(b), work)?.0;
-            }
-            if a > 0. {
-                *row = split(row, (I::point(a) / I::point(b)).checked()?, work)?.1;
-            }
+        if a > 0. {
+            *row = split(row, (I::point(a) / I::point(b)).checked()?, work)?.1;
         }
-        if axis == 0 {
-            grid = transpose(grid);
-        }
+    }
+    if axis == 0 {
+        grid = transpose(grid);
     }
     Ok(grid)
 }

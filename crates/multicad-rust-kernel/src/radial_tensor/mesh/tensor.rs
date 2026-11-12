@@ -11,6 +11,7 @@ pub(super) struct Tensor {
     cells: Vec<Patch>,
 }
 pub(super) struct Patch {
+    index: usize,
     pub controls: Grid,
     pub normal: Grid,
     pub domain: [[f64; 2]; 2],
@@ -142,6 +143,7 @@ impl Tensor {
                     value.checked()?;
                 }
                 cells.push(Patch {
+                    index: cells.len(),
                     controls,
                     normal,
                     domain,
@@ -158,6 +160,11 @@ impl Tensor {
             knots,
             cells,
         })
+    }
+    pub fn owns(&self, patch: &Patch) -> bool {
+        self.cells
+            .get(patch.index)
+            .is_some_and(|p| std::ptr::eq(p, patch))
     }
     pub fn patches(&self, range: [[f64; 2]; 2], work: &mut Work<'_>) -> Result<Vec<&Patch>, Error> {
         let indices = std::array::from_fn::<_, 2, _>(|axis| {

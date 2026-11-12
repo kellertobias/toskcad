@@ -1,0 +1,258 @@
+use super::*;
+fn work() -> Work<'static> {
+    Work {
+        remaining: 100_000_000,
+        interrupt: None,
+    }
+}
+fn tensor<'a>(p: &'a Prepared<'_>) -> &'a Tensor {
+    p.sides
+        .iter()
+        .find_map(|s| {
+            if let Side::Tensor(t) = s {
+                Some(t)
+            } else {
+                None
+            }
+        })
+        .unwrap()
+}
+fn range(p: &tensor::Patch, v: [f64; 2]) -> [[f64; 2]; 2] {
+    let fractions = [[0.11, 0.13], v];
+    std::array::from_fn(|k| {
+        fractions[k].map(|f| p.domain[k][0] + (p.domain[k][1] - p.domain[k][0]) * f)
+    })
+}
+#[test]
+fn actual_source_strips_reuse_u_without_changing_v_domains_or_literal_affines() {
+    let body = super::super::tests::cam();
+    let mut w = work();
+    let prepared = Prepared::new(
+        &body,
+        super::super::tests::options(),
+        DEFAULT_LIMITS,
+        &mut w,
+    )
+    .unwrap();
+    let owner = tensor(&prepared);
+    let patches = owner.patches([[0., 1.]; 2], &mut w).unwrap();
+    let patch = patches[0];
+    let side = prepared
+        .sides
+        .iter()
+        .position(|s| matches!(s, Side::Tensor(_)))
+        .unwrap();
+    let mut cache = Cache::new(owner, 2);
+    let mut whole_v = range(patch, [0.11, 0.13]);
+    whole_v[1] = [0., 1.];
+    for range in [
+        range(patch, [0.11, 0.13]),
+        range(patch, [0.61, 0.63]),
+        whole_v,
+    ] {
+        let uv = [
+            [range[0][0], range[1][0]],
+            [range[0][1], range[1][0]],
+            [range[0][1], range[1][1]],
+            [range[0][0], range[1][1]],
+        ];
+        let points = uv.map(|[u, v]| prepared.point(side, u, v, None, &mut w).unwrap());
+        let cell = cache.cell(patch, range, &mut w).unwrap();
+        let direct =
+            certificate::SourceCell::new(&patch.controls, patch.domain, range, &mut w).unwrap();
+        assert_eq!(cache.entries.len(), 1);
+        for indices in [[0, 1, 2], [0, 2, 3]] {
+            let affine =
+                certificate::Affine::new(indices.map(|i| uv[i]), indices.map(|i| points[i]))
+                    .unwrap();
+            let original = direct.chord_error(&affine, &mut w).unwrap();
+            assert_eq!(
+                cell.chord_error(&affine, &mut w).unwrap().to_bits(),
+                original.to_bits()
+            );
+            let displaced = certificate::Affine::new(
+                indices.map(|i| uv[i]),
+                indices.map(|i| {
+                    let mut p = points[i];
+                    p[0] += 1.;
+                    p
+                }),
+            )
+            .unwrap();
+            assert!(cell.chord_error(&displaced, &mut w).unwrap() > 0.9);
+        }
+    }
+    // The same parameter domain in another immutable source owner must not
+    // obtain this owner's cached coefficient grid, even for equal geometry.
+    let other = Prepared::new(
+        &body,
+        super::super::tests::options(),
+        DEFAULT_LIMITS,
+        &mut w,
+    )
+    .unwrap();
+    let foreign = tensor(&other).patches([[0., 1.]; 2], &mut w).unwrap()[0];
+    assert_eq!(
+        cache
+            .cell(foreign, range(foreign, [0.2, 0.3]), &mut w)
+            .err(),
+        Some(Error::Invalid)
+    );
+    assert_eq!(cache.entries.len(), 1);
+    let posed = body
+        .transformed_with_interrupt(
+            [[30., -20., 10.], [0.8, 0.6, 0.], [-0.36, 0.48, 0.8]],
+            1e-7,
+            1e-6,
+            None,
+        )
+        .unwrap();
+    let posed = Prepared::new(
+        &posed,
+        super::super::tests::options(),
+        DEFAULT_LIMITS,
+        &mut w,
+    )
+    .unwrap();
+    let posed_patch = tensor(&posed).patches([[0., 1.]; 2], &mut w).unwrap()[0];
+    assert_eq!(
+        cache
+            .cell(posed_patch, range(posed_patch, [0.2, 0.3]), &mut w)
+            .err(),
+        Some(Error::Invalid)
+    );
+    assert_eq!(cache.entries.len(), 1);
+    cache.advance(patch.domain[1][1], &mut w).unwrap();
+    assert_eq!(cache.entries.len(), 1);
+    cache.advance(patch.domain[1][1].next_up(), &mut w).unwrap();
+    assert!(cache.entries.is_empty());
+}
+#[test]
+fn bounded_cache_caps_and_cold_hot_cancellation_leave_no_failed_entries() {
+    let body = super::super::tests::cam();
+    let mut w = work();
+    let prepared = Prepared::new(
+        &body,
+        super::super::tests::options(),
+        DEFAULT_LIMITS,
+        &mut w,
+    )
+    .unwrap();
+    let owner = tensor(&prepared);
+    let patch = owner.patches([[0., 1.]; 2], &mut w).unwrap()[0];
+    let range = range(patch, [0.2, 0.3]);
+    for limit in [0, 1] {
+        let mut cache = Cache::new(owner, limit);
+        cache.cell(patch, range, &mut w).unwrap();
+        assert_eq!(cache.entries.len(), limit);
+        let mut other = range;
+        other[0][0] += 0.001;
+        cache.cell(patch, other, &mut w).unwrap();
+        assert_eq!(cache.entries.len(), limit);
+    }
+    let count = std::cell::Cell::new(0);
+    let observe = || {
+        count.set(count.get() + 1);
+        false
+    };
+    let mut cache = Cache::new(owner, 1);
+    cache
+        .cell(
+            patch,
+            range,
+            &mut Work {
+                remaining: 100_000_000,
+                interrupt: Some(&observe),
+            },
+        )
+        .unwrap();
+    let cold = count.get();
+    assert!(cold > 4);
+    for stop in [1, 2, cold / 2, cold] {
+        count.set(0);
+        let cancel = || {
+            count.set(count.get() + 1);
+            count.get() >= stop
+        };
+        let mut cache = Cache::new(owner, 1);
+        assert_eq!(
+            cache
+                .cell(
+                    patch,
+                    range,
+                    &mut Work {
+                        remaining: 100_000_000,
+                        interrupt: Some(&cancel)
+                    }
+                )
+                .err(),
+            Some(Error::Cancelled)
+        );
+        assert!(cache.entries.is_empty());
+    }
+    for remaining in [0, 1, 200] {
+        let mut cache = Cache::new(owner, 1);
+        assert_eq!(
+            cache
+                .cell(
+                    patch,
+                    range,
+                    &mut Work {
+                        remaining,
+                        interrupt: None
+                    }
+                )
+                .err(),
+            Some(Error::Limit)
+        );
+        assert!(cache.entries.is_empty());
+    }
+    let before = w.remaining;
+    certificate::SourceCell::new(&patch.controls, patch.domain, range, &mut w).unwrap();
+    let original_work = before - w.remaining;
+    let before = w.remaining;
+    cache.cell(patch, range, &mut w).unwrap();
+    let reused_work = before - w.remaining;
+    assert!(
+        reused_work < original_work,
+        "cached work {reused_work} must exclude actual repeated U arithmetic {original_work}"
+    );
+    // Hot retrieval and eviction both check work/cancellation before reuse or
+    // mutation. A valid retained source strip survives an interrupted request.
+    let cancel = || true;
+    let stop: Option<&dyn Fn() -> bool> = Some(&cancel);
+    for (remaining, interrupt, expected) in [
+        (0, None, Error::Limit),
+        (100_000_000, stop, Error::Cancelled),
+    ] {
+        assert_eq!(
+            cache
+                .cell(
+                    patch,
+                    range,
+                    &mut Work {
+                        remaining,
+                        interrupt
+                    }
+                )
+                .err(),
+            Some(expected)
+        );
+        assert_eq!(cache.entries.len(), 1);
+        assert_eq!(
+            cache
+                .advance(
+                    patch.domain[1][1].next_up(),
+                    &mut Work {
+                        remaining,
+                        interrupt
+                    }
+                )
+                .err(),
+            Some(expected)
+        );
+        assert_eq!(cache.entries.len(), 1);
+    }
+    cache.cell(patch, range, &mut w).unwrap();
+    assert_eq!(cache.entries.len(), 1);
+}

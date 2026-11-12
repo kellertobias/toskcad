@@ -9,6 +9,7 @@ mod edge;
 mod embedding;
 mod normal_jet;
 mod spline;
+mod strip;
 mod tensor;
 use cap::Cap;
 use cone::Cone;
@@ -21,12 +22,14 @@ struct Limits {
     passes: usize,
     points: usize,
     certificates: usize,
+    strips: usize,
 }
 const DEFAULT_LIMITS: Limits = Limits {
     work: 512_000_000,
     passes: 64,
     points: 131072,
     certificates: 65536,
+    strips: 128,
 };
 enum Side {
     Tensor(Tensor),
@@ -362,8 +365,19 @@ impl<'a> Prepared<'a> {
         work: &mut Work<'_>,
     ) -> Result<(), Error> {
         let options = self.options;
+        let mut strips = self
+            .sides
+            .iter()
+            .map(|side| match side {
+                Side::Tensor(t) => Some(strip::Cache::new(t, self.limits.strips)),
+                Side::Cone(_) => None,
+            })
+            .collect::<Vec<_>>();
         for row in 0..grid.v.len() - 1 {
             for (side, nodes) in grid.u.iter().enumerate() {
+                if let Some(cache) = &mut strips[side] {
+                    cache.advance(grid.v[row], work)?;
+                }
                 // These immutable rail enclosures depend only on this
                 // side and longitudinal row. Reuse them across U cells;
                 // every U blend and actual-facet proof remains separate.
@@ -429,6 +443,7 @@ impl<'a> Prepared<'a> {
                         corners,
                         actual,
                         cone_rows.as_ref(),
+                        strips[side].as_mut(),
                         work,
                     ))? {
                         work.charge(128)?;
@@ -489,6 +504,7 @@ impl<'a> Prepared<'a> {
         }
         Ok(())
     }
+    #[allow(clippy::too_many_arguments)]
     fn cell_matches(
         &self,
         side: usize,
@@ -496,6 +512,7 @@ impl<'a> Prepared<'a> {
         vertices: [Point; 4],
         actual: [[usize; 3]; 2],
         cone_rows: Option<&cone::Rows>,
+        mut strips: Option<&mut strip::Cache<'_>>,
         work: &mut Work<'_>,
     ) -> Result<bool, Error> {
         let options = self.options;
@@ -523,12 +540,16 @@ impl<'a> Prepared<'a> {
                         let cell = if let Some(cell) = source_cell {
                             cell
                         } else {
-                            source_cell.insert(certificate::SourceCell::new(
-                                &patch.controls,
-                                patch.domain,
-                                range,
-                                work,
-                            )?)
+                            source_cell.insert(if let Some(cache) = strips.as_deref_mut() {
+                                cache.cell(patch, range, work)?
+                            } else {
+                                certificate::SourceCell::new(
+                                    &patch.controls,
+                                    patch.domain,
+                                    range,
+                                    work,
+                                )?
+                            })
                         };
                         if (I::point(cell.chord_error(&affine, work)?)
                             + I::point(self.body.error_mm))

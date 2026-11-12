@@ -88,8 +88,14 @@ fn restricted_source_chords_keep_actual_facets_ranges_and_owners_independent() {
         let patch = patches[0];
         let mut source = patch.controls.clone();
         let cell = certificate::SourceCell::new(&source, domain, range, &mut work).unwrap();
+        let strip = certificate::SourceStrip::new(&source, domain, range[0], &mut work).unwrap();
+        let cached = strip.cell(range[1], &mut work).unwrap();
         let affine = certificate::Affine::new(uv, vertices).unwrap();
         let bound = cell.chord_error(&affine, &mut work).unwrap();
+        assert_eq!(
+            cached.chord_error(&affine, &mut work).unwrap().to_bits(),
+            bound.to_bits()
+        );
         assert!(bound < 0.1);
         // Independently evaluate the actual residual polynomial. Subtracting
         // before evaluation avoids treating correlated world coordinates as
@@ -187,6 +193,7 @@ fn real_source_mesh_is_cache_independent_and_failed_requests_are_atomic() {
         Limits {
             points: 0,
             certificates: 0,
+            strips: 0,
             ..DEFAULT_LIMITS
         },
     )
@@ -199,6 +206,7 @@ fn real_source_mesh_is_cache_independent_and_failed_requests_are_atomic() {
         Limits {
             points: 1,
             certificates: 1,
+            strips: 1,
             ..DEFAULT_LIMITS
         },
     )
@@ -747,6 +755,11 @@ fn failed_actual_candidate_facet_checks_and_mid_proof_cancellation_cannot_publis
     {
         corners[index] = source.point(side, u, v, None, &mut work).unwrap();
     }
+    let owner = match &source.sides[side] {
+        Side::Tensor(t) => t,
+        Side::Cone(_) => unreachable!(),
+    };
+    let mut strip_cache = strip::Cache::new(owner, DEFAULT_LIMITS.strips);
     assert!(
         !source
             .cell_matches(
@@ -755,6 +768,7 @@ fn failed_actual_candidate_facet_checks_and_mid_proof_cancellation_cannot_publis
                 corners,
                 [[2, 1, 0], [3, 2, 0]],
                 None,
+                Some(&mut strip_cache),
                 &mut work
             )
             .unwrap()
@@ -770,6 +784,7 @@ fn failed_actual_candidate_facet_checks_and_mid_proof_cancellation_cannot_publis
                 corners,
                 [[0, 1, 2], [3, 2, 0]],
                 None,
+                Some(&mut strip_cache),
                 &mut work
             )
             .unwrap()
@@ -791,6 +806,7 @@ fn failed_actual_candidate_facet_checks_and_mid_proof_cancellation_cannot_publis
                 corners,
                 [[0, 1, 2], [0, 2, 3]],
                 None,
+                Some(&mut strip_cache),
                 &mut counted
             )
             .unwrap()
@@ -809,7 +825,15 @@ fn failed_actual_candidate_facet_checks_and_mid_proof_cancellation_cannot_publis
         };
         assert_eq!(
             source
-                .cell_matches(side, range, corners, [[0, 1, 2], [0, 2, 3]], None, &mut cut)
+                .cell_matches(
+                    side,
+                    range,
+                    corners,
+                    [[0, 1, 2], [0, 2, 3]],
+                    None,
+                    Some(&mut strip_cache),
+                    &mut cut
+                )
                 .err(),
             Some(Error::Cancelled)
         );
@@ -1027,7 +1051,7 @@ fn actual_candidate_stages_cancel_at_every_checkpoint_and_refuse_displaced_caps(
         }
         for actual in [[[0, 1, 2], [0, 2, 3]], [[2, 1, 0], [3, 2, 0]]] {
             every_cancellation(|work| {
-                source.cell_matches(side, range, corners, actual, rows.as_ref(), work)
+                source.cell_matches(side, range, corners, actual, rows.as_ref(), None, work)
             });
         }
     }
