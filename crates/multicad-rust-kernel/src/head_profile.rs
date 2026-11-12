@@ -256,11 +256,31 @@ pub enum Head {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TransportError {
+    pub numeric_conversion_mm: f64,
+    pub arithmetic_mm: f64,
+}
+impl TransportError {
+    pub const ZERO: Self = Self {
+        numeric_conversion_mm: 0.,
+        arithmetic_mm: 0.,
+    };
+    pub fn total_mm(self) -> f64 {
+        if self == Self::ZERO {
+            0.
+        } else {
+            (self.numeric_conversion_mm + self.arithmetic_mm).next_up()
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Profile {
     segments: [Option<Segment>; 5],
     top: [f64; 2],
     end: [f64; 2],
     rounding_error_mm: f64,
+    transport_error: TransportError,
 }
 
 impl Profile {
@@ -268,6 +288,29 @@ impl Profile {
     /// head recipe. Shared stations must already have one source identity.
     /// The two radial caps and the axis close this monotone outer boundary.
     pub fn from_retained_segments(segments: &[Segment]) -> Result<Self, ThreadError> {
+        Self::from_transported_segments(segments, TransportError::ZERO)
+    }
+
+    /// Retain literal physical supports after a separately bounded coordinate
+    /// transport. The caller must derive `transport_error_mm` from arithmetic
+    /// enclosures of that transport; a requested geometric tolerance is not a
+    /// transport error. This uncertainty remains part of every source query's
+    /// exposed precision reserve and must fit downstream manufacturing budgets.
+    pub fn from_transported_segments(
+        segments: &[Segment],
+        transport_error: TransportError,
+    ) -> Result<Self, ThreadError> {
+        let transport_error_mm = transport_error.total_mm();
+        if ![
+            transport_error.numeric_conversion_mm,
+            transport_error.arithmetic_mm,
+            transport_error_mm,
+        ]
+        .into_iter()
+        .all(|e| e.is_finite() && e >= 0.)
+        {
+            return Err(ThreadError::Invalid);
+        }
         if segments.is_empty() || segments.len() > 5 {
             return Err(ThreadError::Invalid);
         }
@@ -297,7 +340,12 @@ impl Profile {
         if scale > 1e7 {
             return Err(ThreadError::Limit);
         }
-        let reserve = 128. * f64::EPSILON * scale;
+        let intrinsic = 128. * f64::EPSILON * scale;
+        let reserve = if transport_error_mm == 0. {
+            intrinsic
+        } else {
+            (intrinsic + transport_error_mm).next_up()
+        };
         if top[0] < 0.
             || end[0] <= reserve
             || top[1] >= 0.
@@ -312,6 +360,7 @@ impl Profile {
             top,
             end,
             rounding_error_mm: reserve,
+            transport_error,
         };
         for (i, &segment) in segments.iter().enumerate() {
             if (i > 0 && segments[i - 1].end != segment.start)
@@ -391,6 +440,7 @@ impl Profile {
             top: [radius, top_z],
             end: [shank, plain],
             rounding_error_mm: reserve,
+            transport_error: TransportError::ZERO,
         };
         let mut count = 0;
         let mut push = |start, end, curve, role| {
@@ -558,6 +608,14 @@ impl Profile {
     /// its positional tolerance before publishing manufacturing geometry.
     pub fn rounding_error_mm(&self) -> f64 {
         self.rounding_error_mm
+    }
+
+    pub fn transport_error_mm(&self) -> f64 {
+        self.transport_error.total_mm()
+    }
+
+    pub fn transport_error(&self) -> TransportError {
+        self.transport_error
     }
 
     pub fn volume_mm3(&self) -> f64 {

@@ -1,5 +1,48 @@
 use super::*;
 
+#[test]
+fn retained_transport_precision_remains_explicit_and_consumable() {
+    let p = Profile::new(counter(0.1, 0.1), 1.5, 1.).unwrap();
+    let segments: Vec<_> = p.segments().collect();
+    let literal = Profile::from_retained_segments(&segments).unwrap();
+    assert_eq!(literal.transport_error(), TransportError::ZERO);
+    assert_eq!(literal.transport_error_mm(), 0.);
+    let error = TransportError {
+        numeric_conversion_mm: 1e-11,
+        arithmetic_mm: 1e-13,
+    };
+    let transported = Profile::from_transported_segments(&segments, error).unwrap();
+    assert_eq!(transported.transport_error(), error);
+    assert!(transported.transport_error_mm() >= 1.01e-11);
+    assert!(transported.rounding_error_mm() >= literal.rounding_error_mm() + error.total_mm());
+    assert_eq!(transported.volume_mm3(), literal.volume_mm3());
+    assert_eq!(transported.segments().collect::<Vec<_>>(), segments);
+    for bad in [f64::NAN, f64::INFINITY, -1., 1e300] {
+        for error in [
+            TransportError {
+                numeric_conversion_mm: bad,
+                arithmetic_mm: 0.,
+            },
+            TransportError {
+                numeric_conversion_mm: 0.,
+                arithmetic_mm: bad,
+            },
+        ] {
+            assert!(Profile::from_transported_segments(&segments, error).is_err());
+        }
+    }
+    assert!(
+        Profile::from_transported_segments(
+            &segments,
+            TransportError {
+                numeric_conversion_mm: f64::MAX,
+                arithmetic_mm: f64::MAX
+            }
+        )
+        .is_err()
+    );
+}
+
 fn counter(neck: f64, chamfer: f64) -> Head {
     Head::Countersunk {
         radius_mm: 3.,
