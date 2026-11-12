@@ -1,6 +1,7 @@
 //! Thread solids and receiving cuts use the same versioned source for UI/MCP.
 mod cosmetic;
 mod end_treatments;
+mod internal;
 use crate::{ModelError, error};
 use multicad_core::{
     document::EntityId,
@@ -337,7 +338,14 @@ pub(crate) fn build_rust(
     let solid = if source.mode == ThreadMode::CutInternal {
         let target = receiving_target(feature, source, solids)?
             .ok_or_else(|| fail("Receiving thread has no target predecessor"))?;
-        target.rust_cut_internal_thread(spec, thread.minimum_wall_mm, feature, frame, policy)
+        return internal::build(
+            feature,
+            source.parameters.family,
+            &thread,
+            target,
+            (spec, root_radius, frame),
+            policy,
+        );
     } else if source.mode == ThreadMode::CutExternal {
         let target = receiving_target(feature, source, solids)?
             .ok_or_else(|| fail("Receiving thread has no target predecessor"))?;

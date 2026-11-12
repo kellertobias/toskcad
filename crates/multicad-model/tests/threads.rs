@@ -182,16 +182,28 @@ fn external_cut_retains_the_unthreaded_shaft_and_internal_cut_mates_with_the_sep
     let receiver = model.solid(hole.feature).unwrap();
     assert_eq!(receiver.solid_count().unwrap(), 1);
     assert!(receiver.volume_mm3().unwrap() < 7700.);
-    assert!(
-        receiver
-            .boolean(
-                model.solid(male.feature).unwrap(),
-                BooleanOperation::Intersect,
-                GeometryPolicy::default()
-            )
-            .unwrap()
-            .is_none()
-    );
+    // General threaded Boolean intersection remains unsupported. Check the
+    // actual owned material, floor and independently certified closed meshes.
+    let male = model.solid(male.feature).unwrap();
+    for z in [0.01, 0.61, 2.17, 4.89, 7.99] {
+        for angle in 0..32 {
+            let theta = f64::from(angle) * 2. * PI / 32.;
+            for radius in [0., 3., 3.4, 3.8, 3.99] {
+                let point = [10. + radius * theta.cos(), 10. + radius * theta.sin(), z];
+                if male.rust_thread_contains(point).unwrap() {
+                    assert!(!receiver.rust_thread_contains(point).unwrap(), "{point:?}");
+                }
+            }
+        }
+    }
+    assert!(!receiver.rust_thread_contains([10., 10., 7.999]).unwrap());
+    assert!(receiver.rust_thread_contains([10., 10., 8.001]).unwrap());
+    for solid in [receiver, male] {
+        let receipt = solid
+            .manufacturing_mesh_with_receipt(Default::default())
+            .unwrap();
+        assert!(receipt.edge_pairs > 0 && receipt.vertex_links > 0);
+    }
 }
 #[test]
 fn incomplete_or_wrong_receiving_geometry_fails_without_changing_the_session() {
@@ -583,4 +595,295 @@ fn unified_cosmetic_fit_cannot_be_exported_as_a_manufacturing_thread() {
     assert!(preview.recipes.iter().all(
         |r| matches!(&r.status, RecipeStatus::Unsupported(reason) if reason.contains("cosmetic"))
     ));
+}
+
+#[test]
+fn blind_thread_tool_preserves_original_length_hand_phase_history_and_reopen() {
+    use multicad_core::model::ThreadHand;
+    for hand in [ThreadHand::Right, ThreadHand::Left] {
+        for top in [false, true] {
+            let mut s = session();
+            let stock = PrimitiveRequest::new(
+                "Stock",
+                PrimitiveParameters::Box {
+                    size: [length(20.), length(20.), length(20.)],
+                    frame: Default::default(),
+                },
+            );
+            primitive(&mut s, &stock);
+            let parameters = ThreadParameters {
+                hand,
+                length: length(8.),
+                radial_allowance: length(0.1),
+                frame: PrimitiveFrame {
+                    origin: [length(10.), length(10.), length(if top { 20. } else { 0. })],
+                    u: [0.6, 0.8, 0.],
+                    v: if top {
+                        [0.8, -0.6, 0.]
+                    } else {
+                        [-0.8, 0.6, 0.]
+                    },
+                },
+                ..params()
+            };
+            let cut = ThreadRequest::receiving(
+                "Tap",
+                ThreadMode::CutInternal,
+                BodyInput {
+                    body: stock.body,
+                    producer: stock.feature,
+                },
+                parameters.clone(),
+            )
+            .unwrap();
+            thread(&mut s, &cut);
+            let before = s.document().clone();
+            let initial = compile(&s);
+            let source = initial.solid(cut.feature).unwrap();
+            let z = if top { 12. } else { 8. };
+            assert!(
+                !source
+                    .rust_thread_contains([10., 10., z + if top { 0.001 } else { -0.001 }])
+                    .unwrap()
+            );
+            assert!(
+                source
+                    .rust_thread_contains([10., 10., z + if top { -0.001 } else { 0.001 }])
+                    .unwrap()
+            );
+            assert!(!source.supports_step_export());
+            let topology = &initial.snapshot().shapes[&cut.feature].topology;
+            let floor = topology
+                .elements
+                .iter()
+                .find(|face| {
+                    face.origins.iter().any(|origin| {
+                        origin.source == cut.feature
+                            && origin.role == "connection.receiver/thread.floor"
+                    })
+                })
+                .unwrap();
+            let floor_ref =
+                multicad_core::references::GeometryIntent::capture(topology, floor.key).unwrap();
+            let volume = source.volume_mm3().unwrap();
+            let edited = ThreadParameters {
+                length: length(9.),
+                ..parameters
+            };
+            let draft = model::prepare_thread_edit(&s, s.revision(), actor(), cut.feature, &edited)
+                .unwrap();
+            let candidate = Compiler {
+                omit_display: true,
+                ..Default::default()
+            }
+            .compile(draft.prepared.document(), s.revision() + 1)
+            .unwrap();
+            assert!(candidate.solid(cut.feature).unwrap().volume_mm3().unwrap() < volume);
+            s.commit(draft.prepared).unwrap();
+            let after = s.document().clone();
+            s.undo(s.revision(), actor()).unwrap();
+            assert_eq!(s.document(), &before);
+            s.redo(s.revision(), actor()).unwrap();
+            assert_eq!(s.document(), &after);
+            let mut bytes = vec![];
+            project_file::write(
+                &ProjectFile::new(after.clone()).unwrap(),
+                &mut bytes,
+                Default::default(),
+            )
+            .unwrap();
+            let reopened = project_file::read(
+                &mut &bytes[..],
+                Default::default(),
+                &project_file::supported_capabilities(),
+            )
+            .unwrap()
+            .project;
+            assert_eq!(reopened.document, after);
+            let recovered = Compiler {
+                omit_display: true,
+                ..Default::default()
+            }
+            .compile(&reopened.document, 0)
+            .unwrap();
+            assert_eq!(recovered.snapshot().bodies[&stock.body], cut.feature);
+            assert!(matches!(
+                multicad_core::references::resolve(
+                    &floor_ref,
+                    &recovered.snapshot().shapes[&cut.feature].topology,
+                    0
+                ),
+                multicad_core::references::Resolution::Resolved { .. }
+            ));
+            let canceled = Compiler {
+                omit_display: true,
+                ..Default::default()
+            }
+            .compile_with_backend(
+                &reopened.document,
+                0,
+                multicad_model::GeometryBackend::Rust,
+                Some(&|| true),
+            )
+            .err()
+            .unwrap();
+            assert!(multicad_model::is_superseded(&canceled));
+            let solid = recovered.solid(cut.feature).unwrap();
+            assert_eq!(
+                solid.volume_mm3().unwrap(),
+                candidate.solid(cut.feature).unwrap().volume_mm3().unwrap()
+            );
+            solid
+                .manufacturing_mesh_with_receipt(Default::default())
+                .unwrap();
+        }
+    }
+}
+
+#[test]
+fn blind_thread_tool_refuses_missing_floor_wall_and_unproved_frame_atomically() {
+    for (length_mm, x, tilt) in [
+        (20., 10., 0.),
+        (21., 10., 0.),
+        (8., 4.5, 0.),
+        (8., 10., 1e-4),
+    ] {
+        let mut s = session();
+        let stock = PrimitiveRequest::new(
+            "Stock",
+            PrimitiveParameters::Box {
+                size: [length(20.), length(20.), length(20.)],
+                frame: Default::default(),
+            },
+        );
+        primitive(&mut s, &stock);
+        let before = s.document().clone();
+        let angle: f64 = tilt;
+        let request = ThreadRequest::receiving(
+            "Invalid tap",
+            ThreadMode::CutInternal,
+            BodyInput {
+                body: stock.body,
+                producer: stock.feature,
+            },
+            ThreadParameters {
+                length: length(length_mm),
+                frame: PrimitiveFrame {
+                    origin: [length(x), length(10.), length(0.)],
+                    u: [angle.cos(), 0., angle.sin()],
+                    v: [0., 1., 0.],
+                },
+                ..params()
+            },
+        )
+        .unwrap();
+        let draft = model::prepare_thread(&s, s.revision(), actor(), &request).unwrap();
+        assert!(
+            Compiler {
+                omit_display: true,
+                ..Default::default()
+            }
+            .compile(draft.prepared.document(), s.revision() + 1)
+            .is_err()
+        );
+        assert_eq!(s.document(), &before);
+        assert_eq!(compile(&s).snapshot().bodies[&stock.body], stock.feature);
+    }
+}
+
+#[test]
+fn blind_thread_tool_refuses_unqualified_family_prior_cut_and_step_publication() {
+    let mut s = session();
+    let stock = PrimitiveRequest::new(
+        "Stock",
+        PrimitiveParameters::Box {
+            size: [length(20.), length(20.), length(20.)],
+            frame: Default::default(),
+        },
+    );
+    primitive(&mut s, &stock);
+    let before = s.document().clone();
+    let unsupported = ThreadRequest::receiving(
+        "UNC box",
+        ThreadMode::CutInternal,
+        BodyInput {
+            body: stock.body,
+            producer: stock.feature,
+        },
+        ThreadParameters {
+            frame: frame(10., 10.),
+            ..unified_parameters(model::ThreadFamily::Unc, true)
+        },
+    )
+    .unwrap();
+    let draft = model::prepare_thread(&s, s.revision(), actor(), &unsupported).unwrap();
+    assert!(
+        Compiler {
+            omit_display: true,
+            ..Default::default()
+        }
+        .compile(draft.prepared.document(), s.revision() + 1)
+        .is_err()
+    );
+    assert_eq!(s.document(), &before);
+    let tap = ThreadRequest::receiving(
+        "Metric box",
+        ThreadMode::CutInternal,
+        BodyInput {
+            body: stock.body,
+            producer: stock.feature,
+        },
+        ThreadParameters {
+            frame: frame(10., 10.),
+            ..params()
+        },
+    )
+    .unwrap();
+    thread(&mut s, &tap);
+    let before = s.document().clone();
+    let repeated = ThreadRequest::receiving(
+        "Prior curved cut",
+        ThreadMode::CutInternal,
+        BodyInput {
+            body: stock.body,
+            producer: tap.feature,
+        },
+        ThreadParameters {
+            frame: frame(10., 10.),
+            ..params()
+        },
+    )
+    .unwrap();
+    let draft = model::prepare_thread(&s, s.revision(), actor(), &repeated).unwrap();
+    assert!(
+        Compiler {
+            omit_display: true,
+            ..Default::default()
+        }
+        .compile(draft.prepared.document(), s.revision() + 1)
+        .is_err()
+    );
+    assert_eq!(s.document(), &before);
+    let set = define_export(&mut s);
+    let before = s.document().clone();
+    let exporter = Exporter::default();
+    let preview = exporter
+        .preview(&before, s.revision(), set, &actor(), None)
+        .unwrap();
+    assert!(!preview.can_run());
+    let output = tempfile::tempdir().unwrap();
+    assert!(
+        exporter
+            .run(
+                &before,
+                s.revision(),
+                &preview.key,
+                output.path(),
+                &actor(),
+                None
+            )
+            .is_err()
+    );
+    assert_eq!(std::fs::read_dir(output.path()).unwrap().count(), 0);
+    assert_eq!(s.document(), &before);
 }
