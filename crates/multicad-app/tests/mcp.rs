@@ -4403,7 +4403,14 @@ fn default_stdio_all_twelve_box_chamfers_rebuild_rollback_export_and_reopen() {
 
 #[test]
 fn default_stdio_profiled_metric_heads_keep_fit_history_and_independent_reopen() {
-    for kind in ["countersunk", "button"] {
+    for (kind, underhead) in [
+        ("countersunk", 3.),
+        ("button", 3.),
+        ("countersunk", 2.),
+        ("button", 2.),
+        ("countersunk", 2.01),
+        ("button", 2.01),
+    ] {
         let directory = tempfile::tempdir().unwrap();
         let project = directory.path().join("profiled.tcd");
         let args = [
@@ -4418,7 +4425,7 @@ fn default_stdio_profiled_metric_heads_keep_fit_history_and_independent_reopen()
         } else {
             json!({"kind":kind,"diameter":length(6.),"height":length(1.8),"crown_radius":length(4.),"top_land_diameter":length(3.),"neck_radius":length(0.1)})
         };
-        let mut recipe = json!({"kind":"machine_screw","underhead_length":length(3.),"shank_diameter":length(3.),"head":head,
+        let mut recipe = json!({"kind":"machine_screw","underhead_length":length(underhead),"shank_diameter":length(3.),"head":head,
             "drive":{"kind":"hex_socket","across_flats":length(2.),"depth":length(0.6)},
             "thread":{"family":"iso_metric","fit":"metric_6g_external","major_diameter":length(3.),"pitch":length(0.5),"length":length(2.),"representation":"modeled"}});
         let created = client.ok(
@@ -4426,6 +4433,24 @@ fn default_stdio_profiled_metric_heads_keep_fit_history_and_independent_reopen()
             json!({"expected_revision":0,"name":"Metric profiled screw","recipe":recipe}),
         );
         let first = client.part_volume();
+        let initial_receipt = client.ok(
+            "export_step",
+            json!({"part":created["part"],"file_name":"initial.step"}),
+        );
+        close(
+            initial_receipt["readback_volume_mm3"].as_f64().unwrap(),
+            first,
+        );
+        let initial = multicad_kernel::Solid::import_rust_step(
+            &std::fs::read_to_string(directory.path().join("initial.step")).unwrap(),
+            multicad_core::document::EntityId::new(),
+            multicad_kernel::GeometryPolicy::default(),
+        )
+        .unwrap();
+        let (source, _) = initial.rust_profiled_screw_geometry().unwrap();
+        assert!(source.spec().head.is_none());
+        close(source.thread().spec().length_mm, 2.);
+        close(initial.volume_mm3().unwrap(), first);
         let inspected = client.ok(
             "inspect_mechanical_part",
             json!({"feature":created["feature"]}),

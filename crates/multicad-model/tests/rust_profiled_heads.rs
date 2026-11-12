@@ -19,7 +19,7 @@ fn compiler() -> Compiler {
         ..Default::default()
     }
 }
-fn recipe(kind: usize, fit: ThreadFit) -> MechanicalPartParameters {
+fn recipe(kind: usize, fit: ThreadFit, underhead: f64) -> MechanicalPartParameters {
     let mut p = model::default_machine_screw();
     let MechanicalPartParameters::MachineScrew {
         underhead_length,
@@ -32,7 +32,7 @@ fn recipe(kind: usize, fit: ThreadFit) -> MechanicalPartParameters {
     else {
         unreachable!()
     };
-    *underhead_length = Some(length(3.));
+    *underhead_length = Some(length(underhead));
     *shank_diameter = length(3.);
     *head = if kind == 0 {
         ScrewHead::Countersunk {
@@ -72,14 +72,21 @@ fn recipe(kind: usize, fit: ThreadFit) -> MechanicalPartParameters {
 
 #[test]
 fn canonical_profiled_heads_create_edit_export_and_reopen_without_native_geometry() {
-    for (kind, fit) in [
-        (0, ThreadFit::NominalBasic),
-        (2, ThreadFit::NominalBasic),
-        (0, ThreadFit::Metric6gExternal),
-        (2, ThreadFit::Metric6gExternal),
+    for (kind, fit, underhead) in [
+        (0, ThreadFit::NominalBasic, 3.),
+        (0, ThreadFit::NominalBasic, 2.),
+        (2, ThreadFit::NominalBasic, 3.),
+        (2, ThreadFit::NominalBasic, 2.),
+        (0, ThreadFit::Metric6gExternal, 3.),
+        (0, ThreadFit::Metric6gExternal, 2.),
+        (0, ThreadFit::Metric6gExternal, 2.01),
+        (2, ThreadFit::Metric6gExternal, 3.),
+        (2, ThreadFit::Metric6gExternal, 2.),
+        (2, ThreadFit::Metric6gExternal, 2.01),
     ] {
         let mut session = Session::new(Document::new("Profiled head workflow").unwrap()).unwrap();
-        let request = MechanicalPartRequest::new("Metric profiled screw", recipe(kind, fit));
+        let request =
+            MechanicalPartRequest::new("Metric profiled screw", recipe(kind, fit, underhead));
         let candidate = model::prepare_mechanical_part(&session, 0, actor(), &request).unwrap();
         let checked = compiler()
             .compile_with_backend(
@@ -97,10 +104,52 @@ fn canonical_profiled_heads_create_edit_export_and_reopen_without_native_geometr
             assert!(actual.thread().spec().major_radius_mm < 1.5);
             assert!(actual.thread().spec().root_radius_mm.is_some());
         }
+        assert_eq!(actual.thread().spec().length_mm, 2.);
+        if underhead <= 2.01 {
+            assert!(actual.visible_thread_interval_mm()[0] > 0.);
+        }
         let before = source.volume_mm3().unwrap();
+        let initial_dir = tempfile::tempdir().unwrap();
+        let initial_path = initial_dir.path().join("initial.step");
+        source.write_step(&initial_path).unwrap();
+        let initial = multicad_kernel::Solid::import_rust_step(
+            &std::fs::read_to_string(initial_path).unwrap(),
+            EntityId::new(),
+            GeometryPolicy::default(),
+        )
+        .unwrap();
+        let (decoded, _) = initial.rust_profiled_screw_geometry().unwrap();
+        assert!(decoded.spec().head.is_none());
+        assert!((decoded.thread().spec().length_mm - 2.).abs() < 1e-8);
+        assert!((initial.volume_mm3().unwrap() - before).abs() < 1e-6);
+        let mut initial_bytes = Vec::new();
+        project_file::write(
+            &ProjectFile::new(candidate.prepared.document().clone()).unwrap(),
+            &mut initial_bytes,
+            Default::default(),
+        )
+        .unwrap();
+        let initial_reopened = project_file::read(
+            &mut initial_bytes.as_slice(),
+            Default::default(),
+            &project_file::supported_capabilities(),
+        )
+        .unwrap()
+        .project;
+        let initial_rebuilt = compiler()
+            .compile_with_backend(&initial_reopened.document, 0, GeometryBackend::Rust, None)
+            .unwrap();
+        assert_eq!(
+            initial_rebuilt
+                .solid(request.feature)
+                .unwrap()
+                .volume_mm3()
+                .unwrap(),
+            before
+        );
         session.commit(candidate.prepared).unwrap();
         let original = session.document().clone();
-        let mut edit = recipe(kind, fit);
+        let mut edit = recipe(kind, fit, underhead);
         let MechanicalPartParameters::MachineScrew {
             underhead_length, ..
         } = &mut edit

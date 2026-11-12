@@ -442,7 +442,7 @@ pub fn validate_screw_profile_envelope(
                 || *l >= radius
                 || radius > *c
                 || shank + n >= radius
-                || *n > plain
+                || *n >= underhead
             {
                 return Err(fail());
             }
@@ -469,7 +469,7 @@ pub fn validate_screw_profile_envelope(
             let theta = included_angle_deg.to_radians() / 2.;
             let rim = k - (radius - shank) / theta.tan();
             let center = n * (theta / 2.).tan();
-            if !rim.is_finite() || rim < 0. || *e >= radius || *e > rim || center > plain {
+            if !rim.is_finite() || rim < 0. || *e >= radius || *e > rim || center >= underhead {
                 return Err(fail());
             }
             let cone_z = center - n * theta.sin();
