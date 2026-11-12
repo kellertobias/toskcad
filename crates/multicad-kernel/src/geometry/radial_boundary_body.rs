@@ -3,7 +3,7 @@ use super::*;
 use crate::rust_prism_topology::Builder;
 use multicad_core::references::{AnalyticGeometry, TopologySnapshot};
 use multicad_rust_kernel::radial_tensor::{
-    Axis, Curve, Location, MassProperties, RadialBoundary, Surface,
+    Axis, Curve, Location, MassProperties, RadialBoundary, Surface, VolumeProperties,
 };
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -19,6 +19,7 @@ mod tests;
 struct Placement {
     boundary: Rc<RadialBoundary>,
     properties: RefCell<Option<MassProperties>>,
+    volume: RefCell<Option<VolumeProperties>>,
     bounds: RefCell<Option<Bounds>>,
 }
 
@@ -196,6 +197,7 @@ impl Solid {
             source: Rc::new(Placement {
                 boundary: Rc::new(boundary),
                 properties: RefCell::new(None),
+                volume: RefCell::new(None),
                 bounds: RefCell::new(None),
             }),
             placed: RefCell::new(None),
@@ -313,6 +315,7 @@ impl RadialBoundaryBody {
         let placement = Rc::new(Placement {
             boundary: Rc::new(boundary),
             properties: RefCell::new(None),
+            volume: RefCell::new(None),
             bounds: RefCell::new(None),
         });
         checkpoint(interrupt)?;
@@ -329,17 +332,39 @@ impl RadialBoundaryBody {
         if let Some(properties) = placement.properties.borrow().as_ref() {
             return Ok(properties.clone());
         }
-        let properties = placement
+        let mut properties = placement
             .boundary
             .properties_with_interrupt(MASS_ACCURACY, interrupt)
             .map_err(failure)?;
+        checkpoint(interrupt)?;
+        // Keep the scalar report independent of whether full properties were
+        // requested first. Each property retains a valid independent enclosure.
+        properties.volume_mm3 = Self::volume_at(&placement, interrupt)?.volume_mm3;
         checkpoint(interrupt)?;
         *placement.properties.borrow_mut() = Some(properties.clone());
         Ok(properties)
     }
 
+    fn volume_at(
+        placement: &Placement,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<VolumeProperties, GeometryError> {
+        checkpoint(interrupt)?;
+        if let Some(volume) = *placement.volume.borrow() {
+            return Ok(volume);
+        }
+        let volume = placement
+            .boundary
+            .volume_with_interrupt(MASS_ACCURACY, interrupt)
+            .map_err(failure)?;
+        checkpoint(interrupt)?;
+        *placement.volume.borrow_mut() = Some(volume);
+        Ok(volume)
+    }
+
     pub(super) fn volume_mm3(&self, frame: PlaneFrame) -> Result<f64, GeometryError> {
-        let [a, b] = self.properties(frame, None)?.volume_mm3;
+        let placement = self.placement(frame, None)?;
+        let [a, b] = Self::volume_at(&placement, None)?.volume_mm3;
         Ok(a + (b - a) * 0.5)
     }
 

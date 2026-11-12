@@ -515,3 +515,69 @@ fn normal_step_import_admits_actual_retained_members_and_mixed_compounds_without
     let reread = Solid::import_rust_step(&exported, feature, policy).unwrap();
     assert_eq!(reread.solid_count().unwrap(), 2);
 }
+
+#[test]
+fn scalar_volume_does_not_compute_full_mass_and_is_independent_of_query_order() {
+    let solid = fixture();
+    let (body, frame) = solid.radial_boundary_body().unwrap();
+    let placement = body.placement(frame, None).unwrap();
+    assert!(placement.properties.borrow().is_none());
+    assert!(placement.volume.borrow().is_none());
+    let scalar = solid.volume_mm3().unwrap();
+    assert!(placement.volume.borrow().is_some());
+    assert!(placement.properties.borrow().is_none());
+    let volume = placement.volume.borrow().unwrap();
+    let properties = solid.rust_radial_boundary_properties(None).unwrap();
+    assert_eq!(properties.volume_mm3, volume.volume_mm3);
+    assert_eq!(solid.volume_mm3().unwrap(), scalar);
+    let other = fixture();
+    let first = other.rust_radial_boundary_properties(None).unwrap();
+    assert_eq!(first.volume_mm3, volume.volume_mm3);
+    assert_eq!(other.volume_mm3().unwrap(), scalar);
+    assert_eq!(
+        RadialBoundaryBody::volume_at(&placement, Some(&|| true))
+            .unwrap_err()
+            .kind,
+        GeometryErrorKind::Cancelled
+    );
+    assert_eq!(
+        RadialBoundaryBody::volume_at(&placement, None).unwrap(),
+        volume
+    );
+}
+
+#[test]
+fn interrupted_cold_volume_queries_never_publish_a_partial_cache() {
+    let baseline = fixture();
+    let (body, frame) = baseline.radial_boundary_body().unwrap();
+    let placement = body.placement(frame, None).unwrap();
+    let count = std::cell::Cell::new(0usize);
+    let counting = || {
+        count.set(count.get() + 1);
+        false
+    };
+    let complete = RadialBoundaryBody::volume_at(&placement, Some(&counting)).unwrap();
+    let end = count.get();
+    for stop in [1, 2, end / 2, end] {
+        let solid = fixture();
+        let (body, frame) = solid.radial_boundary_body().unwrap();
+        let cold = body.placement(frame, None).unwrap();
+        count.set(0);
+        let cancel = || {
+            count.set(count.get() + 1);
+            count.get() >= stop
+        };
+        assert_eq!(
+            RadialBoundaryBody::volume_at(&cold, Some(&cancel))
+                .unwrap_err()
+                .kind,
+            GeometryErrorKind::Cancelled
+        );
+        assert!(cold.volume.borrow().is_none());
+        assert!(cold.properties.borrow().is_none());
+        assert_eq!(
+            RadialBoundaryBody::volume_at(&cold, None).unwrap(),
+            complete
+        );
+    }
+}
