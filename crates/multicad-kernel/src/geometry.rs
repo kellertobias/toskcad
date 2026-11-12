@@ -15,6 +15,7 @@ mod arithmetic;
 mod axial_stack_body;
 mod bevel_body;
 pub(crate) mod bore_treatment;
+pub use bore_treatment::ConicalSeatGeometry;
 pub(crate) mod circular_pocket_body;
 pub(crate) mod construction;
 mod cosmetic_fastener_body;

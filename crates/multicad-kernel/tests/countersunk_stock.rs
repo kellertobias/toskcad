@@ -211,3 +211,105 @@ fn cap_loops_use_actual_conical_mouths_and_mixed_treatments_refuse_atomically() 
     assert_eq!(error.kind, GeometryErrorKind::Unsupported);
     assert_eq!(source.topology_snapshot(owner, 0).unwrap(), before);
 }
+
+#[test]
+fn receiving_support_getter_keeps_actual_finite_caps_under_reverse_and_end_entry() {
+    let q = |n, d| Rational::new(n, d).unwrap();
+    let policy = GeometryPolicy::default();
+    let frame = PlaneFrame {
+        origin: [1e6, -2e6, 3e6],
+        u: [0.8, 0.6, 0.],
+        v: [-0.36, 0.48, 0.8],
+    };
+    for reverse in [false, true] {
+        for end in [false, true] {
+            let prism = PolygonPrism::with_circular_holes(
+                vec![
+                    vec![[0, 0], [20, 0], [20, 16], [0, 16]]
+                        .into_iter()
+                        .map(|p| p.map(|n| q(n, 1)))
+                        .collect(),
+                ],
+                vec![Circle::new([q(10, 1), q(8, 1)], q(17, 10)).unwrap()],
+                q(61, 10),
+            )
+            .unwrap();
+            let feature = EntityId::new();
+            let edges: Vec<_> = (0..5)
+                .map(|i| Origin {
+                    source: feature,
+                    role: format!("edge.{i}"),
+                })
+                .collect();
+            let stock = Solid::from_polygon_prism_sweep(
+                prism,
+                frame,
+                reverse,
+                feature,
+                &edges,
+                &[false; 5],
+                policy,
+            )
+            .unwrap();
+            assert!(stock.rust_countersink_geometry().is_none());
+            let origin = Origin {
+                source: EntityId::new(),
+                role: "seat".into(),
+            };
+            let cut = stock
+                .rust_countersink_polygon(
+                    &[Countersink {
+                        hole: 0,
+                        end,
+                        radius_mm: 3.5,
+                        depth_mm: 2.2,
+                    }],
+                    std::slice::from_ref(&origin),
+                    policy,
+                )
+                .unwrap();
+            let data = cut.rust_countersink_geometry().unwrap();
+            assert_eq!(data.len(), 1);
+            let data = &data[0];
+            assert_eq!(data.origin, origin);
+            assert_eq!(data.bore_radius_mm, 1.7);
+            assert_eq!(data.mouth_radius_mm, 3.5);
+            assert!((data.depth_mm - 2.2).abs() < data.source_error_mm);
+            assert!(data.source_error_mm > 0. && data.source_error_mm < 1e-10);
+            let actual: [f64; 3] = std::array::from_fn(|i| {
+                data.frame.origin[i]
+                    + data.frame.u[i] * data.offset_mm[0]
+                    + data.frame.v[i] * data.offset_mm[1]
+                    + data.frame.normal()[i] * data.offset_mm[2]
+            });
+            let sign = if reverse { -1. } else { 1. };
+            let z = if end { sign * 6.1 } else { 0. };
+            let expected: [f64; 3] = std::array::from_fn(|i| {
+                frame.origin[i] + frame.u[i] * 10. + frame.v[i] * 8. + frame.normal()[i] * z
+            });
+            for (a, b) in actual.into_iter().zip(expected) {
+                assert!((a - b).abs() < 1e-8);
+            }
+            let inward = frame
+                .normal()
+                .map(|n| n * sign * if end { -1. } else { 1. });
+            assert!(
+                data.frame
+                    .normal()
+                    .into_iter()
+                    .zip(inward)
+                    .map(|(a, b)| a * b)
+                    .sum::<f64>()
+                    > 1. - 1e-12
+            );
+            let topology = cut.topology_snapshot(feature, 0).unwrap();
+            assert!(topology.elements.iter().any(|e| {
+                matches!(e.geometry,Some(AnalyticGeometry::CircularArc {frame:circle,radius_mm,..})
+                    if radius_mm==3.5 && circle.origin_mm.into_iter().zip(actual)
+                        .map(|(a,b)|(a-b).abs()).sum::<f64>()<1e-7)
+            }));
+            cut.manufacturing_mesh_with_receipt(Default::default())
+                .unwrap();
+        }
+    }
+}

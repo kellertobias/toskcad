@@ -16,7 +16,82 @@ pub(crate) struct BoreTreatments {
     pub(crate) face_origins: Option<Vec<Vec<Origin>>>,
 }
 
+/// Actual finite receiving support retained by a countersunk prism.
+/// Its cavity chart maps as `frame * (offset_mm + local_point)`, with
+/// local +Z into the stock. No world-origin reassociation is performed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConicalSeatGeometry {
+    pub origin: Origin,
+    pub frame: PlaneFrame,
+    pub offset_mm: [f64; 3],
+    pub bore_radius_mm: f64,
+    pub mouth_radius_mm: f64,
+    pub depth_mm: f64,
+    /// Combined source-coordinate conversion and finite-span arithmetic bound.
+    pub source_error_mm: f64,
+}
+
 impl Solid {
+    /// Read actual retained cone supports and their physical source origins.
+    pub fn rust_countersink_geometry(&self) -> Option<Vec<ConicalSeatGeometry>> {
+        let stock = self.polygon_prism()?;
+        let treatments = stock.bore_treatments.as_ref()?;
+        let cuts = treatments.geometry.countersinks();
+        if cuts.is_empty() {
+            return None;
+        }
+        cuts.iter()
+            .map(|cut| {
+                let stack = treatments.geometry.stacks().get(cut.hole)?;
+                let [x, y] = stack.center_mm;
+                let pair = if cut.end {
+                    let end = stack.layers.len().checked_sub(1)?;
+                    [
+                        stack.layers.get(end)?,
+                        stack.layers.get(end.checked_sub(1)?)?,
+                    ]
+                } else {
+                    [stack.layers.first()?, stack.layers.get(1)?]
+                };
+                let mouth = pair[0];
+                let inner = pair[1];
+                let radius = inner.radius_mm;
+                let depth = (inner.z_mm - mouth.z_mm).abs();
+                let reverse = if stock.reverse_sweep { -1. } else { 1. };
+                let direction = reverse * if cut.end { -1. } else { 1. };
+                let frame = PlaneFrame {
+                    origin: stock.frame.origin,
+                    u: stock.frame.u,
+                    v: stock.frame.v.map(|v| direction * v),
+                };
+                let offset_mm = [
+                    x,
+                    direction * y,
+                    if cut.end { -mouth.z_mm } else { mouth.z_mm },
+                ];
+                // Retain the actual finite support layers, not requested cut
+                // dimensions. Two adjacent spacings per operand cover the
+                // single rational conversion and subsequent finite subtraction;
+                // outward L1 accumulation covers their combined spatial effect.
+                let source_error_mm =
+                    [x, y, mouth.z_mm, inner.z_mm, depth, radius, mouth.radius_mm]
+                        .into_iter()
+                        .fold(0_f64, |sum, v| {
+                            let spacing = (v.next_up() - v).abs().max((v - v.next_down()).abs());
+                            (sum + (2. * spacing).next_up()).next_up()
+                        });
+                Some(ConicalSeatGeometry {
+                    origin: treatments.origins.get(&(cut.hole, cut.end))?.clone(),
+                    frame,
+                    offset_mm,
+                    bore_radius_mm: radius,
+                    mouth_radius_mm: mouth.radius_mm,
+                    depth_mm: depth,
+                    source_error_mm,
+                })
+            })
+            .collect()
+    }
     pub(crate) fn chamfer_polygon_bores(
         &self,
         edges: &[TreatmentEdge],
