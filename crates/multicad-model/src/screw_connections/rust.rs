@@ -5,6 +5,7 @@ use multicad_core::model::{ResolvedScrewHead, ScrewConnectionHardwareSource};
 use multicad_kernel::rust_kernel::helical_thread::Thread;
 mod blind;
 mod conical;
+mod library;
 mod washers;
 
 pub(crate) fn validate(
@@ -60,7 +61,7 @@ fn through_nut(
     let fail = |message: &str| error(Some(id), message);
     let unsupported = || {
         fail(
-            "Rust screw connection requires one through bore, generated screw and nut, and optional generated flat washers",
+            "Rust screw connection requires one through bore, generated screw, generated or pinned metric nut, and optional generated or pinned flat washers",
         )
     };
     let [receiver] = source.receivers.as_slice() else {
@@ -87,26 +88,23 @@ fn through_nut(
     }
     let mut placed = Vec::with_capacity(source.hardware.len());
     for row in &source.hardware {
-        let ScrewConnectionHardwareSource::Generated { part } = &row.source else {
-            return Err(unsupported());
-        };
-        let matches = evaluated
-            .snapshot()
-            .leaf_occurrences
-            .values()
-            .any(|leaf| leaf.path.root == row.instance && leaf.producer == part.feature);
-        if !matches {
-            return Err(fail(
-                "Generated hardware must retain its original physical geometry",
-            ));
+        if let ScrewConnectionHardwareSource::Generated { part } = &row.source {
+            let matches = evaluated
+                .snapshot()
+                .leaf_occurrences
+                .values()
+                .any(|leaf| leaf.path.root == row.instance && leaf.producer == part.feature);
+            if !matches {
+                return Err(fail(
+                    "Generated hardware must retain its original physical geometry",
+                ));
+            }
         }
-        placed.push(hardware(
-            input.document,
-            input.parameters,
-            evaluated,
-            row,
-            id,
-        )?);
+        let current = hardware(input.document, input.parameters, evaluated, row, id)?;
+        if matches!(&row.source, ScrewConnectionHardwareSource::Library { .. }) {
+            library::qualify(input, evaluated, row, &current, id)?;
+        }
+        placed.push(current);
     }
     let screw = placed
         .iter()
