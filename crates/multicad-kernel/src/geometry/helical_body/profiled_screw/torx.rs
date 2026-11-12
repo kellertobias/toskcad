@@ -1,5 +1,7 @@
 //! Nominal finite curved-face evaluations. Source-family uncertainty stays
 //! separate; these properties alone do not admit a solid or a STEP boundary.
+pub(in crate::geometry::helical_body) mod display;
+
 use super::*;
 use multicad_rust_kernel::hexalobular_drive::NominalSurfaceEvaluation;
 
@@ -153,7 +155,7 @@ mod tests {
         hexalobular_drive::{Cone, Drive, TangentSpec},
         screw_recess::Recess,
     };
-    fn source(left: bool, plain: f64) -> Screw {
+    pub(super) fn source(left: bool, plain: f64) -> Screw {
         let drive = Drive::from_authored_tangent(
             TangentSpec {
                 major_diameter_mm: 2.8,

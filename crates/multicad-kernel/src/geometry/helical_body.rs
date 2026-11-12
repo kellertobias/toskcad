@@ -1713,11 +1713,33 @@ impl HelicalBody {
             | HelicalForm::External(_)
             | HelicalForm::EndRelief(_) => {
                 let mut topology = self.topology(frame, self.feature, 0)?;
+                let curved_floor_edges: BTreeSet<_> = match &self.form {
+                    HelicalForm::ProfiledScrew(screw)
+                        if screw.recess().hexalobular_geometry().is_some() =>
+                    {
+                        (0..12)
+                            .map(|i| self.origin(format!("screw.drive/rim/1/{i}")))
+                            .collect()
+                    }
+                    _ => BTreeSet::new(),
+                };
                 topology.elements.retain(|element| {
                     element.key.kind == TopologyKind::Edge
                         && element.key.ordinal >= (3 * count) as u32
+                        && element.origins.is_disjoint(&curved_floor_edges)
                 });
                 edges.extend(crate::rust_display::edges(None, &topology, deflection)?);
+                if let HelicalForm::ProfiledScrew(screw) = &self.form {
+                    let used = edges.iter().map(|edge| edge.points_mm.len()).sum::<usize>();
+                    let mut remaining = MAX_DISPLAY_EDGE_POINTS.saturating_sub(used);
+                    edges.extend(profiled_screw::torx::display::edges(
+                        self,
+                        screw,
+                        frame,
+                        deflection,
+                        &mut remaining,
+                    )?);
+                }
             }
             HelicalForm::Shaft => {}
         }

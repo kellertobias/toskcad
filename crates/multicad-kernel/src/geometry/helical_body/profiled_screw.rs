@@ -1,5 +1,5 @@
 //! Policy admission and finite face identities for actual profiled heads.
-mod torx;
+pub(super) mod torx;
 
 use super::{
     boundary::{Boundary, placed_frame},
