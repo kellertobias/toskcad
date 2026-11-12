@@ -91,22 +91,59 @@ impl Drive {
         let request = (I::point(error_mm) / I::point(4.)).lo;
         let spans =
             self.intersection_carrier_with_cancel(index, request, point_limit, cancelled)?;
-        let mut points = Vec::new();
-        let mut remaining = point_limit;
-        for span in spans {
-            let poles = span.poles_mm.map(|p| p.map(I::point));
-            if points.is_empty() {
-                points.push(point(poles[0]));
-                remaining -= 1;
-            }
-            append(
-                poles,
-                (I::point(error_mm) / I::point(2.)).lo,
-                &mut points,
-                &mut remaining,
-                cancelled,
-            )?;
+        carriers_polyline(&spans, error_mm, point_limit, cancelled)
+    }
+}
+
+fn carriers_polyline(
+    spans: &[CubicIntersectionSpan],
+    error_mm: f64,
+    point_limit: usize,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Vec<[f64; 3]>, Error> {
+    let mut points = Vec::new();
+    let mut remaining = point_limit;
+    for span in spans {
+        let poles = span.poles_mm.map(|p| p.map(I::point));
+        if points.is_empty() {
+            points.push(point(poles[0]));
+            remaining -= 1;
         }
-        Ok(points)
+        append(
+            poles,
+            (I::point(error_mm) / I::point(2.)).lo,
+            &mut points,
+            &mut remaining,
+            cancelled,
+        )?;
+    }
+    Ok(points)
+}
+
+impl FiniteBinding {
+    /// Approximate the retained literal master curves, preserving their shared
+    /// vertices. This does not regenerate nominal circle/cone carriers.
+    pub fn intersection_polyline(
+        &self,
+        index: usize,
+        error_mm: f64,
+        point_limit: usize,
+    ) -> Result<Vec<[f64; 3]>, Error> {
+        self.intersection_polyline_with_cancel(index, error_mm, point_limit, &|| false)
+    }
+    pub fn intersection_polyline_with_cancel(
+        &self,
+        index: usize,
+        error_mm: f64,
+        point_limit: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<[f64; 3]>, Error> {
+        if index >= 12 || !error_mm.is_finite() || error_mm <= 0. {
+            return Err(Error::Invalid);
+        }
+        if !(2..=1_000_000).contains(&point_limit) {
+            return Err(Error::Limit);
+        }
+        carriers_polyline(&self.carriers()[index], error_mm, point_limit, cancelled)
     }
 }
