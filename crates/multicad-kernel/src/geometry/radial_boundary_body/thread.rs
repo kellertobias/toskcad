@@ -143,6 +143,7 @@ impl Solid {
             policy,
             interrupt,
             Some(Rc::new(metadata)),
+            None,
         )
     }
 

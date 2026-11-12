@@ -8,7 +8,9 @@ use multicad_rust_kernel::radial_tensor::{
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 mod identity;
+mod pipe;
 mod thread;
+pub use pipe::RetainedAxialPipeThreadSource;
 pub use thread::RetainedHelicalThreadSource;
 
 const OPERATION: &str = "retained radial boundary";
@@ -33,6 +35,7 @@ pub(crate) struct RadialBoundaryBody {
     edge_keys: Vec<multicad_core::project_file::ContentHash>,
     vertex_keys: Vec<multicad_core::project_file::ContentHash>,
     authored_thread: Option<Rc<thread::AuthoredThread>>,
+    authored_pipe: Option<Rc<pipe::AuthoredPipe>>,
 }
 
 pub(super) fn source_signature(
@@ -145,7 +148,7 @@ impl Solid {
         policy: GeometryPolicy,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Self, GeometryError> {
-        Self::from_certified_radial_boundary(boundary, feature, policy, interrupt, None)
+        Self::from_certified_radial_boundary(boundary, feature, policy, interrupt, None, None)
     }
 
     fn from_certified_radial_boundary(
@@ -154,6 +157,7 @@ impl Solid {
         policy: GeometryPolicy,
         interrupt: Option<&dyn Fn() -> bool>,
         authored_thread: Option<Rc<thread::AuthoredThread>>,
+        authored_pipe: Option<Rc<pipe::AuthoredPipe>>,
     ) -> Result<Self, GeometryError> {
         policy.validate()?;
         checkpoint(interrupt)?;
@@ -206,6 +210,7 @@ impl Solid {
             edge_keys: keys.edges,
             vertex_keys: keys.vertices,
             authored_thread,
+            authored_pipe,
         };
         let bounds = body.bounds(PlaneFrame::default(), interrupt)?;
         policy.point(bounds.min)?;
@@ -285,6 +290,7 @@ impl RadialBoundaryBody {
             edge_keys: self.edge_keys.clone(),
             vertex_keys: self.vertex_keys.clone(),
             authored_thread: self.authored_thread.clone(),
+            authored_pipe: self.authored_pipe.clone(),
         }
     }
     fn placement(
@@ -362,6 +368,14 @@ impl RadialBoundaryBody {
         Ok(volume)
     }
 
+    pub(super) fn volume_properties(
+        &self,
+        frame: PlaneFrame,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<VolumeProperties, GeometryError> {
+        let placement = self.placement(frame, interrupt)?;
+        Self::volume_at(&placement, interrupt)
+    }
     pub(super) fn volume_mm3(&self, frame: PlaneFrame) -> Result<f64, GeometryError> {
         let placement = self.placement(frame, None)?;
         let [a, b] = Self::volume_at(&placement, None)?.volume_mm3;
@@ -450,6 +464,8 @@ impl RadialBoundaryBody {
                 .map(|i| {
                     if let Some(authored) = &self.authored_thread {
                         authored.face_origins(self.feature, i)
+                    } else if let Some(pipe) = &self.authored_pipe {
+                        pipe.face_origins(self.feature, i)
                     } else {
                         vec![Origin {
                             source: self.feature,
@@ -524,6 +540,10 @@ impl RadialBoundaryBody {
         for element in &mut elements {
             if let Some(authored) = &self.authored_thread {
                 authored.apply_origin(self.feature, element);
+                continue;
+            }
+            if let Some(pipe) = &self.authored_pipe {
+                pipe.apply_origin(self.feature, element);
                 continue;
             }
             let keys = match element.key.kind {

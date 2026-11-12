@@ -71,7 +71,7 @@ use orthogonal_body::OrthogonalBody;
 pub use orthogonal_body::slots::RoundedSlotTool;
 use planar_boolean_body::PlanarBooleanBody;
 use radial_boundary_body::RadialBoundaryBody;
-pub use radial_boundary_body::RetainedHelicalThreadSource;
+pub use radial_boundary_body::{RetainedAxialPipeThreadSource, RetainedHelicalThreadSource};
 pub use radial_boundary_body::{RetainedStepMemberMass, RetainedStepVerification};
 use revolution_body::RevolutionBody;
 use rounded_cylinder_body::RoundedCylinderBody;

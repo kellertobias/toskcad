@@ -627,7 +627,7 @@ impl Solid {
             for (leaf, placed) in leaves.iter().zip(&placed) {
                 if let Some(boundary) = placed {
                     counts.push(1);
-                    expected.push(ExpectedStepMember::RetainedRadial {
+                    expected.push(ExpectedStepMember::RetainedRadialVolume {
                         boundary,
                         minimum_feature_mm: leaf.policy.minimum_feature_mm,
                     });
@@ -683,17 +683,15 @@ impl Solid {
                     }
                 };
                 if let Some((body, frame)) = leaf.radial_boundary_body() {
-                    let Some(VerifiedStepMember::RetainedRadial {
-                        properties,
-                        bounds_mm,
-                    }) = decoded.next()
+                    let Some(VerifiedStepMember::RetainedRadialVolume { volume, bounds_mm }) =
+                        decoded.next()
                     else {
                         return Err(ReadError::Invalid);
                     };
-                    let source = body.properties(frame, None).map_err(source_error)?;
+                    let source = body.volume_properties(frame, None).map_err(source_error)?;
                     proof.retained_members.push(RetainedStepMemberMass {
                         member_index: proof.solid_count,
-                        decoded_volume_bounds_mm3: properties.volume_mm3,
+                        decoded_volume_bounds_mm3: volume.volume_mm3,
                         source_volume_bounds_mm3: source.volume_mm3,
                     });
                     include(bounds_mm);
