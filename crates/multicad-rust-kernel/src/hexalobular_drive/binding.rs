@@ -11,10 +11,42 @@ pub struct FiniteVertices {
     pub floor_mm: [[f64; 3]; 12],
     pub apex_mm: [f64; 3],
 }
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FinitePost {
+    pub origin_mm: [f64; 3],
+    pub direction_mm_per_parameter: [f64; 3],
+    /// Parameters of the shared mouth and floor vertices, in that order.
+    pub parameters: [f64; 2],
+}
+impl FinitePost {
+    fn endpoints(self) -> Result<[[I; 3]; 2], Error> {
+        let values = self
+            .origin_mm
+            .into_iter()
+            .chain(self.direction_mm_per_parameter)
+            .chain(self.parameters);
+        if !values.clone().all(f64::is_finite)
+            || self.direction_mm_per_parameter.into_iter().all(|v| v == 0.)
+            || self.parameters[0] == self.parameters[1]
+        {
+            return Err(Error::Invalid);
+        }
+        if values.map(f64::abs).any(|v| v > 1e12) {
+            return Err(Error::Limit);
+        }
+        Ok(self.parameters.map(|t| {
+            std::array::from_fn(|i| {
+                I::point(self.origin_mm[i])
+                    + I::point(self.direction_mm_per_parameter[i]) * I::point(t)
+            })
+        }))
+    }
+}
 #[derive(Clone, Debug, PartialEq)]
 pub struct FiniteBinding {
     source: Shared<Drive>,
     vertices: FiniteVertices,
+    posts: [FinitePost; 12],
     carriers: [Vec<CubicIntersectionSpan>; 12],
     nominal_binding_error_mm: f64,
 }
@@ -76,6 +108,46 @@ impl FiniteBinding {
         maximum_error_mm: f64,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, Error> {
+        let posts = std::array::from_fn(|i| FinitePost {
+            origin_mm: vertices.mouth_mm[i],
+            direction_mm_per_parameter: std::array::from_fn(|j| {
+                vertices.floor_mm[i][j] - vertices.mouth_mm[i][j]
+            }),
+            parameters: [0., 1.],
+        });
+        Self::new_with_posts_and_cancel(
+            source,
+            vertices,
+            posts,
+            carriers,
+            maximum_error_mm,
+            cancelled,
+        )
+    }
+    pub fn new_with_posts(
+        source: Drive,
+        vertices: FiniteVertices,
+        posts: [FinitePost; 12],
+        carriers: [Vec<CubicIntersectionSpan>; 12],
+        maximum_error_mm: f64,
+    ) -> Result<Self, Error> {
+        Self::new_with_posts_and_cancel(
+            source,
+            vertices,
+            posts,
+            carriers,
+            maximum_error_mm,
+            &|| false,
+        )
+    }
+    pub fn new_with_posts_and_cancel(
+        source: Drive,
+        vertices: FiniteVertices,
+        posts: [FinitePost; 12],
+        carriers: [Vec<CubicIntersectionSpan>; 12],
+        maximum_error_mm: f64,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Self, Error> {
         let values = vertices
             .mouth_mm
             .into_iter()
@@ -94,6 +166,7 @@ impl FiniteBinding {
             return Err(Error::Limit);
         }
         let mut crossings = 0;
+        let mut post_error = 0_f64;
         let mut error = distance(
             vertices.apex_mm,
             [
@@ -109,6 +182,10 @@ impl FiniteBinding {
             let next = (i + 1) % 12;
             let mouth = vertices.mouth_mm[i];
             let floor = vertices.floor_mm[i];
+            let ends = posts[i].endpoints()?;
+            post_error = post_error
+                .max(distance(mouth, ends[0]))
+                .max(distance(floor, ends[1]));
             if mouth[..2] != source.arcs()[i].start_mm
                 || mouth == floor
                 || floor == vertices.apex_mm
@@ -149,6 +226,9 @@ impl FiniteBinding {
         if crossings != 1 {
             return Err(Error::Invalid);
         }
+        // A post can differ from a shared vertex, which can in turn differ
+        // from its nominal circle/cone contact. These errors compose by sum.
+        let error = (I::point(error) + I::point(post_error)).hi;
         let total = (I::point(error) + I::point(source.spatial_source_error_bound_mm())).hi;
         if total > maximum_error_mm {
             return Err(Error::Unresolved);
@@ -156,6 +236,7 @@ impl FiniteBinding {
         Ok(Self {
             source: Shared::new(source),
             vertices,
+            posts,
             carriers,
             nominal_binding_error_mm: error,
         })
@@ -168,6 +249,9 @@ impl FiniteBinding {
     }
     pub fn vertices(&self) -> &FiniteVertices {
         &self.vertices
+    }
+    pub fn post_lines(&self) -> &[FinitePost; 12] {
+        &self.posts
     }
     pub fn carriers(&self) -> &[Vec<CubicIntersectionSpan>; 12] {
         &self.carriers

@@ -303,3 +303,86 @@ fn retained_binding_recess_keeps_original_fitted_thread_and_a_closed_metric_mesh
     assert_eq!(recess.finite_binding(), Some(&bound));
     assert!(!crate::step::supports_profiled_screw(&screw, [0.; 3], 1e-7));
 }
+
+#[test]
+fn literal_post_supports_keep_their_origin_direction_and_parameter_gauge() {
+    let original = binding();
+    let mut posts = *original.post_lines();
+    for post in &mut posts {
+        let d = post.direction_mm_per_parameter;
+        post.origin_mm = std::array::from_fn(|i| post.origin_mm[i] + 7. * d[i]);
+        post.direction_mm_per_parameter = d.map(|v| -2. * v);
+        post.parameters = [3.5, 3.];
+    }
+    let source = original.source().clone();
+    let vertices = *original.vertices();
+    let carriers = original.carriers().clone();
+    let actual = FiniteBinding::new_with_posts(source, vertices, posts, carriers, 1e-7).unwrap();
+    assert_eq!(actual.post_lines(), &posts);
+    assert_eq!(actual.vertices(), original.vertices());
+    assert_eq!(actual.carriers(), original.carriers());
+    assert!(
+        actual.spatial_source_error_bound_mm()
+            >= actual.nominal_binding_error_mm() + actual.source().spatial_source_error_bound_mm()
+    );
+}
+
+#[test]
+fn post_support_binding_errors_add_to_curve_error_and_invalid_lines_fail_closed() {
+    let original = binding();
+    let posts = *original.post_lines();
+    let build = |p| {
+        FiniteBinding::new_with_posts(
+            original.source().clone(),
+            *original.vertices(),
+            p,
+            original.carriers().clone(),
+            1e-7,
+        )
+    };
+    for mode in 0..5 {
+        let mut p = posts;
+        match mode {
+            0 => p[0].origin_mm[0] = f64::NAN,
+            1 => p[0].direction_mm_per_parameter = [0.; 3],
+            2 => p[0].parameters = [0., 0.],
+            3 => p[0].parameters[1] = f64::INFINITY,
+            4 => p[0].origin_mm[0] = 1e13,
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            build(p),
+            Err(if mode == 4 {
+                Error::Limit
+            } else {
+                Error::Invalid
+            })
+        );
+    }
+    let mut moved = posts;
+    let delta = original.nominal_binding_error_mm();
+    for post in &mut moved {
+        post.origin_mm[0] += delta;
+    }
+    let limit = original.source().spatial_source_error_bound_mm() + 1.1 * delta;
+    assert_eq!(
+        FiniteBinding::new_with_posts(
+            original.source().clone(),
+            *original.vertices(),
+            moved,
+            original.carriers().clone(),
+            limit
+        ),
+        Err(Error::Unresolved)
+    );
+    assert!(
+        FiniteBinding::new_with_posts(
+            original.source().clone(),
+            *original.vertices(),
+            posts,
+            original.carriers().clone(),
+            limit
+        )
+        .is_ok()
+    );
+}

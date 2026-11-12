@@ -10,7 +10,7 @@ mod properties;
 #[cfg(test)]
 mod tests;
 pub use authoring::TangentSpec;
-pub use binding::{FiniteBinding, FiniteVertices};
+pub use binding::{FiniteBinding, FinitePost, FiniteVertices};
 pub use intersection::{CubicIntersectionSpan, IntersectionErrorBound};
 pub use properties::{NominalSurfaceEvaluation, NominalSurfaceEvaluations};
 
