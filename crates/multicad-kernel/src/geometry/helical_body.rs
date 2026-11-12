@@ -454,6 +454,9 @@ impl Solid {
     /// For cylindrical receivers, report tool length separately from occupied
     /// material. STEP imports recover only material, so their tool length equals it.
     pub fn rust_receiving_thread_intervals(&self) -> Option<ReceivingThreadIntervals> {
+        if let Some((body, frame)) = self.entry_chamfer_body() {
+            return body.receiving_intervals(frame);
+        }
         if let Some((body, frame)) = self.rounded_thread_bore_body() {
             let length = body.geometry.length_mm();
             return Some(ReceivingThreadIntervals {

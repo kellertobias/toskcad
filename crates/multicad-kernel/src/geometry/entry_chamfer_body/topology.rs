@@ -180,6 +180,9 @@ impl EntryChamferBody {
                 geometry: plane.map(|frame| AnalyticGeometry::Plane { frame }),
             });
         }
+        if let Some(stock) = &self.receiving {
+            stock.extend_topology(&self.geometry, frame, &mut elements);
+        }
         let mut physical_vertices = vec![false; graph.vertices().len()];
         for (i, e) in graph.edges().iter().enumerate() {
             let edge = self.references.raw_to_edge[i];

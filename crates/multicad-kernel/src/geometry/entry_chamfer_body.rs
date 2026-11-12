@@ -17,6 +17,7 @@ use std::collections::BTreeSet;
 mod display;
 mod embedding;
 mod placement;
+mod receiving;
 mod references;
 mod topology;
 pub use references::EntryChamferEdge;
@@ -44,6 +45,7 @@ pub(crate) struct EntryChamferBody {
     references: references::ReferenceView,
     properties: MassProperties,
     tolerance: f64,
+    receiving: Option<receiving::ReceivingStock>,
     bounds_cache: RefCell<Option<(PlaneFrame, Bounds)>>,
 }
 fn failure(cause: source::Error) -> GeometryError {
@@ -100,6 +102,30 @@ impl Solid {
         policy: GeometryPolicy,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Self, GeometryError> {
+        Self::make_entry_chamfer(
+            spec,
+            root_radius_mm,
+            radial_depth_mm,
+            terminal,
+            feature,
+            frame,
+            policy,
+            interrupt,
+            None,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn make_entry_chamfer(
+        spec: HelicalThread,
+        root_radius_mm: Option<f64>,
+        radial_depth_mm: f64,
+        terminal: Option<TerminalIntent>,
+        feature: EntityId,
+        frame: PlaneFrame,
+        policy: GeometryPolicy,
+        interrupt: Option<&dyn Fn() -> bool>,
+        receiving: Option<receiving::ReceivingStock>,
+    ) -> Result<Self, GeometryError> {
         if interrupt.is_some_and(|f| f()) {
             return Err(failure(source::Error::Cancelled));
         }
@@ -150,6 +176,7 @@ impl Solid {
             references,
             properties,
             tolerance,
+            receiving,
             bounds_cache: RefCell::new(None),
         };
         let bounds = body.bounds_with_interrupt(frame, interrupt)?;
