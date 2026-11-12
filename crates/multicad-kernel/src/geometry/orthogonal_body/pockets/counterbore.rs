@@ -253,6 +253,12 @@ fn inherit_receiver_faces(
 ) -> Result<Solid, GeometryError> {
     let owner = EntityId::new();
     let old = source.topology_snapshot(owner, 0)?;
+    let old_faces: BTreeMap<_, _> = old
+        .elements
+        .iter()
+        .filter(|e| e.key.kind == TopologyKind::Face)
+        .map(|e| (e.key.ordinal, e))
+        .collect();
     let original = original.topology_snapshot(owner, 0)?;
     let mut anchors = BTreeMap::<Origin, Option<ReferenceFrame>>::new();
     for frame in original.elements.iter().flat_map(|e| &e.frames) {
@@ -281,16 +287,8 @@ fn inherit_receiver_faces(
         .map(|e| e.origins.iter().cloned().collect::<Vec<_>>())
         .collect::<Vec<_>>();
     for (&target, &source) in &mapped {
-        let original = old
-            .elements
-            .iter()
-            .find(|e| {
-                e.key
-                    == TopologyKey {
-                        kind: TopologyKind::Face,
-                        ordinal: source as u32,
-                    }
-            })
+        let original = old_faces
+            .get(&(source as u32))
             .ok_or_else(|| invalid("Receiving face source is absent"))?;
         names[target] = original.origins.iter().cloned().collect();
     }
@@ -308,14 +306,9 @@ fn inherit_receiver_faces(
             if e.key.kind == TopologyKind::Face
                 && let Some(&source) = mapped.get(&(e.key.ordinal as usize))
             {
-                let key = TopologyKey {
-                    kind: TopologyKind::Face,
-                    ordinal: source as u32,
-                };
                 e.frames.clone_from(
-                    &old.elements
-                        .iter()
-                        .find(|e| e.key == key)
+                    &old_faces
+                        .get(&(source as u32))
                         .expect("checked source face")
                         .frames,
                 );
