@@ -1,0 +1,77 @@
+//! Plain blind round receivers retain actual pocket material and source charts.
+use super::*;
+use multicad_kernel::CircularPocketTool;
+pub(super) fn build(
+    inputs: Inputs<'_>,
+    id: EntityId,
+    source: &ConnectionReceiverDefinition,
+) -> Result<Solid, ModelError> {
+    let fail = |message| error(Some(id), message);
+    let resolved = source
+        .resolve_current(
+            inputs.document,
+            inputs.parameters,
+            inputs.revision,
+            inputs.snapshots,
+        )
+        .map_err(|cause| error(Some(id), cause))?;
+    let (Some(depth), Some(floor)) = (resolved.depth_mm, resolved.floor_mm) else {
+        return Err(fail(
+            "Plain blind receivers require an explicit depth and floor",
+        ));
+    };
+    if resolved.thread.is_some() || resolved.seat.is_some() {
+        return Err(fail(
+            "Rust plain blind receivers do not yet support a seat or a thread",
+        ));
+    }
+    let pose = source
+        .local_pose(
+            inputs.document,
+            inputs.parameters,
+            inputs.revision,
+            inputs.snapshots,
+        )
+        .map_err(|cause| error(Some(id), cause))?;
+    let local = pose.frame(ReferenceFrame {
+        origin_mm: [0.; 3],
+        u: [1., 0., 0.],
+        v: [0., 1., 0.],
+    });
+    let frame = PlaneFrame {
+        origin: local.origin_mm,
+        u: local.u,
+        v: local.v,
+    };
+    let overrun = inputs
+        .policy
+        .minimum_feature_mm
+        .max(8. * inputs.policy.linear_tolerance_mm);
+    let n = frame.normal();
+    let tool = CircularPocketTool {
+        frame: PlaneFrame {
+            origin: std::array::from_fn(|i| frame.origin[i] - n[i] * overrun),
+            ..frame
+        },
+        center_uv: [0.; 2],
+        radius_mm: resolved.diameter_mm / 2.,
+        displacement_mm: n.map(|x| x * (depth + overrun)),
+        origin: origin(id, "bore"),
+    };
+    let stock = inputs
+        .solids
+        .get(&source.input.producer)
+        .ok_or_else(|| fail("Blind receiving predecessor has no current Rust solid"))?;
+    let (result, mouth) = stock
+        .rust_connection_blind_bore(&tool, resolved.minimum_wall_mm, floor, inputs.policy)
+        .map_err(|cause| error(Some(id), cause))?;
+    let distance = (mouth[0] - frame.origin[0])
+        .hypot(mouth[1] - frame.origin[1])
+        .hypot(mouth[2] - frame.origin[2]);
+    if distance > inputs.policy.linear_tolerance_mm {
+        return Err(fail(
+            "Blind receiving station does not match the actual stock entry face",
+        ));
+    }
+    Ok(result)
+}

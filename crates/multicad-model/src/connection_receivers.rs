@@ -12,6 +12,7 @@ use multicad_kernel::{
 };
 use std::{collections::BTreeMap, f64::consts::TAU};
 mod rust_blind;
+mod rust_round_blind;
 pub(crate) mod rust_through;
 
 fn native<T>(
@@ -163,7 +164,14 @@ pub(crate) fn build_rust(
             rust_blind::build(inputs, id, source)
         }
         multicad_core::model::ConnectionReceiverCut::Round { .. } => {
-            rust_through::build(inputs, id, source).map(|(solid, _)| solid)
+            if matches!(
+                source.extent,
+                multicad_core::model::ConnectionReceiverExtent::Blind { .. }
+            ) {
+                rust_round_blind::build(inputs, id, source)
+            } else {
+                rust_through::build(inputs, id, source).map(|(solid, _)| solid)
+            }
         }
     }
 }
