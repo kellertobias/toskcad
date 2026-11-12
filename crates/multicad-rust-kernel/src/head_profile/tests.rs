@@ -261,3 +261,43 @@ fn invalid_source_never_builds_an_envelope() {
         assert!(!p.admits_socket(r, d, w));
     }
 }
+
+#[test]
+fn named_surface_moments_follow_the_actual_meridian() {
+    let mut names = std::collections::BTreeSet::new();
+    for head in [counter(0.1, 0.1), crown(0.1)] {
+        let profile = Profile::new(head, 1.5, 1.).unwrap();
+        for segment in profile.segments() {
+            names.insert(segment.role.source_role());
+            let [x, y, z] = segment.center_mm();
+            assert_eq!([x, y], [0., 0.]);
+            assert!(z >= segment.start[1] - 1e-12 && z <= segment.end[1] + 1e-12);
+            let mut moment = 0.;
+            let mut area = 0.;
+            for i in 0..10_000 {
+                let a = segment.point(i as f64 / 10_000.);
+                let b = segment.point((i + 1) as f64 / 10_000.);
+                let [r, z] = segment.point((i as f64 + 0.5) / 10_000.);
+                let weight = r * (b[0] - a[0]).hypot(b[1] - a[1]);
+                area += weight;
+                moment += z * weight;
+            }
+            assert!((moment / area - z).abs() < 1e-8);
+        }
+    }
+    assert_eq!(
+        names,
+        [
+            "top.chamfer",
+            "rim",
+            "cone",
+            "crown",
+            "skirt",
+            "bearing",
+            "neck.blend",
+            "shank"
+        ]
+        .into_iter()
+        .collect()
+    );
+}

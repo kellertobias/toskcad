@@ -19,6 +19,21 @@ pub enum Role {
     Shank,
 }
 
+impl Role {
+    pub fn source_role(self) -> &'static str {
+        match self {
+            Self::Chamfer => "top.chamfer",
+            Self::Rim => "rim",
+            Self::Cone => "cone",
+            Self::Crown => "crown",
+            Self::Skirt => "skirt",
+            Self::Bearing => "bearing",
+            Self::Neck => "neck.blend",
+            Self::Shank => "shank",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Curve {
     Line,
@@ -104,6 +119,30 @@ impl Segment {
                     * (center[0] * sweep + radius * ((angle + sweep).sin() - angle.sin())).abs()
             }
         }
+    }
+
+    /// Centroid of the complete revolved face, in the source meridian frame.
+    pub fn center_mm(self) -> [f64; 3] {
+        let z = match self.curve {
+            Curve::Line => {
+                let [r, z] = self.start;
+                let [end_r, end_z] = self.end;
+                z + (end_z - z) * (r + 2. * end_r) / (3. * (r + end_r))
+            }
+            Curve::Arc {
+                center: [c, z],
+                sweep,
+            } => {
+                let radius = (self.start[0] - c).hypot(self.start[1] - z);
+                let a = self.angle([c, z]);
+                let b = a + sweep;
+                let denominator = c * sweep + radius * (b.sin() - a.sin());
+                z + (radius * c * (a.cos() - b.cos())
+                    + radius * radius * (b.sin().powi(2) - a.sin().powi(2)) / 2.)
+                    / denominator
+            }
+        };
+        [0., 0., z]
     }
 
     /// Support of the revolved face; `radial` must be a nonnegative norm.
