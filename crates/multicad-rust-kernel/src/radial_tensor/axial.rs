@@ -8,6 +8,7 @@ pub struct AxialBoundary {
     pub(super) chart: Chart,
     pub(super) tensors: Vec<ChartTensor>,
     pub(super) caps: [usize; 2],
+    pub(super) cap_axes: [Axis; 2],
     pub(super) cones: Vec<usize>,
     pub(super) axial_error: f64,
     pub(super) tolerance: f64,
@@ -126,13 +127,15 @@ impl TrimmedBoundary {
             };
             let top = direction * sign * if f.forward { 1. } else { -1. } > 0.;
             let end = usize::from(top);
-            if caps[end].replace((face, plane.origin)).is_some() {
+            if caps[end].replace((face, plane)).is_some() {
                 return Err(Error::Invalid);
             }
         }
         let [bottom, top] = caps;
-        let (bottom, bottom_point) = bottom.ok_or(Error::Invalid)?;
-        let (top, top_point) = top.ok_or(Error::Invalid)?;
+        let (bottom, bottom_axis) = bottom.ok_or(Error::Invalid)?;
+        let (top, top_axis) = top.ok_or(Error::Invalid)?;
+        let bottom_point = bottom_axis.origin;
+        let top_point = top_axis.origin;
         let delta = std::array::from_fn(|i| I::point(top_point[i]) - I::point(bottom_point[i]));
         let height = dot(delta, axes[2]).positive()?;
         if height.lo < minimum || height.lo <= 32. * tolerance || height.hi > 2e7 {
@@ -257,6 +260,7 @@ impl TrimmedBoundary {
             chart,
             tensors: charts,
             caps: [bottom, top],
+            cap_axes: [bottom_axis, top_axis],
             cones: cones.into_iter().map(|(face, ..)| face).collect(),
             axial_error,
             tolerance,

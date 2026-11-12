@@ -3,7 +3,7 @@ use super::*;
 use crate::tapered_thread::{Scalar, Series};
 mod measure;
 mod quadrature;
-mod source;
+pub(super) mod source;
 #[cfg(test)]
 mod tests;
 #[derive(Clone, Debug, PartialEq)]
@@ -26,7 +26,7 @@ pub struct MassProperties {
     pub faces: Vec<FaceProperties>,
 }
 mod bounds;
-mod faces;
+pub(super) mod faces;
 mod integrate;
 use measure::QUANTITIES;
 impl RadialBoundary {

@@ -191,3 +191,65 @@ fn cancellation_during_placed_pole_preparation_remains_typed_and_atomic() {
             .is_ok()
     );
 }
+
+#[test]
+fn actual_tapered_source_meshes_keep_shared_manifold_and_source_ownership() {
+    use multicad_rust_kernel::{display::Tessellation, manufacturing};
+    for (left, starts, slope, frame) in [
+        (false, 1, 0., IDENTITY),
+        (
+            true,
+            2,
+            0.03125,
+            [[80., -30., 20.], [0.8, 0.6, 0.], [-0.36, 0.48, 0.8]],
+        ),
+        (false, 1, -0.03125, IDENTITY),
+    ] {
+        let thread = source(left, starts, slope);
+        let body = thread
+            .retained_boundary_with_interrupt(frame, 1e-7, 1e-6, None)
+            .unwrap()
+            .boundary;
+        let original = body.input().clone();
+        let now = std::time::Instant::now();
+        let mesh = body
+            .tessellate_with_interrupt(
+                Tessellation {
+                    deflection: 0.05,
+                    angle: 0.4,
+                    triangle_limit: 200000,
+                },
+                None,
+            )
+            .unwrap();
+        eprintln!(
+            "taper{starts}/{left}/{slope} tris{} {:?}",
+            mesh.face_indices.len(),
+            now.elapsed()
+        );
+        let proof = manufacturing::certify(&mesh).unwrap();
+        assert!(proof.signed_volume_mm3 > 0.);
+        assert_eq!(
+            mesh.face_indices
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            body.input().faces.len()
+        );
+        for vertex in &body.input().vertices {
+            assert!(
+                mesh.vertices.as_chunks::<3>().0.iter().any(|p| p == vertex),
+                "{vertex:?}"
+            );
+        }
+        let expected = thread.volume_bounds(0.002).unwrap();
+        let reference = (expected[0] + expected[1]) * 0.5;
+        assert!(
+            (proof.signed_volume_mm3 - reference).abs() < 0.05 * reference,
+            "{} vs {expected:?}",
+            proof.signed_volume_mm3
+        );
+        assert_eq!(body.input(), &original);
+    }
+}

@@ -9,6 +9,7 @@ mod topology;
 pub use axial::AxialBoundary;
 mod caps;
 mod material;
+mod mesh;
 mod ordering;
 mod properties;
 mod query;

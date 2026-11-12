@@ -382,12 +382,15 @@ pub(crate) fn normal_polynomial(cell: &TensorCell) -> NormalPolynomial {
     NormalPolynomial { controls }
 }
 impl NormalPolynomial {
+    pub(crate) fn coefficients(&self) -> &[Vec<[I; 3]>] {
+        &self.controls
+    }
     pub(crate) fn taylor8(
         &self,
         domain: [[f64; 2]; 2],
         along_v: bool,
     ) -> Result<[[I; 3]; 9], Error> {
-        let restricted = restricted_grid(self.controls.clone(), domain)?;
+        let restricted = restricted_grid(self.coefficients().to_vec(), domain)?;
         let mut controls = self.controls.clone();
         let widths = domain.map(|d| I::point(d[1]) - I::point(d[0]));
         let mut scale = widths[0] * widths[1];

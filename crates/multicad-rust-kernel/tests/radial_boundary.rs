@@ -476,3 +476,126 @@ fn actual_taper_surface_mass_stays_bounded_without_an_inferred_recipe() {
         assert_eq!(body.input(), &input);
     }
 }
+
+#[test]
+fn actual_retained_cam_mesh_has_closed_shared_source_faces_and_convergent_volume() {
+    use multicad_rust_kernel::{display::Tessellation, manufacturing};
+    for grids in [&[1][..], &[1, 2][..]] {
+        let body = certify(wedge(grids));
+        let original = body.input().clone();
+        let exact = 4.
+            * (25. * std::f64::consts::PI + grids.len() as f64 * (30. - 25. * (4_f64 / 3.).atan()));
+        let mut errors = Vec::new();
+        for deflection in [0.05, 0.01] {
+            let now = std::time::Instant::now();
+            let mesh = body
+                .tessellate_with_interrupt(
+                    Tessellation {
+                        deflection,
+                        angle: 0.3,
+                        triangle_limit: 50000,
+                    },
+                    None,
+                )
+                .unwrap();
+            eprintln!(
+                "cam{} chord{deflection} tris{} {:?}",
+                grids.len(),
+                mesh.face_indices.len(),
+                now.elapsed()
+            );
+            let proof = manufacturing::certify(&mesh).unwrap();
+            assert!(proof.signed_volume_mm3 > 0.);
+            errors.push((proof.signed_volume_mm3 - exact).abs());
+            assert_eq!(
+                mesh.face_indices
+                    .iter()
+                    .copied()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len(),
+                body.input().faces.len()
+            );
+            for point in &body.input().vertices {
+                assert!(
+                    mesh.vertices.as_chunks::<3>().0.iter().any(|p| p == point),
+                    "lost source vertex {point:?}"
+                );
+            }
+        }
+        assert!(errors[0] < 4., "{errors:?}");
+        assert!(errors[1] < errors[0], "{errors:?}");
+        assert_eq!(body.input(), &original);
+    }
+}
+#[test]
+fn actual_retained_mesh_normals_and_material_survive_far_proper_pose() {
+    use multicad_rust_kernel::{display::Tessellation, manufacturing};
+    let axes = [[0.8, 0.6, 0.], [-0.36, 0.48, 0.8], [0.48, -0.64, 0.6]];
+    let rotate = |p: Point| {
+        std::array::from_fn::<_, 3, _>(|k| (0..3).map(|j| axes[j][k] * p[j]).sum::<f64>())
+    };
+    let subtract = |a: Point, b: Point| std::array::from_fn::<_, 3, _>(|k| a[k] - b[k]);
+    let cross = |a: Point, b: Point| {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    };
+    let unit = |p: Point| {
+        let n = p.iter().map(|v| v * v).sum::<f64>().sqrt();
+        p.map(|v| v / n)
+    };
+    let dot = |a: Point, b: Point| (0..3).map(|k| a[k] * b[k]).sum::<f64>();
+    let local = wedge(&[1, 2]);
+    for origin in [[10., 20., 30.], [1e6, -1e6, 1e6]] {
+        let body = certify(pose(local.clone(), origin, axes));
+        let source = body.input().clone();
+        let mesh = body
+            .tessellate_with_interrupt(
+                Tessellation {
+                    deflection: 0.02,
+                    angle: 0.25,
+                    triangle_limit: 50000,
+                },
+                None,
+            )
+            .unwrap();
+        let volume = manufacturing::certify(&mesh).unwrap().signed_volume_mm3;
+        let expected = 4. * (25. * std::f64::consts::PI + 2. * (30. - 25. * (4_f64 / 3.).atan()));
+        assert!((volume - expected).abs() < 2.);
+        for (indices, &face) in mesh
+            .indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(&mesh.face_indices)
+        {
+            let p = std::array::from_fn::<_, 3, _>(|i| {
+                std::array::from_fn::<_, 3, _>(|k| mesh.vertices[3 * indices[i] as usize + k])
+            });
+            let actual = unit(cross(subtract(p[1], p[0]), subtract(p[2], p[0])));
+            let face = &local.faces[face as usize];
+            match &local.surfaces[face.surface] {
+                Surface::Plane(a) => assert!(dot(actual, rotate(a.normal)) > 0.25_f64.cos()),
+                Surface::Tensor(t) => {
+                    let n = 9 * t.spans()[1] + 1;
+                    let poles = t.poles();
+                    let normal = unit(cross(
+                        subtract(poles[poles.len() - n], poles[0]),
+                        subtract(poles[n - 1], poles[0]),
+                    ));
+                    assert!(dot(actual, rotate(normal)) > 0.25_f64.cos());
+                }
+                Surface::Cone { .. } => {
+                    for vertex in p {
+                        let d = subtract(vertex, origin);
+                        let xy = [dot(d, axes[0]), dot(d, axes[1]), 0.];
+                        assert!(dot(actual, rotate(unit(xy))) > 0.25_f64.cos());
+                    }
+                }
+            }
+        }
+        assert_eq!(body.input(), &source);
+    }
+}

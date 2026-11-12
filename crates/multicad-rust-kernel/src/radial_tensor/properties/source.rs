@@ -4,23 +4,23 @@ use crate::tapered_thread::{
     curve_first_bounds, curve_taylor9, tensor_first_bounds, tensor_taylor8,
 };
 #[derive(Clone)]
-pub(super) enum Source {
+pub(in crate::radial_tensor) enum Source {
     Tensor(Tensor),
     Spline(Vec<[I; 3]>),
     Circle(Circle),
 }
 #[derive(Clone)]
-pub(super) struct Tensor {
+pub(in crate::radial_tensor) struct Tensor {
     pub geometry: crate::tapered_thread::TensorCell,
     pub normal: std::sync::Arc<crate::tapered_thread::NormalPolynomial>,
 }
-pub(super) struct Jet<const N: usize> {
+pub(in crate::radial_tensor) struct Jet<const N: usize> {
     pub p: [Series<N>; 3],
     pub tangent: [Series<N>; 3],
     pub normal: [Series<N>; 3],
 }
 #[derive(Clone)]
-pub(super) struct Circle {
+pub(in crate::radial_tensor) struct Circle {
     pub center: [I; 3],
     pub u: [I; 3],
     pub v: [I; 3],
@@ -29,7 +29,7 @@ pub(super) struct Circle {
     pub sweep: I,
     pub range: [f64; 2],
 }
-pub(super) type Jets = Jet<9>;
+pub(in crate::radial_tensor) type Jets = Jet<9>;
 fn series<const N: usize>(coefficients: [[I; 3]; N]) -> [Series<N>; 3] {
     std::array::from_fn(|axis| Series {
         c: coefficients.map(|p| p[axis]),

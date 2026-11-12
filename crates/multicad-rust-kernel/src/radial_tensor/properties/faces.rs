@@ -161,7 +161,7 @@ pub(super) fn with_limit(
     faces.sort_by_key(|f| f.index);
     Ok(faces)
 }
-fn argument(p: [I; 2]) -> Result<I, Error> {
+pub(in crate::radial_tensor) fn argument(p: [I; 2]) -> Result<I, Error> {
     let h = p.map(|v| I::point(v.midpoint()));
     let dot = h[0] * p[0] + h[1] * p[1];
     dot.positive()?;
