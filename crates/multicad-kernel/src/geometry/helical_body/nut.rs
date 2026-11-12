@@ -6,6 +6,18 @@ use super::{
 };
 
 impl Solid {
+    /// Actual retained hex-nut material and its current physical thread frame.
+    pub fn rust_hex_nut_geometry(
+        &self,
+    ) -> Option<(&multicad_rust_kernel::hex_nut::Nut, PlaneFrame)> {
+        let (body, frame) = self.helical_body()?;
+        if let HelicalForm::Nut(source) = &body.form {
+            Some((source, frame))
+        } else {
+            None
+        }
+    }
+
     /// Build a hex nut with six planar wrench faces and a modeled through-thread.
     pub fn rust_hex_nut(
         spec: HelicalThread,
