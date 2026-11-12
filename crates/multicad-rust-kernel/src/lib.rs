@@ -8,6 +8,7 @@ pub mod bevel_gear;
 pub mod chamfered_bores;
 pub mod circular_distance;
 pub mod circular_pockets;
+pub mod conical_screw_seat;
 pub mod cosmetic_fastener;
 pub mod curved_projection;
 pub mod cylinder;
