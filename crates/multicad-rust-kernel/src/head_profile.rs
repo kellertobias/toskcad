@@ -92,6 +92,12 @@ impl Segment {
                 center: [c, z],
                 sweep,
             } => {
+                if c == 0. {
+                    let dz = self.end[1] - self.start[1];
+                    return PI
+                        * dz
+                        * (self.start[0].powi(2) - (self.start[1] - z) * dz - dz.powi(2) / 3.);
+                }
                 let radius = (self.start[0] - c).hypot(self.start[1] - z);
                 let start = self.angle([c, z]);
                 let integral = |t: f64| {
@@ -114,6 +120,9 @@ impl Segment {
             }
             Curve::Arc { center, sweep } => {
                 let radius = (self.start[0] - center[0]).hypot(self.start[1] - center[1]);
+                if center[0] == 0. {
+                    return TAU * radius * (self.end[1] - self.start[1]).abs();
+                }
                 let angle = self.angle(center);
                 TAU * radius
                     * (center[0] * sweep + radius * ((angle + sweep).sin() - angle.sin())).abs()
@@ -133,6 +142,9 @@ impl Segment {
                 center: [c, z],
                 sweep,
             } => {
+                if c == 0. {
+                    return [0., 0., self.start[1].midpoint(self.end[1])];
+                }
                 let radius = (self.start[0] - c).hypot(self.start[1] - z);
                 let a = self.angle([c, z]);
                 let b = a + sweep;
@@ -213,6 +225,7 @@ pub struct Profile {
     segments: [Option<Segment>; 5],
     top: [f64; 2],
     end: [f64; 2],
+    rounding_error_mm: f64,
 }
 
 impl Profile {
@@ -246,10 +259,12 @@ impl Profile {
             return Err(ThreadError::Limit);
         }
         let top_z = -height;
+        let mut reserve = 64. * f64::EPSILON * (radius + height + plain + neck);
         let mut result = Self {
             segments: [None; 5],
             top: [radius, top_z],
             end: [shank, plain],
+            rounding_error_mm: reserve,
         };
         let mut count = 0;
         let mut push = |start, end, curve, role| {
@@ -287,6 +302,9 @@ impl Profile {
                     center[1] - neck * theta.sin(),
                 ];
                 if rim < ch || plain < neck_z || top_z + rim > tangent[1] || radius <= tangent[0] {
+                    return Err(ThreadError::Invalid);
+                }
+                if plain > neck_z && plain - neck_z <= reserve {
                     return Err(ThreadError::Invalid);
                 }
                 result.top[0] = radius - ch;
@@ -329,6 +347,10 @@ impl Profile {
                 if crown > 1e7 {
                     return Err(ThreadError::Limit);
                 }
+                reserve += 64. * f64::EPSILON * crown;
+                if plain > neck && plain - neck <= reserve {
+                    return Err(ThreadError::Invalid);
+                }
                 let center_z = top_z + (crown * crown - land * land).sqrt();
                 let skirt_z = center_z - (crown * crown - radius * radius).sqrt();
                 if skirt_z >= 0. {
@@ -362,6 +384,27 @@ impl Profile {
                 push([shank, neck], [shank, plain], Curve::Line, Role::Shank);
             }
         }
+        result.rounding_error_mm = reserve;
+        let extra = match head {
+            Head::Countersunk {
+                edge_chamfer_mm, ..
+            } => edge_chamfer_mm,
+            Head::Crowned {
+                top_land_radius_mm, ..
+            } => top_land_radius_mm,
+        };
+        if [height, shank, radius - shank]
+            .into_iter()
+            .any(|v| v <= reserve)
+            || [neck, plain, extra]
+                .into_iter()
+                .any(|v| v > 0. && v <= reserve)
+            || result
+                .segments()
+                .any(|s| s.role != Role::Bearing && s.end[1] - s.start[1] <= reserve)
+        {
+            return Err(ThreadError::Invalid);
+        }
         Ok(result)
     }
 
@@ -374,6 +417,11 @@ impl Profile {
     }
     pub fn end(&self) -> [f64; 2] {
         self.end
+    }
+    /// Reserve for source arithmetic; policy admission must keep this below
+    /// its positional tolerance before publishing manufacturing geometry.
+    pub fn rounding_error_mm(&self) -> f64 {
+        self.rounding_error_mm
     }
 
     pub fn volume_mm3(&self) -> f64 {
@@ -417,7 +465,7 @@ impl Profile {
                     .min(s.radius_at(s.end[1].min(floor)))
             })
             .fold(f64::INFINITY, f64::min);
-        minimum >= radius + wall
+        minimum >= radius + wall + 2. * self.rounding_error_mm
     }
 }
 

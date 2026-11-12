@@ -301,3 +301,57 @@ fn named_surface_moments_follow_the_actual_meridian() {
         .collect()
     );
 }
+
+#[test]
+fn erased_positive_features_and_marginal_socket_walls_are_refused() {
+    for head in [
+        counter(1e-30, 0.),
+        counter(0., 1e-30),
+        Head::Crowned {
+            radius_mm: 3.,
+            height_mm: 2.5,
+            crown_radius_mm: 4.,
+            top_land_radius_mm: 1e-30,
+            neck_radius_mm: 0.,
+        },
+        Head::Countersunk {
+            radius_mm: 1.5 + 1e-15,
+            height_mm: 1.65,
+            included_angle_deg: 90.,
+            edge_chamfer_mm: 0.,
+            neck_radius_mm: 0.,
+        },
+        Head::Countersunk {
+            radius_mm: 3.,
+            height_mm: 1.5 + 1e-15,
+            included_angle_deg: 90.,
+            edge_chamfer_mm: 0.,
+            neck_radius_mm: 0.,
+        },
+        Head::Crowned {
+            radius_mm: 3.,
+            height_mm: 2.5,
+            crown_radius_mm: 4.,
+            top_land_radius_mm: 3. - 1e-13,
+            neck_radius_mm: 0.,
+        },
+    ] {
+        assert_eq!(Profile::new(head, 1.5, 1.), Err(ThreadError::Invalid));
+    }
+    let neck_z = 0.1 * (PI / 8.).tan();
+    assert_eq!(
+        Profile::new(counter(0.1, 0.), 1.5, neck_z + 1e-15),
+        Err(ThreadError::Invalid)
+    );
+    assert_eq!(
+        Profile::new(crown(0.1), 1.5, 0.1 + 1e-15),
+        Err(ThreadError::Invalid)
+    );
+    let p = Profile::new(counter(0.1, 0.1), 1.5, 1.).unwrap();
+    assert!(p.rounding_error_mm() > 0. && p.rounding_error_mm() < 1e-11);
+    let floor = p.top()[1] + 0.6;
+    let wall = 0.1;
+    let marginal = p.radius_at(floor).unwrap() - wall;
+    assert!(!p.admits_socket(marginal, 0.6, wall));
+    assert!(p.admits_socket(marginal - 4. * p.rounding_error_mm(), 0.6, wall));
+}
