@@ -121,12 +121,23 @@ struct Rim {
     center: Point,
 }
 
+fn edge_record(shell: &Shell<'_, '_>, id: u32) -> Result<([u32; 2], u32, bool)> {
+    let [Value::String(_), a, b, geometry, forward] = shell.args(id, "EDGE_CURVE")? else {
+        return Err(ReadError::Invalid);
+    };
+    Ok((
+        [reference(a)?, reference(b)?],
+        reference(geometry)?,
+        sense(forward)?,
+    ))
+}
+
 fn decode_rim(shell: &mut Shell<'_, '_>, edge: u32, frame: Frame) -> Result<Rim> {
     let [a, b] = shell.edge(edge)?;
-    require(a == b)?;
     let Curve::Circle(circle) = shell.edges[&edge].curve else {
         return Err(ReadError::Invalid);
     };
+    require(a == b)?;
     let local = frame.local(circle.center_mm);
     require(
         local[0].hypot(local[1]) <= shell.tolerance / 16.
@@ -302,10 +313,8 @@ fn periodic_end(
         require(*sense != rim.positive)?;
         rim
     };
-    let [Value::String(_), a, b, _, Value::Enum("T")] = shell.args(seam, "EDGE_CURVE")? else {
-        return Err(ReadError::Invalid);
-    };
-    require([reference(a)?, reference(b)?] == [previous.vertex, end.vertex])?;
+    let (vertices, _, forward) = edge_record(shell, seam)?;
+    require(forward && vertices == [previous.vertex, end.vertex])?;
     Ok((end, seam))
 }
 
@@ -497,11 +506,7 @@ fn line_surface(
     frame: Frame,
 ) -> Result<()> {
     require(forward)?;
-    let [Value::String(_), _, _, geometry, sense_value] = shell.args(seam, "EDGE_CURVE")? else {
-        return Err(ReadError::Invalid);
-    };
-    let geometry = reference(geometry)?;
-    let curve_forward = sense(sense_value)?;
+    let (_, geometry, curve_forward) = edge_record(shell, seam)?;
     shell.line_curve(geometry, [from.vertex, to.vertex], curve_forward)?;
     let entity = shell.simple(surface)?;
     let (axis, radius, angle) = match entity.name {
@@ -616,17 +621,14 @@ fn curved_surface(
         proof.equal(support.origin, frame.world([0.; 2], center[1]))
             && length(sub(support.normal, frame.n)) < proof.angular(),
     )?;
-    let [Value::String(_), a, b, geometry, Value::Enum("T")] = shell.args(seam, "EDGE_CURVE")?
-    else {
-        return Err(ReadError::Invalid);
-    };
-    require([reference(a)?, reference(b)?] == [from.vertex, to.vertex])?;
+    let (vertices, geometry, forward) = edge_record(shell, seam)?;
+    require(forward && vertices == [from.vertex, to.vertex])?;
     let [
         Value::String(_),
         circle,
         pcurves,
         Value::Enum("PCURVE_S1" | "PCURVE_S2"),
-    ] = shell.args(reference(geometry)?, "SEAM_CURVE")?
+    ] = shell.args(geometry, "SEAM_CURVE")?
     else {
         return Err(ReadError::Invalid);
     };
@@ -697,12 +699,7 @@ fn closed_incidence(shell: &mut Shell<'_, '_>, faces: &[u32]) -> Result<()> {
             let mut first = None;
             let mut previous = None;
             for (edge, forward) in edges {
-                let [Value::String(_), a, b, _, sense_value] = shell.args(edge, "EDGE_CURVE")?
-                else {
-                    return Err(ReadError::Invalid);
-                };
-                sense(sense_value)?;
-                let [a, b] = [reference(a)?, reference(b)?];
+                let ([a, b], _, _) = edge_record(shell, edge)?;
                 shell.vertex(a)?;
                 shell.vertex(b)?;
                 let [start, end] = if forward { [a, b] } else { [b, a] };
@@ -920,11 +917,9 @@ mod tests {
                     &imported.profile,
                     ImportProfile::ProfiledScrew { .. }
                 ));
-                if let ImportProfile::ProfiledScrew {
-                    screw,
-                    head_volume_error_mm3,
-                } = imported.profile
                 {
+                    let (screw, head_volume_error_mm3) =
+                        imported.profiled_screw_geometry().unwrap();
                     assert!(screw.spec().head.is_none());
                     assert_eq!(screw.spec().shank_length_mm, 0.);
                     assert!((screw.volume_mm3() - body.volume_mm3()).abs() < 1e-6);
@@ -966,11 +961,8 @@ mod tests {
                 &imported.profile,
                 ImportProfile::ProfiledScrew { .. }
             ));
-            if let ImportProfile::ProfiledScrew {
-                screw,
-                head_volume_error_mm3,
-            } = imported.profile
             {
+                let (screw, head_volume_error_mm3) = imported.profiled_screw_geometry().unwrap();
                 assert!(screw.profile().transport_error_mm() > 0.);
                 assert!(head_volume_error_mm3 > 0.);
                 assert!(
@@ -1127,7 +1119,8 @@ mod tests {
             &imported.profile,
             ImportProfile::ProfiledScrew { .. }
         ));
-        if let ImportProfile::ProfiledScrew { screw, .. } = imported.profile {
+        {
+            let (screw, _) = imported.profiled_screw_geometry().unwrap();
             let neck = screw
                 .profile()
                 .segments()
@@ -1278,6 +1271,122 @@ mod tests {
     }
 
     #[test]
+    fn finite_rims_terminal_junctions_and_bearing_ownership_are_distinct() {
+        let old = screw(true, 1, false);
+        let body = Screw::from_source(
+            Thread::new(helical_thread::Spec {
+                length_mm: 0.5,
+                ..old.thread().spec()
+            })
+            .unwrap(),
+            *old.profile(),
+            crate::profiled_screw::SourceSpec {
+                head: None,
+                ..old.spec()
+            },
+        )
+        .unwrap();
+        let text =
+            step::write_profiled_screw(&body, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7).unwrap();
+        let data = parse_entities(&text, 1e-7).unwrap();
+        let mut shell = Shell::new(&data, 1e-7, true);
+        let faces = shell
+            .member_faces(shell.represented_solids(true).unwrap()[0])
+            .unwrap();
+        let frame = Frame::new([[0.; 3], [1., 0., 0.], [0., 1., 0.]]).unwrap();
+        let (_, _, top) = face(&shell, faces[6]).unwrap();
+        let line = ring(&shell, top[1], false).unwrap()[0].0;
+        assert!(decode_rim(&mut shell, line, frame).is_err());
+        assert!(single_bound_rim(&mut shell, top[1], false, true, frame).is_err());
+        let circle = ring(&shell, top[0], true).unwrap()[0].0;
+        let displaced = Frame::new([[1., 0., 0.], frame.u, frame.v]).unwrap();
+        assert!(decode_rim(&mut shell, circle, displaced).is_err());
+        let count = body.profile().segments().count();
+        let (_, _, last) = face(&shell, faces[6 + count]).unwrap();
+        let edges = ring(&shell, last[0], true).unwrap();
+        let previous = decode_rim(&mut shell, edges[0].0, frame).unwrap();
+        let positive = orient(&edges[2..edges.len() - 1], false);
+        let (vertices, _, _) = edge_record(&shell, positive[0].0).unwrap();
+        let vertex = vertices[usize::from(!positive[0].1)];
+        let join = Junction { positive, vertex };
+        assert!(
+            periodic_end(
+                &mut shell,
+                last[0],
+                previous,
+                false,
+                &join,
+                body.thread(),
+                frame
+            )
+            .is_err()
+        );
+        let bearing = body
+            .profile()
+            .segments()
+            .position(|s| s.role == Role::Bearing)
+            .unwrap();
+        let (_, _, bounds) = face(&shell, faces[7 + bearing]).unwrap();
+        let wires = bounds
+            .iter()
+            .map(|&id| shell.bound(id, false).unwrap().1)
+            .collect::<Vec<_>>();
+        let mut changed = text.clone();
+        for (i, name) in ["FACE_OUTER_BOUND", "FACE_BOUND"].into_iter().enumerate() {
+            let key = format!("#{}=", bounds[i]);
+            let line = text.lines().find(|l| l.starts_with(&key)).unwrap();
+            changed = changed.replacen(line, &format!("{key}{name}('',#{},.T.);", wires[1 - i]), 1);
+        }
+        topology(&changed).unwrap();
+        assert!(
+            verify_profiled_screw(&changed, &body, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
+                .is_err()
+        );
+        assert!(crate::step_read::read_import_solid(&changed, 1e-7).is_err());
+        let (surface, _, _) = face(&shell, faces[8]).unwrap();
+        let key = format!("#{surface}=");
+        let line = text.lines().find(|l| l.starts_with(&key)).unwrap();
+        let changed = text.replacen(line, &format!("{key}B_SPLINE_SURFACE_WITH_KNOTS('');"), 1);
+        assert!(
+            verify_profiled_screw(&changed, &body, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
+                .is_err()
+        );
+        assert!(crate::step_read::read_import_solid(&changed, 1e-7).is_err());
+        let (_, _, bounds) = face(&shell, faces[4]).unwrap();
+        let (_, wire, _) = shell.bound(bounds[0], false).unwrap();
+        let mut directed = refs(&shell.args(wire, "EDGE_LOOP").unwrap()[1]).unwrap();
+        directed.rotate_left(1);
+        let serialized = directed
+            .iter()
+            .map(|id| format!("#{id}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let key = format!("#{wire}=");
+        let line = text.lines().find(|l| l.starts_with(&key)).unwrap();
+        let changed = text.replacen(line, &format!("{key}EDGE_LOOP('',({serialized}));"), 1);
+        topology(&changed).unwrap();
+        assert!(
+            verify_profiled_screw(&changed, &body, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
+                .is_err()
+        );
+        assert!(crate::step_read::read_import_solid(&changed, 1e-7).is_err());
+        let (_, _, bounds) = face(&shell, faces[0]).unwrap();
+        let (_, wire, _) = shell.bound(bounds[0], false).unwrap();
+        let mut directed = refs(&shell.args(wire, "EDGE_LOOP").unwrap()[1]).unwrap();
+        directed.rotate_left(1);
+        let serialized = directed
+            .iter()
+            .map(|id| format!("#{id}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let key = format!("#{wire}=");
+        let line = text.lines().find(|l| l.starts_with(&key)).unwrap();
+        let changed = text.replacen(line, &format!("{key}EDGE_LOOP('',({serialized}));"), 1);
+        topology(&changed).unwrap();
+        assert!(crate::step_read::read_import_solid(&changed, 1e-7).is_err());
+    }
+
+    #[test]
     fn malformed_head_carriers_and_physical_graph_records_are_refused() {
         fn refs_in(value: &Value<'_>, pending: &mut Vec<u32>) {
             match value {
@@ -1324,7 +1433,8 @@ mod tests {
                     }
                     if !matches!(
                         entity.name,
-                        "EDGE_CURVE"
+                        "PLANE"
+                            | "EDGE_CURVE"
                             | "EDGE_LOOP"
                             | "CONICAL_SURFACE"
                             | "CYLINDRICAL_SURFACE"
@@ -1337,6 +1447,27 @@ mod tests {
                     }
                     let key = format!("#{id}=");
                     let line = text.lines().find(|l| l.starts_with(&key)).unwrap();
+                    if entity.name == "EDGE_CURVE" {
+                        let a = reference(&entity.args[1]).unwrap();
+                        let b = reference(&entity.args[2]).unwrap();
+                        let changed = text.replacen(
+                            line,
+                            &format!("{key}EDGE_CURVE('',#{a},#{b},1.,.T.);"),
+                            1,
+                        );
+                        assert!(
+                            verify_profiled_screw(
+                                &changed,
+                                &body,
+                                [0.; 3],
+                                [1., 0., 0.],
+                                [0., 1., 0.],
+                                1e-7
+                            )
+                            .is_err()
+                        );
+                        assert!(crate::step_read::read_import_solid(&changed, 1e-7).is_err());
+                    }
                     let changed = text.replacen(line, &format!("{key}{}('');", entity.name), 1);
                     assert!(
                         verify_profiled_screw(
@@ -1404,12 +1535,37 @@ mod tests {
                 for value in &entity.args {
                     gather(value, &mut pending);
                 }
-                if entity.name != "CARTESIAN_POINT"
+                if entity.name == "DIRECTION"
+                    && matches!(entity.args.as_slice(),[Value::String(_),Value::List(values)] if values.len()==2)
+                {
+                    let key = format!("#{id}=");
+                    let line = text.lines().find(|l| l.starts_with(&key)).unwrap();
+                    let changed =
+                        text.replacen(line, &format!("{key}DIRECTION('',(0.000000001,1.));"), 1);
+                    assert!(crate::step_read::read_import_solid(&changed, 1e-7).is_err());
+                    assert!(
+                        verify_profiled_screw(
+                            &changed,
+                            &body,
+                            [0.; 3],
+                            [1., 0., 0.],
+                            [0., 1., 0.],
+                            1e-7
+                        )
+                        .is_err()
+                    );
+                    continue;
+                }
+                if !matches!(entity.name, "CARTESIAN_POINT" | "DIRECTION")
                     || !matches!(entity.args.as_slice(),[Value::String(_),Value::List(values)] if values.len()==3)
                 {
                     continue;
                 }
-                let point = shell.point(id).unwrap();
+                let point = if entity.name == "DIRECTION" {
+                    shell.direction(id).unwrap()
+                } else {
+                    shell.point(id).unwrap()
+                };
                 for axis in 0..3 {
                     let mut shifted = point;
                     shifted[axis] += 1e-9;
@@ -1418,8 +1574,8 @@ mod tests {
                     let changed = text.replacen(
                         line,
                         &format!(
-                            "{key}CARTESIAN_POINT('',({},{},{}));",
-                            shifted[0], shifted[1], shifted[2]
+                            "{key}{}('',({},{},{}));",
+                            entity.name, shifted[0], shifted[1], shifted[2]
                         ),
                         1,
                     );
@@ -1437,6 +1593,82 @@ mod tests {
             }
         }
         assert!(rejected > 40);
+    }
+
+    #[test]
+    fn steep_cone_carrier_residual_must_fit_source_budget_over_its_whole_extent() {
+        let old = screw(false, 1, false);
+        let source = Screw::new(
+            Thread::new(helical_thread::Spec {
+                length_mm: 0.5,
+                ..old.thread().spec()
+            })
+            .unwrap(),
+            Spec {
+                head: Head::Countersunk {
+                    radius_mm: 3.,
+                    height_mm: 1.65,
+                    included_angle_deg: 150.,
+                    edge_chamfer_mm: 0.1,
+                    neck_radius_mm: 0.1,
+                },
+                shank_length_mm: 1.,
+                socket_across_flats_mm: 2.,
+                socket_depth_mm: 0.6,
+                minimum_wall_mm: 0.1,
+            },
+        )
+        .unwrap();
+        let text =
+            step::write_profiled_screw(&source, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7).unwrap();
+        let (_, imported) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+        let error = imported
+            .profiled_screw_geometry()
+            .unwrap()
+            .0
+            .profile()
+            .rounding_error_mm();
+        let data = parse_entities(&text, 1e-7).unwrap();
+        let shell = Shell::new(&data, 1e-7, true);
+        let faces = shell
+            .member_faces(shell.represented_solids(true).unwrap()[0])
+            .unwrap();
+        let cone = source
+            .profile()
+            .segments()
+            .position(|s| s.role == Role::Cone)
+            .unwrap();
+        let (surface, _, _) = face(&shell, faces[7 + cone]).unwrap();
+        let axis = reference(&shell.args(surface, "CONICAL_SURFACE").unwrap()[1]).unwrap();
+        let args = shell.args(axis, "AXIS2_PLACEMENT_3D").unwrap();
+        let mut origin = shell.point(reference(&args[1]).unwrap()).unwrap();
+        origin[2] += 0.75 * error;
+        let new = data.keys().last().unwrap() + 1;
+        let key = format!("#{axis}=");
+        let line = text.lines().find(|l| l.starts_with(&key)).unwrap();
+        let changed = text.replacen(
+            line,
+            &format!(
+                "{key}AXIS2_PLACEMENT_3D('',#{new},#{},#{});",
+                reference(&args[2]).unwrap(),
+                reference(&args[3]).unwrap()
+            ),
+            1,
+        );
+        let position = changed.rfind("ENDSEC;").unwrap();
+        let changed = format!(
+            "{}#{new}=CARTESIAN_POINT('',({},{},{}));\n{}",
+            &changed[..position],
+            origin[0],
+            origin[1],
+            origin[2],
+            &changed[position..]
+        );
+        assert!(
+            verify_profiled_screw(&changed, &source, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
+                .is_err()
+        );
+        assert!(crate::step_read::read_import_solid(&changed, 1e-7).is_err());
     }
 
     #[test]

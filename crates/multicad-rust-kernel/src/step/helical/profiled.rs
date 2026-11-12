@@ -5,6 +5,8 @@ use crate::{
     profiled_screw::Screw,
 };
 use std::f64::consts::TAU;
+#[cfg(test)]
+mod tests;
 
 struct Station {
     center: Entity,
@@ -79,6 +81,7 @@ pub(super) fn admission(screw: &Screw, origin: Point, tolerance: f64) -> Result<
     }
     if 128. * f64::EPSILON * scale + 4. * screw.profile().rounding_error_mm() > tolerance / 4.
         || screw.spec().socket_depth_mm <= 10. * tolerance
+        || screw.spec().socket_across_flats_mm <= 10. * tolerance
         || !screw.profile().admits_socket(
             screw.spec().socket_across_flats_mm / 3_f64.sqrt(),
             screw.spec().socket_depth_mm,

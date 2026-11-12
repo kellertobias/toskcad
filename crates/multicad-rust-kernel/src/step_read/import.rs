@@ -210,6 +210,19 @@ pub struct ImportSolid {
     pub profile: ImportProfile,
 }
 
+impl ImportSolid {
+    /// Physical head source and its head-only volume uncertainty receipt.
+    pub fn profiled_screw_geometry(&self) -> Option<(&crate::profiled_screw::Screw, f64)> {
+        match &self.profile {
+            ImportProfile::ProfiledScrew {
+                screw,
+                head_volume_error_mm3,
+            } => Some((screw, *head_volume_error_mm3)),
+            _ => None,
+        }
+    }
+}
+
 /// Decode a single analytic extrusion or rectilinear solid from a verified
 /// STEP shell. Orthogonal solids can contain blind and through pockets.
 pub fn read_import_solid(input: &str, tolerance_mm: f64) -> Result<(Readback, ImportSolid)> {

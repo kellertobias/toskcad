@@ -8,11 +8,7 @@ pub fn profiled_screw_import_matches(
     frame: [Point; 3],
     tolerance: f64,
 ) -> bool {
-    let ImportProfile::ProfiledScrew {
-        screw: other,
-        head_volume_error_mm3,
-    } = &imported.profile
-    else {
+    let Some((other, head_volume_error_mm3)) = imported.profiled_screw_geometry() else {
         return false;
     };
     let reserve =
@@ -20,7 +16,7 @@ pub fn profiled_screw_import_matches(
     if !tolerance.is_finite()
         || tolerance <= 0.
         || !head_volume_error_mm3.is_finite()
-        || *head_volume_error_mm3 <= 0.
+        || head_volume_error_mm3 <= 0.
         || reserve > tolerance / 4.
     {
         return false;
@@ -74,8 +70,8 @@ pub fn profiled_screw_import_matches(
         };
         a.role == b.role && station(a.start, b.start) && station(a.end, b.end) && curve
     });
-    let points = [source, other.as_ref()]
-        .map(|s| crate::headed_screw::hex_vertices(s.spec().socket_across_flats_mm));
+    let points =
+        [source, other].map(|s| crate::headed_screw::hex_vertices(s.spec().socket_across_flats_mm));
     let drive = [0., 1.].into_iter().all(|floor| {
         points[0].into_iter().zip(points[1]).all(|(a, b)| {
             near(

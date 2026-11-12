@@ -133,11 +133,9 @@ pub(in super::super::super) fn read(
         rings[0][i] = a;
         rings[1][i] = b;
         for (j, rail) in [left, right].into_iter().enumerate() {
-            let [Value::String(_), a, b, _, Value::Enum("T")] = shell.args(rail, "EDGE_CURVE")?
-            else {
-                return Err(ReadError::Invalid);
-            };
-            corners[i][j] = [reference(a)?, reference(b)?];
+            let (vertices, _, forward) = edge_record(shell, rail)?;
+            require(forward)?;
+            corners[i][j] = vertices;
         }
     }
     let proof = Proof {
