@@ -438,3 +438,67 @@ fn seated_blind_rejects_wrong_policy_frame_profile_and_source_atomically() {
         Solid::rust_helical_thread(spec(false), None, EntityId::new(), entry, policy).unwrap();
     assert!(cut(&bare, EntityId::new(), entry, false, 0.8).is_err());
 }
+
+#[test]
+fn intrinsic_counterbore_invalidity_and_stricter_policy_reserves_both_refuse_atomically() {
+    let policy = GeometryPolicy::default();
+    let owner = EntityId::new();
+    let stock =
+        Solid::rust_box(owner.uuid_bits(), [n(20); 3], PlaneFrame::default(), policy).unwrap();
+    let before = stock.topology_snapshot(owner, 0).unwrap();
+    let entry = PlaneFrame {
+        origin: [10., 10., 20.],
+        u: [1., 0., 0.],
+        v: [0., -1., 0.],
+    };
+    for (radius, depth, message) in [
+        (f64::NAN, 0.8, "Invalid finite counterbore"),
+        (1.5, 0.8, "Invalid finite counterbore"),
+        (3.5, 3.5, "Invalid finite counterbore"),
+        (1e8, 0.8, "Invalid finite counterbore"),
+        (
+            1.5 + policy.minimum_feature_mm / 2.,
+            0.8,
+            "Length is below minimum feature size",
+        ),
+        (
+            3.5,
+            policy.minimum_feature_mm / 2.,
+            "Length is below minimum feature size",
+        ),
+    ] {
+        let cause = stock
+            .rust_cut_counterbored_blind_internal_thread(
+                BlindThreadCut {
+                    profile: spec(false),
+                    entry,
+                    receiving_radius_mm: 1.5,
+                    minimum_wall_mm: 1.,
+                    minimum_floor_mm: 1.,
+                },
+                BlindThreadSeat {
+                    radius_mm: radius,
+                    depth_mm: depth,
+                },
+                EntityId::new(),
+                policy,
+            )
+            .err()
+            .unwrap();
+        assert_eq!(cause.kind, multicad_kernel::GeometryErrorKind::Input);
+        assert!(cause.message.contains(message), "{cause}");
+        assert_eq!(stock.topology_snapshot(owner, 0).unwrap(), before);
+    }
+    let accepted = cut(&stock, EntityId::new(), entry, false, 0.8).unwrap();
+    assert!(
+        !accepted
+            .rust_thread_contains(point(entry, [2., 0., 0.4]))
+            .unwrap()
+    );
+    assert!(
+        accepted
+            .rust_thread_contains(point(entry, [2., 0., 1.]))
+            .unwrap()
+    );
+    assert_eq!(stock.topology_snapshot(owner, 0).unwrap(), before);
+}

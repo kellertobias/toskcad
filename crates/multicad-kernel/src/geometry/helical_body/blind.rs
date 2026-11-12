@@ -83,6 +83,12 @@ impl Solid {
         let geometry = checked_thread(cut.profile, None, policy)?;
         let counterbore = seat
             .map(|seat| {
+                let source = multicad_rust_kernel::thread_counterbore::Counterbore::new(
+                    geometry,
+                    seat.radius_mm,
+                    seat.depth_mm,
+                )
+                .map_err(|_| input("Invalid finite counterbore over the original blind thread"))?;
                 for d in [
                     seat.radius_mm,
                     seat.depth_mm,
@@ -91,12 +97,7 @@ impl Solid {
                 ] {
                     policy.length(d)?;
                 }
-                multicad_rust_kernel::thread_counterbore::Counterbore::new(
-                    geometry,
-                    seat.radius_mm,
-                    seat.depth_mm,
-                )
-                .map_err(|_| input("Invalid finite counterbore over the original blind thread"))
+                Ok(source)
             })
             .transpose()?;
         let stock = self.orthogonal_stock()?;
