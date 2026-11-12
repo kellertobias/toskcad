@@ -22,8 +22,8 @@ pub use axial_profile_stack::axial_profile_stack;
 pub use chamfered_bores::chamfered_polygon_prism;
 pub use normal_sweep::normal_sweep;
 pub use orthogonal_pockets::{
-    blind_tap_stock_face, bored_orthogonal, pocketed_orthogonal, slotted_orthogonal,
-    tapped_orthogonal,
+    blind_tap_stock_face, bored_orthogonal, counterbored_tapped_orthogonal, pocketed_orthogonal,
+    slotted_orthogonal, tapped_orthogonal,
 };
 pub use pierced_sweep::pierced_normal_sweep;
 pub use stadium::stadium_prism;

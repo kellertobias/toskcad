@@ -12,6 +12,9 @@ use std::{
     f64::consts::{PI, TAU},
 };
 
+mod blind_counterbore;
+pub use blind_counterbore::counterbore_volume_error_bound;
+pub(crate) use blind_counterbore::open_counterbored_cavity;
 mod receiver;
 pub use receiver::{receiver_volume_error_bound, tessellate_receiver};
 mod external;

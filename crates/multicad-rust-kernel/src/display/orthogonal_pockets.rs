@@ -4,7 +4,7 @@ use super::stadium::StadiumRing;
 use super::*;
 use crate::{
     helical_thread::Thread,
-    helical_thread_mesh::open_blind_cavity,
+    helical_thread_mesh::{open_blind_cavity, open_counterbored_cavity},
     orthogonal_boundary::{Boundary, BoundaryFace, point_key},
     orthogonal_pockets::{FacePlane, MAX_POCKETS, OrthogonalPocket, OrthogonalThroughBore},
     orthogonal_slots::OrthogonalSlot,
@@ -66,6 +66,26 @@ pub fn tapped_orthogonal(
     [u, v]: [Point; 2],
     options: Tessellation,
 ) -> Result<DisplayMesh, MeshError> {
+    tapped_stock(boundary, thread, pocket, [u, v], options, None)
+}
+/// A counterbored blind tap shares all finite shoulder and stock-mouth vertices.
+pub fn counterbored_tapped_orthogonal(
+    boundary: &Boundary,
+    seat: &crate::thread_counterbore::Counterbore,
+    pocket: OrthogonalPocket,
+    axes: [Point; 2],
+    options: Tessellation,
+) -> Result<DisplayMesh, MeshError> {
+    tapped_stock(boundary, seat.thread(), pocket, axes, options, Some(seat))
+}
+fn tapped_stock(
+    boundary: &Boundary,
+    thread: &Thread,
+    pocket: OrthogonalPocket,
+    [u, v]: [Point; 2],
+    options: Tessellation,
+    seat: Option<&crate::thread_counterbore::Counterbore>,
+) -> Result<DisplayMesh, MeshError> {
     let invalid = MeshError::UnresolvedBoundary;
     let mouth = boundary.faces.get(pocket.face).ok_or(invalid)?;
     let mouth_plane = FacePlane::from_face(mouth).ok_or(invalid)?;
@@ -88,19 +108,28 @@ pub fn tapped_orthogonal(
         ]
         .into_iter()
         .all(|v| v.abs() <= 1e-10)
-        || !mouth_plane.contains_disk(mouth, pocket.center_mm, spec.major_radius_mm)
+        || !mouth_plane.contains_disk(
+            mouth,
+            pocket.center_mm,
+            seat.map_or(spec.major_radius_mm, |s| s.radius_mm()),
+        )
     {
         return Err(invalid);
     }
     let mut normal = mouth.normal;
     normal[mouth_plane.axis] *= -1.;
-    let (mut mesh, rim) = open_blind_cavity(thread, options)?;
+    let (mut mesh, rim) = match seat {
+        Some(seat) => open_counterbored_cavity(seat, options)?,
+        None => open_blind_cavity(thread, options)?,
+    };
     for point in mesh.vertices.as_chunks_mut::<3>().0 {
         let [x, y, z] = *point;
         *point = std::array::from_fn(|i| pocket.center_mm[i] + u[i] * x + v[i] * y + normal[i] * z);
     }
     let mut corners = BTreeMap::new();
-    let thread_faces = 2 + 4 * spec.starts as usize;
+    let thread_faces = seat.map_or(2 + 4 * spec.starts as usize, |s| {
+        s.cavity_face_count() as usize
+    });
     for (i, face) in boundary.faces.iter().enumerate() {
         let plane = FacePlane::from_face(face).ok_or(invalid)?;
         let mut region = stock_region(&mut mesh, &mut corners, face, plane)?;
