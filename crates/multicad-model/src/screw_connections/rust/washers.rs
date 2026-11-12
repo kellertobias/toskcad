@@ -20,7 +20,13 @@ fn fail(input: &Inputs<'_, '_>, message: &str) -> ModelError {
     error(Some(input.connection), message)
 }
 
-fn dimensions(row: &Hardware<'_>, input: &Inputs<'_, '_>) -> Result<[f64; 3], ModelError> {
+pub(super) fn actual_dimensions(
+    row: &Hardware<'_>,
+    axis: ReferenceFrame,
+    policy: GeometryPolicy,
+    id: EntityId,
+) -> Result<[f64; 3], ModelError> {
+    let fail = |message| error(Some(id), message);
     let ResolvedMechanicalPart::Washer {
         bore_radius_mm,
         outside_radius_mm,
@@ -29,16 +35,13 @@ fn dimensions(row: &Hardware<'_>, input: &Inputs<'_, '_>) -> Result<[f64; 3], Mo
     } = row.part
     else {
         return Err(fail(
-            input,
             "A washer role must contain actual flat washer geometry",
         ));
     };
-    let (ring, actual) = row.solid.rust_annulus_data().ok_or_else(|| {
-        fail(
-            input,
-            "A washer role has no retained circular ring material",
-        )
-    })?;
+    let (ring, actual) = row
+        .solid
+        .rust_annulus_data()
+        .ok_or_else(|| fail("A washer role has no retained circular ring material"))?;
     let dimensions = [bore_radius_mm, outside_radius_mm, thickness_mm];
     if dimensions
         != [
@@ -48,7 +51,6 @@ fn dimensions(row: &Hardware<'_>, input: &Inputs<'_, '_>) -> Result<[f64; 3], Mo
         ]
     {
         return Err(fail(
-            input,
             "Actual washer material differs from its current definition",
         ));
     }
@@ -60,31 +62,34 @@ fn dimensions(row: &Hardware<'_>, input: &Inputs<'_, '_>) -> Result<[f64; 3], Mo
     let residual = distance(actual.origin, expected.origin_mm)
         + outside_radius_mm * (distance(actual.u, expected.u) + distance(actual.v, expected.v))
         + thickness_mm * distance(normal, expected.normal());
-    let tilt = cross(normal, input.axis.normal());
+    let tilt = cross(normal, axis.normal());
     let tilt = dot(tilt, tilt).sqrt();
     if !residual.is_finite()
-        || residual > input.policy.linear_tolerance_mm / 8.
-        || tilt * outside_radius_mm > input.policy.linear_tolerance_mm / 8.
-        || dot(normal, input.axis.normal()) <= 0.
+        || residual > policy.linear_tolerance_mm / 8.
+        || tilt * outside_radius_mm > policy.linear_tolerance_mm / 8.
+        || dot(normal, axis.normal()) <= 0.
     {
         return Err(fail(
-            input,
             "Actual washer placement cannot prove a flat bearing plane",
         ));
     }
     Ok(dimensions)
 }
 
-fn land(input: &Inputs<'_, '_>, a: [f64; 2], b: [f64; 2]) -> Result<(), ModelError> {
-    let margin = input
-        .policy
+pub(super) fn annular_land(
+    a: [f64; 2],
+    b: [f64; 2],
+    policy: GeometryPolicy,
+    id: EntityId,
+) -> Result<(), ModelError> {
+    let fail = |message| error(Some(id), message);
+    let margin = policy
         .minimum_feature_mm
-        .max(16. * input.policy.linear_tolerance_mm);
+        .max(16. * policy.linear_tolerance_mm);
     // This complete annular land fits both adjacent materials. The reserve
     // exceeds the admitted frame and reconstruction errors on both sides.
     if a[1].min(b[1]) - a[0].max(b[0]) < 5. * margin {
         return Err(fail(
-            input,
             "Bearing components have no complete overlapping flat annular land",
         ));
     }
@@ -105,7 +110,7 @@ pub(super) fn prove(input: Inputs<'_, '_>) -> Result<[f64; 2], ModelError> {
             Role::NutWasher => 1,
             _ => continue,
         };
-        sums[side] += dimensions(row, &input)?[2];
+        sums[side] += actual_dimensions(row, input.axis, input.policy, input.connection)?[2];
     }
     if sums.into_iter().any(|sum| !sum.is_finite()) {
         return Err(fail(
@@ -146,7 +151,8 @@ pub(super) fn prove(input: Inputs<'_, '_>) -> Result<[f64; 2], ModelError> {
             continue; // The actual finite cone proof replaces a planar head land.
         }
         for row in input.placed.iter().filter(|row| row.role == role) {
-            let [inner, outer, height] = dimensions(row, &input)?;
+            let [inner, outer, height] =
+                actual_dimensions(row, input.axis, input.policy, input.connection)?;
             if role == Role::HeadWasher
                 && input
                     .bore
@@ -186,18 +192,19 @@ pub(super) fn prove(input: Inputs<'_, '_>) -> Result<[f64; 2], ModelError> {
                     "Washer bore interferes with the shaft or head neck",
                 ));
             }
-            land(&input, previous, [inner, outer])?;
+            annular_land(previous, [inner, outer], input.policy, input.connection)?;
             previous = [inner, outer];
             station += height;
         }
-        land(
-            &input,
+        annular_land(
             previous,
             if role == Role::HeadWasher {
                 head_stock
             } else {
                 input.nut
             },
+            input.policy,
+            input.connection,
         )?;
     }
     Ok(sums)

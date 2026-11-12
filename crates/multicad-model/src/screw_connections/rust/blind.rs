@@ -1,4 +1,5 @@
 use super::*;
+mod bearing;
 
 pub(super) fn check(
     input: &connection_receivers::Inputs<'_>,
@@ -10,41 +11,58 @@ pub(super) fn check(
     let fail = |message: &str| error(Some(id), message);
     let unsupported = || {
         fail(
-            "Rust blind tapped connections require one generated metric screw, no grip stack and one unseated blind tap",
+            "Rust blind tapped connections require one generated metric screw, optional flat head washers, no grip stack and one blind tap",
         )
     };
-    let ([receiver], [row]) = (source.receivers.as_slice(), source.hardware.as_slice()) else {
+    let [receiver] = source.receivers.as_slice() else {
         return Err(unsupported());
     };
-    let ScrewConnectionHardwareSource::Generated { part } = &row.source else {
+    if !(1..=64).contains(&source.hardware.len())
+        || source
+            .hardware
+            .iter()
+            .filter(|r| r.role == Role::Screw)
+            .count()
+            != 1
+        || source
+            .hardware
+            .iter()
+            .any(|r| !matches!(r.role, Role::Screw | Role::HeadWasher))
+    {
         return Err(unsupported());
-    };
-    if row.role != Role::Screw
-        || !evaluated
+    }
+    let mut placed = Vec::with_capacity(source.hardware.len());
+    for row in &source.hardware {
+        checkpoint(interrupt)?;
+        let ScrewConnectionHardwareSource::Generated { part } = &row.source else {
+            return Err(unsupported());
+        };
+        if !evaluated
             .snapshot()
             .leaf_occurrences
             .values()
             .any(|leaf| leaf.path.root == row.instance && leaf.producer == part.feature)
-    {
-        return Err(unsupported());
+        {
+            return Err(unsupported());
+        }
+        placed.push(hardware(
+            input.document,
+            input.parameters,
+            evaluated,
+            row,
+            id,
+        )?);
     }
-    let screw = hardware(input.document, input.parameters, evaluated, row, id)?;
+    let screw = placed
+        .iter()
+        .find(|row| row.role == Role::Screw)
+        .expect("one screw checked");
     let ResolvedMechanicalPart::MachineScrew {
-        head,
-        shank_radius_mm,
-        underhead_length_mm,
-        thread: external,
-        ..
+        thread: external, ..
     } = &screw.part
     else {
         return Err(unsupported());
     };
-    if !matches!(
-        head,
-        ResolvedScrewHead::SocketCap { .. } | ResolvedScrewHead::ExternalHex { .. }
-    ) {
-        return Err(unsupported());
-    }
 
     let physical = evaluated
         .snapshot()
@@ -105,36 +123,14 @@ pub(super) fn check(
     };
     let screw_frame = reference(screw_frame);
     let tap_frame = reference(tap_frame);
-    at(
-        axis,
-        placed_frame(&screw.part, screw.pose),
-        0.,
-        tolerance,
-        id,
-    )?;
-    at(axis, screw_frame, 0., tolerance, id)?;
+    let shaft = bearing::prove(input, &placed, screw, axis, &proof, screw_frame, id)?;
     at(axis, tap_frame, 0., tolerance, id)?;
     let (receiver_station, _) = station(axis, tap_frame.origin_mm);
     let (screw_station, _) = station(axis, screw_frame.origin_mm);
-    if (*underhead_length_mm - screw_thread.spec().length_mm).abs() > tolerance {
-        return Err(fail(
-            "The inserted screw must be threaded from its head bearing plane",
-        ));
-    }
     if screw_station + screw_thread.spec().length_mm
         > receiver_station + tap_thread.spec().length_mm - blind_clearance + tolerance
     {
         return Err(fail("Screw tip violates the declared blind-hole clearance"));
-    }
-    let shaft = shank_radius_mm.max(screw_thread.spec().major_radius_mm);
-    let margin = input.policy.minimum_feature_mm.max(16. * tolerance);
-    if head.minimum_radius_mm().min(proof.protected_radius_mm)
-        - tap_thread.spec().major_radius_mm.max(shaft)
-        < 5. * margin
-    {
-        return Err(fail(
-            "The screw head has no complete overlapping flat bearing land on the blind tap stock",
-        ));
     }
     let resolved = receiver
         .source
@@ -145,14 +141,31 @@ pub(super) fn check(
             input.snapshots,
         )
         .map_err(|cause| error(Some(id), cause))?;
+    let expected_seat = resolved
+        .seat
+        .map(|(conical, diameter, depth)| (conical, diameter / 2., depth));
+    let actual_seat = proof
+        .counterbore
+        .map(|seat| (false, seat.radius_mm, seat.depth_mm));
+    if expected_seat != actual_seat {
+        return Err(fail(
+            "Actual blind entry seat differs from its current definition",
+        ));
+    }
     let internal = resolved.thread.ok_or_else(unsupported)?;
-    let mating = model::resolve_metric_thread_mating(
+    let mating = model::resolve_metric_thread_mating_clipped(
         external,
         screw_frame,
         &internal,
         tap_frame,
         minimum,
         tolerance,
+        model::MetricThreadMatingIntervals {
+            external: None,
+            internal: proof
+                .counterbore
+                .map(|seat| [seat.depth_mm, tap_thread.spec().length_mm]),
+        },
     )
     .map_err(|cause| error(Some(id), cause))?;
     no_phase_correction(&mating, id)?;
@@ -163,28 +176,32 @@ pub(super) fn check(
         shaft,
         tolerance,
     )?;
-    let bounds = screw
-        .solid
-        .bounds()
-        .map_err(|cause| error(Some(id), cause))?;
-    for leaf in evaluated.snapshot().leaf_occurrences.values() {
-        checkpoint(interrupt)?;
-        if leaf.path == receiver.source.occurrence || leaf.path.root == row.instance {
-            continue;
-        }
-        if !(0..3).any(|i| {
-            bounds.max[i] + tolerance < leaf.bounds.min[i]
-                || leaf.bounds.max[i] + tolerance < bounds.min[i]
-        }) {
-            return Err(fail(
-                "Rust cannot certify clearance to another nearby physical component",
-            ));
+    for hardware in &placed {
+        let bounds = hardware
+            .solid
+            .bounds()
+            .map_err(|cause| error(Some(id), cause))?;
+        for leaf in evaluated.snapshot().leaf_occurrences.values() {
+            checkpoint(interrupt)?;
+            if leaf.path == receiver.source.occurrence
+                || placed.iter().any(|row| leaf.path.root == row.instance)
+            {
+                continue;
+            }
+            if !(0..3).any(|i| {
+                bounds.max[i] + tolerance < leaf.bounds.min[i]
+                    || leaf.bounds.max[i] + tolerance < bounds.min[i]
+            }) {
+                return Err(fail(
+                    "Rust cannot certify clearance to another nearby physical component",
+                ));
+            }
         }
     }
     Ok(ScrewConnectionCheck {
         connection:id,
         mode:source.mode,
-        hardware_instances:vec![row.instance],
+        hardware_instances:placed.iter().map(|row| row.instance).collect(),
         receiver_features:vec![receiver.feature],
         grip_mm:grip,
         minimum_engagement_mm:minimum,

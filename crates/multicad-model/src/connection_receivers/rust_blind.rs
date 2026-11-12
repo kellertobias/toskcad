@@ -1,7 +1,7 @@
-//! An unseated, exact blind metric tap in previously unmachined orthogonal stock.
+//! An exact blind metric tap in previously unmachined orthogonal stock.
 use super::*;
 use multicad_core::model::{ConnectionReceiverCut, ThreadFamily};
-use multicad_kernel::BlindThreadCut;
+use multicad_kernel::{BlindThreadCut, BlindThreadSeat};
 
 pub(super) fn build(
     inputs: Inputs<'_>,
@@ -25,8 +25,8 @@ pub(super) fn build(
             "Rust tapped receivers require an explicit blind depth and floor",
         ));
     };
-    if resolved.seat.is_some() {
-        return Err(fail("Rust blind taps require an unseated entry"));
+    if resolved.seat.is_some_and(|seat| seat.0) {
+        return Err(fail("Rust blind taps do not support a conical entry seat"));
     }
     if !matches!(&source.cut, ConnectionReceiverCut::Tapped { thread } if thread.family == ThreadFamily::IsoMetric)
     {
@@ -68,17 +68,24 @@ pub(super) fn build(
         .solids
         .get(&source.input.producer)
         .ok_or_else(|| fail("Blind tap predecessor has no current Rust solid"))?;
-    stock
-        .rust_cut_blind_internal_thread(
-            BlindThreadCut {
-                profile,
-                entry,
-                receiving_radius_mm: resolved.diameter_mm / 2.,
-                minimum_wall_mm: resolved.minimum_wall_mm.max(thread.minimum_wall_mm),
-                minimum_floor_mm: floor,
+    let cut = BlindThreadCut {
+        profile,
+        entry,
+        receiving_radius_mm: resolved.diameter_mm / 2.,
+        minimum_wall_mm: resolved.minimum_wall_mm.max(thread.minimum_wall_mm),
+        minimum_floor_mm: floor,
+    };
+    let result = match resolved.seat {
+        Some((false, diameter, depth)) => stock.rust_cut_counterbored_blind_internal_thread(
+            cut,
+            BlindThreadSeat {
+                radius_mm: diameter / 2.,
+                depth_mm: depth,
             },
             id,
             policy,
-        )
-        .map_err(|cause| error(Some(id), cause))
+        ),
+        _ => stock.rust_cut_blind_internal_thread(cut, id, policy),
+    };
+    result.map_err(|cause| error(Some(id), cause))
 }
