@@ -3,6 +3,7 @@
 use super::AxialCylinder;
 use crate::{Rational, exact_binary::binary_fraction, tapered_thread::interval::I};
 use std::cmp::Ordering;
+mod radial;
 mod section;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,12 +98,41 @@ fn radial_exact(offset: [f64; 2], radius: Rational) -> Option<Ordering> {
     if x == zero() {
         return Some(abs(y).cmp(&radius));
     }
-    let q = x
+    let exact = x
         .checked_mul(x)
-        .ok()?
-        .checked_add(y.checked_mul(y).ok()?)
-        .ok()?;
-    Some(q.cmp(&radius.checked_mul(radius).ok()?))
+        .ok()
+        .and_then(|x| y.checked_mul(y).ok().and_then(|y| x.checked_add(y).ok()))
+        .zip(radius.checked_mul(radius).ok())
+        .map(|(q, r)| q.cmp(&r));
+    exact.or_else(|| {
+        radial::square_difference(offset, radius).and_then(|gap| {
+            if gap.lo > 0. {
+                Some(Ordering::Greater)
+            } else if gap.hi < 0. {
+                Some(Ordering::Less)
+            } else if gap.lo == 0. && gap.hi == 0. {
+                Some(Ordering::Equal)
+            } else {
+                None
+            }
+        })
+    })
+}
+// Signed distance to a circle. Direct subtraction is already tight away from
+// contact; an exact squared numerator avoids losing a nonzero subULP gap.
+// Both d and radius enclose the actual source values, so the quotient encloses
+// (d²-radius²)/(d+radius) without rounding the source coordinates or radii.
+fn radial_difference(d: I, radius: I, radiusq: Option<Rational>, xy: [f64; 2]) -> I {
+    let exact_axis = axis_distance(xy)
+        .zip(radiusq)
+        .and_then(|(d, radius)| d.checked_sub(radius).ok());
+    let direct = difference(d, radius, exact_axis);
+    if direct.lo > 0. || direct.hi < 0. {
+        return direct;
+    }
+    radiusq
+        .and_then(|r| radial::square_difference(xy, r))
+        .map_or(direct, |squared| squared / (d + radius))
 }
 fn center_distance(offset: [f64; 2]) -> I {
     if offset[0] == 0. {
@@ -214,11 +244,8 @@ pub fn measure(
     let sumq = ra.checked_add(rb).ok();
     let radial = order(d - sum, sumq.and_then(|q| radial_exact(xy, q)))?;
     let axial = axial(ha, hb, offset[2], reversed)?;
-    let gapq = axis_distance(xy)
-        .zip(sumq)
-        .and_then(|(d, s)| d.checked_sub(s).ok());
     let radial_gap = if radial == Ordering::Greater {
-        positive(difference(d, sum, gapq))?
+        positive(radial_difference(d, sum, sumq, xy))?
     } else {
         I::point(0.)
     };

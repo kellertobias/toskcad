@@ -42,17 +42,13 @@ pub(super) fn area(a: Rational, b: Rational, xy: [f64; 2], d: I) -> Result<I, Er
         return positive(pi() * s.square());
     }
     let sum = r + s;
-    let axis = axis_distance(xy);
-    let externalq = large
-        .checked_add(small)
-        .ok()
-        .zip(axis)
-        .and_then(|(r, d)| r.checked_sub(d).ok());
-    let internalq = axis
-        .zip(differenceq)
-        .and_then(|(d, r)| d.checked_sub(r).ok());
-    let external = positive(super::difference(sum, d, externalq))?;
-    let internal = positive(super::difference(d, difference, internalq))?;
+    let external = positive(-radial_difference(
+        d,
+        sum,
+        large.checked_add(small).ok(),
+        xy,
+    ))?;
+    let internal = positive(radial_difference(d, difference, differenceq, xy))?;
     let chord =
         positive(external * (sum + d) * internal * (d + difference))?.sqrt() / (I::point(2.) * d);
     let x = (d + (r - s) * (r + s) / d) * I::point(0.5);

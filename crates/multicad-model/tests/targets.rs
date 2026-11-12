@@ -735,3 +735,63 @@ fn occupied_cylinder_targets_distinguish_exact_contact_separation_and_positive_l
         assert_eq!(session.document(), &before);
     }
 }
+
+#[test]
+fn literal_diagonal_cylinder_target_queries_preserve_tiny_lenses_and_exact_contacts() {
+    for (radius, xy, intersects) in [
+        (1., [2_f64.sqrt().next_down(); 2], true),
+        (2.5, [3., 4.], false),
+        (2.5, [3., 4_f64.next_down()], true),
+        (2.5, [3., 4_f64.next_up()], false),
+        (2.5, [3., 3.], true),
+        (2.5, [4., 4.], false),
+    ] {
+        let mut session = root();
+        let a = part(
+            &mut session,
+            "Target",
+            PrimitiveParameters::Cylinder {
+                radius: length(radius),
+                height: length(10.),
+                frame: Default::default(),
+            },
+        );
+        let b = part(
+            &mut session,
+            "Literal source tool",
+            PrimitiveParameters::Cylinder {
+                radius: length(radius),
+                height: length(10.),
+                frame: PrimitiveFrame {
+                    origin: [length(xy[0]), length(xy[1]), length(0.)],
+                    ..Default::default()
+                },
+            },
+        );
+        let before = session.document().clone();
+        let model = Compiler::default()
+            .compile(&before, session.revision())
+            .unwrap();
+        let result = model
+            .cut_targets(
+                &before,
+                session.revision(),
+                &CutTargetQuery {
+                    tools: vec![b.producer],
+                    component: None,
+                    include: vec![a.body],
+                    exclude: vec![],
+                },
+                None,
+            )
+            .unwrap();
+        if intersects {
+            assert_eq!(result.targets, vec![a.clone()]);
+            assert!(result.not_intersecting.is_empty());
+        } else {
+            assert!(result.targets.is_empty());
+            assert_eq!(result.not_intersecting, vec![a.body]);
+        }
+        assert_eq!(session.document(), &before);
+    }
+}

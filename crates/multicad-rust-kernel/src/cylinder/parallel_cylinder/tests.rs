@@ -88,12 +88,12 @@ fn bounded_arithmetic_and_ambiguous_contacts_refuse_then_recover() {
         Err(Error::Limit)
     );
     let x = 2_f64.sqrt();
-    assert_eq!(measure(&a, &a, [x, x, 0.], false), Err(Error::Unresolved));
+    let separated = measure(&a, &a, [x, x, 0.], false).unwrap();
+    assert!(separated.distance_bounds_mm[0] > 0.);
+    assert_eq!(separated.common_volume_bounds_mm3, [0.; 2]);
     let outer = cylinder(q(3, 1), q(2, 1));
-    assert_eq!(
-        measure(&outer, &a, [x, x, 0.], false),
-        Err(Error::Unresolved)
-    );
+    let near_internal = measure(&outer, &a, [x, x, 0.], false).unwrap();
+    assert!(near_internal.common_volume_bounds_mm3[0] > 0.);
     let c = measure(&a, &a, [3., 0., 0.], false).unwrap();
     near(c.distance_mm, 1.);
     assert_eq!(a, before);
@@ -172,4 +172,123 @@ fn endpoint_capacity_fallback_and_uncertain_positive_slices_keep_their_sign_cont
         result.common_volume_mm3,
         2. * (25. * (0.8_f64).acos() + 4.5 * std::f64::consts::PI - 12.),
     );
+}
+
+#[test]
+fn literal_diagonal_subulp_gaps_and_lenses_keep_separate_receipts() {
+    let a = cylinder(q(1, 1), q(2, 1));
+    let before = a;
+    let outside = 2_f64.sqrt();
+    let inside = outside.next_down();
+    // Independent 100-digit evaluation of the stored binary coordinate gives
+    // sqrt(2*x*x)-2 in this strict bracket, despite hypot(x,x) rounding to 2.
+    let reference = [1.3671617315323844e-16, 1.367161731532385e-16];
+    for reversed in [false, true] {
+        for sign in [-1., 1.] {
+            let z = if reversed { 2. } else { 0. };
+            let result = measure(&a, &a, [sign * outside, sign * outside, z], reversed).unwrap();
+            assert!(result.distance_bounds_mm[0] > 0.);
+            assert!(
+                result.distance_bounds_mm[0] <= reference[0]
+                    && result.distance_bounds_mm[1] >= reference[1]
+            );
+            assert_eq!(result.common_volume_bounds_mm3, [0.; 2]);
+            let [p, q] = result.witness;
+            let representative_distance = (p[0] - q[0]).hypot(p[1] - q[1]).hypot(p[2] - q[2]);
+            assert!(
+                (representative_distance - result.distance_mm).abs()
+                    <= 2. * result.witness_error_mm
+            );
+            let lens = measure(&a, &a, [sign * inside, sign * inside, z], reversed).unwrap();
+            assert_eq!(lens.distance_bounds_mm, [0.; 2]);
+            assert!(lens.common_volume_bounds_mm3[0] > 0.);
+            // Inscribed rectangle and enclosing box bound the lens independently
+            // of the circular-segment law for penetration in [1.7,1.9]*1e-16.
+            assert!(lens.common_volume_bounds_mm3[0] > 2. * 0.7 * 1.7e-16_f64.powf(1.5));
+            assert!(lens.common_volume_bounds_mm3[1] < 2. * 2. * 1.9e-16_f64.powf(1.5));
+        }
+    }
+    let pythagorean = cylinder(q(5, 2), q(2, 1));
+    for (y, classification) in [
+        (4_f64.next_down(), Ordering::Less),
+        (4., Ordering::Equal),
+        (4_f64.next_up(), Ordering::Greater),
+    ] {
+        let result = measure(&pythagorean, &pythagorean, [3., y, 0.], false).unwrap();
+        match classification {
+            Ordering::Less => assert!(result.common_volume_bounds_mm3[0] > 0.),
+            Ordering::Equal => {
+                assert_eq!(result.distance_bounds_mm, [0.; 2]);
+                assert_eq!(result.common_volume_bounds_mm3, [0.; 2]);
+            }
+            Ordering::Greater => assert!(result.distance_bounds_mm[0] > 0.),
+        }
+    }
+    assert!(
+        measure(&pythagorean, &pythagorean, [3., 3., 0.], false)
+            .unwrap()
+            .common_volume_bounds_mm3[0]
+            > 0.
+    );
+    assert!(
+        measure(&pythagorean, &pythagorean, [4., 4., 0.], false)
+            .unwrap()
+            .distance_bounds_mm[0]
+            > 0.
+    );
+    assert_eq!(a, before);
+}
+
+#[test]
+fn exact_binary_product_capacity_never_guesses_contact_from_rounded_radii() {
+    let a = cylinder(q(1, 10), q(1, 1));
+    assert_eq!(
+        measure(&a, &a, [0.12, 0.16, 0.], false),
+        Err(Error::Unresolved)
+    );
+    let outer = cylinder(q(3, 10), q(1, 1));
+    assert_eq!(
+        measure(&outer, &a, [0.12, 0.16, 0.], false),
+        Err(Error::Unresolved),
+        "A nonbinary internal tangent must not use a rounded radius difference"
+    );
+    let a = cylinder(q(1, 1), q(1, 1));
+    assert_eq!(
+        measure(&a, &a, [2., 1e-200, 0.], false),
+        Err(Error::Unresolved)
+    );
+    // An exact scaled 3-4-5 tangent exceeds bounded Rational square storage,
+    // while error-free binary products still establish equality.
+    let radius = q(5, 1_i64 << 50);
+    let a = cylinder(radius, q(1, 1));
+    let exact = measure(
+        &a,
+        &a,
+        [6. * 2_f64.powi(-50), 8. * 2_f64.powi(-50), 0.],
+        false,
+    )
+    .unwrap();
+    assert_eq!(exact.distance_bounds_mm, [0.; 2]);
+    assert_eq!(exact.common_volume_bounds_mm3, [0.; 2]);
+    // Larger exact Pythagorean operands may leave a signed-zero interval; do
+    // not turn that numerical ambiguity into positive or negative material.
+    let m = (1_i64 << 26) as f64;
+    let n = m - 1.;
+    let xy = [
+        (m * m - n * n) * 2_f64.powi(-32),
+        2. * m * n * 2_f64.powi(-32),
+    ];
+    let radius = q(
+        (1_i64 << 26).pow(2) + ((1_i64 << 26) - 1).pow(2),
+        1_i64 << 32,
+    );
+    let gap = radial::square_difference(xy, radius).unwrap();
+    assert!(gap.lo <= 0. && gap.hi >= 0.);
+    assert!(matches!(
+        radial_exact(xy, radius),
+        None | Some(Ordering::Equal)
+    ));
+    for value in [f64::NAN, f64::INFINITY, 3e7] {
+        assert!(radial::square_difference([value, 1.], q(1, 1)).is_none());
+    }
 }

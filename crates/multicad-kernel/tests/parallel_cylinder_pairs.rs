@@ -324,3 +324,96 @@ fn admitted_near_rigid_placement_cannot_erase_a_real_axial_material_band() {
     );
     near(source.volume_mm3().unwrap(), 250. * std::f64::consts::PI);
 }
+
+#[test]
+fn literal_subulp_diagonal_material_is_not_decided_by_contact_tolerance() {
+    let x = 2_f64.sqrt();
+    let a = cylinder(q(1, 1), q(10, 1), Default::default());
+    let before = (
+        a.volume_mm3().unwrap(),
+        a.topology_snapshot(EntityId::new(), 0).unwrap().elements,
+    );
+    for coordinate in [x.next_down(), x] {
+        let b = cylinder(
+            q(1, 1),
+            q(10, 1),
+            PlaneFrame {
+                origin: [coordinate, coordinate, 0.],
+                ..Default::default()
+            },
+        );
+        let inspection = a.inspect_pair(&b, 1e-7, Default::default()).unwrap();
+        let volume = a
+            .rust_occupied_overlap_volume(&b, Default::default())
+            .unwrap();
+        if coordinate < x {
+            assert!(volume > 0.);
+            assert_eq!(inspection.relation, SolidPairRelation::Overlapping);
+            assert_eq!(inspection.minimum_distance.distance_mm, 0.);
+        } else {
+            assert_eq!(volume, 0.);
+            assert!(inspection.minimum_distance.distance_mm > 0.);
+            assert_eq!(
+                inspection.relation,
+                SolidPairRelation::ContactWithinTolerance
+            );
+        }
+    }
+    let far = [1e6, -1e6, 1e6];
+    let translated = cylinder(
+        q(1, 1),
+        q(10, 1),
+        PlaneFrame {
+            origin: far,
+            ..Default::default()
+        },
+    );
+    let tool_origin = [far[0] + x, far[1] + x, far[2]];
+    assert!(tool_origin[0] - far[0] > x && tool_origin[1] - far[1] > x);
+    let tool = cylinder(
+        q(1, 1),
+        q(10, 1),
+        PlaneFrame {
+            origin: tool_origin,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        translated
+            .rust_occupied_overlap_volume(&tool, Default::default())
+            .unwrap(),
+        0.
+    );
+    assert!(
+        translated
+            .minimum_distance(BRepSelection::Whole, &tool, BRepSelection::Whole)
+            .unwrap()
+            .distance_mm
+            > 0.
+    );
+    let pose = RigidTransform {
+        rotation: [[0.8, -0.36, 0.48], [0.6, 0.48, -0.64], [0., 0.8, 0.6]],
+        translation_mm: [0.; 3],
+    };
+    let tool = cylinder(
+        q(1, 1),
+        q(10, 1),
+        PlaneFrame {
+            origin: [x, x, 0.],
+            ..Default::default()
+        },
+    );
+    let uncertain = a.transformed(pose).unwrap();
+    let tool = tool.transformed(pose).unwrap();
+    assert!(
+        uncertain
+            .rust_occupied_overlap_volume(&tool, Default::default())
+            .is_err(),
+        "A subULP nominal gap cannot absorb noncardinal placement uncertainty"
+    );
+    assert_eq!(a.volume_mm3().unwrap(), before.0);
+    assert_eq!(
+        a.topology_snapshot(EntityId::new(), 0).unwrap().elements,
+        before.1
+    );
+}
