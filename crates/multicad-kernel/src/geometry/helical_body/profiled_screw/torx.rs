@@ -284,6 +284,7 @@ mod tests {
             *screw.thread(),
             EntityId::new(),
             HelicalForm::ProfiledScrew(Box::new(screw.clone())),
+            None,
             GeometryPolicy::default(),
         )
         .unwrap();

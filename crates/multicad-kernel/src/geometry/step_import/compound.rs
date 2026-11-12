@@ -405,6 +405,10 @@ fn member_signature(readback: &Readback, imported: &ImportSolid) -> ContentHash 
                 }
                 if let Some(binding) = recess.finite_binding() {
                     bytes.extend(b"retained-finite-recess");
+                    if let Some(angle) = binding.literal_cone_semi_angle_rad() {
+                        bytes.extend(b"literal-cone-angle");
+                        bytes.extend(angle.to_le_bytes());
+                    }
                     let vertices = binding.vertices();
                     for value in vertices
                         .mouth_mm
