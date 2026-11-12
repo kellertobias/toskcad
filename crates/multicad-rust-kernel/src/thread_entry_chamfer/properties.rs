@@ -124,6 +124,25 @@ impl MassProperties {
     }
 }
 impl Chamfer {
+    fn entry_is_disk(&self) -> bool {
+        let r = I::point(self.tool.spec().major_radius_mm);
+        let knots = self.tool.profile_breaks();
+        // Linear extrema are at the original band endpoints. A circular
+        // valley's true inner support is center-radius, independently of the
+        // separately checked depth metadata. Source dimensions and flank
+        // angles bound these fixed arithmetic expressions well below overflow.
+        let falling = r + I::point(self.tool.slope_at_phase(knots[1], 1))
+            * (I::point(knots[2]) - I::point(knots[1]));
+        let rising = r + I::point(self.tool.slope_at_phase(knots[4], 3))
+            * (I::point(knots[3]) - I::point(knots[4]));
+        let root = self
+            .tool
+            .root_circle()
+            .map_or(I::point(self.tool.root_radius_mm()), |root| {
+                I::point(root.center_radius) - I::point(root.radius)
+            });
+        self.entry_radius_mm <= r.lo.min(falling.lo).min(rising.lo).min(root.lo)
+    }
     pub fn properties(&self, options: PropertiesOptions) -> Result<MassProperties, Error> {
         self.properties_with_interrupt(options, None)
     }
@@ -185,6 +204,11 @@ impl Chamfer {
             positive(x)?;
         }
         let segments = self.phase_segments()?;
+        // A deep entry can be a literal disk even though the original source
+        // is not circular. Prove this from the full radial laws, not glued
+        // activation labels or nominal root metadata. Its tiny exact moments
+        // must not force every unrelated integral below its arithmetic floor.
+        let circular_entry = self.entry_is_disk();
         let count = self.tool.spec().starts;
         let mut total = zero();
         let mut faces = vec![zero(); self.face_count() as usize];
@@ -204,6 +228,9 @@ impl Chamfer {
                     (Kind::Entry, 0),
                     (Kind::End, 1),
                 ] {
+                    if kind == Kind::Entry && circular_entry {
+                        continue;
+                    }
                     if kind == Kind::Cone && !segment.active {
                         continue;
                     }
@@ -218,6 +245,11 @@ impl Chamfer {
                     add(&mut faces[face as usize], value);
                 }
             }
+        }
+        if circular_entry {
+            let disk = integrals::disk(self.entry_radius_mm, 0.)?;
+            add(&mut total, disk);
+            add(&mut faces[0], disk);
         }
         if let Some(tail) = self.terminal {
             let neck = integrals::neck(tail)?;

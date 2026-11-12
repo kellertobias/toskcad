@@ -1,5 +1,31 @@
 use super::*;
 #[test]
+fn certified_full_entry_disks_keep_tiny_cap_centroids_without_global_precision_starvation() {
+    for (left, starts, rounded) in [(false, 1, true), (true, 2, true), (false, 1, false)] {
+        let body = Chamfer::new(
+            super::super::tests::tool(left, starts, rounded),
+            2.998,
+            None,
+        )
+        .unwrap();
+        assert!(body.entry_is_disk());
+        let properties = body.properties(PropertiesOptions::default()).unwrap();
+        let cap = &properties.faces[0];
+        let expected = std::f64::consts::PI * body.entry_radius_mm().powi(2);
+        assert!(cap.area_mm2.lower <= expected && expected <= cap.area_mm2.upper);
+        assert!(
+            cap.centroid_mm
+                .into_iter()
+                .all(|c| c.lower <= 0. && c.upper >= 0. && c.upper - c.lower < 1e-12)
+        );
+    }
+    assert!(
+        !Chamfer::new(super::super::tests::tool(false, 1, true), 0.3, None)
+            .unwrap()
+            .entry_is_disk()
+    );
+}
+#[test]
 fn source_properties_have_positive_faces_and_enclose_independent_volume() {
     let body = Chamfer::new(super::super::tests::tool(false, 1, false), 0.3, None).unwrap();
     let p = body
