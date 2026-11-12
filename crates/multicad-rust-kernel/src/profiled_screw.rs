@@ -186,6 +186,16 @@ impl Screw {
         {
             return Err(ThreadError::Invalid);
         }
+        if let Some((drive, _)) = recess.flat_hex_geometry() {
+            // A reusable contour may have been admitted with a looser budget.
+            // Qualify the literal corners and AF label against this solid's
+            // source reserve; never inherit the caller's family tolerance.
+            HexDrive::from_retained_corners(
+                drive.corners_mm(),
+                drive.across_flats_mm(),
+                profile.rounding_error_mm(),
+            )?;
+        }
         let reserve = profile.rounding_error_mm().max(recess.source_error_mm());
         if recess.maximum_radius_bound_mm() <= 2. * reserve
             || recess.maximum_depth_mm() <= 2. * reserve

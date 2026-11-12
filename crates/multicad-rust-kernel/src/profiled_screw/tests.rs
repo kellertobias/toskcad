@@ -872,3 +872,41 @@ fn metric_pan_torx_uses_twelve_real_lobes_and_a_conical_floor_without_changing_t
     assert_eq!(copied.volume_mm3(), screw.volume_mm3());
     assert!(Screw::new_with_recess(thread, 1.5, head, 3., 1., recess).is_err());
 }
+
+#[test]
+fn retained_hex_requalifies_actual_corners_at_the_solid_budget_instead_of_inheriting_a_loose_family()
+ {
+    let original = Screw::new(thread(1, false), spec(false)).unwrap();
+    let (drive, depth) = original.recess().flat_hex_geometry().unwrap();
+    let af = drive.across_flats_mm();
+    let mut physical = original.spec();
+    physical.head = None;
+    for (kind, label) in [(0, af), (1, af), (2, af + 0.01)] {
+        let mut corners = drive.corners_mm();
+        if kind == 0 {
+            for point in &mut corners {
+                point[0] += 0.001;
+            }
+        }
+        if kind == 1 {
+            corners[0][0] += 0.001;
+        }
+        let loose = HexDrive::from_retained_corners(corners, label, 0.01).unwrap();
+        let recess = Recess::flat_hex(loose, depth).unwrap();
+        assert_eq!(
+            Screw::from_source(*original.thread(), *original.profile(), physical, recess),
+            Err(ThreadError::Invalid)
+        );
+    }
+    let copied = Screw::from_source(
+        *original.thread(),
+        *original.profile(),
+        physical,
+        original.recess().clone(),
+    )
+    .unwrap();
+    assert_eq!(copied.recess(), original.recess());
+    assert_eq!(copied.volume_mm3(), original.volume_mm3());
+    assert!(crate::step::supports_profiled_screw(&copied, [0.; 3], 1e-7));
+    assert!(certify(&tessellate_profiled_screw(&copied, options()).unwrap()).is_ok());
+}
