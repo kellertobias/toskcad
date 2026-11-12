@@ -161,6 +161,46 @@ impl Tensor {
             cells,
         })
     }
+    /// Approximate the owned finite normal polynomial for refinement only.
+    /// This scalar stencil cannot certify a facet or a source cell.
+    pub fn normal_hint(
+        &self,
+        uv: [f64; 2],
+        work: &mut Work<'_>,
+    ) -> Result<Option<[f64; 3]>, Error> {
+        work.charge(2048)?;
+        if uv
+            .iter()
+            .any(|&x| !x.is_finite() || !(0. ..=1.).contains(&x))
+        {
+            return Ok(None);
+        }
+        let index = std::array::from_fn::<_, 2, _>(|k| {
+            self.knots[k]
+                .partition_point(|&x| x <= uv[k])
+                .saturating_sub(1)
+                .min(self.knots[k].len() - 2)
+        });
+        let p = &self.cells[index[0] * (self.knots[1].len() - 1) + index[1]];
+        let local = std::array::from_fn::<_, 2, _>(|k| {
+            ((uv[k] - p.domain[k][0]) / (p.domain[k][1] - p.domain[k][0])).clamp(0., 1.)
+        });
+        let weights = local.map(|t| {
+            std::array::from_fn::<_, 18, _>(|i| {
+                trims::binomial(17, i) * t.powi(i as i32) * (1. - t).powi((17 - i) as i32)
+            })
+        });
+        let anchor = p.normal[0][0].map(I::midpoint);
+        let mut out = anchor;
+        for (u, row) in p.normal.iter().enumerate() {
+            for (v, q) in row.iter().enumerate() {
+                for k in 0..3 {
+                    out[k] += weights[0][u] * weights[1][v] * (q[k].midpoint() - anchor[k]);
+                }
+            }
+        }
+        Ok(out.iter().all(|x| x.is_finite()).then_some(out))
+    }
     pub fn owns(&self, patch: &Patch) -> bool {
         self.cells
             .get(patch.index)

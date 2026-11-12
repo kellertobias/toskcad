@@ -1177,7 +1177,7 @@ fn loose_actual_twisted_sources_still_require_literal_embedding() {
 }
 
 #[test]
-fn authored_pipe_normal_cache_preserves_literal_npt_bytes_and_bspt_resource_semantics() {
+fn authored_pipe_preflight_preserves_npt_bytes_and_qualifies_bspt_with_fixed_limits() {
     use crate::axial_pipe_thread::authored::{AuthoredSection, AuthoredSpec, AuthoredThread};
     for rounded in [false, true] {
         let p = if rounded { 25.4 / 28. } else { 1.25 };
@@ -1237,6 +1237,8 @@ fn authored_pipe_normal_cache_preserves_literal_npt_bytes_and_bspt_resource_sema
                 Some(&probe),
                 Limits {
                     normal_strips: enabled,
+                    compensate_v: enabled,
+                    preflight: enabled,
                     ..DEFAULT_LIMITS
                 },
             );
@@ -1247,13 +1249,32 @@ fn authored_pipe_normal_cache_preserves_literal_npt_bytes_and_bspt_resource_sema
                 current.as_ref().ok().map(|m| m.indices.len() / 3),
                 current.as_ref().err()
             );
-            if rounded {
+            if rounded && !enabled {
                 assert_eq!(current.as_ref().err(), Some(&Error::Limit));
             } else {
-                assert!(current.is_ok());
+                let mesh = current.as_ref().unwrap();
+                let receipt = crate::manufacturing::certify(mesh).unwrap();
+                let mut hash = 0xcbf29ce484222325u64;
+                for byte in mesh
+                    .vertices
+                    .iter()
+                    .flat_map(|x| x.to_bits().to_le_bytes())
+                    .chain(
+                        mesh.indices
+                            .iter()
+                            .chain(&mesh.face_indices)
+                            .flat_map(|x| x.to_le_bytes()),
+                    )
+                {
+                    hash = (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+                }
+                println!(
+                    "actual pipe rounded={rounded} enabled={enabled} hash={hash:016x} signed_volume={}",
+                    receipt.signed_volume_mm3
+                );
             }
-            if let Some(previous) = &result {
-                assert_eq!(&current, previous);
+            if !rounded && let Some(previous) = &result {
+                assert!(&current == previous);
             }
             result = Some(current);
             assert_eq!(body.input(), &original);
@@ -1302,4 +1323,89 @@ fn uncached_normal_fallback_keeps_mid_certificate_cancellation() {
             work,
         )
     });
+}
+
+#[test]
+fn actual_seven_turn_npt_preflight_preserves_the_complete_retained_mesh() {
+    use crate::axial_pipe_thread::authored::{AuthoredSection, AuthoredSpec, AuthoredThread};
+    let pitch = 25.4 / 27.;
+    let k = 1. / 32.;
+    let m = 3_f64.sqrt();
+    let depth = pitch / (1. / (m - k) + 1. / (m + k)) - 2. * 0.0645 * pitch;
+    let source = AuthoredThread::new(
+        AuthoredSpec {
+            major_radius_mm: (0.37360 * 25.4 - 0.1615 * 25.4 / 16. + depth) / 2.,
+            pitch_mm: pitch,
+            length_mm: 0.2639 * 25.4,
+            radial_taper: k,
+            section: AuthoredSection::NptFlat {
+                depth_mm: depth,
+                flat_width_mm: (pitch - depth * (1. / (m - k) + 1. / (m + k))) / 2.,
+            },
+            crest_radius_limit_mm: None,
+        },
+        1e-7,
+        1e-6,
+    )
+    .unwrap();
+    let body = source
+        .raw_boundary_ownership(1e-7, None)
+        .unwrap()
+        .ownership
+        .bind_surfaces(1e-7, None)
+        .unwrap()
+        .certify_axial(1e-7, 1e-6, None)
+        .unwrap()
+        .certify_caps(None)
+        .unwrap()
+        .certify_ordering(None)
+        .unwrap()
+        .certify_material(1e-7, None)
+        .unwrap();
+    let opts = Tessellation {
+        deflection: 0.1,
+        angle: 0.3,
+        triangle_limit: 1_000_000,
+    };
+    let mut baseline = None;
+    for enabled in [false, true] {
+        let started = std::time::Instant::now();
+        let mesh = build_with_limits(
+            &body,
+            opts,
+            None,
+            Limits {
+                normal_strips: enabled,
+                compensate_v: enabled,
+                preflight: enabled,
+                ..DEFAULT_LIMITS
+            },
+        )
+        .unwrap();
+        let receipt = crate::manufacturing::certify(&mesh).unwrap();
+        let mut hash = 0xcbf29ce484222325u64;
+        for byte in mesh
+            .vertices
+            .iter()
+            .flat_map(|x| x.to_bits().to_le_bytes())
+            .chain(
+                mesh.indices
+                    .iter()
+                    .chain(&mesh.face_indices)
+                    .flat_map(|x| x.to_le_bytes()),
+            )
+        {
+            hash = (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+        }
+        println!(
+            "actual7turnNPT enabled={enabled} facets={} hash={hash:016x} signedmeshvolume={} elapsed={:?}",
+            mesh.indices.len() / 3,
+            receipt.signed_volume_mm3,
+            started.elapsed()
+        );
+        if let Some(previous) = &baseline {
+            assert!(previous == &mesh, "NPT default mesh changed with preflight");
+        }
+        baseline = Some(mesh);
+    }
 }

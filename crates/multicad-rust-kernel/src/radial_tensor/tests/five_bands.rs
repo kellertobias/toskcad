@@ -342,6 +342,26 @@ fn foreign_seven_face_step_needs_cold_physical_proofs_and_rejects_same_count_tam
     let volume = decoded.volume_with_interrupt(1e-5, None).unwrap();
     assert!(volume.volume_mm3[0] <= 252. && 252. <= volume.volume_mm3[1]);
 
+    let mesh = decoded
+        .tessellate_with_interrupt(
+            crate::display::Tessellation {
+                deflection: 0.1,
+                angle: 0.3,
+                triangle_limit: 100_000,
+            },
+            None,
+        )
+        .unwrap();
+    let diagnostic = crate::manufacturing::certify(&mesh).unwrap();
+    assert!((diagnostic.signed_volume_mm3 - 252.).abs() < 1.);
+    assert_eq!(
+        mesh.face_indices
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>(),
+        (0..7).collect()
+    );
+
     let control = text
         .lines()
         .find(|line| {

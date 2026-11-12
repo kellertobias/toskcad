@@ -150,38 +150,84 @@ fn actual_bspt_volume_contains_independent_line_and_circle_section_integrals() {
     }
 }
 #[test]
-fn actual_authored_bspt_default_mesh_resource_refusal_stays_explicit() {
-    let t = AuthoredThread::new(bspt_spec(1. / 32.), 1e-7, 1e-6).unwrap();
-    let raw = t.raw_boundary_ownership(1e-7, None).unwrap();
-    let body = raw
-        .ownership
-        .bind_surfaces(1e-7, None)
-        .unwrap()
-        .certify_axial(1e-7, 1e-6, None)
-        .unwrap()
-        .certify_caps(None)
-        .unwrap()
-        .certify_ordering(None)
-        .unwrap()
-        .certify_material(1e-7, None)
-        .unwrap();
-    assert_eq!(body.input().faces.len(), 7);
-    let start = std::time::Instant::now();
-    let result = body.tessellate_with_interrupt(
-        crate::display::Tessellation {
-            deflection: 0.1,
-            angle: 0.3,
-            triangle_limit: 1_000_000,
-        },
-        None,
-    );
-    // Actual source/material qualification is complete; default display work
-    // remains a separately measured, honest resource refusal at this stage.
-    assert!(matches!(result, Err(Error::Limit)));
-    println!(
-        "BSPT actual defaultmesh resource refusal elapsed={:?}",
-        start.elapsed()
-    );
+fn actual_authored_bspt_default_mesh_retains_both_signed_sources_and_literal_embedding() {
+    for k in [-1. / 32., 1. / 32.] {
+        let t = AuthoredThread::new(bspt_spec(k), 1e-7, 1e-6).unwrap();
+        let raw = t.raw_boundary_ownership(1e-7, None).unwrap();
+        let body = raw
+            .ownership
+            .bind_surfaces(1e-7, None)
+            .unwrap()
+            .certify_axial(1e-7, 1e-6, None)
+            .unwrap()
+            .certify_caps(None)
+            .unwrap()
+            .certify_ordering(None)
+            .unwrap()
+            .certify_material(1e-7, None)
+            .unwrap();
+        let original = body.input().clone();
+        let calls = std::cell::Cell::new(0u64);
+        let probe = || {
+            calls.set(calls.get() + 1);
+            false
+        };
+        let start = std::time::Instant::now();
+        let mesh = body
+            .tessellate_with_interrupt(
+                crate::display::Tessellation {
+                    deflection: 0.1,
+                    angle: 0.3,
+                    triangle_limit: 1_000_000,
+                },
+                Some(&probe),
+            )
+            .unwrap();
+        let receipt = crate::manufacturing::certify(&mesh).unwrap();
+        let expected = independent_bspt_volume(t.spec, t.depth());
+        assert!((receipt.signed_volume_mm3 - expected).abs() < 0.05 * expected);
+        assert_eq!(
+            mesh.face_indices
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>(),
+            (0..7).collect()
+        );
+        let mut hash = 0xcbf29ce484222325u64;
+        for byte in mesh
+            .vertices
+            .iter()
+            .flat_map(|x| x.to_bits().to_le_bytes())
+            .chain(
+                mesh.indices
+                    .iter()
+                    .chain(&mesh.face_indices)
+                    .flat_map(|x| x.to_le_bytes()),
+            )
+        {
+            hash = (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+        }
+        println!(
+            "BSPT k={k} facets={} hash={hash:016x} signed_mesh_volume={} independent_analytic_volume={expected} elapsed={:?} callbacks={}",
+            mesh.indices.len() / 3,
+            receipt.signed_volume_mm3,
+            start.elapsed(),
+            calls.get()
+        );
+        assert_eq!(body.input(), &original);
+        assert_eq!(
+            body.tessellate_with_interrupt(
+                crate::display::Tessellation {
+                    deflection: 0.1,
+                    angle: 0.3,
+                    triangle_limit: 100
+                },
+                None
+            )
+            .err(),
+            Some(Error::Limit)
+        );
+    }
 }
 #[test]
 fn authored_npt_endpoints_share_expressions_without_changing_literal_sections() {

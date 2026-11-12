@@ -8,6 +8,7 @@ mod cone;
 mod edge;
 mod embedding;
 mod normal_jet;
+mod preflight;
 mod spline;
 mod strip;
 mod tensor;
@@ -24,6 +25,10 @@ struct Limits {
     certificates: usize,
     strips: usize,
     normal_strips: bool,
+    compensate_v: bool,
+    preflight: bool,
+    probe_cells: usize,
+    compensation_cells: usize,
 }
 const DEFAULT_LIMITS: Limits = Limits {
     work: 512_000_000,
@@ -32,7 +37,23 @@ const DEFAULT_LIMITS: Limits = Limits {
     certificates: 65536,
     strips: 128,
     normal_strips: true,
+    compensate_v: true,
+    preflight: true,
+    probe_cells: 512,
+    compensation_cells: 65536,
 };
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CellCheck {
+    Match,
+    Chord,
+    Normal,
+}
+struct CandidateCell {
+    side: usize,
+    range: [[f64; 2]; 2],
+    vertices: [Point; 4],
+    actual: [[usize; 3]; 2],
+}
 enum Side {
     Tensor(Tensor),
     Cone(Cone),
@@ -46,6 +67,9 @@ struct Prepared<'a> {
     points: BTreeMap<[u64; 3], Point>,
     certificates: BTreeSet<[u64; 18]>,
     limits: Limits,
+    // Coupled-grid heuristics are qualified for closed tensor-side cycles.
+    // Mixed analytic-cone cycles retain their prior grid steering.
+    tensor_cycle: bool,
 }
 struct Grid {
     u: Vec<Vec<f64>>,
@@ -156,6 +180,15 @@ fn build_with_limits(
                 options.triangle_limit,
                 &mut work,
             )?;
+            if prepared.limits.preflight
+                && prepared.tensor_cycle
+                && mesh.indices.len() / 3 >= 32768
+                && prepared.normal_preflight(&mesh, &grid, &ring, pass, &mut changes, &mut work)?
+            {
+                changes.apply(&mut grid, &mut work)?;
+                restart = true;
+                break;
+            }
             prepared.check(&mesh, &grid, &ring, pass, &mut changes, &mut work)?;
             if changes.empty() && changes.embedding(&prepared, &grid, &ring, &mesh, &mut work)? {
                 work.step()?;
@@ -226,9 +259,11 @@ impl<'a> Prepared<'a> {
             });
         }
         let caps = [Cap::new(body, 0, work)?, Cap::new(body, 1, work)?];
+        let tensor_cycle = sides.iter().all(|s| matches!(s, Side::Tensor(_)));
         Ok(Self {
             body,
             sides,
+            tensor_cycle,
             rails,
             caps,
             options,
@@ -367,6 +402,8 @@ impl<'a> Prepared<'a> {
         work: &mut Work<'_>,
     ) -> Result<(), Error> {
         let options = self.options;
+        let compensate = self.limits.compensate_v && self.tensor_cycle;
+        let mut accepted = Vec::new();
         let mut strips = self
             .sides
             .iter()
@@ -437,17 +474,39 @@ impl<'a> Prepared<'a> {
                     // key prevent reuse across a different actual facet.
                     work.charge(128)?;
                     if self.certificates.contains(&key) {
+                        if compensate && accepted.len() < self.limits.compensation_cells {
+                            work.charge(4)?;
+                            accepted.push([side, u, row]);
+                        }
                         continue;
                     }
-                    if uncertain(self.cell_matches(
-                        side,
-                        range,
-                        corners,
-                        actual,
+                    let verdict = match self.cell_check(
+                        CandidateCell {
+                            side,
+                            range,
+                            vertices: corners,
+                            actual,
+                        },
                         cone_rows.as_ref(),
                         strips[side].as_mut(),
                         work,
-                    ))? {
+                    ) {
+                        Ok(v) => Some(v),
+                        Err(Error::Unresolved) => None,
+                        Err(e) => return Err(e),
+                    };
+                    if compensate
+                        && verdict == Some(CellCheck::Normal)
+                        && accepted.len() < self.limits.compensation_cells
+                    {
+                        work.charge(4)?;
+                        accepted.push([side, u, row]);
+                    }
+                    if verdict == Some(CellCheck::Match) {
+                        if compensate && accepted.len() < self.limits.compensation_cells {
+                            work.charge(4)?;
+                            accepted.push([side, u, row]);
+                        }
                         work.charge(128)?;
                         if self.certificates.len() < self.limits.certificates {
                             self.certificates.insert(key);
@@ -458,6 +517,9 @@ impl<'a> Prepared<'a> {
                     }
                 }
             }
+        }
+        if compensate {
+            changes.compensate(self, grid, mesh, ring, &accepted, work)?;
         }
         let centers = [
             point(mesh, ring.entries.len() * grid.v.len()),
@@ -507,6 +569,7 @@ impl<'a> Prepared<'a> {
         Ok(())
     }
     #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
     fn cell_matches(
         &self,
         side: usize,
@@ -514,9 +577,35 @@ impl<'a> Prepared<'a> {
         vertices: [Point; 4],
         actual: [[usize; 3]; 2],
         cone_rows: Option<&cone::Rows>,
-        mut strips: Option<&mut strip::Cache<'_>>,
+        strips: Option<&mut strip::Cache<'_>>,
         work: &mut Work<'_>,
     ) -> Result<bool, Error> {
+        self.cell_check(
+            CandidateCell {
+                side,
+                range,
+                vertices,
+                actual,
+            },
+            cone_rows,
+            strips,
+            work,
+        )
+        .map(|v| v == CellCheck::Match)
+    }
+    fn cell_check(
+        &self,
+        cell: CandidateCell,
+        cone_rows: Option<&cone::Rows>,
+        mut strips: Option<&mut strip::Cache<'_>>,
+        work: &mut Work<'_>,
+    ) -> Result<CellCheck, Error> {
+        let CandidateCell {
+            side,
+            range,
+            vertices,
+            actual,
+        } = cell;
         let options = self.options;
         let uv = [
             [range[0][0], range[1][0]],
@@ -557,7 +646,7 @@ impl<'a> Prepared<'a> {
                             + I::point(self.body.error_mm))
                         .hi > options.deflection
                         {
-                            return Ok(false);
+                            return Ok(CellCheck::Chord);
                         }
                         if uncertain(patch.taylor_normal_box(range, work).and_then(|value| {
                             certificate::normal_matches(
@@ -625,7 +714,7 @@ impl<'a> Prepared<'a> {
                                 )?
                             };
                             if !matches {
-                                return Ok(false);
+                                return Ok(CellCheck::Normal);
                             }
                         }
                     }
@@ -641,7 +730,7 @@ impl<'a> Prepared<'a> {
                     work,
                 )?;
                 if error > options.deflection {
-                    return Ok(false);
+                    return Ok(CellCheck::Chord);
                 }
                 for indices in actual {
                     if !certificate::normal_matches(
@@ -652,12 +741,12 @@ impl<'a> Prepared<'a> {
                         c.normal_budget(options.angle)?,
                         work,
                     )? {
-                        return Ok(false);
+                        return Ok(CellCheck::Normal);
                     }
                 }
             }
         }
-        Ok(true)
+        Ok(CellCheck::Match)
     }
     fn hint(
         &self,
@@ -693,6 +782,56 @@ fn refinement_axis(score: [f64; 2], pass: usize) -> usize {
     }
 }
 impl Refinement {
+    // A global V split can spoil a previously sound, highly skew quad on
+    // another band. Physical edge ratios only propose compensating U knots;
+    // every resulting actual facet still needs its complete source proof.
+    fn compensate(
+        &mut self,
+        source: &Prepared<'_>,
+        grid: &Grid,
+        mesh: &DisplayMesh,
+        ring: &Ring,
+        cells: &[[usize; 3]],
+        work: &mut Work<'_>,
+    ) -> Result<(), Error> {
+        if self.v.is_empty() {
+            return Ok(());
+        }
+        for &[side, u, row] in cells {
+            work.charge(64)?;
+            let vparts = 1 + self
+                .v
+                .range(grid.v[row].to_bits()..grid.v[row + 1].to_bits())
+                .count();
+            if vparts == 1 {
+                continue;
+            }
+            let uparts = 1 + self.u[side]
+                .range(grid.u[side][u].to_bits()..grid.u[side][u + 1].to_bits())
+                .count();
+            let p = [
+                ring.index(side, u, row),
+                ring.index(side, u + 1, row),
+                ring.index(side, u + 1, row + 1),
+                ring.index(side, u, row + 1),
+            ]
+            .map(|i| point(mesh, i));
+            let length = |a: Point, b: Point| {
+                a.into_iter()
+                    .zip(b)
+                    .map(|(x, y)| (x - y).powi(2))
+                    .sum::<f64>()
+                    .sqrt()
+            };
+            let uedge = length(p[0], p[1]).max(length(p[3], p[2])) / uparts as f64;
+            let vedge = length(p[0], p[3]).min(length(p[1], p[2])) / vparts as f64;
+            if uedge.is_finite() && vedge.is_finite() && vedge > 0. && uedge > 2. * vedge {
+                self.mark(source, grid, [side, u, row], 0, work)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Plan recovery from the literal candidate proof. This does not
     /// certify source approximation: the owner must finish its complete
     /// source checks before it can publish any accepted candidate.
