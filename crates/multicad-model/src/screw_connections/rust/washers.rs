@@ -91,6 +91,12 @@ fn land(input: &Inputs<'_, '_>, a: [f64; 2], b: [f64; 2]) -> Result<(), ModelErr
 }
 
 pub(super) fn prove(input: Inputs<'_, '_>) -> Result<[f64; 2], ModelError> {
+    if input.bore.head_seat.is_some_and(|s| s.conical) {
+        return Err(fail(
+            &input,
+            "Conical head bearing requires a retained matching screw profile",
+        ));
+    }
     let mut sums = [0.; 2];
     for row in input.placed {
         let side = match row.role {

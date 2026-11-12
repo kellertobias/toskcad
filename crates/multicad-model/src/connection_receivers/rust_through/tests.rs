@@ -116,7 +116,8 @@ fn verifies_the_authored_m3_through_receiver_without_native_geometry() {
     let (seated_stock, seated_proof) = run(&seated).unwrap();
     assert_eq!(
         seated_proof.head_seat,
-        Some(FlatSeatProof {
+        Some(HeadSeatProof {
+            conical: false,
             radius_mm: 3.5,
             depth_mm: 1.
         })
@@ -128,5 +129,26 @@ fn verifies_the_authored_m3_through_receiver_without_native_geometry() {
         .abs()
             < 1e-6
     );
+    for depth in [1., 1.8, 2.5] {
+        seated.seat = Some(model::ConnectionReceiverSeat::Countersink {
+            diameter: length(7.),
+            depth: length(depth),
+        });
+        let (cone, cone_proof) = run(&seated).unwrap();
+        assert_eq!(
+            cone_proof.head_seat,
+            Some(HeadSeatProof {
+                conical: true,
+                radius_mm: 3.5,
+                depth_mm: depth,
+            })
+        );
+        assert_eq!(cone_proof.mouths_mm, proof.mouths_mm);
+        let expected =
+            analytic - std::f64::consts::PI * (3.5 - 1.7) * (3.5 + 2. * 1.7) * depth / 3.;
+        assert!((cone.volume_mm3().unwrap() - expected).abs() < 1e-6);
+        cone.manufacturing_mesh_with_receipt(Default::default())
+            .unwrap();
+    }
     assert_eq!(stock.volume_mm3().unwrap(), 1640.);
 }
