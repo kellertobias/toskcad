@@ -678,7 +678,7 @@ impl Solid {
         if feature.is_nil() {
             return Err(input("Thread feature identity must not be nil"));
         }
-        let placed = HelicalBody::new(geometry, feature, form(geometry)?, receiving);
+        let placed = HelicalBody::new(geometry, feature, form(geometry)?, receiving, policy)?;
         frame.checked_metric_bounds(placed.bounds(PlaneFrame::default()), policy)?;
         let bounds = placed.bounds(frame);
         policy.point(bounds.min)?;
@@ -908,7 +908,8 @@ impl HelicalBody {
         feature: EntityId,
         form: HelicalForm,
         receiving: Option<end_relief::ReceivingStock>,
-    ) -> Self {
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
         let spec = geometry.spec();
         let breaks = geometry.profile_breaks();
         let height = spec.length_mm;
@@ -1001,7 +1002,7 @@ impl HelicalBody {
             HelicalForm::Nut(nut) => nut::extend_face_properties(nut, &mut local_faces),
             HelicalForm::Screw(screw) => screw::extend_face_properties(screw, &mut local_faces),
             HelicalForm::ProfiledScrew(screw) => {
-                profiled_screw::extend_face_properties(screw, &mut local_faces)
+                profiled_screw::extend_face_properties(screw, &mut local_faces, policy)?
             }
             HelicalForm::Shaft => {}
             HelicalForm::EndRelief(relief) => {
@@ -1016,7 +1017,7 @@ impl HelicalBody {
                     .map(move |phase| f64::from(period) * spec.pitch_mm + phase)
             })
             .collect();
-        Self {
+        Ok(Self {
             geometry,
             feature,
             form,
@@ -1024,7 +1025,7 @@ impl HelicalBody {
             rails,
             import_identity: None,
             receiving,
-        }
+        })
     }
 
     /// Shape forms covered by the certified helical STEP shell.

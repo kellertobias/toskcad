@@ -95,9 +95,24 @@ impl<'a, Role: Copy + PartialEq> Boundary<'a, Role> {
     }
 
     fn geometry(&mut self, name: String, geometry: AnalyticGeometry, faces: &[Role]) {
+        self.element(name, geometry.topology_kind(), Some(geometry), faces);
+    }
+
+    /// A finite edge retained by the owning physical source, whose curve is
+    /// outside the canonical analytic descriptor vocabulary (as with helices).
+    pub(super) fn surface_edge(&mut self, name: String, faces: &[Role]) {
+        self.element(name, TopologyKind::Edge, None, faces);
+    }
+
+    fn element(
+        &mut self,
+        name: String,
+        kind: TopologyKind,
+        geometry: Option<AnalyticGeometry>,
+        faces: &[Role],
+    ) {
         let origin = self.body.origin(name);
         let mut origins = BTreeSet::from([origin.clone()]);
-        let kind = geometry.topology_kind();
         for &role in faces {
             let inherit_faces = self.inherit_faces;
             let face = self.face(role);
@@ -121,7 +136,7 @@ impl<'a, Role: Copy + PartialEq> Boundary<'a, Role> {
             origins,
             boundary: BTreeSet::new(),
             frames: vec![],
-            geometry: Some(geometry),
+            geometry,
         });
         *next += 1;
     }
@@ -146,7 +161,37 @@ impl<'a, Role: Copy + PartialEq> Boundary<'a, Role> {
         );
     }
 
-    fn line(&mut self, name: String, a: Point, b: Point, faces: &[Role]) {
+    pub(super) fn circle_at(
+        &mut self,
+        name: String,
+        center: Point,
+        radius_mm: f64,
+        angles: [f64; 2],
+        faces: &[Role],
+    ) {
+        self.geometry(
+            name,
+            AnalyticGeometry::CircularArc {
+                frame: placed_frame(self.frame, center, [1., 0., 0.], [0., 1., 0.]),
+                radius_mm,
+                start_rad: angles[0],
+                sweep_rad: angles[1],
+            },
+            faces,
+        );
+    }
+
+    pub(super) fn vertex(&mut self, name: String, point: Point, faces: &[Role]) {
+        self.geometry(
+            name,
+            AnalyticGeometry::Point {
+                position_mm: position(self.frame, point),
+            },
+            faces,
+        );
+    }
+
+    pub(super) fn line(&mut self, name: String, a: Point, b: Point, faces: &[Role]) {
         self.geometry(
             name,
             AnalyticGeometry::Line {

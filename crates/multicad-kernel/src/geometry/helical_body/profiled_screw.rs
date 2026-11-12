@@ -1,4 +1,6 @@
 //! Policy admission and finite face identities for actual profiled heads.
+mod torx;
+
 use super::{
     boundary::{Boundary, placed_frame},
     *,
@@ -249,9 +251,13 @@ fn qualify_source(
     Ok(())
 }
 
-pub(super) fn extend_face_properties(screw: &Screw, faces: &mut Vec<(Point, f64)>) {
+pub(super) fn extend_face_properties(
+    screw: &Screw,
+    faces: &mut Vec<(Point, f64)>,
+    policy: GeometryPolicy,
+) -> Result<(), GeometryError> {
     let Some((drive, socket_depth)) = screw.recess().flat_hex_geometry() else {
-        return;
+        return torx::extend_face_properties(screw, faces, policy);
     };
     let spec = screw.spec();
     let radius = screw.profile().end()[0];
@@ -299,10 +305,10 @@ pub(super) fn extend_face_properties(screw: &Screw, faces: &mut Vec<(Point, f64)
             _ => unreachable!("Original helical face properties already exist"),
         });
     }
+    Ok(())
 }
 
 pub(super) fn plane(screw: &Screw, role: ScrewFace, frame: PlaneFrame) -> Option<ReferenceFrame> {
-    let (drive, socket_depth) = screw.recess().flat_hex_geometry()?;
     let axial = |z, sign| placed_frame(frame, [0., 0., z], [1., 0., 0.], [0., sign, 0.]);
     let top = screw.head_top_z();
     match role {
@@ -316,8 +322,12 @@ pub(super) fn plane(screw: &Screw, role: ScrewFace, frame: PlaneFrame) -> Option
             (segment.role == Role::Bearing)
                 .then(|| axial(segment.start[1] - screw.spec().shank_length_mm, 1.))
         }
-        ScrewFace::SocketFloor => Some(axial(top + socket_depth, -1.)),
+        ScrewFace::SocketFloor => {
+            let (_, socket_depth) = screw.recess().flat_hex_geometry()?;
+            Some(axial(top + socket_depth, -1.))
+        }
         ScrewFace::SocketWall(i) => {
+            let (drive, _) = screw.recess().flat_hex_geometry()?;
             let [a, b] = drive.edge_mm(i as usize);
             let d = [b[0] - a[0], b[1] - a[1]];
             let length = d[0].hypot(d[1]);
@@ -357,9 +367,6 @@ pub(super) fn extend_topology(
     frame: PlaneFrame,
     elements: &mut Vec<TopologyElement>,
 ) {
-    let Some((drive, socket_depth)) = screw.recess().flat_hex_geometry() else {
-        return;
-    };
     let roles = screw.faces();
     let count = body.rails.len();
     let segments: Vec<_> = screw.profile().segments().collect();
@@ -429,11 +436,15 @@ pub(super) fn extend_topology(
             &[before, current],
         );
     }
-    add.polygon_prism(
-        "screw.drive",
-        drive.corners_mm(),
-        [screw.head_top_z(), screw.head_top_z() + socket_depth],
-        [ScrewFace::HeadTop, ScrewFace::SocketFloor],
-        ScrewFace::SocketWall,
-    );
+    if let Some((drive, socket_depth)) = screw.recess().flat_hex_geometry() {
+        add.polygon_prism(
+            "screw.drive",
+            drive.corners_mm(),
+            [screw.head_top_z(), screw.head_top_z() + socket_depth],
+            [ScrewFace::HeadTop, ScrewFace::SocketFloor],
+            ScrewFace::SocketWall,
+        );
+    } else {
+        torx::extend_boundary(screw, &mut add);
+    }
 }
