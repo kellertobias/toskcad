@@ -346,3 +346,89 @@ fn hidden_prefix_cannot_leave_a_subminimum_visible_thread() {
         0.5
     );
 }
+
+#[test]
+fn physical_head_source_keeps_literal_supports_transport_budget_and_original_frame() {
+    use multicad_kernel::rust_kernel::{
+        head_profile::{Profile, TransportError},
+        profiled_screw::Screw,
+    };
+    let policy = GeometryPolicy::default();
+    for crown in [false, true] {
+        for union in [false, true] {
+            let owner = EntityId::new();
+            let frame = PlaneFrame {
+                origin: [1000., -2000., 4000.],
+                u: [0., 0., 1.],
+                v: [0., -1., 0.],
+            };
+            let mut spec = spec(crown);
+            if union {
+                spec.shank_length_mm = 0.;
+            }
+            let authored = if union {
+                Solid::rust_profiled_machine_screw_with_head_thread_union(
+                    thread(),
+                    None,
+                    spec,
+                    owner,
+                    frame,
+                    policy,
+                )
+            } else {
+                Solid::rust_profiled_machine_screw(thread(), None, spec, owner, frame, policy)
+            }
+            .unwrap();
+            let (original, at) = authored.rust_profiled_screw_geometry().unwrap();
+            let error = TransportError {
+                numeric_conversion_mm: 1e-11,
+                arithmetic_mm: 2e-11,
+            };
+            let segments: Vec<_> = original.profile().segments().collect();
+            let profile = Profile::from_transported_segments(&segments, error).unwrap();
+            let mut physical_spec = original.spec();
+            physical_spec.head = None;
+            let physical = if union {
+                Screw::from_source_with_union(*original.thread(), profile, physical_spec)
+            } else {
+                Screw::from_source(*original.thread(), profile, physical_spec)
+            }
+            .unwrap();
+            let make = |policy| Solid::rust_profiled_screw_from_source(physical, owner, at, policy);
+            let solid = make(policy).unwrap();
+            let (retained, pose) = solid.rust_profiled_screw_geometry().unwrap();
+            assert_eq!(*retained, physical);
+            assert_eq!(pose, at);
+            assert_eq!(retained.spec().head, None);
+            assert_eq!(retained.profile().transport_error(), error);
+            assert_eq!(retained.profile().segments().collect::<Vec<_>>(), segments);
+            assert_eq!(solid.volume_mm3().unwrap(), authored.volume_mm3().unwrap());
+            let snapshot = solid.topology_snapshot(owner, 1).unwrap();
+            assert_eq!(snapshot, authored.topology_snapshot(owner, 1).unwrap());
+            let mesh = solid
+                .manufacturing_mesh_with_receipt(MeshOptions::default())
+                .unwrap();
+            assert_eq!(mesh.edge_pairs as usize * 2, mesh.mesh.indices.len());
+            assert!(
+                make(GeometryPolicy {
+                    linear_tolerance_mm: 1e-12,
+                    ..policy
+                })
+                .is_err()
+            );
+            assert!(
+                Solid::rust_profiled_screw_from_source(physical, EntityId::nil(), at, policy)
+                    .is_err()
+            );
+            assert_eq!(
+                solid
+                    .rust_profiled_screw_geometry()
+                    .unwrap()
+                    .0
+                    .profile()
+                    .transport_error(),
+                error
+            );
+        }
+    }
+}

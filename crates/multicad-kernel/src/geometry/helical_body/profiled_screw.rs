@@ -99,56 +99,109 @@ impl Solid {
                     "Profiled screw exceeds the geometry envelope",
                 ),
             })?;
-            let reserve = screw.profile().rounding_error_mm();
-            if screw.has_head_thread_overlap() {
-                let [start, end] = screw.visible_thread_interval_mm();
-                policy.length(((end - start).next_down() - 2. * reserve).next_down())?;
-            }
-            if reserve > policy.linear_tolerance_mm / 8. {
-                return Err(input(
-                    "Head source arithmetic exceeds the requested geometry precision",
-                ));
-            }
-            policy.length(screw.profile().top()[0])?;
-            policy.length(-screw.profile().top()[1])?;
-            for segment in screw.profile().segments() {
-                if segment.area_mm2() <= 0.
-                    || !segment.area_mm2().is_finite()
-                    || !segment.center_mm().into_iter().all(f64::is_finite)
-                {
-                    return Err(input("Unrepresentable profiled head surface properties"));
-                }
-                for p in [segment.start, segment.end] {
-                    policy.point(position(underhead, [p[0], 0., p[1]]))?;
-                }
-                if let Curve::Arc {
-                    center,
-                    radius_mm: r,
-                    sweep,
-                } = segment.curve
-                {
-                    policy.length(r)?;
-                    let angle = (segment.start[1] - center[1]).atan2(segment.start[0] - center[0]);
-                    for (fraction, endpoint) in [(0., segment.start), (1., segment.end)] {
-                        let t = angle + fraction * sweep;
-                        let actual = [center[0] + r * t.cos(), center[1] + r * t.sin()];
-                        let residual = (actual[0] - endpoint[0]).hypot(actual[1] - endpoint[1]);
-                        if residual + reserve > policy.linear_tolerance_mm / 4. {
-                            return Err(input(
-                                "Head arc endpoints exceed the requested trim precision",
-                            ));
-                        }
-                    }
-                } else {
-                    policy.length(
-                        (segment.end[0] - segment.start[0])
-                            .hypot(segment.end[1] - segment.start[1]),
-                    )?;
-                }
-            }
+            qualify_source(&screw, frame, policy)?;
             Ok(HelicalForm::ProfiledScrew(Box::new(screw)))
         })
     }
+
+    /// Admit an already validated physical source in its original thread frame.
+    /// Retained meridians, source uncertainty and absent authoring metadata are
+    /// preserved; no head recipe or placement is inferred.
+    pub fn rust_profiled_screw_from_source(
+        source: Screw,
+        feature: EntityId,
+        thread_frame: PlaneFrame,
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        policy.validate()?;
+        thread_frame.checked(policy)?;
+        let geometry = *source.thread();
+        let spec = geometry.spec();
+        checked_thread(
+            HelicalThread {
+                major_radius_mm: spec.major_radius_mm,
+                pitch_mm: spec.pitch_mm,
+                length_mm: spec.length_mm,
+                depth_mm: spec.depth_mm,
+                crest_width_mm: spec.crest_width_mm,
+                lower_flank_deg: spec.lower_flank_deg,
+                upper_flank_deg: spec.upper_flank_deg,
+                radial_taper: 0.,
+                starts: spec.starts,
+                left_hand: spec.left_hand,
+            },
+            spec.root_radius_mm,
+            policy,
+        )?;
+        Self::publish_helical_geometry(geometry, feature, thread_frame, policy, |_| {
+            qualify_source(&source, thread_frame, policy)?;
+            Ok(HelicalForm::ProfiledScrew(Box::new(source)))
+        })
+    }
+}
+
+fn qualify_source(
+    screw: &Screw,
+    frame: PlaneFrame,
+    policy: GeometryPolicy,
+) -> Result<(), GeometryError> {
+    let spec = screw.spec();
+    policy.length(spec.socket_across_flats_mm)?;
+    policy.length(spec.socket_depth_mm)?;
+    policy.length(spec.minimum_wall_mm)?;
+    if spec.shank_length_mm != 0. {
+        policy.length(spec.shank_length_mm)?;
+    }
+    let reserve = screw.profile().rounding_error_mm();
+    if screw.has_head_thread_overlap() {
+        let [start, end] = screw.visible_thread_interval_mm();
+        policy.length(((end - start).next_down() - 2. * reserve).next_down())?;
+    }
+    if reserve > policy.linear_tolerance_mm / 8. {
+        return Err(input(
+            "Head source arithmetic exceeds the requested geometry precision",
+        ));
+    }
+    policy.length(screw.profile().top()[0])?;
+    policy.length(-screw.profile().top()[1])?;
+    for segment in screw.profile().segments() {
+        if segment.area_mm2() <= 0.
+            || !segment.area_mm2().is_finite()
+            || !segment.center_mm().into_iter().all(f64::is_finite)
+        {
+            return Err(input("Unrepresentable profiled head surface properties"));
+        }
+        for p in [segment.start, segment.end] {
+            policy.point(position(
+                frame,
+                [p[0], 0., p[1] - screw.spec().shank_length_mm],
+            ))?;
+        }
+        if let Curve::Arc {
+            center,
+            radius_mm: r,
+            sweep,
+        } = segment.curve
+        {
+            policy.length(r)?;
+            let angle = (segment.start[1] - center[1]).atan2(segment.start[0] - center[0]);
+            for (fraction, endpoint) in [(0., segment.start), (1., segment.end)] {
+                let t = angle + fraction * sweep;
+                let actual = [center[0] + r * t.cos(), center[1] + r * t.sin()];
+                let residual = (actual[0] - endpoint[0]).hypot(actual[1] - endpoint[1]);
+                if residual + reserve > policy.linear_tolerance_mm / 4. {
+                    return Err(input(
+                        "Head arc endpoints exceed the requested trim precision",
+                    ));
+                }
+            }
+        } else {
+            policy.length(
+                (segment.end[0] - segment.start[0]).hypot(segment.end[1] - segment.start[1]),
+            )?;
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn extend_face_properties(screw: &Screw, faces: &mut Vec<(Point, f64)>) {
