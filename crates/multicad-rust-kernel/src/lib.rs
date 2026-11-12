@@ -36,6 +36,7 @@ pub mod planar_projection;
 pub mod planar_section;
 pub mod polygon;
 pub mod prism;
+pub mod profiled_screw;
 pub mod radial_tensor;
 pub mod retained_section;
 pub mod revolution;

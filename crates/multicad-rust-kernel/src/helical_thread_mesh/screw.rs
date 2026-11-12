@@ -5,6 +5,133 @@ use crate::{
 };
 use std::f64::consts::TAU;
 
+/// Retain the existing thread's indexed shoulder while sweeping every real
+/// head segment. No display envelope or mesh boolean enters the source shape.
+pub fn tessellate_profiled_screw(
+    screw: &crate::profiled_screw::Screw,
+    options: Tessellation,
+) -> Result<DisplayMesh, MeshError> {
+    use crate::{head_profile::Curve, profiled_screw::Face};
+    check_options(options)?;
+    let radius = screw.profile().support([1., 0., 0.]);
+    let max_angle = (options.angle * 0.5).min((options.deflection / radius).sqrt());
+    let angular_steps = (TAU / (12. * max_angle)).ceil() * 12.;
+    if angular_steps * 2. > options.triangle_limit as f64 {
+        return Err(MeshError::BudgetExceeded);
+    }
+    let thread = screw.thread();
+    let strips = phase_strips(thread, TAU / angular_steps, options)?;
+    let mut builder = Builder::new(thread, angular_steps as usize, strips, options);
+    builder.build_wall()?;
+    let [mut shoulder, tip] = std::mem::take(&mut builder.caps);
+    builder.add_cap(1, tip)?;
+    Builder::sort_ring(&mut shoulder)?;
+    let faces = screw.faces();
+    let face = |f| {
+        faces
+            .iter()
+            .position(|&candidate| candidate == f)
+            .expect("profiled screw face") as u32
+    };
+    let mut shell = HeadMesh {
+        builder: &mut builder,
+        angles: shoulder.iter().map(|&(angle, _)| angle).collect(),
+    };
+    let shaft_rim: Vec<_> = shoulder.into_iter().map(|(_, id)| id).collect();
+    let join = shell.shank_join(&shaft_rim, thread.spec().major_radius_mm);
+    shell.annulus(&shaft_rim, &join, face(Face::ThreadShoulder), false)?;
+    let top_z = screw.head_top_z();
+    let top = shell.ring(top_z, |_| screw.profile().top()[0]);
+    let mut previous = top.clone();
+    let segments: Vec<_> = screw.profile().segments().collect();
+    for (index, segment) in segments.iter().enumerate() {
+        let subdivisions = match segment.curve {
+            Curve::Line => 1.,
+            Curve::Arc { center, sweep } => {
+                let r = (segment.start[0] - center[0]).hypot(segment.start[1] - center[1]);
+                (sweep.abs() / (options.angle * 0.5).min((options.deflection / r).sqrt())).ceil()
+            }
+        };
+        if subdivisions * shell.angles.len() as f64 * 2. > options.triangle_limit as f64 {
+            return Err(MeshError::BudgetExceeded);
+        }
+        for step in 1..=subdivisions as usize {
+            let point = segment.point(step as f64 / subdivisions);
+            let next = if index + 1 == segments.len() && step == subdivisions as usize {
+                join.clone()
+            } else {
+                shell.ring(point[1] - screw.spec().shank_length_mm, |_| point[0])
+            };
+            shell.wall(
+                &previous,
+                &next,
+                |_| face(Face::ProfileWall(index as u32)),
+                false,
+            )?;
+            previous = next;
+        }
+    }
+    let mouth = shell.ring(top_z, |angle| screw.socket_radius(angle));
+    let floor_z = top_z + screw.spec().socket_depth_mm;
+    let floor = shell.ring(floor_z, |angle| screw.socket_radius(angle));
+    shell.annulus(&mouth, &top, face(Face::HeadTop), true)?;
+    let first_wall = face(Face::SocketWall(0));
+    shell.wall(&mouth, &floor, |angle| first_wall + hex_side(angle), true)?;
+    shell.disk(&floor, floor_z, face(Face::SocketFloor))?;
+    Ok(builder.mesh)
+}
+
+/// Bound the actual frusta and circular chords of the head independently of
+/// the thread interpolation bound. The hex drive has exact planar walls.
+pub fn profiled_screw_volume_error_bound(
+    screw: &crate::profiled_screw::Screw,
+    options: Tessellation,
+) -> Result<f64, MeshError> {
+    use crate::head_profile::{Curve, Segment};
+    check_options(options)?;
+    let radius = screw.profile().support([1., 0., 0.]);
+    let angle = (options.angle * 0.5).min((options.deflection / radius).sqrt());
+    let steps = (TAU / (12. * angle)).ceil() * 12.;
+    if steps * 2. > options.triangle_limit as f64 {
+        return Err(MeshError::BudgetExceeded);
+    }
+    let mut polygonal = 0.;
+    for segment in screw.profile().segments() {
+        let count = match segment.curve {
+            Curve::Line => 1.,
+            Curve::Arc { center, sweep } => {
+                let r = (segment.start[0] - center[0]).hypot(segment.start[1] - center[1]);
+                (sweep.abs() / (options.angle * 0.5).min((options.deflection / r).sqrt())).ceil()
+            }
+        };
+        // Bound work before converting a huge refinement to usize.
+        if count * steps * 2. > options.triangle_limit as f64 {
+            return Err(MeshError::BudgetExceeded);
+        }
+        for i in 0..count as usize {
+            polygonal += Segment {
+                start: segment.point(i as f64 / count),
+                end: segment.point((i + 1) as f64 / count),
+                curve: Curve::Line,
+                role: segment.role,
+            }
+            .volume_mm3();
+        }
+    }
+    let exact = screw.profile().volume_mm3();
+    // Sum (angle - sin(angle)) <= max_angle² * sum(angle) / 6.
+    // Extra thread cap stations only subdivide these angular intervals.
+    let roundoff = 256.
+        * f64::EPSILON
+        * (exact.abs()
+            + polygonal.abs()
+            + radius.powi(2) * (screw.profile().end()[1] - screw.profile().top()[1]));
+    Ok(volume_error_bound(screw.thread(), options)
+        + (polygonal - exact).abs()
+        + polygonal * (TAU / steps).powi(2) / 6.
+        + roundoff)
+}
+
 /// Mesh one connected screw shell using the same trimmed shaft rim at the
 /// attachment. Angular columns include the exact corners of the head or socket.
 pub fn tessellate_screw(screw: &Screw, options: Tessellation) -> Result<DisplayMesh, MeshError> {
