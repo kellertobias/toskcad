@@ -89,8 +89,22 @@ fn compiler() -> Compiler {
         ..Default::default()
     }
 }
-fn valid(left: bool, posed: bool) -> (Session, ScrewConnectionRequest, multicad_model::Model) {
-    let (document, request) = countersunk(left);
+fn valid(
+    left: bool,
+    posed: bool,
+    fully_threaded: bool,
+) -> (Session, ScrewConnectionRequest, multicad_model::Model) {
+    let (document, mut request) = countersunk(left);
+    if fully_threaded {
+        let ScrewConnectionHardwareSource::Generated { part } = &mut request.hardware[0].source
+        else {
+            unreachable!()
+        };
+        let MechanicalPartParameters::MachineScrew { thread, .. } = &mut part.parameters else {
+            unreachable!()
+        };
+        thread.length = length(8.);
+    }
     let mut session = Session::new(document).unwrap();
     if posed {
         let stock = request.receivers[0].source.input.producer;
@@ -129,7 +143,11 @@ fn path(instance: multicad_core::document::EntityId) -> OccurrencePath {
         members: vec![],
     }
 }
-fn assert_actual_bearing(model: &multicad_model::Model, request: &ScrewConnectionRequest) {
+fn assert_actual_bearing(
+    model: &multicad_model::Model,
+    request: &ScrewConnectionRequest,
+    fully_threaded: bool,
+) {
     use multicad_kernel::rust_kernel::conical_screw_seat as seat;
     let screw = model
         .leaf_solid(&path(request.hardware[0].instance))
@@ -145,8 +163,11 @@ fn assert_actual_bearing(model: &multicad_model::Model, request: &ScrewConnectio
     assert_eq!(cavity.origin.source, request.receivers[0].feature);
     assert_eq!(head.profile().end()[0], 1.5);
     assert!(head.thread().spec().major_radius_mm < 1.5);
-    assert_eq!(head.spec().shank_length_mm, 0.5);
-    assert!(!head.has_head_thread_overlap());
+    assert_eq!(
+        head.spec().shank_length_mm,
+        if fully_threaded { 0. } else { 0.5 }
+    );
+    assert_eq!(head.has_head_thread_overlap(), fully_threaded);
     assert!(head.thread().spec().root_radius_mm.is_some());
     let policy = multicad_kernel::GeometryPolicy::default();
     let proof = seat::certify_between_frames(
@@ -200,9 +221,10 @@ fn canonical_counter_history_reopen_and_physical_outputs_survive_both_hands_and_
     };
     use multicad_model::export::Exporter;
     for left in [false, true] {
-        for posed in [false, true] {
-            let (mut session, mut request, original) = valid(left, posed);
-            assert_actual_bearing(&original, &request);
+        for (posed, fully_threaded) in [(false, false), (false, true), (true, false), (true, true)]
+        {
+            let (mut session, mut request, original) = valid(left, posed, fully_threaded);
+            assert_actual_bearing(&original, &request, fully_threaded);
             let head_path = path(request.hardware[0].instance);
             let cavity_path = request.receivers[0].source.occurrence.clone();
             let old_head = &original.leaf_snapshot(&head_path).unwrap().topology;
@@ -232,13 +254,13 @@ fn canonical_counter_history_reopen_and_physical_outputs_survive_both_hands_and_
                 unreachable!()
             };
             *length_input = Some(ScrewLengthInput::Underhead { value: length(9.) });
-            thread.length = length(8.5);
+            thread.length = length(if fully_threaded { 9. } else { 8.5 });
             let candidate =
                 prepare_screw_connection(&session, session.revision(), actor(), &request).unwrap();
             let edited = compiler()
                 .compile(candidate.prepared.document(), session.revision() + 1)
                 .unwrap();
-            assert_actual_bearing(&edited, &request);
+            assert_actual_bearing(&edited, &request, fully_threaded);
             assert!(matches!(
                 resolve(
                     &cap_intent,
@@ -283,7 +305,7 @@ fn canonical_counter_history_reopen_and_physical_outputs_survive_both_hands_and_
             let reopened_model = compiler()
                 .compile(&reopened.document, session.revision())
                 .unwrap();
-            assert_actual_bearing(&reopened_model, &request);
+            assert_actual_bearing(&reopened_model, &request, fully_threaded);
             for leaf in reopened_model.snapshot().leaf_occurrences.values() {
                 let solid = reopened_model.leaf_solid(&leaf.path).unwrap();
                 let receipt = solid
@@ -325,7 +347,9 @@ fn canonical_counter_history_reopen_and_physical_outputs_survive_both_hands_and_
                     &actor(),
                     None,
                 )
-                .unwrap();
+                .unwrap_or_else(|e| {
+                    panic!("left={left} posed={posed} fully_threaded={fully_threaded}: {e:?}")
+                });
             assert_eq!(result.files.len(), 3);
             for file in result.files {
                 let filename =
@@ -390,7 +414,7 @@ fn canonical_counter_refuses_flat_washer_insufficient_engagement_and_floating_ha
         );
         assert_eq!(session.document(), &document);
 
-        let (session, request, _) = valid(left, true);
+        let (session, request, _) = valid(left, true, false);
         let saved = session.document().clone();
         // A positive/negative station displacement changes the actual bearing,
         // not just the connection recipe. Neither candidate may be committed.
