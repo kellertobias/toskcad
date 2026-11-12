@@ -37,6 +37,7 @@ impl Solid {
             underhead,
             policy,
             false,
+            None,
         )
     }
 
@@ -58,6 +59,30 @@ impl Solid {
             underhead,
             policy,
             true,
+            None,
+        )
+    }
+
+    /// Preserve the nominal shank and the fitted thread, including head overlap.
+    pub fn rust_profiled_machine_screw_with_shank(
+        thread: HelicalThread,
+        root_radius_mm: Option<f64>,
+        shank_radius_mm: f64,
+        screw: ScrewSpec,
+        feature: EntityId,
+        underhead: PlaneFrame,
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        policy.length(shank_radius_mm)?;
+        Self::rust_profiled_machine_screw_impl(
+            thread,
+            root_radius_mm,
+            screw,
+            feature,
+            underhead,
+            policy,
+            true,
+            Some(shank_radius_mm),
         )
     }
 
@@ -70,6 +95,7 @@ impl Solid {
         underhead: PlaneFrame,
         policy: GeometryPolicy,
         union: bool,
+        shank_radius_mm: Option<f64>,
     ) -> Result<Self, GeometryError> {
         policy.validate()?;
         underhead.checked(policy)?;
@@ -84,10 +110,11 @@ impl Solid {
             ..underhead
         };
         Self::rust_helical_body(thread, root_radius_mm, feature, frame, policy, |thread| {
+            let shank = shank_radius_mm.unwrap_or(thread.spec().major_radius_mm);
             let screw = if union {
-                Screw::new_with_head_thread_union(thread, screw)
+                Screw::new_with_shank_thread_union(thread, shank, screw)
             } else {
-                Screw::new(thread, screw)
+                Screw::new_with_shank_radius(thread, shank, screw)
             }
             .map_err(|cause| match cause {
                 ThreadError::Invalid => {
@@ -153,6 +180,11 @@ fn qualify_source(
         policy.length(spec.shank_length_mm)?;
     }
     let reserve = screw.profile().rounding_error_mm();
+    let shank = screw.profile().end()[0];
+    let major = screw.thread().spec().major_radius_mm;
+    if shank > major {
+        policy.length(((shank - major).next_down() - 2. * reserve).next_down())?;
+    }
     if screw.has_head_thread_overlap() {
         let [start, end] = screw.visible_thread_interval_mm();
         policy.length(((end - start).next_down() - 2. * reserve).next_down())?;
@@ -206,7 +238,7 @@ fn qualify_source(
 
 pub(super) fn extend_face_properties(screw: &Screw, faces: &mut Vec<(Point, f64)>) {
     let spec = screw.spec();
-    let radius = screw.thread().spec().major_radius_mm;
+    let radius = screw.profile().end()[0];
     let (removed_center, removed_area) = faces[0];
     let shoulder = PI * radius.powi(2) - removed_area;
     faces[0] = (
@@ -325,20 +357,30 @@ pub(super) fn extend_topology(
     let shoulder = ScrewFace::ThreadShoulder;
     let rate = screw.thread().helical_rate();
     let start = screw.visible_thread_interval_mm()[0];
-    for i in 0..count {
-        if (body.band(i) - 2) % 4 == 1 {
-            let edge = body.rim_origin(0, i);
-            add.face(shoulder).boundary.remove(&edge);
-            add.face(last).boundary.insert(edge);
-        } else {
-            let phase = body.rails[i];
-            add.arc(
-                format!("screw.head/thread.junction/{}", body.rail_name(i)),
-                start,
-                screw.thread().spec().major_radius_mm,
-                [(start - phase) / rate, (phase - body.next_phase(i)) / rate],
-                &[shoulder, last],
-            );
+    if screw.profile().end()[0] > screw.thread().spec().major_radius_mm {
+        add.arc(
+            "screw.head/thread.junction/outer".into(),
+            start,
+            screw.profile().end()[0],
+            [0., TAU],
+            &[shoulder, last],
+        );
+    } else {
+        for i in 0..count {
+            if (body.band(i) - 2) % 4 == 1 {
+                let edge = body.rim_origin(0, i);
+                add.face(shoulder).boundary.remove(&edge);
+                add.face(last).boundary.insert(edge);
+            } else {
+                let phase = body.rails[i];
+                add.arc(
+                    format!("screw.head/thread.junction/{}", body.rail_name(i)),
+                    start,
+                    screw.thread().spec().major_radius_mm,
+                    [(start - phase) / rate, (phase - body.next_phase(i)) / rate],
+                    &[shoulder, last],
+                );
+            }
         }
     }
     for (i, segment) in segments.iter().enumerate() {

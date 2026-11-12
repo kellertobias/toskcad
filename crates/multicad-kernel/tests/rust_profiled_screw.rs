@@ -491,3 +491,83 @@ fn physical_head_source_keeps_literal_supports_transport_budget_and_original_fra
         }
     }
 }
+
+#[test]
+fn nominal_shank_and_fitted_rounded_thread_keep_both_actual_shoulder_boundaries() {
+    let owner = EntityId::new();
+    let policy = GeometryPolicy::default();
+    for crown in [false, true] {
+        for plain in [0., 1.] {
+            let mut t = thread();
+            t.major_radius_mm = 1.48;
+            let root = 0.05;
+            t.depth_mm = (t.pitch_mm - t.crest_width_mm) * 3_f64.sqrt() / 2. - root;
+            let mut s = spec(crown);
+            s.shank_length_mm = plain;
+            let solid = Solid::rust_profiled_machine_screw_with_shank(
+                t,
+                Some(root),
+                1.5,
+                s,
+                owner,
+                PlaneFrame::default(),
+                policy,
+            )
+            .unwrap();
+            let (source, _) = solid.rust_profiled_screw_geometry().unwrap();
+            assert_eq!(source.profile().end()[0], 1.5);
+            assert_eq!(source.thread().spec().major_radius_mm, 1.48);
+            assert_eq!(source.thread().spec().root_radius_mm, Some(root));
+            let faces = solid.faces().unwrap();
+            let removed = source.thread().volume_mm3() / t.length_mm;
+            assert!(
+                (faces[0].area_mm2 - (std::f64::consts::PI * 1.5_f64.powi(2) - removed)).abs()
+                    < 1e-10
+            );
+            let snapshot = solid.topology_snapshot(owner, 1).unwrap();
+            let shoulder = snapshot
+                .elements
+                .iter()
+                .find(|e| {
+                    e.key.kind == TopologyKind::Face
+                        && e.origins.iter().any(|o| o.role == "screw.thread/start")
+                })
+                .unwrap();
+            let mut outer = 0;
+            let mut crest = 0;
+            for edge in snapshot.elements.iter().filter(|e| {
+                e.key.kind == TopologyKind::Edge && !e.origins.is_disjoint(&shoulder.boundary)
+            }) {
+                if let Some(AnalyticGeometry::CircularArc { radius_mm, .. }) = edge.geometry {
+                    if radius_mm == 1.5 {
+                        outer += 1;
+                    }
+                    if radius_mm == t.major_radius_mm {
+                        crest += 1;
+                    }
+                }
+            }
+            assert_eq!(outer, 1);
+            assert!(crest > 0);
+            let mesh = solid
+                .manufacturing_mesh_with_receipt(MeshOptions::default())
+                .unwrap();
+            assert_eq!(mesh.edge_pairs as usize * 2, mesh.mesh.indices.len());
+            let original = solid.volume_mm3().unwrap();
+            t.major_radius_mm = 1.5 - policy.minimum_feature_mm / 2.;
+            assert!(
+                Solid::rust_profiled_machine_screw_with_shank(
+                    t,
+                    Some(root),
+                    1.5,
+                    s,
+                    owner,
+                    PlaneFrame::default(),
+                    policy
+                )
+                .is_err()
+            );
+            assert_eq!(solid.volume_mm3().unwrap(), original);
+        }
+    }
+}
