@@ -75,10 +75,23 @@ fn trig(t: I) -> Result<(I, I), Error> {
     Ok((checked(s + I::new(-se, se))?, checked(c + I::new(-ce, ce))?))
 }
 fn arc_bounds(segment: Segment) -> Result<[I; 2], Error> {
-    let Curve::Arc { center, sweep } = segment.curve else {
+    let Curve::Arc {
+        center,
+        radius_mm,
+        sweep,
+    } = segment.curve
+    else {
         return Err(Error::Unresolved);
     };
     let [x, y] = std::array::from_fn(|i| I::point(segment.start[i]) - I::point(center[i]));
+    let length = checked((x.square() + y.square()).sqrt())?;
+    if length.lo <= 0. || !radius_mm.is_finite() || radius_mm <= 0. {
+        return Err(Error::Unresolved);
+    }
+    let [x, y] = [
+        checked(x / length * I::point(radius_mm))?,
+        checked(y / length * I::point(radius_mm))?,
+    ];
     let mut bounds = segment.start.map(I::point);
     for i in 0..256 {
         let a = I::point(sweep) * I::point(f64::from(i)) / I::point(256.);

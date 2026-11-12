@@ -15,6 +15,51 @@ pub(super) fn head(radius: f64, angle: f64, neck: f64) -> Profile {
     )
     .unwrap()
 }
+
+#[test]
+fn arc_enclosure_uses_literal_radius_with_outward_normalized_start_direction() {
+    let arc = Segment {
+        start: [0., -1.],
+        end: [1., 0.],
+        curve: Curve::Arc {
+            center: [0.; 2],
+            radius_mm: 1.,
+            sweep: std::f64::consts::FRAC_PI_2,
+        },
+        role: Role::Crown,
+    };
+    let normal = arc_bounds(arc).unwrap();
+    let larger = arc_bounds(Segment {
+        curve: Curve::Arc {
+            center: [0.; 2],
+            radius_mm: 1. + 1e-14,
+            sweep: std::f64::consts::FRAC_PI_2,
+        },
+        ..arc
+    })
+    .unwrap();
+    assert!(larger[0].hi > normal[0].hi);
+    for radius_mm in [0., -1., f64::NAN] {
+        assert!(
+            arc_bounds(Segment {
+                curve: Curve::Arc {
+                    center: [0.; 2],
+                    radius_mm,
+                    sweep: 0.1
+                },
+                ..arc
+            })
+            .is_err()
+        );
+    }
+    assert!(
+        arc_bounds(Segment {
+            start: [0.; 2],
+            ..arc
+        })
+        .is_err()
+    );
+}
 pub(super) fn seat(radius: f64, angle: f64) -> Seat {
     let bore = radius * 0.5 + 0.2;
     Seat {
@@ -163,6 +208,7 @@ fn finite_source_and_clearance_proof_controls_never_promote_unresolved_arithmeti
         Segment {
             curve: Curve::Arc {
                 center: [0., 0.],
+                radius_mm: 1.,
                 sweep: 0.1,
             },
             ..cone

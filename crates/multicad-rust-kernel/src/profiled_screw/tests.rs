@@ -284,7 +284,11 @@ fn profile_triangles_track_real_cone_crown_neck_and_bearing_geometry() {
                         / (delta[0].powi(2) + delta[1].powi(2));
                     distance(p, segment.point(t.clamp(0., 1.)))
                 }
-                Curve::Arc { center, sweep } => {
+                Curve::Arc {
+                    center,
+                    radius_mm: radius,
+                    sweep,
+                } => {
                     let angle = (p[1] - center[1]).atan2(p[0] - center[0]);
                     let start = (segment.start[1] - center[1]).atan2(segment.start[0] - center[0]);
                     let advance = if sweep > 0. {
@@ -293,7 +297,7 @@ fn profile_triangles_track_real_cone_crown_neck_and_bearing_geometry() {
                         (start - angle).rem_euclid(std::f64::consts::TAU)
                     };
                     if advance <= sweep.abs() {
-                        (distance(p, center) - distance(segment.start, center)).abs()
+                        (distance(p, center) - radius).abs()
                     } else {
                         distance(p, segment.start).min(distance(p, segment.end))
                     }
@@ -314,7 +318,7 @@ fn profile_triangles_track_real_cone_crown_neck_and_bearing_geometry() {
                         segment.end[1] - segment.start[1],
                         segment.start[0] - segment.end[0],
                     ],
-                    Curve::Arc { center, sweep } => [
+                    Curve::Arc { center, sweep, .. } => [
                         (vertex[0].hypot(vertex[1]) - center[0]) * sweep.signum(),
                         (vertex[2] + screw.spec().shank_length_mm - center[1]) * sweep.signum(),
                     ],

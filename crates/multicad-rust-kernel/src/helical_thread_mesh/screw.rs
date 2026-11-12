@@ -62,10 +62,11 @@ pub fn tessellate_profiled_screw(
     for (index, segment) in segments.iter().enumerate() {
         let subdivisions = match segment.curve {
             Curve::Line => 1.,
-            Curve::Arc { center, sweep } => {
-                let r = (segment.start[0] - center[0]).hypot(segment.start[1] - center[1]);
-                (sweep.abs() / (options.angle * 0.5).min((options.deflection / r).sqrt())).ceil()
-            }
+            Curve::Arc {
+                radius_mm: r,
+                sweep,
+                ..
+            } => (sweep.abs() / (options.angle * 0.5).min((options.deflection / r).sqrt())).ceil(),
         };
         if subdivisions * shell.angles.len() as f64 * 2. > options.triangle_limit as f64 {
             return Err(MeshError::BudgetExceeded);
@@ -114,10 +115,11 @@ pub fn profiled_screw_volume_error_bound(
     for segment in screw.profile().segments() {
         let count = match segment.curve {
             Curve::Line => 1.,
-            Curve::Arc { center, sweep } => {
-                let r = (segment.start[0] - center[0]).hypot(segment.start[1] - center[1]);
-                (sweep.abs() / (options.angle * 0.5).min((options.deflection / r).sqrt())).ceil()
-            }
+            Curve::Arc {
+                radius_mm: r,
+                sweep,
+                ..
+            } => (sweep.abs() / (options.angle * 0.5).min((options.deflection / r).sqrt())).ceil(),
         };
         // Bound work before converting a huge refinement to usize.
         if count * steps * 2. > options.triangle_limit as f64 {

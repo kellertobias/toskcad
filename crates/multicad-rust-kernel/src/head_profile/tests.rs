@@ -135,6 +135,7 @@ fn support_arc_interior_and_endpoint_and_areas_are_analytic() {
         end: [2., 0.],
         curve: Curve::Arc {
             center: [0., 0.],
+            radius_mm: 2.,
             sweep: FRAC_PI_2,
         },
         role: Role::Crown,
@@ -148,6 +149,7 @@ fn support_arc_interior_and_endpoint_and_areas_are_analytic() {
         end: [2., 1.],
         curve: Curve::Arc {
             center: [3., 1.],
+            radius_mm: 1.,
             sweep: -FRAC_PI_2,
         },
         role: Role::Neck,
@@ -469,7 +471,11 @@ fn physical_graphs_refuse_gaps_axis_pinches_false_roles_and_invalid_arc_domains(
         let Curve::Arc { center, .. } = bad[3].curve else {
             unreachable!()
         };
-        bad[3].curve = Curve::Arc { center, sweep };
+        bad[3].curve = Curve::Arc {
+            center,
+            radius_mm: 0.1,
+            sweep,
+        };
         assert_eq!(
             Profile::from_retained_segments(&bad),
             Err(ThreadError::Invalid)
@@ -479,6 +485,7 @@ fn physical_graphs_refuse_gaps_axis_pinches_false_roles_and_invalid_arc_domains(
         let mut bad = segments.clone();
         bad[3].curve = Curve::Arc {
             center,
+            radius_mm: 0.1,
             sweep: -PI / 4.,
         };
         assert_eq!(
@@ -540,4 +547,43 @@ fn physical_graphs_refuse_gaps_axis_pinches_false_roles_and_invalid_arc_domains(
         Profile::from_retained_segments(&pinched),
         Err(ThreadError::Invalid)
     );
+}
+
+#[test]
+fn literal_support_radius_is_preserved_and_never_fitted_to_trim_vertices() {
+    let p = Profile::new(counter(0.1, 0.1), 1.5, 1.).unwrap();
+    let parts: Vec<_> = p.segments().collect();
+    let Curve::Arc {
+        center,
+        radius_mm,
+        sweep,
+    } = parts[3].curve
+    else {
+        unreachable!()
+    };
+    assert_eq!(radius_mm, 0.1);
+    for radius_mm in [f64::NAN, 0., -0.1, 1e-30, 0.100001, 1e8] {
+        let mut bad = parts.clone();
+        bad[3].curve = Curve::Arc {
+            center,
+            radius_mm,
+            sweep,
+        };
+        assert!(Profile::from_retained_segments(&bad).is_err());
+    }
+    let arc = Segment {
+        start: [0., -1.],
+        end: [1., 0.],
+        curve: Curve::Arc {
+            center: [0.; 2],
+            radius_mm: 1. + 1e-14,
+            sweep: FRAC_PI_2,
+        },
+        role: Role::Crown,
+    };
+    let actual = Profile::from_retained_segments(&[arc]).unwrap();
+    let q = arc.point(0.5);
+    assert!((q[0].hypot(q[1]) - (1. + 1e-14)).abs() < 1e-15);
+    assert!(actual.support([1., 0., 0.]) > 1.);
+    assert!(actual.support([0., 0., -1.]) > 1.);
 }

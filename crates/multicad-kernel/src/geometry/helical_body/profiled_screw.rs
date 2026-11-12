@@ -70,8 +70,12 @@ impl Solid {
                 for p in [segment.start, segment.end] {
                     policy.point(position(underhead, [p[0], 0., p[1]]))?;
                 }
-                if let Curve::Arc { center, sweep } = segment.curve {
-                    let r = (segment.start[0] - center[0]).hypot(segment.start[1] - center[1]);
+                if let Curve::Arc {
+                    center,
+                    radius_mm: r,
+                    sweep,
+                } = segment.curve
+                {
                     policy.length(r)?;
                     let angle = (segment.start[1] - center[1]).atan2(segment.start[0] - center[0]);
                     for (fraction, endpoint) in [(0., segment.start), (1., segment.end)] {

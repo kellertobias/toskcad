@@ -37,9 +37,11 @@ impl Role {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Curve {
     Line,
-    /// The signed angle preserves the authored direction around the center.
+    /// Literal support radius; trim vertices may differ only within the
+    /// profile's exposed arithmetic reserve. The signed angle keeps direction.
     Arc {
         center: [f64; 2],
+        radius_mm: f64,
         sweep: f64,
     },
 }
@@ -65,8 +67,11 @@ impl Segment {
             Curve::Line => {
                 std::array::from_fn(|i| self.start[i] + fraction * (self.end[i] - self.start[i]))
             }
-            Curve::Arc { center, sweep } => {
-                let radius = (self.start[0] - center[0]).hypot(self.start[1] - center[1]);
+            Curve::Arc {
+                center,
+                radius_mm: radius,
+                sweep,
+            } => {
                 let angle = self.angle(center) + sweep * fraction;
                 [
                     center[0] + radius * angle.cos(),
@@ -90,16 +95,18 @@ impl Segment {
             }
             Curve::Arc {
                 center: [c, z],
+                radius_mm: radius,
                 sweep,
             } => {
+                let start = self.angle([c, z]);
                 if c == 0. {
-                    let dz = self.end[1] - self.start[1];
+                    let dz = 2. * radius * (start + sweep / 2.).cos() * (sweep / 2.).sin();
                     return PI
                         * dz
-                        * (self.start[0].powi(2) - (self.start[1] - z) * dz - dz.powi(2) / 3.);
+                        * ((radius * start.cos()).powi(2)
+                            - radius * start.sin() * dz
+                            - dz.powi(2) / 3.);
                 }
-                let radius = (self.start[0] - c).hypot(self.start[1] - z);
-                let start = self.angle([c, z]);
                 let integral = |t: f64| {
                     let s = t.sin();
                     radius * c * c * s
@@ -118,12 +125,17 @@ impl Segment {
                 PI * (self.start[0] + self.end[0])
                     * (self.end[0] - self.start[0]).hypot(self.end[1] - self.start[1])
             }
-            Curve::Arc { center, sweep } => {
-                let radius = (self.start[0] - center[0]).hypot(self.start[1] - center[1]);
-                if center[0] == 0. {
-                    return TAU * radius * (self.end[1] - self.start[1]).abs();
-                }
+            Curve::Arc {
+                center,
+                radius_mm: radius,
+                sweep,
+            } => {
                 let angle = self.angle(center);
+                if center[0] == 0. {
+                    return TAU
+                        * radius
+                        * (2. * radius * (angle + sweep / 2.).cos() * (sweep / 2.).sin()).abs();
+                }
                 TAU * radius
                     * (center[0] * sweep + radius * ((angle + sweep).sin() - angle.sin())).abs()
             }
@@ -140,13 +152,14 @@ impl Segment {
             }
             Curve::Arc {
                 center: [c, z],
+                radius_mm: radius,
                 sweep,
             } => {
-                if c == 0. {
-                    return [0., 0., self.start[1].midpoint(self.end[1])];
-                }
-                let radius = (self.start[0] - c).hypot(self.start[1] - z);
                 let a = self.angle([c, z]);
+                if c == 0. {
+                    let dz = 2. * radius * (a + sweep / 2.).cos() * (sweep / 2.).sin();
+                    return [0., 0., z + radius * a.sin() + dz / 2.];
+                }
                 let b = a + sweep;
                 let denominator = c * sweep + radius * (b.sin() - a.sin());
                 z + (radius * c * (a.cos() - b.cos())
@@ -161,8 +174,19 @@ impl Segment {
     pub fn support(self, radial: f64, axial: f64) -> f64 {
         let dot = |[r, z]: [f64; 2]| radial.mul_add(r, axial * z);
         let mut value = dot(self.start).max(dot(self.end));
-        if let Curve::Arc { center, sweep } = self.curve {
+        if let Curve::Arc {
+            center,
+            radius_mm: radius,
+            sweep,
+        } = self.curve
+        {
             let start = self.angle(center);
+            for angle in [start, start + sweep] {
+                value = value.max(dot([
+                    center[0] + radius * angle.cos(),
+                    center[1] + radius * angle.sin(),
+                ]));
+            }
             let candidate = axial.atan2(radial);
             let advance = if sweep > 0. {
                 (candidate - start).rem_euclid(TAU)
@@ -170,7 +194,6 @@ impl Segment {
                 (start - candidate).rem_euclid(TAU)
             };
             if advance <= sweep.abs() {
-                let radius = (self.start[0] - center[0]).hypot(self.start[1] - center[1]);
                 value = value.max(dot(center) + radius * radial.hypot(axial));
             }
         }
@@ -196,8 +219,11 @@ impl Segment {
                             * (self.end[0] - self.start[0])
                 }
             }
-            Curve::Arc { center, .. } => {
-                let radius = (self.start[0] - center[0]).hypot(self.start[1] - center[1]);
+            Curve::Arc {
+                center,
+                radius_mm: radius,
+                ..
+            } => {
                 let offset = (z - center[1]).abs();
                 let radial = ((radius - offset) * (radius + offset)).max(0.).sqrt();
                 if self.role == Role::Crown {
@@ -251,7 +277,15 @@ impl Profile {
         for segment in segments {
             let points = match segment.curve {
                 Curve::Line => [segment.start, segment.end, [0.; 2]],
-                Curve::Arc { center, .. } => [segment.start, segment.end, center],
+                Curve::Arc {
+                    center, radius_mm, ..
+                } => {
+                    if !radius_mm.is_finite() || radius_mm <= 0. {
+                        return Err(ThreadError::Invalid);
+                    }
+                    scale = scale.max(radius_mm);
+                    [segment.start, segment.end, center]
+                }
             };
             for point in points {
                 if !point.into_iter().all(f64::is_finite) {
@@ -403,6 +437,7 @@ impl Profile {
                         [shank, neck_z],
                         Curve::Arc {
                             center,
+                            radius_mm: neck,
                             sweep: -theta,
                         },
                         Role::Neck,
@@ -445,6 +480,7 @@ impl Profile {
                     [radius, skirt_z],
                     Curve::Arc {
                         center: [0., center_z],
+                        radius_mm: crown,
                         sweep: end_angle - start_angle,
                     },
                     Role::Crown,
@@ -457,6 +493,7 @@ impl Profile {
                         [shank, neck],
                         Curve::Arc {
                             center: [shank + neck, neck],
+                            radius_mm: neck,
                             sweep: -FRAC_PI_2,
                         },
                         Role::Neck,
@@ -561,12 +598,16 @@ fn retained_segment_valid(segment: Segment, reserve: f64) -> bool {
             Role::Bearing => dr < -reserve && dz == 0.,
             Role::Crown | Role::Neck => false,
         },
-        Curve::Arc { center, sweep } => {
+        Curve::Arc {
+            center,
+            radius_mm: radius,
+            sweep,
+        } => {
             if !sweep.is_finite() || center[0] < 0. || dz <= reserve {
                 return false;
             }
-            let radius = (segment.start[0] - center[0]).hypot(segment.start[1] - center[1]);
-            if radius <= reserve || radius > 1e7 {
+            let start_radius = (segment.start[0] - center[0]).hypot(segment.start[1] - center[1]);
+            if radius <= reserve || radius > 1e7 || (start_radius - radius).abs() > reserve {
                 return false;
             }
             let a = segment.angle(center);
