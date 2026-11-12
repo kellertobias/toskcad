@@ -4064,3 +4064,117 @@ fn rust_stdio_parallel_cylinder_pair_queries_are_read_only_and_source_guarded() 
         4.,
     );
 }
+
+#[test]
+fn default_stdio_text_cut_join_keeps_all_four_counters_and_reopens_exact_step_material() {
+    use multicad_kernel::{Solid, rust_kernel::spline_cap_relief::FaceRole};
+    let directory = tempfile::tempdir().unwrap();
+    for (operation, reverse, sign) in [("cut", false, -1.), ("join", true, 1.)] {
+        let project = directory.path().join(format!("text-{operation}.tcd"));
+        let imported_project = directory
+            .path()
+            .join(format!("imported-text-{operation}.tcd"));
+        let args = |path: &Path| {
+            vec![
+                "--project".to_owned(),
+                path.to_str().unwrap().to_owned(),
+                "--export-dir".to_owned(),
+                directory.path().to_str().unwrap().to_owned(),
+            ]
+        };
+        let arguments = args(&project);
+        let mut client = Client::start(&arguments.iter().map(String::as_str).collect::<Vec<_>>());
+        assert_eq!(
+            client.ok("document_info", json!({}))["geometry_backend"],
+            "rust"
+        );
+        let base = client.ok(
+            "create_sketch",
+            json!({"expected_revision":0,"plane":"xy","name":"Plate"}),
+        )["sketch"]
+            .clone();
+        client.ok("sketch_add_rectangle",json!({"expected_revision":1,"sketch":base,"origin_mm":[-5,-5],"width":{"value":50,"unit":"mm"},"height":{"value":20,"unit":"mm"}}));
+        let plate=client.ok("extrude",json!({"expected_revision":2,"sketch":base,"regions":[0],"distance":{"value":5,"unit":"mm"},"operation":"new_body"}));
+        let part = plate["created"][0]["part"].clone();
+        let text = client.ok(
+            "create_sketch",
+            json!({"expected_revision":3,"plane":"xy","name":"ABO lettering"}),
+        )["sketch"]
+            .clone();
+        client.ok("sketch_add_text",json!({"expected_revision":4,"sketch":text,"text":"ABO","height_mm":8,"origin_mm":[0,0]}));
+        let regions = client.ok("inspect_sketch", json!({"sketch":text}));
+        let regions = regions["regions"].as_array().unwrap();
+        let glyphs = regions
+            .iter()
+            .filter(|r| r["holes"].as_u64().unwrap() > 0)
+            .collect::<Vec<_>>();
+        assert_eq!(glyphs.len(), 3);
+        let letters = glyphs
+            .iter()
+            .map(|r| r["index"].clone())
+            .collect::<Vec<_>>();
+        let area = glyphs
+            .iter()
+            .map(|r| r["area_mm2"].as_f64().unwrap())
+            .sum::<f64>();
+        client.ok("extrude",json!({"expected_revision":5,"sketch":text,"regions":letters,"distance":{"value":2,"unit":"mm"},"operation":operation,"reverse":reverse,"target_part":part}));
+        let expected = 5000. + sign * 2. * area;
+        close(client.part_volume(), expected);
+        client.ok("undo", json!({"expected_revision":6}));
+        close(client.part_volume(), 5000.);
+        client.fail("extrude",json!({"expected_revision":7,"sketch":text,"regions":letters,"distance":{"value":5,"unit":"mm"},"operation":"cut","target_part":part}));
+        assert_eq!(client.revision(), 7);
+        close(client.part_volume(), 5000.);
+        client.ok("redo", json!({"expected_revision":7}));
+        close(client.part_volume(), expected);
+        let filename = format!("text-{operation}.step");
+        let receipt = client.ok("export_step", json!({"part":part,"file_name":filename}));
+        close(receipt["readback_volume_mm3"].as_f64().unwrap(), expected);
+        let bytes = std::fs::read_to_string(directory.path().join(&filename)).unwrap();
+        let solid = Solid::import_rust_step(
+            &bytes,
+            multicad_core::document::EntityId::new(),
+            Default::default(),
+        )
+        .unwrap();
+        let (data, _) = solid.rust_spline_cap_relief_data().unwrap();
+        assert_eq!(data.motifs().len(), 3);
+        assert_eq!(
+            data.motifs().iter().map(|m| m.holes().len()).sum::<usize>(),
+            4
+        );
+        assert_eq!(
+            data.boundary()
+                .faces
+                .iter()
+                .filter(|f| matches!(f.role, FaceRole::CounterCap { .. }))
+                .count(),
+            4
+        );
+        solid
+            .manufacturing_mesh_with_receipt(Default::default())
+            .unwrap();
+        client.ok("save_project", json!({"expected_revision":8}));
+        drop(client);
+        let mut reopened = Client::start(&arguments.iter().map(String::as_str).collect::<Vec<_>>());
+        close(reopened.part_volume(), expected);
+        drop(reopened);
+        let arguments = args(&imported_project);
+        let mut importer = Client::start(&arguments.iter().map(String::as_str).collect::<Vec<_>>());
+        let imported = importer.ok(
+            "import_step",
+            json!({"expected_revision":0,"file_name":filename}),
+        );
+        assert_eq!(imported["parts"].as_array().unwrap().len(), 1);
+        close(importer.part_volume(), expected);
+        importer.ok("save_project", json!({"expected_revision":1}));
+        drop(importer);
+        std::fs::remove_file(directory.path().join(filename)).unwrap();
+        let mut reopened = Client::start(&arguments.iter().map(String::as_str).collect::<Vec<_>>());
+        close(reopened.part_volume(), expected);
+        reopened.ok(
+            "export_step",
+            json!({"part":imported["parts"][0],"file_name":format!("restored-{operation}.step")}),
+        );
+    }
+}

@@ -66,7 +66,7 @@ fn reconstruct(
     })
 }
 
-pub(super) fn section_edges(
+pub(in crate::step_read) fn section_edges(
     reader: &Shell<'_, '_>,
     edges: &Edges,
     plane: &Plane,

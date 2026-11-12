@@ -56,6 +56,7 @@ use internal_ring_body::InternalRingBody;
 use linear_body::LinearBody;
 use nonplanar_loft_body::NonplanarLoftBody;
 use normal_relief_body::NormalReliefBody;
+mod spline_cap_relief_body;
 pub use normal_relief_body::NormalReliefMotif;
 use normal_sweep_body::NormalSweepBody;
 pub use normal_sweep_body::SweepOpening;
@@ -71,6 +72,7 @@ use rounded_thread_bore_body::RoundedThreadBoreBody;
 pub use rounded_thread_bore_body::RoundedThreadBoreData;
 use rust_compound::RustCompound;
 use sphere_body::SphereBody;
+use spline_cap_relief_body::SplineCapReliefBody;
 use spline_sweep_body::SplineSweepBody;
 use spur_gear_body::SpurGearBody;
 use torus_body::TorusBody;
@@ -686,6 +688,7 @@ enum SolidBody {
     RoundedSlot(Rc<RoundedSlotBody>, PlaneFrame),
     NormalSweep(Rc<NormalSweepBody>, PlaneFrame),
     NormalRelief(Rc<NormalReliefBody>, PlaneFrame),
+    SplineCapRelief(Rc<SplineCapReliefBody>, PlaneFrame),
     NonplanarLoft(Rc<NonplanarLoftBody>, PlaneFrame),
     SplineSweep(Rc<SplineSweepBody>, PlaneFrame),
     SpurGear(Rc<SpurGearBody>, PlaneFrame),
@@ -1149,6 +1152,9 @@ impl Solid {
             SolidBody::NormalRelief(body, frame) => {
                 SolidBody::NormalRelief(Rc::clone(body), *frame)
             }
+            SolidBody::SplineCapRelief(body, frame) => {
+                SolidBody::SplineCapRelief(Rc::clone(body), *frame)
+            }
             SolidBody::SplineSweep(body, frame) => SolidBody::SplineSweep(Rc::clone(body), *frame),
             SolidBody::SpurGear(body, frame) => SolidBody::SpurGear(Rc::clone(body), *frame),
             SolidBody::InternalRing(body, frame) => {
@@ -1534,6 +1540,12 @@ impl Solid {
                     frame.checked_metric_bounds(body.bounds(PlaneFrame::default()), self.policy)?;
                     SolidBody::NormalRelief(Rc::clone(body), frame)
                 }
+                SolidBody::SplineCapRelief(body, frame) => {
+                    let frame = transform.frame(*frame);
+                    frame.checked_metric_bounds(body.bounds(PlaneFrame::default()), self.policy)?;
+                    SolidBody::SplineCapRelief(Rc::clone(body), frame)
+                }
+
                 SolidBody::SpurGear(body, frame) => {
                     SolidBody::SpurGear(Rc::clone(body), transform.frame(*frame))
                 }
@@ -1663,6 +1675,9 @@ impl Solid {
         if let Some((body, _)) = self.axial_stack_body() {
             return Ok(body.volume_mm3());
         }
+        if let Some((body, _)) = self.spline_cap_relief_body() {
+            return Ok(body.volume_mm3());
+        }
         if let Some((body, _)) = self.normal_relief_body() {
             return Ok(body.volume_mm3());
         }
@@ -1775,6 +1790,9 @@ impl Solid {
             return Ok(body.bounds(frame));
         }
         if let Some((body, frame)) = self.axial_stack_body() {
+            return Ok(body.bounds(frame));
+        }
+        if let Some((body, frame)) = self.spline_cap_relief_body() {
             return Ok(body.bounds(frame));
         }
         if let Some((body, frame)) = self.normal_relief_body() {
@@ -1935,6 +1953,9 @@ impl Solid {
             return body.faces(frame);
         }
         if let Some((body, frame)) = self.axial_stack_body() {
+            return Ok(body.faces(frame));
+        }
+        if let Some((body, frame)) = self.spline_cap_relief_body() {
             return Ok(body.faces(frame));
         }
         if let Some((body, frame)) = self.normal_relief_body() {
@@ -2099,6 +2120,7 @@ impl Solid {
             SolidBody::RoundedSlot(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::NormalSweep(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::NormalRelief(body, frame) => body.mesh(*frame, rust_options),
+            SolidBody::SplineCapRelief(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::SplineSweep(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::SpurGear(body, frame) => {
                 crate::rust_display::placed_mesh(body.profile.mesh(rust_options), *frame, false)
@@ -2413,6 +2435,9 @@ impl Solid {
         ordinal: u32,
         options: multicad_rust_kernel::display::Tessellation,
     ) -> Option<Result<Vec<[f64; 3]>, multicad_rust_kernel::display::MeshError>> {
+        if let Some((body, frame)) = self.spline_cap_relief_body() {
+            return body.sample_rim(frame, ordinal, options);
+        }
         if let Some((body, frame)) = self.spline_sweep_body() {
             return body.sample_rim(frame, ordinal, options);
         }
@@ -2467,6 +2492,7 @@ impl Solid {
             SolidBody::RoundedSlot(body, _) => body.feature,
             SolidBody::NormalSweep(body, _) => body.feature,
             SolidBody::NormalRelief(body, _) => body.feature,
+            SolidBody::SplineCapRelief(body, _) => body.feature,
             SolidBody::SplineSweep(body, _) => body.feature,
             SolidBody::SpurGear(body, _) => body.feature,
             SolidBody::InternalRing(body, _) => body.feature,
@@ -2494,6 +2520,7 @@ impl Solid {
     fn supports_step_shell(&self, standalone: bool) -> bool {
         match &self.body {
             SolidBody::NormalRelief(..)
+            | SolidBody::SplineCapRelief(..)
             | SolidBody::RoundedThread(..)
             | SolidBody::RoundedThreadBore(..) => true,
             SolidBody::Occt(_)
@@ -2594,6 +2621,7 @@ impl Solid {
         use multicad_rust_kernel::step;
         match &self.body {
             SolidBody::NormalRelief(body, frame) => body.append_step(writer, *frame),
+            SolidBody::SplineCapRelief(body, frame) => body.append_step(writer, *frame),
             SolidBody::PolygonPrism(placed) => {
                 if let Some(treatments) = &placed.bore_treatments {
                     writer.append_treated_polygon_prism(

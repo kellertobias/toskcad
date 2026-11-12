@@ -207,6 +207,25 @@ impl Solid {
                 | ImportProfile::PocketedOrthogonal { .. }
                 | ImportProfile::SlottedOrthogonal { .. }
         );
+        if matches!(&imported.profile, ImportProfile::SplineCapRelief { .. }) {
+            let expected = imported.clone();
+            let solid = Self::from_imported_step(imported, feature, policy)?;
+            verify_step_metrics(&solid, readback, policy.linear_tolerance_mm)?;
+            let (body, frame) = solid
+                .spline_cap_relief_body()
+                .ok_or_else(|| invalid("Missing reconstructed all-ring spline material"))?;
+            if !step_read::spline_cap_relief_import_matches(
+                &expected,
+                &body.geometry,
+                [frame.origin, frame.u, frame.v],
+                policy.linear_tolerance_mm,
+            ) {
+                return Err(invalid(
+                    "Reconstructed spline cap material differs from the full imported boundary",
+                ));
+            }
+            return Ok(solid);
+        }
         let solid = Self::from_imported_step(imported, feature, policy)?;
         verify(
             &solid,
@@ -323,6 +342,9 @@ impl Solid {
                 )
                 .map_err(|_| invalid("rounded cylinder exceeds import policy"))?;
                 Self::import_rounded_cylinder(geometry, frame, feature, policy)
+            }
+            ImportProfile::SplineCapRelief { relief } => {
+                Self::from_spline_cap_relief_import(*relief, frame, feature, policy)
             }
             ImportProfile::SplineSweep { sweep } => {
                 let body = SplineSweepBody::new(feature, sweep, frame, policy.linear_tolerance_mm)?;

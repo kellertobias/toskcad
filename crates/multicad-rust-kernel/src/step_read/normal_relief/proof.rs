@@ -39,7 +39,7 @@ pub(super) fn vertices(
         })
         .collect()
 }
-pub(super) fn circle(curve: Curve) -> Option<(Point, Point, f64, f64)> {
+pub(in crate::step_read) fn circle(curve: Curve) -> Option<(Point, Point, f64, f64)> {
     match curve {
         Curve::Circle(c) => Some((c.center_mm, c.normal, c.radius_mm, std::f64::consts::TAU)),
         Curve::Semicircle(c) => Some((c.center_mm, c.normal, c.radius_mm, std::f64::consts::PI)),

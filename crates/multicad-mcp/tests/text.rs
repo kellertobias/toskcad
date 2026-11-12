@@ -453,7 +453,7 @@ fn anchored_multiline_cantarell_text_extrudes_and_rebuilds_after_anchor_edits() 
 }
 
 #[test]
-fn unqualified_curved_text_booleans_leave_the_source_repairable_for_new_body() {
+fn breakthrough_and_wrong_side_text_booleans_leave_the_source_repairable_for_new_body() {
     let host = Headless::new(
         Workspace::new(Document::new("Text rollback").unwrap()).unwrap(),
         None,
@@ -490,8 +490,8 @@ fn unqualified_curved_text_booleans_leave_the_source_repairable_for_new_body() {
         .collect();
     assert_eq!(letters.len(), 3);
     let before = host.document();
-    for (operation, reverse) in [("cut", false), ("join", true)] {
-        let error=run("extrude",json!({"expected_revision":5,"sketch":text,"regions":letters,"distance":mm(2.),"operation":operation,"target_part":part,"reverse":reverse})).unwrap_err();
+    for (operation, reverse, depth) in [("cut", false, 5.), ("join", false, 2.)] {
+        let error=run("extrude",json!({"expected_revision":5,"sketch":text,"regions":letters,"distance":mm(depth),"operation":operation,"target_part":part,"reverse":reverse})).unwrap_err();
         assert_eq!(error.code, "model_failed");
         assert_eq!(host.document(), before);
         let current = run("evaluate_model", json!({})).unwrap();

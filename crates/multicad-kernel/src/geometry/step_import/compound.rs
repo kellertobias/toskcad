@@ -27,6 +27,16 @@ fn unsigned_normal(normal: Point) -> Point {
 // members. An update must not bind a face to a different shell just because
 // its shell was moved to the same list position.
 fn member_signature(readback: &Readback, imported: &ImportSolid) -> ContentHash {
+    if let ImportProfile::SplineCapRelief { relief } = &imported.profile {
+        return super::super::spline_cap_relief_body::imported_signature(
+            relief,
+            PlaneFrame {
+                origin: imported.origin_mm,
+                u: imported.u,
+                v: imported.v,
+            },
+        );
+    }
     if let ImportProfile::NormalRelief { relief } = &imported.profile {
         return super::super::normal_relief_body::imported_signature(
             relief,
@@ -627,6 +637,14 @@ fn match_leaf(leaf: &Solid, members: &[(Readback, Option<ImportSolid>)], toleran
         return false;
     }
     if let Some(profile) = profile {
+        if let Some((body, frame)) = leaf.spline_cap_relief_body() {
+            return step_read::spline_cap_relief_import_matches(
+                profile,
+                &body.geometry,
+                [frame.origin, frame.u, frame.v],
+                tolerance,
+            );
+        }
         if let Some((body, frame)) = leaf.normal_relief_body() {
             return step_read::normal_relief_import_matches(
                 profile,

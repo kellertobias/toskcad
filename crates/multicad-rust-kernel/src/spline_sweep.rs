@@ -33,6 +33,20 @@ pub enum Edge {
 }
 
 impl Edge {
+    pub fn reversed(&self) -> Self {
+        match self {
+            Self::Analytic(edge) => Self::Analytic(edge.reversed()),
+            Self::Cubic(curve) => Self::Cubic(
+                Cubic::new(
+                    curve.poles().to_vec(),
+                    curve.knots().to_vec(),
+                    !curve.reversed(),
+                )
+                .expect("reversing a validated curve"),
+            ),
+        }
+    }
+
     pub fn point(&self, fraction: f64) -> Point {
         match self {
             Self::Analytic(edge) => edge.point(fraction),
@@ -85,7 +99,7 @@ impl Edge {
         }
     }
 
-    fn moments(&self, origin: Point) -> [f64; 3] {
+    pub(crate) fn moments(&self, origin: Point) -> [f64; 3] {
         match self {
             Self::Analytic(edge) => edge.moments(origin),
             Self::Cubic(edge) => edge.moments(origin),
@@ -104,6 +118,10 @@ pub struct Sweep {
 }
 
 impl Sweep {
+    pub(crate) fn join_adjustment_mm(&self) -> f64 {
+        self.join_adjustment_mm
+    }
+
     pub fn new(
         outline: Vec<Edge>,
         hole: Option<normal_sweep::Edge>,

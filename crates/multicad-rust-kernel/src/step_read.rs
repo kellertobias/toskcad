@@ -49,7 +49,12 @@ pub use rounded_thread_bore::{
 };
 mod sphere;
 mod spline;
+mod spline_cap_relief;
 mod spline_sweep;
+pub use spline_cap_relief::{
+    ImportedSplineCapRelief, read_spline_cap_relief, read_spline_cap_relief_compound,
+    spline_cap_relief_import_matches, verify_spline_cap_relief,
+};
 pub(crate) mod tapered_thread;
 mod torus;
 pub use rounded_cylinder::{

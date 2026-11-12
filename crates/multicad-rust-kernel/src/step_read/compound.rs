@@ -45,8 +45,14 @@ pub(super) fn read_import_members(
                 .iter()
                 .any(|&face| spline_sweep::has_extrusion_support(shell, face))
             {
-                return spline_sweep::import_member(shell, face_ids)
-                    .map(|(proof, body)| import::recognize_spline(proof, body));
+                return match spline_sweep::import_member(shell, face_ids) {
+                    Ok((proof, body)) => Ok(import::recognize_spline(proof, body)),
+                    Err(error @ (ReadError::Invalid | ReadError::Unsupported)) => {
+                        spline_cap_relief::recognize_member(shell, id)
+                            .map_err(|cause| spline_error(cause, error))
+                    }
+                    Err(error) => Err(error),
+                };
             }
             let regular = shell
                 .validate_faces(face_ids)
@@ -118,7 +124,15 @@ pub(super) fn read_analytic_member(
         .iter()
         .any(|&face| spline_sweep::has_extrusion_support(shell, face))
     {
-        return spline_sweep::read_member(shell, faces).map(|proof| (proof, None));
+        return match spline_sweep::read_member(shell, faces) {
+            Ok(proof) => Ok((proof, None)),
+            Err(error @ (ReadError::Invalid | ReadError::Unsupported)) => {
+                spline_cap_relief::recognize_member(shell, id)
+                    .map(|(proof, body)| (proof, Some(body)))
+                    .map_err(|cause| spline_error(cause, error))
+            }
+            Err(error) => Err(error),
+        };
     }
     let regular = shell
         .validate_faces(faces)
@@ -128,6 +142,15 @@ pub(super) fn read_analytic_member(
             fallback_warped(shell, id, error).map(|(proof, _)| (proof, None))
         }
         _ => regular.map(|proof| (proof, None)),
+    }
+}
+
+// A later provider cannot mask either an earlier malformed-geometry diagnosis
+// or its own resource refusal. Both analytic and import entry points share this.
+pub(super) fn spline_error(cause: ReadError, original: ReadError) -> ReadError {
+    match cause {
+        ReadError::Limit => ReadError::Limit,
+        _ => original,
     }
 }
 

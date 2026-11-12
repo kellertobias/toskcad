@@ -114,6 +114,9 @@ pub enum ImportProfile {
     NormalSweep {
         sweep: normal_sweep::Sweep,
     },
+    SplineCapRelief {
+        relief: Box<crate::spline_cap_relief::Relief>,
+    },
     SplineSweep {
         sweep: crate::spline_sweep::Sweep,
     },

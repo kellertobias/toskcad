@@ -590,6 +590,18 @@ impl Writer {
         self.append(|file| normal_relief::encode(file, relief, placement))
     }
 
+    /// Append the complete finite spline relief after source and blind proofs.
+    pub fn append_spline_cap_relief(
+        &mut self,
+        relief: &crate::spline_cap_relief::Relief,
+        origin: Point,
+        u: Point,
+        v: Point,
+    ) -> Result<(), StepError> {
+        let placement = Placement::new(origin, u, v)?;
+        self.append(|file| spline_cap_relief::encode(file, relief, placement))
+    }
+
     /// Append the exact cubic and analytic trims of a verified normal sweep.
     pub fn append_spline_sweep(
         &mut self,

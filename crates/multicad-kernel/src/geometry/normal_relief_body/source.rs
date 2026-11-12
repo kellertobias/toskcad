@@ -2,11 +2,11 @@
 use super::*;
 use crate::planar_contours::SourcedPlanarContours;
 
-pub(super) struct Source {
-    pub(super) depth_mm: f64,
-    pub(super) opposite: u32,
-    pub(super) base_frame: PlaneFrame,
-    pub(super) contours: SourcedPlanarContours,
+pub(in crate::geometry) struct Source {
+    pub(in crate::geometry) depth_mm: f64,
+    pub(in crate::geometry) opposite: u32,
+    pub(in crate::geometry) base_frame: PlaneFrame,
+    pub(in crate::geometry) contours: SourcedPlanarContours,
 }
 fn add_up(a: f64, b: f64) -> f64 {
     let sum = a + b;
@@ -88,7 +88,7 @@ fn placement_receipt(
     error
 }
 
-pub(super) fn retained_source(
+pub(in crate::geometry) fn retained_source(
     stock: &Solid,
     selected: u32,
     requested: PlaneFrame,

@@ -2,29 +2,29 @@
 use super::*;
 
 mod hub;
-mod reconstruction;
+pub(super) mod reconstruction;
 pub(super) use reconstruction::{DecodedSplineSweep, import_member};
 mod section;
 
-struct FaceWire {
-    surface: u32,
-    forward: bool,
-    outer: Vec<Traversal>,
-    holes: Vec<Vec<Traversal>>,
+pub(super) struct FaceWire {
+    pub(super) surface: u32,
+    pub(super) forward: bool,
+    pub(super) outer: Vec<Traversal>,
+    pub(super) holes: Vec<Vec<Traversal>>,
 }
 
-enum Geometry {
+pub(super) enum Geometry {
     Analytic(Curve),
     Cubic { id: u32, curve: SplineEdge },
 }
 
-struct EdgeData {
-    vertices: [u32; 2],
-    geometry: Geometry,
-    uses: [u8; 2],
+pub(super) struct EdgeData {
+    pub(super) vertices: [u32; 2],
+    pub(super) geometry: Geometry,
+    pub(super) uses: [u8; 2],
 }
 
-type Edges = BTreeMap<u32, EdgeData>;
+pub(super) type Edges = BTreeMap<u32, EdgeData>;
 
 pub(super) fn has_extrusion_support(reader: &Shell<'_, '_>, id: u32) -> bool {
     matches!(
@@ -137,7 +137,11 @@ fn read_member_with<T>(
     Ok((readback, Some(solid)))
 }
 
-fn read_face(reader: &mut Shell<'_, '_>, id: u32, edges: &mut Edges) -> Result<FaceWire> {
+pub(super) fn read_face(
+    reader: &mut Shell<'_, '_>,
+    id: u32,
+    edges: &mut Edges,
+) -> Result<FaceWire> {
     let (bounds, surface, forward) = face_args(reader, id)?;
     if !(1..=MAX_VERTICES + 1).contains(&bounds.len()) {
         return Err(ReadError::Unsupported);
@@ -265,7 +269,7 @@ fn normal_cap(reader: &Shell<'_, '_>, face: &FaceWire, normal: Point) -> Result<
     Ok((length(cross(plane.normal, normal)) <= 1e-10).then_some(plane))
 }
 
-fn face_plane(reader: &Shell<'_, '_>, face: &FaceWire) -> Result<Plane> {
+pub(super) fn face_plane(reader: &Shell<'_, '_>, face: &FaceWire) -> Result<Plane> {
     let [Value::String(_), placement] = reader.args(face.surface, "PLANE")? else {
         return Err(ReadError::Invalid);
     };
@@ -442,7 +446,7 @@ fn round_geometry(curve: Curve) -> Option<Round> {
     })
 }
 
-fn metrics(
+pub(super) fn metrics(
     reader: &Shell<'_, '_>,
     edges: Edges,
     seams: &BTreeSet<u32>,

@@ -115,6 +115,11 @@ impl SplineSweepBody {
         })
     }
 
+    pub(super) fn source_enclosure(&self) -> (f64, f64) {
+        self.authored
+            .as_ref()
+            .map_or((0., 0.), |a| (a.source_error_mm, 1e-6))
+    }
     fn cap(&self, frame: PlaneFrame, top: bool) -> ReferenceFrame {
         let height = if top { self.sweep.height_mm() } else { 0. };
         ReferenceFrame {

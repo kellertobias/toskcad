@@ -46,6 +46,7 @@ pub mod rounded_thread_mesh;
 pub mod section_hatch;
 pub mod sketch_reference;
 pub mod sphere;
+pub mod spline_cap_relief;
 pub mod spline_intersection;
 pub mod spline_sweep;
 pub mod spur_gear;

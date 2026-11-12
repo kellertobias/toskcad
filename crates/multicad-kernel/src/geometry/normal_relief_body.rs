@@ -12,7 +12,7 @@ use multicad_core::{
 use multicad_rust_kernel::normal_relief::{Curve, FaceRole, Relief, Surface};
 use std::collections::BTreeSet;
 mod imported;
-mod source;
+pub(super) mod source;
 pub(super) use imported::imported_signature;
 
 #[derive(Clone, Debug)]

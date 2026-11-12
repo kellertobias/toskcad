@@ -3,7 +3,7 @@ use super::*;
 use crate::normal_relief::{Boundary, Curve as ReliefCurve, Relief, Surface};
 use crate::normal_sweep::Edge as ProfileEdge;
 mod matcher;
-mod proof;
+pub(super) mod proof;
 pub use matcher::normal_relief_import_matches;
 mod recognize;
 #[cfg(test)]
@@ -21,12 +21,12 @@ fn require(value: bool) -> Result<()> {
     value.then_some(()).ok_or(ReadError::Invalid)
 }
 #[derive(Clone, Copy)]
-struct Frame {
-    origin: Point,
-    axes: [Point; 3],
+pub(super) struct Frame {
+    pub(super) origin: Point,
+    pub(super) axes: [Point; 3],
 }
 impl Frame {
-    fn new(origin: Point, u: Point, v: Point) -> Result<Self> {
+    pub(super) fn new(origin: Point, u: Point, v: Point) -> Result<Self> {
         require(
             origin.into_iter().chain(u).chain(v).all(f64::is_finite)
                 && (dot(u, u) - 1.).abs() <= 1e-10
@@ -38,15 +38,15 @@ impl Frame {
             axes: [u, v, cross(u, v)],
         })
     }
-    fn vector(self, [x, y, z]: Point) -> Point {
+    pub(super) fn vector(self, [x, y, z]: Point) -> Point {
         std::array::from_fn(|i| self.axes[0][i] * x + self.axes[1][i] * y + self.axes[2][i] * z)
     }
-    fn world(self, [x, y, z]: Point) -> Point {
+    pub(super) fn world(self, [x, y, z]: Point) -> Point {
         std::array::from_fn(|i| {
             self.origin[i] + self.axes[0][i] * x + self.axes[1][i] * y + self.axes[2][i] * z
         })
     }
-    fn local(self, point: Point) -> Point {
+    pub(super) fn local(self, point: Point) -> Point {
         let delta = sub(point, self.origin);
         let [u, v, n] = self.axes;
         let determinant = dot(u, cross(v, n));

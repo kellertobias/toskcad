@@ -104,7 +104,7 @@ pub(crate) fn clear_disk(
         .sum()
 }
 
-fn consume(budget: &mut Budget<'_>) -> Result<()> {
+pub(crate) fn consume(budget: &mut Budget<'_>) -> Result<()> {
     if budget.interrupt.is_some_and(|interrupt| interrupt()) {
         return Err(ConstructionError::Cancelled);
     }
@@ -290,7 +290,7 @@ pub(crate) fn merge([a, b]: [Point2; 2], [c, d]: [Point2; 2]) -> [Point2; 2] {
     ]
 }
 pub(crate) fn separated([a, b]: [Point2; 2], [c, d]: [Point2; 2], tolerance: f64) -> bool {
-    (0..2).any(|i| b[i] + tolerance < c[i] || d[i] + tolerance < a[i])
+    (0..2).any(|i| (b[i] + tolerance).next_up() < c[i] || (d[i] + tolerance).next_up() < a[i])
 }
 pub(crate) fn diameter([a, b]: [Point2; 2]) -> f64 {
     norm(sub2(b, a))
@@ -305,14 +305,22 @@ pub(super) fn authored(
     tolerance: f64,
     interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<()> {
-    if matches!(outline, [Edge::Analytic(normal_sweep::Edge::Circle { .. })]) {
-        return Err(ConstructionError::Invalid);
-    }
     let mut budget = Budget {
         remaining: MAX_PAIR_WORK,
         interrupt,
     };
-    let section = boundaries(outline, tolerance, &mut budget)?;
+    authored_with_budget(outline, hole, tolerance, &mut budget)
+}
+fn authored_with_budget(
+    outline: &[Edge],
+    hole: Option<normal_sweep::Edge>,
+    tolerance: f64,
+    budget: &mut Budget<'_>,
+) -> Result<()> {
+    if matches!(outline, [Edge::Analytic(normal_sweep::Edge::Circle { .. })]) {
+        return Err(ConstructionError::Invalid);
+    }
+    let section = boundaries(outline, tolerance, budget)?;
     if let Some(normal_sweep::Edge::Circle {
         center, radius_mm, ..
     }) = hole
@@ -321,7 +329,7 @@ pub(super) fn authored(
         let winding = section
             .iter()
             .flat_map(|boundary| &boundary.pieces)
-            .map(|&piece| clear_disk(piece, center, radius_mm + tolerance, 0, &mut budget))
+            .map(|&piece| clear_disk(piece, center, radius_mm + tolerance, 0, budget))
             .sum::<Result<f64>>()?;
         if (winding - TAU).abs() > 1e-7 {
             return Err(ConstructionError::Invalid);
@@ -331,6 +339,14 @@ pub(super) fn authored(
 }
 
 fn boundaries(outline: &[Edge], tolerance: f64, budget: &mut Budget<'_>) -> Result<Vec<Boundary>> {
+    boundaries_with_refinement(outline, tolerance, budget, false)
+}
+fn boundaries_with_refinement(
+    outline: &[Edge],
+    tolerance: f64,
+    budget: &mut Budget<'_>,
+    refined: bool,
+) -> Result<Vec<Boundary>> {
     let mut section = Vec::with_capacity(outline.len());
     let mut scale: f64 = 1.;
     for edge in outline {
@@ -424,6 +440,23 @@ fn boundaries(outline: &[Edge], tolerance: f64, budget: &mut Budget<'_>) -> Resu
         }
         section.push(Boundary { pieces, bounds });
     }
+    if refined {
+        let mut parts = Vec::new();
+        for boundary in section {
+            for piece in boundary.pieces {
+                consume(budget)?;
+                for half in piece.split() {
+                    for quarter in half.split() {
+                        parts.push(Boundary {
+                            pieces: vec![quarter],
+                            bounds: quarter.bounds(),
+                        });
+                    }
+                }
+            }
+        }
+        section = parts;
+    }
     // The retained subdivision proof uses the source float control values.
     // Refuse charts whose arithmetic enclosure could exhaust its clearance.
     if 128. * f64::EPSILON * scale > tolerance / 4. {
@@ -461,8 +494,6 @@ pub(super) fn authored_rings(
     tolerance: f64,
     interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<()> {
-    // Preserve the already-qualified single circular-bore path, including its
-    // complete disk clearance certificate, without resetting a multi-ring budget.
     if holes.is_empty() {
         return authored(outline, None, tolerance, interrupt);
     }
@@ -475,21 +506,53 @@ pub(super) fn authored_rings(
         remaining: MAX_PAIR_WORK,
         interrupt,
     };
+    region_with_budget(outline, holes, tolerance, tolerance, &mut budget)
+}
+/// Certify all profiles under one cumulative caller budget. Clearance applies
+/// between distinct rings; source-curve admission retains numeric tolerance.
+pub(crate) fn region_with_budget(
+    outline: &[Edge],
+    holes: &[Vec<Edge>],
+    tolerance: f64,
+    clearance: f64,
+    budget: &mut Budget<'_>,
+) -> Result<()> {
+    region(outline, holes, tolerance, clearance, budget, false)
+}
+/// A more local sufficient simplicity proof, without changing retained source
+/// edges: only the interval proof charts are subdivided.
+pub(crate) fn refined_region_with_budget(
+    outline: &[Edge],
+    holes: &[Vec<Edge>],
+    tolerance: f64,
+    clearance: f64,
+    budget: &mut Budget<'_>,
+) -> Result<()> {
+    region(outline, holes, tolerance, clearance, budget, true)
+}
+fn region(
+    outline: &[Edge],
+    holes: &[Vec<Edge>],
+    tolerance: f64,
+    clearance: f64,
+    budget: &mut Budget<'_>,
+    refined: bool,
+) -> Result<()> {
     let rings = std::iter::once(outline)
         .chain(holes.iter().map(Vec::as_slice))
-        .map(|ring| boundaries(ring, tolerance, &mut budget))
+        .map(|ring| boundaries_with_refinement(ring, tolerance, budget, refined))
         .collect::<Result<Vec<_>>>()?;
     for i in 1..rings.len() {
         for j in 0..i {
             for a in &rings[i] {
                 for b in &rings[j] {
-                    consume(&mut budget)?;
-                    if separated(a.bounds, b.bounds, tolerance) {
+                    consume(budget)?;
+                    if separated(a.bounds, b.bounds, clearance) {
                         continue;
                     }
                     for &x in &a.pieces {
                         for &y in &b.pieces {
-                            clear_pair(x, y, tolerance, 0, &mut budget)?;
+                            clear_pair(x, y, clearance, 0, budget)?;
                         }
                     }
                 }
@@ -503,7 +566,7 @@ pub(super) fn authored_rings(
             let winding = ring
                 .iter()
                 .flat_map(|edge| &edge.pieces)
-                .map(|&piece| clear_disk(piece, sample, tolerance, 0, &mut budget))
+                .map(|&piece| clear_disk(piece, sample, clearance, 0, budget))
                 .sum::<Result<f64>>()?;
             let expected = if j == 0 { TAU } else { 0. };
             if (winding - expected).abs() > 1e-7 {
@@ -512,6 +575,22 @@ pub(super) fn authored_rings(
         }
     }
     Ok(())
+}
+
+/// Winding of the actual source curves around a finite query exclusion disk.
+/// Near-boundary points refuse rather than manufacture an inside/outside answer.
+pub(crate) fn winding_profile(
+    outline: &[Edge],
+    point: Point2,
+    tolerance: f64,
+    budget: &mut Budget<'_>,
+) -> Result<f64> {
+    let section = boundaries_with_refinement(outline, tolerance, budget, true)?;
+    section
+        .iter()
+        .flat_map(|b| &b.pieces)
+        .map(|&p| clear_disk(p, point, tolerance, 0, budget))
+        .sum()
 }
 
 fn check(point: Point2) -> Result<()> {

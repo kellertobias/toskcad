@@ -1668,35 +1668,45 @@ impl Compiler {
                                 message: "Boolean removed all material; no output body can be committed".into(),
                             }
                         })));
-                        certified.or_else(|| match operation {
-                            multicad_kernel::BooleanOperation::Union => {
-                                Solid::union_coaxial_cylinders(&operands, id, self.policy)
+                        certified
+                            .or_else(|| {
+                                Solid::boolean_spline_cap_relief(
+                                    &operands,
+                                    operation,
+                                    id,
+                                    self.policy,
+                                    interrupt,
+                                )
+                            })
+                            .or_else(|| match operation {
+                                multicad_kernel::BooleanOperation::Union => {
+                                    Solid::union_coaxial_cylinders(&operands, id, self.policy)
+                                        .or_else(|| {
+                                            Solid::union_round_rectangular_stack(
+                                                &operands,
+                                                id,
+                                                self.policy,
+                                            )
+                                        })
+                                        .or_else(|| {
+                                            Solid::union_quarter_rounds(&operands, id, self.policy)
+                                        })
+                                        .or_else(|| {
+                                            Solid::union_planar_pieces(&operands, id, self.policy)
+                                        })
+                                }
+                                multicad_kernel::BooleanOperation::Subtract => target
+                                    .subtract_warped_tools(&operands[1..], id, self.policy)
                                     .or_else(|| {
-                                        Solid::union_round_rectangular_stack(
-                                            &operands,
-                                            id,
+                                        target.subtract_cylindrical_compound_tools(
+                                            &operands[1..],
                                             self.policy,
                                         )
-                                    })
-                                    .or_else(|| {
-                                        Solid::union_quarter_rounds(&operands, id, self.policy)
-                                    })
-                                    .or_else(|| {
-                                        Solid::union_planar_pieces(&operands, id, self.policy)
-                                    })
-                            }
-                            multicad_kernel::BooleanOperation::Subtract => target
-                                .subtract_warped_tools(&operands[1..], id, self.policy)
-                                .or_else(|| {
-                                    target.subtract_cylindrical_compound_tools(
-                                        &operands[1..],
-                                        self.policy,
-                                    )
-                                }),
-                            multicad_kernel::BooleanOperation::Intersect => {
-                                Solid::intersect_warped_box(&operands, id, self.policy)
-                            }
-                        })
+                                    }),
+                                multicad_kernel::BooleanOperation::Intersect => {
+                                    Solid::intersect_warped_box(&operands, id, self.policy)
+                                }
+                            })
                     } else {
                         None
                     };
