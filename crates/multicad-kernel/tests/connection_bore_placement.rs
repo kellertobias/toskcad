@@ -363,3 +363,98 @@ fn counterbore_reconstruction_keeps_authored_cap_names_on_their_actual_planes() 
         assert_eq!(anchor.frame.v, original.frame.v);
     }
 }
+
+#[test]
+fn conical_receiving_seats_retain_actual_stock_for_every_entry_axis_and_slope() {
+    use multicad_core::references::{GeometryIntent, Resolution, resolve};
+    use multicad_kernel::rust_kernel::Rational;
+    let policy = GeometryPolicy::default();
+    for translation_mm in [[0.; 3], [1e6, -2e6, 3e6]] {
+        let pose = RigidTransform {
+            rotation: [[0.8, -0.36, 0.48], [0.6, 0.48, -0.64], [0., 0.8, 0.6]],
+            translation_mm,
+        };
+        let owner = EntityId::new();
+        let stock = Solid::rust_box(
+            owner.uuid_bits(),
+            [Rational::new(20, 1).unwrap(); 3],
+            Default::default(),
+            policy,
+        )
+        .unwrap()
+        .transformed(pose)
+        .unwrap();
+        let before = stock.topology_snapshot(owner, 0).unwrap();
+        for axis in 0..3 {
+            for sign in [-1., 1.] {
+                let mut local = [10.; 3];
+                local[axis] = if sign < 0. { 20.00001 } else { -0.00001 };
+                let mut u = [0.; 3];
+                u[(axis + 1) % 3] = 1.;
+                let mut v = [0.; 3];
+                v[(axis + 2) % 3] = sign;
+                let frame = PlaneFrame {
+                    origin: point(pose, local),
+                    u: vector(pose, u),
+                    v: vector(pose, v),
+                };
+                let tool = CircularPocketTool {
+                    frame,
+                    center_uv: [0.; 2],
+                    radius_mm: 1.7,
+                    displacement_mm: frame.normal().map(|n| n * 20.00002),
+                    origin: Origin {
+                        source: EntityId::new(),
+                        role: "bore".into(),
+                    },
+                };
+                let origin = Origin {
+                    source: EntityId::new(),
+                    role: "cone".into(),
+                };
+                // Both sides of 45 degrees and exactly 45 degrees use one
+                // physical cone source; no slope-specific reconstruction.
+                for depth in [0.8, 1.8, 2.8] {
+                    let (cut, mouths) = stock
+                        .rust_connection_countersink(&tool, 3.5, depth, 1., origin.clone(), policy)
+                        .unwrap();
+                    let volume = 8000.
+                        - std::f64::consts::PI
+                            * (1.7_f64.powi(2) * 20. + (3.5 - 1.7) * (3.5 + 2. * 1.7) * depth / 3.);
+                    near(cut.volume_mm3().unwrap(), volume);
+                    let after = cut.topology_snapshot(owner, 1).unwrap();
+                    for element in &before.elements {
+                        let intent = GeometryIntent::capture(&before, element.key).unwrap();
+                        assert!(matches!(
+                            resolve(&intent, &after, 1),
+                            Resolution::Resolved { .. }
+                        ));
+                    }
+                    for (i, mouth) in mouths.into_iter().enumerate() {
+                        let mut expected = [10.; 3];
+                        expected[axis] = if (sign < 0.) == (i == 0) { 20. } else { 0. };
+                        for (actual, expected) in mouth.into_iter().zip(point(pose, expected)) {
+                            near(actual, expected);
+                        }
+                    }
+                    cut.manufacturing_mesh_with_receipt(Default::default())
+                        .unwrap();
+                    let dir = tempfile::tempdir().unwrap();
+                    let path = dir.path().join("receiving-cone.step");
+                    cut.write_step(&path).unwrap();
+                    let read = Solid::read_step(&path, policy).unwrap();
+                    assert!((read.volume_mm3().unwrap() - volume).abs() < 1e-5);
+                    assert_eq!(read.faces().unwrap().len(), 8);
+                }
+                for (r, d) in [(1.7, 1.), (3.5, 0.), (3.5, 20.), (20., 1.)] {
+                    assert!(
+                        stock
+                            .rust_connection_countersink(&tool, r, d, 1., origin.clone(), policy,)
+                            .is_err()
+                    );
+                }
+            }
+        }
+        assert_eq!(stock.topology_snapshot(owner, 0).unwrap(), before);
+    }
+}

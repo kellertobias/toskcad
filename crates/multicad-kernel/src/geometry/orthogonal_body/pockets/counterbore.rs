@@ -1,6 +1,15 @@
 //! Rebuild only an actual constant cross-section, after full protected-tool proof.
 use super::*;
-use multicad_rust_kernel::{chamfered_bores::Counterbore, polygon::PolygonPrism};
+use multicad_rust_kernel::{
+    chamfered_bores::{Counterbore, Countersink},
+    polygon::PolygonPrism,
+};
+
+struct ReceivingSeat {
+    radius_mm: f64,
+    depth_mm: f64,
+    conical: bool,
+}
 
 impl Solid {
     pub fn rust_connection_counterbore(
@@ -12,11 +21,62 @@ impl Solid {
         seat_origin: Origin,
         policy: GeometryPolicy,
     ) -> Result<(Self, [Point; 2]), GeometryError> {
+        self.connection_seat(
+            tool,
+            ReceivingSeat {
+                radius_mm: seat_radius_mm,
+                depth_mm: seat_depth_mm,
+                conical: false,
+            },
+            minimum_wall_mm,
+            seat_origin,
+            policy,
+        )
+    }
+
+    /// Subtract an actual conical receiving seat, retaining the stock boundary.
+    pub fn rust_connection_countersink(
+        &self,
+        tool: &CircularPocketTool,
+        seat_radius_mm: f64,
+        seat_depth_mm: f64,
+        minimum_wall_mm: f64,
+        seat_origin: Origin,
+        policy: GeometryPolicy,
+    ) -> Result<(Self, [Point; 2]), GeometryError> {
+        self.connection_seat(
+            tool,
+            ReceivingSeat {
+                radius_mm: seat_radius_mm,
+                depth_mm: seat_depth_mm,
+                conical: true,
+            },
+            minimum_wall_mm,
+            seat_origin,
+            policy,
+        )
+    }
+
+    fn connection_seat(
+        &self,
+        tool: &CircularPocketTool,
+        seat: ReceivingSeat,
+        minimum_wall_mm: f64,
+        seat_origin: Origin,
+        policy: GeometryPolicy,
+    ) -> Result<(Self, [Point; 2]), GeometryError> {
+        let ReceivingSeat {
+            radius_mm: seat_radius_mm,
+            depth_mm: seat_depth_mm,
+            conical,
+        } = seat;
         policy.validate()?;
         policy.length(seat_radius_mm)?;
         policy.length(seat_depth_mm)?;
         if seat_radius_mm - tool.radius_mm < policy.minimum_feature_mm {
-            return Err(invalid("A counterbore must be wider than its through bore"));
+            return Err(invalid(
+                "A receiving seat must be wider than its through bore",
+            ));
         }
         // In a constant section the complete enlarged protected disk fits at
         // every station. This also qualifies the original tool's full extent
@@ -44,7 +104,7 @@ impl Solid {
         for (i, face) in body.boundary.faces.iter().enumerate() {
             if face.normal[axis] != 0. && !bore.faces.contains(&i) {
                 return Err(unsupported(
-                    "Counterbore stock has intermediate axial faces",
+                    "Receiving-seat stock has intermediate axial faces",
                 ));
             }
         }
@@ -65,13 +125,13 @@ impl Solid {
         };
         if boundary_key(cap) != boundary_key(&body.boundary.faces[bore.faces[1]]) {
             return Err(unsupported(
-                "Counterbore stock caps have different complete sections",
+                "Receiving-seat stock caps have different complete sections",
             ));
         }
         let dimension = |x| {
             rational_coordinate(x, policy.linear_tolerance_mm / 16.).ok_or_else(|| {
                 unsupported(
-                    "Counterbore stock cannot retain its section within the construction budget",
+                    "Receiving-seat stock cannot retain its section within the construction budget",
                 )
             })
         };
@@ -99,7 +159,9 @@ impl Solid {
         .map_err(|cause| invalid(format!("Invalid receiving circle: {cause:?}")))?;
         let prism =
             PolygonPrism::with_circular_holes(rings, vec![circle], dimension(bore.depth_mm())?)
-                .map_err(|cause| unsupported(&format!("Counterbore stock section: {cause:?}")))?;
+                .map_err(|cause| {
+                    unsupported(&format!("Receiving-seat stock section: {cause:?}"))
+                })?;
         for (ring, source) in prism.rings().iter().zip(&cap.rings) {
             for (&p, &q) in ring.iter().zip(source.iter().rev()) {
                 for end in [0, 1] {
@@ -152,16 +214,29 @@ impl Solid {
             &vec![false; origins.len()],
             policy,
         )?;
-        let result = base.rust_counterbore_polygon(
-            &[Counterbore {
-                hole: 0,
-                end: false,
-                radius_mm: seat_radius_mm,
-                depth_mm: seat_depth_mm,
-            }],
-            std::slice::from_ref(&seat_origin),
-            policy,
-        )?;
+        let result = if conical {
+            base.rust_countersink_polygon(
+                &[Countersink {
+                    hole: 0,
+                    end: false,
+                    radius_mm: seat_radius_mm,
+                    depth_mm: seat_depth_mm,
+                }],
+                std::slice::from_ref(&seat_origin),
+                policy,
+            )
+        } else {
+            base.rust_counterbore_polygon(
+                &[Counterbore {
+                    hole: 0,
+                    end: false,
+                    radius_mm: seat_radius_mm,
+                    depth_mm: seat_depth_mm,
+                }],
+                std::slice::from_ref(&seat_origin),
+                policy,
+            )
+        }?;
         // Index complete literal source edges once. Matching every cap edge
         // against every side wire repeats quadratic scans on detailed stock.
         let mut sides = BTreeMap::<_, Vec<usize>>::new();
@@ -296,7 +371,7 @@ fn inherit_receiver_faces(
         unreachable!("constructed receiving prism")
     };
     let placed = Rc::make_mut(placed);
-    Rc::make_mut(placed.bore_treatments.as_mut().expect("new counterbore")).face_origins =
+    Rc::make_mut(placed.bore_treatments.as_mut().expect("new receiving seat")).face_origins =
         Some(names);
     result.provenance = result
         .topology_snapshot(owner, 0)?
