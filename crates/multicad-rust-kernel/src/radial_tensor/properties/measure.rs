@@ -103,3 +103,29 @@ pub(super) fn evaluate<const N: usize>(
     }
     Ok(values)
 }
+
+/// The same oriented volume form, without area or moment derivatives.
+pub(super) fn volume_only<const N: usize>(
+    density: Density,
+    jet: source::Jet<N>,
+    chart: &axial::Chart,
+    center: f64,
+) -> Result<[Series<N>; QUANTITIES], Error> {
+    let source::Jet {
+        p: [x, y, z],
+        tangent: du,
+        normal: q,
+    } = jet;
+    let mut values = [Series::constant(0.); QUANTITIES];
+    values[0] = match density {
+        Density::Tensor => (x * q[0] + y * q[1]) / Series::constant(2.),
+        Density::Cone => {
+            let angle_rate = (x * du[1] - y * du[0]) / (x * x + y * y);
+            -primitive(z - Series::constant(center), 2, 0, chart, center) * angle_rate
+                / Series::constant(2.)
+        }
+        Density::Cap(_) => Series::constant(0.),
+    };
+    values[0].checked()?;
+    Ok(values)
+}

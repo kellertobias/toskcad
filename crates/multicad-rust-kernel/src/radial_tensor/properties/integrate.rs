@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 pub(super) struct Accuracy {
     pub scales: Values,
     pub epsilon: f64,
+    pub volume_only: bool,
 }
 #[derive(Clone, Copy)]
 pub(super) struct Limits {
@@ -47,12 +48,16 @@ pub(super) fn with_limits(
     limits: Limits,
     work: &mut Work<'_>,
 ) -> Result<Values, Error> {
-    let Accuracy { scales, epsilon } = accuracy;
+    let Accuracy {
+        scales,
+        epsilon,
+        volume_only,
+    } = accuracy;
     let mut heap: BTreeMap<u64, Vec<Cell>> = BTreeMap::new();
     let mut count = 0;
     let mut total = [I::point(0.); QUANTITIES];
     for source in sources {
-        for cell in ready(source, 0, density, chart, center, limits, work)? {
+        for cell in ready(source, 0, density, chart, center, limits, volume_only, work)? {
             for (sum, value) in total.iter_mut().zip(cell.value) {
                 *sum = *sum + value;
             }
@@ -108,7 +113,16 @@ pub(super) fn with_limits(
             );
         }
         for child in children {
-            for cell in ready(child, old.depth + 1, density, chart, center, limits, work)? {
+            for cell in ready(
+                child,
+                old.depth + 1,
+                density,
+                chart,
+                center,
+                limits,
+                volume_only,
+                work,
+            )? {
                 for (sum, value) in total.iter_mut().zip(cell.value) {
                     *sum = *sum + value;
                 }
@@ -130,6 +144,7 @@ fn insert(heap: &mut BTreeMap<u64, Vec<Cell>>, cell: Cell, scales: &Values) {
         .fold(0., f64::max);
     heap.entry(score.to_bits()).or_default().push(cell);
 }
+#[allow(clippy::too_many_arguments)]
 fn ready(
     source: Source,
     depth: u8,
@@ -137,12 +152,18 @@ fn ready(
     chart: &axial::Chart,
     center: f64,
     limits: Limits,
+    volume_only: bool,
     work: &mut Work<'_>,
 ) -> Result<Vec<Cell>, Error> {
     let mut pending = vec![(source, depth)];
     let mut ready = Vec::new();
     while let Some((source, depth)) = pending.pop() {
-        match quadrature::enclosure(&source, density, chart, center, work) {
+        let enclosure = if volume_only {
+            quadrature::volume_enclosure(&source, density, chart, center, work)
+        } else {
+            quadrature::enclosure(&source, density, chart, center, work)
+        };
+        match enclosure {
             Ok(value) => ready.push(Cell {
                 source,
                 value,

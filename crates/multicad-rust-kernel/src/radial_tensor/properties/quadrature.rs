@@ -9,6 +9,25 @@ pub(super) fn enclosure(
     center: f64,
     work: &mut Work<'_>,
 ) -> Result<Values, Error> {
+    selected_enclosure(source, density, chart, center, false, work)
+}
+pub(super) fn volume_enclosure(
+    source: &Source,
+    density: Density,
+    chart: &axial::Chart,
+    center: f64,
+    work: &mut Work<'_>,
+) -> Result<Values, Error> {
+    selected_enclosure(source, density, chart, center, true, work)
+}
+fn selected_enclosure(
+    source: &Source,
+    density: Density,
+    chart: &axial::Chart,
+    center: f64,
+    volume_only: bool,
+    work: &mut Work<'_>,
+) -> Result<Values, Error> {
     // A fixed degree-nine source cell, all derivative coefficients through
     // order nine, and sixteen Gaussian nodes have bounded arithmetic cost.
     work.charge(if source.dimensions() == 2 {
@@ -18,7 +37,12 @@ pub(super) fn enclosure(
     })?;
     let mut remainder = [I::point(0.); QUANTITIES];
     for axis in 0..source.dimensions() {
-        let derivatives = evaluate(density, source.taylor(axis == 1)?, chart, center)?;
+        let jet = source.taylor(axis == 1)?;
+        let derivatives = if volume_only {
+            measure::volume_only(density, jet, chart, center)?
+        } else {
+            evaluate(density, jet, chart, center)?
+        };
         for i in 0..QUANTITIES {
             // Gauss4 on [0,1]: the remainder coefficient is
             // (4!)^4/(9*(8!)^2) = 1/44100 times sup|c8|.
@@ -46,7 +70,11 @@ pub(super) fn enclosure(
         };
         for (v, wv) in second {
             let jet = source.at([u, v]);
-            let at = evaluate(density, jet, chart, center)?;
+            let at = if volume_only {
+                measure::volume_only(density, jet, chart, center)?
+            } else {
+                evaluate(density, jet, chart, center)?
+            };
             for i in 0..QUANTITIES {
                 value[i] = value[i] + wu * wv * at[i].c[0];
             }

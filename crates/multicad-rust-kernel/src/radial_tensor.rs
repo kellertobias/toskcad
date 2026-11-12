@@ -17,7 +17,7 @@ mod query;
 pub use caps::CapBoundary;
 pub use material::RadialBoundary;
 pub use ordering::OrderedBoundary;
-pub use properties::{FaceProperties, MassProperties};
+pub use properties::{FaceProperties, MassProperties, VolumeProperties};
 pub use query::{Collars, Location};
 mod trims;
 pub use trims::TrimmedBoundary;

@@ -28,7 +28,9 @@ pub struct MassProperties {
 mod bounds;
 pub(super) mod faces;
 mod integrate;
+mod volume;
 use measure::QUANTITIES;
+pub use volume::VolumeProperties;
 impl RadialBoundary {
     /// Full-width error bounds normalized by L^3 (volume), L^2 (area),
     /// L (centroids), and L^5 (centroidal inertia), where L is returned in
@@ -84,7 +86,11 @@ impl RadialBoundary {
                 source.density,
                 &self.ordered.caps.axial.chart,
                 center,
-                integrate::Accuracy { scales, epsilon },
+                integrate::Accuracy {
+                    scales,
+                    epsilon,
+                    volume_only: false,
+                },
                 &mut work,
             )?;
             for (sum, v) in raw.iter_mut().zip(value) {
