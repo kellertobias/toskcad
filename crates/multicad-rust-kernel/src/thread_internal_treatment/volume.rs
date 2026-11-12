@@ -1,13 +1,6 @@
 //! Finite source-column integration, independent of any tessellation.
 use super::*;
 use crate::tapered_thread::interval::I;
-fn checked(value: I) -> Result<I, Error> {
-    if value.valid() {
-        Ok(value)
-    } else {
-        Err(Error::Unresolved)
-    }
-}
 fn clamp(value: I, lower: f64, upper: f64) -> I {
     I::new(value.lo.clamp(lower, upper), value.hi.clamp(lower, upper))
 }
@@ -58,6 +51,11 @@ impl Cavity {
         } else {
             I::point(0.)
         };
+        // Source dimensions are <=1e7, pitch>=.001, affine slopes<58 and
+        // constructor-owned cone slope encloses the endpoint-derived 45° law.
+        // Restricted phase bands therefore keep every product far below f64
+        // overflow. Query options change subdivision only; the final whole
+        // interval still has to be finite, nonnegative and within accuracy.
         let knots = self.thread.profile_breaks();
         let mut pending = Vec::with_capacity(64);
         for band in 0..5 {
@@ -70,9 +68,9 @@ impl Cavity {
         }
         while let Some((a, b, band, tolerance)) = pending.pop() {
             work.step()?;
-            let value = self.volume_cell(a, b, band, factor)?;
+            let value = self.volume_cell(a, b, band, factor);
             if value.width() <= tolerance {
-                sum = checked(sum + value)?;
+                sum = sum + value;
                 continue;
             }
             let mid = a.midpoint(b);
@@ -82,8 +80,7 @@ impl Cavity {
             pending.push((a, mid, band, tolerance / 2.));
             pending.push((mid, b, band, tolerance / 2.));
         }
-        let sum = checked(sum)?;
-        if sum.lo < 0. || sum.width() > options.tolerance_mm3 {
+        if !sum.valid() || sum.lo < 0. || sum.width() > options.tolerance_mm3 {
             return Err(Error::Unresolved);
         }
         Ok(Enclosure {
@@ -107,23 +104,20 @@ impl Cavity {
             slope,
         )
     }
-    fn column(&self, r: I) -> Result<I, Error> {
+    fn column(&self, r: I) -> I {
         let f = I::point(self.terminal_station);
         let Some(c) = self.intent.entry_depth_mm else {
-            return checked(r.square() * f);
+            return r.square() * f;
         };
         let a = I::point(self.entry_radius);
         let [lo, hi] = self.entry_slope.expect("validated enabled cone");
         let k = I::new(lo, hi);
-        let g = clamp(checked((a - r) / k)?, 0., c);
+        let g = clamp((a - r) / k, 0., c);
         // Two positive physical height columns. This remains correct at both
         // clamp endpoints, including a last-bit source flank/root discrepancy.
-        checked(
-            r.square() * (f - g)
-                + g * (a.square() - a * k * g + k.square() * g.square() / I::point(3.)),
-        )
+        r.square() * (f - g) + g * (a.square() - a * k * g + k.square() * g.square() / I::point(3.))
     }
-    fn volume_cell(&self, a: f64, b: f64, band: usize, factor: I) -> Result<I, Error> {
+    fn volume_cell(&self, a: f64, b: f64, band: usize, factor: I) -> I {
         let width = I::point(b) - I::point(a);
         let midpoint = (I::point(a) + I::point(b)) / I::point(2.);
         let (r, _) = self.profile(band, midpoint);
@@ -138,8 +132,8 @@ impl Cavity {
         // H'=2r(F-g); a.e. H''<=2(F+r/k). Thus the first derivative is
         // Lipschitz and the ordinary midpoint error is valid across a kink;
         // no high-derivative quadrature is applied across an unsplit MAX.
-        let second = checked(I::point(2.) * slope.square() * (f + extra))?;
+        let second = I::point(2.) * slope.square() * (f + extra);
         let error = second * width.square() / I::point(24.);
-        checked((self.column(r)? + I::new(-error.hi, error.hi)) * width * factor)
+        (self.column(r) + I::new(-error.hi, error.hi)) * width * factor
     }
 }

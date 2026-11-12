@@ -90,12 +90,21 @@ impl Cavity {
                 (I::point(entry_radius) - I::point(thread.root_radius_mm())) / I::point(depth);
             [slope.lo, slope.hi]
         });
-        let mut valid = terminal_station > c
+        // Explicit finite-query invariants: factor pi/p<4000, all source
+        // radii/stations<=1e7, affine slope magnitude<58 and finite band hulls.
+        // The endpoint-derived cone slope stays inside [.5,2]. These bounds
+        // keep all volume products (including 1M-cell accumulation) finite.
+        let mut valid = spec.pitch_mm >= 0.001
+            && spec.pitch_mm <= 1e7
+            && spec.length_mm <= 1e7
+            && spec.major_radius_mm <= 1e7
+            && terminal_station > c
             && (intent.terminal.is_none() || terminal_station < spec.length_mm)
             && (c == 0. || entry_radius > thread.root_radius_mm())
             && (d == 0. || terminal_radius > spec.major_radius_mm)
-            && entry_slope
-                .is_none_or(|[lo, hi]| lo.is_finite() && hi.is_finite() && lo > 0. && lo <= hi);
+            && entry_slope.is_none_or(|[lo, hi]| {
+                lo.is_finite() && hi.is_finite() && lo >= 0.5 && hi <= 2. && lo <= hi
+            });
         let mut source = Self {
             thread,
             intent,
@@ -120,11 +129,16 @@ impl Cavity {
         // a positive nominal root survives all literal source arithmetic.
         let knots = thread.profile_breaks();
         for band in 0..5 {
-            let (radius, _) = source.profile(
+            let (radius, slope) = source.profile(
                 band,
                 crate::tapered_thread::interval::I::new(knots[band], knots[band + 1]),
             );
-            valid &= radius.valid() && radius.lo > 0.;
+            valid &= radius.valid()
+                && radius.lo > 0.
+                && radius.hi <= 1e9
+                && radius.width() <= 1e9
+                && slope.valid()
+                && slope.magnitude() <= 58.;
             source.maximum_radius_bound = source.maximum_radius_bound.max(radius.hi);
         }
         if !valid {

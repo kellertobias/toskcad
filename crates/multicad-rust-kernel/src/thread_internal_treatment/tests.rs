@@ -340,3 +340,31 @@ fn source_maximum_encloses_actual_flank_coefficients_and_mid_query_cancel_is_ret
         expected
     );
 }
+
+#[test]
+fn large_finite_terminal_cavity_reports_global_precision_floor_after_small_cells_converge() {
+    let source = Cavity::new(
+        tool(false, 1),
+        Intent {
+            entry_depth_mm: None,
+            terminal: Some(Terminal {
+                width_mm: 0.3,
+                radial_depth_mm: 1e7 - 1.5,
+            }),
+        },
+    )
+    .unwrap();
+    assert_eq!(source.terminal_radius_mm(), Some(1e7));
+    assert_eq!(
+        source.removed_volume_mm3(Default::default()),
+        Err(Error::Unresolved)
+    );
+    assert!(
+        source
+            .removed_volume_mm3(QueryOptions {
+                tolerance_mm3: 1.,
+                ..Default::default()
+            })
+            .is_ok()
+    );
+}
