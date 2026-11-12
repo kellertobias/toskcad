@@ -6,6 +6,7 @@ use crate::{
 use std::f64::consts::TAU;
 #[cfg(test)]
 mod contour_tests;
+mod torx;
 
 fn profiled_options(
     screw: &crate::profiled_screw::Screw,
@@ -29,13 +30,9 @@ pub fn tessellate_profiled_screw(
     options: Tessellation,
 ) -> Result<DisplayMesh, MeshError> {
     use crate::{head_profile::Curve, profiled_screw::Face};
-    let (drive, socket_depth) = screw
-        .recess()
-        .flat_hex_geometry()
-        .ok_or(MeshError::UnresolvedBoundary)?;
     let options = profiled_options(screw, options)?;
     let radius = screw.profile().support([1., 0., 0.]);
-    let max_angle = (options.angle * 0.5).min((options.deflection / radius).sqrt());
+    let max_angle = profiled_angle(screw, options, radius);
     let angular_steps = (TAU / (12. * max_angle)).ceil() * 12.;
     if angular_steps * 2. > options.triangle_limit as f64 {
         return Err(MeshError::BudgetExceeded);
@@ -43,10 +40,19 @@ pub fn tessellate_profiled_screw(
     let thread = screw.thread();
     let strips = phase_strips(thread, TAU / angular_steps, options)?;
     let mut builder = Builder::new(thread, angular_steps as usize, strips, options);
-    let coupling = screw.profile().rounding_error_mm() / drive.maximum_radius_mm();
-    if !drive.is_canonical() {
-        let angles = drive.corners_mm().map(|[x, y]| y.atan2(x).rem_euclid(TAU));
-        builder.insert_angular_stations(&angles, coupling)?;
+    let coupling = screw.source_error_mm() / screw.recess().maximum_radius_bound_mm();
+    match screw.recess() {
+        crate::screw_recess::Recess::FlatHex(recess) => {
+            let (drive, _) = recess.geometry();
+            if !drive.is_canonical() {
+                let angles = drive.corners_mm().map(|[x, y]| y.atan2(x).rem_euclid(TAU));
+                builder.insert_angular_stations(&angles, coupling)?;
+            }
+        }
+        crate::screw_recess::Recess::ConicalHexalobular(recess) => {
+            let angles = torx::stations(recess.source(), options)?;
+            builder.insert_angular_stations(&angles, coupling)?;
+        }
     }
     builder.lower = screw.visible_thread_interval_mm()[0];
     builder.build_wall()?;
@@ -100,22 +106,36 @@ pub fn tessellate_profiled_screw(
             shell.wall(
                 &previous,
                 &next,
-                |_| face(Face::ProfileWall(index as u32)),
+                |_| Ok(face(Face::ProfileWall(index as u32))),
                 false,
             )?;
             previous = next;
         }
     }
-    let mouth = if drive.is_canonical() {
-        shell.ring(top_z, |angle| drive.radius_at_angle_mm(angle))
-    } else {
-        shell.drive_ring(top_z, drive, coupling)?
-    };
-    let floor_z = top_z + socket_depth;
-    let floor = if drive.is_canonical() {
-        shell.ring(floor_z, |angle| drive.radius_at_angle_mm(angle))
-    } else {
-        shell.drive_ring(floor_z, drive, coupling)?
+    let (mouth, floor, floor_z) = match screw.recess() {
+        crate::screw_recess::Recess::FlatHex(recess) => {
+            let (drive, depth) = recess.geometry();
+            let floor_z = top_z + depth;
+            let mouth = if drive.is_canonical() {
+                shell.ring(top_z, |angle| drive.radius_at_angle_mm(angle))
+            } else {
+                shell.drive_ring(top_z, drive, coupling)?
+            };
+            let floor = if drive.is_canonical() {
+                shell.ring(floor_z, |angle| drive.radius_at_angle_mm(angle))
+            } else {
+                shell.drive_ring(floor_z, drive, coupling)?
+            };
+            (mouth, floor, floor_z)
+        }
+        crate::screw_recess::Recess::ConicalHexalobular(recess) => {
+            let source = recess.source();
+            (
+                shell.torx_ring(top_z, source, coupling, false, options)?,
+                shell.torx_ring(top_z, source, coupling, true, options)?,
+                top_z + source.cone().tip_depth_mm,
+            )
+        }
     };
     shell.annulus(&mouth, &top, face(Face::HeadTop), true)?;
     let first_wall = face(Face::SocketWall(0));
@@ -123,12 +143,22 @@ pub fn tessellate_profiled_screw(
         &mouth,
         &floor,
         |angle| {
-            first_wall
-                + if drive.is_canonical() {
-                    hex_side(angle)
-                } else {
-                    drive.side_at_angle(angle).expect("finite drive angle") as u32
-                }
+            Ok(first_wall
+                + match screw.recess() {
+                    crate::screw_recess::Recess::FlatHex(recess) => {
+                        let (drive, _) = recess.geometry();
+                        if drive.is_canonical() {
+                            hex_side(angle)
+                        } else {
+                            drive.side_at_angle(angle).expect("finite drive angle") as u32
+                        }
+                    }
+                    crate::screw_recess::Recess::ConicalHexalobular(recess) => recess
+                        .source()
+                        .arc_index_at_angle(angle)
+                        .ok_or(MeshError::UnresolvedBoundary)?
+                        as u32,
+                })
         },
         true,
     )?;
@@ -142,13 +172,10 @@ pub fn profiled_screw_volume_error_bound(
     screw: &crate::profiled_screw::Screw,
     options: Tessellation,
 ) -> Result<f64, MeshError> {
-    if screw.recess().flat_hex_geometry().is_none() {
-        return Err(MeshError::UnresolvedBoundary);
-    }
     use crate::head_profile::{Curve, Segment};
     let options = profiled_options(screw, options)?;
     let radius = screw.profile().support([1., 0., 0.]);
-    let angle = (options.angle * 0.5).min((options.deflection / radius).sqrt());
+    let angle = profiled_angle(screw, options, radius);
     let steps = (TAU / (12. * angle)).ceil() * 12.;
     if steps * 2. > options.triangle_limit as f64 {
         return Err(MeshError::BudgetExceeded);
@@ -193,10 +220,32 @@ pub fn profiled_screw_volume_error_bound(
             * (exact.abs()
                 + polygonal.abs()
                 + radius.powi(2) * (screw.profile().end()[1] - screw.profile().top()[1]));
-    Ok(volume_error_bound(screw.thread(), options)
+    let error = volume_error_bound(screw.thread(), options)
         + (polygonal - exact).abs()
         + polygonal * (TAU / steps).powi(2) / 6.
-        + roundoff)
+        + roundoff;
+    if let Some(source) = screw.recess().hexalobular_geometry() {
+        let [lo, hi] = screw.recess().volume_bounds_mm3();
+        let cavity = torx::volume_error(
+            source,
+            options,
+            4. * screw.source_error_mm(),
+            (hi - lo).next_up(),
+        )?;
+        Ok((crate::tapered_thread::interval::I::point(error)
+            + crate::tapered_thread::interval::I::point(cavity))
+        .hi)
+    } else {
+        Ok(error)
+    }
+}
+
+fn profiled_angle(screw: &crate::profiled_screw::Screw, options: Tessellation, radius: f64) -> f64 {
+    let angle = (options.angle * 0.5).min((options.deflection / radius).sqrt());
+    screw
+        .recess()
+        .hexalobular_geometry()
+        .map_or(angle, |source| torx::angular_step(source, options, angle))
 }
 
 /// Mesh one connected screw shell using the same trimmed shaft rim at the
@@ -247,7 +296,7 @@ pub fn tessellate_screw(screw: &Screw, options: Tessellation) -> Result<DisplayM
             false,
         )?;
         let shank_wall = face(ScrewFace::ShankWall);
-        shell.wall(&shank_bottom, &shank_top, |_| shank_wall, false)?;
+        shell.wall(&shank_bottom, &shank_top, |_| Ok(shank_wall), false)?;
         shell.annulus(&shank_bottom, &head_seat, face(ScrewFace::HeadSeat), false)?;
     } else {
         shell.annulus(
@@ -266,7 +315,7 @@ pub fn tessellate_screw(screw: &Screw, options: Tessellation) -> Result<DisplayM
     shell.wall(
         &head_top,
         &head_seat,
-        |angle| first_wall + head_side(angle),
+        |angle| Ok(first_wall + head_side(angle)),
         false,
     )?;
     if let ScrewHead::SocketCap {
@@ -279,7 +328,12 @@ pub fn tessellate_screw(screw: &Screw, options: Tessellation) -> Result<DisplayM
         let floor = shell.ring(floor_z, socket_radius);
         shell.annulus(&mouth, &head_top, face(ScrewFace::HeadTop), true)?;
         let first_wall = face(ScrewFace::SocketWall(0));
-        shell.wall(&mouth, &floor, |angle| first_wall + hex_side(angle), true)?;
+        shell.wall(
+            &mouth,
+            &floor,
+            |angle| Ok(first_wall + hex_side(angle)),
+            true,
+        )?;
         shell.disk(&floor, floor_z, face(ScrewFace::SocketFloor))?;
     } else {
         shell.disk(&head_top, top_z, face(ScrewFace::HeadTop))?;
@@ -332,18 +386,7 @@ impl HeadMesh<'_, '_> {
         drive: &crate::hex_drive::HexDrive,
         coupling: f64,
     ) -> Result<Vec<u32>, MeshError> {
-        let mut corners = vec![None; self.angles.len()];
-        for point in drive.corners_mm() {
-            let angle = point[1].atan2(point[0]).rem_euclid(TAU);
-            let distance = |a: f64| (a - angle).rem_euclid(TAU).min((angle - a).rem_euclid(TAU));
-            let index = (0..self.angles.len())
-                .min_by(|&a, &b| distance(self.angles[a]).total_cmp(&distance(self.angles[b])))
-                .ok_or(MeshError::UnresolvedBoundary)?;
-            if distance(self.angles[index]) > 2. * coupling || corners[index].is_some() {
-                return Err(MeshError::UnresolvedBoundary);
-            }
-            corners[index] = Some(point);
-        }
+        let corners = self.corner_stations(&drive.corners_mm(), coupling)?;
         Ok((0..self.angles.len())
             .map(|i| {
                 let [x, y] = corners[i].unwrap_or_else(|| {
@@ -354,6 +397,26 @@ impl HeadMesh<'_, '_> {
                 self.push([x, y, z])
             })
             .collect())
+    }
+
+    fn corner_stations(
+        &self,
+        points: &[[f64; 2]],
+        coupling: f64,
+    ) -> Result<Vec<Option<[f64; 2]>>, MeshError> {
+        let mut corners = vec![None; self.angles.len()];
+        for &point in points {
+            let angle = point[1].atan2(point[0]).rem_euclid(TAU);
+            let distance = |a: f64| (a - angle).rem_euclid(TAU).min((angle - a).rem_euclid(TAU));
+            let index = (0..self.angles.len())
+                .min_by(|&a, &b| distance(self.angles[a]).total_cmp(&distance(self.angles[b])))
+                .ok_or(MeshError::UnresolvedBoundary)?;
+            if distance(self.angles[index]) > 2. * coupling || corners[index].is_some() {
+                return Err(MeshError::UnresolvedBoundary);
+            }
+            corners[index] = Some(point);
+        }
+        Ok(corners)
     }
 
     fn shank_join(&mut self, inner: &[u32], radius: f64) -> Vec<u32> {
@@ -398,14 +461,14 @@ impl HeadMesh<'_, '_> {
         &mut self,
         low: &[u32],
         high: &[u32],
-        face: impl Fn(f64) -> u32,
+        face: impl Fn(f64) -> Result<u32, MeshError>,
         reverse: bool,
     ) -> Result<(), MeshError> {
         for i in 0..low.len() {
             let next = (i + 1) % low.len();
             let lo = self.angles[i];
             let hi = if next == 0 { TAU } else { self.angles[next] };
-            let face = face((lo + hi) * 0.5);
+            let face = face((lo + hi) * 0.5)?;
             let [a, b, c, d] = [low[i], low[next], high[i], high[next]];
             self.triangle([a, b, d], face, reverse)?;
             self.triangle([a, d, c], face, reverse)?;

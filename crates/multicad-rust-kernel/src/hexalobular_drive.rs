@@ -276,14 +276,17 @@ impl Drive {
     }
 
     pub fn radius_at_angle_mm(&self, angle: f64) -> Option<f64> {
+        let index = self.arc_index_at_angle(angle)?;
+        let theta = (angle - self.angles[0]).rem_euclid(TAU) + self.angles[0];
+        ray_radius(self.arcs[index], [theta.cos(), theta.sin()])
+    }
+    pub fn arc_index_at_angle(&self, angle: f64) -> Option<usize> {
         if !angle.is_finite() {
             return None;
         }
         let theta = (angle - self.angles[0]).rem_euclid(TAU) + self.angles[0];
         let index = self.angles[1..12].partition_point(|&a| a < theta);
-        let arc = self.arcs[index];
-        let d = [theta.cos(), theta.sin()];
-        ray_radius(arc, d)
+        Some(index)
     }
 
     pub fn floor_depth_mm(&self, point: [f64; 2]) -> Option<f64> {
@@ -317,6 +320,28 @@ impl Drive {
         // The cone is Lipschitz in radius with literal slope depth_per_radius.
         (I::point(2.) * perimeter * d + I::point(12.) * pi * d.square()) * depth
             + pi * radius.square() * d * (I::point(1.) + I::point(self.cone.depth_per_radius))
+    }
+
+    /// Bound a boundary approximation using a planar perimeter tube and a
+    /// separate floor-height error. The retained cone/curves are unchanged.
+    pub fn boundary_volume_error_bound_mm3(&self, xy_mm: f64, floor_mm: f64) -> Option<f64> {
+        if ![xy_mm, floor_mm]
+            .into_iter()
+            .all(|v| v.is_finite() && v >= 0.)
+        {
+            return None;
+        }
+        let d = I::point(xy_mm);
+        let floor = I::point(floor_mm);
+        let pi = I::new(PI.next_down(), PI.next_up());
+        let perimeter = self.arcs.iter().fold(I::point(0.), |sum, a| {
+            sum + I::point(a.radius_mm) * I::point(a.sweep_rad.abs())
+        });
+        let radius = I::point(self.radius) + d;
+        let result = (I::point(2.) * perimeter * d + I::point(12.) * pi * d.square())
+            * (I::point(self.cone.tip_depth_mm) + floor)
+            + pi * radius.square() * floor;
+        result.valid().then_some(result.hi)
     }
 
     pub fn volume_bounds_mm3(&self, width_mm3: f64, work_limit: usize) -> Result<[f64; 2], Error> {

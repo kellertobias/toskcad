@@ -86,7 +86,16 @@ impl Recess {
     pub fn source_error_mm(&self) -> f64 {
         match self {
             Self::FlatHex(_) => 0.,
-            Self::ConicalHexalobular(h) => h.source.source_error_mm(),
+            Self::ConicalHexalobular(h) => {
+                let cone = h.source.cone();
+                ((I::point(1.) + I::point(cone.depth_per_radius))
+                    * I::point(h.source.source_error_mm())
+                    + I::point(64. * f64::EPSILON)
+                        * (I::point(cone.tip_depth_mm)
+                            + I::point(h.source.maximum_radius_bound_mm())
+                                * I::point(cone.depth_per_radius)))
+                .hi
+            }
         }
     }
     pub fn maximum_radius_bound_mm(&self) -> f64 {

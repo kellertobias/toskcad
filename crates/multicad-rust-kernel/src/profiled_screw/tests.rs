@@ -862,14 +862,10 @@ fn metric_pan_torx_uses_twelve_real_lobes_and_a_conical_floor_without_changing_t
         crate::step::write_profiled_screw(&screw, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7),
         Err(crate::step::StepError::Unsupported)
     );
-    assert_eq!(
-        tessellate_profiled_screw(&screw, options()),
-        Err(crate::display::MeshError::UnresolvedBoundary)
-    );
-    assert_eq!(
-        profiled_screw_volume_error_bound(&screw, options()),
-        Err(crate::display::MeshError::UnresolvedBoundary)
-    );
+    let mesh = tessellate_profiled_screw(&screw, options()).unwrap();
+    let proof = certify(&mesh).unwrap();
+    let bound = profiled_screw_volume_error_bound(&screw, options()).unwrap();
+    assert!((proof.signed_volume_mm3 - screw.volume_mm3()).abs() <= bound);
     let mut physical = screw.spec();
     physical.head = None;
     let copied = Screw::from_source(thread, *screw.profile(), physical, recess.clone()).unwrap();
