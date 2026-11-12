@@ -722,7 +722,7 @@ pub(super) fn encode(
     }
     faces.extend(extra_shoulders);
     if let (Closure::Profiled(screw), Some(join)) = (closure, profiled_join) {
-        faces.extend(profiled::head(file, &placement, screw, join)?);
+        faces.extend(profiled::head(file, &placement, screw, join, tolerance_mm)?);
     }
     if let Some((cylinder, outward)) = &cylinder {
         faces.push(cylinder.wall(file, *outward));

@@ -7,6 +7,7 @@ use crate::{
 use std::f64::consts::TAU;
 #[cfg(test)]
 mod tests;
+mod torx;
 
 #[derive(Clone, Copy)]
 struct Station {
@@ -227,11 +228,8 @@ pub(super) fn head(
     p: &Placement,
     screw: &Screw,
     join: Junction,
+    tolerance_mm: f64,
 ) -> Result<Vec<Entity>, StepError> {
-    let (drive, socket_depth) = screw
-        .recess()
-        .flat_hex_geometry()
-        .ok_or(StepError::Unsupported)?;
     let segments: Vec<_> = screw.profile().segments().collect();
     let zshift = screw.spec().shank_length_mm;
     let rim = |file: &mut StepFile, [r, z]: [f64; 2]| {
@@ -370,15 +368,25 @@ pub(super) fn head(
         previous = next;
     }
     let top = screw.head_top_z();
-    let ([mouth, floor], sides) =
-        encode_drive_prism(file, p, drive.corners_mm(), [top, top + socket_depth], true)?;
+    let (mouth, mut cavity) = match screw.recess() {
+        crate::screw_recess::Recess::FlatHex(recess) => {
+            let (drive, socket_depth) = recess.geometry();
+            let ([mouth, floor], sides) =
+                encode_drive_prism(file, p, drive.corners_mm(), [top, top + socket_depth], true)?;
+            let floor_center = file.point(p.point_f64([0.; 2], top + socket_depth));
+            let mut faces = vec![file.face(&[floor], floor_center, p.normal.map(|x| -x), p.u)];
+            faces.extend(sides);
+            (mouth, faces)
+        }
+        crate::screw_recess::Recess::ConicalHexalobular(recess) => {
+            torx::encode(file, p, recess.source(), top, tolerance_mm)?
+        }
+    };
     let outer = circular_bound(file, top_edge, false, true);
     let down = p.normal.map(|x| -x);
     let mut faces = vec![file.face(&[outer, mouth], top_center, down, p.u)];
     faces.extend(walls);
-    let floor_center = file.point(p.point_f64([0.; 2], top + socket_depth));
-    faces.push(file.face(&[floor], floor_center, down, p.u));
-    faces.extend(sides);
+    faces.append(&mut cavity);
     Ok(faces)
 }
 
