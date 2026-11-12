@@ -604,5 +604,5 @@ fn an_ordinary_closed_planar_cube_is_bound_but_not_misclassified_as_radial_mater
 #[path = "tests/cam.rs"]
 pub(crate) mod cam;
 
-mod seam_probe;
 mod five_bands;
+mod seam_probe;
