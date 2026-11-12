@@ -1,6 +1,7 @@
 //! Finite cubic carriers of the actual cylinder/cone intersection. Certification
 //! consumes literal controls; an authoring recipe is never a readback proof.
 use super::*;
+mod polyline;
 #[cfg(test)]
 mod tests;
 
