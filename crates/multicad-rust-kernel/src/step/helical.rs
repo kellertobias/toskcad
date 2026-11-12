@@ -6,6 +6,7 @@ use crate::{
     step_read::MAX_STEP_ENTITIES,
 };
 
+mod profiled;
 mod rounded;
 mod tangent;
 
@@ -26,7 +27,7 @@ pub(crate) struct SocketHead {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum Closure {
+pub(crate) enum Closure<'a> {
     Shaft,
     Bore(f64),
     BlindBore {
@@ -48,10 +49,11 @@ pub(crate) enum Closure {
         height_mm: f64,
     },
     SocketHead(SocketHead),
+    Profiled(&'a crate::profiled_screw::Screw),
     HexNut(f64),
 }
 
-impl Closure {
+impl Closure<'_> {
     pub(crate) fn stock(radius: Option<f64>) -> Self {
         radius.map_or(Self::Shaft, Self::Bore)
     }
@@ -104,7 +106,10 @@ impl Closure {
     }
 
     pub(crate) fn is_screw(self) -> bool {
-        matches!(self, Self::HexHead { .. } | Self::SocketHead(_))
+        matches!(
+            self,
+            Self::HexHead { .. } | Self::SocketHead(_) | Self::Profiled(_)
+        )
     }
 
     pub(crate) fn inside(self) -> bool {
@@ -163,6 +168,9 @@ impl Closure {
             Self::HexHead { .. } => bands + 9,
             Self::HexNut(_) => bands + 8,
             Self::SocketHead(head) => bands + 11 + 2 * usize::from(head.shank_length_mm > 0.),
+            Self::Profiled(screw) => {
+                screw.faces().len() + screw.thread().spec().starts as usize - 1
+            }
         }
     }
 
@@ -182,6 +190,7 @@ impl Closure {
                 height_mm,
             } => (across_flats_mm / 3_f64.sqrt(), height_mm),
             Self::SocketHead(head) => (head.radius_mm, head.height_mm + head.shank_length_mm),
+            Self::Profiled(screw) => (screw.profile().support([1., 0., 0.]), -screw.head_top_z()),
         }
     }
 }
@@ -291,6 +300,34 @@ pub fn write_helical_screw(
     tolerance_mm: f64,
 ) -> Result<String, StepError> {
     write_one(|writer| writer.append_helical_screw(screw, origin, u, v, tolerance_mm))
+}
+
+pub fn write_profiled_screw(
+    screw: &crate::profiled_screw::Screw,
+    origin: Point,
+    u: Point,
+    v: Point,
+    tolerance_mm: f64,
+) -> Result<String, StepError> {
+    write_one(|writer| writer.append_profiled_screw(screw, origin, u, v, tolerance_mm))
+}
+
+pub fn supports_profiled_screw(
+    screw: &crate::profiled_screw::Screw,
+    origin: Point,
+    tolerance_mm: f64,
+) -> bool {
+    profiled::admission(screw, origin, tolerance_mm)
+        .and_then(|()| {
+            prepare(
+                screw.thread(),
+                Closure::Profiled(screw),
+                origin,
+                tolerance_mm,
+            )
+            .map(|_| ())
+        })
+        .is_ok()
 }
 
 /// Whether a fully threaded hex-head or socket-cap screw fits the STEP proof.
@@ -423,6 +460,20 @@ pub(super) fn encode(
         .tangent_shank()
         .map(|length| tangent::encode(file, &placement, thread, length, [rings[0][0], rings[0][3]]))
         .transpose()?;
+    let profiled_join = if let Closure::Profiled(screw) = closure {
+        profiled::admission(screw, placement.origin, tolerance_mm)?;
+        profiled::placement(screw, &placement, tolerance_mm)?;
+        Some(profiled::junction(
+            file,
+            &placement,
+            thread,
+            &(0..spec.starts as usize)
+                .map(|k| [rings[0][4 * k], rings[0][4 * k + 3]])
+                .collect::<Vec<_>>(),
+        )?)
+    } else {
+        None
+    };
     let mut faces = Vec::with_capacity(closure.face_count(bands.len(), spec.major_radius_mm));
     let mut cap_edges = [
         Vec::with_capacity(bands.len()),
@@ -437,6 +488,12 @@ pub(super) fn encode(
                 && let Some(external) = &external
             {
                 return external.crests[i / 4];
+            }
+            if end == 0
+                && i % 4 == 3
+                && let Some(join) = &profiled_join
+            {
+                return join.crests[i / 4];
             }
             if end == 0
                 && i == 3
@@ -516,6 +573,7 @@ pub(super) fn encode(
         | Closure::ExternalStock { .. }
         | Closure::TerminalRelief { .. }
         | Closure::Hollow(_)
+        | Closure::Profiled(_)
         | Closure::HexNut(_) => None,
     };
     let hex = if let Closure::HexNut(width) = closure {
@@ -532,6 +590,30 @@ pub(super) fn encode(
     let mut extra_shoulders = Vec::new();
     for (end, cap) in cap_edges.into_iter().enumerate() {
         let top = end == 1;
+        if !top && let Some(join) = &profiled_join {
+            for (k, part) in cap.as_chunks::<4>().0.iter().enumerate() {
+                let uses = [
+                    (part[0], true),
+                    (part[1], true),
+                    (part[2], true),
+                    (join.complements[k], false),
+                ];
+                let edges = if !spec.left_hand {
+                    uses.map(|(e, s)| file.oriented_edge(e, s))
+                } else {
+                    [3, 2, 1, 0].map(|i| file.oriented_edge(uses[i].0, !uses[i].1))
+                };
+                let bound = file.bound(&edges, true);
+                let center = file.point(centers[0]);
+                let face = file.face(&[bound], center, placement.normal, placement.u);
+                if k == 0 {
+                    faces.push(face);
+                } else {
+                    extra_shoulders.push(face);
+                }
+            }
+            continue;
+        }
         if top && let Some(external) = &external {
             for (k, part) in cap.as_chunks::<4>().0.iter().enumerate() {
                 let uses = [
@@ -603,6 +685,9 @@ pub(super) fn encode(
         faces.push(file.face(&bounds, center, normal, placement.u));
     }
     faces.extend(extra_shoulders);
+    if let (Closure::Profiled(screw), Some(join)) = (closure, profiled_join) {
+        faces.extend(profiled::head(file, &placement, screw, join)?);
+    }
     if let Some((cylinder, outward)) = &cylinder {
         faces.push(cylinder.wall(file, *outward));
         if closure.is_blind_bore()
@@ -749,6 +834,7 @@ pub(crate) fn prepare(
                 | Closure::BlindBore { .. }
                 | Closure::ExternalStock { .. }
                 | Closure::TerminalRelief { .. }
+                | Closure::Profiled(_)
         )
     {
         return Err(StepError::Unsupported);
@@ -859,6 +945,7 @@ pub(crate) fn prepare(
         return Err(StepError::Limit);
     }
     if closure.tangent_shank().is_some()
+        || matches!(closure, Closure::Profiled(_))
         || matches!(closure,Closure::ExternalStock {radius_mm,..} if radius_mm==major)
     {
         for part in bands.as_chunks::<4>().0 {

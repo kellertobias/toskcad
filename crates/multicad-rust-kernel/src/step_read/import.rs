@@ -55,6 +55,11 @@ pub enum ImportProfile {
         spec: crate::helical_thread::Spec,
         screw: crate::headed_screw::ScrewSpec,
     },
+    /// Actual finite head carriers and drive, without an inferred head recipe.
+    ProfiledScrew {
+        screw: Box<crate::profiled_screw::Screw>,
+        head_volume_error_mm3: f64,
+    },
     /// Full hexagonal exterior and independently certified internal thread.
     HelicalReceiver {
         spec: crate::helical_thread::Spec,

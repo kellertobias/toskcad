@@ -13,7 +13,8 @@ mod helical_import;
 mod thread_entry_chamfer;
 pub use helical_import::{
     helical_import_matches, helical_nut_import_matches, helical_receiver_import_matches,
-    helical_screw_import_matches, thread_end_relief_import_matches, threaded_shaft_import_matches,
+    helical_screw_import_matches, profiled_screw_import_matches, thread_end_relief_import_matches,
+    threaded_shaft_import_matches,
 };
 pub use thread_entry_chamfer::{
     EntryChamferProof, EntryChamferReadError, verify_thread_entry_chamfer,
@@ -24,8 +25,9 @@ pub use authored_compound::{ExpectedStepMember, VerifiedStepMember, verify_autho
 mod worm;
 pub use bevel::verify_bevel;
 pub use helical::{
-    verify_helical_nut, verify_helical_receiver, verify_helical_screw, verify_helical_thread,
-    verify_thread_end_relief, verify_threaded_shaft,
+    profiled_screw_head_volume_error_bound_mm3, verify_helical_nut, verify_helical_receiver,
+    verify_helical_screw, verify_helical_thread, verify_profiled_screw, verify_thread_end_relief,
+    verify_threaded_shaft,
 };
 pub use herringbone::verify_herringbone;
 pub use worm::{verify_worm_wheel, verify_za_worm};

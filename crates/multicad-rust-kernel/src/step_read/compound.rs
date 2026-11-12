@@ -25,11 +25,11 @@ pub(super) fn read_import_member(
     if let Some(torus) = torus::read_member(shell, &face_ids)? {
         return Ok(torus);
     }
-    if let Some(rounded) = rounded_cylinder::recognize_member(shell, id, &face_ids)? {
-        return Ok(rounded);
-    }
     if let Some(thread) = helical_import::read_member(shell, id, &face_ids)? {
         return Ok(thread);
+    }
+    if let Some(rounded) = rounded_cylinder::recognize_member(shell, id, &face_ids)? {
+        return Ok(rounded);
     }
     if let Some(thread) = rounded_thread::recognize_member(shell, id, &face_ids)? {
         return Ok(thread);
@@ -102,11 +102,11 @@ pub(super) fn read_analytic_member(
     if let Some((proof, _)) = torus::read_member(shell, &faces)? {
         return Ok((proof, None));
     }
-    if let Some((proof, _)) = rounded_cylinder::recognize_member(shell, id, &faces)? {
-        return Ok((proof, None));
-    }
     if let Some((proof, thread)) = helical_import::read_member(shell, id, &faces)? {
         return Ok((proof, Some(thread)));
+    }
+    if let Some((proof, _)) = rounded_cylinder::recognize_member(shell, id, &faces)? {
+        return Ok((proof, None));
     }
     if let Some((proof, thread)) = rounded_thread::recognize_member(shell, id, &faces)? {
         return Ok((proof, Some(thread)));

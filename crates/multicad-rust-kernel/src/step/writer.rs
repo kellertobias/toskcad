@@ -369,6 +369,26 @@ impl Writer {
         self.append(|file| helical::encode(file, screw.thread(), closure, placement, tolerance_mm))
     }
 
+    pub fn append_profiled_screw(
+        &mut self,
+        screw: &crate::profiled_screw::Screw,
+        origin: Point,
+        u: Point,
+        v: Point,
+        tolerance_mm: f64,
+    ) -> Result<(), StepError> {
+        let placement = Placement::new(origin, u, v)?;
+        self.append(|file| {
+            helical::encode(
+                file,
+                screw.thread(),
+                helical::Closure::Profiled(screw),
+                placement,
+                tolerance_mm,
+            )
+        })
+    }
+
     pub fn append_orthogonal(
         &mut self,
         boundary: &Boundary,

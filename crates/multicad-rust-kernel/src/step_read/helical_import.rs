@@ -8,7 +8,9 @@ use crate::{
 };
 use helical::{face, require};
 mod headed;
+mod profiled;
 pub use headed::helical_screw_import_matches;
+pub use profiled::profiled_screw_import_matches;
 pub(super) mod cylindrical_closure;
 mod receiver;
 pub use receiver::helical_receiver_import_matches;
@@ -44,8 +46,21 @@ pub(super) fn read_member(
         }
         count += 1;
     }
-    if !count.is_multiple_of(4)
-        || !(matches!(faces.len() - count, 2 | 3 | 4 | 8 | 9 | 11 | 13)
+    if !count.is_multiple_of(4) {
+        return Ok(None);
+    }
+    let head_index = count + count / 4 + 1;
+    let profiled = if let Some(&id) = faces.get(head_index) {
+        let (surface, _, bounds) = face(shell, id)?;
+        bounds.len() == 2
+            && shell.simple(surface)?.name == "PLANE"
+            && face(shell, faces[count])?.2.len() == 1
+            && (9..=13).contains(&(faces.len() - head_index))
+    } else {
+        false
+    };
+    if !profiled
+        && !(matches!(faces.len() - count, 2 | 3 | 4 | 8 | 9 | 11 | 13)
             || faces.len() - count == count / 4 + 3)
     {
         return Ok(None);
@@ -71,13 +86,14 @@ pub(super) fn read_member(
         && tail == 4
         && shoulder_bounds == 2
         && dot(bottom.normal, top.normal) < 0.;
-    let external = entry_bounds == 1
+    let external = !profiled
+        && entry_bounds == 1
         && !is_end_relief
         && (tail == 4 || (tail == starts as usize + 3 && shoulder_bounds == 1));
     let tangent_external = external && shoulder_bounds == 1;
     let external_shoulders = if tangent_external { starts as usize } else { 1 };
-    let headed = !external && matches!(faces.len() - count, 9 | 11 | 13);
-    let shank = faces.len() - count == 13;
+    let headed = profiled || (!external && matches!(faces.len() - count, 9 | 11 | 13));
+    let shank = !profiled && faces.len() - count == 13;
     let is_receiver = !external && !is_end_relief && faces.len() - count == 4;
     let is_nut = !external && faces.len() - count == 8;
     let mut grids = Vec::with_capacity(4);
@@ -142,7 +158,20 @@ pub(super) fn read_member(
         let point = shell.point(*ids.first().ok_or(ReadError::Invalid)?)?;
         Ok(length(sub(point, origin)))
     };
-    let major = if shank || tangent_external {
+    let major = if profiled {
+        let (_, _, bounds) = face(shell, faces[3])?;
+        let edges = helical::orient(&helical::ring(shell, bounds[0], true)?, first.1);
+        let (edge, _) = edges[0];
+        let [Value::String(_), _, _, geometry, _] = shell.args(edge, "EDGE_CURVE")? else {
+            return Err(ReadError::Invalid);
+        };
+        let [Value::String(_), _, Value::Number(radius)] =
+            shell.args(reference(geometry)?, "CIRCLE")?
+        else {
+            return Err(ReadError::Invalid);
+        };
+        *radius
+    } else if shank || tangent_external {
         let offset = if tangent_external {
             external_shoulders + 1
         } else {
@@ -239,7 +268,17 @@ pub(super) fn read_member(
     // residual bounds the complete patch under piecewise affine chart maps;
     // independent knot lengths do not change a segment's geometric image.
     // Exact edge/surface control equality and shared vertices remain mandatory.
-    let screw = if headed {
+    let profiled_screw = if profiled {
+        Some(helical::profiled::read(
+            shell,
+            faces,
+            &thread,
+            [origin, u, v],
+        )?)
+    } else {
+        None
+    };
+    let screw = if headed && !profiled {
         Some(if faces.len() - count == 9 {
             headed::hex(
                 shell,
@@ -321,7 +360,9 @@ pub(super) fn read_member(
         },
         |r| r.full_length_mm(),
     );
-    let closure = if let Some(relief) = &end_relief {
+    let closure = if let Some(screw) = &profiled_screw {
+        Closure::Profiled(screw)
+    } else if let Some(relief) = &end_relief {
         Closure::TerminalRelief {
             neck_radius_mm: relief.neck_radius_mm(),
             full_length_mm: relief.full_length_mm(),
@@ -353,6 +394,9 @@ pub(super) fn read_member(
         Some(shell.tolerance.min(1e-7) / 16.),
     )?;
     let support = |direction: Point| {
+        if let Some(screw) = &profiled_screw {
+            return screw.support(direction);
+        }
         if let Some(relief) = &end_relief {
             return relief.support(direction);
         }
@@ -419,7 +463,15 @@ pub(super) fn read_member(
             u,
             v,
             height_mm: stock_height,
-            profile: if let Some(relief) = end_relief {
+            profile: if let Some(screw) = profiled_screw {
+                ImportProfile::ProfiledScrew {
+                    head_volume_error_mm3: helical::profiled_screw_head_volume_error_bound_mm3(
+                        &screw,
+                    )
+                    .ok_or(ReadError::Invalid)?,
+                    screw: Box::new(screw),
+                }
+            } else if let Some(relief) = end_relief {
                 ImportProfile::ThreadEndRelief {
                     tool_spec: relief.source_thread().spec(),
                     material_length_mm: relief.material_length_mm(),

@@ -12,6 +12,8 @@ use crate::{
 mod end_relief;
 mod external;
 mod hex_head;
+pub(super) mod profiled;
+pub use profiled::profiled_screw_head_volume_error_bound_mm3;
 mod socket_head;
 mod tangent_shank;
 pub(super) mod volume;
@@ -128,6 +130,23 @@ pub fn verify_helical_screw(
 ) -> Result<f64> {
     let closure = Closure::screw(screw).map_err(step_error)?;
     verify(input, screw.thread(), closure, [origin, u, v], tolerance)
+}
+
+pub fn verify_profiled_screw(
+    input: &str,
+    screw: &crate::profiled_screw::Screw,
+    origin: Point,
+    u: Point,
+    v: Point,
+    tolerance: f64,
+) -> Result<f64> {
+    verify(
+        input,
+        screw.thread(),
+        Closure::Profiled(screw),
+        [origin, u, v],
+        tolerance,
+    )
 }
 
 pub(super) fn step_error(error: StepError) -> ReadError {
@@ -248,7 +267,10 @@ pub(super) fn verify_member(
             )?;
         }
         for (cap, &rim) in [start, end].iter().enumerate() {
-            if cap == 0 && i == 3 && shank_length.is_some() {
+            if cap == 0
+                && ((i == 3 && shank_length.is_some())
+                    || (i % 4 == 3 && matches!(closure, Closure::Profiled(_))))
+            {
                 // The circular crest is verified with the shank wall.
                 continue;
             }
@@ -289,7 +311,8 @@ pub(super) fn verify_member(
         if matches!(
             closure,
             Closure::ExternalStock { .. } | Closure::TerminalRelief { .. }
-        ) {
+        ) || (end == 0 && matches!(closure, Closure::Profiled(_)))
+        {
             continue;
         }
         let top = end == 1;
@@ -351,6 +374,15 @@ pub(super) fn verify_member(
         }
     }
     let outside_volume = match closure {
+        Closure::Profiled(screw) => profiled::verify(
+            proof,
+            shell,
+            &faces,
+            screw,
+            &rings,
+            &corners,
+            [origin, u, v],
+        )?,
         Closure::TerminalRelief {
             neck_radius_mm,
             full_length_mm,
