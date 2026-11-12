@@ -2,6 +2,7 @@
 mod custom;
 mod rust;
 mod seating;
+mod seating_pose;
 use crate::{Model, ModelError, compiler::checkpoint, error};
 use multicad_core::{
     document::{Document, EntityData, EntityId},
@@ -13,6 +14,7 @@ use multicad_core::{
     references::{ReferenceFrame, TopologySnapshot},
 };
 use multicad_kernel::{BooleanOperation, PlaneFrame, Solid};
+pub(crate) use seating_pose::{Inputs as SeatingPoseInputs, refine as refine_hardware_pose};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use multicad_core::model::ScrewConnectionCheck;

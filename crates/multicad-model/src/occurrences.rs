@@ -159,9 +159,21 @@ pub(crate) fn build(
             "Occurrence source geometry is unavailable before its placement",
         )
     })?;
-    let pose =
+    let nominal_pose =
         resolve_instance_pose_with_snapshots(document, instance, parameters, revision, topologies)
             .map_err(|e| error(Some(instance), e))?;
+    let pose = crate::screw_connections::refine_hardware_pose(
+        crate::screw_connections::SeatingPoseInputs {
+            document,
+            parameters,
+            topologies,
+            source,
+            policy,
+            instance,
+            revision,
+        },
+        nominal_pose,
+    )?;
     let source_topology = topologies.get(&producer).ok_or_else(|| {
         error(
             Some(instance),

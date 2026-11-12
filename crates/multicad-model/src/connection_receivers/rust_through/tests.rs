@@ -7,8 +7,7 @@ use multicad_core::{
     references::TopologyKind,
 };
 
-#[path = "../../../../multicad-mcp/tests/support/screw_connection.rs"]
-mod fixture;
+use crate::test_screw_connection_fixture as fixture;
 
 #[test]
 fn verifies_the_authored_m3_through_receiver_without_native_geometry() {

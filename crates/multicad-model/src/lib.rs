@@ -2,6 +2,9 @@
 //! thread; immutable display and reference snapshots may cross to the UI.
 #[cfg(test)]
 extern crate self as multicad_model;
+#[cfg(test)]
+#[path = "../../multicad-mcp/tests/support/screw_connection.rs"]
+pub(crate) mod test_screw_connection_fixture;
 
 mod screw_connections;
 pub use screw_connections::ScrewConnectionCheck;
