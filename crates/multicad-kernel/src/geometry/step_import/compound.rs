@@ -376,14 +376,30 @@ fn member_signature(readback: &Readback, imported: &ImportSolid) -> ContentHash 
 }
 
 pub(super) fn rebuild(
-    members: Vec<(Readback, ImportSolid)>,
+    members: Vec<step_read::SourceImport>,
     feature: EntityId,
     policy: GeometryPolicy,
 ) -> Result<Solid, GeometryError> {
     let mut occurrences = BTreeMap::<ContentHash, u32>::new();
     let mut solids = Vec::with_capacity(members.len());
-    for (readback, imported) in members {
-        let signature = member_signature(&readback, &imported);
+    enum Qualified {
+        Analytic(Box<(Readback, ImportSolid)>),
+        Radial(Box<multicad_rust_kernel::radial_tensor::RadialBoundary>),
+    }
+    for member in members {
+        let (signature, member) = match member {
+            step_read::SourceImport::Analytic(value) => (
+                member_signature(&value.0, &value.1),
+                Qualified::Analytic(value),
+            ),
+            step_read::SourceImport::Radial(owned) => {
+                let boundary = Solid::qualify_imported_radial(*owned, policy)?;
+                (
+                    super::super::radial_boundary_body::source_signature(&boundary),
+                    Qualified::Radial(Box::new(boundary)),
+                )
+            }
+        };
         let occurrence = occurrences.entry(signature).or_default();
         let mut bytes = b"multicad.step-member/1".to_vec();
         bytes.extend(feature.uuid_bits().to_le_bytes());
@@ -392,9 +408,15 @@ pub(super) fn rebuild(
         *occurrence += 1;
         let hash = ContentHash::of(&bytes);
         let child = EntityId::from_uuid_bits(u128::from_le_bytes(hash.0[..16].try_into().unwrap()));
-        solids.push(Solid::verified_step_member(
-            &readback, imported, child, policy,
-        )?);
+        solids.push(match member {
+            Qualified::Analytic(value) => {
+                let (readback, imported) = *value;
+                Solid::verified_step_member(&readback, imported, child, policy)?
+            }
+            Qualified::Radial(boundary) => {
+                Solid::from_rust_radial_boundary(*boundary, child, policy)?
+            }
+        });
     }
     let members: Vec<_> = solids.iter().collect();
     Solid::make_rust_compound(&members, feature, policy, None)
@@ -454,6 +476,167 @@ impl Solid {
             remaining = rest;
         }
         remaining.is_empty()
+    }
+
+    /// Verify actual retained source values and keep each independently
+    /// integrated decoded mass enclosure separate from scalar member reports.
+    pub fn verify_retained_step_source(
+        &self,
+        input: &str,
+        tolerance: f64,
+    ) -> Option<std::result::Result<RetainedStepVerification, ReadError>> {
+        use step_read::{ExpectedStepMember, VerifiedStepMember};
+        if !self.has_retained_radial_source() {
+            return None;
+        }
+        Some((|| {
+            let source_error = |cause: GeometryError| match cause.kind {
+                GeometryErrorKind::Limit => ReadError::Limit,
+                GeometryErrorKind::Unsupported => ReadError::Unsupported,
+                _ => ReadError::Invalid,
+            };
+            let mut leaves = Vec::new();
+            self.step_leaf_members(&mut leaves);
+            let placed = leaves
+                .iter()
+                .map(|leaf| {
+                    leaf.radial_boundary_body()
+                        .map(|(body, frame)| body.placed_boundary(frame))
+                        .transpose()
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(source_error)?;
+            let mut expected = Vec::new();
+            let mut counts = Vec::new();
+            for (leaf, placed) in leaves.iter().zip(&placed) {
+                if let Some(boundary) = placed {
+                    counts.push(1);
+                    expected.push(ExpectedStepMember::RetainedRadial {
+                        boundary,
+                        minimum_feature_mm: leaf.policy.minimum_feature_mm,
+                    });
+                } else if let Some((body, frame)) = leaf.normal_relief_body() {
+                    counts.push(1);
+                    expected.push(ExpectedStepMember::NormalRelief {
+                        relief: &body.geometry,
+                        origin: frame.origin,
+                        u: frame.u,
+                        v: frame.v,
+                    });
+                } else if let Some((body, frame)) = leaf.herringbone_body() {
+                    counts.push(1);
+                    expected.push(ExpectedStepMember::TwistedGear {
+                        gear: &body.geometry,
+                        origin: frame.origin,
+                        u: frame.u,
+                        v: frame.v,
+                    });
+                } else if let Some((body, frame)) = leaf.bevel_body() {
+                    counts.push(1);
+                    expected.push(ExpectedStepMember::Bevel {
+                        gear: &body.geometry,
+                        origin: frame.origin,
+                        u: frame.u,
+                        v: frame.v,
+                    });
+                } else if let Some(member) = leaf.expected_worm_member() {
+                    counts.push(1);
+                    expected.push(member);
+                } else {
+                    let count = leaf.planar_boolean_body().map_or_else(
+                        || leaf.solid_count().map(|n| n as usize).map_err(source_error),
+                        |(body, _)| Ok(body.geometry.solid_count()),
+                    )?;
+                    counts.push(count);
+                    expected.extend((0..count).map(|_| ExpectedStepMember::Analytic));
+                }
+            }
+            let mut decoded =
+                step_read::verify_authored_compound(input, &expected, tolerance)?.into_iter();
+            let mut proof = RetainedStepVerification {
+                solid_count: 0,
+                bounds_mm: [[f64::INFINITY; 3], [f64::NEG_INFINITY; 3]],
+                retained_members: vec![],
+                decoded_scalar_members: vec![],
+            };
+            for (leaf, count) in leaves.into_iter().zip(counts) {
+                let mut include = |bounds: [[f64; 3]; 2]| {
+                    for (k, lo) in bounds[0].into_iter().enumerate() {
+                        proof.bounds_mm[0][k] = proof.bounds_mm[0][k].min(lo);
+                        proof.bounds_mm[1][k] = proof.bounds_mm[1][k].max(bounds[1][k]);
+                    }
+                };
+                if let Some((body, frame)) = leaf.radial_boundary_body() {
+                    let Some(VerifiedStepMember::RetainedRadial {
+                        properties,
+                        bounds_mm,
+                    }) = decoded.next()
+                    else {
+                        return Err(ReadError::Invalid);
+                    };
+                    let source = body.properties(frame, None).map_err(source_error)?;
+                    proof.retained_members.push(RetainedStepMemberMass {
+                        member_index: proof.solid_count,
+                        decoded_volume_bounds_mm3: properties.volume_mm3,
+                        source_volume_bounds_mm3: source.volume_mm3,
+                    });
+                    include(bounds_mm);
+                    proof.solid_count = proof.solid_count.checked_add(1).ok_or(ReadError::Limit)?;
+                } else if leaf.normal_relief_body().is_some()
+                    || leaf.herringbone_body().is_some()
+                    || leaf.bevel_body().is_some()
+                    || leaf.worm_body().is_some()
+                {
+                    let volume = match decoded.next() {
+                        Some(
+                            VerifiedStepMember::NormalRelief { volume_mm3 }
+                            | VerifiedStepMember::TwistedGear { volume_mm3 }
+                            | VerifiedStepMember::Bevel { volume_mm3 }
+                            | VerifiedStepMember::Worm { volume_mm3 }
+                            | VerifiedStepMember::WormWheel { volume_mm3 },
+                        ) => volume_mm3,
+                        _ => return Err(ReadError::Invalid),
+                    };
+                    proof
+                        .decoded_scalar_members
+                        .push((proof.solid_count, volume));
+                    let bounds = leaf.bounds().map_err(source_error)?;
+                    include([bounds.min, bounds.max]);
+                    proof.solid_count = proof.solid_count.checked_add(1).ok_or(ReadError::Limit)?;
+                } else {
+                    let mut members = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        let Some(VerifiedStepMember::Analytic { readback, imported }) =
+                            decoded.next()
+                        else {
+                            return Err(ReadError::Invalid);
+                        };
+                        members.push((*readback, imported.map(|v| *v)));
+                    }
+                    let topology = leaf
+                        .rust_topology()
+                        .ok_or(ReadError::Invalid)?
+                        .map_err(source_error)?;
+                    if !leaf.step_readback_matches(&topology, &members, tolerance * 2.) {
+                        return Err(ReadError::Invalid);
+                    }
+                    for (member, _) in members {
+                        proof
+                            .decoded_scalar_members
+                            .push((proof.solid_count, member.volume_mm3));
+                        include(member.bounds_mm);
+                        proof.solid_count = proof
+                            .solid_count
+                            .checked_add(member.solid_count)
+                            .ok_or(ReadError::Limit)?;
+                    }
+                }
+            }
+            if decoded.next().is_some() {
+                return Err(ReadError::Invalid);
+            }
+            Ok(proof)
+        })())
     }
 
     /// Compatibility entry point for callers of the original gear-only proof.

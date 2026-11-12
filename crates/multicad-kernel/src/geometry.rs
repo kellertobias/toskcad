@@ -31,6 +31,7 @@ mod normal_sweep_body;
 mod orthogonal_body;
 mod parallel_cylinder;
 mod planar_boolean_body;
+mod radial_boundary_body;
 mod revolution_body;
 mod rounded_cylinder_body;
 mod rounded_slot_body;
@@ -67,6 +68,8 @@ pub use normal_sweep_body::SweepOpening;
 use orthogonal_body::OrthogonalBody;
 pub use orthogonal_body::slots::RoundedSlotTool;
 use planar_boolean_body::PlanarBooleanBody;
+use radial_boundary_body::RadialBoundaryBody;
+pub use radial_boundary_body::{RetainedStepMemberMass, RetainedStepVerification};
 use revolution_body::RevolutionBody;
 use rounded_cylinder_body::RoundedCylinderBody;
 use rounded_slot_body::RoundedSlotBody;
@@ -694,6 +697,7 @@ enum SolidBody {
     NormalSweep(Rc<NormalSweepBody>, PlaneFrame),
     NormalRelief(Rc<NormalReliefBody>, PlaneFrame),
     SplineCapRelief(Rc<SplineCapReliefBody>, PlaneFrame),
+    RadialBoundary(Rc<RadialBoundaryBody>, PlaneFrame),
     NonplanarLoft(Rc<NonplanarLoftBody>, PlaneFrame),
     SplineSweep(Rc<SplineSweepBody>, PlaneFrame),
     SpurGear(Rc<SpurGearBody>, PlaneFrame),
@@ -1163,6 +1167,9 @@ impl Solid {
             SolidBody::SplineCapRelief(body, frame) => {
                 SolidBody::SplineCapRelief(Rc::clone(body), *frame)
             }
+            SolidBody::RadialBoundary(body, frame) => {
+                SolidBody::RadialBoundary(Rc::clone(body), *frame)
+            }
             SolidBody::SplineSweep(body, frame) => SolidBody::SplineSweep(Rc::clone(body), *frame),
             SolidBody::SpurGear(body, frame) => SolidBody::SpurGear(Rc::clone(body), *frame),
             SolidBody::InternalRing(body, frame) => {
@@ -1563,6 +1570,15 @@ impl Solid {
                     SolidBody::SplineCapRelief(Rc::clone(body), frame)
                 }
 
+                SolidBody::RadialBoundary(body, frame) => {
+                    let frame = transform.frame(*frame);
+                    frame.checked(self.policy)?;
+                    let body = Rc::new(body.new_occurrence());
+                    let bounds = body.bounds(frame, None)?;
+                    self.policy.point(bounds.min)?;
+                    self.policy.point(bounds.max)?;
+                    SolidBody::RadialBoundary(body, frame)
+                }
                 SolidBody::SpurGear(body, frame) => {
                     SolidBody::SpurGear(Rc::clone(body), transform.frame(*frame))
                 }
@@ -1698,6 +1714,9 @@ impl Solid {
         if let Some((body, _)) = self.normal_relief_body() {
             return Ok(body.volume_mm3());
         }
+        if let Some((body, frame)) = self.radial_boundary_body() {
+            return body.volume_mm3(frame);
+        }
         if let Some((body, _)) = self.normal_sweep_body() {
             return Ok(body.volume_mm3());
         }
@@ -1817,6 +1836,9 @@ impl Solid {
         }
         if let Some((body, frame)) = self.normal_relief_body() {
             return Ok(body.bounds(frame));
+        }
+        if let Some((body, frame)) = self.radial_boundary_body() {
+            return body.bounds(frame, None);
         }
         if let Some((body, frame)) = self.normal_sweep_body() {
             return Ok(body.bounds(frame));
@@ -1984,6 +2006,9 @@ impl Solid {
         if let Some((body, frame)) = self.normal_relief_body() {
             return Ok(body.faces(frame));
         }
+        if let Some((body, frame)) = self.radial_boundary_body() {
+            return body.faces(frame);
+        }
         if let Some((body, frame)) = self.normal_sweep_body() {
             return Ok(body.faces(frame));
         }
@@ -2148,6 +2173,7 @@ impl Solid {
             SolidBody::NormalSweep(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::NormalRelief(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::SplineCapRelief(body, frame) => body.mesh(*frame, rust_options),
+            SolidBody::RadialBoundary(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::SplineSweep(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::SpurGear(body, frame) => {
                 crate::rust_display::placed_mesh(body.profile.mesh(rust_options), *frame, false)
@@ -2224,6 +2250,13 @@ impl Solid {
         Ok(self.manufacturing_mesh_with_receipt(options)?.mesh)
     }
 
+    pub fn has_retained_radial_source(&self) -> bool {
+        self.radial_boundary_body().is_some()
+            || self
+                .rust_compound()
+                .is_some_and(|compound| compound.members().any(Self::has_retained_radial_source))
+    }
+
     fn rust_manufacturing_mesh(
         &self,
         options: MeshOptions,
@@ -2255,16 +2288,22 @@ impl Solid {
                 format!("Rust indexed mesh certification failed: {cause:?}"),
             )
         })?;
-        let exact_volume = self.volume_mm3()?;
-        let volume_tolerance = self.rust_mesh_volume_tolerance(options, exact_volume)?;
-        if !volume_tolerance.is_finite()
-            || (proof.signed_volume_mm3 - exact_volume).abs() > volume_tolerance
-        {
-            return Err(error(
-                OPERATION,
-                GeometryErrorKind::InvalidResult,
-                "Rust manufacturing mesh volume differs from the exact solid beyond the chord error bound",
-            ));
+        // Retained radial providers have already proved every actual facet
+        // against the complete finite source and certified literal embedding.
+        // Their independent mass enclosure is not an exact analytic scalar.
+        // Mixed compounds verify analytic children before merging instead.
+        if !self.has_retained_radial_source() {
+            let exact_volume = self.volume_mm3()?;
+            let volume_tolerance = self.rust_mesh_volume_tolerance(options, exact_volume)?;
+            if !volume_tolerance.is_finite()
+                || (proof.signed_volume_mm3 - exact_volume).abs() > volume_tolerance
+            {
+                return Err(error(
+                    OPERATION,
+                    GeometryErrorKind::InvalidResult,
+                    "Rust manufacturing mesh volume differs from the exact solid beyond the chord error bound",
+                ));
+            }
         }
         let DisplayMesh {
             vertices,
@@ -2485,6 +2524,9 @@ impl Solid {
         if let Some((body, frame)) = self.helical_tube_cut_body() {
             return body.sample_edge(frame, ordinal, options);
         }
+        if let Some((body, frame)) = self.radial_boundary_body() {
+            return body.sample_edge(frame, ordinal, options);
+        }
         let (member, local) = self.rust_compound()?.edge_source(ordinal)?;
         member.sample_non_analytic_edge(local, options)
     }
@@ -2526,6 +2568,7 @@ impl Solid {
             SolidBody::NormalSweep(body, _) => body.feature,
             SolidBody::NormalRelief(body, _) => body.feature,
             SolidBody::SplineCapRelief(body, _) => body.feature,
+            SolidBody::RadialBoundary(body, _) => body.feature,
             SolidBody::SplineSweep(body, _) => body.feature,
             SolidBody::SpurGear(body, _) => body.feature,
             SolidBody::InternalRing(body, _) => body.feature,
@@ -2554,6 +2597,7 @@ impl Solid {
         match &self.body {
             SolidBody::NormalRelief(..)
             | SolidBody::SplineCapRelief(..)
+            | SolidBody::RadialBoundary(..)
             | SolidBody::RoundedThread(..)
             | SolidBody::RoundedThreadBore(..) => true,
             SolidBody::Occt(_)
@@ -2656,6 +2700,9 @@ impl Solid {
         match &self.body {
             SolidBody::NormalRelief(body, frame) => body.append_step(writer, *frame),
             SolidBody::SplineCapRelief(body, frame) => body.append_step(writer, *frame),
+            SolidBody::RadialBoundary(body, frame) => {
+                body.append_step(writer, *frame, self.policy.linear_tolerance_mm)
+            }
             SolidBody::PolygonPrism(placed) => {
                 if let Some(treatments) = &placed.bore_treatments {
                     writer.append_treated_polygon_prism(

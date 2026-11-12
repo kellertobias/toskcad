@@ -340,17 +340,24 @@ impl RustCompound {
             face_indices: vec![],
         };
         let mut remaining = options.maximum_triangles;
+        let verify_members = usage == MeshUse::Manufacturing
+            && self
+                .members
+                .iter()
+                .any(|member| member.solid.has_retained_radial_source());
         for member in &self.members {
             if remaining == 0 {
                 return Err(budget_error());
             }
-            let mesh = member.solid.rust_mesh(
-                MeshOptions {
-                    maximum_triangles: remaining,
-                    ..options
-                },
-                usage,
-            )?;
+            let child_options = MeshOptions {
+                maximum_triangles: remaining,
+                ..options
+            };
+            let mesh = if verify_members {
+                member.solid.manufacturing_mesh(child_options)?
+            } else {
+                member.solid.rust_mesh(child_options, usage)?
+            };
             let triangles = u32::try_from(mesh.face_indices.len()).map_err(|_| budget_error())?;
             remaining = remaining.checked_sub(triangles).ok_or_else(budget_error)?;
             let vertices = result.vertices.len() / 3;

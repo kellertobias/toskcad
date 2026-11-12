@@ -11,8 +11,8 @@ pub mod print;
 pub use print::PrintWorker;
 mod publish;
 pub use publish::{
-    StepVerificationMethod, StepVerificationReceipt, verify_rust_step_shape,
-    verify_rust_step_shape_receipt,
+    StepRetainedMemberReceipt, StepVerificationMethod, StepVerificationReceipt,
+    verify_rust_step_shape, verify_rust_step_shape_receipt,
 };
 mod schedule;
 pub use schedule::ScheduleTarget;

@@ -174,7 +174,7 @@ impl Solid {
             return Err(invalid("STEP import needs a source identity"));
         }
         let tolerance = policy.linear_tolerance_mm;
-        let mut members = step_read::read_import_compound(input, tolerance).map_err(|cause| {
+        let mut members = step_read::read_source_compound(input, tolerance).map_err(|cause| {
             let (kind, message) = match cause {
                 ReadError::Invalid => (GeometryErrorKind::InvalidResult, "Invalid STEP geometry"),
                 ReadError::Limit => (
@@ -189,8 +189,16 @@ impl Solid {
             error(IMPORT, kind, message)
         })?;
         if members.len() == 1 {
-            let (readback, imported) = members.pop().expect("one member");
-            return Self::verified_step_member(&readback, imported, feature, policy);
+            return match members.pop().expect("one member") {
+                step_read::SourceImport::Analytic(value) => {
+                    let (readback, imported) = *value;
+                    Self::verified_step_member(&readback, imported, feature, policy)
+                }
+                step_read::SourceImport::Radial(owned) => {
+                    let boundary = Self::qualify_imported_radial(*owned, policy)?;
+                    Self::from_rust_radial_boundary(boundary, feature, policy)
+                }
+            };
         }
         compound::rebuild(members, feature, policy)
     }

@@ -18,7 +18,14 @@ const MANIFEST: &str = "multicad-export.json";
 #[serde(rename_all = "snake_case")]
 pub enum StepVerificationMethod {
     DecodedBoundary,
+    DecodedBoundaryEnclosure,
     SourceKnownBoundary,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StepRetainedMemberReceipt {
+    pub member_index: u32,
+    pub decoded_volume_bounds_mm3: [f64; 2],
+    pub source_volume_bounds_mm3: [f64; 2],
 }
 /// Distinguishes decoded file mass from certified authored-source mass.
 /// Missing decoded mass is explicit; source support tolerance is not a
@@ -27,6 +34,12 @@ pub enum StepVerificationMethod {
 pub struct StepVerificationReceipt {
     pub method: StepVerificationMethod,
     pub decoded_volume_mm3: Option<f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retained_members: Vec<StepRetainedMemberReceipt>,
+    /// Separate existing decoded scalar contracts; never treated as exact
+    /// zero-width contributions to a retained whole-file enclosure.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decoded_scalar_members: Vec<(u32, f64)>,
     pub source_volume_bounds_mm3: Option<[f64; 2]>,
     /// Actual full-checker parameter, not a measured combined boundary error.
     pub verified_tolerance_mm: Option<f64>,
@@ -40,6 +53,8 @@ impl StepVerificationReceipt {
         Self {
             method: StepVerificationMethod::DecodedBoundary,
             decoded_volume_mm3: Some(volume),
+            retained_members: vec![],
+            decoded_scalar_members: vec![],
             source_volume_bounds_mm3: None,
             verified_tolerance_mm: None,
             maximum_polynomial_trim_error_mm: None,
@@ -132,6 +147,19 @@ fn verify(
             .ok_or_else(|| io("Missing source model"))?;
         let topology = rust_step_topology(model, artifact)?;
         let solid = artifact_solid(model, artifact)?;
+        if let Some(proof) = verify_retained_step(
+            path,
+            solid,
+            (
+                artifact.solid_count,
+                artifact.volume_mm3,
+                artifact.bounds_mm,
+            ),
+            artifact.producer,
+            tolerance,
+        ) {
+            return proof.map(|_| ());
+        }
         if let Some(proof) = verify_source_known_step(
             path,
             solid,
@@ -202,11 +230,11 @@ pub fn verify_rust_step_shape(
     shape: &crate::ShapeSnapshot,
     tolerance: f64,
 ) -> Result<f64, ExportError> {
-    if solid.rust_thread_entry_chamfer_data().is_some() {
+    if solid.rust_thread_entry_chamfer_data().is_some() || solid.has_retained_radial_source() {
         return Err(failure(
             ErrorKind::Unsupported,
             Some(shape.producer),
-            "This authored STEP has a source-known boundary proof; decoded file mass is unavailable. Use the verification receipt API",
+            "STEP mass needs a discriminated verification receipt; use the verification receipt API",
         ));
     }
     let actual = read_rust_step(path, solid, &shape.topology, shape.producer, tolerance)?;
@@ -237,6 +265,19 @@ pub fn verify_rust_step_shape_receipt(
             "STEP verification needs a finite positive tolerance",
         ));
     }
+    if let Some(proof) = verify_retained_step(
+        path,
+        solid,
+        (
+            shape.solid_count,
+            shape.volume_mm3,
+            [shape.bounds.min, shape.bounds.max],
+        ),
+        shape.producer,
+        tolerance,
+    ) {
+        return proof;
+    }
     if let Some(proof) = verify_source_known_step(
         path,
         solid,
@@ -251,6 +292,93 @@ pub fn verify_rust_step_shape_receipt(
         return proof;
     }
     verify_rust_step_shape(path, solid, shape, tolerance).map(StepVerificationReceipt::decoded)
+}
+fn verify_retained_step(
+    path: &Path,
+    solid: &Solid,
+    expected: StepMetrics,
+    producer: EntityId,
+    tolerance: f64,
+) -> Option<Result<StepVerificationReceipt, ExportError>> {
+    if !solid.has_retained_radial_source() {
+        return None;
+    }
+    Some((|| {
+        if !tolerance.is_finite() || tolerance <= 0. {
+            return Err(failure(
+                ErrorKind::Invalid,
+                Some(producer),
+                "STEP verification needs a finite positive tolerance",
+            ));
+        }
+        if !expected.1.is_finite()
+            || expected.1 <= 0.
+            || expected
+                .2
+                .into_iter()
+                .flatten()
+                .any(|value| !value.is_finite())
+        {
+            return Err(failure(
+                ErrorKind::Invalid,
+                Some(producer),
+                "Retained source snapshot needs finite bounds and positive finite mass",
+            ));
+        }
+        // Check source snapshot freshness separately from file mass. The
+        // source scalar is a display value, not a decoded exact-volume proof.
+        let bounds = solid.bounds().map_err(io)?;
+        verify_step_dimensions(
+            producer,
+            expected,
+            (
+                solid.solid_count().map_err(io)?,
+                solid.volume_mm3().map_err(io)?,
+                [bounds.min, bounds.max],
+            ),
+            tolerance,
+        )?;
+        let input = read_step_source(path, producer)?;
+        let proof = solid
+            .verify_retained_step_source(&input, tolerance)
+            .expect("typed retained source")
+            .map_err(|cause| {
+                failure(
+                    if cause == step_read::ReadError::Limit {
+                        ErrorKind::Budget
+                    } else {
+                        ErrorKind::Invalid
+                    },
+                    Some(producer),
+                    format!("Retained STEP boundary proof failed: {cause:?}"),
+                )
+            })?;
+        if proof.solid_count != expected.0 {
+            return Err(failure(
+                ErrorKind::Invalid,
+                Some(producer),
+                "Retained STEP member count differs from the current source",
+            ));
+        }
+        Ok(StepVerificationReceipt {
+            method: StepVerificationMethod::DecodedBoundaryEnclosure,
+            decoded_volume_mm3: None,
+            retained_members: proof
+                .retained_members
+                .into_iter()
+                .map(|member| StepRetainedMemberReceipt {
+                    member_index: member.member_index,
+                    decoded_volume_bounds_mm3: member.decoded_volume_bounds_mm3,
+                    source_volume_bounds_mm3: member.source_volume_bounds_mm3,
+                })
+                .collect(),
+            decoded_scalar_members: proof.decoded_scalar_members,
+            source_volume_bounds_mm3: None,
+            verified_tolerance_mm: Some(tolerance),
+            maximum_polynomial_trim_error_mm: None,
+            analytic_closure_tolerance_mm: None,
+        })
+    })())
 }
 fn verify_source_known_step(
     path: &Path,
@@ -314,6 +442,8 @@ fn verify_source_known_step(
         Ok(StepVerificationReceipt {
             method: StepVerificationMethod::SourceKnownBoundary,
             decoded_volume_mm3: None,
+            retained_members: vec![],
+            decoded_scalar_members: vec![],
             source_volume_bounds_mm3: Some(proof.source_volume_bounds_mm3),
             verified_tolerance_mm: Some(proof.verified_tolerance_mm),
             maximum_polynomial_trim_error_mm: Some(proof.maximum_polynomial_trim_error_mm),

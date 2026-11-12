@@ -308,6 +308,9 @@ pub(crate) fn planar_loops(solid: &Solid, face: u32) -> Vec<Vec<(u32, bool)>> {
     if let Some((body, _)) = solid.normal_relief_body() {
         return body.planar_loops(face);
     }
+    if let Some((body, _)) = solid.radial_boundary_body() {
+        return body.planar_loops(face);
+    }
     if let Some((body, _)) = solid.normal_sweep_body() {
         return body.planar_loops(face);
     }
