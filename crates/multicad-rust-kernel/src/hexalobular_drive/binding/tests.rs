@@ -386,3 +386,73 @@ fn post_support_binding_errors_add_to_curve_error_and_invalid_lines_fail_closed(
         .is_ok()
     );
 }
+
+#[test]
+fn literal_cone_angle_keeps_its_bits_and_adds_conversion_error_to_spatial_and_mass_bounds() {
+    let original = binding();
+    assert_eq!(original.literal_cone_semi_angle_rad(), None);
+    assert_eq!(original.cone_angle_conversion_error(), TransportError::ZERO);
+    let angle = PI / 3.;
+    let actual = original
+        .clone()
+        .with_literal_cone_semi_angle(angle)
+        .unwrap();
+    assert_eq!(
+        actual.literal_cone_semi_angle_rad().unwrap().to_bits(),
+        angle.to_bits()
+    );
+    let error = actual.cone_angle_conversion_error();
+    assert!(error.numeric_conversion_mm > 0. && error.arithmetic_mm > 0.);
+    let difference = actual.source().maximum_radius_bound_mm()
+        * (actual.source().cone().depth_per_radius - angle.cos() / angle.sin()).abs();
+    assert!(error.arithmetic_mm >= difference);
+    assert!(
+        actual.spatial_source_error_bound_mm()
+            >= original.spatial_source_error_bound_mm() + error.total_mm()
+    );
+    assert!(
+        actual.additional_volume_error_bound_mm3().unwrap()
+            > original.additional_volume_error_bound_mm3().unwrap()
+    );
+    assert_eq!(
+        actual.nominal_binding_error_mm(),
+        original.nominal_binding_error_mm()
+    );
+    assert_eq!(actual.vertices(), original.vertices());
+    assert_eq!(actual.carriers(), original.carriers());
+    assert_eq!(actual.post_lines(), original.post_lines());
+    let recess = Recess::conical_hexalobular_from_binding(actual.clone(), 1e-5, 100_000).unwrap();
+    assert_eq!(
+        recess.source_error_mm(),
+        actual.spatial_source_error_bound_mm()
+    );
+    let Recess::ConicalHexalobular(recess) = recess else {
+        unreachable!()
+    };
+    assert_eq!(
+        recess
+            .finite_binding()
+            .unwrap()
+            .literal_cone_semi_angle_rad(),
+        Some(angle)
+    );
+}
+
+#[test]
+fn literal_cone_angle_refuses_uncoupled_or_unrepresentable_support_data() {
+    let original = binding();
+    for angle in [0., -1., f64::NAN, f64::INFINITY, PI / 2., 2., 0.5] {
+        assert_eq!(
+            original.clone().with_literal_cone_semi_angle(angle),
+            Err(Error::Invalid)
+        );
+    }
+    for angle in [f64::from_bits(1), 1e-310] {
+        assert_eq!(
+            original.clone().with_literal_cone_semi_angle(angle),
+            Err(Error::Unresolved)
+        );
+    }
+    assert_eq!(original.literal_cone_semi_angle_rad(), None);
+    assert!(original.with_literal_cone_semi_angle(PI / 3.).is_ok());
+}

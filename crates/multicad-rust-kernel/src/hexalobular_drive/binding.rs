@@ -2,6 +2,7 @@
 //! decoder; this type independently certifies the retained chart geometry.
 use super::*;
 use std::sync::Arc as Shared;
+mod cone_angle;
 #[cfg(test)]
 mod tests;
 
@@ -49,6 +50,7 @@ pub struct FiniteBinding {
     posts: [FinitePost; 12],
     carriers: [Vec<CubicIntersectionSpan>; 12],
     nominal_binding_error_mm: f64,
+    literal_cone_angle: Option<cone_angle::LiteralAngle>,
 }
 fn distance(actual: [f64; 3], expected: [I; 3]) -> f64 {
     actual
@@ -239,6 +241,7 @@ impl FiniteBinding {
             posts,
             carriers,
             nominal_binding_error_mm: error,
+            literal_cone_angle: None,
         })
     }
     pub fn source(&self) -> &Drive {
@@ -261,16 +264,24 @@ impl FiniteBinding {
         self.nominal_binding_error_mm
     }
     pub fn spatial_source_error_bound_mm(&self) -> f64 {
-        (I::point(self.source.spatial_source_error_bound_mm())
-            + I::point(self.nominal_binding_error_mm))
-        .hi
+        let base = I::point(self.source.spatial_source_error_bound_mm())
+            + I::point(self.nominal_binding_error_mm);
+        if let Some(angle) = self.literal_cone_angle {
+            (base + I::point(angle.error.total_mm())).hi
+        } else {
+            base.hi
+        }
     }
     /// Extra trim tube only; the source's volume certificate already includes
     /// its own numerical/transport reserve.
     pub fn additional_volume_error_bound_mm3(&self) -> Option<f64> {
         let d = self.nominal_binding_error_mm;
-        let floor =
-            ((I::point(1.) + I::point(self.source.cone().depth_per_radius)) * I::point(d)).hi;
+        let floor = (I::point(1.) + I::point(self.source.cone().depth_per_radius)) * I::point(d);
+        let floor = if let Some(angle) = self.literal_cone_angle {
+            (floor + I::point(angle.error.total_mm())).hi
+        } else {
+            floor.hi
+        };
         self.source.boundary_volume_error_bound_mm3(d, floor)
     }
 }
