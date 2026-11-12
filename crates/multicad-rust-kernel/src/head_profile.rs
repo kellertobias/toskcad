@@ -178,6 +178,14 @@ impl Segment {
     }
 
     fn radius_at(self, z: f64) -> f64 {
+        if self.start[1] != self.end[1] {
+            if z == self.start[1] {
+                return self.start[0];
+            }
+            if z == self.end[1] {
+                return self.end[0];
+            }
+        }
         match self.curve {
             Curve::Line => {
                 if self.start[1] == self.end[1] {
@@ -190,7 +198,8 @@ impl Segment {
             }
             Curve::Arc { center, .. } => {
                 let radius = (self.start[0] - center[0]).hypot(self.start[1] - center[1]);
-                let radial = (radius * radius - (z - center[1]).powi(2)).max(0.).sqrt();
+                let offset = (z - center[1]).abs();
+                let radial = ((radius - offset) * (radius + offset)).max(0.).sqrt();
                 if self.role == Role::Crown {
                     center[0] + radial
                 } else {
@@ -259,6 +268,10 @@ impl Profile {
             return Err(ThreadError::Limit);
         }
         let top_z = -height;
+        // Reserve several dozen rounding steps at the complete source scale.
+        // Stable factored square roots below avoid amplifying cancellation.
+        // This budget alone is not a manufacturing certificate: the placed
+        // facade must check source/trim residuals against its geometry policy.
         let mut reserve = 64. * f64::EPSILON * (radius + height + plain + neck);
         let mut result = Self {
             segments: [None; 5],
@@ -351,8 +364,8 @@ impl Profile {
                 if plain > neck && plain - neck <= reserve {
                     return Err(ThreadError::Invalid);
                 }
-                let center_z = top_z + (crown * crown - land * land).sqrt();
-                let skirt_z = center_z - (crown * crown - radius * radius).sqrt();
+                let center_z = top_z + ((crown - land) * (crown + land)).sqrt();
+                let skirt_z = center_z - ((crown - radius) * (crown + radius)).sqrt();
                 if skirt_z >= 0. {
                     return Err(ThreadError::Invalid);
                 }

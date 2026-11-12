@@ -355,3 +355,26 @@ fn erased_positive_features_and_marginal_socket_walls_are_refused() {
     assert!(!p.admits_socket(marginal, 0.6, wall));
     assert!(p.admits_socket(marginal - 4. * p.rounding_error_mm(), 0.6, wall));
 }
+
+#[test]
+fn representable_small_land_keeps_its_authored_circle_endpoint() {
+    let land = 1e-12;
+    let p = Profile::new(
+        Head::Crowned {
+            radius_mm: 3.,
+            height_mm: 2.5,
+            crown_radius_mm: 4.,
+            top_land_radius_mm: land,
+            neck_radius_mm: 0.,
+        },
+        1.5,
+        1.,
+    )
+    .unwrap();
+    assert!(land > p.rounding_error_mm());
+    assert_eq!(p.radius_at(p.top()[1]), Some(land));
+    let c = p.segments().next().unwrap();
+    assert_eq!(c.point(0.), [land, -2.5]);
+    assert_eq!(c.radius_at(c.end[1]), c.end[0]);
+    assert!(c.area_mm2().is_finite() && c.volume_mm3() > 0.);
+}
