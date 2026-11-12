@@ -1007,6 +1007,114 @@ mod tests {
         }
     }
 
+    #[test]
+    fn cyclic_drive_loops_and_wall_face_order_preserve_the_same_physical_member() {
+        for crown in [false, true] {
+            let old = screw(crown, 1, false);
+            let source = Screw::new_with_head_thread_union(
+                *old.thread(),
+                Spec {
+                    head: old.spec().head.unwrap(),
+                    shank_length_mm: 0.,
+                    socket_across_flats_mm: 2.,
+                    socket_depth_mm: 0.6,
+                    minimum_wall_mm: 0.1,
+                },
+            )
+            .unwrap();
+            let frame = [[30., -20., 10.], [0.6, 0.8, 0.], [0., 0., 1.]];
+            let text =
+                step::write_profiled_screw(&source, frame[0], frame[1], frame[2], 1e-7).unwrap();
+            let data = parse_entities(&text, 1e-7).unwrap();
+            let shell = Shell::new(&data, 1e-7, true);
+            let solid = shell.represented_solids(true).unwrap()[0];
+            let faces = shell.member_faces(solid).unwrap();
+            let top = faces.len() - source.profile().segments().count() - 8;
+            let floor = faces.len() - 7;
+            // A lower drive edge alone cannot qualify a wall: its complete
+            // finite four-edge cycle is still mandatory after order matching.
+            let bound = face(&shell, faces[floor + 1]).unwrap().2[0];
+            let loop_id = reference(&shell.simple(bound).unwrap().args[1]).unwrap();
+            let mut broken = refs(&shell.args(loop_id, "EDGE_LOOP").unwrap()[1]).unwrap();
+            broken.remove(1);
+            let line = text
+                .lines()
+                .find(|line| line.starts_with(&format!("#{loop_id}=")))
+                .unwrap();
+            let replacement = format!(
+                "#{loop_id}=EDGE_LOOP('',({}));",
+                broken
+                    .iter()
+                    .map(|id| format!("#{id}"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+            let malformed = text.replacen(line, &replacement, 1);
+            assert!(
+                verify_profiled_screw(&malformed, &source, frame[0], frame[1], frame[2], 1e-7)
+                    .is_err()
+            );
+            assert!(crate::step_read::read_import_solid(&malformed, 1e-7).is_err());
+            let mut loops = Vec::new();
+            for (i, &id) in faces.iter().enumerate().skip(top) {
+                if i != top && i < floor {
+                    continue;
+                }
+                let bounds = face(&shell, id).unwrap().2;
+                let bound = bounds[usize::from(i == top)];
+                let bound = shell.simple(bound).unwrap();
+                let loop_id = reference(&bound.args[1]).unwrap();
+                let mut edges = refs(&shell.args(loop_id, "EDGE_LOOP").unwrap()[1]).unwrap();
+                edges.rotate_left(1);
+                loops.push((
+                    loop_id,
+                    format!(
+                        "EDGE_LOOP('',({}))",
+                        edges
+                            .iter()
+                            .map(|id| format!("#{id}"))
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    ),
+                ));
+            }
+            let shell_id =
+                reference(&shell.args(solid, "MANIFOLD_SOLID_BREP").unwrap()[1]).unwrap();
+            let mut reordered_faces = faces.clone();
+            reordered_faces[floor + 1..].rotate_left(2);
+            loops.push((
+                shell_id,
+                format!(
+                    "CLOSED_SHELL('',({}))",
+                    reordered_faces
+                        .iter()
+                        .map(|id| format!("#{id}"))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ),
+            ));
+            let mut reordered = text.clone();
+            for (id, entity) in loops {
+                let line = text
+                    .lines()
+                    .find(|line| line.starts_with(&format!("#{id}=")))
+                    .unwrap();
+                reordered = reordered.replacen(line, &format!("#{id}={entity};"), 1);
+            }
+            topology(&reordered).unwrap();
+            verify_profiled_screw(&reordered, &source, frame[0], frame[1], frame[2], 1e-7).unwrap();
+            let (_, first) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+            let (_, second) = crate::step_read::read_import_solid(&reordered, 1e-7).unwrap();
+            assert_eq!(
+                first.profiled_screw_geometry().unwrap().0.drive(),
+                second.profiled_screw_geometry().unwrap().0.drive()
+            );
+            assert!(crate::step_read::profiled_screw_import_matches(
+                &second, &source, frame, 1e-7
+            ));
+        }
+    }
+
     fn topology(input: &str) -> Result<()> {
         compound::read_members_by(input, 1e-7, true, true, |shell, id, _| {
             let faces = shell.member_faces(id)?;
@@ -1501,7 +1609,12 @@ mod tests {
                     ));
                     let (actual, _) = imported.profiled_screw_geometry().unwrap();
                     assert!(!actual.drive().is_canonical());
-                    for (a, b) in actual.drive().corners_mm().into_iter().zip(corners) {
+                    for (a, b) in actual
+                        .drive()
+                        .corners_mm()
+                        .into_iter()
+                        .zip(source.drive().corners_mm())
+                    {
                         assert!(
                             (a[0] - b[0]).hypot(a[1] - b[1]) < actual.profile().rounding_error_mm()
                         );

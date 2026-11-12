@@ -68,11 +68,22 @@ pub(super) fn walls_area(
 ) -> Result<f64> {
     let mut rails = [[(0, false); 2]; 6];
     let mut area = 0.;
-    for (i, (&id, (lower, upper))) in faces.iter().zip(lower.iter().zip(upper)).enumerate() {
-        let (surface, forward, bounds) = face(shell, id)?;
-        let [bound] = bounds[..] else {
-            return Err(ReadError::Invalid);
-        };
+    require(faces.len() == 6 && lower.len() == 6 && upper.len() == 6)?;
+    let mut remaining = faces.to_vec();
+    for (i, (lower, upper)) in lower.iter().zip(upper).enumerate() {
+        let mut found = None;
+        for (index, &id) in remaining.iter().enumerate() {
+            let (surface, forward, bounds) = face(shell, id)?;
+            let [bound] = bounds[..] else {
+                return Err(ReadError::Invalid);
+            };
+            if orient(&ring(shell, bound, true)?, !cavity).contains(&lower.oriented) {
+                found = Some((index, surface, forward, bound));
+                break;
+            }
+        }
+        let (index, surface, forward, bound) = found.ok_or(ReadError::Invalid)?;
+        remaining.remove(index);
         require(forward)?;
         let [start, end] = lower.vertices;
         let a = shell.vertex(start)?;
@@ -85,7 +96,12 @@ pub(super) fn walls_area(
             cross(tangent, axis).map(|n| if cavity { -n } else { n }),
             tangent,
         )?;
-        let edges = orient(&ring(shell, bound, true)?, !cavity);
+        let mut edges = orient(&ring(shell, bound, true)?, !cavity);
+        let first_edge = edges
+            .iter()
+            .position(|&e| e == lower.oriented)
+            .ok_or(ReadError::Invalid)?;
+        edges.rotate_left(first_edge);
         let [bottom, end_rail, top, start_rail] = edges[..] else {
             return Err(ReadError::Invalid);
         };
@@ -133,21 +149,25 @@ pub(super) fn hex_rim(
 ) -> Result<Vec<LineUse>> {
     let edges = ring(shell, bound, exterior)?;
     require(edges.len() == expected.len())?;
-    // The bottom rim is oriented clockwise starting at corner 5. Normalize
-    // it to the same first corner and counterclockwise order as the shoulder.
-    let mut edges = orient(&edges, forward);
-    if !forward {
-        edges.rotate_left(1);
-    }
+    let edges = orient(&edges, forward);
     let mut uses = Vec::with_capacity(expected.len());
-    for (i, edge) in edges.into_iter().enumerate() {
-        let line = line(shell, edge)?;
+    for edge in edges {
+        uses.push(line(shell, edge)?);
+    }
+    let mut start = None;
+    for (i, line) in uses.iter().enumerate() {
+        if proof.equal(shell.vertex(line.vertices[0])?, expected[0]) {
+            start = Some(i);
+            break;
+        }
+    }
+    uses.rotate_left(start.ok_or(ReadError::Invalid)?);
+    for (i, line) in uses.iter().enumerate() {
         let [a, b] = line.vertices;
         require(
             proof.equal(shell.vertex(a)?, expected[i])
                 && proof.equal(shell.vertex(b)?, expected[(i + 1) % 6]),
         )?;
-        uses.push(line);
     }
     require((0..6).all(|i| uses[i].vertices[1] == uses[(i + 1) % 6].vertices[0]))?;
     Ok(uses)
@@ -200,6 +220,21 @@ mod tests {
         let root = reader.represented_solids(true).unwrap()[0];
         let faces = reader.member_faces(root).unwrap();
         let mut rewrite = Vec::new();
+        let (_, _, bounds) = face(&reader, faces[faces.len() - 6]).unwrap();
+        let (_, wire, _) = reader.bound(bounds[0], true).unwrap();
+        let mut incomplete = refs(&reader.args(wire, "EDGE_LOOP").unwrap()[1]).unwrap();
+        incomplete.remove(1);
+        rewrite.push((
+            wire,
+            format!(
+                "EDGE_LOOP('',({}));",
+                incomplete
+                    .iter()
+                    .map(|id| format!("#{id}"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        ));
         for id in &faces[6..8] {
             let (surface, _, bounds) = face(&reader, *id).unwrap();
             rewrite.push((*id, format!("ADVANCED_FACE('',(),#{surface},.T.);")));

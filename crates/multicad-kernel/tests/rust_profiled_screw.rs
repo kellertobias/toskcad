@@ -189,6 +189,7 @@ fn retained_socket_contour_controls_actual_faces_planes_references_and_exchange(
         let source =
             Screw::from_source_with_drive(*source.thread(), *source.profile(), physical, points)
                 .unwrap();
+        let points = source.drive().corners_mm();
         let retained = Solid::rust_profiled_screw_from_source(source, owner, at, policy).unwrap();
         let snapshot = retained.topology_snapshot(owner, 0).unwrap();
         snapshot.validate().unwrap();
@@ -738,4 +739,56 @@ fn nominal_shank_and_fitted_rounded_thread_keep_both_actual_shoulder_boundaries(
             assert_eq!(solid.volume_mm3().unwrap(), original);
         }
     }
+}
+
+#[test]
+fn cyclic_drive_loop_starts_keep_import_member_and_wall_references_stable() {
+    let scratch = tempfile::tempdir().unwrap();
+    let policy = GeometryPolicy::default();
+    let owner = EntityId::new();
+    let mut authored = spec(false);
+    authored.shank_length_mm = 0.;
+    let solid = Solid::rust_profiled_machine_screw_with_head_thread_union(
+        thread(),
+        None,
+        authored,
+        owner,
+        PlaneFrame::default(),
+        policy,
+    )
+    .unwrap();
+    let path = scratch.path().join("cyclic.step");
+    solid.write_step(&path).unwrap();
+    let text = std::fs::read_to_string(path).unwrap();
+    let mut changed = 0;
+    let reordered = text
+        .lines()
+        .map(|line| {
+            if let Some((prefix, list)) = line.split_once("=EDGE_LOOP('',(") {
+                let mut uses = list
+                    .strip_suffix("));")
+                    .unwrap()
+                    .split(',')
+                    .collect::<Vec<_>>();
+                if uses.len() == 6 {
+                    uses.rotate_left(2);
+                    changed += 1;
+                    return format!("{prefix}=EDGE_LOOP('',({}));", uses.join(","));
+                }
+            }
+            line.to_owned()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(changed, 2);
+    let first = Solid::import_rust_step(&text, owner, policy).unwrap();
+    let second = Solid::import_rust_step(&reordered, owner, policy).unwrap();
+    assert_eq!(
+        first.topology_snapshot(owner, 0).unwrap(),
+        second.topology_snapshot(owner, 0).unwrap()
+    );
+    assert_eq!(
+        first.rust_profiled_screw_geometry().unwrap().0.drive(),
+        second.rust_profiled_screw_geometry().unwrap().0.drive()
+    );
 }

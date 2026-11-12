@@ -7,7 +7,15 @@ fn actual_rotated_corners_drive_area_rays_edges_and_centroid() {
             let corners = headed_screw::hex_vertices(2.)
                 .map(|[x, y]| [c * x - s * y + offset, s * x + c * y]);
             let drive = HexDrive::from_retained_corners(corners, 2., 1e-12).unwrap();
-            assert_eq!(drive.corners_mm(), corners);
+            assert!(drive.corners_mm().into_iter().all(|p| corners.contains(&p)));
+            for start in 0..6 {
+                let mut cyclic = corners;
+                cyclic.rotate_left(start);
+                assert_eq!(
+                    HexDrive::from_retained_corners(cyclic, 2., 1e-12).unwrap(),
+                    drive
+                );
+            }
             assert_eq!(drive.is_canonical(), angle == 0. && offset == 0.);
             assert!((drive.area_mm2() - 3_f64.sqrt() * 2.).abs() < 1e-12);
             let center = drive.center_mm();

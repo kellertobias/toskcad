@@ -22,9 +22,11 @@ impl HexDrive {
             source_error_mm,
         )
     }
-    /// Retain the caller's ordered physical corners. Size, centering and
+    /// Retain the caller's counterclockwise physical corners. Size, centering and
     /// regularity are qualified within the separately exposed source budget;
-    /// corners are never rotated, fitted or replaced with ideal vertices.
+    /// coordinates are never rotated, fitted or replaced with ideal vertices.
+    /// Only the cyclic array start is normalized to the greatest literal (x,y)
+    /// corner, so equivalent loop starts give stable side ordinals and identity.
     pub fn from_retained_corners(
         corners: [Point; 6],
         across_flats: f64,
@@ -65,6 +67,16 @@ impl HexDrive {
         if center[0].hypot(center[1]) > budget {
             return Err(ThreadError::Invalid);
         }
+        let mut corners = corners;
+        let mut first = 0;
+        for i in 1..6 {
+            if corners[i][0] > corners[first][0]
+                || (corners[i][0] == corners[first][0] && corners[i][1] > corners[first][1])
+            {
+                first = i;
+            }
+        }
+        corners.rotate_left(first);
         Ok(Self {
             corners,
             across_flats,

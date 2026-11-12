@@ -71,20 +71,23 @@ pub fn profiled_screw_import_matches(
         a.role == b.role && station(a.start, b.start) && station(a.end, b.end) && curve
     });
     let points = [source, other].map(|s| s.drive().corners_mm());
-    let drive = [0., 1.].into_iter().all(|floor| {
-        points[0].into_iter().zip(points[1]).all(|(a, b)| {
-            near(
-                world(
-                    frame,
-                    a,
-                    source.head_top_z() + floor * source.spec().socket_depth_mm,
-                ),
-                world(
-                    other_frame,
-                    b,
-                    other.head_top_z() + floor * other.spec().socket_depth_mm,
-                ),
-            )
+    let drive = (0..6).any(|start| {
+        [0., 1.].into_iter().all(|floor| {
+            points[0].into_iter().enumerate().all(|(i, a)| {
+                let b = points[1][(i + start) % 6];
+                near(
+                    world(
+                        frame,
+                        a,
+                        source.head_top_z() + floor * source.spec().socket_depth_mm,
+                    ),
+                    world(
+                        other_frame,
+                        b,
+                        other.head_top_z() + floor * other.spec().socket_depth_mm,
+                    ),
+                )
+            })
         })
     });
     meridian && drive
