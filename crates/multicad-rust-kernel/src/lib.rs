@@ -3,6 +3,7 @@
 mod exact_binary;
 
 pub mod annulus;
+pub mod axial_pipe_thread;
 pub mod axial_profile_stack;
 pub mod bevel_gear;
 pub mod chamfered_bores;
