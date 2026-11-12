@@ -8,6 +8,8 @@ use multicad_rust_kernel::radial_tensor::{
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 mod identity;
+mod thread;
+pub use thread::RetainedHelicalThreadSource;
 
 const OPERATION: &str = "retained radial boundary";
 const MASS_ACCURACY: f64 = 1e-4;
@@ -29,6 +31,7 @@ pub(crate) struct RadialBoundaryBody {
     face_keys: Vec<multicad_core::project_file::ContentHash>,
     edge_keys: Vec<multicad_core::project_file::ContentHash>,
     vertex_keys: Vec<multicad_core::project_file::ContentHash>,
+    authored_thread: Option<Rc<thread::AuthoredThread>>,
 }
 
 pub(super) fn source_signature(
@@ -141,6 +144,16 @@ impl Solid {
         policy: GeometryPolicy,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Self, GeometryError> {
+        Self::from_certified_radial_boundary(boundary, feature, policy, interrupt, None)
+    }
+
+    fn from_certified_radial_boundary(
+        boundary: RadialBoundary,
+        feature: EntityId,
+        policy: GeometryPolicy,
+        interrupt: Option<&dyn Fn() -> bool>,
+        authored_thread: Option<Rc<thread::AuthoredThread>>,
+    ) -> Result<Self, GeometryError> {
         policy.validate()?;
         checkpoint(interrupt)?;
         if feature.is_nil() || policy.boolean_fuzzy_mm != 0. {
@@ -190,6 +203,7 @@ impl Solid {
             face_keys: keys.faces,
             edge_keys: keys.edges,
             vertex_keys: keys.vertices,
+            authored_thread,
         };
         let bounds = body.bounds(PlaneFrame::default(), interrupt)?;
         policy.point(bounds.min)?;
@@ -268,6 +282,7 @@ impl RadialBoundaryBody {
             face_keys: self.face_keys.clone(),
             edge_keys: self.edge_keys.clone(),
             vertex_keys: self.vertex_keys.clone(),
+            authored_thread: self.authored_thread.clone(),
         }
     }
     fn placement(
@@ -408,10 +423,14 @@ impl RadialBoundaryBody {
         let mut builder = Builder::new(
             (0..input.faces.len())
                 .map(|i| {
-                    vec![Origin {
-                        source: self.feature,
-                        role: format!("retained.face/{}", self.face_keys[i]),
-                    }]
+                    if let Some(authored) = &self.authored_thread {
+                        authored.face_origins(self.feature, i)
+                    } else {
+                        vec![Origin {
+                            source: self.feature,
+                            role: format!("retained.face/{}", self.face_keys[i]),
+                        }]
+                    }
                 })
                 .collect(),
         );
@@ -478,6 +497,10 @@ impl RadialBoundaryBody {
         }
         let mut elements = builder.into_elements();
         for element in &mut elements {
+            if let Some(authored) = &self.authored_thread {
+                authored.apply_origin(self.feature, element);
+                continue;
+            }
             let keys = match element.key.kind {
                 multicad_core::references::TopologyKind::Face => None,
                 multicad_core::references::TopologyKind::Edge => Some((&self.edge_keys, "edge")),
