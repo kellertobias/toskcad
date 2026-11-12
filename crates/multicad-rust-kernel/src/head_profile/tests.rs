@@ -630,3 +630,23 @@ fn literal_support_radius_is_preserved_and_never_fitted_to_trim_vertices() {
     assert!(actual.support([1., 0., 0.]) > 1.);
     assert!(actual.support([0., 0., -1.]) > 1.);
 }
+
+mod cylindrical;
+
+#[test]
+fn expanded_union_neck_respects_the_complete_axial_source_envelope() {
+    assert_eq!(
+        Profile::new_for_thread_union(
+            Head::Crowned {
+                radius_mm: 8e6,
+                height_mm: 5e6,
+                crown_radius_mm: 9e6,
+                top_land_radius_mm: 4e6,
+                neck_radius_mm: 6e6
+            },
+            1e6,
+            0.
+        ),
+        Err(ThreadError::Limit)
+    );
+}

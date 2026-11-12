@@ -262,3 +262,49 @@ fn existing_socket_wall_budget_failure_keeps_the_original_source_reusable() {
     );
     assert_eq!(super::super::tessellate_screw(&source, opts).unwrap(), mesh);
 }
+
+#[test]
+fn cylindrical_socket_caps_keep_true_torx_cavity_and_full_original_threads() {
+    for left in [false, true] {
+        for plain in [0., 3.] {
+            let prototype = screw(1., left, false, true);
+            let actual = Screw::new_with_recess(
+                *prototype.thread(),
+                1.5,
+                Head::Cylindrical {
+                    radius_mm: 2.8,
+                    height_mm: 2.4,
+                },
+                plain,
+                0.1,
+                prototype.recess().clone(),
+            )
+            .unwrap();
+            assert!(!actual.has_head_thread_overlap());
+            assert_eq!(
+                actual.visible_thread_interval_mm(),
+                [0., actual.thread().spec().length_mm]
+            );
+            let mesh = tessellate_profiled_screw(&actual, options(1.)).unwrap();
+            let receipt = certify(&mesh).unwrap();
+            let bound = profiled_screw_volume_error_bound(&actual, options(1.)).unwrap();
+            assert!((receipt.signed_volume_mm3 - actual.volume_mm3()).abs() <= bound);
+            let vertices = mesh.vertices.as_chunks::<3>().0;
+            let drive = actual.recess().hexalobular_geometry().unwrap();
+            for arc in drive.arcs() {
+                let [x, y] = arc.start_mm;
+                assert!(vertices.contains(&[x, y, actual.head_top_z()]));
+                assert!(vertices.contains(&[
+                    x,
+                    y,
+                    actual.head_top_z() + drive.cone().tip_depth_mm
+                        - x.hypot(y) * drive.cone().depth_per_radius
+                ]));
+            }
+            let expected = actual.thread().volume_mm3()
+                + PI * (2.8_f64.powi(2) * 2.4 + 1.5_f64.powi(2) * plain)
+                - actual.recess().nominal_volume_mm3();
+            assert!((actual.volume_mm3() - expected).abs() < 1e-10);
+        }
+    }
+}

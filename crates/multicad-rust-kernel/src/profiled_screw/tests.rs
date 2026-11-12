@@ -524,27 +524,30 @@ fn opt_in_union_retains_full_thread_phase_and_actual_neck_material() {
                     })
                     .unwrap();
                     let mut s = spec(crowned);
-                    s.head = match s.head {
-                        Head::Countersunk {
-                            included_angle_deg,
-                            edge_chamfer_mm,
-                            neck_radius_mm,
-                            ..
-                        } => Head::Countersunk {
+                    if let Head::Countersunk {
+                        included_angle_deg,
+                        edge_chamfer_mm,
+                        neck_radius_mm,
+                        ..
+                    } = s.head
+                    {
+                        s.head = Head::Countersunk {
                             radius_mm: 2. * major,
                             height_mm: major + 0.15,
                             included_angle_deg,
                             edge_chamfer_mm,
                             neck_radius_mm,
-                        },
-                        Head::Crowned { neck_radius_mm, .. } => Head::Crowned {
+                        };
+                    }
+                    if let Head::Crowned { neck_radius_mm, .. } = s.head {
+                        s.head = Head::Crowned {
                             radius_mm: 2. * major,
                             height_mm: major + 1.,
                             crown_radius_mm: 3. * major,
                             top_land_radius_mm: major,
                             neck_radius_mm,
-                        },
-                    };
+                        };
+                    }
                     s.shank_length_mm = plain;
                     assert!(Screw::new(t, s).is_err());
                     let screw = Screw::new_with_head_thread_union(t, s).unwrap();

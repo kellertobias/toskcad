@@ -238,6 +238,8 @@ impl Segment {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Head {
+    /// A socket-cap cylinder with its actual flat annular bearing face.
+    Cylindrical { radius_mm: f64, height_mm: f64 },
     Countersunk {
         radius_mm: f64,
         height_mm: f64,
@@ -402,6 +404,10 @@ impl Profile {
 
     fn construct(head: Head, shank: f64, plain: f64, union: bool) -> Result<Self, ThreadError> {
         let (radius, height, neck) = match head {
+            Head::Cylindrical {
+                radius_mm,
+                height_mm,
+            } => (radius_mm, height_mm, 0.),
             Head::Countersunk {
                 radius_mm,
                 height_mm,
@@ -455,6 +461,11 @@ impl Profile {
             }
         };
         match head {
+            Head::Cylindrical { .. } => {
+                push(result.top, [radius, 0.], Curve::Line, Role::Rim);
+                push([radius, 0.], [shank, 0.], Curve::Line, Role::Bearing);
+                push([shank, 0.], [shank, plain], Curve::Line, Role::Shank);
+            }
             Head::Countersunk {
                 included_angle_deg,
                 edge_chamfer_mm: ch,
@@ -572,6 +583,7 @@ impl Profile {
         }
         result.rounding_error_mm = reserve;
         let extra = match head {
+            Head::Cylindrical { .. } => 0.,
             Head::Countersunk {
                 edge_chamfer_mm, ..
             } => edge_chamfer_mm,
