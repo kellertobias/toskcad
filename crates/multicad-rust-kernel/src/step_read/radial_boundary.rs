@@ -27,13 +27,13 @@ fn exchange_failure(cause: crate::step::StepError) -> ReadError {
     }
 }
 
-pub(super) fn verify_member(
+fn verified_member_boundary(
     shell: &mut Shell<'_, '_>,
     id: u32,
     expected: &radial::RadialBoundary,
     tolerance: f64,
     minimum: f64,
-) -> Result<(radial::MassProperties, [Point; 2])> {
+) -> Result<radial::RadialBoundary> {
     let restored = read_member(shell, id)?
         .bind_surfaces(tolerance, None)
         .map_err(failure)?
@@ -52,9 +52,9 @@ pub(super) fn verify_member(
     {
         return Err(ReadError::Unsupported);
     }
-    let properties = restored
-        .properties_with_interrupt(1e-4, None)
-        .map_err(failure)?;
+    Ok(restored)
+}
+fn member_bounds(restored: &radial::RadialBoundary, tolerance: f64) -> Result<[Point; 2]> {
     let mut bounds = [[0.; 3]; 2];
     for (k, direction) in [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]]
         .into_iter()
@@ -67,7 +67,33 @@ pub(super) fn verify_member(
             .support_bounds(direction.map(|v| -v), tolerance * 64., None)
             .map_err(failure)?[1];
     }
-    Ok((properties, bounds))
+    Ok(bounds)
+}
+pub(super) fn verify_member(
+    shell: &mut Shell<'_, '_>,
+    id: u32,
+    expected: &radial::RadialBoundary,
+    tolerance: f64,
+    minimum: f64,
+) -> Result<(radial::MassProperties, [Point; 2])> {
+    let restored = verified_member_boundary(shell, id, expected, tolerance, minimum)?;
+    let properties = restored
+        .properties_with_interrupt(1e-4, None)
+        .map_err(failure)?;
+    Ok((properties, member_bounds(&restored, tolerance)?))
+}
+pub(super) fn verify_volume_member(
+    shell: &mut Shell<'_, '_>,
+    id: u32,
+    expected: &radial::RadialBoundary,
+    tolerance: f64,
+    minimum: f64,
+) -> Result<(radial::VolumeProperties, [Point; 2])> {
+    let restored = verified_member_boundary(shell, id, expected, tolerance, minimum)?;
+    let volume = restored
+        .volume_with_interrupt(1e-4, None)
+        .map_err(failure)?;
+    Ok((volume, member_bounds(&restored, tolerance)?))
 }
 fn axis(shell: &Shell<'_, '_>, id: u32) -> Result<radial::Axis> {
     let [Value::String(_), origin, normal, reference_axis] =

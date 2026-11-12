@@ -169,3 +169,51 @@ fn retained_member_verification_integrates_the_decoded_source_and_refuses_change
     assert_ne!(changed, input);
     assert!(verify_authored_compound(&changed, &expected, 1e-7).is_err());
 }
+
+#[test]
+fn retained_volume_only_verification_keeps_geometry_identity_and_interval_authority() {
+    let body = material(
+        BoundaryOwnership::new(crate::radial_tensor::tests::cam::wedge(&[1, 2]), 1e-7, None)
+            .unwrap(),
+    );
+    let input = crate::step::write_radial_boundary(&body, 1e-7).unwrap();
+    let expected = [ExpectedStepMember::RetainedRadialVolume {
+        boundary: &body,
+        minimum_feature_mm: 1e-6,
+    }];
+    assert!(format!("{:?}", expected[0]).contains("RadialBoundary"));
+    let mut verified = verify_authored_compound(&input, &expected, 1e-7).unwrap();
+    let VerifiedStepMember::RetainedRadialVolume { volume, bounds_mm } = verified.pop().unwrap()
+    else {
+        panic!()
+    };
+    assert!(volume.volume_mm3[0] > 0. && volume.volume_mm3[1] >= volume.volume_mm3[0]);
+    assert!(bounds_mm[0][0] < bounds_mm[1][0]);
+    let moved = body
+        .transformed_with_interrupt([[1., 0., 0.], [1., 0., 0.], [0., 1., 0.]], 1e-7, 1e-6, None)
+        .unwrap();
+    assert!(
+        verify_authored_compound(
+            &input,
+            &[ExpectedStepMember::RetainedRadialVolume {
+                boundary: &moved,
+                minimum_feature_mm: 1e-6
+            }],
+            1e-7
+        )
+        .is_err()
+    );
+    assert!(
+        verify_authored_compound(
+            &input,
+            &[ExpectedStepMember::RetainedRadialVolume {
+                boundary: &body,
+                minimum_feature_mm: 0.
+            }],
+            1e-7
+        )
+        .is_err()
+    );
+    let changed = input.replace("ADVANCED_FACE(", "INVALID_FACE(");
+    assert!(verify_authored_compound(&changed, &expected, 1e-7).is_err());
+}

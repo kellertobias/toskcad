@@ -11,6 +11,11 @@ use crate::{
 #[derive(Clone, Copy, Debug)]
 pub enum ExpectedStepMember<'a> {
     Analytic,
+    /// Same physical identity/occupied-source proof, requesting volume only.
+    RetainedRadialVolume {
+        boundary: &'a crate::radial_tensor::RadialBoundary,
+        minimum_feature_mm: f64,
+    },
     RetainedRadial {
         boundary: &'a crate::radial_tensor::RadialBoundary,
         minimum_feature_mm: f64,
@@ -50,6 +55,11 @@ pub enum ExpectedStepMember<'a> {
 /// Independently decoded geometry or an integrated authored-surface proof.
 #[derive(Clone, Debug, PartialEq)]
 pub enum VerifiedStepMember {
+    /// A rigorous decoded volume interval; no area/centroid/inertia is implied.
+    RetainedRadialVolume {
+        volume: crate::radial_tensor::VolumeProperties,
+        bounds_mm: [Point; 2],
+    },
     RetainedRadial {
         properties: Box<crate::radial_tensor::MassProperties>,
         bounds_mm: [Point; 2],
@@ -89,6 +99,19 @@ pub fn verify_authored_compound(
     let members =
         compound::read_members_by(input, tolerance, true, false, |shell, solid, warped| {
             match expected.next().ok_or(ReadError::Invalid)? {
+                ExpectedStepMember::RetainedRadialVolume {
+                    boundary,
+                    minimum_feature_mm,
+                } => {
+                    let (volume, bounds_mm) = radial_boundary::verify_volume_member(
+                        shell,
+                        solid,
+                        boundary,
+                        tolerance,
+                        *minimum_feature_mm,
+                    )?;
+                    Ok(VerifiedStepMember::RetainedRadialVolume { volume, bounds_mm })
+                }
                 ExpectedStepMember::RetainedRadial {
                     boundary,
                     minimum_feature_mm,
