@@ -197,14 +197,24 @@ impl Screw {
             )?;
         }
         let reserve = profile.rounding_error_mm().max(recess.source_error_mm());
+        let expanded = |value| {
+            if recess.source_error_mm() == 0. {
+                value
+            } else {
+                (crate::tapered_thread::interval::I::point(value)
+                    + crate::tapered_thread::interval::I::point(recess.source_error_mm()))
+                .hi
+            }
+        };
+        let radius = expanded(recess.maximum_radius_bound_mm());
+        let depth = expanded(recess.maximum_depth_mm());
+        let back = (crate::tapered_thread::interval::I::point(profile.top()[1])
+            + crate::tapered_thread::interval::I::point(depth))
+        .hi;
         if recess.maximum_radius_bound_mm() <= 2. * reserve
             || recess.maximum_depth_mm() <= 2. * reserve
-            || !profile.admits_socket(
-                recess.maximum_radius_bound_mm() + recess.source_error_mm(),
-                recess.maximum_depth_mm(),
-                spec.minimum_wall_mm,
-            )
-            || profile.top()[1] + recess.maximum_depth_mm() >= 0.
+            || !profile.admits_socket(radius, depth, spec.minimum_wall_mm)
+            || back >= 0.
         {
             return Err(ThreadError::Invalid);
         }

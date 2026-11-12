@@ -910,3 +910,62 @@ fn retained_hex_requalifies_actual_corners_at_the_solid_budget_instead_of_inheri
     assert!(crate::step::supports_profiled_screw(&copied, [0.; 3], 1e-7));
     assert!(certify(&tessellate_profiled_screw(&copied, options()).unwrap()).is_ok());
 }
+
+#[test]
+fn retained_cavity_depth_error_cannot_breach_a_small_positive_head_bottom_wall() {
+    use crate::hexalobular_drive::{Cone, Drive, FiniteBinding, FiniteVertices, TangentSpec};
+    for shift_floor in [false, true] {
+        let source = Drive::from_authored_tangent(
+            TangentSpec {
+                major_diameter_mm: 2.8,
+                minor_diameter_mm: 2.05,
+                outer_lobe_radius_mm: 0.28,
+            },
+            Cone {
+                tip_depth_mm: 1.1 + 1.4 / 3_f64.sqrt(),
+                depth_per_radius: 1. / 3_f64.sqrt(),
+            },
+        )
+        .unwrap();
+        let tip = source.cone().tip_depth_mm;
+        let carriers: [Vec<_>; 12] =
+            std::array::from_fn(|i| source.intersection_carrier(i, 1e-8, 10_000).unwrap());
+        let vertices = FiniteVertices {
+            mouth_mm: source
+                .arcs()
+                .map(|arc| [arc.start_mm[0], arc.start_mm[1], 0.]),
+            floor_mm: std::array::from_fn(|i| carriers[i][0].poles_mm[0]),
+            apex_mm: [0., 0., tip],
+        };
+        let safe = FiniteBinding::new(source.clone(), vertices, carriers.clone(), 0.01).unwrap();
+        let mut moved = vertices;
+        let mut curves = carriers;
+        if shift_floor {
+            for point in &mut moved.floor_mm {
+                point[2] += 0.005;
+            }
+            for arc in &mut curves {
+                for span in arc {
+                    for point in &mut span.poles_mm {
+                        point[2] += 0.005;
+                    }
+                }
+            }
+        } else {
+            moved.apex_mm[2] += 0.005;
+        }
+        let binding = FiniteBinding::new(source, moved, curves, 0.01).unwrap();
+        let recess = Recess::conical_hexalobular_from_binding(binding, 1., 100_000).unwrap();
+        let head = Head::Crowned {
+            radius_mm: 2.8,
+            height_mm: tip + 0.002,
+            crown_radius_mm: 5.,
+            top_land_radius_mm: 2.05,
+            neck_radius_mm: 0.125,
+        };
+        let result = Screw::new_with_recess(thread(1, false), 1.5, head, 1., 0.0001, recess);
+        assert_eq!(result, Err(ThreadError::Invalid));
+        let safe = Recess::conical_hexalobular_from_binding(safe, 1., 100_000).unwrap();
+        assert!(Screw::new_with_recess(thread(1, false), 1.5, head, 1., 0.0001, safe).is_ok());
+    }
+}
