@@ -111,7 +111,9 @@ pub(super) fn mesh(
     options: Tessellation,
 ) -> Result<Mesh, GeometryError> {
     if frame == PlaneFrame::default() {
-        return crate::rust_display::mesh(source::tessellate(source, options));
+        let mesh = crate::rust_display::mesh(source::tessellate(source, options))?;
+        super::embedding::certify(&mesh)?;
+        return Ok(mesh);
     }
     let axes = [frame.u, frame.v, frame.normal()];
     chart(axes)?;
