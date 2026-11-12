@@ -13,6 +13,7 @@ pub mod curved_projection;
 pub mod cylinder;
 pub mod display;
 mod drawing_events;
+pub mod head_profile;
 pub mod headed_screw;
 pub mod helical_receiver;
 pub mod helical_thread;

@@ -1,0 +1,386 @@
+//! Retained analytic meridians for countersunk and crowned screw heads.
+//!
+//! Coordinates are `[radius, axial position]`, with the nominal bearing at
+//! zero and the head on negative Z. The final station is the plain-shank
+//! junction, not an approximation of the helical thread.
+
+use crate::helical_thread::ThreadError;
+use std::f64::consts::{FRAC_PI_2, PI, TAU};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Role {
+    Chamfer,
+    Rim,
+    Cone,
+    Crown,
+    Skirt,
+    Bearing,
+    Neck,
+    Shank,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Curve {
+    Line,
+    /// The signed angle preserves the authored direction around the center.
+    Arc {
+        center: [f64; 2],
+        sweep: f64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Segment {
+    pub start: [f64; 2],
+    pub end: [f64; 2],
+    pub curve: Curve,
+    pub role: Role,
+}
+
+impl Segment {
+    pub fn point(self, fraction: f64) -> [f64; 2] {
+        // Keep neighboring source faces on the very same endpoint values.
+        if fraction == 0. {
+            return self.start;
+        }
+        if fraction == 1. {
+            return self.end;
+        }
+        match self.curve {
+            Curve::Line => {
+                std::array::from_fn(|i| self.start[i] + fraction * (self.end[i] - self.start[i]))
+            }
+            Curve::Arc { center, sweep } => {
+                let radius = (self.start[0] - center[0]).hypot(self.start[1] - center[1]);
+                let angle = self.angle(center) + sweep * fraction;
+                [
+                    center[0] + radius * angle.cos(),
+                    center[1] + radius * angle.sin(),
+                ]
+            }
+        }
+    }
+
+    fn angle(self, center: [f64; 2]) -> f64 {
+        (self.start[1] - center[1]).atan2(self.start[0] - center[0])
+    }
+
+    /// Analytic disk integral, without tessellation or numerical quadrature.
+    pub fn volume_mm3(self) -> f64 {
+        match self.curve {
+            Curve::Line => {
+                let [a, z] = self.start;
+                let [b, end] = self.end;
+                PI * (end - z) * (a * a + a * b + b * b) / 3.
+            }
+            Curve::Arc {
+                center: [c, z],
+                sweep,
+            } => {
+                let radius = (self.start[0] - c).hypot(self.start[1] - z);
+                let start = self.angle([c, z]);
+                let integral = |t: f64| {
+                    let s = t.sin();
+                    radius * c * c * s
+                        + c * radius * radius * (t + (2. * t).sin() / 2.)
+                        + radius.powi(3) * (s - s.powi(3) / 3.)
+                };
+                PI * (integral(start + sweep) - integral(start))
+            }
+        }
+    }
+
+    /// Area of this revolved face, including horizontal bearing annuli.
+    pub fn area_mm2(self) -> f64 {
+        match self.curve {
+            Curve::Line => {
+                PI * (self.start[0] + self.end[0])
+                    * (self.end[0] - self.start[0]).hypot(self.end[1] - self.start[1])
+            }
+            Curve::Arc { center, sweep } => {
+                let radius = (self.start[0] - center[0]).hypot(self.start[1] - center[1]);
+                let angle = self.angle(center);
+                TAU * radius
+                    * (center[0] * sweep + radius * ((angle + sweep).sin() - angle.sin())).abs()
+            }
+        }
+    }
+
+    /// Support of the revolved face; `radial` must be a nonnegative norm.
+    pub fn support(self, radial: f64, axial: f64) -> f64 {
+        let dot = |[r, z]: [f64; 2]| radial.mul_add(r, axial * z);
+        let mut value = dot(self.start).max(dot(self.end));
+        if let Curve::Arc { center, sweep } = self.curve {
+            let start = self.angle(center);
+            let candidate = axial.atan2(radial);
+            let advance = if sweep > 0. {
+                (candidate - start).rem_euclid(TAU)
+            } else {
+                (start - candidate).rem_euclid(TAU)
+            };
+            if advance <= sweep.abs() {
+                let radius = (self.start[0] - center[0]).hypot(self.start[1] - center[1]);
+                value = value.max(dot(center) + radius * radial.hypot(axial));
+            }
+        }
+        value
+    }
+
+    fn radius_at(self, z: f64) -> f64 {
+        match self.curve {
+            Curve::Line => {
+                if self.start[1] == self.end[1] {
+                    self.start[0].max(self.end[0])
+                } else {
+                    self.start[0]
+                        + (z - self.start[1]) / (self.end[1] - self.start[1])
+                            * (self.end[0] - self.start[0])
+                }
+            }
+            Curve::Arc { center, .. } => {
+                let radius = (self.start[0] - center[0]).hypot(self.start[1] - center[1]);
+                let radial = (radius * radius - (z - center[1]).powi(2)).max(0.).sqrt();
+                if self.role == Role::Crown {
+                    center[0] + radial
+                } else {
+                    center[0] - radial
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Head {
+    Countersunk {
+        radius_mm: f64,
+        height_mm: f64,
+        included_angle_deg: f64,
+        edge_chamfer_mm: f64,
+        neck_radius_mm: f64,
+    },
+    /// Pan and button heads share this source geometry and differ in dimensions.
+    Crowned {
+        radius_mm: f64,
+        height_mm: f64,
+        crown_radius_mm: f64,
+        top_land_radius_mm: f64,
+        neck_radius_mm: f64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Profile {
+    segments: [Option<Segment>; 5],
+    top: [f64; 2],
+    end: [f64; 2],
+}
+
+impl Profile {
+    pub fn new(head: Head, shank: f64, plain: f64) -> Result<Self, ThreadError> {
+        let (radius, height, neck) = match head {
+            Head::Countersunk {
+                radius_mm,
+                height_mm,
+                neck_radius_mm,
+                ..
+            }
+            | Head::Crowned {
+                radius_mm,
+                height_mm,
+                neck_radius_mm,
+                ..
+            } => (radius_mm, height_mm, neck_radius_mm),
+        };
+        if ![radius, height, neck, shank, plain]
+            .into_iter()
+            .all(f64::is_finite)
+            || shank <= 0.
+            || radius <= shank
+            || height <= 0.
+            || neck < 0.
+            || plain < 0.
+        {
+            return Err(ThreadError::Invalid);
+        }
+        if radius.max(height + plain).max(neck) > 1e7 {
+            return Err(ThreadError::Limit);
+        }
+        let top_z = -height;
+        let mut result = Self {
+            segments: [None; 5],
+            top: [radius, top_z],
+            end: [shank, plain],
+        };
+        let mut count = 0;
+        let mut push = |start, end, curve, role| {
+            if start != end {
+                result.segments[count] = Some(Segment {
+                    start,
+                    end,
+                    curve,
+                    role,
+                });
+                count += 1;
+            }
+        };
+        match head {
+            Head::Countersunk {
+                included_angle_deg,
+                edge_chamfer_mm: ch,
+                ..
+            } => {
+                if !included_angle_deg.is_finite()
+                    || !(0. ..180.).contains(&included_angle_deg)
+                    || included_angle_deg == 0.
+                    || !ch.is_finite()
+                    || ch < 0.
+                    || ch >= radius
+                {
+                    return Err(ThreadError::Invalid);
+                }
+                let theta = included_angle_deg.to_radians() / 2.;
+                let rim = height - (radius - shank) / theta.tan();
+                let neck_z = neck * (theta / 2.).tan();
+                let center = [shank + neck, neck_z];
+                let tangent = [
+                    center[0] - neck * theta.cos(),
+                    center[1] - neck * theta.sin(),
+                ];
+                if rim < ch || plain < neck_z || top_z + rim > tangent[1] || radius <= tangent[0] {
+                    return Err(ThreadError::Invalid);
+                }
+                result.top[0] = radius - ch;
+                push(result.top, [radius, top_z + ch], Curve::Line, Role::Chamfer);
+                push(
+                    [radius, top_z + ch],
+                    [radius, top_z + rim],
+                    Curve::Line,
+                    Role::Rim,
+                );
+                push([radius, top_z + rim], tangent, Curve::Line, Role::Cone);
+                if neck > 0. {
+                    push(
+                        tangent,
+                        [shank, neck_z],
+                        Curve::Arc {
+                            center,
+                            sweep: -theta,
+                        },
+                        Role::Neck,
+                    );
+                }
+                push([shank, neck_z], [shank, plain], Curve::Line, Role::Shank);
+            }
+            Head::Crowned {
+                crown_radius_mm: crown,
+                top_land_radius_mm: land,
+                ..
+            } => {
+                if !crown.is_finite()
+                    || !land.is_finite()
+                    || crown < radius
+                    || land < 0.
+                    || land >= radius
+                    || radius <= shank + neck
+                    || plain < neck
+                {
+                    return Err(ThreadError::Invalid);
+                }
+                if crown > 1e7 {
+                    return Err(ThreadError::Limit);
+                }
+                let center_z = top_z + (crown * crown - land * land).sqrt();
+                let skirt_z = center_z - (crown * crown - radius * radius).sqrt();
+                if skirt_z >= 0. {
+                    return Err(ThreadError::Invalid);
+                }
+                result.top[0] = land;
+                let start_angle = (top_z - center_z).atan2(land);
+                let end_angle = (skirt_z - center_z).atan2(radius);
+                push(
+                    result.top,
+                    [radius, skirt_z],
+                    Curve::Arc {
+                        center: [0., center_z],
+                        sweep: end_angle - start_angle,
+                    },
+                    Role::Crown,
+                );
+                push([radius, skirt_z], [radius, 0.], Curve::Line, Role::Skirt);
+                push([radius, 0.], [shank + neck, 0.], Curve::Line, Role::Bearing);
+                if neck > 0. {
+                    push(
+                        [shank + neck, 0.],
+                        [shank, neck],
+                        Curve::Arc {
+                            center: [shank + neck, neck],
+                            sweep: -FRAC_PI_2,
+                        },
+                        Role::Neck,
+                    );
+                }
+                push([shank, neck], [shank, plain], Curve::Line, Role::Shank);
+            }
+        }
+        Ok(result)
+    }
+
+    pub fn segments(&self) -> impl Iterator<Item = Segment> + '_ {
+        self.segments.iter().flatten().copied()
+    }
+
+    pub fn top(&self) -> [f64; 2] {
+        self.top
+    }
+    pub fn end(&self) -> [f64; 2] {
+        self.end
+    }
+
+    pub fn volume_mm3(&self) -> f64 {
+        self.segments().map(Segment::volume_mm3).sum()
+    }
+
+    pub fn support(&self, direction: [f64; 3]) -> f64 {
+        let radial = direction[0].hypot(direction[1]);
+        self.segments()
+            .map(|s| s.support(radial, direction[2]))
+            .fold(f64::NEG_INFINITY, f64::max)
+    }
+
+    pub fn radius_at(&self, z: f64) -> Option<f64> {
+        if !z.is_finite() || z < self.top[1] || z > self.end[1] {
+            return None;
+        }
+        self.segments()
+            .filter(|s| z >= s.start[1] && z <= s.end[1])
+            .map(|s| s.radius_at(z))
+            .reduce(f64::max)
+    }
+
+    /// Prove a blind circular envelope fits with the requested radial wall.
+    /// A hex socket uses its corner radius, not its across-flats radius.
+    pub fn admits_socket(&self, radius: f64, depth: f64, wall: f64) -> bool {
+        if ![radius, depth, wall].into_iter().all(f64::is_finite)
+            || radius <= 0.
+            || depth <= 0.
+            || wall <= 0.
+            || self.top[1] + depth >= self.end[1]
+        {
+            return false;
+        }
+        let floor = self.top[1] + depth;
+        let minimum = self
+            .segments()
+            .filter(|s| s.start[1] <= floor)
+            .map(|s| {
+                s.radius_at(s.start[1])
+                    .min(s.radius_at(s.end[1].min(floor)))
+            })
+            .fold(f64::INFINITY, f64::min);
+        minimum >= radius + wall
+    }
+}
+
+#[cfg(test)]
+mod tests;
