@@ -170,6 +170,28 @@ impl Solid {
             let start = local(tool_frame.origin);
             let end = local(world_end);
             let radius = cylinder.circle().radius().as_f64();
+            let delta = subtract(end, start);
+            let axis = (0..3)
+                .max_by(|&a, &b| delta[a].abs().total_cmp(&delta[b].abs()))
+                .expect("three coordinates");
+            let bounds = stock.geometry.bounds();
+            let numeric = 32.
+                * f64::EPSILON
+                * bounds
+                    .min
+                    .into_iter()
+                    .chain(bounds.max)
+                    .map(f64::abs)
+                    .fold(1., f64::max);
+            if delta
+                .iter()
+                .enumerate()
+                .any(|(i, &d)| i != axis && d.abs() > numeric)
+            {
+                return Err(unsupported(
+                    "Oblique cylindrical subtraction requires a qualified curved Boolean provider",
+                ));
+            }
             // In this exact signed-cardinal source chart the radial disk has
             // zero extent along its travel axis. Disjoint axial intervals,
             // including end-face contact, remove no regularized material.
