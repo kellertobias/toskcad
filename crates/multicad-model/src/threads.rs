@@ -276,9 +276,26 @@ pub(crate) fn build_rust(
             });
         }
         if source.mode == ThreadMode::CutExternal {
-            return Err(fail(
-                "Receiving terminal relief without an entry chamfer is not yet certified",
-            ));
+            let target = receiving_target(feature, source, solids)?
+                .ok_or_else(|| fail("Receiving relief thread has no target predecessor"))?;
+            return target
+                .rust_cut_external_thread_end_relief_with_interrupt(
+                    spec,
+                    root_radius,
+                    ends.end_relief_length_mm,
+                    ends.end_relief_radial_depth_mm,
+                    feature,
+                    frame,
+                    policy,
+                    interrupt,
+                )
+                .map_err(|cause| {
+                    if cause.kind == multicad_kernel::GeometryErrorKind::Cancelled {
+                        error(Some(feature), "Model evaluation superseded")
+                    } else {
+                        error(Some(feature), cause)
+                    }
+                });
         }
         return Solid::rust_helical_thread_end_relief(
             spec,

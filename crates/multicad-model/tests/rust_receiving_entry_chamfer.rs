@@ -227,16 +227,6 @@ fn canonical_receiving_entry_edits_reopen_export_and_refusals_are_atomic() {
                 length: length(3.6),
                 ..edited.clone()
             },
-            ThreadParameters {
-                end_treatments: Some(ThreadEndTreatments {
-                    start: ThreadStartTreatment::FlatCut,
-                    end: ThreadEndTreatment::CylindricalRelief {
-                        length: length(0.3),
-                        radial_depth: length(0.05),
-                    },
-                }),
-                ..edited.clone()
-            },
         ] {
             let q = model::prepare_thread_edit(
                 &s,
