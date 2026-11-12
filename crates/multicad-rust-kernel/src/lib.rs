@@ -65,6 +65,7 @@ pub mod tapered_thread;
 pub mod thread_counterbore;
 pub mod thread_end_relief;
 pub mod thread_entry_chamfer;
+pub mod thread_internal_treatment;
 pub mod threaded_shaft;
 pub mod torus;
 pub mod trim_curve;
