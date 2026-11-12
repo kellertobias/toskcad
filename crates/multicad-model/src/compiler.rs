@@ -661,9 +661,6 @@ impl Compiler {
         checkpoint(interrupt)?;
         let source = document.validated().map_err(|e| error(None, e))?;
         self.policy.validate().map_err(|e| error(None, e))?;
-        if backend == GeometryBackend::Rust && roots.is_none() {
-            crate::rust_backend::validate_document(document, None)?;
-        }
         if roots.is_none() {
             crate::symbols::validate_definitions(
                 self,
@@ -769,7 +766,7 @@ impl Compiler {
                 }
             }
         }
-        if backend == GeometryBackend::Rust && roots.is_some() {
+        if backend == GeometryBackend::Rust {
             crate::rust_backend::validate_document(document, Some(&needed))?;
         }
         let mut cached = cache.map(|cache| {

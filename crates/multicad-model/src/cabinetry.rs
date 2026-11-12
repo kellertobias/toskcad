@@ -183,11 +183,13 @@ fn subtract(
     // named faces. The profile and removed-volume contracts are unchanged.
     let removed = || error(Some(id), format!("The {what} removed the whole panel"));
     if backend == GeometryBackend::Rust && !tools.is_empty() {
-        current = Some(
-            base.rust_subtract_orthogonal_tools(&tools, policy)
-                .map_err(|e| error(Some(id), e))?
-                .ok_or_else(removed)?,
-        );
+        let cut = match base.rust_subtract_orthogonal_tools(&tools, policy) {
+            Err(cause) if cause.kind == multicad_kernel::GeometryErrorKind::Unsupported => {
+                base.rust_subtract_planar_tools(&tools.iter().collect::<Vec<_>>(), id, policy)
+            }
+            result => result,
+        };
+        current = Some(cut.map_err(|e| error(Some(id), e))?.ok_or_else(removed)?);
     } else {
         for chunk in tools.chunks(if batch_circles { 128 } else { 1 }) {
             let compound;
