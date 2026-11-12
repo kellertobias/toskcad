@@ -7,19 +7,20 @@ use crate::{head_profile::TransportError, tapered_thread::interval::I};
 // representable value on each side encloses that numeric conversion; this is
 // independent of the caller's geometry tolerance. Directed intervals then
 // enclose every subtraction, cross product, determinant and inverse projection.
-struct ChartEnclosure {
+#[derive(Clone, Copy)]
+pub(super) struct ChartEnclosure {
     origin: [I; 3],
     rows: [[I; 3]; 3],
     determinant: I,
 }
-fn icross(a: [I; 3], b: [I; 3]) -> [I; 3] {
+pub(super) fn icross(a: [I; 3], b: [I; 3]) -> [I; 3] {
     [
         a[1] * b[2] - a[2] * b[1],
         a[2] * b[0] - a[0] * b[2],
         a[0] * b[1] - a[1] * b[0],
     ]
 }
-fn idot(a: [I; 3], b: [I; 3]) -> I {
+pub(super) fn idot(a: [I; 3], b: [I; 3]) -> I {
     a.into_iter()
         .zip(b)
         .fold(I::point(0.), |sum, (x, y)| sum + x * y)
@@ -35,16 +36,24 @@ impl ChartEnclosure {
         };
         let [u, v] = [frame.u.map(enclose), frame.v.map(enclose)];
         let n = icross(u, v);
+        Self::from_axes(frame.origin.map(enclose), [u, v, n])
+    }
+    pub(super) fn from_axes(origin: [I; 3], [u, v, n]: [[I; 3]; 3]) -> Result<Self> {
         let rows = [icross(v, n), icross(n, u), icross(u, v)];
         let determinant = idot(u, rows[0]);
         require(determinant.valid() && determinant.lo > 0.)?;
         Ok(Self {
-            origin: frame.origin.map(enclose),
+            origin,
             rows,
             determinant,
         })
     }
-    fn local(&self, point: Point, conversion: bool) -> Result<[I; 3]> {
+    pub(super) fn vector(&self, vector: [I; 3]) -> Result<[I; 3]> {
+        let local = self.rows.map(|row| idot(row, vector) / self.determinant);
+        require(local.into_iter().all(I::valid))?;
+        Ok(local)
+    }
+    pub(super) fn local(&self, point: Point, conversion: bool) -> Result<[I; 3]> {
         let point = point.map(|v| {
             if conversion {
                 I::new(v.next_down(), v.next_up())
@@ -52,13 +61,13 @@ impl ChartEnclosure {
                 I::point(v)
             }
         });
-        let delta = std::array::from_fn(|i| point[i] - self.origin[i]);
-        let local = self.rows.map(|row| idot(row, delta) / self.determinant);
-        require(local.into_iter().all(I::valid))?;
-        Ok(local)
+        self.point(point)
+    }
+    pub(super) fn point(&self, point: [I; 3]) -> Result<[I; 3]> {
+        self.vector(std::array::from_fn(|i| point[i] - self.origin[i]))
     }
 }
-fn references(value: &Value<'_>, out: &mut Vec<u32>) {
+pub(super) fn references(value: &Value<'_>, out: &mut Vec<u32>) {
     match value {
         Value::Reference(id) => out.push(*id),
         Value::List(values) => {
