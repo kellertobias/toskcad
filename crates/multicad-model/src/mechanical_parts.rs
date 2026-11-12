@@ -1,5 +1,6 @@
 //! Native mounting geometry and nut threads from retained canonical parameters.
 mod custom_connection;
+mod profiled_heads;
 mod screw_profiles;
 mod wood_screws;
 use crate::{ModelError, error};
@@ -571,6 +572,17 @@ fn rust_machine_screw(
             policy,
         )
         .map_err(|cause| error(Some(feature), cause));
+    }
+    if let Some(solid) = profiled_heads::build(
+        feature,
+        underhead_length_mm,
+        shank_radius_mm,
+        &head,
+        &drive,
+        thread,
+        policy,
+    )? {
+        return Ok(solid);
     }
     let (profile, root_radius, frame) = crate::threads::rust_profile(feature, thread)?;
     let head = legacy_head.ok_or_else(|| {
