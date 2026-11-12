@@ -711,7 +711,7 @@ fn curved_surface(
     Ok(())
 }
 
-fn closed_incidence(shell: &mut Shell<'_, '_>, faces: &[u32]) -> Result<()> {
+pub(in super::super) fn closed_incidence(shell: &mut Shell<'_, '_>, faces: &[u32]) -> Result<()> {
     require(faces.iter().collect::<BTreeSet<_>>().len() == faces.len())?;
     let mut directed = BTreeSet::new();
     let mut uses = BTreeMap::<u32, Vec<bool>>::new();

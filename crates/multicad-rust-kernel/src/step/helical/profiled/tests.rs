@@ -165,3 +165,24 @@ fn physical_junction_and_drive_encoders_refuse_collapsed_geometry() {
     let rim = corners(&mut file, &thread, &p);
     assert!(junction(&mut file, &p, &thread, f64::INFINITY, &rim).is_err());
 }
+
+#[test]
+fn far_world_collapsed_crest_refuses_public_export_and_writer_retries_cleanly() {
+    let tiny = Thread::new(crate::helical_thread::Spec {
+        crest_width_mm: 1e-14,
+        ..thread(1).spec()
+    })
+    .unwrap();
+    let body = Screw::new(tiny, spec(0.1)).unwrap();
+    let mut writer = crate::step::Writer::new();
+    let failed =
+        writer.append_profiled_screw(&body, [100000.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7);
+    assert_eq!(failed, Err(StepError::InvalidGeometry));
+    let qualified = Screw::new(thread(1), spec(0.1)).unwrap();
+    writer
+        .append_profiled_screw(&qualified, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
+        .unwrap();
+    let text = writer.finish().unwrap();
+    assert_eq!(text.matches("MANIFOLD_SOLID_BREP(").count(), 1);
+    crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+}

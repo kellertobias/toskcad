@@ -21,6 +21,8 @@ pub use external::threaded_shaft_import_matches;
 mod nut;
 pub use nut::helical_nut_import_matches;
 use std::f64::consts::TAU;
+#[cfg(test)]
+mod recognition_guards;
 
 pub(super) fn read_member(
     shell: &mut Shell<'_, '_>,
