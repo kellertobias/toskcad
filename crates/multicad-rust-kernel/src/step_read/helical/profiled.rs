@@ -155,7 +155,8 @@ fn decode_rim(shell: &mut Shell<'_, '_>, edge: u32, frame: Frame) -> Result<Rim>
 
 struct Junction {
     positive: Vec<EdgeRef>,
-    vertex: u32,
+    end: Rim,
+    shoulders: usize,
 }
 
 fn junction(
@@ -169,6 +170,45 @@ fn junction(
 ) -> Result<Junction> {
     let spec = thread.spec();
     let starts = spec.starts as usize;
+    let (surface, forward, bounds) = face(shell, faces[0])?;
+    if bounds.len() == 2 {
+        require(forward)?;
+        proof.axis(
+            shell,
+            hex_head::plane(shell, surface)?,
+            frame.origin,
+            frame.n,
+            frame.u,
+        )?;
+        let outer = single_bound_rim(shell, bounds[0], true, true, frame)?;
+        require(outer.radius > spec.major_radius_mm && proof.equal(outer.center, frame.origin))?;
+        let edges = orient(&ring(shell, bounds[1], false)?, !spec.left_hand);
+        require(edges == rings[0].iter().map(|&id| (id, true)).collect::<Vec<_>>())?;
+        let [_, start, _, _, crest, _] = thread.profile_breaks();
+        let arc_axis = frame.n.map(|v| if spec.left_hand { v } else { -v });
+        for k in 0..starts {
+            tangent_shank::arc(
+                shell,
+                rings[0][4 * k + 3],
+                [
+                    corners[4 * k + 3][0][0],
+                    corners[(4 * (k + 1)) % rings[0].len()][0][0],
+                ],
+                frame.origin,
+                arc_axis,
+                (
+                    proof,
+                    spec.major_radius_mm,
+                    (start + spec.pitch_mm - crest) / thread.helical_rate().abs(),
+                ),
+            )?;
+        }
+        return Ok(Junction {
+            positive: vec![(outer.edge.ok_or(ReadError::Invalid)?, true)],
+            end: outer,
+            shoulders: 1,
+        });
+    }
     let shoulders: Vec<_> = std::iter::once(faces[0])
         .chain(faces[2..starts + 1].iter().copied())
         .collect();
@@ -236,7 +276,15 @@ fn junction(
     }
     Ok(Junction {
         positive,
-        vertex: corners[0][0][0],
+        end: Rim {
+            edge: None,
+            vertex: corners[0][0][0],
+            radius: spec.major_radius_mm,
+            z: 0.,
+            positive: true,
+            center: frame.origin,
+        },
+        shoulders: starts,
     })
 }
 
@@ -281,7 +329,6 @@ fn periodic_end(
     previous: Rim,
     last: bool,
     join: &Junction,
-    thread: &Thread,
     frame: Frame,
 ) -> Result<(Rim, u32)> {
     let mut edges = ring(shell, bound, true)?;
@@ -297,14 +344,7 @@ fn periodic_end(
     let middle = &edges[2..edges.len() - 1];
     let end = if last {
         require(middle == orient(&join.positive, false))?;
-        Rim {
-            edge: None,
-            vertex: join.vertex,
-            radius: thread.spec().major_radius_mm,
-            z: 0.,
-            positive: true,
-            center: frame.origin,
-        }
+        join.end
     } else {
         let [(edge, sense)] = middle else {
             return Err(ReadError::Invalid);
@@ -339,7 +379,7 @@ pub(super) fn verify(
     let count = 4 * thread.spec().starts as usize;
     let tail = &all_faces[count..];
     let join = junction(proof, shell, tail, thread, rings, corners, frame)?;
-    let faces = &tail[thread.spec().starts as usize + 1..];
+    let faces = &tail[join.shoulders + 1..];
     if let Some(error) = proof.error {
         head_edge_residuals(shell, faces, frame, error)?;
     }
@@ -373,20 +413,13 @@ pub(super) fn verify(
             plane_at(proof, shell, surface, previous, frame, true)?;
             if last {
                 require(ring(shell, bounds[1], false)? == orient(&join.positive, false))?;
-                Rim {
-                    edge: None,
-                    vertex: join.vertex,
-                    radius: thread.spec().major_radius_mm,
-                    z: 0.,
-                    positive: true,
-                    center: frame.origin,
-                }
+                join.end
             } else {
                 single_bound_rim(shell, bounds[1], false, false, frame)?
             }
         } else {
             require(bounds.len() == 1)?;
-            let (end, seam) = periodic_end(shell, bounds[0], previous, last, &join, thread, frame)?;
+            let (end, seam) = periodic_end(shell, bounds[0], previous, last, &join, frame)?;
             match source.curve {
                 HeadCurve::Line => line_surface(
                     proof,
@@ -1175,6 +1208,111 @@ mod tests {
     }
 
     #[test]
+    fn fitted_major_and_larger_shank_share_one_true_annular_step() {
+        for crown in [false, true] {
+            for (starts, left_hand, rounded) in [(1, false, false), (2, true, true)] {
+                let old = screw(crown, starts, left_hand);
+                let depth = if rounded {
+                    (0.5 - 0.0625) * 3_f64.sqrt() / 2. - 0.05
+                } else {
+                    0.2
+                };
+                let thread = Thread::new(helical_thread::Spec {
+                    major_radius_mm: 1.48,
+                    length_mm: 0.5,
+                    depth_mm: depth,
+                    root_radius_mm: rounded.then_some(0.05),
+                    ..old.thread().spec()
+                })
+                .unwrap();
+                let source = Screw::new_with_shank_radius(
+                    thread,
+                    1.5,
+                    Spec {
+                        head: old.spec().head.unwrap(),
+                        shank_length_mm: 1.,
+                        socket_across_flats_mm: 2.,
+                        socket_depth_mm: 0.6,
+                        minimum_wall_mm: 0.1,
+                    },
+                )
+                .unwrap();
+                assert!(step::supports_profiled_screw(&source, [0.; 3], 1e-7));
+                let text =
+                    step::write_profiled_screw(&source, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
+                        .unwrap();
+                topology(&text).unwrap();
+                let volume = verify_profiled_screw(
+                    &text,
+                    &source,
+                    [0.; 3],
+                    [1., 0., 0.],
+                    [0., 1., 0.],
+                    1e-7,
+                )
+                .unwrap();
+                assert!((volume - source.volume_mm3()).abs() < 1e-6);
+                let (proof, imported) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+                assert!(crate::step_read::profiled_screw_import_matches(
+                    &imported,
+                    &source,
+                    [[0.; 3], [1., 0., 0.], [0., 1., 0.]],
+                    1e-7
+                ));
+                let (decoded, _) = imported.profiled_screw_geometry().unwrap();
+                assert_eq!(decoded.profile().end()[0], 1.5);
+                assert_eq!(decoded.thread().spec().major_radius_mm, 1.48);
+                assert_eq!(proof.face_count, source.faces().len());
+                if !crown && starts == 1 {
+                    let data = parse_entities(&text, 1e-7).unwrap();
+                    let shell = Shell::new(&data, 1e-7, true);
+                    let faces = shell
+                        .member_faces(shell.represented_solids(true).unwrap()[0])
+                        .unwrap();
+                    let (surface, _, bounds) = face(&shell, faces[4]).unwrap();
+                    let (_, wire, _) = shell.bound(bounds[1], false).unwrap();
+                    let mut ids = refs(&shell.args(wire, "EDGE_LOOP").unwrap()[1]).unwrap();
+                    ids.rotate_left(1);
+                    let joined = ids
+                        .iter()
+                        .map(|id| format!("#{id}"))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let axis = reference(&shell.args(surface, "PLANE").unwrap()[1]).unwrap();
+                    let args = shell.args(axis, "AXIS2_PLACEMENT_3D").unwrap();
+                    let center = reference(&args[1]).unwrap();
+                    let (_, _, rim) = face(&shell, faces[3]).unwrap();
+                    let crest = orient(&ring(&shell, rim[0], true).unwrap(), left_hand)[0].0;
+                    let circle = reference(&shell.args(crest, "EDGE_CURVE").unwrap()[3]).unwrap();
+                    let args = shell.args(circle, "CIRCLE").unwrap();
+                    let circle_axis = reference(&args[1]).unwrap();
+                    for (id, record) in [
+                        (wire, format!("EDGE_LOOP('',({joined}));")),
+                        (center, "CARTESIAN_POINT('',(0.,0.,0.000000001));".into()),
+                        (circle, format!("CIRCLE('',#{circle_axis},1.480000001);")),
+                    ] {
+                        let key = format!("#{id}=");
+                        let line = text.lines().find(|l| l.starts_with(&key)).unwrap();
+                        let changed = text.replacen(line, &format!("{key}{record}"), 1);
+                        assert!(
+                            verify_profiled_screw(
+                                &changed,
+                                &source,
+                                [0.; 3],
+                                [1., 0., 0.],
+                                [0., 1., 0.],
+                                1e-7
+                            )
+                            .is_err()
+                        );
+                        assert!(crate::step_read::read_import_solid(&changed, 1e-7).is_err());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn physical_terminal_bearings_and_toroidal_crowns_roundtrip() {
         let old = screw(true, 1, false);
         let thread = Thread::new(helical_thread::Spec {
@@ -1308,19 +1446,19 @@ mod tests {
         let positive = orient(&edges[2..edges.len() - 1], false);
         let (vertices, _, _) = edge_record(&shell, positive[0].0).unwrap();
         let vertex = vertices[usize::from(!positive[0].1)];
-        let join = Junction { positive, vertex };
-        assert!(
-            periodic_end(
-                &mut shell,
-                last[0],
-                previous,
-                false,
-                &join,
-                body.thread(),
-                frame
-            )
-            .is_err()
-        );
+        let join = Junction {
+            positive,
+            end: Rim {
+                edge: None,
+                vertex,
+                radius: body.thread().spec().major_radius_mm,
+                z: 0.,
+                positive: true,
+                center: frame.origin,
+            },
+            shoulders: 1,
+        };
+        assert!(periodic_end(&mut shell, last[0], previous, false, &join, frame).is_err());
         let bearing = body
             .profile()
             .segments()

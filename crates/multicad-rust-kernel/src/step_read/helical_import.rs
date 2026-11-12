@@ -49,13 +49,18 @@ pub(super) fn read_member(
     if !count.is_multiple_of(4) {
         return Ok(None);
     }
-    let head_index = count + count / 4 + 1;
+    let entry_bounds = face(shell, faces[count])?.2.len();
+    let head_index = count + if entry_bounds == 2 { 2 } else { count / 4 + 1 };
     let profiled = if let Some(&id) = faces.get(head_index) {
         let (surface, _, bounds) = face(shell, id)?;
         bounds.len() == 2
             && shell.simple(surface)?.name == "PLANE"
-            && face(shell, faces[count])?.2.len() == 1
+            && matches!(entry_bounds, 1 | 2)
             && (9..=13).contains(&(faces.len() - head_index))
+            && !(entry_bounds == 2
+                && faces.len() - head_index == 9
+                && shell.simple(face(shell, faces[head_index + 1])?.0)?.name
+                    == "CYLINDRICAL_SURFACE")
     } else {
         false
     };
@@ -70,7 +75,6 @@ pub(super) fn read_member(
     }
     let starts = (count / 4) as u32;
     let tail = faces.len() - count;
-    let entry_bounds = face(shell, faces[count])?.2.len();
     let shoulder_bounds = face(shell, faces[count + 1])?.2.len();
     let plane = |id| -> Result<Plane> {
         let (surface, forward, _) = face(shell, id)?;

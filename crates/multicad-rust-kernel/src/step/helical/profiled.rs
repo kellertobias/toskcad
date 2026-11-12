@@ -8,6 +8,7 @@ use std::f64::consts::TAU;
 #[cfg(test)]
 mod tests;
 
+#[derive(Clone, Copy)]
 struct Station {
     center: Entity,
     axis: Option<Entity>,
@@ -33,18 +34,27 @@ pub(super) struct Junction {
     vertex: Vertex,
     reference: Point,
     positive: Vec<(Entity, bool)>,
+    pub(super) outer: Option<CircularRim>,
 }
 
 pub(super) fn admission(screw: &Screw, origin: Point, tolerance: f64) -> Result<(), StepError> {
-    if screw.profile().end()[1] != screw.spec().shank_length_mm
-        || screw.profile().end()[0] != screw.thread().spec().major_radius_mm
-    {
+    if screw.profile().end()[1] != screw.spec().shank_length_mm {
         return Err(StepError::Unsupported);
     }
     if !tolerance.is_finite() || tolerance <= 0. || !origin.into_iter().all(f64::is_finite) {
         return Err(StepError::InvalidGeometry);
     }
     let tolerance = tolerance.min(MAX_ERROR_MM);
+    let step = screw.profile().end()[0] - screw.thread().spec().major_radius_mm;
+    if step > 0. && step <= 10. * tolerance {
+        return Err(StepError::Limit);
+    }
+    if step > 0.
+        && screw.profile().segments().count() == 1
+        && screw.profile().top()[0] == screw.profile().end()[0]
+    {
+        return Err(StepError::Unsupported);
+    }
     let mut scale =
         origin.into_iter().map(f64::abs).fold(0., f64::max) + screw.thread().spec().length_mm + 1.;
     for segment in screw.profile().segments() {
@@ -134,6 +144,7 @@ pub(super) fn junction(
     file: &mut StepFile,
     p: &Placement,
     thread: &Thread,
+    shank_radius: f64,
     corners: &[[Vertex; 2]],
 ) -> Result<Junction, StepError> {
     let spec = thread.spec();
@@ -161,18 +172,20 @@ pub(super) fn junction(
             )?
             .0,
         );
-        complements.push(
-            circular_arc_edge(
-                file,
-                [first, last],
-                p.origin,
-                axis,
-                radial(start + shift),
-                spec.major_radius_mm,
-                (crest - start) / rate.abs(),
-            )?
-            .0,
-        );
+        if shank_radius == spec.major_radius_mm {
+            complements.push(
+                circular_arc_edge(
+                    file,
+                    [first, last],
+                    p.origin,
+                    axis,
+                    radial(start + shift),
+                    spec.major_radius_mm,
+                    (crest - start) / rate.abs(),
+                )?
+                .0,
+            );
+        }
     }
     let mut positive: Vec<_> = complements
         .iter()
@@ -182,12 +195,27 @@ pub(super) fn junction(
     if !spec.left_hand {
         positive = positive.into_iter().rev().map(|(e, s)| (e, !s)).collect();
     }
+    let outer = if shank_radius > spec.major_radius_mm {
+        Some(CircularRim::new(
+            file,
+            p.origin,
+            p.normal,
+            radial(start),
+            shank_radius,
+        )?)
+    } else {
+        None
+    };
+    if let Some(outer) = &outer {
+        positive = vec![(outer.edge, true)];
+    }
     Ok(Junction {
         crests,
         complements,
         vertex: corners[0][0],
         reference: radial(start),
         positive,
+        outer,
     })
 }
 
@@ -212,19 +240,20 @@ pub(super) fn head(
     let first = rim(file, screw.profile().top())?;
     let top_edge = first.rim.expect("initial full circle");
     let top_center = first.center;
+    let terminal = join.outer.map(Station::from);
     let mut previous = first;
     let mut walls = Vec::new();
     for (index, segment) in segments.iter().enumerate() {
         let last = index + 1 == segments.len();
         let next = if last {
             // The nominal circle is split into actual crest/complement edges.
-            Station {
+            terminal.unwrap_or(Station {
                 center: file.point(p.origin),
                 axis: None,
                 rim: None,
                 vertex: join.vertex,
                 radius: screw.thread().spec().major_radius_mm,
-            }
+            })
         } else {
             rim(file, segment.end)?
         };

@@ -93,6 +93,31 @@ fn unresolved_positive_head_dimensions_and_distorted_frames_refuse() {
         placement(&body, &frame, 1e-7),
         Err(StepError::InvalidPlacement)
     );
+    let close = Screw::new_with_shank_radius(thread(1), 1.5 + 1e-8, spec(0.1)).unwrap();
+    assert_eq!(admission(&close, [0.; 3], 1e-7), Err(StepError::Limit));
+    let profile = Profile::from_retained_segments(&[Segment {
+        start: [2., -2.],
+        end: [2., 0.],
+        curve: Curve::Line,
+        role: Role::Shank,
+    }])
+    .unwrap();
+    let cylinder = Screw::from_source(
+        thread(1),
+        profile,
+        SourceSpec {
+            head: None,
+            shank_length_mm: 0.,
+            socket_across_flats_mm: 1.,
+            socket_depth_mm: 0.6,
+            minimum_wall_mm: 0.1,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        admission(&cylinder, [0.; 3], 1e-7),
+        Err(StepError::Unsupported)
+    );
 }
 
 #[test]
@@ -106,7 +131,7 @@ fn physical_junction_and_drive_encoders_refuse_collapsed_geometry() {
         let mut displaced = rim[0][index].point;
         displaced[2] += 1.;
         rim[0][index] = file.vertex(displaced);
-        assert!(junction(&mut file, &p, &thread, &rim).is_err());
+        assert!(junction(&mut file, &p, &thread, thread.spec().major_radius_mm, &rim).is_err());
     }
     let thread = thread(1);
     let profile = Profile::from_retained_segments(&[Segment {
@@ -130,10 +155,13 @@ fn physical_junction_and_drive_encoders_refuse_collapsed_geometry() {
     .unwrap();
     let mut file = StepFile::new();
     let rim = corners(&mut file, &thread, &p);
-    let join = junction(&mut file, &p, &thread, &rim).unwrap();
+    let join = junction(&mut file, &p, &thread, thread.spec().major_radius_mm, &rim).unwrap();
     let collapsed = Placement {
         normal: [0.; 3],
         ..p
     };
     assert!(head(&mut file, &collapsed, &source, join).is_err());
+    let mut file = StepFile::new();
+    let rim = corners(&mut file, &thread, &p);
+    assert!(junction(&mut file, &p, &thread, f64::INFINITY, &rim).is_err());
 }

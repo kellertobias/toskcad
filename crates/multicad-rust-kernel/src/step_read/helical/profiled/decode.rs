@@ -144,7 +144,7 @@ pub(in super::super::super) fn read(
     };
     let tail = &faces[count..];
     let join = junction(proof, shell, tail, thread, &rings, &corners, frame)?;
-    let head = &tail[thread.spec().starts as usize + 1..];
+    let head = &tail[join.shoulders + 1..];
     require((9..=13).contains(&head.len()))?;
     let segment_count = head.len() - 8;
     let (_, forward, bounds) = face(shell, head[0])?;
@@ -165,21 +165,14 @@ pub(in super::super::super) fn read(
             )?;
             let end = if last {
                 require(ring(shell, bounds[1], false)? == orient(&join.positive, false))?;
-                Rim {
-                    edge: None,
-                    vertex: join.vertex,
-                    radius: thread.spec().major_radius_mm,
-                    z: 0.,
-                    positive: true,
-                    center: frame.origin,
-                }
+                join.end
             } else {
                 single_bound_rim(shell, bounds[1], false, false, frame)?
             };
             (end, HeadCurve::Line, Role::Bearing)
         } else {
             require(bounds.len() == 1)?;
-            let (end, _) = periodic_end(shell, bounds[0], previous, last, &join, thread, frame)?;
+            let (end, _) = periodic_end(shell, bounds[0], previous, last, &join, frame)?;
             match name {
                 "CYLINDRICAL_SURFACE" | "CONICAL_SURFACE" => {
                     let role = if previous.radius == end.radius {

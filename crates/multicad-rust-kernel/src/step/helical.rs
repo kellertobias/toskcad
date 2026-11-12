@@ -169,7 +169,12 @@ impl Closure<'_> {
             Self::HexNut(_) => bands + 8,
             Self::SocketHead(head) => bands + 11 + 2 * usize::from(head.shank_length_mm > 0.),
             Self::Profiled(screw) => {
-                screw.faces().len() + screw.thread().spec().starts as usize - 1
+                screw.faces().len()
+                    + if screw.profile().end()[0] == major {
+                        screw.thread().spec().starts as usize - 1
+                    } else {
+                        0
+                    }
             }
         }
     }
@@ -467,6 +472,7 @@ pub(super) fn encode(
             file,
             &placement,
             thread,
+            screw.profile().end()[0],
             &(0..spec.starts as usize)
                 .map(|k| [rings[0][4 * k], rings[0][4 * k + 3]])
                 .collect::<Vec<_>>(),
@@ -591,6 +597,27 @@ pub(super) fn encode(
     for (end, cap) in cap_edges.into_iter().enumerate() {
         let top = end == 1;
         if !top && let Some(join) = &profiled_join {
+            if let Some(outer) = &join.outer {
+                let uses = cap.into_iter().map(|edge| (edge, true)).collect::<Vec<_>>();
+                let uses = if !spec.left_hand {
+                    uses
+                } else {
+                    uses.into_iter().rev().map(|(e, s)| (e, !s)).collect()
+                };
+                let edges = uses
+                    .into_iter()
+                    .map(|(e, s)| file.oriented_edge(e, s))
+                    .collect::<Vec<_>>();
+                let inside = file.bound(&edges, false);
+                let outside = circular_bound(file, outer.edge, true, true);
+                faces.push(file.face(
+                    &[outside, inside],
+                    outer.center,
+                    placement.normal,
+                    placement.u,
+                ));
+                continue;
+            }
             for (k, part) in cap.as_chunks::<4>().0.iter().enumerate() {
                 let uses = [
                     (part[0], true),
