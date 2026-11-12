@@ -180,7 +180,10 @@ pub(super) fn read_member(shell: &mut Shell<'_, '_>, id: u32) -> Result<radial::
     if faces.len() > 34 {
         return Err(ReadError::Limit);
     }
-    if faces.len() < 6 || !(faces.len() - 2).is_multiple_of(4) {
+    // Candidate decoding preserves actual source tables. Occupied admission
+    // separately proves the complete tensor/cone cycle, caps, axis and core;
+    // a legitimate rounded cycle need not contain any exposed cone faces.
+    if faces.len() < 5 {
         return Err(ReadError::Unsupported);
     }
     let mut surface_ids = BTreeMap::<u32, usize>::new();
@@ -497,6 +500,19 @@ mod tests {
         let write = |p: &PolygonPrism| {
             crate::step::write_polygon_prism(p, [0.; 3], [1., 0., 0.], [0., 1., 0.], false).unwrap()
         };
+        let cylinder = crate::cylinder::AxialCylinder::new(
+            1,
+            crate::Circle::new([r(0); 2], r(1)).unwrap(),
+            r(0),
+            r(1),
+        )
+        .unwrap();
+        let analytic = crate::step::write_axial_cylinder(&cylinder, [1., 0., 0.]).unwrap();
+        assert_eq!(
+            read_radial_boundary(&analytic, 1e-7).err(),
+            Some(ReadError::Unsupported)
+        );
+        assert!(crate::step_read::read_analytic_solid(&analytic, 1e-7).is_ok());
         let triangle =
             PolygonPrism::new(vec![vec![[r(0), r(0)], [r(1), r(0)], [r(0), r(1)]]], r(1)).unwrap();
         assert_eq!(

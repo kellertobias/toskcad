@@ -19,6 +19,170 @@ fn spec(k: f64) -> AuthoredSpec {
 pub(super) fn source(k: f64) -> AuthoredThread {
     AuthoredThread::new(spec(k), 1e-7, 1e-6).unwrap()
 }
+pub(super) fn bspt_spec(k: f64) -> AuthoredSpec {
+    let p = 25.4 / 28.;
+    AuthoredSpec {
+        major_radius_mm: 9.728 / 2. - k * if k > 0. { 4. } else { p / 2. },
+        pitch_mm: p,
+        length_mm: 6.5,
+        radial_taper: k,
+        section: AuthoredSection::BsptRounded {
+            depth_mm: p / (3. * 27.5_f64.to_radians().tan()),
+        },
+        crest_radius_limit_mm: None,
+    }
+}
+#[test]
+fn rounded_pipe_positive_moving_od_clips_are_not_silently_discarded() {
+    for k in [-1. / 32., 1. / 32.] {
+        let s = bspt_spec(k);
+        let limit = s.major_radius_mm + if k > 0. { 0.05 } else { -0.05 };
+        let s = AuthoredSpec {
+            crest_radius_limit_mm: Some(limit),
+            ..s
+        };
+        let t = AuthoredThread::new(s, 1e-7, 1e-6).unwrap();
+        let before = t;
+        assert!(matches!(
+            t.raw_boundary_ownership(1e-7, None),
+            Err(Error::Unsupported)
+        ));
+        let radius = t.derived_rounding_radius_bounds_mm().unwrap().unwrap();
+        let r = (radius[0] + radius[1]) / 2.;
+        let x = -k * r / (1. + k * k).sqrt();
+        let q = if x < 0. { s.pitch_mm + x } else { x };
+        let z = if k > 0. { s.length_mm } else { 0. };
+        assert_eq!(t.radial_bounds([q; 2], [z; 2]).unwrap(), [limit; 2]);
+        assert_eq!(t, before);
+    }
+}
+fn independent_bspt_volume(s: AuthoredSpec, d: f64) -> f64 {
+    let a = 27.5_f64.to_radians();
+    let m = 1. / a.tan();
+    let k = s.radial_taper;
+    let p = s.pitch_mm;
+    let l = s.length_mm;
+    let r0 = s.major_radius_mm;
+    let full = p * (m * m - k * k) / (2. * m);
+    let q = (1. + k * k).sqrt();
+    let r = (full - d) / (2. * (1. / a.sin() - q));
+    let h = r * a.cos();
+    let v = full / (m + k);
+    let crest = r0 - r * q;
+    let root = r0 - d + r * q;
+    let circular = h * r * a.sin() + r * r * (std::f64::consts::FRAC_PI_2 - a);
+    let mut first = 2. * h * (crest + root);
+    let mut second = 2. * h * (crest * crest + root * root + 2. * r * r)
+        + (k * k - 1.) * 4. * h.powi(3) / 3.
+        + 2. * circular * (crest - root);
+    for (width, x, y) in [
+        (
+            v - 2. * h,
+            crest + r * a.sin() - k * h,
+            root - r * a.sin() + k * h,
+        ),
+        (
+            p - v - 2. * h,
+            root - r * a.sin() - k * h,
+            crest + r * a.sin() + k * h,
+        ),
+    ] {
+        first += width * (x + y) / 2.;
+        second += width * (x * x + x * y + y * y) / 3.;
+    }
+    std::f64::consts::PI / p * (l * second + k * l * l * first + k * k * l.powi(3) * p / 3.)
+}
+#[test]
+fn actual_bspt_volume_contains_independent_line_and_circle_section_integrals() {
+    for k in [-1. / 32., 1. / 32.] {
+        let s = bspt_spec(k);
+        let t = AuthoredThread::new(s, 1e-7, 1e-6).unwrap();
+        let body = t
+            .raw_boundary_ownership(1e-7, None)
+            .unwrap()
+            .ownership
+            .bind_surfaces(1e-7, None)
+            .unwrap()
+            .certify_axial(1e-7, 1e-6, None)
+            .unwrap()
+            .certify_caps(None)
+            .unwrap()
+            .certify_ordering(None)
+            .unwrap()
+            .certify_material(1e-7, None)
+            .unwrap();
+        let started = std::time::Instant::now();
+        let volume = body.volume_with_interrupt(1e-5, None).unwrap();
+        let expected = independent_bspt_volume(s, t.depth());
+        assert!(
+            volume.volume_mm3[0] <= expected && expected <= volume.volume_mm3[1],
+            "{expected} outside {:?}",
+            volume.volume_mm3
+        );
+        println!(
+            "BSPT independentvolume k={k}, expected={expected}, actual={:?}, elapsed={:?}",
+            volume.volume_mm3,
+            started.elapsed()
+        );
+        if k > 0. {
+            let text = crate::step::write_radial_boundary(&body, 1e-7).unwrap();
+            assert!(!text.contains("CONICAL_SURFACE"));
+            let owned = crate::step_read::read_radial_boundary(&text, 1e-7).unwrap();
+            let decoded = owned
+                .bind_surfaces(1e-7, None)
+                .unwrap()
+                .certify_axial(1e-7, 1e-6, None)
+                .unwrap();
+            assert_eq!(decoded.start_radius_bounds_mm(), None);
+            let decoded = decoded
+                .certify_caps(None)
+                .unwrap()
+                .certify_ordering(None)
+                .unwrap()
+                .certify_material(1e-7, None)
+                .unwrap();
+            let interval = decoded
+                .volume_with_interrupt(1e-5, None)
+                .unwrap()
+                .volume_mm3;
+            assert!(interval[0] <= expected && expected <= interval[1]);
+        }
+    }
+}
+#[test]
+fn actual_authored_bspt_default_mesh_resource_refusal_stays_explicit() {
+    let t = AuthoredThread::new(bspt_spec(1. / 32.), 1e-7, 1e-6).unwrap();
+    let raw = t.raw_boundary_ownership(1e-7, None).unwrap();
+    let body = raw
+        .ownership
+        .bind_surfaces(1e-7, None)
+        .unwrap()
+        .certify_axial(1e-7, 1e-6, None)
+        .unwrap()
+        .certify_caps(None)
+        .unwrap()
+        .certify_ordering(None)
+        .unwrap()
+        .certify_material(1e-7, None)
+        .unwrap();
+    assert_eq!(body.input().faces.len(), 7);
+    let start = std::time::Instant::now();
+    let result = body.tessellate_with_interrupt(
+        crate::display::Tessellation {
+            deflection: 0.1,
+            angle: 0.3,
+            triangle_limit: 1_000_000,
+        },
+        None,
+    );
+    // Actual source/material qualification is complete; default display work
+    // remains a separately measured, honest resource refusal at this stage.
+    assert!(matches!(result, Err(Error::Limit)));
+    println!(
+        "BSPT actual defaultmesh resource refusal elapsed={:?}",
+        start.elapsed()
+    );
+}
 #[test]
 fn authored_npt_endpoints_share_expressions_without_changing_literal_sections() {
     for k in [-1. / 32., 1. / 32.] {
@@ -215,10 +379,54 @@ fn authored_bspt_has_derived_circle_supports_and_shared_actual_joins() {
         for axis in 0..3 {
             assert!(a[axis][0] <= b[axis][1] && b[axis][0] <= a[axis][1]);
         }
-        assert!(matches!(
-            t.raw_boundary_ownership(1e-7, None),
-            Err(Error::Unsupported)
-        ));
+        let raw = t.raw_boundary_ownership(1e-7, None).unwrap();
+        let input = raw.ownership.input();
+        assert_eq!(
+            (input.vertices.len(), input.edges.len(), input.faces.len()),
+            (10, 15, 7)
+        );
+        assert!(
+            input
+                .surfaces
+                .iter()
+                .all(|s| !matches!(s, crate::radial_tensor::Surface::Cone { .. }))
+        );
+        assert!(raw.root_faces.iter().all(|&f| matches!(
+            input.surfaces[input.faces[f].surface],
+            crate::radial_tensor::Surface::Tensor(_)
+        )));
+        println!(
+            "BSPT raw k={k},source error={}, controls={}",
+            raw.source_error_mm,
+            input
+                .surfaces
+                .iter()
+                .filter_map(|s| if let crate::radial_tensor::Surface::Tensor(t) = s {
+                    Some(t.poles().len())
+                } else {
+                    None
+                })
+                .sum::<usize>()
+        );
+        let bound = raw.ownership.bind_surfaces(1e-7, None).unwrap();
+        let axial = bound.certify_axial(1e-7, 1e-6, None).unwrap();
+        assert_eq!(axial.start_radius_bounds_mm(), None);
+        assert!(axial.proposed_core_start_radius_bounds_mm()[0] > 0.);
+        let caps = axial.certify_caps(None).unwrap();
+        let ordered = caps.certify_ordering(None).unwrap();
+        let material = ordered.certify_material(1e-7, None).unwrap();
+        assert_eq!(material.side_faces().len(), 5);
+        assert_eq!(
+            material.classify([0., 0., s.length_mm / 2.], None).unwrap(),
+            crate::radial_tensor::Location::Inside
+        );
+        assert_eq!(
+            material
+                .classify([2. * s.major_radius_mm + 1., 0., s.length_mm / 2.], None)
+                .unwrap(),
+            crate::radial_tensor::Location::Outside
+        );
+        println!("BSPT actual 5band/no-cone material k={k} qualified");
     }
 }
 

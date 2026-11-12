@@ -24,6 +24,12 @@ pub(super) struct Chart {
     pub radius: I,
     pub radius_range: I,
     pub slope: I,
+    pub core_kind: CoreKind,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CoreKind {
+    ExposedCone,
+    Cylinder,
 }
 #[derive(Clone)]
 pub(super) struct ChartTensor {
@@ -55,7 +61,14 @@ impl AxialBoundary {
     pub fn height_bounds_mm(&self) -> [f64; 2] {
         [self.chart.height.lo, self.chart.height.hi]
     }
-    pub fn start_radius_bounds_mm(&self) -> [f64; 2] {
+    /// Actual common retained cone radius at the bottom cap. A proposed inner
+    /// cylinder is not a physical cone support and cannot supply this getter.
+    pub fn start_radius_bounds_mm(&self) -> Option<[f64; 2]> {
+        (self.chart.core_kind == CoreKind::ExposedCone)
+            .then_some(self.proposed_core_start_radius_bounds_mm())
+    }
+    /// Proposed core only; containment is established by certify_material.
+    pub fn proposed_core_start_radius_bounds_mm(&self) -> [f64; 2] {
         [self.chart.radius.lo, self.chart.radius.hi]
     }
     pub fn axial_parameter_error_mm(&self) -> f64 {
@@ -97,14 +110,20 @@ impl TrimmedBoundary {
             }
         }
         let n = cones.len();
-        if !(1..=8).contains(&n)
+        let tensor_count = self.tensors.len();
+        if n > 8
+            || tensor_count == 0
+            || tensor_count + n < 3
+            || tensor_count + n > 32
             || planes.len() != 2
-            || self.tensors.len() != 3 * n
-            || input.faces.len() != 4 * n + 2
+            || input.faces.len() != tensor_count + n + 2
         {
             return Err(Error::Unsupported);
         }
-        let (_, axis, radius, angle) = cones[0];
+        let retained = cones.first().copied();
+        // A cap plane can propose a chart axis; every actual tensor and the
+        // complete cap cycle/order/core still need their independent proofs.
+        let axis = retained.map_or(planes[0].1, |(_, axis, ..)| axis);
         let basis = checked_axis(axis)?;
         let dominant = (0..3)
             .max_by(|&a, &b| axis.normal[a].abs().total_cmp(&axis.normal[b].abs()))
@@ -141,26 +160,49 @@ impl TrimmedBoundary {
         if height.lo < minimum || height.lo <= 32. * tolerance || height.hi > 2e7 {
             return Err(Error::Unresolved);
         }
-        for &(face, a, r, alpha) in &cones {
-            let f = &input.faces[face];
-            if !f.forward
-                || a.origin != axis.origin
-                || a.normal != axis.normal
-                || r != radius
-                || alpha != angle
-            {
-                return Err(Error::Unsupported);
+        if let Some((_, _, radius, angle)) = retained {
+            for &(face, a, r, alpha) in &cones {
+                let f = &input.faces[face];
+                if !f.forward
+                    || a.origin != axis.origin
+                    || a.normal != axis.normal
+                    || r != radius
+                    || alpha != angle
+                {
+                    return Err(Error::Unsupported);
+                }
             }
         }
-        let base = std::array::from_fn(|i| I::point(bottom_point[i]) - I::point(axis.origin[i]));
-        let unsigned = if angle == 0. {
-            I::point(0.)
+        let (r0, slope, core_kind) = if let Some((_, _, radius, angle)) = retained {
+            let base =
+                std::array::from_fn(|i| I::point(bottom_point[i]) - I::point(axis.origin[i]));
+            let unsigned = if angle == 0. {
+                I::point(0.)
+            } else {
+                I::point(angle).sin() / I::point(angle).cos()
+            };
+            unsigned.checked()?;
+            (
+                (I::point(radius) + unsigned * dot(base, basis[2])).positive()?,
+                unsigned * I::point(sign),
+                CoreKind::ExposedCone,
+            )
         } else {
-            I::point(angle).sin() / I::point(angle).cos()
+            // This is a witness proposal, not a fitted source surface. The
+            // material stage proves the complete actual polynomial wall lies
+            // outside it; cap winding must also place its axis inside.
+            let mut vertex_radius = f64::INFINITY;
+            for &p in &input.vertices {
+                work.step()?;
+                let d = std::array::from_fn(|i| I::point(p[i]) - I::point(axis.origin[i]));
+                let r = (dot(d, axes[0]).square() + dot(d, axes[1]).square())
+                    .sqrt()
+                    .positive()?;
+                vertex_radius = vertex_radius.min(r.lo);
+            }
+            let radius = (I::point(vertex_radius) / I::point(2.)).positive()?.lo;
+            (I::point(radius), I::point(0.), CoreKind::Cylinder)
         };
-        unsigned.checked()?;
-        let r0 = (I::point(radius) + unsigned * dot(base, basis[2])).positive()?;
-        let slope = unsigned * I::point(sign);
         let r1 = (r0 + slope * height).positive()?;
         if r0.lo.min(r1.lo) < minimum || r0.lo.min(r1.lo) <= 32. * tolerance {
             return Err(Error::Unresolved);
@@ -176,6 +218,7 @@ impl TrimmedBoundary {
             radius: r0,
             radius_range: I::new(r0.lo.min(r1.lo), r0.hi.max(r1.hi)),
             slope,
+            core_kind,
         };
         let mut charts = Vec::with_capacity(self.tensors.len());
         let mut axial_error = 0f64;

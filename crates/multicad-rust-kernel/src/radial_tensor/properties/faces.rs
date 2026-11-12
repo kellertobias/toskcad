@@ -24,12 +24,10 @@ pub(super) fn with_limit(
     let input = body.input();
     let chart = &axial.chart;
     let mut faces = Vec::with_capacity(input.faces.len());
-    // The certified 3n tensor/6n cone/10n cap-edge structure permits
-    // at most 128 edge occurrences. Each retained degree-nine source has
-    // bounded poles, so this count cannot overflow even a 32-bit usize.
-    // Every spline edge is one of the certified tensor iso-edges. Thus
-    // calculation sources <= MAX_POLES/81 +2*MAX_POLES/45 +64 circles,
-    // below 32768 even at the full public manufacturing pole capacity.
+    // Each qualified side has its actual tensor or cone sources; both caps
+    // retain the complete incidence-derived rim cycle. The public ownership
+    // table and pole limits bound every addition even on a 32-bit usize.
+    // Keep the independent calculation-source limit for every band count.
     let mut source_count = 0usize;
     for tensor in &axial.tensors {
         let mut sources = Vec::new();

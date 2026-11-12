@@ -333,7 +333,7 @@ fn finite_source_tables_and_supports_refuse_malformed_data_before_publication() 
     let source = fixture();
     assert_eq!(source.edge_faces().len(), 14);
     assert_eq!(source.vertex_edges().len(), 10);
-    assert!(axial().start_radius_bounds_mm()[0] > 3.4);
+    assert!(axial().start_radius_bounds_mm().unwrap()[0] > 3.4);
     assert!(material().boundary_error_mm() < 1e-7 / 8.);
     assert_eq!(source.input(), &original);
 }
@@ -605,3 +605,4 @@ fn an_ordinary_closed_planar_cube_is_bound_but_not_misclassified_as_radial_mater
 pub(crate) mod cam;
 
 mod seam_probe;
+mod five_bands;

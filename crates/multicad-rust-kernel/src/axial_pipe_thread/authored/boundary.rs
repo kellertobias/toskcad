@@ -3,6 +3,7 @@ use super::*;
 use crate::radial_tensor::{Axis, BoundaryInput, BoundaryOwnership, Curve, Edge, Face, Surface};
 use crate::tapered_thread::RetainedTensor;
 use std::f64::consts::TAU;
+mod rounded;
 type S = Series<11>;
 const DEGREE: usize = 9;
 pub struct RawAuthoredBoundary {
@@ -16,6 +17,7 @@ pub struct RawAuthoredBoundary {
     pub analytic_error_mm: f64,
     pub cap_faces: [usize; 2],
     pub band_faces: Vec<usize>,
+    /// Actual root support faces. Rounded roots are tensor bands, not cones.
     pub root_faces: Vec<usize>,
 }
 struct Work<'a> {
@@ -54,12 +56,21 @@ fn node(i: usize, n: usize, length: f64) -> f64 {
 }
 fn curve_values(t: &AuthoredThread, band: Option<usize>, x: S) -> Result<[S; 4], Error> {
     let w = Series::interval(I::point(2.) * pi() / I::point(t.spec.pitch_mm));
-    let (angle, scale) = if let Some(band) = band {
+    let (mut angle, scale) = if let Some(band) = band {
         let (q, a) = t.profile(band, x)?;
         (-w * q, a)
     } else {
         (w * x, x)
     };
+    if matches!(t.spec.section, AuthoredSection::BsptRounded { .. })
+        && ((band == Some(0) && x.c[0].lo == 0. && x.c[0].hi == 0.)
+            || (band == Some(4) && x.c[0].lo == 1. && x.c[0].hi == 1.))
+    {
+        // The authored endpoints q=0 and q=p have exactly the same angular
+        // phase. Retain this true periodic identity before rounding controls;
+        // no literal imported support or positive junction is rewritten.
+        angle.c[0] = I::point(0.);
+    }
     let [sin, cos] = angle.sin_cos();
     let out = [cos, sin, scale * cos, scale * sin];
     for value in out {
@@ -276,9 +287,6 @@ impl AuthoredThread {
         if !tolerance.is_finite() || tolerance <= 0. {
             return Err(Error::Invalid);
         }
-        if !matches!(self.spec.section, AuthoredSection::NptFlat { .. }) {
-            return Err(Error::Unsupported);
-        }
         if let Some(limit) = self.spec.crest_radius_limit_mm {
             let maximum = I::point(self.spec.major_radius_mm)
                 + max(
@@ -299,13 +307,16 @@ impl AuthoredThread {
         let axial = fit(self, None, budget, &mut work)?;
         let mut nets = Vec::new();
         let mut error = 0_f64;
-        for band in 0..3 {
+        for band in 0..self.band_count() {
             let u = fit(self, Some(band), budget, &mut work)?;
             let n = net(self, &u, &axial, &mut work)?;
             error = error.max(n.error);
             nets.push(n);
         }
         error_budget(error, tolerance)?;
+        if matches!(self.spec.section, AuthoredSection::BsptRounded { .. }) {
+            return rounded::build(self, nets, error, tolerance, interrupt);
+        }
         let mut graph = Graph(BoundaryInput {
             vertices: vec![],
             curves: vec![],

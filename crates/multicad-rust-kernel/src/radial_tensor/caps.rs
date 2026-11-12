@@ -12,6 +12,9 @@ pub struct CapBoundary {
     pub(super) kinds: Vec<SideKind>,
     pub(super) rails: Vec<(usize, Vec<[I; 3]>)>,
     pub(super) rims: [Vec<Vec<(usize, bool)>>; 2],
+    /// Actual tensor-to-longitudinal-edge incidences. Each exposed seam must
+    /// have a tensor owner; tensor/tensor seams retain both transfer collars.
+    pub(super) tensor_rail_incidences: usize,
 }
 #[derive(Clone, Copy)]
 pub(super) enum SideKind {
@@ -143,12 +146,25 @@ impl AxialBoundary {
             }
             check_cone_partition(&input.faces[cone].outer, &expected, run)?;
         }
+        let mut tensor_rail_incidences = 0;
+        for (edge, _) in &rails {
+            let owners = self.boundary.ownership.topology.edge_faces[*edge];
+            // Complete cycle ownership plus the nonempty tensor runs above
+            // excludes cone/cone rails. Every actual seam therefore has at
+            // least one exact tensor iso-rail; retain both when it has two.
+            let count = owners
+                .into_iter()
+                .filter(|face| tensor_faces.contains(face))
+                .count();
+            tensor_rail_incidences += count;
+        }
         Ok(CapBoundary {
             axial: self,
             sides,
             kinds,
             rails,
             rims: rings,
+            tensor_rail_incidences,
         })
     }
 }
@@ -190,7 +206,7 @@ fn check_cone_partition(
     if wire.iter().map(|e| e.0).collect::<BTreeSet<_>>() != *expected {
         return Err(Error::Invalid);
     }
-    if run != 3 {
+    if run == 0 || run > 32 {
         return Err(Error::Unsupported);
     }
     Ok(())

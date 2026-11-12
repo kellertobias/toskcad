@@ -138,7 +138,10 @@ fn independent_cap_partitions_require_unique_complete_corresponding_strips() {
         check_cone_partition(&wire[..5], &expected, 3),
         Err(Error::Invalid)
     );
-    for run in [2, 4] {
+    for run in [1, 2, 3, 4, 5] {
+        check_cone_partition(&wire, &expected, run).unwrap();
+    }
+    for run in [0, 33, usize::MAX] {
         assert_eq!(
             check_cone_partition(&wire, &expected, run),
             Err(Error::Unsupported)

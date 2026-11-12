@@ -33,7 +33,10 @@ pub(super) fn prove(
         std::f64::consts::PI.next_up(),
     );
     let angular = I::point(8.) * e / minimum;
-    let corners = I::point((6 * axial.cones.len()) as f64);
+    // Count actual qualified tensor/long-rail transfers, including both
+    // owners of tensor/tensor seams. Cone/cone seams are not admitted. This
+    // also covers complete rounded cycles without any exposed cone faces.
+    let corners = I::point(body.ordered.caps.tensor_rail_incidences as f64);
     // Complete cap slabs, endpoint angular collars through the retained
     // height, and the radial sewing band bound any admitted closure's
     // signed-volume difference. The same cylinder bounds its moments.
