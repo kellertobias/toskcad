@@ -118,6 +118,7 @@ pub(in super::super::super) fn read(
     faces: &[u32],
     thread: &Thread,
     placement: [Point; 3],
+    visible_start: f64,
 ) -> Result<Screw> {
     let frame = Frame::new(placement)?;
     let count = 4 * thread.spec().starts as usize;
@@ -143,7 +144,15 @@ pub(in super::super::super) fn read(
         extent: thread.spec().length_mm.max(thread.spec().major_radius_mm),
     };
     let tail = &faces[count..];
-    let join = junction(proof, shell, tail, thread, &rings, &corners, frame)?;
+    let join = junction(
+        proof,
+        shell,
+        tail,
+        thread,
+        &rings,
+        &corners,
+        (frame, visible_start),
+    )?;
     let head = &tail[join.shoulders + 1..];
     require((9..=13).contains(&head.len()))?;
     let segment_count = head.len() - 8;
@@ -285,7 +294,7 @@ pub(in super::super::super) fn read(
             upper = candidate;
         }
     }
-    Screw::from_source_with_drive(
+    Screw::from_source_with_union_and_drive(
         *thread,
         profile,
         SourceSpec {

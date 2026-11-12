@@ -141,10 +141,41 @@ pub(super) fn read_member(
     } else {
         None
     };
-    let origin = bottom.origin;
     let u = bottom.u;
     let v = bottom.v.map(|n| if headed { n } else { -n });
     let n = bottom.normal.map(|n| if headed { n } else { -n });
+    let full_support_entry = if profiled {
+        let edges = helical::orient(
+            &helical::ring(shell, *first.2.first().ok_or(ReadError::Invalid)?, true)?,
+            first.1,
+        );
+        let [_, _, _, (rail, _)] = edges[..] else {
+            return Err(ReadError::Invalid);
+        };
+        let [Value::String(_), a, _, curve, _] = shell.args(rail, "EDGE_CURVE")? else {
+            return Err(ReadError::Invalid);
+        };
+        let args = shell.args(reference(curve)?, "B_SPLINE_CURVE_WITH_KNOTS")?;
+        let controls = refs(args.get(2).ok_or(ReadError::Invalid)?)?;
+        let point = shell.point(*controls.first().ok_or(ReadError::Invalid)?)?;
+        let [Value::String(_), endpoint] = shell.args(reference(a)?, "VERTEX_POINT")? else {
+            return Err(ReadError::Invalid);
+        };
+        point == shell.point(reference(endpoint)?)?
+    } else {
+        true
+    };
+    let origin = if profiled && !full_support_entry {
+        // The complete literal tensor support declares its original axial
+        // datum even when the physical face starts at an interior trim. No
+        // unseen tool extension or authoring recipe is reconstructed.
+        let ids = refs(&grids[0][0])?;
+        let first = shell.point(*ids.first().ok_or(ReadError::Invalid)?)?;
+        let offset = dot(sub(first, bottom.origin), n);
+        std::array::from_fn(|i| bottom.origin[i] + n[i] * offset)
+    } else {
+        bottom.origin
+    };
     let height = dot(sub(top.origin, origin), n);
     require(height.is_finite() && height > shell.tolerance)?;
     require(
@@ -280,6 +311,7 @@ pub(super) fn read_member(
             faces,
             &thread,
             [origin, u, v],
+            dot(sub(bottom.origin, origin), n),
         )?)
     } else {
         None

@@ -131,7 +131,17 @@ fn physical_junction_and_drive_encoders_refuse_collapsed_geometry() {
         let mut displaced = rim[0][index].point;
         displaced[2] += 1.;
         rim[0][index] = file.vertex(displaced);
-        assert!(junction(&mut file, &p, &thread, thread.spec().major_radius_mm, &rim).is_err());
+        assert!(
+            junction(
+                &mut file,
+                &p,
+                &thread,
+                thread.spec().major_radius_mm,
+                0.,
+                &rim
+            )
+            .is_err()
+        );
     }
     let thread = thread(1);
     let profile = Profile::from_retained_segments(&[Segment {
@@ -155,7 +165,15 @@ fn physical_junction_and_drive_encoders_refuse_collapsed_geometry() {
     .unwrap();
     let mut file = StepFile::new();
     let rim = corners(&mut file, &thread, &p);
-    let join = junction(&mut file, &p, &thread, thread.spec().major_radius_mm, &rim).unwrap();
+    let join = junction(
+        &mut file,
+        &p,
+        &thread,
+        thread.spec().major_radius_mm,
+        0.,
+        &rim,
+    )
+    .unwrap();
     let collapsed = Placement {
         normal: [0.; 3],
         ..p
@@ -163,7 +181,7 @@ fn physical_junction_and_drive_encoders_refuse_collapsed_geometry() {
     assert!(head(&mut file, &collapsed, &source, join).is_err());
     let mut file = StepFile::new();
     let rim = corners(&mut file, &thread, &p);
-    assert!(junction(&mut file, &p, &thread, f64::INFINITY, &rim).is_err());
+    assert!(junction(&mut file, &p, &thread, f64::INFINITY, 0., &rim).is_err());
 }
 
 #[test]

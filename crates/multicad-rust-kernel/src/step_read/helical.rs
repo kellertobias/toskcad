@@ -132,6 +132,10 @@ pub fn verify_helical_screw(
     verify(input, screw.thread(), closure, [origin, u, v], tolerance)
 }
 
+/// Verify the complete boundary against a known retained source. The head
+/// contribution is evaluated from that proved source; the thread contribution
+/// is integrated from the retained finite spline cells. This is not an
+/// independently decoded mass receipt (use `read_import_solid` for that).
 pub fn verify_profiled_screw(
     input: &str,
     screw: &crate::profiled_screw::Screw,
@@ -237,7 +241,10 @@ pub(super) fn verify_member(
             &splines.heights,
             [origin, u, v],
         )?;
-        flux += quadrature.spline_flux(&controls, origin, axis);
+        // F=(radial projection)/2 has zero flux through every transverse
+        // cap plane, including an interior trim. Integrate only retained
+        // Bézier cells while proving the full support net above.
+        flux += quadrature.trimmed_spline_flux(&controls, origin, axis, splines.visible_start);
 
         let uses = ring(shell, bound, true)?;
         let uses = orient(&uses, forward);
@@ -252,11 +259,12 @@ pub(super) fn verify_member(
             .into_iter()
             .enumerate()
         {
-            corners[i][j] = spline_edge(
+            corners[i][j] = trimmed_spline_edge(
                 proof,
                 shell,
                 rail,
                 &splines.axial,
+                [splines.visible_start, splines.axial.poles.len() - 1],
                 &controls[if j == 0 { a } else { b }],
                 splines
                     .axial
@@ -280,9 +288,9 @@ pub(super) fn verify_member(
             {
                 continue;
             }
-            let z = [0., height][cap];
+            let z = [splines.heights[splines.visible_start], height][cap];
             let axial = splines.axial.poles[if cap == 0 {
-                0
+                splines.visible_start
             } else {
                 splines.axial.poles.len() - 1
             }];
@@ -293,7 +301,13 @@ pub(super) fn verify_member(
                 radial,
                 &controls
                     .iter()
-                    .map(|row| row[if cap == 0 { 0 } else { row.len() - 1 }])
+                    .map(|row| {
+                        row[if cap == 0 {
+                            splines.visible_start
+                        } else {
+                            row.len() - 1
+                        }]
+                    })
                     .collect::<Vec<_>>(),
                 radial.poles.iter().map(|&p| world(product(p, axial), z)),
             )?;
@@ -749,6 +763,26 @@ pub(super) fn spline_edge(
     boundary: &[Point],
     points: impl Iterator<Item = Point>,
 ) -> Result<[u32; 2]> {
+    trimmed_spline_edge(
+        proof,
+        shell,
+        id,
+        spline,
+        [0, spline.poles.len() - 1],
+        boundary,
+        points,
+    )
+}
+
+fn trimmed_spline_edge(
+    proof: Proof,
+    shell: &mut Shell<'_, '_>,
+    id: u32,
+    spline: &Spline,
+    trim: [usize; 2],
+    boundary: &[Point],
+    points: impl Iterator<Item = Point>,
+) -> Result<[u32; 2]> {
     let [Value::String(_), a, b, curve, Value::Enum("T")] = shell.args(id, "EDGE_CURVE")? else {
         return Err(ReadError::Invalid);
     };
@@ -771,7 +805,7 @@ pub(super) fn spline_edge(
     proof.knots(mult, segments, spline)?;
     let points = proof.poles(shell, controls, points)?;
     require(points == boundary)?;
-    let [start, end] = [points[0], points[points.len() - 1]];
+    let [start, end] = trim.map(|i| points[i]);
     require(start == shell.vertex(a)? && end == shell.vertex(b)? && start != end)?;
     Ok([a, b])
 }

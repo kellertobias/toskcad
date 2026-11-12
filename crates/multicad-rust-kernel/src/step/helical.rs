@@ -411,12 +411,14 @@ pub(super) fn encode(
         bands,
         axial,
         heights,
+        visible_start,
     } = prepare(thread, closure, placement.origin, tolerance_mm)?;
     let spec = thread.spec();
     let height = spec.length_mm;
-    let [axial_start, axial_end] = [0, axial.poles.len() - 1];
+    let [axial_start, axial_end] = [visible_start, axial.poles.len() - 1];
     let endpoints = [axial.poles[axial_start], axial.poles[axial_end]];
-    let rings = [0., height]
+    let ends = [heights[visible_start], height];
+    let rings = ends
         .into_iter()
         .zip(endpoints)
         .map(|(z, spin)| {
@@ -436,7 +438,13 @@ pub(super) fn encode(
                 .iter()
                 .zip(&heights)
                 .map(|(&spin, &z)| placement.point_f64(product(band.poles[0], spin), z));
-            curve(file, &axial, [bottom, top], &mut poles)
+            trimmed_curve(
+                file,
+                &axial,
+                [bottom, top],
+                [axial_start, axial_end],
+                &mut poles,
+            )
         })
         .collect::<Vec<_>>();
     let external = if let Closure::ExternalStock {
@@ -473,6 +481,7 @@ pub(super) fn encode(
             &placement,
             thread,
             screw.profile().end()[0],
+            ends[0],
             &(0..spec.starts as usize)
                 .map(|k| [rings[0][4 * k], rings[0][4 * k + 3]])
                 .collect::<Vec<_>>(),
@@ -507,7 +516,7 @@ pub(super) fn encode(
             {
                 return shank.crest;
             }
-            let z = [0., height][end];
+            let z = ends[end];
             let mut poles = band
                 .poles
                 .iter()
@@ -533,7 +542,7 @@ pub(super) fn encode(
         faces.push(file.face_on(&[bound], surface, forward));
     }
 
-    let centers = [0., height].map(|z| placement.point_f64([0.; 2], z));
+    let centers = ends.map(|z| placement.point_f64([0.; 2], z));
     let cylinder_spec = if let Closure::ExternalStock {
         radius_mm,
         stock_length_mm,
@@ -853,6 +862,8 @@ pub(crate) struct ThreadSplines {
     pub(crate) bands: Vec<Spline>,
     pub(crate) axial: Spline,
     pub(crate) heights: Vec<f64>,
+    /// First visible axial Bézier pole; preceding support remains literal file data.
+    pub(crate) visible_start: usize,
 }
 
 pub(crate) fn prepare(
@@ -926,7 +937,30 @@ pub(crate) fn prepare(
     // Bound the factors separately. The product error is at most
     // e_A + R e_B + e_A e_B, leaving room for roundoff and the closure seam.
     let hand = rate.signum();
-    let axial = Spline::new(0., spin, [1., 1.], hand, tolerance / (8. * major))?;
+    let visible_z = match closure {
+        Closure::Profiled(screw) => screw.visible_thread_interval_mm()[0],
+        _ => 0.,
+    };
+    let (axial, heights, visible_start) = if visible_z > 0. {
+        let split = visible_z / rate.abs();
+        let mut prefix = Spline::new(0., split, [1., 1.], hand, tolerance / (8. * major))?;
+        let suffix = Spline::new(split, spin, [1., 1.], hand, tolerance / (8. * major))?;
+        let visible_start = prefix.poles.len() - 1;
+        // These are newly certified Hermite cells on both sides of the trim,
+        // not knot insertion into an older approximation. The shared endpoint
+        // is the analytic rotation jet at split; the same remainder certificate
+        // applies to every retained full-support cell.
+        let mut heights = prefix.linear_poles(visible_z);
+        let suffix_heights = suffix.affine_poles([visible_z, height]);
+        prefix.knots.extend_from_slice(&suffix.knots[1..]);
+        prefix.poles.extend_from_slice(&suffix.poles[1..]);
+        heights.extend_from_slice(&suffix_heights[1..]);
+        (prefix, heights, visible_start)
+    } else {
+        let axial = Spline::new(0., spin, [1., 1.], hand, tolerance / (8. * major))?;
+        let heights = axial.linear_poles(height);
+        (axial, heights, 0)
+    };
     let knots = thread.profile_breaks();
     let [_, start, upper, lower, crest, _] = knots;
     let phase = [start, upper, lower, crest, start + spec.pitch_mm];
@@ -994,11 +1028,11 @@ pub(crate) fn prepare(
         return Err(StepError::Limit);
     }
 
-    let heights = axial.linear_poles(height);
     Ok(ThreadSplines {
         bands,
         axial,
         heights,
+        visible_start,
     })
 }
 
@@ -1089,6 +1123,27 @@ impl Spline {
                     pair[0] + (pair[1] - pair[0]) * i as f64 / DEGREE as f64
                 };
                 z / end * height
+            }));
+        }
+        result
+    }
+
+    fn affine_poles(&self, [start, end]: [f64; 2]) -> Vec<f64> {
+        let a = self.knots[0];
+        let b = self.knots[self.knots.len() - 1];
+        let mut result = vec![start];
+        for pair in self.knots.windows(2) {
+            result.extend((1..=DEGREE).map(|i| {
+                if i == DEGREE && pair[1] == b {
+                    end
+                } else {
+                    let t = if i == DEGREE {
+                        pair[1]
+                    } else {
+                        pair[0] + (pair[1] - pair[0]) * i as f64 / DEGREE as f64
+                    };
+                    start + (t - a) / (b - a) * (end - start)
+                }
             }));
         }
         result
@@ -1196,12 +1251,28 @@ pub(super) fn curve(
     [from, to]: [Vertex; 2],
     points: &mut dyn Iterator<Item = Point>,
 ) -> Entity {
+    trimmed_curve(
+        file,
+        spline,
+        [from, to],
+        [0, spline.poles.len() - 1],
+        points,
+    )
+}
+
+fn trimmed_curve(
+    file: &mut StepFile,
+    spline: &Spline,
+    [from, to]: [Vertex; 2],
+    trim: [usize; 2],
+    points: &mut dyn Iterator<Item = Point>,
+) -> Entity {
     let poles = points
         .enumerate()
         .map(|(i, point)| {
-            if i == 0 {
+            if i == trim[0] {
                 from.cartesian
-            } else if i + 1 == spline.poles.len() {
+            } else if i == trim[1] {
                 to.cartesian
             } else {
                 file.point(point)

@@ -56,9 +56,19 @@ impl Quadrature {
         origin: Point,
         axis: Point,
     ) -> f64 {
+        self.trimmed_spline_flux(rows, origin, axis, 0)
+    }
+
+    pub(in crate::step_read) fn trimmed_spline_flux(
+        &self,
+        rows: &[Vec<Point>],
+        origin: Point,
+        axis: Point,
+        start: usize,
+    ) -> f64 {
         let mut flux = 0.;
         for radial in rows.windows(WIDTH).step_by(DEGREE) {
-            for axial in (0..radial[0].len() - DEGREE).step_by(DEGREE) {
+            for axial in (start..radial[0].len() - DEGREE).step_by(DEGREE) {
                 let patch = from_fn(|i| from_fn(|j| sub(radial[i][axial + j], origin)));
                 flux += self.patch_flux(&patch, axis);
             }

@@ -139,6 +139,7 @@ pub(crate) fn prepare(
         bands,
         axial,
         heights,
+        visible_start: 0,
     })
 }
 /// Construct and certify one affine-radius rotation chart as one operation.
@@ -257,6 +258,7 @@ fn encode_material(
         bands,
         axial,
         heights,
+        ..
     } = prepare(thread, placement.origin, tolerance)?;
     let length = thread.spec().length_mm;
     let endpoints = [axial.poles[0], *axial.poles.last().expect("axial")];

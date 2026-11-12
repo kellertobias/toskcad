@@ -161,8 +161,9 @@ fn junction(
     thread: &Thread,
     rings: &[Vec<u32>; 2],
     corners: &[[[u32; 2]; 2]],
-    frame: Frame,
+    (frame, z): (Frame, f64),
 ) -> Result<Junction> {
+    let center = frame.world([0.; 2], z);
     let spec = thread.spec();
     let starts = spec.starts as usize;
     let (surface, forward, bounds) = face(shell, faces[0])?;
@@ -171,12 +172,12 @@ fn junction(
         proof.axis(
             shell,
             hex_head::plane(shell, surface)?,
-            frame.origin,
+            center,
             frame.n,
             frame.u,
         )?;
         let outer = single_bound_rim(shell, bounds[0], true, true, frame)?;
-        require(outer.radius > spec.major_radius_mm && proof.equal(outer.center, frame.origin))?;
+        require(outer.radius > spec.major_radius_mm && proof.equal(outer.center, center))?;
         let edges = orient(&ring(shell, bounds[1], false)?, !spec.left_hand);
         require(edges == rings[0].iter().map(|&id| (id, true)).collect::<Vec<_>>())?;
         let [_, start, _, _, crest, _] = thread.profile_breaks();
@@ -189,7 +190,7 @@ fn junction(
                     corners[4 * k + 3][0][0],
                     corners[(4 * (k + 1)) % rings[0].len()][0][0],
                 ],
-                frame.origin,
+                center,
                 arc_axis,
                 (
                     proof,
@@ -218,7 +219,7 @@ fn junction(
         proof.axis(
             shell,
             hex_head::plane(shell, surface)?,
-            frame.origin,
+            center,
             frame.n,
             frame.u,
         )?;
@@ -242,7 +243,7 @@ fn junction(
             shell,
             crest_edge,
             [last, next],
-            frame.origin,
+            center,
             arc_axis,
             (
                 proof,
@@ -254,7 +255,7 @@ fn junction(
             shell,
             complement,
             [first, last],
-            frame.origin,
+            center,
             arc_axis,
             (proof, spec.major_radius_mm, (crest - start) / rate.abs()),
         )?;
@@ -275,9 +276,9 @@ fn junction(
             edge: None,
             vertex: corners[0][0][0],
             radius: spec.major_radius_mm,
-            z: 0.,
+            z,
             positive: true,
-            center: frame.origin,
+            center,
         },
         shoulders: starts,
     })
@@ -373,7 +374,15 @@ pub(super) fn verify(
     let thread = expected.thread();
     let count = 4 * thread.spec().starts as usize;
     let tail = &all_faces[count..];
-    let join = junction(proof, shell, tail, thread, rings, corners, frame)?;
+    let join = junction(
+        proof,
+        shell,
+        tail,
+        thread,
+        rings,
+        corners,
+        (frame, expected.visible_thread_interval_mm()[0]),
+    )?;
     let faces = &tail[join.shoulders + 1..];
     if let Some(error) = proof.error {
         head_edge_residuals(shell, faces, frame, error)?;
@@ -516,6 +525,15 @@ pub(super) fn verify(
         frame.n,
         true,
     )?;
+    if proof.error.is_none() {
+        // A source-known proof above checks every literal support, trim,
+        // drive point and shared edge against the original source. Evaluate
+        // that source directly: a WCS inverse projection would introduce a
+        // second, avoidable precision domain for a known meridian. Independent
+        // physical imports take the transported decoded branch below.
+        return Ok(expected.profile().volume_mm3()
+            - expected.drive().area_mm2() * expected.spec().socket_depth_mm);
+    }
     let profile =
         Profile::from_transported_segments(&decoded, expected.profile().transport_error())
             .map_err(|_| ReadError::Invalid)?;
@@ -847,6 +865,146 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    #[test]
+    fn full_original_thread_support_has_explicit_interior_head_trim() {
+        for crown in [false, true] {
+            for (starts, left) in [(1, false), (2, true)] {
+                for fitted in [false, true] {
+                    let old = screw(crown, starts, left);
+                    let thread = Thread::new(helical_thread::Spec {
+                        major_radius_mm: if fitted { 1.48 } else { 1.5 },
+                        ..old.thread().spec()
+                    })
+                    .unwrap();
+                    let source = Screw::new_with_shank_thread_union(
+                        thread,
+                        1.5,
+                        Spec {
+                            head: old.spec().head.unwrap(),
+                            shank_length_mm: 0.,
+                            socket_across_flats_mm: 2.,
+                            socket_depth_mm: 0.6,
+                            minimum_wall_mm: 0.1,
+                        },
+                    )
+                    .unwrap();
+                    for (origin, u, v) in [
+                        ([0.; 3], [1., 0., 0.], [0., 1., 0.]),
+                        ([30., -20., 10.], [0.6, 0.8, 0.], [0., 0., 1.]),
+                        ([100000., -100000., 100000.], [0.6, 0.8, 0.], [0., 0., 1.]),
+                    ] {
+                        let text = step::write_profiled_screw(&source, origin, u, v, 1e-7).unwrap();
+                        topology(&text).unwrap();
+                        let volume =
+                            verify_profiled_screw(&text, &source, origin, u, v, 1e-7).unwrap();
+                        assert!((volume - source.volume_mm3()).abs() < 1e-6);
+                        let (_, imported) =
+                            crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+                        let (decoded, _) = imported.profiled_screw_geometry().unwrap();
+                        assert!(decoded.has_head_thread_overlap());
+                        assert!(
+                            (decoded.thread().spec().length_mm - thread.spec().length_mm).abs()
+                                < 1e-7
+                        );
+                        assert!(crate::step_read::profiled_screw_import_matches(
+                            &imported,
+                            &source,
+                            [origin, u, v],
+                            1e-7
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hidden_full_support_is_proved_instead_of_inferring_an_unseen_thread_recipe() {
+        let old = screw(false, 1, false);
+        let source = Screw::new_with_head_thread_union(
+            *old.thread(),
+            Spec {
+                head: old.spec().head.unwrap(),
+                shank_length_mm: 0.,
+                socket_across_flats_mm: 2.,
+                socket_depth_mm: 0.6,
+                minimum_wall_mm: 0.1,
+            },
+        )
+        .unwrap();
+        let text =
+            step::write_profiled_screw(&source, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7).unwrap();
+        let data = parse_entities(&text, 1e-7).unwrap();
+        let shell = Shell::new(&data, 1e-7, true);
+        let faces = shell
+            .member_faces(shell.represented_solids(true).unwrap()[0])
+            .unwrap();
+        let surface = shell.simple(face(&shell, faces[0]).unwrap().0).unwrap();
+        let rows = surface
+            .args
+            .iter()
+            .find_map(|value| {
+                if let Value::List(rows) = value {
+                    Some(rows)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        let point_id = refs(&rows[0]).unwrap()[0];
+        let point = shell.point(point_id).unwrap();
+        let line = text
+            .lines()
+            .find(|line| line.starts_with(&format!("#{point_id}=")))
+            .unwrap();
+        let changed = format!(
+            "#{point_id}=CARTESIAN_POINT('',({},{},{}));",
+            point[0] + 0.001,
+            point[1],
+            point[2]
+        );
+        let malformed = text.replacen(line, &changed, 1);
+        assert!(
+            verify_profiled_screw(
+                &malformed,
+                &source,
+                [0.; 3],
+                [1., 0., 0.],
+                [0., 1., 0.],
+                1e-7
+            )
+            .is_err()
+        );
+        assert!(crate::step_read::read_import_solid(&malformed, 1e-7).is_err());
+        let first = face(&shell, faces[0]).unwrap();
+        let bound = shell.simple(first.2[0]).unwrap();
+        let loop_id = reference(&bound.args[1]).unwrap();
+        let loop_uses = refs(&shell.args(loop_id, "EDGE_LOOP").unwrap()[1]).unwrap();
+        let edges = orient(&ring(&shell, first.2[0], true).unwrap(), first.1);
+        let rail = edges[3].0;
+        let rail_args = shell.args(rail, "EDGE_CURVE").unwrap();
+        let start = reference(&rail_args[1]).unwrap();
+        let point = reference(&shell.args(start, "VERTEX_POINT").unwrap()[1]).unwrap();
+        for (id, replacement) in [
+            (
+                loop_id,
+                format!(
+                    "#{loop_id}=EDGE_LOOP('',(#{},#{},#{}));",
+                    loop_uses[0], loop_uses[1], loop_uses[2]
+                ),
+            ),
+            (rail, format!("#{rail}=EDGE_CURVE('',#{start},#{start});")),
+            (start, format!("#{start}=VERTEX_POINT(#{point});")),
+        ] {
+            let line = text
+                .lines()
+                .find(|line| line.starts_with(&format!("#{id}=")))
+                .unwrap();
+            let malformed = text.replacen(line, &replacement, 1);
+            assert!(crate::step_read::read_import_solid(&malformed, 1e-7).is_err());
+        }
     }
 
     fn topology(input: &str) -> Result<()> {
@@ -1442,11 +1600,11 @@ mod tests {
         )
         .unwrap();
         assert!(union.has_head_thread_overlap());
-        assert!(!step::supports_profiled_screw(&union, [0.; 3], 1e-7));
-        assert_eq!(
-            step::write_profiled_screw(&union, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7),
-            Err(step::StepError::Unsupported)
-        );
+        assert!(step::supports_profiled_screw(&union, [0.; 3], 1e-7));
+        let text =
+            step::write_profiled_screw(&union, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7).unwrap();
+        let (read, _) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+        assert!((read.volume_mm3 - union.volume_mm3()).abs() < 1e-6);
     }
 
     #[test]

@@ -420,6 +420,7 @@ fn precision_and_invalid_drive_edits_preserve_the_previous_source() {
 
 #[test]
 fn covered_thread_prefix_keeps_actual_visible_faces_rims_and_phase() {
+    let scratch = tempfile::tempdir().unwrap();
     for crown in [false, true] {
         for left_hand in [false, true] {
             let mut thread = thread();
@@ -500,7 +501,21 @@ fn covered_thread_prefix_keeps_actual_visible_faces_rims_and_phase() {
                         .unwrap();
                     assert_eq!(mesh.edge_pairs as usize * 2, mesh.mesh.indices.len());
                 }
-                assert!(!solid.supports_step_export());
+                assert!(solid.supports_step_export());
+                let path = scratch
+                    .path()
+                    .join(format!("union-{crown}-{left_hand}-{plain}.step"));
+                solid.write_step(&path).unwrap();
+                let text = std::fs::read_to_string(path).unwrap();
+                let imported =
+                    Solid::import_rust_step(&text, EntityId::new(), GeometryPolicy::default())
+                        .unwrap();
+                let (decoded, _) = imported.rust_profiled_screw_geometry().unwrap();
+                assert!(decoded.has_head_thread_overlap());
+                assert!((decoded.thread().spec().length_mm - thread.length_mm).abs() < 1e-12);
+                assert!(
+                    (imported.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < 1e-6
+                );
             }
         }
     }

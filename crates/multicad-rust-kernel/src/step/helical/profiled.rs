@@ -38,9 +38,6 @@ pub(super) struct Junction {
 }
 
 pub(super) fn admission(screw: &Screw, origin: Point, tolerance: f64) -> Result<(), StepError> {
-    if screw.profile().end()[1] != screw.spec().shank_length_mm {
-        return Err(StepError::Unsupported);
-    }
     if !tolerance.is_finite() || tolerance <= 0. || !origin.into_iter().all(f64::is_finite) {
         return Err(StepError::InvalidGeometry);
     }
@@ -145,15 +142,17 @@ pub(super) fn junction(
     p: &Placement,
     thread: &Thread,
     shank_radius: f64,
+    z: f64,
     corners: &[[Vertex; 2]],
 ) -> Result<Junction, StepError> {
     let spec = thread.spec();
     let [_, start, _, _, crest, _] = thread.profile_breaks();
     let rate = thread.helical_rate();
     let radial = |phase: f64| {
-        let (sin, cos) = (-phase / rate).sin_cos();
+        let (sin, cos) = ((z - phase) / rate).sin_cos();
         p.vector([cos, sin, 0.])
     };
+    let center = p.point_f64([0.; 2], z);
     let axis = p.normal.map(|x| if spec.left_hand { x } else { -x });
     let mut crests = Vec::new();
     let mut complements = Vec::new();
@@ -164,7 +163,7 @@ pub(super) fn junction(
             circular_arc_edge(
                 file,
                 [last, next],
-                p.origin,
+                center,
                 axis,
                 radial(crest + shift),
                 spec.major_radius_mm,
@@ -177,7 +176,7 @@ pub(super) fn junction(
                 circular_arc_edge(
                     file,
                     [first, last],
-                    p.origin,
+                    center,
                     axis,
                     radial(start + shift),
                     spec.major_radius_mm,
@@ -198,7 +197,7 @@ pub(super) fn junction(
     let outer = if shank_radius > spec.major_radius_mm {
         Some(CircularRim::new(
             file,
-            p.origin,
+            center,
             p.normal,
             radial(start),
             shank_radius,
@@ -248,7 +247,7 @@ pub(super) fn head(
         let next = if last {
             // The nominal circle is split into actual crest/complement edges.
             terminal.unwrap_or(Station {
-                center: file.point(p.origin),
+                center: file.point(p.point_f64([0.; 2], screw.visible_thread_interval_mm()[0])),
                 axis: None,
                 rim: None,
                 vertex: join.vertex,
