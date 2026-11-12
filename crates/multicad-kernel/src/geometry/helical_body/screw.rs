@@ -13,6 +13,18 @@ enum MountingFrame {
 }
 
 impl Solid {
+    /// Actual regular screw source and its current physical thread frame.
+    pub fn rust_machine_screw_geometry(
+        &self,
+    ) -> Option<(&multicad_rust_kernel::headed_screw::Screw, PlaneFrame)> {
+        let (body, frame) = self.helical_body()?;
+        if let HelicalForm::Screw(source) = &body.form {
+            Some((source, frame))
+        } else {
+            None
+        }
+    }
+
     /// Build a screw in its canonical underhead mounting frame. The thread,
     /// optional plain shank and recessed or hex head share one boundary.
     pub fn rust_machine_screw(
