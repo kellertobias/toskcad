@@ -379,7 +379,7 @@ pub(super) fn head(
             (mouth, faces)
         }
         crate::screw_recess::Recess::ConicalHexalobular(recess) => {
-            torx::encode(file, p, recess.source(), top, tolerance_mm)?
+            torx::encode(file, p, recess, top, tolerance_mm)?
         }
     };
     let outer = circular_bound(file, top_edge, false, true);

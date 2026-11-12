@@ -1,6 +1,10 @@
 //! Curved cavity patches; publication stays gated until physical readback.
 use super::*;
-use crate::hexalobular_drive::{Drive, Error};
+use crate::{
+    hexalobular_drive::{Error, FinitePost, FiniteVertices},
+    screw_recess::ConicalHexalobular,
+};
+use std::borrow::Cow;
 #[cfg(test)]
 mod tests;
 
@@ -14,39 +18,70 @@ fn source_error(error: Error) -> StepError {
 pub(super) fn encode(
     file: &mut StepFile,
     p: &Placement,
-    source: &Drive,
+    recess: &ConicalHexalobular,
     top: f64,
     tolerance: f64,
 ) -> Result<(Entity, Vec<Entity>), StepError> {
     if !tolerance.is_finite() || tolerance <= 0. || !top.is_finite() {
         return Err(StepError::InvalidGeometry);
     }
+    let source = recess.source();
+    let binding = recess.finite_binding();
     let tolerance = tolerance.min(MAX_ERROR_MM);
-    let half_angle = source.cone().depth_per_radius.recip().atan();
+    let half_angle = binding
+        .and_then(|b| b.literal_cone_semi_angle_rad())
+        .unwrap_or_else(|| source.cone().depth_per_radius.recip().atan());
     if half_angle <= 0. || half_angle >= std::f64::consts::FRAC_PI_2 {
         return Err(StepError::Unsupported);
     }
-    let curves = (0..12)
+    let (curves, vertices) = if let Some(binding) = binding {
+        if binding.spatial_source_error_bound_mm() > tolerance / 8. {
+            return Err(StepError::Limit);
+        }
+        (
+            Cow::Borrowed(binding.carriers().as_slice()),
+            *binding.vertices(),
+        )
+    } else {
+        let curves = (0..12)
+            .map(|i| {
+                source
+                    .intersection_carrier(i, tolerance / 16., 100_000)
+                    .map_err(source_error)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mouth_mm = source.arcs().map(|a| [a.start_mm[0], a.start_mm[1], 0.]);
+        let floor_mm = mouth_mm.map(|[x, y, _]| {
+            [
+                x,
+                y,
+                source.cone().tip_depth_mm - source.cone().depth_per_radius * x.hypot(y),
+            ]
+        });
+        (
+            Cow::Owned(curves),
+            FiniteVertices {
+                mouth_mm,
+                floor_mm,
+                apex_mm: [0., 0., source.cone().tip_depth_mm],
+            },
+        )
+    };
+    let placed = |[x, y, z]: Point| p.point_f64([x, y], top + z);
+    let mouth = vertices.mouth_mm.map(|point| file.vertex(placed(point)));
+    let floor = vertices.floor_mm.map(|point| file.vertex(placed(point)));
+    let posts = (0..12)
         .map(|i| {
-            source
-                .intersection_carrier(i, tolerance / 16., 100_000)
-                .map_err(source_error)
+            if let Some(binding) = binding {
+                post_edge(file, p, binding.post_lines()[i], [mouth[i], floor[i]], top)
+            } else {
+                line_edge(file, mouth[i], floor[i])
+            }
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let contacts = source.arcs().map(|a| a.start_mm);
-    let mouth = contacts.map(|xy| file.vertex(p.point_f64(xy, top)));
-    let floor = contacts.map(|xy| {
-        file.vertex(p.point_f64(
-            xy,
-            top + source.cone().tip_depth_mm - source.cone().depth_per_radius * xy[0].hypot(xy[1]),
-        ))
-    });
-    let posts = (0..12)
-        .map(|i| line_edge(file, mouth[i], floor[i]))
-        .collect::<Result<Vec<_>, _>>()?;
-    let apex_point = p.point_f64([0.; 2], top + source.cone().tip_depth_mm);
+    let apex_point = placed(vertices.apex_mm);
     let apex_cartesian = file.point(apex_point);
-    let [x, y] = contacts[0];
+    let [x, y] = std::array::from_fn(|i| vertices.floor_mm[0][i] - vertices.apex_mm[i]);
     let radius = x.hypot(y);
     let axis = file.axis(
         apex_cartesian,
@@ -151,6 +186,32 @@ pub(super) fn encode(
     let mut faces = vec![floor_face];
     faces.extend(sides);
     Ok((mouth_bound, faces))
+}
+
+fn post_edge(
+    file: &mut StepFile,
+    p: &Placement,
+    post: FinitePost,
+    [from, to]: [Vertex; 2],
+    top: f64,
+) -> Result<Entity, StepError> {
+    let vector = p.vector(post.direction_mm_per_parameter);
+    let magnitude = vector[0].hypot(vector[1]).hypot(vector[2]);
+    if from.point == to.point || !magnitude.is_finite() || magnitude <= 0. {
+        return Err(StepError::InvalidGeometry);
+    }
+    let [x, y, z] = post.origin_mm;
+    let origin = file.point(p.point_f64([x, y], top + z));
+    let direction = file.direction(vector);
+    let vector = file.entity(format_args!("VECTOR('',{direction},{magnitude:.16E})"));
+    let line = file.entity(format_args!("LINE('',{origin},{vector})"));
+    let (a, b) = (from.vertex, to.vertex);
+    let sense = if post.parameters[1] > post.parameters[0] {
+        ".T."
+    } else {
+        ".F."
+    };
+    Ok(file.entity(format_args!("EDGE_CURVE('',{a},{b},{line},{sense})")))
 }
 
 fn uv_definition(file: &mut StepFile, context: Entity, points: [[f64; 2]; 2]) -> Entity {

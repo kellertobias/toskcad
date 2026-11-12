@@ -1,6 +1,15 @@
 use super::*;
-use crate::hexalobular_drive::{Cone, TangentSpec};
+use crate::hexalobular_drive::{Cone, Drive, FiniteBinding, TangentSpec};
+use std::f64::consts::PI;
 
+fn payload(source: Drive) -> ConicalHexalobular {
+    let crate::screw_recess::Recess::ConicalHexalobular(payload) =
+        crate::screw_recess::Recess::conical_hexalobular(source, 1e-7, 100_000).unwrap()
+    else {
+        unreachable!()
+    };
+    payload
+}
 fn source() -> Drive {
     Drive::from_authored_tangent(
         TangentSpec {
@@ -15,12 +24,148 @@ fn source() -> Drive {
     )
     .unwrap()
 }
+
+fn retained_payload(shift: f64) -> ConicalHexalobular {
+    let source = source();
+    let mut curves: [Vec<_>; 12] =
+        std::array::from_fn(|i| source.intersection_carrier(i, 1e-9, 10_000).unwrap());
+    let vertices = FiniteVertices {
+        mouth_mm: source.arcs().map(|a| [a.start_mm[0], a.start_mm[1], 0.]),
+        floor_mm: std::array::from_fn(|i| curves[i][0].poles_mm[0]),
+        apex_mm: [0., 0., source.cone().tip_depth_mm],
+    };
+    curves[0][0].poles_mm[1][2] += shift;
+    let posts = std::array::from_fn(|i| {
+        let d: Point = std::array::from_fn(|j| vertices.floor_mm[i][j] - vertices.mouth_mm[i][j]);
+        FinitePost {
+            origin_mm: std::array::from_fn(|j| vertices.mouth_mm[i][j] + 7. * d[j]),
+            direction_mm_per_parameter: d.map(|x| -2. * x),
+            parameters: [3.5, 3.],
+        }
+    });
+    let binding = FiniteBinding::new_with_posts(source, vertices, posts, curves, 0.01)
+        .unwrap()
+        .with_literal_cone_semi_angle((PI / 3.).next_up())
+        .unwrap();
+    let crate::screw_recess::Recess::ConicalHexalobular(payload) =
+        crate::screw_recess::Recess::conical_hexalobular_from_binding(binding, 1., 100_000)
+            .unwrap()
+    else {
+        unreachable!()
+    };
+    payload
+}
+
+#[test]
+fn retained_encoder_keeps_actual_controls_post_supports_and_original_cone_angle() {
+    let recess = retained_payload(2e-10);
+    let binding = recess.finite_binding().unwrap();
+    let p = Placement::new([10., -20., 30.], [0.8, 0.6, 0.], [0., 0., 1.]).unwrap();
+    let top = -2.4;
+    let mut file = StepFile::new();
+    encode(&mut file, &p, &recess, top, 1e-7).unwrap();
+    let curve = file
+        .data
+        .lines()
+        .find(|line| line.contains("B_SPLINE_CURVE_WITH_KNOTS("))
+        .unwrap();
+    let refs = references(curve);
+    let points = std::iter::once(binding.carriers()[0][0].poles_mm[0]).chain(
+        binding.carriers()[0]
+            .iter()
+            .flat_map(|s| s.poles_mm[1..].iter().copied()),
+    );
+    let expected = points
+        .map(|[x, y, z]| {
+            let point = p
+                .point_f64([x, y], top + z)
+                .map(|x| if x == 0. { 0. } else { x });
+            file.points[&point.map(f64::to_bits)].0.to_string()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(refs[1..], expected);
+    for post in binding.post_lines() {
+        let [x, y, z] = post.origin_mm;
+        assert!(
+            file.points
+                .contains_key(&p.point_f64([x, y], top + z).map(f64::to_bits))
+        );
+        let value = p.vector(post.direction_mm_per_parameter);
+        assert!(
+            file.data
+                .contains(&format!("DIRECTION('',{})", Coordinates(value)))
+        );
+    }
+    let angle = binding.literal_cone_semi_angle_rad().unwrap();
+    assert_ne!(
+        angle.to_bits(),
+        recess
+            .source()
+            .cone()
+            .depth_per_radius
+            .recip()
+            .atan()
+            .to_bits()
+    );
+    assert!(file.data.contains(&format!(",0.,{angle:.16E})")));
+    assert_eq!(recess.finite_binding().unwrap(), binding);
+}
+
+#[test]
+fn retained_encoder_refuses_insufficient_precision_or_collapsed_world_posts_without_replacing_sources()
+ {
+    let too_wide = retained_payload(1e-4);
+    let p = Placement::new([0.; 3], [1., 0., 0.], [0., 1., 0.]).unwrap();
+    let mut file = StepFile::new();
+    let before = file.data.clone();
+    assert!(matches!(
+        encode(&mut file, &p, &too_wide, -2.4, 1e-7),
+        Err(StepError::Limit)
+    ));
+    assert_eq!(file.data, before);
+    let recess = retained_payload(2e-10);
+    let collapsed = Placement::new([1e300; 3], [1., 0., 0.], [0., 1., 0.]).unwrap();
+    assert!(matches!(
+        encode(&mut StepFile::new(), &collapsed, &recess, -2.4, 1e-7),
+        Err(StepError::InvalidGeometry)
+    ));
+    assert!(encode(&mut StepFile::new(), &p, &recess, -2.4, 1e-7).is_ok());
+}
+
+#[test]
+fn retained_encoder_keeps_positive_post_parameterization_without_a_literal_angle_override() {
+    let previous = retained_payload(2e-10);
+    let stored = previous.finite_binding().unwrap();
+    let binding = FiniteBinding::new(
+        stored.source().clone(),
+        *stored.vertices(),
+        stored.carriers().clone(),
+        1e-7,
+    )
+    .unwrap();
+    assert!(
+        binding
+            .post_lines()
+            .iter()
+            .all(|p| p.parameters == [0., 1.])
+    );
+    assert_eq!(binding.literal_cone_semi_angle_rad(), None);
+    let crate::screw_recess::Recess::ConicalHexalobular(recess) =
+        crate::screw_recess::Recess::conical_hexalobular_from_binding(binding, 1e-5, 100_000)
+            .unwrap()
+    else {
+        unreachable!()
+    };
+    let p = Placement::new([0.; 3], [1., 0., 0.], [0., 1., 0.]).unwrap();
+    assert!(encode(&mut StepFile::new(), &p, &recess, -2.4, 1e-7).is_ok());
+}
 #[test]
 fn torx_encoder_retains_real_surfaces_contacts_and_apex_without_opening_public_admission() {
     let source = source();
+    let recess = payload(source.clone());
     let p = Placement::new([10., -20., 30.], [0.8, 0.6, 0.], [0., 0., 1.]).unwrap();
     let mut file = StepFile::new();
-    let (_mouth, faces) = encode(&mut file, &p, &source, -2.4, 1e-7).unwrap();
+    let (_mouth, faces) = encode(&mut file, &p, &recess, -2.4, 1e-7).unwrap();
     assert_eq!(faces.len(), 13);
     assert_eq!(file.data.matches("CYLINDRICAL_SURFACE(").count(), 12);
     assert_eq!(file.data.matches("CONICAL_SURFACE(").count(), 1);
@@ -246,20 +391,21 @@ fn finite_apex_graph_rejects_wrong_parameter_points_seam_refs_and_orphaned_topol
 #[test]
 fn torx_encoder_refuses_unresolvable_precision_and_collapsed_world_geometry() {
     let source = source();
+    let recess = payload(source.clone());
     let snapshot = source.clone();
     let p = Placement::new([0.; 3], [1., 0., 0.], [0., 1., 0.]).unwrap();
     for tolerance in [0., -1., f64::NAN, f64::INFINITY] {
         assert!(matches!(
-            encode(&mut StepFile::new(), &p, &source, -2.4, tolerance),
+            encode(&mut StepFile::new(), &p, &recess, -2.4, tolerance),
             Err(StepError::InvalidGeometry)
         ));
     }
     assert!(matches!(
-        encode(&mut StepFile::new(), &p, &source, f64::NAN, 1e-7),
+        encode(&mut StepFile::new(), &p, &recess, f64::NAN, 1e-7),
         Err(StepError::InvalidGeometry)
     ));
     assert!(matches!(
-        encode(&mut StepFile::new(), &p, &source, -2.4, 1e-20),
+        encode(&mut StepFile::new(), &p, &recess, -2.4, 1e-20),
         Err(StepError::Unsupported)
     ));
     let shallow = Drive::from_authored_tangent(
@@ -275,12 +421,12 @@ fn torx_encoder_refuses_unresolvable_precision_and_collapsed_world_geometry() {
     )
     .unwrap();
     assert!(matches!(
-        encode(&mut StepFile::new(), &p, &shallow, -2.4, 1e-7),
+        encode(&mut StepFile::new(), &p, &payload(shallow), -2.4, 1e-7),
         Err(StepError::Unsupported)
     ));
     let collapsed = Placement::new([1e300; 3], [1., 0., 0.], [0., 1., 0.]).unwrap();
     assert!(matches!(
-        encode(&mut StepFile::new(), &collapsed, &source, -2.4, 1e-7),
+        encode(&mut StepFile::new(), &collapsed, &recess, -2.4, 1e-7),
         Err(StepError::InvalidGeometry)
     ));
     let skewed = Placement {
@@ -290,7 +436,7 @@ fn torx_encoder_refuses_unresolvable_precision_and_collapsed_world_geometry() {
         normal: [0., 0., 1.],
     };
     assert!(matches!(
-        encode(&mut StepFile::new(), &skewed, &source, -2.4, 1e-7),
+        encode(&mut StepFile::new(), &skewed, &recess, -2.4, 1e-7),
         Err(StepError::InvalidGeometry)
     ));
     for error in [
@@ -310,5 +456,5 @@ fn torx_encoder_refuses_unresolvable_precision_and_collapsed_world_geometry() {
         );
     }
     assert_eq!(source, snapshot);
-    assert!(encode(&mut StepFile::new(), &p, &source, -2.4, 1e-7).is_ok());
+    assert!(encode(&mut StepFile::new(), &p, &recess, -2.4, 1e-7).is_ok());
 }
