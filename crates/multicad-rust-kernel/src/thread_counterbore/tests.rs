@@ -75,6 +75,13 @@ fn finite_counterbore_keeps_original_thread_and_actual_closed_stock_mesh() {
                 "{} vs {expected}",
                 proof.signed_volume_mm3
             );
+            let bound = crate::helical_thread_mesh::counterbore_volume_error_bound(&seat, options);
+            assert!(bound.is_finite() && bound > 0.);
+            assert!(
+                (proof.signed_volume_mm3 - expected).abs() <= bound,
+                "actual volume error {} exceeds {bound}",
+                (proof.signed_volume_mm3 - expected).abs()
+            );
             assert!(mesh.face_indices.contains(&seat.cylinder_face()));
             assert!(mesh.face_indices.contains(&seat.shoulder_face()));
             assert!(mesh.face_indices.contains(&0));

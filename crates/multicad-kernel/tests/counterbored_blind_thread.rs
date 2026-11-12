@@ -127,3 +127,314 @@ fn actual_counterbored_blind_source_preserves_stock_and_finite_reference_geometr
         }
     }
 }
+
+#[test]
+fn actual_regular_screw_getter_retains_source_and_reports_thread_start_after_pose() {
+    use multicad_kernel::{
+        RigidTransform,
+        rust_kernel::headed_screw::{ScrewHead, ScrewSpec},
+    };
+    let policy = GeometryPolicy::default();
+    let source_frame = PlaneFrame {
+        origin: [5., 6., 7.],
+        u: [0.8, 0.6, 0.],
+        v: [-0.36, 0.48, 0.8],
+    };
+    let occurrence = PlaneFrame {
+        origin: [100., -30., 50.],
+        u: [0., 1., 0.],
+        v: [0., 0., 1.],
+    };
+    let transform = RigidTransform {
+        rotation: std::array::from_fn(|i| {
+            [occurrence.u[i], occurrence.v[i], occurrence.normal()[i]]
+        }),
+        translation_mm: occurrence.origin,
+    };
+    let head = ScrewSpec {
+        head: ScrewHead::SocketCap {
+            radius_mm: 2.75,
+            height_mm: 3.,
+            socket_across_flats_mm: 2.5,
+            socket_depth_mm: 1.3,
+        },
+        shank_length_mm: 0.375,
+        shank_radius_mm: 1.5,
+    };
+    for left in [false, true] {
+        let mut thread = spec(left);
+        thread.starts = 2;
+        let screw =
+            Solid::rust_machine_screw(thread, None, head, EntityId::new(), source_frame, policy)
+                .unwrap();
+        let (original, frame) = screw.rust_machine_screw_geometry().unwrap();
+        assert_eq!(original.spec(), head);
+        assert_eq!(original.thread().spec().starts, 2);
+        assert_eq!(original.thread().spec().left_hand, left);
+        let original = *original;
+        let close = |a: [f64; 3], b: [f64; 3]| {
+            for i in 0..3 {
+                assert!((a[i] - b[i]).abs() < 1e-12, "{a:?} vs {b:?}");
+            }
+        };
+        close(frame.origin, point(source_frame, [0., 0., 0.375]));
+        close(
+            point(frame, [0., 0., original.head_seat_z()]),
+            source_frame.origin,
+        );
+        let posed = screw.transformed(transform).unwrap();
+        let (actual, placed) = posed.rust_machine_screw_geometry().unwrap();
+        assert_eq!(*actual, original);
+        close(placed.origin, point(occurrence, frame.origin));
+        close(
+            point(placed, [0., 0., actual.head_seat_z()]),
+            point(occurrence, source_frame.origin),
+        );
+        assert_eq!(*screw.rust_machine_screw_geometry().unwrap().0, original);
+        assert_eq!(screw.rust_machine_screw_geometry().unwrap().1, frame);
+        let bare = Solid::rust_helical_thread(thread, None, EntityId::new(), source_frame, policy)
+            .unwrap();
+        assert!(bare.rust_machine_screw_geometry().is_none());
+    }
+    let stock = Solid::rust_box(
+        EntityId::new().uuid_bits(),
+        [n(20); 3],
+        PlaneFrame::default(),
+        policy,
+    )
+    .unwrap();
+    assert!(stock.rust_machine_screw_geometry().is_none());
+}
+
+#[test]
+fn counterbore_actual_material_and_mating_proof_keep_the_original_blind_thread() {
+    use multicad_kernel::rust_kernel::headed_screw::{ScrewHead, ScrewSpec};
+    let policy = GeometryPolicy::default();
+    let stock_id = EntityId::new();
+    let stock = Solid::rust_box(
+        stock_id.uuid_bits(),
+        [n(20); 3],
+        PlaneFrame::default(),
+        policy,
+    )
+    .unwrap();
+    let entry = PlaneFrame {
+        origin: [10., 10., 20.],
+        u: [1., 0., 0.],
+        v: [0., -1., 0.],
+    };
+    for left in [false, true] {
+        let mut profile = spec(left);
+        profile.starts = 2;
+        let feature = EntityId::new();
+        let seated = stock
+            .rust_cut_counterbored_blind_internal_thread(
+                BlindThreadCut {
+                    profile,
+                    entry,
+                    receiving_radius_mm: 1.5,
+                    minimum_wall_mm: 1.,
+                    minimum_floor_mm: 1.,
+                },
+                BlindThreadSeat {
+                    radius_mm: 3.5,
+                    depth_mm: 0.8,
+                },
+                feature,
+                policy,
+            )
+            .unwrap();
+        let screw = Solid::rust_machine_screw(
+            profile,
+            None,
+            ScrewSpec {
+                head: ScrewHead::ExternalHex {
+                    across_flats_mm: 5.5,
+                    height_mm: 2.,
+                },
+                shank_length_mm: 0.,
+                shank_radius_mm: 1.5,
+            },
+            EntityId::new(),
+            entry,
+            policy,
+        )
+        .unwrap();
+        let proof = screw.rust_screw_blind_thread(&seated).unwrap();
+        assert_eq!(
+            proof.counterbore.unwrap(),
+            BlindThreadSeat {
+                radius_mm: 3.5,
+                depth_mm: 0.8
+            }
+        );
+        assert_eq!(proof.threads[1].0.spec().length_mm, 3.5);
+        assert_eq!(proof.threads[1].0.spec().starts, 2);
+        assert_eq!(proof.threads[1].1, entry);
+        assert_eq!(proof.protected_radius_mm, 4.5);
+        assert!(proof.entry_is_support_plane);
+        assert!(
+            !seated
+                .rust_thread_contains(point(entry, [2., 0., 0.4]))
+                .unwrap()
+        );
+        assert!(
+            seated
+                .rust_thread_contains(point(entry, [2., 0., 1.]))
+                .unwrap()
+        );
+        assert!(
+            !seated
+                .rust_thread_contains(point(entry, [0., 0., 3.4]))
+                .unwrap()
+        );
+        assert!(
+            seated
+                .rust_thread_contains(point(entry, [0., 0., 3.6]))
+                .unwrap()
+        );
+        let faces = seated.faces().unwrap();
+        let cylinder = &faces[10];
+        assert!((cylinder.area_mm2 - std::f64::consts::TAU * 3.5 * 0.8).abs() < 1e-10);
+        assert!((cylinder.center_mm[2] - 19.6).abs() < 1e-12);
+        assert!(cylinder.plane.is_none());
+        let floor = &faces[11];
+        assert!((floor.center_mm[2] - 19.2).abs() < 1e-12);
+        assert!(floor.plane.is_some());
+        assert_eq!(faces.len(), 17);
+        let unseated = stock
+            .rust_cut_blind_internal_thread(
+                BlindThreadCut {
+                    profile,
+                    entry,
+                    receiving_radius_mm: 1.5,
+                    minimum_wall_mm: 1.,
+                    minimum_floor_mm: 1.,
+                },
+                EntityId::new(),
+                policy,
+            )
+            .unwrap();
+        assert!(
+            screw
+                .rust_screw_blind_thread(&unseated)
+                .unwrap()
+                .counterbore
+                .is_none()
+        );
+        assert!(seated.rust_screw_blind_thread(&seated).is_none());
+        assert!(screw.rust_screw_blind_thread(&stock).is_none());
+        assert!(screw.rust_screw_blind_thread(&screw).is_none());
+        assert!(stock.rust_screw_blind_thread(&seated).is_none());
+    }
+}
+
+#[test]
+fn invalid_seated_blind_geometry_cannot_replace_current_stock() {
+    let policy = GeometryPolicy::default();
+    let owner = EntityId::new();
+    let stock =
+        Solid::rust_box(owner.uuid_bits(), [n(20); 3], PlaneFrame::default(), policy).unwrap();
+    let original = stock.topology_snapshot(owner, 0).unwrap();
+    let entry = PlaneFrame {
+        origin: [10., 10., 20.],
+        u: [1., 0., 0.],
+        v: [0., -1., 0.],
+    };
+    for seat in [
+        BlindThreadSeat {
+            radius_mm: f64::NAN,
+            depth_mm: 0.8,
+        },
+        BlindThreadSeat {
+            radius_mm: 3.5,
+            depth_mm: f64::INFINITY,
+        },
+        BlindThreadSeat {
+            radius_mm: 1.5,
+            depth_mm: 0.8,
+        },
+        BlindThreadSeat {
+            radius_mm: 3.5,
+            depth_mm: 3.5,
+        },
+        BlindThreadSeat {
+            radius_mm: 10.,
+            depth_mm: 0.8,
+        },
+        BlindThreadSeat {
+            radius_mm: 1.5 + 1e-8,
+            depth_mm: 0.8,
+        },
+    ] {
+        assert!(
+            stock
+                .rust_cut_counterbored_blind_internal_thread(
+                    BlindThreadCut {
+                        profile: spec(false),
+                        entry,
+                        receiving_radius_mm: 1.5,
+                        minimum_wall_mm: 1.,
+                        minimum_floor_mm: 1.
+                    },
+                    seat,
+                    EntityId::new(),
+                    policy
+                )
+                .is_err()
+        );
+        assert_eq!(stock.topology_snapshot(owner, 0).unwrap(), original);
+    }
+}
+
+#[test]
+fn seated_blind_rejects_wrong_policy_frame_profile_and_source_atomically() {
+    let policy = GeometryPolicy::default();
+    let owner = EntityId::new();
+    let stock =
+        Solid::rust_box(owner.uuid_bits(), [n(20); 3], PlaneFrame::default(), policy).unwrap();
+    let original = stock.topology_snapshot(owner, 0).unwrap();
+    let entry = PlaneFrame {
+        origin: [10., 10., 20.],
+        u: [1., 0., 0.],
+        v: [0., -1., 0.],
+    };
+    for case in 0..7 {
+        let mut cut = BlindThreadCut {
+            profile: spec(false),
+            entry,
+            receiving_radius_mm: 1.5,
+            minimum_wall_mm: 1.,
+            minimum_floor_mm: 1.,
+        };
+        let mut requested = policy;
+        let mut feature = EntityId::new();
+        match case {
+            0 => requested.minimum_feature_mm = -1.,
+            1 => cut.entry.u = [0.; 3],
+            2 => cut.receiving_radius_mm = -1.,
+            3 => requested.minimum_feature_mm *= 2.,
+            4 => cut.profile.pitch_mm = 0.,
+            5 => feature = owner,
+            _ => cut.entry.origin[2] += 0.1,
+        }
+        assert!(
+            stock
+                .rust_cut_counterbored_blind_internal_thread(
+                    cut,
+                    BlindThreadSeat {
+                        radius_mm: 3.5,
+                        depth_mm: 0.8
+                    },
+                    feature,
+                    requested
+                )
+                .is_err(),
+            "case{case}"
+        );
+        assert_eq!(stock.topology_snapshot(owner, 0).unwrap(), original);
+    }
+    let bare =
+        Solid::rust_helical_thread(spec(false), None, EntityId::new(), entry, policy).unwrap();
+    assert!(cut(&bare, EntityId::new(), entry, false, 0.8).is_err());
+}
