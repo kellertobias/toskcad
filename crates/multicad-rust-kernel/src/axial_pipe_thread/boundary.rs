@@ -28,14 +28,15 @@ mod tests {
         };
         let t = Thread::new(spec, 1e-7, 1e-6).unwrap();
         let q = t.bands()[0].phase_mm[1];
-        let Curve::Line {
-            radius_mm: anchor, ..
-        } = t.bands()[1].curve
-        else {
-            panic!()
-        };
-        let (rounded, residual) = add(spec.major_radius_mm, k * q);
-        assert_eq!(rounded, anchor);
+        let (anchor, residual) = add(spec.major_radius_mm, k * q);
+        assert_eq!(
+            t.bands()[1].curve,
+            Curve::Line {
+                phase_mm: q,
+                radius_mm: anchor,
+                slope: -m,
+            }
+        );
         assert_ne!(
             residual, 0.,
             "This fixture must contain actual distinct literal incident supports"
