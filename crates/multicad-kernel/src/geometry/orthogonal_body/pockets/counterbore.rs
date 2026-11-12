@@ -162,37 +162,40 @@ impl Solid {
             std::slice::from_ref(&seat_origin),
             policy,
         )?;
+        // Index complete literal source edges once. Matching every cap edge
+        // against every side wire repeats quadratic scans on detailed stock.
+        let mut sides = BTreeMap::<_, Vec<usize>>::new();
+        let edge_key = |a: Point, b: Point| {
+            let mut ends = [a, b].map(|p| p.map(|x| if x == 0. { 0 } else { x.to_bits() }));
+            ends.sort();
+            ends
+        };
+        for (i, face) in body.boundary.faces.iter().enumerate() {
+            if face.normal[axis] != 0. {
+                continue;
+            }
+            for ring in &face.rings {
+                for (&a, &b) in ring.iter().zip(ring.iter().cycle().skip(1)) {
+                    let owners = sides.entry(edge_key(a, b)).or_default();
+                    if owners.last() != Some(&i) {
+                        owners.push(i);
+                    }
+                }
+            }
+        }
         let mut side_sources = Vec::new();
         for ring in &cap.rings {
             let reversed: Vec<_> = ring.iter().copied().rev().collect();
             for (&a, &b) in reversed.iter().zip(reversed.iter().cycle().skip(1)) {
-                let mut matches = body
-                    .boundary
-                    .faces
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, face)| {
-                        if face.normal[axis] != 0. {
-                            return None;
-                        }
-                        face.rings
-                            .iter()
-                            .any(|ring| {
-                                ring.iter()
-                                    .zip(ring.iter().cycle().skip(1))
-                                    .any(|(&p, &q)| (p == a && q == b) || (p == b && q == a))
-                            })
-                            .then_some(i)
-                    });
-                let source = matches.next().ok_or_else(|| {
+                let sources = sides.get(&edge_key(a, b)).ok_or_else(|| {
                     unsupported("Receiving profile edge has no complete source face")
                 })?;
-                if matches.next().is_some() {
+                let [source] = sources.as_slice() else {
                     return Err(unsupported(
                         "Receiving profile edge has ambiguous source faces",
                     ));
-                }
-                side_sources.push(source);
+                };
+                side_sources.push(*source);
             }
         }
         let result = inherit_receiver_faces(result, &drilled, self, body, bore, &side_sources)?;
