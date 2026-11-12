@@ -70,8 +70,7 @@ pub fn profiled_screw_import_matches(
         };
         a.role == b.role && station(a.start, b.start) && station(a.end, b.end) && curve
     });
-    let points =
-        [source, other].map(|s| crate::headed_screw::hex_vertices(s.spec().socket_across_flats_mm));
+    let points = [source, other].map(|s| s.drive().corners_mm());
     let drive = [0., 1.].into_iter().all(|floor| {
         points[0].into_iter().zip(points[1]).all(|(a, b)| {
             near(

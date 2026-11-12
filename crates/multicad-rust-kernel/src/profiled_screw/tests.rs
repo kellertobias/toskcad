@@ -1,4 +1,5 @@
 use super::*;
+use crate::headed_screw::hex_area;
 use crate::{
     display::Tessellation,
     helical_thread,
@@ -53,6 +54,123 @@ fn options() -> Tessellation {
         deflection: 0.02,
         angle: 0.25,
         triangle_limit: 500_000,
+    }
+}
+
+#[test]
+fn retained_drive_orientation_controls_material_and_conforming_manufacturing_mesh() {
+    for crowned in [false, true] {
+        for (starts, left) in [(1, false), (2, true)] {
+            for union in [false, true] {
+                let mut authored = spec(crowned);
+                if union {
+                    authored.shank_length_mm = 0.;
+                }
+                let original = if union {
+                    Screw::new_with_head_thread_union(thread(starts, left), authored)
+                } else {
+                    Screw::new(thread(starts, left), authored)
+                }
+                .unwrap();
+                let mut physical = original.spec();
+                physical.head = None;
+                for angle in [
+                    0.37,
+                    -std::f64::consts::PI / 6.,
+                    -0.03125 / original.thread().helical_rate() - std::f64::consts::PI / 6.,
+                ] {
+                    let (s, c) = angle.sin_cos();
+                    let points = crate::headed_screw::hex_vertices(2.)
+                        .map(|[x, y]| [c * x - s * y + 1e-14, s * x + c * y]);
+                    let retained = if union {
+                        Screw::from_source_with_union_and_drive(
+                            *original.thread(),
+                            *original.profile(),
+                            physical,
+                            points,
+                        )
+                    } else {
+                        Screw::from_source_with_drive(
+                            *original.thread(),
+                            *original.profile(),
+                            physical,
+                            points,
+                        )
+                    }
+                    .unwrap();
+                    assert_eq!(retained.drive().corners_mm(), points);
+                    assert_eq!(*retained.thread(), *original.thread());
+                    assert_eq!(
+                        retained.visible_thread_interval_mm(),
+                        original.visible_thread_interval_mm()
+                    );
+                    assert!(!retained.drive().is_canonical());
+                    let mesh = tessellate_profiled_screw(&retained, options()).unwrap();
+                    assert_eq!(
+                        tessellate_profiled_screw(
+                            &retained,
+                            Tessellation {
+                                deflection: 1.,
+                                angle: 1.,
+                                triangle_limit: 48
+                            }
+                        ),
+                        Err(crate::display::MeshError::BudgetExceeded)
+                    );
+                    let receipt = certify(&mesh).unwrap();
+                    assert!(
+                        (receipt.signed_volume_mm3 - retained.volume_mm3()).abs()
+                            <= profiled_screw_volume_error_bound(&retained, options()).unwrap()
+                    );
+                    for point in points {
+                        for z in [
+                            retained.head_top_z(),
+                            retained.head_top_z() + retained.spec().socket_depth_mm,
+                        ] {
+                            assert!(
+                                mesh.vertices
+                                    .as_chunks::<3>()
+                                    .0
+                                    .contains(&[point[0], point[1], z])
+                            );
+                        }
+                    }
+                    let floor = retained.head_top_z() + retained.spec().socket_depth_mm;
+                    assert!(!retained.contains([0., 0., floor - 0.1], 0.));
+                    assert!(retained.contains([0., 0., floor + 0.1], 0.));
+                    let mut bad = points;
+                    bad[0][0] += 0.01;
+                    assert!(
+                        Screw::from_source_with_drive(
+                            *original.thread(),
+                            *original.profile(),
+                            physical,
+                            bad
+                        )
+                        .is_err()
+                    );
+                }
+                let corners = original.drive().corners_mm();
+                assert!(
+                    Screw::from_source_with_drive(
+                        *original.thread(),
+                        *original.profile(),
+                        original.spec(),
+                        corners
+                    )
+                    .is_err()
+                );
+                assert!(
+                    Screw::from_source_with_union_and_drive(
+                        *original.thread(),
+                        *original.profile(),
+                        original.spec(),
+                        corners
+                    )
+                    .is_err()
+                );
+            }
+        }
     }
 }
 

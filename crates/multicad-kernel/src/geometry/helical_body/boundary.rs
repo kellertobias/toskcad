@@ -166,6 +166,17 @@ impl<'a, Role: Copy + PartialEq> Boundary<'a, Role> {
         wall: impl Fn(u32) -> Role,
     ) {
         let corners = hex_vertices(across_flats);
+        self.polygon_prism(name, corners, depths, caps, wall);
+    }
+
+    pub(super) fn polygon_prism(
+        &mut self,
+        name: &str,
+        corners: [[f64; 2]; 6],
+        depths: [f64; 2],
+        caps: [Role; 2],
+        wall: impl Fn(u32) -> Role,
+    ) {
         for (i, &p) in corners.iter().enumerate() {
             let j = (i + 1) % corners.len();
             let previous = (i + corners.len() - 1) % corners.len();

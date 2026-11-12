@@ -58,18 +58,13 @@ pub fn profiled_screw_head_volume_error_bound_mm3(
     let r = radial + d;
     let outer =
         I::point(2.) * pi * r * (I::point(2.) * length * d + I::point(count) * pi * d.square());
-    let af = screw.spec().socket_across_flats_mm;
     let depth = screw.spec().socket_depth_mm;
-    let width = I::new(
-        (af - d.hi).max(0.).next_down().max(0.),
-        (af + d.hi).next_up(),
-    );
     let depth = I::new(
         (depth - d.hi).max(0.).next_down().max(0.),
         (depth + d.hi).next_up(),
     );
-    let root3 = I::point(3.).sqrt();
-    let void = root3 * I::point(0.5) * width.square() * depth;
+    let [lo, hi] = screw.drive().area_bounds_mm2(d.hi)?;
+    let void = I::new(lo, hi) * depth;
     let frame = Frame::new(placement).ok()?;
     let scale = decode::volume_scale_error(frame).ok()?;
     let height = I::point(profile.end()[1]) - I::point(profile.top()[1]) + I::point(2.) * d;
@@ -495,8 +490,7 @@ pub(super) fn verify(
         frame.n.map(|v| -v),
         frame.u,
     )?;
-    let af = expected.spec().socket_across_flats_mm;
-    let points = crate::headed_screw::hex_vertices(af);
+    let points = expected.drive().corners_mm();
     let lower = hex_head::hex_rim(
         proof,
         shell,
@@ -1306,6 +1300,53 @@ mod tests {
                             .is_err()
                         );
                         assert!(crate::step_read::read_import_solid(&changed, 1e-7).is_err());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn actual_rotated_drive_corners_survive_physical_exchange_without_idealization() {
+        for crown in [false, true] {
+            for fitted in [false, true] {
+                let old = screw(crown, 1, false);
+                let thread = Thread::new(helical_thread::Spec {
+                    major_radius_mm: if fitted { 1.48 } else { 1.5 },
+                    length_mm: 0.5,
+                    ..old.thread().spec()
+                })
+                .unwrap();
+                let mut spec = old.spec();
+                spec.head = None;
+                for angle in [0.37_f64, -PI / 6.] {
+                    let (s, c) = angle.sin_cos();
+                    let corners = old
+                        .drive()
+                        .corners_mm()
+                        .map(|[x, y]| [c * x - s * y + 1e-14, s * x + c * y]);
+                    let source =
+                        Screw::from_source_with_drive(thread, *old.profile(), spec, corners)
+                            .unwrap();
+                    let origin = [30., -20., 10.];
+                    let u = [0.6, 0.8, 0.];
+                    let v = [0., 0., 1.];
+                    let text = step::write_profiled_screw(&source, origin, u, v, 1e-7).unwrap();
+                    let volume = verify_profiled_screw(&text, &source, origin, u, v, 1e-7).unwrap();
+                    assert!((volume - source.volume_mm3()).abs() < 1e-6);
+                    let (_, imported) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+                    assert!(crate::step_read::profiled_screw_import_matches(
+                        &imported,
+                        &source,
+                        [origin, u, v],
+                        1e-7
+                    ));
+                    let (actual, _) = imported.profiled_screw_geometry().unwrap();
+                    assert!(!actual.drive().is_canonical());
+                    for (a, b) in actual.drive().corners_mm().into_iter().zip(corners) {
+                        assert!(
+                            (a[0] - b[0]).hypot(a[1] - b[1]) < actual.profile().rounding_error_mm()
+                        );
                     }
                 }
             }

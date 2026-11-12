@@ -804,6 +804,16 @@ fn encode_hex_prism(
     cavity: bool,
 ) -> Result<([Entity; 2], Vec<Entity>), StepError> {
     let hex = hex_vertices(across_flats_mm);
+    encode_drive_prism(file, placement, hex, depths, cavity)
+}
+
+fn encode_drive_prism(
+    file: &mut StepFile,
+    placement: &Placement,
+    hex: [[f64; 2]; 6],
+    depths: [f64; 2],
+    cavity: bool,
+) -> Result<([Entity; 2], Vec<Entity>), StepError> {
     let mut prism = BRep::new(
         file,
         depths

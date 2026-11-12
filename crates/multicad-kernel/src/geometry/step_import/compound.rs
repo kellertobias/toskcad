@@ -378,6 +378,9 @@ fn member_signature(readback: &Readback, imported: &ImportSolid) -> ContentHash 
     } = &imported.profile
     {
         bytes.extend(b"profiled-screw-physical");
+        for value in screw.drive().corners_mm().into_iter().flatten() {
+            bytes.extend(if value == 0. { 0. } else { value }.to_le_bytes());
+        }
         let spec = screw.thread().spec();
         for value in imported
             .origin_mm

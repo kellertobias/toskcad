@@ -249,23 +249,20 @@ pub(in super::super::super) fn read(
     let reserve = profile.rounding_error_mm();
     let edges = ring(shell, mouth, false)?;
     require(edges.len() == 6)?;
-    let mut half_width = 0_f64;
-    let mut mouth_points = Vec::new();
-    for (edge, _) in edges {
-        for id in shell.edge(edge)? {
-            let point = frame.local(shell.vertex(id)?);
-            require((point[2] - top.z).abs() <= reserve)?;
-            half_width = half_width.max(point[0].abs());
-            mouth_points.push(point);
-        }
+    let mut corners = [[0.; 2]; 6];
+    for (i, (edge, forward)) in edges.into_iter().enumerate() {
+        let vertices = shell.edge(edge)?;
+        let point = frame.local(shell.vertex(vertices[usize::from(!forward)])?);
+        require((point[2] - top.z).abs() <= reserve)?;
+        corners[i] = [point[0], point[1]];
     }
-    let across = 2. * half_width;
-    let regular = crate::headed_screw::hex_vertices(across);
-    require(mouth_points.iter().all(|p| {
-        regular
-            .iter()
-            .any(|q| (p[0] - q[0]).hypot(p[1] - q[1]) <= reserve)
-    }))?;
+    let across = corners
+        .into_iter()
+        .map(|p| p[0].hypot(p[1]))
+        .fold(0., f64::max)
+        * 3_f64.sqrt();
+    let drive = crate::hex_drive::HexDrive::from_retained_corners(corners, across, reserve)
+        .map_err(|_| ReadError::Invalid)?;
     let (surface, forward, bounds) = face(shell, head[segment_count + 1])?;
     require(forward && bounds.len() == 1)?;
     let [Value::String(_), axis] = shell.args(surface, "PLANE")? else {
@@ -276,7 +273,7 @@ pub(in super::super::super) fn read(
     // This is a certified physical wall, not an inferred author's minimum.
     // Keep a real dimensional lower bound for downstream feature policy;
     // using a precision epsilon here would spuriously reject a sound head.
-    let corner = across / 3_f64.sqrt();
+    let corner = drive.maximum_radius_mm();
     let mut wall = 4. * reserve;
     require(profile.admits_socket(corner, depth, wall))?;
     let mut upper = profile.support([1., 0., 0.]);
@@ -288,7 +285,7 @@ pub(in super::super::super) fn read(
             upper = candidate;
         }
     }
-    Screw::from_source(
+    Screw::from_source_with_drive(
         *thread,
         profile,
         SourceSpec {
@@ -298,6 +295,7 @@ pub(in super::super::super) fn read(
             socket_depth_mm: depth,
             minimum_wall_mm: wall,
         },
+        corners,
     )
     .map_err(|_| ReadError::Invalid)
 }

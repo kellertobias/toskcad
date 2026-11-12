@@ -4,6 +4,8 @@ use crate::{
     headed_screw::{Screw, ScrewFace, ScrewHead},
 };
 use std::f64::consts::TAU;
+#[cfg(test)]
+mod contour_tests;
 
 fn profiled_options(
     screw: &crate::profiled_screw::Screw,
@@ -37,6 +39,14 @@ pub fn tessellate_profiled_screw(
     let thread = screw.thread();
     let strips = phase_strips(thread, TAU / angular_steps, options)?;
     let mut builder = Builder::new(thread, angular_steps as usize, strips, options);
+    let coupling = screw.profile().rounding_error_mm() / screw.drive().maximum_radius_mm();
+    if !screw.drive().is_canonical() {
+        let angles = screw
+            .drive()
+            .corners_mm()
+            .map(|[x, y]| y.atan2(x).rem_euclid(TAU));
+        builder.insert_angular_stations(&angles, coupling)?;
+    }
     builder.lower = screw.visible_thread_interval_mm()[0];
     builder.build_wall()?;
     let [mut shoulder, tip] = std::mem::take(&mut builder.caps);
@@ -95,12 +105,35 @@ pub fn tessellate_profiled_screw(
             previous = next;
         }
     }
-    let mouth = shell.ring(top_z, |angle| screw.socket_radius(angle));
+    let mouth = if screw.drive().is_canonical() {
+        shell.ring(top_z, |angle| screw.socket_radius(angle))
+    } else {
+        shell.drive_ring(top_z, screw.drive(), coupling)?
+    };
     let floor_z = top_z + screw.spec().socket_depth_mm;
-    let floor = shell.ring(floor_z, |angle| screw.socket_radius(angle));
+    let floor = if screw.drive().is_canonical() {
+        shell.ring(floor_z, |angle| screw.socket_radius(angle))
+    } else {
+        shell.drive_ring(floor_z, screw.drive(), coupling)?
+    };
     shell.annulus(&mouth, &top, face(Face::HeadTop), true)?;
     let first_wall = face(Face::SocketWall(0));
-    shell.wall(&mouth, &floor, |angle| first_wall + hex_side(angle), true)?;
+    shell.wall(
+        &mouth,
+        &floor,
+        |angle| {
+            first_wall
+                + if screw.drive().is_canonical() {
+                    hex_side(angle)
+                } else {
+                    screw
+                        .drive()
+                        .side_at_angle(angle)
+                        .expect("finite drive angle") as u32
+                }
+        },
+        true,
+    )?;
     shell.disk(&floor, floor_z, face(Face::SocketFloor))?;
     Ok(builder.mesh)
 }
@@ -290,6 +323,36 @@ impl HeadMesh<'_, '_> {
                 self.push([radius * cos, radius * sin, z])
             })
             .collect()
+    }
+
+    fn drive_ring(
+        &mut self,
+        z: f64,
+        drive: &crate::hex_drive::HexDrive,
+        coupling: f64,
+    ) -> Result<Vec<u32>, MeshError> {
+        let mut corners = vec![None; self.angles.len()];
+        for point in drive.corners_mm() {
+            let angle = point[1].atan2(point[0]).rem_euclid(TAU);
+            let distance = |a: f64| (a - angle).rem_euclid(TAU).min((angle - a).rem_euclid(TAU));
+            let index = (0..self.angles.len())
+                .min_by(|&a, &b| distance(self.angles[a]).total_cmp(&distance(self.angles[b])))
+                .ok_or(MeshError::UnresolvedBoundary)?;
+            if distance(self.angles[index]) > 2. * coupling || corners[index].is_some() {
+                return Err(MeshError::UnresolvedBoundary);
+            }
+            corners[index] = Some(point);
+        }
+        Ok((0..self.angles.len())
+            .map(|i| {
+                let [x, y] = corners[i].unwrap_or_else(|| {
+                    let angle = self.angles[i];
+                    let radius = drive.radius_at_angle_mm(angle);
+                    [radius * angle.cos(), radius * angle.sin()]
+                });
+                self.push([x, y, z])
+            })
+            .collect())
     }
 
     fn shank_join(&mut self, inner: &[u32], radius: f64) -> Vec<u32> {

@@ -36,6 +36,39 @@ fn options() -> Tessellation {
     }
 }
 
+#[test]
+fn additional_angular_stations_are_finite_budgeted_and_preserve_uniform_defaults() {
+    let source = metric(false, 1, false, 1.25);
+    let settings = options();
+    let strips = phase_strips(&source, TAU / 24., settings).unwrap();
+    let mut builder = Builder::new(&source, 24, strips, settings);
+    assert!(builder.angular.is_none());
+    for (angles, coupling) in [
+        (vec![f64::NAN], 1e-12),
+        (vec![0.1], 0.),
+        (vec![0.1], f64::INFINITY),
+    ] {
+        assert_eq!(
+            builder.insert_angular_stations(&angles, coupling),
+            Err(MeshError::UnresolvedBoundary)
+        );
+    }
+    builder
+        .insert_angular_stations(&[0.37, 1.23], 1e-12)
+        .unwrap();
+    assert_eq!(builder.steps, 26);
+    assert_eq!(builder.fraction(0), 0.);
+    assert_eq!(builder.fraction(builder.steps), 1.);
+    assert!(
+        builder
+            .angular
+            .as_ref()
+            .unwrap()
+            .windows(2)
+            .all(|w| w[0] < w[1])
+    );
+}
+
 fn verify(thread: &Thread, options: Tessellation) -> DisplayMesh {
     let mesh = tessellate(thread, options).unwrap();
     let proof = manufacturing::certify(&mesh).unwrap();

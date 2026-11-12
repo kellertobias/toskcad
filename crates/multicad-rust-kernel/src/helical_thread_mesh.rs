@@ -252,6 +252,7 @@ struct BoreRim {
 struct Builder<'a> {
     thread: &'a Thread,
     steps: usize,
+    angular: Option<Vec<f64>>,
     strips: Vec<Strip>,
     limit: usize,
     lead: f64,
@@ -283,6 +284,7 @@ impl<'a> Builder<'a> {
         Self {
             thread,
             steps,
+            angular: None,
             strips,
             limit: options.triangle_limit,
             lead,
@@ -313,6 +315,38 @@ impl<'a> Builder<'a> {
             }
         }
         Ok(self.mesh)
+    }
+
+    fn insert_angular_stations(
+        &mut self,
+        stations: &[f64],
+        coupling_angle: f64,
+    ) -> Result<(), MeshError> {
+        if !coupling_angle.is_finite()
+            || coupling_angle <= 0.
+            || !stations.iter().all(|x| x.is_finite())
+        {
+            return Err(MeshError::UnresolvedBoundary);
+        }
+        let mut columns = (0..=self.steps)
+            .map(|i| i as f64 / self.steps as f64)
+            .collect::<Vec<_>>();
+        for &angle in stations {
+            let value = angle.rem_euclid(TAU) / TAU;
+            let index = columns.partition_point(|&x| x < value);
+            let near = columns[index.saturating_sub(1)..=(index.min(columns.len() - 1))]
+                .iter()
+                .any(|&x| (x - value).abs() <= coupling_angle / TAU);
+            if !near {
+                columns.insert(index, value);
+            }
+        }
+        if (columns.len() - 1).saturating_mul(2) > self.limit {
+            return Err(MeshError::BudgetExceeded);
+        }
+        self.steps = columns.len() - 1;
+        self.angular = Some(columns);
+        Ok(())
     }
 
     fn build_wall(&mut self) -> Result<(), MeshError> {
@@ -464,7 +498,9 @@ impl<'a> Builder<'a> {
     }
 
     fn fraction(&self, column: usize) -> f64 {
-        column as f64 / self.steps as f64
+        self.angular
+            .as_ref()
+            .map_or_else(|| column as f64 / self.steps as f64, |v| v[column])
     }
 
     fn rail_phase(&self, rail: i64) -> f64 {

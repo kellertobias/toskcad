@@ -159,6 +159,111 @@ fn fitted_shank_annular_step_exports_and_imports_without_losing_nominal_radius()
 }
 
 #[test]
+fn retained_socket_contour_controls_actual_faces_planes_references_and_exchange() {
+    use multicad_kernel::rust_kernel::profiled_screw::{Face, Screw};
+    let scratch = tempfile::tempdir().unwrap();
+    for crown in [false, true] {
+        let policy = GeometryPolicy::default();
+        let owner = EntityId::new();
+        let original = Solid::rust_profiled_machine_screw(
+            thread(),
+            None,
+            spec(crown),
+            owner,
+            PlaneFrame {
+                origin: [30., -20., 10.],
+                u: [0.6, 0.8, 0.],
+                v: [0., 0., 1.],
+            },
+            policy,
+        )
+        .unwrap();
+        let (source, at) = original.rust_profiled_screw_geometry().unwrap();
+        let (s, c) = 0.37_f64.sin_cos();
+        let points = source
+            .drive()
+            .corners_mm()
+            .map(|[x, y]| [c * x - s * y + 1e-14, s * x + c * y]);
+        let mut physical = source.spec();
+        physical.head = None;
+        let source =
+            Screw::from_source_with_drive(*source.thread(), *source.profile(), physical, points)
+                .unwrap();
+        let retained = Solid::rust_profiled_screw_from_source(source, owner, at, policy).unwrap();
+        let snapshot = retained.topology_snapshot(owner, 0).unwrap();
+        snapshot.validate().unwrap();
+        let wall = snapshot
+            .elements
+            .iter()
+            .find(|e| {
+                e.key.kind == TopologyKind::Face
+                    && e.origins.iter().any(|o| o.role == "screw.drive/edge/0")
+            })
+            .unwrap();
+        let frame = wall.frames.first().unwrap().frame;
+        let project = |[x, y, z]: [f64; 3]| {
+            std::array::from_fn::<_, 3, _>(|i| {
+                at.origin[i] + at.u[i] * x + at.v[i] * y + at.normal()[i] * z
+            })
+        };
+        let expected = project([points[0][0], points[0][1], source.head_top_z()]);
+        let d = [points[1][0] - points[0][0], points[1][1] - points[0][1]];
+        let length = d[0].hypot(d[1]);
+        assert!(
+            frame
+                .u
+                .into_iter()
+                .enumerate()
+                .all(|(i, x)| (x + (at.u[i] * d[0] + at.v[i] * d[1]) / length).abs() < 1e-12)
+        );
+        assert!(
+            frame
+                .origin_mm
+                .into_iter()
+                .zip(expected)
+                .all(|(a, b)| (a - b).abs() < 1e-12)
+        );
+        let index = source
+            .faces()
+            .iter()
+            .position(|f| *f == Face::SocketWall(0))
+            .unwrap();
+        let faces = retained.faces().unwrap();
+        assert!(
+            (faces[index].area_mm2
+                - source.drive().side_length_mm(0) * source.spec().socket_depth_mm)
+                .abs()
+                < 1e-12
+        );
+        for (i, point) in points.into_iter().enumerate() {
+            let vertex = snapshot
+                .elements
+                .iter()
+                .find(|e| {
+                    e.key.kind == TopologyKind::Vertex
+                        && e.origins
+                            .iter()
+                            .any(|o| o.role == format!("screw.drive/corner/0/{i}"))
+                })
+                .unwrap();
+            assert!(
+                matches!(vertex.geometry,Some(AnalyticGeometry::Point { position_mm }) if position_mm.into_iter().zip(project([point[0],point[1],source.head_top_z()])).all(|(a,b)|(a-b).abs()<1e-12))
+            );
+        }
+        let path = scratch.path().join(format!("rotated-drive-{crown}.step"));
+        retained.write_step(&path).unwrap();
+        let text = std::fs::read_to_string(path).unwrap();
+        let imported = Solid::import_rust_step(&text, EntityId::new(), policy).unwrap();
+        let (decoded, _) = imported.rust_profiled_screw_geometry().unwrap();
+        assert!(!decoded.drive().is_canonical());
+        let mesh = imported
+            .manufacturing_mesh_with_receipt(MeshOptions::default())
+            .unwrap();
+        assert_eq!(mesh.edge_pairs as usize * 2, mesh.mesh.indices.len());
+    }
+}
+
+#[test]
 fn typed_source_and_finite_faces_survive_rotated_placement() {
     for crown in [false, true] {
         let owner = EntityId::new();

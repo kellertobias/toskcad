@@ -363,10 +363,10 @@ pub(super) fn head(
         previous = next;
     }
     let top = screw.head_top_z();
-    let ([mouth, floor], sides) = encode_hex_prism(
+    let ([mouth, floor], sides) = encode_drive_prism(
         file,
         p,
-        screw.spec().socket_across_flats_mm,
+        screw.drive().corners_mm(),
         [top, top + screw.spec().socket_depth_mm],
         true,
     )?;

@@ -1,6 +1,6 @@
 //! Policy admission and finite face identities for actual profiled heads.
 use super::{
-    boundary::{Boundary, edge_midpoint, hex_wall_plane, placed_frame},
+    boundary::{Boundary, placed_frame},
     *,
 };
 use multicad_rust_kernel::{
@@ -176,6 +176,13 @@ fn qualify_source(
     policy.length(spec.socket_across_flats_mm)?;
     policy.length(spec.socket_depth_mm)?;
     policy.length(spec.minimum_wall_mm)?;
+    for (i, [x, y]) in screw.drive().corners_mm().into_iter().enumerate() {
+        policy.point(position(frame, [x, y, screw.head_top_z()]))?;
+        policy.length(
+            (screw.drive().side_length_mm(i) - 2. * screw.profile().rounding_error_mm())
+                .next_down(),
+        )?;
+    }
     if spec.shank_length_mm != 0. {
         policy.length(spec.shank_length_mm)?;
     }
@@ -250,29 +257,36 @@ pub(super) fn extend_face_properties(screw: &Screw, faces: &mut Vec<(Point, f64)
         shoulder,
     );
     let top = screw.head_top_z();
-    let socket_area = 3_f64.sqrt() * spec.socket_across_flats_mm.powi(2) / 2.;
+    let socket_area = screw.drive().area_mm2();
+    let [cx, cy] = screw.drive().center_mm();
     let segments: Vec<_> = screw.profile().segments().collect();
     for face in screw.faces().into_iter().skip(faces.len()) {
         faces.push(match face {
-            ScrewFace::HeadTop => (
-                [0., 0., top],
-                PI * screw.profile().top()[0].powi(2) - socket_area,
-            ),
+            ScrewFace::HeadTop => {
+                let area = PI * screw.profile().top()[0].powi(2) - socket_area;
+                (
+                    [-cx * socket_area / area, -cy * socket_area / area, top],
+                    area,
+                )
+            }
             ScrewFace::ProfileWall(i) => {
                 let segment = segments[i as usize];
                 let mut center = segment.center_mm();
                 center[2] -= spec.shank_length_mm;
                 (center, segment.area_mm2())
             }
-            ScrewFace::SocketFloor => ([0., 0., top + spec.socket_depth_mm], socket_area),
-            ScrewFace::SocketWall(i) => (
-                edge_midpoint(
-                    spec.socket_across_flats_mm,
-                    i,
-                    top + spec.socket_depth_mm / 2.,
-                ),
-                spec.socket_across_flats_mm * spec.socket_depth_mm / 3_f64.sqrt(),
-            ),
+            ScrewFace::SocketFloor => ([cx, cy, top + spec.socket_depth_mm], socket_area),
+            ScrewFace::SocketWall(i) => {
+                let [a, b] = screw.drive().edge_mm(i as usize);
+                (
+                    [
+                        a[0].midpoint(b[0]),
+                        a[1].midpoint(b[1]),
+                        top + spec.socket_depth_mm / 2.,
+                    ],
+                    screw.drive().side_length_mm(i as usize) * spec.socket_depth_mm,
+                )
+            }
             _ => unreachable!("Original helical face properties already exist"),
         });
     }
@@ -293,13 +307,17 @@ pub(super) fn plane(screw: &Screw, role: ScrewFace, frame: PlaneFrame) -> Option
                 .then(|| axial(segment.start[1] - screw.spec().shank_length_mm, 1.))
         }
         ScrewFace::SocketFloor => Some(axial(top + screw.spec().socket_depth_mm, -1.)),
-        ScrewFace::SocketWall(i) => Some(hex_wall_plane(
-            frame,
-            screw.spec().socket_across_flats_mm,
-            i,
-            top,
-            -1.,
-        )),
+        ScrewFace::SocketWall(i) => {
+            let [a, b] = screw.drive().edge_mm(i as usize);
+            let d = [b[0] - a[0], b[1] - a[1]];
+            let length = d[0].hypot(d[1]);
+            Some(placed_frame(
+                frame,
+                [a[0], a[1], top],
+                [-d[0] / length, -d[1] / length, 0.],
+                [0., 0., 1.],
+            ))
+        }
         _ => None,
     }
 }
@@ -398,9 +416,9 @@ pub(super) fn extend_topology(
             &[before, current],
         );
     }
-    add.hex_prism(
+    add.polygon_prism(
         "screw.drive",
-        screw.spec().socket_across_flats_mm,
+        screw.drive().corners_mm(),
         [
             screw.head_top_z(),
             screw.head_top_z() + screw.spec().socket_depth_mm,

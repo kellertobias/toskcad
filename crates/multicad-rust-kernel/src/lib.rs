@@ -21,6 +21,7 @@ pub mod helical_receiver;
 pub mod helical_thread;
 pub mod helical_thread_mesh;
 pub mod helical_tube_cut;
+pub mod hex_drive;
 pub mod hex_nut;
 pub mod linear_sweep;
 pub mod linear_sweep_mesh;
