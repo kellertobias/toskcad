@@ -728,9 +728,20 @@ mod tests {
                 suppressed: false,
             },
         );
+        let unrelated_part = Entity::new(
+            "An unsupported active part outside the requested view",
+            EntityData::Part {
+                features: vec![unrelated.id],
+                material: None,
+                tags: Default::default(),
+            },
+        );
         let document = session
             .document()
-            .edited(&[Mutation::Insert(unrelated)])
+            .edited(&[
+                Mutation::Insert(unrelated),
+                Mutation::Insert(unrelated_part),
+            ])
             .unwrap();
         let mut session = Session::new(document).unwrap();
         let mut page = projection_page(source.body);
