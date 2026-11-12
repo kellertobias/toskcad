@@ -9,6 +9,17 @@ pub struct Counterbore {
     pub depth_mm: f64,
 }
 
+/// A straight conical mouth joining the original cylindrical through bore.
+/// Radius and axial depth are independent; the resulting cone is not limited
+/// to a symmetric 45-degree edge chamfer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Countersink {
+    pub hole: usize,
+    pub end: bool,
+    pub radius_mm: f64,
+    pub depth_mm: f64,
+}
+
 impl ChamferedBores {
     /// Cut seats in an already proved constant-section stock. The maximum
     /// complete disk of each cut must clear every other boundary; intersecting
@@ -19,6 +30,37 @@ impl ChamferedBores {
         cuts: &[Counterbore],
         clearance_mm: f64,
         minimum_mm: f64,
+    ) -> Result<Self, PocketError> {
+        Self::seated(prism, cuts, clearance_mm, minimum_mm, false)
+    }
+
+    pub fn countersunk(
+        prism: &PolygonPrism,
+        cuts: &[Countersink],
+        clearance_mm: f64,
+        minimum_mm: f64,
+    ) -> Result<Self, PocketError> {
+        if cuts.len() > 2 * prism.circular_holes().len() {
+            return Err(PocketError::BudgetExceeded);
+        }
+        let seats: Vec<_> = cuts
+            .iter()
+            .map(|cut| Counterbore {
+                hole: cut.hole,
+                end: cut.end,
+                radius_mm: cut.radius_mm,
+                depth_mm: cut.depth_mm,
+            })
+            .collect();
+        Self::seated(prism, &seats, clearance_mm, minimum_mm, true)
+    }
+
+    fn seated(
+        prism: &PolygonPrism,
+        cuts: &[Counterbore],
+        clearance_mm: f64,
+        minimum_mm: f64,
+        conical: bool,
     ) -> Result<Self, PocketError> {
         use PocketError::{BudgetExceeded, InvalidInput, UnresolvedBoundary};
         if cuts.is_empty()
@@ -83,7 +125,12 @@ impl ChamferedBores {
                 if let Some(cut) = cut {
                     let area = PI * (cut.radius_mm - radius) * (cut.radius_mm + radius);
                     cap_loss[cap] += area;
-                    lost += area * cut.depth_mm;
+                    lost += if conical {
+                        PI * (cut.radius_mm - radius) * (cut.radius_mm + 2. * radius) * cut.depth_mm
+                            / 3.
+                    } else {
+                        area * cut.depth_mm
+                    };
                     for axis in 0..2 {
                         cap_moment[cap][axis] += area * (center[axis] - centroid[axis]);
                     }
@@ -95,11 +142,13 @@ impl ChamferedBores {
             }];
             let mut faces = Vec::new();
             if let Some(cut) = pair[0] {
-                layers.push(BoreLayer {
-                    z_mm: cut.depth_mm,
-                    radius_mm: cut.radius_mm,
-                });
-                faces.push(new_face());
+                if !conical {
+                    layers.push(BoreLayer {
+                        z_mm: cut.depth_mm,
+                        radius_mm: cut.radius_mm,
+                    });
+                    faces.push(new_face());
+                }
                 layers.push(BoreLayer {
                     z_mm: cut.depth_mm,
                     radius_mm: radius,
@@ -112,11 +161,13 @@ impl ChamferedBores {
             });
             faces.push((first + i) as u32);
             if let Some(cut) = pair[1] {
-                layers.push(BoreLayer {
-                    z_mm: height - cut.depth_mm,
-                    radius_mm: cut.radius_mm,
-                });
-                faces.push(new_face());
+                if !conical {
+                    layers.push(BoreLayer {
+                        z_mm: height - cut.depth_mm,
+                        radius_mm: cut.radius_mm,
+                    });
+                    faces.push(new_face());
+                }
                 layers.push(BoreLayer {
                     z_mm: height,
                     radius_mm: cut.radius_mm,
@@ -162,7 +213,19 @@ impl ChamferedBores {
         Ok(Self {
             stock: Arc::new(prism.clone()),
             chamfers: Vec::new(),
-            counterbores: cuts,
+            countersinks: if conical {
+                cuts.iter()
+                    .map(|c| Countersink {
+                        hole: c.hole,
+                        end: c.end,
+                        radius_mm: c.radius_mm,
+                        depth_mm: c.depth_mm,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            counterbores: if conical { Vec::new() } else { cuts },
             stacks,
             caps,
             volume_mm3,
@@ -275,6 +338,118 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn arbitrary_conical_seats_have_real_slopes_exact_mass_and_independent_step_readback() {
+        let p = stock(&[[10, 8]]);
+        for depth_mm in [0.75, 1.25, 2.] {
+            for ends in [vec![false], vec![true], vec![false, true]] {
+                let cuts: Vec<_> = ends
+                    .iter()
+                    .map(|&end| Countersink {
+                        hole: 0,
+                        end,
+                        radius_mm: 3.,
+                        depth_mm,
+                    })
+                    .collect();
+                let b = ChamferedBores::countersunk(&p, &cuts, 1e-7, 1e-5).unwrap();
+                assert_eq!(b.countersinks(), cuts);
+                assert!(b.chamfers().is_empty());
+                assert!(b.counterbores().is_empty());
+                // Independent frustum minus original cylindrical bore.
+                let loss =
+                    cuts.len() as f64 * std::f64::consts::PI * depth_mm * (9. + 3. - 2.) / 3.;
+                assert!((b.volume_mm3() - (p.volume().as_f64() - loss)).abs() < 1e-10);
+                let stack = &b.stacks()[0];
+                assert!(stack.layers.windows(2).all(|p| p[0].z_mm < p[1].z_mm));
+                assert_eq!(stack.layers.len(), 2 + cuts.len());
+                assert_eq!(stack.face_indices.iter().filter(|&&id| id == 6).count(), 1);
+                let mesh = chamfered_polygon_prism(
+                    &p,
+                    &b,
+                    Tessellation {
+                        deflection: 0.001,
+                        angle: 0.08,
+                        triangle_limit: 100000,
+                    },
+                )
+                .unwrap();
+                let receipt = certify(&mesh).unwrap();
+                assert!((receipt.signed_volume_mm3 - b.volume_mm3()).abs() < 0.1);
+                for reverse in [false, true] {
+                    let mut writer = StepWriter::new();
+                    writer
+                        .append_treated_polygon_prism(
+                            &p,
+                            &b,
+                            [40., -8., 12.],
+                            [0.8, 0.6, 0.],
+                            [-0.36, 0.48, 0.8],
+                            reverse,
+                        )
+                        .unwrap();
+                    let bytes = writer.finish().unwrap();
+                    assert_eq!(bytes.matches("CONICAL_SURFACE").count(), cuts.len());
+                    let read = read_analytic_solid(&bytes, 1e-7).unwrap();
+                    assert!((read.volume_mm3 - b.volume_mm3()).abs() < 1e-7);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn conical_seats_refuse_duplicate_intersecting_and_unrepresentable_cuts_without_changing_stock()
+    {
+        let p = stock(&[[7, 8], [12, 8]]);
+        let before = p.clone();
+        let cut = Countersink {
+            hole: 0,
+            end: false,
+            radius_mm: 3.,
+            depth_mm: 1.,
+        };
+        let build = |cuts: &[Countersink]| ChamferedBores::countersunk(&p, cuts, 1e-7, 1e-5);
+        assert_eq!(build(&[]), Err(PocketError::InvalidInput));
+        assert_eq!(build(&[cut; 5]), Err(PocketError::BudgetExceeded));
+        assert_eq!(build(&[cut, cut]), Err(PocketError::InvalidInput));
+        for (radius_mm, depth_mm) in [
+            (f64::NAN, 1.),
+            (3., f64::INFINITY),
+            (1., 1.),
+            (3., 0.),
+            (3., 6.),
+        ] {
+            assert!(
+                build(&[Countersink {
+                    radius_mm,
+                    depth_mm,
+                    ..cut
+                }])
+                .is_err()
+            );
+        }
+        assert_eq!(
+            build(&[
+                cut,
+                Countersink {
+                    hole: 1,
+                    end: true,
+                    depth_mm: 4.,
+                    ..cut
+                }
+            ]),
+            Err(PocketError::UnresolvedBoundary)
+        );
+        assert_eq!(p, before);
+        assert!(
+            build(&[Countersink {
+                radius_mm: 2.,
+                ..cut
+            }])
+            .is_ok()
+        );
+    }
+
     #[test]
     fn opposite_deep_seats_on_different_holes_must_not_intersect_inside_stock() {
         let p = stock(&[[7, 8], [12, 8]]);

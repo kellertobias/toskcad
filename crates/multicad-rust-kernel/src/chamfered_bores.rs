@@ -6,7 +6,7 @@ use crate::{
 };
 use std::{f64::consts::PI, sync::Arc};
 mod counterbores;
-pub use counterbores::Counterbore;
+pub use counterbores::{Counterbore, Countersink};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BoreChamfer {
@@ -40,6 +40,7 @@ pub struct ChamferedBores {
     stock: Arc<PolygonPrism>,
     chamfers: Vec<BoreChamfer>,
     counterbores: Vec<Counterbore>,
+    countersinks: Vec<Countersink>,
     stacks: Vec<BoreStack>,
     caps: [(f64, [f64; 2]); 2],
     volume_mm3: f64,
@@ -151,6 +152,7 @@ impl ChamferedBores {
             stock: Arc::new(prism.clone()),
             chamfers,
             counterbores: Vec::new(),
+            countersinks: Vec::new(),
             stacks,
             caps,
             volume_mm3,
@@ -163,6 +165,10 @@ impl ChamferedBores {
 
     pub fn counterbores(&self) -> &[Counterbore] {
         &self.counterbores
+    }
+
+    pub fn countersinks(&self) -> &[Countersink] {
+        &self.countersinks
     }
 
     pub fn stacks(&self) -> &[BoreStack] {
