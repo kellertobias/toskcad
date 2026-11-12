@@ -83,24 +83,27 @@ fn retained_drive_orientation_controls_material_and_conforming_manufacturing_mes
                     let points = crate::headed_screw::hex_vertices(2.)
                         .map(|[x, y]| [c * x - s * y + 1e-14, s * x + c * y]);
                     let retained = if union {
-                        Screw::from_source_with_union_and_drive(
+                        Screw::from_source_with_union(
                             *original.thread(),
                             *original.profile(),
                             physical,
-                            points,
+                            changed_hex(&original, points).unwrap(),
                         )
                     } else {
-                        Screw::from_source_with_drive(
+                        Screw::from_source(
                             *original.thread(),
                             *original.profile(),
                             physical,
-                            points,
+                            changed_hex(&original, points).unwrap(),
                         )
                     }
                     .unwrap();
                     assert!(
                         retained
-                            .drive()
+                            .recess()
+                            .flat_hex_geometry()
+                            .unwrap()
+                            .0
                             .corners_mm()
                             .into_iter()
                             .all(|p| points.contains(&p))
@@ -110,7 +113,14 @@ fn retained_drive_orientation_controls_material_and_conforming_manufacturing_mes
                         retained.visible_thread_interval_mm(),
                         original.visible_thread_interval_mm()
                     );
-                    assert!(!retained.drive().is_canonical());
+                    assert!(
+                        !retained
+                            .recess()
+                            .flat_hex_geometry()
+                            .unwrap()
+                            .0
+                            .is_canonical()
+                    );
                     let mesh = tessellate_profiled_screw(&retained, options()).unwrap();
                     assert_eq!(
                         tessellate_profiled_screw(
@@ -131,7 +141,7 @@ fn retained_drive_orientation_controls_material_and_conforming_manufacturing_mes
                     for point in points {
                         for z in [
                             retained.head_top_z(),
-                            retained.head_top_z() + retained.spec().socket_depth_mm,
+                            retained.head_top_z() + retained.recess().maximum_depth_mm(),
                         ] {
                             assert!(
                                 mesh.vertices
@@ -141,37 +151,34 @@ fn retained_drive_orientation_controls_material_and_conforming_manufacturing_mes
                             );
                         }
                     }
-                    let floor = retained.head_top_z() + retained.spec().socket_depth_mm;
+                    let floor = retained.head_top_z() + retained.recess().maximum_depth_mm();
                     assert!(!retained.contains([0., 0., floor - 0.1], 0.));
                     assert!(retained.contains([0., 0., floor + 0.1], 0.));
                     let mut bad = points;
                     bad[0][0] += 0.01;
-                    assert!(
-                        Screw::from_source_with_drive(
-                            *original.thread(),
-                            *original.profile(),
-                            physical,
-                            bad
-                        )
-                        .is_err()
-                    );
+                    assert!(changed_hex(&original, bad).is_err());
                 }
-                let corners = original.drive().corners_mm();
+                let corners = original
+                    .recess()
+                    .flat_hex_geometry()
+                    .unwrap()
+                    .0
+                    .corners_mm();
                 assert!(
-                    Screw::from_source_with_drive(
+                    Screw::from_source(
                         *original.thread(),
                         *original.profile(),
                         original.spec(),
-                        corners
+                        changed_hex(&original, corners).unwrap()
                     )
                     .is_err()
                 );
                 assert!(
-                    Screw::from_source_with_union_and_drive(
+                    Screw::from_source_with_union(
                         *original.thread(),
                         *original.profile(),
                         original.spec(),
-                        corners
+                        changed_hex(&original, corners).unwrap()
                     )
                     .is_err()
                 );
@@ -469,11 +476,12 @@ fn physical_profile_and_drive_need_no_authored_head_recipe() {
             .unwrap();
     let mut data = original.spec();
     assert_eq!(
-        Screw::from_source(*original.thread(), profile, data),
+        Screw::from_source(*original.thread(), profile, data, original.recess().clone()),
         Err(ThreadError::Invalid)
     );
     data.head = None;
-    let physical = Screw::from_source(*original.thread(), profile, data).unwrap();
+    let physical =
+        Screw::from_source(*original.thread(), profile, data, original.recess().clone()).unwrap();
     assert_eq!(physical.spec().head, None);
     assert_eq!(physical.volume_mm3(), original.volume_mm3());
     assert_eq!(physical.faces(), original.faces());
@@ -482,28 +490,24 @@ fn physical_profile_and_drive_need_no_authored_head_recipe() {
         original.profile().segments().collect::<Vec<_>>()
     );
     assert!(certify(&tessellate_profiled_screw(&physical, options()).unwrap()).is_ok());
-    for bad in [
-        SourceSpec {
-            shank_length_mm: 0.,
-            ..data
-        },
-        SourceSpec {
-            socket_depth_mm: 100.,
-            ..data
-        },
-    ] {
-        assert_eq!(
-            Screw::from_source(*original.thread(), profile, bad),
-            Err(ThreadError::Invalid)
-        );
-    }
+    let bad = SourceSpec {
+        shank_length_mm: 0.,
+        ..data
+    };
+    assert_eq!(
+        Screw::from_source(*original.thread(), profile, bad, original.recess().clone()),
+        Err(ThreadError::Invalid)
+    );
+    let invalid_depth =
+        Recess::flat_hex(*original.recess().flat_hex_geometry().unwrap().0, 100.).unwrap();
+    assert!(Screw::from_source(*original.thread(), profile, data, invalid_depth).is_err());
     let different = Thread::new(helical_thread::Spec {
         major_radius_mm: 1.6,
         ..thread(1, false).spec()
     })
     .unwrap();
     assert_eq!(
-        Screw::from_source(different, profile, data),
+        Screw::from_source(different, profile, data, original.recess().clone()),
         Err(ThreadError::Invalid)
     );
 }
@@ -586,12 +590,28 @@ fn opt_in_union_retains_full_thread_phase_and_actual_neck_material() {
                     assert!(phase_changed);
                     let mut source = screw.spec();
                     source.head = None;
-                    assert!(Screw::from_source(t, *screw.profile(), source).is_err());
-                    let imported =
-                        Screw::from_source_with_union(t, *screw.profile(), source).unwrap();
+                    assert!(
+                        Screw::from_source(t, *screw.profile(), source, screw.recess().clone())
+                            .is_err()
+                    );
+                    let imported = Screw::from_source_with_union(
+                        t,
+                        *screw.profile(),
+                        source,
+                        screw.recess().clone(),
+                    )
+                    .unwrap();
                     assert_eq!(imported.visible_thread_interval_mm(), [lo, hi]);
                     assert_eq!(imported.volume_mm3(), screw.volume_mm3());
-                    assert!(Screw::from_source_with_union(t, *screw.profile(), s.into()).is_err());
+                    assert!(
+                        Screw::from_source_with_union(
+                            t,
+                            *screw.profile(),
+                            s.into(),
+                            screw.recess().clone()
+                        )
+                        .is_err()
+                    );
                 }
             }
         }
@@ -654,7 +674,10 @@ fn union_refuses_real_crescents_and_exhausted_thread_without_mutating_retry() {
     source.head = None;
     for plain in [-1., f64::NAN, 0.25] {
         source.shank_length_mm = plain;
-        assert!(Screw::from_source_with_union(t, *good.profile(), source).is_err());
+        assert!(
+            Screw::from_source_with_union(t, *good.profile(), source, good.recess().clone())
+                .is_err()
+        );
     }
     let old = Screw::new(t, spec(false)).unwrap();
     assert_eq!(
@@ -675,7 +698,8 @@ fn retained_union_proves_actual_cylindrical_overlap_and_bounds_complete_head() {
         shank_length_mm: 0.,
         ..old.spec()
     };
-    let union = Screw::from_source_with_union(t, *old.profile(), source).unwrap();
+    let union =
+        Screw::from_source_with_union(t, *old.profile(), source, old.recess().clone()).unwrap();
     assert_eq!(union.visible_thread_interval_mm(), [1., 7.5]);
     assert!(union.contains([1.5, 0., 0.9], 0.));
     assert!(certify(&tessellate_profiled_screw(&union, options()).unwrap()).is_ok());
@@ -741,9 +765,14 @@ fn nominal_shank_preserves_fitted_thread_shoulders_round_roots_and_head_unions()
                         let mut physical = screw.spec();
                         physical.head = None;
                         assert_eq!(
-                            Screw::from_source_with_union(t, *screw.profile(), physical)
-                                .unwrap()
-                                .profile(),
+                            Screw::from_source_with_union(
+                                t,
+                                *screw.profile(),
+                                physical,
+                                screw.recess().clone()
+                            )
+                            .unwrap()
+                            .profile(),
                             screw.profile()
                         );
                         for r in [1.47, f64::NAN, f64::INFINITY] {
@@ -754,4 +783,96 @@ fn nominal_shank_preserves_fitted_thread_shoulders_round_roots_and_head_unions()
             }
         }
     }
+}
+
+fn changed_hex(original: &Screw, points: [[f64; 2]; 6]) -> Result<Recess, ThreadError> {
+    let (hex, depth) = original.recess().flat_hex_geometry().unwrap();
+    HexDrive::from_retained_corners(
+        points,
+        hex.across_flats_mm(),
+        original.profile().rounding_error_mm(),
+    )
+    .map(|drive| Recess::flat_hex(drive, depth).unwrap())
+}
+
+#[test]
+fn metric_pan_torx_uses_twelve_real_lobes_and_a_conical_floor_without_changing_thread() {
+    use crate::{
+        hexalobular_drive::{Cone, Drive, TangentSpec},
+        screw_recess::Recess,
+    };
+    let source = Drive::from_authored_tangent(
+        TangentSpec {
+            major_diameter_mm: 2.8,
+            minor_diameter_mm: 2.05,
+            outer_lobe_radius_mm: 0.28,
+        },
+        Cone {
+            tip_depth_mm: 1.1 + 1.4 / 3_f64.sqrt(),
+            depth_per_radius: 1. / 3_f64.sqrt(),
+        },
+    )
+    .unwrap();
+    let recess = Recess::conical_hexalobular(source, 1e-7, 100_000).unwrap();
+    let head = Head::Crowned {
+        radius_mm: 2.8,
+        height_mm: 2.4,
+        crown_radius_mm: 5.,
+        top_land_radius_mm: 2.05,
+        neck_radius_mm: 0.1,
+    };
+    let thread = Thread::new(helical_thread::Spec {
+        length_mm: 3.,
+        ..thread(1, false).spec()
+    })
+    .unwrap();
+    let screw = Screw::new_with_recess(thread, 1.5, head, 3., 0.1, recess.clone()).unwrap();
+    assert_eq!(*screw.thread(), thread);
+    assert_eq!(
+        screw
+            .faces()
+            .iter()
+            .filter(|f| matches!(f, Face::SocketWall(_)))
+            .count(),
+        12
+    );
+    assert!(screw.recess().flat_hex_geometry().is_none());
+    let top = screw.head_top_z();
+    assert!(!screw.contains([0., 0., top + 1.3], 0.));
+    assert!(screw.contains([1.25, 0., top + 1.3], 0.));
+    assert!(!screw.contains([1.2, 0., top + 0.1], 0.));
+    assert!(screw.contains(
+        [1.2 * (std::f64::consts::PI / 6.).cos(), 0.6, top + 0.1],
+        0.
+    ));
+    let [lo, hi] = recess.volume_bounds_mm3();
+    let uncut = screw.visible_thread_volume_mm3() + screw.profile().volume_mm3();
+    assert!(uncut - hi <= screw.volume_mm3() && screw.volume_mm3() <= uncut - lo);
+    assert!(screw.source_error_mm() >= recess.source_error_mm());
+    assert_eq!(screw.socket_radius(f64::NAN), None);
+    assert!(screw.socket_radius(0.).unwrap() > 1.39);
+    let bound = crate::step_read::profiled_screw_head_volume_error_bound_mm3(
+        &screw,
+        [[0.; 3], [1., 0., 0.], [0., 1., 0.]],
+    )
+    .unwrap();
+    assert!(bound >= hi - lo);
+    assert!(!crate::step::supports_profiled_screw(&screw, [0.; 3], 1e-7));
+    assert_eq!(
+        crate::step::write_profiled_screw(&screw, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7),
+        Err(crate::step::StepError::Unsupported)
+    );
+    assert_eq!(
+        tessellate_profiled_screw(&screw, options()),
+        Err(crate::display::MeshError::UnresolvedBoundary)
+    );
+    assert_eq!(
+        profiled_screw_volume_error_bound(&screw, options()),
+        Err(crate::display::MeshError::UnresolvedBoundary)
+    );
+    let mut physical = screw.spec();
+    physical.head = None;
+    let copied = Screw::from_source(thread, *screw.profile(), physical, recess.clone()).unwrap();
+    assert_eq!(copied.volume_mm3(), screw.volume_mm3());
+    assert!(Screw::new_with_recess(thread, 1.5, head, 3., 1., recess).is_err());
 }

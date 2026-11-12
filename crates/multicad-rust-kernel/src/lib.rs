@@ -49,6 +49,7 @@ pub mod round_occlusion;
 pub mod rounded_cylinder;
 pub mod rounded_thread;
 pub mod rounded_thread_mesh;
+pub mod screw_recess;
 pub mod section_hatch;
 pub mod sketch_reference;
 pub mod sphere;

@@ -181,16 +181,33 @@ fn retained_socket_contour_controls_actual_faces_planes_references_and_exchange(
         let (source, at) = original.rust_profiled_screw_geometry().unwrap();
         let (s, c) = 0.37_f64.sin_cos();
         let points = source
-            .drive()
+            .recess()
+            .flat_hex_geometry()
+            .unwrap()
+            .0
             .corners_mm()
             .map(|[x, y]| [c * x - s * y + 1e-14, s * x + c * y]);
         let mut physical = source.spec();
         physical.head = None;
-        let source =
-            Screw::from_source_with_drive(*source.thread(), *source.profile(), physical, points)
-                .unwrap();
-        let points = source.drive().corners_mm();
-        let retained = Solid::rust_profiled_screw_from_source(source, owner, at, policy).unwrap();
+        let source = Screw::from_source(
+            *source.thread(),
+            *source.profile(),
+            physical,
+            multicad_kernel::rust_kernel::screw_recess::Recess::flat_hex(
+                multicad_kernel::rust_kernel::hex_drive::HexDrive::from_retained_corners(
+                    points,
+                    2.,
+                    source.profile().rounding_error_mm(),
+                )
+                .unwrap(),
+                0.6,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let points = source.recess().flat_hex_geometry().unwrap().0.corners_mm();
+        let retained =
+            Solid::rust_profiled_screw_from_source(source.clone(), owner, at, policy).unwrap();
         let snapshot = retained.topology_snapshot(owner, 0).unwrap();
         snapshot.validate().unwrap();
         let wall = snapshot
@@ -232,8 +249,14 @@ fn retained_socket_contour_controls_actual_faces_planes_references_and_exchange(
         let faces = retained.faces().unwrap();
         assert!(
             (faces[index].area_mm2
-                - source.drive().side_length_mm(0) * source.spec().socket_depth_mm)
-                .abs()
+                - source
+                    .recess()
+                    .flat_hex_geometry()
+                    .unwrap()
+                    .0
+                    .side_length_mm(0)
+                    * source.recess().maximum_depth_mm())
+            .abs()
                 < 1e-12
         );
         for (i, point) in points.into_iter().enumerate() {
@@ -256,7 +279,14 @@ fn retained_socket_contour_controls_actual_faces_planes_references_and_exchange(
         let text = std::fs::read_to_string(path).unwrap();
         let imported = Solid::import_rust_step(&text, EntityId::new(), policy).unwrap();
         let (decoded, _) = imported.rust_profiled_screw_geometry().unwrap();
-        assert!(!decoded.drive().is_canonical());
+        assert!(
+            !decoded
+                .recess()
+                .flat_hex_geometry()
+                .unwrap()
+                .0
+                .is_canonical()
+        );
         let mesh = imported
             .manufacturing_mesh_with_receipt(MeshOptions::default())
             .unwrap();
@@ -617,12 +647,24 @@ fn physical_head_source_keeps_literal_supports_transport_budget_and_original_fra
             let mut physical_spec = original.spec();
             physical_spec.head = None;
             let physical = if union {
-                Screw::from_source_with_union(*original.thread(), profile, physical_spec)
+                Screw::from_source_with_union(
+                    *original.thread(),
+                    profile,
+                    physical_spec,
+                    original.recess().clone(),
+                )
             } else {
-                Screw::from_source(*original.thread(), profile, physical_spec)
+                Screw::from_source(
+                    *original.thread(),
+                    profile,
+                    physical_spec,
+                    original.recess().clone(),
+                )
             }
             .unwrap();
-            let make = |policy| Solid::rust_profiled_screw_from_source(physical, owner, at, policy);
+            let make = |policy| {
+                Solid::rust_profiled_screw_from_source(physical.clone(), owner, at, policy)
+            };
             let solid = make(policy).unwrap();
             let (retained, pose) = solid.rust_profiled_screw_geometry().unwrap();
             assert_eq!(*retained, physical);
@@ -788,7 +830,65 @@ fn cyclic_drive_loop_starts_keep_import_member_and_wall_references_stable() {
         second.topology_snapshot(owner, 0).unwrap()
     );
     assert_eq!(
-        first.rust_profiled_screw_geometry().unwrap().0.drive(),
-        second.rust_profiled_screw_geometry().unwrap().0.drive()
+        first
+            .rust_profiled_screw_geometry()
+            .unwrap()
+            .0
+            .recess()
+            .flat_hex_geometry()
+            .unwrap()
+            .0,
+        second
+            .rust_profiled_screw_geometry()
+            .unwrap()
+            .0
+            .recess()
+            .flat_hex_geometry()
+            .unwrap()
+            .0
     );
+}
+
+#[test]
+fn conical_recess_source_cannot_publish_partial_hex_geometry_before_native_qualification() {
+    use multicad_kernel::rust_kernel::{
+        hexalobular_drive::{Cone, Drive, TangentSpec},
+        profiled_screw::Screw,
+        screw_recess::Recess,
+    };
+    let policy = GeometryPolicy::default();
+    let owner = EntityId::new();
+    let old = Solid::rust_profiled_machine_screw(
+        thread(),
+        None,
+        spec(true),
+        owner,
+        PlaneFrame::default(),
+        policy,
+    )
+    .unwrap();
+    let before = old.topology_snapshot(owner, 0).unwrap();
+    let (source, _) = old.rust_profiled_screw_geometry().unwrap();
+    let drive = Drive::from_authored_tangent(
+        TangentSpec {
+            major_diameter_mm: 2.8,
+            minor_diameter_mm: 2.05,
+            outer_lobe_radius_mm: 0.28,
+        },
+        Cone {
+            tip_depth_mm: 1.1 + 1.4 / 3_f64.sqrt(),
+            depth_per_radius: 1. / 3_f64.sqrt(),
+        },
+    )
+    .unwrap();
+    let recess = Recess::conical_hexalobular(drive, 1e-7, 100_000).unwrap();
+    let source =
+        Screw::new_with_recess(*source.thread(), 1.5, spec(true).head, 1., 0.01, recess).unwrap();
+    let error =
+        Solid::rust_profiled_screw_from_source(source, owner, PlaneFrame::default(), policy)
+            .err()
+            .unwrap();
+    assert_eq!(error.kind, multicad_kernel::GeometryErrorKind::Unsupported);
+    assert_eq!(old.topology_snapshot(owner, 0).unwrap(), before);
+    assert!(old.supports_step_export());
 }

@@ -294,17 +294,15 @@ pub(in super::super::super) fn read(
             upper = candidate;
         }
     }
-    Screw::from_source_with_union_and_drive(
+    Screw::from_source_with_union(
         *thread,
         profile,
         SourceSpec {
             head: None,
             shank_length_mm: 0.,
-            socket_across_flats_mm: across,
-            socket_depth_mm: depth,
             minimum_wall_mm: wall,
         },
-        corners,
+        crate::screw_recess::Recess::flat_hex(drive, depth).map_err(|_| ReadError::Invalid)?,
     )
     .map_err(|_| ReadError::Invalid)
 }

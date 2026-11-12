@@ -58,13 +58,21 @@ pub fn profiled_screw_head_volume_error_bound_mm3(
     let r = radial + d;
     let outer =
         I::point(2.) * pi * r * (I::point(2.) * length * d + I::point(count) * pi * d.square());
-    let depth = screw.spec().socket_depth_mm;
-    let depth = I::new(
-        (depth - d.hi).max(0.).next_down().max(0.),
-        (depth + d.hi).next_up(),
-    );
-    let [lo, hi] = screw.drive().area_bounds_mm2(d.hi)?;
-    let void = I::new(lo, hi) * depth;
+    let void = match screw.recess() {
+        crate::screw_recess::Recess::FlatHex(_) => {
+            let (drive, depth) = screw.recess().flat_hex_geometry()?;
+            let depth = I::new(
+                (depth - d.hi).max(0.).next_down().max(0.),
+                (depth + d.hi).next_up(),
+            );
+            let [lo, hi] = drive.area_bounds_mm2(d.hi)?;
+            I::new(lo, hi) * depth
+        }
+        crate::screw_recess::Recess::ConicalHexalobular(_) => {
+            let [lo, hi] = screw.recess().volume_bounds_mm3();
+            I::new(lo, hi)
+        }
+    };
     let frame = Frame::new(placement).ok()?;
     let scale = decode::volume_scale_error(frame).ok()?;
     let height = I::point(profile.end()[1]) - I::point(profile.top()[1]) + I::point(2.) * d;
@@ -363,6 +371,10 @@ pub(super) fn verify(
     corners: &[[[u32; 2]; 2]],
     placement: [Point; 3],
 ) -> Result<f64> {
+    let (drive, socket_depth) = expected
+        .recess()
+        .flat_hex_geometry()
+        .ok_or(ReadError::Unsupported)?;
     closed_incidence(shell, all_faces)?;
     // The generic tensor proof has its own approximation budget. Reconstructing
     // an analytic head may use only its intrinsic source arithmetic reserve.
@@ -463,10 +475,7 @@ pub(super) fn verify(
     }
     let (floor_surface, forward, bounds) = face(shell, faces[segments.len() + 1])?;
     require(forward && bounds.len() == 1)?;
-    let floor_origin = frame.world(
-        [0.; 2],
-        expected.head_top_z() + expected.spec().socket_depth_mm,
-    );
+    let floor_origin = frame.world([0.; 2], expected.head_top_z() + socket_depth);
     proof.axis(
         shell,
         hex_head::plane(shell, floor_surface)?,
@@ -474,7 +483,7 @@ pub(super) fn verify(
         frame.n.map(|v| -v),
         frame.u,
     )?;
-    let points = expected.drive().corners_mm();
+    let points = drive.corners_mm();
     let lower = hex_head::hex_rim(
         proof,
         shell,
@@ -489,7 +498,7 @@ pub(super) fn verify(
         bounds[0],
         true,
         false,
-        points.map(|p| frame.world(p, expected.head_top_z() + expected.spec().socket_depth_mm)),
+        points.map(|p| frame.world(p, expected.head_top_z() + socket_depth)),
     )?;
     hex_head::walls_area(
         proof,
@@ -506,8 +515,7 @@ pub(super) fn verify(
     // it in that same chart; reprojecting its centers through WCS a second
     // time would introduce a different, unbudgeted source geometry. Direct
     // source-known callers retain their separately documented provenance.
-    Ok(expected.profile().volume_mm3()
-        - expected.drive().area_mm2() * expected.spec().socket_depth_mm)
+    Ok(expected.profile().volume_mm3() - expected.recess().nominal_volume_mm3())
 }
 
 fn line_surface(
@@ -1074,8 +1082,22 @@ mod tests {
             let (_, first) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
             let (_, second) = crate::step_read::read_import_solid(&reordered, 1e-7).unwrap();
             assert_eq!(
-                first.profiled_screw_geometry().unwrap().0.drive(),
-                second.profiled_screw_geometry().unwrap().0.drive()
+                first
+                    .profiled_screw_geometry()
+                    .unwrap()
+                    .0
+                    .recess()
+                    .flat_hex_geometry()
+                    .unwrap()
+                    .0,
+                second
+                    .profiled_screw_geometry()
+                    .unwrap()
+                    .0
+                    .recess()
+                    .flat_hex_geometry()
+                    .unwrap()
+                    .0
             );
             assert!(crate::step_read::profiled_screw_import_matches(
                 &second, &source, frame, 1e-7
@@ -1175,6 +1197,48 @@ mod tests {
         assert!(changed.len() >= 10);
     }
 
+    #[test]
+    fn actual_nonhex_recess_does_not_match_a_hex_recess_from_a_shared_head_or_thread() {
+        let hex = screw(true, 1, false);
+        let source = crate::hexalobular_drive::Drive::from_authored_tangent(
+            crate::hexalobular_drive::TangentSpec {
+                major_diameter_mm: 2.8,
+                minor_diameter_mm: 2.05,
+                outer_lobe_radius_mm: 0.28,
+            },
+            crate::hexalobular_drive::Cone {
+                tip_depth_mm: 1.1 + 1.4 / 3_f64.sqrt(),
+                depth_per_radius: 1. / 3_f64.sqrt(),
+            },
+        )
+        .unwrap();
+        let recess =
+            crate::screw_recess::Recess::conical_hexalobular(source, 1e-7, 100_000).unwrap();
+        let torx = Screw::new_with_recess(
+            *hex.thread(),
+            1.5,
+            hex.spec().head.unwrap(),
+            1.,
+            1e-5,
+            recess,
+        )
+        .unwrap();
+        let frame = [[0.; 3], [1., 0., 0.], [0., 1., 0.]];
+        let text = step::write_profiled_screw(&hex, frame[0], frame[1], frame[2], 1e-7).unwrap();
+        let (_, imported) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+        assert!(!crate::step_read::profiled_screw_import_matches(
+            &imported, &torx, frame, 1e-7
+        ));
+        let mut untrusted = imported.clone();
+        untrusted.profile = ImportProfile::ProfiledScrew {
+            screw: Box::new(torx),
+            head_volume_error_mm3: 1e-9,
+        };
+        assert!(!crate::step_read::profiled_screw_import_matches(
+            &untrusted, &hex, frame, 1e-7
+        ));
+    }
+
     fn topology(input: &str) -> Result<()> {
         compound::read_members_by(input, 1e-7, true, true, |shell, id, _| {
             let faces = shell.member_faces(id)?;
@@ -1229,6 +1293,7 @@ mod tests {
                             head: None,
                             ..body.spec()
                         },
+                        body.recess().clone(),
                     )
                     .unwrap();
                     assert!(!crate::step_read::profiled_screw_import_matches(
@@ -1341,6 +1406,7 @@ mod tests {
                     head: None,
                     ..old.spec()
                 },
+                old.recess().clone(),
             )
             .unwrap();
             let text = step::write_profiled_screw(&body, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
@@ -1430,6 +1496,7 @@ mod tests {
                 head: None,
                 ..old.spec()
             },
+            old.recess().clone(),
         )
         .unwrap();
         let text =
@@ -1506,6 +1573,7 @@ mod tests {
                     head: None,
                     ..old.spec()
                 },
+                old.recess().clone(),
             )
             .unwrap();
             let text = step::write_profiled_screw(&body, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
@@ -1648,12 +1716,28 @@ mod tests {
                 for angle in [0.37_f64, -PI / 6.] {
                     let (s, c) = angle.sin_cos();
                     let corners = old
-                        .drive()
+                        .recess()
+                        .flat_hex_geometry()
+                        .unwrap()
+                        .0
                         .corners_mm()
                         .map(|[x, y]| [c * x - s * y + 1e-14, s * x + c * y]);
-                    let source =
-                        Screw::from_source_with_drive(thread, *old.profile(), spec, corners)
-                            .unwrap();
+                    let source = Screw::from_source(
+                        thread,
+                        *old.profile(),
+                        spec,
+                        crate::screw_recess::Recess::flat_hex(
+                            crate::hex_drive::HexDrive::from_retained_corners(
+                                corners,
+                                2.,
+                                old.profile().rounding_error_mm(),
+                            )
+                            .unwrap(),
+                            0.6,
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap();
                     let origin = [30., -20., 10.];
                     let u = [0.6, 0.8, 0.];
                     let v = [0., 0., 1.];
@@ -1668,12 +1752,22 @@ mod tests {
                         1e-7
                     ));
                     let (actual, _) = imported.profiled_screw_geometry().unwrap();
-                    assert!(!actual.drive().is_canonical());
+                    assert!(
+                        !actual
+                            .recess()
+                            .flat_hex_geometry()
+                            .unwrap()
+                            .0
+                            .is_canonical()
+                    );
                     for (a, b) in actual
-                        .drive()
+                        .recess()
+                        .flat_hex_geometry()
+                        .unwrap()
+                        .0
                         .corners_mm()
                         .into_iter()
-                        .zip(source.drive().corners_mm())
+                        .zip(source.recess().flat_hex_geometry().unwrap().0.corners_mm())
                     {
                         assert!(
                             (a[0] - b[0]).hypot(a[1] - b[1]) < actual.profile().rounding_error_mm()
@@ -1747,6 +1841,7 @@ mod tests {
                 head: None,
                 ..plain.spec()
             },
+            plain.recess().clone(),
         )
         .unwrap();
         for body in [plain, torus] {
@@ -1794,6 +1889,7 @@ mod tests {
                 head: None,
                 ..old.spec()
             },
+            old.recess().clone(),
         )
         .unwrap();
         let text =
@@ -1922,6 +2018,7 @@ mod tests {
                     head: None,
                     ..old.spec()
                 },
+                old.recess().clone(),
             )
             .unwrap();
             let text = step::write_profiled_screw(&body, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
@@ -2025,6 +2122,7 @@ mod tests {
                 head: None,
                 ..old.spec()
             },
+            old.recess().clone(),
         )
         .unwrap();
         let text =
@@ -2229,6 +2327,7 @@ mod tests {
                 head: None,
                 ..body.spec()
             },
+            body.recess().clone(),
         )
         .unwrap();
         assert!(

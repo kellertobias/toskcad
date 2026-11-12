@@ -1,8 +1,9 @@
-//! Actual helical screws with a retained, variable-section head and hex drive.
+//! Actual helical screws with a retained head and typed physical recess.
 use crate::{
     head_profile::{Curve, Head, Profile},
     helical_thread::{Thread, ThreadError},
     hex_drive::HexDrive,
+    screw_recess::Recess,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -14,15 +15,13 @@ pub struct Spec {
     pub minimum_wall_mm: f64,
 }
 
-/// Drive dimensions and junction data; authored head metadata is absent on a
-/// physical import. Outer shape uses the profile, drive shape uses `drive()`;
+/// Junction data; authored head metadata is absent on a physical import.
+/// Outer shape uses the profile, the cavity uses the typed `recess()`;
 /// the optional head hint is never geometry authority.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SourceSpec {
     pub head: Option<Head>,
     pub shank_length_mm: f64,
-    pub socket_across_flats_mm: f64,
-    pub socket_depth_mm: f64,
     pub minimum_wall_mm: f64,
 }
 
@@ -31,8 +30,6 @@ impl From<Spec> for SourceSpec {
         Self {
             head: Some(spec.head),
             shank_length_mm: spec.shank_length_mm,
-            socket_across_flats_mm: spec.socket_across_flats_mm,
-            socket_depth_mm: spec.socket_depth_mm,
             minimum_wall_mm: spec.minimum_wall_mm,
         }
     }
@@ -49,13 +46,13 @@ pub enum Face {
     SocketWall(u32),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Screw {
     thread: Thread,
     spec: SourceSpec,
     profile: Profile,
     visible_start_mm: f64,
-    drive: HexDrive,
+    recess: Recess,
 }
 
 impl Screw {
@@ -70,19 +67,26 @@ impl Screw {
         spec: Spec,
     ) -> Result<Self, ThreadError> {
         let profile = Profile::new(spec.head, shank_radius_mm, spec.shank_length_mm)?;
-        Self::admit_source(thread, profile, spec.into(), false, None)
+        Self::admit_source(
+            thread,
+            profile,
+            spec.into(),
+            false,
+            flat_hex(&profile, spec)?,
+        )
     }
 
-    /// Physical meridian/drive admission without guessing an authoring recipe.
+    /// Physical geometry admission; the recess retains its actual floor and contour.
     pub fn from_source(
         thread: Thread,
         profile: Profile,
         spec: SourceSpec,
+        recess: Recess,
     ) -> Result<Self, ThreadError> {
         if spec.head.is_some() {
             return Err(ThreadError::Invalid);
         }
-        Self::admit_source(thread, profile, spec, false, None)
+        Self::admit_source(thread, profile, spec, false, recess)
     }
 
     /// Opt in to the actual head/thread union; the original thread law and
@@ -99,42 +103,47 @@ impl Screw {
     ) -> Result<Self, ThreadError> {
         let profile =
             Profile::new_for_thread_union(spec.head, shank_radius_mm, spec.shank_length_mm)?;
-        Self::admit_source(thread, profile, spec.into(), true, None)
+        Self::admit_source(
+            thread,
+            profile,
+            spec.into(),
+            true,
+            flat_hex(&profile, spec)?,
+        )
     }
 
     pub fn from_source_with_union(
         thread: Thread,
         profile: Profile,
         spec: SourceSpec,
+        recess: Recess,
     ) -> Result<Self, ThreadError> {
         if spec.head.is_some() {
             return Err(ThreadError::Invalid);
         }
-        Self::admit_source(thread, profile, spec, true, None)
+        Self::admit_source(thread, profile, spec, true, recess)
     }
 
-    pub fn from_source_with_drive(
+    pub fn new_with_recess(
         thread: Thread,
-        profile: Profile,
-        spec: SourceSpec,
-        corners: [[f64; 2]; 6],
+        shank_radius_mm: f64,
+        head: Head,
+        shank_length_mm: f64,
+        minimum_wall_mm: f64,
+        recess: Recess,
     ) -> Result<Self, ThreadError> {
-        if spec.head.is_some() {
-            return Err(ThreadError::Invalid);
-        }
-        Self::admit_source(thread, profile, spec, false, Some(corners))
-    }
-
-    pub fn from_source_with_union_and_drive(
-        thread: Thread,
-        profile: Profile,
-        spec: SourceSpec,
-        corners: [[f64; 2]; 6],
-    ) -> Result<Self, ThreadError> {
-        if spec.head.is_some() {
-            return Err(ThreadError::Invalid);
-        }
-        Self::admit_source(thread, profile, spec, true, Some(corners))
+        let profile = Profile::new_for_thread_union(head, shank_radius_mm, shank_length_mm)?;
+        Self::admit_source(
+            thread,
+            profile,
+            SourceSpec {
+                head: Some(head),
+                shank_length_mm,
+                minimum_wall_mm,
+            },
+            true,
+            recess,
+        )
     }
 
     fn admit_source(
@@ -142,7 +151,7 @@ impl Screw {
         profile: Profile,
         spec: SourceSpec,
         union: bool,
-        corners: Option<[[f64; 2]; 6]>,
+        recess: Recess,
     ) -> Result<Self, ThreadError> {
         let major = thread.spec().major_radius_mm;
         let visible_start_mm = profile.end()[1] - spec.shank_length_mm;
@@ -177,23 +186,15 @@ impl Screw {
         {
             return Err(ThreadError::Invalid);
         }
-        let drive = if let Some(corners) = corners {
-            HexDrive::from_retained_corners(
-                corners,
-                spec.socket_across_flats_mm,
-                profile.rounding_error_mm(),
-            )?
-        } else {
-            HexDrive::canonical(spec.socket_across_flats_mm, profile.rounding_error_mm())?
-        };
-        if spec.socket_across_flats_mm <= 2. * profile.rounding_error_mm()
-            || spec.socket_depth_mm <= 2. * profile.rounding_error_mm()
+        let reserve = profile.rounding_error_mm().max(recess.source_error_mm());
+        if recess.maximum_radius_bound_mm() <= 2. * reserve
+            || recess.maximum_depth_mm() <= 2. * reserve
             || !profile.admits_socket(
-                drive.maximum_radius_mm(),
-                spec.socket_depth_mm,
+                recess.maximum_radius_bound_mm() + recess.source_error_mm(),
+                recess.maximum_depth_mm(),
                 spec.minimum_wall_mm,
             )
-            || profile.top()[1] + spec.socket_depth_mm >= 0.
+            || profile.top()[1] + recess.maximum_depth_mm() >= 0.
         {
             return Err(ThreadError::Invalid);
         }
@@ -202,7 +203,7 @@ impl Screw {
             spec,
             profile,
             visible_start_mm,
-            drive,
+            recess,
         })
     }
 
@@ -230,11 +231,16 @@ impl Screw {
     pub fn head_top_z(&self) -> f64 {
         self.profile.top()[1] - self.spec.shank_length_mm
     }
-    pub fn socket_radius(&self, angle: f64) -> f64 {
-        self.drive.radius_at_angle_mm(angle)
+    pub fn socket_radius(&self, angle: f64) -> Option<f64> {
+        self.recess.radius_at_angle_mm(angle)
     }
-    pub fn drive(&self) -> &HexDrive {
-        &self.drive
+    pub fn recess(&self) -> &Recess {
+        &self.recess
+    }
+    pub fn source_error_mm(&self) -> f64 {
+        self.profile
+            .rounding_error_mm()
+            .max(self.recess.source_error_mm())
     }
 
     pub fn faces(&self) -> Vec<Face> {
@@ -243,13 +249,15 @@ impl Screw {
         result.push(Face::HeadTop);
         result.extend((0..self.profile.segments().count() as u32).map(Face::ProfileWall));
         result.push(Face::SocketFloor);
-        result.extend((0..6).map(Face::SocketWall));
+        result.extend((0..self.recess.wall_count()).map(Face::SocketWall));
         result
     }
 
+    /// Nominal source evaluation. Curved recess uncertainty remains available
+    /// through the recess's cached volume interval for manufacturing proofs.
     pub fn volume_mm3(&self) -> f64 {
         self.visible_thread_volume_mm3() + self.profile.volume_mm3()
-            - self.drive.area_mm2() * self.spec.socket_depth_mm
+            - self.recess.nominal_volume_mm3()
     }
 
     pub fn support(&self, direction: [f64; 3]) -> f64 {
@@ -288,9 +296,16 @@ impl Screw {
                 .radius_at(local_z.clamp(top, end))
                 .expect("profile domain")
                 + tolerance
-            && (z >= self.head_top_z() + self.spec.socket_depth_mm - tolerance
-                || radius >= self.socket_radius(y.atan2(x)) - tolerance)
+            && self
+                .recess
+                .contains_void([x, y, z - self.head_top_z()], tolerance)
+                == Some(false)
     }
+}
+
+fn flat_hex(profile: &Profile, spec: Spec) -> Result<Recess, ThreadError> {
+    let contour = HexDrive::canonical(spec.socket_across_flats_mm, profile.rounding_error_mm())?;
+    Recess::flat_hex(contour, spec.socket_depth_mm).map_err(|_| ThreadError::Invalid)
 }
 
 #[cfg(test)]

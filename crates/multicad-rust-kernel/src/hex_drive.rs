@@ -86,6 +86,9 @@ impl HexDrive {
     pub fn corners_mm(&self) -> [Point; 6] {
         self.corners
     }
+    pub fn across_flats_mm(&self) -> f64 {
+        self.across_flats
+    }
     pub fn is_canonical(&self) -> bool {
         self.canonical
     }

@@ -80,10 +80,9 @@ fn unresolved_positive_head_dimensions_and_distorted_frames_refuse() {
         SourceSpec {
             head: None,
             shank_length_mm: 0.,
-            socket_across_flats_mm: 1.,
-            socket_depth_mm: 2e-7,
             minimum_wall_mm: 0.1,
         },
+        crate::screw_recess::Recess::canonical_flat_hex(1., 2e-7).unwrap(),
     )
     .unwrap();
     assert_eq!(admission(&small, [0.; 3], 1e-7), Err(StepError::Limit));
@@ -108,10 +107,9 @@ fn unresolved_positive_head_dimensions_and_distorted_frames_refuse() {
         SourceSpec {
             head: None,
             shank_length_mm: 0.,
-            socket_across_flats_mm: 1.,
-            socket_depth_mm: 0.6,
             minimum_wall_mm: 0.1,
         },
+        crate::screw_recess::Recess::canonical_flat_hex(1., 0.6).unwrap(),
     )
     .unwrap();
     assert_eq!(
@@ -157,10 +155,9 @@ fn physical_junction_and_drive_encoders_refuse_collapsed_geometry() {
         SourceSpec {
             head: None,
             shank_length_mm: 0.,
-            socket_across_flats_mm: 1.5,
-            socket_depth_mm: 0.6,
             minimum_wall_mm: 0.1,
         },
+        crate::screw_recess::Recess::canonical_flat_hex(1.5, 0.6).unwrap(),
     )
     .unwrap();
     let mut file = StepFile::new();

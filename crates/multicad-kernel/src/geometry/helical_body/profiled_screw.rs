@@ -172,15 +172,21 @@ fn qualify_source(
     frame: PlaneFrame,
     policy: GeometryPolicy,
 ) -> Result<(), GeometryError> {
+    let (drive, socket_depth) = screw.recess().flat_hex_geometry().ok_or_else(|| {
+        error(
+            OPERATION,
+            GeometryErrorKind::Unsupported,
+            "Conical curved recesses need the qualified native mesh and exchange pipeline",
+        )
+    })?;
     let spec = screw.spec();
-    policy.length(spec.socket_across_flats_mm)?;
-    policy.length(spec.socket_depth_mm)?;
+    policy.length(drive.across_flats_mm())?;
+    policy.length(socket_depth)?;
     policy.length(spec.minimum_wall_mm)?;
-    for (i, [x, y]) in screw.drive().corners_mm().into_iter().enumerate() {
+    for (i, [x, y]) in drive.corners_mm().into_iter().enumerate() {
         policy.point(position(frame, [x, y, screw.head_top_z()]))?;
         policy.length(
-            (screw.drive().side_length_mm(i) - 2. * screw.profile().rounding_error_mm())
-                .next_down(),
+            (drive.side_length_mm(i) - 2. * screw.profile().rounding_error_mm()).next_down(),
         )?;
     }
     if spec.shank_length_mm != 0. {
@@ -244,6 +250,9 @@ fn qualify_source(
 }
 
 pub(super) fn extend_face_properties(screw: &Screw, faces: &mut Vec<(Point, f64)>) {
+    let Some((drive, socket_depth)) = screw.recess().flat_hex_geometry() else {
+        return;
+    };
     let spec = screw.spec();
     let radius = screw.profile().end()[0];
     let (removed_center, removed_area) = faces[0];
@@ -257,8 +266,8 @@ pub(super) fn extend_face_properties(screw: &Screw, faces: &mut Vec<(Point, f64)
         shoulder,
     );
     let top = screw.head_top_z();
-    let socket_area = screw.drive().area_mm2();
-    let [cx, cy] = screw.drive().center_mm();
+    let socket_area = drive.area_mm2();
+    let [cx, cy] = drive.center_mm();
     let segments: Vec<_> = screw.profile().segments().collect();
     for face in screw.faces().into_iter().skip(faces.len()) {
         faces.push(match face {
@@ -275,16 +284,16 @@ pub(super) fn extend_face_properties(screw: &Screw, faces: &mut Vec<(Point, f64)
                 center[2] -= spec.shank_length_mm;
                 (center, segment.area_mm2())
             }
-            ScrewFace::SocketFloor => ([cx, cy, top + spec.socket_depth_mm], socket_area),
+            ScrewFace::SocketFloor => ([cx, cy, top + socket_depth], socket_area),
             ScrewFace::SocketWall(i) => {
-                let [a, b] = screw.drive().edge_mm(i as usize);
+                let [a, b] = drive.edge_mm(i as usize);
                 (
                     [
                         a[0].midpoint(b[0]),
                         a[1].midpoint(b[1]),
-                        top + spec.socket_depth_mm / 2.,
+                        top + socket_depth / 2.,
                     ],
-                    screw.drive().side_length_mm(i as usize) * spec.socket_depth_mm,
+                    drive.side_length_mm(i as usize) * socket_depth,
                 )
             }
             _ => unreachable!("Original helical face properties already exist"),
@@ -293,6 +302,7 @@ pub(super) fn extend_face_properties(screw: &Screw, faces: &mut Vec<(Point, f64)
 }
 
 pub(super) fn plane(screw: &Screw, role: ScrewFace, frame: PlaneFrame) -> Option<ReferenceFrame> {
+    let (drive, socket_depth) = screw.recess().flat_hex_geometry()?;
     let axial = |z, sign| placed_frame(frame, [0., 0., z], [1., 0., 0.], [0., sign, 0.]);
     let top = screw.head_top_z();
     match role {
@@ -306,9 +316,9 @@ pub(super) fn plane(screw: &Screw, role: ScrewFace, frame: PlaneFrame) -> Option
             (segment.role == Role::Bearing)
                 .then(|| axial(segment.start[1] - screw.spec().shank_length_mm, 1.))
         }
-        ScrewFace::SocketFloor => Some(axial(top + screw.spec().socket_depth_mm, -1.)),
+        ScrewFace::SocketFloor => Some(axial(top + socket_depth, -1.)),
         ScrewFace::SocketWall(i) => {
-            let [a, b] = screw.drive().edge_mm(i as usize);
+            let [a, b] = drive.edge_mm(i as usize);
             let d = [b[0] - a[0], b[1] - a[1]];
             let length = d[0].hypot(d[1]);
             Some(placed_frame(
@@ -347,6 +357,9 @@ pub(super) fn extend_topology(
     frame: PlaneFrame,
     elements: &mut Vec<TopologyElement>,
 ) {
+    let Some((drive, socket_depth)) = screw.recess().flat_hex_geometry() else {
+        return;
+    };
     let roles = screw.faces();
     let count = body.rails.len();
     let segments: Vec<_> = screw.profile().segments().collect();
@@ -418,11 +431,8 @@ pub(super) fn extend_topology(
     }
     add.polygon_prism(
         "screw.drive",
-        screw.drive().corners_mm(),
-        [
-            screw.head_top_z(),
-            screw.head_top_z() + screw.spec().socket_depth_mm,
-        ],
+        drive.corners_mm(),
+        [screw.head_top_z(), screw.head_top_z() + socket_depth],
         [ScrewFace::HeadTop, ScrewFace::SocketFloor],
         ScrewFace::SocketWall,
     );

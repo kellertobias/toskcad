@@ -378,9 +378,34 @@ fn member_signature(readback: &Readback, imported: &ImportSolid) -> ContentHash 
     } = &imported.profile
     {
         bytes.extend(b"profiled-screw-physical");
-        for value in screw.drive().corners_mm().into_iter().flatten() {
-            bytes.extend(if value == 0. { 0. } else { value }.to_le_bytes());
-        }
+        let recess_dimensions = match screw.recess() {
+            multicad_rust_kernel::screw_recess::Recess::FlatHex(recess) => {
+                let (drive, depth) = recess.geometry();
+                for value in drive.corners_mm().into_iter().flatten() {
+                    bytes.extend(if value == 0. { 0. } else { value }.to_le_bytes());
+                }
+                vec![drive.across_flats_mm(), depth]
+            }
+            multicad_rust_kernel::screw_recess::Recess::ConicalHexalobular(recess) => {
+                let source = recess.source();
+                bytes.extend(b"conical-hexalobular-recess");
+                for arc in source.arcs() {
+                    for value in arc
+                        .center_mm
+                        .into_iter()
+                        .chain(arc.start_mm)
+                        .chain(arc.end_mm)
+                        .chain([arc.radius_mm, arc.start_angle_rad, arc.sweep_rad])
+                    {
+                        bytes.extend(if value == 0. { 0. } else { value }.to_le_bytes());
+                    }
+                }
+                for value in [source.cone().tip_depth_mm, source.cone().depth_per_radius] {
+                    bytes.extend(value.to_le_bytes());
+                }
+                vec![]
+            }
+        };
         let spec = screw.thread().spec();
         for value in imported
             .origin_mm
@@ -399,8 +424,9 @@ fn member_signature(readback: &Readback, imported: &ImportSolid) -> ContentHash 
                 f64::from(spec.left_hand),
                 spec.root_radius_mm.unwrap_or(0.),
                 screw.spec().shank_length_mm,
-                screw.spec().socket_across_flats_mm,
-                screw.spec().socket_depth_mm,
+            ])
+            .chain(recess_dimensions)
+            .chain([
                 screw.profile().transport_error().numeric_conversion_mm,
                 screw.profile().transport_error().arithmetic_mm,
                 *head_volume_error_mm3,

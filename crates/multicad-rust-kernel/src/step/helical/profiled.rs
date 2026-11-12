@@ -38,6 +38,10 @@ pub(super) struct Junction {
 }
 
 pub(super) fn admission(screw: &Screw, origin: Point, tolerance: f64) -> Result<(), StepError> {
+    let (drive, socket_depth) = screw
+        .recess()
+        .flat_hex_geometry()
+        .ok_or(StepError::Unsupported)?;
     if !tolerance.is_finite() || tolerance <= 0. || !origin.into_iter().all(f64::is_finite) {
         return Err(StepError::InvalidGeometry);
     }
@@ -87,11 +91,11 @@ pub(super) fn admission(screw: &Screw, origin: Point, tolerance: f64) -> Result<
         }
     }
     if 128. * f64::EPSILON * scale + 4. * screw.profile().rounding_error_mm() > tolerance / 4.
-        || screw.spec().socket_depth_mm <= 10. * tolerance
-        || screw.spec().socket_across_flats_mm <= 10. * tolerance
+        || socket_depth <= 10. * tolerance
+        || drive.across_flats_mm() <= 10. * tolerance
         || !screw.profile().admits_socket(
-            screw.spec().socket_across_flats_mm / 3_f64.sqrt(),
-            screw.spec().socket_depth_mm,
+            drive.across_flats_mm() / 3_f64.sqrt(),
+            socket_depth,
             10. * tolerance,
         )
     {
@@ -224,6 +228,10 @@ pub(super) fn head(
     screw: &Screw,
     join: Junction,
 ) -> Result<Vec<Entity>, StepError> {
+    let (drive, socket_depth) = screw
+        .recess()
+        .flat_hex_geometry()
+        .ok_or(StepError::Unsupported)?;
     let segments: Vec<_> = screw.profile().segments().collect();
     let zshift = screw.spec().shank_length_mm;
     let rim = |file: &mut StepFile, [r, z]: [f64; 2]| {
@@ -362,18 +370,13 @@ pub(super) fn head(
         previous = next;
     }
     let top = screw.head_top_z();
-    let ([mouth, floor], sides) = encode_drive_prism(
-        file,
-        p,
-        screw.drive().corners_mm(),
-        [top, top + screw.spec().socket_depth_mm],
-        true,
-    )?;
+    let ([mouth, floor], sides) =
+        encode_drive_prism(file, p, drive.corners_mm(), [top, top + socket_depth], true)?;
     let outer = circular_bound(file, top_edge, false, true);
     let down = p.normal.map(|x| -x);
     let mut faces = vec![file.face(&[outer, mouth], top_center, down, p.u)];
     faces.extend(walls);
-    let floor_center = file.point(p.point_f64([0.; 2], top + screw.spec().socket_depth_mm));
+    let floor_center = file.point(p.point_f64([0.; 2], top + socket_depth));
     faces.push(file.face(&[floor], floor_center, down, p.u));
     faces.extend(sides);
     Ok(faces)
