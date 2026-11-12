@@ -4,9 +4,11 @@ use crate::{head_profile::TransportError, tapered_thread::interval::I};
 use std::f64::consts::{PI, TAU};
 
 mod authoring;
+mod properties;
 #[cfg(test)]
 mod tests;
 pub use authoring::TangentSpec;
+pub use properties::{NominalSurfaceEvaluation, NominalSurfaceEvaluations};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum BoundarySource {
@@ -145,7 +147,7 @@ impl Arc {
             * I::point(0.5)
     }
 
-    fn moment(self, angle: I, radial_min_squared: f64) -> Jet {
+    fn radial(self, angle: I, radial_min_squared: f64) -> Jet {
         let (center_radius, phase) = self.center_support();
         let [x, y] = self.center_mm;
         let r = self.radius_mm;
@@ -157,7 +159,13 @@ impl Arc {
         // positive lower bound proved at admission. This tightens an interval,
         // never the retained circle or its physical radius.
         squared.0[0].lo = squared.0[0].lo.max(radial_min_squared);
-        let radial = squared.sqrt_positive();
+        squared.sqrt_positive()
+    }
+    fn moment(self, angle: I, radial_min_squared: f64) -> Jet {
+        let (center_radius, phase) = self.center_support();
+        let center_dot = Jet::cos(angle - phase).scale_interval(center_radius);
+        let r = self.radius_mm;
+        let radial = self.radial(angle, radial_min_squared);
         (radial * (Jet::constant(I::point(r).square()) + center_dot.scale(r)))
             .scale_interval(I::point(1.) / I::point(3.))
     }
@@ -446,6 +454,15 @@ impl Jet {
             -t.cos() * I::point(0.5),
             t.sin() / I::point(6.),
             t.cos() / I::point(24.),
+        ])
+    }
+    fn sin(t: I) -> Self {
+        Self([
+            t.sin(),
+            t.cos(),
+            -t.sin() * I::point(0.5),
+            -t.cos() / I::point(6.),
+            t.sin() / I::point(24.),
         ])
     }
     fn scale(self, value: f64) -> Self {
