@@ -87,6 +87,60 @@ pub(super) fn chord_error(
     }
     Ok(upper)
 }
+/// One restriction of the immutable source polynomial. Every actual facet
+/// still subtracts its own affine polynomial in the retained global chart.
+pub(super) struct SourceCell {
+    poles: Grid,
+    domain: [[I; 2]; 2],
+}
+impl SourceCell {
+    pub fn new(
+        poles: &Grid,
+        domain: [[f64; 2]; 2],
+        range: [[f64; 2]; 2],
+        work: &mut Work<'_>,
+    ) -> Result<Self, Error> {
+        work.charge(poles.len() * poles[0].len())?;
+        let local = local_range(domain, range)?;
+        let source = restrict(poles.clone(), local, work)?;
+        // local_range rounds outwards. Use those actual retained restriction
+        // endpoints, including the original chart's interval transfer, rather
+        // than replacing them with the requested rectangle's rounded bounds.
+        let domain = std::array::from_fn(|axis| {
+            local[axis].map(|t| {
+                I::point(domain[axis][0])
+                    + (I::point(domain[axis][1]) - I::point(domain[axis][0])) * I::point(t)
+            })
+        });
+        Ok(Self {
+            poles: source,
+            domain,
+        })
+    }
+    pub fn chord_error(&self, affine: &Affine, work: &mut Work<'_>) -> Result<f64, Error> {
+        work.charge(self.poles.len() * self.poles[0].len())?;
+        let degree = [self.poles.len() - 1, self.poles[0].len() - 1];
+        let mut upper = 0_f64;
+        for (i, row) in self.poles.iter().enumerate() {
+            let u = self.domain[0][0]
+                + (self.domain[0][1] - self.domain[0][0]) * I::point(i as f64)
+                    / I::point(degree[0] as f64);
+            for (j, point) in row.iter().enumerate() {
+                let v = self.domain[1][0]
+                    + (self.domain[1][1] - self.domain[1][0]) * I::point(j as f64)
+                        / I::point(degree[1] as f64);
+                let line = affine.at(u, v);
+                let l1 = (0..3)
+                    .fold(I::point(0.), |s, k| {
+                        s + I::point((point[k] - line[k]).magnitude())
+                    })
+                    .checked()?;
+                upper = upper.max(l1.hi);
+            }
+        }
+        Ok(upper)
+    }
+}
 /// A convex positive normal cone proves the angle to the actual rounded
 /// facet normal. No secant-normal theorem or sampled normal is assumed.
 /// Restricting the original normal polynomial suffices for directions:

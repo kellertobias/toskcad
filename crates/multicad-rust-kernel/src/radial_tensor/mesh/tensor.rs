@@ -1,6 +1,8 @@
 //! Canonical source cells with indexed, knot-aware patch lookup.
 use super::*;
 use crate::tapered_thread::{calculation_cell, normal_polynomial};
+#[cfg(test)]
+mod tests;
 type Grid = Vec<Vec<[I; 3]>>;
 pub(super) struct Tensor {
     pub face: usize,
@@ -15,6 +17,7 @@ pub(super) struct Patch {
     normal_derivative: [[I; 3]; 2],
     normal_hull: [I; 3],
     curvature: [f64; 2],
+    normal_jet: std::sync::OnceLock<Option<normal_jet::NormalJet>>,
 }
 impl Tensor {
     pub fn new(
@@ -145,6 +148,7 @@ impl Tensor {
                     normal_derivative,
                     normal_hull,
                     curvature,
+                    normal_jet: std::sync::OnceLock::new(),
                 });
             }
         }
@@ -282,6 +286,26 @@ fn evaluate(points: &[[I; 3]], t: I) -> [I; 3] {
 }
 
 impl Patch {
+    pub fn taylor_normal_box(
+        &self,
+        range: [[f64; 2]; 2],
+        work: &mut Work<'_>,
+    ) -> Result<[I; 3], Error> {
+        if self.normal_jet.get().is_none() {
+            let candidate = match normal_jet::NormalJet::new(&self.normal, self.domain, work) {
+                Ok(jet) => Some(jet),
+                Err(Error::Unresolved) => None,
+                Err(error) => return Err(error),
+            };
+            let _ = self.normal_jet.set(candidate);
+        }
+        self.normal_jet
+            .get()
+            .and_then(Option::as_ref)
+            .ok_or(Error::Unresolved)?
+            .enclose(range, work)
+    }
+
     /// Interval point evaluation plus a whole-polynomial derivative bound
     /// is an authority-preserving mean-value enclosure, not a sampled
     /// normal approximation. The Bernstein cone remains the fallback.

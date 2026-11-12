@@ -7,6 +7,7 @@ mod certificate;
 mod cone;
 mod edge;
 mod embedding;
+mod normal_jet;
 mod spline;
 mod tensor;
 use cap::Cap;
@@ -506,23 +507,56 @@ impl<'a> Prepared<'a> {
         ];
         match &self.sides[side] {
             Side::Tensor(t) => {
+                // Both literal triangles cover this same immutable source
+                // cell. Reuse only source-dependent enclosures; each facet
+                // still owns its affine chord and normal certificates.
+                let mut patches = t
+                    .patches(range, work)?
+                    .into_iter()
+                    .map(|patch| (patch, None, None))
+                    .collect::<Vec<_>>();
                 for indices in actual {
                     let triangle = indices.map(|i| vertices[i]);
                     let affine = certificate::Affine::new(indices.map(|i| uv[i]), triangle)?;
                     let normal = certificate::facet_normal(triangle);
-                    for patch in t.patches(range, work)? {
-                        if (I::point(certificate::chord_error(
-                            &patch.controls,
-                            patch.domain,
-                            range,
-                            &affine,
-                            work,
-                        )?) + I::point(self.body.error_mm))
+                    for (patch, source_normal, source_cell) in &mut patches {
+                        let cell = if let Some(cell) = source_cell {
+                            cell
+                        } else {
+                            source_cell.insert(certificate::SourceCell::new(
+                                &patch.controls,
+                                patch.domain,
+                                range,
+                                work,
+                            )?)
+                        };
+                        if (I::point(cell.chord_error(&affine, work)?)
+                            + I::point(self.body.error_mm))
                         .hi > options.deflection
                         {
                             return Ok(false);
                         }
-                        let fast = uncertain(patch.normal_box(range, work).and_then(|value| {
+                        if uncertain(patch.taylor_normal_box(range, work).and_then(|value| {
+                            certificate::normal_matches(
+                                vec![vec![value]],
+                                [[0., 1.]; 2],
+                                [[0., 1.]; 2],
+                                normal,
+                                options.angle,
+                                work,
+                            )
+                        }))? {
+                            continue;
+                        }
+                        let source_normal = match *source_normal {
+                            Some(value) => value,
+                            None => {
+                                let value = patch.normal_box(range, work);
+                                *source_normal = Some(value);
+                                value
+                            }
+                        };
+                        let fast = uncertain(source_normal.and_then(|value| {
                             certificate::normal_matches(
                                 vec![vec![value]],
                                 [[0., 1.]; 2],

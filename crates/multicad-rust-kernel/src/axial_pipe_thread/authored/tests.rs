@@ -40,7 +40,7 @@ fn authored_npt_endpoints_share_expressions_without_changing_literal_sections() 
     }
 }
 #[test]
-fn actual_authored_npt_raw_material_mass_pass_but_default_mesh_budget_refuses() {
+fn actual_authored_npt_raw_material_mass_and_default_mesh_qualify() {
     let t = source(1. / 32.);
     let started = std::time::Instant::now();
     let raw = t.raw_boundary_ownership(1e-7, None).unwrap();
@@ -114,12 +114,19 @@ fn actual_authored_npt_raw_material_mass_pass_but_default_mesh_budget_refuses() 
         },
         Some(&count),
     );
-    // This is a bounded source/raw-boundary milestone, not a qualified app
-    // workflow. The actual existing certifier exhausts its work budget on this
-    // ordinary seven-turn source; keep that refusal explicit until it is fixed.
-    assert!(matches!(result, Err(Error::Limit)));
+    let mesh = result.unwrap_or_else(|error| {
+        panic!(
+            "actual default mesh {error:?}, elapsed {:?}, checks={}",
+            mesh_started.elapsed(),
+            checks.get()
+        )
+    });
+    let proof = crate::manufacturing::certify(&mesh).unwrap();
+    assert!(proof.signed_volume_mm3 > 0.);
     println!(
-        "default mesh honestly refuses Limit after {:?}, callback checks={}",
+        "actual default mesh facets={}, volume={}, elapsed {:?}, checks={}",
+        mesh.indices.len() / 3,
+        proof.signed_volume_mm3,
         mesh_started.elapsed(),
         checks.get()
     );

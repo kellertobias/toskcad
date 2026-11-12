@@ -1,6 +1,6 @@
 use super::*;
 use std::cell::Cell;
-fn cam() -> RadialBoundary {
+pub(super) fn cam() -> RadialBoundary {
     BoundaryOwnership::new(crate::radial_tensor::tests::cam::wedge(&[1, 2]), 1e-7, None)
         .unwrap()
         .bind_surfaces(1e-7, None)
@@ -14,7 +14,7 @@ fn cam() -> RadialBoundary {
         .certify_material(1e-7, None)
         .unwrap()
 }
-fn options() -> Tessellation {
+pub(super) fn options() -> Tessellation {
     Tessellation {
         deflection: 0.05,
         angle: 0.3,
@@ -22,9 +22,163 @@ fn options() -> Tessellation {
     }
 }
 #[test]
+fn restricted_source_chords_keep_actual_facets_ranges_and_owners_independent() {
+    let thread = crate::tapered_thread::Thread::new(
+        crate::helical_thread::Spec {
+            major_radius_mm: 4.,
+            pitch_mm: 1.25,
+            length_mm: 1.25,
+            depth_mm: 0.5,
+            crest_width_mm: 0.25,
+            lower_flank_deg: 12.,
+            upper_flank_deg: 18.,
+            starts: 1,
+            left_hand: false,
+            root_radius_mm: None,
+        },
+        0.03125,
+        1e-7,
+        1e-6,
+    )
+    .unwrap();
+    let body = thread
+        .retained_boundary_with_interrupt([[0.; 3], [1., 0., 0.], [0., 1., 0.]], 1e-7, 1e-6, None)
+        .unwrap()
+        .boundary;
+    let mut work = Work {
+        remaining: 100_000_000,
+        interrupt: None,
+    };
+    let prepared = Prepared::new(&body, options(), DEFAULT_LIMITS, &mut work).unwrap();
+    let side = prepared
+        .sides
+        .iter()
+        .position(|s| matches!(s, Side::Tensor(_)))
+        .unwrap();
+    let domains = if let Side::Tensor(t) = &prepared.sides[side] {
+        t.patches([[0., 1.]; 2], &mut work)
+            .unwrap()
+            .iter()
+            .map(|p| p.domain)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    assert!(!domains.is_empty());
+    for fraction in [[0.11, 0.13], [0.61, 0.63]] {
+        let domain = domains[0];
+        let range = domain.map(|d| fraction.map(|f| d[0] + (d[1] - d[0]) * f));
+        let uv = [
+            [range[0][0], range[1][0]],
+            [range[0][1], range[1][0]],
+            [range[0][1], range[1][1]],
+        ];
+        let mut vertices = [[0.; 3]; 3];
+        for i in 0..3 {
+            vertices[i] = prepared
+                .point(side, uv[i][0], uv[i][1], None, &mut work)
+                .unwrap();
+        }
+        let patches = if let Side::Tensor(t) = &prepared.sides[side] {
+            t.patches(range, &mut work).unwrap()
+        } else {
+            Vec::new()
+        };
+        assert_eq!(patches.len(), 1);
+        let patch = patches[0];
+        let mut source = patch.controls.clone();
+        let cell = certificate::SourceCell::new(&source, domain, range, &mut work).unwrap();
+        let affine = certificate::Affine::new(uv, vertices).unwrap();
+        let bound = cell.chord_error(&affine, &mut work).unwrap();
+        assert!(bound < 0.1);
+        // Independently evaluate the actual residual polynomial. Subtracting
+        // before evaluation avoids treating correlated world coordinates as
+        // unrelated interval boxes near a zero residual.
+        let residual = source
+            .iter()
+            .enumerate()
+            .map(|(i, row)| {
+                row.iter()
+                    .enumerate()
+                    .map(|(j, p)| {
+                        let local = [
+                            I::point(i as f64) / I::point((source.len() - 1) as f64),
+                            I::point(j as f64) / I::point((row.len() - 1) as f64),
+                        ];
+                        let global = std::array::from_fn::<_, 2, _>(|k| {
+                            I::point(domain[k][0])
+                                + (I::point(domain[k][1]) - I::point(domain[k][0])) * local[k]
+                        });
+                        let at = std::array::from_fn::<_, 2, _>(|k| {
+                            (global[k] - I::point(range[k][0]))
+                                / (I::point(range[k][1]) - I::point(range[k][0]))
+                        });
+                        std::array::from_fn(|k| {
+                            p[k] - (I::point(vertices[0][k])
+                                + (I::point(vertices[1][k]) - I::point(vertices[0][k])) * at[0]
+                                + (I::point(vertices[2][k]) - I::point(vertices[1][k])) * at[1])
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        for du in [0., 0.37, 1.] {
+            for dv in [0., 0.63, 1.] {
+                let at = [du, dv];
+                let local = std::array::from_fn::<_, 2, _>(|k| {
+                    let global = I::point(range[k][0])
+                        + (I::point(range[k][1]) - I::point(range[k][0])) * I::point(at[k]);
+                    (global - I::point(domain[k][0]))
+                        / (I::point(domain[k][1]) - I::point(domain[k][0]))
+                });
+                let error = evaluate_source(&residual, local)
+                    .into_iter()
+                    .map(I::magnitude)
+                    .sum::<f64>();
+                assert!(error <= bound, "residual={error}, bound={bound}");
+            }
+        }
+        for sign in [-1., 1.] {
+            let shifted = vertices.map(|mut p| {
+                p[0] += sign;
+                p
+            });
+            let other = certificate::Affine::new(uv, shifted).unwrap();
+            assert!(cell.chord_error(&other, &mut work).unwrap() > 0.9);
+        }
+        for p in source.iter_mut().flatten() {
+            p[0] = p[0] + I::point(1.);
+        }
+        let other = certificate::SourceCell::new(&source, domain, range, &mut work).unwrap();
+        assert!(other.chord_error(&affine, &mut work).unwrap() > 0.9);
+        assert_eq!(cell.chord_error(&affine, &mut work).unwrap(), bound);
+    }
+}
+fn evaluate_source(poles: &[Vec<[I; 3]>], at: [I; 2]) -> [I; 3] {
+    let reduce = |mut row: Vec<[I; 3]>, t: I| {
+        while row.len() > 1 {
+            row = row
+                .windows(2)
+                .map(|p| std::array::from_fn(|k| (I::point(1.) - t) * p[0][k] + t * p[1][k]))
+                .collect();
+        }
+        row[0]
+    };
+    reduce(
+        poles.iter().map(|row| reduce(row.clone(), at[1])).collect(),
+        at[0],
+    )
+}
+#[test]
 fn real_source_mesh_is_cache_independent_and_failed_requests_are_atomic() {
     let body = cam();
     let original = body.input().clone();
+    let edge = body
+        .sample_edge_with_interrupt(0, options().deflection, 1000, None)
+        .unwrap();
+    let endpoints = original.edges[0].vertices.map(|i| original.vertices[i]);
+    assert_eq!(edge.first(), Some(&endpoints[0]));
+    assert_eq!(edge.last(), Some(&endpoints[1]));
     let regular = body.tessellate_with_interrupt(options(), None).unwrap();
     let uncached = build_with_limits(
         &body,
@@ -97,6 +251,23 @@ fn real_source_mesh_is_cache_independent_and_failed_requests_are_atomic() {
     }
     assert_eq!(body.input(), &original);
     assert_eq!(build(&body, options(), None).unwrap(), regular);
+}
+#[test]
+fn actual_proper_and_distant_source_frames_keep_certified_closed_meshes() {
+    let body = cam();
+    for origin in [[100., -30., 50.], [1e6, -2e6, 3e6]] {
+        let frame = [origin, [0.8, 0.6, 0.], [-0.36, 0.48, 0.8]];
+        let placed = body
+            .transformed_with_interrupt(frame, 1e-6, 1e-5, None)
+            .unwrap();
+        let mesh = build(&placed, options(), None).unwrap();
+        assert!(
+            crate::manufacturing::certify(&mesh)
+                .unwrap()
+                .signed_volume_mm3
+                > 0.
+        );
+    }
 }
 #[test]
 fn invalid_precision_and_allocation_limits_refuse_before_publication() {
@@ -502,8 +673,12 @@ fn oppositely_stored_cap_support_keeps_outward_material_orientation() {
     );
 }
 #[test]
-fn direct_positive_taper_and_maximum_start_sources_get_actual_manifold_meshes() {
-    for starts in [1, 8] {
+fn direct_signed_taper_and_multistart_sources_get_actual_manifold_meshes() {
+    for (starts, taper, left_hand) in [
+        (1, 0.03125, false),
+        (8, 0.03125, false),
+        (2, -0.03125, true),
+    ] {
         let spec = crate::helical_thread::Spec {
             major_radius_mm: 4.,
             pitch_mm: 1.25,
@@ -513,10 +688,10 @@ fn direct_positive_taper_and_maximum_start_sources_get_actual_manifold_meshes() 
             lower_flank_deg: 12.,
             upper_flank_deg: 18.,
             starts,
-            left_hand: false,
+            left_hand,
             root_radius_mm: None,
         };
-        let source = crate::tapered_thread::Thread::new(spec, 0.03125, 1e-7, 1e-6).unwrap();
+        let source = crate::tapered_thread::Thread::new(spec, taper, 1e-7, 1e-6).unwrap();
         let authored = source
             .retained_boundary_with_interrupt(
                 [[0.; 3], [1., 0., 0.], [0., 1., 0.]],
@@ -579,6 +754,21 @@ fn failed_actual_candidate_facet_checks_and_mid_proof_cancellation_cannot_publis
                 range,
                 corners,
                 [[2, 1, 0], [3, 2, 0]],
+                None,
+                &mut work
+            )
+            .unwrap()
+    );
+    // The first actual facet may qualify against a source enclosure reused by
+    // the second. That enclosure cannot certify the second facet's reversed
+    // literal orientation.
+    assert!(
+        !source
+            .cell_matches(
+                side,
+                range,
+                corners,
+                [[0, 1, 2], [3, 2, 0]],
                 None,
                 &mut work
             )
@@ -752,6 +942,17 @@ fn recovery_planner_uses_actual_rejected_candidates_without_publishing_them() {
 }
 
 fn every_cancellation<T>(mut run: impl FnMut(&mut Work<'_>) -> Result<T, Error>) {
+    // The immutable source jet has its own cold-construction cancellation
+    // tests. Count every actual candidate checkpoint with a stable warm
+    // source cache, so the observation itself cannot change the next run.
+    let mut warm = Work {
+        remaining: 10000000,
+        interrupt: None,
+    };
+    assert!(!matches!(
+        run(&mut warm),
+        Err(Error::Cancelled | Error::Limit)
+    ));
     let count = Cell::new(0);
     let observe = || {
         count.set(count.get() + 1);
