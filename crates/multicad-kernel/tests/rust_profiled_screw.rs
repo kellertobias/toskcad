@@ -892,3 +892,86 @@ fn conical_recess_source_cannot_publish_partial_hex_geometry_before_native_quali
     assert_eq!(old.topology_snapshot(owner, 0).unwrap(), before);
     assert!(old.supports_step_export());
 }
+
+#[test]
+fn cylindrical_profiled_socket_cap_keeps_actual_bearing_and_physical_step_readback() {
+    let scratch = tempfile::tempdir().unwrap();
+    for left in [false, true] {
+        for plain in [0., 1.] {
+            for frame in [
+                PlaneFrame::default(),
+                PlaneFrame {
+                    origin: [30., -20., 10.],
+                    u: [0.6, 0.8, 0.],
+                    v: [0., 0., 1.],
+                },
+            ] {
+                let policy = GeometryPolicy::default();
+                let solid = Solid::rust_profiled_machine_screw_with_shank(
+                    HelicalThread {
+                        left_hand: left,
+                        starts: if left { 2 } else { 1 },
+                        ..thread()
+                    },
+                    None,
+                    1.5,
+                    Spec {
+                        head: Head::Cylindrical {
+                            radius_mm: 2.8,
+                            height_mm: 2.4,
+                        },
+                        shank_length_mm: plain,
+                        socket_across_flats_mm: 2.,
+                        socket_depth_mm: 1.2,
+                        minimum_wall_mm: 0.1,
+                    },
+                    EntityId::new(),
+                    frame,
+                    policy,
+                )
+                .unwrap();
+                let (source, thread_frame) = solid.rust_profiled_screw_geometry().unwrap();
+                assert!(!source.has_head_thread_overlap());
+                assert_eq!(
+                    source.visible_thread_interval_mm(),
+                    [0., thread().length_mm]
+                );
+                assert_eq!(
+                    thread_frame.origin,
+                    std::array::from_fn(|i| frame.origin[i] + plain * frame.normal()[i])
+                );
+                assert!(source.profile().segments().any(|s| s.role == Role::Bearing
+                    && s.start == [2.8, 0.]
+                    && s.end == [1.5, 0.]));
+                solid
+                    .manufacturing_mesh_with_receipt(MeshOptions::default())
+                    .unwrap();
+                assert!(solid.supports_step_export());
+                let path = scratch.path().join("cylindrical.step");
+                solid.write_step(&path).unwrap();
+                let text = std::fs::read_to_string(path).unwrap();
+                let (read, imported) = multicad_kernel::rust_kernel::step_read::read_import_solid(
+                    &text,
+                    policy.linear_tolerance_mm,
+                )
+                .unwrap();
+                assert!(
+                    multicad_kernel::rust_kernel::step_read::profiled_screw_import_matches(
+                        &imported,
+                        source,
+                        [thread_frame.origin, thread_frame.u, thread_frame.v],
+                        policy.linear_tolerance_mm
+                    )
+                );
+                let reopened = Solid::import_rust_step(&text, EntityId::new(), policy).unwrap();
+                assert!((read.volume_mm3 - solid.volume_mm3().unwrap()).abs() < 1e-6);
+                assert!(
+                    (reopened.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < 1e-6
+                );
+                reopened
+                    .manufacturing_mesh_with_receipt(MeshOptions::default())
+                    .unwrap();
+            }
+        }
+    }
+}
