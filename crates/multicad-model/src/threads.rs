@@ -2,6 +2,7 @@
 mod cosmetic;
 mod end_treatments;
 mod internal;
+mod pipe;
 use crate::{ModelError, error};
 use multicad_core::{
     document::EntityId,
@@ -213,6 +214,21 @@ pub(crate) fn build_rust(
         }
         .map_err(|cause| error(Some(feature), cause));
     }
+    if source.mode == ThreadMode::NewExternal
+        && thread.representation == ThreadRepresentation::Modeled
+        && matches!(
+            source.parameters.family,
+            ThreadFamily::Npt | ThreadFamily::Bspt
+        )
+    {
+        return pipe::shaft(
+            feature,
+            source.parameters.family,
+            &thread,
+            policy,
+            interrupt,
+        );
+    }
     validate_rust_family(feature, source.parameters.family)?;
     if thread.representation == ThreadRepresentation::CosmeticEnvelope
         && source.mode == ThreadMode::CutExternal
@@ -365,6 +381,8 @@ fn rounded_family(family: ThreadFamily) -> bool {
 /// Thread-tool mode availability; dimensions and closures still require proof.
 pub fn rust_thread_mode_supported(family: ThreadFamily, mode: ThreadMode) -> bool {
     rust_thread_family_supported(family)
+        || (mode == ThreadMode::NewExternal
+            && matches!(family, ThreadFamily::Npt | ThreadFamily::Bspt))
         || (matches!(mode, ThreadMode::NewExternal | ThreadMode::CutInternal)
             && rounded_family(family))
 }
