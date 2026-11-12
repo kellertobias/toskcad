@@ -9,6 +9,8 @@ mod box_void;
 mod compound;
 mod curve;
 mod helical;
+#[cfg(test)]
+pub(crate) use helical::profiled::verify_finite_graph_fixture;
 mod helical_import;
 mod thread_entry_chamfer;
 pub use helical_import::{

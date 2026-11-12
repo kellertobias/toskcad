@@ -6,6 +6,7 @@ use crate::{
 };
 use std::f64::consts::{PI, TAU};
 mod decode;
+mod finite_graph;
 pub(in super::super) use decode::read;
 
 /// Absolute head/drive mass uncertainty from the retained source precision.
@@ -707,22 +708,20 @@ pub(in super::super) fn closed_incidence(shell: &mut Shell<'_, '_>, faces: &[u32
         let (_, _, bounds) = face(shell, id)?;
         let mut outside = 0;
         for bound in bounds {
-            let (outer, wire, _) = shell.bound(bound, false)?;
+            let (outer, _, _) = shell.bound(bound, false)?;
             outside += usize::from(outer);
-            let [Value::String(_), oriented] = shell.args(wire, "EDGE_LOOP")? else {
-                return Err(ReadError::Invalid);
-            };
-            for id in refs(oriented)? {
+            let wire = finite_graph::wire(shell, bound, outer)?;
+            for id in wire.uses {
                 require(directed.insert(id))?;
             }
-            let edges = ring(shell, bound, outer)?;
+            let edges = wire.edges;
             require(!edges.is_empty())?;
             let mut first = None;
             let mut previous = None;
             for (edge, forward) in edges {
                 let ([a, b], _, _) = edge_record(shell, edge)?;
-                shell.vertex(a)?;
-                shell.vertex(b)?;
+                finite_graph::vertex(shell, a)?;
+                finite_graph::vertex(shell, b)?;
                 let [start, end] = if forward { [a, b] } else { [b, a] };
                 require(previous.is_none_or(|last| last == start))?;
                 first.get_or_insert(start);
@@ -734,6 +733,15 @@ pub(in super::super) fn closed_incidence(shell: &mut Shell<'_, '_>, faces: &[u32
         require(outside == 1)?;
     }
     require(uses.values().all(|s| s.len() == 2 && s[0] != s[1]))
+}
+
+#[cfg(test)]
+pub(crate) fn verify_finite_graph_fixture(input: &str) -> Result<()> {
+    compound::read_members_by(input, 1e-7, true, true, |shell, id, _| {
+        let faces = shell.member_faces(id)?;
+        closed_incidence(shell, &faces)
+    })
+    .map(|_| ())
 }
 
 // A source reconstructed from trims must also retain the literal carriers.

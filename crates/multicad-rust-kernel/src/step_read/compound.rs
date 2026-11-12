@@ -228,6 +228,7 @@ fn topology(name: &str) -> bool {
             | "FACE_BOUND"
             | "EDGE_LOOP"
             | "ORIENTED_EDGE"
+            | "SEAM_EDGE"
             | "EDGE_CURVE"
             | "VERTEX_POINT"
             | "BREP_WITH_VOIDS"

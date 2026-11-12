@@ -118,15 +118,13 @@ pub(super) fn encode(
         ));
         let (a, b) = (floor[i].vertex, floor[next].vertex);
         let lower = file.entity(format_args!("EDGE_CURVE('',{a},{b},{intersection},.T.)"));
-        let mut wire = vec![
-            (top_edge, true),
-            (posts[next], true),
-            (lower, false),
-            (posts[i], false),
+        // Face.same_sense selects the support normal, not topological uses.
+        let wire = [
+            (posts[i], true),
+            (lower, true),
+            (posts[next], false),
+            (top_edge, false),
         ];
-        if arc.sweep_rad < 0. {
-            wire = wire.into_iter().rev().map(|(e, s)| (e, !s)).collect();
-        }
         let wire = wire
             .into_iter()
             .map(|(e, s)| file.oriented_edge(e, s))
@@ -143,10 +141,11 @@ pub(super) fn encode(
     let mouth_bound = file.bound(&mouth_wire, false);
     let mut floor_wire = lower_edges
         .into_iter()
-        .map(|e| file.oriented_edge(e, true))
+        .rev()
+        .map(|e| file.oriented_edge(e, false))
         .collect::<Vec<_>>();
-    floor_wire.push(file.entity(format_args!("SEAM_EDGE('',*,*,{seam},.T.,{first_pcurve})")));
-    floor_wire.push(file.entity(format_args!("SEAM_EDGE('',*,*,{seam},.F.,{last_pcurve})")));
+    floor_wire.push(file.entity(format_args!("SEAM_EDGE('',*,*,{seam},.T.,{last_pcurve})")));
+    floor_wire.push(file.entity(format_args!("SEAM_EDGE('',*,*,{seam},.F.,{first_pcurve})")));
     let bound = file.bound(&floor_wire, true);
     let floor_face = file.face_on(&[bound], cone, false);
     let mut faces = vec![floor_face];
