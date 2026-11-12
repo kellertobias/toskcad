@@ -378,3 +378,166 @@ fn representable_small_land_keeps_its_authored_circle_endpoint() {
     assert_eq!(c.radius_at(c.end[1]), c.end[0]);
     assert!(c.area_mm2().is_finite() && c.volume_mm3() > 0.);
 }
+
+#[test]
+fn physical_meridians_retain_actual_patches_without_an_authored_recipe() {
+    for head in [counter(0.1, 0.1), crown(0.1)] {
+        let original = Profile::new(head, 1.5, 1.).unwrap();
+        let segments: Vec<_> = original.segments().collect();
+        let retained = Profile::from_retained_segments(&segments).unwrap();
+        assert_eq!(retained.segments().collect::<Vec<_>>(), segments);
+        assert_eq!(retained.top(), original.top());
+        assert_eq!(retained.end(), original.end());
+        close(retained.volume_mm3(), original.volume_mm3());
+        assert!(retained.rounding_error_mm() > 0.);
+    }
+    let stepped = [
+        Segment {
+            start: [5., -3.],
+            end: [5., -1.],
+            curve: Curve::Line,
+            role: Role::Rim,
+        },
+        Segment {
+            start: [5., -1.],
+            end: [3., -1.],
+            curve: Curve::Line,
+            role: Role::Bearing,
+        },
+        Segment {
+            start: [3., -1.],
+            end: [1.5, 0.5],
+            curve: Curve::Line,
+            role: Role::Cone,
+        },
+        Segment {
+            start: [1.5, 0.5],
+            end: [1.5, 1.],
+            curve: Curve::Line,
+            role: Role::Shank,
+        },
+    ];
+    let p = Profile::from_retained_segments(&stepped).unwrap();
+    assert_eq!(p.radius_at(-1.), Some(5.));
+    assert!(p.support([1., 0., 0.]) > 3.);
+    // The upper step protrudes beyond the cone extended above its finite rim.
+    assert!(p.radius_at(-1.1).unwrap() > 3.1);
+}
+
+#[test]
+fn physical_graphs_refuse_gaps_axis_pinches_false_roles_and_invalid_arc_domains() {
+    let source = Profile::new(counter(0.1, 0.1), 1.5, 1.).unwrap();
+    let segments: Vec<_> = source.segments().collect();
+    assert_eq!(
+        Profile::from_retained_segments(&[]),
+        Err(ThreadError::Invalid)
+    );
+    assert_eq!(
+        Profile::from_retained_segments(&[segments[0]; 6]),
+        Err(ThreadError::Invalid)
+    );
+    for (index, field, value) in [(0, 0, f64::NAN), (0, 1, f64::INFINITY), (2, 0, -1.)] {
+        let mut bad = segments.clone();
+        bad[index].start[field] = value;
+        assert_eq!(
+            Profile::from_retained_segments(&bad),
+            Err(ThreadError::Invalid)
+        );
+    }
+    let mut bad = segments.clone();
+    bad[1].start[1] += 0.01;
+    assert_eq!(
+        Profile::from_retained_segments(&bad),
+        Err(ThreadError::Invalid)
+    );
+    let mut bad = segments.clone();
+    bad[1].role = bad[0].role;
+    assert_eq!(
+        Profile::from_retained_segments(&bad),
+        Err(ThreadError::Invalid)
+    );
+    for role in [Role::Crown, Role::Neck] {
+        let mut bad = segments.clone();
+        bad[0].role = role;
+        assert_eq!(
+            Profile::from_retained_segments(&bad),
+            Err(ThreadError::Invalid)
+        );
+    }
+    for sweep in [f64::NAN, 0., FRAC_PI_2, -PI] {
+        let mut bad = segments.clone();
+        let Curve::Arc { center, .. } = bad[3].curve else {
+            unreachable!()
+        };
+        bad[3].curve = Curve::Arc { center, sweep };
+        assert_eq!(
+            Profile::from_retained_segments(&bad),
+            Err(ThreadError::Invalid)
+        );
+    }
+    for center in [[-1., 0.], [f64::NAN, 0.], [1.5, 0.], segments[3].start] {
+        let mut bad = segments.clone();
+        bad[3].curve = Curve::Arc {
+            center,
+            sweep: -PI / 4.,
+        };
+        assert_eq!(
+            Profile::from_retained_segments(&bad),
+            Err(ThreadError::Invalid)
+        );
+    }
+    let mut bad = segments.clone();
+    bad[3].role = Role::Bearing;
+    assert_eq!(
+        Profile::from_retained_segments(&bad),
+        Err(ThreadError::Invalid)
+    );
+    let mut bad = segments.clone();
+    bad[3].end[0] += 1e-5;
+    bad[4].start = bad[3].end;
+    assert_eq!(
+        Profile::from_retained_segments(&bad),
+        Err(ThreadError::Invalid)
+    );
+    for (radius, top, end) in [
+        (1e8, -1., 0.),
+        (1., 1., 2.),
+        (1., -2., -1.),
+        (0., -1., 0.),
+        (1e-200, -1e-200, 0.),
+    ] {
+        let line = Segment {
+            start: [radius, top],
+            end: [radius, end],
+            curve: Curve::Line,
+            role: Role::Rim,
+        };
+        let result = Profile::from_retained_segments(&[line]);
+        assert_eq!(
+            result,
+            Err(if radius > 1e7 {
+                ThreadError::Limit
+            } else {
+                ThreadError::Invalid
+            })
+        );
+    }
+    let pinched = [
+        Segment {
+            start: [2., -1.],
+            end: [0., 0.],
+            curve: Curve::Line,
+            role: Role::Cone,
+        },
+        Segment {
+            start: [0., 0.],
+            end: [1., 1.],
+            curve: Curve::Line,
+            role: Role::Chamfer,
+        },
+    ];
+    assert_eq!(
+        Profile::from_retained_segments(&pinched),
+        Err(ThreadError::Invalid)
+    );
+}

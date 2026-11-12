@@ -238,6 +238,74 @@ pub struct Profile {
 }
 
 impl Profile {
+    /// Retain a complete physical meridian without reconstructing an authored
+    /// head recipe. Shared stations must already have one source identity.
+    /// The two radial caps and the axis close this monotone outer boundary.
+    pub fn from_retained_segments(segments: &[Segment]) -> Result<Self, ThreadError> {
+        if segments.is_empty() || segments.len() > 5 {
+            return Err(ThreadError::Invalid);
+        }
+        let top = segments[0].start;
+        let end = segments.last().expect("nonempty meridian").end;
+        let mut scale = 0_f64;
+        for segment in segments {
+            let points = match segment.curve {
+                Curve::Line => [segment.start, segment.end, [0.; 2]],
+                Curve::Arc { center, .. } => [segment.start, segment.end, center],
+            };
+            for point in points {
+                if !point.into_iter().all(f64::is_finite) {
+                    return Err(ThreadError::Invalid);
+                }
+                scale = point.into_iter().map(f64::abs).fold(scale, f64::max);
+            }
+        }
+        if scale > 1e7 {
+            return Err(ThreadError::Limit);
+        }
+        let reserve = 128. * f64::EPSILON * scale;
+        if top[0] < 0.
+            || end[0] <= reserve
+            || top[1] >= 0.
+            || end[1] < 0.
+            || end[1] - top[1] <= reserve
+            || (top[0] > 0. && top[0] <= reserve)
+        {
+            return Err(ThreadError::Invalid);
+        }
+        let mut result = Self {
+            segments: [None; 5],
+            top,
+            end,
+            rounding_error_mm: reserve,
+        };
+        for (i, &segment) in segments.iter().enumerate() {
+            if (i > 0 && segments[i - 1].end != segment.start)
+                || segments[..i].iter().any(|s| s.role == segment.role)
+                || segment.start[0].min(segment.end[0]) < 0.
+                || segment.end[0] <= reserve
+                || !retained_segment_valid(segment, reserve)
+            {
+                return Err(ThreadError::Invalid);
+            }
+            let area = segment.area_mm2();
+            let volume = segment.volume_mm3();
+            let center = segment.center_mm();
+            if !area.is_finite()
+                || area <= 0.
+                || !volume.is_finite()
+                || (segment.role != Role::Bearing && volume <= 0.)
+                || !center.into_iter().all(f64::is_finite)
+                || center[2] < segment.start[1] - reserve
+                || center[2] > segment.end[1] + reserve
+            {
+                return Err(ThreadError::Invalid);
+            }
+            result.segments[i] = Some(segment);
+        }
+        Ok(result)
+    }
+
     pub fn new(head: Head, shank: f64, plain: f64) -> Result<Self, ThreadError> {
         let (radius, height, neck) = match head {
             Head::Countersunk {
@@ -479,6 +547,50 @@ impl Profile {
             })
             .fold(f64::INFINITY, f64::min);
         minimum >= radius + wall + 2. * self.rounding_error_mm
+    }
+}
+
+fn retained_segment_valid(segment: Segment, reserve: f64) -> bool {
+    let dr = segment.end[0] - segment.start[0];
+    let dz = segment.end[1] - segment.start[1];
+    match segment.curve {
+        Curve::Line => match segment.role {
+            Role::Chamfer => dr > reserve && dz > reserve,
+            Role::Cone => dr < -reserve && dz > reserve,
+            Role::Rim | Role::Skirt | Role::Shank => dr == 0. && dz > reserve,
+            Role::Bearing => dr < -reserve && dz == 0.,
+            Role::Crown | Role::Neck => false,
+        },
+        Curve::Arc { center, sweep } => {
+            if !sweep.is_finite() || center[0] < 0. || dz <= reserve {
+                return false;
+            }
+            let radius = (segment.start[0] - center[0]).hypot(segment.start[1] - center[1]);
+            if radius <= reserve || radius > 1e7 {
+                return false;
+            }
+            let a = segment.angle(center);
+            let b = a + sweep;
+            let angular = 32. * f64::EPSILON;
+            let domain = match segment.role {
+                Role::Crown => {
+                    sweep > 0. && a >= -FRAC_PI_2 - angular && b <= angular && dr > reserve
+                }
+                Role::Neck => {
+                    sweep < 0.
+                        && a <= -FRAC_PI_2 + angular
+                        && b >= -PI - angular
+                        && dr < -reserve
+                        && center[0] > radius
+                }
+                _ => false,
+            };
+            if !domain {
+                return false;
+            }
+            let target = [center[0] + radius * b.cos(), center[1] + radius * b.sin()];
+            (target[0] - segment.end[0]).hypot(target[1] - segment.end[1]) <= reserve
+        }
     }
 }
 
