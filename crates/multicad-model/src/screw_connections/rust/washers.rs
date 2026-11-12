@@ -9,6 +9,7 @@ pub(super) struct Inputs<'a, 'solid> {
     pub grip: f64,
     pub head: [f64; 2],
     pub head_extent: f64,
+    pub conical_bearing: Option<&'a super::conical::Proof>,
     pub nut: [f64; 2],
     pub shaft: f64,
     pub policy: GeometryPolicy,
@@ -91,7 +92,7 @@ fn land(input: &Inputs<'_, '_>, a: [f64; 2], b: [f64; 2]) -> Result<(), ModelErr
 }
 
 pub(super) fn prove(input: Inputs<'_, '_>) -> Result<[f64; 2], ModelError> {
-    if input.bore.head_seat.is_some_and(|s| s.conical) {
+    if input.bore.head_seat.is_some_and(|s| s.conical) && input.conical_bearing.is_none() {
         return Err(fail(
             &input,
             "Conical head bearing requires a retained matching screw profile",
@@ -112,6 +113,12 @@ pub(super) fn prove(input: Inputs<'_, '_>) -> Result<[f64; 2], ModelError> {
             "Washer stack dimensions exceed the numerical budget",
         ));
     }
+    if input.conical_bearing.is_some() && sums[0] != 0. {
+        return Err(fail(
+            &input,
+            "Flat head washers cannot replace certified conical bearing",
+        ));
+    }
     let stock = [input.bore.radius_mm, input.bore.protected_radius_mm];
     let margin = input
         .policy
@@ -123,6 +130,7 @@ pub(super) fn prove(input: Inputs<'_, '_>) -> Result<[f64; 2], ModelError> {
         .head_seat
         .map_or(stock, |s| [input.bore.radius_mm, s.radius_mm]);
     if let Some(seat) = input.bore.head_seat
+        && !seat.conical
         && input.head_extent + 5. * margin >= seat.radius_mm
     {
         return Err(fail(
@@ -134,6 +142,9 @@ pub(super) fn prove(input: Inputs<'_, '_>) -> Result<[f64; 2], ModelError> {
         (Role::HeadWasher, head_station - sums[0], input.head),
         (Role::NutWasher, input.grip, stock),
     ] {
+        if role == Role::HeadWasher && input.conical_bearing.is_some() {
+            continue; // The actual finite cone proof replaces a planar head land.
+        }
         for row in input.placed.iter().filter(|row| row.role == role) {
             let [inner, outer, height] = dimensions(row, &input)?;
             if role == Role::HeadWasher

@@ -52,7 +52,7 @@ fn covered(
     }
     Ok(())
 }
-fn origin(id: EntityId, role: &str) -> Origin {
+pub(crate) fn origin(id: EntityId, role: &str) -> Origin {
     Origin {
         source: id,
         role: format!("connection.receiver/{role}"),

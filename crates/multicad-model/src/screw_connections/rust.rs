@@ -4,6 +4,7 @@ use crate::connection_receivers::{self, rust_through};
 use multicad_core::model::{ResolvedScrewHead, ScrewConnectionHardwareSource};
 use multicad_kernel::rust_kernel::helical_thread::Thread;
 mod blind;
+mod conical;
 mod washers;
 
 pub(crate) fn validate(
@@ -133,7 +134,9 @@ fn through_nut(
     };
     if !matches!(
         head,
-        ResolvedScrewHead::SocketCap { .. } | ResolvedScrewHead::ExternalHex { .. }
+        ResolvedScrewHead::SocketCap { .. }
+            | ResolvedScrewHead::ExternalHex { .. }
+            | ResolvedScrewHead::Countersunk { .. }
     ) {
         return Err(unsupported());
     }
@@ -231,6 +234,28 @@ fn through_nut(
             "The actual screw shaft has insufficient clearance in the through bore",
         ));
     }
+    if matches!(head, ResolvedScrewHead::Countersunk { .. })
+        != bore.head_seat.is_some_and(|seat| seat.conical)
+    {
+        return Err(fail(
+            "A countersunk head and a conical receiver must be selected together",
+        ));
+    }
+    let conical_bearing = if bore.head_seat.is_some_and(|seat| seat.conical) {
+        let receiving_solid = evaluated
+            .leaf_solid(&receiver.source.occurrence)
+            .ok_or_else(|| fail("The current receiving occurrence has no physical solid"))?;
+        Some(conical::prove(
+            screw.solid,
+            receiving_solid,
+            receiver.feature,
+            bore,
+            input.policy,
+            id,
+        )?)
+    } else {
+        None
+    };
     let [head_washers, nut_washers] = washers::prove(washers::Inputs {
         placed: &placed,
         axis,
@@ -241,6 +266,7 @@ fn through_nut(
             head.minimum_radius_mm(),
         ],
         head_extent: head.maximum_radius_mm(),
+        conical_bearing: conical_bearing.as_ref(),
         nut: [nut_thread.spec().major_radius_mm, across_flats_mm / 2.],
         shaft,
         policy: input.policy,
@@ -250,7 +276,10 @@ fn through_nut(
     at(
         axis,
         placed_frame(&screw.part, screw.pose),
-        bore.head_seat.map_or(0., |seat| seat.depth_mm) - head_washers,
+        conical_bearing.as_ref().map_or_else(
+            || bore.head_seat.map_or(0., |seat| seat.depth_mm) - head_washers,
+            conical::Proof::station_mm,
+        ),
         tolerance,
         id,
     )?;
@@ -312,7 +341,10 @@ fn through_nut(
         actual_engagement_mm: Some(mating.overlap_length_mm),
         actual_wood_engagement_mm: None,
         native_component_collision_checked: true,
-        scope: "Exact placed metric profiles, through-bore clearance and flat seating with separation from other components".into(),
+        scope: conical_bearing.as_ref().map_or_else(
+            || "Exact placed metric profiles, through-bore clearance and flat seating with separation from other components".into(),
+            |proof| format!("Placed metric profiles, through-bore clearance and source-certified conical bearing with maximum gap {:.6e} mm, with separation from other components", proof.maximum_gap_mm()),
+        ),
     })
 }
 
