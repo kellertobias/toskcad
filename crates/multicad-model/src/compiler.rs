@@ -1501,6 +1501,7 @@ impl Compiler {
                             solids: &solids,
                             topologies: &topologies,
                             policy: self.policy,
+                            interrupt,
                         },
                         id,
                         &source,

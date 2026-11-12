@@ -18,6 +18,7 @@ use std::{
 mod certified;
 mod chamfer;
 mod concave;
+mod corner_chamfer;
 mod derived_identity;
 mod imported_convex;
 mod imported_identity;

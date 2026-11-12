@@ -1375,3 +1375,188 @@ fn parallel_box_chamfers_rebuild_both_named_faces_through_edits_history_and_reop
     );
     assert_eq!(session.document(), &before);
 }
+
+#[test]
+fn intersecting_box_chamfers_keep_all_twelve_named_faces_through_edits_history_and_reopen() {
+    use multicad_core::references::{Resolution, resolve};
+    let (mut session, input, _) = fixture();
+    let original = session.document().clone();
+    let initial = compile(&session);
+    let topology = &initial.snapshot().shapes[&input.producer].topology;
+    let selections: Vec<_> = topology
+        .elements
+        .iter()
+        .filter(|e| e.key.kind == TopologyKind::Edge)
+        .map(|e| GeometryIntent::capture(topology, e.key).unwrap())
+        .collect();
+    assert_eq!(selections.len(), 12);
+    let mut request = EdgeTreatmentRequest::new(
+        input.clone(),
+        EdgeTreatmentParameters {
+            profile: EdgeTreatmentProfile::Chamfer,
+            size: length(2.),
+        },
+        selections.clone(),
+    );
+    let prepared =
+        model::prepare_edge_treatment(&session, session.revision(), actor(), &request).unwrap();
+    let preview = Compiler::default()
+        .compile(prepared.prepared.document(), session.revision() + 1)
+        .unwrap();
+    near(
+        preview.solid(input.body).unwrap().volume_mm3().unwrap(),
+        5562. + 2. / 3.,
+    );
+    let callbacks = std::cell::Cell::new(0);
+    let observe = || {
+        callbacks.set(callbacks.get() + 1);
+        false
+    };
+    Compiler::default()
+        .compile_interruptible(
+            prepared.prepared.document(),
+            session.revision() + 1,
+            Some(&observe),
+        )
+        .unwrap();
+    assert!(callbacks.get() > 20);
+    for at in [1, callbacks.get() / 2, callbacks.get() - 1] {
+        let seen = std::cell::Cell::new(0);
+        let cancel = || {
+            seen.set(seen.get() + 1);
+            seen.get() == at
+        };
+        let error = Compiler::default()
+            .compile_interruptible(
+                prepared.prepared.document(),
+                session.revision() + 1,
+                Some(&cancel),
+            )
+            .err()
+            .unwrap();
+        assert!(error.message.contains("superseded"), "{error:?}");
+        assert_eq!(session.document(), &original);
+    }
+    assert_eq!(session.document(), &original);
+    session.commit(prepared.prepared).unwrap();
+    let topology = &preview.snapshot().shapes[&request.feature].topology;
+    let generated: Vec<_> = selections
+        .iter()
+        .map(|selection| {
+            let origin = Origin {
+                source: request.feature,
+                role: format!("edge/{}", selection.id),
+            };
+            let face = topology
+                .elements
+                .iter()
+                .find(|element| {
+                    element.key.kind == TopologyKind::Face && element.origins.contains(&origin)
+                })
+                .unwrap();
+            GeometryIntent::capture(topology, face.key).unwrap()
+        })
+        .collect();
+    let applied = session.document().clone();
+    request.parameters.size = length(3.);
+    let edit = model::prepare_edge_treatment_edit(
+        &session,
+        session.revision(),
+        actor(),
+        request.feature,
+        &request.parameters,
+        &selections,
+    )
+    .unwrap();
+    session.commit(edit.prepared).unwrap();
+    let changed = compile(&session);
+    near(
+        changed.solid(input.body).unwrap().volume_mm3().unwrap(),
+        5064.,
+    );
+    for intent in &generated {
+        assert!(matches!(
+            resolve(
+                intent,
+                &changed.snapshot().shapes[&request.feature].topology,
+                session.revision()
+            ),
+            Resolution::Resolved { .. }
+        ));
+    }
+    session.undo(session.revision(), actor()).unwrap();
+    assert_eq!(session.document(), &applied);
+    session.redo(session.revision(), actor()).unwrap();
+    let mut width = session
+        .document()
+        .entities()
+        .find(|e| e.name == "width")
+        .unwrap()
+        .clone();
+    let EntityData::Parameter { expression, .. } = &mut width.data else {
+        panic!()
+    };
+    *expression = "40".into();
+    session
+        .apply(Request {
+            expected_revision: session.revision(),
+            actor: actor(),
+            label: "Resize chamfer stock".into(),
+            edits: vec![Mutation::Replace(width)],
+        })
+        .unwrap();
+    let resized = compile(&session);
+    near(
+        resized.solid(input.body).unwrap().volume_mm3().unwrap(),
+        6884.,
+    );
+    for intent in &generated {
+        assert!(matches!(
+            resolve(
+                intent,
+                &resized.snapshot().shapes[&request.feature].topology,
+                session.revision()
+            ),
+            Resolution::Resolved { .. }
+        ));
+    }
+    let mut bytes = Vec::new();
+    project_file::write(
+        &ProjectFile::new(session.document().clone()).unwrap(),
+        &mut bytes,
+        Default::default(),
+    )
+    .unwrap();
+    let reopened = project_file::read(
+        &mut std::io::Cursor::new(bytes),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap();
+    let reopened = Session::new(reopened.project.document).unwrap();
+    near(
+        compile(&reopened)
+            .solid(input.body)
+            .unwrap()
+            .volume_mm3()
+            .unwrap(),
+        6884.,
+    );
+    let before = session.document().clone();
+    request.parameters.size = length(21.);
+    let invalid = model::prepare_edge_treatment_edit(
+        &session,
+        session.revision(),
+        actor(),
+        request.feature,
+        &request.parameters,
+        &selections,
+    )
+    .unwrap();
+    assert!(
+        Compiler::default()
+            .compile(invalid.prepared.document(), session.revision() + 1)
+            .is_err()
+    );
+    assert_eq!(session.document(), &before);
+}

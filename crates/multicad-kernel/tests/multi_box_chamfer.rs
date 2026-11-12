@@ -151,7 +151,7 @@ fn simultaneous_parallel_bevels_keep_distances_ancestry_mesh_and_exchange() {
 }
 
 #[test]
-fn touching_intersecting_and_nonbox_bevels_refuse_without_mutation() {
+fn touching_and_nonbox_bevels_refuse_without_mutation() {
     let p = GeometryPolicy::default();
     let owner = EntityId::new();
     let feature = EntityId::new();
@@ -176,19 +176,16 @@ fn touching_intersecting_and_nonbox_bevels_refuse_without_mutation() {
         edges[0].clone(),
         selected(&stock, owner, feature, 0)[0].clone(),
     ];
-    assert_eq!(
-        stock
-            .treat_edges_named(
-                &mixed,
-                EdgeTreatment::Chamfer { distance_mm: 2. },
-                feature,
-                p
-            )
-            .err()
-            .unwrap()
-            .kind,
-        GeometryErrorKind::Unsupported
-    );
+    // Mixed-axis selections now have certified planar corner closure.
+    let changed = stock
+        .treat_edges_named(
+            &mixed,
+            EdgeTreatment::Chamfer { distance_mm: 2. },
+            feature,
+            p,
+        )
+        .unwrap();
+    assert!(changed.volume_mm3().unwrap() < stock.volume_mm3().unwrap());
     assert!(
         stock
             .treat_edges_named(

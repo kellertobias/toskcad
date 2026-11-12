@@ -151,6 +151,24 @@ impl Solid {
         feature: EntityId,
         policy: GeometryPolicy,
     ) -> Result<Self, GeometryError> {
+        self.treat_edges_named_with_interrupt(edges, treatment, feature, policy, None)
+    }
+    /// The canonical edge treatment with cooperative cancellation for the
+    /// certified simultaneous box-chamfer construction.
+    pub fn treat_edges_named_with_interrupt(
+        &self,
+        edges: &[TreatmentEdge],
+        treatment: EdgeTreatment,
+        feature: EntityId,
+        policy: GeometryPolicy,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Self, GeometryError> {
+        if interrupt.is_some_and(|f| f()) {
+            return Err(failure(
+                GeometryErrorKind::Cancelled,
+                "Edge treatment superseded",
+            ));
+        }
         policy.validate()?;
         let (mode, size) = match treatment {
             EdgeTreatment::Fillet { radius_mm } => (0, radius_mm),
@@ -205,12 +223,13 @@ impl Solid {
                             })
                         }) =>
                     {
-                        self.rust_chamfer_parallel_box_edges(
+                        self.rust_chamfer_box_edges(
                             edges,
                             distance_mm,
                             feature,
                             policy,
                             topology,
+                            interrupt,
                         )
                     }
                     _ => self.chamfer_polygon_bores(edges, distance_mm, policy),
