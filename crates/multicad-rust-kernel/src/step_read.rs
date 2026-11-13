@@ -1021,6 +1021,13 @@ fn face_area(outer: &Trim, holes: &[Trim], tolerance: f64) -> Result<f64> {
         .ok_or(ReadError::Invalid)
 }
 
+pub use phillips_cutter::{
+    ParsedPhillipsAxis, ParsedPhillipsBoundary, ParsedPhillipsCurve, ParsedPhillipsEdge,
+    ParsedPhillipsFace, ParsedPhillipsMaterialLoop, ParsedPhillipsMaterialUse, ParsedPhillipsMouth,
+    ParsedPhillipsSurface, ParsedPhillipsVertex, read_phillips_screw_boundary,
+    read_phillips_screw_boundary_with_interrupt,
+};
+
 #[cfg(test)]
 mod tests;
 

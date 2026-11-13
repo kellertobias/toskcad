@@ -19,7 +19,7 @@ fn axis(shell: &Shell<'_, '_>, id: u32) -> Result<LiteralAxis> {
         reference: direction(reference(reference_axis)?)?,
     })
 }
-fn support(shell: &Shell<'_, '_>, id: u32, forward: bool) -> Result<LiteralSupport> {
+pub(super) fn support(shell: &Shell<'_, '_>, id: u32, forward: bool) -> Result<LiteralSupport> {
     let entity = shell.simple(id)?;
     let (axis_id, kind) = match (entity.name, entity.args.as_slice()) {
         ("PLANE", [Value::String(_), a]) => (reference(a)?, Kind::Plane),
@@ -46,13 +46,70 @@ fn support(shell: &Shell<'_, '_>, id: u32, forward: bool) -> Result<LiteralSuppo
         forward,
     })
 }
-fn analytic(shell: &Shell<'_, '_>, edge: graph::Edge) -> Result<Literal> {
+/// The analytical parser cannot produce a polynomial carrier. Keep that fact
+/// in its return type rather than borrowing the writer's broader curve enum.
+pub(super) enum Analytic {
+    Line {
+        origin: Point,
+        direction: Point,
+        forward: bool,
+        vector_entity: u32,
+        direction_entity: u32,
+        magnitude: f64,
+    },
+    Circle {
+        axis: LiteralAxis,
+        radius: f64,
+        forward: bool,
+    },
+    Ellipse {
+        axis: LiteralAxis,
+        semiaxes: [f64; 2],
+        forward: bool,
+    },
+}
+impl Analytic {
+    fn literal(self) -> Literal {
+        match self {
+            Self::Line {
+                origin,
+                direction,
+                forward,
+                ..
+            } => Literal::Line {
+                origin,
+                direction,
+                forward,
+            },
+            Self::Circle {
+                axis,
+                radius,
+                forward,
+            } => Literal::Circle {
+                axis,
+                radius,
+                forward,
+            },
+            Self::Ellipse {
+                axis,
+                semiaxes,
+                forward,
+            } => Literal::Ellipse {
+                axis,
+                semiaxes,
+                forward,
+            },
+        }
+    }
+}
+pub(super) fn analytic(shell: &Shell<'_, '_>, edge: graph::Edge) -> Result<Analytic> {
     let entity = shell.simple(edge.geometry)?;
     let forward = edge.forward ^ edge.reversed;
     match (entity.name, entity.args.as_slice()) {
         ("LINE", [Value::String(_), origin, vector]) => {
+            let vector_entity = reference(vector)?;
             let [Value::String(_), direction, Value::Number(magnitude)] =
-                shell.args(reference(vector)?, "VECTOR")?
+                shell.args(vector_entity, "VECTOR")?
             else {
                 return Err(ReadError::Invalid);
             };
@@ -60,19 +117,22 @@ fn analytic(shell: &Shell<'_, '_>, edge: graph::Edge) -> Result<Literal> {
             let [Value::String(_), values] = shell.args(reference(direction)?, "DIRECTION")? else {
                 return Err(ReadError::Invalid);
             };
-            Ok(Literal::Line {
+            Ok(Analytic::Line {
                 origin: shell.point(reference(origin)?)?,
                 direction: numbers(values)?,
                 forward,
+                vector_entity,
+                direction_entity: reference(direction)?,
+                magnitude: *magnitude,
             })
         }
-        ("CIRCLE", [Value::String(_), a, Value::Number(r)]) => Ok(Literal::Circle {
+        ("CIRCLE", [Value::String(_), a, Value::Number(r)]) => Ok(Analytic::Circle {
             axis: axis(shell, reference(a)?)?,
             radius: *r,
             forward,
         }),
         ("ELLIPSE", [Value::String(_), a, Value::Number(x), Value::Number(y)]) => {
-            Ok(Literal::Ellipse {
+            Ok(Analytic::Ellipse {
                 axis: axis(shell, reference(a)?)?,
                 semiaxes: [*x, *y],
                 forward,
@@ -81,7 +141,7 @@ fn analytic(shell: &Shell<'_, '_>, edge: graph::Edge) -> Result<Literal> {
         _ => Err(ReadError::Unsupported),
     }
 }
-fn spline(
+pub(super) fn spline(
     shell: &Shell<'_, '_>,
     geometry: u32,
     owners: [u32; 2],
@@ -187,7 +247,7 @@ pub(super) fn verify(
     for (index, &edge) in graph.edges.iter().enumerate() {
         work.step(1)?;
         if let Some(expected) = source.curve_analytic_support(index).map_err(cutter_error)? {
-            let actual = analytic(shell, edge)?;
+            let actual = analytic(shell, edge)?.literal();
             let ends = source.edges()[index]
                 .vertices()
                 .map(|v| graph.vertices[v].2);

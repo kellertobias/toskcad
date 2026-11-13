@@ -13,6 +13,14 @@ use helical::require;
 use std::cell::Cell;
 mod geometry;
 mod graph;
+mod physical;
+pub use physical::{
+    Axis as ParsedPhillipsAxis, Boundary as ParsedPhillipsBoundary, Curve as ParsedPhillipsCurve,
+    Edge as ParsedPhillipsEdge, Face as ParsedPhillipsFace,
+    MaterialLoop as ParsedPhillipsMaterialLoop, MaterialUse as ParsedPhillipsMaterialUse,
+    Mouth as ParsedPhillipsMouth, Surface as ParsedPhillipsSurface, Vertex as ParsedPhillipsVertex,
+    read_phillips_screw_boundary, read_phillips_screw_boundary_with_interrupt,
+};
 #[cfg(test)]
 mod tests;
 /// Oriented source-decomposition view backed by actual parsed entities.
