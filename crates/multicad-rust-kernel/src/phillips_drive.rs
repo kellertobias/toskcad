@@ -1,0 +1,224 @@
+//! Authored Phillips H cutter with finite true C-C corner prisms.
+//! Finite boundary and manufacturing publication require additional proofs.
+use crate::tapered_thread::interval::I;
+use std::f64::consts::PI;
+mod classify;
+mod source;
+#[cfg(test)]
+mod tests;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Spec {
+    pub mouth_diameter_mm: f64,
+    pub mouth_radius_mm: f64,
+    pub b_width_mm: f64,
+    pub g_diameter_mm: f64,
+    pub tilt_angle_deg: f64,
+    pub outer_flank_angle_deg: f64,
+    pub floor_angle_deg: f64,
+    pub outer_corner_angle_deg: f64,
+    pub inner: Inner,
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Inner {
+    Rounded { radius_mm: f64 },
+    ShallowV { angle_deg: f64, e_width_mm: f64 },
+}
+/// The finite corner prism, measured relative to the cutter mouth plane.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Domain {
+    pub corner_start_depth_mm: f64,
+    pub corner_end_depth_mm: f64,
+    /// Length along each outer section ray, not its horizontal projection.
+    pub corner_reach_mm: f64,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Error {
+    Invalid,
+    Unresolved,
+    Limit,
+    Cancelled,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Classification {
+    Inside,
+    Outside,
+    UnresolvedBoundary,
+}
+/// Bounds enclose the exact authored expression, not fitted support geometry.
+pub type Bounds = [f64; 2];
+pub type Point2Bounds = [Bounds; 2];
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Curve {
+    Line,
+    CircularArc {
+        center_mm_bounds: Point2Bounds,
+        radius_mm: f64,
+        sweep_rad_bounds: Bounds,
+    },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnvelopeRole {
+    EntryRoundover,
+    OuterFlank,
+    Floor,
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MeridianSegment {
+    pub start_mm_bounds: Point2Bounds,
+    pub end_mm_bounds: Point2Bounds,
+    pub curve: Curve,
+    pub role: EnvelopeRole,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SectionRole {
+    InnerRound,
+    InnerUpper,
+    OuterUpper,
+    Closure,
+    OuterLower,
+    InnerLower,
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SectionSegment {
+    pub start_mm_bounds: Point2Bounds,
+    pub end_mm_bounds: Point2Bounds,
+    pub curve: Curve,
+    pub role: SectionRole,
+}
+#[derive(Clone, Debug)]
+pub struct Envelope {
+    segments: [MeridianSegment; 3],
+    entry: I,
+    join: I,
+    flank: I,
+    tip: I,
+    sin_a: I,
+    cos_a: I,
+    sin_c: I,
+    cos_c: I,
+}
+impl Envelope {
+    pub fn segments(&self) -> &[MeridianSegment; 3] {
+        &self.segments
+    }
+    pub fn entry_radius_mm_bounds(&self) -> Bounds {
+        bounds(self.entry)
+    }
+    pub fn roundover_join_depth_mm_bounds(&self) -> Bounds {
+        bounds(self.join)
+    }
+    pub fn flank_join_depth_mm_bounds(&self) -> Bounds {
+        bounds(self.flank)
+    }
+    pub fn tip_depth_mm_bounds(&self) -> Bounds {
+        bounds(self.tip)
+    }
+}
+#[derive(Clone, Debug)]
+pub struct Corner {
+    quarter_turn: u8,
+    domain: Domain,
+    section: [Option<SectionSegment>; 5],
+    sin_beta: I,
+    cos_beta: I,
+    sin_theta: I,
+    cos_theta: I,
+    b_depth: I,
+    join_s: I,
+    join_y: I,
+    far_s: I,
+    b_half: I,
+    inner: SourceInner,
+}
+#[derive(Clone, Debug)]
+enum SourceInner {
+    Rounded { radius_mm: f64 },
+    ShallowV { sine: I, cosine: I },
+}
+impl Corner {
+    pub fn quarter_turns(&self) -> u8 {
+        self.quarter_turn
+    }
+    pub fn domain(&self) -> Domain {
+        self.domain
+    }
+    pub fn section_segments(&self) -> impl Iterator<Item = &SectionSegment> {
+        self.section.iter().flatten()
+    }
+    /// Source direction normal to the true C-C section, pointing into depth.
+    pub fn extrusion_axis_bounds(&self) -> [Bounds; 3] {
+        let [x, y] = rotate([-self.sin_beta, I::point(0.)], self.quarter_turn);
+        [bounds(x), bounds(y), bounds(self.cos_beta)]
+    }
+    /// C-C coordinates (s,y) and the finite extrusion parameter in depth units.
+    pub fn section_coordinates_mm_bounds(&self, p: [f64; 3]) -> Result<[Bounds; 3], Error> {
+        if !p.into_iter().all(f64::is_finite) {
+            return Err(Error::Invalid);
+        }
+        let values = self.coordinates(p.map(I::point));
+        if values.into_iter().all(I::valid) {
+            Ok(values.map(bounds))
+        } else {
+            Err(Error::Unresolved)
+        }
+    }
+}
+#[derive(Clone, Debug)]
+pub struct Cutter {
+    spec: Spec,
+    domain: Domain,
+    envelope: Envelope,
+    corners: [Corner; 4],
+}
+impl PartialEq for Cutter {
+    fn eq(&self, other: &Self) -> bool {
+        self.spec == other.spec && self.domain == other.domain
+    }
+}
+impl Cutter {
+    pub fn new(spec: Spec, domain: Domain) -> Result<Self, Error> {
+        Self::new_with_cancel(spec, domain, &|| false)
+    }
+    pub fn new_with_cancel(
+        spec: Spec,
+        domain: Domain,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Self, Error> {
+        source::construct(spec, domain, cancelled)
+    }
+    pub fn spec(&self) -> Spec {
+        self.spec
+    }
+    pub fn domain(&self) -> Domain {
+        self.domain
+    }
+    pub fn envelope(&self) -> &Envelope {
+        &self.envelope
+    }
+    pub fn corners(&self) -> &[Corner; 4] {
+        &self.corners
+    }
+    /// Conservative box for the cavity at and below its mouth, not an exact BBox.
+    pub fn bounding_box_mm(&self) -> [[f64; 3]; 2] {
+        let r = self.envelope.entry.hi;
+        [[-r, -r, 0.], [r, r, self.envelope.tip.hi]]
+    }
+    pub fn classify_point_mm(&self, p: [f64; 3]) -> Result<Classification, Error> {
+        classify::point(self, p)
+    }
+}
+fn bounds(value: I) -> Bounds {
+    [value.lo, value.hi]
+}
+fn point2(p: [I; 2]) -> Point2Bounds {
+    p.map(bounds)
+}
+fn rotate([x, y]: [I; 2], quarter: u8) -> [I; 2] {
+    match quarter {
+        0 => [x, y],
+        1 => [-y, x],
+        2 => [-x, -y],
+        _ => [y, -x],
+    }
+}
