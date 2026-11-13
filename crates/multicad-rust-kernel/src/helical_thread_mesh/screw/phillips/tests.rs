@@ -372,3 +372,22 @@ fn real_negative_zipper_cell_and_nonplanar_cap_are_refused() {
         Err(MeshError::UnresolvedBoundary)
     );
 }
+
+#[test]
+fn actual_cutter_budget_exhaustion_propagates_without_a_partial_screw_candidate() {
+    let source = fixture(1);
+    // This budget can pass the outer-ring preflight, but cannot contain the
+    // actual finite cavity's chart mesh. Exercise the real source failure.
+    let tight = Tessellation {
+        triangle_limit: 128,
+        ..options()
+    };
+    let atlas = source.cavity().source().surface_patches().unwrap();
+    assert!(matches!(atlas.boundary_mesh(tight), Err(Error::Limit)));
+    assert_eq!(
+        tessellate_phillips_screw(&source, tight, &|| false).unwrap_err(),
+        PhillipsMeshError::Geometry(MeshError::BudgetExceeded)
+    );
+    let retry = tessellate_phillips_screw(&source, options(), &|| false).unwrap();
+    assert!(retry.connectivity().signed_volume_mm3 > 0.);
+}
