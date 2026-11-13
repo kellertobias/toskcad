@@ -260,39 +260,59 @@ fn point_triangle_distance(p: [f64; 3], [a, b, c]: [[f64; 3]; 3]) -> f64 {
 }
 
 /// Largest distance from any vertex of one mesh to the surface of the other,
-/// in both directions.
-fn mesh_deviation(a: &multicad_kernel::Mesh, b: &multicad_kernel::Mesh) -> f64 {
+/// in both directions. Distances beyond `radius` are not searched and report
+/// infinity, which fails any tolerance up to that radius.
+fn mesh_deviation(a: &multicad_kernel::Mesh, b: &multicad_kernel::Mesh, radius: f64) -> f64 {
+    use std::collections::HashMap;
+    let vertex = |m: &multicad_kernel::Mesh, i: u32| {
+        let i = i as usize * 3;
+        [m.vertices[i], m.vertices[i + 1], m.vertices[i + 2]]
+    };
+    let cell = |p: [f64; 3]| p.map(|x| (x / radius).floor() as i64);
     let one_way = |from: &multicad_kernel::Mesh, to: &multicad_kernel::Mesh| {
-        let vertex = |m: &multicad_kernel::Mesh, i: u32| {
-            let i = i as usize * 3;
-            [m.vertices[i], m.vertices[i + 1], m.vertices[i + 2]]
-        };
-        let triangles: Vec<[[f64; 3]; 3]> = to
-            .indices
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .map(|t| [vertex(to, t[0]), vertex(to, t[1]), vertex(to, t[2])])
-            .collect();
-        // A vertex shared exactly with the other mesh lies on its surface;
-        // only the remaining vertices need a nearest-triangle search.
-        let shared: std::collections::BTreeSet<[u64; 3]> = to
-            .vertices
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .map(|p| p.map(f64::to_bits))
-            .collect();
+        // Bucket each triangle into every grid cell its bounds, expanded by
+        // the search radius, overlap; a query then reads one cell.
+        let mut grid: HashMap<[i64; 3], Vec<[[f64; 3]; 3]>> = HashMap::new();
+        for t in to.indices.as_chunks::<3>().0 {
+            let triangle = [vertex(to, t[0]), vertex(to, t[1]), vertex(to, t[2])];
+            let low = cell(std::array::from_fn(|axis| {
+                triangle
+                    .iter()
+                    .map(|p| p[axis])
+                    .fold(f64::INFINITY, f64::min)
+                    - radius
+            }));
+            let high = cell(std::array::from_fn(|axis| {
+                triangle
+                    .iter()
+                    .map(|p| p[axis])
+                    .fold(f64::NEG_INFINITY, f64::max)
+                    + radius
+            }));
+            for x in low[0]..=high[0] {
+                for y in low[1]..=high[1] {
+                    for z in low[2]..=high[2] {
+                        grid.entry([x, y, z]).or_default().push(triangle);
+                    }
+                }
+            }
+        }
         from.vertices
             .as_chunks::<3>()
             .0
             .iter()
-            .filter(|p| !shared.contains(&p.map(f64::to_bits)))
-            .map(|p| {
-                triangles
-                    .iter()
-                    .map(|&t| point_triangle_distance([p[0], p[1], p[2]], t))
-                    .fold(f64::INFINITY, f64::min)
+            .map(|&p| {
+                grid.get(&cell(p)).map_or(f64::INFINITY, |triangles| {
+                    let nearest = triangles
+                        .iter()
+                        .map(|&t| point_triangle_distance(p, t))
+                        .fold(f64::INFINITY, f64::min);
+                    if nearest <= radius {
+                        nearest
+                    } else {
+                        f64::INFINITY
+                    }
+                })
             })
             .fold(0., f64::max)
     };
@@ -718,7 +738,7 @@ fn run_entry(entry: &Value, row: &mut Value) {
         "{id}: readback solids"
     );
     let (readback_mesh, _) = checked_mesh(&readback_solid, id);
-    let deviation = mesh_deviation(&source_mesh, &readback_mesh);
+    let deviation = mesh_deviation(&source_mesh, &readback_mesh, 4. * MESH_DEFLECTION_MM);
     assert!(
         deviation <= MESH_DEFLECTION_MM,
         "{id}: mesh deviation {deviation}"
@@ -745,7 +765,7 @@ fn run_entry(entry: &Value, row: &mut Value) {
         "mesh_deviation_mm": deviation,
         "section": readback_section,
     });
-    row["native_readback"] = native_readback(&exported, volume, bounds, solids);
+    row["native_readback"] = native_readback(&exported, volume, bounds, solids, &readback_mesh);
 }
 
 #[cfg(not(feature = "occt"))]
@@ -776,14 +796,29 @@ fn native_source(path: &Path) -> Value {
 }
 
 #[cfg(not(feature = "occt"))]
-fn native_readback(_: &Path, _: f64, _: [[f64; 3]; 2], _: u32) -> Value {
+fn native_readback(_: &Path, _: f64, _: [[f64; 3]; 2], _: u32, _: &multicad_kernel::Mesh) -> Value {
     json!("not built; run with --features occt")
 }
 
 /// OpenCascade 7.9.3 reads the Rust re-export as reference evidence.
 #[cfg(feature = "occt")]
-fn native_readback(path: &Path, volume: f64, bounds: [[f64; 3]; 2], solids: u32) -> Value {
+fn native_readback(
+    path: &Path,
+    volume: f64,
+    bounds: [[f64; 3]; 2],
+    solids: u32,
+    rust_mesh: &multicad_kernel::Mesh,
+) -> Value {
     let native = Solid::read_step(path, GeometryPolicy::default()).unwrap();
+    // Independent tessellations of the same exact boundary: each lies
+    // within the requested deflection of the surface, so their mutual
+    // deviation is bounded by twice that deflection.
+    let native_mesh = native.mesh(mesh_options()).unwrap();
+    let deviation = mesh_deviation(rust_mesh, &native_mesh, 4. * MESH_DEFLECTION_MM);
+    assert!(
+        deviation <= 2. * MESH_DEFLECTION_MM,
+        "OpenCascade tessellation deviates {deviation} mm from the Rust readback"
+    );
     assert!(!native.uses_rust_geometry());
     let native_volume = native.volume_mm3().unwrap();
     let native_bounds = bounds_of(&native);
@@ -798,6 +833,7 @@ fn native_readback(path: &Path, volume: f64, bounds: [[f64; 3]; 2], solids: u32)
     assert_eq!(native.solid_count().unwrap(), solids);
     json!({
         "reader": "OpenCascade 7.9.3",
+        "mesh_deviation_mm": deviation,
         "volume_mm3": native_volume,
         "bounds_mm": native_bounds,
         "solids": native.solid_count().unwrap(),
