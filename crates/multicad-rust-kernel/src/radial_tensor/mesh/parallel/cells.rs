@@ -10,21 +10,21 @@ use std::{
     thread,
     time::Duration,
 };
+#[cfg(test)]
 struct ActiveGuard {
-    #[cfg(test)]
     old: bool,
 }
+#[cfg(test)]
 impl ActiveGuard {
     fn new() -> Self {
         Self {
-            #[cfg(test)]
             old: super::super::parallel_probe::ACTIVE.with(|a| a.replace(true)),
         }
     }
 }
+#[cfg(test)]
 impl Drop for ActiveGuard {
     fn drop(&mut self) {
-        #[cfg(test)]
         super::super::parallel_probe::ACTIVE.with(|a| a.set(self.old));
     }
 }
@@ -288,6 +288,7 @@ pub(super) fn check(
     let setup_wall = setup_at.elapsed();
     #[cfg(test)]
     let dispatch_at = std::time::Instant::now();
+    #[cfg(test)]
     let active = ActiveGuard::new();
     thread::scope(|scope| {
         let mut handles = Vec::new();
@@ -342,6 +343,7 @@ pub(super) fn check(
     });
     #[cfg(test)]
     let dispatch_wall = dispatch_at.elapsed();
+    #[cfg(test)]
     drop(active);
     let (remaining, _spent, _refills) = pool.finish()?;
     work.remaining = remaining;

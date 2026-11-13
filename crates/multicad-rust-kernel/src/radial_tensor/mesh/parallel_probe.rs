@@ -4,7 +4,7 @@ use std::{
     cell::{Cell, RefCell},
     time::{Duration, Instant},
 };
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Stage {
     Prepare,
     Emit,
@@ -15,6 +15,7 @@ pub(super) enum Stage {
 }
 #[derive(Default)]
 struct Stats {
+    active: Option<Stage>,
     time: [Duration; 6],
     work: [usize; 6],
     calls: [usize; 6],
@@ -24,15 +25,17 @@ thread_local! {static STATS:RefCell<Option<Stats>>=const{RefCell::new(None)};}
 pub(super) type Stamp = Option<(Stage, Instant, usize)>;
 pub(super) fn start(stage: Stage, work: &Work<'_>) -> Stamp {
     STATS.with(|s| {
-        s.borrow()
-            .as_ref()
-            .map(|_| (stage, Instant::now(), work.remaining))
+        s.borrow_mut().as_mut().map(|stats| {
+            stats.active = Some(stage);
+            (stage, Instant::now(), work.remaining)
+        })
     })
 }
 pub(super) fn end(stamp: Stamp, work: &Work<'_>) {
     if let Some((stage, at, before)) = stamp {
         STATS.with(|s| {
             if let Some(s) = s.borrow_mut().as_mut() {
+                s.active = None;
                 let i = stage as usize;
                 s.time[i] += at.elapsed();
                 s.work[i] += before - work.remaining;
@@ -410,4 +413,33 @@ fn cam_fixture_refuses_non_spline_rims() {
         })
         .is_none()
     );
+}
+
+#[test]
+fn cancellation_inside_actual_large_grid_normal_preflight_preserves_source() {
+    let body = fixture();
+    let original = body.input().clone();
+    STATS.with(|stats| *stats.borrow_mut() = Some(Stats::default()));
+    let cancelled = Cell::new(false);
+    let interrupt = || {
+        let preflight =
+            STATS.with(|stats| stats.borrow().as_ref().unwrap().active == Some(Stage::Preflight));
+        cancelled.set(cancelled.get() || preflight);
+        preflight
+    };
+    let result = build(
+        &body,
+        Tessellation {
+            deflection: 0.1,
+            angle: 0.3,
+            triangle_limit: 1_000_000,
+        },
+        Some(&interrupt),
+    );
+    let stats = STATS.with(|stats| stats.borrow_mut().take().unwrap());
+    assert_eq!(result, Err(Error::Cancelled));
+    assert!(cancelled.get());
+    assert_eq!(stats.active, Some(Stage::Preflight));
+    assert!(stats.calls[Stage::Emit as usize] > 0);
+    assert_eq!(body.input(), &original);
 }
