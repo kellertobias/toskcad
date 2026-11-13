@@ -19,7 +19,6 @@ const MISSING_PLANE: &str = "Box stock topology does not publish every support p
 
 /// Authored identity of one source face. Each source frame is kept
 /// literally as captured and in the stock chart for later placements.
-#[derive(Clone)]
 struct Source {
     origins: Vec<Origin>,
     frames: Vec<(AnchoredFrame, ReferenceFrame)>,
