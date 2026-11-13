@@ -4691,3 +4691,79 @@ fn exercise_default_combined_internal_fit(fit: &str) {
     close(reopened.part_volume(), edited);
     assert_eq!(std::fs::read(&project).unwrap(), saved);
 }
+
+#[test]
+fn default_stdio_phillips_metric_screws_keep_actual_geometry_history_and_atomic_step_limits() {
+    for fit in ["nominal_basic", "metric_6g_external"] {
+        let directory = tempfile::tempdir().unwrap();
+        let project = directory.path().join("phillips.tcd");
+        let arguments = [
+            "--project",
+            project.to_str().unwrap(),
+            "--export-dir",
+            directory.path().to_str().unwrap(),
+        ];
+        let timings = directory.path().join("model-timings.jsonl");
+        let mut client = Client::start_with_model_timings(&arguments, Some(&timings));
+        let head = if fit == "nominal_basic" {
+            json!({"kind":"pan","diameter":length(5.6),"height":length(2.4),"crown_radius":length(3.),"top_land_diameter":length(4.2),"neck_radius":length(0.1)})
+        } else {
+            json!({"kind":"countersunk","diameter":length(5.5),"height":length(1.65),"included_angle":{"value":90.,"unit":"deg"},"edge_chamfer":length(0.05),"neck_radius":length(0.1)})
+        };
+        let angle = |v| json!({"value":v,"unit":"deg"});
+        let mut recipe = json!({"kind":"machine_screw","underhead_length":length(9.),"shank_diameter":length(3.),"head":head,
+            "drive":{"kind":"phillips_h","profile":{"size":"h1","mouth_diameter":length(3.),"mouth_radius":length(0.5),"b_width":length(0.955),"g_diameter":length(1.27),"tilt_angle":angle(7.),"outer_flank_angle":angle(26.5),"floor_angle":angle(28.),"outer_corner_angle":angle(92.),"inner":{"kind":"shallow_v","angle":angle(138.),"e_width":length(0.435)}}},
+            "thread":{"family":"iso_metric","fit":fit,"hand":"left","major_diameter":length(3.),"pitch":length(0.5),"length":length(8.),"representation":"modeled","plane":"yz","origin":[length(10.),length(20.),length(30.)]}});
+        if fit == "metric_6g_external" {
+            recipe["thread"]["metric_fit_engagement"] = json!({"kind":"normal_group_assumed"});
+        }
+        let started = std::time::Instant::now();
+        let created = client.ok(
+            "set_mechanical_part",
+            json!({"expected_revision":0,"name":"Owned metric Phillips screw","recipe":recipe}),
+        );
+        eprintln!(
+            "Actual default-app Phillips {fit} create response: {:?}",
+            started.elapsed()
+        );
+        let first = client.part_volume();
+        assert!(first > 0.);
+        let inspected = client.ok(
+            "inspect_mechanical_part",
+            json!({"feature":created["feature"]}),
+        );
+        assert_eq!(
+            inspected["source"]["parameters"]["drive"]["kind"],
+            "phillips_h"
+        );
+        let edited=client.ok("set_mechanical_part",json!({"expected_revision":1,"feature":created["feature"],"recipe":{"kind":"machine_screw","underhead_length":length(10.)}}));
+        assert_eq!(edited["part"], created["part"]);
+        let second = client.part_volume();
+        assert!(second > first);
+        client.ok("undo", json!({"expected_revision":2}));
+        close(client.part_volume(), first);
+        client.ok("redo", json!({"expected_revision":3}));
+        close(client.part_volume(), second);
+        client.fail("set_mechanical_part",json!({"expected_revision":4,"feature":created["feature"],"recipe":{"kind":"machine_screw","drive":{"kind":"phillips_h","profile":{"mouth_diameter":length(100.)}}}}));
+        assert_eq!(client.revision(), 4);
+        close(client.part_volume(), second);
+        client.fail(
+            "export_step",
+            json!({"part":created["part"],"file_name":"unfinished.step"}),
+        );
+        assert!(!directory.path().join("unfinished.step").exists());
+        std::fs::write(directory.path().join("unfinished.step"), b"accepted file").unwrap();
+        client.fail(
+            "export_step",
+            json!({"part":created["part"],"file_name":"unfinished.step"}),
+        );
+        assert_eq!(
+            std::fs::read(directory.path().join("unfinished.step")).unwrap(),
+            b"accepted file"
+        );
+        client.ok("save_project", json!({"expected_revision":4}));
+        drop(client);
+        let mut reopened = Client::start(&arguments);
+        close(reopened.part_volume(), second);
+    }
+}

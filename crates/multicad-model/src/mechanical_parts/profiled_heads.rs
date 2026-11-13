@@ -2,6 +2,7 @@
 use super::*;
 use multicad_kernel::rust_kernel::{head_profile::Head, profiled_screw::Spec};
 mod hexalobular;
+mod phillips;
 
 pub(super) fn build(
     feature: EntityId,
@@ -12,6 +13,17 @@ pub(super) fn build(
     thread: &ResolvedThread,
     policy: GeometryPolicy,
 ) -> Result<Option<Solid>, ModelError> {
+    if matches!(drive, ResolvedScrewDrive::PhillipsH { .. }) {
+        return phillips::build(
+            feature,
+            underhead_length_mm,
+            shank_radius_mm,
+            head,
+            drive,
+            thread,
+            policy,
+        );
+    }
     if matches!(drive, ResolvedScrewDrive::Hexalobular { .. }) {
         return hexalobular::build(
             feature,

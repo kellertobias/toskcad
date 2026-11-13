@@ -929,9 +929,10 @@ pub(super) fn mechanical_part_profiles(_: &dyn Host, call: &Request, _: NoArgs) 
         return Ok(json!({
             "supported_geometry": ["machine_screw", "hex_nut", "washer", "bearing_envelope", "wood_screw"],
             "head_forms": ["socket_cap", "external_hex", "pan", "button", "countersunk"],
-            "drive_forms": ["hex_socket", "external_hex", "hexalobular"],
+            "drive_forms": ["hex_socket", "external_hex", "hexalobular", "phillips_h"],
             "active_geometry_support": {
-                "head_drive_pairs": [["socket_cap", "hex_socket"], ["external_hex", "external_hex"], ["countersunk", "hex_socket"], ["button", "hex_socket"], ["socket_cap", "hexalobular"], ["pan", "hexalobular"], ["button", "hexalobular"], ["countersunk", "hexalobular"]],
+                "head_drive_pairs": [["socket_cap", "hex_socket"], ["external_hex", "external_hex"], ["countersunk", "hex_socket"], ["button", "hex_socket"], ["socket_cap", "hexalobular"], ["pan", "hexalobular"], ["button", "hexalobular"], ["countersunk", "hexalobular"], ["pan", "phillips_h"], ["countersunk", "phillips_h"]],
+                "phillips_h": {"representation":"modeled", "manufacturing_mesh":true, "step":false, "step_scope":"Independent physical STEP boundary/import qualification remains unfinished."},
                 "thread_families": ["iso_metric", "custom"],
                 "metric_fits": ["nominal_basic", "metric_6g_external"],
                 "hex_nut_metric_fits": ["nominal_basic", "metric_6h_internal"],
@@ -943,7 +944,7 @@ pub(super) fn mechanical_part_profiles(_: &dyn Host, call: &Request, _: NoArgs) 
                 "radial_taper": false,
                 "mesh": true,
                 "threaded_step": true,
-                "threaded_step_scope": "Straight modeled threads and the listed head/drive pairs within source and spline limits. Nominal or fitted threads retain their original phase and a qualified plain shank or head/thread union. Qualified conical recesses may continue into the plain shank but must end before the original thread; wall, floor and actual placement must qualify.",
+                "threaded_step_scope": "Except Phillips H, straight modeled threads and the listed head/drive pairs within source and spline limits. Nominal or fitted threads retain their original phase and a qualified plain shank or head/thread union. Qualified conical recesses may continue into the plain shank but must end before the original thread; wall, floor and actual placement must qualify.",
                 "wood_screw": {"representation":"simplified_envelope","head":"external_hex","drive":"external_hex","manufacturing_available":false},
                 "step_geometry": ["washer", "bearing_envelope", "machine_screw", "hex_nut"]
             },
