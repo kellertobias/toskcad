@@ -158,3 +158,65 @@ fn actual_direct_wood_contact_survives_both_hands_starts_pose_edit_history_and_r
         assert_eq!(*session.document(), reopened);
     }
 }
+
+#[test]
+fn foreign_unknown_source_cannot_be_declared_clear_by_an_old_bounding_box() {
+    let (mut session, request) = fixture(false, false, 1);
+    let unknown = PrimitiveRequest::new(
+        "Unqualified curved counterpart",
+        PrimitiveParameters::Cylinder {
+            radius: length(1.),
+            height: length(2.),
+            frame: PrimitiveFrame {
+                origin: std::array::from_fn(|_| length(100.)),
+                ..Default::default()
+            },
+        },
+    );
+    session
+        .commit(
+            prepare_primitive(&session, 0, actor(), &unknown)
+                .unwrap()
+                .prepared,
+        )
+        .unwrap();
+    let before = session.document().clone();
+    let candidate =
+        prepare_screw_connection(&session, session.revision(), actor(), &request).unwrap();
+    let failure = compiler()
+        .compile(candidate.prepared.document(), session.revision() + 1)
+        .err()
+        .unwrap();
+    assert!(failure.message.contains("source separation"), "{failure:?}");
+    assert_eq!(*session.document(), before);
+}
+
+#[test]
+fn a_far_actual_rectangular_counterpart_has_an_owned_separation_proof() {
+    let (mut session, request) = fixture(false, false, 1);
+    let known = PrimitiveRequest::new(
+        "Known rectangular counterpart",
+        PrimitiveParameters::Box {
+            size: std::array::from_fn(|_| length(2.)),
+            frame: PrimitiveFrame {
+                origin: std::array::from_fn(|_| length(100.)),
+                ..Default::default()
+            },
+        },
+    );
+    session
+        .commit(
+            prepare_primitive(&session, 0, actor(), &known)
+                .unwrap()
+                .prepared,
+        )
+        .unwrap();
+    let before = session.document().clone();
+    let candidate =
+        prepare_screw_connection(&session, session.revision(), actor(), &request).unwrap();
+    let model = compiler()
+        .compile(candidate.prepared.document(), session.revision() + 1)
+        .unwrap();
+    assert!(model.snapshot().screw_connection_checks[0].native_component_collision_checked);
+    assert_eq!(*session.document(), before);
+}

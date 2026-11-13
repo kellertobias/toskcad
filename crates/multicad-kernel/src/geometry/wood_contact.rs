@@ -24,6 +24,44 @@ fn source_error(cause: source::Error) -> GeometryError {
     )
 }
 impl Solid {
+    /// A strict outward source-envelope separation proof. Unknown source
+    /// families and overlapping envelopes grant no disjointness authority.
+    pub fn rust_wood_separated_from(
+        &self,
+        other: &Self,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Option<bool>, GeometryError> {
+        let Some((screw, screw_frame)) = self.rust_machine_screw_geometry() else {
+            return Ok(None);
+        };
+        let interrupted = || interrupt.is_some_and(|f| f());
+        if let Some((body, other_frame)) = other.orthogonal_body() {
+            let Some(material) = body.wood_envelope_source() else {
+                return Ok(None);
+            };
+            source::separated_from_stock(
+                material,
+                frame(other_frame),
+                screw,
+                frame(screw_frame),
+                &interrupted,
+            )
+            .map(Some)
+            .map_err(source_error)
+        } else if let Some((prism, other_frame)) = other.rust_prism_frame() {
+            source::separated_from_rectangular_prism(
+                prism,
+                frame(other_frame),
+                screw,
+                frame(screw_frame),
+                &interrupted,
+            )
+            .map_err(source_error)
+        } else {
+            Ok(None)
+        }
+    }
+
     /// A positive retained-cell intersection witness; None is inconclusive.
     pub fn rust_wood_obstruction_witness(
         &self,
@@ -316,6 +354,72 @@ mod tests {
                 .rust_wood_obstruction_witness(&round, None)
                 .unwrap()
                 .is_none()
+        );
+    }
+    #[test]
+    fn only_outward_owned_envelopes_can_publish_disjointness() {
+        let (recipient, screw, _) = fixture();
+        let far = Solid::box_solid([2.; 3], Default::default())
+            .unwrap()
+            .transformed(RigidTransform {
+                rotation: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+                translation_mm: [30.; 3],
+            })
+            .unwrap();
+        assert_eq!(
+            screw.rust_wood_separated_from(&far, None).unwrap(),
+            Some(true)
+        );
+        assert_eq!(
+            screw
+                .rust_wood_separated_from(&far.orthogonal_stock().unwrap(), None)
+                .unwrap(),
+            Some(true)
+        );
+        assert_eq!(
+            screw.rust_wood_separated_from(&recipient, None).unwrap(),
+            Some(false)
+        );
+        assert_eq!(far.rust_wood_separated_from(&screw, None).unwrap(), None);
+        assert_eq!(
+            screw
+                .rust_wood_separated_from(&far, Some(&|| true))
+                .unwrap_err()
+                .kind,
+            GeometryErrorKind::Cancelled
+        );
+        let round = Solid::cylinder(
+            PlaneFrame {
+                origin: [100.; 3],
+                ..Default::default()
+            },
+            1.,
+            2.,
+            Default::default(),
+        )
+        .unwrap();
+        assert_eq!(screw.rust_wood_separated_from(&round, None).unwrap(), None);
+        let base = Solid::box_solid([4., 4., 1.], Default::default()).unwrap();
+        let top = Solid::box_solid([2., 2., 1.], Default::default())
+            .unwrap()
+            .transformed(RigidTransform {
+                rotation: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+                translation_mm: [0., 0., 1.],
+            })
+            .unwrap();
+        let stepped = base
+            .rust_union_orthogonal_tools(&[top], Default::default())
+            .unwrap()
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("actual-imported-stock.step");
+        stepped.write_step(&path).unwrap();
+        let text = std::fs::read_to_string(path).unwrap();
+        let imported = Solid::import_rust_step(&text, EntityId::new(), Default::default()).unwrap();
+        assert!(imported.orthogonal_body().is_some());
+        assert_eq!(
+            screw.rust_wood_separated_from(&imported, None).unwrap(),
+            None
         );
     }
 }

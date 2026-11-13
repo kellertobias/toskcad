@@ -138,17 +138,20 @@ pub(super) fn check(
         let other = evaluated
             .leaf_solid(other_path)
             .ok_or_else(|| fail("Physical component has no actual solid"))?;
-        let a = h.solid.bounds().map_err(|e| error(Some(id), e))?;
-        let b = other.bounds().map_err(|e| error(Some(id), e))?;
-        if (0..3).any(|i| a.max[i] < b.min[i] || b.max[i] < a.min[i]) {
-            continue;
-        }
         if queries >= 4096 {
             return Err(fail(
                 "Wood collision validation exceeds the 4096 candidate budget",
             ));
         }
         queries += 1;
+        if h.solid
+            .rust_wood_separated_from(other, interrupt)
+            .map_err(|e| error(Some(id), e))?
+            == Some(true)
+        {
+            continue;
+        }
+
         if h.solid
             .rust_wood_obstruction_witness(other, interrupt)
             .map_err(|e| error(Some(id), e))?
@@ -158,9 +161,9 @@ pub(super) fn check(
                 "Actual wood hardware has unintended component interference",
             ));
         }
-        // The combined candidate was charged above. The existing fallback
-        // retains its own query/error semantics without charging it twice.
-        collision(h.solid, other, evaluated, id, &mut 0)?;
+        return Err(fail(
+            "Actual source separation from this component could not be certified; no nominal bounding-box or Boolean fallback is admitted",
+        ));
     }
     checkpoint(interrupt)?;
     let engagement = contact.engagement_mm[0].midpoint(contact.engagement_mm[1]);

@@ -1112,6 +1112,12 @@ impl OrthogonalBody {
         Some((&self.geometry, *pilot))
     }
 
+    // Curved cuts only remove material from this actual outer source.
+    pub(in crate::geometry) fn wood_envelope_source(&self) -> Option<&OrthogonalSolid> {
+        self.imported_roundoff_mm
+            .is_none()
+            .then_some(&self.geometry)
+    }
     pub(in crate::geometry) fn wood_obstruction_source(&self) -> Option<&OrthogonalSolid> {
         (!self.has_curved_cuts() && self.imported_roundoff_mm.is_none()).then_some(&self.geometry)
     }

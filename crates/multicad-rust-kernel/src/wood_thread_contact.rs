@@ -50,6 +50,9 @@ pub struct Contact {
     pub witness_volume_lower_mm3: f64,
     pub source_chart_bearing_radial_land_mm: [f64; 2],
 }
+mod separation;
+pub use separation::{separated_from_rectangular_prism, separated_from_stock};
+
 type R<T> = Result<T, Error>;
 fn checkpoint(f: &dyn Fn() -> bool) -> R<()> {
     if f() { Err(Error::Cancelled) } else { Ok(()) }
@@ -642,7 +645,7 @@ mod tests {
             axes: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
         }
     }
-    fn fixture(
+    pub(super) fn fixture(
         left: bool,
         starts: u32,
     ) -> (
