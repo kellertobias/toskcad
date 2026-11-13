@@ -1,5 +1,6 @@
 //! Transfer a certified local tessellation without spending its world error budget twice.
 use super::*;
+pub(in crate::geometry) mod measured;
 use crate::geometry::arithmetic::{difference_with_error, dot_error, sum_error};
 use multicad_rust_kernel::display::Tessellation;
 

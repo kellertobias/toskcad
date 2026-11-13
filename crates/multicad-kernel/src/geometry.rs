@@ -20,6 +20,8 @@ pub(crate) mod circular_pocket_body;
 pub(crate) mod construction;
 mod cosmetic_fastener_body;
 mod entry_chamfer_body;
+mod wood_insert_material;
+pub use wood_insert_material::WoodInsertMaterial;
 mod helical_body;
 mod helical_tube_body;
 mod herringbone_body;
@@ -3589,3 +3591,6 @@ mod exact_geometry_digest_tests {
         assert_eq!(source.to_brep().unwrap(), before);
     }
 }
+
+#[cfg(test)]
+mod wood_insert_world_tests;
