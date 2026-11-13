@@ -2,6 +2,60 @@
 use super::*;
 use crate::profiled_screw::SourceSpec;
 use crate::{head_profile::TransportError, tapered_thread::interval::I};
+mod header;
+
+/// Retained meridian/header extraction only. Literal tensors and all finite
+/// trims stay in the caller's immutable file arena for independent matching.
+pub(in super::super::super) struct PhillipsOuterHeader {
+    pub profile: Profile,
+    pub head_top_face: u32,
+    pub head_top_surface: u32,
+    pub outer_bound: u32,
+    pub removed_hole: u32,
+    pub profile_faces: Vec<u32>,
+}
+pub(in super::super::super) fn read_phillips_outer_header(
+    shell: &mut Shell<'_, '_>,
+    faces: &[u32],
+    thread: &Thread,
+    placement: [Point; 3],
+    visible_start: f64,
+    cavity: &crate::step_read::ParsedPhillipsBoundary,
+) -> Result<PhillipsOuterHeader> {
+    let layout = header::layout(shell, faces, thread, placement, visible_start)?;
+    let cavity_faces: BTreeSet<_> = cavity
+        .faces()
+        .iter()
+        .filter_map(|f| f.material_entity)
+        .collect();
+    let count = layout
+        .head
+        .len()
+        .checked_sub(cavity_faces.len() + 1)
+        .ok_or(ReadError::Unsupported)?;
+    require((1..=5).contains(&count))?;
+    require(
+        layout.head[0] == cavity.mouth().material_face
+            && layout.head[count + 1..]
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>()
+                == cavity_faces,
+    )?;
+    let decoded = header::meridian(shell, &layout, count)?;
+    require(
+        decoded.mouth == cavity.mouth().material_bound
+            && decoded.top_surface == cavity.mouth().material_surface,
+    )?;
+    Ok(PhillipsOuterHeader {
+        profile: decoded.profile,
+        head_top_face: layout.head[0],
+        head_top_surface: decoded.top_surface,
+        outer_bound: decoded.outer_bound,
+        removed_hole: decoded.mouth,
+        profile_faces: layout.head[1..=count].to_vec(),
+    })
+}
 
 // Decimal STEP numbers are rounded to f64 once by the parser. One adjacent
 // representable value on each side encloses that numeric conversion; this is
@@ -129,142 +183,17 @@ pub(in super::super::super) fn read(
     placement: [Point; 3],
     visible_start: f64,
 ) -> Result<Screw> {
-    let frame = Frame::new(placement)?;
-    let count = 4 * thread.spec().starts as usize;
-    let mut rings = [vec![0; count], vec![0; count]];
-    let mut corners = vec![[[0; 2]; 2]; count];
-    for (i, &id) in faces[..count].iter().enumerate() {
-        let (_, forward, bounds) = face(shell, id)?;
-        require(forward == thread.spec().left_hand && bounds.len() == 1)?;
-        let edges = orient(&ring(shell, bounds[0], true)?, forward);
-        let [(a, true), (right, true), (b, false), (left, false)] = edges[..] else {
-            return Err(ReadError::Invalid);
-        };
-        rings[0][i] = a;
-        rings[1][i] = b;
-        for (j, rail) in [left, right].into_iter().enumerate() {
-            let (vertices, _, forward) = edge_record(shell, rail)?;
-            require(forward)?;
-            corners[i][j] = vertices;
-        }
-    }
-    let proof = Proof {
-        error: Some(shell.tolerance.min(1e-7) / 16.),
-        extent: thread.spec().length_mm.max(thread.spec().major_radius_mm),
-    };
-    let tail = &faces[count..];
-    let join = junction(
-        proof,
-        shell,
-        tail,
-        thread,
-        &rings,
-        &corners,
-        (frame, visible_start),
-    )?;
-    let head = &tail[join.shoulders + 1..];
+    let layout = header::layout(shell, faces, thread, placement, visible_start)?;
+    let frame = layout.frame;
+    let count = layout.count;
+    let head = &layout.head;
     let torx = (15..=19).contains(&head.len());
     require(torx || (9..=13).contains(&head.len()))?;
     let segment_count = head.len() - if torx { 14 } else { 8 };
-    let (_, forward, bounds) = face(shell, head[0])?;
-    require(forward && bounds.len() == 2)?;
-    let mouth = bounds[1];
-    let mut previous = single_bound_rim(shell, bounds[0], true, false, frame)?;
-    let top = previous;
-    let mut segments = Vec::new();
-    for (i, &id) in head[1..=segment_count].iter().enumerate() {
-        let (surface, forward, bounds) = face(shell, id)?;
-        let name = shell.simple(surface)?.name;
-        let last = i + 1 == segment_count;
-        let (end, curve, role) = if name == "PLANE" {
-            require(forward && bounds.len() == 2)?;
-            require(
-                ring(shell, bounds[0], true)?
-                    == [(previous.edge.ok_or(ReadError::Invalid)?, previous.positive)],
-            )?;
-            let end = if last {
-                require(ring(shell, bounds[1], false)? == orient(&join.positive, false))?;
-                join.end
-            } else {
-                single_bound_rim(shell, bounds[1], false, false, frame)?
-            };
-            (end, HeadCurve::Line, Role::Bearing)
-        } else {
-            require(bounds.len() == 1)?;
-            let (end, _) = periodic_end(shell, bounds[0], previous, last, &join, frame)?;
-            match name {
-                "CYLINDRICAL_SURFACE" | "CONICAL_SURFACE" => {
-                    let role = if previous.radius == end.radius {
-                        if last {
-                            Role::Shank
-                        } else if segments.iter().any(|s: &Segment| s.role == Role::Crown) {
-                            Role::Skirt
-                        } else {
-                            Role::Rim
-                        }
-                    } else if end.radius < previous.radius {
-                        Role::Cone
-                    } else {
-                        Role::Chamfer
-                    };
-                    (end, HeadCurve::Line, role)
-                }
-                "SPHERICAL_SURFACE" | "TOROIDAL_SURFACE" => {
-                    let entity = shell.simple(surface)?;
-                    let (axis, major, radius, role) = match entity.args.as_slice() {
-                        [Value::String(_), axis, Value::Number(radius)]
-                            if name == "SPHERICAL_SURFACE" =>
-                        {
-                            (reference(axis)?, 0., *radius, Role::Crown)
-                        }
-                        [
-                            Value::String(_),
-                            axis,
-                            Value::Number(major),
-                            Value::Number(radius),
-                        ] if name == "TOROIDAL_SURFACE" => (
-                            reference(axis)?,
-                            *major,
-                            *radius,
-                            if forward { Role::Crown } else { Role::Neck },
-                        ),
-                        _ => return Err(ReadError::Invalid),
-                    };
-                    let support = shell.placement(axis)?;
-                    let local = frame.local(support.origin);
-                    let center = [major, local[2]];
-                    let a = (previous.z - center[1]).atan2(previous.radius - center[0]);
-                    let b = (end.z - center[1]).atan2(end.radius - center[0]);
-                    let sweep = if role == Role::Crown {
-                        (b - a).rem_euclid(TAU)
-                    } else {
-                        -(a - b).rem_euclid(TAU)
-                    };
-                    (
-                        end,
-                        HeadCurve::Arc {
-                            center,
-                            radius_mm: radius,
-                            sweep,
-                        },
-                        role,
-                    )
-                }
-                _ => return Err(ReadError::Unsupported),
-            }
-        };
-        segments.push(Segment {
-            start: [previous.radius, previous.z],
-            end: [end.radius, end.z],
-            curve,
-            role,
-        });
-        previous = end;
-    }
-    let error = transport(shell, head, frame)?;
-    require(error.total_mm() <= shell.tolerance.min(1e-7) / 32.)?;
-    let profile =
-        Profile::from_transported_segments(&segments, error).map_err(|_| ReadError::Invalid)?;
+    let decoded = header::meridian(shell, &layout, segment_count)?;
+    let profile = decoded.profile;
+    let top = decoded.top;
+    let mouth = decoded.mouth;
     let reserve = profile.rounding_error_mm();
     if torx {
         let recess = super::torx::read(shell, faces, head, segment_count, frame, count, top)?;

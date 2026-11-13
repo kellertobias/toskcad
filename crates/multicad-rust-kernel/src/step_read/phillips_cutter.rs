@@ -18,7 +18,8 @@ pub use physical::{
     AnalyticEdgeLift, AnalyticEdgeLiftKind, AnalyticEdgeLiftOptions, AnalyticEdgeLifts,
     AnalyticSupportBounds as PhillipsAnalyticSupportBounds,
     AnalyticSupportOptions as PhillipsAnalyticSupportOptions, Axis as ParsedPhillipsAxis,
-    Boundary as ParsedPhillipsBoundary, CubicSupportBounds as PhillipsCubicSupportBounds,
+    Body as ParsedPhillipsBody, Boundary as ParsedPhillipsBoundary,
+    CubicSupportBounds as PhillipsCubicSupportBounds,
     CubicSupportOptions as PhillipsCubicSupportOptions, Curve as ParsedPhillipsCurve,
     Edge as ParsedPhillipsEdge, EdgeSupportBound as PhillipsEdgeSupportBound,
     EndpointCouplingBounds as PhillipsEndpointCouplingBounds,
@@ -27,7 +28,9 @@ pub use physical::{
     IntersectionSection, IntersectionTubeOptions, IntersectionTubes,
     MaterialLoop as ParsedPhillipsMaterialLoop, MaterialUse as ParsedPhillipsMaterialUse,
     Mouth as ParsedPhillipsMouth, Surface as ParsedPhillipsSurface, Vertex as ParsedPhillipsVertex,
-    read_phillips_screw_boundary, read_phillips_screw_boundary_with_interrupt,
+    VirtualOuterCap as ParsedPhillipsVirtualOuterCap, read_phillips_body,
+    read_phillips_body_with_interrupt, read_phillips_screw_boundary,
+    read_phillips_screw_boundary_with_interrupt,
 };
 #[cfg(test)]
 mod tests;

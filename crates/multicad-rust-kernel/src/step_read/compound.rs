@@ -173,8 +173,23 @@ pub(super) fn read_members_by<T>(
     tolerance: f64,
     allow_circles: bool,
     single: bool,
-    mut member: impl FnMut(&mut Shell<'_, '_>, u32, bool) -> Result<T>,
+    member: impl FnMut(&mut Shell<'_, '_>, u32, bool) -> Result<T>,
 ) -> Result<Vec<T>> {
+    read_members_retaining_arena(input, tolerance, allow_circles, single, member)
+        .map(|(_, members)| members)
+}
+
+/// Retain the actual immutable parsed file when later boundary proofs need
+/// its literal tensors/curves. Ownership and orphan-topology checks are exactly
+/// the same as the ordinary reader; no virtual geometry is inserted here.
+type RetainedMembers<'input, T> = (BTreeMap<u32, Vec<Entity<'input>>>, Vec<T>);
+pub(super) fn read_members_retaining_arena<'input, T>(
+    input: &'input str,
+    tolerance: f64,
+    allow_circles: bool,
+    single: bool,
+    mut member: impl FnMut(&mut Shell<'_, 'input>, u32, bool) -> Result<T>,
+) -> Result<RetainedMembers<'input, T>> {
     let entities = parse_entities(input, tolerance)?;
     let solids = Shell::new(&entities, tolerance, allow_circles).represented_solids(single)?;
     let (topology_count, analytic_candidate) = inspect_flat_entities(entities.values().flatten())?;
@@ -192,7 +207,7 @@ pub(super) fn read_members_by<T>(
     if owners.len() != topology_count {
         return Err(ReadError::Invalid);
     }
-    Ok(members)
+    Ok((entities, members))
 }
 
 fn inspect_flat_entities<'a>(

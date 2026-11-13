@@ -8,7 +8,9 @@ use crate::{
 };
 use helical::{face, require};
 mod headed;
+pub(super) mod law;
 mod profiled;
+pub(super) mod seed;
 pub use headed::helical_screw_import_matches;
 pub use profiled::profiled_screw_import_matches;
 pub(super) mod cylindrical_closure;
@@ -107,40 +109,8 @@ pub(super) fn read_member(
     let shank = !profiled && (tail == 13 || hex_shank);
     let is_receiver = !external && !is_end_relief && faces.len() - count == 4;
     let is_nut = !external && faces.len() - count == 8;
-    let mut grids = Vec::with_capacity(4);
-    let mut radial = Vec::with_capacity(4);
-    let mut axial = None;
-    for &id in &faces[..4] {
-        let (id, _, _) = face(shell, id)?;
-        let args = shell.args(id, "B_SPLINE_SURFACE_WITH_KNOTS")?;
-        let [
-            Value::String(_),
-            Value::Number(a),
-            Value::Number(b),
-            Value::List(rows),
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-            r,
-            z,
-            _,
-        ] = args
-        else {
-            return Err(ReadError::Invalid);
-        };
-        require(*a == DEGREE as f64 && *b == DEGREE as f64 && rows.len() > DEGREE)?;
-        radial.push(domain(r)?);
-        let domain = domain(z)?;
-        if let Some(previous) = axial {
-            require(previous == domain)?;
-        } else {
-            axial = Some(domain);
-        }
-        grids.push(rows);
-    }
+    let tensor = seed::TensorHeader::read(shell, faces)?;
+    let radial = &tensor.radial;
     let far = if is_receiver || external || is_end_relief {
         Some(plane(*faces.last().ok_or(ReadError::Invalid)?)?)
     } else {
@@ -149,35 +119,8 @@ pub(super) fn read_member(
     let u = bottom.u;
     let v = bottom.v.map(|n| if headed { n } else { -n });
     let n = bottom.normal.map(|n| if headed { n } else { -n });
-    let full_support_entry = if profiled {
-        let edges = helical::orient(
-            &helical::ring(shell, *first.2.first().ok_or(ReadError::Invalid)?, true)?,
-            first.1,
-        );
-        let [_, _, _, (rail, _)] = edges[..] else {
-            return Err(ReadError::Invalid);
-        };
-        let [Value::String(_), a, _, curve, _] = shell.args(rail, "EDGE_CURVE")? else {
-            return Err(ReadError::Invalid);
-        };
-        let args = shell.args(reference(curve)?, "B_SPLINE_CURVE_WITH_KNOTS")?;
-        let controls = refs(args.get(2).ok_or(ReadError::Invalid)?)?;
-        let point = shell.point(*controls.first().ok_or(ReadError::Invalid)?)?;
-        let [Value::String(_), endpoint] = shell.args(reference(a)?, "VERTEX_POINT")? else {
-            return Err(ReadError::Invalid);
-        };
-        point == shell.point(reference(endpoint)?)?
-    } else {
-        true
-    };
-    let origin = if profiled && !full_support_entry {
-        // The complete literal tensor support declares its original axial
-        // datum even when the physical face starts at an interior trim. No
-        // unseen tool extension or authoring recipe is reconstructed.
-        let ids = refs(&grids[0][0])?;
-        let first = shell.point(*ids.first().ok_or(ReadError::Invalid)?)?;
-        let offset = dot(sub(first, bottom.origin), n);
-        std::array::from_fn(|i| bottom.origin[i] + n[i] * offset)
+    let origin = if profiled {
+        tensor.retained_origin(shell, faces[0], bottom.origin, n)?
     } else {
         bottom.origin
     };
@@ -189,30 +132,13 @@ pub(super) fn read_member(
             std::array::from_fn(|i| origin[i] + n[i] * height),
         )) <= shell.tolerance / 16.,
     )?;
-    let [start, spin] = axial.ok_or(ReadError::Invalid)?;
+    let [start, spin] = tensor.axial;
     require(start == 0. && spin > 0.)?;
     let rate = height / spin;
     let pitch = TAU * rate / f64::from(starts);
-    let radius = |band: usize, last: bool| -> Result<f64> {
-        let rows = grids[band];
-        let row = &rows[if last { rows.len() - 1 } else { 0 }];
-        let ids = refs(row)?;
-        let point = shell.point(*ids.first().ok_or(ReadError::Invalid)?)?;
-        Ok(length(sub(point, origin)))
-    };
+    let radius = |band: usize, last: bool| tensor.radius(shell, origin, band, last);
     let major = if profiled {
-        let (_, _, bounds) = face(shell, faces[3])?;
-        let edges = helical::orient(&helical::ring(shell, bounds[0], true)?, first.1);
-        let (edge, _) = edges[0];
-        let [Value::String(_), _, _, geometry, _] = shell.args(edge, "EDGE_CURVE")? else {
-            return Err(ReadError::Invalid);
-        };
-        let [Value::String(_), _, Value::Number(radius)] =
-            shell.args(reference(geometry)?, "CIRCLE")?
-        else {
-            return Err(ReadError::Invalid);
-        };
-        *radius
+        seed::TensorHeader::profiled_major(shell, faces[3], first.1)?
     } else if shank || tangent_external {
         let offset = if tangent_external {
             external_shoulders + 1
@@ -232,38 +158,7 @@ pub(super) fn read_member(
     };
     let upper_radius = radius(0, true)?;
     let lower_radius = radius(2, false)?;
-    let phase_start = radial[0][0] * rate;
-    let phase_upper = radial[0][1] * rate;
-    let phase_lower = radial[2][0] * rate;
-    let phase_crest = radial[2][1] * rate;
-    let upper_run = (phase_upper - phase_start) / (major - upper_radius);
-    let lower_run = (phase_crest - phase_lower) / (major - lower_radius);
-    let (depth, root_radius, flank_degrees) = if radial[1][0] < 0. {
-        let [a, b] = radial[1];
-        require(
-            a < 0. && b > 0. && a > -std::f64::consts::FRAC_PI_2 && b < std::f64::consts::FRAC_PI_2,
-        )?;
-        let f = (phase_lower - phase_upper) / (b.sin() - a.sin());
-        // The circular-root trim directly carries both tangent angles.
-        // Reconstruct their consistent depth in this intrinsic chart rather
-        // than subtracting radii obtained from distant world coordinates.
-        let lower = std::f64::consts::FRAC_PI_2 - b;
-        let upper = std::f64::consts::FRAC_PI_2 + a;
-        let half = (lower + upper) / 2.;
-        let tilt = (upper - lower) / 2.;
-        let intersection = (pitch - 2. * phase_start) / (lower.tan() + upper.tan());
-        (
-            intersection - f * (tilt.cos() / half.sin() - 1.),
-            Some(f),
-            [lower.to_degrees(), upper.to_degrees()],
-        )
-    } else {
-        (
-            major - upper_radius,
-            None,
-            [lower_run.atan().to_degrees(), upper_run.atan().to_degrees()],
-        )
-    };
+    let law = law::Law::infer(major, upper_radius, lower_radius, radial, rate, pitch)?;
     let stock = if external || matches!(faces.len() - count, 3 | 4) {
         let offset = if external { external_shoulders + 1 } else { 2 };
         let (surface, outward, _) = face(shell, faces[count + offset])?;
@@ -282,22 +177,11 @@ pub(super) fn read_member(
     } else {
         height
     };
-    let tool = Thread::new(Spec {
-        major_radius_mm: major,
-        pitch_mm: pitch,
-        length_mm: full_length,
-        depth_mm: depth,
-        crest_width_mm: 2. * phase_start,
-        lower_flank_deg: flank_degrees[0],
-        upper_flank_deg: flank_degrees[1],
+    let tool = law.thread(
+        full_length,
         starts,
-        left_hand: first.1 != ((!external && !is_end_relief && stock.is_some()) || is_nut),
-        root_radius_mm: root_radius,
-    })
-    .map_err(|e| match e {
-        crate::helical_thread::ThreadError::Invalid => ReadError::Invalid,
-        crate::helical_thread::ThreadError::Limit => ReadError::Limit,
-    })?;
+        first.1 != ((!external && !is_end_relief && stock.is_some()) || is_nut),
+    )?;
     let thread = if is_end_relief {
         *tool
             .positive_axial_prefix(height)

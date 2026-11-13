@@ -4,6 +4,8 @@ use super::*;
 
 mod analytic;
 mod branches;
+mod body;
+pub use body::{Body, VirtualOuterCap, read_phillips_body, read_phillips_body_with_interrupt};
 mod endpoints;
 pub use analytic::{AnalyticSupportBounds, AnalyticSupportOptions};
 pub use branches::{
