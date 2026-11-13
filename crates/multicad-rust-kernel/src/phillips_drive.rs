@@ -6,8 +6,7 @@ mod classify;
 mod source;
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod volume_prototype;
+mod volume;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Spec {
@@ -166,6 +165,18 @@ impl Corner {
         }
     }
 }
+/// Bounded volume of the exact authored source expressions. This is not a
+/// physical-file mass receipt or a finite manufacturing-boundary certificate.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VolumeBounds {
+    pub volume_mm3: [f64; 2],
+    pub section_evaluations: usize,
+    /// Outward sum of midpoint value-enclosure widths times their cell lengths.
+    pub midpoint_evaluation_width_mm3: f64,
+    /// Outward sum of signed curvature-remainder widths and whole-area event
+    /// ranges. Diagnostics are not independent additive volume intervals.
+    pub curvature_and_event_width_mm3: f64,
+}
 #[derive(Clone, Debug)]
 pub struct Cutter {
     spec: Spec,
@@ -188,6 +199,26 @@ impl Cutter {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, Error> {
         source::construct(spec, domain, cancelled)
+    }
+    /// Integrates eligible shallow-V cutters after proving their finite caps,
+    /// closure, and adjacent corner cutouts inactive/disjoint throughout the
+    /// cavity. Other authored domains and rounded H0 return `Unresolved`.
+    pub fn volume_bounds_mm3(
+        &self,
+        width_mm3: f64,
+        work_limit: usize,
+    ) -> Result<VolumeBounds, Error> {
+        self.volume_bounds_with_cancel(width_mm3, work_limit, &|| false)
+    }
+    /// Work counts each section-cell evaluation, including initial cells.
+    /// Limits above one million evaluations exceed this routine’s resource cap.
+    pub fn volume_bounds_with_cancel(
+        &self,
+        width_mm3: f64,
+        work_limit: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<VolumeBounds, Error> {
+        volume::compute(self, width_mm3, work_limit, cancelled)
     }
     pub fn spec(&self) -> Spec {
         self.spec
