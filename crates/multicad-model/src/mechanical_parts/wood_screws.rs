@@ -32,7 +32,7 @@ fn authored_role(role: &str) -> bool {
     })
 }
 fn valid_face_origins(origins: &std::collections::BTreeSet<Origin>, owner: EntityId) -> bool {
-    let side_prefix = format!("side/{}/", neutral_owner());
+    let side_prefix = format!("side/{owner}/");
     !origins.is_empty()
         && origins.iter().any(|origin| authored_role(&origin.role))
         && origins.iter().all(|origin| {
@@ -162,6 +162,21 @@ pub(super) fn build(
     p: &ResolvedWoodScrew,
     policy: GeometryPolicy,
 ) -> Result<Solid, ModelError> {
+    build_inner(feature, p, policy, false)
+}
+pub(super) fn build_rust(
+    feature: EntityId,
+    p: &ResolvedWoodScrew,
+    policy: GeometryPolicy,
+) -> Result<Solid, ModelError> {
+    build_inner(feature, p, policy, true)
+}
+fn build_inner(
+    feature: EntityId,
+    p: &ResolvedWoodScrew,
+    policy: GeometryPolicy,
+    rust: bool,
+) -> Result<Solid, ModelError> {
     policy.validate().map_err(|e| error(Some(feature), e))?;
     let ResolvedScrewHead::ExternalHex {
         across_flats_mm,
@@ -199,10 +214,10 @@ pub(super) fn build(
         ));
     }
     let cache_key = key(p, policy);
-    if let Some(hit) = cached(&cache_key, feature) {
+    if !rust && let Some(hit) = cached(&cache_key, feature) {
         return Ok(hit);
     }
-    let neutral = neutral_owner();
+    let neutral = if rust { feature } else { neutral_owner() };
     let head = prism(
         neutral,
         "head",
@@ -222,10 +237,14 @@ pub(super) fn build(
         }],
         policy,
     )?;
-    let solid = head
-        .boolean(&stock, BooleanOperation::Union, policy)
-        .map_err(|e| error(Some(feature), e))?
-        .ok_or_else(|| error(Some(feature), "Wood envelope union produced no solid"))?;
+    let solid = if head.uses_rust_geometry() && stock.uses_rust_geometry() {
+        Solid::rust_join_planar_head_and_round_stock(&head, &stock, neutral, policy)
+            .map_err(|e| error(Some(feature), e))?
+    } else {
+        head.boolean(&stock, BooleanOperation::Union, policy)
+            .map_err(|e| error(Some(feature), e))?
+            .ok_or_else(|| error(Some(feature), "Wood envelope union produced no solid"))?
+    };
     if solid.solid_count().map_err(|e| error(Some(feature), e))? != 1 {
         return Err(error(
             Some(feature),
@@ -251,6 +270,12 @@ pub(super) fn build(
             translation_mm: frame.origin,
         })
         .map_err(|e| error(Some(feature), e))?;
+    // Rust's immutable Model evaluation cache already retains completed
+    // feature geometry. Keep its actual owner instead of native-handle
+    // serialization and neutral-owner rebinding.
+    if rust {
+        return Ok(completed);
+    }
     let result = completed
         .rebind_exclusive_owner(neutral, feature)
         .map_err(|e| error(Some(feature), e))?;

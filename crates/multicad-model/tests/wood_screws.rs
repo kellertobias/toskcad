@@ -194,15 +194,23 @@ fn sourced_hex_stock_envelopes_have_real_bounds_flat_limit_planes_and_raw_step_r
             .iter()
             .filter(|e| e.key.kind == multicad_core::references::TopologyKind::Face)
             .collect::<Vec<_>>();
-        assert_eq!(faces.len(), 10);
+        assert_eq!(
+            faces.len(),
+            if solid.uses_rust_geometry() { 13 } else { 10 }
+        );
         assert!(faces.iter().all(|e| {
             !e.origins.is_empty()
                 && e.origins.iter().all(|o| {
                     o.source == r.feature
                         && (o.role.starts_with("wood.envelope.")
-                            || o.role.starts_with(
-                                "side/d067b697-a074-4bc7-8ae8-4c05d18b3a90/wood.envelope.",
-                            ))
+                            || o.role.starts_with(&format!(
+                                "side/{}/wood.envelope.",
+                                if solid.uses_rust_geometry() {
+                                    r.feature
+                                } else {
+                                    EntityId::parse("d067b697-a074-4bc7-8ae8-4c05d18b3a90").unwrap()
+                                }
+                            )))
                 })
         }));
         let path = dir.path().join(format!("declared-envelope-{index}.step"));
@@ -499,4 +507,85 @@ fn pinned_private_wood_occurrence_with_navigator_parent_remains_limited_after_ca
     let fresh = Session::new(p.document).unwrap();
     assert_refused(&fresh, set, vec![placed.instance]);
     assert_eq!(s.document(), &before);
+}
+
+#[test]
+fn rust_wood_envelope_retains_a_complete_independently_decoded_stock_boundary() {
+    use multicad_kernel::rust_kernel::{step_read, warped_union::Support};
+    for (d, l, af, k, pitch, core) in [
+        (4., 16., 7., 2.8, 1.8, 2.8),
+        (6., 40., 10., 4., 2.6, 4.2),
+        (10., 100., 17., 7., 4.5, 7.),
+    ] {
+        let mut s = session();
+        let request = add(&mut s, wood(d, l, af, k, pitch, core));
+        let built = compiler().compile(s.document(), s.revision()).unwrap();
+        let solid = built.solid(request.feature).unwrap();
+        assert!(solid.uses_rust_geometry());
+        let expected = 3_f64.sqrt() / 2. * af * af * k + PI * (d / 2.).powi(2) * l;
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("declared-stock-envelope.step");
+        solid.write_step(&file).unwrap();
+        let text = std::fs::read_to_string(file).unwrap();
+        let (read, imported) = step_read::read_import_solid(&text, 1e-7).unwrap();
+        assert_eq!(read.solid_count, 1);
+        assert_eq!(read.face_count, 13);
+        assert!((read.volume_mm3 - expected).abs() < expected * 1e-9);
+        let step_read::ImportProfile::WarpedUnion { shell } = imported.profile else {
+            panic!("expected actual finite plane and cylinder boundaries")
+        };
+        assert_eq!(imported.u, [1., 0., 0.]);
+        assert_eq!(imported.v, [0., 1., 0.]);
+        let mut cylinders = 0;
+        let mut area = 0.;
+        for face in shell.faces() {
+            if let Support::Cylinder {
+                axis_origin_mm,
+                axis_direction,
+                radius_mm,
+                outward,
+            } = face.support
+            {
+                cylinders += 1;
+                area += face.area_mm2;
+                assert!(outward);
+                assert_eq!(axis_direction, [0., 0., 1.]);
+                assert!((radius_mm - d / 2.).abs() < 1e-10);
+                let world: [f64; 3] =
+                    std::array::from_fn(|i| axis_origin_mm[i] + imported.origin_mm[i]);
+                assert!(world.into_iter().all(|v| v.abs() < 1e-7));
+                let mut levels = vec![];
+                for edge in &face.boundary {
+                    for vertex in shell.edges()[edge.edge].vertices {
+                        let p = shell.vertices()[vertex];
+                        let world: [f64; 3] = std::array::from_fn(|i| p[i] + imported.origin_mm[i]);
+                        assert!((world[0].hypot(world[1]) - d / 2.).abs() < 1e-7);
+                        assert!(world[2].abs() < 1e-7 || (world[2] - l).abs() < 1e-7);
+                        levels.push(world[2]);
+                    }
+                }
+                assert!(levels.iter().any(|z| z.abs() < 1e-7));
+                assert!(levels.iter().any(|z| (z - l).abs() < 1e-7));
+            }
+        }
+        assert_eq!(cylinders, 4);
+        assert!((area - PI * d * l).abs() < 1e-7);
+        let decoded =
+            Solid::import_rust_step(&text, EntityId::new(), GeometryPolicy::default()).unwrap();
+        assert!(decoded.uses_rust_geometry());
+        assert!((decoded.volume_mm3().unwrap() - expected).abs() < expected * 1e-9);
+        let mesh = decoded
+            .manufacturing_mesh_with_receipt(Default::default())
+            .unwrap();
+        assert_eq!(mesh.edge_pairs as usize * 2, mesh.mesh.indices.len());
+        // Closed raw envelope geometry does not invent the unspecified wood
+        // thread or point, nor grant the authored part manufacturing approval.
+        assert_eq!(
+            model::manufacturing_limitation_in_history(s.document(), request.feature)
+                .unwrap()
+                .unwrap()
+                .feature,
+            request.feature
+        );
+    }
 }

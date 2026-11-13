@@ -416,6 +416,9 @@ pub(crate) fn build_rust(
         .resolve(evaluated)
         .map_err(|cause| error(Some(feature), cause))?
     {
+        ResolvedMechanicalPart::WoodScrew { parameters } => {
+            wood_screws::build_rust(feature, &parameters, policy)
+        }
         ResolvedMechanicalPart::MachineScrew {
             underhead_length_mm,
             shank_radius_mm,

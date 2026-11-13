@@ -413,6 +413,91 @@ fn warped_error(operation: &str, cause: warped_union::Error) -> GeometryError {
 }
 
 impl Solid {
+    /// Join an authored planar head and round stock at their exact common cap.
+    /// The private boss extends into the head only: its entire swept disk is
+    /// proved clear of every other head face by the existing attachment proof.
+    /// Removing that buried extension therefore leaves the original union.
+    pub fn rust_join_planar_head_and_round_stock(
+        head: &Self,
+        stock: &Self,
+        feature: EntityId,
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        policy.validate()?;
+        if feature.is_nil()
+            || policy.boolean_fuzzy_mm != 0.
+            || head.policy != policy
+            || stock.policy != policy
+            || !head.uses_rust_geometry()
+            || !stock.uses_rust_geometry()
+        {
+            return Err(input(
+                "Authored head and stock require one Rust geometry policy",
+            ));
+        }
+        let (cylinder, frame) = stock
+            .axial_cylinder_frame()
+            .ok_or_else(|| input("Authored round stock requires an actual cylinder"))?;
+        // These source coordinates must survive the existing binary shell
+        // without silently normalizing the literal rational cylinder.
+        let exact = |value: Rational| {
+            let (numerator, denominator) = value.ratio();
+            (denominator as u64).is_power_of_two()
+                && (numerator as f64) as i128 == i128::from(numerator)
+        };
+        if !exact(cylinder.circle().radius()) || !exact(cylinder.height()) {
+            return Err(error(
+                "stock attachment",
+                GeometryErrorKind::Unsupported,
+                "Round-stock attachment cannot yet retain these dimensions",
+            ));
+        }
+        let bounds = head.bounds()?;
+        if frame != PlaneFrame::default()
+            || cylinder.circle().center().iter().any(|c| c.ratio().0 != 0)
+            || cylinder.bottom().ratio().0 != 0
+            || bounds.max[2] != 0.
+            || bounds.max[2] - bounds.min[2] <= 2. * policy.linear_tolerance_mm
+        {
+            return Err(input(
+                "Authored head and stock must share an exact axial cap",
+            ));
+        }
+        let mut chart = Chart::new(None);
+        chart
+            .append(head, None, policy)
+            .ok_or_else(|| input("The authored head requires certified planar material"))??;
+        chart
+            .append_boss(stock)
+            .ok_or_else(|| input("The authored stock requires cylinder ancestry"))??;
+        // This is a construction point, never a new exterior boundary. The
+        // complete attachment proof must establish its disk is inside the head.
+        chart.bosses[0].ends[0][2] = bounds.min[2].midpoint(bounds.max[2]);
+        chart.stock_count = chart.pieces.len();
+        let union = Union::new(&chart.pieces, policy.linear_tolerance_mm).map_err(source_error)?;
+        let mut solid = chart.finish(union, feature, policy)?;
+        let SolidBody::WarpedUnion(body, _) = &mut solid.body else {
+            unreachable!("the planar attachment builder returns its retained shell")
+        };
+        let body = Rc::get_mut(body).expect("a newly built attachment has one owner");
+        for origins in &mut body.origins {
+            origins.retain(|origin| {
+                origin.source != feature || !origin.role.starts_with("quarter-round.face.")
+            });
+            if origins.is_empty() {
+                return Err(input(
+                    "Authored stock attachment lost its source-face ancestry",
+                ));
+            }
+        }
+        if body.solid_count() != 1 {
+            return Err(input(
+                "Authored head and round stock must form one material domain",
+            ));
+        }
+        Ok(solid)
+    }
+
     /// Join quarter-round fillets with convex planar stock whose other walls
     /// through the rounded band are vertical.
     pub fn union_quarter_rounds(
@@ -1012,5 +1097,106 @@ mod partition_tests {
             ],
             sizes
         );
+    }
+}
+
+#[cfg(test)]
+mod stock_attachment_tests {
+    use super::*;
+    #[test]
+    fn exact_cap_attachment_preserves_material_sources_and_rejects_unproved_operands() {
+        let policy = GeometryPolicy::default();
+        let owner = EntityId::new();
+        let head = Solid::rust_box(
+            owner.uuid_bits(),
+            [10, 10, 4].map(|n| Rational::new(n, 1).unwrap()),
+            PlaneFrame::default(),
+            policy,
+        )
+        .unwrap()
+        .transformed(RigidTransform {
+            translation_mm: [-5., -5., -4.],
+            ..Default::default()
+        })
+        .unwrap();
+        let stock = |radius, height| {
+            crate::geometry::construction::cylinder(
+                PlaneFrame::default(),
+                radius,
+                height,
+                owner,
+                policy,
+            )
+            .unwrap()
+        };
+        let shaft = stock(2., 10.);
+        let old_head = head.topology_snapshot(owner, 0).unwrap();
+        let old_stock = shaft.topology_snapshot(owner, 0).unwrap();
+        let result =
+            Solid::rust_join_planar_head_and_round_stock(&head, &shaft, owner, policy).unwrap();
+        assert!(result.uses_rust_geometry());
+        assert_eq!(result.solid_count().unwrap(), 1);
+        let volume = 400. + 40. * std::f64::consts::PI;
+        assert!((result.volume_mm3().unwrap() - volume).abs() < 1e-8);
+        assert_eq!(
+            result.bounds().unwrap(),
+            Bounds {
+                min: [-5., -5., -4.],
+                max: [5., 5., 10.]
+            }
+        );
+        let mesh = result
+            .manufacturing_mesh_with_receipt(Default::default())
+            .unwrap();
+        assert_eq!(mesh.edge_pairs as usize * 2, mesh.mesh.indices.len());
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("retained-cap.step");
+        result.write_step(&file).unwrap();
+        let read = multicad_rust_kernel::step_read::read_analytic_solid(
+            &std::fs::read_to_string(file).unwrap(),
+            1e-7,
+        )
+        .unwrap();
+        assert!((read.volume_mm3 - volume).abs() < 1e-8);
+        assert_eq!(read.solid_count, 1);
+        for bad in [
+            stock(6., 10.),
+            stock(2., 3.3),
+            shaft
+                .transformed(RigidTransform {
+                    translation_mm: [0., 0., 0.01],
+                    ..Default::default()
+                })
+                .unwrap(),
+            shaft
+                .transformed(RigidTransform {
+                    translation_mm: [0.01, 0., 0.],
+                    ..Default::default()
+                })
+                .unwrap(),
+            head.share().unwrap(),
+        ] {
+            assert!(
+                Solid::rust_join_planar_head_and_round_stock(&head, &bad, owner, policy).is_err()
+            );
+        }
+        assert!(
+            Solid::rust_join_planar_head_and_round_stock(&head, &shaft, EntityId::nil(), policy)
+                .is_err()
+        );
+        assert!(
+            Solid::rust_join_planar_head_and_round_stock(
+                &head,
+                &shaft,
+                owner,
+                GeometryPolicy {
+                    boolean_fuzzy_mm: 1e-8,
+                    ..policy
+                }
+            )
+            .is_err()
+        );
+        assert_eq!(head.topology_snapshot(owner, 0).unwrap(), old_head);
+        assert_eq!(shaft.topology_snapshot(owner, 0).unwrap(), old_stock);
     }
 }
