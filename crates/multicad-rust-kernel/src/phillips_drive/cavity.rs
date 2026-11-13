@@ -1,6 +1,8 @@
 //! Authored cavity cache and monotone whole-suffix envelope, without admission.
 use super::*;
 use std::sync::Arc;
+mod host;
+pub use host::HostEnvelopeProof;
 
 /// Qualified authored cavity. This retains the finite cutter, not an imported
 /// body. Its volume is a source-expression enclosure; native publication,

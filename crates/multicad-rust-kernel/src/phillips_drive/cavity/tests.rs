@@ -1,10 +1,10 @@
 use super::*;
 
-fn cavity(index: usize) -> Cavity {
+pub(super) fn cavity(index: usize) -> Cavity {
     let (spec, domain) = crate::phillips_drive::test_fixture(index);
     Cavity::new(Cutter::new(spec, domain).unwrap(), 1e-5, 100_000).unwrap()
 }
-fn oracle(s: Spec, depth: f64) -> f64 {
+pub(super) fn oracle(s: Spec, depth: f64) -> f64 {
     let a = s.outer_flank_angle_deg.to_radians();
     let c = s.floor_angle_deg.to_radians();
     let r = s.mouth_radius_mm;

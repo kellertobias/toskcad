@@ -4,7 +4,7 @@ use crate::tapered_thread::interval::I;
 use std::f64::consts::PI;
 mod cavity;
 mod classify;
-pub use cavity::Cavity;
+pub use cavity::{Cavity, HostEnvelopeProof};
 mod events;
 mod finite_section;
 pub use events::{
