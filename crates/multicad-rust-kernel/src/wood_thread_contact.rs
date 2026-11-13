@@ -41,6 +41,8 @@ pub struct Stock<'a> {
 #[derive(Clone, Debug)]
 pub struct Contact {
     pub engagement_mm: [f64; 2],
+    /// Normal separation of the actual parallel thread-tip and pilot-floor
+    /// supporting planes. Distance to the finite floor is at least this gap.
     pub tip_clearance_mm: [f64; 2],
     /// A complete source-coordinate open box lies in both actual materials.
     pub thread_witness_mm: [[f64; 2]; 3],
@@ -87,7 +89,27 @@ fn enclosure(v: &Q) -> R<I> {
 fn ip(v: f64) -> I {
     I::point(v)
 }
-fn scale(frame: Frame) -> R<(I, I)> {
+struct Metric {
+    minimum_scale: I,
+    maximum_scale: I,
+    determinant: I,
+}
+fn exact_orthonormal(frame: Frame) -> R<bool> {
+    let a = [
+        vector(frame.axes[0])?,
+        vector(frame.axes[1])?,
+        vector(frame.axes[2])?,
+    ];
+    for i in 0..3 {
+        for j in 0..3 {
+            if dot(&a[i], &a[j])? != q(if i == j { 1. } else { 0. })? {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
+}
+fn scale(frame: Frame) -> R<Metric> {
     if frame
         .origin_mm
         .into_iter()
@@ -116,7 +138,20 @@ fn scale(frame: Frame) -> R<(I, I)> {
     if !e.valid() || e.hi > 1e-6 || !d.valid() || d.lo <= 0. {
         return Err(Error::Unsupported);
     }
-    Ok(((ip(1.) - e).sqrt(), d))
+    // Exact Gram identity plus the proved positive determinant means this
+    // literal matrix is an isometry with determinant1. No frame is fitted.
+    if exact_orthonormal(frame)? {
+        return Ok(Metric {
+            minimum_scale: ip(1.),
+            maximum_scale: ip(1.),
+            determinant: ip(1.),
+        });
+    }
+    Ok(Metric {
+        minimum_scale: (ip(1.) - e).sqrt(),
+        maximum_scale: (ip(1.) + e).sqrt(),
+        determinant: d,
+    })
 }
 /// Exact inverse of the literal stock frame. The returned affine map is never
 /// replaced by a fitted/normalized rotation or inferred from nearby points.
@@ -331,8 +366,9 @@ pub fn certify(
         req.minimum_feature_mm,
     )
     .map_err(pocket_error)?;
-    let (sigma, _) = scale(stock.frame)?;
-    let (_, det) = scale(screw_frame)?;
+    let metric = scale(stock.frame)?;
+    let sigma = metric.minimum_scale;
+    let det = scale(screw_frame)?.determinant;
     let (origin, columns) = relative(stock.frame, screw_frame, interrupt)?;
     let face = boundary.faces.get(stock.pilot.face).ok_or(Error::Invalid)?;
     let (axis, sign) = inward_axis(face.normal)?;
@@ -371,16 +407,28 @@ pub fn certify(
         .into_iter()
         .fold(ip(0.), |s, v| s + v.square()))
     .sqrt();
-    let engagement = ip(t.spec().length_mm) * length;
-    let clearance =
-        (ip(stock.pilot.depth_mm) - ip(spec.shank_length_mm) - ip(t.spec().length_mm)) * sigma;
-    if !engagement.valid()
-        || engagement.lo < req.minimum_engagement_mm
-        || !clearance.valid()
-        || clearance.lo < req.tip_clearance_mm
+    let mut engagement = ip(t.spec().length_mm) * length;
+    let n = vector(screw_frame.axes[2])?;
+    let actual_length_squared = bounded(q(t.spec().length_mm)?.pow(2) * dot(&n, &n)?)?;
+    let required_length_squared = q(req.minimum_engagement_mm)?.pow(2);
+    let axial_gap =
+        bounded(q(stock.pilot.depth_mm)? - q(spec.shank_length_mm)? - q(t.spec().length_mm)?)?;
+    if actual_length_squared < required_length_squared
+        || axial_gap < Q::zero()
+        || &axial_gap * q(sigma.lo)? < q(req.tip_clearance_mm)?
     {
         return Err(Error::Unsupported);
     }
+    // Intersect two independently valid bounds: actual norm enclosure and
+    // exact squared-length inequality. This preserves true threshold equality.
+    engagement.lo = engagement.lo.max(req.minimum_engagement_mm);
+    finite(engagement)?;
+    let axial_gap = enclosure(&axial_gap)?;
+    let clearance_bounds = I::new(
+        (axial_gap * sigma).lo.max(req.tip_clearance_mm),
+        (axial_gap * metric.maximum_scale).hi,
+    );
+    let clearance = finite(clearance_bounds)?;
     let radius = thread_radius(screw)?;
     if stock.pilot.radius_mm >= t.spec().major_radius_mm {
         return Err(Error::Unsupported);
@@ -531,7 +579,7 @@ pub fn obstruction_witness(
     if material.cells().len() > 4096 {
         return Err(Error::Limit);
     }
-    let (_, det) = scale(material_frame)?;
+    let det = scale(material_frame)?.determinant;
     scale(screw_frame)?;
     let (origin, columns) = affine(screw_frame, material_frame, interrupt)?;
     let origin = [
@@ -1265,6 +1313,78 @@ mod tests {
             rectangular_obstruction_witness(&prism, identity(), &screw, frame, &|| false)
                 .unwrap()
                 .is_none()
+        );
+    }
+    #[test]
+    fn exact_metric_thresholds_and_raw_clearance_receipts_keep_true_equality() {
+        let (material, pilot, screw, frame, mut req) = fixture(false, 1);
+        req.minimum_engagement_mm = 12.;
+        req.tip_clearance_mm = 4.;
+        let proof = run(&material, pilot, &screw, frame, req).unwrap();
+        assert!(proof.engagement_mm[0] <= 12. && proof.engagement_mm[1] >= 12.);
+        assert!(proof.tip_clearance_mm[0] <= 4. && proof.tip_clearance_mm[1] >= 4.);
+        let mut failed = req;
+        failed.minimum_engagement_mm = 12_f64.next_up();
+        assert_eq!(
+            run(&material, pilot, &screw, frame, failed).unwrap_err(),
+            Error::Unsupported
+        );
+        failed = req;
+        failed.tip_clearance_mm = 4_f64.next_up();
+        assert_eq!(
+            run(&material, pilot, &screw, frame, failed).unwrap_err(),
+            Error::Unsupported
+        );
+        let mut end = screw.thread().spec();
+        end.length_mm = 16.;
+        let end = Screw::new(Thread::new(end).unwrap(), screw.spec()).unwrap();
+        req.minimum_engagement_mm = 16.;
+        req.tip_clearance_mm = 0.;
+        let touching = run(&material, pilot, &end, frame, req).unwrap();
+        assert!(touching.tip_clearance_mm[0] <= 0. && touching.tip_clearance_mm[1] >= 0.);
+        let mut breakthrough = end.thread().spec();
+        breakthrough.length_mm = 16_f64.next_up();
+        let breakthrough = Screw::new(Thread::new(breakthrough).unwrap(), end.spec()).unwrap();
+        assert_eq!(
+            run(&material, pilot, &breakthrough, frame, req).unwrap_err(),
+            Error::Unsupported
+        );
+
+        let strain = 2_f64.powi(-40);
+        let raw = Frame {
+            axes: [[1. + strain, 0., 0.], [0., 1., 0.], [0., 0., 1. + strain]],
+            ..identity()
+        };
+        let placed = Frame {
+            origin_mm: [10. * (1. + strain), 10., 20. * (1. + strain)],
+            axes: [
+                raw.axes[0],
+                raw.axes[1].map(|x| -x),
+                raw.axes[2].map(|x| -x),
+            ],
+        };
+        req.minimum_engagement_mm = 8.;
+        req.tip_clearance_mm = 1.;
+        let proof = certify(
+            Stock {
+                material: &material,
+                pilot,
+                frame: raw,
+            },
+            &screw,
+            placed,
+            req,
+            &|| false,
+        )
+        .unwrap();
+        let actual = Q::from_integer(4.into()) * q(1. + strain).unwrap();
+        assert!(
+            q(proof.tip_clearance_mm[0]).unwrap() <= actual
+                && q(proof.tip_clearance_mm[1]).unwrap() >= actual
+        );
+        assert!(
+            proof.tip_clearance_mm[1] > 4.,
+            "upper bound includes actual stretched cap separation"
         );
     }
 }
