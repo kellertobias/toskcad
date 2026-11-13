@@ -480,7 +480,7 @@ fn impossible_socket_floor_corner_wall_thread_extent_and_pitch_fail_atomically()
             0 => {
                 *drive = ScrewDrive::HexSocket {
                     across_flats: length(2.55),
-                    depth: length(3.),
+                    depth: length(9.),
                 }
             }
             1 => {
@@ -855,4 +855,70 @@ fn rust_headed_screw_fitted_partial_rotated_profile_retains_intent_through_edit_
             .rust_thread_contains(world([0., -radius, 6.75], true))
             .unwrap()
     );
+}
+
+#[test]
+fn socket_floor_can_enter_plain_shank_with_physical_manufacturing_and_step_proof() {
+    for (height, depth) in [(3., 3.), (1., 1.3)] {
+        let mut p = parameters(false, true, false, false);
+        let MechanicalPartParameters::MachineScrew { head, drive, .. } = &mut p else {
+            unreachable!()
+        };
+        *head = ScrewHead::SocketCap {
+            diameter: length(5.68),
+            height: length(height),
+        };
+        *drive = ScrewDrive::HexSocket {
+            across_flats: length(2.55),
+            depth: length(depth),
+        };
+        let mut s = session();
+        let r = add(&mut s, p);
+        let compiled = compiler()
+            .compile_with_backend(
+                s.document(),
+                s.revision(),
+                multicad_model::GeometryBackend::Rust,
+                None,
+            )
+            .unwrap();
+        let solid = compiled.solid(r.feature).unwrap();
+        let floor = depth - height;
+        assert!(!solid.rust_thread_contains([0., 0., floor - 0.01]).unwrap());
+        assert!(solid.rust_thread_contains([0., 0., floor + 0.01]).unwrap());
+        assert!(
+            solid
+                .rust_thread_contains([1.49, 0., floor - 0.01])
+                .unwrap()
+        );
+        let mesh = solid
+            .manufacturing_mesh_with_receipt(Default::default())
+            .unwrap();
+        assert_eq!(mesh.edge_pairs as usize * 2, mesh.mesh.indices.len());
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("plain-zone-socket.step");
+        solid.write_step(&path).unwrap();
+        let decoded = Solid::import_rust_step(
+            &std::fs::read_to_string(path).unwrap(),
+            EntityId::new(),
+            GeometryPolicy::default(),
+        )
+        .unwrap();
+        assert!((solid.volume_mm3().unwrap() - decoded.volume_mm3().unwrap()).abs() < 1e-6);
+        assert!(
+            !decoded
+                .rust_thread_contains([0., 0., floor - 0.01])
+                .unwrap()
+        );
+        assert!(
+            decoded
+                .rust_thread_contains([0., 0., floor + 0.01])
+                .unwrap()
+        );
+        assert!(
+            decoded
+                .rust_thread_contains([1.49, 0., floor - 0.01])
+                .unwrap()
+        );
+    }
 }

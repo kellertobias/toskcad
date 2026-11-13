@@ -900,10 +900,10 @@ fn invalid_stale_cancelled_and_incomplete_screw_recipes_never_partially_commit()
     for (key, value) in [
         ("underhead_length", mm(1.)),
         ("shank_diameter", mm(0.)),
-        ("drive", json!({"kind":"hex_socket","depth":mm(3.)})),
+        ("drive", json!({"kind":"hex_socket","depth":mm(9.)})),
         ("drive", json!({"kind":"hex_socket","across_flats":mm(5.)})),
         ("head", json!({"kind":"external_hex","height":mm(2.)})),
-        ("head", json!({"kind":"socket_cap","height":mm(1.)})),
+        ("head", json!({"kind":"socket_cap","height":mm(0.)})),
         ("thread", json!({"length":mm(1.5),"pitch":mm(0.)})),
         (
             "thread",
@@ -936,6 +936,67 @@ fn invalid_stale_cancelled_and_incomplete_screw_recipes_never_partially_commit()
             )
             .is_err()
         );
+        assert_eq!(h.document(), before);
+    }
+}
+
+#[test]
+fn rust_mcp_shallow_head_recess_can_extend_into_plain_shank_and_export_actual_material() {
+    use multicad_core::document::EntityId;
+    use multicad_kernel::{GeometryPolicy, Solid};
+    use multicad_model::GeometryBackend;
+    for (height, depth) in [(3., 3.), (1., 1.3)] {
+        let dir = tempfile::tempdir().unwrap();
+        let h = Headless::with_geometry_backend(
+            Workspace::new(Document::new("Plain-zone socket").unwrap()).unwrap(),
+            Some(dir.path().into()),
+            false,
+            GeometryBackend::Rust,
+        );
+        let created = run(
+            &h,
+            "set_mechanical_part",
+            json!({"expected_revision":0,"name":"Plain-zone socket","recipe":{"kind":"machine_screw","underhead_length":mm(3.),"thread":{"length":mm(1.5)},"head":{"kind":"socket_cap","height":mm(height)},"drive":{"kind":"hex_socket","depth":mm(depth)}}}),
+        );
+        let before = h.document();
+        let exported = run(
+            &h,
+            "export_step",
+            json!({"part":created["part"],"file_name":"plain-zone.step"}),
+        );
+        let decoded = Solid::import_rust_step(
+            &std::fs::read_to_string(dir.path().join("plain-zone.step")).unwrap(),
+            EntityId::new(),
+            GeometryPolicy::default(),
+        )
+        .unwrap();
+        let floor = depth - height;
+        assert!(
+            !decoded
+                .rust_thread_contains([0., 0., floor - 0.01])
+                .unwrap()
+        );
+        assert!(
+            decoded
+                .rust_thread_contains([0., 0., floor + 0.01])
+                .unwrap()
+        );
+        assert!(
+            decoded
+                .rust_thread_contains([1.49, 0., floor - 0.01])
+                .unwrap()
+        );
+        assert!(
+            (decoded.volume_mm3().unwrap() - exported["readback_volume_mm3"].as_f64().unwrap())
+                .abs()
+                < 1e-6
+        );
+        let mesh = decoded
+            .manufacturing_mesh_with_receipt(Default::default())
+            .unwrap();
+        assert_eq!(mesh.edge_pairs as usize * 2, mesh.mesh.indices.len());
+        assert_eq!(h.document(), before);
+        assert!(dispatch(&h,&call(false),"set_mechanical_part",json!({"expected_revision":1,"feature":created["feature"],"recipe":{"kind":"machine_screw","drive":{"kind":"hex_socket","depth":mm(9.)}}})).is_err());
         assert_eq!(h.document(), before);
     }
 }
