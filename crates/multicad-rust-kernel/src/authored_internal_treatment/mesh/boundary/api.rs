@@ -368,6 +368,13 @@ impl BoundaryCurve {
     pub fn faces(&self) -> [u32; 2] {
         [self.uses[0].unwrap().face, self.uses[1].unwrap().face]
     }
+    /// Exact original source-face incidence, relative to endpoints().
+    pub fn face_uses(&self) -> [(u32, bool); 2] {
+        self.uses.map(|side| {
+            let side = side.expect("qualified closed source curve");
+            (side.face, side.forward)
+        })
+    }
     pub fn affine_rzv_bounds(&self) -> [[Enclosure; 3]; 2] {
         [self.base.map(interval), self.delta.map(interval)]
     }

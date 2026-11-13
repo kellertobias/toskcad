@@ -70,3 +70,376 @@ fn real_paired_sources_have_two_annuli_and_one_closed_oriented_torus() {
         }
     }
 }
+
+fn requalify(graph: &Boundary) -> Result<(usize, usize), Error> {
+    graph.qualify(
+        &mut Memory {
+            used: graph.retained_bytes(),
+            limit: BoundaryOptions::default().bytes,
+        },
+        &mut Work {
+            remaining: 16_000_000,
+            used: 0,
+            interrupt: None,
+        },
+    )
+}
+#[test]
+fn actual_mapped_source_use_directions_exclude_a_globally_reversed_cavity() {
+    let source = source(false, true, 2, 3);
+    let mut graph = source
+        .boundary_with_interrupt(BoundaryOptions::default(), None)
+        .unwrap();
+    for face in &mut graph.loops {
+        for wire in face {
+            if wire
+                .first()
+                .is_some_and(|edge| edge.curve.owner() == Side::Inner)
+            {
+                wire.reverse();
+                for edge in wire {
+                    edge.forward = !edge.forward;
+                }
+            }
+        }
+    }
+    assert_eq!(requalify(&graph), Err(Error::Unresolved));
+    assert_eq!(graph.source(), &source);
+}
+#[test]
+fn public_namespace_queries_retain_original_source_objects_and_reject_foreign_keys() {
+    use std::collections::{BTreeSet, HashSet};
+    let source = source(true, false, 2, 3);
+    let graph = source
+        .boundary_with_interrupt(BoundaryOptions::default(), None)
+        .unwrap();
+    let mut vertices = BTreeSet::new();
+    let mut curves = HashSet::new();
+    for (id, point) in graph.vertices() {
+        assert!(vertices.insert(id));
+        assert!(std::ptr::eq(graph.point(id).unwrap(), point));
+        let _ = format!("{id:?}");
+    }
+    for (id, curve) in graph.curves() {
+        assert!(curves.insert(id));
+        assert!(std::ptr::eq(graph.curve(id).unwrap(), curve));
+        let bare = graph.source_boundary(id.owner());
+        assert!(std::ptr::eq(
+            bare.source_curve(id.source_index()).unwrap(),
+            curve
+        ));
+        let line = graph.curve_polyline(id, 0.05, 10000, None).unwrap();
+        assert!(line.maximum_error_mm <= 0.05);
+        assert_eq!(
+            line.points_mm.first().copied(),
+            Some(graph.curve_point(id, 0., None).unwrap().point_mm)
+        );
+        assert_eq!(
+            line.points_mm.last().copied(),
+            Some(graph.curve_point(id, 1., None).unwrap().point_mm)
+        );
+        assert_eq!(
+            graph.curve_point(id, 0.37, None).unwrap(),
+            bare.curve_point(id.source_index(), 0.37, None).unwrap()
+        );
+        assert_eq!(
+            graph.curve_endpoints(id).unwrap(),
+            curve.endpoints().map(|i| vertex_key(id.owner(), i))
+        );
+        assert!(graph.curve_faces(id).is_some());
+        let _ = format!("{id:?}");
+    }
+    assert_ne!(BoundaryVertexKey::Outer(0), BoundaryVertexKey::Inner(0));
+    assert!(graph.point(BoundaryVertexKey::Outer(u32::MAX)).is_none());
+    assert!(graph.point(BoundaryVertexKey::Inner(u32::MAX)).is_none());
+    let bad = BoundaryCurveKey::Inner(u32::MAX);
+    assert!(graph.curve(bad).is_none());
+    assert!(graph.curve_endpoints(bad).is_none());
+    assert!(graph.curve_faces(bad).is_none());
+    assert_eq!(graph.curve_point(bad, 0., None), Err(Error::Invalid));
+    assert_eq!(
+        graph.curve_point(BoundaryCurveKey::Outer(0), f64::NAN, None),
+        Err(Error::Invalid)
+    );
+    assert_eq!(
+        graph.curve_point(BoundaryCurveKey::Outer(0), 0., Some(&|| true)),
+        Err(Error::Cancelled)
+    );
+    assert!(
+        graph
+            .face_loops(FaceKey::InnerThread {
+                start: u32::MAX,
+                band: crate::authored_internal_treatment::ThreadBandRole::Root
+            })
+            .is_none()
+    );
+    for side in [Side::Outer, Side::Inner] {
+        assert!(graph.cell_face(side, usize::MAX).is_none());
+        assert!(matches!(
+            graph.cell_coedges(side, usize::MAX),
+            Err(Error::Invalid)
+        ));
+        for i in 0..graph.cells(side).len() {
+            let bare = graph
+                .source_boundary(side)
+                .cell_coedges(i)
+                .unwrap()
+                .collect::<Vec<_>>();
+            let actual = graph.cell_coedges(side, i).unwrap().collect::<Vec<_>>();
+            for (j, edge) in actual.iter().enumerate() {
+                let original = bare[if side == Side::Inner {
+                    bare.len() - 1 - j
+                } else {
+                    j
+                }];
+                assert_eq!(edge.curve, curve_key(side, original.curve as u32));
+                assert_eq!(edge.forward, original.forward != (side == Side::Inner));
+            }
+        }
+    }
+}
+
+#[test]
+fn aggregate_packet_limits_are_not_reset_for_each_component_or_topology_query() {
+    let source = source(false, true, 1, 1);
+    let options = BoundaryOptions::default();
+    assert!(matches!(
+        source.boundary_with_interrupt(options, Some(&|| true)),
+        Err(Error::Cancelled)
+    ));
+    for invalid in [
+        BoundaryOptions {
+            cells: 0,
+            ..options
+        },
+        BoundaryOptions {
+            vertices: 8193,
+            ..options
+        },
+        BoundaryOptions {
+            curves: 0,
+            ..options
+        },
+        BoundaryOptions { work: 0, ..options },
+        BoundaryOptions {
+            bytes: 0,
+            ..options
+        },
+    ] {
+        assert!(matches!(
+            source.boundary_with_interrupt(invalid, None),
+            Err(Error::Invalid)
+        ));
+    }
+    for budget in [1, 2, 20] {
+        assert!(matches!(
+            source.boundary_with_interrupt(
+                BoundaryOptions {
+                    work: budget,
+                    ..options
+                },
+                None
+            ),
+            Err(Error::Limit)
+        ));
+    }
+    for budget in [1, 1024, 8 * 1024 * 1024] {
+        assert!(matches!(
+            source.boundary_with_interrupt(
+                BoundaryOptions {
+                    bytes: budget,
+                    ..options
+                },
+                None
+            ),
+            Err(Error::Limit)
+        ));
+    }
+    let outer = source
+        .outer()
+        .boundary_with_interrupt(options, None)
+        .unwrap();
+    let inner = source
+        .inner()
+        .boundary_with_interrupt(options, None)
+        .unwrap();
+    let single_work = outer.work_used().max(inner.work_used());
+    for component in [source.outer(), source.inner()] {
+        assert!(
+            component
+                .boundary_with_interrupt(
+                    BoundaryOptions {
+                        work: single_work,
+                        ..options
+                    },
+                    None
+                )
+                .is_ok()
+        );
+    }
+    assert!(matches!(
+        source.boundary_with_interrupt(
+            BoundaryOptions {
+                work: single_work,
+                ..options
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    let baseline = source.boundary_with_interrupt(options, None).unwrap();
+    assert!(matches!(
+        source.boundary_with_interrupt(
+            BoundaryOptions {
+                work: baseline.work_used() - 1,
+                ..options
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    for requested in [
+        BoundaryOptions {
+            cells: 1,
+            ..options
+        },
+        BoundaryOptions {
+            vertices: 1,
+            ..options
+        },
+        BoundaryOptions {
+            curves: 1,
+            ..options
+        },
+    ] {
+        assert!(matches!(
+            source.boundary_with_interrupt(requested, None),
+            Err(Error::Limit)
+        ));
+    }
+    // Search only a resource threshold, with the exact same real source. Both
+    // individually fitting components still need aggregate packet ownership.
+    let mut low = 1;
+    let mut high = options.bytes;
+    while low < high {
+        let mid = low + (high - low) / 2;
+        let fits = [source.outer(), source.inner()]
+            .into_iter()
+            .all(|component| {
+                component
+                    .boundary_with_interrupt(
+                        BoundaryOptions {
+                            bytes: mid,
+                            ..options
+                        },
+                        None,
+                    )
+                    .is_ok()
+            });
+        if fits {
+            high = mid;
+        } else {
+            low = mid + 1;
+        }
+    }
+    assert!(
+        [source.outer(), source.inner()]
+            .into_iter()
+            .all(|component| component
+                .boundary_with_interrupt(
+                    BoundaryOptions {
+                        bytes: low,
+                        ..options
+                    },
+                    None
+                )
+                .is_ok())
+    );
+    assert!(matches!(
+        source.boundary_with_interrupt(
+            BoundaryOptions {
+                bytes: low,
+                ..options
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    assert_eq!(baseline.source(), &source);
+}
+#[test]
+fn cancellation_across_both_real_sources_annular_sewing_and_final_qualification_is_atomic() {
+    let source = source(true, false, 1, 2);
+    let calls = std::cell::Cell::new(0usize);
+    let count = || {
+        calls.set(calls.get() + 1);
+        false
+    };
+    let graph = source
+        .boundary_with_interrupt(BoundaryOptions::default(), Some(&count))
+        .unwrap();
+    let total = calls.get();
+    assert!(total > 100);
+    for at in [
+        1,
+        2,
+        10,
+        100,
+        total / 4,
+        total / 2,
+        3 * total / 4,
+        total - 2,
+        total - 1,
+        total,
+    ] {
+        calls.set(0);
+        let cancel = || {
+            calls.set(calls.get() + 1);
+            calls.get() >= at
+        };
+        assert!(matches!(
+            source.boundary_with_interrupt(BoundaryOptions::default(), Some(&cancel)),
+            Err(Error::Cancelled)
+        ));
+    }
+    assert_eq!(graph.source(), &source);
+    assert!(
+        source
+            .boundary_with_interrupt(BoundaryOptions::default(), None)
+            .is_ok()
+    );
+}
+#[test]
+fn missing_foreign_duplicate_and_misordered_actual_wire_uses_never_qualify() {
+    let source = source(false, false, 1, 1);
+    let fresh = || {
+        source
+            .boundary_with_interrupt(BoundaryOptions::default(), None)
+            .unwrap()
+    };
+    let mut graph = fresh();
+    graph.loops.pop();
+    assert_eq!(requalify(&graph), Err(Error::Unresolved));
+    let mut graph = fresh();
+    graph.loops[0].pop();
+    assert_eq!(requalify(&graph), Err(Error::Unresolved));
+    let mut graph = fresh();
+    graph.loops[0][0].clear();
+    assert_eq!(requalify(&graph), Err(Error::Unresolved));
+    let mut graph = fresh();
+    graph.loops[0][0][0].curve = BoundaryCurveKey::Outer(u32::MAX);
+    assert_eq!(requalify(&graph), Err(Error::Unresolved));
+    let mut graph = fresh();
+    graph.loops[0][0][0].curve = graph.loops[1][0][0].curve;
+    assert_eq!(requalify(&graph), Err(Error::Unresolved));
+    let mut graph = fresh();
+    let edge = graph.loops[0][0][0];
+    graph.loops[0][0].push(edge);
+    assert_eq!(requalify(&graph), Err(Error::Unresolved));
+    let mut graph = fresh();
+    graph.loops[0][0].swap(0, 1);
+    assert_eq!(requalify(&graph), Err(Error::Unresolved));
+    let mut graph = fresh();
+    graph.loops[0][0][0].forward = !graph.loops[0][0][0].forward;
+    assert_eq!(requalify(&graph), Err(Error::Unresolved));
+}

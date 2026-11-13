@@ -230,6 +230,35 @@ impl Boundary {
             .curve_point(key.source_index(), t, interrupt)
             .map_err(failure)
     }
+    /// Whole-curve source proof with this entire paired packet retained inside
+    /// the original aggregate byte budget. Each query has a fresh work ledger.
+    pub fn curve_polyline(
+        &self,
+        key: BoundaryCurveKey,
+        deflection_mm: f64,
+        point_limit: usize,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<crate::authored_internal_treatment::BoundaryPolyline, Error> {
+        checkpoint(interrupt)?;
+        let source = self.source_boundary(key.owner());
+        let external = self.external_reservation(key.owner(), self.retained_bytes())?;
+        source
+            .curve_polyline_accounted(
+                (key.source_index(), deflection_mm, point_limit),
+                self.limits.work,
+                external,
+                interrupt,
+            )
+            .map(|(line, _)| line)
+            .map_err(failure)
+    }
+    fn external_reservation(&self, owner: Side, live: usize) -> Result<usize, Error> {
+        let source = self.source_boundary(owner);
+        let construction_reserved = self.limits.bytes - source.query_byte_limit();
+        live.checked_sub(source.retained_bytes())
+            .and_then(|n| n.checked_sub(construction_reserved))
+            .ok_or(Error::Limit)
+    }
     pub fn cells(&self, owner: Side) -> &[BoundaryCell] {
         self.source_boundary(owner).cells()
     }
@@ -298,12 +327,7 @@ impl Boundary {
         let source = self.source_boundary(owner);
         // Each component constructor already reserved the then-live packet.
         // Add only later live objects here; do not double-charge that reservation.
-        let construction_reserved = self.limits.bytes - source.query_byte_limit();
-        let external = memory
-            .used
-            .checked_sub(source.retained_bytes())
-            .and_then(|v| v.checked_sub(construction_reserved))
-            .ok_or(Error::Limit)?;
+        let external = self.external_reservation(owner, memory.used)?;
         let (loops, used) = source
             .face_loops_accounted(face, w.remaining, external, w.interrupt)
             .map_err(failure)?;

@@ -57,12 +57,12 @@ impl Boundary {
                 for (i, edge) in chain.iter().enumerate() {
                     w.charge(1)?;
                     let source = self.curve(edge.curve).ok_or(Error::Unresolved)?;
-                    if !self
-                        .curve_faces(edge.curve)
-                        .ok_or(Error::Unresolved)?
-                        .iter()
-                        .any(|&f| self.source.face_index(f) == Some(face as u32))
-                    {
+                    let expected = source
+                        .face_uses()
+                        .into_iter()
+                        .find(|&(f, _)| self.global_face(edge.curve.owner(), f) == face as u32)
+                        .ok_or(Error::Unresolved)?;
+                    if edge.forward != (expected.1 != (edge.curve.owner() == Side::Inner)) {
                         return Err(Error::Unresolved);
                     }
                     if source.faces()[0] == source.faces()[1] {
