@@ -132,6 +132,104 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ("bored box", "oblique section-only", Drawn),
     ("bored box", "axial detail", Drawn),
     ("bored box", "side detail", Drawn),
+    (
+        "oblique bore",
+        "axial",
+        Unsupported(
+            "Rust oblique bore drawings currently support sections of one solid or separated scenes",
+        ),
+    ),
+    (
+        "oblique bore",
+        "axial reversed",
+        Unsupported(
+            "Rust oblique bore drawings currently support sections of one solid or separated scenes",
+        ),
+    ),
+    (
+        "oblique bore",
+        "axial hidden",
+        Unsupported(
+            "Rust oblique bore drawings currently support sections of one solid or separated scenes",
+        ),
+    ),
+    (
+        "oblique bore",
+        "side",
+        Unsupported(
+            "Rust oblique bore drawings currently support sections of one solid or separated scenes",
+        ),
+    ),
+    (
+        "oblique bore",
+        "side hidden",
+        Unsupported(
+            "Rust oblique bore drawings currently support sections of one solid or separated scenes",
+        ),
+    ),
+    (
+        "oblique bore",
+        "oblique",
+        Unsupported(
+            "Rust oblique bore drawings currently support sections of one solid or separated scenes",
+        ),
+    ),
+    (
+        "oblique bore",
+        "oblique hidden",
+        Unsupported(
+            "Rust oblique bore drawings currently support sections of one solid or separated scenes",
+        ),
+    ),
+    (
+        "oblique bore",
+        "axial section",
+        Unsupported("Rust retained oblique bore sections require a view along the bore axis"),
+    ),
+    ("oblique bore", "axial section-only", Drawn),
+    (
+        "oblique bore",
+        "axial finite depth",
+        Unsupported("Rust retained oblique bore sections require a view along the bore axis"),
+    ),
+    (
+        "oblique bore",
+        "side section",
+        Unsupported("Rust retained oblique bore sections require a view along the bore axis"),
+    ),
+    ("oblique bore", "side section-only", Drawn),
+    (
+        "oblique bore",
+        "side finite depth",
+        Unsupported("Rust retained oblique bore sections require a view along the bore axis"),
+    ),
+    (
+        "oblique bore",
+        "side lateral window",
+        Unsupported("Rust retained oblique bore sections require a view along the bore axis"),
+    ),
+    (
+        "oblique bore",
+        "oblique section",
+        Unsupported(
+            "Rust retained oblique bore sections require the retained stock behind the cut face",
+        ),
+    ),
+    ("oblique bore", "oblique section-only", Drawn),
+    (
+        "oblique bore",
+        "axial detail",
+        Unsupported(
+            "Rust oblique bore drawings currently support sections of one solid or separated scenes",
+        ),
+    ),
+    (
+        "oblique bore",
+        "side detail",
+        Unsupported(
+            "Rust oblique bore drawings currently support sections of one solid or separated scenes",
+        ),
+    ),
     ("cylinder", "axial", Drawn),
     ("cylinder", "axial reversed", Drawn),
     ("cylinder", "axial hidden", Drawn),
@@ -2217,9 +2315,28 @@ pub fn families() -> Vec<(&'static str, Result<Solid, GeometryError>)> {
         policy,
     )
     .unwrap();
+    // A 0.5 mm bore along the main diagonal of a 10 mm cube (CAD-354).
+    let oblique = {
+        let (sx, ty) = (0.5_f64.sqrt(), (1_f64 / 6.).sqrt());
+        Solid::cylinder(
+            PlaneFrame {
+                origin: [1. / 3. - 3_f64.sqrt().recip(); 3],
+                u: [sx, -sx, 0.],
+                v: [ty, ty, -2. * ty],
+            },
+            0.5,
+            20.,
+            policy,
+        )
+        .and_then(|tool| {
+            Solid::box_solid([10.; 3], policy)?.boolean(&tool, BooleanOperation::Subtract, policy)
+        })
+        .map(|cut| cut.expect("material remains"))
+    };
     vec![
         ("box", Ok(boxed)),
         ("bored box", Ok(bored)),
+        ("oblique bore", oblique),
         ("cylinder", Ok(cylinder)),
         (
             "annulus",

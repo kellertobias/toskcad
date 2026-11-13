@@ -40,19 +40,38 @@ pub fn assert_matches_native_with(
             Solid::read_step(&path, solid.geometry_policy()).unwrap()
         })
         .collect();
-    assert!(native.iter().all(|solid| !solid.uses_rust_geometry()));
-    let native_solids: Vec<_> = native.iter().collect();
+    let native: Vec<_> = native.iter().collect();
+    assert_matches_reference(&rust, &native, options, references, native_to_rust, label);
+}
+
+/// Compare Rust vectors with the drawing of independently built native
+/// solids, with the same rules as `assert_matches_native_with`.
+pub fn assert_matches_reference(
+    rust: &[multicad_kernel::ProjectedVector],
+    native_solids: &[&Solid],
+    options: DrawingProjection,
+    references: &[DrawingProjection],
+    native_to_rust: bool,
+    label: &str,
+) {
+    let project = |solids: &[&Solid], options| {
+        let inputs: Vec<_> = solids
+            .iter()
+            .map(|&solid| DrawingSolid { solid, hatch: None })
+            .collect();
+        project_drawing(&inputs, options).unwrap()
+    };
+    assert!(
+        native_solids
+            .iter()
+            .all(|solid| !solid.uses_rust_geometry())
+    );
     let extra: Vec<_> = references
         .iter()
-        .flat_map(|&reference| {
-            let inputs: Vec<_> = native_solids
-                .iter()
-                .map(|&solid| DrawingSolid { solid, hatch: None })
-                .collect();
-            project_drawing(&inputs, reference).unwrap()
-        })
+        .flat_map(|&reference| project(native_solids, reference))
         .collect();
-    let native = project(&native_solids);
+    let native = project(native_solids, options);
+    let rust = rust.to_vec();
     let mut worst: f64 = 0.;
     let directions = [("Rust", &rust, &native), ("OpenCascade", &native, &rust)];
     for (from_label, from, to) in directions.into_iter().take(1 + usize::from(native_to_rust)) {

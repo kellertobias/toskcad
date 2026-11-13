@@ -24,6 +24,18 @@ struct Source {
     frames: Vec<(AnchoredFrame, ReferenceFrame)>,
 }
 
+/// World-space stock box `origin + Σ size[i] * axes[i]` and the finite tool
+/// cylinder: base center, unit axis, radius and height.
+pub(crate) struct DrawingBoxAndTool {
+    pub(crate) origin: [f64; 3],
+    pub(crate) axes: [[f64; 3]; 3],
+    pub(crate) size: [f64; 3],
+    pub(crate) base: [f64; 3],
+    pub(crate) axis: [f64; 3],
+    pub(crate) radius: f64,
+    pub(crate) height: f64,
+}
+
 pub(crate) struct ObliqueBoreBody {
     pub(super) geometry: ObliqueBore,
     pub(super) feature: EntityId,
@@ -337,6 +349,27 @@ impl Solid {
 }
 
 impl ObliqueBoreBody {
+    /// The stock box and the finite tool cylinder in world coordinates, for
+    /// exact drawing sections. (CAD-346 drawing access.)
+    pub(crate) fn drawing_box_and_tool(&self, frame: PlaneFrame) -> DrawingBoxAndTool {
+        let normal = frame.normal();
+        let axes = [frame.u, frame.v, normal];
+        let vector = |p: [f64; 3]| -> [f64; 3] {
+            std::array::from_fn(|i| axes.iter().zip(p).map(|(axis, v)| axis[i] * v).sum())
+        };
+        let tool = self.geometry.tool();
+        let base = vector(tool.base_mm);
+        DrawingBoxAndTool {
+            origin: frame.origin,
+            axes,
+            size: self.geometry.size_mm(),
+            base: std::array::from_fn(|i| frame.origin[i] + base[i]),
+            axis: vector(tool.axes[2]),
+            radius: tool.radius_mm,
+            height: tool.height_mm,
+        }
+    }
+
     pub(super) fn bounds(&self, frame: PlaneFrame) -> Bounds {
         let normal = frame.normal();
         let ranges: [[f64; 2]; 3] = std::array::from_fn(|i| {

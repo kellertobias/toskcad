@@ -137,6 +137,7 @@ fn single_body_family(solid: &Solid) -> bool {
         || panel::contains_spline_sweep(solid)
         || solid.spur_gear_body().is_some()
         || solid.internal_ring_body().is_some()
+        || solid.oblique_bore_body().is_some()
 }
 
 /// A scene with a single-body family draws as the union of its exact member
@@ -297,6 +298,16 @@ pub fn project_drawing(
         if let Some(projection) = project_separated(solids, options) {
             return projection;
         }
+        if solids
+            .iter()
+            .any(|input| input.solid.oblique_bore_body().is_some())
+            && (solids.len() > 1 || options.section_offset_mm.is_none())
+        {
+            return Err(err(
+                GeometryErrorKind::Unsupported,
+                "Rust oblique bore drawings currently support sections of one solid or separated scenes",
+            ));
+        }
         if let [input] = solids
             && let Some((sphere, frame)) = input.solid.sphere_body()
             && (options.section_offset_mm.is_none()
@@ -363,6 +374,12 @@ pub fn project_drawing(
         if let Some(depth) = options.section_offset_mm {
             if let [input] = solids
                 && let Some(projection) = panel::section_straight_gear(input, options, depth)
+            {
+                return projection;
+            }
+            if let [input] = solids
+                && let Some(projection) =
+                    section::oblique::project_oblique_bore(input, options, depth)
             {
                 return projection;
             }

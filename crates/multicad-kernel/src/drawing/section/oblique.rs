@@ -33,6 +33,8 @@ pub(crate) struct Bore {
 pub(crate) struct Section {
     pub(crate) curves: Vec<Curve>,
     pub(crate) hatch: Vec<[P2; 2]>,
+    /// The section polygon of the stock box before bores are removed.
+    pub(crate) polygon: Vec<P2>,
 }
 
 fn dot3(a: P3, b: P3) -> f64 {
@@ -78,6 +80,27 @@ impl Region {
         let y = (d[0] * e.v[0] + d[1] * e.v[1]) / e.minor;
         let axial = self.station + self.reach * x;
         x.hypot(y) > 1. + tolerance || axial < self.low - tolerance || axial > self.high + tolerance
+    }
+}
+
+/// A bore's void in the section plane: a trimmed ellipse where the plane
+/// crosses the axis, or the rectangle between the two generator lines and
+/// the cap lines where the plane runs along it.
+enum Void {
+    Ellipse(Region),
+    Strip([P2; 4]),
+}
+
+impl Void {
+    fn outside(&self, point: P2, tolerance: f64) -> bool {
+        match self {
+            Self::Ellipse(region) => region.outside(point, tolerance),
+            Self::Strip(corners) => (0..4).any(|i| {
+                let [a, b] = [corners[i], corners[(i + 1) % 4]];
+                (b[0] - a[0]) * (point[1] - a[1]) - (b[1] - a[1]) * (point[0] - a[0])
+                    < -tolerance * (b[0] - a[0]).hypot(b[1] - a[1])
+            }),
+        }
     }
 }
 
@@ -232,14 +255,38 @@ fn region(
     plane: P3,
     origin: P3,
     tolerance: f64,
-) -> Result<Region, GeometryError> {
+) -> Result<Option<Void>, GeometryError> {
     let w = bore.axis;
     let along = dot3(w, axes[2]);
     if along.abs() <= 1e-9 {
-        return Err(err(
-            GeometryErrorKind::Unsupported,
-            "Rust oblique sections do not cut a bore along its axis",
-        ));
+        // The plane runs along the axis at distance `offset`: the void is the
+        // strip between two generators, trimmed by the cap lines.
+        let offset = dot3(sub3(bore.base, plane), axes[2]);
+        let gap = bore.radius - offset.abs();
+        if gap.abs() <= tolerance {
+            return Err(unresolved());
+        }
+        if gap < 0. {
+            return Ok(None);
+        }
+        let half = (bore.radius * bore.radius - offset * offset).sqrt();
+        let foot: P3 = std::array::from_fn(|i| bore.base[i] - offset * axes[2][i]);
+        let start = [
+            dot3(sub3(foot, origin), axes[0]),
+            dot3(sub3(foot, origin), axes[1]),
+        ];
+        let d = [dot3(w, axes[0]), dot3(w, axes[1])];
+        let length = d[0].hypot(d[1]);
+        let d = [d[0] / length, d[1] / length];
+        let side = [-d[1] * half, d[0] * half];
+        let end = [start[0] + d[0] * bore.height, start[1] + d[1] * bore.height];
+        // Counterclockwise: start - side, end - side, end + side, start + side.
+        return Ok(Some(Void::Strip([
+            [start[0] - side[0], start[1] - side[1]],
+            [end[0] - side[0], end[1] - side[1]],
+            [end[0] + side[0], end[1] + side[1]],
+            [start[0] + side[0], start[1] + side[1]],
+        ])));
     }
     let station = dot3(sub3(plane, bore.base), axes[2]) / along;
     let center3: P3 = std::array::from_fn(|i| bore.base[i] + station * w[i]);
@@ -256,7 +303,7 @@ fn region(
         (u, [-u[1], u[0]])
     };
     let major = bore.radius / along.abs();
-    Ok(Region {
+    Ok(Some(Void::Ellipse(Region {
         ellipse: Ellipse {
             center,
             u,
@@ -269,7 +316,7 @@ fn region(
         reach: length * major,
         low: 0.,
         high: bore.height,
-    })
+    })))
 }
 
 /// Section the stock minus `bores` in the plane at `depth` along the view
@@ -298,10 +345,13 @@ pub(crate) fn section(
     if outline.len() < 3 {
         return Ok(None);
     }
-    let regions = bores
+    let voids: Vec<Void> = bores
         .iter()
         .map(|bore| region(bore, axes, plane, origin, tolerance))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect();
     let count = outline.len();
     // Inward half-planes of the polygon: `normal · point >= offset`.
     let sides: Vec<(P2, f64, P2, P2)> = (0..count)
@@ -326,10 +376,10 @@ pub(crate) fn section(
         })
     };
     let outside_bores = |point: P2, skip: Option<usize>| {
-        regions
+        voids
             .iter()
             .enumerate()
-            .all(|(i, region)| Some(i) == skip || region.outside(point, tolerance))
+            .all(|(i, void)| Some(i) == skip || void.outside(point, tolerance))
     };
 
     let mut curves = Vec::new();
@@ -342,7 +392,50 @@ pub(crate) fn section(
         let d = [b[0] - a[0], b[1] - a[1]];
         ((point[0] - a[0]) * d[0] + (point[1] - a[1]) * d[1]) / (d[0] * d[0] + d[1] * d[1])
     };
-    for (index, region) in regions.iter().enumerate() {
+    for (index, void) in voids.iter().enumerate() {
+        let region = match void {
+            Void::Ellipse(region) => region,
+            Void::Strip(corners) => {
+                // Strip sides are exact lines; keep the parts strictly inside
+                // the polygon and outside every other bore.
+                for i in 0..4 {
+                    let [a, b] = [corners[i], corners[(i + 1) % 4]];
+                    let [a, b] = [a, b].map(|p| snap(&mut anchors, p, tolerance));
+                    let mut stops = vec![(0., a), (1., b)];
+                    for (side, &(normal, offset, ..)) in sides.iter().enumerate() {
+                        let [pa, pb] = [a, b].map(|p| normal[0] * p[0] + normal[1] * p[1] - offset);
+                        if (pa < -tolerance && pb > tolerance)
+                            || (pa > tolerance && pb < -tolerance)
+                        {
+                            let t = pa / (pa - pb);
+                            let point = snap(
+                                &mut anchors,
+                                [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t],
+                                tolerance,
+                            );
+                            let s = along_side(side, point);
+                            if (-tolerance..=1. + tolerance).contains(&s) {
+                                junctions[side].push((s, point));
+                            }
+                            stops.push((t, point));
+                        }
+                    }
+                    stops.sort_by(|x, y| x.0.total_cmp(&y.0));
+                    for pair in stops.windows(2) {
+                        let [p, q] = [pair[0].1, pair[1].1];
+                        let middle = [(p[0] + q[0]) / 2., (p[1] + q[1]) / 2.];
+                        if (q[0] - p[0]).hypot(q[1] - p[1]) > tolerance
+                            && strictly_inside(middle)
+                            && outside_bores(middle, Some(index))
+                        {
+                            curves.push(Curve::Line([p, q]));
+                            hatch.push([p, q]);
+                        }
+                    }
+                }
+                continue;
+            }
+        };
         let e = &region.ellipse;
         // Arc breakpoints: the slab limits and every polygon side.
         let mut breaks = Vec::new();
@@ -494,7 +587,11 @@ pub(crate) fn section(
     if curves.is_empty() {
         return Ok(None);
     }
-    Ok(Some(Section { curves, hatch }))
+    Ok(Some(Section {
+        curves,
+        hatch,
+        polygon: outline,
+    }))
 }
 
 /// Publish an exact section as Section vectors with its hatch.
@@ -532,4 +629,114 @@ pub(crate) fn publish(
         )?);
     }
     Ok(vectors)
+}
+
+/// Sections of the oblique-bore solid: a stock box minus one finite oblique
+/// cylinder. Section-only cuts take any transversal plane. Retained and
+/// finite-depth cuts are admitted when the view runs along the bore axis and
+/// every retained stock corner projects inside the section polygon: then all
+/// retained stock lies behind the cut face except the bore, which is seen
+/// along its axis, so every visible edge behind the plane coincides with the
+/// section boundary and is published there.
+pub(crate) fn project_oblique_bore(
+    input: &DrawingSolid<'_>,
+    options: DrawingProjection,
+    depth: f64,
+) -> Option<Result<Vec<ProjectedVector>, GeometryError>> {
+    let (body, frame) = input.solid.oblique_bore_body()?;
+    let tolerance = input.solid.geometry_policy().linear_tolerance_mm;
+    let geometry = body.drawing_box_and_tool(frame);
+    let (origin, axes, size) = (geometry.origin, geometry.axes, geometry.size);
+    let (base, axis, radius, height) = (
+        geometry.base,
+        geometry.axis,
+        geometry.radius,
+        geometry.height,
+    );
+    let stock = Stock { origin, axes, size };
+    let bore = Bore {
+        base,
+        axis,
+        radius,
+        height,
+    };
+    Some((|| {
+        if options.detail.is_some() {
+            return Err(err(
+                GeometryErrorKind::Unsupported,
+                "Rust oblique bore sections do not support a detail crop",
+            ));
+        }
+        let Some(section) = section(
+            &stock,
+            std::slice::from_ref(&bore),
+            options,
+            depth,
+            tolerance,
+        )?
+        else {
+            return Ok(Vec::new());
+        };
+        let view = planar::view_axes(options.frame);
+        let retained_boundary = if options.section_only {
+            false
+        } else {
+            let along = dot3(axis, view[2]);
+            if (1. - along.abs()) > 1e-12 {
+                return Err(err(
+                    GeometryErrorKind::Unsupported,
+                    "Rust retained oblique bore sections require a view along the bore axis",
+                ));
+            }
+            // Corners behind the plane, within any finite depth, must project
+            // inside the convex section polygon.
+            let count = section.polygon.len();
+            let far = options.section_depth_mm.map(|range| depth - range);
+            for bits in 0..8 {
+                let corner: P3 = std::array::from_fn(|i| {
+                    origin[i]
+                        + (0..3)
+                            .map(|k| {
+                                f64::from(u8::from(bits & (1 << k) != 0)) * size[k] * axes[k][i]
+                            })
+                            .sum::<f64>()
+                });
+                let offset = sub3(corner, options.frame.origin);
+                let level = dot3(offset, view[2]);
+                if level > depth + tolerance || far.is_some_and(|far| level < far - tolerance) {
+                    continue;
+                }
+                let point = [dot3(offset, view[0]), dot3(offset, view[1])];
+                let inside = (0..count).all(|i| {
+                    let [a, b] = [section.polygon[i], section.polygon[(i + 1) % count]];
+                    (b[0] - a[0]) * (point[1] - a[1]) - (b[1] - a[1]) * (point[0] - a[0])
+                        >= -tolerance
+                });
+                if !inside {
+                    return Err(err(
+                        GeometryErrorKind::Unsupported,
+                        "Rust retained oblique bore sections require the retained stock behind the cut face",
+                    ));
+                }
+            }
+            true
+        };
+        let curves = section.curves.clone();
+        let mut vectors = publish(section, input.hatch, options, 0, tolerance)?;
+        if retained_boundary {
+            let mut remaining = options;
+            remaining.maximum_curves = remaining
+                .maximum_curves
+                .saturating_sub(vectors.len() as u32);
+            let edges = curves
+                .into_iter()
+                .map(|curve| CurvedEdge {
+                    hidden: false,
+                    curve,
+                })
+                .collect();
+            vectors.extend(curved::publish(edges, remaining, 0)?);
+        }
+        Ok(vectors)
+    })())
 }
