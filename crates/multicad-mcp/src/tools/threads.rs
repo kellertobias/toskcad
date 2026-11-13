@@ -704,7 +704,7 @@ pub(super) fn thread_profiles(_: &dyn Host, call: &Request, _: NoArgs) -> ToolRe
             "representations": ["modeled", "cosmetic_envelope"],
             "cosmetic_scope": "new_external only; receiving cuts require modeled geometry",
             "end_treatments": true,
-            "end_treatments_scope": "Modeled ISO metric external entry chamfers and terminal reliefs; combined internal 6H chamfer45 plus cylindrical terminal relief supports the exact full-height cylinder stock and flat single-start profile; small entry, partial stock and other unresolved source domains are refused. STEP for this combined internal provider is unsupported",
+            "end_treatments_scope": "Modeled ISO metric external entry chamfers and terminal reliefs; combined internal nominal basic or 6H chamfer45 plus cylindrical terminal relief supports the exact full-height cylinder stock and flat single-start profile; small entry, partial stock and other unresolved source domains are refused. STEP for this combined internal provider is unsupported",
             "radial_taper": false,
             "step": true,
             "step_scope": "Standalone straight modeled shafts with one to eight starts, flat or circular roots, and partial, full or overrun cap-entry external cuts and blind or through internal threads in round stock, within the bounded spline budget; combined internal entry plus terminal treatments are excluded from STEP",
@@ -712,7 +712,7 @@ pub(super) fn thread_profiles(_: &dyn Host, call: &Request, _: NoArgs) -> ToolRe
             "reference_data_includes_other_backends": true
         });
         report["active_geometry_support"]["combined_internal_treatments"] = json!({
-            "families":["iso_metric"],"fits":["metric_6h_internal"],"starts":[1],"representation":"modeled",
+            "families":["iso_metric"],"fits":["nominal_basic","metric_6h_internal"],"starts":[1],"representation":"modeled",
             "receiving_stock":"original full-height cylinder with the exact resolved source frame",
             "profile":"actual flat bands; no rounded-root substitution",
             "start":"positive chamfer45","end":"positive cylindrical_relief",

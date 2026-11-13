@@ -8,7 +8,7 @@ use crate::{ModelError, error};
 use multicad_core::{
     document::EntityId,
     model::{
-        ResolvedThread, ThreadDefinition, ThreadFamily, ThreadFit, ThreadHand, ThreadMode,
+        ResolvedThread, ThreadDefinition, ThreadFamily, ThreadHand, ThreadMode,
         ThreadRepresentation,
     },
     parameters::EvaluatedParameters,
@@ -250,11 +250,6 @@ pub(crate) fn build_rust(
             && ends.start_chamfer_radial_depth_mm > 0.
             && ends.end_relief_length_mm > 0.
         {
-            if source.parameters.fit != ThreadFit::Metric6HInternal {
-                return Err(fail(
-                    "Combined internal entry and terminal relief is currently qualified for 6H metric threads only; nominal basic meshing is not yet supported",
-                ));
-            }
             let target = receiving_target(feature, source, solids)?
                 .ok_or_else(|| fail("Combined internal treatments have no target predecessor"))?;
             return internal_treatments::build(feature, &thread, target, policy, interrupt);

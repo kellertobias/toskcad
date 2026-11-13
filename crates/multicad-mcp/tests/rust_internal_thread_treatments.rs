@@ -48,7 +48,10 @@ fn ends(c: f64, w: f64) -> Value {
 }
 #[test]
 fn normal_mcp_combined_internal_treatments_preview_edit_reopen_and_refuse_step_atomically() {
-    for hand in ["right", "left"] {
+    for (fit, hand) in ["nominal_basic", "metric_6h_internal"]
+        .into_iter()
+        .flat_map(|fit| ["right", "left"].map(|hand| (fit, hand)))
+    {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("combined.tcd");
         let mut source =
@@ -80,10 +83,13 @@ fn normal_mcp_combined_internal_treatments_preview_edit_reopen_and_refuse_step_a
         assert_eq!(catalog["end_treatments"]["standalone_thread_only"], false);
         let scope = &catalog["active_geometry_support"]["combined_internal_treatments"];
         assert_eq!(scope["starts"], json!([1]));
-        assert_eq!(scope["fits"], json!(["metric_6h_internal"]));
+        assert_eq!(
+            scope["fits"],
+            json!(["nominal_basic", "metric_6h_internal"])
+        );
         assert_eq!(scope["step"], false);
         assert_eq!(scope["manufacturing_mesh"], true);
-        let args = json!({"expected_revision":0,"name":"M3 combined internal","mode":"cut_internal","target_part":stock.body,"family":"iso_metric","fit":"metric_6h_internal","major_diameter":mm(3.),"pitch":mm(0.5),"length":mm(4.),"minimum_wall":mm(0.5),"hand":hand,"end_treatments":ends(0.5,0.5)});
+        let args = json!({"expected_revision":0,"name":"M3 combined internal","mode":"cut_internal","target_part":stock.body,"family":"iso_metric","fit":fit,"major_diameter":mm(3.),"pitch":mm(0.5),"length":mm(4.),"minimum_wall":mm(0.5),"hand":hand,"end_treatments":ends(0.5,0.5)});
         assert_eq!(
             dispatch(&host, &call(true), "set_thread", args.clone())
                 .unwrap_err()
