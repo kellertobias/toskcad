@@ -3,7 +3,9 @@
 use super::*;
 type BranchResult<T> = std::result::Result<T, PhillipsReadError>;
 mod functional;
+mod lifts;
 mod matrix;
+pub use lifts::{FiniteLift, FiniteLifts, LiftKind, LiftOptions};
 mod section;
 use supports::chart::Chart;
 const WORK: usize = 16_000_000;

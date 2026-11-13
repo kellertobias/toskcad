@@ -8,6 +8,8 @@ mod endpoints;
 pub use analytic::{AnalyticSupportBounds, AnalyticSupportOptions};
 pub use branches::{
     EdgeSection as IntersectionSection, EdgeTube as IntersectionEdgeTube,
+    FiniteLift as AnalyticEdgeLift, FiniteLifts as AnalyticEdgeLifts,
+    LiftKind as AnalyticEdgeLiftKind, LiftOptions as AnalyticEdgeLiftOptions,
     Options as IntersectionTubeOptions, Tubes as IntersectionTubes,
 };
 mod incidence;

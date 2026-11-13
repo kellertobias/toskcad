@@ -15,6 +15,7 @@ mod geometry;
 mod graph;
 mod physical;
 pub use physical::{
+    AnalyticEdgeLift, AnalyticEdgeLiftKind, AnalyticEdgeLiftOptions, AnalyticEdgeLifts,
     AnalyticSupportBounds as PhillipsAnalyticSupportBounds,
     AnalyticSupportOptions as PhillipsAnalyticSupportOptions, Axis as ParsedPhillipsAxis,
     Boundary as ParsedPhillipsBoundary, CubicSupportBounds as PhillipsCubicSupportBounds,

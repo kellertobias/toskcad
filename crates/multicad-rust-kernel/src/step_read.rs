@@ -45,6 +45,10 @@ pub use normal_relief::{normal_relief_import_matches, verify_normal_relief};
 mod part21;
 mod phillips_cutter;
 pub use phillips_cutter::{
+    AnalyticEdgeLift as PhillipsAnalyticEdgeLift,
+    AnalyticEdgeLiftKind as PhillipsAnalyticEdgeLiftKind,
+    AnalyticEdgeLiftOptions as PhillipsAnalyticEdgeLiftOptions,
+    AnalyticEdgeLifts as PhillipsAnalyticEdgeLifts,
     IntersectionEdgeTube as PhillipsIntersectionEdgeTube,
     IntersectionSection as PhillipsIntersectionSection,
     IntersectionTubeOptions as PhillipsIntersectionTubeOptions,
