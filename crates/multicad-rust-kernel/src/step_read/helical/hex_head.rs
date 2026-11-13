@@ -298,12 +298,13 @@ mod tests {
         )
         .unwrap();
         let encoded = write(&authored).unwrap();
-        assert!(!supports_helical_screw(&partial, origin, 1e-7));
-        assert_eq!(write(&partial), Err(StepError::Unsupported));
-        assert_eq!(
-            verify_helical_screw(&encoded, &partial, origin, u, v, 1e-7),
-            Err(ReadError::Unsupported)
+        assert!(supports_helical_screw(&partial, origin, 1e-7));
+        let text = write_helical_screw(&partial, origin, u, v, 1e-7).unwrap();
+        assert!(
+            crate::step_read::verify_helical_screw(&text, &partial, origin, u, v, 1e-7).is_ok()
         );
+        assert!(write(&partial).is_ok());
+        assert!(verify_helical_screw(&encoded, &partial, origin, u, v, 1e-7).is_err());
         let thin_seat = Screw::new(
             *authored.thread(),
             ScrewSpec {

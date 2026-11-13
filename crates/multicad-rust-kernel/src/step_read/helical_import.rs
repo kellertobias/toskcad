@@ -100,7 +100,11 @@ pub(super) fn read_member(
     let tangent_external = external && shoulder_bounds == 1;
     let external_shoulders = if tangent_external { starts as usize } else { 1 };
     let headed = profiled || (!external && matches!(faces.len() - count, 9 | 11 | 13));
-    let shank = !profiled && faces.len() - count == 13;
+    let hex_shank = !profiled
+        && tail == 11
+        && entry_bounds == 1
+        && shell.simple(face(shell, faces[count + 2])?.0)?.name == "CYLINDRICAL_SURFACE";
+    let shank = !profiled && (tail == 13 || hex_shank);
     let is_receiver = !external && !is_end_relief && faces.len() - count == 4;
     let is_nut = !external && faces.len() - count == 8;
     let mut grids = Vec::with_capacity(4);
@@ -318,12 +322,19 @@ pub(super) fn read_member(
         None
     };
     let screw = if headed && !profiled {
-        Some(if faces.len() - count == 9 {
+        Some(if hex_shank || faces.len() - count == 9 {
+            let length = if hex_shank {
+                headed::shank_length(shell, faces[count + 3], [origin, u, v])?
+            } else {
+                0.
+            };
+            let start = count + 2 + 2 * usize::from(hex_shank);
             headed::hex(
                 shell,
-                faces[count + 2..].try_into().expect("seven hex head faces"),
+                faces[start..].try_into().expect("seven hex head faces"),
                 &thread,
                 [origin, u, v],
+                length,
             )?
         } else {
             let length = if shank {

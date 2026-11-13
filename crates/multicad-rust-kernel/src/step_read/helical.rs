@@ -206,6 +206,11 @@ pub(super) fn verify_member(
                 Closure::SocketHead(head) => {
                     head.radius_mm.max(head.height_mm + head.shank_length_mm)
                 }
+                Closure::HexShankHead {
+                    across_flats_mm,
+                    height_mm,
+                    shank_length_mm,
+                } => across_flats_mm.max(height_mm + shank_length_mm),
                 _ => 0.,
             }),
     };
@@ -501,15 +506,43 @@ pub(super) fn verify_member(
         Closure::HexHead {
             across_flats_mm,
             height_mm,
-        } => hex_head::verify(
-            shell,
-            &faces[6..],
-            shoulder.ok_or(ReadError::Invalid)?,
-            caps[0],
-            [u, normal],
-            (proof, [across_flats_mm, height_mm]),
-            world,
-        )?,
+        }
+        | Closure::HexShankHead {
+            across_flats_mm,
+            height_mm,
+            ..
+        } => {
+            let (rim, seat, volume, offset, length) = if let Some(length) = shank_length {
+                let (rim, seat, volume) = tangent_shank::verify(
+                    proof,
+                    shell,
+                    [faces[count + 2], faces[count + 3]],
+                    tangent.ok_or(ReadError::Invalid)?,
+                    thread,
+                    length,
+                    [origin, u, v],
+                )?;
+                (rim, seat, volume, count + 4, length)
+            } else {
+                (
+                    shoulder.ok_or(ReadError::Invalid)?,
+                    caps[0],
+                    0.,
+                    count + 2,
+                    0.,
+                )
+            };
+            let head_volume = hex_head::verify(
+                shell,
+                &faces[offset..],
+                rim,
+                seat,
+                [u, normal],
+                (proof, [across_flats_mm, height_mm]),
+                |point, z| world(point, z - length),
+            )?;
+            volume + head_volume
+        }
         Closure::SocketHead(head) => {
             let (rim, seat, shank_volume, offset) = if let Some(length) = shank_length {
                 let joint = tangent.ok_or(ReadError::Invalid)?;

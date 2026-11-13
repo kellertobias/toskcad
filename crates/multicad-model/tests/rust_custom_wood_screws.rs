@@ -109,29 +109,18 @@ fn custom_authored_wood_threads_keep_their_exact_start_frame_and_physical_geomet
             .manufacturing_mesh_with_receipt(Default::default())
             .unwrap();
         assert_eq!(mesh.edge_pairs as usize * 2, mesh.mesh.indices.len());
-        if plain == 0. {
-            solid.write_step(&path).unwrap();
-            let text = std::fs::read_to_string(&path).unwrap();
-            let (physical, _) =
-                multicad_kernel::rust_kernel::step_read::read_import_solid(&text, 1e-7).unwrap();
-            assert_eq!(physical.solid_count, 1);
-            assert!((physical.volume_mm3 - expected).abs() < expected * 1e-8);
-            let decoded =
-                Solid::import_rust_step(&text, EntityId::new(), GeometryPolicy::default()).unwrap();
-            let mesh = decoded
-                .manufacturing_mesh_with_receipt(Default::default())
-                .unwrap();
-            assert_eq!(mesh.edge_pairs as usize * 2, mesh.mesh.indices.len());
-        } else {
-            // The existing flat-hex head/shank STEP provider is still absent.
-            // Preserve that explicit refusal rather than losing the plain zone.
-            std::fs::write(&path, b"previous output").unwrap();
-            assert_eq!(
-                solid.write_step(&path).unwrap_err().kind,
-                multicad_kernel::GeometryErrorKind::Unsupported
-            );
-            assert_eq!(std::fs::read(&path).unwrap(), b"previous output");
-        }
+        solid.write_step(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let (physical, _) =
+            multicad_kernel::rust_kernel::step_read::read_import_solid(&text, 1e-7).unwrap();
+        assert_eq!(physical.solid_count, 1);
+        assert!((physical.volume_mm3 - expected).abs() < expected * 1e-8);
+        let decoded =
+            Solid::import_rust_step(&text, EntityId::new(), GeometryPolicy::default()).unwrap();
+        let mesh = decoded
+            .manufacturing_mesh_with_receipt(Default::default())
+            .unwrap();
+        assert_eq!(mesh.edge_pairs as usize * 2, mesh.mesh.indices.len());
         let mut saved = Vec::new();
         project_file::write(
             &ProjectFile::new(session.document().clone()).unwrap(),

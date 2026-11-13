@@ -1056,7 +1056,9 @@ impl HelicalBody {
             )
             || matches!(&self.form, HelicalForm::Screw(screw)
             if match screw.spec().head {
-                multicad_rust_kernel::headed_screw::ScrewHead::ExternalHex { .. } => screw.spec().shank_length_mm == 0.,
+                multicad_rust_kernel::headed_screw::ScrewHead::ExternalHex { .. } =>
+                    screw.spec().shank_length_mm == 0.
+                        || screw.spec().shank_radius_mm == screw.thread().spec().major_radius_mm,
                 multicad_rust_kernel::headed_screw::ScrewHead::SocketCap { .. } => true,
             })
     }

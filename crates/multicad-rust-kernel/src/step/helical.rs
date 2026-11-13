@@ -48,6 +48,11 @@ pub(crate) enum Closure<'a> {
         across_flats_mm: f64,
         height_mm: f64,
     },
+    HexShankHead {
+        across_flats_mm: f64,
+        height_mm: f64,
+        shank_length_mm: f64,
+    },
     SocketHead(SocketHead),
     Profiled(&'a crate::profiled_screw::Screw),
     HexNut(f64),
@@ -77,12 +82,19 @@ impl Closure<'_> {
     pub(crate) fn screw(screw: &Screw) -> Result<Self, StepError> {
         let spec = screw.spec();
         if spec.shank_length_mm > 0.
-            && (!matches!(spec.head, ScrewHead::SocketCap { .. })
-                || spec.shank_radius_mm != screw.thread().spec().major_radius_mm)
+            && spec.shank_radius_mm != screw.thread().spec().major_radius_mm
         {
             return Err(StepError::Unsupported);
         }
         Ok(match spec.head {
+            ScrewHead::ExternalHex {
+                across_flats_mm,
+                height_mm,
+            } if spec.shank_length_mm > 0. => Self::HexShankHead {
+                across_flats_mm,
+                height_mm,
+                shank_length_mm: spec.shank_length_mm,
+            },
             ScrewHead::ExternalHex {
                 across_flats_mm,
                 height_mm,
@@ -108,7 +120,10 @@ impl Closure<'_> {
     pub(crate) fn is_screw(self) -> bool {
         matches!(
             self,
-            Self::HexHead { .. } | Self::SocketHead(_) | Self::Profiled(_)
+            Self::HexHead { .. }
+                | Self::HexShankHead { .. }
+                | Self::SocketHead(_)
+                | Self::Profiled(_)
         )
     }
 
@@ -120,6 +135,12 @@ impl Closure<'_> {
     }
 
     pub(crate) fn tangent_shank(self) -> Option<f64> {
+        if let Self::HexShankHead {
+            shank_length_mm, ..
+        } = self
+        {
+            return Some(shank_length_mm);
+        }
         if let Self::SocketHead(head) = self
             && head.shank_length_mm > 0.
         {
@@ -166,6 +187,7 @@ impl Closure<'_> {
             }
             Self::Bore(_) | Self::Hollow(_) => bands + 3,
             Self::HexHead { .. } => bands + 9,
+            Self::HexShankHead { .. } => bands + 11,
             Self::HexNut(_) => bands + 8,
             Self::SocketHead(head) => bands + 11 + 2 * usize::from(head.shank_length_mm > 0.),
             Self::Profiled(screw) => {
@@ -194,6 +216,11 @@ impl Closure<'_> {
                 across_flats_mm,
                 height_mm,
             } => (across_flats_mm / 3_f64.sqrt(), height_mm),
+            Self::HexShankHead {
+                across_flats_mm,
+                height_mm,
+                shank_length_mm,
+            } => (across_flats_mm / 3_f64.sqrt(), height_mm + shank_length_mm),
             Self::SocketHead(head) => (head.radius_mm, head.height_mm + head.shank_length_mm),
             Self::Profiled(screw) => (screw.profile().support([1., 0., 0.]), -screw.head_top_z()),
         }
@@ -352,7 +379,8 @@ pub fn supports_profiled_screw_in_frame(
         .is_ok()
 }
 
-/// Whether a fully threaded hex-head or socket-cap screw fits the STEP proof.
+/// Whether a hex-head or socket-cap screw fits the STEP proof. A plain shank
+/// requires its radius to match the retained thread crest radius.
 pub fn supports_helical_screw(screw: &Screw, origin: Point, tolerance_mm: f64) -> bool {
     Closure::screw(screw)
         .and_then(|closure| prepare(screw.thread(), closure, origin, tolerance_mm))
@@ -430,6 +458,36 @@ pub(super) fn encode(
         heights,
         visible_start,
     } = prepare(thread, closure, placement.origin, tolerance_mm)?;
+    // Reject an invalid finite head chart before allocating the thread's
+    // tensor records. Face ordering below remains independent of entity order.
+    let head = match closure {
+        Closure::HexHead {
+            across_flats_mm,
+            height_mm,
+        }
+        | Closure::HexShankHead {
+            across_flats_mm,
+            height_mm,
+            ..
+        } => {
+            let seat = closure.tangent_shank().map(|length| -length).unwrap_or(0.);
+            Some(encode_hex_head_at(
+                file,
+                &placement,
+                across_flats_mm,
+                [seat - height_mm, seat],
+            )?)
+        }
+        Closure::SocketHead(socket) => Some(encode_socket_head(file, &placement, socket)?),
+        Closure::Shaft
+        | Closure::Bore(_)
+        | Closure::BlindBore { .. }
+        | Closure::ExternalStock { .. }
+        | Closure::TerminalRelief { .. }
+        | Closure::Hollow(_)
+        | Closure::Profiled(_)
+        | Closure::HexNut(_) => None,
+    };
     let spec = thread.spec();
     let height = spec.length_mm;
     let [axial_start, axial_end] = [visible_start, axial.poles.len() - 1];
@@ -589,24 +647,6 @@ pub(super) fn encode(
         Some((trim?, outward))
     } else {
         None
-    };
-    let head = match closure {
-        Closure::HexHead {
-            across_flats_mm,
-            height_mm,
-        } => {
-            let trim = encode_hex_head(file, &placement, across_flats_mm, height_mm);
-            Some(trim?)
-        }
-        Closure::SocketHead(socket) => Some(encode_socket_head(file, &placement, socket)?),
-        Closure::Shaft
-        | Closure::Bore(_)
-        | Closure::BlindBore { .. }
-        | Closure::ExternalStock { .. }
-        | Closure::TerminalRelief { .. }
-        | Closure::Hollow(_)
-        | Closure::Profiled(_)
-        | Closure::HexNut(_) => None,
     };
     let hex = if let Closure::HexNut(width) = closure {
         Some(encode_hex_prism(
@@ -778,15 +818,15 @@ pub(super) fn encode(
     Ok(file.solid(&faces))
 }
 
-fn encode_hex_head(
+fn encode_hex_head_at(
     file: &mut StepFile,
     placement: &Placement,
     across_flats_mm: f64,
-    height_mm: f64,
+    ends: [f64; 2],
 ) -> Result<(Entity, Vec<Entity>), StepError> {
     let ([bottom, shoulder], mut faces) =
-        encode_hex_prism(file, placement, across_flats_mm, [-height_mm, 0.], false)?;
-    let center = file.point(placement.point_f64([0.; 2], -height_mm));
+        encode_hex_prism(file, placement, across_flats_mm, ends, false)?;
+    let center = file.point(placement.point_f64([0.; 2], ends[0]));
     let down = placement.normal.map(|n| -n);
     faces.insert(0, file.face(&[bottom], center, down, placement.u));
     Ok((shoulder, faces))
@@ -941,6 +981,8 @@ pub(crate) fn prepare(
             if radius <= tolerance || major - spec.depth_mm - radius <= tolerance)
         || matches!(closure, Closure::HexHead { across_flats_mm, height_mm }
             if across_flats_mm / 2. - major <= tolerance || height_mm <= tolerance)
+        || matches!(closure, Closure::HexShankHead { across_flats_mm, height_mm, shank_length_mm }
+            if across_flats_mm / 2. - major <= tolerance || height_mm <= tolerance || shank_length_mm <= tolerance)
         || matches!(closure, Closure::SocketHead(head) if head.radius_mm - major <= tolerance
             || head.radius_mm - head.across_flats_mm / 3_f64.sqrt() <= tolerance
             || head.depth_mm <= tolerance || head.height_mm - head.depth_mm <= tolerance
@@ -1622,3 +1664,6 @@ mod tests {
 
 #[cfg(test)]
 mod nut_tests;
+
+#[cfg(test)]
+mod hex_shank_tests;

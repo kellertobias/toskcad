@@ -8,6 +8,7 @@ pub(super) fn hex(
     faces: &[u32; 7],
     thread: &Thread,
     [origin, u, v]: [Point; 3],
+    shank_length_mm: f64,
 ) -> Result<Screw> {
     let cap = faces[0];
     let (surface, forward, bounds) = face(shell, cap)?;
@@ -18,7 +19,7 @@ pub(super) fn hex(
     let cap = shell.placement(reference(placement)?)?;
     let chart = Chart::new([origin, u, v])?;
     let local = |point| chart.local(point);
-    let height = -local(cap.origin)[2];
+    let height = -local(cap.origin)[2] - shank_length_mm;
     let edges = helical::ring(shell, bounds[0], true)?;
     require(edges.len() == 6)?;
     let mut half_width = 0_f64;
@@ -34,7 +35,7 @@ pub(super) fn hex(
                 across_flats_mm: 2. * half_width,
                 height_mm: height,
             },
-            shank_length_mm: 0.,
+            shank_length_mm,
             shank_radius_mm: thread.spec().major_radius_mm,
         },
     )
@@ -99,12 +100,6 @@ pub fn helical_screw_import_matches(
     if (la == 0.) != (lb == 0.) || la < 0. || lb < 0. {
         return false;
     }
-    if la > 0.
-        && (!matches!(source.spec().head, ScrewHead::SocketCap { .. })
-            || !matches!(screw.head, ScrewHead::SocketCap { .. }))
-    {
-        return false;
-    }
     let frames = [[origin, u, v], [imported.origin_mm, imported.u, imported.v]];
     if la > 0.
         && (!circles_match(
@@ -147,7 +142,7 @@ pub fn helical_screw_import_matches(
                 across_flats_mm: b,
                 height_mm: hb,
             },
-        ) => ([a, b], [(0., 0.), (-ha, -hb)]),
+        ) => ([a, b], [(-la, -lb), (-la - ha, -lb - hb)]),
         (
             ScrewHead::SocketCap {
                 radius_mm: ra,

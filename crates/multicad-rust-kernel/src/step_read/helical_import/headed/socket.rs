@@ -314,14 +314,16 @@ mod tests {
                                 },
                             )
                             .unwrap();
-                            let wrong = ImportSolid {
-                                profile: ImportProfile::HelicalScrew {
-                                    spec: hex.thread().spec(),
-                                    screw: hex.spec(),
-                                },
-                                ..read.clone()
-                            };
-                            assert!(!helical_screw_import_matches(&wrong, &hex, frame, 1e-7));
+                            // The real decoded socket head cannot match a hex
+                            // head. Do not replace its decoded profile with
+                            // the expected profile before checking equivalence.
+                            assert!(!helical_screw_import_matches(&read, &hex, frame, 1e-7));
+                            assert!(
+                                crate::step_read::verify_helical_screw(
+                                    &text, &hex, frame[0], frame[1], frame[2], 1e-7
+                                )
+                                .is_err()
+                            );
                             let long = Screw::new(
                                 *screw.thread(),
                                 ScrewSpec {
