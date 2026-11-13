@@ -45,11 +45,14 @@ fn profile(fit: ThreadFit, left: bool, starts: u32) -> HelicalThread {
     }
 }
 fn body(profile: HelicalThread, entry: bool, tail: bool) -> Solid {
+    body_radius(profile, entry, tail, Rational::new(5, 2).unwrap())
+}
+fn body_radius(profile: HelicalThread, entry: bool, tail: bool, radius: Rational) -> Solid {
     let zero = Rational::new(0, 1).unwrap();
     let stock = Solid::from_axial_cylinder(
         AxialCylinder::new(
             7,
-            Circle::new([zero; 2], Rational::new(5, 2).unwrap()).unwrap(),
+            Circle::new([zero; 2], radius).unwrap(),
             zero,
             Rational::new(4, 1).unwrap(),
         )
@@ -213,4 +216,35 @@ fn unresolved_nonbinary_limit_remains_atomic_and_is_not_a_geometry_waiver() {
             .unwrap(),
         volume
     );
+}
+
+#[test]
+fn actual_wider_stock_keeps_inner_source_and_passes_literal_manufacturing_embedding() {
+    for (left, starts, posed) in [(false, 1, false), (true, 2, true)] {
+        let p = HelicalThread {
+            depth_mm: 0.25,
+            crest_width_mm: 0.125,
+            ..profile(ThreadFit::NominalBasic, left, starts)
+        };
+        let mut solid = body_radius(p, true, true, Rational::new(8, 1).unwrap());
+        if posed {
+            solid = solid
+                .transformed(RigidTransform {
+                    rotation: [[0.8, -0.36, 0.48], [0.6, 0.48, -0.64], [0., 0.8, 0.6]],
+                    translation_mm: [10., 20., 30.],
+                })
+                .unwrap();
+        }
+        let original = solid.rust_internal_thread_treatment_data().unwrap();
+        let display = solid.mesh(MeshOptions::default()).unwrap();
+        unique(&display);
+        let manufacturing = solid
+            .manufacturing_mesh_with_receipt(MeshOptions::default())
+            .unwrap();
+        assert!(!manufacturing.mesh.indices.is_empty());
+        assert_eq!(
+            solid.rust_internal_thread_treatment_data().unwrap(),
+            original
+        );
+    }
 }

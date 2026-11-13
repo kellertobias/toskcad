@@ -8,6 +8,7 @@ use super::{
     *,
 };
 use std::cmp::Ordering;
+mod radial;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Link {
     from: usize,
@@ -334,8 +335,6 @@ fn assemble(
     options: Tessellation,
     w: &mut Work<'_>,
 ) -> Result<Option<Candidate>, Error> {
-    let body = material.cavity();
-    let radius = material.radius_interval();
     let Prepared { mut shell, caps } = prepared;
     w.charge(1 + shell.mesh.indices.len() / 3)?;
     for (i, triangle) in shell
@@ -351,6 +350,48 @@ fn assemble(
         }
         triangle.swap(1, 2);
     }
+    let baseline = (
+        shell.mesh.vertices.len(),
+        shell.mesh.indices.len(),
+        shell.mesh.face_indices.len(),
+        shell.chord,
+        shell.normal,
+    );
+    let mut strips = 1;
+    loop {
+        match stock_boundary(material, &mut shell, &caps, &trace, options, strips, w)? {
+            radial::Verdict::Done => break,
+            radial::Verdict::Radial if strips < radial::MAX_STRIPS => {
+                w.step()?;
+                shell.mesh.vertices.truncate(baseline.0);
+                shell.mesh.indices.truncate(baseline.1);
+                shell.mesh.face_indices.truncate(baseline.2);
+                shell.chord = baseline.3;
+                shell.normal = baseline.4;
+                strips *= 2;
+            }
+            _ => return Ok(None),
+        }
+    }
+    compact(&mut shell.mesh, w)?;
+    Ok(Some(Candidate {
+        mesh: shell.mesh,
+        source_chord_bound_mm: shell.chord,
+        source_normal_angle_bound_rad: shell.normal,
+        work_used: w.used,
+    }))
+}
+fn stock_boundary(
+    material: &Material,
+    shell: &mut Shell,
+    caps: &[Disk],
+    trace: &Trace,
+    options: Tessellation,
+    strips: usize,
+    w: &mut Work<'_>,
+) -> Result<radial::Verdict, Error> {
+    let body = material.cavity();
+    let radius = material.radius_interval();
     let count = shell.mesh.vertices.len() / 3;
     w.charge(count * 2 + caps.len())?;
     let mut outer = Vec::new();
@@ -375,13 +416,15 @@ fn assemble(
         .map(|part| (part.capacity(), std::mem::size_of::<Link>()));
     storage::bytes(&allocations, 0, 4 * 1024 * 1024)?;
 
-    for disk in caps {
+    let mut spoke =
+        radial::Spokes::new(count, caps.len(), strips, outer.capacity(), &mut errors, w)?;
+    for &disk in caps {
         let [a, b] = [0, 1].map(|i| {
             boundary_point(
                 StockSurface {
                     body,
                     radius,
-                    trace: &trace,
+                    trace,
                 },
                 &disk,
                 i,
@@ -393,23 +436,29 @@ fn assemble(
         });
         let (a, ae) = a?;
         let (b, be) = b?;
-        let field = annulus(body, &disk, radius);
-        if !close::quad(
-            &mut shell,
-            field,
-            [disk.ids[0], disk.ids[1], b, a],
-            [disk.errors[0], disk.errors[1], be, ae],
-            disk.end,
+        match radial::emit(
+            &mut spoke,
+            shell,
+            StockSurface {
+                body,
+                radius,
+                trace,
+            },
+            &disk,
+            ([a, b], [ae, be]),
             options,
             w,
         )? {
-            return Ok(None);
+            radial::Verdict::Done => {}
+            other => return Ok(other),
         }
-        links[disk.end as usize].push(link(&disk, &trace, w)?);
+        w.charge(shell.mesh.vertices.len() / 3 - errors.len())?;
+        errors.resize(shell.mesh.vertices.len() / 3, 0.);
+        links[disk.end as usize].push(link(&disk, trace, w)?);
     }
     let rings = [
-        ring(std::mem::take(&mut links[0]), &outer, &errors, &trace, w)?,
-        ring(std::mem::take(&mut links[1]), &outer, &errors, &trace, w)?,
+        ring(std::mem::take(&mut links[0]), &outer, &errors, trace, w)?,
+        ring(std::mem::take(&mut links[1]), &outer, &errors, trace, w)?,
     ];
     let face = 2
         + 4 * body.thread.spec().starts
@@ -419,23 +468,17 @@ fn assemble(
         StockSurface {
             body,
             radius,
-            trace: &trace,
+            trace,
         },
-        &mut shell,
+        shell,
         &rings,
         face,
         options,
         w,
     )? {
-        return Ok(None);
+        return Ok(radial::Verdict::Refine);
     }
-    compact(&mut shell.mesh, w)?;
-    Ok(Some(Candidate {
-        mesh: shell.mesh,
-        source_chord_bound_mm: shell.chord,
-        source_normal_angle_bound_rad: shell.normal,
-        work_used: w.used,
-    }))
+    Ok(radial::Verdict::Done)
 }
 pub(super) fn tessellate(
     material: &Material,
@@ -1108,8 +1151,7 @@ mod tests {
 #[cfg(test)]
 mod partition_closure_tests {
     use super::*;
-    #[test]
-    fn actual_larger_stock_annulus_refines_after_qualified_inner_sources() {
+    pub(super) fn material(radius: i64) -> Material {
         use crate::{
             Circle, Rational,
             authored_flat_thread::{AuthoredThread, SourceOptions},
@@ -1148,12 +1190,17 @@ mod partition_closure_tests {
         let zero = Rational::new(0, 1).unwrap();
         let stock = AxialCylinder::new(
             7,
-            Circle::new([zero; 2], Rational::new(8, 1).unwrap()).unwrap(),
+            Circle::new([zero; 2], Rational::new(radius, 1).unwrap()).unwrap(),
             zero,
             Rational::new(4, 1).unwrap(),
         )
         .unwrap();
-        let material = Material::new(stock, cavity, 0.5).unwrap();
+        Material::new(stock, cavity, 0.5).unwrap()
+    }
+    #[test]
+    fn actual_larger_stock_annulus_refines_after_qualified_inner_sources() {
+        let material = material(8);
+        let cavity = *material.cavity();
         let options = Tessellation {
             deflection: 0.1,
             angle: 0.3,
@@ -1170,20 +1217,160 @@ mod partition_closure_tests {
         let prepared = close::prepare(shell, &cavity, options, &mut w)
             .unwrap()
             .unwrap();
-        assert!(
-            assemble(&material, prepared, trace, options, &mut w)
-                .unwrap()
-                .is_none(),
-            "outer annulus requires its own full source proof"
-        );
+        let direct = assemble(&material, prepared, trace, options, &mut w)
+            .unwrap()
+            .unwrap();
         let before = material;
-        // This real wider-stock case still exhausts the unchanged aggregate
-        // work budget after refinement; only the closure-refusal path is
-        // qualified here, not successful wider-stock manufacturing.
+        let candidate = material.tessellate_candidate(options, None).unwrap();
+        assert_eq!(direct.mesh, candidate.mesh);
+        assert!(candidate.source_chord_bound_mm <= options.deflection);
+        assert!(candidate.source_normal_angle_bound_rad <= options.angle);
+        assert!(candidate.work_used < 16_000_000);
+
+        assert_eq!(material, before);
+    }
+    #[test]
+    fn local_annulus_retries_cancel_atomically_and_keep_real_limits() {
+        let actual = material(8);
+        let body = actual.cavity();
+        let options = Tessellation {
+            deflection: 0.1,
+            angle: 0.3,
+            triangle_limit: 1_000_000,
+        };
+        let calls = std::cell::Cell::new(0usize);
+        let count = || {
+            calls.set(calls.get() + 1);
+            false
+        };
+        let mut w = Work {
+            remaining: 16_000_000,
+            used: 0,
+            interrupt: Some(&count),
+        };
+        let (shell, trace) = chart::traced_shell(body, options, 1, 64, &mut w)
+            .unwrap()
+            .unwrap();
+        let mut prepared = close::prepare(shell, body, options, &mut w)
+            .unwrap()
+            .unwrap();
+        let before_assembly = calls.get();
         assert!(matches!(
-            material.tessellate_candidate(options, None),
+            stock_boundary(
+                &actual,
+                &mut prepared.shell,
+                &prepared.caps,
+                &trace,
+                options,
+                1,
+                &mut w
+            )
+            .unwrap(),
+            radial::Verdict::Radial
+        ));
+        let after_rejection = calls.get();
+        calls.set(0);
+        let complete = actual.tessellate_candidate(options, Some(&count)).unwrap();
+        let total = calls.get();
+        for stop in [
+            0,
+            before_assembly,
+            after_rejection - 1,
+            after_rejection,
+            after_rejection + 1,
+            total - 1,
+        ] {
+            calls.set(0);
+            let cancel = || {
+                calls.set(calls.get() + 1);
+                calls.get() > stop
+            };
+            assert!(matches!(
+                actual.tessellate_candidate(options, Some(&cancel)),
+                Err(Error::Cancelled)
+            ));
+        }
+        assert_eq!(
+            actual.tessellate_candidate(options, None).unwrap().mesh,
+            complete.mesh
+        );
+        let limited = Tessellation {
+            triangle_limit: prepared.shell.mesh.face_indices.len() + 2,
+            ..options
+        };
+        assert!(matches!(
+            actual.tessellate_candidate(limited, None),
             Err(Error::Limit)
         ));
-        assert_eq!(material, before);
+        let large = material(1_000_000);
+        assert!(matches!(
+            large.tessellate_candidate(options, None),
+            Err(Error::Limit)
+        ));
+    }
+    #[test]
+    fn a_genuine_positive_single_ulp_wall_is_not_erased_to_publish_an_annulus() {
+        use crate::{Circle, Rational, cylinder::AxialCylinder};
+        let base = material(8);
+        let zero = Rational::new(0, 1).unwrap();
+        let den = 1_i64 << 49;
+        let radius = Rational::new(8 * den + 1, den).unwrap();
+        let stock = AxialCylinder::new(
+            7,
+            Circle::new([zero; 2], radius).unwrap(),
+            zero,
+            Rational::new(8, 1).unwrap(),
+        )
+        .unwrap();
+        let thread = crate::authored_flat_thread::AuthoredThread::new(
+            crate::helical_thread::Spec {
+                length_mm: 8.,
+                ..base.cavity().thread.spec()
+            },
+            crate::authored_flat_thread::SourceOptions {
+                position_limit_mm: 1e-7,
+                normal_angle_limit_rad: 1e-7,
+            },
+        )
+        .unwrap();
+        let cavity = Cavity::new(
+            thread,
+            Intent {
+                entry_depth_mm: Some(6.75),
+                ..base.cavity().intent()
+            },
+        )
+        .unwrap();
+        let actual = Material::new(stock, cavity, 1e-18).unwrap();
+        let options = Tessellation {
+            deflection: 0.1,
+            angle: 0.3,
+            triangle_limit: 1_000_000,
+        };
+        let mut w = Work {
+            remaining: 16_000_000,
+            used: 0,
+            interrupt: None,
+        };
+        let (shell, trace) = chart::traced_shell(actual.cavity(), options, 1, 64, &mut w)
+            .unwrap()
+            .unwrap();
+        let mut prepared = close::prepare(shell, actual.cavity(), options, &mut w)
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            stock_boundary(
+                &actual,
+                &mut prepared.shell,
+                &prepared.caps,
+                &trace,
+                options,
+                4,
+                &mut w
+            )
+            .unwrap(),
+            radial::Verdict::Refine
+        ));
+        assert_eq!(actual.stock().circle().radius(), radius);
     }
 }
