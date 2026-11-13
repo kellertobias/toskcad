@@ -83,6 +83,8 @@ fn recipe(kind: usize, fit: ThreadFit, underhead: f64) -> MechanicalPartParamete
 #[test]
 fn canonical_hexalobular_heads_create_edit_export_and_reopen_without_native_geometry() {
     for (kind, fit, underhead) in [
+        (1, ThreadFit::NominalBasic, 3.),
+        (1, ThreadFit::Metric6gExternal, 2.),
         (0, ThreadFit::NominalBasic, 2.),
         (0, ThreadFit::NominalBasic, 3.),
         (2, ThreadFit::NominalBasic, 2.),

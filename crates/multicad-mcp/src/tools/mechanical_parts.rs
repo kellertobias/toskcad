@@ -928,10 +928,10 @@ pub(super) fn mechanical_part_profiles(_: &dyn Host, call: &Request, _: NoArgs) 
     if call.backend == GeometryBackend::Rust {
         return Ok(json!({
             "supported_geometry": ["machine_screw", "hex_nut", "washer", "bearing_envelope"],
-            "head_forms": ["socket_cap", "external_hex"],
-            "drive_forms": ["hex_socket", "external_hex"],
+            "head_forms": ["socket_cap", "external_hex", "pan", "button", "countersunk"],
+            "drive_forms": ["hex_socket", "external_hex", "hexalobular"],
             "active_geometry_support": {
-                "head_drive_pairs": [["socket_cap", "hex_socket"], ["external_hex", "external_hex"]],
+                "head_drive_pairs": [["socket_cap", "hex_socket"], ["external_hex", "external_hex"], ["countersunk", "hex_socket"], ["button", "hex_socket"], ["socket_cap", "hexalobular"], ["pan", "hexalobular"], ["button", "hexalobular"], ["countersunk", "hexalobular"]],
                 "thread_families": ["iso_metric", "custom"],
                 "metric_fits": ["nominal_basic", "metric_6g_external"],
                 "hex_nut_metric_fits": ["nominal_basic", "metric_6h_internal"],
@@ -943,8 +943,8 @@ pub(super) fn mechanical_part_profiles(_: &dyn Host, call: &Request, _: NoArgs) 
                 "radial_taper": false,
                 "mesh": true,
                 "threaded_step": true,
-                "threaded_step_scope": "Modeled straight single-start screws within the bounded spline budget. Fully threaded external-hex and hex-socket cap forms, plus socket caps with a plain shank at the exact thread crest diameter",
-                "step_geometry": ["washer", "bearing_envelope", "machine_screw"]
+                "threaded_step_scope": "Straight modeled threads and the listed head/drive pairs within source and spline limits. Nominal or fitted threads retain their original phase and a qualified plain shank or head/thread union. Conical recesses must end within the head; wall, floor and actual placement must qualify.",
+                "step_geometry": ["washer", "bearing_envelope", "machine_screw", "hex_nut"]
             },
             "machine_screw": "The underhead length runs from the head seat to the tip. Overall length adds the head height. The thread length is its extent ending at the tip, and its frame locates the underhead datum.",
             "nut_thread": "Rust supports modeled hex nuts and cosmetic cylindrical thread envelopes. The thread length sets the nut height.",

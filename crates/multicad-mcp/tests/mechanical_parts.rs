@@ -58,7 +58,7 @@ fn rust_mcp_round_trips_rotated_washer_step_and_edits_bearing_envelope() {
     let profiles = run(&h, "mechanical_part_profiles", json!({}));
     assert_eq!(
         profiles["active_geometry_support"]["step_geometry"],
-        json!(["washer", "bearing_envelope", "machine_screw"])
+        json!(["washer", "bearing_envelope", "machine_screw", "hex_nut"])
     );
     let washer = run(
         &h,
@@ -156,7 +156,13 @@ fn rust_mcp_edits_and_reopens_a_modeled_m6_socket_screw() {
         profiles["active_geometry_support"]["head_drive_pairs"],
         json!([
             ["socket_cap", "hex_socket"],
-            ["external_hex", "external_hex"]
+            ["external_hex", "external_hex"],
+            ["countersunk", "hex_socket"],
+            ["button", "hex_socket"],
+            ["socket_cap", "hexalobular"],
+            ["pan", "hexalobular"],
+            ["button", "hexalobular"],
+            ["countersunk", "hexalobular"]
         ])
     );
     assert_eq!(
