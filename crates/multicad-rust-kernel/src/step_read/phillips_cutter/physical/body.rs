@@ -37,6 +37,9 @@ pub struct Body<'input> {
     retained_budget_bytes: usize,
 }
 impl<'input> Body<'input> {
+    pub(super) fn source_entities(&self) -> &BTreeMap<u32, Vec<Entity<'input>>> {
+        &self.entities
+    }
     pub fn cavity(&self) -> &Boundary {
         &self.cavity
     }

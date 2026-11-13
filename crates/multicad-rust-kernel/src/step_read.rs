@@ -1048,3 +1048,11 @@ pub use phillips_cutter::{
 mod tests;
 
 pub use helical::{PhillipsScrewSourceKnownProof, verify_phillips_screw_source_known};
+
+pub use phillips_cutter::{
+    DerivedCavityOptions as PhillipsDerivedCavityOptions,
+    DerivedCavityRepresentative as PhillipsDerivedCavityRepresentative,
+    DerivedEdgeCorrespondence as PhillipsDerivedEdgeCorrespondence,
+    DerivedFaceCorrespondence as PhillipsDerivedFaceCorrespondence,
+    DerivedVertexCorrespondence as PhillipsDerivedVertexCorrespondence,
+};

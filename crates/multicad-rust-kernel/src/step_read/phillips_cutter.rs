@@ -217,3 +217,8 @@ fn verify(
     let graph = graph::read(&mut shell, &faces, &topology, &pose, tolerance, work)?;
     geometry::verify(&shell, &graph, &topology, &pose, tolerance, work)
 }
+
+pub use physical::{
+    DerivedCavityOptions, DerivedCavityRepresentative, DerivedEdgeCorrespondence,
+    DerivedFaceCorrespondence, DerivedVertexCorrespondence,
+};

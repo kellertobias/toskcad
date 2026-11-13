@@ -318,3 +318,8 @@ pub(crate) fn read_member(
     }
     incidence::read(shell, mouth, &views, &entities, work)
 }
+
+pub use branches::{
+    DerivedCavityOptions, DerivedCavityRepresentative, DerivedEdgeCorrespondence,
+    DerivedFaceCorrespondence, DerivedVertexCorrespondence,
+};
