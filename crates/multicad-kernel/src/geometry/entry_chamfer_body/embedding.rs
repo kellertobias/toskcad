@@ -610,4 +610,84 @@ mod tests {
             assert!(controlled(&mesh, None, 1).is_err());
         }
     }
+    #[test]
+    fn actual_internal_stock_annuli_and_outer_wall_have_literal_embedding() {
+        use multicad_rust_kernel::{
+            Circle, Rational,
+            authored_flat_thread::{AuthoredThread, SourceOptions},
+            authored_internal_treatment::{Cavity, Intent, Material, Terminal},
+            cylinder::AxialCylinder,
+            display::Tessellation,
+            helical_thread::Spec,
+        };
+        for (left_hand, starts, entry, tail, width) in [
+            (false, 1, true, true, 0.5),
+            (true, 2, true, true, 0.3),
+            (false, 1, false, true, 0.5),
+            (true, 1, true, false, 0.5),
+        ] {
+            let thread = AuthoredThread::new(
+                Spec {
+                    major_radius_mm: 1.5,
+                    pitch_mm: 0.5,
+                    length_mm: 4.,
+                    depth_mm: 0.25,
+                    crest_width_mm: 0.125,
+                    lower_flank_deg: 30.,
+                    upper_flank_deg: 30.,
+                    starts,
+                    left_hand,
+                    root_radius_mm: None,
+                },
+                SourceOptions {
+                    position_limit_mm: 1e-7,
+                    normal_angle_limit_rad: 1e-7,
+                },
+            )
+            .unwrap();
+            let body = Cavity::new(
+                thread,
+                Intent {
+                    entry_depth_mm: entry.then_some(0.5),
+                    terminal: tail.then_some(Terminal {
+                        width_mm: width,
+                        radial_depth_mm: 0.125,
+                    }),
+                },
+            )
+            .unwrap();
+            let zero = Rational::new(0, 1).unwrap();
+            let stock = AxialCylinder::new(
+                7,
+                Circle::new([zero; 2], Rational::new(5, 2).unwrap()).unwrap(),
+                zero,
+                Rational::new(4, 1).unwrap(),
+            )
+            .unwrap();
+            let material = Material::new(stock, body, 0.5).unwrap();
+            let candidate = material
+                .tessellate_candidate(
+                    Tessellation {
+                        deflection: 0.1,
+                        angle: 0.3,
+                        triangle_limit: 1_000_000,
+                    },
+                    None,
+                )
+                .unwrap();
+            let mesh = Mesh {
+                vertices: candidate.mesh.vertices,
+                indices: candidate.mesh.indices,
+                face_indices: candidate.mesh.face_indices,
+            };
+            let timer = std::time::Instant::now();
+            let pairs = certify(&mesh).unwrap();
+            eprintln!(
+                "actualStockLiteral {left_hand}/{starts}/{entry}/{tail}/{width}: {}facets,{pairs}pairs,{:?}",
+                mesh.indices.len() / 3,
+                timer.elapsed()
+            );
+            assert!(pairs > 0);
+        }
+    }
 }
