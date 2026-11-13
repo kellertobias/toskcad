@@ -158,6 +158,7 @@ pub(crate) fn build_rust(
     inputs: Inputs<'_>,
     id: EntityId,
     source: &ConnectionReceiverDefinition,
+    interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<Solid, ModelError> {
     match source.cut {
         multicad_core::model::ConnectionReceiverCut::Tapped { .. } => {
@@ -168,7 +169,7 @@ pub(crate) fn build_rust(
                 source.extent,
                 multicad_core::model::ConnectionReceiverExtent::Blind { .. }
             ) {
-                rust_round_blind::build(inputs, id, source)
+                rust_round_blind::build(inputs, id, source, interrupt)
             } else {
                 rust_through::build(inputs, id, source).map(|(solid, _)| solid)
             }

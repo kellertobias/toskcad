@@ -5,6 +5,7 @@ pub(super) fn build(
     inputs: Inputs<'_>,
     id: EntityId,
     source: &ConnectionReceiverDefinition,
+    interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<Solid, ModelError> {
     let fail = |message| error(Some(id), message);
     let resolved = source
@@ -20,7 +21,7 @@ pub(super) fn build(
             "Plain blind receivers require an explicit depth and floor",
         ));
     };
-    if resolved.thread.is_some() || resolved.seat.is_some() {
+    if resolved.thread.is_some() || resolved.seat.is_some_and(|s| s.0) {
         return Err(fail(
             "Rust plain blind receivers do not yet support a seat or a thread",
         ));
@@ -62,6 +63,33 @@ pub(super) fn build(
         .solids
         .get(&source.input.producer)
         .ok_or_else(|| fail("Blind receiving predecessor has no current Rust solid"))?;
+    if stock.rust_cylindrical_stock_available() {
+        return stock
+            .rust_cut_cylindrical_blind_pocket(
+                multicad_kernel::CylindricalBlindPocketSpec {
+                    radius_mm: resolved.diameter_mm / 2.,
+                    depth_mm: depth,
+                    minimum_wall_mm: resolved.minimum_wall_mm,
+                    minimum_floor_mm: floor,
+                    seat: resolved.seat.map(|(_, diameter, depth)| {
+                        multicad_kernel::rust_kernel::cylindrical_blind_pocket::Seat {
+                            radius_mm: diameter / 2.,
+                            depth_mm: depth,
+                        }
+                    }),
+                },
+                frame,
+                id,
+                inputs.policy,
+                interrupt,
+            )
+            .map_err(|cause| error(Some(id), cause));
+    }
+    if resolved.seat.is_some() {
+        return Err(fail(
+            "Rust plain blind receivers do not yet support a seat or a thread",
+        ));
+    }
     let (result, mouth) = stock
         .rust_connection_blind_bore(&tool, resolved.minimum_wall_mm, floor, inputs.policy)
         .map_err(|cause| error(Some(id), cause))?;
