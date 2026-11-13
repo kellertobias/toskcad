@@ -2655,12 +2655,11 @@ impl Solid {
                 .is_ok()
             }
             SolidBody::Revolved(body, _) => {
-                !body.has_cylindrical_blind_pocket()
-                    && (multicad_rust_kernel::step::supports_cylindrical_revolution(&body.geometry)
-                        || multicad_rust_kernel::step::supports_conical_revolution(
-                            &body.geometry,
-                            self.policy.linear_tolerance_mm,
-                        ))
+                multicad_rust_kernel::step::supports_cylindrical_revolution(&body.geometry)
+                    || multicad_rust_kernel::step::supports_conical_revolution(
+                        &body.geometry,
+                        self.policy.linear_tolerance_mm,
+                    )
             }
             SolidBody::Orthogonal(body, _) => body.supports_step(),
         }
@@ -2788,9 +2787,6 @@ impl Solid {
                 writer.append_warped_union(&body.geometry, frame.origin, frame.u, frame.v)
             }
             SolidBody::Revolved(body, frame) => {
-                if body.has_cylindrical_blind_pocket() {
-                    return Err(step::StepError::Unsupported);
-                }
                 if let Some((base, radius, height, bore)) = body.circular_sweep(*frame) {
                     writer.append_placed_circular_sweep(
                         radius,

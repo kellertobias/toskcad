@@ -169,11 +169,6 @@ impl Solid {
         Some((body.cylindrical_pocket.as_deref()?, *frame))
     }
 }
-impl RevolutionBody {
-    pub(crate) fn has_cylindrical_blind_pocket(&self) -> bool {
-        self.cylindrical_pocket.is_some()
-    }
-}
 #[cfg(test)]
 mod tests;
 

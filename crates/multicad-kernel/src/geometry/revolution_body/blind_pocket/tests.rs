@@ -81,17 +81,16 @@ fn actual_both_cap_pockets_manufacture_and_keep_typed_stock_provenance() {
             source,
             copy.rust_cylindrical_blind_pocket_geometry().unwrap().0
         ));
-        assert!(!cut.supports_step_export());
-        let mut writer = multicad_rust_kernel::step::Writer::new();
-        assert_eq!(
-            cut.append_step(&mut writer).err().unwrap(),
-            multicad_rust_kernel::step::StepError::Unsupported
-        );
+        assert!(cut.supports_step_export());
         let file = tempfile::NamedTempFile::new().unwrap();
-        assert_eq!(
-            cut.write_step(file.path()).err().unwrap().kind,
-            GeometryErrorKind::Unsupported
-        );
+        cut.write_step(file.path()).unwrap();
+        let imported = Solid::import_rust_step(
+            &std::fs::read_to_string(file.path()).unwrap(),
+            EntityId::new(),
+            GeometryPolicy::default(),
+        )
+        .unwrap();
+        assert!((imported.volume_mm3().unwrap() - cut.volume_mm3().unwrap()).abs() < 1e-9);
         assert!(original.rust_cylindrical_blind_pocket_geometry().is_none());
     }
 }
@@ -456,4 +455,101 @@ fn a_loose_stock_policy_cannot_authorize_a_later_strict_cut_policy() {
         admitted.rust_cylindrical_blind_pocket_geometry().unwrap().1,
         frame
     );
+}
+
+#[test]
+fn literal_blind_pocket_step_reconstructs_the_independent_material_domain() {
+    use multicad_rust_kernel::{revolution::Revolution, step, step_read};
+    for frame in [
+        PlaneFrame::default(),
+        PlaneFrame {
+            origin: [30., -20., 10.],
+            u: [0.6, 0.8, 0.],
+            v: [0., 0., 1.],
+        },
+        PlaneFrame {
+            origin: [100000., -100000., 100000.],
+            u: [0.6, 0.8, 0.],
+            v: [0., 0., 1.],
+        },
+    ] {
+        for end in [false, true] {
+            for seated in [false, true] {
+                let mut requested = spec();
+                if !seated {
+                    requested.seat = None;
+                }
+                let original = stock(frame, EntityId::new(), 10.);
+                let cut = original
+                    .rust_cut_cylindrical_blind_pocket(
+                        requested,
+                        entry(frame, end),
+                        EntityId::new(),
+                        GeometryPolicy::default(),
+                        None,
+                    )
+                    .unwrap();
+                let (source, pose) = cut.rust_cylindrical_blind_pocket_geometry().unwrap();
+                assert!(step::supports_cylindrical_revolution(source.geometry()));
+                let text = step::write_cylindrical_revolution(
+                    source.geometry(),
+                    pose.origin,
+                    pose.u,
+                    pose.v,
+                )
+                .unwrap();
+                assert!(step_read::read_import_solid(&text, 1e-7).is_ok());
+                assert!(cut.supports_step_export());
+                let file = tempfile::NamedTempFile::new().unwrap();
+                cut.write_step(file.path()).unwrap();
+                let text = std::fs::read_to_string(file.path()).unwrap();
+                let (read, imported) = step_read::read_import_solid(&text, 1e-7).unwrap();
+                assert_eq!(read.solid_count, 1);
+                assert_eq!(read.face_count, if seated { 7 } else { 5 });
+                let expected_volume =
+                    std::f64::consts::PI * (1000. - if seated { 40. } else { 16. });
+                assert!((read.volume_mm3 - expected_volume).abs() < 1e-8);
+                let step_read::ImportProfile::CylindricalRevolution { meridian } = imported.profile
+                else {
+                    panic!("actual pocket must retain its complete revolution boundary")
+                };
+                let decoded = Revolution::new(vec![meridian], std::f64::consts::TAU).unwrap();
+                let normal = [
+                    imported.u[1] * imported.v[2] - imported.u[2] * imported.v[1],
+                    imported.u[2] * imported.v[0] - imported.u[0] * imported.v[2],
+                    imported.u[0] * imported.v[1] - imported.u[1] * imported.v[0],
+                ];
+                for radius in [0., 1.9, 2.1, 3.9, 4.1, 9.9, 10.1] {
+                    for z in [-0.1, 0.1, 1.9, 2.1, 3.9, 4.1, 9.9, 10.1] {
+                        let travel = if end { 10. - z } else { z };
+                        let cavity = travel > 0.
+                            && travel < requested.depth_mm
+                            && radius < requested.radius_mm
+                            || seated && travel > 0. && travel < 2. && radius < 4.;
+                        let material = radius < 10. && z > 0. && z < 10. && !cavity;
+                        let world = position(pose, [radius, 0., z]);
+                        let delta: [f64; 3] =
+                            std::array::from_fn(|i| world[i] - imported.origin_mm[i]);
+                        let local = [imported.u, imported.v, normal]
+                            .map(|axis| (0..3).map(|i| delta[i] * axis[i]).sum::<f64>());
+                        assert_eq!(
+                            decoded.contains(local, 1e-7),
+                            material,
+                            "end={end} seat={seated} r={radius} z={z}"
+                        );
+                    }
+                }
+                let reopened =
+                    Solid::import_rust_step(&text, EntityId::new(), GeometryPolicy::default())
+                        .unwrap();
+                assert!((reopened.volume_mm3().unwrap() - expected_volume).abs() < 1e-8);
+                assert!(reopened.rust_cylindrical_blind_pocket_geometry().is_none());
+                let proof = reopened
+                    .manufacturing_mesh_with_receipt(Default::default())
+                    .unwrap();
+                assert_eq!(proof.edge_pairs as usize * 2, proof.mesh.indices.len());
+                assert!(original.rust_cylindrical_blind_pocket_geometry().is_none());
+            }
+        }
+    }
 }

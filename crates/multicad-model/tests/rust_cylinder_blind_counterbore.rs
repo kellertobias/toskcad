@@ -144,7 +144,7 @@ fn canonical_cylinder_stock_blind_counterbore_has_a_real_shoulder_and_floor() {
 }
 
 #[test]
-fn both_caps_plain_and_seated_sources_keep_geometry_and_display() {
+fn both_caps_plain_and_seated_sources_keep_geometry_display_and_verified_step() {
     for end in [false, true] {
         for seat in [false, true] {
             let (mut session, mut request) = fixture(end);
@@ -183,6 +183,57 @@ fn both_caps_plain_and_seated_sources_keep_geometry_and_display() {
                 .manufacturing_mesh_with_receipt(Default::default())
                 .unwrap();
             session.commit(candidate.prepared).unwrap();
+            use multicad_core::exchange::{Recipe, Scope, ScopeRoot, SetDefinition, prepare_set};
+            use multicad_model::export::Exporter;
+            let set = EntityId::new();
+            let prepared = prepare_set(
+                &session,
+                session.revision(),
+                actor(),
+                set,
+                "Blind pocket STEP",
+                &SetDefinition {
+                    scope: Scope {
+                        root: ScopeRoot::Explicit {
+                            entities: vec![request.source.occurrence.root],
+                        },
+                        tags: None,
+                    },
+                    recipes: vec![Recipe::step("STEP")],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            session.commit(prepared).unwrap();
+            let before = session.document().clone();
+            let exporter = Exporter {
+                compiler: compiler(),
+            };
+            let preview = exporter
+                .preview(&before, session.revision(), set, &actor(), None)
+                .unwrap();
+            assert!(preview.can_run(), "{preview:?}");
+            let directory = tempfile::tempdir().unwrap();
+            let receipt = exporter
+                .run(
+                    &before,
+                    session.revision(),
+                    &preview.key,
+                    directory.path(),
+                    &actor(),
+                    None,
+                )
+                .unwrap();
+            assert_eq!(receipt.files.len(), 1);
+            let file = std::path::Path::new(&receipt.directory)
+                .join(&receipt.files[0].artifact.output.filename);
+            let text = std::fs::read_to_string(file).unwrap();
+            let (read, _) =
+                multicad_kernel::rust_kernel::step_read::read_import_solid(&text, 1e-7).unwrap();
+            assert_eq!(read.face_count, if seat { 7 } else { 5 });
+            let volume = std::f64::consts::PI * if seat { 960. } else { 984. };
+            assert!((read.volume_mm3 - volume).abs() < 1e-8);
+            assert_eq!(session.document(), &before);
         }
     }
 }
