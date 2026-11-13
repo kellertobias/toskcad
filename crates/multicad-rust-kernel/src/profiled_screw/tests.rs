@@ -860,11 +860,10 @@ fn metric_pan_torx_uses_twelve_real_lobes_and_a_conical_floor_without_changing_t
     )
     .unwrap();
     assert!(bound >= hi - lo);
-    assert!(!crate::step::supports_profiled_screw(&screw, [0.; 3], 1e-7));
-    assert_eq!(
-        crate::step::write_profiled_screw(&screw, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7),
-        Err(crate::step::StepError::Unsupported)
-    );
+    assert!(crate::step::supports_profiled_screw(&screw, [0.; 3], 1e-7));
+    let text = crate::step::write_profiled_screw(&screw, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
+        .unwrap();
+    assert!(crate::step_read::read_import_solid(&text, 1e-7).is_ok());
     let mesh = tessellate_profiled_screw(&screw, options()).unwrap();
     let proof = certify(&mesh).unwrap();
     let bound = profiled_screw_volume_error_bound(&screw, options()).unwrap();

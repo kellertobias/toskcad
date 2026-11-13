@@ -160,7 +160,7 @@ fn retained_encoder_keeps_positive_post_parameterization_without_a_literal_angle
     assert!(encode(&mut StepFile::new(), &p, &recess, -2.4, 1e-7).is_ok());
 }
 #[test]
-fn torx_encoder_retains_real_surfaces_contacts_and_apex_without_opening_public_admission() {
+fn torx_encoder_retains_real_surfaces_contacts_and_apex() {
     let source = source();
     let recess = payload(source.clone());
     let p = Placement::new([10., -20., 30.], [0.8, 0.6, 0.], [0., 0., 1.]).unwrap();
@@ -242,14 +242,26 @@ fn head_fixture() -> (String, Screw) {
 }
 
 #[test]
-fn retained_pan_head_bundle_uses_curved_cavity_while_public_screw_export_stays_gated() {
+fn public_pan_head_export_has_independently_decoded_curved_cavity() {
     let (text, screw) = head_fixture();
     crate::step_read::verify_finite_graph_fixture(&text).unwrap();
-    assert!(!crate::step::supports_profiled_screw(&screw, [0.; 3], 1e-7));
-    assert_eq!(
-        crate::step::write_profiled_screw(&screw, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7),
-        Err(StepError::Unsupported)
-    );
+    assert!(crate::step::supports_profiled_screw(&screw, [0.; 3], 1e-7));
+    assert!(!crate::step::supports_profiled_screw_in_frame(
+        &screw,
+        [0.; 3],
+        [1., 0., 0.],
+        [1., 0., 0.],
+        1e-7
+    ));
+    let text = crate::step::write_profiled_screw(&screw, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
+        .unwrap();
+    let (_, imported) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+    assert!(crate::step_read::profiled_screw_import_matches(
+        &imported,
+        &screw,
+        [[0.; 3], [1., 0., 0.], [0., 1., 0.]],
+        1e-7
+    ));
 }
 
 fn full_fixture() -> (String, Screw) {
@@ -277,16 +289,16 @@ fn full_fixture_with(left: bool, plain: f64, pose: [Point; 3]) -> (String, Screw
     }
     let screw =
         Screw::new_with_recess(thread, 1.5, head, plain, 0.1, original.recess().clone()).unwrap();
-    let hex = Screw::new_with_shank_thread_union(
+    full_fixture_source(screw, pose)
+}
+fn full_fixture_source(screw: Screw, pose: [Point; 3]) -> (String, Screw) {
+    let mut source_spec = screw.spec();
+    source_spec.head = None;
+    let hex = Screw::from_source_with_union(
         *screw.thread(),
-        1.5,
-        crate::profiled_screw::Spec {
-            head,
-            shank_length_mm: screw.spec().shank_length_mm,
-            socket_across_flats_mm: 2.,
-            socket_depth_mm: 1.,
-            minimum_wall_mm: 0.1,
-        },
+        *screw.profile(),
+        source_spec,
+        crate::screw_recess::Recess::canonical_flat_hex(2., 1.).unwrap(),
     )
     .unwrap();
     let mut text =
@@ -775,7 +787,9 @@ fn independently_decoded_torx_heads_keep_original_hands_datums_and_proper_world_
                     -0.7999999999999605,
                 ],
             ];
-            let (text, source) = full_fixture_with(left, plain, pose);
+            let (_, source) = full_fixture_with(left, plain, pose);
+            let text = crate::step::write_profiled_screw(&source, pose[0], pose[1], pose[2], 1e-7)
+                .unwrap();
             let (_, decoded) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
             assert!(
                 crate::step_read::profiled_screw_import_matches(&decoded, &source, pose, 1e-7),
@@ -786,6 +800,22 @@ fn independently_decoded_torx_heads_keep_original_hands_datums_and_proper_world_
             assert_eq!(physical.thread().spec().left_hand, left);
             assert_eq!(physical.has_head_thread_overlap(), plain == 0.);
             assert!(physical.recess().hexalobular_geometry().is_some());
+            assert!(crate::step::supports_profiled_screw_in_frame(
+                physical,
+                decoded.origin_mm,
+                decoded.u,
+                decoded.v,
+                1e-7
+            ));
+            let roundtrip = crate::step::write_profiled_screw(
+                physical,
+                decoded.origin_mm,
+                decoded.u,
+                decoded.v,
+                1e-7,
+            )
+            .unwrap();
+            assert!(crate::step_read::read_import_solid(&roundtrip, 1e-7).is_ok());
         }
     }
 }
@@ -793,7 +823,8 @@ fn independently_decoded_torx_heads_keep_original_hands_datums_and_proper_world_
 #[test]
 fn far_placed_metric_torx_import_preserves_its_literal_finite_reexport_data() {
     let pose = [[100000., -100000., 100000.], [0.6, 0.8, 0.], [0., 0., 1.]];
-    let (text, source) = full_fixture_with(true, 0., pose);
+    let (_, source) = full_fixture_with(true, 0., pose);
+    let text = crate::step::write_profiled_screw(&source, pose[0], pose[1], pose[2], 1e-7).unwrap();
     let (_, decoded) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
     assert!(crate::step_read::profiled_screw_import_matches(
         &decoded, &source, pose, 1e-7
@@ -814,6 +845,195 @@ fn far_placed_metric_torx_import_preserves_its_literal_finite_reexport_data() {
     )
     .unwrap();
     assert_eq!(file.data.matches("INTERSECTION_CURVE(").count(), 12);
+    let reexport =
+        crate::step::write_profiled_screw(physical, decoded.origin_mm, decoded.u, decoded.v, 1e-7)
+            .unwrap();
+    let (_, reimport) = crate::step_read::read_import_solid(&reexport, 1e-7).unwrap();
+    assert!(crate::step_read::profiled_screw_import_matches(
+        &reimport,
+        physical,
+        [decoded.origin_mm, decoded.u, decoded.v],
+        1e-7
+    ));
+}
+
+#[test]
+fn public_torx_export_refuses_noncanonical_finite_binding_even_with_a_small_trim_tube() {
+    let (_, source) = full_fixture();
+    let text =
+        crate::step::write_profiled_screw(&source, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
+            .unwrap();
+    let (_, imported) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+    let (physical, _) = imported.profiled_screw_geometry().unwrap();
+    let crate::screw_recess::Recess::ConicalHexalobular(recess) = physical.recess() else {
+        panic!("finite Torx");
+    };
+    let binding = recess.finite_binding().unwrap();
+    let mut invalid = Vec::new();
+    for kind in 0..3 {
+        let mut vertices = *binding.vertices();
+        let mut posts = *binding.post_lines();
+        match kind {
+            0 => posts[0].origin_mm[0] += 2e-10,
+            1 => vertices.apex_mm[0] += 2e-10,
+            _ => vertices.mouth_mm[0][2] += 2e-10,
+        }
+        let binding = FiniteBinding::new_with_posts(
+            binding.source().clone(),
+            vertices,
+            posts,
+            binding.carriers().clone(),
+            1e-7,
+        )
+        .unwrap()
+        .with_literal_cone_semi_angle(binding.literal_cone_semi_angle_rad().unwrap())
+        .unwrap();
+        let recess =
+            crate::screw_recess::Recess::conical_hexalobular_from_binding(binding, 0.1, 100_000)
+                .unwrap();
+        assert!(recess.source_error_mm() < 1e-7 / 8.);
+        let screw = Screw::from_source_with_union(
+            *physical.thread(),
+            *physical.profile(),
+            physical.spec(),
+            recess,
+        )
+        .unwrap();
+        assert!(!crate::step::supports_profiled_screw(&screw, [0.; 3], 1e-7));
+        assert_eq!(
+            crate::step::write_profiled_screw(&screw, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7),
+            Err(StepError::Unsupported)
+        );
+        invalid.push(screw);
+    }
+    let mut writer = crate::step::Writer::new();
+    for screw in invalid {
+        assert!(
+            writer
+                .append_profiled_screw(&screw, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
+                .is_err()
+        );
+    }
+    writer
+        .append_profiled_screw(&source, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
+        .unwrap();
+    let written = writer.finish().unwrap();
+    assert_eq!(
+        crate::step_read::read_import_compound(&written, 1e-7)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn public_torx_gate_preserves_retained_negative_post_gauges_and_refuses_unqualified_families() {
+    let (_, base) = head_fixture();
+    let thin_flat = Screw::new(
+        *base.thread(),
+        crate::profiled_screw::Spec {
+            head: base.spec().head.unwrap(),
+            shank_length_mm: 1.,
+            socket_across_flats_mm: 2.,
+            socket_depth_mm: 5e-7,
+            minimum_wall_mm: 0.1,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        crate::step::write_profiled_screw(&thin_flat, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7),
+        Err(StepError::Limit)
+    );
+    let make = |recess| {
+        Screw::new_with_recess(
+            *base.thread(),
+            1.5,
+            base.spec().head.unwrap(),
+            1.,
+            0.1,
+            recess,
+        )
+        .unwrap()
+    };
+    let retained = make(crate::screw_recess::Recess::ConicalHexalobular(
+        retained_payload(2e-10),
+    ));
+    assert!(crate::step::supports_profiled_screw(
+        &retained, [0.; 3], 1e-7
+    ));
+    let text =
+        crate::step::write_profiled_screw(&retained, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
+            .unwrap();
+    let (_, imported) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+    assert!(crate::step_read::profiled_screw_import_matches(
+        &imported,
+        &retained,
+        [[0.; 3], [1., 0., 0.], [0., 1., 0.]],
+        1e-7
+    ));
+    let source = source();
+    let arbitrary = Drive::from_retained(
+        *source.arcs(),
+        source.cone(),
+        crate::head_profile::TransportError::ZERO,
+    )
+    .unwrap();
+    let arbitrary =
+        make(crate::screw_recess::Recess::conical_hexalobular(arbitrary, 1e-6, 100_000).unwrap());
+    assert_eq!(
+        crate::step::write_profiled_screw(&arbitrary, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7),
+        Err(StepError::Unsupported)
+    );
+    let shallow = Drive::from_authored_tangent(
+        TangentSpec {
+            major_diameter_mm: 2.8,
+            minor_diameter_mm: 2.05,
+            outer_lobe_radius_mm: 0.28,
+        },
+        Cone {
+            tip_depth_mm: 1.,
+            depth_per_radius: f64::MIN_POSITIVE,
+        },
+    )
+    .unwrap();
+    let shallow =
+        make(crate::screw_recess::Recess::conical_hexalobular(shallow, 1e-6, 100_000).unwrap());
+    assert_eq!(
+        crate::step::write_profiled_screw(&shallow, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7),
+        Err(StepError::Unsupported)
+    );
+    let wide = make(crate::screw_recess::Recess::ConicalHexalobular(
+        retained_payload(1e-4),
+    ));
+    assert_eq!(
+        crate::step::write_profiled_screw(&wide, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7),
+        Err(StepError::Limit)
+    );
+    let thin = Drive::from_authored_tangent(
+        TangentSpec {
+            major_diameter_mm: 2.8,
+            minor_diameter_mm: 2.05,
+            outer_lobe_radius_mm: 0.28,
+        },
+        Cone {
+            tip_depth_mm: 1.4 * 5e-5 + 1e-9,
+            depth_per_radius: 5e-5,
+        },
+    )
+    .unwrap();
+    let thin = make(crate::screw_recess::Recess::conical_hexalobular(thin, 1e-6, 100_000).unwrap());
+    // The raw-support phase has no tolerance argument: when placement rounds
+    // both ends to indistinguishable coordinates, it cannot certify an edge
+    // orientation. The public writer also enforces its earlier global budget.
+    let unresolved = Placement::new([1e12; 3], [1., 0., 0.], [0., 1., 0.]).unwrap();
+    assert_eq!(
+        preflight::placement(&thin, &unresolved),
+        Err(StepError::Unsupported)
+    );
+    assert_eq!(
+        crate::step::write_profiled_screw(&thin, [1e12; 3], [1., 0., 0.], [0., 1., 0.], 1e-7),
+        Err(StepError::Limit)
+    );
 }
 
 fn entity<'a>(text: &'a str, id: &str) -> &'a str {

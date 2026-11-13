@@ -317,12 +317,29 @@ pub fn write_profiled_screw(
     write_one(|writer| writer.append_profiled_screw(screw, origin, u, v, tolerance_mm))
 }
 
+/// Qualify the identity orientation translated to `origin`.
+/// Use the full-frame qualifier for a placed independently decoded source.
 pub fn supports_profiled_screw(
     screw: &crate::profiled_screw::Screw,
     origin: Point,
     tolerance_mm: f64,
 ) -> bool {
+    supports_profiled_screw_in_frame(screw, origin, [1., 0., 0.], [0., 1., 0.], tolerance_mm)
+}
+
+/// Qualify the actual emitted support geometry in its requested rigid frame.
+/// Independently decoded supports must be checked in that frame; an identity
+/// pose is a distinct emission and can expose different floating-point data.
+pub fn supports_profiled_screw_in_frame(
+    screw: &crate::profiled_screw::Screw,
+    origin: Point,
+    u: Point,
+    v: Point,
+    tolerance_mm: f64,
+) -> bool {
     profiled::admission(screw, origin, tolerance_mm)
+        .and_then(|()| Placement::new(origin, u, v))
+        .and_then(|placement| profiled::placement(screw, &placement, tolerance_mm))
         .and_then(|()| {
             prepare(
                 screw.thread(),

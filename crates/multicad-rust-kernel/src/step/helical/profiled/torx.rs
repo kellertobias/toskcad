@@ -5,8 +5,10 @@ use crate::{
     screw_recess::ConicalHexalobular,
 };
 use std::borrow::Cow;
+mod preflight;
 #[cfg(test)]
 mod tests;
+pub(super) use preflight::{admission, placement};
 
 fn source_error(error: Error) -> StepError {
     match error {

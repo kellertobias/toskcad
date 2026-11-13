@@ -39,10 +39,6 @@ pub(super) struct Junction {
 }
 
 pub(super) fn admission(screw: &Screw, origin: Point, tolerance: f64) -> Result<(), StepError> {
-    let (drive, socket_depth) = screw
-        .recess()
-        .flat_hex_geometry()
-        .ok_or(StepError::Unsupported)?;
     if !tolerance.is_finite() || tolerance <= 0. || !origin.into_iter().all(f64::is_finite) {
         return Err(StepError::InvalidGeometry);
     }
@@ -91,16 +87,26 @@ pub(super) fn admission(screw: &Screw, origin: Point, tolerance: f64) -> Result<
             }
         }
     }
-    if 128. * f64::EPSILON * scale + 4. * screw.profile().rounding_error_mm() > tolerance / 4.
-        || socket_depth <= 10. * tolerance
-        || drive.across_flats_mm() <= 10. * tolerance
-        || !screw.profile().admits_socket(
-            drive.across_flats_mm() / 3_f64.sqrt(),
-            socket_depth,
-            10. * tolerance,
-        )
-    {
+    if 128. * f64::EPSILON * scale + 4. * screw.profile().rounding_error_mm() > tolerance / 4. {
         return Err(StepError::Limit);
+    }
+    match screw.recess() {
+        crate::screw_recess::Recess::FlatHex(hex) => {
+            let (drive, socket_depth) = hex.geometry();
+            if socket_depth <= 10. * tolerance
+                || drive.across_flats_mm() <= 10. * tolerance
+                || !screw.profile().admits_socket(
+                    drive.across_flats_mm() / 3_f64.sqrt(),
+                    socket_depth,
+                    10. * tolerance,
+                )
+            {
+                return Err(StepError::Limit);
+            }
+        }
+        crate::screw_recess::Recess::ConicalHexalobular(recess) => {
+            torx::admission(screw, recess, tolerance)?
+        }
     }
     Ok(())
 }
@@ -139,7 +145,7 @@ pub(super) fn placement(screw: &Screw, p: &Placement, tolerance: f64) -> Result<
     {
         return Err(StepError::InvalidPlacement);
     }
-    Ok(())
+    torx::placement(screw, p)
 }
 
 pub(super) fn junction(
