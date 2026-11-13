@@ -44,6 +44,7 @@ mod spur_gear_body;
 mod step_import;
 mod torus_body;
 mod warped_union_body;
+mod wood_contact;
 mod worm_body;
 use annulus_body::AnnulusBody;
 use axial_stack_body::AxialStackBody;
