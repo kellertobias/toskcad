@@ -325,3 +325,7 @@ pub use branches::{
 };
 
 pub use branches::ClosedDerivedCavityCertificate;
+
+pub use body::{
+    CommonMouthChart, CommonMouthHeadEnvelope, CommonMouthOptions, CommonTensorTransfer,
+};

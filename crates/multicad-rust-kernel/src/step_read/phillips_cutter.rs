@@ -224,3 +224,7 @@ pub use physical::{
 };
 
 pub use physical::ClosedDerivedCavityCertificate;
+
+pub use physical::{
+    CommonMouthChart, CommonMouthHeadEnvelope, CommonMouthOptions, CommonTensorTransfer,
+};

@@ -28,7 +28,7 @@ impl HostEnvelopeProof {
 // positive-circle Crown or negative-circle Neck support. Expand the queried
 // axial interval AND radial result by the profile's explicit source reserve.
 // This avoids treating rounded trim vertices as exact support intersections.
-fn head_radius_lower(profile: &Profile, z: I) -> f64 {
+pub(super) fn head_radius_lower(profile: &Profile, z: I) -> f64 {
     let reserve = I::point(profile.rounding_error_mm());
     let z = z + I::new(-reserve.hi, reserve.hi);
     let mut lower = f64::INFINITY;

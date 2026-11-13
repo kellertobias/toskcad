@@ -356,4 +356,4 @@ impl<'a> Tubes<'a> {
 mod tests;
 
 #[cfg(test)]
-mod representative;
+pub(super) mod representative;

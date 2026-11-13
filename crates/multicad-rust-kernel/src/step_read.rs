@@ -1058,3 +1058,10 @@ pub use phillips_cutter::{
 };
 
 pub use phillips_cutter::ClosedDerivedCavityCertificate as PhillipsClosedDerivedCavityCertificate;
+
+pub use phillips_cutter::{
+    CommonMouthChart as PhillipsCommonMouthChart,
+    CommonMouthHeadEnvelope as PhillipsCommonMouthHeadEnvelope,
+    CommonMouthOptions as PhillipsCommonMouthOptions,
+    CommonTensorTransfer as PhillipsCommonTensorTransfer,
+};

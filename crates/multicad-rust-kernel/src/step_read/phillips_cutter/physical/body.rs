@@ -79,22 +79,26 @@ impl<'input> Body<'input> {
         &self,
         index: usize,
     ) -> std::result::Result<Vec<Vec<Point>>, PhillipsReadError> {
-        let result = (|| {
-            let id = *self
-                .tensor_face_entities()
-                .get(index)
-                .ok_or(ReadError::Invalid)?;
-            let shell = Shell::new(&self.entities, self.tolerance, true);
-            let (surface, _, _) = helical::face(&shell, id)?;
-            let args = shell.args(surface, "B_SPLINE_SURFACE_WITH_KNOTS")?;
-            let Value::List(rows) = args.get(3).ok_or(ReadError::Invalid)? else {
-                return Err(ReadError::Invalid);
-            };
-            rows.iter()
-                .map(|row| refs(row)?.into_iter().map(|id| shell.point(id)).collect())
-                .collect()
-        })();
-        result.map_err(PhillipsReadError::from)
+        self.literal_tensor_control_points_raw(index)
+            .map_err(PhillipsReadError::from)
+    }
+    pub(super) fn literal_tensor_control_points_raw(
+        &self,
+        index: usize,
+    ) -> Result<Vec<Vec<Point>>> {
+        let id = *self
+            .tensor_face_entities()
+            .get(index)
+            .ok_or(ReadError::Invalid)?;
+        let shell = Shell::new(&self.entities, self.tolerance, true);
+        let (surface, _, _) = helical::face(&shell, id)?;
+        let args = shell.args(surface, "B_SPLINE_SURFACE_WITH_KNOTS")?;
+        let Value::List(rows) = args.get(3).ok_or(ReadError::Invalid)? else {
+            return Err(ReadError::Invalid);
+        };
+        rows.iter()
+            .map(|row| refs(row)?.into_iter().map(|id| shell.point(id)).collect())
+            .collect()
     }
 }
 fn plane(shell: &Shell<'_, '_>, id: u32) -> Result<Plane> {
@@ -226,3 +230,8 @@ pub fn read_phillips_body_with_interrupt<'input>(
     body.retained_budget_bytes = budget.map_err(PhillipsReadError::from)?;
     Ok(body)
 }
+
+mod common_mouth;
+pub use common_mouth::{
+    CommonMouthChart, CommonMouthHeadEnvelope, CommonMouthOptions, CommonTensorTransfer,
+};

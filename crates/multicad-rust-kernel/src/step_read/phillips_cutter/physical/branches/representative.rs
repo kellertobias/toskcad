@@ -162,7 +162,10 @@ fn compare(
 }
 // Fixture construction is intentionally outside candidate(): none of these
 // original source dimensions are available to the reconstruction function.
-pub(super) fn scaled_text(scale: f64, posed: bool) -> String {
+pub(in crate::step_read::phillips_cutter::physical) fn scaled_text(
+    scale: f64,
+    posed: bool,
+) -> String {
     use crate::{
         head_profile::{Head, Profile},
         helical_thread::{Spec as ThreadSpec, Thread},
