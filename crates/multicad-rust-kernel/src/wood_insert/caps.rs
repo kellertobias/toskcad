@@ -139,9 +139,12 @@ fn cmp(a: &Q, b: &Q, w: &mut Work<'_>) -> Result<Ordering, Error> {
 }
 fn modulo(a: &Q, period: &Q, w: &mut Work<'_>) -> Result<(Q, i64), Error> {
     let quotient = op(a, period, Op::Div, w)?;
-    // Source turn bounds prove at most128 periods plus8starts. The integer
-    // operation is separately charged and cannot silently saturate a cast.
-    w.charge(1)?;
+    // Floor performs another integer division even when its result is small.
+    // Charge the actual operand limb bound before invoking library arithmetic.
+    let words = (quotient.numer().bits() + quotient.denom().bits()).div_ceil(64) as usize;
+    w.charge(1 + words * words)?;
+    // Source turn bounds keep the result within128 periods plus8starts;
+    // the checked conversion below also prevents silent saturation.
     let k = quotient.floor().to_integer().to_i64().ok_or(Error::Limit)?;
     let shift = op(period, &Q::from_integer(k.into()), Op::Mul, w)?;
     Ok((op(a, &shift, Op::Sub, w)?, k))
@@ -379,6 +382,8 @@ impl Insert {
             + knots.len() * size_of::<CapKnot>()
             + cells.len() * size_of::<CapCell>()
             + angles.iter().map(Angle::bytes).sum::<usize>();
+        // Shrinking the bounded Vec headers into boxed slices can briefly
+        // retain old descriptors; the separate256KiB scratch includes these.
         w.memory(SCRATCH_BYTES + retained_bytes)?;
         w.charge(1)?;
         Ok(CapDomains {
