@@ -213,12 +213,15 @@ impl Screw {
         .hi;
         if recess.maximum_radius_bound_mm() <= 2. * reserve
             || recess.maximum_depth_mm() <= 2. * reserve
-            || !profile.admits_socket(radius, depth, spec.minimum_wall_mm)
-            // The head profile also owns the plain shank. A blind recess may
-            // continue into it while its complete envelope remains before the
-            // original helical source at world z=0. Thread-core cuts require
-            // different boundary ownership and are deliberately not admitted.
-            || back >= spec.shank_length_mm
+            || !Self::admits_envelope(
+                &thread,
+                &profile,
+                spec.shank_length_mm,
+                radius,
+                depth,
+                spec.minimum_wall_mm,
+                back,
+            )
         {
             return Err(ThreadError::Invalid);
         }
@@ -229,6 +232,48 @@ impl Screw {
             visible_start_mm,
             recess,
         })
+    }
+
+    pub(crate) fn admits_envelope(
+        thread: &Thread,
+        profile: &Profile,
+        shank: f64,
+        radius: f64,
+        depth: f64,
+        wall: f64,
+        back: f64,
+    ) -> bool {
+        if back < shank {
+            return profile.admits_socket(radius, depth, wall);
+        }
+        use crate::tapered_thread::interval::I;
+        let mut core =
+            (I::point(thread.spec().major_radius_mm) - I::point(thread.spec().depth_mm)).lo;
+        if let Some(root) = thread.root_circle() {
+            core = core.min((I::point(root.center_radius) - I::point(root.radius)).lo);
+        }
+        let reserve = I::point(2. * profile.rounding_error_mm());
+        let radial = (I::point(radius) + I::point(wall) + reserve).hi;
+        let end = (I::point(back) - I::point(shank) + I::point(wall) + reserve).hi;
+        // The entire cavity lies inside a common cylindrical core. Its walls
+        // therefore never trim a helical face or change the original phase.
+        profile.admits_radial_prefix(radius, shank, wall)
+            && radial < core
+            && end < thread.spec().length_mm
+    }
+
+    pub(crate) fn admits_recess_envelope(&self, radius: f64, depth: f64, wall: f64) -> bool {
+        use crate::tapered_thread::interval::I;
+        let back = (I::point(self.profile.top()[1]) + I::point(depth)).hi;
+        Self::admits_envelope(
+            &self.thread,
+            &self.profile,
+            self.spec.shank_length_mm,
+            radius,
+            depth,
+            wall,
+            back,
+        )
     }
 
     pub fn thread(&self) -> &Thread {
@@ -304,22 +349,19 @@ impl Screw {
         if !point.into_iter().all(f64::is_finite) || !tolerance.is_finite() || tolerance < 0. {
             return false;
         }
-        if self.thread.contains(point, tolerance) {
-            return true;
-        }
         let [x, y, z] = point;
         let local_z = z + self.spec.shank_length_mm;
         let [top, end] = [self.profile.top()[1], self.profile.end()[1]];
-        if local_z < top - tolerance || local_z > end + tolerance {
-            return false;
-        }
         let radius = x.hypot(y);
-        radius
-            <= self
-                .profile
-                .radius_at(local_z.clamp(top, end))
-                .expect("profile domain")
-                + tolerance
+        let in_profile = local_z >= top - tolerance
+            && local_z <= end + tolerance
+            && radius
+                <= self
+                    .profile
+                    .radius_at(local_z.clamp(top, end))
+                    .expect("profile domain")
+                    + tolerance;
+        (self.thread.contains(point, tolerance) || in_profile)
             && self
                 .recess
                 .contains_void([x, y, z - self.head_top_z()], tolerance)

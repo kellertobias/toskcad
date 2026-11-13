@@ -95,7 +95,7 @@ pub(super) fn admission(screw: &Screw, origin: Point, tolerance: f64) -> Result<
             let (drive, socket_depth) = hex.geometry();
             if socket_depth <= 10. * tolerance
                 || drive.across_flats_mm() <= 10. * tolerance
-                || !screw.profile().admits_socket(
+                || !screw.admits_recess_envelope(
                     drive.across_flats_mm() / 3_f64.sqrt(),
                     socket_depth,
                     10. * tolerance,

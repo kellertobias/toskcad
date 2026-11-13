@@ -66,9 +66,7 @@ pub(in super::super) fn admission(
     let radius = (screw.recess().maximum_radius_bound_mm() + error).next_up();
     let depth = (screw.recess().maximum_depth_mm() + error).next_up();
     if error > tolerance / 8.
-        || !screw
-            .profile()
-            .admits_socket(radius, depth, 10. * tolerance)
+        || !screw.admits_recess_envelope(radius, depth, 10. * tolerance)
         || source.arcs().iter().any(|arc| {
             arc.radius_mm <= 10. * tolerance
                 || arc.radius_mm * arc.sweep_rad.abs() <= 10. * tolerance

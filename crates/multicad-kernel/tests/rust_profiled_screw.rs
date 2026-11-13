@@ -1012,3 +1012,55 @@ fn cylindrical_profiled_socket_cap_keeps_actual_bearing_and_physical_step_readba
         }
     }
 }
+
+#[test]
+fn blind_recess_in_original_thread_core_survives_public_facade_and_import() {
+    let scratch = tempfile::tempdir().unwrap();
+    for left_hand in [false, true] {
+        let policy = GeometryPolicy::default();
+        let source = Solid::rust_profiled_machine_screw(
+            HelicalThread {
+                left_hand,
+                ..thread()
+            },
+            None,
+            Spec {
+                head: Head::Cylindrical {
+                    radius_mm: 2.75,
+                    height_mm: 2.2,
+                },
+                shank_length_mm: 0.,
+                socket_across_flats_mm: 1.5,
+                socket_depth_mm: 2.5,
+                minimum_wall_mm: 0.1,
+            },
+            EntityId::new(),
+            PlaneFrame {
+                origin: [30., -20., 10.],
+                u: [0.6, 0.8, 0.],
+                v: [0., 0., 1.],
+            },
+            policy,
+        )
+        .unwrap();
+        source
+            .topology_snapshot(EntityId::new(), 0)
+            .unwrap()
+            .validate()
+            .unwrap();
+        source
+            .manufacturing_mesh_with_receipt(MeshOptions::default())
+            .unwrap();
+        let path = scratch.path().join(format!("core-{left_hand}.step"));
+        source.write_step(&path).unwrap();
+        let text = std::fs::read_to_string(path).unwrap();
+        let reopened = Solid::import_rust_step(&text, EntityId::new(), policy).unwrap();
+        assert!((source.volume_mm3().unwrap() - reopened.volume_mm3().unwrap()).abs() < 1e-6);
+        let (retained, _) = reopened.rust_profiled_screw_geometry().unwrap();
+        assert!(!retained.contains([0., 0., 0.15], 0.));
+        assert!(retained.contains([0., 0., 0.5], 0.));
+        reopened
+            .manufacturing_mesh_with_receipt(MeshOptions::default())
+            .unwrap();
+    }
+}

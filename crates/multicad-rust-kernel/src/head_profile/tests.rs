@@ -650,3 +650,25 @@ fn expanded_union_neck_respects_the_complete_axial_source_envelope() {
         Err(ThreadError::Limit)
     );
 }
+
+#[test]
+fn radial_prefix_refuses_stations_outside_its_retained_material() {
+    let profile = Profile::new(
+        Head::Cylindrical {
+            radius_mm: 2.75,
+            height_mm: 2.2,
+        },
+        1.5,
+        0.,
+    )
+    .unwrap();
+    assert!(profile.admits_radial_prefix(0.9, 0., 0.1));
+    for (radius, z, wall) in [
+        (0.9, -2.2, 0.1),
+        (0.9, 0.1, 0.1),
+        (f64::NAN, 0., 0.1),
+        (0.9, 0., 0.),
+    ] {
+        assert!(!profile.admits_radial_prefix(radius, z, wall));
+    }
+}

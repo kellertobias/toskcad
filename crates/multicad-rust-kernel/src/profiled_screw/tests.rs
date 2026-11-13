@@ -233,7 +233,7 @@ fn real_head_neck_drive_and_unchanged_thread_have_one_material_domain() {
             ..spec(false)
         },
         Spec {
-            socket_depth_mm: 2.7,
+            socket_depth_mm: 12.,
             ..spec(false)
         },
         Spec {
@@ -1030,19 +1030,29 @@ fn blind_recess_can_continue_through_the_head_into_the_owned_plain_shank() {
                 [[0.; 3], [1., 0., 0.], [0., 1., 0.]],
                 1e-7,
             ));
-            // The identical cutter with insufficient plain shank intersects the
-            // original helical source and must not be admitted as this provider.
-            assert!(
-                Screw::new_with_recess(
-                    thread(starts, left),
-                    1.5,
-                    spec(false).head,
-                    0.5,
-                    0.1,
-                    recess.clone(),
-                )
-                .is_err()
-            );
+            // The same actual cutter may continue inside the common thread core.
+            let core = Screw::new_with_recess(
+                thread(starts, left),
+                1.5,
+                spec(false).head,
+                0.5,
+                0.1,
+                recess.clone(),
+            )
+            .unwrap();
+            assert!(core.head_top_z() + recess.maximum_depth_mm() > 0.);
+            assert!(!core.contains([0., 0., 0.025], 0.));
+            assert!(certify(&tessellate_profiled_screw(&core, options()).unwrap()).is_ok());
+            let text =
+                crate::step::write_profiled_screw(&core, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
+                    .unwrap();
+            let (_, imported) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+            assert!(crate::step_read::profiled_screw_import_matches(
+                &imported,
+                &core,
+                [[0.; 3], [1., 0., 0.], [0., 1., 0.]],
+                1e-7
+            ));
             assert!(
                 Screw::new_with_recess(
                     thread(starts, left),
@@ -1054,6 +1064,103 @@ fn blind_recess_can_continue_through_the_head_into_the_owned_plain_shank() {
                 )
                 .is_err()
             );
+        }
+    }
+}
+
+#[test]
+fn a_blind_recess_inside_the_original_thread_core_preserves_outer_helices() {
+    for left in [false, true] {
+        let source = thread(1, left);
+        let shape = Screw::new(
+            source,
+            Spec {
+                head: Head::Cylindrical {
+                    radius_mm: 2.75,
+                    height_mm: 2.2,
+                },
+                shank_length_mm: 0.,
+                socket_across_flats_mm: 1.5,
+                socket_depth_mm: 2.5,
+                minimum_wall_mm: 0.1,
+            },
+        )
+        .unwrap();
+        assert_eq!(*shape.thread(), source);
+        assert!(!shape.contains([0., 0., 0.15], 1e-10));
+        assert!(shape.contains([1.1, 0., 0.15], 1e-10));
+        assert!(shape.contains([0., 0., 0.5], 1e-10));
+        let expected = source.volume_mm3() + std::f64::consts::PI * 2.75_f64.powi(2) * 2.2
+            - hex_area(1.5) * 2.5;
+        assert!((shape.volume_mm3() - expected).abs() < 1e-9);
+        let mesh = tessellate_profiled_screw(&shape, options()).unwrap();
+        assert!(certify(&mesh).unwrap().signed_volume_mm3 > 0.);
+    }
+}
+
+#[test]
+fn thread_core_recesses_keep_actual_rounded_roots_and_physical_step() {
+    for left in [false, true] {
+        for rounded in [false, true] {
+            let mut data = thread(1, left).spec();
+            if rounded {
+                data.root_radius_mm = Some(0.05);
+                data.depth_mm = (data.pitch_mm - data.crest_width_mm) * 3_f64.sqrt() / 2. - 0.05;
+            }
+            let original = Thread::new(data).unwrap();
+            let spec = Spec {
+                head: Head::Cylindrical {
+                    radius_mm: 2.75,
+                    height_mm: 2.2,
+                },
+                shank_length_mm: 0.,
+                socket_across_flats_mm: 1.5,
+                socket_depth_mm: 2.5,
+                minimum_wall_mm: 0.1,
+            };
+            let shape = Screw::new(original, spec).unwrap();
+            for frame in [
+                [[0.; 3], [1., 0., 0.], [0., 1., 0.]],
+                [[32., -64., 16.], [0.8, 0.6, 0.], [-0.36, 0.48, 0.8]],
+            ] {
+                let [o, u, v] = frame;
+                let text = crate::step::write_profiled_screw(&shape, o, u, v, 1e-7).unwrap();
+                let known =
+                    crate::step_read::verify_profiled_screw(&text, &shape, o, u, v, 1e-7).unwrap();
+                let (receipt, decoded) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+                assert_eq!(receipt.solid_count, 1);
+                assert!((receipt.volume_mm3 - shape.volume_mm3()).abs() < 1e-4);
+                assert!((known - shape.volume_mm3()).abs() < 1e-4);
+                assert!(crate::step_read::profiled_screw_import_matches(
+                    &decoded, &shape, frame, 1e-7
+                ));
+            }
+            let mesh = tessellate_profiled_screw(&shape, options()).unwrap();
+            let mass = certify(&mesh).unwrap();
+            assert!(
+                (mass.signed_volume_mm3 - shape.volume_mm3()).abs()
+                    <= profiled_screw_volume_error_bound(&shape, options()).unwrap()
+            );
+            // A cavity may never break into the helical flank or through the end.
+            for invalid in [
+                Spec {
+                    socket_across_flats_mm: 2.2,
+                    ..spec
+                },
+                Spec {
+                    socket_depth_mm: 9.7,
+                    ..spec
+                },
+                Spec {
+                    minimum_wall_mm: 0.5,
+                    ..spec
+                },
+            ] {
+                assert_eq!(Screw::new(original, invalid), Err(ThreadError::Invalid));
+            }
+            assert_eq!(*shape.thread(), original);
+            assert!(!shape.contains([0., 0., 0.15], 0.));
+            assert!(shape.contains([0., 0., 0.5], 0.));
         }
     }
 }

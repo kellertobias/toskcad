@@ -662,7 +662,20 @@ impl Profile {
         {
             return false;
         }
-        let floor = self.top[1] + depth;
+        self.admits_radial_prefix(radius, self.top[1] + depth, wall)
+    }
+
+    /// Bound the complete head envelope through a retained axial station.
+    /// Unlike a blind socket, the prefix may end at the head/thread junction.
+    pub(crate) fn admits_radial_prefix(&self, radius: f64, floor: f64, wall: f64) -> bool {
+        if ![radius, floor, wall].into_iter().all(f64::is_finite)
+            || radius <= 0.
+            || wall <= 0.
+            || floor <= self.top[1]
+            || floor > self.end[1]
+        {
+            return false;
+        }
         let minimum = self
             .segments()
             .filter(|s| s.start[1] <= floor)

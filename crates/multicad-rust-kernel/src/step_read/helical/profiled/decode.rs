@@ -271,7 +271,7 @@ pub(in super::super::super) fn read(
         let error = recess.source_error_mm();
         let radius = (recess.maximum_radius_bound_mm() + error).next_up();
         let depth = (recess.maximum_depth_mm() + error).next_up();
-        let wall = certified_wall(&profile, radius, depth, reserve + error)?;
+        let wall = certified_wall(thread, &profile, radius, depth, reserve + error)?;
         return Screw::from_source_with_union(
             *thread,
             profile,
@@ -307,7 +307,7 @@ pub(in super::super::super) fn read(
     };
     let floor = shell.placement(reference(axis)?)?;
     let depth = frame.local(floor.origin)[2] - top.z;
-    let wall = certified_wall(&profile, drive.maximum_radius_mm(), depth, reserve)?;
+    let wall = certified_wall(thread, &profile, drive.maximum_radius_mm(), depth, reserve)?;
     Screw::from_source_with_union(
         *thread,
         profile,
@@ -324,13 +324,21 @@ pub(in super::super::super) fn read(
 /// Certify actual surrounding radial material over the complete cavity depth.
 /// The reserve starts the proof; it is not a dimensional feature wall. Callers
 /// expand the recess by its own spatial error before using this head contract.
-fn certified_wall(profile: &Profile, radius: f64, depth: f64, reserve: f64) -> Result<f64> {
+fn certified_wall(
+    thread: &Thread,
+    profile: &Profile,
+    radius: f64,
+    depth: f64,
+    reserve: f64,
+) -> Result<f64> {
+    let back = (I::point(profile.top()[1]) + I::point(depth)).hi;
+    let admits = |wall| Screw::admits_envelope(thread, profile, 0., radius, depth, wall, back);
     let mut wall = 4. * reserve;
-    require(profile.admits_socket(radius, depth, wall))?;
+    require(admits(wall))?;
     let mut upper = profile.support([1., 0., 0.]);
     for _ in 0..52 {
         let candidate = wall + (upper - wall) * 0.5;
-        if profile.admits_socket(radius, depth, candidate) {
+        if admits(candidate) {
             wall = candidate;
         } else {
             upper = candidate;
@@ -356,15 +364,28 @@ mod tests {
             1.,
         )
         .unwrap();
+        let thread = Thread::new(crate::helical_thread::Spec {
+            major_radius_mm: 1.5,
+            pitch_mm: 0.5,
+            length_mm: 7.5,
+            depth_mm: 0.2,
+            crest_width_mm: 0.0625,
+            lower_flank_deg: 30.,
+            upper_flank_deg: 30.,
+            starts: 1,
+            left_hand: false,
+            root_radius_mm: None,
+        })
+        .unwrap();
         let reserve = profile.rounding_error_mm();
-        let wall = certified_wall(&profile, 1.4, 1.9, reserve).unwrap();
+        let wall = certified_wall(&thread, &profile, 1.4, 1.9, reserve).unwrap();
         // The mouth land is the limiting radius throughout this cavity:
         // 2.05-1.4=0.65mm, independent of the precision reserve.
         assert!(wall > 0.64 && wall <= 0.65);
         assert!(profile.admits_socket(1.4, 1.9, wall));
         assert!(!profile.admits_socket(1.4, 1.9, wall + 1e-5));
         assert_eq!(
-            certified_wall(&profile, 2.1, 1.9, reserve),
+            certified_wall(&thread, &profile, 2.1, 1.9, reserve),
             Err(ReadError::Invalid)
         );
     }
