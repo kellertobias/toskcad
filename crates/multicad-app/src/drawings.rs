@@ -218,6 +218,9 @@ impl DrawingBackend for Backend {
     }
 }
 #[cfg(test)]
+#[path = "drawings/rust_parity_tests.rs"]
+mod rust_parity_tests;
+#[cfg(test)]
 mod tests {
     use super::*;
     use multicad_core::{
@@ -229,7 +232,11 @@ mod tests {
     use multicad_ui::drawings::{DrawingEditor, DrawingTool, ScheduleStatus};
     use std::time::{Duration, Instant};
 
-    fn preview(backend: &mut Backend, session: &Session, page: EntityId) -> Arc<DrawingEvaluation> {
+    pub(super) fn preview(
+        backend: &mut Backend,
+        session: &Session,
+        page: EntityId,
+    ) -> Arc<DrawingEvaluation> {
         let stamp = DrawingStamp {
             document: session.document().id(),
             revision: session.revision(),
@@ -587,7 +594,7 @@ mod tests {
         );
     }
 
-    fn projection_page(source: EntityId) -> drawings::Page {
+    pub(super) fn projection_page(source: EntityId) -> drawings::Page {
         let mut page = drawings::Page::new("1");
         page.views.push(drawings::DrawingView {
             id: EntityId::new(),
@@ -2169,7 +2176,7 @@ mod tests {
         );
     }
 
-    fn add_box(session: &mut Session, name: &str, x: f64) -> model::BodyInput {
+    pub(super) fn add_box(session: &mut Session, name: &str, x: f64) -> model::BodyInput {
         let request = PrimitiveRequest::new(
             name,
             PrimitiveParameters::Box {
