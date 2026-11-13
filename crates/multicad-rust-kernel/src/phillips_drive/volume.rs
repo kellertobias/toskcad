@@ -21,7 +21,7 @@ fn root(v: J) -> Option<J> {
         v.sqrt().checked().ok()
     }
 }
-struct Sections<'a> {
+pub(super) struct Sections<'a> {
     c: &'a Cutter,
     inner: SectionInner,
     b1: I,
@@ -33,7 +33,7 @@ enum SectionInner {
     Rounded { radius: f64 },
 }
 impl<'a> Sections<'a> {
-    fn new(c: &'a Cutter) -> Result<Self, Error> {
+    pub(super) fn new(c: &'a Cutter) -> Result<Self, Error> {
         let k = &c.corners[0];
         // Both shallow-V slopes must be below one. The rounded front slope
         // increases from zero to b1 at its exact tangent join. Therefore
@@ -96,21 +96,9 @@ impl<'a> Sections<'a> {
             offset,
         })
     }
-    fn area(&self, d: J, branch: usize) -> Option<J> {
-        let e = &self.c.envelope;
-        let s = self.c.spec;
+    pub(super) fn area(&self, d: J, branch: usize) -> Option<J> {
         let k = &self.c.corners[0];
-        let r = match branch {
-            0 => {
-                j(e.entry)
-                    - root(j(I::point(s.mouth_radius_mm).square()) - sq(d - n(s.mouth_radius_mm)))?
-            }
-            1 => j(I::point(s.mouth_diameter_mm) / I::point(2.)) - d * j(e.sin_a / e.cos_a),
-            _ => (j(e.tip) - d) * j(e.cos_c / e.sin_c),
-        };
-        if r.v.lo <= 0. {
-            return None;
-        }
+        let r = self.radius(d, branch)?;
         let rb = j(k.b_half) + (j(k.b_depth) - d) * j(k.sin_beta / k.cos_beta);
         let a = match self.inner {
             SectionInner::ShallowV { b0 } => part(r, rb, j(b0), I::point(0.), Some(k.join_y))?,
@@ -119,6 +107,23 @@ impl<'a> Sections<'a> {
         let b = part(r, rb + j(self.offset), j(self.b1), k.join_y, None)?;
         let value = j(I::new(PI.next_down(), PI.next_up())) * sq(r) - n(8.) * (a + b);
         value.checked().ok()
+    }
+    pub(super) fn radius(&self, d: J, branch: usize) -> Option<J> {
+        let e = &self.c.envelope;
+        let s = self.c.spec;
+        let r = match branch {
+            0 => {
+                j(e.entry)
+                    - root(j(I::point(s.mouth_radius_mm).square()) - sq(d - n(s.mouth_radius_mm)))?
+            }
+            1 => j(I::point(s.mouth_diameter_mm) / I::point(2.)) - d * j(e.sin_a / e.cos_a),
+            _ => (j(e.tip) - d) * j(e.cos_c / e.sin_c),
+        };
+        let r = r.checked().ok()?;
+        if r.v.lo <= 0. {
+            return None;
+        }
+        Some(r)
     }
 }
 // Actual horizontal section of the inclined H0 cylinder: the ellipse front
@@ -139,17 +144,25 @@ fn rounded_part(r: J, rb: J, radius: f64, k: &Corner) -> Option<J> {
         // Solve circle/ellipse incidence on the proved left ellipse branch.
         // Positive coupled forms avoid cancellation of g*A²-R0². Original
         // authored beta is retained, with directed trig bounds in the jets.
-        let cos = j(k.cos_beta);
-        let g = j(k.cos_beta.square());
-        let b = g * rb + cos * n(radius);
-        let c = g * sq(rb) + n(2.) * cos * rb * n(radius) + circle_sq;
-        let x = c / (root(sq(b) + j(k.sin_beta.square()) * c)? + b);
-        root(circle_sq - sq(x))?
+        rounded_intersection(r, rb, radius, k)?[1]
     } else {
         return None;
     };
     let a = rb + n(radius) / j(k.cos_beta);
     Some(primitive(r, hi)? - a * hi + primitive(n(radius), hi)? / j(k.cos_beta))
+}
+pub(super) fn rounded_intersection(r: J, rb: J, radius: f64, k: &Corner) -> Option<[J; 2]> {
+    let cos = j(k.cos_beta);
+    let g = j(k.cos_beta.square());
+    let b = g * rb + cos * n(radius);
+    let c = g * sq(rb) + n(2.) * cos * rb * n(radius) + sq(r);
+    let x = c / (root(sq(b) + j(k.sin_beta.square()) * c)? + b);
+    Some([x, root(sq(r) - sq(x))?])
+}
+pub(super) fn line_intersection(r: J, a: J, b: J) -> Option<[J; 2]> {
+    let difference = (r - a) * (r + a);
+    let y = difference / (root(sq(r * b) + difference)? + a * b);
+    Some([a + b * y, y])
 }
 fn primitive(r: J, y: J) -> Option<J> {
     if y.v.lo == 0. && y.v.hi == 0. {
@@ -165,8 +178,7 @@ fn part(r: J, a: J, b: J, lo: I, upper: Option<I>) -> Option<J> {
     if r.v.lo <= a.v.hi {
         return None;
     }
-    let disc = sq(r) * (n(1.) + sq(b)) - sq(a);
-    let mut hi = (-a * b + root(disc)?) / (n(1.) + sq(b));
+    let mut hi = line_intersection(r, a, b)?[1];
     // Whole-cell order tests only. At any unresolved intersection, clamp,
     // tangency, or inactive/active event the caller uses an area range instead
     // of differentiating across a branch change.

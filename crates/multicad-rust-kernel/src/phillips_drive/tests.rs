@@ -132,7 +132,7 @@ fn cc_world(s: Spec, d: Domain, [section_x, y, parameter]: [f64; 3]) -> [f64; 3]
         d.corner_start_depth_mm + section_x * beta.sin() + parameter,
     ]
 }
-fn oracle(s: Spec, domain: Domain, p: [f64; 3]) -> bool {
+pub(super) fn oracle(s: Spec, domain: Domain, p: [f64; 3]) -> bool {
     let [entry, join, flank, tip, tb] = constants(s);
     if p[2] < 0. || p[2] > tip {
         return false;

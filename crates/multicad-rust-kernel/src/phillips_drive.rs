@@ -3,6 +3,10 @@
 use crate::tapered_thread::interval::I;
 use std::f64::consts::PI;
 mod classify;
+mod finite_section;
+pub use finite_section::{
+    EdgeRole, SectionBoundary, SectionCurve, SectionEdge, SectionVertex, VertexRole,
+};
 mod source;
 #[cfg(test)]
 mod tests;
@@ -199,6 +203,19 @@ impl Cutter {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, Error> {
         source::construct(spec, domain, cancelled)
+    }
+    /// A sealed oriented wire of actual authored section supports. Shared IDs
+    /// preserve expression ownership; these bounds do not authorize meshing or
+    /// independently certify literal foreign-file support incidence.
+    pub fn finite_section(&self, depth_mm: f64) -> Result<SectionBoundary<'_>, Error> {
+        self.finite_section_with_cancel(depth_mm, &|| false)
+    }
+    pub fn finite_section_with_cancel(
+        &self,
+        depth_mm: f64,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<SectionBoundary<'_>, Error> {
+        finite_section::construct(self, depth_mm, cancelled)
     }
     /// Integrates eligible Phillips cutters after proving their finite caps,
     /// closure, and adjacent corner cutouts inactive/disjoint throughout the
