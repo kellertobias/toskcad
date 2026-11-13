@@ -588,7 +588,7 @@ fn absent_source_supports_and_subnormal_accuracy_never_create_geometry() {
         (&only_entry, FaceKey::MaterialOuterWall),
     ] {
         assert!(matches!(
-            source::evaluate(body, None, key, options, &mut work),
+            source::evaluate(source::Domain::treated(body), None, key, options, &mut work),
             Err(Error::Invalid)
         ));
     }

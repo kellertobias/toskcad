@@ -5,7 +5,7 @@ use crate::tapered_thread::interval::I;
 pub use crate::thread_internal_treatment::{Enclosure, Error, Intent, QueryOptions, Terminal};
 mod material;
 mod mesh;
-mod properties;
+pub(crate) mod properties;
 pub use properties::{FaceKey, FaceProperties, FacePropertyOptions, ThreadBandRole};
 #[cfg(test)]
 mod tests;

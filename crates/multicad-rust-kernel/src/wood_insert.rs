@@ -6,8 +6,10 @@ use num_rational::BigRational;
 mod caps;
 mod classify;
 mod faces;
-pub use faces::FaceKey;
+mod properties;
 pub use caps::{Candidate, CapCell, CapCellBounds, CapDomains, CapEnd, CapKnot, CapOptions, Side};
+pub use faces::FaceKey;
+pub use properties::{FaceProperties, FacePropertyOptions};
 #[cfg(test)]
 mod tests;
 

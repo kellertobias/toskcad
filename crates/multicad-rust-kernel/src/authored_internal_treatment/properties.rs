@@ -97,25 +97,9 @@ impl Cavity {
     }
     /// Period is the actual source q/pitch period, including negative q/v cells.
     pub fn thread_face_key(&self, period: i64, band: usize) -> Result<FaceKey, Error> {
-        if band >= 5 {
-            return Err(Error::Invalid);
-        }
-        let n = i64::from(self.thread.spec().starts);
-        let group = (period.rem_euclid(n) + [0, 0, 0, 1, 1][band]) % n;
-        let start = if self.thread.spec().left_hand {
-            group
-        } else {
-            (n - group) % n
-        } as u32;
-        let role = [
-            ThreadBandRole::Crest,
-            ThreadBandRole::Upper,
-            ThreadBandRole::Root,
-            ThreadBandRole::Lower,
-            ThreadBandRole::Crest,
-        ][band];
-        Ok(FaceKey::Thread { start, band: role })
+        thread_face_key(&self.thread, period, band)
     }
+
     pub fn local_face_properties(
         &self,
         face: FaceKey,
@@ -189,7 +173,13 @@ fn query(
     {
         return Err(Error::Unresolved);
     }
-    let values = source::evaluate(body, material, face, options, &mut work)?;
+    let values = source::evaluate(
+        source::Domain::treated(body),
+        material.map(Material::radius_interval),
+        face,
+        options,
+        &mut work,
+    )?;
     let result = finish(face, values, options)?;
     work.checkpoint()?;
     Ok(result)
@@ -234,4 +224,90 @@ fn checked_values(values: [I; 4]) -> Result<[I; 4], Error> {
     } else {
         Err(Error::Unresolved)
     }
+}
+
+fn thread_face_key(thread: &AuthoredThread, period: i64, band: usize) -> Result<FaceKey, Error> {
+    if band >= 5 {
+        return Err(Error::Invalid);
+    }
+    let n = i64::from(thread.spec().starts);
+    let group = (period.rem_euclid(n) + [0, 0, 0, 1, 1][band]) % n;
+    let start = if thread.spec().left_hand {
+        group
+    } else {
+        (n - group) % n
+    } as u32;
+    let role = [
+        ThreadBandRole::Crest,
+        ThreadBandRole::Upper,
+        ThreadBandRole::Root,
+        ThreadBandRole::Lower,
+        ThreadBandRole::Crest,
+    ][band];
+    Ok(FaceKey::Thread { start, band: role })
+}
+
+impl AuthoredThread {
+    /// Measures the actual shared-affine finite source, without a treatment.
+    pub fn local_face_properties(
+        &self,
+        face: FaceKey,
+        options: FacePropertyOptions,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<FaceProperties, Error> {
+        bare_properties(self, None, face, options, interrupt)
+    }
+}
+/// Optional subtraction is only the paired source's actual planar cap domain.
+/// Both integrals share one work ledger and retain their own phase/start law.
+pub(crate) fn bare_properties(
+    source: &AuthoredThread,
+    subtract: Option<&AuthoredThread>,
+    face: FaceKey,
+    options: FacePropertyOptions,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<FaceProperties, Error> {
+    let mut work = integrate::Work::new(options, interrupt)?;
+    let valid = match face {
+        FaceKey::StartCap | FaceKey::EndCap => true,
+        FaceKey::Thread { start, .. } => start < source.spec().starts && subtract.is_none(),
+        _ => false,
+    };
+    if !valid || subtract.is_some_and(|s| s.full_length_mm() != source.full_length_mm()) {
+        return Err(Error::Invalid);
+    }
+    // Independent operands each receive half the requested integral widths.
+    // The final quotient/centroid width is checked after directed subtraction.
+    let integration_options = if subtract.is_some() {
+        FacePropertyOptions {
+            area_tolerance_mm2: options.area_tolerance_mm2 * 0.5,
+            first_moment_tolerance_mm3: options.first_moment_tolerance_mm3 * 0.5,
+            centroid_tolerance_mm: options.centroid_tolerance_mm * 0.5,
+            ..options
+        }
+    } else {
+        options
+    };
+    let mut values = source::evaluate(
+        source::Domain::bare(source),
+        None,
+        face,
+        integration_options,
+        &mut work,
+    )?;
+    if let Some(inner) = subtract {
+        let other = source::evaluate(
+            source::Domain::bare(inner),
+            None,
+            face,
+            integration_options,
+            &mut work,
+        )?;
+        for axis in 0..4 {
+            values[axis] = values[axis] - other[axis];
+        }
+    }
+    let result = finish(face, values, options)?;
+    work.checkpoint()?;
+    Ok(result)
 }
