@@ -955,7 +955,6 @@ fn unsupported_downstream_operations_refuse_explicitly() {
             .treat_edges_named(&selected, treatment, feature, policy())
             .err()
             .unwrap();
-        println!("{error}");
         assert_eq!(error.kind, GeometryErrorKind::Unsupported, "{error}");
     }
     // Queries without a certified provider for this boundary refuse.
