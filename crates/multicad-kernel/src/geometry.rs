@@ -21,7 +21,7 @@ pub(crate) mod construction;
 mod cosmetic_fastener_body;
 mod entry_chamfer_body;
 mod wood_insert_material;
-pub use wood_insert_material::WoodInsertMaterial;
+pub use wood_insert_material::{WoodInsertFaceProperties, WoodInsertMaterial};
 mod helical_body;
 mod helical_tube_body;
 mod herringbone_body;
