@@ -146,3 +146,49 @@ fn saved_metric_hex_head_plain_shank_exports_and_blindly_reimports_through_real_
     assert_eq!(mesh.edge_pairs as usize * 2, mesh.mesh.indices.len());
     assert_eq!(std::fs::read(&project).unwrap(), saved);
 }
+
+#[test]
+fn saved_metric_socket_core_recess_exports_through_real_commands() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("metric-core-recess.tcd");
+    let command = dir.path().join("command.json");
+    let exports = dir.path().join("exports");
+    std::fs::create_dir(&exports).unwrap();
+    let mut bytes = Vec::new();
+    project_file::write(
+        &ProjectFile::new(Document::new("Metric core recess").unwrap()).unwrap(),
+        &mut bytes,
+        Default::default(),
+    )
+    .unwrap();
+    std::fs::write(&project, bytes).unwrap();
+    let created = invoke(
+        &project,
+        &command,
+        "set_mechanical_part",
+        json!({
+            "expected_revision":0,"name":"M3 deep socket","recipe":{
+                "kind":"machine_screw","underhead_length":mm(3.),"shank_diameter":mm(3.),
+                "head":{"kind":"socket_cap","diameter":mm(5.5),"height":mm(2.2)},
+                "drive":{"kind":"hex_socket","across_flats":mm(1.5),"depth":mm(2.5)},
+                "thread":{"family":"iso_metric","fit":"metric_6g_external","major_diameter":mm(3.),"pitch":mm(0.5),"length":mm(3.),"representation":"modeled"}
+            }
+        }),
+        true,
+    );
+    let saved = std::fs::read(&project).unwrap();
+    let receipt = export_via_stdio(&project, &exports, &created["part"]);
+    let text = std::fs::read_to_string(exports.join("actual-plain-shank.step")).unwrap();
+    let (physical, _) =
+        multicad_kernel::rust_kernel::step_read::read_import_solid(&text, 1e-7).unwrap();
+    assert_eq!(physical.solid_count, 1);
+    assert!((physical.volume_mm3 - receipt["readback_volume_mm3"].as_f64().unwrap()).abs() < 1e-6);
+    let solid = Solid::import_rust_step(&text, EntityId::new(), GeometryPolicy::default()).unwrap();
+    let (source, _) = solid.rust_profiled_screw_geometry().unwrap();
+    assert!(!source.contains([0., 0., 0.15], 0.));
+    assert!(source.contains([0., 0., 0.5], 0.));
+    solid
+        .manufacturing_mesh_with_receipt(Default::default())
+        .unwrap();
+    assert_eq!(std::fs::read(project).unwrap(), saved);
+}

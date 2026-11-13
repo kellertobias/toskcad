@@ -31,6 +31,13 @@ pub(super) fn build(
         return Ok(None);
     };
     let head = match *head {
+        ResolvedScrewHead::SocketCap {
+            radius_mm,
+            height_mm,
+        } if depth_mm >= height_mm => Head::Cylindrical {
+            radius_mm,
+            height_mm,
+        },
         ResolvedScrewHead::Countersunk {
             radius_mm,
             height_mm,

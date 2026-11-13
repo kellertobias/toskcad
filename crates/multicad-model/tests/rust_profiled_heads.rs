@@ -223,3 +223,85 @@ fn canonical_profiled_heads_create_edit_export_and_reopen_without_native_geometr
         );
     }
 }
+
+#[test]
+fn modeled_metric_recesses_enter_the_thread_core_and_reopen_without_recipes() {
+    for kind in 0..3 {
+        let mut parameters = recipe(
+            if kind == 0 { 0 } else { 2 },
+            ThreadFit::Metric6gExternal,
+            2.,
+        );
+        let MechanicalPartParameters::MachineScrew { head, drive, .. } = &mut parameters else {
+            unreachable!()
+        };
+        let depth = if kind == 1 {
+            *head = ScrewHead::SocketCap {
+                diameter: length(5.5),
+                height: length(2.2),
+            };
+            2.5
+        } else if kind == 0 {
+            1.9
+        } else {
+            2.1
+        };
+        *drive = ScrewDrive::HexSocket {
+            across_flats: length(1.5),
+            depth: length(depth),
+        };
+        let mut session = Session::new(Document::new("Thread core recess").unwrap()).unwrap();
+        let request = MechanicalPartRequest::new("Deep metric socket", parameters);
+        let candidate = model::prepare_mechanical_part(&session, 0, actor(), &request).unwrap();
+        let compiled = compiler()
+            .compile_with_backend(
+                candidate.prepared.document(),
+                1,
+                GeometryBackend::Rust,
+                None,
+            )
+            .unwrap();
+        let solid = compiled.solid(request.feature).unwrap();
+        let (source, _) = solid.rust_profiled_screw_geometry().unwrap();
+        let floor = source.head_top_z() + source.recess().maximum_depth_mm();
+        assert!(floor > 0.);
+        assert!(!source.contains([0., 0., floor / 2.], 0.));
+        assert!(source.contains([0., 0., floor + 0.2], 0.));
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("core.step");
+        solid.write_step(&path).unwrap();
+        let imported = multicad_kernel::Solid::import_rust_step(
+            &std::fs::read_to_string(path).unwrap(),
+            EntityId::new(),
+            GeometryPolicy::default(),
+        )
+        .unwrap();
+        assert!((solid.volume_mm3().unwrap() - imported.volume_mm3().unwrap()).abs() < 1e-6);
+        session.commit(candidate.prepared).unwrap();
+        let mut bytes = Vec::new();
+        project_file::write(
+            &ProjectFile::new(session.document().clone()).unwrap(),
+            &mut bytes,
+            Default::default(),
+        )
+        .unwrap();
+        let reopened = project_file::read(
+            &mut bytes.as_slice(),
+            Default::default(),
+            &project_file::supported_capabilities(),
+        )
+        .unwrap()
+        .project;
+        let rebuilt = compiler()
+            .compile_with_backend(&reopened.document, 0, GeometryBackend::Rust, None)
+            .unwrap();
+        assert_eq!(
+            rebuilt
+                .solid(request.feature)
+                .unwrap()
+                .volume_mm3()
+                .unwrap(),
+            solid.volume_mm3().unwrap()
+        );
+    }
+}

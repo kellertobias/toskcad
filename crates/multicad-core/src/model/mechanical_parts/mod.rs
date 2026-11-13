@@ -8,7 +8,7 @@ mod screw_profiles;
 mod screws;
 mod wood;
 use super::{
-    BodyOutput, PrimitiveFrame, ResolvedThread, ThreadMode, ThreadParameters,
+    BodyOutput, PrimitiveFrame, ResolvedThread, ThreadMode, ThreadParameters, ThreadRepresentation,
     common::*,
     source::{check_dimension, invalid},
 };
@@ -351,7 +351,8 @@ impl MechanicalPartParameters {
                 ) = (&head, &drive)
                     && (*across_flats_mm <= 0.
                         || *depth_mm <= 0.
-                        || *depth_mm >= head.height_mm()
+                        || (*depth_mm >= head.height_mm()
+                            && thread.representation != ThreadRepresentation::Modeled)
                         || across_flats_mm / 3_f64.sqrt() >= head.minimum_radius_mm())
                 {
                     return Err(invalid(
