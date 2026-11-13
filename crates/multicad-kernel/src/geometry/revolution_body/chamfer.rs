@@ -154,6 +154,7 @@ impl Solid {
                 })
                 .collect::<Result<Vec<_>, GeometryError>>()?;
             let body = RevolutionBody {
+                cylindrical_pocket: None,
                 rings: topology::ring_edges(&geometry),
                 geometry,
                 feature,

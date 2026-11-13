@@ -9,6 +9,8 @@ use multicad_rust_kernel::{
 };
 use std::collections::BTreeSet;
 
+mod blind_pocket;
+pub use blind_pocket::CylindricalBlindPocketSpec;
 mod chamfer;
 mod draft;
 mod shell;
@@ -21,6 +23,7 @@ const OPERATION: &str = "Rust revolution";
 
 pub(crate) struct RevolutionBody {
     pub(crate) geometry: Revolution,
+    cylindrical_pocket: Option<Rc<multicad_rust_kernel::cylindrical_blind_pocket::Pocket>>,
     pub(super) feature: EntityId,
     sketch: PlaneFrame,
     segments: Vec<Vec<MeridianSegment>>,
@@ -253,6 +256,7 @@ impl Solid {
         })?;
         let rings = topology::ring_edges(&geometry);
         let body = RevolutionBody {
+            cylindrical_pocket: None,
             geometry,
             feature,
             sketch,
@@ -341,6 +345,7 @@ impl Solid {
         segments.push(cap("loft.axis", 0.));
         let rings = topology::ring_edges(&geometry);
         let body = RevolutionBody {
+            cylindrical_pocket: None,
             geometry,
             feature,
             sketch: PlaneFrame {

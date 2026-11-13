@@ -73,6 +73,7 @@ use planar_boolean_body::PlanarBooleanBody;
 use radial_boundary_body::RadialBoundaryBody;
 pub use radial_boundary_body::{RetainedAxialPipeThreadSource, RetainedHelicalThreadSource};
 pub use radial_boundary_body::{RetainedStepMemberMass, RetainedStepVerification};
+pub use revolution_body::CylindricalBlindPocketSpec;
 use revolution_body::RevolutionBody;
 use rounded_cylinder_body::RoundedCylinderBody;
 use rounded_slot_body::RoundedSlotBody;
@@ -2654,11 +2655,12 @@ impl Solid {
                 .is_ok()
             }
             SolidBody::Revolved(body, _) => {
-                multicad_rust_kernel::step::supports_cylindrical_revolution(&body.geometry)
-                    || multicad_rust_kernel::step::supports_conical_revolution(
-                        &body.geometry,
-                        self.policy.linear_tolerance_mm,
-                    )
+                !body.has_cylindrical_blind_pocket()
+                    && (multicad_rust_kernel::step::supports_cylindrical_revolution(&body.geometry)
+                        || multicad_rust_kernel::step::supports_conical_revolution(
+                            &body.geometry,
+                            self.policy.linear_tolerance_mm,
+                        ))
             }
             SolidBody::Orthogonal(body, _) => body.supports_step(),
         }
@@ -2786,6 +2788,9 @@ impl Solid {
                 writer.append_warped_union(&body.geometry, frame.origin, frame.u, frame.v)
             }
             SolidBody::Revolved(body, frame) => {
+                if body.has_cylindrical_blind_pocket() {
+                    return Err(step::StepError::Unsupported);
+                }
                 if let Some((base, radius, height, bore)) = body.circular_sweep(*frame) {
                     writer.append_placed_circular_sweep(
                         radius,

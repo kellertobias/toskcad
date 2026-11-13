@@ -167,6 +167,7 @@ fn build(
         .map(|(a, b)| segment(surface(a, b), a, &faces, feature, frame, height, policy))
         .collect::<Result<Vec<_>, GeometryError>>()?;
     let body = RevolutionBody {
+        cylindrical_pocket: None,
         rings: topology::ring_edges(&geometry),
         geometry,
         feature,

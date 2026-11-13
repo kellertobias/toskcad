@@ -164,6 +164,7 @@ impl Solid {
                 })
                 .collect();
             let body = RevolutionBody {
+                cylindrical_pocket: None,
                 geometry,
                 feature,
                 sketch: PlaneFrame {
