@@ -2210,6 +2210,9 @@ name = "multicad-rust-kernel"
 version = "0.1.0-dev"
 dependencies = [
  "multicad-precision",
+ "num-bigint",
+ "num-rational",
+ "num-traits 0.2.19",
  "spade",
 ]
 

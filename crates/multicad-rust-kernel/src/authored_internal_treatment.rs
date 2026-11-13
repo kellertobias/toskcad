@@ -3,9 +3,11 @@
 use crate::authored_flat_thread::AuthoredThread;
 use crate::tapered_thread::interval::I;
 pub use crate::thread_internal_treatment::{Enclosure, Error, Intent, QueryOptions, Terminal};
+mod mesh;
 #[cfg(test)]
 mod tests;
 mod volume;
+pub use mesh::{Candidate, tessellate_candidate};
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Entry {
     radius: f64,
