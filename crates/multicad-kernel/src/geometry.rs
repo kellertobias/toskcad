@@ -2562,10 +2562,10 @@ impl Solid {
     }
 
     pub fn display_edges(&self, deflection_mm: f64) -> Result<Vec<DisplayEdge>, GeometryError> {
+        self.validate_display_deflection(deflection_mm)?;
         if let Some((body, frame)) = self.wood_insert_body() {
             return body.display_edges(frame, deflection_mm, self.policy);
         }
-        self.validate_display_deflection(deflection_mm)?;
         if let Some((body, frame)) = self.internal_thread_treatment_body() {
             return body.display_edges(frame, deflection_mm, self.policy);
         }
