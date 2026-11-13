@@ -1,6 +1,7 @@
 //! A nominal wood screw envelope does not recover thread or point geometry.
 use super::*;
 use multicad_core::model::{ResolvedWoodScrew, WoodPointIntent, WoodScrewRepresentation};
+use multicad_kernel::rust_kernel::Rational;
 
 const MAX_ENTRIES: usize = 16;
 const MAX_BYTES: usize = 8 * 1024 * 1024;
@@ -157,6 +158,86 @@ fn prism(
     })
     .map_err(|e| error(Some(feature), e))
 }
+// New authored stock retains the evaluator's actual binary64 dimensions.
+// This is construction from parameters, never normalization of existing stock.
+fn binary_dimension(feature: EntityId, value: f64) -> Result<Rational, ModelError> {
+    let failed = || {
+        error(
+            Some(feature),
+            "Wood stock dimensions exceed the exact arithmetic budget",
+        )
+    };
+    if !value.is_finite() || value <= 0. {
+        return Err(failed());
+    }
+    let bits = value.to_bits();
+    let exponent = ((bits >> 52) & 0x7ff) as i32;
+    let mut numerator = bits & ((1_u64 << 52) - 1);
+    let mut shift = if exponent == 0 {
+        -1074
+    } else {
+        exponent - 1075
+    };
+    if exponent != 0 {
+        numerator |= 1_u64 << 52;
+    }
+    let zeros = numerator.trailing_zeros();
+    numerator >>= zeros;
+    shift += zeros as i32;
+    let (n, d) = if shift >= 0 {
+        (
+            u128::from(numerator)
+                .checked_mul(1_u128.checked_shl(shift as u32).ok_or_else(failed)?)
+                .ok_or_else(failed)?,
+            1_u128,
+        )
+    } else {
+        (
+            u128::from(numerator),
+            1_u128.checked_shl((-shift) as u32).ok_or_else(failed)?,
+        )
+    };
+    let n = i64::try_from(n).map_err(|_| failed())?;
+    let d = i64::try_from(d).map_err(|_| failed())?;
+    Rational::new(n, d).map_err(|_| failed())
+}
+fn rust_stock(
+    feature: EntityId,
+    radius: f64,
+    height: f64,
+    policy: GeometryPolicy,
+) -> Result<Solid, ModelError> {
+    let zero = Rational::new(0, 1).expect("zero");
+    let circle =
+        multicad_kernel::rust_kernel::Circle::new([zero; 2], binary_dimension(feature, radius)?)
+            .map_err(|e| error(Some(feature), format!("Invalid wood stock circle: {e:?}")))?;
+    let cylinder = multicad_kernel::rust_kernel::cylinder::AxialCylinder::new(
+        feature.uuid_bits(),
+        circle,
+        zero,
+        binary_dimension(feature, height)?,
+    )
+    .map_err(|e| error(Some(feature), format!("Invalid wood stock: {e:?}")))?;
+    Solid::from_axial_cylinder_sweep(
+        cylinder,
+        PlaneFrame::default(),
+        [0.; 2],
+        false,
+        Origin {
+            source: feature,
+            role: "wood.envelope.stock/side/0".into(),
+        },
+        policy,
+    )
+    .and_then(|solid| {
+        solid.with_feature_cap_roles(
+            feature,
+            "wood.envelope.stock/start",
+            "wood.envelope.stock/end",
+        )
+    })
+    .map_err(|e| error(Some(feature), e))
+}
 pub(super) fn build(
     feature: EntityId,
     p: &ResolvedWoodScrew,
@@ -226,17 +307,21 @@ fn build_inner(
         super::hexagon(across_flats_mm),
         policy,
     )?;
-    let stock = prism(
-        neutral,
-        "stock",
-        0.,
-        p.underhead_length_mm,
-        vec![CurvedEdge2d::Circle {
-            center: [0., 0.],
-            radius_mm: radius,
-        }],
-        policy,
-    )?;
+    let stock = if rust {
+        rust_stock(neutral, radius, p.underhead_length_mm, policy)?
+    } else {
+        prism(
+            neutral,
+            "stock",
+            0.,
+            p.underhead_length_mm,
+            vec![CurvedEdge2d::Circle {
+                center: [0., 0.],
+                radius_mm: radius,
+            }],
+            policy,
+        )?
+    };
     let solid = if head.uses_rust_geometry() && stock.uses_rust_geometry() {
         Solid::rust_join_planar_head_and_round_stock(&head, &stock, neutral, policy)
             .map_err(|e| error(Some(feature), e))?
@@ -299,6 +384,34 @@ mod tests {
             unreachable!()
         };
         *parameters
+    }
+    #[test]
+    fn authored_binary_dimensions_are_exact_and_refuse_out_of_budget_values() {
+        let feature = EntityId::new();
+        for value in [0.125, 3.3, 8.7, 12345.6789] {
+            assert_eq!(
+                binary_dimension(feature, value).unwrap().as_f64().to_bits(),
+                value.to_bits()
+            );
+        }
+        assert_eq!(
+            binary_dimension(feature, 3.3).unwrap().ratio(),
+            (3715469692580659, 1125899906842624)
+        );
+        for value in [
+            0.,
+            -1.,
+            f64::NAN,
+            f64::INFINITY,
+            1e-300,
+            f64::from_bits(1),
+            0.001,
+            1e-20,
+            1e19,
+            f64::MAX,
+        ] {
+            assert!(binary_dimension(feature, value).is_err());
+        }
     }
     #[test]
     #[cfg(feature = "occt")]

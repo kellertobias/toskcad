@@ -516,6 +516,7 @@ fn rust_wood_envelope_retains_a_complete_independently_decoded_stock_boundary() 
         (4., 16., 7., 2.8, 1.8, 2.8),
         (6., 40., 10., 4., 2.6, 4.2),
         (10., 100., 17., 7., 4.5, 7.),
+        (6.6, 43.3, 11., 4.1, 2.6, 4.2),
     ] {
         let mut s = session();
         let request = add(&mut s, wood(d, l, af, k, pitch, core));
