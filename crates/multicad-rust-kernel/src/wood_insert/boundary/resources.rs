@@ -34,6 +34,10 @@ impl Memory {
         }
         let mut v = Vec::new();
         v.try_reserve_exact(count).map_err(|_| Error::Limit)?;
+        self.retain(v)
+    }
+    /// Account actual allocator capacity before handing an owned buffer on.
+    pub fn retain<T>(&mut self, v: Vec<T>) -> Result<Vec<T>, Error> {
         self.add(
             v.capacity()
                 .checked_mul(size_of::<T>())

@@ -443,3 +443,256 @@ fn missing_foreign_duplicate_and_misordered_actual_wire_uses_never_qualify() {
     graph.loops[0][0][0].forward = !graph.loops[0][0][0].forward;
     assert_eq!(requalify(&graph), Err(Error::Unresolved));
 }
+
+#[test]
+fn allocation_accounting_and_incidence_only_checks_refuse_overflow_and_nonmanifold_data() {
+    use super::topology::{Corner, Use, edge_receipt, shell_receipt, vertex_links};
+    let mut memory = Memory { used: 1, limit: 2 };
+    assert_eq!(memory.add(2), Err(Error::Limit));
+    assert!(matches!(
+        memory.allocate::<u64>(
+            2,
+            &mut Work {
+                remaining: 100,
+                used: 0,
+                interrupt: None
+            }
+        ),
+        Err(Error::Limit)
+    ));
+    assert!(matches!(
+        memory.retain(Vec::<u64>::with_capacity(2)),
+        Err(Error::Limit)
+    ));
+    let mut unlimited = Work {
+        remaining: usize::MAX,
+        used: 0,
+        interrupt: None,
+    };
+    assert!(matches!(
+        memory.allocate::<u8>(usize::MAX, &mut unlimited),
+        Err(Error::Limit)
+    ));
+    let mut unlimited = Work {
+        remaining: usize::MAX,
+        used: 0,
+        interrupt: None,
+    };
+    let mut huge = Memory {
+        used: 0,
+        limit: usize::MAX,
+    };
+    assert!(matches!(
+        huge.allocate::<u8>(isize::MAX as usize + 1, &mut unlimited),
+        Err(Error::Limit)
+    ));
+    assert_eq!(
+        super::topology::edge_count([(true, [None, None])], &mut unlimited),
+        Err(Error::Unresolved)
+    );
+    let mut ordinary = Memory {
+        used: 0,
+        limit: 100,
+    };
+    assert!(
+        ordinary
+            .allocate::<u8>(2, &mut unlimited)
+            .unwrap()
+            .capacity()
+            >= 2
+    );
+    assert!(
+        ordinary
+            .allocate::<u64>(2, &mut unlimited)
+            .unwrap()
+            .capacity()
+            >= 2
+    );
+    let incidence = |uses| super::topology::Incidence {
+        uses,
+        heads: vec![],
+        corners: vec![],
+        seen: vec![],
+        reached: vec![false],
+        queue: vec![],
+        chi: 0,
+    };
+    assert_eq!(
+        incidence(vec![[None, None]]).finish([true], (0, 0), &mut unlimited),
+        Err(Error::Unresolved)
+    );
+    assert_eq!(
+        incidence(vec![]).finish([], (1, 0), &mut unlimited),
+        Err(Error::Unresolved)
+    );
+    let use0 = Use {
+        face: 0,
+        forward: false,
+    };
+    assert!(edge_receipt(true, [Some(use0), None]).is_err());
+    assert!(edge_receipt(false, [Some(use0), None]).is_err());
+    let corner = |a, b, next| Corner {
+        germs: [a, b],
+        next,
+    };
+    let cases = [
+        (vec![0], vec![corner(0, 1, usize::MAX)]),
+        (
+            vec![0],
+            vec![corner(0, 1, 1), corner(0, 1, 2), corner(0, 1, usize::MAX)],
+        ),
+        (vec![0, 0], vec![corner(0, 1, 1), corner(0, 1, usize::MAX)]),
+        (
+            vec![0],
+            vec![
+                corner(0, 1, 1),
+                corner(0, 1, 2),
+                corner(2, 3, 3),
+                corner(2, 3, usize::MAX),
+            ],
+        ),
+    ];
+    for (heads, corners) in cases {
+        assert_eq!(
+            vertex_links(
+                &heads,
+                &corners,
+                &mut [false; 8],
+                &mut Work {
+                    remaining: 1000,
+                    used: 0,
+                    interrupt: None
+                }
+            ),
+            Err(Error::Unresolved)
+        );
+    }
+    assert_eq!(
+        shell_receipt((1, 1), (1, 2), 0, &[true]),
+        Err(Error::Unresolved)
+    );
+    assert_eq!(
+        shell_receipt((1, 1), (1, 1), 0, &[false]),
+        Err(Error::Unresolved)
+    );
+    assert_eq!(
+        shell_receipt((1, 1), (1, 1), 1, &[true]),
+        Err(Error::Unresolved)
+    );
+}
+#[test]
+fn hidden_cell_seams_and_duplicate_cycles_cannot_be_promoted_to_material_wires() {
+    let source = source(false, false, 1, 1);
+    let mut graph = source
+        .boundary_with_interrupt(BoundaryOptions::default(), None)
+        .unwrap();
+    let hidden = graph
+        .outer
+        .source_curves()
+        .find(|(_, curve)| curve.faces()[0] == curve.faces()[1] && curve.faces()[0] >= 2)
+        .map(|(i, c)| (i, c.faces()[0]))
+        .unwrap();
+    let (id, face) = hidden;
+    let forward = graph.outer.source_curve(id).unwrap().face_uses()[0].1;
+    graph.loops[face as usize][0] = vec![BoundaryCoedge {
+        curve: BoundaryCurveKey::Outer(id),
+        forward,
+    }];
+    assert_eq!(requalify(&graph), Err(Error::Unresolved));
+    let mut graph = source
+        .boundary_with_interrupt(BoundaryOptions::default(), None)
+        .unwrap();
+    let copy = graph.loops[0][0].clone();
+    graph.loops[0][0].extend(copy);
+    assert_eq!(requalify(&graph), Err(Error::Unresolved));
+}
+#[test]
+fn original_curve_precision_and_parent_query_bytes_remain_real_limits() {
+    let source = source(false, true, 1, 1);
+    let outer = source
+        .outer()
+        .boundary_with_interrupt(BoundaryOptions::default(), None)
+        .unwrap();
+    assert!(matches!(
+        source.boundary_with_interrupt(
+            BoundaryOptions {
+                work: outer.work_used() + 1,
+                ..BoundaryOptions::default()
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    let limits = BoundaryOptions {
+        cells: 256,
+        vertices: 1024,
+        curves: 1024,
+        bytes: 9 * 1024 * 1024,
+        ..BoundaryOptions::default()
+    };
+    let graph = source.boundary_with_interrupt(limits, None).unwrap();
+    let key = graph
+        .outer
+        .curves()
+        .max_by(|(_, a), (_, b)| {
+            let score = |c: &BoundaryCurve| {
+                let p = c.affine_rzv_bounds();
+                p[0][0].upper * p[1][2].upper.abs().powi(2)
+            };
+            score(a).total_cmp(&score(b))
+        })
+        .map(|(id, _)| BoundaryCurveKey::Outer(id))
+        .unwrap();
+    assert!(matches!(
+        graph.curve_polyline(key, 2e-10, 500000, None),
+        Err(Error::Limit)
+    ));
+    assert!(matches!(
+        graph.curve_polyline(key, 0.05, 1000, Some(&|| true)),
+        Err(Error::Cancelled)
+    ));
+    let original = source.outer().spec();
+    let options = SourceOptions {
+        position_limit_mm: 1e-7,
+        normal_angle_limit_rad: 1e-7,
+    };
+    let tiny_source = Insert::new(
+        AuthoredThread::new(
+            Spec {
+                length_mm: 4.,
+                ..original
+            },
+            options,
+        )
+        .unwrap(),
+        AuthoredThread::new(
+            Spec {
+                length_mm: 4.,
+                ..source.inner().spec()
+            },
+            options,
+        )
+        .unwrap(),
+        0.5,
+        None,
+    )
+    .unwrap();
+    let tiny = tiny_source
+        .boundary_with_interrupt(BoundaryOptions::default(), None)
+        .unwrap();
+    let key = tiny
+        .outer
+        .curves()
+        .min_by(|(_, a), (_, b)| {
+            a.affine_rzv_bounds()[1][2]
+                .upper
+                .abs()
+                .total_cmp(&b.affine_rzv_bounds()[1][2].upper.abs())
+        })
+        .map(|(id, _)| BoundaryCurveKey::Outer(id))
+        .unwrap();
+    assert!(matches!(
+        tiny.curve_polyline(key, 1e-20, 1000, None),
+        Err(Error::Unresolved)
+    ));
+}
