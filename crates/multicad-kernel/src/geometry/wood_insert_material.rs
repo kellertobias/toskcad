@@ -1,7 +1,9 @@
 //! Native paired-thread material. Solid topology/Model admission is separate.
+mod faces;
 use super::entry_chamfer_body::placement::measured::{self, SourceMesh};
 use super::internal_thread_treatment_body::interval::Interval as I;
 use super::*;
+pub use faces::WoodInsertFaceProperties;
 use multicad_rust_kernel::{
     display::{DisplayMesh, Tessellation},
     manufacturing,
