@@ -5,7 +5,10 @@ use super::*;
 mod analytic;
 mod body;
 mod branches;
-pub use body::{Body, VirtualOuterCap, read_phillips_body, read_phillips_body_with_interrupt};
+pub use body::{
+    Body, OuterCarrierBounds, OuterCarrierOptions, TensorCarrierBound, VirtualOuterCap,
+    read_phillips_body, read_phillips_body_with_interrupt,
+};
 mod endpoints;
 pub use analytic::{AnalyticSupportBounds, AnalyticSupportOptions};
 pub use branches::{

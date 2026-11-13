@@ -3,6 +3,8 @@
 //! publication receipt. No expected authoring source or gauge is accepted.
 use super::*;
 use crate::step_read::helical_import::{law::Law, seed::TensorHeader};
+mod outer;
+pub use outer::{OuterCarrierBounds, OuterCarrierOptions, TensorCarrierBound};
 #[cfg(test)]
 mod tests;
 

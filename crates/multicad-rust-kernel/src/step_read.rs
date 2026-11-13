@@ -1035,7 +1035,8 @@ pub use phillips_cutter::{
     ParsedPhillipsVirtualOuterCap, PhillipsAnalyticSupportBounds, PhillipsAnalyticSupportOptions,
     PhillipsCubicSupportBounds, PhillipsCubicSupportOptions, PhillipsEdgeSupportBound,
     PhillipsEndpointCouplingBounds, PhillipsEndpointCouplingOptions,
-    PhillipsImplicitSupportEnclosure, read_phillips_body, read_phillips_body_with_interrupt,
+    PhillipsImplicitSupportEnclosure, PhillipsOuterCarrierBounds, PhillipsOuterCarrierOptions,
+    PhillipsTensorCarrierBound, read_phillips_body, read_phillips_body_with_interrupt,
     read_phillips_screw_boundary, read_phillips_screw_boundary_with_interrupt,
 };
 

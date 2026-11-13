@@ -13,7 +13,7 @@ mod phillips;
 pub(crate) use phillips::verify_cavity_fixture as verify_phillips_cavity_fixture;
 mod torx;
 pub(in super::super) use decode::read;
-pub(in super::super) use decode::read_phillips_outer_header;
+pub(in super::super) use decode::{match_phillips_outer, read_phillips_outer_header};
 pub(super) use phillips::verify as verify_phillips;
 pub use phillips::{PhillipsScrewSourceKnownProof, verify_phillips_screw_source_known};
 pub(in super::super) use torx::matches as torx_recess_matches;

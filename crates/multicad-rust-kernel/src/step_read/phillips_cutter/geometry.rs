@@ -1,7 +1,7 @@
 //! Inspect every transmitted support and complete polynomial carrier against
 //! the supplied source. No exporter controls or partition are regenerated.
 use super::*;
-fn axis(shell: &Shell<'_, '_>, id: u32) -> Result<LiteralAxis> {
+pub(super) fn axis(shell: &Shell<'_, '_>, id: u32) -> Result<LiteralAxis> {
     let [Value::String(_), origin, normal, reference_axis] =
         shell.args(id, "AXIS2_PLACEMENT_3D")?
     else {

@@ -5,7 +5,7 @@ use crate::{
     helical_thread::Thread,
     step::{
         StepError,
-        helical::{Closure, DEGREE, Spline, prepare, product},
+        helical::{Closure, DEGREE, Spline, ThreadSplines, prepare, product},
     },
 };
 
@@ -229,99 +229,26 @@ pub(super) fn verify_member(
     let faces = shell.member_faces(id)?;
     let count = splines.bands.len();
     require(faces.len() == closure.face_count(count, thread.spec().major_radius_mm))?;
-    let mut rings: [Vec<u32>; 2] = std::array::from_fn(|_| vec![0; count]);
-    let mut rails = vec![[0; 2]; count];
-    let mut corners = vec![[[0; 2]; 2]; count];
     let mut flux = 0.;
-    for (i, radial) in splines.bands.iter().enumerate() {
-        let (surface, outward, bounds) = face(shell, faces[i])?;
-        let [bound] = bounds[..] else {
-            return Err(ReadError::Invalid);
-        };
-        require(outward == forward)?;
-        let controls = tensor_surface(
+    let Prefix { rings, corners } = verify_prefix(
+        shell,
+        &faces[..count],
+        &splines,
+        [origin, u, v],
+        PrefixContract {
             proof,
-            shell,
-            surface,
-            radial,
-            &splines.axial,
-            &splines.heights,
-            [origin, u, v],
-        )?;
-        // F=(radial projection)/2 has zero flux through every transverse
-        // cap plane, including an interior trim. Integrate only retained
-        // Bézier cells while proving the full support net above.
-        flux += quadrature.trimmed_spline_flux(&controls, origin, axis, splines.visible_start);
-
-        let uses = ring(shell, bound, true)?;
-        let uses = orient(&uses, forward);
-        let [(start, true), (next, true), (end, false), (previous, false)] = uses[..] else {
-            return Err(ReadError::Invalid);
-        };
-        rings[0][i] = start;
-        rings[1][i] = end;
-        rails[i] = [previous, next];
-        let [a, b] = [0, radial.poles.len() - 1];
-        for (j, (rail, p)) in [(previous, radial.poles[a]), (next, radial.poles[b])]
-            .into_iter()
-            .enumerate()
-        {
-            corners[i][j] = trimmed_spline_edge(
-                proof,
-                shell,
-                rail,
-                &splines.axial,
-                [splines.visible_start, splines.axial.poles.len() - 1],
-                &controls[if j == 0 { a } else { b }],
-                splines
-                    .axial
-                    .poles
-                    .iter()
-                    .zip(&splines.heights)
-                    .map(|(&axial, &z)| world(product(p, axial), z)),
-            )?;
-        }
-        for (cap, &rim) in [start, end].iter().enumerate() {
-            if cap == 0
-                && ((i == 3 && shank_length.is_some())
-                    || (i % 4 == 3 && matches!(closure, Closure::Profiled(_))))
-            {
-                // The circular crest is verified with the shank wall.
-                continue;
-            }
-            if cap == 1
-                && i % 4 == 3
-                && matches!(closure,Closure::ExternalStock {radius_mm,..} if radius_mm==thread.spec().major_radius_mm)
-            {
-                continue;
-            }
-            let z = [splines.heights[splines.visible_start], height][cap];
-            let axial = splines.axial.poles[if cap == 0 {
-                splines.visible_start
-            } else {
-                splines.axial.poles.len() - 1
-            }];
-            let endpoints = spline_edge(
-                proof,
-                shell,
-                rim,
-                radial,
-                &controls
-                    .iter()
-                    .map(|row| {
-                        row[if cap == 0 {
-                            splines.visible_start
-                        } else {
-                            row.len() - 1
-                        }]
-                    })
-                    .collect::<Vec<_>>(),
-                radial.poles.iter().map(|&p| world(product(p, axial), z)),
-            )?;
-            require(endpoints == [corners[i][0][cap], corners[i][1][cap]])?;
-        }
-    }
-    require((0..count).all(|i| rails[i][1] == rails[(i + 1) % count][0]))?;
+            forward,
+            legacy_shank_entry: shank_length.is_some(),
+            all_entry_crests: matches!(closure, Closure::Profiled(_)),
+            exit_crests: matches!(closure,Closure::ExternalStock {radius_mm,..} if radius_mm==thread.spec().major_radius_mm),
+        },
+        |_, controls| {
+            // The legacy scalar remains internal. Independent physical receipts do
+            // not reuse this unbounded floating-point integral as decoded mass.
+            flux += quadrature.trimmed_spline_flux(controls, origin, axis, splines.visible_start);
+            Ok(())
+        },
+    )?;
 
     let mut cylinder_rims = [0; 2];
     let mut caps = [[0.; 3]; 2];
@@ -337,6 +264,17 @@ pub(super) fn verify_member(
             continue;
         }
         let top = end == 1;
+        if top && matches!(closure, Closure::Profiled(_)) {
+            verify_plain_tip(
+                proof,
+                shell,
+                *face_id,
+                [origin, u, v],
+                (height, forward),
+                &rings[1],
+            )?;
+            continue;
+        }
         let (surface, outward, bounds) = face(shell, *face_id)?;
         let hole = closure.cap_hole(top);
         let inner = matches!(closure, Closure::Hollow(_));
@@ -593,6 +531,154 @@ pub(super) fn verify_member(
     let volume = outside_volume + if forward { flux } else { -flux };
     require(volume.is_finite() && volume > 0.)?;
     Ok(volume)
+}
+
+/// Real outer transverse tip cap with actual finite tensor-rim identities.
+pub(super) fn verify_plain_tip(
+    proof: Proof,
+    shell: &Shell<'_, '_>,
+    id: u32,
+    [origin, u, v]: [Point; 3],
+    (height, forward): (f64, bool),
+    rings: &[u32],
+) -> Result<()> {
+    let (surface, outward, bounds) = face(shell, id)?;
+    require(outward && bounds.len() == 1)?;
+    let [Value::String(_), axis] = shell.args(surface, "PLANE")? else {
+        return Err(ReadError::Invalid);
+    };
+    let normal = cross(u, v);
+    proof.axis(
+        shell,
+        axis,
+        std::array::from_fn(|i| origin[i] + normal[i] * height),
+        normal,
+        u,
+    )?;
+    let expected: Vec<_> = rings.iter().map(|&id| (id, true)).collect();
+    require(orient(&ring(shell, bounds[0], true)?, forward) == expected)
+}
+
+/// Actual finite tensor/rail/rim incidence, shared by the legacy independent
+/// reader and source-free retained outer packets. No head/recess recipe needed.
+pub(super) struct PrefixContract {
+    pub proof: Proof,
+    pub forward: bool,
+    pub legacy_shank_entry: bool,
+    pub all_entry_crests: bool,
+    pub exit_crests: bool,
+}
+pub(super) struct Prefix {
+    pub rings: [Vec<u32>; 2],
+    pub corners: Vec<[[u32; 2]; 2]>,
+}
+pub(super) fn verify_prefix(
+    shell: &mut Shell<'_, '_>,
+    faces: &[u32],
+    splines: &ThreadSplines,
+    [origin, u, v]: [Point; 3],
+    contract: PrefixContract,
+    mut controls_receipt: impl FnMut(usize, &[Vec<Point>]) -> Result<()>,
+) -> Result<Prefix> {
+    let PrefixContract {
+        proof,
+        forward,
+        legacy_shank_entry,
+        all_entry_crests,
+        exit_crests,
+    } = contract;
+    let count = splines.bands.len();
+    require(faces.len() == count)?;
+    let normal = cross(u, v);
+    let world = |[x, y]: Point2, z: f64| {
+        std::array::from_fn(|i| origin[i] + u[i] * x + v[i] * y + normal[i] * z)
+    };
+    let height = *splines.heights.last().ok_or(ReadError::Invalid)?;
+    let mut rings: [Vec<u32>; 2] = std::array::from_fn(|_| vec![0; count]);
+    let mut rails = vec![[0; 2]; count];
+    let mut corners = vec![[[0; 2]; 2]; count];
+    for (i, radial) in splines.bands.iter().enumerate() {
+        let (surface, outward, bounds) = face(shell, faces[i])?;
+        let [bound] = bounds[..] else {
+            return Err(ReadError::Invalid);
+        };
+        require(outward == forward)?;
+        let controls = tensor_surface(
+            proof,
+            shell,
+            surface,
+            radial,
+            &splines.axial,
+            &splines.heights,
+            [origin, u, v],
+        )?;
+        controls_receipt(i, &controls)?;
+
+        let uses = ring(shell, bound, true)?;
+        let uses = orient(&uses, forward);
+        let [(start, true), (next, true), (end, false), (previous, false)] = uses[..] else {
+            return Err(ReadError::Invalid);
+        };
+        rings[0][i] = start;
+        rings[1][i] = end;
+        rails[i] = [previous, next];
+        let [a, b] = [0, radial.poles.len() - 1];
+        for (j, (rail, p)) in [(previous, radial.poles[a]), (next, radial.poles[b])]
+            .into_iter()
+            .enumerate()
+        {
+            corners[i][j] = trimmed_spline_edge(
+                proof,
+                shell,
+                rail,
+                &splines.axial,
+                [splines.visible_start, splines.axial.poles.len() - 1],
+                &controls[if j == 0 { a } else { b }],
+                splines
+                    .axial
+                    .poles
+                    .iter()
+                    .zip(&splines.heights)
+                    .map(|(&axial, &z)| world(product(p, axial), z)),
+            )?;
+        }
+        for (cap, &rim) in [start, end].iter().enumerate() {
+            if cap == 0 && ((i == 3 && legacy_shank_entry) || (i % 4 == 3 && all_entry_crests)) {
+                // The circular crest is verified with the shank wall.
+                continue;
+            }
+            if cap == 1 && i % 4 == 3 && exit_crests {
+                continue;
+            }
+            let z = [splines.heights[splines.visible_start], height][cap];
+            let axial = splines.axial.poles[if cap == 0 {
+                splines.visible_start
+            } else {
+                splines.axial.poles.len() - 1
+            }];
+            let endpoints = spline_edge(
+                proof,
+                shell,
+                rim,
+                radial,
+                &controls
+                    .iter()
+                    .map(|row| {
+                        row[if cap == 0 {
+                            splines.visible_start
+                        } else {
+                            row.len() - 1
+                        }]
+                    })
+                    .collect::<Vec<_>>(),
+                radial.poles.iter().map(|&p| world(product(p, axial), z)),
+            )?;
+            require(endpoints == [corners[i][0][cap], corners[i][1][cap]])?;
+        }
+    }
+    require((0..count).all(|i| rails[i][1] == rails[(i + 1) % count][0]))?;
+
+    Ok(Prefix { rings, corners })
 }
 
 pub(super) fn tensor_surface(

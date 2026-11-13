@@ -62,7 +62,7 @@ pub(super) fn verify(
     let shift = expected.plain_length_mm();
     let (surface, forward, bounds) = face(shell, faces[0])?;
     require(forward && bounds.len() == 2)?;
-    let mut previous = single_bound_rim(shell, bounds[0], true, false, frame)?;
+    let previous = single_bound_rim(shell, bounds[0], true, false, frame)?;
     if phi {
         let axis = hex_head::plane(shell, surface)?;
         let actual = shell.placement(reference(axis)?)?;
@@ -72,6 +72,51 @@ pub(super) fn verify(
     }
     let top = previous;
     let socket_mouth = bounds[1];
+    verify_walls(
+        proof,
+        shell,
+        &faces[1..=segments.len()],
+        MeridianWalls {
+            segments: &segments,
+            frame,
+            shift,
+            top: previous,
+            join: &join,
+        },
+    )?;
+    Ok(Verified {
+        frame,
+        proof,
+        top,
+        mouth: socket_mouth,
+        faces: faces.to_vec(),
+        segment_count: segments.len(),
+    })
+}
+
+/// Shared actual outer wall/finite-curve proof. The caller supplies a retained
+/// meridian, never a dummy recess or reconstructed authoring head recipe.
+pub(super) struct MeridianWalls<'a> {
+    pub segments: &'a [Segment],
+    pub frame: Frame,
+    pub shift: f64,
+    pub top: Rim,
+    pub join: &'a Junction,
+}
+pub(super) fn verify_walls(
+    proof: Proof,
+    shell: &mut Shell<'_, '_>,
+    faces: &[u32],
+    walls: MeridianWalls<'_>,
+) -> Result<()> {
+    let MeridianWalls {
+        segments,
+        frame,
+        shift,
+        top: mut previous,
+        join,
+    } = walls;
+    require(faces.len() == segments.len())?;
     for (i, source) in segments.iter().enumerate() {
         require(
             previous.radius == source.start[0]
@@ -80,7 +125,7 @@ pub(super) fn verify(
                     frame.world([0.; 2], source.start[1] - shift),
                 ),
         )?;
-        let (surface, forward, bounds) = face(shell, faces[i + 1])?;
+        let (surface, forward, bounds) = face(shell, faces[i])?;
         let last = i + 1 == segments.len();
         let end = if source.role == Role::Bearing {
             require(forward && bounds.len() == 2)?;
@@ -97,7 +142,7 @@ pub(super) fn verify(
             }
         } else {
             require(bounds.len() == 1)?;
-            let (end, seam) = periodic_end(shell, bounds[0], previous, last, &join, frame)?;
+            let (end, seam) = periodic_end(shell, bounds[0], previous, last, join, frame)?;
             match source.curve {
                 HeadCurve::Line => line_surface(
                     proof,
@@ -137,12 +182,5 @@ pub(super) fn verify(
         )?;
         previous = end;
     }
-    Ok(Verified {
-        frame,
-        proof,
-        top,
-        mouth: socket_mouth,
-        faces: faces.to_vec(),
-        segment_count: segments.len(),
-    })
+    Ok(())
 }
