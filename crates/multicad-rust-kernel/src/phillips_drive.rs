@@ -3,7 +3,9 @@
 use crate::tapered_thread::interval::I;
 use std::f64::consts::PI;
 mod classify;
+mod events;
 mod finite_section;
+pub use events::{BoundaryEvents, EventRole, FiniteTrim, SourceEvent, WallKind};
 pub use finite_section::{
     EdgeRole, SectionBoundary, SectionCurve, SectionEdge, SectionVertex, VertexRole,
 };
@@ -203,6 +205,17 @@ impl Cutter {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, Error> {
         source::construct(spec, domain, cancelled)
+    }
+    /// Shared expression-owned events and finite trim domains of the canonical
+    /// three-dimensional boundary. General event orders remain unsupported.
+    pub fn boundary_events(&self) -> Result<BoundaryEvents<'_>, Error> {
+        self.boundary_events_with_cancel(&|| false)
+    }
+    pub fn boundary_events_with_cancel(
+        &self,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<BoundaryEvents<'_>, Error> {
+        events::construct(self, cancelled)
     }
     /// A sealed oriented wire of actual authored section supports. Shared IDs
     /// preserve expression ownership; these bounds do not authorize meshing or
