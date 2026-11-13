@@ -13,6 +13,8 @@ mod helical;
 pub(crate) use helical::profiled::read_torx_cavity_fixture;
 #[cfg(test)]
 pub(crate) use helical::profiled::verify_finite_graph_fixture;
+#[cfg(test)]
+pub(crate) use helical::profiled::verify_phillips_cavity_fixture;
 mod helical_import;
 mod thread_entry_chamfer;
 pub use helical_import::{
@@ -1021,3 +1023,5 @@ fn face_area(outer: &Trim, holes: &[Trim], tolerance: f64) -> Result<f64> {
 
 #[cfg(test)]
 mod tests;
+
+pub use helical::{PhillipsScrewSourceKnownProof, verify_phillips_screw_source_known};

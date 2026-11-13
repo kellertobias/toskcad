@@ -411,7 +411,7 @@ pub(super) fn read_member(
         |r| r.full_length_mm(),
     );
     let closure = if let Some(screw) = &profiled_screw {
-        Closure::Profiled(screw)
+        Closure::Profiled(screw.into())
     } else if let Some(relief) = &end_relief {
         Closure::TerminalRelief {
             neck_radius_mm: relief.neck_radius_mm(),

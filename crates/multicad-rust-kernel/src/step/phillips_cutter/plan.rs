@@ -1,6 +1,6 @@
 use super::*;
 use support::{LiteralSupport, Pose, Support, adjacent, b, map_point, norm};
-pub(super) struct Plan<'a> {
+pub(in crate::step) struct Plan<'a> {
     topology: BoundaryTopology<'a>,
     points: Vec<Point>,
     surfaces: Vec<LiteralSupport>,
@@ -101,6 +101,25 @@ impl<'a> Plan<'a> {
         file: &mut StepFile,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Entity, Error> {
+        let (surfaces, edges) = self.emit_geometry(file, interrupt)?;
+        let mut faces = Vec::new();
+        for (index, face) in self.topology.faces().iter().enumerate() {
+            checkpoint(interrupt)?;
+            let uses = face
+                .edge_uses()
+                .iter()
+                .map(|u| file.oriented_edge(edges[u.edge], u.forward))
+                .collect::<Vec<_>>();
+            let bound = file.bound(&uses, true);
+            faces.push(file.face_on(&[bound], surfaces[index], self.surfaces[index].forward));
+        }
+        Ok(file.solid(&faces))
+    }
+    fn emit_geometry(
+        &self,
+        file: &mut StepFile,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<(Vec<Entity>, Vec<Entity>), Error> {
         let mut vertices = Vec::new();
         for &point in &self.points {
             checkpoint(interrupt)?;
@@ -118,17 +137,51 @@ impl<'a> Plan<'a> {
             let supports = self.owners[index].map(|i| surfaces[i]);
             edges.push(curve.emit(file, ends, supports, interrupt)?);
         }
+        Ok((surfaces, edges))
+    }
+    /// Omit the temporary source Mouth cap and reverse every actual cavity
+    /// face use/sense. The exact same literal Mouth plane and reversed wire
+    /// become the material head-top support and hole; no fitted substitute.
+    pub fn emit_reversed_cavity(
+        &self,
+        file: &mut StepFile,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<VoidBoundary, Error> {
+        let (surfaces, edges) = self.emit_geometry(file, interrupt)?;
         let mut faces = Vec::new();
+        let mut mouth = None;
         for (index, face) in self.topology.faces().iter().enumerate() {
             checkpoint(interrupt)?;
             let uses = face
                 .edge_uses()
                 .iter()
-                .map(|u| file.oriented_edge(edges[u.edge], u.forward))
+                .rev()
+                .map(|u| file.oriented_edge(edges[u.edge], !u.forward))
                 .collect::<Vec<_>>();
-            let bound = file.bound(&uses, true);
-            faces.push(file.face_on(&[bound], surfaces[index], self.surfaces[index].forward));
+            if face.source_identity() == crate::phillips_drive::FaceKey::Mouth {
+                mouth = Some((
+                    file.bound(&uses, false),
+                    surfaces[index],
+                    self.surfaces[index].forward,
+                ));
+            } else {
+                let bound = file.bound(&uses, true);
+                faces.push(file.face_on(&[bound], surfaces[index], !self.surfaces[index].forward));
+            }
         }
-        Ok(file.solid(&faces))
+        let (mouth, mouth_surface, mouth_forward) = mouth.expect("sealed source Mouth ownership");
+        Ok(VoidBoundary {
+            faces,
+            mouth,
+            mouth_surface,
+            mouth_forward,
+        })
     }
+}
+
+pub(in crate::step) struct VoidBoundary {
+    pub faces: Vec<Entity>,
+    pub mouth: Entity,
+    pub mouth_surface: Entity,
+    pub mouth_forward: bool,
 }

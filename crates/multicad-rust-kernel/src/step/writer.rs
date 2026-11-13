@@ -382,7 +382,7 @@ impl Writer {
             helical::encode(
                 file,
                 screw.thread(),
-                helical::Closure::Profiled(screw),
+                helical::Closure::Profiled(screw.into()),
                 placement,
                 tolerance_mm,
             )

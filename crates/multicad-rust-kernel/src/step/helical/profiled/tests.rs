@@ -175,7 +175,7 @@ fn physical_junction_and_drive_encoders_refuse_collapsed_geometry() {
         normal: [0.; 3],
         ..p
     };
-    assert!(head(&mut file, &collapsed, &source, join, 1e-7).is_err());
+    assert!(head(&mut file, &collapsed, (&source).into(), join, 1e-7, None).is_err());
     let mut file = StepFile::new();
     let rim = corners(&mut file, &thread, &p);
     assert!(junction(&mut file, &p, &thread, f64::INFINITY, 0., &rim).is_err());

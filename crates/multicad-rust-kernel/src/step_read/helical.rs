@@ -14,6 +14,8 @@ mod external;
 mod hex_head;
 pub(super) mod profiled;
 pub use profiled::profiled_screw_head_volume_error_bound_mm3;
+pub use profiled::{PhillipsScrewSourceKnownProof, verify_phillips_screw_source_known};
+
 mod socket_head;
 mod tangent_shank;
 pub(super) mod volume;
@@ -147,7 +149,7 @@ pub fn verify_profiled_screw(
     verify(
         input,
         screw.thread(),
-        Closure::Profiled(screw),
+        Closure::Profiled(screw.into()),
         [origin, u, v],
         tolerance,
     )
@@ -393,15 +395,32 @@ pub(super) fn verify_member(
         }
     }
     let outside_volume = match closure {
-        Closure::Profiled(screw) => profiled::verify(
-            proof,
-            shell,
-            &faces,
-            screw,
-            &rings,
-            &corners,
-            [origin, u, v],
-        )?,
+        Closure::Profiled(source) => {
+            if let Some(screw) = source.existing() {
+                profiled::verify(
+                    proof,
+                    shell,
+                    &faces,
+                    screw,
+                    &rings,
+                    &corners,
+                    [origin, u, v],
+                )?
+            } else {
+                let screw = source
+                    .phillips_geometry()
+                    .expect("typed existing/Phillips source dispatch");
+                profiled::verify_phillips(
+                    proof,
+                    shell,
+                    &faces,
+                    screw,
+                    &rings,
+                    &corners,
+                    [origin, u, v],
+                )?
+            }
+        }
         Closure::TerminalRelief {
             neck_radius_mm,
             full_length_mm,

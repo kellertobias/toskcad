@@ -6,6 +6,9 @@ use crate::{
 };
 use std::f64::consts::TAU;
 mod outer;
+mod source;
+pub(crate) use source::HeadSource;
+pub(super) mod phillips;
 #[cfg(test)]
 mod tests;
 mod torx;
@@ -40,31 +43,63 @@ pub(super) struct Junction {
 }
 
 pub(super) fn admission(screw: &Screw, origin: Point, tolerance: f64) -> Result<(), StepError> {
-    outer::admission(outer::Data::from(screw), origin, tolerance)?;
-    match screw.recess() {
-        crate::screw_recess::Recess::FlatHex(hex) => {
-            let (drive, socket_depth) = hex.geometry();
-            if socket_depth <= 10. * tolerance
-                || drive.across_flats_mm() <= 10. * tolerance
-                || !screw.admits_recess_envelope(
-                    drive.across_flats_mm() / 3_f64.sqrt(),
-                    socket_depth,
-                    10. * tolerance,
-                )
-            {
-                return Err(StepError::Limit);
+    admission_source(HeadSource::from(screw), origin, tolerance)
+}
+pub(super) fn admission_source(
+    source: HeadSource<'_>,
+    origin: Point,
+    tolerance: f64,
+) -> Result<(), StepError> {
+    outer::admission(source.data, origin, tolerance)?;
+    match source.kind {
+        source::Kind::Existing(screw) => match screw.recess() {
+            crate::screw_recess::Recess::FlatHex(hex) => {
+                let (drive, socket_depth) = hex.geometry();
+                if socket_depth <= 10. * tolerance
+                    || drive.across_flats_mm() <= 10. * tolerance
+                    || !screw.admits_recess_envelope(
+                        drive.across_flats_mm() / 3_f64.sqrt(),
+                        socket_depth,
+                        10. * tolerance,
+                    )
+                {
+                    return Err(StepError::Limit);
+                }
             }
-        }
-        crate::screw_recess::Recess::ConicalHexalobular(recess) => {
-            torx::admission(screw, recess, tolerance)?
+            crate::screw_recess::Recess::ConicalHexalobular(recess) => {
+                torx::admission(screw, recess, tolerance)?
+            }
+        },
+        source::Kind::Phillips(screw) => {
+            screw
+                .cavity()
+                .certify_host_envelope(
+                    screw.profile(),
+                    screw.thread(),
+                    screw.spec().shank_length_mm,
+                    10. * tolerance.min(MAX_ERROR_MM),
+                    100_000,
+                    &|| false,
+                )
+                .map_err(phillips::source_error)?;
         }
     }
     Ok(())
 }
 
 pub(super) fn placement(screw: &Screw, p: &Placement, tolerance: f64) -> Result<(), StepError> {
-    outer::placement(outer::Data::from(screw), p, tolerance)?;
-    torx::placement(screw, p)
+    placement_source(HeadSource::from(screw), p, tolerance)
+}
+pub(super) fn placement_source(
+    source: HeadSource<'_>,
+    p: &Placement,
+    tolerance: f64,
+) -> Result<(), StepError> {
+    outer::placement(source.data, p, tolerance)?;
+    match source.kind {
+        source::Kind::Existing(screw) => torx::placement(screw, p),
+        source::Kind::Phillips(_) => Ok(()),
+    }
 }
 
 pub(super) fn junction(
@@ -149,6 +184,47 @@ pub(super) fn junction(
 }
 
 pub(super) fn head(
+    file: &mut StepFile,
+    p: &Placement,
+    source: HeadSource<'_>,
+    join: Junction,
+    tolerance_mm: f64,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<Vec<Entity>, StepError> {
+    match source.kind {
+        source::Kind::Existing(screw) => existing_head(file, p, screw, join, tolerance_mm),
+        source::Kind::Phillips(screw) => {
+            let shell = outer::shell(file, p, source.data, join)?;
+            let pose = crate::step::phillips_cutter::support::Pose::new(
+                p.point_f64([0.; 2], screw.head_top_z()),
+                p.u,
+                p.v,
+            )
+            .map_err(phillips::plan_error)?;
+            let plan = crate::step::phillips_cutter::plan::Plan::new(
+                screw.cavity().source(),
+                &pose,
+                tolerance_mm,
+                interrupt,
+            )
+            .map_err(phillips::plan_error)?;
+            let cavity = plan
+                .emit_reversed_cavity(file, interrupt)
+                .map_err(phillips::plan_error)?;
+            let outer = circular_bound(file, shell.top_edge, false, true);
+            let top = file.face_on(
+                &[outer, cavity.mouth],
+                cavity.mouth_surface,
+                cavity.mouth_forward,
+            );
+            let mut faces = vec![top];
+            faces.extend(shell.walls);
+            faces.extend(cavity.faces);
+            Ok(faces)
+        }
+    }
+}
+fn existing_head(
     file: &mut StepFile,
     p: &Placement,
     screw: &Screw,

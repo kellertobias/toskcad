@@ -231,7 +231,7 @@ fn head_fixture() -> (String, Screw) {
         positive: vec![(rim.edge, true)],
         outer: Some(rim),
     };
-    let mut faces = head(&mut file, &p, &screw, join, 1e-7).unwrap();
+    let mut faces = head(&mut file, &p, (&screw).into(), join, 1e-7, None).unwrap();
     assert_eq!(faces.len(), screw.profile().segments().count() + 14);
     assert_eq!(file.data.matches("INTERSECTION_CURVE(").count(), 12);
     let end = circular_bound(&mut file, closing.0, true, true);

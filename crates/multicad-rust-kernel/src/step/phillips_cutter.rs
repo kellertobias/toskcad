@@ -6,7 +6,7 @@ use crate::{
     tapered_thread::interval::I,
 };
 pub(crate) mod curves;
-mod plan;
+pub(in crate::step) mod plan;
 pub(crate) mod support;
 #[cfg(test)]
 mod tests;

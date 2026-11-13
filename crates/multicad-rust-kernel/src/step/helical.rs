@@ -7,6 +7,8 @@ use crate::{
 };
 
 mod profiled;
+pub(crate) use profiled::HeadSource;
+pub use profiled::phillips::{write_phillips_screw, write_phillips_screw_with_interrupt};
 mod rounded;
 mod tangent;
 
@@ -54,7 +56,7 @@ pub(crate) enum Closure<'a> {
         shank_length_mm: f64,
     },
     SocketHead(SocketHead),
-    Profiled(&'a crate::profiled_screw::Screw),
+    Profiled(profiled::HeadSource<'a>),
     HexNut(f64),
 }
 
@@ -191,7 +193,7 @@ impl Closure<'_> {
             Self::HexNut(_) => bands + 8,
             Self::SocketHead(head) => bands + 11 + 2 * usize::from(head.shank_length_mm > 0.),
             Self::Profiled(screw) => {
-                screw.faces().len()
+                screw.face_count()
                     + if screw.profile().end()[0] == major {
                         screw.thread().spec().starts as usize - 1
                     } else {
@@ -370,7 +372,7 @@ pub fn supports_profiled_screw_in_frame(
         .and_then(|()| {
             prepare(
                 screw.thread(),
-                Closure::Profiled(screw),
+                Closure::Profiled(screw.into()),
                 origin,
                 tolerance_mm,
             )
@@ -423,6 +425,24 @@ pub(super) fn encode(
     placement: Placement,
     tolerance_mm: f64,
 ) -> Result<Entity, StepError> {
+    encode_with_interrupt(file, thread, closure, placement, tolerance_mm, None)
+}
+fn checkpoint(interrupt: Option<&dyn Fn() -> bool>) -> Result<(), StepError> {
+    if interrupt.is_some_and(|f| f()) {
+        Err(StepError::Limit)
+    } else {
+        Ok(())
+    }
+}
+pub(super) fn encode_with_interrupt(
+    file: &mut StepFile,
+    thread: &Thread,
+    closure: Closure,
+    placement: Placement,
+    tolerance_mm: f64,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<Entity, StepError> {
+    checkpoint(interrupt)?;
     let closure_extents = match closure {
         Closure::ExternalStock {
             radius_mm,
@@ -549,8 +569,8 @@ pub(super) fn encode(
         .map(|length| tangent::encode(file, &placement, thread, length, [rings[0][0], rings[0][3]]))
         .transpose()?;
     let profiled_join = if let Closure::Profiled(screw) = closure {
-        profiled::admission(screw, placement.origin, tolerance_mm)?;
-        profiled::placement(screw, &placement, tolerance_mm)?;
+        profiled::admission_source(screw, placement.origin, tolerance_mm)?;
+        profiled::placement_source(screw, &placement, tolerance_mm)?;
         Some(profiled::junction(
             file,
             &placement,
@@ -571,6 +591,7 @@ pub(super) fn encode(
     ];
     let forward = spec.left_hand != closure.inside();
     for (i, band) in bands.iter().enumerate() {
+        checkpoint(interrupt)?;
         let next = (i + 1) % bands.len();
         let rims = [0, 1].map(|end| {
             if end == 1
@@ -779,7 +800,14 @@ pub(super) fn encode(
     }
     faces.extend(extra_shoulders);
     if let (Closure::Profiled(screw), Some(join)) = (closure, profiled_join) {
-        faces.extend(profiled::head(file, &placement, screw, join, tolerance_mm)?);
+        faces.extend(profiled::head(
+            file,
+            &placement,
+            screw,
+            join,
+            tolerance_mm,
+            interrupt,
+        )?);
     }
     if let Some((cylinder, outward)) = &cylinder {
         faces.push(cylinder.wall(file, *outward));

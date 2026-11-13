@@ -15,6 +15,29 @@ mod geometry;
 mod graph;
 #[cfg(test)]
 mod tests;
+/// Oriented source-decomposition view backed by actual parsed entities.
+/// This never changes the file's graph or authorizes an imported recipe.
+pub(in crate::step_read) struct SourceFaceView {
+    pub surface: u32,
+    pub forward: bool,
+    pub uses: Vec<(u32, bool)>,
+}
+pub(in crate::step_read) fn verify_component(
+    shell: &mut Shell<'_, '_>,
+    views: &[SourceFaceView],
+    source: &Cutter,
+    pose: &Pose,
+    tolerance: f64,
+) -> Result<PhillipsSourceKnownProof> {
+    let mut work = Work {
+        remaining: 1_000_000,
+        interrupt: None,
+        cancelled: Cell::new(false),
+    };
+    let topology = source.boundary_topology().map_err(cutter_error)?;
+    let graph = graph::read_views(shell, views, &topology, pose, tolerance, &mut work)?;
+    geometry::verify(shell, &graph, &topology, pose, tolerance, &mut work)
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PhillipsReadError {
     Invalid,

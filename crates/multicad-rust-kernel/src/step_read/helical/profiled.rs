@@ -7,8 +7,14 @@ use crate::{
 use std::f64::consts::{PI, TAU};
 mod decode;
 mod finite_graph;
+mod outer;
+mod phillips;
+#[cfg(test)]
+pub(crate) use phillips::verify_cavity_fixture as verify_phillips_cavity_fixture;
 mod torx;
 pub(in super::super) use decode::read;
+pub(super) use phillips::verify as verify_phillips;
+pub use phillips::{PhillipsScrewSourceKnownProof, verify_phillips_screw_source_known};
 pub(in super::super) use torx::matches as torx_recess_matches;
 
 /// Absolute head/drive mass uncertainty from the retained source precision.
@@ -336,111 +342,25 @@ pub(super) fn verify(
     placement: [Point; 3],
 ) -> Result<f64> {
     let hex = expected.recess().flat_hex_geometry();
-    closed_incidence(shell, all_faces)?;
-    // The generic tensor proof has its own approximation budget. Reconstructing
-    // an analytic head may use only its intrinsic source arithmetic reserve.
-    let proof = Proof {
-        error: proof.error.map(|_| expected.profile().rounding_error_mm()),
-        ..proof
-    };
-    let frame = Frame::new(placement)?;
-    let thread = expected.thread();
-    let count = 4 * thread.spec().starts as usize;
-    let tail = &all_faces[count..];
-    let join = junction(
+    let count = 4 * expected.thread().spec().starts as usize;
+    let outer::Verified {
+        frame,
+        proof,
+        top,
+        mouth: socket_mouth,
+        faces,
+        segment_count,
+    } = outer::verify(
         proof,
         shell,
-        tail,
-        thread,
+        all_faces,
+        expected.into(),
         rings,
         corners,
-        (frame, expected.visible_thread_interval_mm()[0]),
+        placement,
     )?;
-    let faces = &tail[join.shoulders + 1..];
-    let segments: Vec<_> = expected.profile().segments().collect();
-    require(faces.len() == segments.len() + if hex.is_some() { 8 } else { 14 })?;
-    if let Some(error) = proof.error {
-        let analytic = if hex.is_some() {
-            faces
-        } else {
-            &faces[..segments.len() + 1]
-        };
-        head_edge_residuals(shell, analytic, frame, error)?;
-    }
-    let shift = expected.spec().shank_length_mm;
-    let (surface, forward, bounds) = face(shell, faces[0])?;
-    require(forward && bounds.len() == 2)?;
-    let mut previous = single_bound_rim(shell, bounds[0], true, false, frame)?;
-    plane_at(proof, shell, surface, previous, frame, false)?;
-    let top = previous;
-    let socket_mouth = bounds[1];
-    for (i, source) in segments.iter().enumerate() {
-        require(
-            previous.radius == source.start[0]
-                && proof.equal(
-                    previous.center,
-                    frame.world([0.; 2], source.start[1] - shift),
-                ),
-        )?;
-        let (surface, forward, bounds) = face(shell, faces[i + 1])?;
-        let last = i + 1 == segments.len();
-        let end = if source.role == Role::Bearing {
-            require(forward && bounds.len() == 2)?;
-            require(
-                ring(shell, bounds[0], true)?
-                    == [(previous.edge.ok_or(ReadError::Invalid)?, previous.positive)],
-            )?;
-            plane_at(proof, shell, surface, previous, frame, true)?;
-            if last {
-                require(ring(shell, bounds[1], false)? == orient(&join.positive, false))?;
-                join.end
-            } else {
-                single_bound_rim(shell, bounds[1], false, false, frame)?
-            }
-        } else {
-            require(bounds.len() == 1)?;
-            let (end, seam) = periodic_end(shell, bounds[0], previous, last, &join, frame)?;
-            match source.curve {
-                HeadCurve::Line => line_surface(
-                    proof,
-                    shell,
-                    (surface, forward, seam),
-                    [previous, end],
-                    source,
-                    frame,
-                )?,
-                HeadCurve::Arc {
-                    center,
-                    radius_mm,
-                    sweep,
-                } => {
-                    let arc = ArcSource {
-                        center: [center[0], center[1] - shift],
-                        radius: radius_mm,
-                        angle: (source.start[1] - center[1]).atan2(source.start[0] - center[0]),
-                        sweep,
-                        role: source.role,
-                    };
-                    curved_surface(
-                        proof,
-                        shell,
-                        (surface, forward, seam),
-                        [previous, end],
-                        arc,
-                        frame,
-                    )?;
-                }
-            }
-            end
-        };
-        require(
-            end.radius == source.end[0]
-                && proof.equal(end.center, frame.world([0.; 2], source.end[1] - shift)),
-        )?;
-        previous = end;
-    }
     let Some((drive, socket_depth)) = hex else {
-        let actual = torx::read(shell, all_faces, faces, segments.len(), frame, count, top)?;
+        let actual = torx::read(shell, all_faces, &faces, segment_count, frame, count, top)?;
         let limit = shell.tolerance.min(1e-7);
         require(torx::matches(
             expected.recess(),
@@ -451,7 +371,7 @@ pub(super) fn verify(
         ))?;
         return Ok(expected.profile().volume_mm3() - actual.nominal_volume_mm3());
     };
-    let (floor_surface, forward, bounds) = face(shell, faces[segments.len() + 1])?;
+    let (floor_surface, forward, bounds) = face(shell, faces[segment_count + 1])?;
     require(forward && bounds.len() == 1)?;
     let floor_origin = frame.world([0.; 2], expected.head_top_z() + socket_depth);
     proof.axis(
@@ -481,7 +401,7 @@ pub(super) fn verify(
     hex_head::walls_area(
         proof,
         shell,
-        &faces[segments.len() + 2..],
+        &faces[segment_count + 2..],
         [&lower, &upper],
         top.center,
         frame.n,

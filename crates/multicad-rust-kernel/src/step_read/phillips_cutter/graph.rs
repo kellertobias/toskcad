@@ -49,10 +49,7 @@ pub(super) fn read(
     work: &mut Work<'_>,
 ) -> Result<Graph> {
     require(face_ids.len() == source.faces().len())?;
-    let mut faces = Vec::new();
-    let mut edges = BTreeMap::new();
-    let mut vertex_ids = BTreeSet::new();
-    let mut raw_uses = BTreeMap::<u32, Vec<bool>>::new();
+    let mut views = Vec::new();
     for &id in face_ids {
         work.step(1)?;
         let (surface, forward, bounds) = helical::face(shell, id)?;
@@ -60,13 +57,43 @@ pub(super) fn read(
             return Err(ReadError::Unsupported);
         };
         let uses = helical::ring(shell, *bound, true)?;
+        views.push(SourceFaceView {
+            surface,
+            forward,
+            uses,
+        });
+    }
+    read_views(shell, &views, source, pose, tolerance, work)
+}
+pub(super) fn read_views(
+    shell: &mut Shell<'_, '_>,
+    views: &[SourceFaceView],
+    source: &BoundaryTopology<'_>,
+    pose: &Pose,
+    tolerance: f64,
+    work: &mut Work<'_>,
+) -> Result<Graph> {
+    require(views.len() == source.faces().len())?;
+    let mut faces = Vec::new();
+    let mut edges = BTreeMap::new();
+    let mut vertex_ids = BTreeSet::new();
+    let mut raw_uses = BTreeMap::<u32, Vec<bool>>::new();
+    for view in views {
+        work.step(1)?;
+        let uses = view.uses.clone();
         for &(id, forward) in &uses {
             let e = edge(shell, id)?;
             vertex_ids.extend(e.vertices);
             edges.insert(id, e);
             raw_uses.entry(id).or_default().push(forward);
         }
-        faces.push((Face { surface, forward }, uses));
+        faces.push((
+            Face {
+                surface: view.surface,
+                forward: view.forward,
+            },
+            uses,
+        ));
     }
     require(edges.len() == source.edges().len() && vertex_ids.len() == source.vertices().len())?;
     require(raw_uses.values().all(|u| u.len() == 2 && u[0] != u[1]))?;

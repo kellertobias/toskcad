@@ -1250,3 +1250,5 @@ impl CylindricalTrim {
 
 #[cfg(test)]
 mod cap_treatment_tests;
+
+pub use helical::{write_phillips_screw, write_phillips_screw_with_interrupt};
