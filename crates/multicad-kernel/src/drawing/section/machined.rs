@@ -455,15 +455,46 @@ fn stadium_section(
     ])
 }
 
+const HATCH_SEGMENT_LIMIT: usize = 100_000;
+
 fn hatch_segments(
     loops: &[Vec<Edge>],
     frame: SliceFrame,
     enlarge_voids: bool,
     deflection: f64,
 ) -> Result<Vec<Segment>, GeometryError> {
-    const LIMIT: usize = 100_000;
     let mut segments = Vec::new();
-    for edge in loops.iter().flatten() {
+    for ring in loops {
+        let first = segments.len();
+        hatch_ring(ring, frame, enlarge_voids, deflection, &mut segments)?;
+        // Each edge starts where its predecessor ends. Independently evaluated
+        // arc endpoints differ only by rounding; a real gap is not a region.
+        let count = segments.len() - first;
+        for index in 0..count {
+            let end = segments[first + index][1];
+            let next = &mut segments[first + (index + 1) % count][0];
+            let gap = (end[0] - next[0]).hypot(end[1] - next[1]);
+            if gap > deflection {
+                return Err(err(
+                    GeometryErrorKind::InvalidResult,
+                    "Rust machined section loop is not closed",
+                ));
+            }
+            *next = end;
+        }
+    }
+    Ok(segments)
+}
+
+fn hatch_ring(
+    ring: &[Edge],
+    frame: SliceFrame,
+    enlarge_voids: bool,
+    deflection: f64,
+    segments: &mut Vec<Segment>,
+) -> Result<(), GeometryError> {
+    const LIMIT: usize = HATCH_SEGMENT_LIMIT;
+    for edge in ring {
         match *edge {
             Edge::Line(ends) => segments.push(ends.map(|point| frame.point(point))),
             Edge::Arc {
@@ -506,5 +537,5 @@ fn hatch_segments(
             return Err(limit());
         }
     }
-    Ok(segments)
+    Ok(())
 }

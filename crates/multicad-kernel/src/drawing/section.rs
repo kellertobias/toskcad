@@ -53,6 +53,11 @@ pub(super) fn project(
                 result => result,
             };
         }
+        // The planar provider below cannot represent curved boundaries.
+        return Err(err(
+            GeometryErrorKind::Unsupported,
+            "Rust retained sections of curved bodies cannot yet show hidden or tangent edges",
+        ));
     }
     project_planar(solids, options, depth)
 }

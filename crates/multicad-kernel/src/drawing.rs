@@ -196,6 +196,23 @@ pub fn project_drawing(
                 "Rust drawing projection requires all sources to use Rust geometry",
             ));
         }
+        // Bored rectangular prisms draw through the equivalent orthogonal
+        // stock, which the curved, aperture and section providers qualify.
+        let equivalents = solids
+            .iter()
+            .map(|input| input.solid.drawing_bored_equivalent().transpose())
+            .collect::<Result<Vec<_>, _>>()?;
+        if equivalents.iter().any(Option::is_some) {
+            let inputs: Vec<_> = solids
+                .iter()
+                .zip(&equivalents)
+                .map(|(input, equivalent)| DrawingSolid {
+                    solid: equivalent.as_ref().unwrap_or(input.solid),
+                    hatch: input.hatch,
+                })
+                .collect();
+            return project_drawing(&inputs, options);
+        }
         if let [input] = solids
             && let Some((sphere, frame)) = input.solid.sphere_body()
             && (options.section_offset_mm.is_none()

@@ -8,6 +8,54 @@ mod blind;
 mod counterbore;
 
 impl Solid {
+    /// The identical point set of a rectangular Rust prism with circular
+    /// through holes, expressed as orthogonal stock with validated through
+    /// bores for the drawing providers. The box keeps the prism's exact size,
+    /// feature and placement; each bore keeps its circle and spans the full
+    /// height. Rounded ends and unbored prisms return `None`.
+    pub(crate) fn drawing_bored_equivalent(&self) -> Option<Result<Self, GeometryError>> {
+        let (prism, frame) = self.rust_prism_frame()?;
+        if prism.rounded_end().is_some() || prism.inner_loops().len() == 0 {
+            return None;
+        }
+        Some((|| {
+            let size = prism.dimensions();
+            let height = size[2].as_f64();
+            let stock =
+                Self::rust_box(prism.feature(), size, frame, self.policy)?.orthogonal_stock()?;
+            let (body, _) = stock.orthogonal_body().expect("orthogonal stock");
+            let cap = |level: f64, normal: f64| {
+                body.boundary
+                    .faces
+                    .iter()
+                    .position(|face| {
+                        face.normal == [0., 0., normal] && face.rings[0][0][2] == level
+                    })
+                    .ok_or_else(|| invalid("Cannot recover a bored prism cap for drawing"))
+            };
+            let faces = [cap(0., -1.)?, cap(height, 1.)?];
+            let (bores, origins): (Vec<_>, Vec<_>) = prism
+                .inner_loops()
+                .enumerate()
+                .map(|(index, (bore, circle))| {
+                    let [x, y] = circle.center().map(|value| value.as_f64());
+                    (
+                        OrthogonalThroughBore {
+                            faces,
+                            centers_mm: [[x, y, 0.], [x, y, height]],
+                            radius_mm: circle.radius().as_f64(),
+                        },
+                        Origin {
+                            source: EntityId::from_uuid_bits(bore),
+                            role: format!("bore.wall.{index}"),
+                        },
+                    )
+                })
+                .unzip();
+            stock.with_orthogonal_round_cuts(Vec::new(), Vec::new(), bores, origins)
+        })())
+    }
+
     pub(in crate::geometry) fn with_orthogonal_pockets(
         self,
         pockets: Vec<OrthogonalPocket>,

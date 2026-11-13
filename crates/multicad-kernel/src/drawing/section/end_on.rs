@@ -88,6 +88,34 @@ pub(super) fn project(
                 return Err(unsupported());
             }
             scene.rounded.add(solid, source, options)?;
+        } else if let Some((stock, cuts)) = solid
+            .orthogonal_body()
+            .filter(|(body, _)| {
+                // Through bores without slots; blind pockets keep their floors.
+                let stock = body.drawing_stock();
+                !stock.through_bores.is_empty() && stock.slots.is_empty()
+            })
+            .and_then(|_| solid.drawing_circular_cuts())
+        {
+            let body = scene.sources.len();
+            scene.push_stock(source, Some(stock), solid);
+            for cut in cuts {
+                let centers = cut.centers.map(|point| volume.point(point));
+                let outward = volume.vector(cut.outward);
+                if cut.faces[1].is_some() {
+                    scene.through(&volume, body, centers, outward, cut.radius)?;
+                } else {
+                    let [mouth, floor] = centers;
+                    let depth = dot(std::array::from_fn(|i| mouth[i] - floor[i]), outward);
+                    scene.opening(
+                        &volume,
+                        body,
+                        Mouth::Circle(mouth, cut.radius),
+                        outward,
+                        depth,
+                    )?;
+                }
+            }
         } else if let Some((stock, circles, slots)) = solid.drawing_machined_stock() {
             let body = scene.sources.len();
             scene.push_stock(source, Some(stock), solid);
@@ -252,6 +280,8 @@ struct Opening {
     shape: Mouth,
     mouth_depth: f64,
     floor_depth: f64,
+    /// A through bore leaving by the stock face at `floor_depth`.
+    exits: bool,
 }
 
 #[derive(Default)]
@@ -308,6 +338,75 @@ impl<'a> Scene<'a> {
             shape,
             mouth_depth,
             floor_depth,
+            exits: false,
+        });
+        Ok(())
+    }
+
+    /// A circular cut with stock faces at both ends. Viewed along its axis the
+    /// mouth is the nearer stock face or the section plane, and the far end is
+    /// the opposite stock face, or the rear face that a finite depth limit
+    /// trims from the retained stock.
+    fn through(
+        &mut self,
+        volume: &Volume,
+        body: usize,
+        centers: [Point; 2],
+        outward: Point,
+        radius: f64,
+    ) -> Result<(), GeometryError> {
+        let [near, far] = if centers[0][2] >= centers[1][2] {
+            centers
+        } else {
+            [centers[1], centers[0]]
+        };
+        let normal = if outward[2] >= 0. {
+            outward
+        } else {
+            outward.map(|value| -value)
+        };
+        let depth = near[2] - far[2];
+        let shape = Mouth::Circle(near, radius);
+        let bounds = shape.span(normal, depth);
+        if !volume.overlaps(bounds) {
+            return Ok(());
+        }
+        if normal[0].hypot(normal[1]) > AXIS_TOLERANCE {
+            // An edge-on or inclined bore is hidden inside the solid proxy
+            // only while the retained volume leaves it intact.
+            return if normal[2] <= AXIS_TOLERANCE && volume.contains(bounds) {
+                Ok(())
+            } else {
+                Err(unsupported())
+            };
+        }
+        let [[left, right], [bottom, top], [limit, section]] = volume.bounds;
+        if near[0] - radius < left - volume.tolerance
+            || near[0] + radius > right + volume.tolerance
+            || near[1] - radius < bottom - volume.tolerance
+            || near[1] + radius > top + volume.tolerance
+        {
+            return Err(unsupported());
+        }
+        let mouth_depth = near[2].min(section);
+        // A finite depth limit trims the retained stock with its own rear
+        // face, so a bore that passes the limit leaves through that face.
+        let floor_depth = if far[2] > limit + volume.tolerance {
+            far[2]
+        } else if far[2] < limit - volume.tolerance {
+            limit
+        } else {
+            return Err(unsupported());
+        };
+        if mouth_depth - floor_depth <= volume.tolerance {
+            return Ok(());
+        }
+        self.openings.push(Opening {
+            body,
+            shape: Mouth::Circle([near[0], near[1], mouth_depth], radius),
+            mouth_depth,
+            floor_depth,
+            exits: true,
         });
         Ok(())
     }
@@ -328,6 +427,7 @@ impl<'a> Scene<'a> {
             shape,
             mouth_depth,
             floor_depth,
+            exits,
         } in self.openings
         {
             let face = mouth_face(
@@ -346,7 +446,17 @@ impl<'a> Scene<'a> {
                         face,
                         center,
                         radius,
-                        end: planar_projection::CircularOpeningEnd::Floor(floor_depth),
+                        end: if exits {
+                            planar_projection::CircularOpeningEnd::OppositeFace(exit_face(
+                                &bodies[body],
+                                center,
+                                floor_depth,
+                                tolerance,
+                                &mut work,
+                            )?)
+                        } else {
+                            planar_projection::CircularOpeningEnd::Floor(floor_depth)
+                        },
                     });
                     rims.push(RimCandidate {
                         source,
@@ -425,6 +535,33 @@ impl<'a> Scene<'a> {
         .map_err(planar::projection_error)?;
         curved::publish_scene(projection, options, &self.sources, &self.round_sources)
     }
+}
+
+/// The rear stock face at `depth` that contains a through bore's exit.
+fn exit_face(
+    body: &Body,
+    [u, v]: [f64; 2],
+    depth: f64,
+    tolerance: f64,
+    work: &mut usize,
+) -> Result<usize, GeometryError> {
+    for (i, face) in body.faces.iter().enumerate() {
+        if face.normal[2] >= 0.
+            || face.normal[0].hypot(face.normal[1]) > AXIS_TOLERANCE
+            || (depth - face.point[2]).abs() > tolerance
+        {
+            continue;
+        }
+        *work = work.checked_sub(face.edges.len()).ok_or_else(limit)?;
+        let inside = face.edges.iter().fold(false, |inside, &edge| {
+            let [[x, y, _], [a, b, _]] = body.edges[edge];
+            inside ^ ((y > v) != (b > v) && u < ((v - y) / (b - y)).mul_add(a - x, x))
+        });
+        if inside {
+            return Ok(i);
+        }
+    }
+    Err(unsupported())
 }
 
 fn mouth_face(
