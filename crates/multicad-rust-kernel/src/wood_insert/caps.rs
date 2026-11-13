@@ -5,6 +5,8 @@ use num_rational::BigRational as Q;
 use num_traits::{One, ToPrimitive, Zero};
 use std::{cmp::Ordering, mem::size_of};
 #[cfg(test)]
+mod affine_probe;
+#[cfg(test)]
 mod tests;
 const MAX_BITS: u64 = 8192;
 // Temporary bounded Q operands/conversion buffers, separate from retained data.
