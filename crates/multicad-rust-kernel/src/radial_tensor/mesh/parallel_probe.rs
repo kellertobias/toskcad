@@ -525,9 +525,7 @@ fn actual_failed_transverse_cell_is_not_recovered_by_longitudinal_splits() {
             ];
             let vertices = uv.map(|uv| p.point(0, uv[0], uv[1], None, &mut w).unwrap());
             let actual = quad_triangles(vertices);
-            let Side::Tensor(t) = &p.sides[0] else {
-                panic!("tensor")
-            };
+            let t = strip::tests::tensor(&p);
             let mut cache = strip::Cache::new(t, DEFAULT_LIMITS.strips);
             cache.advance(range[1][0], &mut w).unwrap();
             let result = p.cell_check(

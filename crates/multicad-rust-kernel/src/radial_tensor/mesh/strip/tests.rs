@@ -5,7 +5,7 @@ fn work() -> Work<'static> {
         interrupt: None,
     }
 }
-fn tensor<'a>(p: &'a Prepared<'_>) -> &'a Tensor {
+pub(in crate::radial_tensor::mesh) fn tensor<'a>(p: &'a Prepared<'_>) -> &'a Tensor {
     p.sides
         .iter()
         .find_map(|s| {

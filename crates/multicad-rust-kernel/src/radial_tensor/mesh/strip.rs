@@ -1,7 +1,7 @@
 //! Bounded source-only U restrictions within one Tensor and check pass.
 use super::*;
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
 pub(super) struct Cache<'a> {
     owner: &'a Tensor,
     entries: BTreeMap<[u64; 6], certificate::SourceStrip>,

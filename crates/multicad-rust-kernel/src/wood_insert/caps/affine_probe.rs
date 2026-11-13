@@ -232,84 +232,6 @@ fn proof(
     }
     (maximum, boxes)
 }
-fn adaptive(
-    cap: &CapDomains,
-    uv: &[[Q; 2]; 3],
-    p: [[f64; 3]; 3],
-    limit: f64,
-    w: &mut Work<'_>,
-) -> Result<(f64, usize, usize), Error> {
-    let a = affine(uv, p, w);
-    let z = station(cap.owner(), cap.end());
-    let z_i = ij(&z, w);
-    let mut maximum = 0_f64;
-    let mut checked = 0;
-    let mut accepted = 0;
-    let min = uv.iter().map(|p| p[0].clone()).min().unwrap();
-    let max = uv.iter().map(|p| p[0].clone()).max().unwrap();
-    for cell in cap.cells() {
-        let lo = cap.angles[cell.events[0]].decode(w)?.max(min.clone());
-        let hi = cap.angles[cell.events[1]].decode(w)?.min(max.clone());
-        if lo >= hi {
-            continue;
-        }
-        let inner = coeff(
-            cap.owner().inner(),
-            &z,
-            cell.inner_band,
-            cell.inner_period,
-            w,
-        )
-        .map(|q| ij(&q, w));
-        let outer = coeff(
-            cap.owner().outer(),
-            &z,
-            cell.outer_band,
-            cell.outer_period,
-            w,
-        )
-        .map(|q| ij(&q, w));
-        let mut stack = vec![([[lo, hi], [Q::zero(), Q::one()]], 0)];
-        while let Some((bounds, depth)) = stack.pop() {
-            if outside(uv, &bounds, w) {
-                continue;
-            }
-            checked += 1;
-            if checked > 4096 {
-                return Err(Error::Limit);
-            }
-            let e = residual([inner, outer], &bounds, z_i, a, w);
-            if e <= limit {
-                maximum = maximum.max(e);
-                accepted += 1;
-                continue;
-            }
-            if depth == 12 {
-                return Err(Error::Unresolved);
-            }
-            let mid: [Q; 2] = std::array::from_fn(|i| {
-                div(
-                    &add(&bounds[i][0], &bounds[i][1], w),
-                    &Q::from_integer(2.into()),
-                    w,
-                )
-            });
-            for i in 0..2 {
-                for j in 0..2 {
-                    let half = |axis: usize, upper: usize| {
-                        if upper == 0 {
-                            [bounds[axis][0].clone(), mid[axis].clone()]
-                        } else {
-                            [mid[axis].clone(), bounds[axis][1].clone()]
-                        }
-                    };
-                    stack.push(([half(0, i), half(1, j)], depth + 1));
-                }
-            }
-        }
-    }
-    Ok((maximum, checked, accepted))
-}
 #[test]
 fn actual_piecewise_cap_source_to_literal_affine_chord_is_provable_without_new_vertices() {
     let body = super::super::tests::fixture(false, 1, false);
@@ -341,33 +263,4 @@ fn actual_piecewise_cap_source_to_literal_affine_chord_is_provable_without_new_v
     let mut wrong = p;
     wrong[0][0] += 1.;
     assert!(proof(&cap, &uv, wrong, 8, &mut work).0 > 0.1);
-}
-
-#[test]
-fn adaptive_exact_proof_partition_keeps_geometry_and_needs_fewer_boxes() {
-    let body = super::super::tests::fixture(false, 1, false);
-    let options = CapOptions {
-        maximum_work: 16_000_000,
-        maximum_bytes: 1024 * 1024,
-    };
-    let cap = body.cap_domains(CapEnd::Start, options, None).unwrap();
-    let mut work = work(options, None).unwrap();
-    let uv = [
-        [Q::new(5.into(), 64.into()), Q::one()],
-        [Q::new(5.into(), 64.into()), Q::zero()],
-        [Q::new(6.into(), 64.into()), Q::one()],
-    ];
-    let p = uv
-        .each_ref()
-        .map(|uv| literal(&body, &Q::zero(), &uv[0], &uv[1], &mut work));
-    let result = adaptive(&cap, &uv, p, 0.1, &mut work).unwrap();
-    eprintln!("adaptive actualcap {result:?} {}weightedQwork", work.used);
-    assert!(result.0 <= 0.1);
-    assert!(result.1 < 726);
-    let mut wrong = p;
-    wrong[0][0] += 1.;
-    assert_eq!(
-        adaptive(&cap, &uv, wrong, 0.1, &mut work),
-        Err(Error::Unresolved)
-    );
 }
