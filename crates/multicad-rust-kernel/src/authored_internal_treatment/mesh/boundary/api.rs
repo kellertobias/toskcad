@@ -10,7 +10,7 @@ pub struct Boundary<S = Cavity> {
 }
 pub use super::loops::Coedge as BoundaryCoedge;
 impl BoundaryOptions {
-    pub(super) fn validate(self) -> Result<(), Error> {
+    pub(crate) fn validate(self) -> Result<(), Error> {
         if self.cells == 0
             || self.cells > 2048
             || self.vertices == 0
@@ -196,6 +196,15 @@ impl<S> Boundary<S> {
     }
     /// Includes actual source-cell seams that logical face merging hides from
     /// the Native BRep. This is source incidence, never manufacturing triangles.
+    pub fn source_curve_count(&self) -> usize {
+        self.graph.curves.len()
+    }
+    pub fn source_curve(&self, index: u32) -> Option<&BoundaryCurve> {
+        self.graph.curves.get(index as usize)
+    }
+    pub(crate) fn query_byte_limit(&self) -> usize {
+        self.graph.limits.bytes
+    }
     pub fn source_curves(&self) -> impl Iterator<Item = (u32, &BoundaryCurve)> {
         self.graph
             .curves
@@ -208,7 +217,7 @@ impl<S> Boundary<S> {
     pub fn cell_coedges(
         &self,
         index: usize,
-    ) -> Result<impl Iterator<Item = BoundaryCoedge> + '_, Error> {
+    ) -> Result<impl DoubleEndedIterator<Item = BoundaryCoedge> + '_, Error> {
         let cell = self.graph.cells.get(index).ok_or(Error::Invalid)?;
         let material = self.graph.material.is_some();
         let ascending = self.graph.source.thread.spec().left_hand != material;
@@ -240,8 +249,20 @@ impl<S> Boundary<S> {
         face: u32,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Vec<Vec<BoundaryCoedge>>, Error> {
+        self.face_loops_accounted(face, self.graph.limits.work, 0, interrupt)
+            .map(|(loops, _)| loops)
+    }
+    /// A sealed compound owner supplies its remaining work and already-live
+    /// external buffers. The original graph allocation limit is never widened.
+    pub(crate) fn face_loops_accounted(
+        &self,
+        face: u32,
+        maximum_work: usize,
+        reserved_bytes: usize,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<(Vec<Vec<BoundaryCoedge>>, usize), Error> {
         let mut work = Work {
-            remaining: self.graph.limits.work,
+            remaining: maximum_work.min(16_000_000),
             used: 0,
             interrupt,
         };
@@ -249,11 +270,13 @@ impl<S> Boundary<S> {
         if face >= self.face_count() {
             return Err(Error::Invalid);
         }
-        let result = self
-            .graph
-            .face_loops_reserved(face, self.query_headers(), &mut work)?;
+        let reserved = self
+            .query_headers()
+            .checked_add(reserved_bytes)
+            .ok_or(Error::Limit)?;
+        let result = self.graph.face_loops_reserved(face, reserved, &mut work)?;
         work.step()?;
-        Ok(result)
+        Ok((result, work.used))
     }
     /// Original source-cell q/v footpoint enclosure, retained from the actual
     /// exact values before shared geometry undergoes periodic canonicalization.

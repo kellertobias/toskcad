@@ -3,8 +3,11 @@
 use crate::{authored_flat_thread::AuthoredThread, tapered_thread::interval::I};
 use num_rational::BigRational;
 
+mod boundary;
 mod caps;
 mod classify;
+pub use crate::authored_internal_treatment::BoundaryOptions;
+pub use boundary::{Boundary, BoundaryCoedge, BoundaryCurveKey, BoundaryVertexKey};
 mod faces;
 mod properties;
 pub use caps::{Candidate, CapCell, CapCellBounds, CapDomains, CapEnd, CapKnot, CapOptions, Side};
