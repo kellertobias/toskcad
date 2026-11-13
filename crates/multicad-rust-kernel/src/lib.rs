@@ -18,6 +18,7 @@ pub mod cylinder;
 pub mod cylindrical_blind_pocket;
 pub mod display;
 mod drawing_events;
+pub mod hanger_bolt;
 pub mod head_profile;
 pub mod headed_screw;
 pub mod helical_receiver;
