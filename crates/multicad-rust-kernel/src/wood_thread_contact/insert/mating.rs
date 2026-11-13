@@ -1,6 +1,7 @@
 //! Independent clearance between actual authored cavity bands and original
 //! external literal flank/root supports, over the whole physical phase period.
 use super::*;
+mod phase_error;
 use crate::{authored_flat_thread::AuthoredThread, helical_thread::Thread};
 #[derive(Clone, Copy)]
 pub enum MatingScrew<'a> {
@@ -60,6 +61,12 @@ pub struct InsertMating {
     pub prefix_entry_clearance_mm: [f64; 2],
     pub thread_exit_clearance_mm: [f64; 2],
     pub entire_thread_within_insert: bool,
+    pub external_indexed_phase_error_mm: f64,
+    pub external_evaluator_phase_error_mm: f64,
+    /// True only when an inner bound used the earned whole-period envelope
+    /// instead of resolving its narrower indexed phase interval.
+    pub inner_whole_period_envelope_used: bool,
+    pub outer_whole_source_envelope_used: bool,
 }
 fn exact_interval(v: &Q) -> R<I> {
     let x = v.to_f64().ok_or(Error::Unsupported)?;
@@ -134,14 +141,17 @@ pub fn certify_insert_mating(
     let signed = if i.left_hand { -1. } else { 1. };
     // A quarter-turn's exact true-angle phase is signed lead/4. It does not
     // inherit independent PI/TAU rounding or silently rotate either source.
-    let base = bounded(
-        &origin[2]
-            - q(signed)?
-                * q(i.pitch_mm)?
-                * Q::from_integer(i.starts.into())
-                * Q::from_integer(quarter.into())
-                / Q::from_integer(4.into()),
-    )?;
+    // Exact frame leaves have common denominator D=2^1074. The inverse
+    // translation's integer adjugate/determinant gives <6500 combined bits.
+    // Admitted pitch>=.001 has dyadic denominator<=2^62; starts<=8 and the
+    // quarter/4 term leave this expression <7000 bits, below the 16384 guard
+    // already earned by relative(). No second rational-budget gate is needed.
+    let base = &origin[2]
+        - q(signed)?
+            * q(i.pitch_mm)?
+            * Q::from_integer(i.starts.into())
+            * Q::from_integer(quarter.into())
+            / Q::from_integer(4.into());
     let true_rate = ip(1.) / internal.angular_gain();
     let tau = ip(2.)
         * I::new(
@@ -150,10 +160,18 @@ pub fn certify_insert_mating(
         );
     // The original external evaluator measures its actual polar angle in
     // [0,2pi]. Retain its literal helical rate and cover true-rate drift.
-    let offset = finite(
-        exact_interval(&base)? + (ip(outer.helical_rate()) - true_rate) * I::new(0., tau.hi),
-    )?;
+    let correspondence = phase_error::measure(outer, interrupt)?;
+    // Positive finite overlap bounds |originZ|<=1e7; lead<=8e7 and quarter<=2
+    // bound |base|<=5e7. Rates are <1.4e7, tau<7 and measure()'s admitted
+    // finite-domain allowance is <.001, so this offset is finite (<2.5e8).
+    // Every periodic-radius quotient is still independently checked before
+    // iteration and before this interval may be published in a receipt.
+    let offset = exact_interval(&base)?
+        + (ip(outer.helical_rate()) - true_rate) * I::new(0., tau.hi)
+        + I::new(-correspondence.total_mm, correspondence.total_mm);
     let mut clearance = f64::INFINITY;
+    let mut inner_envelope_used = false;
+    let mut outer_envelope_used = false;
     // Between either source's joins the cavity radius is affine and the
     // original external radius is affine/constant or a convex circular root.
     // Their difference is concave. BOTH one-sided laws and periodic endpoints
@@ -166,10 +184,10 @@ pub fn certify_insert_mating(
             .map(|p| ip(p) - offset),
     ) {
         checkpoint(interrupt)?;
-        let bore = periodic_radius(phase + offset, i.pitch_mm, |p| authored_radius(internal, p))?;
-        let shaft = periodic_radius(phase, e.pitch_mm, |p| {
-            outer.radius_at_phase_interval(p).ok_or(Error::Unsupported)
-        })?;
+        let (bore, used_envelope) = authored_periodic_bound(internal, phase + offset);
+        inner_envelope_used |= used_envelope;
+        let (shaft, used_envelope) = external_periodic_bound(outer, phase);
+        outer_envelope_used |= used_envelope;
         clearance = clearance.min(finite(bore - shaft)?.lo);
     }
     let physical = ip(clearance) * metric.minimum_scale;
@@ -184,6 +202,10 @@ pub fn certify_insert_mating(
         prefix_entry_clearance_mm: physical_gap(&prefix_gap, &metric)?,
         thread_exit_clearance_mm: physical_gap(&exit_gap, &metric)?,
         entire_thread_within_insert: exit_gap >= Q::zero(),
+        external_indexed_phase_error_mm: correspondence.indexed_mm,
+        external_evaluator_phase_error_mm: correspondence.evaluator_mm,
+        inner_whole_period_envelope_used: inner_envelope_used,
+        outer_whole_source_envelope_used: outer_envelope_used,
     })
 }
 pub(super) fn physical_gap(gap: &Q, metric: &Metric) -> R<[f64; 2]> {
@@ -201,6 +223,40 @@ pub(super) fn physical_gap(gap: &Q, metric: &Metric) -> R<[f64; 2]> {
     Ok([lower, upper])
 }
 
+fn external_periodic_bound(source: &Thread, phase: I) -> (I, bool) {
+    match periodic_radius(phase, source.spec().pitch_mm, &mut |p| {
+        source.radius_at_phase_interval(p).ok_or(Error::Unsupported)
+    }) {
+        Ok(value) => (value, false),
+        Err(_) => {
+            // Actual source_support bounds retain the WHOLE literal root circle.
+            // Closed flank trims are monotone from the literal major, hence
+            // never exceed it. The evaluator's signed FMA flank updates cannot
+            // exceed that same representable major; root evaluation subtracts
+            // a nonnegative height from its literal center. Thus this upper
+            // encloses both all actual supports and relevant evaluator paths.
+            (I::new(0., source.source_coordinate_bounds_mm()[0][1]), true)
+        }
+    }
+}
+fn authored_periodic_bound(source: &AuthoredThread, phase: I) -> (I, bool) {
+    match periodic_radius(phase, source.spec().pitch_mm, &mut |p| {
+        authored_radius(source, p)
+    }) {
+        Ok(value) => (value, false),
+        Err(_) => {
+            // These private evaluators have only numeric Unsupported failures:
+            // cancellation/resource publication is owned by the outer query.
+            // Every exact normalized affine source band lies between its sealed
+            // endpoint radii for ALL phases. This is an earned cavity bound,
+            // not a nominal diameter or a claim that an envelope is material.
+            (
+                I::new(source.minimum_radius_mm(), source.maximum_radius_mm()),
+                true,
+            )
+        }
+    }
+}
 fn authored_radius(source: &AuthoredThread, phase: I) -> R<I> {
     let mut result = I::new(f64::INFINITY, f64::NEG_INFINITY);
     for band in source.bands() {
@@ -220,7 +276,7 @@ fn authored_radius(source: &AuthoredThread, phase: I) -> R<I> {
     }
     finite(result)
 }
-fn periodic_radius(phase: I, pitch: f64, mut evaluate: impl FnMut(I) -> R<I>) -> R<I> {
+fn periodic_radius(phase: I, pitch: f64, evaluate: &mut dyn FnMut(I) -> R<I>) -> R<I> {
     let quotient = finite(phase / ip(pitch))?;
     if quotient.width() >= 1. {
         return evaluate(I::new(0., pitch));

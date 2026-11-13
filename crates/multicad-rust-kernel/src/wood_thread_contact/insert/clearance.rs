@@ -84,11 +84,16 @@ pub fn certify_insert_screw_clearance(
     {
         return Err(Error::Unsupported);
     }
+    let mut tip_clearance = mating::physical_gap(&gap, &metric)?;
+    // Intersect with the independently earned exact threshold inequality.
+    tip_clearance[0] = tip_clearance[0].max(req.minimum_tip_clearance_mm);
     checkpoint(interrupt)?;
     Ok(ScrewClearance {
-        tip_clearance_mm: mating::physical_gap(&gap, &metric)?,
+        tip_clearance_mm: tip_clearance,
         prefix_entry_clearance_mm: mating::physical_gap(&prefix_gap, &metric)?,
-        minimum_radial_clearance_mm: (enclosure(&remaining)? * metric.minimum_scale).lo,
+        minimum_radial_clearance_mm: (enclosure(&remaining)? * metric.minimum_scale)
+            .lo
+            .max(req.minimum_feature_mm),
     })
 }
 #[cfg(test)]

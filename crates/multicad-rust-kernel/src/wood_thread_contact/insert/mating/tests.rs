@@ -6,7 +6,7 @@ fn identity() -> Frame {
         axes: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
     }
 }
-fn fixture(left: bool, rounded: bool) -> (Insert, Thread) {
+pub(super) fn fixture(left: bool, rounded: bool) -> (Insert, Thread) {
     let major = (2.874 + 2.980) / 4.;
     let pitch_mid = (2.580 + 2.655) / 2.;
     let pitch = 0.5;
@@ -173,7 +173,10 @@ fn phase_interference_nonexact_axes_prefix_penetration_and_short_overlap_refuse(
         match field {
             0 => s.left_hand = true,
             1 => s.starts = 2,
-            _ => s.pitch_mm = 0.6,
+            _ => {
+                s.pitch_mm = 0.6;
+                s.root_radius_mm = None;
+            }
         };
         let wrong = regular(Thread::new(s).unwrap());
         assert_eq!(
@@ -363,17 +366,100 @@ fn cancelled_invalid_and_outward_period_primitives_keep_honest_boundaries() {
         (1. / 3_f64).next_down()
     );
     assert!(
-        periodic_radius(I::new(-1., 1.), 0.5, |p| authored_radius(insert.inner(), p))
-            .unwrap()
-            .lo
-            > 1.
+        periodic_radius(I::new(-1., 1.), 0.5, &mut |p| authored_radius(
+            insert.inner(),
+            p
+        ))
+        .unwrap()
+        .lo > 1.
     );
     assert_eq!(
-        periodic_radius(ip(3000.), 0.5, |p| authored_radius(insert.inner(), p)).unwrap_err(),
+        periodic_radius(ip(3000.), 0.5, &mut |p| authored_radius(insert.inner(), p)).unwrap_err(),
         Error::Unsupported
     );
     assert_eq!(
         authored_radius(insert.inner(), I::new(2., 3.)).unwrap_err(),
         Error::Unsupported
     );
+}
+#[test]
+fn source_owned_inner_envelope_and_genuine_admitted_tiny_root_have_honest_outcomes() {
+    let (insert, _) = fixture(false, true);
+    let (bound, fallback) = authored_periodic_bound(insert.inner(), ip(1e8));
+    assert!(fallback);
+    assert_eq!(bound.lo, insert.inner().minimum_radius_mm());
+    assert_eq!(bound.hi, insert.inner().maximum_radius_mm());
+    let (bound, fallback) = authored_periodic_bound(insert.inner(), ip(0.1));
+    assert!(!fallback && bound.valid());
+    let a = 1_f64.to_radians();
+    let r = 2_f64.powi(-52).next_up();
+    let spec = Spec {
+        major_radius_mm: 20.,
+        pitch_mm: 0.5,
+        length_mm: 4.,
+        crest_width_mm: 0.0625,
+        lower_flank_deg: 1.,
+        upper_flank_deg: 1.,
+        depth_mm: (0.5 - 0.0625) / (2. * a.tan()) - r * (1. / a.sin() - 1.),
+        root_radius_mm: Some(r),
+        starts: 1,
+        left_hand: false,
+    };
+    let thread = Thread::new(spec).unwrap();
+    let tiny_bound = thread
+        .radius_at_phase_interval(ip(thread.profile_breaks()[2]))
+        .unwrap();
+    assert!(tiny_bound.valid());
+    let source = |s| {
+        AuthoredThread::new(
+            s,
+            SourceOptions {
+                position_limit_mm: 1e-5,
+                normal_angle_limit_rad: 1e-5,
+            },
+        )
+        .unwrap()
+    };
+    let inner = source(Spec {
+        major_radius_mm: 21.,
+        depth_mm: 12.,
+        root_radius_mm: None,
+        ..spec
+    });
+    let wood = source(Spec {
+        major_radius_mm: 30.,
+        pitch_mm: 2.,
+        depth_mm: 1.,
+        crest_width_mm: 0.4,
+        lower_flank_deg: 30.,
+        upper_flank_deg: 30.,
+        root_radius_mm: None,
+        ..spec
+    });
+    let insert = Insert::new(wood, inner, 0.5, None).unwrap();
+    let screw = crate::headed_screw::Screw::new(
+        thread,
+        crate::headed_screw::ScrewSpec {
+            head: crate::headed_screw::ScrewHead::ExternalHex {
+                across_flats_mm: 50.,
+                height_mm: 3.,
+            },
+            shank_length_mm: 0.,
+            shank_radius_mm: 20.,
+        },
+    )
+    .unwrap();
+    assert!(
+        query(&insert, MatingScrew::Regular(&screw), identity(), 2.)
+            .unwrap()
+            .minimum_radial_clearance_lower_mm
+            > 0.5
+    );
+    let (bound, fallback) = external_periodic_bound(&thread, ip(1e8));
+    assert!(fallback && bound.valid());
+    assert_eq!(bound.lo, 0.);
+    assert_eq!(bound.hi, thread.source_coordinate_bounds_mm()[0][1]);
+    let (bound, fallback) = external_periodic_bound(&thread, ip(0.1));
+    assert!(!fallback && bound.valid());
+    assert_eq!(*screw.thread(), thread);
 }

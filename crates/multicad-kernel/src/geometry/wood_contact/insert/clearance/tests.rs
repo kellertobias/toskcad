@@ -64,7 +64,7 @@ fn fixture(length: f64) -> (Solid, Solid) {
 }
 #[test]
 fn real_five_point_five_mm_tip_fails_real_one_mm_blind_bottom_requirement() {
-    for (length, gap) in [(3., 3.), (4.5, 1.5), (5.5, 0.5)] {
+    for (length, gap) in [(3., 3.), (4.5, 1.5), (5., 1.), (5.5, 0.5)] {
         let (stock, screw) = fixture(length);
         let proof = stock
             .rust_wood_insert_screw_clearance(&screw, 0.4, None)
@@ -84,4 +84,59 @@ fn real_five_point_five_mm_tip_fails_real_one_mm_blind_bottom_requirement() {
             );
         }
     }
+}
+#[test]
+fn cancelled_unknown_and_mismatched_policy_queries_publish_no_stock_exclusion() {
+    let (stock, screw) = fixture(4.5);
+    assert_eq!(
+        stock
+            .rust_wood_insert_screw_clearance(&screw, 1., Some(&|| true))
+            .unwrap_err()
+            .kind,
+        GeometryErrorKind::Cancelled
+    );
+    assert_eq!(
+        stock
+            .rust_wood_insert_screw_clearance(&screw, -1., None)
+            .unwrap_err()
+            .kind,
+        GeometryErrorKind::Input
+    );
+    let plain = Solid::box_solid([20.; 3], GeometryPolicy::default()).unwrap();
+    assert_eq!(
+        plain
+            .rust_wood_insert_screw_clearance(&screw, 1., None)
+            .unwrap_err()
+            .kind,
+        GeometryErrorKind::Unsupported
+    );
+    assert_eq!(
+        screw
+            .rust_wood_insert_screw_clearance(&screw, 1., None)
+            .unwrap_err()
+            .kind,
+        GeometryErrorKind::Unsupported
+    );
+    assert_eq!(
+        stock
+            .rust_wood_insert_screw_clearance(&plain, 1., None)
+            .unwrap_err()
+            .kind,
+        GeometryErrorKind::Unsupported
+    );
+    let mut policy = GeometryPolicy::default();
+    policy.linear_tolerance_mm *= 2.;
+    let unequal = Solid::box_solid([20.; 3], policy).unwrap();
+    assert_eq!(
+        stock
+            .rust_wood_insert_screw_clearance(&unequal, 1., None)
+            .unwrap_err()
+            .kind,
+        GeometryErrorKind::Input
+    );
+    assert!(
+        stock
+            .rust_wood_insert_screw_clearance(&screw, 1., None)
+            .is_ok()
+    );
 }
