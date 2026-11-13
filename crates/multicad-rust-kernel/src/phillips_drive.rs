@@ -12,6 +12,11 @@ pub use finite_section::{
     EdgeRole, SectionBoundary, SectionCurve, SectionEdge, SectionVertex, VertexRole,
 };
 mod source;
+mod topology;
+pub use topology::{
+    BoundaryEdge, BoundaryFace, BoundaryTopology, BoundaryVertex, CurveKey, EdgeUse, FaceKey,
+    LineSupport, MeridianStation, Surface, TopologyCertificate, VertexKey,
+};
 #[cfg(test)]
 mod tests;
 mod volume;
@@ -207,6 +212,17 @@ impl Cutter {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, Error> {
         source::construct(spec, domain, cancelled)
+    }
+    /// Closed source incidence with real support ownership. Manufacturing and
+    /// literal emitted-file incidence require their separate certificates.
+    pub fn boundary_topology(&self) -> Result<BoundaryTopology<'_>, Error> {
+        self.boundary_topology_with_cancel(&|| false)
+    }
+    pub fn boundary_topology_with_cancel(
+        &self,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<BoundaryTopology<'_>, Error> {
+        topology::construct(self, cancelled)
     }
     /// Shared expression-owned events and finite trim domains of the canonical
     /// three-dimensional boundary. General event orders remain unsupported.
