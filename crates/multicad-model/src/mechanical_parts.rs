@@ -416,6 +416,9 @@ pub(crate) fn build_rust(
         .resolve(evaluated)
         .map_err(|cause| error(Some(feature), cause))?
     {
+        ResolvedMechanicalPart::CustomConnection { parameters } => {
+            custom_connection::build_rust(feature, *parameters, policy)
+        }
         ResolvedMechanicalPart::WoodScrew { parameters } => {
             wood_screws::build_rust(feature, &parameters, policy)
         }
@@ -487,10 +490,6 @@ pub(crate) fn build_rust(
             policy,
         )
         .map_err(|cause| error(Some(feature), cause)),
-        _ => Err(error(
-            Some(feature),
-            "Rust mechanical parts currently support washers, bearing envelopes, machine screws and hex nuts",
-        )),
     }
 }
 

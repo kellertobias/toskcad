@@ -1,6 +1,45 @@
 //! Authored custom connection hardware, built from actual helical solids.
 use super::*;
 use multicad_core::model::{ResolvedCustomConnectionHardware, ScrewLengthConvention};
+pub(super) fn build_rust(
+    feature: EntityId,
+    source: ResolvedCustomConnectionHardware,
+    policy: GeometryPolicy,
+) -> Result<Solid, ModelError> {
+    let ResolvedCustomConnectionHardware::WoodScrew {
+        wood_thread,
+        plain_length_mm,
+        plain_radius_mm,
+        head,
+        drive,
+        ..
+    } = source
+    else {
+        return Err(error(
+            Some(feature),
+            "Rust custom inserts and hanger bolts require their own connected-material providers",
+        ));
+    };
+    let head = super::rust_legacy_head(&head, &drive).ok_or_else(|| {
+        error(Some(feature), "Rust custom wood screws require an external hex head or a socket cap with a flat hex socket")
+    })?;
+    let (profile, root, frame) = crate::threads::rust_profile(feature, &wood_thread)?;
+    // The custom source authors the actual thread-start frame. Reconstructing
+    // it by subtracting and adding a plain length can lose its original phase.
+    Solid::rust_machine_screw_at_thread_frame(
+        profile,
+        root,
+        ScrewSpec {
+            head,
+            shank_length_mm: plain_length_mm,
+            shank_radius_mm: plain_radius_mm,
+        },
+        feature,
+        frame,
+        policy,
+    )
+    .map_err(|cause| error(Some(feature), cause))
+}
 fn stage(
     feature: EntityId,
     thread: multicad_core::model::ResolvedThread,

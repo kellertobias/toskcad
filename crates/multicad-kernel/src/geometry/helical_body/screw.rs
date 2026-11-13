@@ -45,7 +45,9 @@ impl Solid {
         )
     }
 
-    pub(super) fn rust_machine_screw_at_thread_frame(
+    /// Build from an explicitly authored thread-start frame, preserving its
+    /// literal origin and axes rather than reconstructing it from a head seat.
+    pub fn rust_machine_screw_at_thread_frame(
         spec: HelicalThread,
         root_radius_mm: Option<f64>,
         screw: ScrewSpec,
