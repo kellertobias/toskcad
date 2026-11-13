@@ -1,6 +1,6 @@
 use super::*;
 use std::cell::Cell;
-fn fixture(index: usize) -> (Spec, Domain) {
+pub(super) fn fixture(index: usize) -> (Spec, Domain) {
     let (m, r, b, g, inner, beta, head_r, head_h) = match index {
         0 => (
             1.9,

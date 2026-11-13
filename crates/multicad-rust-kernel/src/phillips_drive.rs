@@ -6,6 +6,8 @@ mod classify;
 mod source;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod volume_prototype;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Spec {

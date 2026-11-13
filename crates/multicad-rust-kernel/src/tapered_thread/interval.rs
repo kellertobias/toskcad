@@ -157,7 +157,7 @@ impl Div for I {
 }
 /// Value and first/second partials, with all operations outward rounded.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct J {
+pub(crate) struct J {
     pub v: I,
     pub d: I,
     pub z: I,
