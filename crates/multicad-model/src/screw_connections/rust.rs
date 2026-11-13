@@ -7,6 +7,7 @@ mod blind;
 mod conical;
 mod library;
 mod washers;
+mod wood;
 
 pub(crate) fn validate(
     document: &Document,
@@ -42,7 +43,9 @@ pub(crate) fn validate(
         }
         let source = model::read_screw_connection_request(document, entity.id)
             .map_err(|e| error(Some(entity.id), e))?;
-        checks.push(if source.mode == Mode::TappedReceiver {
+        checks.push(if source.mode == Mode::DirectWood {
+            wood::check(&input, &source, evaluated, interrupt)?
+        } else if source.mode == Mode::TappedReceiver {
             blind::check(&input, &source, evaluated, interrupt)?
         } else {
             through_nut(&input, &source, evaluated, interrupt)?
