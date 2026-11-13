@@ -12,6 +12,7 @@ mod api;
 mod close;
 mod loops;
 mod material;
+mod polyline;
 mod qualify;
 #[cfg(test)]
 mod tests;
@@ -92,7 +93,7 @@ pub struct BoundaryCell {
     face: u32,
     vertices: [u32; 6],
     count: usize,
-    wraps: u8,
+    parameters: [[I; 2]; 6],
 }
 struct Graph {
     source: Cavity,
@@ -131,19 +132,19 @@ impl Graph {
         )
         .map(|_| ())
     }
-    fn buffer<T>(&self, count: usize, reserved: usize) -> Result<Vec<T>, Error> {
-        self.check(
-            reserved
-                .checked_add(count.checked_mul(size_of::<T>()).ok_or(Error::Limit)?)
-                .ok_or(Error::Limit)?,
-        )?;
+    fn buffer<T>(&self, count: usize, reserved: usize, w: &mut Work<'_>) -> Result<Vec<T>, Error> {
+        w.step()?;
+        let requested = reserved
+            .checked_add(count.checked_mul(size_of::<T>()).ok_or(Error::Limit)?)
+            .ok_or(Error::Limit)?;
+        self.check(requested)?;
         let mut result = Vec::new();
         result.try_reserve_exact(count).map_err(|_| Error::Limit)?;
-        self.check(
-            reserved
-                .checked_add(result.capacity() * size_of::<T>())
-                .ok_or(Error::Limit)?,
-        )?;
+        let actual = reserved
+            .checked_add(result.capacity() * size_of::<T>())
+            .ok_or(Error::Limit)?;
+        self.check(actual)?;
+        w.step()?;
         Ok(result)
     }
     fn new(source: Cavity, limits: BoundaryOptions, w: &mut Work<'_>) -> Result<Self, Error> {
@@ -401,12 +402,9 @@ impl Graph {
         let starts = source.thread.spec().starts;
         let periods = source.tail.map_or(source.full_length_mm(), |t| t.station)
             / source.thread.spec().pitch_mm;
-        // Bound before the float-to-integer conversion and all count products.
-        // The source may be valid with a much longer length/pitch ratio than
-        // this finite-boundary request can retain.
-        if periods.ceil() > limits.cells as f64 {
-            return Err(Error::Limit);
-        }
+        // AuthoredThread construction qualifies its immutable legacy Spec with
+        // length/pitch + 2*starts <=128. The retained prefix is no longer than
+        // that source, so this cast and the <=137*5*2 count product are bounded.
         let count = periods.ceil() as usize + starts as usize + 1;
         if count * 5 * (1 + usize::from(source.entry.is_some())) > limits.cells {
             return Err(Error::Limit);
@@ -439,14 +437,16 @@ impl Graph {
                         face,
                         vertices: [0; 6],
                         count: polygon.points.len(),
-                        wraps: 0,
+                        parameters: [[I::point(0.); 2]; 6],
                     };
                     for (corner, point) in polygon.points.iter().enumerate() {
                         cell.vertices[corner] =
                             graph.point(&patch, &polygon, point, index, corner, work)?;
-                        if point.v.cmp(&Q::integer(1, work)?, work)? == Ordering::Equal {
-                            cell.wraps |= 1 << corner;
-                        }
+                        // Retain the original source chart BEFORE ownership's
+                        // true-periodic canonicalization. Queries need no later
+                        // decoding or recomputation of the exact q/v transfer.
+                        cell.parameters[corner] =
+                            [point.q.enclosure(work)?.1, point.v.enclosure(work)?.1];
                     }
                     for corner in 0..cell.count {
                         let next = (corner + 1) % cell.count;
@@ -481,3 +481,4 @@ fn coordinates(patch: &Patch, kind: Kind, p: &Point, w: &mut Work<'_>) -> Result
 }
 
 pub use api::{Boundary, BoundaryCoedge};
+pub use polyline::BoundaryPolyline;

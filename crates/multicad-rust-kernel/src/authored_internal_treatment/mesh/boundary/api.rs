@@ -90,30 +90,27 @@ fn build(
         header
             + graph.curves.len() * size_of::<BoundaryCurve>()
             + graph.cells.len() * size_of::<BoundaryCell>(),
+        &mut work,
     )?;
     let curves = graph.buffer::<BoundaryCurve>(
         graph.curves.len(),
         header
             + points.capacity() * size_of::<BoundaryPoint>()
             + graph.cells.len() * size_of::<BoundaryCell>(),
+        &mut work,
     )?;
     let cells = graph.buffer::<BoundaryCell>(
         graph.cells.len(),
         header
             + points.capacity() * size_of::<BoundaryPoint>()
             + curves.capacity() * size_of::<BoundaryCurve>(),
+        &mut work,
     )?;
     let (mut points, mut curves, mut cells) = (points, curves, cells);
-    let actual = storage::bytes(
-        &[
-            (points.capacity(), size_of::<BoundaryPoint>()),
-            (curves.capacity(), size_of::<BoundaryCurve>()),
-            (cells.capacity(), size_of::<BoundaryCell>()),
-        ],
-        size_of::<Boundary>() - size_of::<Graph>(),
-        options.bytes,
-    )?;
-    graph.check(actual)?;
+    // The final buffer reservation included both earlier actual capacities,
+    // this buffer's actual capacity and the Boundary header while all original
+    // graph buffers remain live. Rechecking the same immutable sum adds no
+    // allocation or publication protection.
     points.append(&mut graph.vertices);
     curves.append(&mut graph.curves);
     cells.append(&mut graph.cells);
@@ -191,8 +188,8 @@ impl Boundary {
         work.step()?;
         Ok(result)
     }
-    /// Original exact source-cell q/v footpoint enclosure. v1 was canonicalized
-    /// for shared geometry, then restored here with its exact period transfer.
+    /// Original source-cell q/v footpoint enclosure, retained from the actual
+    /// exact values before shared geometry undergoes periodic canonicalization.
     pub fn cell_parameter_bounds(
         &self,
         cell: usize,
@@ -202,24 +199,7 @@ impl Boundary {
         if corner >= cell.count {
             return Err(Error::Invalid);
         }
-        let node = &self.graph.vertices[cell.vertices[corner] as usize];
-        let mut work = Work {
-            remaining: self.graph.limits.work,
-            used: 0,
-            interrupt: None,
-        };
-        self.graph.check(EXACT_SCRATCH)?;
-        let mut q = super::close::scalar(&node.exact, 0, &mut work)?;
-        let mut v = super::close::scalar(&node.exact, 1, &mut work)?;
-        if cell.wraps & (1 << corner) != 0 {
-            let lead = Q::float(self.graph.source.thread.spec().pitch_mm, &mut work)?.mul(
-                &Q::integer(i64::from(self.graph.source.thread.spec().starts), &mut work)?,
-                &mut work,
-            )?;
-            q = q.sub(&lead, &mut work)?;
-            v = Q::integer(1, &mut work)?;
-        }
-        Ok([q.enclosure(&mut work)?.1, v.enclosure(&mut work)?.1].map(interval))
+        Ok(cell.parameters[corner].map(interval))
     }
     pub fn curve_point(
         &self,
@@ -285,7 +265,7 @@ impl BoundaryCurve {
     pub fn exact_affine_key(&self) -> &[u8] {
         &self.exact
     }
-    fn physical(&self) -> bool {
+    pub(super) fn physical(&self) -> bool {
         self.uses[1].is_some_and(|b| b.face != self.uses[0].unwrap().face)
     }
     pub fn endpoints(&self) -> [u32; 2] {

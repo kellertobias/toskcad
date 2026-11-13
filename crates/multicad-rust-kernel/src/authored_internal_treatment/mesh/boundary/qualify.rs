@@ -12,6 +12,19 @@ impl Graph {
             + u32::from(self.source.entry.is_some())
             + 2 * u32::from(self.source.tail.is_some())
             + u32::from(self.material.is_some())) as usize;
+        let mut edges = 0usize;
+        for curve in &self.curves {
+            w.step()?;
+            let [Some(a), Some(b)] = curve.uses else {
+                return Err(Error::Unresolved);
+            };
+            if a.forward == b.forward || a.face as usize >= faces || b.face as usize >= faces {
+                return Err(Error::Unresolved);
+            }
+            if a.face != b.face {
+                edges += 1;
+            }
+        }
         let requests = [
             self.vertices.len() * size_of::<usize>(),
             2 * self.curves.len() * size_of::<Corner>(),
@@ -22,21 +35,21 @@ impl Graph {
         let mut remaining: usize = requests.iter().sum();
         let mut workspace = 0;
         remaining -= requests[0];
-        let mut heads = self.buffer(self.vertices.len(), workspace + remaining)?;
+        let mut heads = self.buffer(self.vertices.len(), workspace + remaining, w)?;
         heads.resize(self.vertices.len(), usize::MAX);
         workspace += heads.capacity() * size_of::<usize>();
         remaining -= requests[1];
-        let mut corners = self.buffer(2 * self.curves.len(), workspace + remaining)?;
+        let mut corners = self.buffer(2 * self.curves.len(), workspace + remaining, w)?;
         workspace += corners.capacity() * size_of::<Corner>();
         remaining -= requests[2];
-        let mut seen = self.buffer(2 * self.curves.len(), workspace + remaining)?;
+        let mut seen = self.buffer(2 * self.curves.len(), workspace + remaining, w)?;
         seen.resize(2 * self.curves.len(), false);
         workspace += seen.capacity() * size_of::<bool>();
         remaining -= requests[3];
-        let mut reached = self.buffer(faces, workspace + remaining)?;
+        let mut reached = self.buffer(faces, workspace + remaining, w)?;
         reached.resize(faces, false);
         workspace += reached.capacity() * size_of::<bool>();
-        let mut queue = self.buffer(faces, workspace)?;
+        let mut queue = self.buffer(faces, workspace, w)?;
         workspace += queue.capacity() * size_of::<usize>();
         let base =
             2 + 4 * self.source.thread.spec().starts + u32::from(self.source.entry.is_some());
@@ -66,17 +79,13 @@ impl Graph {
                     w.step()?;
                     let outgoing = chain[(i + 1) % chain.len()];
                     let first = &self.curves[incoming.curve];
-                    let second = &self.curves[outgoing.curve];
                     let a = usize::from(incoming.forward);
                     let b = usize::from(!outgoing.forward);
                     let vertex = first.endpoints[a] as usize;
-                    if second.endpoints[b] as usize != vertex {
-                        return Err(Error::Unresolved);
-                    }
+                    // trace already proved incoming.end == outgoing.start.
+                    // Different curves have distinct germs; a one-edge circle
+                    // uses its two distinct endpoint germs even at one vertex.
                     let germs = [2 * incoming.curve + a, 2 * outgoing.curve + b];
-                    if germs[0] == germs[1] {
-                        return Err(Error::Unresolved);
-                    }
                     corners.push(Corner {
                         germs,
                         next: heads[vertex],
@@ -94,9 +103,10 @@ impl Graph {
             let mut previous = usize::MAX;
             loop {
                 w.step()?;
-                if seen[current] {
-                    return Err(Error::Unresolved);
-                }
+                // Every physical curve has two distinct incident faces. Each
+                // face's traced wire contributes exactly one corner to each
+                // endpoint germ. Thus this undirected link is degree two; a
+                // walk with its previous germ is a finite simple cycle.
                 seen[current] = true;
                 let mut neighbors = [usize::MAX; 2];
                 let mut count = 0;
@@ -106,17 +116,11 @@ impl Graph {
                     let link = &corners[at];
                     for i in 0..2 {
                         if link.germs[i] == current {
-                            if count == 2 {
-                                return Err(Error::Unresolved);
-                            }
                             neighbors[count] = link.germs[1 - i];
                             count += 1;
                         }
                     }
                     at = link.next;
-                }
-                if count != 2 {
-                    return Err(Error::Unresolved);
                 }
                 let next = if neighbors[0] == previous {
                     neighbors[1]
@@ -139,19 +143,6 @@ impl Graph {
                 at = link.next;
             }
         }
-        let mut edges = 0usize;
-        for curve in &self.curves {
-            w.step()?;
-            let [Some(a), Some(b)] = curve.uses else {
-                return Err(Error::Unresolved);
-            };
-            if a.forward == b.forward || a.face as usize >= faces || b.face as usize >= faces {
-                return Err(Error::Unresolved);
-            }
-            if a.face != b.face {
-                edges += 1;
-            }
-        }
         reached[0] = true;
         queue.push(0);
         let mut at = 0;
@@ -160,9 +151,9 @@ impl Graph {
             at += 1;
             for curve in &self.curves {
                 w.step()?;
-                let [Some(a), Some(b)] = curve.uses else {
-                    return Err(Error::Unresolved);
-                };
+                // The immutable initial incidence pass qualified both uses and
+                // their face range before tracing or allocating this workspace.
+                let [a, b] = curve.uses.map(Option::unwrap);
                 for (from, to) in [(a.face, b.face), (b.face, a.face)] {
                     if from as usize == face && !reached[to as usize] {
                         reached[to as usize] = true;
@@ -171,16 +162,36 @@ impl Graph {
                 }
             }
         }
-        if reached.iter().any(|v| !v) {
-            return Err(Error::Unresolved);
-        }
         let vertices = heads.iter().filter(|&&v| v != usize::MAX).count();
-        if vertices as isize - edges as isize + chi_faces
-            != if self.material.is_some() { 0 } else { 2 }
-        {
-            return Err(Error::Unresolved);
-        }
-        w.step()?;
-        Ok((vertices, edges))
+        shell_receipt(
+            self.material.is_some(),
+            vertices,
+            edges,
+            chi_faces,
+            &reached,
+        )
+        .and_then(|()| {
+            // Only a qualified shell proceeds to the final publication poll.
+            w.step()?;
+            Ok((vertices, edges))
+        })
     }
+}
+/// Final combinatorial certificate, after actual ordered face wires and vertex
+/// links qualify. A Tool is a sphere; through-cavity Material is a torus. This
+/// numeric receipt grants no geometry admission independently of those proofs.
+pub(super) fn shell_receipt(
+    material: bool,
+    vertices: usize,
+    edges: usize,
+    chi_faces: isize,
+    reached: &[bool],
+) -> Result<(), Error> {
+    if reached.iter().any(|v| !v) {
+        return Err(Error::Unresolved);
+    }
+    if vertices as isize - edges as isize + chi_faces != if material { 0 } else { 2 } {
+        return Err(Error::Unresolved);
+    }
+    Ok(())
 }

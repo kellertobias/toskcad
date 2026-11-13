@@ -19,7 +19,7 @@ impl Graph {
         reserved: usize,
         w: &mut Work<'_>,
     ) -> Result<Vec<Vec<Coedge>>, Error> {
-        let mut edges = self.buffer(self.curves.len(), reserved)?;
+        let mut edges = self.buffer(self.curves.len(), reserved, w)?;
         for (index, curve) in self.curves.iter().enumerate() {
             w.step()?;
             if curve.uses[1].is_some_and(|b| b.face == curve.uses[0].unwrap().face) {
@@ -35,7 +35,7 @@ impl Graph {
         self.trace_reserved(&edges, reserved + edges.capacity() * size_of::<Coedge>(), w)
     }
     pub(super) fn rim(&self, end: usize, w: &mut Work<'_>) -> Result<Vec<Coedge>, Error> {
-        let mut edges = self.buffer(self.curves.len(), 0)?;
+        let mut edges = self.buffer(self.curves.len(), 0, w)?;
         for (index, curve) in self.curves.iter().enumerate() {
             w.step()?;
             if curve.uses[1].is_none() && curve.station == Some(if end == 0 { 0 } else { 2 }) {
@@ -84,7 +84,7 @@ impl Graph {
         edges: &[Coedge],
         w: &mut Work<'_>,
     ) -> Result<Vec<Vec<Coedge>>, Error> {
-        self.trace_reserved(edges, edges.len() * size_of::<Coedge>(), w)
+        self.trace_reserved(edges, std::mem::size_of_val(edges), w)
     }
     fn trace_reserved(
         &self,
@@ -98,15 +98,19 @@ impl Graph {
         }
         let count = self.vertices.len();
         let seen_request = edges.len() * size_of::<bool>();
-        let mut incoming =
-            self.buffer::<usize>(count, reserved + count * size_of::<usize>() + seen_request)?;
+        let mut incoming = self.buffer::<usize>(
+            count,
+            reserved + count * size_of::<usize>() + seen_request,
+            w,
+        )?;
         incoming.resize(count, usize::MAX);
         let incoming_bytes = incoming.capacity() * size_of::<usize>();
-        let mut outgoing = self.buffer(count, reserved + incoming_bytes + seen_request)?;
+        let mut outgoing = self.buffer(count, reserved + incoming_bytes + seen_request, w)?;
         outgoing.resize(count, usize::MAX);
         let mut seen = self.buffer(
             edges.len(),
             reserved + incoming_bytes + outgoing.capacity() * size_of::<usize>(),
+            w,
         )?;
         seen.resize(edges.len(), false);
         let bytes = reserved
@@ -139,7 +143,7 @@ impl Graph {
         {
             return Err(Error::Unresolved);
         }
-        let mut loops = self.buffer::<Vec<Coedge>>(2, bytes)?;
+        let mut loops = self.buffer::<Vec<Coedge>>(2, bytes, w)?;
         let mut retained = loops.capacity() * size_of::<Vec<Coedge>>();
         for start in 0..edges.len() {
             if seen[start] {
@@ -148,15 +152,15 @@ impl Graph {
             if loops.len() == 2 {
                 return Err(Error::Unresolved);
             }
-            let mut chain = self.buffer(edges.len(), bytes + retained)?;
+            let mut chain = self.buffer(edges.len(), bytes + retained, w)?;
             retained += chain.capacity() * size_of::<Coedge>();
             self.check(bytes + retained)?;
             let mut current = start;
             loop {
                 w.step()?;
-                if seen[current] {
-                    return Err(Error::Unresolved);
-                }
+                // One incoming and outgoing edge per used vertex was proved
+                // above. A finite bijection is disjoint cycles; this walk can
+                // only revisit its starting edge (handled below).
                 seen[current] = true;
                 let coedge = edges[current];
                 chain.push(coedge);
@@ -165,9 +169,6 @@ impl Graph {
                 current = outgoing[end as usize];
                 if current == start {
                     break;
-                }
-                if current == usize::MAX {
-                    return Err(Error::Unresolved);
                 }
             }
             loops.push(chain);

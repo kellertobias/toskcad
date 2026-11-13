@@ -80,25 +80,19 @@ impl Owners {
         let mut slots = Vec::new();
         let mut owners = Vec::new();
         slots.try_reserve_exact(count).map_err(|_| Error::Limit)?;
-        storage::bytes(
-            &[
-                (slots.capacity(), size_of::<Option<Slot>>()),
-                (maximum, size_of::<Owner>()),
-            ],
-            reserved + size_of::<Self>(),
-            limit,
-        )?;
+        let first_allocation = [
+            (slots.capacity(), size_of::<Option<Slot>>()),
+            (maximum, size_of::<Owner>()),
+        ];
+        storage::bytes(&first_allocation, reserved + size_of::<Self>(), limit)?;
         owners
             .try_reserve_exact(maximum)
             .map_err(|_| Error::Limit)?;
-        let bytes = storage::bytes(
-            &[
-                (slots.capacity(), size_of::<Option<Slot>>()),
-                (owners.capacity(), size_of::<Owner>()),
-            ],
-            size_of::<Self>(),
-            BYTE_LIMIT,
-        )?;
+        let allocations = [
+            (slots.capacity(), size_of::<Option<Slot>>()),
+            (owners.capacity(), size_of::<Owner>()),
+        ];
+        let bytes = storage::bytes(&allocations, size_of::<Self>(), BYTE_LIMIT)?;
         storage::bytes(&[(bytes, 1)], reserved, limit)?;
         slots.resize(count, None);
         Ok(Self {

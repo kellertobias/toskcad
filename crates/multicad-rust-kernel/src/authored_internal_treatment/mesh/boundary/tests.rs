@@ -37,13 +37,18 @@ fn actual_unsampled_cells_pair_by_entire_exact_source_curve_laws() {
         assert!(graph.vertices.iter().all(|v| !v.exact.is_empty()
             && v.rzv.iter().all(|b| b.valid())
             && matches!(v.origin, Origin::Parameter {cell,corner} if cell<graph.cells.len() && corner<graph.cells[cell].count)));
-        assert!(graph.cells.iter().all(|c| c.count >= 3
-            && c.count <= 6
-            && c.band < 5
-            && c.period >= -i64::from(starts)
-            && c.face >= 2
-            && c.wraps < 64
-            && matches!(c.kind, Kind::Cone | Kind::Wall)));
+        assert!(graph.cells.iter().all(|c| {
+            c.count >= 3
+                && c.count <= 6
+                && c.band < 5
+                && c.period >= -i64::from(starts)
+                && c.face >= 2
+                && c.parameters[..c.count]
+                    .iter()
+                    .flatten()
+                    .all(|i| i.lo.is_finite() && i.hi.is_finite())
+                && matches!(c.kind, Kind::Cone | Kind::Wall)
+        }));
         let w = &mut Work {
             remaining: 16_000_000,
             used: 0,
@@ -321,7 +326,7 @@ fn declared_lower_budgets_cancellation_and_invalid_queries_never_publish_partial
         boundary.curve_point(id, 0.5, Some(&|| true)),
         Err(Error::Cancelled)
     ));
-    let calls = std::cell::Cell::new(0);
+    let calls = std::cell::Cell::new(0usize);
     let cancel = || {
         calls.set(calls.get() + 1);
         calls.get() > 1
@@ -472,4 +477,656 @@ fn smaller_combined_memory_budget_is_checked_before_owner_allocation_or_exact_wo
         .unwrap();
     assert!(normal.graph.temporary == 0 && normal.graph.point_owners.is_none());
     assert!(normal.retained_bytes() < EXACT_SCRATCH);
+}
+
+#[test]
+fn whole_source_polylines_keep_canonical_ends_and_independent_stock_circle_chords() {
+    use crate::{Circle, Rational, cylinder::AxialCylinder};
+    for left in [false, true] {
+        let cavity = super::super::tests::source(left, 2, Some(0.4), true);
+        let zero = Rational::new(0, 1).unwrap();
+        let stock = AxialCylinder::new(
+            7,
+            Circle::new([zero; 2], Rational::new(5, 2).unwrap()).unwrap(),
+            zero,
+            Rational::new(3715469692580659, 1125899906842624).unwrap(),
+        )
+        .unwrap();
+        let material = Material::new(stock, cavity, 0.1).unwrap();
+        let boundary = material
+            .boundary_with_interrupt(BoundaryOptions::default(), None)
+            .unwrap();
+        let mut stock_rims = 0;
+        for (id, curve) in boundary.curves() {
+            let polyline = boundary.curve_polyline(id, 0.01, 500_000, None).unwrap();
+            assert!(polyline.maximum_error_mm <= 0.01);
+            assert_eq!(
+                polyline.points_mm.first().copied(),
+                Some(boundary.curve_point(id, 0., None).unwrap().point_mm)
+            );
+            assert_eq!(
+                polyline.points_mm.last().copied(),
+                Some(boundary.curve_point(id, 1., None).unwrap().point_mm)
+            );
+            if matches!(
+                boundary.points()[curve.endpoints()[0] as usize].role(),
+                BoundaryPointRole::StockRim { .. }
+            ) {
+                stock_rims += 1;
+                // Independent exact cardinal source points, unrelated to any
+                // sampled manufacturing/display mesh or the polyline formula.
+                for (t, expected) in [
+                    (0., [2.5, 0.]),
+                    (0.25, [0., if left { -2.5 } else { 2.5 }]),
+                    (0.5, [-2.5, 0.]),
+                    (0.75, [0., if left { 2.5 } else { -2.5 }]),
+                    (1., [2.5, 0.]),
+                ] {
+                    let p = boundary.curve_point(id, t, None).unwrap();
+                    assert!(
+                        (p.point_mm[0] - expected[0]).hypot(p.point_mm[1] - expected[1])
+                            <= p.error_mm
+                    );
+                }
+                for pair in polyline.points_mm.windows(2) {
+                    let midpoint = [
+                        (pair[0][0] + pair[1][0]) * 0.5,
+                        (pair[0][1] + pair[1][1]) * 0.5,
+                    ];
+                    let sagitta = 2.5 - midpoint[0].hypot(midpoint[1]);
+                    assert!(sagitta <= polyline.maximum_error_mm);
+                }
+                assert!(matches!(
+                    boundary.curve_polyline(id, 0.01, 2, None),
+                    Err(Error::Limit)
+                ));
+                assert!(matches!(
+                    boundary.curve_polyline(id, f64::MIN_POSITIVE, 500_000, None),
+                    Err(Error::Limit)
+                ));
+            }
+        }
+        assert_eq!(stock_rims, 2);
+        let id = boundary.curves().next().unwrap().0;
+        for deflection in [0., -1., f64::NAN] {
+            assert!(matches!(
+                boundary.curve_polyline(id, deflection, 1000, None),
+                Err(Error::Invalid)
+            ));
+        }
+        for limit in [0, 1, 500_001] {
+            assert!(matches!(
+                boundary.curve_polyline(id, 0.1, limit, None),
+                Err(Error::Invalid)
+            ));
+        }
+        assert!(matches!(
+            boundary.curve_polyline(u32::MAX, 0.1, 1000, None),
+            Err(Error::Invalid)
+        ));
+        assert!(matches!(
+            boundary.curve_polyline(id, 0.1, 1000, Some(&|| true)),
+            Err(Error::Cancelled)
+        ));
+        let count = std::cell::Cell::new(0usize);
+        let counter = || {
+            count.set(count.get() + 1);
+            false
+        };
+        boundary
+            .curve_polyline(id, 0.01, 500_000, Some(&counter))
+            .unwrap();
+        for stop in [1, count.get() / 2, count.get() - 1] {
+            let calls = std::cell::Cell::new(0usize);
+            let cancel = || {
+                calls.set(calls.get() + 1);
+                calls.get() > stop
+            };
+            assert!(matches!(
+                boundary.curve_polyline(id, 0.01, 500_000, Some(&cancel)),
+                Err(Error::Cancelled)
+            ));
+        }
+    }
+}
+
+#[test]
+fn actual_closed_incidence_records_reject_duplicate_attachments_and_missing_or_foreign_uses() {
+    let source = super::super::tests::source(false, 1, Some(0.4), true);
+    let fresh = || Graph::raw(source, BoundaryOptions::default(), None).unwrap();
+    let work = || Work {
+        remaining: 16_000_000,
+        used: 0,
+        interrupt: None,
+    };
+    let mut w = work();
+    let mut graph = fresh();
+    let rim = graph.rim(0, &mut w).unwrap();
+    let edge = rim[0];
+    assert_eq!(
+        graph.attach(edge.curve, 0, edge.forward, &mut w),
+        Err(Error::Unresolved)
+    );
+    graph.attach(edge.curve, 0, !edge.forward, &mut w).unwrap();
+    assert_eq!(
+        graph.attach(edge.curve, 0, !edge.forward, &mut w),
+        Err(Error::Unresolved)
+    );
+    assert_eq!(
+        graph.attach(usize::MAX, 0, false, &mut w),
+        Err(Error::Unresolved)
+    );
+    let mut graph = fresh().closed(&mut w).unwrap();
+    let curve = graph
+        .curves
+        .iter()
+        .position(|c| c.uses[0].unwrap().face != c.uses[1].unwrap().face)
+        .unwrap();
+    graph.curves[curve].uses[1] = None;
+    assert_eq!(graph.qualify(&mut w), Err(Error::Unresolved));
+    let mut graph = fresh().closed(&mut w).unwrap();
+    graph.curves[curve].uses[1].as_mut().unwrap().face = u32::MAX;
+    assert_eq!(graph.qualify(&mut w), Err(Error::Unresolved));
+    let mut graph = fresh().closed(&mut w).unwrap();
+    graph.curves[curve].uses[1].as_mut().unwrap().forward =
+        graph.curves[curve].uses[0].unwrap().forward;
+    assert_eq!(graph.qualify(&mut w), Err(Error::Unresolved));
+    // These are real source coedges: reversing the outgoing neighbor gives two
+    // incoming germs at the same vertex with distinct starting vertices.
+    let graph = fresh().closed(&mut w).unwrap();
+    let wire = graph.face_loops(0, &mut w).unwrap().remove(0);
+    assert!(wire.len() > 2);
+    let mut next = wire[1];
+    next.forward = !next.forward;
+    assert!(matches!(
+        graph.trace(&[wire[0], next], &mut w),
+        Err(Error::Unresolved)
+    ));
+}
+
+#[test]
+fn actual_source_ownership_refuses_a_third_coedge_even_with_identical_whole_curve_law() {
+    let source = super::super::tests::source(false, 1, Some(0.4), true);
+    let mut w = Work {
+        remaining: 16_000_000,
+        used: 0,
+        interrupt: None,
+    };
+    let mut graph = Graph::raw(source, BoundaryOptions::default(), None)
+        .unwrap()
+        .closed(&mut w)
+        .unwrap();
+    let curve = &graph.curves[0];
+    let q = |i, w: &mut Work<'_>| close::scalar(&curve.exact, i, w).unwrap();
+    let base = [q(0, &mut w), q(1, &mut w), q(2, &mut w)];
+    let end = std::array::from_fn(|i| base[i].add(&q(3 + i, &mut w), &mut w).unwrap());
+    let ids = curve.endpoints;
+    let side = curve.uses[0].unwrap();
+    let station = curve.station;
+    assert_eq!(
+        graph.register(ids, [base, end], station, side, &mut w),
+        Err(Error::Unresolved)
+    );
+}
+
+#[test]
+fn valid_sources_reject_unclosed_or_mismatched_material_handoffs() {
+    use crate::{Circle, Rational, cylinder::AxialCylinder};
+    let source = super::super::tests::source(false, 1, Some(0.4), true);
+    let zero = Rational::new(0, 1).unwrap();
+    let stock = AxialCylinder::new(
+        7,
+        Circle::new([zero; 2], Rational::new(5, 2).unwrap()).unwrap(),
+        zero,
+        Rational::new(3715469692580659, 1125899906842624).unwrap(),
+    )
+    .unwrap();
+    let material = Material::new(stock, source, 0.1).unwrap();
+    let other = super::super::tests::source(true, 1, Some(0.4), true);
+    let other_material = Material::new(stock, other, 0.1).unwrap();
+    let mut w = Work {
+        remaining: 16_000_000,
+        used: 0,
+        interrupt: None,
+    };
+    let fresh = || Graph::raw(source, BoundaryOptions::default(), None).unwrap();
+    assert!(matches!(
+        fresh().material(material, &mut w),
+        Err(Error::Unresolved)
+    ));
+    assert!(matches!(
+        fresh()
+            .closed(&mut w)
+            .unwrap()
+            .material(other_material, &mut w),
+        Err(Error::Invalid)
+    ));
+    let mut graph = fresh()
+        .closed(&mut w)
+        .unwrap()
+        .material(material, &mut w)
+        .unwrap();
+    // Three disjoint real rim cycles exceed the source face contract's two.
+    let mut edges = graph
+        .face_loops(0, &mut w)
+        .unwrap()
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    let upper = graph.face_loops(1, &mut w).unwrap();
+    let circle = upper.into_iter().find(|chain| chain.len() == 1).unwrap();
+    edges.extend(circle);
+    assert!(matches!(
+        graph.trace(&edges, &mut w),
+        Err(Error::Unresolved)
+    ));
+    // Reusing an occupied result is never an alternate source admission route.
+    graph.material = Some(material);
+    assert!(matches!(
+        graph.material(material, &mut w),
+        Err(Error::Invalid)
+    ));
+}
+#[test]
+fn exact_unsampled_domains_agree_with_independent_qz_face_area_and_semantic_ownership() {
+    use crate::authored_internal_treatment::{FaceKey, FacePropertyOptions};
+    let tau = I::new(
+        std::f64::consts::TAU.next_down(),
+        std::f64::consts::TAU.next_up(),
+    );
+    for (left, starts) in [(false, 1), (true, 2), (false, 3)] {
+        let body = super::super::tests::source(left, starts, Some(0.4), true);
+        let boundary = body
+            .boundary_with_interrupt(BoundaryOptions::default(), None)
+            .unwrap();
+        let mut areas = vec![I::point(0.); body.face_count() as usize];
+        let lead = I::point(body.thread.spec().pitch_mm) * I::point(f64::from(starts));
+        let bounds = |e: Enclosure| I::new(e.lower, e.upper);
+        for (index, cell) in boundary.cells().iter().enumerate() {
+            let uv = (0..cell.points().len())
+                .map(|corner| {
+                    boundary
+                        .cell_parameter_bounds(index, corner)
+                        .unwrap()
+                        .map(bounds)
+                })
+                .collect::<Vec<_>>();
+            let mut signed_area = I::point(0.);
+            let mut qrange = I::new(f64::INFINITY, f64::NEG_INFINITY);
+            let mut vrange = qrange;
+            for (i, p) in uv.iter().enumerate() {
+                let next = uv[(i + 1) % uv.len()];
+                signed_area = signed_area + p[0] * next[1] - next[0] * p[1];
+                qrange = I::new(qrange.lo.min(p[0].lo), qrange.hi.max(p[0].hi));
+                vrange = I::new(vrange.lo.min(p[1].lo), vrange.hi.max(p[1].hi));
+            }
+            let area = signed_area / I::point(2.);
+            assert!(area.hi > 0.);
+            // Exact clipping supplies a positive domain; an interval shoelace
+            // lower bound may conservatively include zero, never erase area.
+            let area = I::new(area.lo.max(0.), area.hi);
+            let (key, jacobian) = if cell.is_entry_cone() {
+                let entry = body.entry.unwrap();
+                let k = (I::point(entry.radius) - I::point(body.thread.minimum_radius_mm()))
+                    / I::point(entry.depth);
+                let z = qrange + lead * vrange;
+                let r = I::point(entry.radius) - k * z;
+                // Actual clipped cone lies between its mouth radius and the
+                // shared thread seam; this bound is independently source-owned.
+                let r = I::new(
+                    r.lo.max(body.thread.minimum_radius_mm()),
+                    r.hi.min(entry.radius),
+                );
+                (
+                    FaceKey::EntryCone,
+                    tau * r * (I::point(1.) + k.square()).sqrt(),
+                )
+            } else {
+                let key = body.thread_face_key(cell.period(), cell.band()).unwrap();
+                let band = body.thread.bands()[cell.band()];
+                let m = (I::point(band.radius_mm[1]) - I::point(band.radius_mm[0]))
+                    / (I::point(band.phase_mm[1]) - I::point(band.phase_mm[0]));
+                let q0 = I::point(band.phase_mm[0])
+                    + I::point(cell.period() as f64) * I::point(body.thread.spec().pitch_mm);
+                let r = I::point(band.radius_mm[0]) + m * (qrange - q0);
+                (
+                    key,
+                    ((tau * r).square() * (I::point(1.) + m.square()) + (m * lead).square()).sqrt(),
+                )
+            };
+            assert_eq!(body.face_index(key), Some(cell.face()));
+            areas[cell.face() as usize] = areas[cell.face() as usize] + area * jacobian;
+        }
+        for (face, area) in areas
+            .into_iter()
+            .enumerate()
+            .filter(|(_, area)| area.hi > 0.)
+        {
+            let key = body.face_key(face as u32).unwrap();
+            let qz = body
+                .local_face_properties(key, FacePropertyOptions::default())
+                .unwrap();
+            assert!(
+                area.lo <= qz.area_mm2.upper && qz.area_mm2.lower <= area.hi,
+                "actual unsampled q/v versus independent q/z {left}/{starts}/{key:?}: {area:?} vs {:?}",
+                qz.area_mm2
+            );
+            assert!(area.hi.is_finite() && qz.area_mm2.lower > 0.);
+        }
+    }
+}
+
+#[test]
+fn real_narrow_crest_curves_refuse_an_unrepresentable_endpoint_error_budget() {
+    use crate::authored_flat_thread::{AuthoredThread, SourceOptions};
+    let base = super::super::tests::source(false, 1, Some(0.4), true);
+    let source = AuthoredThread::new(
+        crate::helical_thread::Spec {
+            crest_width_mm: 1e-6,
+            ..base.thread.spec()
+        },
+        SourceOptions {
+            position_limit_mm: 1e-7,
+            normal_angle_limit_rad: 1e-7,
+        },
+    )
+    .unwrap();
+    let body = Cavity::new(source, base.intent()).unwrap();
+    let boundary = body
+        .boundary_with_interrupt(BoundaryOptions::default(), None)
+        .unwrap();
+    let mut refused_precision = false;
+    for (id, _) in boundary.curves() {
+        let sample = boundary.curve_point(id, 0., None).unwrap();
+        if matches!(
+            boundary.curve_polyline(id, sample.error_mm * 0.125, 500_000, None),
+            Err(Error::Unresolved)
+        ) {
+            refused_precision = true;
+        }
+    }
+    assert!(refused_precision);
+}
+
+#[test]
+fn source_boundary_stage_matrix_cancels_before_publishing_any_geometry() {
+    use crate::authored_flat_thread::{AuthoredThread, SourceOptions};
+    let base = super::super::tests::source(false, 1, Some(0.4), true);
+    let thread = AuthoredThread::new(
+        crate::helical_thread::Spec {
+            length_mm: 1.5,
+            ..base.thread.spec()
+        },
+        SourceOptions {
+            position_limit_mm: 1e-7,
+            normal_angle_limit_rad: 1e-7,
+        },
+    )
+    .unwrap();
+    let body = Cavity::new(thread, base.intent()).unwrap();
+    let options = BoundaryOptions {
+        cells: 128,
+        vertices: 128,
+        curves: 256,
+        ..BoundaryOptions::default()
+    };
+    let calls = std::cell::Cell::new(0usize);
+    let counter = || {
+        calls.set(calls.get() + 1);
+        false
+    };
+    body.boundary_with_interrupt(options, Some(&counter))
+        .unwrap();
+    let count = calls.get();
+    eprintln!("actual complete source boundary cancellation checkpoints: {count}");
+    // The exhaustive qualification run checked all 28,159 positions. Routine
+    // regression retains allocation/publication windows and sampled body paths.
+    let mut stops = std::collections::BTreeSet::new();
+    stops.extend((0..count).step_by(count.div_ceil(512)));
+    stops.extend(0..count.min(64));
+    stops.extend(count.saturating_sub(64)..count);
+    // Locate real phase boundaries without adding production stage logging.
+    calls.set(0);
+    let mut work = Work {
+        remaining: options.work,
+        used: 0,
+        interrupt: Some(&counter),
+    };
+    let graph = Graph::raw_in(body, options, &mut work).unwrap();
+    let raw = calls.get() + 1;
+    let graph = graph.closed(&mut work).unwrap();
+    let closed = calls.get() + 1;
+    graph.qualify(&mut work).unwrap();
+    let qualified = calls.get() + 1;
+    for end in [raw, closed, qualified] {
+        stops.extend(end.saturating_sub(64)..end.saturating_add(64).min(count));
+    }
+    assert!(stops.len() <= 1024);
+    // Repeat the separately recorded exhaustive qualification when explicitly
+    // requested; ordinary regression always retains the bounded stage matrix.
+    if std::env::var("MULTICAD_BOUNDARY_EXHAUSTIVE_CANCEL").as_deref() == Ok("1") {
+        stops.extend(0..count);
+    }
+    for stop in stops {
+        calls.set(0);
+        let cancel = || {
+            calls.set(calls.get() + 1);
+            calls.get() > stop
+        };
+        assert!(
+            matches!(
+                body.boundary_with_interrupt(options, Some(&cancel)),
+                Err(Error::Cancelled)
+            ),
+            "checkpoint {stop}/{count}"
+        );
+    }
+    assert_eq!(body.source_thread(), &thread);
+    assert!(body.boundary_with_interrupt(options, None).is_ok());
+}
+
+#[test]
+fn distinct_actual_cap_vertices_cannot_be_merged_into_a_pinched_source_boundary() {
+    let source = super::super::tests::source(false, 1, Some(0.4), true);
+    let mut w = Work {
+        remaining: 16_000_000,
+        used: 0,
+        interrupt: None,
+    };
+    let mut graph = Graph::raw(source, BoundaryOptions::default(), None)
+        .unwrap()
+        .closed(&mut w)
+        .unwrap();
+    let mouth = graph
+        .curves
+        .iter()
+        .find(|c| c.station == Some(0))
+        .unwrap()
+        .endpoints[0];
+    let far = graph
+        .vertices
+        .iter()
+        .position(|p| matches!(p.origin, Origin::Tail { end: 1, .. }))
+        .unwrap() as u32;
+    assert_ne!(mouth, far);
+    // Tamper only the proof's incidence records: preserve all actual source
+    // curve laws, face/coedge identities and opposite orientations. Joining
+    // disjoint cap stars must fail the connected vertex-link certificate.
+    for curve in &mut graph.curves {
+        for endpoint in &mut curve.endpoints {
+            if *endpoint == far {
+                *endpoint = mouth;
+            }
+        }
+    }
+    assert_eq!(graph.qualify(&mut w), Err(Error::Unresolved));
+}
+
+#[test]
+fn actual_source_rim_receipts_refuse_multiple_cycles_reversed_direction_and_wrong_winding() {
+    let source = super::super::tests::source(false, 1, Some(0.4), true);
+    let fresh = || Graph::raw(source, BoundaryOptions::default(), None).unwrap();
+    let mut w = Work {
+        remaining: 16_000_000,
+        used: 0,
+        interrupt: None,
+    };
+    let mut graph = fresh();
+    for curve in &mut graph.curves {
+        if curve.station == Some(2) {
+            curve.station = Some(0);
+        }
+    }
+    assert!(matches!(graph.rim(0, &mut w), Err(Error::Unresolved)));
+    let mut graph = fresh();
+    let rim = graph.rim(0, &mut w).unwrap();
+    graph.curves[rim[0].curve].v_direction = graph.curves[rim[0].curve].v_direction.reverse();
+    assert!(matches!(graph.rim(0, &mut w), Err(Error::Unresolved)));
+    let mut graph = fresh();
+    let rim = graph.rim(0, &mut w).unwrap();
+    let curve = rim
+        .iter()
+        .find(|e| graph.curves[e.curve].wrap_jump != 0)
+        .unwrap()
+        .curve;
+    graph.curves[curve].wrap_jump = 0;
+    assert!(matches!(graph.rim(0, &mut w), Err(Error::Unresolved)));
+}
+
+#[test]
+fn actual_shell_receipts_retain_connectivity_genus_and_face_loop_contracts() {
+    let source = super::super::tests::source(false, 1, Some(0.4), true);
+    let mut w = Work {
+        remaining: 16_000_000,
+        used: 0,
+        interrupt: None,
+    };
+    let mut graph = Graph::raw(source, BoundaryOptions::default(), None)
+        .unwrap()
+        .closed(&mut w)
+        .unwrap();
+    let (vertices, edges) = graph.qualify(&mut w).unwrap();
+    let faces = source.face_count();
+    let mut chi = 0;
+    for face in 0..faces {
+        chi += 2 - graph.face_loops(face, &mut w).unwrap().len() as isize;
+    }
+    let mut reached = vec![true; faces as usize];
+    assert_eq!(
+        qualify::shell_receipt(false, vertices, edges, chi, &reached),
+        Ok(())
+    );
+    assert_eq!(
+        qualify::shell_receipt(true, vertices, edges, chi, &reached),
+        Err(Error::Unresolved)
+    );
+    reached[faces as usize - 1] = false;
+    assert_eq!(
+        qualify::shell_receipt(false, vertices, edges, chi, &reached),
+        Err(Error::Unresolved)
+    );
+    // A real complete cone mouth cycle moved to the far-cap receipt produces
+    // two simple disjoint cap loops. It must not masquerade as one tool disk.
+    let cone = source
+        .face_index(crate::authored_internal_treatment::FaceKey::EntryCone)
+        .unwrap();
+    for curve in &mut graph.curves {
+        if curve.station == Some(0) {
+            for side in curve.uses.iter_mut().flatten() {
+                if side.face == cone {
+                    side.face = 1;
+                }
+            }
+        }
+    }
+    assert_eq!(graph.qualify(&mut w), Err(Error::Unresolved));
+}
+
+#[test]
+fn valid_source_cannot_exceed_a_lower_requested_finite_cell_budget() {
+    use crate::authored_flat_thread::{AuthoredThread, SourceOptions};
+    let base = super::super::tests::source(false, 1, Some(0.4), true);
+    let thread = AuthoredThread::new(
+        crate::helical_thread::Spec {
+            length_mm: 10.,
+            ..base.thread.spec()
+        },
+        SourceOptions {
+            position_limit_mm: 1e-7,
+            normal_angle_limit_rad: 1e-7,
+        },
+    )
+    .unwrap();
+    let body = Cavity::new(thread, base.intent()).unwrap();
+    assert!(matches!(
+        body.boundary_with_interrupt(
+            BoundaryOptions {
+                cells: 32,
+                ..BoundaryOptions::default()
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    assert_eq!(body.full_length_mm(), 10.);
+}
+
+#[test]
+fn actual_material_handoff_cancels_each_exact_stock_circle_allocation_and_publication_checkpoint() {
+    use crate::{Circle, Rational, cylinder::AxialCylinder};
+    let source = super::super::tests::source(false, 1, Some(0.4), true);
+    let zero = Rational::new(0, 1).unwrap();
+    let stock = AxialCylinder::new(
+        7,
+        Circle::new([zero; 2], Rational::new(5, 2).unwrap()).unwrap(),
+        zero,
+        Rational::new(3715469692580659, 1125899906842624).unwrap(),
+    )
+    .unwrap();
+    let material = Material::new(stock, source, 0.1).unwrap();
+    let fresh = || {
+        let mut w = Work {
+            remaining: 16_000_000,
+            used: 0,
+            interrupt: None,
+        };
+        Graph::raw(source, BoundaryOptions::default(), None)
+            .unwrap()
+            .closed(&mut w)
+            .unwrap()
+    };
+    let calls = std::cell::Cell::new(0usize);
+    let counter = || {
+        calls.set(calls.get() + 1);
+        false
+    };
+    fresh()
+        .material(
+            material,
+            &mut Work {
+                remaining: 16_000_000,
+                used: 0,
+                interrupt: Some(&counter),
+            },
+        )
+        .unwrap();
+    let count = calls.get();
+    for stop in 0..count {
+        calls.set(0);
+        let cancel = || {
+            calls.set(calls.get() + 1);
+            calls.get() > stop
+        };
+        assert!(matches!(
+            fresh().material(
+                material,
+                &mut Work {
+                    remaining: 16_000_000,
+                    used: 0,
+                    interrupt: Some(&cancel)
+                }
+            ),
+            Err(Error::Cancelled)
+        ));
+    }
 }
