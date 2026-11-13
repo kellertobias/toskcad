@@ -814,12 +814,8 @@ impl Solid {
                 "Select an analytic Rust thread body",
             )
         })?;
-        if body.has_phillips_source() {
-            return Err(error(
-                OPERATION,
-                GeometryErrorKind::Unsupported,
-                "Phillips world point classification needs a bounded inverse-coordinate query",
-            ));
+        if let HelicalForm::PhillipsScrew(source) = &body.form {
+            return phillips::queries::contains(source.source(), frame, point_mm, self.policy);
         }
         let offset = std::array::from_fn(|i| point_mm[i] - frame.origin[i]);
         let local = [frame.u, frame.v, frame.normal()].map(|axis| dot(axis, offset));

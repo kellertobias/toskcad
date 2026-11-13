@@ -36,7 +36,7 @@ fn local_box(frame: PlaneFrame, world: Point) -> Result<[B; 3], GeometryError> {
     let local = cofactors.map(|c| dot(c, offset) / determinant);
     Ok(local)
 }
-pub(super) fn contains(
+pub(in crate::geometry::helical_body) fn contains(
     source: &PhillipsScrew,
     frame: PlaneFrame,
     world: Point,

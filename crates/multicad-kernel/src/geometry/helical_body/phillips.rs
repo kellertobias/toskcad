@@ -1,11 +1,10 @@
-//! Typed retained Phillips source. Public construction stays closed while the
-//! native boundary, placement and independent exchange gates are qualified.
+//! Typed retained Phillips source with bounded native material receipts.
+//! Physical STEP exchange is not admitted by this source constructor.
 use super::*;
 use multicad_rust_kernel::phillips_drive::{self as source, PhillipsScrew, ScrewFace};
 pub(super) mod display;
 mod properties;
-#[cfg(test)]
-mod queries;
+pub(super) mod queries;
 pub(super) mod topology;
 pub(super) use properties::plane;
 

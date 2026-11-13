@@ -233,7 +233,14 @@ fn typed_source_properties_and_original_geometry_survive_native_cardinal_and_pro
         assert!(!s.display_edges(0.1).unwrap().is_empty());
         assert!(!s.display_vertices().unwrap().is_empty());
         assert!(s.volume_mm3().unwrap() > 0.);
-        assert!(s.rust_thread_contains([0., 0., 0.]).is_err());
+        assert!(
+            s.rust_thread_contains(position(frame, [0., 0., 4.]))
+                .unwrap()
+        );
+        assert!(
+            !s.rust_thread_contains(position(frame, [20., 0., 0.]))
+                .unwrap()
+        );
     }
 }
 #[test]
