@@ -475,6 +475,30 @@ fn surviving_stock_faces_keep_their_origins_and_the_bore_names_the_tool() {
         }
         assert_eq!(compared, 6);
         assert_eq!(moved.display_edges(0.01).unwrap().len(), 14);
+        // A world-vertical drill is oblique to the same stock once the
+        // stock itself is rotated.
+        let tilted = stock.transformed(pose).unwrap();
+        let center = tilted.bounds().unwrap();
+        let center: V = std::array::from_fn(|i| (center.min[i] + center.max[i]) / 2.);
+        let drill = Solid::cylinder(
+            PlaneFrame {
+                origin: [center[0], center[1], center[2] - 20.],
+                ..Default::default()
+            },
+            1.,
+            40.,
+            policy(),
+        )
+        .unwrap();
+        let drilled = subtract(&tilted, &drill);
+        let through = drilled.topology_snapshot(owner, 0).unwrap();
+        let bore = elements(&through, TopologyKind::Face)
+            .into_iter()
+            .find(|face| face.geometry.is_none())
+            .unwrap();
+        assert!(bore.origins.iter().all(|origin| origin.source != box_id));
+        assert!(480. - drilled.volume_mm3().unwrap() > 6. * PI);
+        certified_volume(&drilled);
         // The source stock is unchanged.
         assert_eq!(stock.volume_mm3().unwrap(), 480.);
         assert_eq!(

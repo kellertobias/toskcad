@@ -1362,6 +1362,11 @@ impl Solid {
             if let Some(result) = self.subtract_coaxial_cylinder(other, policy) {
                 return result;
             }
+            // A cylinder oblique to plain box stock in the stock's own chart,
+            // whatever the world placement of either operand.
+            if let Some(result) = self.oblique_cylinder_cut(other, None) {
+                return result;
+            }
             if let Some(tool) = other.axial_cylinder() {
                 if let Some(target) = self.polygon_prism() {
                     return Self::subtract_polygon_cylinder(target, tool, policy).map(Some);
@@ -1376,9 +1381,6 @@ impl Solid {
                 {
                     return Ok(Some(result));
                 }
-            }
-            if let Some(result) = self.oblique_cylinder_cut(other, None) {
-                return result;
             }
             if let Some(result) = self.subtract_orthogonal_cylinder(other, policy) {
                 return result.map(Some);
