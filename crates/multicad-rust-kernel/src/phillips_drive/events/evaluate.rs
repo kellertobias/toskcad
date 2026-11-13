@@ -43,6 +43,23 @@ impl Value for Series<5> {
         self.sin_cos()[0]
     }
 }
+impl Value for Series<6> {
+    fn bound(v: I) -> Self {
+        Self::interval(v)
+    }
+    fn parameter(v: I) -> Self {
+        Self::variable(v)
+    }
+    fn value(self) -> I {
+        self.c[0]
+    }
+    fn checked(self) -> Result<Self, Error> {
+        Series::checked(self).map_err(|_| Error::Unresolved)
+    }
+    fn sine(self) -> Self {
+        self.sin_cos()[0]
+    }
+}
 impl Value for J {
     fn bound(v: I) -> Self {
         Self {
