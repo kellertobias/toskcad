@@ -1,6 +1,12 @@
 //! Actual authored insert in retained drilled stock, not a headed-screw alias.
 use super::*;
 use crate::wood_insert::{Classification, Insert};
+mod clearance;
+mod mating;
+pub use clearance::{ScrewClearance, ScrewClearanceRequirements, certify_insert_screw_clearance};
+pub use mating::{
+    InsertMating, MatingExternal, MatingRequirements, MatingScrew, certify_insert_mating,
+};
 #[derive(Clone, Debug)]
 pub struct InsertContact {
     pub engagement_mm: [f64; 2],
@@ -58,6 +64,7 @@ pub fn certify_insert(
     let (origin, columns) = relative(stock.frame, insert_frame, interrupt)?;
     let face = boundary.faces.get(stock.pilot.face).ok_or(Error::Invalid)?;
     let (axis, sign) = inward_axis(face.normal)?;
+    receiving_halfspace(&stock, axis, sign, interrupt)?;
     if columns[2][axis] != sign as i8 || origin[axis] != q(stock.pilot.center_mm[axis])? {
         return Err(Error::Unsupported);
     }
@@ -168,6 +175,22 @@ pub fn certify_insert(
         half /= 2.;
     }
     Err(Error::Unsupported)
+}
+fn receiving_halfspace(
+    stock: &Stock<'_>,
+    axis: usize,
+    sign: f64,
+    interrupt: &dyn Fn() -> bool,
+) -> R<()> {
+    // A local pilot alone never excludes overhanging actual stock above entry.
+    let mouth = q(stock.pilot.center_mm[axis])?;
+    for cell in stock.material.cells() {
+        checkpoint(interrupt)?;
+        if sign > 0. && q(cell.min[axis])? < mouth || sign < 0. && q(cell.max[axis])? > mouth {
+            return Err(Error::Unsupported);
+        }
+    }
+    Ok(())
 }
 fn insert_error(e: crate::wood_insert::Error) -> Error {
     match e {

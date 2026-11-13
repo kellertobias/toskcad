@@ -342,3 +342,45 @@ fn paired_source_error_classes_are_preserved() {
         assert_eq!(insert_error(cause), expected);
     }
 }
+#[test]
+fn a_real_overhanging_stock_cell_is_not_waived_by_local_pilot_contact() {
+    use crate::orthogonal::{self, Box3, Operation};
+    let (_, _, insert, frame, req) = fixture(false, 1);
+    let material = orthogonal::boolean(
+        &[
+            Box3 {
+                min: [0.; 3],
+                max: [20.; 3],
+            },
+            Box3 {
+                min: [0., 0., 20.],
+                max: [1., 20., 25.],
+            },
+            Box3 {
+                min: [0., 0., 24.],
+                max: [20., 20., 25.],
+            },
+        ],
+        &[],
+        Operation::Union,
+        1e-7,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(material.solid_count(), 1);
+    let boundary = orthogonal_boundary::build(material.quads()).unwrap();
+    let pilot = orthogonal_pockets::identify_pocket(
+        &material,
+        &boundary,
+        [10., 10., 20.001],
+        [10., 10., 14.],
+        4.,
+        1e-7,
+        1e-4,
+    )
+    .unwrap();
+    assert_eq!(
+        run(&material, pilot, &insert, frame, req).unwrap_err(),
+        Error::Unsupported
+    );
+}

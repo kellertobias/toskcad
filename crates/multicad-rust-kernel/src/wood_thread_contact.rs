@@ -52,7 +52,11 @@ pub struct Contact {
 }
 mod insert;
 mod separation;
-pub use insert::{InsertContact, certify_insert};
+pub use insert::{
+    InsertContact, InsertMating, MatingExternal, MatingRequirements, MatingScrew, ScrewClearance,
+    ScrewClearanceRequirements, certify_insert, certify_insert_mating,
+    certify_insert_screw_clearance,
+};
 pub use separation::{separated_from_rectangular_prism, separated_from_stock};
 
 type R<T> = Result<T, Error>;
