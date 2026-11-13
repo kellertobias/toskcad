@@ -80,6 +80,65 @@ impl BoundaryEvents<'_> {
         let h = I::point(b) - I::point(a);
         hermite_error(control_error, whole.map(|s| s.c[4]), h)
     }
+    /// Certify literal controls in an explicit affine source chart. Reflected
+    /// corner orbits may preserve depth while reversing one transverse axis.
+    /// This evaluates curve distance; it does not admit a frame or solid.
+    pub fn certify_trim_span_in_frame(
+        &self,
+        index: usize,
+        span: &CubicTrimSpan,
+        origin_mm: [f64; 3],
+        axes: [[f64; 3]; 3],
+    ) -> Result<TrimErrorBound, Error> {
+        let [a, b] = span.parameters;
+        if index >= 4
+            || !a.is_finite()
+            || !b.is_finite()
+            || a < 0.
+            || b > 1.
+            || a >= b
+            || !span
+                .poles_mm
+                .into_iter()
+                .flatten()
+                .chain(origin_mm)
+                .chain(axes.into_iter().flatten())
+                .all(f64::is_finite)
+        {
+            return Err(Error::Invalid);
+        }
+        if span
+            .poles_mm
+            .into_iter()
+            .flatten()
+            .chain(origin_mm)
+            .any(|v| v.abs() > 1e12)
+            || axes.into_iter().flatten().any(|v| v.abs() > 1e9)
+        {
+            return Err(Error::Limit);
+        }
+        let vector = |p: [I; 3]| {
+            std::array::from_fn(|i| {
+                (0..3).fold(I::point(0.), |sum, j| sum + I::point(axes[j][i]) * p[j])
+            })
+        };
+        let ideal = self.trim_controls(index, [a, b])?.map(|p| {
+            let v = vector(p);
+            std::array::from_fn::<_, 3, _>(|i| I::point(origin_mm[i]) + v[i])
+        });
+        let control_error = span
+            .poles_mm
+            .into_iter()
+            .zip(ideal)
+            .map(|(p, ideal)| norm(std::array::from_fn(|i| I::point(p[i]) - ideal[i])).hi)
+            .fold(0., f64::max);
+        let whole = evaluate::trim_state::<Series<5>>(self, index, I::new(a, b))?;
+        hermite_error(
+            control_error,
+            vector(whole.map(|s| s.c[4])),
+            I::point(b) - I::point(a),
+        )
+    }
     pub fn trim_carrier(
         &self,
         index: usize,
