@@ -7,6 +7,7 @@ use multicad_rust_kernel::radial_tensor::{
 };
 use std::cell::RefCell;
 use std::collections::BTreeSet;
+mod display_cache;
 mod identity;
 mod pipe;
 mod thread;
@@ -571,20 +572,23 @@ impl RadialBoundaryBody {
         &self,
         frame: PlaneFrame,
         options: multicad_rust_kernel::display::Tessellation,
+        usage: MeshUse,
     ) -> Result<Mesh, GeometryError> {
         let options = multicad_rust_kernel::display::Tessellation {
             triangle_limit: options.triangle_limit.min(4_000_000),
             ..options
         };
-        let mesh = self
-            .placement(frame, None)?
-            .boundary
-            .tessellate_with_interrupt(options, None)
-            .map_err(failure)?;
-        Ok(Mesh {
-            vertices: mesh.vertices,
-            indices: mesh.indices,
-            face_indices: mesh.face_indices,
+        let placement = self.placement(frame, None)?;
+        display_cache::mesh(&placement, options, usage, None, || {
+            let mesh = placement
+                .boundary
+                .tessellate_with_interrupt(options, None)
+                .map_err(failure)?;
+            Ok(Mesh {
+                vertices: mesh.vertices,
+                indices: mesh.indices,
+                face_indices: mesh.face_indices,
+            })
         })
     }
 

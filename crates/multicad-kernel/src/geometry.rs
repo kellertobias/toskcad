@@ -2176,7 +2176,7 @@ impl Solid {
             SolidBody::NormalSweep(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::NormalRelief(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::SplineCapRelief(body, frame) => body.mesh(*frame, rust_options),
-            SolidBody::RadialBoundary(body, frame) => body.mesh(*frame, rust_options),
+            SolidBody::RadialBoundary(body, frame) => body.mesh(*frame, rust_options, usage),
             SolidBody::SplineSweep(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::SpurGear(body, frame) => {
                 crate::rust_display::placed_mesh(body.profile.mesh(rust_options), *frame, false)
