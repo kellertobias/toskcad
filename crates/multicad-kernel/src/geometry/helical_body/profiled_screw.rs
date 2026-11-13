@@ -11,6 +11,54 @@ use multicad_rust_kernel::{
 };
 
 impl Solid {
+    /// Build a typed physical recess without passing artificial hex dimensions.
+    #[allow(clippy::too_many_arguments)]
+    pub fn rust_profiled_machine_screw_with_recess(
+        thread: HelicalThread,
+        root_radius_mm: Option<f64>,
+        shank_radius_mm: f64,
+        spec: multicad_rust_kernel::profiled_screw::SourceSpec,
+        recess: multicad_rust_kernel::screw_recess::Recess,
+        feature: EntityId,
+        underhead: PlaneFrame,
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        policy.validate()?;
+        underhead.checked(policy)?;
+        policy.length(shank_radius_mm)?;
+        policy.length(spec.minimum_wall_mm)?;
+        if spec.shank_length_mm != 0. {
+            policy.length(spec.shank_length_mm)?;
+        }
+        let head = spec
+            .head
+            .ok_or_else(|| input("An authored screw requires a head definition"))?;
+        let frame = PlaneFrame {
+            origin: position(underhead, [0., 0., spec.shank_length_mm]),
+            ..underhead
+        };
+        Self::rust_helical_body(thread, root_radius_mm, feature, frame, policy, |thread| {
+            let screw = Screw::new_with_recess(
+                thread,
+                shank_radius_mm,
+                head,
+                spec.shank_length_mm,
+                spec.minimum_wall_mm,
+                recess,
+            )
+            .map_err(|cause| match cause {
+                ThreadError::Invalid => input("Invalid physical screw head, shank or recess"),
+                ThreadError::Limit => error(
+                    OPERATION,
+                    GeometryErrorKind::Limit,
+                    "Physical screw exceeds the geometry envelope",
+                ),
+            })?;
+            qualify_source(&screw, frame, policy)?;
+            Ok(HelicalForm::ProfiledScrew(Box::new(screw)))
+        })
+    }
+
     /// Current retained head meridian and true helical thread, in its placed
     /// thread frame. Source meridian Z is shifted by minus the plain length.
     pub fn rust_profiled_screw_geometry(&self) -> Option<(&Screw, PlaneFrame)> {
@@ -174,22 +222,32 @@ fn qualify_source(
     frame: PlaneFrame,
     policy: GeometryPolicy,
 ) -> Result<(), GeometryError> {
-    let (drive, socket_depth) = screw.recess().flat_hex_geometry().ok_or_else(|| {
-        error(
-            OPERATION,
-            GeometryErrorKind::Unsupported,
-            "Conical curved recesses need the qualified native mesh and exchange pipeline",
-        )
-    })?;
     let spec = screw.spec();
-    policy.length(drive.across_flats_mm())?;
-    policy.length(socket_depth)?;
     policy.length(spec.minimum_wall_mm)?;
-    for (i, [x, y]) in drive.corners_mm().into_iter().enumerate() {
-        policy.point(position(frame, [x, y, screw.head_top_z()]))?;
-        policy.length(
-            (drive.side_length_mm(i) - 2. * screw.profile().rounding_error_mm()).next_down(),
-        )?;
+    if let Some((drive, socket_depth)) = screw.recess().flat_hex_geometry() {
+        policy.length(drive.across_flats_mm())?;
+        policy.length(socket_depth)?;
+        for (i, [x, y]) in drive.corners_mm().into_iter().enumerate() {
+            policy.point(position(frame, [x, y, screw.head_top_z()]))?;
+            policy.length(
+                (drive.side_length_mm(i) - 2. * screw.profile().rounding_error_mm()).next_down(),
+            )?;
+        }
+    } else {
+        if !multicad_rust_kernel::step::supports_profiled_screw_in_frame(
+            screw,
+            frame.origin,
+            frame.u,
+            frame.v,
+            policy.linear_tolerance_mm,
+        ) {
+            return Err(error(
+                OPERATION,
+                GeometryErrorKind::Unsupported,
+                "Conical curved recesses need the qualified native mesh and exchange pipeline",
+            ));
+        }
+        torx::qualify_source(screw, frame, policy)?;
     }
     if spec.shank_length_mm != 0. {
         policy.length(spec.shank_length_mm)?;

@@ -1062,9 +1062,11 @@ impl HelicalBody {
     }
     pub(super) fn supports_step(&self, frame: PlaneFrame, policy: GeometryPolicy) -> bool {
         if let HelicalForm::ProfiledScrew(screw) = &self.form {
-            return multicad_rust_kernel::step::supports_profiled_screw(
+            return multicad_rust_kernel::step::supports_profiled_screw_in_frame(
                 screw,
                 frame.origin,
+                frame.u,
+                frame.v,
                 policy.linear_tolerance_mm,
             );
         }

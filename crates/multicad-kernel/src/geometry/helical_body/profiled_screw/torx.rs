@@ -5,6 +5,51 @@ pub(in crate::geometry::helical_body) mod display;
 use super::*;
 use multicad_rust_kernel::hexalobular_drive::NominalSurfaceEvaluation;
 
+pub(super) fn qualify_source(
+    screw: &Screw,
+    frame: PlaneFrame,
+    policy: GeometryPolicy,
+) -> Result<(), GeometryError> {
+    let source = screw
+        .recess()
+        .hexalobular_geometry()
+        .ok_or_else(|| input("A curved recess requires its physical contour and cone"))?;
+    let reserve = screw.recess().source_error_mm();
+    // Spend the same complete source reserve as profiled_options. A retained
+    // carrier tube is separate from the arithmetic-only head-meridian bound.
+    if !reserve.is_finite() || (4. * reserve).next_up() > policy.linear_tolerance_mm {
+        return Err(input("Curved recess source precision is unresolved"));
+    }
+    policy.length(source.cone().tip_depth_mm)?;
+    let floor_drop = (source.cone().depth_per_radius * source.maximum_radius_bound_mm()).next_up();
+    let shortest_wall =
+        ((source.cone().tip_depth_mm - floor_drop).next_down() - reserve).next_down();
+    policy.length(shortest_wall)?;
+    for arc in source.arcs() {
+        policy.length((arc.radius_mm - 2. * reserve).next_down())?;
+        // Include both angular endpoint transfers and radius uncertainty;
+        // policy feature conditioning keeps radius above forty source errors.
+        policy.length(
+            ((arc.radius_mm * arc.sweep_rad.abs()).next_down() - 16. * reserve).next_down(),
+        )?;
+    }
+    // This complete local envelope includes every retained trim and finite
+    // cone point. Checking its corners bounds all placed coordinates.
+    let radius = (source.maximum_radius_bound_mm() + reserve).next_up();
+    let top = screw.head_top_z();
+    for x in [-radius, radius] {
+        for y in [-radius, radius] {
+            for z in [
+                (top - reserve).next_down(),
+                ((top + source.cone().tip_depth_mm).next_up() + reserve).next_up(),
+            ] {
+                policy.point(position(frame, [x, y, z]))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn evaluated(
     evaluation: NominalSurfaceEvaluation,
     top: f64,
@@ -478,16 +523,39 @@ mod tests {
                 assert!(floor_center[0].abs() < 1e-8 && floor_center[1].abs() < 1e-8);
                 assert!(plane(&source, ScrewFace::HeadTop, PlaneFrame::default()).is_some());
                 assert_eq!(source, original);
-                // Source evaluations do not admit unresolved native incidence/exchange.
+                let published = Solid::rust_profiled_screw_from_source(
+                    source.clone(),
+                    EntityId::new(),
+                    PlaneFrame::default(),
+                    policy,
+                )
+                .unwrap();
+                let mesh = published
+                    .manufacturing_mesh_with_receipt(crate::MeshOptions::default())
+                    .unwrap();
+                assert_eq!(mesh.edge_pairs as usize * 2, mesh.mesh.indices.len());
+                let directory = tempfile::tempdir().unwrap();
+                let path = directory.path().join("physical-torx.step");
+                published.write_step(&path).unwrap();
+                let decoded = Solid::import_rust_step(
+                    &std::fs::read_to_string(path).unwrap(),
+                    EntityId::new(),
+                    policy,
+                )
+                .unwrap();
+                let (physical, _) = decoded.rust_profiled_screw_geometry().unwrap();
+                assert!(physical.spec().head.is_none());
+                assert!(physical.recess().flat_hex_geometry().is_none());
+                let multicad_rust_kernel::screw_recess::Recess::ConicalHexalobular(recess) =
+                    physical.recess()
+                else {
+                    panic!("physical curved cavity");
+                };
+                assert!(recess.finite_binding().is_some());
                 assert!(
-                    Solid::rust_profiled_screw_from_source(
-                        source,
-                        EntityId::new(),
-                        PlaneFrame::default(),
-                        policy
-                    )
-                    .is_err()
+                    (decoded.volume_mm3().unwrap() - published.volume_mm3().unwrap()).abs() < 1e-5
                 );
+                assert_eq!(source, original);
             }
         }
     }
