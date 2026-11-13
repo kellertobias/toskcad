@@ -694,3 +694,6 @@ mod tests {
 
 #[cfg(test)]
 mod phillips_tests;
+
+#[cfg(test)]
+mod phillips_screw_tests;

@@ -4,7 +4,7 @@ use multicad_rust_kernel::{
     display::Tessellation,
     phillips_drive::{Cutter, Domain, Inner, Spec},
 };
-fn fixture(index: usize) -> (Spec, Domain) {
+pub(super) fn fixture(index: usize) -> (Spec, Domain) {
     let (m, r, b, g, inner, beta, head_r, head_h) = match index {
         0 => (
             1.9,
