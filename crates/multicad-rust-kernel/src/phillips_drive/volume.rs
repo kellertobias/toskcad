@@ -32,6 +32,16 @@ enum SectionInner {
     ShallowV { b0: I },
     Rounded { radius: f64 },
 }
+// Shared source identity for radial embedding as well as integration. The
+// front is x=rb+f(y)/cos(beta); its radial derivative numerator is x-y*x'.
+// For both straight fronts this is their intercept. H0's inner ellipse has
+// its smallest value at the true tangent join, equal to the outer intercept.
+pub(super) fn radial_intercepts(c: &Cutter) -> [I; 3] {
+    let k = &c.corners[0];
+    let offset = (k.join_s - k.join_y * k.cos_theta / k.sin_theta) / k.cos_beta;
+    let rb = k.b_half + (k.b_depth - c.envelope.tip) * (k.sin_beta / k.cos_beta);
+    [rb, offset, rb + offset]
+}
 impl<'a> Sections<'a> {
     pub(super) fn new(c: &'a Cutter) -> Result<Self, Error> {
         let k = &c.corners[0];
@@ -45,10 +55,8 @@ impl<'a> Sections<'a> {
             SourceInner::Rounded { radius_mm } => SectionInner::Rounded { radius: radius_mm },
         };
         let b1 = k.cos_theta / k.sin_theta / k.cos_beta;
-        let offset = (k.join_s - k.join_y * k.cos_theta / k.sin_theta) / k.cos_beta;
+        let [rb, offset, outer_intercept] = radial_intercepts(c);
         let e = &c.envelope;
-        let tb = k.sin_beta / k.cos_beta;
-        let rb = k.b_half + (k.b_depth - e.tip) * tb;
         // Every removed section point has s>=0. Bound its maximum over the
         // WHOLE cavity box, then prove the authored finite closure and both
         // extrusion caps are inactive before using an infinite-front integral.
@@ -81,7 +89,7 @@ impl<'a> Sections<'a> {
             || b1.lo <= 0.
             || b1.hi >= 1.
             || rb.lo <= 0.
-            || (rb + offset).lo <= 0.
+            || outer_intercept.lo <= 0.
             || (rb + f / k.cos_beta - t).lo <= 0.
             || smax >= k.far_s.lo
             || (-I::point(c.domain.corner_start_depth_mm) - I::point(smax) * k.sin_beta).lo <= 0.

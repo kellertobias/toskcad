@@ -5,6 +5,8 @@ mod host;
 pub use host::HostEnvelopeProof;
 mod screw;
 pub use screw::{PhillipsScrew, ScrewFace};
+mod mouth;
+pub use mouth::MouthSweepProof;
 
 /// Qualified authored cavity. This retains the finite cutter, not an imported
 /// body. Its volume is a source-expression enclosure; native publication,
@@ -14,6 +16,7 @@ pub struct Cavity {
     source: Arc<Cutter>,
     volume: VolumeBounds,
     side_faces: Arc<[FaceKey]>,
+    mouth_edge_count: usize,
 }
 impl Cavity {
     pub fn new(source: Cutter, width_mm3: f64, work_limit: usize) -> Result<Self, Error> {
@@ -28,6 +31,11 @@ impl Cavity {
         // These independent source gates prove finite-cap eligibility and the
         // actual closed incidence, retaining both H0 and shallow-V supports.
         let topology = source.boundary_topology_with_cancel(cancelled)?;
+        let mouth_edge_count = topology
+            .edges()
+            .iter()
+            .filter(|e| matches!(e.source_identity(), CurveKey::Mouth { .. }))
+            .count();
         let side_faces = topology
             .faces()
             .iter()
@@ -40,6 +48,7 @@ impl Cavity {
             source: Arc::new(source),
             volume,
             side_faces,
+            mouth_edge_count,
         })
     }
     pub fn source(&self) -> &Cutter {
