@@ -172,3 +172,8 @@ impl Cavity {
         x.hypot(y) <= self.radius_mm(y.atan2(x), z.clamp(0., self.full_length_mm())) + tolerance
     }
 }
+
+pub use mesh::boundary::{
+    Boundary, BoundaryCell, BoundaryCoedge, BoundaryConstraint, BoundaryCurve, BoundaryOptions,
+    BoundaryPoint, BoundaryPointKey, BoundaryPointRole,
+};

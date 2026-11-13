@@ -169,3 +169,5 @@ impl Material {
         material_mesh::tessellate(self, options, interrupt)
     }
 }
+
+pub(super) mod boundary;

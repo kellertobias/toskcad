@@ -4,14 +4,14 @@ use super::*;
 use std::mem::size_of;
 const MAX_OWNERS: usize = 131_072;
 const BYTE_LIMIT: usize = 64 * 1024 * 1024;
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Constraint {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Constraint {
     Rail(i64),
     Row(u32),
     Station(u8, i64),
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Key(pub [Constraint; 2]);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Key(pub [Constraint; 2]);
 impl Key {
     fn hash(self) -> usize {
         let mut hash = 0xcbf29ce484222325_u64;
@@ -44,8 +44,7 @@ pub(super) struct Owners {
     maximum: usize,
 }
 impl Owners {
-    pub fn new(maximum: usize, w: &mut Work<'_>) -> Result<Self, Error> {
-        w.step()?;
+    pub fn requested_bytes(maximum: usize) -> Result<usize, Error> {
         let maximum = maximum.min(MAX_OWNERS);
         if maximum == 0 {
             return Err(Error::Limit);
@@ -54,18 +53,53 @@ impl Owners {
             .checked_mul(2)
             .and_then(usize::checked_next_power_of_two)
             .ok_or(Error::Limit)?;
+        storage::bytes(
+            &[
+                (count, size_of::<Option<Slot>>()),
+                (maximum, size_of::<Owner>()),
+            ],
+            size_of::<Self>(),
+            BYTE_LIMIT,
+        )
+    }
+    pub fn new(maximum: usize, w: &mut Work<'_>) -> Result<Self, Error> {
+        Self::new_reserved(maximum, 0, BYTE_LIMIT, w)
+    }
+    pub fn new_reserved(
+        maximum: usize,
+        reserved: usize,
+        limit: usize,
+        w: &mut Work<'_>,
+    ) -> Result<Self, Error> {
+        w.step()?;
+        let maximum = maximum.min(MAX_OWNERS);
+        let requested = Self::requested_bytes(maximum)?;
+        storage::bytes(&[(requested, 1)], reserved, limit)?;
+        let count = (maximum * 2).next_power_of_two();
         w.charge(count + maximum)?;
         let mut slots = Vec::new();
         let mut owners = Vec::new();
         slots.try_reserve_exact(count).map_err(|_| Error::Limit)?;
+        storage::bytes(
+            &[
+                (slots.capacity(), size_of::<Option<Slot>>()),
+                (maximum, size_of::<Owner>()),
+            ],
+            reserved + size_of::<Self>(),
+            limit,
+        )?;
         owners
             .try_reserve_exact(maximum)
             .map_err(|_| Error::Limit)?;
-        let allocations = [
-            (slots.capacity(), size_of::<Option<Slot>>()),
-            (owners.capacity(), size_of::<Owner>()),
-        ];
-        let bytes = storage::bytes(&allocations, size_of::<Self>(), BYTE_LIMIT)?;
+        let bytes = storage::bytes(
+            &[
+                (slots.capacity(), size_of::<Option<Slot>>()),
+                (owners.capacity(), size_of::<Owner>()),
+            ],
+            size_of::<Self>(),
+            BYTE_LIMIT,
+        )?;
+        storage::bytes(&[(bytes, 1)], reserved, limit)?;
         slots.resize(count, None);
         Ok(Self {
             slots,
