@@ -1,0 +1,60 @@
+//! Computational partition proposals only. No proposal certifies source/facets.
+use super::*;
+pub(super) const MAX_ROWS: u32 = 65_536;
+pub(super) const MAX_SUBDIVISIONS: usize = 1024;
+const ALTERNATE_OFFSET: u32 = 3;
+pub(super) enum Attempt<T> {
+    Complete(T),
+    Refine,
+    Repartition,
+}
+pub(super) struct Grid {
+    pub subdivisions: usize,
+    base_rows: u32,
+    alternative: bool,
+}
+impl Grid {
+    pub fn new() -> Self {
+        Self {
+            subdivisions: 1,
+            base_rows: 64,
+            alternative: false,
+        }
+    }
+    pub fn rows(&self) -> u32 {
+        self.base_rows
+            + if self.alternative {
+                ALTERNATE_OFFSET
+            } else {
+                0
+            }
+    }
+    pub fn advance(&mut self, repartition: bool) -> Result<(), Error> {
+        if repartition && !self.alternative && self.base_rows <= MAX_ROWS - ALTERNATE_OFFSET {
+            self.alternative = true;
+        } else {
+            if self.subdivisions >= MAX_SUBDIVISIONS || self.base_rows >= MAX_ROWS {
+                return Err(Error::Limit);
+            }
+            // The preceding chart bounds and private state transitions prove
+            // these products fit. Failed alternate returns to original dyadic
+            // refinement; no partial candidate or ownership cache survives.
+            self.subdivisions *= 2;
+            self.base_rows *= 2;
+            self.alternative = false;
+        }
+        Ok(())
+    }
+}
+/// A nominal short literal edge relative to its endpoint evaluation radii
+/// proposes another partition. This does NOT classify source separation, erase
+/// a positive domain, or certify any facet; every acceptance proof runs again.
+pub(super) fn short_literal_edge(points: [[f64; 3]; 3], errors: [f64; 3]) -> bool {
+    [(0, 1), (1, 2), (2, 0)].into_iter().any(|(a, b)| {
+        let edge = (0..3).fold(0., |sum, k| sum + (points[a][k] - points[b][k]).abs());
+        edge <= errors[a] + errors[b]
+    })
+}
+
+#[cfg(test)]
+mod tests;

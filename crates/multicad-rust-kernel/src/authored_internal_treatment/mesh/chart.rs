@@ -17,6 +17,7 @@ pub(super) struct Shell {
     pub mouth: Vec<Edge>,
     pub top: Vec<Edge>,
 }
+#[cfg(test)]
 pub(super) fn shell(
     body: &Cavity,
     options: Tessellation,
@@ -24,8 +25,21 @@ pub(super) fn shell(
     rows: u32,
     w: &mut Work<'_>,
 ) -> Result<Option<Shell>, Error> {
+    Ok(match shell_attempt(body, options, subdivisions, rows, w)? {
+        Attempt::Complete(shell) => Some(shell),
+        Attempt::Refine | Attempt::Repartition => None,
+    })
+}
+pub(super) fn shell_attempt(
+    body: &Cavity,
+    options: Tessellation,
+    subdivisions: usize,
+    rows: u32,
+    w: &mut Work<'_>,
+) -> Result<Attempt<Shell>, Error> {
     build(body, options, subdivisions, rows, None, w)
 }
+#[cfg(test)]
 pub(super) fn traced_shell(
     body: &Cavity,
     options: Tessellation,
@@ -33,9 +47,28 @@ pub(super) fn traced_shell(
     rows: u32,
     w: &mut Work<'_>,
 ) -> Result<Option<(Shell, trace::Trace)>, Error> {
+    Ok(
+        match traced_attempt(body, options, subdivisions, rows, w)? {
+            Attempt::Complete(value) => Some(value),
+            Attempt::Refine | Attempt::Repartition => None,
+        },
+    )
+}
+pub(super) fn traced_attempt(
+    body: &Cavity,
+    options: Tessellation,
+    subdivisions: usize,
+    rows: u32,
+    w: &mut Work<'_>,
+) -> Result<Attempt<(Shell, trace::Trace)>, Error> {
     let mut trace = trace::Trace::new(options.triangle_limit.min(131_072), w)?;
-    let shell = build(body, options, subdivisions, rows, Some(&mut trace), w)?;
-    Ok(shell.map(|shell| (shell, trace)))
+    Ok(
+        match build(body, options, subdivisions, rows, Some(&mut trace), w)? {
+            Attempt::Complete(shell) => Attempt::Complete((shell, trace)),
+            Attempt::Refine => Attempt::Refine,
+            Attempt::Repartition => Attempt::Repartition,
+        },
+    )
 }
 fn build(
     body: &Cavity,
@@ -44,9 +77,13 @@ fn build(
     rows: u32,
     mut trace: Option<&mut trace::Trace>,
     w: &mut Work<'_>,
-) -> Result<Option<Shell>, Error> {
+) -> Result<Attempt<Shell>, Error> {
     w.step()?;
-    if subdivisions == 0 || subdivisions > 1024 || rows == 0 || rows > 65536 {
+    if subdivisions == 0
+        || subdivisions > sampling::MAX_SUBDIVISIONS
+        || rows == 0
+        || rows > sampling::MAX_ROWS
+    {
         return Err(Error::Limit);
     }
     let f = body.tail.map_or(body.full_length_mm(), |tail| tail.station);
@@ -186,10 +223,17 @@ fn build(
                         // without crossing clipping boundaries. Zero area exact
                         // clipping cells were removed by the polygon cardinality.
                         for i in 1..ids.len() - 1 {
-                            let Some(proof) =
-                                qualify(&field, &points, &errors, [0, i, i + 1], options, w)?
-                            else {
-                                return Ok(None);
+                            let proof = match qualify_attempt(
+                                &field,
+                                &points,
+                                &errors,
+                                [0, i, i + 1],
+                                options,
+                                w,
+                            )? {
+                                Attempt::Complete(proof) => proof,
+                                Attempt::Refine => return Ok(Attempt::Refine),
+                                Attempt::Repartition => return Ok(Attempt::Repartition),
                             };
                             let node = Node {
                                 band,
@@ -211,7 +255,7 @@ fn build(
             }
         }
     }
-    Ok(Some(Shell {
+    Ok(Attempt::Complete(Shell {
         mesh,
         chord,
         normal,

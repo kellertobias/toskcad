@@ -456,20 +456,26 @@ pub(super) fn tessellate(
     {
         return Err(Error::Unresolved);
     }
-    let mut subdivisions = 1usize;
-    let mut rows = 64u32;
+    let mut grid = Grid::new();
     loop {
-        if let Some((shell, trace)) =
-            chart::traced_shell(body, options, subdivisions, rows, &mut w)?
-            && let Some(prepared) = close::prepare(shell, body, options, &mut w)?
-            && let Some(candidate) = assemble(material, prepared, trace, options, &mut w)?
-        {
-            return Ok(candidate);
-        }
-        subdivisions = subdivisions.checked_mul(2).ok_or(Error::Limit)?;
-        rows = rows.checked_mul(2).ok_or(Error::Limit)?;
+        let repartition =
+            match chart::traced_attempt(body, options, grid.subdivisions, grid.rows(), &mut w)? {
+                Attempt::Complete((shell, trace)) => {
+                    if let Some(prepared) = close::prepare(shell, body, options, &mut w)?
+                        && let Some(candidate) =
+                            assemble(material, prepared, trace, options, &mut w)?
+                    {
+                        return Ok(candidate);
+                    }
+                    false
+                }
+                Attempt::Refine => false,
+                Attempt::Repartition => true,
+            };
+        grid.advance(repartition)?;
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1096,5 +1102,88 @@ mod tests {
         assert!(points.iter().any(|p| p[0] < 0.));
         assert!(origin[0].as_f64() - stock.circle().radius().as_f64() > 0.);
         assert_eq!(moved.stock_chart_origin(), origin);
+    }
+}
+
+#[cfg(test)]
+mod partition_closure_tests {
+    use super::*;
+    #[test]
+    fn actual_larger_stock_annulus_refines_after_qualified_inner_sources() {
+        use crate::{
+            Circle, Rational,
+            authored_flat_thread::{AuthoredThread, SourceOptions},
+            cylinder::AxialCylinder,
+        };
+        let thread = AuthoredThread::new(
+            crate::helical_thread::Spec {
+                major_radius_mm: 1.5,
+                pitch_mm: 0.5,
+                length_mm: 4.,
+                depth_mm: 0.25,
+                crest_width_mm: 0.125,
+                lower_flank_deg: 30.,
+                upper_flank_deg: 30.,
+                starts: 1,
+                left_hand: false,
+                root_radius_mm: None,
+            },
+            SourceOptions {
+                position_limit_mm: 1e-7,
+                normal_angle_limit_rad: 1e-7,
+            },
+        )
+        .unwrap();
+        let cavity = Cavity::new(
+            thread,
+            Intent {
+                entry_depth_mm: Some(0.5),
+                terminal: Some(Terminal {
+                    width_mm: 0.5,
+                    radial_depth_mm: 0.125,
+                }),
+            },
+        )
+        .unwrap();
+        let zero = Rational::new(0, 1).unwrap();
+        let stock = AxialCylinder::new(
+            7,
+            Circle::new([zero; 2], Rational::new(8, 1).unwrap()).unwrap(),
+            zero,
+            Rational::new(4, 1).unwrap(),
+        )
+        .unwrap();
+        let material = Material::new(stock, cavity, 0.5).unwrap();
+        let options = Tessellation {
+            deflection: 0.1,
+            angle: 0.3,
+            triangle_limit: 1_000_000,
+        };
+        let mut w = Work {
+            remaining: 16_000_000,
+            used: 0,
+            interrupt: None,
+        };
+        let (shell, trace) = chart::traced_shell(&cavity, options, 1, 64, &mut w)
+            .unwrap()
+            .unwrap();
+        let prepared = close::prepare(shell, &cavity, options, &mut w)
+            .unwrap()
+            .unwrap();
+        assert!(
+            assemble(&material, prepared, trace, options, &mut w)
+                .unwrap()
+                .is_none(),
+            "outer annulus requires its own full source proof"
+        );
+        let before = material;
+        // This real wider-stock case still exhausts the unchanged aggregate
+        // work budget after refinement; only the closure-refusal path is
+        // qualified here, not successful wider-stock manufacturing.
+        assert!(matches!(
+            material.tessellate_candidate(options, None),
+            Err(Error::Limit)
+        ));
+        assert_eq!(material, before);
     }
 }

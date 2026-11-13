@@ -22,6 +22,8 @@ pub struct Candidate {
     pub source_normal_angle_bound_rad: f64,
     pub work_used: usize,
 }
+mod sampling;
+use sampling::{Attempt, Grid};
 struct Work<'a> {
     remaining: usize,
     used: usize,
@@ -69,19 +71,24 @@ pub fn tessellate_candidate(
     {
         return Err(Error::Unresolved);
     }
-    let mut subdivisions = 1usize;
-    let mut rows = 64usize;
+    let mut grid = Grid::new();
     loop {
-        if let Some(shell) = chart::shell(body, options, subdivisions, rows as u32, &mut work)?
-            && let Some(mut candidate) = close::close(shell, body, options, &mut work)?
-        {
-            candidate.work_used = work.used;
-            return Ok(candidate);
-        }
-        subdivisions = subdivisions.checked_mul(2).ok_or(Error::Limit)?;
-        rows = rows.checked_mul(2).ok_or(Error::Limit)?;
+        let repartition =
+            match chart::shell_attempt(body, options, grid.subdivisions, grid.rows(), &mut work)? {
+                Attempt::Complete(shell) => {
+                    if let Some(mut candidate) = close::close(shell, body, options, &mut work)? {
+                        candidate.work_used = work.used;
+                        return Ok(candidate);
+                    }
+                    false
+                }
+                Attempt::Refine => false,
+                Attempt::Repartition => true,
+            };
+        grid.advance(repartition)?;
     }
 }
+
 fn wall_face(body: &Cavity, node: Node) -> u32 {
     let n = body.thread.spec().starts;
     let shift = [0, 0, 0, 1, 1][node.band];
@@ -115,23 +122,46 @@ fn qualify(
     options: Tessellation,
     work: &mut Work<'_>,
 ) -> Result<Option<Qualified>, Error> {
+    Ok(
+        match qualify_attempt(field, points, errors, ids, options, work)? {
+            Attempt::Complete(proof) => Some(proof),
+            Attempt::Refine | Attempt::Repartition => None,
+        },
+    )
+}
+fn qualify_attempt(
+    field: &source::Field,
+    points: &[[f64; 3]],
+    errors: &[f64],
+    ids: [usize; 3],
+    options: Tessellation,
+    work: &mut Work<'_>,
+) -> Result<Attempt<Qualified>, Error> {
     work.step()?;
     let chord = certificate::chord(field, ids.map(|i| errors[i]));
     if !chord.is_finite() || chord > options.deflection {
-        return Ok(None);
+        return Ok(Attempt::Refine);
     }
     let Some((reverse, angle)) =
         certificate::oriented_triangle(ids.map(|i| points[i]), field.normal, options.angle)
     else {
-        return Ok(None);
+        work.charge(3)?;
+        return Ok(
+            if sampling::short_literal_edge(ids.map(|i| points[i]), ids.map(|i| errors[i])) {
+                Attempt::Repartition
+            } else {
+                Attempt::Refine
+            },
+        );
     };
-    Ok(Some(Qualified {
+    Ok(Attempt::Complete(Qualified {
         ids,
         reverse,
         chord,
         angle,
     }))
 }
+
 fn append_qualified(
     mesh: &mut DisplayMesh,
     indices: &[usize],
