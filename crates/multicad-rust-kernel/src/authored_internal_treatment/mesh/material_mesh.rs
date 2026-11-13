@@ -1051,4 +1051,50 @@ mod tests {
         }
         assert_eq!(material, source(false, 1, true, true));
     }
+    #[test]
+    fn nonzero_exact_stock_origin_is_retained_while_candidates_are_stock_relative() {
+        let original = source(false, 1, true, true);
+        let origin = [
+            Rational::new(33, 10).unwrap(),
+            Rational::new(-7, 3).unwrap(),
+            Rational::new(17, 10).unwrap(),
+        ];
+        let stock = AxialCylinder::new(
+            9,
+            Circle::new([origin[0], origin[1]], original.stock().circle().radius()).unwrap(),
+            origin[2],
+            original.stock().height(),
+        )
+        .unwrap();
+        let moved = Material::new(stock, *original.cavity(), original.minimum_wall_mm()).unwrap();
+        assert_eq!(moved.stock_chart_origin(), origin);
+        assert_eq!(moved.stock(), &stock);
+        assert_eq!(
+            moved.volume_bounds(QueryOptions::default()).unwrap(),
+            original.volume_bounds(QueryOptions::default()).unwrap()
+        );
+        let options = Tessellation {
+            deflection: 0.1,
+            angle: 0.3,
+            triangle_limit: 1_000_000,
+        };
+        let local = moved.tessellate_candidate(options, None).unwrap();
+        let baseline = original.tessellate_candidate(options, None).unwrap();
+        assert_eq!(local.mesh, baseline.mesh);
+        let points = local.mesh.vertices.as_chunks::<3>().0;
+        assert_eq!(
+            points.iter().map(|p| p[2]).fold(f64::INFINITY, f64::min),
+            0.
+        );
+        assert_eq!(
+            points
+                .iter()
+                .map(|p| p[2])
+                .fold(f64::NEG_INFINITY, f64::max),
+            4.
+        );
+        assert!(points.iter().any(|p| p[0] < 0.));
+        assert!(origin[0].as_f64() - stock.circle().radius().as_f64() > 0.);
+        assert_eq!(moved.stock_chart_origin(), origin);
+    }
 }

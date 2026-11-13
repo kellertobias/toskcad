@@ -3,6 +3,11 @@
 use super::*;
 use crate::{Rational, cylinder::AxialCylinder};
 use num_rational::BigRational;
+/// Stock minus the cavity in a stock-relative chart. Local[0,0,0] is the
+/// original cylinder's exact center/bottom, returned by stock_chart_origin.
+/// Cavity coordinates and tessellation candidates use this local chart; they
+/// do not contain an approximated WCS translation. stock() retains all original
+/// rational coordinates. A caller must separately qualify any world placement.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Material {
     stock: AxialCylinder,
@@ -74,6 +79,12 @@ impl Material {
     }
     pub fn stock(&self) -> &AxialCylinder {
         &self.stock
+    }
+    /// Exact origin of the local stock chart in the retained, unplaced
+    /// AxialCylinder coordinate system. This is not an active framed placement.
+    pub fn stock_chart_origin(&self) -> [Rational; 3] {
+        let [x, y] = self.stock.circle().center();
+        [x, y, self.stock.bottom()]
     }
     pub fn cavity(&self) -> &Cavity {
         &self.cavity

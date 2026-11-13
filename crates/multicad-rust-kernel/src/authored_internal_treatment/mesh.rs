@@ -158,6 +158,9 @@ fn append_qualified(
 mod tests;
 
 impl Material {
+    /// Candidate vertices are stock-relative. The original exact rational
+    /// center/bottom is retained separately by stock_chart_origin(); no WCS
+    /// origin is rounded or silently added to these emitted coordinates.
     pub fn tessellate_candidate(
         &self,
         options: Tessellation,
