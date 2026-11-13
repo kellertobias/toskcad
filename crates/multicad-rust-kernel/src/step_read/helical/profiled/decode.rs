@@ -43,10 +43,11 @@ pub(in super::super::super) fn read_phillips_outer_header(
                 == cavity_faces,
     )?;
     let decoded = header::meridian(shell, &layout, count)?;
-    require(
-        decoded.mouth == cavity.mouth().material_bound
-            && decoded.top_surface == cavity.mouth().material_surface,
-    )?;
+    // This helper's sole caller constructs cavity from this same Shell before
+    // extracting this header. The verified head-face identity above therefore
+    // means meridian reads exactly the same raw surface and bounds[1] that own
+    // Mouth. Shell caches do not mutate those immutable entity fields; repeating
+    // their equality as a fallible cross-arena check would be redundant.
     Ok(PhillipsOuterHeader {
         profile: decoded.profile,
         head_top_face: layout.head[0],

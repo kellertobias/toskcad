@@ -1034,10 +1034,11 @@ pub use phillips_cutter::{
     ParsedPhillipsMouth, ParsedPhillipsSurface, ParsedPhillipsVertex,
     ParsedPhillipsVirtualOuterCap, PhillipsAnalyticSupportBounds, PhillipsAnalyticSupportOptions,
     PhillipsCubicSupportBounds, PhillipsCubicSupportOptions, PhillipsEdgeSupportBound,
-    PhillipsEndpointCouplingBounds, PhillipsEndpointCouplingOptions,
-    PhillipsImplicitSupportEnclosure, PhillipsOuterCarrierBounds, PhillipsOuterCarrierOptions,
-    PhillipsTensorCarrierBound, read_phillips_body, read_phillips_body_with_interrupt,
-    read_phillips_screw_boundary, read_phillips_screw_boundary_with_interrupt,
+    PhillipsEndpointCouplingBounds, PhillipsEndpointCouplingOptions, PhillipsExactPointLeaf,
+    PhillipsImplicitSupportEnclosure, PhillipsOriginalNumericLeaf, PhillipsOriginalNumericLeaves,
+    PhillipsOuterCarrierBounds, PhillipsOuterCarrierOptions, PhillipsTensorCarrierBound,
+    read_phillips_body, read_phillips_body_with_interrupt, read_phillips_screw_boundary,
+    read_phillips_screw_boundary_with_interrupt,
 };
 
 #[cfg(test)]

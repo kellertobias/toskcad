@@ -4,7 +4,9 @@
 use super::*;
 use crate::step_read::helical_import::{law::Law, seed::TensorHeader};
 mod outer;
+mod retained;
 pub use outer::{OuterCarrierBounds, OuterCarrierOptions, TensorCarrierBound};
+pub use retained::{ExactPointLeaf, OriginalNumericLeaf, OriginalNumericLeaves};
 #[cfg(test)]
 mod tests;
 
@@ -32,6 +34,7 @@ pub struct Body<'input> {
     cap: VirtualOuterCap,
     tensor_face_count: usize,
     tolerance: f64,
+    retained_budget_bytes: usize,
 }
 impl<'input> Body<'input> {
     pub fn cavity(&self) -> &Boundary {
@@ -198,7 +201,7 @@ pub fn read_phillips_body_with_interrupt<'input>(
             .filter_map(|f| f.material_entity)
             .collect(),
     };
-    Ok(Body {
+    let mut body = Body {
         input,
         entities,
         material_faces: faces,
@@ -211,5 +214,12 @@ pub fn read_phillips_body_with_interrupt<'input>(
         cap,
         tensor_face_count: count,
         tolerance,
-    })
+        retained_budget_bytes: 0,
+    };
+    let budget = retained::budget(&body, &mut work);
+    if work.cancelled.get() {
+        return Err(PhillipsReadError::Cancelled);
+    }
+    body.retained_budget_bytes = budget.map_err(PhillipsReadError::from)?;
+    Ok(body)
 }

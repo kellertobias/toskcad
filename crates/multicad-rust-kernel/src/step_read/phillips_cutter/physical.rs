@@ -6,8 +6,9 @@ mod analytic;
 mod body;
 mod branches;
 pub use body::{
-    Body, OuterCarrierBounds, OuterCarrierOptions, TensorCarrierBound, VirtualOuterCap,
-    read_phillips_body, read_phillips_body_with_interrupt,
+    Body, ExactPointLeaf, OriginalNumericLeaf, OriginalNumericLeaves, OuterCarrierBounds,
+    OuterCarrierOptions, TensorCarrierBound, VirtualOuterCap, read_phillips_body,
+    read_phillips_body_with_interrupt,
 };
 mod endpoints;
 pub use analytic::{AnalyticSupportBounds, AnalyticSupportOptions};
