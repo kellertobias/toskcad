@@ -58,6 +58,8 @@ fn actual_default_insert_candidate_has_closed_annular_material_and_paired_volume
     let source = c.source_volume_mm3();
     assert!((proof.signed_volume_mm3 - source[0]).abs() < source[0] * 0.01);
     assert_eq!(body, before);
+    let moved = c.into_mesh();
+    assert!(crate::manufacturing::certify(&moved).is_ok());
 }
 
 #[test]

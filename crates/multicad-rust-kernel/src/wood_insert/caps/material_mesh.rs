@@ -27,6 +27,9 @@ impl Candidate {
     pub fn mesh(&self) -> &DisplayMesh {
         &self.mesh
     }
+    pub fn into_mesh(self) -> DisplayMesh {
+        self.mesh
+    }
     pub fn source_chord_bound_mm(&self) -> f64 {
         self.chord
     }
