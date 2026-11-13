@@ -1,4 +1,5 @@
 //! Actual retained screw/pilot contact; no generic Boolean exception.
+mod insert;
 use super::*;
 use multicad_rust_kernel::wood_thread_contact::{
     self as source, Contact, Frame, Requirements, Stock,
@@ -150,7 +151,7 @@ mod tests {
     use crate::HelicalThread;
     use multicad_core::references::Origin;
     use multicad_rust_kernel::headed_screw::{ScrewHead, ScrewSpec};
-    fn fixture() -> (Solid, Solid, Requirements) {
+    pub(super) fn fixture() -> (Solid, Solid, Requirements) {
         let policy = GeometryPolicy::default();
         let stock = Solid::box_solid([20.; 3], policy).unwrap();
         let tool = CircularPocketTool {

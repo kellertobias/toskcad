@@ -50,7 +50,9 @@ pub struct Contact {
     pub witness_volume_lower_mm3: f64,
     pub source_chart_bearing_radial_land_mm: [f64; 2],
 }
+mod insert;
 mod separation;
+pub use insert::{InsertContact, certify_insert};
 pub use separation::{separated_from_rectangular_prism, separated_from_stock};
 
 type R<T> = Result<T, Error>;
