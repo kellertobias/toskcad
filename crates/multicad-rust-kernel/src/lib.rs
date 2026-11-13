@@ -32,6 +32,7 @@ pub mod linear_sweep_mesh;
 pub mod manufacturing;
 pub mod normal_relief;
 pub mod normal_sweep;
+pub mod oblique_bore;
 pub mod orthogonal;
 pub mod orthogonal_boundary;
 pub mod orthogonal_pockets;
