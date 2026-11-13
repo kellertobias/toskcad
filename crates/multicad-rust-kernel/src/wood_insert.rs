@@ -5,7 +5,7 @@ use num_rational::BigRational;
 
 mod caps;
 mod classify;
-pub use caps::{CapCell, CapCellBounds, CapDomains, CapEnd, CapKnot, CapOptions, Side};
+pub use caps::{Candidate, CapCell, CapCellBounds, CapDomains, CapEnd, CapKnot, CapOptions, Side};
 #[cfg(test)]
 mod tests;
 

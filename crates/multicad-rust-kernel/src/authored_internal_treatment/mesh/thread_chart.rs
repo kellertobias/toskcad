@@ -34,6 +34,9 @@ pub enum ShellEnd {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ThreadRimEdge {
     pub vertex_indices: [usize; 2],
+    /// Unsigned source v; physical angle is hand*2pi*v. A computational
+    /// sampling cut may start above0 and end above1. These bounds do not prove
+    /// equality or order of footpoints; the paired mesher uses exact tokens.
     pub angular_turns: [[f64; 2]; 2],
     /// Retained phase meridian rho=m*q+b, with directed source coefficients.
     pub phase_slope: [f64; 2],
@@ -107,6 +110,48 @@ fn shell(
     }
 }
 impl ThreadShell {
+    pub(crate) fn exact_rim_turns(
+        &self,
+        vertex: usize,
+        maximum_work: usize,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<(num_rational::BigRational, usize), SourceError> {
+        self.parameter(vertex, maximum_work, interrupt)
+            .map_err(failure)
+    }
+    fn parameter(
+        &self,
+        vertex: usize,
+        maximum_work: usize,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<(num_rational::BigRational, usize), Error> {
+        use super::exact::Q;
+        let mut work = Work {
+            remaining: maximum_work.min(16_000_000),
+            used: 0,
+            interrupt,
+        };
+        work.step()?;
+        let original = self.trace.parameter(vertex, &mut work)?;
+        let zero = Q::integer(0, &mut work)?;
+        let one = Q::integer(1, &mut work)?;
+        // Trace is owned by the sealed grid: v in[cut,cut+1), cut being0 or
+        // the fixed positive dyadic seam shift<1. No arbitrary floor or float
+        // comparison decides the physical angle; trueperiodicity is exact.
+        let mut physical = if original.cmp(&one, &mut work)? == std::cmp::Ordering::Less {
+            original
+        } else {
+            original.sub(&one, &mut work)?
+        };
+        if self.thread.spec().left_hand
+            && physical.cmp(&zero, &mut work)? != std::cmp::Ordering::Equal
+        {
+            physical = one.sub(&physical, &mut work)?;
+        }
+        let value = physical.rational(&mut work)?;
+        work.step()?;
+        Ok((value, work.used))
+    }
     pub fn source(&self) -> &AuthoredThread {
         &self.thread
     }

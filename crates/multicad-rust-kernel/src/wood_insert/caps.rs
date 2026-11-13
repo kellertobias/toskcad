@@ -6,6 +6,9 @@ use num_traits::{One, ToPrimitive, Zero};
 use std::{cmp::Ordering, mem::size_of};
 #[cfg(test)]
 mod affine_probe;
+mod chord;
+mod material_mesh;
+pub use material_mesh::Candidate;
 #[cfg(test)]
 mod tests;
 const MAX_BITS: u64 = 8192;

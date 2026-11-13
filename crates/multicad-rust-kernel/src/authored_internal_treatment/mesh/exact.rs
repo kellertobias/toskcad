@@ -117,6 +117,13 @@ impl Q {
             Sign::Plus => Ordering::Greater,
         }
     }
+    /// Ephemeral exact query value. Callers compact before arena retention.
+    pub fn rational(&self, work: &mut Work<'_>) -> Result<BigRational, Error> {
+        work.charge(
+            1 + (self.0.number.numer().bits() + self.0.number.denom().bits()).div_ceil(64) as usize,
+        )?;
+        Ok(self.0.number.clone())
+    }
     /// A newly allocated compact representation has no historical BigInt
     /// capacity. Headers and magnitude bytes are charged before allocation;
     /// callers account its actual retained boxed length alongside table storage.

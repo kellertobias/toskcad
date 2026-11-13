@@ -96,6 +96,15 @@ impl Trace {
             .map(|a| a.bounds)
             .ok_or(Error::Unresolved)
     }
+    pub fn parameter(&self, id: usize, work: &mut Work<'_>) -> Result<Q, Error> {
+        work.step()?;
+        let value = self
+            .keys
+            .get(id)
+            .and_then(Option::as_ref)
+            .ok_or(Error::Unresolved)?;
+        Q::decode(&value.token, work)
+    }
     pub fn compare(&self, a: usize, b: usize, w: &mut Work<'_>) -> Result<Ordering, Error> {
         w.step()?;
         let [a, b] = [a, b].map(|id| {
