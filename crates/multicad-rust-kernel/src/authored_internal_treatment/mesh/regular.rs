@@ -19,6 +19,7 @@ pub(super) struct Patch {
     pub intercept: Q,
     pub entry: Option<(Q, Q)>,
     pub top: Q,
+    offset: Option<Q>,
 }
 pub(super) struct Polygon {
     pub points: Vec<Point>,
@@ -34,6 +35,16 @@ impl Patch {
         period: i64,
         band: usize,
         subdivisions: usize,
+        w: &mut Work<'_>,
+    ) -> Result<Self, Error> {
+        Self::with_offset(body, period, band, subdivisions, false, w)
+    }
+    pub fn with_offset(
+        body: &Cavity,
+        period: i64,
+        band: usize,
+        subdivisions: usize,
+        shifted: bool,
         w: &mut Work<'_>,
     ) -> Result<Self, Error> {
         w.step()?;
@@ -71,6 +82,9 @@ impl Patch {
             intercept,
             entry,
             top,
+            offset: shifted
+                .then(|| Q::float(sampling::TURN_OFFSET, w))
+                .transpose()?,
         })
     }
     pub fn cell(
@@ -93,8 +107,12 @@ impl Patch {
         let ql = self.q0.add(&span.mul(&fraction(index, w)?, w)?, w)?;
         let qh = self.q0.add(&span.mul(&fraction(index + 1, w)?, w)?, w)?;
         let denominator = Q::integer(i64::from(rows), w)?;
-        let vl = Q::integer(i64::from(row), w)?.div(&denominator, w)?;
-        let vh = Q::integer(i64::from(row + 1), w)?.div(&denominator, w)?;
+        let mut vl = Q::integer(i64::from(row), w)?.div(&denominator, w)?;
+        let mut vh = Q::integer(i64::from(row + 1), w)?.div(&denominator, w)?;
+        if let Some(offset) = &self.offset {
+            vl = vl.add(offset, w)?;
+            vh = vh.add(offset, w)?;
+        }
         // All cuts retain their positive side. No source radius/phase change.
         let mouth = Line::new(one.clone(), self.lead.clone(), zero.clone(), w)?;
         let top = Line::new(
@@ -216,13 +234,21 @@ impl Patch {
     ) -> Result<Footpoint, Error> {
         let zero = Q::integer(0, w)?;
         let one = Q::integer(1, w)?;
-        let wrap = p.v.cmp(&one, w)? == Ordering::Equal;
+        let end = match &self.offset {
+            Some(offset) => one.add(offset, w)?,
+            None => one,
+        };
+        let wrap = p.v.cmp(&end, w)? == Ordering::Equal;
         let q = if wrap {
             p.q.add(&self.lead, w)?
         } else {
             p.q.clone()
         };
-        let v = if wrap { zero } else { p.v.clone() };
+        let v = if wrap {
+            self.offset.clone().unwrap_or(zero)
+        } else {
+            p.v.clone()
+        };
         // Physical r,z are evaluated BEFORE periodic transfer; this exact source
         // identity changes Q and v but leaves both values unchanged.
         let z = p.q.add(&self.lead.mul(&p.v, w)?, w)?;

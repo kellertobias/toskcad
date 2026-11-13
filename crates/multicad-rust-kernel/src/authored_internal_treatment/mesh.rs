@@ -73,18 +73,17 @@ pub fn tessellate_candidate(
     }
     let mut grid = Grid::new();
     loop {
-        let repartition =
-            match chart::shell_attempt(body, options, grid.subdivisions, grid.rows(), &mut work)? {
-                Attempt::Complete(shell) => {
-                    if let Some(mut candidate) = close::close(shell, body, options, &mut work)? {
-                        candidate.work_used = work.used;
-                        return Ok(candidate);
-                    }
-                    false
+        let repartition = match chart::grid_attempt(body, options, &grid, &mut work)? {
+            Attempt::Complete(shell) => {
+                if let Some(mut candidate) = close::close(shell, body, options, &mut work)? {
+                    candidate.work_used = work.used;
+                    return Ok(candidate);
                 }
-                Attempt::Refine => false,
-                Attempt::Repartition => true,
-            };
+                false
+            }
+            Attempt::Refine => false,
+            Attempt::Repartition => true,
+        };
         grid.advance(repartition)?;
     }
 }

@@ -10,9 +10,14 @@ struct Angle {
 pub(super) struct Trace {
     keys: Vec<Option<Angle>>,
     bytes: usize,
+    origin: f64,
 }
 impl Trace {
+    #[cfg(test)]
     pub fn new(maximum: usize, w: &mut Work<'_>) -> Result<Self, Error> {
+        Self::at_origin(maximum, 0., w)
+    }
+    pub fn at_origin(maximum: usize, origin: f64, w: &mut Work<'_>) -> Result<Self, Error> {
         w.step()?;
         if maximum > 131_072 {
             return Err(Error::Limit);
@@ -23,7 +28,17 @@ impl Trace {
         let allocations = [(keys.capacity(), std::mem::size_of::<Option<Angle>>())];
         let bytes = storage::bytes(&allocations, std::mem::size_of::<Self>(), BYTES)?;
         keys.resize_with(maximum, || None);
-        Ok(Self { keys, bytes })
+        Ok(Self {
+            keys,
+            bytes,
+            origin,
+        })
+    }
+    pub fn origin(&self) -> f64 {
+        self.origin
+    }
+    pub fn end(&self) -> f64 {
+        1. + self.origin
     }
     pub fn memory_bytes(&self) -> usize {
         self.bytes
@@ -42,9 +57,17 @@ impl Trace {
         if id >= self.keys.len() {
             return Err(Error::Limit);
         }
-        let one = Q::integer(1, w)?;
-        let canonical = if v.cmp(&one, w)? == Ordering::Equal {
-            Q::integer(0, w)?
+        let end = if self.origin == 0. {
+            Q::integer(1, w)?
+        } else {
+            Q::float(self.end(), w)?
+        };
+        let canonical = if v.cmp(&end, w)? == Ordering::Equal {
+            if self.origin == 0. {
+                Q::integer(0, w)?
+            } else {
+                Q::float(self.origin, w)?
+            }
         } else {
             v.clone()
         };

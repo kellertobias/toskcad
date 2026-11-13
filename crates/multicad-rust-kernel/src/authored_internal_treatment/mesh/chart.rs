@@ -30,6 +30,7 @@ pub(super) fn shell(
         Attempt::Refine | Attempt::Repartition => None,
     })
 }
+#[cfg(test)]
 pub(super) fn shell_attempt(
     body: &Cavity,
     options: Tessellation,
@@ -37,7 +38,34 @@ pub(super) fn shell_attempt(
     rows: u32,
     w: &mut Work<'_>,
 ) -> Result<Attempt<Shell>, Error> {
-    build(body, options, subdivisions, rows, None, w)
+    build(body, options, (subdivisions, rows, false), None, w)
+}
+pub(super) fn grid_attempt(
+    body: &Cavity,
+    options: Tessellation,
+    grid: &Grid,
+    w: &mut Work<'_>,
+) -> Result<Attempt<Shell>, Error> {
+    build(
+        body,
+        options,
+        (grid.subdivisions, grid.rows(), grid.shifted),
+        None,
+        w,
+    )
+}
+pub(super) fn traced_grid_attempt(
+    body: &Cavity,
+    options: Tessellation,
+    grid: &Grid,
+    w: &mut Work<'_>,
+) -> Result<Attempt<(Shell, trace::Trace)>, Error> {
+    traced(
+        body,
+        options,
+        (grid.subdivisions, grid.rows(), grid.shifted),
+        w,
+    )
 }
 #[cfg(test)]
 pub(super) fn traced_shell(
@@ -54,6 +82,7 @@ pub(super) fn traced_shell(
         },
     )
 }
+#[cfg(test)]
 pub(super) fn traced_attempt(
     body: &Cavity,
     options: Tessellation,
@@ -61,24 +90,34 @@ pub(super) fn traced_attempt(
     rows: u32,
     w: &mut Work<'_>,
 ) -> Result<Attempt<(Shell, trace::Trace)>, Error> {
-    let mut trace = trace::Trace::new(options.triangle_limit.min(131_072), w)?;
-    Ok(
-        match build(body, options, subdivisions, rows, Some(&mut trace), w)? {
-            Attempt::Complete(shell) => Attempt::Complete((shell, trace)),
-            Attempt::Refine => Attempt::Refine,
-            Attempt::Repartition => Attempt::Repartition,
-        },
-    )
+    traced(body, options, (subdivisions, rows, false), w)
+}
+fn traced(
+    body: &Cavity,
+    options: Tessellation,
+    grid: (usize, u32, bool),
+    w: &mut Work<'_>,
+) -> Result<Attempt<(Shell, trace::Trace)>, Error> {
+    let mut trace = trace::Trace::at_origin(
+        options.triangle_limit.min(131_072),
+        if grid.2 { sampling::TURN_OFFSET } else { 0. },
+        w,
+    )?;
+    Ok(match build(body, options, grid, Some(&mut trace), w)? {
+        Attempt::Complete(shell) => Attempt::Complete((shell, trace)),
+        Attempt::Refine => Attempt::Refine,
+        Attempt::Repartition => Attempt::Repartition,
+    })
 }
 fn build(
     body: &Cavity,
     options: Tessellation,
-    subdivisions: usize,
-    rows: u32,
+    grid: (usize, u32, bool),
     mut trace: Option<&mut trace::Trace>,
     w: &mut Work<'_>,
 ) -> Result<Attempt<Shell>, Error> {
     w.step()?;
+    let (subdivisions, rows, shifted) = grid;
     if subdivisions == 0
         || subdivisions > sampling::MAX_SUBDIVISIONS
         || rows == 0
@@ -88,7 +127,8 @@ fn build(
     }
     let f = body.tail.map_or(body.full_length_mm(), |tail| tail.station);
     // Immutable Thread construction proves L/p + 2*starts <=128. This
-    // bounds every finite phase period, including empty clipped end cells.
+    // bounds the physical phase span. The shifted sampling chart adds one
+    // negative period below; all cells and allocations remain work charged.
     let periods = (f / body.thread.spec().pitch_mm).ceil();
     let maximum = options.triangle_limit.min(131_072);
     let mut owners = Owners::new(maximum, w)?;
@@ -116,9 +156,13 @@ fn build(
     storage::bytes(&allocations, 0, 16 * 1024 * 1024)?;
     let mut chord = 0_f64;
     let mut normal = 0_f64;
-    for period in -i64::from(body.thread.spec().starts)..=periods as i64 {
+    // A positive angular seam shift needs one additional negative phase
+    // period to retain the complete z=0 source clipping domain: construction
+    // bounds starts by64, hence lead*TURN_OFFSET < pitch.
+    let first = -i64::from(body.thread.spec().starts) - i64::from(shifted);
+    for period in first..=periods as i64 {
         for band in 0..5 {
-            let patch = Patch::new(body, period, band, subdivisions, w)?;
+            let patch = Patch::with_offset(body, period, band, subdivisions, shifted, w)?;
             for index in 0..subdivisions {
                 for row in 0..rows {
                     for kind in [Kind::Cone, Kind::Wall] {
@@ -157,7 +201,7 @@ fn build(
                             if vertex == proposed as usize {
                                 let literal = point.map(|p| p.lo.midpoint(p.hi));
                                 // Checked exact r,z bounds are within1e7 and
-                                // v within[0,1]. Angle intermediates are <7,
+                                // v within[0,1+TURN_OFFSET]. Angle intermediates are <7,
                                 // trig within[-1,1], products/midpoints <2e7.
                                 mesh.vertices.extend(literal);
                             }
