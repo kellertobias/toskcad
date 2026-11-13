@@ -155,17 +155,15 @@ fn custom_authored_wood_threads_keep_their_exact_start_frame_and_physical_geomet
 }
 
 #[test]
-fn unsupported_custom_insert_and_hanger_keep_the_previous_document() {
+fn unsupported_custom_hanger_keeps_the_previous_document() {
     let compiler = Compiler {
         omit_display: true,
         ..Default::default()
     };
     let session = Session::new(Document::new("Atomic custom hardware refusal").unwrap()).unwrap();
     let before = session.document().clone();
-    for source in [
-        model::default_custom_connection_wood_insert(),
-        model::default_custom_connection_hanger_bolt(),
-    ] {
+    {
+        let source = model::default_custom_connection_hanger_bolt();
         let request = MechanicalPartRequest::new("Needs connected material", source);
         let candidate =
             model::prepare_mechanical_part(&session, 0, Actor::local(Channel::Ui), &request)
@@ -180,7 +178,7 @@ fn unsupported_custom_insert_and_hanger_keep_the_previous_document() {
             .err()
             .unwrap();
         assert!(
-            failure.message.contains("connected-material providers"),
+            failure.message.contains("hanger bolts require their own connected-material provider"),
             "{failure:?}"
         );
         assert_eq!(session.document(), &before);

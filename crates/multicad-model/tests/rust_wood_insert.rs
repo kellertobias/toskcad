@@ -173,3 +173,28 @@ fn actual_insert_edit_history_and_saved_pose_keep_both_original_thread_sources()
     );
     assert_eq!(*s.document(), before);
 }
+
+#[test]
+fn blind_insert_without_a_qualified_floor_graph_refuses_without_mutation() {
+    let session = Session::new(Document::new("Unqualified blind insert").unwrap()).unwrap();
+    let before = session.document().clone();
+    let mut parameters = default_custom_connection_wood_insert();
+    let MechanicalPartParameters::CustomConnection { parameters: custom } = &mut parameters else {
+        panic!()
+    };
+    let CustomConnectionHardwareParameters::WoodInsert { inner_thread, .. } = custom.as_mut()
+    else {
+        panic!()
+    };
+    inner_thread.length = length(3.);
+    let request = MechanicalPartRequest::new("Blind insert", parameters);
+    let prepared =
+        prepare_mechanical_part(&session, 0, Actor::local(Channel::Ui), &request).unwrap();
+    assert!(
+        Compiler::default()
+            .compile_with_backend(prepared.prepared.document(), 1, GeometryBackend::Rust, None)
+            .is_err()
+    );
+    assert_eq!(*session.document(), before);
+    assert_eq!(session.revision(), 0);
+}
