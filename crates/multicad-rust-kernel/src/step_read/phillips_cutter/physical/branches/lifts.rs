@@ -27,20 +27,66 @@ pub enum LiftKind {
 #[derive(Clone, Copy, Debug)]
 pub struct FiniteLift {
     edge: usize,
-    kind: LiftKind,
+    pub(super) source: AnalyticCarrier,
+}
+#[derive(Clone, Copy)]
+pub(super) struct LineLift {
+    pub origin: [I; 3],
+    pub vector: [I; 3],
+    pub magnitude: I,
+    pub parameters: [[f64; 2]; 2],
+}
+impl LineLift {
+    fn kind(self) -> LiftKind {
+        LiftKind::Line {
+            parameters: self.parameters,
+        }
+    }
+}
+#[derive(Clone, Copy)]
+pub(super) struct ArcLift {
+    pub frame: support::Frame,
+    pub start: [f64; 2],
+    pub sweep: [f64; 2],
+}
+impl ArcLift {
+    fn kind(self) -> LiftKind {
+        LiftKind::Arc {
+            start_angle_rad: self.start,
+            signed_sweep_rad: self.sweep,
+        }
+    }
+}
+#[derive(Clone, Copy)]
+pub(super) enum AnalyticCarrier {
+    Line(LineLift),
+    Arc { lift: ArcLift, radii: [I; 2] },
+}
+impl std::fmt::Debug for AnalyticCarrier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.kind(), f)
+    }
+}
+impl AnalyticCarrier {
+    fn kind(self) -> LiftKind {
+        match self {
+            Self::Line(lift) => lift.kind(),
+            Self::Arc { lift, .. } => lift.kind(),
+        }
+    }
 }
 impl FiniteLift {
     pub fn edge_index(&self) -> usize {
         self.edge
     }
     pub fn kind(&self) -> LiftKind {
-        self.kind
+        self.source.kind()
     }
 }
 /// Retains original numeric endpoint/support receipts. This parameter receipt
 /// does not identify independently rounded intersection endpoints as equal.
 pub struct FiniteLifts<'a> {
-    analytic: AnalyticSupportBounds<'a>,
+    pub(super) analytic: AnalyticSupportBounds<'a>,
     endpoints: EndpointCouplingBounds<'a>,
     lifts: Vec<FiniteLift>,
     work_used: usize,
@@ -140,7 +186,7 @@ fn arc(
     points: [Point; 2],
     forward: bool,
     budget: &mut Budget<'_>,
-) -> BranchResult<LiftKind> {
+) -> BranchResult<ArcLift> {
     let frame = frame(axis, budget)?;
     let directions = points.map(|p| {
         let p = local(frame, p);
@@ -157,9 +203,10 @@ fn arc(
     let last = scaled(directions[1])?;
     let start = angle(first[1], first[0])?;
     let sweep = directed_sweep(first, last, forward)?;
-    Ok(LiftKind::Arc {
-        start_angle_rad: bounds(start),
-        signed_sweep_rad: bounds(sweep),
+    Ok(ArcLift {
+        frame,
+        start: bounds(start),
+        sweep: bounds(sweep),
     })
 }
 fn line(
@@ -169,7 +216,7 @@ fn line(
     points: [Point; 2],
     forward: bool,
     budget: &mut Budget<'_>,
-) -> BranchResult<LiftKind> {
+) -> BranchResult<LineLift> {
     let seed = (0..3)
         .min_by(|&a, &b| direction[a].abs().total_cmp(&direction[b].abs()))
         .unwrap();
@@ -197,7 +244,10 @@ fn line(
     {
         return Err(PhillipsReadError::Unsupported);
     }
-    Ok(LiftKind::Line {
+    Ok(LineLift {
+        origin: frame.origin,
+        vector,
+        magnitude: support::adjacent(magnitude),
         parameters: parameters.map(bounds),
     })
 }
@@ -260,7 +310,7 @@ impl<'a> AnalyticSupportBounds<'a> {
         footprint(base, lifts.capacity(), options.maximum_bytes, &mut budget)?;
         for (edge_index, edge) in boundary.edges().iter().enumerate() {
             let points = edge.vertices.map(|i| boundary.vertices()[i].point);
-            let kind = match edge.curve {
+            let source = match edge.curve {
                 Curve::Line {
                     origin,
                     direction,
@@ -268,34 +318,40 @@ impl<'a> AnalyticSupportBounds<'a> {
                     ..
                 } => {
                     budget.charge(1024)?;
-                    line(
+                    AnalyticCarrier::Line(line(
                         origin,
                         direction,
                         magnitude,
                         points,
                         edge.same_sense,
                         &mut budget,
-                    )?
+                    )?)
                 }
-                Curve::Circle { axis, .. } => {
+                Curve::Circle { axis, radius_mm } => {
                     budget.charge(1024)?;
-                    arc(axis, None, points, edge.same_sense, &mut budget)?
+                    AnalyticCarrier::Arc {
+                        lift: arc(axis, None, points, edge.same_sense, &mut budget)?,
+                        radii: [support::adjacent(radius_mm); 2],
+                    }
                 }
                 Curve::Ellipse { axis, semiaxes_mm } => {
                     budget.charge(1024)?;
-                    arc(
-                        axis,
-                        Some(semiaxes_mm),
-                        points,
-                        edge.same_sense,
-                        &mut budget,
-                    )?
+                    AnalyticCarrier::Arc {
+                        lift: arc(
+                            axis,
+                            Some(semiaxes_mm),
+                            points,
+                            edge.same_sense,
+                            &mut budget,
+                        )?,
+                        radii: semiaxes_mm.map(support::adjacent),
+                    }
                 }
                 Curve::CubicIntersection { .. } => continue,
             };
             lifts.push(FiniteLift {
                 edge: edge_index,
-                kind,
+                source,
             });
         }
         budget.charge(1)?;

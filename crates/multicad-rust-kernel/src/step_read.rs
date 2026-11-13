@@ -53,7 +53,10 @@ pub use phillips_cutter::{
     IntersectionSection as PhillipsIntersectionSection,
     IntersectionTubeOptions as PhillipsIntersectionTubeOptions,
     IntersectionTubes as PhillipsIntersectionTubes, PhillipsReadError, PhillipsSourceKnownProof,
-    verify_phillips_cutter_source_known, verify_phillips_cutter_source_known_with_interrupt,
+    SewnEdgeEvaluation as PhillipsSewnEdgeEvaluation, SewnEdgeOptions as PhillipsSewnEdgeOptions,
+    SewnEdgeParameter as PhillipsSewnEdgeParameter, SewnEdgeSource as PhillipsSewnEdgeSource,
+    SewnEdgeSources as PhillipsSewnEdgeSources, verify_phillips_cutter_source_known,
+    verify_phillips_cutter_source_known_with_interrupt,
 };
 mod round;
 mod rounded_cylinder;

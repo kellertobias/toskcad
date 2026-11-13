@@ -16,7 +16,9 @@ pub use branches::{
     EdgeSection as IntersectionSection, EdgeTube as IntersectionEdgeTube,
     FiniteLift as AnalyticEdgeLift, FiniteLifts as AnalyticEdgeLifts,
     LiftKind as AnalyticEdgeLiftKind, LiftOptions as AnalyticEdgeLiftOptions,
-    Options as IntersectionTubeOptions, Tubes as IntersectionTubes,
+    Options as IntersectionTubeOptions, SewnEdgeSource, SewnEdgeSources,
+    SewnEvaluation as SewnEdgeEvaluation, SewnOptions as SewnEdgeOptions,
+    SewnParameter as SewnEdgeParameter, Tubes as IntersectionTubes,
 };
 mod incidence;
 pub use endpoints::{EndpointCouplingBounds, EndpointCouplingOptions};

@@ -7,6 +7,8 @@ mod lifts;
 mod matrix;
 pub use lifts::{FiniteLift, FiniteLifts, LiftKind, LiftOptions};
 mod section;
+mod sewn;
+pub use sewn::{SewnEdgeSource, SewnEdgeSources, SewnEvaluation, SewnOptions, SewnParameter};
 use supports::chart::Chart;
 const WORK: usize = 16_000_000;
 const BYTES: usize = 64 * 1024 * 1024;

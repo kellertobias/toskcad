@@ -33,6 +33,7 @@ fn lifted(index: usize, posed: bool) -> (usize, usize) {
     );
     let mut lines = 0;
     let mut arcs = 0;
+    eprintln!("first retained typed analytic lift: {:?}", lifts.edges()[0]);
     for lift in lifts.edges() {
         let edge = &b.edges()[lift.edge_index()];
         match lift.kind() {
@@ -135,7 +136,9 @@ fn independent_vector_magnitude_and_ellipse_parameter_oracles_use_original_geome
             [points[1], points[0]]
         };
         let LiftKind::Line { parameters } =
-            line(origin, [0., 0., 10.], 2., p, forward, &mut budget).unwrap()
+            line(origin, [0., 0., 10.], 2., p, forward, &mut budget)
+                .unwrap()
+                .kind()
         else {
             panic!()
         };
@@ -173,6 +176,7 @@ fn independent_vector_magnitude_and_ellipse_parameter_oracles_use_original_geome
         &mut budget,
     )
     .unwrap()
+    .kind()
     else {
         panic!()
     };
