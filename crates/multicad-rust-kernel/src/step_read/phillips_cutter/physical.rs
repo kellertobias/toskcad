@@ -2,7 +2,12 @@
 //! mass, self-intersection, Phillips gauge or native-publication certificate.
 use super::*;
 
+mod branches;
 mod endpoints;
+pub use branches::{
+    EdgeSection as IntersectionSection, EdgeTube as IntersectionEdgeTube,
+    Options as IntersectionTubeOptions, Tubes as IntersectionTubes,
+};
 mod incidence;
 pub use endpoints::{EndpointCouplingBounds, EndpointCouplingOptions};
 mod literal;
