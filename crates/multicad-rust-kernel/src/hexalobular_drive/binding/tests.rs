@@ -301,7 +301,23 @@ fn retained_binding_recess_keeps_original_fitted_thread_and_a_closed_metric_mesh
         unreachable!()
     };
     assert_eq!(recess.finite_binding(), Some(&bound));
-    assert!(!crate::step::supports_profiled_screw(&screw, [0.; 3], 1e-7));
+    assert!(crate::step::supports_profiled_screw(&screw, [0.; 3], 1e-7));
+    let frame = [[0.; 3], [1., 0., 0.], [0., 1., 0.]];
+    let text =
+        crate::step::write_profiled_screw(&screw, frame[0], frame[1], frame[2], 1e-7).unwrap();
+    let (_, physical) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+    assert!(crate::step_read::profiled_screw_import_matches(
+        &physical, &screw, frame, 1e-7
+    ));
+    assert!(
+        physical
+            .profiled_screw_geometry()
+            .unwrap()
+            .0
+            .spec()
+            .head
+            .is_none()
+    );
 }
 
 #[test]

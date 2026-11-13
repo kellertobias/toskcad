@@ -850,7 +850,7 @@ fn cyclic_drive_loop_starts_keep_import_member_and_wall_references_stable() {
 }
 
 #[test]
-fn conical_recess_source_cannot_publish_partial_hex_geometry_before_native_qualification() {
+fn conical_recess_source_publishes_actual_curved_geometry_without_changing_the_old_solid() {
     use multicad_kernel::rust_kernel::{
         hexalobular_drive::{Cone, Drive, TangentSpec},
         profiled_screw::Screw,
@@ -884,11 +884,48 @@ fn conical_recess_source_cannot_publish_partial_hex_geometry_before_native_quali
     let recess = Recess::conical_hexalobular(drive, 1e-7, 100_000).unwrap();
     let source =
         Screw::new_with_recess(*source.thread(), 1.5, spec(true).head, 1., 0.01, recess).unwrap();
-    let error =
+    let curved =
         Solid::rust_profiled_screw_from_source(source, owner, PlaneFrame::default(), policy)
-            .err()
             .unwrap();
-    assert_eq!(error.kind, multicad_kernel::GeometryErrorKind::Unsupported);
+    assert!(
+        curved
+            .rust_profiled_screw_geometry()
+            .unwrap()
+            .0
+            .recess()
+            .flat_hex_geometry()
+            .is_none()
+    );
+    let topology = curved.topology_snapshot(owner, 1).unwrap();
+    assert_eq!(
+        topology
+            .elements
+            .iter()
+            .filter(|e| e.key.kind == TopologyKind::Face
+                && e.origins
+                    .iter()
+                    .any(|o| o.role.starts_with("screw.drive/edge/")))
+            .count(),
+        12
+    );
+    let mesh = curved
+        .manufacturing_mesh_with_receipt(MeshOptions::default())
+        .unwrap();
+    assert_eq!(mesh.edge_pairs as usize * 2, mesh.mesh.indices.len());
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("actual-curved.step");
+    curved.write_step(&path).unwrap();
+    let physical = Solid::import_rust_step(
+        &std::fs::read_to_string(path).unwrap(),
+        EntityId::new(),
+        policy,
+    )
+    .unwrap();
+    let decoded = physical.rust_profiled_screw_geometry().unwrap().0;
+    assert!(decoded.spec().head.is_none());
+    assert!(decoded.recess().hexalobular_geometry().is_some());
+    assert!(decoded.recess().flat_hex_geometry().is_none());
+    assert!((curved.volume_mm3().unwrap() - physical.volume_mm3().unwrap()).abs() < 1e-5);
     assert_eq!(old.topology_snapshot(owner, 0).unwrap(), before);
     assert!(old.supports_step_export());
 }
