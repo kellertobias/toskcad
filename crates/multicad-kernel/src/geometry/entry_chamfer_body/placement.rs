@@ -231,6 +231,38 @@ fn source_mesh(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn original_entry_source_uses_the_unchanged_standard_transfer() {
+        let root = 1. / (4. * 3_f64.sqrt());
+        let body = Solid::rust_helical_thread_entry_chamfer(
+            HelicalThread {
+                major_radius_mm: 3.,
+                pitch_mm: 1.,
+                length_mm: 6.6,
+                depth_mm: 0.875 * 3_f64.sqrt() / 2. - root,
+                crest_width_mm: 0.125,
+                lower_flank_deg: 30.,
+                upper_flank_deg: 30.,
+                radial_taper: 0.,
+                starts: 1,
+                left_hand: false,
+            },
+            Some(root),
+            0.3,
+            None,
+            EntityId::new(),
+            PlaneFrame::default(),
+            GeometryPolicy::default(),
+        )
+        .unwrap();
+        let mesh = body.manufacturing_mesh(MeshOptions::default()).unwrap();
+        assert!(!mesh.indices.is_empty());
+        assert!(
+            mesh.indices
+                .iter()
+                .all(|&i| (i as usize) < mesh.vertices.len())
+        );
+    }
     use super::*;
     #[test]
     fn proper_chart_and_actual_normals_are_required_without_normalizing_away_errors() {

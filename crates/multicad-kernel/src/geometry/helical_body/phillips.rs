@@ -39,6 +39,13 @@ fn failure(cause: source::Error) -> GeometryError {
         format!("Actual retained Phillips source proof failed: {cause:?}"),
     )
 }
+fn checkpoint(interrupt: &dyn Fn() -> bool) -> Result<(), GeometryError> {
+    if interrupt() {
+        Err(failure(source::Error::Cancelled))
+    } else {
+        Ok(())
+    }
+}
 impl Body {
     fn new(
         source: PhillipsScrew,
@@ -76,9 +83,7 @@ impl Body {
             )
             .map_err(failure)?;
         let volume = source.source_volume_bounds().map_err(failure)?;
-        if interrupt() {
-            return Err(failure(source::Error::Cancelled));
-        }
+        checkpoint(interrupt)?;
         Ok(Self {
             source,
             policy,
@@ -129,9 +134,7 @@ impl Body {
         options: multicad_rust_kernel::display::Tessellation,
         interrupt: &dyn Fn() -> bool,
     ) -> Result<Mesh, GeometryError> {
-        if interrupt() {
-            return Err(failure(source::Error::Cancelled));
-        }
+        checkpoint(interrupt)?;
         let local_pair = std::cell::Cell::new(None);
         let mesh = super::super::entry_chamfer_body::placement::qualified_source_mesh_with_small_normal_reserve(
             frame,
@@ -162,18 +165,14 @@ impl Body {
                 })
             },
         )?;
-        if interrupt() {
-            return Err(failure(source::Error::Cancelled));
-        }
+        checkpoint(interrupt)?;
         // Both successful transfer branches invoke the local producer exactly
         // once. A future mesh cache must retain this source receipt as well.
         let (volume, literal, difference) = local_pair
             .get()
             .expect("successful source transfer invoked its owned producer");
         let pair = properties::mesh_pair(volume, frame, &mesh, literal, difference, options)?;
-        if interrupt() {
-            return Err(failure(source::Error::Cancelled));
-        }
+        checkpoint(interrupt)?;
         *self.last_mesh_pair.borrow_mut() = Some(pair);
         Ok(mesh)
     }

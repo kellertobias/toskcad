@@ -554,6 +554,11 @@ fn transported_sources_and_wrong_native_getters_remain_explicitly_separate() {
 
 #[test]
 fn final_cancellation_and_source_precision_refuse_without_publishing_geometry_or_receipts() {
+    assert_eq!(
+        checkpoint(&|| true).unwrap_err().kind,
+        GeometryErrorKind::Cancelled
+    );
+    checkpoint(&|| false).unwrap();
     use std::cell::Cell;
     let source = fixture(1, 1., false);
     let policy = GeometryPolicy::default();

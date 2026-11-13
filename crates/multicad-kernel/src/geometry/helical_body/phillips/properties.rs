@@ -193,9 +193,9 @@ pub(in crate::geometry::helical_body) fn plane(
     let a = axes(frame);
     let cof = [cross(a[1], a[2]), cross(a[2], a[0]), cross(a[0], a[1])];
     positive(dot(cof[2], a[2]))?;
-    let actual = normalized(std::array::from_fn(|i| {
-        (0..3).fold(I::ZERO, |s, k| s + cof[k][i] * normal[k])
-    }))?;
+    let transported_normal =
+        std::array::from_fn(|i| (0..3).fold(I::ZERO, |s, k| s + cof[k][i] * normal[k]));
+    let actual = normalized(transported_normal)?;
     let n = mid(actual);
     let index = (0..3)
         .min_by(|&i, &j| n[i].abs().total_cmp(&n[j].abs()))
