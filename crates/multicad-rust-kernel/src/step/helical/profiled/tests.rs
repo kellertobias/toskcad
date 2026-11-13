@@ -4,7 +4,7 @@ use crate::{
     profiled_screw::{SourceSpec, Spec},
 };
 
-fn thread(starts: u32) -> Thread {
+pub(super) fn thread(starts: u32) -> Thread {
     Thread::new(crate::helical_thread::Spec {
         major_radius_mm: 1.5,
         pitch_mm: 0.5,
@@ -19,7 +19,7 @@ fn thread(starts: u32) -> Thread {
     })
     .unwrap()
 }
-fn spec(chamfer: f64) -> Spec {
+pub(super) fn spec(chamfer: f64) -> Spec {
     Spec {
         head: Head::Countersunk {
             radius_mm: 3.,
@@ -200,4 +200,96 @@ fn far_world_collapsed_crest_refuses_public_export_and_writer_retries_cleanly() 
     let text = writer.finish().unwrap();
     assert_eq!(text.matches("MANIFOLD_SOLID_BREP(").count(), 1);
     crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+}
+
+#[test]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn shared_step_outer_preserves_frozen_existing_head_file_bytes() {
+    use crate::{
+        hex_drive::HexDrive,
+        hexalobular_drive::{Cone, Drive, TangentSpec},
+        screw_recess::Recess,
+    };
+    let mut fingerprints = Vec::new();
+    for family in 0..3 {
+        for union in [false, true] {
+            let mut ts = thread(1).spec();
+            ts.major_radius_mm = 1.47;
+            ts.left_hand = union;
+            let t = Thread::new(ts).unwrap();
+            let h = if family == 0 {
+                spec(0.1).head
+            } else {
+                Head::Crowned {
+                    radius_mm: 2.8,
+                    height_mm: 2.4,
+                    crown_radius_mm: 3.,
+                    top_land_radius_mm: 2.1,
+                    neck_radius_mm: 0.1,
+                }
+            };
+            let drive = match family {
+                0 => Recess::canonical_flat_hex(2., 0.6).unwrap(),
+                1 => {
+                    let angle = 0.193_f64;
+                    let canonical = HexDrive::canonical(2., 1e-12).unwrap();
+                    let corners = canonical.corners_mm().map(|[x, y]| {
+                        [
+                            x * angle.cos() - y * angle.sin(),
+                            x * angle.sin() + y * angle.cos(),
+                        ]
+                    });
+                    Recess::flat_hex(
+                        HexDrive::from_retained_corners(corners, 2., 1e-12).unwrap(),
+                        0.6,
+                    )
+                    .unwrap()
+                }
+                _ => Recess::conical_hexalobular(
+                    Drive::from_authored_tangent(
+                        TangentSpec {
+                            major_diameter_mm: 2.8,
+                            minor_diameter_mm: 2.05,
+                            outer_lobe_radius_mm: 0.28,
+                        },
+                        Cone {
+                            tip_depth_mm: 1.9,
+                            depth_per_radius: 1. / 3f64.sqrt(),
+                        },
+                    )
+                    .unwrap(),
+                    1e-7,
+                    100_000,
+                )
+                .unwrap(),
+            };
+            let s = Screw::new_with_recess(t, 1.5, h, if union { 0. } else { 1. }, 0.01, drive)
+                .unwrap();
+            let (o, u, v) = if union {
+                ([105., -20., 60.], [0.8, 0.6, 0.], [0.36, -0.48, -0.8])
+            } else {
+                ([0.; 3], [1., 0., 0.], [0., 1., 0.])
+            };
+            let text = crate::step::write_profiled_screw(&s, o, u, v, 1e-7).unwrap();
+            let mut hash = 0xcbf29ce484222325u64;
+            for byte in text.bytes() {
+                hash = (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+            }
+            fingerprints.push((text.len(), hash));
+        }
+    }
+    // Captured from the unrefactored source at291514ca with the pinned
+    // arm64 macOS toolchain. Cross-platform behavior has independent geometry
+    // readback controls; platform transcendental rounding need not be equal.
+    assert_eq!(
+        fingerprints,
+        vec![
+            (212947, 12384164169844171353),
+            (268920, 10569167352034862003),
+            (213716, 17712331813652097306),
+            (269663, 17769957927807670706),
+            (477654, 5975792124410495725),
+            (528452, 12947489326318806268),
+        ]
+    );
 }
