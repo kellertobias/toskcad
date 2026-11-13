@@ -120,3 +120,50 @@ fn screw_can_continue_beyond_through_insert_when_actual_pilot_floor_still_clears
     assert!(check.native_component_collision_checked);
     assert_eq!(*session.document(), document);
 }
+
+#[test]
+fn unrelated_parts_require_real_separation_and_never_share_the_intentional_wood_bite() {
+    for separated in [true, false] {
+        let (document, request) = support::fixture(ScrewConnectionMode::WoodInsert);
+        let mut session = Session::new(document).unwrap();
+        let origin = if separated {
+            [30., 30., 30.]
+        } else {
+            [14.3, 10., 18.]
+        };
+        let obstacle = PrimitiveRequest::new(
+            "Unrelated component",
+            PrimitiveParameters::Box {
+                size: std::array::from_fn(|_| length(0.2)),
+                frame: PrimitiveFrame {
+                    origin: origin.map(length),
+                    ..Default::default()
+                },
+            },
+        );
+        session
+            .commit(
+                prepare_primitive(&session, 0, actor(), &obstacle)
+                    .unwrap()
+                    .prepared,
+            )
+            .unwrap();
+        let before = session.document().clone();
+        let prepared =
+            prepare_screw_connection(&session, session.revision(), actor(), &request).unwrap();
+        let result = compiler().compile_with_backend(
+            prepared.prepared.document(),
+            session.revision() + 1,
+            GeometryBackend::Rust,
+            None,
+        );
+        if separated {
+            let model = result.unwrap();
+            assert!(model.snapshot().screw_connection_checks[0].native_component_collision_checked);
+            assert!(model.solid(obstacle.feature).is_some());
+        } else {
+            assert!(result.is_err());
+        }
+        assert_eq!(*session.document(), before);
+    }
+}
