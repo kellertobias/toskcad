@@ -2,7 +2,7 @@
 use multicad_rust_kernel::authored_internal_treatment::Enclosure;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(in crate::geometry::internal_thread_treatment_body) struct Interval {
+pub(in crate::geometry) struct Interval {
     pub lo: f64,
     pub hi: f64,
 }

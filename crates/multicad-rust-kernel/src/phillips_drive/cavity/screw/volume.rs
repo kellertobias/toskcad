@@ -7,6 +7,7 @@ pub struct SourceVolumeBounds {
     volume_mm3: [f64; 2],
     profile_precision_error_mm3: f64,
     cavity_source_width_mm3: f64,
+    thread_phase_domain_error_mm3: f64,
 }
 impl SourceVolumeBounds {
     pub fn volume_mm3(&self) -> [f64; 2] {
@@ -17,6 +18,9 @@ impl SourceVolumeBounds {
     }
     pub fn cavity_source_width_mm3(&self) -> f64 {
         self.cavity_source_width_mm3
+    }
+    pub fn thread_phase_domain_error_mm3(&self) -> f64 {
+        self.thread_phase_domain_error_mm3
     }
 }
 fn cube(x: I) -> I {
@@ -85,9 +89,13 @@ impl PhillipsScrew {
         let precision = crate::head_profile::source_volume::precision_envelope(&self.profile)
             .ok_or(Error::Unresolved)?;
         let thread = thread_volume(&self.thread, self.visible_start_mm).ok_or(Error::Unresolved)?;
+        let phase = self
+            .thread
+            .phase_domain_volume_error_mm3(self.visible_thread_interval_mm())
+            .map_err(super::properties::thread_error)?;
         let cavity = self.cavity.volume.volume_mm3;
         let cavity = I::new(cavity[0], cavity[1]);
-        let volume = head + thread - cavity;
+        let volume = head + thread - cavity + I::new(-phase, phase);
         if !volume.valid() || volume.lo <= 0. {
             return Err(Error::Unresolved);
         }
@@ -95,6 +103,7 @@ impl PhillipsScrew {
             volume_mm3: [volume.lo, volume.hi],
             profile_precision_error_mm3: precision.volume.hi,
             cavity_source_width_mm3: cavity.width(),
+            thread_phase_domain_error_mm3: phase,
         })
     }
 }

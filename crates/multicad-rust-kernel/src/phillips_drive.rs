@@ -5,7 +5,8 @@ use std::f64::consts::PI;
 mod cavity;
 mod classify;
 pub use cavity::{
-    Cavity, HostEnvelopeProof, MouthSweepProof, PhillipsScrew, ScrewFace, SourceVolumeBounds,
+    Cavity, HostEnvelopeProof, MouthSweepProof, PhillipsScrew, ScrewFace, ScrewFaceProperties,
+    SourceVolumeBounds,
 };
 mod events;
 mod finite_section;

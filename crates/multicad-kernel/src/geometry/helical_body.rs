@@ -27,6 +27,8 @@ pub(super) mod full_height;
 use external::ExternalStock;
 mod boundary;
 mod nut;
+mod phillips;
+pub use phillips::PhillipsMeshVolumePair;
 mod profiled_screw;
 mod screw;
 pub(super) mod stock_frame;
@@ -90,6 +92,7 @@ enum HelicalForm {
     Nut(Nut),
     Screw(Screw),
     ProfiledScrew(Box<multicad_rust_kernel::profiled_screw::Screw>),
+    PhillipsScrew(Box<phillips::Body>),
 }
 
 struct BoreStock {
@@ -143,7 +146,7 @@ impl Solid {
         };
         if !matches!(
             screw.form,
-            HelicalForm::Screw(_) | HelicalForm::ProfiledScrew(_)
+            HelicalForm::Screw(_) | HelicalForm::ProfiledScrew(_) | HelicalForm::PhillipsScrew(_)
         ) || !matches!(nut.form, HelicalForm::Nut(_))
         {
             return None;
@@ -811,6 +814,13 @@ impl Solid {
                 "Select an analytic Rust thread body",
             )
         })?;
+        if body.has_phillips_source() {
+            return Err(error(
+                OPERATION,
+                GeometryErrorKind::Unsupported,
+                "Phillips world point classification needs a bounded inverse-coordinate query",
+            ));
+        }
         let offset = std::array::from_fn(|i| point_mm[i] - frame.origin[i]);
         let local = [frame.u, frame.v, frame.normal()].map(|axis| dot(axis, offset));
         Ok(body.contains(local, self.policy.linear_tolerance_mm))
@@ -922,6 +932,7 @@ impl HelicalBody {
         };
         let start = match &form {
             HelicalForm::ProfiledScrew(screw) => screw.visible_thread_interval_mm()[0],
+            HelicalForm::PhillipsScrew(body) => body.source().visible_thread_interval_mm()[0],
             HelicalForm::Blind(stock) => stock.thread_start_mm(),
             _ => 0.,
         };
@@ -1004,6 +1015,7 @@ impl HelicalBody {
             HelicalForm::ProfiledScrew(screw) => {
                 profiled_screw::extend_face_properties(screw, &mut local_faces, policy)?
             }
+            HelicalForm::PhillipsScrew(body) => body.extend_properties(&mut local_faces)?,
             HelicalForm::Shaft => {}
             HelicalForm::EndRelief(relief) => {
                 end_relief::extend_properties(relief, &mut local_faces)
@@ -1041,7 +1053,8 @@ impl HelicalBody {
             HelicalForm::Blind(_)
             | HelicalForm::Nut(_)
             | HelicalForm::Screw(_)
-            | HelicalForm::ProfiledScrew(_) => None,
+            | HelicalForm::ProfiledScrew(_)
+            | HelicalForm::PhillipsScrew(_) => None,
         }
     }
 
@@ -1210,6 +1223,7 @@ impl HelicalBody {
             HelicalForm::Nut(nut) => nut.volume_mm3(),
             HelicalForm::Screw(screw) => screw.volume_mm3(),
             HelicalForm::ProfiledScrew(screw) => screw.volume_mm3(),
+            HelicalForm::PhillipsScrew(body) => body.volume_mm3(),
         }
     }
 
@@ -1220,6 +1234,7 @@ impl HelicalBody {
             HelicalForm::External(stock) => return stock.contains(self.geometry, local, tolerance),
             HelicalForm::Screw(screw) => return screw.contains(local, tolerance),
             HelicalForm::ProfiledScrew(screw) => return screw.contains(local, tolerance),
+            HelicalForm::PhillipsScrew(body) => return body.source().contains(local, tolerance),
             HelicalForm::Nut(nut) => return nut.contains(local, tolerance),
             HelicalForm::Blind(stock) => {
                 let [x, y, z] = local;
@@ -1244,6 +1259,9 @@ impl HelicalBody {
     }
 
     pub(super) fn bounds(&self, frame: PlaneFrame) -> Bounds {
+        if let HelicalForm::PhillipsScrew(body) = &self.form {
+            return body.bounds(frame);
+        }
         if let HelicalForm::Blind(stock) = &self.form {
             return stock.bounds(frame);
         }
@@ -1260,6 +1278,7 @@ impl HelicalBody {
                 }
                 HelicalForm::Screw(screw) => screw.support(direction),
                 HelicalForm::ProfiledScrew(screw) => screw.support(direction),
+                HelicalForm::PhillipsScrew(body) => body.source().support(direction),
                 HelicalForm::Nut(nut) => nut.support(direction),
                 HelicalForm::Blind(_) => unreachable!("blind tap uses stock bounds"),
             }
@@ -1273,6 +1292,7 @@ impl HelicalBody {
     fn cap_z(&self, index: usize) -> f64 {
         match &self.form {
             HelicalForm::ProfiledScrew(screw) => screw.visible_thread_interval_mm()[index],
+            HelicalForm::PhillipsScrew(body) => body.source().visible_thread_interval_mm()[index],
             HelicalForm::Blind(stock) if index == 0 => stock.thread_start_mm(),
             _ => index as f64 * self.geometry.spec().length_mm,
         }
@@ -1289,7 +1309,9 @@ impl HelicalBody {
                 || (index == 0
                     && !matches!(
                         &self.form,
-                        HelicalForm::Screw(_) | HelicalForm::ProfiledScrew(_)
+                        HelicalForm::Screw(_)
+                            | HelicalForm::ProfiledScrew(_)
+                            | HelicalForm::PhillipsScrew(_)
                     ))
             {
                 frame.v.map(|v| -v)
@@ -1374,7 +1396,7 @@ impl HelicalBody {
             ][cap]
         } else if matches!(
             &self.form,
-            HelicalForm::Screw(_) | HelicalForm::ProfiledScrew(_)
+            HelicalForm::Screw(_) | HelicalForm::ProfiledScrew(_) | HelicalForm::PhillipsScrew(_)
         ) {
             ["screw.thread/start", "screw.thread/end"][cap]
         } else if matches!(&self.form, HelicalForm::Blind(_))
@@ -1600,6 +1622,9 @@ impl HelicalBody {
         if let HelicalForm::Nut(nut) = &self.form {
             nut::extend_topology(self, nut, frame, &mut elements);
         }
+        if let HelicalForm::PhillipsScrew(body) = &self.form {
+            phillips::topology::extend(self, body.source(), frame, body.policy(), &mut elements)?;
+        }
         if let HelicalForm::External(stock) = &self.form {
             stock.extend_topology(self, frame, owner, revision, count, &mut elements)?;
         }
@@ -1713,6 +1738,7 @@ impl HelicalBody {
             }
             HelicalForm::Screw(_)
             | HelicalForm::ProfiledScrew(_)
+            | HelicalForm::PhillipsScrew(_)
             | HelicalForm::Nut(_)
             | HelicalForm::External(_)
             | HelicalForm::EndRelief(_) => {
@@ -1728,11 +1754,28 @@ impl HelicalBody {
                     _ => BTreeSet::new(),
                 };
                 topology.elements.retain(|element| {
+                    if matches!(&self.form, HelicalForm::PhillipsScrew(_))
+                        && phillips::topology::is_cavity_edge(element)
+                    {
+                        return false;
+                    }
                     element.key.kind == TopologyKind::Edge
                         && element.key.ordinal >= (3 * count) as u32
                         && element.origins.is_disjoint(&curved_floor_edges)
                 });
                 edges.extend(crate::rust_display::edges(None, &topology, deflection)?);
+                if let HelicalForm::PhillipsScrew(body) = &self.form {
+                    let used = edges.iter().map(|edge| edge.points_mm.len()).sum::<usize>();
+                    let mut remaining = MAX_DISPLAY_EDGE_POINTS.saturating_sub(used);
+                    edges.extend(phillips::display::edges(
+                        self,
+                        body.source(),
+                        frame,
+                        deflection,
+                        body.policy(),
+                        &mut remaining,
+                    )?);
+                }
                 if let HelicalForm::ProfiledScrew(screw) = &self.form {
                     let used = edges.iter().map(|edge| edge.points_mm.len()).sum::<usize>();
                     let mut remaining = MAX_DISPLAY_EDGE_POINTS.saturating_sub(used);
@@ -1779,6 +1822,7 @@ impl HelicalBody {
             HelicalForm::Screw(screw) => {
                 helical_thread_mesh::screw_volume_error_bound(screw, options)
             }
+            HelicalForm::PhillipsScrew(body) => body.volume_error_bound(options),
             HelicalForm::ProfiledScrew(screw) => {
                 helical_thread_mesh::profiled_screw_volume_error_bound(screw, options)
                     .unwrap_or(f64::INFINITY)
@@ -1791,6 +1835,9 @@ impl HelicalBody {
         frame: PlaneFrame,
         options: multicad_rust_kernel::display::Tessellation,
     ) -> Result<Mesh, GeometryError> {
+        if let HelicalForm::PhillipsScrew(body) = &self.form {
+            return body.mesh(frame, options);
+        }
         let mesh = match &self.form {
             HelicalForm::Shaft => helical_thread_mesh::tessellate(&self.geometry, options),
             HelicalForm::EndRelief(relief) => {
@@ -1810,6 +1857,9 @@ impl HelicalBody {
                 helical_thread_mesh::tessellate_profiled_screw(screw, options)
             }
             HelicalForm::Nut(nut) => helical_thread_mesh::tessellate_nut(nut, options),
+            HelicalForm::PhillipsScrew(_) => {
+                unreachable!("Phillips uses its source-certified placed mesh")
+            }
         };
         crate::rust_display::placed_mesh(mesh, frame, false)
     }

@@ -2,8 +2,12 @@
 
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
+mod classify;
+pub use classify::BoxClassification;
 mod prefix;
+mod properties;
 pub use prefix::AxialPrefix;
+pub use properties::{FaceProperties, FacePropertyError, FacePropertyOptions};
 
 const MAX_DIMENSION_MM: f64 = 1e7;
 

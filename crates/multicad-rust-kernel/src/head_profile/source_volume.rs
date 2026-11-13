@@ -62,7 +62,7 @@ pub(crate) fn precision_envelope(profile: &Profile) -> Option<PrecisionEnvelope>
 fn cube(x: I) -> I {
     x * x * x
 }
-fn angle(segment: Segment, center: [f64; 2]) -> I {
+pub(crate) fn angle(segment: Segment, center: [f64; 2]) -> I {
     let x = I::point(segment.start[0]) - I::point(center[0]);
     let z = I::point(segment.start[1]) - I::point(center[1]);
     let pi = I::new(PI.next_down(), PI.next_up());

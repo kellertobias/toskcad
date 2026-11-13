@@ -1,6 +1,9 @@
 //! Typed authored composition preceding native and physical-file admission.
 use super::*;
+mod classification;
 mod geometry;
+mod properties;
+pub use properties::ScrewFaceProperties;
 mod volume;
 use crate::{
     head_profile::Profile,

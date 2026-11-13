@@ -121,12 +121,41 @@ pub(in crate::geometry) fn qualified_source_mesh(
     options: Tessellation,
     mut build: impl FnMut(Tessellation) -> Result<Mesh, GeometryError>,
 ) -> Result<Mesh, GeometryError> {
-    source_mesh(frame, options, &mut build)
+    source_mesh(frame, options, &mut build, AngleBudget::Standard)
+}
+/// Same complete transfer proof with a smaller accepted literal normal error.
+/// This does not change caller quality or any source/chord/embedding condition.
+pub(in crate::geometry) fn qualified_source_mesh_with_small_normal_reserve(
+    frame: PlaneFrame,
+    options: Tessellation,
+    mut build: impl FnMut(Tessellation) -> Result<Mesh, GeometryError>,
+) -> Result<Mesh, GeometryError> {
+    source_mesh(frame, options, &mut build, AngleBudget::SmallNormalReserve)
+}
+#[derive(Clone, Copy)]
+enum AngleBudget {
+    Standard,
+    SmallNormalReserve,
+}
+impl AngleBudget {
+    fn source(self, angle: f64) -> f64 {
+        match self {
+            Self::Standard => angle * 0.75,
+            Self::SmallNormalReserve => angle * 0.99,
+        }
+    }
+    fn transfer(self, angle: f64) -> f64 {
+        match self {
+            Self::Standard => angle / 5.,
+            Self::SmallNormalReserve => angle / 200.,
+        }
+    }
 }
 fn source_mesh(
     frame: PlaneFrame,
     options: Tessellation,
     build: &mut dyn FnMut(Tessellation) -> Result<Mesh, GeometryError>,
+    angle_budget: AngleBudget,
 ) -> Result<Mesh, GeometryError> {
     if frame == PlaneFrame::default() {
         let mesh = build(options)?;
@@ -137,7 +166,7 @@ fn source_mesh(
     chart(axes)?;
     let local = Tessellation {
         deflection: options.deflection / 2.,
-        angle: options.angle * 0.75,
+        angle: angle_budget.source(options.angle),
         ..options
     };
     if local.angle < 0.01 {
@@ -156,8 +185,11 @@ fn source_mesh(
     }
     // The exact affine image has normal A^-T n. Its source/facet angle is
     // <= condition(A)*local.angle. Half the chord budget plus point rounding
-    // uses less than 0.751 of the request; 3/4 of the angle plus 1/5
-    // rounding reserve uses less than 0.951. Certify the additional emitted-point error
+    // uses less than 0.751 of the request. The standard angular split uses
+    // <0.951 of the request. The small-normal-error split uses
+    // 0.99*1.00001+1/200 <0.996; it requires the correspondingly stricter
+    // actual literal-facet transfer below. Neither policy loosens source quality.
+    // Certify the additional emitted-point error
     // triangle by triangle, relative to a lower bound on the exact local area.
     for ids in mesh.indices.as_chunks::<3>().0 {
         let [i, j, k] = ids.map(|i| i as usize);
@@ -174,9 +206,11 @@ fn source_mesh(
             product(4., product(e, e)),
         );
         let ratio = (perturbation / (0.5 * lower).next_down()).next_up();
-        // asin(ratio) <= 2 ratio for ratio <= 1/4. The reserved 1/5
-        // angle plus the conditioned 3/4-angle is strictly below the request.
-        if (!ratio.is_finite() || ratio > 0.25 || product(2., ratio) > options.angle / 5.)
+        // asin(ratio) <= 2 ratio for ratio <= 1/4. Each named policy's
+        // actual transfer reserve plus its conditioned source angle is <request.
+        if (!ratio.is_finite()
+            || ratio > 0.25
+            || product(2., ratio) > angle_budget.transfer(options.angle))
             && !normal_transfer(
                 axes,
                 a,
@@ -184,7 +218,7 @@ fn source_mesh(
                 b,
                 be,
                 [world[i].0, world[j].0, world[k].0],
-                options.angle / 5.,
+                angle_budget.transfer(options.angle),
             )
         {
             return Err(refused());
@@ -233,6 +267,66 @@ mod tests {
             [[0.; 3]; 3],
             0.01
         ));
+    }
+    #[test]
+    fn small_normal_reserve_preserves_actual_source_quality_and_refuses_literal_rounding() {
+        use multicad_rust_kernel::{Rational, display, prism::Prism};
+        let source = Prism::rectangular(
+            7,
+            [
+                Rational::new(1, 8).unwrap(),
+                Rational::new(1, 4).unwrap(),
+                Rational::new(1, 2).unwrap(),
+            ],
+        )
+        .unwrap();
+        let frame = PlaneFrame {
+            origin: [10., 20., 30.],
+            u: [0.8, 0.6, 0.],
+            v: [-0.36, 0.48, 0.8],
+        };
+        let options = Tessellation {
+            deflection: 0.1,
+            angle: 0.3,
+            triangle_limit: 1000,
+        };
+        let build = |quality| crate::rust_display::mesh(display::rust_prism(&source, quality));
+        let old = qualified_source_mesh(frame, options, build).unwrap();
+        let new = qualified_source_mesh_with_small_normal_reserve(frame, options, build).unwrap();
+        assert_eq!(old.vertices, new.vertices);
+        assert_eq!(old.indices, new.indices);
+        assert_eq!(old.face_indices, new.face_indices);
+        assert!(
+            qualified_source_mesh_with_small_normal_reserve(
+                frame,
+                Tessellation {
+                    angle: 0.01,
+                    ..options
+                },
+                build
+            )
+            .is_err()
+        );
+        let thin = Prism::rectangular(
+            7,
+            [
+                Rational::new(1, 1_000_000_000_000).unwrap(),
+                Rational::new(1, 8).unwrap(),
+                Rational::new(1, 4).unwrap(),
+            ],
+        )
+        .unwrap();
+        assert!(
+            qualified_source_mesh_with_small_normal_reserve(
+                PlaneFrame {
+                    origin: [1e6, -2e6, 3e6],
+                    ..frame
+                },
+                options,
+                |quality| crate::rust_display::mesh(display::rust_prism(&thin, quality))
+            )
+            .is_err()
+        );
     }
     #[test]
     fn actual_dyadic_source_transfer_refuses_tight_angles_point_rounding_and_collapsed_thin_facets()

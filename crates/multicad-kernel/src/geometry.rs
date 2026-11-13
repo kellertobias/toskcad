@@ -53,6 +53,7 @@ use cosmetic_fastener_body::CosmeticFastenerBody;
 use entry_chamfer_body::EntryChamferBody;
 pub use entry_chamfer_body::{EntryChamferBoundaryProof, EntryChamferData, EntryChamferEdge};
 use helical_body::HelicalBody;
+pub use helical_body::PhillipsMeshVolumePair;
 pub use helical_body::{
     BlindThreadCut, BlindThreadMating, BlindThreadSeat, ReceivingThreadIntervals,
 };
@@ -1687,6 +1688,12 @@ impl Solid {
         Ok(result)
     }
     pub fn volume_mm3(&self) -> Result<f64, GeometryError> {
+        if let Some((body, frame)) = self.helical_body()
+            && let Some(interval) = body.phillips_volume(frame)
+        {
+            let [lo, hi] = interval?;
+            return Ok(lo.midpoint(hi));
+        }
         if let Some((body, frame)) = self.internal_thread_treatment_body() {
             let interval = body.volume(frame)?;
             return Ok(interval.lower.midpoint(interval.upper));
@@ -1986,6 +1993,11 @@ impl Solid {
         crate::planar_contours::extract(self, face, frame, self.policy)
     }
     pub fn faces(&self) -> Result<Vec<Face>, GeometryError> {
+        if let Some((body, frame)) = self.helical_body()
+            && let Some(faces) = body.phillips_faces(frame, self.policy)
+        {
+            return faces;
+        }
         if let Some((body, frame)) = self.internal_thread_treatment_body() {
             return body.faces(frame, self.policy);
         }
@@ -2290,7 +2302,9 @@ impl Solid {
     /// an analytic scalar. Keep analytic children separately checked in mixed
     /// compounds; a source interval is not a mesh-volume equality receipt.
     fn has_certified_source_mesh(&self) -> bool {
-        self.has_retained_radial_source()
+        self.helical_body()
+            .is_some_and(|(body, _)| body.has_phillips_source())
+            || self.has_retained_radial_source()
             || self.internal_thread_treatment_body().is_some()
             || self
                 .rust_compound()
