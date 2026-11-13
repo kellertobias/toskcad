@@ -28,6 +28,7 @@ mod linear_body;
 mod nonplanar_loft_body;
 mod normal_relief_body;
 mod normal_sweep_body;
+mod oblique_bore_body;
 mod orthogonal_body;
 mod parallel_cylinder;
 mod planar_boolean_body;
@@ -68,6 +69,7 @@ mod spline_cap_relief_body;
 pub use normal_relief_body::NormalReliefMotif;
 use normal_sweep_body::NormalSweepBody;
 pub use normal_sweep_body::SweepOpening;
+use oblique_bore_body::ObliqueBoreBody;
 use orthogonal_body::OrthogonalBody;
 pub use orthogonal_body::slots::RoundedSlotTool;
 use planar_boolean_body::PlanarBooleanBody;
@@ -718,6 +720,7 @@ enum SolidBody {
     Worm(Rc<WormBody>, PlaneFrame),
     Sphere(Rc<SphereBody>, PlaneFrame),
     Torus(Rc<TorusBody>, PlaneFrame),
+    ObliqueBore(Rc<ObliqueBoreBody>, PlaneFrame),
     RoundedCylinder(Rc<RoundedCylinderBody>, PlaneFrame),
     AxialStack(Rc<AxialStackBody>, PlaneFrame),
     RustCompound(Rc<RustCompound>),
@@ -1194,6 +1197,7 @@ impl Solid {
             SolidBody::Worm(body, frame) => SolidBody::Worm(Rc::clone(body), *frame),
             SolidBody::Sphere(body, frame) => SolidBody::Sphere(Rc::clone(body), *frame),
             SolidBody::Torus(body, frame) => SolidBody::Torus(Rc::clone(body), *frame),
+            SolidBody::ObliqueBore(body, frame) => SolidBody::ObliqueBore(Rc::clone(body), *frame),
             SolidBody::RoundedCylinder(body, frame) => {
                 SolidBody::RoundedCylinder(Rc::clone(body), *frame)
             }
@@ -1372,6 +1376,9 @@ impl Solid {
                 {
                     return Ok(Some(result));
                 }
+            }
+            if let Some(result) = self.oblique_cylinder_cut(other, None) {
+                return result;
             }
             if let Some(result) = self.subtract_orthogonal_cylinder(other, policy) {
                 return result.map(Some);
@@ -1628,6 +1635,11 @@ impl Solid {
                     )?;
                     SolidBody::Torus(Rc::clone(body), frame)
                 }
+                SolidBody::ObliqueBore(body, frame) => {
+                    let frame = transform.frame(*frame);
+                    frame.checked_metric_extent(body.geometry.size_mm(), self.policy)?;
+                    SolidBody::ObliqueBore(Rc::clone(body), frame)
+                }
                 SolidBody::RoundedCylinder(body, frame) => {
                     let frame = transform.frame(*frame);
                     frame.checked_metric_bounds(body.bounds(PlaneFrame::default()), self.policy)?;
@@ -1705,6 +1717,9 @@ impl Solid {
             return Ok(body.cut.volume_mm3());
         }
         if let Some((body, _)) = self.torus_body() {
+            return Ok(body.geometry.volume_mm3());
+        }
+        if let Some((body, _)) = self.oblique_bore_body() {
             return Ok(body.geometry.volume_mm3());
         }
         if let Some((body, _)) = self.sphere_body() {
@@ -1831,6 +1846,9 @@ impl Solid {
             return body.bounds(frame);
         }
         if let Some((body, frame)) = self.torus_body() {
+            return Ok(body.bounds(frame));
+        }
+        if let Some((body, frame)) = self.oblique_bore_body() {
             return Ok(body.bounds(frame));
         }
         if let Some((body, frame)) = self.sphere_body() {
@@ -2009,6 +2027,9 @@ impl Solid {
         }
         if let Some((body, frame)) = self.torus_body() {
             return Ok(vec![body.face(frame)]);
+        }
+        if let Some((body, frame)) = self.oblique_bore_body() {
+            return Ok(body.faces(frame));
         }
         if let Some((body, frame)) = self.sphere_body() {
             return Ok(vec![body.face(frame)]);
@@ -2231,6 +2252,9 @@ impl Solid {
                 crate::rust_display::placed_mesh(body.geometry.mesh(rust_options), *frame, false)
             }
             SolidBody::Torus(body, frame) => {
+                crate::rust_display::placed_mesh(body.geometry.mesh(rust_options), *frame, false)
+            }
+            SolidBody::ObliqueBore(body, frame) => {
                 crate::rust_display::placed_mesh(body.geometry.mesh(rust_options), *frame, false)
             }
             SolidBody::AxialStack(body, frame) => body.mesh(*frame, rust_options),
@@ -2636,6 +2660,7 @@ impl Solid {
             SolidBody::Worm(body, _) => body.feature,
             SolidBody::Sphere(body, _) => body.feature,
             SolidBody::Torus(body, _) => body.feature,
+            SolidBody::ObliqueBore(body, _) => body.feature,
             SolidBody::RoundedCylinder(body, _) => body.feature,
             SolidBody::AxialStack(body, _) => body.feature,
             SolidBody::PlanarBoolean(body, _) => body.feature,
@@ -2692,7 +2717,9 @@ impl Solid {
                     self.policy.linear_tolerance_mm,
                 )
             }
-            SolidBody::CosmeticFastener(..) | SolidBody::InternalThreadTreatment(..) => false,
+            SolidBody::CosmeticFastener(..)
+            | SolidBody::InternalThreadTreatment(..)
+            | SolidBody::ObliqueBore(..) => false,
             SolidBody::WarpedUnion(body, _) => {
                 multicad_rust_kernel::step::supports_warped_union(&body.geometry)
             }
@@ -2903,9 +2930,9 @@ impl Solid {
                 frame.v,
                 self.policy.linear_tolerance_mm,
             ),
-            SolidBody::CosmeticFastener(..) | SolidBody::InternalThreadTreatment(..) => {
-                Err(step::StepError::Unsupported)
-            }
+            SolidBody::CosmeticFastener(..)
+            | SolidBody::InternalThreadTreatment(..)
+            | SolidBody::ObliqueBore(..) => Err(step::StepError::Unsupported),
             SolidBody::Orthogonal(body, frame) => body.append_step(writer, *frame),
             SolidBody::Occt(_) => unreachable!("native STEP dispatched above"),
         }
