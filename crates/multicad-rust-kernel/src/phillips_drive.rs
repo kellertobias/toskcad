@@ -200,9 +200,9 @@ impl Cutter {
     ) -> Result<Self, Error> {
         source::construct(spec, domain, cancelled)
     }
-    /// Integrates eligible shallow-V cutters after proving their finite caps,
+    /// Integrates eligible Phillips cutters after proving their finite caps,
     /// closure, and adjacent corner cutouts inactive/disjoint throughout the
-    /// cavity. Other authored domains and rounded H0 return `Unresolved`.
+    /// cavity. Other authored domains return `Unresolved`.
     pub fn volume_bounds_mm3(
         &self,
         width_mm3: f64,

@@ -1,4 +1,4 @@
-//! Authored shallow-V section volume with finite-domain eligibility proofs.
+//! Authored Phillips section volume with finite-domain eligibility proofs.
 use super::*;
 use crate::tapered_thread::interval::J;
 use std::collections::BinaryHeap;
@@ -23,19 +23,27 @@ fn root(v: J) -> Option<J> {
 }
 struct Sections<'a> {
     c: &'a Cutter,
-    b0: I,
+    inner: SectionInner,
     b1: I,
     offset: I,
+}
+#[derive(Clone, Copy)]
+enum SectionInner {
+    ShallowV { b0: I },
+    Rounded { radius: f64 },
 }
 impl<'a> Sections<'a> {
     fn new(c: &'a Cutter) -> Result<Self, Error> {
         let k = &c.corners[0];
-        let SourceInner::ShallowV { sine, cosine } = k.inner else {
-            return Err(Error::Unresolved);
+        // Both shallow-V slopes must be below one. The rounded front slope
+        // increases from zero to b1 at its exact tangent join. Therefore
+        // front(t)-t decreases, including a nonconvex shallow-V junction.
+        let inner = match k.inner {
+            SourceInner::ShallowV { sine, cosine } => SectionInner::ShallowV {
+                b0: cosine / sine / k.cos_beta,
+            },
+            SourceInner::Rounded { radius_mm } => SectionInner::Rounded { radius: radius_mm },
         };
-        // Section fronts have slopes b0,b1. With both below one, front(t)-t
-        // decreases continuously, including a nonconvex shallow-V junction.
-        let b0 = cosine / sine / k.cos_beta;
         let b1 = k.cos_theta / k.sin_theta / k.cos_beta;
         let offset = (k.join_s - k.join_y * k.cos_theta / k.sin_theta) / k.cos_beta;
         let e = &c.envelope;
@@ -53,15 +61,24 @@ impl<'a> Sections<'a> {
         // minimum rb together, without losing the correlation f(t)-t.
         let t = e.entry / I::point(2.).sqrt();
         let f = if t.hi < k.join_y.lo {
-            t * cosine / sine
+            match inner {
+                SectionInner::ShallowV { b0 } => t * b0 * k.cos_beta,
+                SectionInner::Rounded { radius } => {
+                    t.square()
+                        / (I::point(radius) + (I::point(radius).square() - t.square()).sqrt())
+                }
+            }
         } else if t.lo > k.join_y.hi {
             k.join_s + (t - k.join_y) * k.cos_theta / k.sin_theta
         } else {
             return Err(Error::Unresolved);
         };
-        if b0.lo <= 0.
+        let inner_slope_invalid = match inner {
+            SectionInner::ShallowV { b0 } => b0.lo <= 0. || b0.hi >= 1.,
+            SectionInner::Rounded { .. } => false,
+        };
+        if inner_slope_invalid
             || b1.lo <= 0.
-            || b0.hi >= 1.
             || b1.hi >= 1.
             || rb.lo <= 0.
             || (rb + offset).lo <= 0.
@@ -72,7 +89,12 @@ impl<'a> Sections<'a> {
         {
             return Err(Error::Unresolved);
         }
-        Ok(Self { c, b0, b1, offset })
+        Ok(Self {
+            c,
+            inner,
+            b1,
+            offset,
+        })
     }
     fn area(&self, d: J, branch: usize) -> Option<J> {
         let e = &self.c.envelope;
@@ -90,11 +112,44 @@ impl<'a> Sections<'a> {
             return None;
         }
         let rb = j(k.b_half) + (j(k.b_depth) - d) * j(k.sin_beta / k.cos_beta);
-        let a = part(r, rb, j(self.b0), I::point(0.), Some(k.join_y))?;
+        let a = match self.inner {
+            SectionInner::ShallowV { b0 } => part(r, rb, j(b0), I::point(0.), Some(k.join_y))?,
+            SectionInner::Rounded { radius } => rounded_part(r, rb, radius, k)?,
+        };
         let b = part(r, rb + j(self.offset), j(self.b1), k.join_y, None)?;
         let value = j(I::new(PI.next_down(), PI.next_up())) * sq(r) - n(8.) * (a + b);
         value.checked().ok()
     }
+}
+// Actual horizontal section of the inclined H0 cylinder: the ellipse front
+// x=rb+(R0-sqrt(R0²-y²))/cos(beta). It is not a circular XY substitute.
+fn rounded_part(r: J, rb: J, radius: f64, k: &Corner) -> Option<J> {
+    if r.v.hi <= rb.v.lo {
+        return Some(n(0.));
+    }
+    if r.v.lo <= rb.v.hi {
+        return None;
+    }
+    let circle_sq = sq(r);
+    let join_x = rb + j(k.join_s / k.cos_beta);
+    let join_sq = sq(join_x) + j(k.join_y.square());
+    let hi = if circle_sq.v.lo >= join_sq.v.hi {
+        j(k.join_y)
+    } else if circle_sq.v.hi < join_sq.v.lo {
+        // Solve circle/ellipse incidence on the proved left ellipse branch.
+        // Positive coupled forms avoid cancellation of g*A²-R0². Original
+        // authored beta is retained, with directed trig bounds in the jets.
+        let cos = j(k.cos_beta);
+        let g = j(k.cos_beta.square());
+        let b = g * rb + cos * n(radius);
+        let c = g * sq(rb) + n(2.) * cos * rb * n(radius) + circle_sq;
+        let x = c / (root(sq(b) + j(k.sin_beta.square()) * c)? + b);
+        root(circle_sq - sq(x))?
+    } else {
+        return None;
+    };
+    let a = rb + n(radius) / j(k.cos_beta);
+    Some(primitive(r, hi)? - a * hi + primitive(n(radius), hi)? / j(k.cos_beta))
 }
 fn primitive(r: J, y: J) -> Option<J> {
     if y.v.lo == 0. && y.v.hi == 0. {

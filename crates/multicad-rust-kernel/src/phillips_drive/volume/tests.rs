@@ -140,11 +140,6 @@ fn prototype_refuses_unqualified_finite_domains_and_honors_work_cancel() {
             Err(Error::Unresolved)
         ));
     }
-    let (h0, d0) = super::super::tests::fixture(0);
-    assert!(matches!(
-        compute(&Cutter::new(h0, d0).unwrap(), 1e-8, 100000, &|| false),
-        Err(Error::Unresolved)
-    ));
     let overlap = Spec {
         outer_corner_angle_deg: 170.,
         ..s
@@ -263,4 +258,142 @@ fn arithmetic_overflow_preserves_the_whole_area_enclosure_and_nonconvex_sections
     let receipt = c.volume_bounds_mm3(2e-8, 100000).unwrap();
     let expected = oracle(s);
     assert!(receipt.volume_mm3[0] <= expected && expected <= receipt.volume_mm3[1]);
+}
+
+// Independent H0 section oracle: bracket the actual ellipse/circle crossing
+// directly, without the production quadratic reconstruction or interval jets.
+fn rounded_oracle_section(s: Spec, depth: f64) -> f64 {
+    let Inner::Rounded { radius_mm: radius } = s.inner else {
+        unreachable!()
+    };
+    let beta = s.tilt_angle_deg.to_radians();
+    let theta = (s.outer_corner_angle_deg / 2.).to_radians();
+    let a = s.outer_flank_angle_deg.to_radians();
+    let c = s.floor_angle_deg.to_radians();
+    let flank = (s.mouth_diameter_mm - s.g_diameter_mm) / (2. * a.tan());
+    let tip = flank + s.g_diameter_mm / 2. * c.tan();
+    let join = s.mouth_radius_mm * (1. - a.sin());
+    let entry = s.mouth_diameter_mm / 2. + s.mouth_radius_mm * (1. - a.sin()) / a.cos();
+    let rr = if depth <= join {
+        entry
+            - (s.mouth_radius_mm.powi(2) - (depth - s.mouth_radius_mm).powi(2))
+                .max(0.)
+                .sqrt()
+    } else if depth <= flank {
+        s.mouth_diameter_mm / 2. - depth * a.tan()
+    } else {
+        (tip - depth).max(0.) / c.tan()
+    };
+    if rr == 0. {
+        return 0.;
+    }
+    let tb = flank + (s.g_diameter_mm - s.b_width_mm) / 2. * c.tan();
+    let rb = s.b_width_mm / 2. + (tb - depth) * beta.tan();
+    if rr <= rb {
+        return PI * rr * rr;
+    }
+    let js = radius * (1. - theta.sin());
+    let jy = radius * theta.cos();
+    let slope = 1. / (theta.tan() * beta.cos());
+    let front = |y: f64| {
+        rb + if y <= jy {
+            (radius - (radius * radius - y * y).max(0.).sqrt()) / beta.cos()
+        } else {
+            (js + (y - jy) / theta.tan()) / beta.cos()
+        }
+    };
+    let (mut lo, mut hi) = (0., rr);
+    for _ in 0..80 {
+        let mid = (lo + hi) / 2.;
+        if (rr * rr - mid * mid).max(0.).sqrt() > front(mid) {
+            lo = mid
+        } else {
+            hi = mid
+        }
+    }
+    let crossing = (lo + hi) / 2.;
+    let upper = crossing.min(jy);
+    let primitive = |rad: f64, y: f64| {
+        0.5 * (y * (rad * rad - y * y).max(0.).sqrt() + rad * rad * (y / rad).clamp(-1., 1.).asin())
+    };
+    let inner = primitive(rr, upper) - (rb + radius / beta.cos()) * upper
+        + primitive(radius, upper) / beta.cos();
+    let outer = if crossing > jy {
+        primitive(rr, crossing)
+            - primitive(rr, jy)
+            - (rb + (js - jy / theta.tan()) / beta.cos()) * (crossing - jy)
+            - slope * (crossing * crossing - jy * jy) / 2.
+    } else {
+        0.
+    };
+    PI * rr * rr - 8. * (inner + outer)
+}
+fn rounded_oracle_volume(s: Spec) -> f64 {
+    let a = s.outer_flank_angle_deg.to_radians();
+    let floor = s.floor_angle_deg.to_radians();
+    let flank = (s.mouth_diameter_mm - s.g_diameter_mm) / (2. * a.tan());
+    let tip = flank + s.g_diameter_mm / 2. * floor.tan();
+    [0., s.mouth_radius_mm * (1. - a.sin()), flank, tip]
+        .windows(2)
+        .map(|w| integral(&|d| rounded_oracle_section(s, d), w[0], w[1], 1e-12, 34))
+        .sum()
+}
+#[test]
+fn actual_h0_ellipse_sections_and_volume_meet_policy_budget() {
+    let (base, d) = super::super::tests::fixture(0);
+    for tilt in [7., 0.000001] {
+        let s = Spec {
+            tilt_angle_deg: tilt,
+            ..base
+        };
+        let c = Cutter::new(s, d).unwrap();
+        let sections = Sections::new(&c).unwrap();
+        for fraction in [0.00001, 0.03, 0.3, 0.6, 0.85, 0.95] {
+            let z = c.envelope.tip.midpoint() * fraction;
+            let branch = if z < c.envelope.join.lo {
+                0
+            } else if z < c.envelope.flank.lo {
+                1
+            } else {
+                2
+            };
+            let actual = sections.area(J::d(I::point(z)), branch).unwrap().v;
+            let expected = rounded_oracle_section(s, z);
+            assert!(
+                actual.lo <= expected && expected <= actual.hi,
+                "section {z} {actual:?} vs {expected}"
+            );
+        }
+        let extent = c.envelope.entry.hi.max(c.envelope.tip.hi);
+        let width = 1e-7 / 32. * extent * extent;
+        let now = std::time::Instant::now();
+        let receipt = c.volume_bounds_mm3(width, 100000).unwrap();
+        let expected = rounded_oracle_volume(s);
+        eprintln!(
+            "H0 tilt={tilt} width={width:e} {receipt:?} oracle={expected:.16e} elapsed={:?}",
+            now.elapsed()
+        );
+        assert!(receipt.volume_mm3[0] <= expected && expected <= receipt.volume_mm3[1]);
+    }
+    let broad = Spec {
+        mouth_diameter_mm: 3.,
+        mouth_radius_mm: 0.001,
+        b_width_mm: 2.9,
+        g_diameter_mm: 2.95,
+        inner: Inner::Rounded { radius_mm: 1.9 },
+        ..base
+    };
+    assert!(Sections::new(&Cutter::new(broad, d).unwrap()).is_ok());
+    let capped = Cutter::new(
+        base,
+        Domain {
+            corner_start_depth_mm: 0.,
+            ..d
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        capped.volume_bounds_mm3(1e-8, 100000),
+        Err(Error::Unresolved)
+    );
 }
