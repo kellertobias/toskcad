@@ -10,10 +10,20 @@ const MAX_DEPTH: usize = 24;
 const MAX_TOKEN_BYTES: usize = 64 * 1024;
 const MAX_COMPONENTS: usize = 64;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub(super) struct Entity<'a> {
+    /// Exact parsed source; absent only for synthetic internal/test records.
+    pub(super) source: Option<&'a str>,
     pub(super) name: &'a str,
     pub(super) args: Vec<Value<'a>>,
+}
+
+// AST equality retains its numeric semantics; exact source authority is queried
+// explicitly and must never be inferred from this comparison.
+impl PartialEq for Entity<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.args == other.args
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -40,6 +50,40 @@ pub(super) fn parse(input: &str) -> Result<BTreeMap<u32, Vec<Entity<'_>>>, ReadE
         values: 0,
     }
     .file()
+}
+
+/// Borrow exact numeric spellings from a previously parsed entity. Names,
+/// references, comments and labels are deliberately excluded.
+pub(super) fn numeric_spellings<'a>(entity: &Entity<'a>) -> Option<Vec<&'a str>> {
+    let mut p = Parser {
+        input: entity.source?,
+        offset: 0,
+        values: 0,
+    };
+    let mut tokens = Vec::new();
+    while let Some(byte) = p.peek().ok()? {
+        match byte {
+            b'\'' => {
+                p.offset += 1;
+                p.quoted().ok()?;
+            }
+            b'#' => {
+                p.offset += 1;
+                p.id().ok()?;
+            }
+            b'+' | b'-' | b'0'..=b'9' => {
+                tokens.push(
+                    p.token(|b| matches!(b, b'+' | b'-' | b'.' | b'E' | b'0'..=b'9'))
+                        .ok()?,
+                );
+            }
+            b'A'..=b'Z' | b'_' => {
+                p.name().ok()?;
+            }
+            _ => p.offset += 1,
+        }
+    }
+    Some(tokens)
 }
 
 struct Parser<'a> {
@@ -230,9 +274,14 @@ impl<'a> Parser<'a> {
 
     fn entity(&mut self, depth: usize) -> Result<Entity<'a>, ReadError> {
         self.charge()?;
+        self.skip_trivia()?;
+        let start = self.offset;
+        let name = self.name()?;
+        let args = self.arguments(depth)?;
         Ok(Entity {
-            name: self.name()?,
-            args: self.arguments(depth)?,
+            source: Some(&self.input[start..self.offset]),
+            name,
+            args,
         })
     }
 

@@ -111,6 +111,7 @@ fn malformed_finite_face_graph_and_support_controls_refuse_without_publishing() 
                 map.insert(
                     id,
                     vec![Entity {
+                        source: None,
                         name: "DIRECTION",
                         args: vec![
                             Value::String(""),
@@ -130,6 +131,7 @@ fn malformed_finite_face_graph_and_support_controls_refuse_without_publishing() 
                     map.insert(
                         id,
                         vec![Entity {
+                            source: None,
                             name: "CARTESIAN_POINT",
                             args: vec![
                                 Value::String(""),
@@ -175,6 +177,7 @@ fn malformed_finite_face_graph_and_support_controls_refuse_without_publishing() 
                 map.insert(
                     id,
                     vec![Entity {
+                        source: None,
                         name: "CARTESIAN_POINT",
                         args: vec![
                             Value::String(""),

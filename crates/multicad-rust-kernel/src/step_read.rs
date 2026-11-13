@@ -486,7 +486,7 @@ impl<'a, 'input> Shell<'a, 'input> {
             return Err(ReadError::Invalid);
         };
         let linked = self.entities.values().any(|components| {
-            matches!(components.as_slice(), [Entity { name: "SHAPE_DEFINITION_REPRESENTATION", args }]
+            matches!(components.as_slice(), [Entity { name: "SHAPE_DEFINITION_REPRESENTATION", args, .. }]
                 if matches!(args.as_slice(), [Value::Reference(definition), Value::Reference(rep)]
                     if *rep == representation_id && self.args(*definition, "PRODUCT_DEFINITION_SHAPE").is_ok()))
         });

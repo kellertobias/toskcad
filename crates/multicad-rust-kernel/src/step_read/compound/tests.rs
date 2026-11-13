@@ -250,6 +250,7 @@ fn complex_geometry_may_not_hide_topology_in_the_ownership_walk() {
     let face = initial.member_faces(solid).unwrap()[0];
     let support = reference(&initial.args(face, "ADVANCED_FACE").unwrap()[2]).unwrap();
     entities.get_mut(&support).unwrap().push(Entity {
+        source: None,
         name: "EDGE_CURVE",
         args: vec![],
     });

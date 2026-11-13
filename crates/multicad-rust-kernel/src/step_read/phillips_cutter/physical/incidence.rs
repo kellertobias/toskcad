@@ -132,11 +132,16 @@ pub(super) fn read(
             .collect();
         require(connected(&adjacency))?;
     }
+    let exact_support_keys = faces
+        .iter()
+        .map(|f| provenance::read(shell, f.surface_entity, work))
+        .collect::<Result<_>>()?;
     Ok(Boundary {
         mouth,
         vertices,
         edges,
         faces,
+        exact_support_keys,
     })
 }
 #[cfg(test)]

@@ -25,6 +25,7 @@ fn multiline_entities_and_complex_components_preserve_borrowed_spelling() {
     assert_eq!(
         records[&1],
         [Entity {
+            source: None,
             name: "EXAMPLE",
             args: vec![
                 Value::String("can''t? It''s naïve /* literal */"),
@@ -37,6 +38,7 @@ fn multiline_entities_and_complex_components_preserve_borrowed_spelling() {
                 Value::Omitted,
                 Value::Derived,
                 Value::Typed(Entity {
+                    source: None,
                     name: "LENGTH_MEASURE",
                     args: vec![Value::Number(2.)],
                 }),
@@ -47,14 +49,17 @@ fn multiline_entities_and_complex_components_preserve_borrowed_spelling() {
         records[&2],
         [
             Entity {
+                source: None,
                 name: "LENGTH_UNIT",
                 args: vec![]
             },
             Entity {
+                source: None,
                 name: "NAMED_UNIT",
                 args: vec![Value::Derived]
             },
             Entity {
+                source: None,
                 name: "SI_UNIT",
                 args: vec![Value::Enum("MILLI"), Value::Enum("METRE")]
             },

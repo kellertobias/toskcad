@@ -751,6 +751,7 @@ mod rejection_tests {
             Value::Omitted,
             Value::Derived,
             Value::Typed(Entity {
+                source: None,
                 name: "UNPROVED",
                 args: vec![Value::Number(0.)],
             }),

@@ -190,6 +190,7 @@ fn rejects_missing_and_duplicate_topology_or_invalid_cap_geometry() {
             f.records.insert(
                 point,
                 vec![Entity {
+                    source: None,
                     name: "CARTESIAN_POINT",
                     args: vec![
                         Value::String(""),

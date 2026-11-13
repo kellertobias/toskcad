@@ -17,6 +17,8 @@ pub use branches::{
 mod incidence;
 pub use endpoints::{EndpointCouplingBounds, EndpointCouplingOptions};
 mod literal;
+mod provenance;
+pub use provenance::ExactSupportKey;
 mod supports;
 pub use supports::{
     CubicSupportBounds, CubicSupportOptions, EdgeSupportBound, ImplicitSupportEnclosure,
@@ -85,6 +87,7 @@ pub struct Boundary {
     vertices: Vec<Vertex>,
     edges: Vec<Edge>,
     faces: Vec<Face>,
+    exact_support_keys: Vec<Option<ExactSupportKey>>,
 }
 impl Boundary {
     pub fn mouth(&self) -> &Mouth {
