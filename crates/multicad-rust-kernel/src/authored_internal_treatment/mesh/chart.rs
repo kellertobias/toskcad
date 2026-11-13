@@ -38,7 +38,13 @@ pub(super) fn shell_attempt(
     rows: u32,
     w: &mut Work<'_>,
 ) -> Result<Attempt<Shell>, Error> {
-    build(body, options, (subdivisions, rows, false), None, w)
+    build(
+        ThreadChart::treated(body),
+        options,
+        (subdivisions, rows, false),
+        None,
+        w,
+    )
 }
 pub(super) fn grid_attempt(
     body: &Cavity,
@@ -47,7 +53,7 @@ pub(super) fn grid_attempt(
     w: &mut Work<'_>,
 ) -> Result<Attempt<Shell>, Error> {
     build(
-        body,
+        ThreadChart::treated(body),
         options,
         (grid.subdivisions, grid.rows(), grid.shifted),
         None,
@@ -98,6 +104,14 @@ fn traced(
     grid: (usize, u32, bool),
     w: &mut Work<'_>,
 ) -> Result<Attempt<(Shell, trace::Trace)>, Error> {
+    traced_chart(ThreadChart::treated(body), options, grid, w)
+}
+pub(super) fn traced_chart(
+    body: ThreadChart<'_>,
+    options: Tessellation,
+    grid: (usize, u32, bool),
+    w: &mut Work<'_>,
+) -> Result<Attempt<(Shell, trace::Trace)>, Error> {
     let mut trace = trace::Trace::at_origin(
         options.triangle_limit.min(131_072),
         if grid.2 { sampling::TURN_OFFSET } else { 0. },
@@ -110,7 +124,7 @@ fn traced(
     })
 }
 fn build(
-    body: &Cavity,
+    body: ThreadChart<'_>,
     options: Tessellation,
     grid: (usize, u32, bool),
     mut trace: Option<&mut trace::Trace>,
@@ -125,7 +139,7 @@ fn build(
     {
         return Err(Error::Limit);
     }
-    let f = body.tail.map_or(body.full_length_mm(), |tail| tail.station);
+    let f = body.top;
     // Immutable Thread construction proves L/p + 2*starts <=128. This
     // bounds the physical phase span. The shifted sampling chart adds one
     // negative period below; all cells and allocations remain work charged.
@@ -162,7 +176,7 @@ fn build(
     let first = -i64::from(body.thread.spec().starts) - i64::from(shifted);
     for period in first..=periods as i64 {
         for band in 0..5 {
-            let patch = Patch::with_offset(body, period, band, subdivisions, shifted, w)?;
+            let patch = Patch::from_chart(body, period, band, subdivisions, shifted, w)?;
             for index in 0..subdivisions {
                 for row in 0..rows {
                     for kind in [Kind::Cone, Kind::Wall] {
@@ -173,7 +187,7 @@ fn build(
                         if polygon.points.len() < 3 {
                             continue;
                         }
-                        let field = patch.field(body, &polygon, w)?;
+                        let field = patch.field(body.thread, &polygon, w)?;
                         let mut ids = Vec::with_capacity(8);
                         let mut errors = Vec::with_capacity(8);
                         for p in &polygon.points {
@@ -288,7 +302,7 @@ fn build(
                                 &mut mesh,
                                 &ids,
                                 proof,
-                                face(body, node, kind),
+                                face(body.thread, node, kind),
                                 options,
                             )?;
                             chord = chord.max(proof.chord);

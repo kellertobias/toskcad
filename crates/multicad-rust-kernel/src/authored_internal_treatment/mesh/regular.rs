@@ -47,6 +47,23 @@ impl Patch {
         shifted: bool,
         w: &mut Work<'_>,
     ) -> Result<Self, Error> {
+        Self::from_chart(
+            ThreadChart::treated(body),
+            period,
+            band,
+            subdivisions,
+            shifted,
+            w,
+        )
+    }
+    pub fn from_chart(
+        body: ThreadChart<'_>,
+        period: i64,
+        band: usize,
+        subdivisions: usize,
+        shifted: bool,
+        w: &mut Work<'_>,
+    ) -> Result<Self, Error> {
         w.step()?;
         let b = body.thread.bands()[band];
         let pitch = Q::float(body.thread.spec().pitch_mm, w)?;
@@ -70,7 +87,7 @@ impl Patch {
                 Ok((radius, k))
             })
             .transpose()?;
-        let top = Q::float(body.tail.map_or(body.full_length_mm(), |t| t.station), w)?;
+        let top = Q::float(body.top, w)?;
         Ok(Self {
             band,
             period,
@@ -162,7 +179,7 @@ impl Patch {
     }
     pub fn field(
         &self,
-        body: &Cavity,
+        thread: &AuthoredThread,
         polygon: &Polygon,
         w: &mut Work<'_>,
     ) -> Result<source::Field, Error> {
@@ -188,11 +205,7 @@ impl Patch {
                 let r = q
                     .scale(m)
                     .add(Jet::constant(self.intercept.enclosure(w)?.1));
-                (
-                    r,
-                    -m,
-                    (I::point(1.) / body.thread.angular_gain()) * m / r.value,
-                )
+                (r, -m, (I::point(1.) / thread.angular_gain()) * m / r.value)
             }
             Kind::Cone => {
                 let (a, k) = self.entry.as_ref().ok_or(Error::Invalid)?;
@@ -209,11 +222,7 @@ impl Patch {
                 std::f64::consts::PI.next_down(),
                 std::f64::consts::PI.next_up(),
             );
-        let angle = v.scale(if body.thread.spec().left_hand {
-            -tau
-        } else {
-            tau
-        });
+        let angle = v.scale(if thread.spec().left_hand { -tau } else { tau });
         Ok(source::Field {
             point: [r.mul(angle.cos()), r.mul(angle.sin()), z],
             normal: source::Normal::Radial {

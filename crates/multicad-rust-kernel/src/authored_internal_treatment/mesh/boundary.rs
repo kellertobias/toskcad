@@ -441,7 +441,7 @@ impl Graph {
                     }
                     let index = graph.cells.len();
                     let face = face(
-                        &source,
+                        &source.thread,
                         Node {
                             band,
                             start: period.rem_euclid(i64::from(starts)) as u32,

@@ -13,8 +13,11 @@ mod owners;
 mod regular;
 mod source;
 mod storage;
+mod thread_chart;
 mod trace;
 use source::Kind;
+use thread_chart::ThreadChart;
+pub use thread_chart::{ShellEnd, ThreadRimEdge, ThreadShell};
 #[derive(Clone, Debug)]
 pub struct Candidate {
     pub mesh: DisplayMesh,
@@ -88,21 +91,21 @@ pub fn tessellate_candidate(
     }
 }
 
-fn wall_face(body: &Cavity, node: Node) -> u32 {
-    let n = body.thread.spec().starts;
+fn wall_face(thread: &AuthoredThread, node: Node) -> u32 {
+    let n = thread.spec().starts;
     let shift = [0, 0, 0, 1, 1][node.band];
     let group = (node.start + shift) % n;
-    let group = if body.thread.spec().left_hand {
+    let group = if thread.spec().left_hand {
         group
     } else {
         (n - group) % n
     };
     2 + 4 * group + [1, 2, 3, 0, 1][node.band]
 }
-fn face(body: &Cavity, node: Node, kind: Kind) -> u32 {
-    let base = 2 + 4 * body.thread.spec().starts;
+fn face(thread: &AuthoredThread, node: Node, kind: Kind) -> u32 {
+    let base = 2 + 4 * thread.spec().starts;
     match kind {
-        Kind::Wall => wall_face(body, node),
+        Kind::Wall => wall_face(thread, node),
         Kind::Cone => base,
     }
 }

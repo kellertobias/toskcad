@@ -11,7 +11,7 @@ pub use properties::{FaceKey, FaceProperties, FacePropertyOptions, ThreadBandRol
 mod tests;
 mod volume;
 pub use material::Material;
-pub use mesh::{Candidate, tessellate_candidate};
+pub use mesh::{Candidate, ShellEnd, ThreadRimEdge, ThreadShell, tessellate_candidate};
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Entry {
     radius: f64,

@@ -9,6 +9,7 @@ use crate::tapered_thread::interval::I;
 #[cfg(test)]
 mod tests;
 mod transfer;
+pub use crate::authored_internal_treatment::{ShellEnd, ThreadRimEdge, ThreadShell};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
     Invalid,
