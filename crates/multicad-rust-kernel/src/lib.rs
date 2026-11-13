@@ -76,6 +76,7 @@ pub mod torus;
 pub mod trim_curve;
 pub mod trimmed_sweep;
 pub mod warped_union;
+pub mod wood_thread_contact;
 pub mod worm_gear;
 
 pub use multicad_precision::{Error, GridCoordinate, Quantum, Rational, parse_length_mm};
