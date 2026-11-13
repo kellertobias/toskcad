@@ -14,6 +14,10 @@ mod loops;
 mod material;
 mod polyline;
 mod qualify;
+mod source;
+use source::Source;
+#[cfg(test)]
+mod bare_tests;
 #[cfg(test)]
 mod tests;
 const BYTES: usize = 64 * 1024 * 1024;
@@ -110,7 +114,7 @@ pub struct BoundaryCell {
     coedges: [BoundaryCoedge; 6],
 }
 struct Graph {
-    source: Cavity,
+    source: Source,
     material: Option<Material>,
     vertices: Vec<BoundaryPoint>,
     curves: Vec<BoundaryCurve>,
@@ -161,7 +165,15 @@ impl Graph {
         w.step()?;
         Ok(result)
     }
+    #[cfg(test)]
     fn new(source: Cavity, limits: BoundaryOptions, w: &mut Work<'_>) -> Result<Self, Error> {
+        Self::new_source(Source::treated(source), limits, w)
+    }
+    fn new_source(
+        source: Source,
+        limits: BoundaryOptions,
+        w: &mut Work<'_>,
+    ) -> Result<Self, Error> {
         w.step()?;
         // Both entry points validate immutable BoundaryOptions before work or
         // allocation; no second, unreachable options gate is needed here.
@@ -409,7 +421,15 @@ impl Graph {
         };
         Self::raw_in(source, limits, &mut work)
     }
+    #[cfg(test)]
     fn raw_in(source: Cavity, limits: BoundaryOptions, work: &mut Work<'_>) -> Result<Self, Error> {
+        Self::raw_source(Source::treated(source), limits, work)
+    }
+    fn raw_source(
+        source: Source,
+        limits: BoundaryOptions,
+        work: &mut Work<'_>,
+    ) -> Result<Self, Error> {
         work.step()?;
         if source
             .entry
@@ -427,10 +447,10 @@ impl Graph {
         if count * 5 * (1 + usize::from(source.entry.is_some())) > limits.cells {
             return Err(Error::Limit);
         }
-        let mut graph = Self::new(source, limits, work)?;
+        let mut graph = Self::new_source(source, limits, work)?;
         for period in -i64::from(starts)..=periods.ceil() as i64 {
             for band in 0..5 {
-                let patch = Patch::new(&source, period, band, 1, work)?;
+                let patch = Patch::from_chart(source.chart(), period, band, 1, false, work)?;
                 for kind in [Kind::Cone, Kind::Wall] {
                     if matches!(kind, Kind::Cone) && source.entry.is_none() {
                         continue;
@@ -492,7 +512,7 @@ impl Graph {
     }
 }
 fn cell_source(
-    body: &Cavity,
+    body: &Source,
     patch: &Patch,
     kind: Kind,
     w: &mut Work<'_>,
@@ -538,5 +558,5 @@ fn coordinates(patch: &Patch, kind: Kind, p: &Point, w: &mut Work<'_>) -> Result
     Ok([r, z, p.v.clone()])
 }
 
-pub use api::{Boundary, BoundaryCoedge};
+pub use api::{Boundary, BoundaryCoedge, ThreadBoundary};
 pub use polyline::BoundaryPolyline;

@@ -1,7 +1,8 @@
 //! Immutable finite source graph, with construction caches discarded on success.
 use super::*;
 use crate::authored_flat_thread::PointSample;
-pub struct Boundary {
+pub struct Boundary<S = Cavity> {
+    owner: S,
     pub(super) graph: Graph,
     work_used: usize,
     vertices: usize,
@@ -33,7 +34,7 @@ impl Cavity {
         options: BoundaryOptions,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Boundary, Error> {
-        build(*self, None, options, interrupt)
+        build(*self, Source::treated(*self), None, options, interrupt)
     }
 }
 impl Material {
@@ -43,15 +44,22 @@ impl Material {
         options: BoundaryOptions,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Boundary, Error> {
-        build(*self.cavity(), Some(*self), options, interrupt)
+        build(
+            *self.cavity(),
+            Source::treated(*self.cavity()),
+            Some(*self),
+            options,
+            interrupt,
+        )
     }
 }
-fn build(
-    source: Cavity,
+fn build<S>(
+    owner: S,
+    source: Source,
     material: Option<Material>,
     options: BoundaryOptions,
     interrupt: Option<&dyn Fn() -> bool>,
-) -> Result<Boundary, Error> {
+) -> Result<Boundary<S>, Error> {
     if interrupt.is_some_and(|f| f()) {
         return Err(Error::Cancelled);
     }
@@ -61,7 +69,7 @@ fn build(
         used: 0,
         interrupt,
     };
-    let mut graph = Graph::raw_in(source, options, &mut work)?.closed(&mut work)?;
+    let mut graph = Graph::raw_source(source, options, &mut work)?.closed(&mut work)?;
     if let Some(material) = material {
         graph = graph.material(material, &mut work)?;
     }
@@ -84,7 +92,7 @@ fn build(
         + graph.curves.len() * size_of::<BoundaryCurve>()
         + graph.cells.len() * size_of::<BoundaryCell>();
     graph.check(requested)?;
-    let header = size_of::<Boundary>() - size_of::<Graph>();
+    let header = size_of::<Boundary<S>>() - size_of::<Graph>();
     let points = graph.buffer::<BoundaryPoint>(
         graph.vertices.len(),
         header
@@ -120,22 +128,42 @@ fn build(
     graph.temporary = 0;
     work.step()?;
     Ok(Boundary {
+        owner,
         graph,
         work_used: work.used,
         vertices,
         edges,
     })
 }
-impl Boundary {
+/// The original authored source owns a capped material graph without any
+/// invented entry or terminal treatment.
+pub type ThreadBoundary = Boundary<AuthoredThread>;
+impl AuthoredThread {
+    pub fn boundary_with_interrupt(
+        &self,
+        options: BoundaryOptions,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<ThreadBoundary, Error> {
+        build(*self, Source::bare(*self), None, options, interrupt)
+    }
+}
+impl Boundary<Cavity> {
+    pub fn cavity(&self) -> &Cavity {
+        &self.owner
+    }
+}
+impl Boundary<AuthoredThread> {
+    pub fn source(&self) -> &AuthoredThread {
+        &self.owner
+    }
+}
+impl<S> Boundary<S> {
     // Public queries retain the Boundary extension beyond Graph. At most eight
     // dynamic Vec descriptors are live while tracing nested wires (including
     // construction/return descriptors); reserve them even when moves can share
     // storage. Their allocated capacities are charged separately by Graph.
     pub(super) fn query_headers(&self) -> usize {
         size_of::<Self>() - size_of::<Graph>() + 8 * size_of::<Vec<usize>>()
-    }
-    pub fn cavity(&self) -> &Cavity {
-        &self.graph.source
     }
     pub fn material(&self) -> Option<&Material> {
         self.graph.material.as_ref()

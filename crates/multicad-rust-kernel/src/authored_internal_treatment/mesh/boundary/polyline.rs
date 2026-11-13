@@ -4,7 +4,7 @@ pub struct BoundaryPolyline {
     pub points_mm: Vec<[f64; 3]>,
     pub maximum_error_mm: f64,
 }
-impl Boundary {
+impl<S> Boundary<S> {
     /// Stock-relative source curve. Every actual segment includes the numerical
     /// endpoint error; the source owns the exact periodic endpoint identity.
     pub fn curve_polyline(

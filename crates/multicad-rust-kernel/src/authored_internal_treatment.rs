@@ -176,4 +176,5 @@ impl Cavity {
 pub use mesh::boundary::{
     Boundary, BoundaryCell, BoundaryCellSource, BoundaryCoedge, BoundaryConstraint, BoundaryCurve,
     BoundaryOptions, BoundaryPoint, BoundaryPointKey, BoundaryPointRole, BoundaryPolyline,
+    ThreadBoundary,
 };

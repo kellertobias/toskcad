@@ -30,6 +30,9 @@ pub(super) struct Polygon {
     pub rows: u32,
 }
 impl Patch {
+    // Legacy fixtures still build a real treated source; production now
+    // enters the same carrier through its explicit borrowed ThreadChart.
+    #[cfg(test)]
     pub fn new(
         body: &Cavity,
         period: i64,
@@ -37,22 +40,12 @@ impl Patch {
         subdivisions: usize,
         w: &mut Work<'_>,
     ) -> Result<Self, Error> {
-        Self::with_offset(body, period, band, subdivisions, false, w)
-    }
-    pub fn with_offset(
-        body: &Cavity,
-        period: i64,
-        band: usize,
-        subdivisions: usize,
-        shifted: bool,
-        w: &mut Work<'_>,
-    ) -> Result<Self, Error> {
         Self::from_chart(
             ThreadChart::treated(body),
             period,
             band,
             subdivisions,
-            shifted,
+            false,
             w,
         )
     }
