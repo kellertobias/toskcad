@@ -2313,4 +2313,36 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn profiled_closure_keeps_screw_caps_and_rejects_reversed_plain_tip() {
+        let body = screw(false, 1, false);
+        let closure = Closure::Profiled((&body).into());
+        assert!(closure.is_screw());
+        assert!(closure.cap_positive(false) && closure.cap_positive(true));
+        assert!(closure.cap_hole(false) && !closure.cap_hole(true));
+        let frame = [[0.; 3], [1., 0., 0.], [0., 1., 0.]];
+        let text = step::write_profiled_screw(&body, frame[0], frame[1], frame[2], 1e-7).unwrap();
+        let data = parse_entities(&text, 1e-7).unwrap();
+        let shell = Shell::new(&data, 1e-7, true);
+        let faces = shell
+            .member_faces(shell.represented_solids(true).unwrap()[0])
+            .unwrap();
+        let count = prepare(body.thread(), closure, frame[0], 1e-7)
+            .unwrap()
+            .bands
+            .len();
+        let tip_id = faces[count + 1];
+        let key = format!("#{tip_id}=");
+        let line = text.lines().find(|line| line.starts_with(&key)).unwrap();
+        let reversed = line.replacen(",.T.);", ",.F.);", 1);
+        assert_ne!(reversed, line);
+        let changed = text.replacen(line, &reversed, 1);
+        assert!(
+            verify_profiled_screw(&text, &body, frame[0], frame[1], frame[2], 1e-7).unwrap() > 0.
+        );
+        assert_eq!(
+            verify_profiled_screw(&changed, &body, frame[0], frame[1], frame[2], 1e-7),
+            Err(ReadError::Invalid)
+        );
+    }
 }
