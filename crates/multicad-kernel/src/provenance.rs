@@ -1052,6 +1052,9 @@ impl Solid {
         owner: EntityId,
         revision: u64,
     ) -> Result<TopologySnapshot, GeometryError> {
+        if let Some((body, _)) = self.internal_thread_treatment_body() {
+            return Err(body.unavailable_boundary());
+        }
         if self.uses_rust_geometry() {
             let mut snapshot = if let Some((body, frame)) = self.rounded_thread_bore_body() {
                 body.topology(frame, owner, revision)?

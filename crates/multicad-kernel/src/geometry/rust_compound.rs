@@ -344,7 +344,7 @@ impl RustCompound {
             && self
                 .members
                 .iter()
-                .any(|member| member.solid.has_retained_radial_source());
+                .any(|member| member.solid.has_certified_source_mesh());
         for member in &self.members {
             if remaining == 0 {
                 return Err(budget_error());

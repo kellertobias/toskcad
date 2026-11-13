@@ -79,6 +79,9 @@ use rounded_cylinder_body::RoundedCylinderBody;
 use rounded_slot_body::RoundedSlotBody;
 use rounded_thread_body::RoundedThreadBody;
 pub use rounded_thread_body::{RoundedThreadData, RoundedThreadMassProperties};
+mod internal_thread_treatment_body;
+use internal_thread_treatment_body::InternalThreadTreatmentBody;
+pub use internal_thread_treatment_body::{InternalThreadTreatmentCut, InternalThreadTreatmentData};
 use rounded_thread_bore_body::RoundedThreadBoreBody;
 pub use rounded_thread_bore_body::RoundedThreadBoreData;
 use rust_compound::RustCompound;
@@ -694,6 +697,7 @@ enum SolidBody {
     RoundedThread(Rc<RoundedThreadBody>, PlaneFrame),
     EntryChamfer(Rc<EntryChamferBody>, PlaneFrame),
     RoundedThreadBore(Rc<RoundedThreadBoreBody>, PlaneFrame),
+    InternalThreadTreatment(Rc<InternalThreadTreatmentBody>, PlaneFrame),
     HelicalTubeCut(Rc<HelicalTubeBody>, PlaneFrame),
     Linear(Rc<LinearBody>, PlaneFrame),
     Revolved(Rc<RevolutionBody>, PlaneFrame),
@@ -1155,6 +1159,9 @@ impl Solid {
             SolidBody::RoundedThreadBore(body, frame) => {
                 SolidBody::RoundedThreadBore(Rc::clone(body), *frame)
             }
+            SolidBody::InternalThreadTreatment(body, frame) => {
+                SolidBody::InternalThreadTreatment(Rc::clone(body), *frame)
+            }
             SolidBody::RoundedThread(body, frame) => {
                 SolidBody::RoundedThread(Rc::clone(body), *frame)
             }
@@ -1503,6 +1510,11 @@ impl Solid {
                     )?;
                     SolidBody::Annulus(Rc::clone(body), frame)
                 }
+                SolidBody::InternalThreadTreatment(body, frame) => {
+                    let frame = transform.frame(*frame);
+                    body.validate_frame(frame, self.policy)?;
+                    SolidBody::InternalThreadTreatment(Rc::clone(body), frame)
+                }
                 SolidBody::RoundedThreadBore(body, frame) => {
                     let frame = transform.frame(*frame);
                     frame.checked_metric_extent(
@@ -1673,6 +1685,10 @@ impl Solid {
         Ok(result)
     }
     pub fn volume_mm3(&self) -> Result<f64, GeometryError> {
+        if let Some((body, frame)) = self.internal_thread_treatment_body() {
+            let interval = body.volume(frame)?;
+            return Ok(interval.lower.midpoint(interval.upper));
+        }
         if let Some((body, _)) = self.rounded_cylinder_body() {
             return Ok(body.geometry.volume_mm3());
         }
@@ -1796,6 +1812,9 @@ impl Solid {
         ffi::solid_count(self.occt()?).map_err(|e| native("solid count", e))
     }
     pub fn bounds(&self) -> Result<Bounds, GeometryError> {
+        if let Some((body, frame)) = self.internal_thread_treatment_body() {
+            return Ok(body.bounds(frame));
+        }
         if let Some((body, frame)) = self.rounded_cylinder_body() {
             return Ok(body.bounds(frame));
         }
@@ -1965,6 +1984,9 @@ impl Solid {
         crate::planar_contours::extract(self, face, frame, self.policy)
     }
     pub fn faces(&self) -> Result<Vec<Face>, GeometryError> {
+        if let Some((body, _)) = self.internal_thread_treatment_body() {
+            return Err(body.unavailable_boundary());
+        }
         if let Some((body, frame)) = self.rounded_cylinder_body() {
             return Ok(body.faces(frame));
         }
@@ -2154,6 +2176,7 @@ impl Solid {
                 false,
             ),
             SolidBody::EntryChamfer(body, frame) => body.mesh(*frame, rust_options),
+            SolidBody::InternalThreadTreatment(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::Helical(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::RoundedThreadBore(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::RoundedThread(body, frame) => body.mesh(*frame, rust_options),
@@ -2261,6 +2284,16 @@ impl Solid {
                 .is_some_and(|compound| compound.members().any(Self::has_retained_radial_source))
     }
 
+    /// These sources prove actual facets and literal embedding independently of
+    /// an analytic scalar. Keep analytic children separately checked in mixed
+    /// compounds; a source interval is not a mesh-volume equality receipt.
+    fn has_certified_source_mesh(&self) -> bool {
+        self.has_retained_radial_source()
+            || self.internal_thread_treatment_body().is_some()
+            || self
+                .rust_compound()
+                .is_some_and(|compound| compound.members().any(Self::has_certified_source_mesh))
+    }
     fn rust_manufacturing_mesh(
         &self,
         options: MeshOptions,
@@ -2296,7 +2329,7 @@ impl Solid {
         // against the complete finite source and certified literal embedding.
         // Their independent mass enclosure is not an exact analytic scalar.
         // Mixed compounds verify analytic children before merging instead.
-        if !self.has_retained_radial_source() {
+        if !self.has_certified_source_mesh() {
             let exact_volume = self.volume_mm3()?;
             let volume_tolerance = self.rust_mesh_volume_tolerance(options, exact_volume)?;
             if !volume_tolerance.is_finite()
@@ -2561,6 +2594,7 @@ impl Solid {
             SolidBody::AxialCylinder(cylinder, ..) => EntityId::from_uuid_bits(cylinder.feature()),
             SolidBody::Annulus(body, _) => body.feature,
             SolidBody::EntryChamfer(body, _) => body.feature,
+            SolidBody::InternalThreadTreatment(body, _) => body.feature,
             SolidBody::Helical(body, _) => body.feature,
             SolidBody::RoundedThreadBore(body, _) => body.feature,
             SolidBody::RoundedThread(body, _) => body.feature,
@@ -2637,7 +2671,7 @@ impl Solid {
                     self.policy.linear_tolerance_mm,
                 )
             }
-            SolidBody::CosmeticFastener(..) => false,
+            SolidBody::CosmeticFastener(..) | SolidBody::InternalThreadTreatment(..) => false,
             SolidBody::WarpedUnion(body, _) => {
                 multicad_rust_kernel::step::supports_warped_union(&body.geometry)
             }
@@ -2848,7 +2882,9 @@ impl Solid {
                 frame.v,
                 self.policy.linear_tolerance_mm,
             ),
-            SolidBody::CosmeticFastener(..) => Err(step::StepError::Unsupported),
+            SolidBody::CosmeticFastener(..) | SolidBody::InternalThreadTreatment(..) => {
+                Err(step::StepError::Unsupported)
+            }
             SolidBody::Orthogonal(body, frame) => body.append_step(writer, *frame),
             SolidBody::Occt(_) => unreachable!("native STEP dispatched above"),
         }

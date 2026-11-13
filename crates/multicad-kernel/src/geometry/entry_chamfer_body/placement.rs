@@ -110,8 +110,26 @@ pub(super) fn mesh(
     frame: PlaneFrame,
     options: Tessellation,
 ) -> Result<Mesh, GeometryError> {
+    qualified_source_mesh(frame, options, |quality| {
+        crate::rust_display::mesh(source::tessellate(source, quality))
+    })
+}
+/// Transfer a source-certified local candidate, retaining all original actual
+/// point, normal and literal-intersection gates for either owned source.
+pub(in crate::geometry) fn qualified_source_mesh(
+    frame: PlaneFrame,
+    options: Tessellation,
+    mut build: impl FnMut(Tessellation) -> Result<Mesh, GeometryError>,
+) -> Result<Mesh, GeometryError> {
+    source_mesh(frame, options, &mut build)
+}
+fn source_mesh(
+    frame: PlaneFrame,
+    options: Tessellation,
+    build: &mut dyn FnMut(Tessellation) -> Result<Mesh, GeometryError>,
+) -> Result<Mesh, GeometryError> {
     if frame == PlaneFrame::default() {
-        let mesh = crate::rust_display::mesh(source::tessellate(source, options))?;
+        let mesh = build(options)?;
         super::embedding::certify(&mesh)?;
         return Ok(mesh);
     }
@@ -125,7 +143,7 @@ pub(super) fn mesh(
     if local.angle < 0.01 {
         return Err(refused());
     }
-    let mut mesh = crate::rust_display::mesh(source::tessellate(source, local))?;
+    let mut mesh = build(local)?;
     let points = mesh.vertices.as_chunks::<3>().0;
     let world = points
         .iter()
@@ -215,5 +233,69 @@ mod tests {
             [[0.; 3]; 3],
             0.01
         ));
+    }
+    #[test]
+    fn actual_dyadic_source_transfer_refuses_tight_angles_point_rounding_and_collapsed_thin_facets()
+    {
+        use multicad_rust_kernel::{Rational, display, prism::Prism};
+        let frame = PlaneFrame {
+            origin: [1e6, -2e6, 3e6],
+            u: [0.8, 0.6, 0.],
+            v: [-0.36, 0.48, 0.8],
+        };
+        let options = Tessellation {
+            deflection: 0.1,
+            angle: 0.3,
+            triangle_limit: 1000,
+        };
+        let source = Prism::rectangular(
+            7,
+            [
+                Rational::new(1, 8).unwrap(),
+                Rational::new(1, 4).unwrap(),
+                Rational::new(1, 2).unwrap(),
+            ],
+        )
+        .unwrap();
+        let build = |quality| crate::rust_display::mesh(display::rust_prism(&source, quality));
+        assert!(qualified_source_mesh(frame, options, build).is_ok());
+        assert!(
+            qualified_source_mesh(
+                frame,
+                Tessellation {
+                    angle: 0.01,
+                    ..options
+                },
+                build
+            )
+            .is_err()
+        );
+        assert!(
+            qualified_source_mesh(
+                frame,
+                Tessellation {
+                    deflection: 1e-12,
+                    ..options
+                },
+                build
+            )
+            .is_err()
+        );
+        let tiny = Prism::rectangular(
+            7,
+            [
+                Rational::new(1, 1_i64 << 40).unwrap(),
+                Rational::new(1, 1).unwrap(),
+                Rational::new(1, 1).unwrap(),
+            ],
+        )
+        .unwrap();
+        // This is real exact source material. At this distance its tiny side
+        // collapses in emitted binary64 coordinates; no normal/mesh is repaired.
+        let refused = qualified_source_mesh(frame, options, |quality| {
+            crate::rust_display::mesh(display::rust_prism(&tiny, quality))
+        })
+        .unwrap_err();
+        assert_eq!(refused.kind, GeometryErrorKind::Unsupported);
     }
 }

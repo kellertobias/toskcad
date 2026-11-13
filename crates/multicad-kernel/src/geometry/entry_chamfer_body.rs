@@ -16,7 +16,7 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 mod display;
 mod embedding;
-mod placement;
+pub(super) mod placement;
 mod receiving;
 mod references;
 mod topology;
