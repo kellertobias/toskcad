@@ -479,6 +479,104 @@ fn a_part_behind_the_bore_is_visible_only_through_the_opening() {
 }
 
 #[test]
+fn oblique_sections_only_keep_the_exact_elliptical_void() {
+    let s = 0.5_f64.sqrt();
+    let t = (1_f64 / 6.).sqrt();
+    let solid = bored();
+    // Planes through the axis at several heights. Near the stock caps the
+    // ellipse reaches a cap face and its chord there bounds no material.
+    for (height, window) in [
+        (4., None),
+        (1.5, None),
+        (0.5, None),
+        (6.5, None),
+        (4., Some(([-3., 6.], [-4., 2.]))),
+    ] {
+        let options = DrawingProjection {
+            frame: frame([10., 6., height], [s, -s, 0.], [t, t, -2. * t]),
+            section_offset_mm: Some(0.),
+            section_only: true,
+            section_u_mm: window.map(|w: ([f64; 2], [f64; 2])| w.0),
+            section_v_mm: window.map(|w: ([f64; 2], [f64; 2])| w.1),
+            ..Default::default()
+        };
+        let label = format!("height {height} window {window:?}");
+        let vectors = draw(&solid, options);
+        assert!(
+            vectors
+                .iter()
+                .all(|v| matches!(v.role, VectorRole::Section | VectorRole::Hatch))
+        );
+        // The view normal (1, 1, 1)/√3 meets the bore axis +Z at cos 1/√3, so
+        // every void arc lies on the ellipse with semiaxes 2√3 and 2 about the
+        // point where the axis crosses the plane.
+        for vector in &vectors {
+            if let VectorCurve::Ellipse {
+                center,
+                major_mm,
+                minor_mm,
+                ..
+            } = vector.curve
+            {
+                assert!(near(center, [0., 0.]), "{label}");
+                assert!((major_mm - 2. * 3_f64.sqrt()).abs() < TOLERANCE, "{label}");
+                assert!((minor_mm - 2.).abs() < TOLERANCE, "{label}");
+            }
+        }
+        let world =
+            |[x, y]: [f64; 2]| [10. + s * x + t * y, 6. - s * x + t * y, height - 2. * t * y];
+        let in_window = |[x, y]: [f64; 2]| {
+            window.is_none_or(|([u0, u1], [v0, v1])| {
+                x >= u0 - 1e-9 && x <= u1 + 1e-9 && y >= v0 - 1e-9 && y <= v1 + 1e-9
+            })
+        };
+        let on_boundary = |p: [f64; 2]| {
+            let w = world(p);
+            (0..3).any(|i| w[i].abs() < 1e-9 || (w[i] - [20., 12., 8.][i]).abs() < 1e-9)
+                || window.is_some_and(|([u0, u1], [v0, v1])| {
+                    [p[0] - u0, p[0] - u1, p[1] - v0, p[1] - v1]
+                        .iter()
+                        .any(|d| d.abs() < 1e-9)
+                })
+                || ((w[0] - 10.).hypot(w[1] - 6.) - 2.).abs() < 1e-9
+        };
+        for vector in vectors.iter().filter(|v| v.role == VectorRole::Section) {
+            if let VectorCurve::Line { a, b } = vector.curve {
+                for q in [0., 0.5, 1.] {
+                    let p = [a[0] + (b[0] - a[0]) * q, a[1] + (b[1] - a[1]) * q];
+                    assert!(on_boundary(p) && in_window(p), "{label}: {p:?}");
+                }
+            }
+        }
+        let strokes: Vec<_> = vectors
+            .iter()
+            .filter(|v| v.role == VectorRole::Hatch)
+            .collect();
+        assert!(strokes.len() > 5, "{label}");
+        for stroke in strokes {
+            let VectorCurve::Line { a, b } = stroke.curve else {
+                panic!("hatch strokes are lines");
+            };
+            for q in [0., 0.25, 0.5, 0.75, 1.] {
+                let p = [a[0] + (b[0] - a[0]) * q, a[1] + (b[1] - a[1]) * q];
+                let w = world(p);
+                assert!(in_window(p), "{label}: {p:?}");
+                assert!(
+                    w.iter()
+                        .zip([20., 12., 8.])
+                        .all(|(v, m)| *v >= -1e-9 && *v <= m + 1e-9),
+                    "{label}: {w:?}"
+                );
+                assert!(
+                    (w[0] - 10.).hypot(w[1] - 6.) >= 2. - 1e-9,
+                    "{label}: hatch enters the bore at {w:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn an_oblique_section_through_the_bore_is_an_explicit_finding() {
     let s = 0.5_f64.sqrt();
     let t = (1_f64 / 6.).sqrt();
@@ -580,6 +678,26 @@ fn bored_box_views_and_sections_match_native_open_cascade() {
                 frame: axial,
                 detail: Some(([0., 0.], 3.)),
                 ..Default::default()
+            },
+        ),
+        (
+            "oblique section only",
+            DrawingProjection {
+                section_only: true,
+                ..section(PlaneFrame {
+                    origin: [10., 6., 4.],
+                    ..oblique
+                })
+            },
+        ),
+        (
+            "oblique section only at a cap",
+            DrawingProjection {
+                section_only: true,
+                ..section(PlaneFrame {
+                    origin: [10., 6., 1.5],
+                    ..oblique
+                })
             },
         ),
     ] {

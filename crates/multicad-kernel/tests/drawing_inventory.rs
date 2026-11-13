@@ -107,6 +107,7 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ("box", "side finite depth", Drawn),
     ("box", "side lateral window", Drawn),
     ("box", "oblique section", Drawn),
+    ("box", "oblique section-only", Drawn),
     ("box", "axial detail", Drawn),
     ("box", "side detail", Drawn),
     ("bored box", "axial", Drawn),
@@ -128,6 +129,7 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
         "oblique section",
         Unsupported("Rust retained projection cannot yet clip this curved boundary"),
     ),
+    ("bored box", "oblique section-only", Drawn),
     ("bored box", "axial detail", Drawn),
     ("bored box", "side detail", Drawn),
     ("cylinder", "axial", Drawn),
@@ -149,6 +151,7 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
         "oblique section",
         Unsupported("Rust retained projection cannot yet clip this curved boundary"),
     ),
+    ("cylinder", "oblique section-only", Drawn),
     ("cylinder", "axial detail", Drawn),
     ("cylinder", "side detail", Drawn),
     ("annulus", "axial", Drawn),
@@ -190,6 +193,7 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
             "A Rust annulus section with geometry behind the cut requires a transverse plane and no lateral crop",
         ),
     ),
+    ("annulus", "oblique section-only", Drawn),
     ("annulus", "axial detail", Drawn),
     ("annulus", "side detail", Drawn),
     ("sphere", "axial", Drawn),
@@ -207,6 +211,7 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ("sphere", "side finite depth", Drawn),
     ("sphere", "side lateral window", Drawn),
     ("sphere", "oblique section", Drawn),
+    ("sphere", "oblique section-only", Drawn),
     ("sphere", "axial detail", Drawn),
     ("sphere", "side detail", Drawn),
     ("rounded slot", "axial", Drawn),
@@ -235,6 +240,11 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
         "rounded slot",
         "oblique section",
         Unsupported("Rust retained projection cannot yet clip this curved boundary"),
+    ),
+    (
+        "rounded slot",
+        "oblique section-only",
+        Unsupported("Rust machined sections require a stock-aligned cutting plane"),
     ),
     ("rounded slot", "axial detail", Drawn),
     ("rounded slot", "side detail", Drawn),
@@ -295,6 +305,13 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     (
         "spur gear",
         "oblique section",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "spur gear",
+        "oblique section-only",
         Unsupported(
             "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
         ),
@@ -372,6 +389,13 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ),
     (
         "internal ring",
+        "oblique section-only",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "internal ring",
         "axial detail",
         Unsupported("Rust internal ring drawing currently requires an uncropped axial view"),
     ),
@@ -430,6 +454,11 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
         "helical gear",
         "oblique section",
         Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "helical gear",
+        "oblique section-only",
+        Unsupported("Rust herringbone sections require a plane perpendicular to the gear axis"),
     ),
     (
         "helical gear",
@@ -494,6 +523,11 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ),
     (
         "herringbone gear",
+        "oblique section-only",
+        Unsupported("Rust herringbone sections require a plane perpendicular to the gear axis"),
+    ),
+    (
+        "herringbone gear",
         "axial detail",
         Unsupported("Rust herringbone projection requires an uncropped axial view"),
     ),
@@ -551,6 +585,11 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     (
         "bevel gear",
         "oblique section",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "bevel gear",
+        "oblique section-only",
         Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
     ),
     (
@@ -628,6 +667,13 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     (
         "za worm",
         "oblique section",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "za worm",
+        "oblique section-only",
         Unsupported(
             "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
         ),
@@ -717,6 +763,13 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ),
     (
         "worm wheel",
+        "oblique section-only",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "worm wheel",
         "axial detail",
         Unsupported(
             "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
@@ -744,6 +797,7 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ("box + cylinder overlapping", "side finite depth", Drawn),
     ("box + cylinder overlapping", "side lateral window", Drawn),
     ("box + cylinder overlapping", "oblique section", Drawn),
+    ("box + cylinder overlapping", "oblique section-only", Drawn),
     ("box + cylinder overlapping", "axial detail", Drawn),
     ("box + cylinder overlapping", "side detail", Drawn),
     ("box + cylinder separated", "axial", Drawn),
@@ -761,6 +815,7 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ("box + cylinder separated", "side finite depth", Drawn),
     ("box + cylinder separated", "side lateral window", Drawn),
     ("box + cylinder separated", "oblique section", Drawn),
+    ("box + cylinder separated", "oblique section-only", Drawn),
     ("box + cylinder separated", "axial detail", Drawn),
     ("box + cylinder separated", "side detail", Drawn),
     ("box + sphere overlapping", "axial", Drawn),
@@ -778,6 +833,7 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ("box + sphere overlapping", "side finite depth", Drawn),
     ("box + sphere overlapping", "side lateral window", Drawn),
     ("box + sphere overlapping", "oblique section", Drawn),
+    ("box + sphere overlapping", "oblique section-only", Drawn),
     ("box + sphere overlapping", "axial detail", Drawn),
     ("box + sphere overlapping", "side detail", Drawn),
     ("box + sphere separated", "axial", Drawn),
@@ -795,6 +851,7 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ("box + sphere separated", "side finite depth", Drawn),
     ("box + sphere separated", "side lateral window", Drawn),
     ("box + sphere separated", "oblique section", Drawn),
+    ("box + sphere separated", "oblique section-only", Drawn),
     ("box + sphere separated", "axial detail", Drawn),
     ("box + sphere separated", "side detail", Drawn),
     (
@@ -882,6 +939,11 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ),
     (
         "box + spur gear overlapping",
+        "oblique section-only",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + spur gear overlapping",
         "axial detail",
         Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
@@ -953,6 +1015,13 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ),
     (
         "box + spur gear separated",
+        "oblique section-only",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "box + spur gear separated",
         "axial detail",
         Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
     ),
@@ -980,6 +1049,11 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
         Drawn,
     ),
     ("cylinder + sphere overlapping", "oblique section", Drawn),
+    (
+        "cylinder + sphere overlapping",
+        "oblique section-only",
+        Drawn,
+    ),
     ("cylinder + sphere overlapping", "axial detail", Drawn),
     ("cylinder + sphere overlapping", "side detail", Drawn),
     ("cylinder + sphere separated", "axial", Drawn),
@@ -997,6 +1071,7 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ("cylinder + sphere separated", "side finite depth", Drawn),
     ("cylinder + sphere separated", "side lateral window", Drawn),
     ("cylinder + sphere separated", "oblique section", Drawn),
+    ("cylinder + sphere separated", "oblique section-only", Drawn),
     ("cylinder + sphere separated", "axial detail", Drawn),
     ("cylinder + sphere separated", "side detail", Drawn),
     ("cylinder + annulus overlapping", "axial", Drawn),
@@ -1030,6 +1105,11 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
         "oblique section",
         Unsupported("Rust retained projection cannot yet clip this curved boundary"),
     ),
+    (
+        "cylinder + annulus overlapping",
+        "oblique section-only",
+        Drawn,
+    ),
     ("cylinder + annulus overlapping", "axial detail", Drawn),
     ("cylinder + annulus overlapping", "side detail", Drawn),
     ("cylinder + annulus separated", "axial", Drawn),
@@ -1050,6 +1130,11 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
         "cylinder + annulus separated",
         "oblique section",
         Unsupported("Rust retained projection cannot yet clip this curved boundary"),
+    ),
+    (
+        "cylinder + annulus separated",
+        "oblique section-only",
+        Drawn,
     ),
     ("cylinder + annulus separated", "axial detail", Drawn),
     ("cylinder + annulus separated", "side detail", Drawn),
@@ -1138,6 +1223,11 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ),
     (
         "box + internal ring overlapping",
+        "oblique section-only",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + internal ring overlapping",
         "axial detail",
         Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
@@ -1203,6 +1293,13 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     (
         "box + internal ring separated",
         "oblique section",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "box + internal ring separated",
+        "oblique section-only",
         Unsupported(
             "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
         ),
@@ -1298,6 +1395,11 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     (
         "spur gear + spur gear overlapping",
         "oblique section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "spur gear + spur gear overlapping",
+        "oblique section-only",
         Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
     (
@@ -1381,6 +1483,13 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ),
     (
         "spur gear + spur gear separated",
+        "oblique section-only",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "spur gear + spur gear separated",
         "axial detail",
         Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
     ),
@@ -1478,6 +1587,11 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ),
     (
         "box + bevel gear overlapping",
+        "oblique section-only",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + bevel gear overlapping",
         "axial detail",
         Unsupported(
             "Rust bevel drawing supports one gear at a time; scene occlusion is unavailable",
@@ -1537,6 +1651,11 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     (
         "box + bevel gear separated",
         "oblique section",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + bevel gear separated",
+        "oblique section-only",
         Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
     ),
     (
@@ -1634,6 +1753,11 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     (
         "box + za worm overlapping",
         "oblique section",
+        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
+    ),
+    (
+        "box + za worm overlapping",
+        "oblique section-only",
         Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
     ),
     (
@@ -1719,6 +1843,13 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ),
     (
         "box + za worm separated",
+        "oblique section-only",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "box + za worm separated",
         "axial detail",
         Unsupported(
             "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
@@ -1824,6 +1955,11 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ),
     (
         "box + herringbone gear overlapping",
+        "oblique section-only",
+        Unsupported("Rust herringbone sections require a plane perpendicular to the gear axis"),
+    ),
+    (
+        "box + herringbone gear overlapping",
         "axial detail",
         Unsupported(
             "Rust exact drawing projection for continuous herringbone gears is unavailable",
@@ -1895,6 +2031,11 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ),
     (
         "box + herringbone gear separated",
+        "oblique section-only",
+        Unsupported("Rust herringbone sections require a plane perpendicular to the gear axis"),
+    ),
+    (
+        "box + herringbone gear separated",
         "axial detail",
         Unsupported("Rust herringbone projection requires an uncropped axial view"),
     ),
@@ -1960,7 +2101,12 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     (
         "bored box + rounded slot overlapping",
         "oblique section",
-        Unsupported("Rust machined sections require a stock-aligned cutting plane"),
+        Drawn,
+    ),
+    (
+        "bored box + rounded slot overlapping",
+        "oblique section-only",
+        Drawn,
     ),
     (
         "bored box + rounded slot overlapping",
@@ -2013,7 +2159,12 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     (
         "bored box + rounded slot separated",
         "oblique section",
-        Unsupported("Rust machined sections require a stock-aligned cutting plane"),
+        Drawn,
+    ),
+    (
+        "bored box + rounded slot separated",
+        "oblique section-only",
+        Drawn,
     ),
     ("bored box + rounded slot separated", "axial detail", Drawn),
     ("bored box + rounded slot separated", "side detail", Drawn),
@@ -2254,6 +2405,13 @@ pub fn views(center: [f64; 3]) -> Vec<(&'static str, DrawingProjection)> {
             },
         ),
         ("oblique section", section(oblique)),
+        (
+            "oblique section-only",
+            DrawingProjection {
+                section_only: true,
+                ..section(oblique)
+            },
+        ),
         (
             "axial detail",
             DrawingProjection {

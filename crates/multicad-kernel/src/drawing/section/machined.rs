@@ -186,7 +186,24 @@ impl SectionOutput {
         if let Some((body, placement)) = solid.orthogonal_body()
             && body.has_curved_cuts()
         {
-            let frame = SliceFrame::new(placement, self.options, depth)?;
+            let frame = match SliceFrame::new(placement, self.options, depth) {
+                Err(error) if error.kind == GeometryErrorKind::Unsupported => {
+                    // A plane inclined to the stock chart cuts box stock with
+                    // through bores in the exact oblique section.
+                    let Some((stock, bores)) = oblique_stock(solid) else {
+                        return Err(error);
+                    };
+                    let Some(section) =
+                        oblique::section(&stock, &bores, self.options, depth, tolerance)?
+                    else {
+                        return Ok(());
+                    };
+                    let vectors =
+                        oblique::publish(section, hatch, self.options, source, tolerance)?;
+                    return self.extend(vectors);
+                }
+                frame => frame?,
+            };
             let loops = body
                 .section(frame.options(self.options, tolerance)?)
                 .map_err(cut_error)?;
@@ -538,4 +555,44 @@ fn hatch_ring(
         }
     }
     Ok(())
+}
+
+/// Single-box orthogonal stock whose only curved cuts are full through
+/// bores, as world-space box and cylinders for an oblique section.
+fn oblique_stock(solid: &Solid) -> Option<(oblique::Stock, Vec<oblique::Bore>)> {
+    let (body, placement) = solid.orthogonal_body()?;
+    let drawing = body.drawing_stock();
+    let [cell] = drawing.cells else {
+        return None;
+    };
+    if !drawing.pockets.is_empty() || !drawing.slots.is_empty() {
+        return None;
+    }
+    let normal = placement.normal();
+    let world = |p: [f64; 3]| -> [f64; 3] {
+        std::array::from_fn(|i| {
+            placement.origin[i] + placement.u[i] * p[0] + placement.v[i] * p[1] + normal[i] * p[2]
+        })
+    };
+    let stock = oblique::Stock {
+        origin: world(cell.min),
+        axes: [placement.u, placement.v, normal],
+        size: std::array::from_fn(|i| cell.max[i] - cell.min[i]),
+    };
+    let bores = drawing
+        .through_bores
+        .iter()
+        .map(|bore| {
+            let [a, b] = bore.centers_mm.map(world);
+            let delta: [f64; 3] = std::array::from_fn(|i| b[i] - a[i]);
+            let height = dot(delta, delta).sqrt();
+            oblique::Bore {
+                base: a,
+                axis: delta.map(|x| x / height),
+                radius: bore.radius_mm,
+                height,
+            }
+        })
+        .collect();
+    Some((stock, bores))
 }

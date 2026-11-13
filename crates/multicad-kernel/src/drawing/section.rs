@@ -7,6 +7,7 @@ mod annulus;
 mod end_on;
 mod loft;
 mod machined;
+pub(crate) mod oblique;
 mod retained;
 pub(super) mod sampled;
 mod warped;
