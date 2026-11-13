@@ -5,6 +5,8 @@ use num_rational::BigRational;
 
 mod caps;
 mod classify;
+mod faces;
+pub use faces::FaceKey;
 pub use caps::{Candidate, CapCell, CapCellBounds, CapDomains, CapEnd, CapKnot, CapOptions, Side};
 #[cfg(test)]
 mod tests;
