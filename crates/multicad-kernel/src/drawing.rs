@@ -129,6 +129,87 @@ fn contains_herringbone(solid: &Solid) -> bool {
             .is_some_and(|compound| compound.members().any(contains_herringbone))
 }
 
+/// Families whose exact projection is published for one body at a time.
+fn single_body_family(solid: &Solid) -> bool {
+    contains_worm(solid)
+        || contains_bevel(solid)
+        || contains_herringbone(solid)
+        || panel::contains_spline_sweep(solid)
+        || solid.spur_gear_body().is_some()
+        || solid.internal_ring_body().is_some()
+}
+
+/// A scene with a single-body family draws as the union of its exact member
+/// drawings when the members' projected bounds are pairwise separated: no
+/// line of sight can then meet two members, so nothing occludes anything
+/// else, and a section plane cuts each member independently. Overlapping
+/// scenes keep their explicit refusal.
+fn project_separated(
+    solids: &[DrawingSolid<'_>],
+    options: DrawingProjection,
+) -> Option<Result<Vec<ProjectedVector>, GeometryError>> {
+    if solids.len() < 2 || !solids.iter().any(|input| single_body_family(input.solid)) {
+        return None;
+    }
+    let [u, v, _] = planar::view_axes(options.frame);
+    let mut extents = Vec::with_capacity(solids.len());
+    let mut tolerance: f64 = 0.;
+    for input in solids {
+        let Ok(bounds) = input.solid.bounds() else {
+            return None;
+        };
+        tolerance = tolerance.max(input.solid.geometry_policy().linear_tolerance_mm);
+        let extent = [u, v].map(|axis| {
+            let [mut lo, mut hi] = [0., 0.];
+            for (i, &component) in axis.iter().enumerate() {
+                let offset = component * options.frame.origin[i];
+                let [a, b] = [component * bounds.min[i], component * bounds.max[i]];
+                lo += a.min(b) - offset;
+                hi += a.max(b) - offset;
+            }
+            [lo, hi]
+        });
+        extents.push(extent);
+    }
+    let separated = extents.iter().enumerate().all(|(i, a)| {
+        extents[i + 1..]
+            .iter()
+            .all(|b| (0..2).any(|k| a[k][1] + tolerance < b[k][0] || b[k][1] + tolerance < a[k][0]))
+    });
+    if !separated {
+        return None;
+    }
+    Some((|| {
+        let mut output = Vec::new();
+        let mut remaining = options;
+        for (source, input) in solids.iter().enumerate() {
+            let vectors = project_drawing(std::slice::from_ref(input), remaining)?;
+            let points: usize = vectors.iter().map(|vector| vector.preview_mm.len()).sum();
+            let exhausted = || {
+                err(
+                    GeometryErrorKind::Limit,
+                    "Rust drawing exceeded its curve or point budget",
+                )
+            };
+            remaining.maximum_curves = remaining
+                .maximum_curves
+                .checked_sub(u32::try_from(vectors.len()).map_err(|_| exhausted())?)
+                .filter(|count| *count > 0 || source + 1 == solids.len())
+                .ok_or_else(exhausted)?;
+            remaining.maximum_points = remaining
+                .maximum_points
+                .checked_sub(u32::try_from(points).map_err(|_| exhausted())?)
+                .filter(|count| *count > 0 || source + 1 == solids.len())
+                .ok_or_else(exhausted)?;
+            output.extend(vectors.into_iter().map(|mut vector| {
+                vector.source_index = source;
+                vector
+            }));
+        }
+        Ok(output)
+    })())
+}
+
 pub fn project_drawing(
     solids: &[DrawingSolid<'_>],
     options: DrawingProjection,
@@ -212,6 +293,9 @@ pub fn project_drawing(
                 })
                 .collect();
             return project_drawing(&inputs, options);
+        }
+        if let Some(projection) = project_separated(solids, options) {
+            return projection;
         }
         if let [input] = solids
             && let Some((sphere, frame)) = input.solid.sphere_body()

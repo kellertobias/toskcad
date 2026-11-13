@@ -2,7 +2,8 @@
 use multicad_kernel::{DrawingProjection, DrawingSolid, Solid, project_drawing};
 
 /// Every Rust preview point lies on a native curve of the same role and
-/// source, and vice versa, within three chord tolerances. OpenCascade reads
+/// source, and every native point on a Rust curve of the same source,
+/// within three chord tolerances. OpenCascade reads
 /// the same finite solids from the Rust STEP export, so the comparison
 /// isolates drawing parity from different construction histories.
 pub fn assert_matches_native(solids: &[&Solid], options: DrawingProjection, label: &str) {
@@ -56,10 +57,14 @@ pub fn assert_matches_native_with(
     let directions = [("Rust", &rust, &native), ("OpenCascade", &native, &rust)];
     for (from_label, from, to) in directions.into_iter().take(1 + usize::from(native_to_rust)) {
         for vector in from {
+            // As in the established worm comparison, a native curve may lie
+            // on a Rust curve of any role: rear edges that coincide with a
+            // visible edge are published once by Rust and twice natively.
             let spans: Vec<_> = to
                 .iter()
                 .filter(|other| {
-                    other.source_index == vector.source_index && other.role == vector.role
+                    other.source_index == vector.source_index
+                        && (other.role == vector.role || from_label == "OpenCascade")
                 })
                 .chain(extra.iter().filter(|other| {
                     from_label == "Rust" && other.source_index == vector.source_index
