@@ -5,6 +5,7 @@ mod exact_binary;
 pub mod annulus;
 pub mod authored_flat_thread;
 pub mod authored_internal_treatment;
+pub mod authored_metric_thread;
 pub mod axial_pipe_thread;
 pub mod axial_profile_stack;
 pub mod bevel_gear;
