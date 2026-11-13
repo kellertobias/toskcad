@@ -214,7 +214,11 @@ impl Screw {
         if recess.maximum_radius_bound_mm() <= 2. * reserve
             || recess.maximum_depth_mm() <= 2. * reserve
             || !profile.admits_socket(radius, depth, spec.minimum_wall_mm)
-            || back >= 0.
+            // The head profile also owns the plain shank. A blind recess may
+            // continue into it while its complete envelope remains before the
+            // original helical source at world z=0. Thread-core cuts require
+            // different boundary ownership and are deliberately not admitted.
+            || back >= spec.shank_length_mm
         {
             return Err(ThreadError::Invalid);
         }

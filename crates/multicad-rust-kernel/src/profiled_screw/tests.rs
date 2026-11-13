@@ -233,7 +233,7 @@ fn real_head_neck_drive_and_unchanged_thread_have_one_material_domain() {
             ..spec(false)
         },
         Spec {
-            socket_depth_mm: 1.7,
+            socket_depth_mm: 2.7,
             ..spec(false)
         },
         Spec {
@@ -914,7 +914,7 @@ fn retained_hex_requalifies_actual_corners_at_the_solid_budget_instead_of_inheri
 }
 
 #[test]
-fn retained_cavity_depth_error_cannot_breach_a_small_positive_head_bottom_wall() {
+fn retained_cavity_depth_error_cannot_breach_the_original_thread_source() {
     use crate::hexalobular_drive::{Cone, Drive, FiniteBinding, FiniteVertices, TangentSpec};
     for shift_floor in [false, true] {
         let source = Drive::from_authored_tangent(
@@ -965,9 +965,95 @@ fn retained_cavity_depth_error_cannot_breach_a_small_positive_head_bottom_wall()
             top_land_radius_mm: 2.05,
             neck_radius_mm: 0.125,
         };
-        let result = Screw::new_with_recess(thread(1, false), 1.5, head, 1., 0.0001, recess);
+        let result = Screw::new_with_recess(thread(1, false), 1.5, head, 0., 0.0001, recess);
         assert_eq!(result, Err(ThreadError::Invalid));
         let safe = Recess::conical_hexalobular_from_binding(safe, 1., 100_000).unwrap();
-        assert!(Screw::new_with_recess(thread(1, false), 1.5, head, 1., 0.0001, safe).is_ok());
+        assert!(Screw::new_with_recess(thread(1, false), 1.5, head, 0., 0.0001, safe).is_ok());
+    }
+}
+
+#[test]
+fn blind_recess_can_continue_through_the_head_into_the_owned_plain_shank() {
+    use crate::hexalobular_drive::{Cone, Drive, TangentSpec};
+    for (starts, left) in [(1, false), (2, true)] {
+        let recess = Recess::conical_hexalobular(
+            Drive::from_authored_tangent(
+                TangentSpec {
+                    major_diameter_mm: 1.6,
+                    minor_diameter_mm: 1.2,
+                    outer_lobe_radius_mm: 0.16,
+                },
+                Cone {
+                    tip_depth_mm: 2.2,
+                    depth_per_radius: 1. / 3_f64.sqrt(),
+                },
+            )
+            .unwrap(),
+            1e-7,
+            100_000,
+        )
+        .unwrap();
+        for recess in [
+            recess,
+            Recess::flat_hex(HexDrive::canonical(1.4, 1e-12).unwrap(), 2.2).unwrap(),
+        ] {
+            let screw = Screw::new_with_recess(
+                thread(starts, left),
+                1.5,
+                spec(false).head,
+                1.,
+                0.1,
+                recess.clone(),
+            )
+            .unwrap();
+            let apex = screw.head_top_z() + recess.maximum_depth_mm();
+            assert!(apex > -1. && apex < 0.);
+            assert!(!screw.contains([0., 0., -0.6], 0.));
+            assert!(screw.contains([0., 0., -0.3], 0.));
+            assert!(screw.contains([1.2, 0., -0.6], 0.));
+            let mesh = tessellate_profiled_screw(&screw, options()).unwrap();
+            let proof = certify(&mesh).unwrap();
+            let bound = profiled_screw_volume_error_bound(&screw, options()).unwrap();
+            assert!((proof.signed_volume_mm3 - screw.volume_mm3()).abs() <= bound);
+            let text = crate::step::write_profiled_screw(
+                &screw,
+                [0.; 3],
+                [1., 0., 0.],
+                [0., 1., 0.],
+                1e-7,
+            )
+            .unwrap();
+            let (_, imported) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
+            assert!(crate::step_read::profiled_screw_import_matches(
+                &imported,
+                &screw,
+                [[0.; 3], [1., 0., 0.], [0., 1., 0.]],
+                1e-7,
+            ));
+            // The identical cutter with insufficient plain shank intersects the
+            // original helical source and must not be admitted as this provider.
+            assert!(
+                Screw::new_with_recess(
+                    thread(starts, left),
+                    1.5,
+                    spec(false).head,
+                    0.5,
+                    0.1,
+                    recess.clone(),
+                )
+                .is_err()
+            );
+            assert!(
+                Screw::new_with_recess(
+                    thread(starts, left),
+                    1.5,
+                    spec(false).head,
+                    1.,
+                    0.8,
+                    recess,
+                )
+                .is_err()
+            );
+        }
     }
 }

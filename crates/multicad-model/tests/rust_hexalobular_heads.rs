@@ -197,3 +197,82 @@ fn canonical_hexalobular_heads_create_edit_export_and_reopen_without_native_geom
         );
     }
 }
+
+#[test]
+fn deep_metric_recess_retains_plain_shank_material_and_refuses_thread_core_intersection() {
+    for kind in [0, 2] {
+        for fit in [ThreadFit::NominalBasic, ThreadFit::Metric6gExternal] {
+            let mut session = Session::new(Document::new("Deep metric drive").unwrap()).unwrap();
+            let mut parameters = recipe(kind, fit, 3.);
+            let MechanicalPartParameters::MachineScrew { drive, .. } = &mut parameters else {
+                unreachable!()
+            };
+            let ScrewDrive::Hexalobular { profile } = drive else {
+                unreachable!()
+            };
+            profile.depth = length(1.8);
+            let request = MechanicalPartRequest::new("Deep plain-shank drive", parameters.clone());
+            let candidate = model::prepare_mechanical_part(&session, 0, actor(), &request).unwrap();
+            let compiled = compiler()
+                .compile_with_backend(
+                    candidate.prepared.document(),
+                    1,
+                    GeometryBackend::Rust,
+                    None,
+                )
+                .unwrap();
+            let solid = compiled.solid(request.feature).unwrap();
+            let (source, _) = solid.rust_profiled_screw_geometry().unwrap();
+            let back = source.head_top_z() + source.recess().maximum_depth_mm();
+            assert!(back > -1. && back < 0.);
+            assert!(!source.contains([0., 0., back - 0.01], 0.));
+            assert!(source.contains([0., 0., back + 0.01], 0.));
+            assert!(source.contains([1.25, 0., back - 0.01], 0.));
+            let mesh = solid
+                .manufacturing_mesh_with_receipt(Default::default())
+                .unwrap();
+            assert_eq!(mesh.edge_pairs as usize * 2, mesh.mesh.indices.len());
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("deep-drive.step");
+            solid.write_step(&path).unwrap();
+            let physical = multicad_kernel::Solid::import_rust_step(
+                &std::fs::read_to_string(path).unwrap(),
+                EntityId::new(),
+                GeometryPolicy::default(),
+            )
+            .unwrap();
+            assert!((solid.volume_mm3().unwrap() - physical.volume_mm3().unwrap()).abs() < 1e-6);
+            let physical_source = physical.rust_profiled_screw_geometry().unwrap().0;
+            assert!(!physical_source.contains([0., 0., back - 0.01], 0.));
+            assert!(physical_source.contains([0., 0., back + 0.01], 0.));
+            session.commit(candidate.prepared).unwrap();
+            let unchanged = session.document().clone();
+            let MechanicalPartParameters::MachineScrew {
+                underhead_length, ..
+            } = &mut parameters
+            else {
+                unreachable!()
+            };
+            *underhead_length = Some(length(2.));
+            let invalid = model::prepare_mechanical_part_edit(
+                &session,
+                session.revision(),
+                actor(),
+                request.feature,
+                &parameters,
+            )
+            .unwrap();
+            assert!(
+                compiler()
+                    .compile_with_backend(
+                        invalid.prepared.document(),
+                        2,
+                        GeometryBackend::Rust,
+                        None,
+                    )
+                    .is_err()
+            );
+            assert_eq!(session.document(), &unchanged);
+        }
+    }
+}
