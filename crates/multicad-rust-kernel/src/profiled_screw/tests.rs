@@ -1164,3 +1164,87 @@ fn thread_core_recesses_keep_actual_rounded_roots_and_physical_step() {
         }
     }
 }
+
+#[test]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn outer_shell_refactor_preserves_frozen_hex_and_torx_mesh_bytes() {
+    use crate::hexalobular_drive::{Cone, Drive, TangentSpec};
+    let mut fingerprints = Vec::new();
+    for family in 0..3 {
+        for union in [false, true] {
+            let head = spec(true).head;
+            let recess = match family {
+                0 => Recess::canonical_flat_hex(2., 0.6).unwrap(),
+                1 => {
+                    let angle = 0.193_f64;
+                    let canonical = HexDrive::canonical(2., 1e-12).unwrap();
+                    let corners = canonical.corners_mm().map(|[x, y]| {
+                        [
+                            x * angle.cos() - y * angle.sin(),
+                            x * angle.sin() + y * angle.cos(),
+                        ]
+                    });
+                    Recess::flat_hex(
+                        HexDrive::from_retained_corners(corners, 2., 1e-12).unwrap(),
+                        0.6,
+                    )
+                    .unwrap()
+                }
+                _ => Recess::conical_hexalobular(
+                    Drive::from_authored_tangent(
+                        TangentSpec {
+                            major_diameter_mm: 2.8,
+                            minor_diameter_mm: 2.05,
+                            outer_lobe_radius_mm: 0.28,
+                        },
+                        Cone {
+                            tip_depth_mm: 1.9,
+                            depth_per_radius: 1. / 3_f64.sqrt(),
+                        },
+                    )
+                    .unwrap(),
+                    1e-7,
+                    100_000,
+                )
+                .unwrap(),
+            };
+            let s = Screw::new_with_recess(
+                thread(1, union),
+                if union { 1.55 } else { 1.5 },
+                head,
+                if union { 0. } else { 1. },
+                0.01,
+                recess,
+            )
+            .unwrap();
+            let mesh = tessellate_profiled_screw(&s, options()).unwrap();
+            let mut hash = 0xcbf29ce484222325u64;
+            for value in mesh
+                .vertices
+                .iter()
+                .map(|v| v.to_bits())
+                .chain(mesh.indices.iter().map(|&v| u64::from(v)))
+                .chain(mesh.face_indices.iter().map(|&v| u64::from(v)))
+            {
+                for byte in value.to_le_bytes() {
+                    hash = (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+                }
+            }
+            fingerprints.push((mesh.vertices.len(), mesh.indices.len(), hash));
+        }
+    }
+    // Captured from the unrefactored production source at 6fe77455 on the
+    // pinned arm64 macOS toolchain. Other platforms retain geometric controls
+    // rather than assuming identical platform transcendental rounding.
+    assert_eq!(
+        fingerprints,
+        vec![
+            (26256, 52500, 4775075664380762383),
+            (25857, 51702, 3765674040374272986),
+            (28107, 56202, 13800335858148611555),
+            (27675, 55338, 6322295958705583023),
+            (89202, 178392, 12729986422886773511),
+            (87669, 175326, 6232386977902650541),
+        ]
+    );
+}

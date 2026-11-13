@@ -29,7 +29,7 @@ pub fn tessellate_profiled_screw(
     screw: &crate::profiled_screw::Screw,
     options: Tessellation,
 ) -> Result<DisplayMesh, MeshError> {
-    use crate::{head_profile::Curve, profiled_screw::Face};
+    use crate::profiled_screw::Face;
     let options = profiled_options(screw, options)?;
     let radius = screw.profile().support([1., 0., 0.]);
     let max_angle = profiled_angle(screw, options, radius);
@@ -71,47 +71,17 @@ pub fn tessellate_profiled_screw(
         angles: shoulder.iter().map(|&(angle, _)| angle).collect(),
     };
     let shaft_rim: Vec<_> = shoulder.into_iter().map(|(_, id)| id).collect();
-    let shank_radius = screw.profile().end()[0];
-    let join = if shank_radius == thread.spec().major_radius_mm {
-        shell.shank_join(&shaft_rim, shank_radius)
-    } else {
-        // Distinct physical circles keep distinct source identities, even
-        // when their positive separation is below a display chord request.
-        shell.ring(screw.visible_thread_interval_mm()[0], |_| shank_radius)
-    };
-    shell.annulus(&shaft_rim, &join, face(Face::ThreadShoulder), false)?;
     let top_z = screw.head_top_z();
-    let top = shell.ring(top_z, |_| screw.profile().top()[0]);
-    let mut previous = top.clone();
-    let segments: Vec<_> = screw.profile().segments().collect();
-    for (index, segment) in segments.iter().enumerate() {
-        let subdivisions = match segment.curve {
-            Curve::Line => 1.,
-            Curve::Arc {
-                radius_mm: r,
-                sweep,
-                ..
-            } => (sweep.abs() / (options.angle * 0.5).min((options.deflection / r).sqrt())).ceil(),
-        };
-        if subdivisions * shell.angles.len() as f64 * 2. > options.triangle_limit as f64 {
-            return Err(MeshError::BudgetExceeded);
-        }
-        for step in 1..=subdivisions as usize {
-            let point = segment.point(step as f64 / subdivisions);
-            let next = if index + 1 == segments.len() && step == subdivisions as usize {
-                join.clone()
-            } else {
-                shell.ring(point[1] - screw.spec().shank_length_mm, |_| point[0])
-            };
-            shell.wall(
-                &previous,
-                &next,
-                |_| Ok(face(Face::ProfileWall(index as u32))),
-                false,
-            )?;
-            previous = next;
-        }
-    }
+    let top = shell.profile_outer(
+        screw.profile(),
+        screw.spec().shank_length_mm,
+        screw.visible_thread_interval_mm()[0],
+        &shaft_rim,
+        (face(Face::ThreadShoulder), |index| {
+            face(Face::ProfileWall(index))
+        }),
+        options,
+    )?;
     let (mouth, floor, floor_z) = match screw.recess() {
         crate::screw_recess::Recess::FlatHex(recess) => {
             let (drive, depth) = recess.geometry();
@@ -363,6 +333,56 @@ struct HeadMesh<'a, 'thread> {
 }
 
 impl HeadMesh<'_, '_> {
+    fn profile_outer(
+        &mut self,
+        profile: &crate::head_profile::Profile,
+        plain: f64,
+        visible_start: f64,
+        shaft_rim: &[u32],
+        faces: (u32, impl Fn(u32) -> u32),
+        options: Tessellation,
+    ) -> Result<Vec<u32>, MeshError> {
+        use crate::head_profile::Curve;
+        let shank_radius = profile.end()[0];
+        let join = if shank_radius == self.builder.thread.spec().major_radius_mm {
+            self.shank_join(shaft_rim, shank_radius)
+        } else {
+            // Distinct physical circles keep distinct source identities, even
+            // when their positive separation is below a display chord request.
+            self.ring(visible_start, |_| shank_radius)
+        };
+        self.annulus(shaft_rim, &join, faces.0, false)?;
+        let top_z = profile.top()[1] - plain;
+        let top = self.ring(top_z, |_| profile.top()[0]);
+        let mut previous = top.clone();
+        let segments: Vec<_> = profile.segments().collect();
+        for (index, segment) in segments.iter().enumerate() {
+            let subdivisions = match segment.curve {
+                Curve::Line => 1.,
+                Curve::Arc {
+                    radius_mm: r,
+                    sweep,
+                    ..
+                } => (sweep.abs() / (options.angle * 0.5).min((options.deflection / r).sqrt()))
+                    .ceil(),
+            };
+            if subdivisions * self.angles.len() as f64 * 2. > options.triangle_limit as f64 {
+                return Err(MeshError::BudgetExceeded);
+            }
+            for step in 1..=subdivisions as usize {
+                let point = segment.point(step as f64 / subdivisions);
+                let next = if index + 1 == segments.len() && step == subdivisions as usize {
+                    join.clone()
+                } else {
+                    self.ring(point[1] - plain, |_| point[0])
+                };
+                self.wall(&previous, &next, |_| Ok(faces.1(index as u32)), false)?;
+                previous = next;
+            }
+        }
+        Ok(top)
+    }
+
     fn push(&mut self, point: [f64; 3]) -> u32 {
         let id = (self.builder.mesh.vertices.len() / 3) as u32;
         self.builder.mesh.vertices.extend(point);
