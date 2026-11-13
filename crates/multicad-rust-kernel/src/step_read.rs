@@ -1027,10 +1027,11 @@ fn face_area(outer: &Trim, holes: &[Trim], tolerance: f64) -> Result<f64> {
 pub use phillips_cutter::{
     ParsedPhillipsAxis, ParsedPhillipsBoundary, ParsedPhillipsCurve, ParsedPhillipsEdge,
     ParsedPhillipsFace, ParsedPhillipsMaterialLoop, ParsedPhillipsMaterialUse, ParsedPhillipsMouth,
-    ParsedPhillipsSurface, ParsedPhillipsVertex, PhillipsCubicSupportBounds,
-    PhillipsCubicSupportOptions, PhillipsEdgeSupportBound, PhillipsEndpointCouplingBounds,
-    PhillipsEndpointCouplingOptions, PhillipsImplicitSupportEnclosure,
-    read_phillips_screw_boundary, read_phillips_screw_boundary_with_interrupt,
+    ParsedPhillipsSurface, ParsedPhillipsVertex, PhillipsAnalyticSupportBounds,
+    PhillipsAnalyticSupportOptions, PhillipsCubicSupportBounds, PhillipsCubicSupportOptions,
+    PhillipsEdgeSupportBound, PhillipsEndpointCouplingBounds, PhillipsEndpointCouplingOptions,
+    PhillipsImplicitSupportEnclosure, read_phillips_screw_boundary,
+    read_phillips_screw_boundary_with_interrupt,
 };
 
 #[cfg(test)]

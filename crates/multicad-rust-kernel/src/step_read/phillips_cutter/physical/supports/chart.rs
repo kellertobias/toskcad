@@ -55,7 +55,9 @@ impl Chart {
         self.project(point.map(interval))
     }
     pub(in super::super) fn project(&self, point: [I; 3]) -> [I; 3] {
-        let delta = std::array::from_fn::<_, 3, _>(|i| point[i] - self.frame.origin[i]);
+        self.project_vector(std::array::from_fn(|i| point[i] - self.frame.origin[i]))
+    }
+    pub(in super::super) fn project_vector(&self, delta: [I; 3]) -> [I; 3] {
         self.frame.axes.map(|axis| {
             axis.into_iter()
                 .zip(delta)
@@ -103,6 +105,95 @@ impl Chart {
                 )
             }
         }
+    }
+    pub(in super::super) fn homogeneous_degree(&self) -> usize {
+        match self.kind {
+            Kind::Plane => 1,
+            Kind::Cylinder(_) | Kind::Cone(..) => 2,
+            Kind::Torus(..) => 4,
+        }
+    }
+    /// Exact rational quadratic parameterization, not a polynomial fit. The
+    /// result is W^degree * F(numerator/W), through Bernstein degree8.
+    pub(in super::super) fn implicit_homogeneous(&self, n: [[I; 3]; 3], w: [I; 3]) -> Vec<I> {
+        let [x, y, z] = [0, 1, 2].map(|i| n.map(|p| p[i]));
+        let radial = add(&square(&x), &square(&y));
+        let ww = square(&w);
+        match self.kind {
+            Kind::Plane => z.to_vec(),
+            Kind::Cylinder(r) => sub(
+                &radial,
+                &ww.iter().map(|&v| v * r.square()).collect::<Vec<_>>(),
+            ),
+            Kind::Cone(r, k) => sub(
+                &radial,
+                &square(&std::array::from_fn::<_, 3, _>(|i| r * w[i] + k * z[i])),
+            ),
+            Kind::Torus(a, b) => {
+                let norm = add(
+                    &add(&radial, &square(&z)),
+                    &ww.iter()
+                        .map(|&v| v * (a.square() - b.square()))
+                        .collect::<Vec<_>>(),
+                );
+                sub(
+                    &square(&norm),
+                    &product(&radial, &ww)
+                        .iter()
+                        .map(|&v| I::point(4.) * a.square() * v)
+                        .collect::<Vec<_>>(),
+                )
+            }
+        }
+    }
+    /// Uniform whole-support metric; deliberately conservative. Finite chart
+    /// filling and branch/winding validity are independent responsibilities.
+    pub(in super::super) fn uniform_distance(&self, residual: I, local_box: [I; 3]) -> Result<f64> {
+        let denominator = match self.kind {
+            Kind::Plane => return finite_bound(residual.magnitude()),
+            Kind::Cylinder(r) => r,
+            Kind::Cone(r, k) => r + k * local_box[2],
+            Kind::Torus(a, b) => b * (a.square() - b.square()),
+        };
+        if !denominator.valid() || denominator.lo <= 0. {
+            return Err(ReadError::Unsupported);
+        }
+        finite_bound((I::point(residual.magnitude()) / denominator).hi)
+    }
+    /// Bound one finite affine segment against a positive cone ruling, also
+    /// at its apex. The ruling is only a comparison for an error bound; this
+    /// method never replaces the transmitted line or its endpoint data.
+    pub(in super::super) fn cone_line_distance(&self, p: [[I; 3]; 2]) -> Result<f64> {
+        let Kind::Cone(r, k) = self.kind else {
+            return Err(ReadError::Unsupported);
+        };
+        if k.lo <= 0. {
+            return Err(ReadError::Unsupported);
+        }
+        let radial = p.map(|q| (q[0].square() + q[1].square()).sqrt());
+        if radial.into_iter().any(|i| !i.valid()) {
+            return Err(ReadError::Limit);
+        }
+        let index = usize::from(radial[1].lo > radial[0].lo);
+        if radial[index].lo <= 0. {
+            return Err(ReadError::Unsupported);
+        }
+        let unit = [p[index][0] / radial[index], p[index][1] / radial[index]];
+        let mut upper = 0_f64;
+        for point in p {
+            let q = r + k * point[2];
+            if !q.valid() {
+                return Err(ReadError::Limit);
+            }
+            let clipped = I::new(q.lo.max(0.), q.hi.max(0.));
+            let target = [clipped * unit[0], clipped * unit[1], (clipped - r) / k];
+            let deviation = support::norm(std::array::from_fn(|i| point[i] - target[i]));
+            if !deviation.valid() {
+                return Err(ReadError::Limit);
+            }
+            upper = upper.max(deviation.hi);
+        }
+        finite_bound(upper)
     }
     pub(in super::super) fn gradient(&self, [x, y, z]: [I; 3]) -> [I; 3] {
         let two = I::point(2.);

@@ -15,8 +15,9 @@ mod geometry;
 mod graph;
 mod physical;
 pub use physical::{
-    Axis as ParsedPhillipsAxis, Boundary as ParsedPhillipsBoundary,
-    CubicSupportBounds as PhillipsCubicSupportBounds,
+    AnalyticSupportBounds as PhillipsAnalyticSupportBounds,
+    AnalyticSupportOptions as PhillipsAnalyticSupportOptions, Axis as ParsedPhillipsAxis,
+    Boundary as ParsedPhillipsBoundary, CubicSupportBounds as PhillipsCubicSupportBounds,
     CubicSupportOptions as PhillipsCubicSupportOptions, Curve as ParsedPhillipsCurve,
     Edge as ParsedPhillipsEdge, EdgeSupportBound as PhillipsEdgeSupportBound,
     EndpointCouplingBounds as PhillipsEndpointCouplingBounds,

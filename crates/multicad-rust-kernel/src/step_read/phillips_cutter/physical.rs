@@ -2,8 +2,10 @@
 //! mass, self-intersection, Phillips gauge or native-publication certificate.
 use super::*;
 
+mod analytic;
 mod branches;
 mod endpoints;
+pub use analytic::{AnalyticSupportBounds, AnalyticSupportOptions};
 pub use branches::{
     EdgeSection as IntersectionSection, EdgeTube as IntersectionEdgeTube,
     Options as IntersectionTubeOptions, Tubes as IntersectionTubes,
