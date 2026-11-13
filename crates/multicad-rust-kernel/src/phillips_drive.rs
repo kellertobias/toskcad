@@ -2,7 +2,9 @@
 //! Finite boundary and manufacturing publication require additional proofs.
 use crate::tapered_thread::interval::I;
 use std::f64::consts::PI;
+mod cavity;
 mod classify;
+pub use cavity::Cavity;
 mod events;
 mod finite_section;
 pub use events::{
