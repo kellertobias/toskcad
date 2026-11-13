@@ -5,6 +5,7 @@ use super::{
     jet::Jet,
     *,
 };
+mod shoulder;
 fn span(edge: Edge) -> I {
     I::new(
         edge.v[0].lo.min(edge.v[1].lo),
@@ -31,6 +32,9 @@ pub(super) enum Surface {
     OuterCap,
 }
 pub(super) fn field(body: &Cavity, edge: Edge, station: f64, mode: Surface) -> source::Field {
+    field_at(body, edge, station, mode, Jet::variable(1))
+}
+fn field_at(body: &Cavity, edge: Edge, station: f64, mode: Surface, t: Jet) -> source::Field {
     let bound = span(edge);
     let v = Jet::constant(I::point(bound.lo))
         .add(Jet::variable(0).scale(I::point(bound.hi) - I::point(bound.lo)));
@@ -51,7 +55,6 @@ pub(super) fn field(body: &Cavity, edge: Edge, station: f64, mode: Surface) -> s
             source::Normal::Axial(I::point(if station == 0. { -1. } else { 1. })),
         ),
         Surface::Shoulder => {
-            let t = Jet::variable(1);
             let outer = Jet::constant(I::point(body.tail.unwrap().radius));
             (
                 rho.add(outer.sub(rho).mul(t)),
@@ -226,26 +229,60 @@ pub(super) struct Prepared {
     pub shell: Shell,
     pub caps: Vec<Disk>,
 }
+enum ClosureAttempt {
+    Ready(Prepared),
+    Radial(Shell),
+    Refine,
+}
 pub(super) fn prepare(
     mut shell: Shell,
     body: &Cavity,
     options: Tessellation,
     w: &mut Work<'_>,
 ) -> Result<Option<Prepared>, Error> {
+    let mut strips = 1;
+    loop {
+        match prepare_once(shell, body, options, w, strips)? {
+            ClosureAttempt::Ready(prepared) => return Ok(Some(prepared)),
+            ClosureAttempt::Radial(next) if strips < shoulder::MAX_STRIPS => {
+                shell = next;
+                strips *= 2;
+            }
+            ClosureAttempt::Radial(_) | ClosureAttempt::Refine => return Ok(None),
+        }
+    }
+}
+fn prepare_once(
+    mut shell: Shell,
+    body: &Cavity,
+    options: Tessellation,
+    w: &mut Work<'_>,
+    strips: usize,
+) -> Result<ClosureAttempt, Error> {
     w.step()?;
+    let baseline = (
+        shell.mesh.vertices.len(),
+        shell.mesh.indices.len(),
+        shell.mesh.face_indices.len(),
+        shell.chord,
+        shell.normal,
+    );
+    let mouth = std::mem::take(&mut shell.mouth);
+    let source_top = std::mem::take(&mut shell.top);
     let count = shell.mesh.vertices.len() / 3;
-    // Both maps are fixed by already bounded exact source vertices; no retained
-    // rational heap and no geometric proximity search is introduced.
+    // Exact original source identities own all three bounded maps. The new
+    // radial map shares the original 4MiB closure workspace allowance.
+    let planned_maps = [
+        (count * 2, std::mem::size_of::<usize>()),
+        (count * (strips - 1), std::mem::size_of::<usize>()),
+    ];
+    storage::bytes(&planned_maps, 0, 4 * 1024 * 1024)?;
     w.charge(2 * count)?;
     let mut bottom = Vec::new();
     let mut top = Vec::new();
     bottom.try_reserve_exact(count).map_err(|_| Error::Limit)?;
     top.try_reserve_exact(count).map_err(|_| Error::Limit)?;
-    let allocations = [
-        (bottom.capacity(), std::mem::size_of::<usize>()),
-        (top.capacity(), std::mem::size_of::<usize>()),
-    ];
-    storage::bytes(&allocations, 0, 4 * 1024 * 1024)?;
+    let mut spokes = shoulder::Spokes::new(count, strips, [bottom.capacity(), top.capacity()], w)?;
     bottom.resize(count, usize::MAX);
     top.resize(count, usize::MAX);
     let centers = [count, count + 1];
@@ -253,15 +290,13 @@ pub(super) fn prepare(
         .mesh
         .vertices
         .extend([0., 0., 0., 0., 0., body.full_length_mm()]);
-    // One typed cap queue and one quality gate serve all physical disk kinds.
-    // Rims are already bounded16k each; retain at most32k fixed-size receipts.
-    w.charge(shell.mouth.len() + shell.top.len())?;
+    w.charge(mouth.len() + source_top.len())?;
     let mut caps = Vec::new();
-    caps.try_reserve_exact(shell.mouth.len() + shell.top.len())
+    caps.try_reserve_exact(mouth.len() + source_top.len())
         .map_err(|_| Error::Limit)?;
-    let allocation = [(caps.capacity(), std::mem::size_of::<Disk>())];
-    storage::bytes(&allocation, 0, 16 * 1024 * 1024)?;
-    for edge in std::mem::take(&mut shell.mouth) {
+    let actual_caps = [(caps.capacity(), std::mem::size_of::<Disk>())];
+    storage::bytes(&actual_caps, 0, 16 * 1024 * 1024)?;
+    for &edge in &mouth {
         caps.push(Disk {
             edge,
             ids: edge.vertices,
@@ -272,57 +307,65 @@ pub(super) fn prepare(
         });
     }
     let base = 2 + 4 * body.thread.spec().starts + u32::from(body.entry.is_some());
-    for edge in std::mem::take(&mut shell.top) {
-        let (ids, errors, mode) = if let Some(tail) = body.tail {
-            let (low, le) = outer(body, edge, tail.station, &mut bottom, &mut shell.mesh, w)?;
-            let (high, he) = outer(
-                body,
-                edge,
-                body.full_length_mm(),
-                &mut top,
-                &mut shell.mesh,
-                w,
-            )?;
-            for (kind, ids, errors, face) in [
-                (
-                    Surface::Shoulder,
-                    [edge.vertices[0], edge.vertices[1], low[1], low[0]],
-                    [edge.errors[0], edge.errors[1], le[1], le[0]],
-                    base,
-                ),
-                (
-                    Surface::Terminal,
+    let verdict = (|| -> Result<shoulder::Verdict, Error> {
+        for &edge in &source_top {
+            let (ids, errors, mode) = if let Some(tail) = body.tail {
+                let (low, le) = outer(body, edge, tail.station, &mut bottom, &mut shell.mesh, w)?;
+                let (high, he) = outer(
+                    body,
+                    edge,
+                    body.full_length_mm(),
+                    &mut top,
+                    &mut shell.mesh,
+                    w,
+                )?;
+                match spokes.emit(&mut shell, body, edge, (low, le), options, w)? {
+                    shoulder::Verdict::Done => {}
+                    other => return Ok(other),
+                }
+                if !quad(
+                    &mut shell,
+                    field(body, edge, tail.station, Surface::Terminal),
                     [low[0], low[1], high[1], high[0]],
                     [le[0], le[1], he[1], he[0]],
                     base + 1,
-                ),
-            ] {
-                if !quad(
-                    &mut shell,
-                    field(body, edge, tail.station, kind),
-                    ids,
-                    errors,
-                    face,
                     options,
                     w,
                 )? {
-                    return Ok(None);
+                    return Ok(shoulder::Verdict::Refine);
                 }
-            }
-            (high, he, Surface::OuterCap)
-        } else {
-            (edge.vertices, edge.errors, Surface::InnerCap)
-        };
-        caps.push(Disk {
-            edge,
-            ids,
-            errors,
-            center: centers[1],
-            end: 1,
-            mode,
-        });
-    }
-    Ok(Some(Prepared { shell, caps }))
+                (high, he, Surface::OuterCap)
+            } else {
+                (edge.vertices, edge.errors, Surface::InnerCap)
+            };
+            caps.push(Disk {
+                edge,
+                ids,
+                errors,
+                center: centers[1],
+                end: 1,
+                mode,
+            });
+        }
+        Ok(shoulder::Verdict::Done)
+    })()?;
+    Ok(match verdict {
+        shoulder::Verdict::Done => ClosureAttempt::Ready(Prepared { shell, caps }),
+        shoulder::Verdict::Refine => ClosureAttempt::Refine,
+        shoulder::Verdict::Radial => {
+            // Failed partial closure is never published or reused as proof.
+            // Retain the already-certified side and exact source rims; every
+            // attempted closure's work stays charged to this same operation.
+            shell.mesh.vertices.truncate(baseline.0);
+            shell.mesh.indices.truncate(baseline.1);
+            shell.mesh.face_indices.truncate(baseline.2);
+            shell.chord = baseline.3;
+            shell.normal = baseline.4;
+            shell.mouth = mouth;
+            shell.top = source_top;
+            ClosureAttempt::Radial(shell)
+        }
+    })
 }
 pub(super) fn close(
     shell: Shell,
@@ -531,5 +574,48 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+    }
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::*;
+    fn setup() -> (Cavity, Shell, Tessellation, Work<'static>) {
+        let body = super::super::tests::source(false, 1, Some(0.4), true);
+        let options = super::super::tests::options();
+        let mut w = Work {
+            remaining: 16_000_000,
+            used: 0,
+            interrupt: None,
+        };
+        let shell = chart::shell(&body, options, 1, 64, &mut w)
+            .unwrap()
+            .unwrap();
+        (body, shell, options, w)
+    }
+    #[test]
+    fn collapsed_actual_literal_rim_never_becomes_a_radial_quality_retry() {
+        let (body, mut shell, options, mut w) = setup();
+        // Corrupt only a literal candidate coordinate, preserving the actual source.
+        // A zero-area represented shoulder must refine, never be accepted.
+        let [a, b] = shell.top[0].vertices;
+        for k in 0..3 {
+            shell.mesh.vertices[3 * b + k] = shell.mesh.vertices[3 * a + k];
+        }
+        assert!(matches!(
+            prepare_once(shell, &body, options, &mut w, 1).unwrap(),
+            ClosureAttempt::Refine
+        ));
+    }
+    #[test]
+    fn actual_terminal_wall_refuses_an_independently_tight_angular_request() {
+        let (body, shell, mut options, mut w) = setup();
+        // Source side/rim is genuine and remains immutable. This closure gate
+        // must not reuse its previous looser angular receipt.
+        options.angle = 0.01;
+        assert!(matches!(
+            prepare_once(shell, &body, options, &mut w, 1).unwrap(),
+            ClosureAttempt::Refine
+        ));
     }
 }

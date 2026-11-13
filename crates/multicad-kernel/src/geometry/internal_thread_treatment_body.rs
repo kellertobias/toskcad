@@ -968,3 +968,57 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod large_shoulder_tests {
+    use super::*;
+    use multicad_rust_kernel::{Circle, Rational};
+    #[test]
+    fn actual_large_terminal_keeps_default_native_quality_and_literal_embedding() {
+        for (left, starts, frame) in [
+            (false, 1, PlaneFrame::default()),
+            (
+                true,
+                2,
+                PlaneFrame {
+                    origin: [10., 20., 30.],
+                    u: [0.8, 0.6, 0.],
+                    v: [-0.36, 0.48, 0.8],
+                },
+            ),
+        ] {
+            let zero = Rational::new(0, 1).unwrap();
+            let stock = AxialCylinder::new(
+                7,
+                Circle::new([zero; 2], Rational::new(25, 2).unwrap()).unwrap(),
+                zero,
+                Rational::new(4, 1).unwrap(),
+            )
+            .unwrap();
+            let policy = GeometryPolicy::default();
+            let original = Solid::build_axial_cylinder(stock, frame, None, policy).unwrap();
+            let mut cut = super::tests::cut(frame, left, starts);
+            cut.intent.terminal.as_mut().unwrap().radial_depth_mm = 10.;
+            let body = original
+                .rust_cut_authored_internal_thread_treatments_with_interrupt(
+                    cut,
+                    EntityId::new(),
+                    policy,
+                    None,
+                )
+                .unwrap();
+            let timer = std::time::Instant::now();
+            let receipt = body
+                .manufacturing_mesh_with_receipt(MeshOptions::default())
+                .unwrap();
+            eprintln!(
+                "actual large terminal Native {left}/{starts}: {} facets {:?}",
+                receipt.mesh.face_indices.len(),
+                timer.elapsed()
+            );
+            assert!(!receipt.mesh.indices.is_empty());
+            assert!(body.volume_mm3().unwrap() > 0.);
+            assert!(body.volume_mm3().unwrap() < original.volume_mm3().unwrap());
+        }
+    }
+}

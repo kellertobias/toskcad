@@ -196,12 +196,11 @@ fn a_real_large_terminal_refines_after_qualified_side_sources_and_strict_targets
     else {
         panic!("actual side sources should already qualify")
     };
-    assert!(
-        close::close(shell, &body, quality(), &mut w)
-            .unwrap()
-            .is_none(),
-        "the larger terminal has its own source chord proof"
-    );
+    let closed = close::close(shell, &body, quality(), &mut w)
+        .unwrap()
+        .unwrap();
+    assert!(closed.source_chord_bound_mm <= quality().deflection);
+    crate::manufacturing::certify(&closed.mesh).unwrap();
     let result = tessellate_candidate(&body, quality(), None);
     match result {
         Ok(candidate) => assert!(candidate.source_chord_bound_mm <= 0.1),
@@ -221,4 +220,72 @@ fn a_real_large_terminal_refines_after_qualified_side_sources_and_strict_targets
         .unwrap()
         .is_none()
     );
+}
+
+#[test]
+fn actual_large_terminal_uses_local_conforming_shoulders_without_refining_the_thread() {
+    let base = source(false);
+    let thread = AuthoredThread::new(
+        crate::helical_thread::Spec {
+            depth_mm: 0.25,
+            crest_width_mm: 0.125,
+            ..base.thread.spec()
+        },
+        SourceOptions {
+            position_limit_mm: 1e-7,
+            normal_angle_limit_rad: 1e-7,
+        },
+    )
+    .unwrap();
+    let body = Cavity::new(
+        thread,
+        Intent {
+            terminal: Some(Terminal {
+                width_mm: 0.5,
+                radial_depth_mm: 10.,
+            }),
+            ..base.intent()
+        },
+    )
+    .unwrap();
+    let mut w = work();
+    let Attempt::Complete(shell) = chart::shell_attempt(&body, quality(), 1, 64, &mut w).unwrap()
+    else {
+        panic!("side source must qualify")
+    };
+    let before = w.used;
+    let tail = body.tail.unwrap();
+    let chord = shell
+        .top
+        .iter()
+        .map(|&e| {
+            certificate::chord(
+                &close::field(&body, e, tail.station, close::Surface::Shoulder),
+                [0.; 3],
+            )
+        })
+        .fold(0_f64, f64::max);
+    eprintln!(
+        "actual shoulder curvature-only bound={chord}, requested={}, sidework={before}, sidefacets={}",
+        quality().deflection,
+        shell.mesh.face_indices.len()
+    );
+    assert!(chord > quality().deflection);
+    let start = std::time::Instant::now();
+    let candidate = tessellate_candidate(&body, quality(), None);
+    eprintln!(
+        "before actual full candidate={:?}, elapsed={:?}",
+        candidate.as_ref().map(|x| (
+            x.mesh.face_indices.len(),
+            x.work_used,
+            x.source_chord_bound_mm
+        )),
+        start.elapsed()
+    );
+    let candidate = candidate.unwrap();
+    assert!(candidate.source_chord_bound_mm <= quality().deflection);
+    assert!(candidate.source_normal_angle_bound_rad <= quality().angle);
+    let proof = crate::manufacturing::certify(&candidate.mesh).unwrap();
+    assert!(proof.signed_volume_mm3 > 0. && proof.vertex_links > 0);
+    assert!(candidate.work_used < 4_000_000);
 }
