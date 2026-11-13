@@ -223,7 +223,7 @@ fn saved_pair_exact_metrics_and_manufacturing_mesh_agree_with_native_readback() 
             match kind {
                 Face::Cap { end } => assert_eq!(heights, [if end { 4. } else { 0. }; 3]),
                 Face::Tooth { band, edge } => {
-                    let [lo, hi] = band.axial_interval_mm(4.);
+                    let [lo, hi] = gear.band_interval_mm(band);
                     assert!(heights.into_iter().all(|z| (lo..=hi).contains(&z)));
                     if first_sample {
                         let centroid = std::array::from_fn::<_, 3, _>(|axis| {
@@ -254,6 +254,7 @@ fn saved_pair_exact_metrics_and_manufacturing_mesh_agree_with_native_readback() 
                     }
                 }
                 Face::Bore | Face::HubWall { .. } | Face::HubCap { .. } => {}
+                Face::RootCore | Face::Shoulder { .. } => panic!("continuous chevron gap face"),
             }
         }
         assert_eq!(seen.len(), topology.faces.len());

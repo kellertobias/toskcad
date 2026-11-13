@@ -197,8 +197,8 @@ impl Herringbone {
         segments.sort_unstable_by(|a, b| a.x[0].total_cmp(&b.x[0]));
         let max_length = segments.iter().map(|s| s.length).fold(0., f64::max);
         let height = self.profile.height_mm();
-        let half = height * 0.5;
-        let sweep = self.phase_at(half).abs();
+        let band = self.band_length_mm();
+        let sweep = self.phase_at(band).abs();
         let max_angle = (8. * section.deflection / self.tip_radius_mm)
             .sqrt()
             .min(section.angle)
@@ -207,7 +207,15 @@ impl Herringbone {
         let cap_triangles = hubs
             .as_ref()
             .map_or(2 * caps_count, |ends| ends.triangles(count));
-        let layer_budget = options.triangle_limit.saturating_sub(cap_triangles) / (4 * count);
+        let gap = self
+            .is_gapped()
+            .then(|| Gap::new(self, &boundary, section))
+            .transpose()?;
+        let gap_triangles = gap.as_ref().map_or(0, Gap::triangles);
+        let layer_budget = options
+            .triangle_limit
+            .saturating_sub(cap_triangles + gap_triangles)
+            / (4 * count);
         if required > layer_budget as f64 {
             return Err(MeshError::BudgetExceeded);
         }
@@ -221,15 +229,22 @@ impl Herringbone {
             layer_budget,
         );
         let layers = refinement?;
-        let cap_top = 2 * layers * count;
-        let triangles = cap_triangles + 4 * layers * count;
+        let rows = 2 * layers + 1 + usize::from(gap.is_some());
+        let cap_top = (rows - 1) * count;
+        let triangles = cap_triangles + 4 * layers * count + gap_triangles;
         let mut mesh = DisplayMesh {
-            vertices: Vec::with_capacity((2 * layers + 1) * count * 3),
+            vertices: Vec::with_capacity(rows * count * 3),
             indices: Vec::with_capacity(triangles * 3),
             face_indices: Vec::with_capacity(triangles),
         };
-        for layer in 0..=2 * layers {
-            let z = height * (layer as f64 / (2 * layers) as f64);
+        for row in 0..rows {
+            let z = if gap.is_none() {
+                height * (row as f64 / (2 * layers) as f64)
+            } else if row <= layers {
+                band * (row as f64 / layers as f64)
+            } else {
+                (height - band) + band * ((row - layers - 1) as f64 / layers as f64)
+            };
             for point in &boundary.points {
                 mesh.vertices.extend(self.section_point(*point, z));
             }
@@ -260,10 +275,14 @@ impl Herringbone {
         }
         let band_faces = self.profile.outline().len() as u32;
         let bore_face = 2 + 2 * band_faces;
-        for layer in 0..2 * layers {
+        for layer in 0..rows - 1 {
+            let across_gap = gap.is_some() && layer == layers;
             for (&[a, b], &face) in boundary.edges.iter().zip(&boundary.faces) {
                 let start = layer * count;
                 let end = start + count;
+                if across_gap && face != bore_face {
+                    continue;
+                }
                 let face = if layer >= layers && face != bore_face {
                     face + band_faces
                 } else {
@@ -272,7 +291,162 @@ impl Herringbone {
                 wall(&mut mesh, [start + a, start + b], [end + a, end + b], face);
             }
         }
+        if let Some(gap) = gap {
+            gap.append(
+                self,
+                &boundary,
+                &mut mesh,
+                [layers, layers + 1].map(|row| row * count),
+            )?;
+        }
         Ok(mesh)
+    }
+}
+
+/// The root core and the per-tooth shoulders of a gapped chevron. Both
+/// shoulder rows share the same rotation, so one set of root-circle
+/// samples under each tooth serves both rows.
+struct Gap {
+    /// Per tooth: left foot and right foot outline sample indices.
+    feet: Vec<[usize; 2]>,
+    /// Unrotated interior samples under each tooth, right to left.
+    under: Vec<Vec<Point>>,
+    /// Counterclockwise root-circle ring of the core.
+    ring: Vec<Sample>,
+    bore_edges: usize,
+}
+
+#[derive(Clone, Copy)]
+enum Sample {
+    Outline(usize),
+    /// Offset into the concatenated interior samples.
+    Under(usize),
+}
+
+impl Gap {
+    fn new(
+        gear: &Herringbone,
+        boundary: &Boundary,
+        options: Tessellation,
+    ) -> Result<Self, MeshError> {
+        let teeth = gear.teeth();
+        let outline = gear.profile.outline().len() as u32;
+        let per_tooth = outline / teeth;
+        let radius = gear.profile.root_radius_mm;
+        let first = |face: u32| {
+            boundary
+                .faces
+                .iter()
+                .position(|&f| f == face)
+                .ok_or(MeshError::UnresolvedBoundary)
+        };
+        let outer = boundary
+            .faces
+            .iter()
+            .take_while(|&&face| face < 2 + outline)
+            .count();
+        let mut feet = Vec::with_capacity(teeth as usize);
+        let mut under = Vec::with_capacity(teeth as usize);
+        for tooth in 0..teeth {
+            let base = 2 + tooth * per_tooth;
+            feet.push([first(base)?, first(base + per_tooth - 1)?]);
+            let [from, to] = gear.under_tooth_angles(tooth);
+            let segments = options.arc_segments(radius, to - from)?.max(2);
+            under.push(
+                (1..segments)
+                    .map(|i| {
+                        let angle = (to - from).mul_add(i as f64 / segments as f64, from);
+                        [radius * angle.cos(), radius * angle.sin()]
+                    })
+                    .collect::<Vec<_>>(),
+            );
+        }
+        let mut ring = Vec::new();
+        let mut offset = 0;
+        for (tooth, [left, right]) in feet.iter().enumerate() {
+            ring.push(Sample::Outline(*left));
+            let interior = under[tooth].len();
+            ring.extend((0..interior).rev().map(|j| Sample::Under(offset + j)));
+            offset += interior;
+            let next = feet.get(tooth + 1).map_or(outer, |feet| feet[0]);
+            ring.extend((*right..next).map(Sample::Outline));
+        }
+        let bore_edges = boundary.faces.len() - outer;
+        Ok(Self {
+            feet,
+            under,
+            ring,
+            bore_edges,
+        })
+    }
+
+    fn triangles(&self) -> usize {
+        let shoulders: usize = self
+            .feet
+            .iter()
+            .zip(&self.under)
+            .map(|([left, right], under)| right - left + under.len() - 1)
+            .sum();
+        2 * shoulders + 2 * self.ring.len() + 2 * self.bore_edges
+    }
+
+    /// Append both shoulder rows and the core wall. The band layer loop
+    /// already continues the bore across the gap.
+    fn append(
+        self,
+        gear: &Herringbone,
+        boundary: &Boundary,
+        mesh: &mut DisplayMesh,
+        rows: [usize; 2],
+    ) -> Result<(), MeshError> {
+        let shoulders = gear.shoulder_heights_mm().expect("gapped gear");
+        let teeth = gear.teeth();
+        let core = gear.gap_faces_start();
+        let mut extra = [0; 2];
+        for (side, z) in shoulders.into_iter().enumerate() {
+            extra[side] = mesh.vertices.len() / 3;
+            for point in self.under.iter().flatten() {
+                mesh.vertices.extend(gear.section_point(*point, z));
+            }
+        }
+        let index = |side: usize, sample: Sample| match sample {
+            Sample::Outline(i) => rows[side] + i,
+            Sample::Under(j) => extra[side] + j,
+        };
+        let mut offset = 0;
+        for (tooth, ([left, right], under)) in self.feet.iter().zip(&self.under).enumerate() {
+            let samples: Vec<_> = (*left..=*right)
+                .map(Sample::Outline)
+                .chain((0..under.len()).map(|j| Sample::Under(offset + j)))
+                .collect();
+            offset += under.len();
+            let points = (*left..=*right)
+                .map(|i| boundary.points[i])
+                .chain(under.iter().copied())
+                .map(|[x, y]| Point2::new(x, y))
+                .collect();
+            let edges: Vec<_> = (0..samples.len())
+                .map(|i| [i, (i + 1) % samples.len()])
+                .collect();
+            for [a, b, c] in triangulate_region(points, &edges, 0)?.triangles {
+                for (side, upper) in [(0, false), (1, true)] {
+                    let face = core + 1 + u32::from(upper) * teeth + tooth as u32;
+                    let triangle = [a, b, c].map(|i| index(side, samples[i]));
+                    let [a, b, c] = triangle;
+                    mesh.triangle(if upper { [c, b, a] } else { [a, b, c] }, face);
+                }
+            }
+        }
+        for (i, &sample) in self.ring.iter().enumerate() {
+            let next = self.ring[(i + 1) % self.ring.len()];
+            wall(
+                mesh,
+                [index(0, sample), index(0, next)],
+                [index(1, sample), index(1, next)],
+                core,
+            );
+        }
+        Ok(())
     }
 }
 
