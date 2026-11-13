@@ -20,6 +20,8 @@ pub use topology::{
 };
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::fixture as test_fixture;
 mod volume;
 
 #[derive(Clone, Copy, Debug, PartialEq)]

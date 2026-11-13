@@ -40,7 +40,11 @@ pub use herringbone::{supports_herringbone, write_herringbone};
 mod nonplanar_loft;
 mod normal_relief;
 mod normal_sweep;
+pub(crate) mod phillips_cutter;
 mod pierced_sweep;
+pub use phillips_cutter::{
+    Error as PhillipsStepError, write_phillips_cutter, write_phillips_cutter_with_interrupt,
+};
 mod planar_union;
 mod radial_boundary;
 mod rounded_cylinder;
