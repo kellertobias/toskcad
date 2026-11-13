@@ -319,3 +319,6 @@ impl Quantum {
         }
     }
 }
+
+#[cfg(test)]
+mod rational_contract_tests;
