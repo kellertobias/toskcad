@@ -62,7 +62,11 @@ fn real_paired_sources_have_two_annuli_and_one_closed_oriented_torus() {
                             != (side == Side::Inner)
                     );
                     for (i, _) in graph.cells(side).iter().enumerate() {
-                        assert!(graph.cell_face(side, i).is_some());
+                        assert!(graph.cells(side)[i].face() >= 2);
+                        assert!(!matches!(
+                            graph.cell_face(side, i),
+                            None | Some(FaceKey::StartCap | FaceKey::EndCap)
+                        ));
                         assert!(graph.cell_coedges(side, i).unwrap().count() >= 3);
                     }
                 }
@@ -180,6 +184,11 @@ fn public_namespace_queries_retain_original_source_objects_and_reject_foreign_ke
             Err(Error::Invalid)
         ));
         for i in 0..graph.cells(side).len() {
+            assert!(graph.cells(side)[i].face() >= 2);
+            assert!(!matches!(
+                graph.cell_face(side, i),
+                None | Some(FaceKey::StartCap | FaceKey::EndCap)
+            ));
             let bare = graph
                 .source_boundary(side)
                 .cell_coedges(i)

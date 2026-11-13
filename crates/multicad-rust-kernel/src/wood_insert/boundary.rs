@@ -259,6 +259,10 @@ impl Boundary {
             .and_then(|n| n.checked_sub(construction_reserved))
             .ok_or(Error::Limit)
     }
+    /// Original finite side-patch cells only: the component graph closes its
+    /// ends by attaching rim coedges and never creates disk cap cells here.
+    /// Actual material annuli use paired face_loops and CapDomains; component
+    /// source_boundary().face_loops(0/1) remain disk-closure scaffolding.
     pub fn cells(&self, owner: Side) -> &[BoundaryCell] {
         self.source_boundary(owner).cells()
     }
