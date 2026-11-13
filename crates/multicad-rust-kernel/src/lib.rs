@@ -15,6 +15,7 @@ pub mod conical_screw_seat;
 pub mod cosmetic_fastener;
 pub mod curved_projection;
 pub mod cylinder;
+pub mod cylindrical_blind_pocket;
 pub mod display;
 mod drawing_events;
 pub mod head_profile;
