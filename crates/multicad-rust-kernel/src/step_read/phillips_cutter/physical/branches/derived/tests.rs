@@ -447,6 +447,14 @@ fn maximum_actual_cubic_schema_fits_the_declared_workspace_and_global_work() {
     .unwrap();
     assert_eq!(spans.len(), 4096);
     assert!(spans.capacity() <= 8192);
+    let closed = receipt
+        .closed_boundary_certificate(
+            crate::phillips_drive::ClosedBoundaryOptions::default(),
+            None,
+        )
+        .unwrap();
+    assert!(closed.work_used() < WORK);
+    assert_eq!(closed.local_source_certificate().patch_domains().len(), 88);
     assert!(receipt.work_used() < WORK);
     assert!(receipt.retained_budget_bytes() + SCRATCH_BYTES < BYTES);
     eprintln!(
@@ -618,4 +626,165 @@ fn reordered_actual_cavity_faces_preserve_geometric_roles_and_raw_entities() {
         assert_eq!(a.raw_cavity_forward, b.raw_cavity_forward);
     }
     assert_eq!(before.transfer_bounds(), after.transfer_bounds());
+}
+
+#[test]
+fn actual_derived_cavity_closed_source_and_raw_affine_image_are_bound_to_original_body() {
+    use crate::phillips_drive::ClosedBoundaryOptions;
+    use num_rational::BigRational as Q;
+    for posed in [false, true] {
+        let text = super::super::representative::scaled_text(1.137, posed);
+        let body = read_phillips_body(&text, 1e-7, 1_000_000).unwrap();
+        let (lifts, cubics) = prerequisites(body.cavity());
+        let sewn = lifts
+            .sewn_edge_sources(&body, &cubics, SewnOptions::default(), None)
+            .unwrap();
+        let representative = body
+            .derived_cavity_representative(&sewn, Default::default(), None)
+            .unwrap();
+        let closed = representative
+            .closed_boundary_certificate(ClosedBoundaryOptions::default(), None)
+            .unwrap();
+        assert!(std::ptr::eq(closed.representative(), &representative));
+        assert!(std::ptr::eq(
+            closed.local_source_certificate().source(),
+            representative.derived_cavity_source()
+        ));
+        assert_eq!(closed.local_source_certificate().patch_domains().len(), 88);
+        assert_eq!(
+            closed
+                .local_source_certificate()
+                .chart_topology()
+                .euler_characteristic,
+            2
+        );
+        let columns = closed.actual_affine_columns();
+        assert_eq!(columns, representative.derived_affine_columns());
+        assert_eq!(
+            representative.derived_frame(),
+            [columns[0], columns[1], columns[2]]
+        );
+        let [_, u, v, n] = columns.map(|p| p.map(|x| Q::from_float(x).unwrap()));
+        let cross: [Q; 3] = std::array::from_fn(|i| {
+            &v[(i + 1) % 3] * &n[(i + 2) % 3] - &v[(i + 2) % 3] * &n[(i + 1) % 3]
+        });
+        let determinant = (0..3).fold(Q::from_integer(0.into()), |s, i| s + &u[i] * &cross[i]);
+        let bounds = closed
+            .determinant_bounds()
+            .map(|x| Q::from_float(x).unwrap());
+        assert!(bounds[0] > Q::from_integer(0.into()));
+        assert!(bounds[0] <= determinant && determinant <= bounds[1]);
+        if posed {
+            assert_ne!(determinant, Q::from_integer(1.into()));
+        }
+        assert!(closed.work_used() > representative.work_used() && closed.work_used() < WORK);
+        assert_eq!(
+            closed.retained_budget_bytes(),
+            representative.retained_budget_bytes() + std::mem::size_of_val(&closed)
+        );
+        assert_eq!(closed.representative().body().literal_input(), text);
+    }
+}
+#[test]
+fn closed_derived_source_resource_and_cancellation_failures_leave_original_receipt_reusable() {
+    use crate::phillips_drive::{ClosedBoundaryCertificate, ClosedBoundaryOptions};
+    let text = super::super::representative::scaled_text(1., false);
+    let body = read_phillips_body(&text, 1e-7, 1_000_000).unwrap();
+    let (lifts, cubics) = prerequisites(body.cavity());
+    let sewn = lifts
+        .sewn_edge_sources(&body, &cubics, SewnOptions::default(), None)
+        .unwrap();
+    let representative = body
+        .derived_cavity_representative(&sewn, Default::default(), None)
+        .unwrap();
+    for options in [
+        ClosedBoundaryOptions {
+            maximum_work: 0,
+            ..Default::default()
+        },
+        ClosedBoundaryOptions {
+            maximum_work: WORK + 1,
+            ..Default::default()
+        },
+        ClosedBoundaryOptions {
+            maximum_bytes: 0,
+            ..Default::default()
+        },
+        ClosedBoundaryOptions {
+            maximum_bytes: BYTES + 1,
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            representative.closed_boundary_certificate(options, None),
+            Err(PhillipsReadError::Invalid)
+        ));
+    }
+    let peak = representative.retained_budget_bytes()
+        + std::mem::size_of::<ClosedDerivedCavityCertificate<'_, '_, '_>>()
+        + ClosedBoundaryCertificate::scratch_budget_bytes();
+    assert!(matches!(
+        representative.closed_boundary_certificate(
+            ClosedBoundaryOptions {
+                maximum_bytes: peak - 1,
+                ..Default::default()
+            },
+            None
+        ),
+        Err(PhillipsReadError::Limit)
+    ));
+    let good = representative
+        .closed_boundary_certificate(
+            ClosedBoundaryOptions {
+                maximum_bytes: peak,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+    let work = good.work_used();
+    for maximum_work in [
+        representative.work_used(),
+        representative.work_used() + 257,
+        work - 1,
+    ] {
+        assert!(matches!(
+            representative.closed_boundary_certificate(
+                ClosedBoundaryOptions {
+                    maximum_work,
+                    ..Default::default()
+                },
+                None
+            ),
+            Err(PhillipsReadError::Limit)
+        ));
+    }
+    let calls = std::cell::Cell::new(0);
+    let count = || {
+        calls.set(calls.get() + 1);
+        false
+    };
+    representative
+        .closed_boundary_certificate(Default::default(), Some(&count))
+        .unwrap();
+    for prefix in [0, 1, 2, 3, 4, 5, calls.get() / 2, calls.get() - 1] {
+        let n = std::cell::Cell::new(0);
+        let cancel = || {
+            let old = n.get();
+            n.set(old + 1);
+            old >= prefix
+        };
+        assert!(matches!(
+            representative.closed_boundary_certificate(Default::default(), Some(&cancel)),
+            Err(PhillipsReadError::Cancelled)
+        ));
+    }
+    let retry = representative
+        .closed_boundary_certificate(Default::default(), None)
+        .unwrap();
+    assert_eq!(retry.determinant_bounds(), good.determinant_bounds());
+    assert_eq!(
+        retry.local_source_certificate().reserves(),
+        good.local_source_certificate().reserves()
+    );
 }

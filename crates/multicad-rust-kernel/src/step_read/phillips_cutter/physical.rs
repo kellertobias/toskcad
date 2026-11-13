@@ -323,3 +323,5 @@ pub use branches::{
     DerivedCavityOptions, DerivedCavityRepresentative, DerivedEdgeCorrespondence,
     DerivedFaceCorrespondence, DerivedVertexCorrespondence,
 };
+
+pub use branches::ClosedDerivedCavityCertificate;

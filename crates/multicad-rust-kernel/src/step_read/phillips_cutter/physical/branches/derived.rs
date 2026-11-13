@@ -2,7 +2,9 @@
 //! No exact raw closure, finite-face filling, embedding, material or mass receipt.
 use super::*;
 use crate::phillips_drive::{CurveKey, Cutter, FaceKey, VertexKey};
+mod closed;
 mod fit;
+pub use closed::ClosedDerivedCavityCertificate;
 #[cfg(test)]
 mod tests;
 // Only the 49V/76E/29F rounded-inner family is proposed. Construction/topology
@@ -77,7 +79,7 @@ pub struct DerivedFaceCorrespondence {
 pub struct DerivedCavityRepresentative<'a, 'input> {
     body: &'a Body<'input>,
     source: Cutter,
-    frame: [Point; 3],
+    frame: [Point; 4],
     vertices: [DerivedVertexCorrespondence; 49],
     edges: [DerivedEdgeCorrespondence; 76],
     faces: [DerivedFaceCorrespondence; 29],
@@ -96,6 +98,10 @@ impl<'a, 'input> DerivedCavityRepresentative<'a, 'input> {
     /// Raw affine placement of the derived source: origin, U and V. The normal
     /// is their actual cross product; no rigid mass/area invariance is asserted.
     pub fn derived_frame(&self) -> [Point; 3] {
+        [self.frame[0], self.frame[1], self.frame[2]]
+    }
+    /// Actual stored origin,U,V,N columns used in source comparison.
+    pub fn derived_affine_columns(&self) -> [Point; 4] {
         self.frame
     }
     pub fn vertices(&self) -> &[DerivedVertexCorrespondence; 49] {
@@ -238,6 +244,7 @@ impl<'input> Body<'input> {
                     candidate.pose.origin,
                     candidate.pose.axes[0],
                     candidate.pose.axes[1],
+                    candidate.pose.axes[2],
                 ],
                 vertices,
                 edges,

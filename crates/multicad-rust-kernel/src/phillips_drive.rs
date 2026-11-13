@@ -323,3 +323,9 @@ fn rotate([x, y]: [I; 2], quarter: u8) -> [I; 2] {
         _ => [y, -x],
     }
 }
+
+mod embedding;
+pub use embedding::{
+    CertifiedPatchDomain, CertifiedTrimDomain, ClosedBoundaryCertificate, ClosedBoundaryOptions,
+    ClosedBoundaryReserves, OutwardOrientationWitness, SourceChartSide,
+};

@@ -1056,3 +1056,5 @@ pub use phillips_cutter::{
     DerivedFaceCorrespondence as PhillipsDerivedFaceCorrespondence,
     DerivedVertexCorrespondence as PhillipsDerivedVertexCorrespondence,
 };
+
+pub use phillips_cutter::ClosedDerivedCavityCertificate as PhillipsClosedDerivedCavityCertificate;

@@ -222,3 +222,5 @@ pub use physical::{
     DerivedCavityOptions, DerivedCavityRepresentative, DerivedEdgeCorrespondence,
     DerivedFaceCorrespondence, DerivedVertexCorrespondence,
 };
+
+pub use physical::ClosedDerivedCavityCertificate;

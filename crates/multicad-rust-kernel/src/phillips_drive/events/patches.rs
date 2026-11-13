@@ -52,6 +52,14 @@ impl SurfacePatch {
     pub fn face_index(&self) -> usize {
         self.face
     }
+    /// Exact chart orientation inherited from the typed source law.
+    pub fn winding(&self) -> i8 {
+        match self.law {
+            Law::Gap(_) => 1,
+            Law::Wall(_, _, true) | Law::Trace(_, _, true) => 1,
+            _ => -1,
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PatchBounds {
@@ -282,11 +290,7 @@ impl<'a> PatchAtlas<'a> {
     /// Fixed source-chart orientation, never repaired from a generated triangle.
     pub fn patch_winding(&self, index: usize) -> Result<i8, Error> {
         let patch = self.patches.get(index).ok_or(Error::Invalid)?;
-        Ok(match patch.law {
-            Law::Gap(_) => 1,
-            Law::Wall(_, _, true) | Law::Trace(_, _, true) => 1,
-            _ => -1,
-        })
+        Ok(patch.winding())
     }
     pub fn certify_quad(
         &self,
@@ -450,3 +454,17 @@ pub(in crate::phillips_drive) fn construct<'a>(
 }
 #[cfg(test)]
 mod tests;
+
+// Source-only cell-complex certificate; no literal vertices/facets are emitted.
+pub(in crate::phillips_drive) struct ChartIncidence {
+    pub topology: TopologyCertificate,
+    pub sides: [[crate::phillips_drive::SourceChartSide; 4]; 88],
+}
+impl PatchAtlas<'_> {
+    pub(in crate::phillips_drive) fn chart_incidence(
+        &self,
+        cancel: &dyn Fn() -> bool,
+    ) -> Result<ChartIncidence, Error> {
+        mesh::chart_incidence(self, cancel)
+    }
+}

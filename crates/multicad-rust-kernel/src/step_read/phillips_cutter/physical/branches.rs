@@ -10,8 +10,8 @@ mod derived;
 mod section;
 mod sewn;
 pub use derived::{
-    DerivedCavityOptions, DerivedCavityRepresentative, DerivedEdgeCorrespondence,
-    DerivedFaceCorrespondence, DerivedVertexCorrespondence,
+    ClosedDerivedCavityCertificate, DerivedCavityOptions, DerivedCavityRepresentative,
+    DerivedEdgeCorrespondence, DerivedFaceCorrespondence, DerivedVertexCorrespondence,
 };
 pub use sewn::{SewnEdgeSource, SewnEdgeSources, SewnEvaluation, SewnOptions, SewnParameter};
 use supports::chart::Chart;
