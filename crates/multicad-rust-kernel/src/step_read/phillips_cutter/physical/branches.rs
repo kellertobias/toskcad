@@ -79,6 +79,7 @@ fn allocation<T>(v: &Vec<T>) -> usize {
 }
 fn arena(b: &Boundary) -> usize {
     let mut size = std::mem::size_of::<Boundary>();
+    size = add(size, b.exact_support_keys_capacity_bytes());
     size = add(size, allocation(&b.vertices));
     size = add(size, allocation(&b.edges));
     size = add(size, allocation(&b.faces));
