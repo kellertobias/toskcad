@@ -441,3 +441,16 @@ fn explicit_multistart_source_uses_the_same_profile_and_actual_retained_rate_cor
         );
     }
 }
+
+#[test]
+fn detached_shell_error_boundary_preserves_precision_resource_and_cancellation_types() {
+    use crate::authored_internal_treatment::Error as MeshError;
+    for (input, expected) in [
+        (MeshError::Invalid, Error::Invalid),
+        (MeshError::Unresolved, Error::Unresolved),
+        (MeshError::Limit, Error::Limit),
+        (MeshError::Cancelled, Error::Cancelled),
+    ] {
+        assert_eq!(shell_error(input), expected);
+    }
+}

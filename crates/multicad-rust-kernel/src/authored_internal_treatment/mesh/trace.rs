@@ -13,6 +13,16 @@ pub(super) struct Trace {
     origin: f64,
 }
 impl Trace {
+    pub fn requested_bytes(maximum: usize) -> Result<usize, Error> {
+        if maximum > 131_072 {
+            return Err(Error::Limit);
+        }
+        storage::bytes(
+            &[(maximum, std::mem::size_of::<Option<Angle>>())],
+            std::mem::size_of::<Self>(),
+            BYTES,
+        )
+    }
     #[cfg(test)]
     pub fn new(maximum: usize, w: &mut Work<'_>) -> Result<Self, Error> {
         Self::at_origin(maximum, 0., w)

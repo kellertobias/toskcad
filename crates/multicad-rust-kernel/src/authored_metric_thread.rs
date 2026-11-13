@@ -252,3 +252,27 @@ pub(crate) fn phase_coefficients(knot: Knot) -> [(i64, i64); 2] {
         Knot::End => [(1, 1), (0, 1)],
     }
 }
+
+// The geometry remains this actual source. The detached open shell is an
+// approximation receipt, not a closed manufacturing or exchange authority.
+pub use crate::authored_internal_treatment::{MetricRimEdge, MetricShell};
+impl AuthoredMetricThread {
+    pub fn tessellate_shell(
+        &self,
+        options: crate::display::Tessellation,
+        maximum_work: usize,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<MetricShell, Error> {
+        crate::authored_internal_treatment::metric_shell(self, options, maximum_work, interrupt)
+            .map_err(shell_error)
+    }
+}
+
+fn shell_error(e: crate::authored_internal_treatment::Error) -> Error {
+    match e {
+        crate::authored_internal_treatment::Error::Invalid => Error::Invalid,
+        crate::authored_internal_treatment::Error::Unresolved => Error::Unresolved,
+        crate::authored_internal_treatment::Error::Limit => Error::Limit,
+        crate::authored_internal_treatment::Error::Cancelled => Error::Cancelled,
+    }
+}
