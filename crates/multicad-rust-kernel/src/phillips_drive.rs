@@ -15,8 +15,8 @@ pub use finite_section::{
 mod source;
 mod topology;
 pub use topology::{
-    BoundaryEdge, BoundaryFace, BoundaryTopology, BoundaryVertex, CurveKey, EdgeUse, FaceKey,
-    LineSupport, MeridianStation, Surface, TopologyCertificate, VertexKey,
+    AnalyticCurve, BoundaryEdge, BoundaryFace, BoundaryTopology, BoundaryVertex, CurveKey, EdgeUse,
+    FaceKey, LineSupport, MeridianStation, Surface, TopologyCertificate, VertexKey,
 };
 #[cfg(test)]
 mod tests;

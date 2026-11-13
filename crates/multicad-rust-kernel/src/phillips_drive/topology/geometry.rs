@@ -203,19 +203,10 @@ impl BoundaryTopology<'_> {
                 }
             }
             CurveKey::MeridianCircle { station, quarter } => {
-                let p = self.events.event(station.event()).point_mm_bounds().map(i);
-                let phi = (p[1] / p[0]).atan();
-                let angle = phi
-                    + I::point(quarter as f64) * pi() / I::point(2.)
-                    + u * (pi() / I::point(2.) - I::point(2.) * phi);
-                let c = self.events.source();
-                let radius = match station {
-                    MeridianStation::Entry => {
-                        c.envelope.entry - I::point(c.spec.mouth_radius_mm) * c.envelope.cos_a
-                    }
-                    MeridianStation::Floor => I::point(c.spec.g_diameter_mm) / I::point(2.),
-                };
-                [radius * angle.cos(), radius * angle.sin(), p[2]]
+                let [radius, depth, start, sweep] =
+                    super::analytic::meridian_data(self, station, quarter);
+                let angle = start + u * sweep;
+                [radius * angle.cos(), radius * angle.sin(), depth]
             }
             CurveKey::WallJoin { .. }
             | CurveKey::Center { .. }

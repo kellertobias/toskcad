@@ -1,10 +1,12 @@
 //! Closed expression-owned source topology. Its incidence certificate is not
 //! independent evidence about literal emitted STEP data or manufacturing mesh.
 use super::*;
+mod analytic;
 mod geometry;
 #[cfg(test)]
 mod tests;
 pub(in crate::phillips_drive) mod validate;
+pub use analytic::AnalyticCurve;
 pub use geometry::{LineSupport, Surface};
 pub use validate::TopologyCertificate;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
