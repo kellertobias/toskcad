@@ -81,7 +81,9 @@ use rounded_thread_body::RoundedThreadBody;
 pub use rounded_thread_body::{RoundedThreadData, RoundedThreadMassProperties};
 mod internal_thread_treatment_body;
 use internal_thread_treatment_body::InternalThreadTreatmentBody;
-pub use internal_thread_treatment_body::{InternalThreadTreatmentCut, InternalThreadTreatmentData};
+pub use internal_thread_treatment_body::{
+    InternalThreadFaceProperties, InternalThreadTreatmentCut, InternalThreadTreatmentData,
+};
 use rounded_thread_bore_body::RoundedThreadBoreBody;
 pub use rounded_thread_bore_body::RoundedThreadBoreData;
 use rust_compound::RustCompound;

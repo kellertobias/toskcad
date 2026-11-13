@@ -1,6 +1,7 @@
 //! Actual cylindrical stock minus an explicitly authored shared-boundary MAX
 //! cavity. No display mesh, legacy thread approximation or recipe is material.
 pub(super) mod interval;
+mod properties;
 use super::arithmetic::{dot_error, sum_error};
 use super::*;
 use crate::HelicalThread;
@@ -10,6 +11,7 @@ use multicad_rust_kernel::{
     authored_internal_treatment::{self as source, Cavity, Enclosure, Material, QueryOptions},
     display::Tessellation,
 };
+pub use properties::InternalThreadFaceProperties;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct InternalThreadTreatmentCut {
