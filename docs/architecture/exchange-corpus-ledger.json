@@ -1,0 +1,3562 @@
+{
+  "command": "CARGO_TARGET_DIR=target/occt cargo test --locked -p multicad-app --features occt --test exchange_corpus corpus_matches_the_pinned_ledger",
+  "entries": [
+    {
+      "expected": "pass",
+      "export_ms": 0.6342500000000001,
+      "finding": null,
+      "id": "freecad-drilled-box",
+      "import_ms": 1.929,
+      "location": "vendored",
+      "mesh": {
+        "edge_pairs": 150,
+        "maximum_displacement_mm": 0.0,
+        "triangles": 100,
+        "volume_mm3": 4700.962261397937
+      },
+      "native_readback": {
+        "bounds_mm": [
+          [
+            13.0,
+            -7.0,
+            5.0
+          ],
+          [
+            33.0,
+            23.0,
+            13.0
+          ]
+        ],
+        "faces": 7,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 4699.469035085126
+      },
+      "outcome": "pass",
+      "path": "freecad-drilled-box.step",
+      "persistence": {
+        "mass_kg": 0.012688566394729843,
+        "material": "Corpus aluminium 2700 kg/m3",
+        "parts": 1,
+        "project_bytes": 12047,
+        "section": {
+          "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
+          "plane_z_mm": 9.0
+        }
+      },
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 7.8",
+          "FreeCAD"
+        ],
+        "name": "FreeCAD",
+        "version": "1.1.1 (Open CASCADE STEP processor 7.8)"
+      },
+      "readback": {
+        "bounds_deviation_mm": 0.0,
+        "bounds_mm": [
+          [
+            13.0,
+            -7.0,
+            5.0
+          ],
+          [
+            33.0,
+            23.0,
+            13.0
+          ]
+        ],
+        "export_bytes": 9236,
+        "faces": 7,
+        "mesh_deviation_mm": 0.0,
+        "reader": {
+          "bounds_mm": [
+            [
+              13.0,
+              -7.0,
+              5.0
+            ],
+            [
+              33.0,
+              23.0,
+              13.0
+            ]
+          ],
+          "faces": 7,
+          "members": 1,
+          "volume_mm3": 4699.469035085127
+        },
+        "section": {
+          "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
+          "plane_z_mm": 9.0
+        },
+        "volume_deviation_mm3": 0.0,
+        "volume_mm3": 4699.469035085127
+      },
+      "section": {
+        "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
+        "plane_z_mm": 9.0
+      },
+      "sha256": "8f9ce63627381af481ae3ca3fb9357fa17d41fa650357caffce8d71c4ae37e51",
+      "source": {
+        "bounds_mm": [
+          [
+            13.0,
+            -7.0,
+            5.0
+          ],
+          [
+            33.0,
+            23.0,
+            13.0
+          ]
+        ],
+        "faces": 7,
+        "solids": 1,
+        "volume_mm3": 4699.469035085127
+      },
+      "source_native": {
+        "bounds_mm": [
+          [
+            13.0,
+            -7.0,
+            5.0
+          ],
+          [
+            33.0,
+            23.0,
+            13.0
+          ]
+        ],
+        "faces": 7,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 4699.469035085126
+      },
+      "source_reader": {
+        "bounds_mm": [
+          [
+            13.0,
+            -7.0,
+            5.0
+          ],
+          [
+            33.0,
+            23.0,
+            13.0
+          ]
+        ],
+        "faces": 7,
+        "members": 1,
+        "volume_mm3": 4699.469035085127
+      },
+      "tags": [
+        "box",
+        "cylinder",
+        "trims-seams",
+        "placement",
+        "hole"
+      ],
+      "verdict": "pass"
+    },
+    {
+      "expected": "pass",
+      "export_ms": 0.262709,
+      "finding": null,
+      "id": "occt-placed-box",
+      "import_ms": 2.098417,
+      "location": "vendored",
+      "mesh": {
+        "edge_pairs": 18,
+        "maximum_displacement_mm": 0.0,
+        "triangles": 12,
+        "volume_mm3": 3455.9999999999986
+      },
+      "native_readback": {
+        "bounds_mm": [
+          [
+            42.0,
+            -20.0000000000001,
+            7.0
+          ],
+          [
+            70.7846096908265,
+            5.856406460550799,
+            15.999999999999998
+          ]
+        ],
+        "faces": 6,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 3455.9999999999973
+      },
+      "outcome": "pass",
+      "path": "corpus/occt-placed-box.step",
+      "persistence": {
+        "mass_kg": 0.0093312,
+        "material": "Corpus aluminium 2700 kg/m3",
+        "parts": 1,
+        "project_bytes": 19949,
+        "section": {
+          "curves": 4,
+          "hatch_vectors": 217,
+          "length_exact": true,
+          "length_mm": 79.99999999999997,
+          "plane_z_mm": 11.5
+        }
+      },
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ],
+        "name": "OpenCascade",
+        "version": "7.9.3 (Open CASCADE STEP processor 7.9)"
+      },
+      "readback": {
+        "bounds_deviation_mm": 1.7763568394002505e-15,
+        "bounds_mm": [
+          [
+            42.0,
+            -20.000000000000096,
+            7.0
+          ],
+          [
+            70.7846096908265,
+            5.856406460550797,
+            15.999999999999998
+          ]
+        ],
+        "export_bytes": 7567,
+        "faces": 6,
+        "mesh_deviation_mm": 1.7763568394002505e-15,
+        "reader": {
+          "bounds_mm": [
+            [
+              42.0,
+              -20.000000000000096,
+              7.0
+            ],
+            [
+              70.7846096908265,
+              5.8564064605507955,
+              15.999999999999998
+            ]
+          ],
+          "faces": 6,
+          "members": 1,
+          "volume_mm3": 3455.999999999998
+        },
+        "section": {
+          "curves": 4,
+          "hatch_vectors": 0,
+          "length_exact": true,
+          "length_mm": 79.99999999999999,
+          "plane_z_mm": 11.5
+        },
+        "volume_deviation_mm3": 0.0,
+        "volume_mm3": 3456.0
+      },
+      "section": {
+        "curves": 4,
+        "hatch_vectors": 0,
+        "length_exact": true,
+        "length_mm": 79.99999999999997,
+        "plane_z_mm": 11.5
+      },
+      "sha256": "11fe52beecff6e6ba60d54cfa7936cda49a32e00ee28c2fd6af77a4245d3a7b6",
+      "source": {
+        "bounds_mm": [
+          [
+            42.0,
+            -20.000000000000096,
+            7.0
+          ],
+          [
+            70.7846096908265,
+            5.8564064605507955,
+            15.999999999999998
+          ]
+        ],
+        "faces": 6,
+        "solids": 1,
+        "volume_mm3": 3456.0
+      },
+      "source_native": {
+        "bounds_mm": [
+          [
+            42.0,
+            -20.0,
+            7.0
+          ],
+          [
+            70.784609690827,
+            5.856406460551,
+            16.0
+          ]
+        ],
+        "faces": 6,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 3455.9999999994907
+      },
+      "source_reader": {
+        "bounds_mm": [
+          [
+            42.0,
+            -20.0,
+            7.0
+          ],
+          [
+            70.784609690827,
+            5.856406460551,
+            16.0
+          ]
+        ],
+        "faces": 6,
+        "members": 1,
+        "volume_mm3": 3455.999999999492
+      },
+      "tags": [
+        "box",
+        "placement"
+      ],
+      "verdict": "pass"
+    },
+    {
+      "expected": "pass",
+      "export_ms": 0.169958,
+      "finding": null,
+      "id": "occt-cylinder",
+      "import_ms": 0.8144170000000001,
+      "location": "vendored",
+      "mesh": {
+        "edge_pairs": 144,
+        "maximum_displacement_mm": 0.0,
+        "triangles": 96,
+        "volume_mm3": 1678.6567383627696
+      },
+      "native_readback": {
+        "bounds_mm": [
+          [
+            -3.0,
+            -2.0,
+            5.0
+          ],
+          [
+            9.0,
+            10.0,
+            20.0
+          ]
+        ],
+        "faces": 3,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 1696.4600329384846
+      },
+      "outcome": "pass",
+      "path": "corpus/occt-cylinder.step",
+      "persistence": {
+        "mass_kg": 0.004580442088933918,
+        "material": "Corpus aluminium 2700 kg/m3",
+        "parts": 1,
+        "project_bytes": 9191,
+        "section": {
+          "curves": 1,
+          "hatch_vectors": 120,
+          "length_exact": true,
+          "length_mm": 37.69911184307752,
+          "plane_z_mm": 12.5
+        }
+      },
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ],
+        "name": "OpenCascade",
+        "version": "7.9.3 (Open CASCADE STEP processor 7.9)"
+      },
+      "readback": {
+        "bounds_deviation_mm": 0.0,
+        "bounds_mm": [
+          [
+            -3.0,
+            -2.0,
+            5.0
+          ],
+          [
+            9.0,
+            10.0,
+            20.0
+          ]
+        ],
+        "export_bytes": 3815,
+        "faces": 3,
+        "mesh_deviation_mm": 0.0,
+        "reader": {
+          "bounds_mm": [
+            [
+              -3.0,
+              -2.0,
+              5.0
+            ],
+            [
+              9.0,
+              10.0,
+              20.0
+            ]
+          ],
+          "faces": 3,
+          "members": 1,
+          "volume_mm3": 1696.4600329384882
+        },
+        "section": {
+          "curves": 1,
+          "hatch_vectors": 0,
+          "length_exact": true,
+          "length_mm": 37.69911184307752,
+          "plane_z_mm": 12.5
+        },
+        "volume_deviation_mm3": 0.0,
+        "volume_mm3": 1696.4600329384882
+      },
+      "section": {
+        "curves": 1,
+        "hatch_vectors": 0,
+        "length_exact": true,
+        "length_mm": 37.69911184307752,
+        "plane_z_mm": 12.5
+      },
+      "sha256": "e481d610a7c8e1a74a1db141bba3e57f634a790f080e5d5b5bfe1db1948a812d",
+      "source": {
+        "bounds_mm": [
+          [
+            -3.0,
+            -2.0,
+            5.0
+          ],
+          [
+            9.0,
+            10.0,
+            20.0
+          ]
+        ],
+        "faces": 3,
+        "solids": 1,
+        "volume_mm3": 1696.4600329384882
+      },
+      "source_native": {
+        "bounds_mm": [
+          [
+            -3.0,
+            -2.0,
+            5.0
+          ],
+          [
+            9.0,
+            10.0,
+            20.0
+          ]
+        ],
+        "faces": 3,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 1696.4600329384848
+      },
+      "source_reader": {
+        "bounds_mm": [
+          [
+            -3.0,
+            -2.0,
+            5.0
+          ],
+          [
+            9.0,
+            10.0,
+            20.0
+          ]
+        ],
+        "faces": 3,
+        "members": 1,
+        "volume_mm3": 1696.4600329384882
+      },
+      "tags": [
+        "cylinder",
+        "trims-seams",
+        "placement"
+      ],
+      "verdict": "pass"
+    },
+    {
+      "expected": "pass",
+      "export_ms": 0.237458,
+      "finding": null,
+      "id": "occt-torus",
+      "import_ms": 0.609666,
+      "location": "vendored",
+      "mesh": {
+        "edge_pairs": 33696,
+        "maximum_displacement_mm": 0.0,
+        "triangles": 22464,
+        "volume_mm3": 2128.5541654877775
+      },
+      "native_readback": {
+        "bounds_mm": [
+          [
+            -15.0000001,
+            -15.0000001,
+            -3.0000001
+          ],
+          [
+            15.0000001,
+            15.0000001,
+            3.0000001
+          ]
+        ],
+        "faces": 1,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 2131.8345506352966
+      },
+      "outcome": "pass",
+      "path": "corpus/occt-torus.step",
+      "persistence": {
+        "mass_kg": 0.005755953286715314,
+        "material": "Corpus aluminium 2700 kg/m3",
+        "parts": 1,
+        "project_bytes": 7553,
+        "section": {
+          "curves": 2,
+          "hatch_vectors": 480,
+          "length_exact": true,
+          "length_mm": 150.79644737231007,
+          "plane_z_mm": 0.0
+        }
+      },
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ],
+        "name": "OpenCascade",
+        "version": "7.9.3 (Open CASCADE STEP processor 7.9)"
+      },
+      "readback": {
+        "bounds_deviation_mm": 0.0,
+        "bounds_mm": [
+          [
+            -15.0,
+            -15.0,
+            -3.0
+          ],
+          [
+            15.0,
+            15.0,
+            3.0
+          ]
+        ],
+        "export_bytes": 3685,
+        "faces": 1,
+        "mesh_deviation_mm": 0.0,
+        "reader": {
+          "bounds_mm": [
+            [
+              -15.0,
+              -15.0,
+              -3.0
+            ],
+            [
+              15.0,
+              15.0,
+              3.0
+            ]
+          ],
+          "faces": 1,
+          "members": 1,
+          "volume_mm3": 2131.8345506353016
+        },
+        "section": {
+          "curves": 2,
+          "hatch_vectors": 0,
+          "length_exact": true,
+          "length_mm": 150.79644737231007,
+          "plane_z_mm": 0.0
+        },
+        "volume_deviation_mm3": 0.0,
+        "volume_mm3": 2131.8345506353016
+      },
+      "section": {
+        "curves": 2,
+        "hatch_vectors": 0,
+        "length_exact": true,
+        "length_mm": 150.79644737231007,
+        "plane_z_mm": 0.0
+      },
+      "sha256": "98a5775152057701c67b8c3eb1a99ec223f3d6d216e7f94b54b20d65c28d62c8",
+      "source": {
+        "bounds_mm": [
+          [
+            -15.0,
+            -15.0,
+            -3.0
+          ],
+          [
+            15.0,
+            15.0,
+            3.0
+          ]
+        ],
+        "faces": 1,
+        "solids": 1,
+        "volume_mm3": 2131.8345506353016
+      },
+      "source_native": {
+        "bounds_mm": [
+          [
+            -15.0000001,
+            -15.0000001,
+            -3.0000001
+          ],
+          [
+            15.0000001,
+            15.0000001,
+            3.0000001
+          ]
+        ],
+        "faces": 1,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 2131.8345506352966
+      },
+      "source_reader": {
+        "bounds_mm": [
+          [
+            -15.0,
+            -15.0,
+            -3.0
+          ],
+          [
+            15.0,
+            15.0,
+            3.0
+          ]
+        ],
+        "faces": 1,
+        "members": 1,
+        "volume_mm3": 2131.8345506353016
+      },
+      "tags": [
+        "torus",
+        "revolution",
+        "trims-seams"
+      ],
+      "verdict": "pass"
+    },
+    {
+      "expected": "pass",
+      "export_ms": 2.4945000000000004,
+      "finding": null,
+      "id": "occt-box-void",
+      "import_ms": 11.550542,
+      "location": "vendored",
+      "mesh": {
+        "edge_pairs": 180,
+        "maximum_displacement_mm": 0.0,
+        "triangles": 120,
+        "volume_mm3": 5760.000000000004
+      },
+      "native_readback": {
+        "bounds_mm": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            30.0,
+            20.0,
+            10.0
+          ]
+        ],
+        "faces": 12,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 5759.999999999999
+      },
+      "outcome": "pass",
+      "path": "corpus/occt-box-void.step",
+      "persistence": {
+        "mass_kg": 0.015552,
+        "material": "Corpus aluminium 2700 kg/m3",
+        "parts": 1,
+        "project_bytes": 33611,
+        "section": {
+          "curves": 8,
+          "hatch_vectors": 466,
+          "length_exact": true,
+          "length_mm": 132.0,
+          "plane_z_mm": 5.0
+        }
+      },
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ],
+        "name": "OpenCascade",
+        "version": "7.9.3 (Open CASCADE STEP processor 7.9)"
+      },
+      "readback": {
+        "bounds_deviation_mm": 0.0,
+        "bounds_mm": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            30.0,
+            20.0,
+            10.0
+          ]
+        ],
+        "export_bytes": 13617,
+        "faces": 12,
+        "mesh_deviation_mm": 0.0,
+        "reader": {
+          "bounds_mm": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              30.0,
+              20.0,
+              10.0
+            ]
+          ],
+          "faces": 12,
+          "members": 1,
+          "volume_mm3": 5760.0
+        },
+        "section": {
+          "curves": 8,
+          "hatch_vectors": 0,
+          "length_exact": true,
+          "length_mm": 132.0,
+          "plane_z_mm": 5.0
+        },
+        "volume_deviation_mm3": 0.0,
+        "volume_mm3": 5760.0
+      },
+      "section": {
+        "curves": 8,
+        "hatch_vectors": 0,
+        "length_exact": true,
+        "length_mm": 132.0,
+        "plane_z_mm": 5.0
+      },
+      "sha256": "5935d0d03b057989682c4924fe3a6b168fa4bed7e994a1f49319d88f3ea85d5d",
+      "source": {
+        "bounds_mm": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            30.0,
+            20.0,
+            10.0
+          ]
+        ],
+        "faces": 12,
+        "solids": 1,
+        "volume_mm3": 5760.0
+      },
+      "source_native": {
+        "bounds_mm": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            30.0,
+            20.0,
+            10.0
+          ]
+        ],
+        "faces": 12,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 5759.999999999999
+      },
+      "source_reader": {
+        "bounds_mm": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            30.0,
+            20.0,
+            10.0
+          ]
+        ],
+        "faces": 12,
+        "members": 1,
+        "volume_mm3": 5760.0
+      },
+      "tags": [
+        "box",
+        "voids"
+      ],
+      "verdict": "pass"
+    },
+    {
+      "expected": "pass",
+      "export_ms": 0.9970840000000001,
+      "finding": null,
+      "id": "occt-pocketed-plate",
+      "import_ms": 36.754791000000004,
+      "location": "vendored",
+      "mesh": {
+        "edge_pairs": 171,
+        "maximum_displacement_mm": 0.0,
+        "triangles": 114,
+        "volume_mm3": 9172.728180090862
+      },
+      "native_readback": {
+        "bounds_mm": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            40.0,
+            30.0,
+            8.0
+          ]
+        ],
+        "faces": 13,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 9170.628330588459
+      },
+      "outcome": "pass",
+      "path": "corpus/occt-pocketed-plate.step",
+      "persistence": {
+        "mass_kg": 0.02476069649258884,
+        "material": "Corpus aluminium 2700 kg/m3",
+        "parts": 1,
+        "project_bytes": 37854,
+        "section": {
+          "curves": 5,
+          "hatch_vectors": 555,
+          "length_exact": true,
+          "length_mm": 158.84955592153875,
+          "plane_z_mm": 4.0
+        }
+      },
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ],
+        "name": "OpenCascade",
+        "version": "7.9.3 (Open CASCADE STEP processor 7.9)"
+      },
+      "readback": {
+        "bounds_deviation_mm": 0.0,
+        "bounds_mm": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            40.0,
+            30.0,
+            8.0
+          ]
+        ],
+        "export_bytes": 15203,
+        "faces": 13,
+        "mesh_deviation_mm": 0.0,
+        "reader": {
+          "bounds_mm": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              40.0,
+              30.0,
+              8.0
+            ]
+          ],
+          "faces": 13,
+          "members": 1,
+          "volume_mm3": 9170.628330588459
+        },
+        "section": {
+          "curves": 5,
+          "hatch_vectors": 0,
+          "length_exact": true,
+          "length_mm": 158.84955592153875,
+          "plane_z_mm": 4.0
+        },
+        "volume_deviation_mm3": 0.0,
+        "volume_mm3": 9170.628330588459
+      },
+      "section": {
+        "curves": 5,
+        "hatch_vectors": 0,
+        "length_exact": true,
+        "length_mm": 158.84955592153875,
+        "plane_z_mm": 4.0
+      },
+      "sha256": "7c66016ab4a24a0f015c0e92fd2883d0e2d320b4bd83c992a72a9a72da2c0b41",
+      "source": {
+        "bounds_mm": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            40.0,
+            30.0,
+            8.0
+          ]
+        ],
+        "faces": 13,
+        "solids": 1,
+        "volume_mm3": 9170.628330588459
+      },
+      "source_native": {
+        "bounds_mm": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            40.0,
+            30.0,
+            8.0
+          ]
+        ],
+        "faces": 13,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 9170.628330588477
+      },
+      "source_reader": {
+        "bounds_mm": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            40.0,
+            30.0,
+            8.0
+          ]
+        ],
+        "faces": 13,
+        "members": 1,
+        "volume_mm3": 9170.628330588459
+      },
+      "tags": [
+        "box",
+        "cylinder",
+        "trims-seams",
+        "hole",
+        "pocket"
+      ],
+      "verdict": "pass"
+    },
+    {
+      "expected": "unsupported",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "A standalone conical frustum (CONICAL_SURFACE between two planar caps) is outside the Rust import families; only certified conical stock mouths and thread treatments are admitted."
+      },
+      "id": "occt-cone-frustum",
+      "import_ms": 0.616792,
+      "location": "vendored",
+      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
+      "outcome": "unsupported",
+      "path": "corpus/occt-cone-frustum.step",
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ],
+        "name": "OpenCascade",
+        "version": "7.9.3 (Open CASCADE STEP processor 7.9)"
+      },
+      "sha256": "360c5ca8c2610429efb48a151607e8b010be020b35c30e3edf5968c84d337af1",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -8.0,
+            -8.0,
+            0.0
+          ],
+          [
+            8.0,
+            8.0,
+            10.0
+          ]
+        ],
+        "faces": 3,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 1172.8612573407918
+      },
+      "tags": [
+        "cone",
+        "revolution"
+      ],
+      "verdict": "unsupported"
+    },
+    {
+      "expected": "invalid",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "A valid complete OpenCascade sphere (one SPHERICAL_SURFACE face bounded by its seam and degenerate pole edges) is rejected as invalid STEP geometry, although the matrix lists complete spheres; the reader only admits its own sphere encoding."
+      },
+      "id": "occt-sphere",
+      "import_ms": 0.204416,
+      "location": "vendored",
+      "message": "STEP import: Invalid STEP geometry",
+      "outcome": "invalid",
+      "path": "corpus/occt-sphere.step",
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ],
+        "name": "OpenCascade",
+        "version": "7.9.3 (Open CASCADE STEP processor 7.9)"
+      },
+      "sha256": "fbc1d0dcb601e65ad75ae138a127a62363c9f1611f15c284eb1146e340c20842",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -5.0,
+            -5.0,
+            -5.0
+          ],
+          [
+            5.0,
+            5.0,
+            5.0
+          ]
+        ],
+        "faces": 1,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 523.598775598298
+      },
+      "tags": [
+        "sphere",
+        "revolution",
+        "trims-seams"
+      ],
+      "verdict": "fail"
+    },
+    {
+      "expected": "unsupported",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "General solids of revolution mixing planar, cylindrical and toroidal bands are outside the Rust import families."
+      },
+      "id": "occt-revolved-vase",
+      "import_ms": 1.150292,
+      "location": "vendored",
+      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
+      "outcome": "unsupported",
+      "path": "corpus/occt-revolved-vase.step",
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ],
+        "name": "OpenCascade",
+        "version": "7.9.3 (Open CASCADE STEP processor 7.9)"
+      },
+      "sha256": "7ca667360a7e2473fffc901ea9d8e7d20e71720186c06104b3d31bb3f59608d0",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -10.0000001,
+            -10.0000001,
+            0.0
+          ],
+          [
+            10.0,
+            10.0,
+            14.0
+          ]
+        ],
+        "faces": 5,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 3196.4546443634363
+      },
+      "tags": [
+        "revolution",
+        "torus",
+        "cylinder"
+      ],
+      "verdict": "unsupported"
+    },
+    {
+      "expected": "limit",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "A 9.6 kB single-spline prism from OpenCascade reports the Rust import budget as exceeded instead of importing or refusing it as unsupported; a resource Limit is the wrong classification for this small input."
+      },
+      "id": "occt-spline-prism",
+      "import_ms": 0.766167,
+      "location": "vendored",
+      "message": "STEP import: STEP exceeds the Rust import budget",
+      "outcome": "limit",
+      "path": "corpus/occt-spline-prism.step",
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ],
+        "name": "OpenCascade",
+        "version": "7.9.3 (Open CASCADE STEP processor 7.9)"
+      },
+      "sha256": "e67c9dfb23c5adab5d351bd705a91f081c14f2dc18aa0ed8c9acfc464d87064e",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -1e-7,
+            -1e-7,
+            -1e-7
+          ],
+          [
+            20.0000001,
+            9.0000001,
+            6.0000001
+          ]
+        ],
+        "faces": 4,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 863.9999999999984
+      },
+      "tags": [
+        "spline",
+        "trims-seams"
+      ],
+      "verdict": "fail"
+    },
+    {
+      "expected": "unsupported",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "STEP assembly product structure (NEXT_ASSEMBLY_USAGE_OCCURRENCE, CONTEXT_DEPENDENT_SHAPE_REPRESENTATION, ITEM_DEFINED_TRANSFORMATION) is refused; only one flat ADVANCED_BREP_SHAPE_REPRESENTATION is read."
+      },
+      "id": "occt-two-bodies",
+      "import_ms": 1.681208,
+      "location": "vendored",
+      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
+      "outcome": "unsupported",
+      "path": "corpus/occt-two-bodies.step",
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ],
+        "name": "OpenCascade",
+        "version": "7.9.3 (Open CASCADE STEP processor 7.9)"
+      },
+      "sha256": "66c1ea814b4a8a0ab77443911d7a8352a4cc655f702f94016cc96fb172e7ad70",
+      "source_native": {
+        "bounds_mm": [
+          [
+            0.0,
+            -4.0,
+            0.0
+          ],
+          [
+            34.0,
+            10.0,
+            8.0
+          ]
+        ],
+        "faces": 9,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 2,
+        "volume_mm3": 902.1238596594925
+      },
+      "tags": [
+        "multi-body",
+        "placement",
+        "assembly",
+        "box",
+        "cylinder"
+      ],
+      "verdict": "unsupported"
+    },
+    {
+      "expected": "unsupported",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "KiCad wraps even a bare board in an assembly occurrence with an ITEM_DEFINED_TRANSFORMATION, which the Rust reader refuses; every KiCad board export is currently unsupported."
+      },
+      "id": "kicad-plate-holes",
+      "import_ms": 0.983584,
+      "location": "vendored",
+      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
+      "outcome": "unsupported",
+      "path": "corpus/kicad-plate-holes.step",
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 7.8",
+          "KiCad to STEP converter"
+        ],
+        "name": "KiCad",
+        "version": "10.0.0 (kicad-cli pcb export step, Open CASCADE STEP processor 7.8)"
+      },
+      "sha256": "544b1f5fd9719976c20f6c104c41331b43a2245caa06b2f6d458cd9bb4de1c8c",
+      "source_native": {
+        "bounds_mm": [
+          [
+            100.0,
+            -150.0,
+            0.0
+          ],
+          [
+            180.0,
+            -100.0,
+            1.53
+          ]
+        ],
+        "faces": 8,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 6095.390019788838
+      },
+      "tags": [
+        "board",
+        "box",
+        "cylinder",
+        "hole",
+        "assembly"
+      ],
+      "verdict": "unsupported"
+    },
+    {
+      "expected": "unsupported",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "KiCad assembly occurrence placement is refused (same cause as kicad-plate-holes)."
+      },
+      "id": "kicad-round-board",
+      "import_ms": 0.519459,
+      "location": "vendored",
+      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
+      "outcome": "unsupported",
+      "path": "corpus/kicad-round-board.step",
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 7.8",
+          "KiCad to STEP converter"
+        ],
+        "name": "KiCad",
+        "version": "10.0.0 (kicad-cli pcb export step, Open CASCADE STEP processor 7.8)"
+      },
+      "sha256": "b6733b4f0109ef30fc79558eaa8b0676f15aa4b5d64e9c0ae4442f8bc4602897",
+      "source_native": {
+        "bounds_mm": [
+          [
+            125.0,
+            -145.0,
+            0.0
+          ],
+          [
+            175.0,
+            -95.0,
+            1.53
+          ]
+        ],
+        "faces": 4,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 2927.241786835355
+      },
+      "tags": [
+        "board",
+        "cylinder",
+        "hole",
+        "assembly"
+      ],
+      "verdict": "unsupported"
+    },
+    {
+      "expected": "unsupported",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "KiCad assembly occurrence placement is refused (same cause as kicad-plate-holes)."
+      },
+      "id": "kicad-slotted-rounded-board",
+      "import_ms": 1.644416,
+      "location": "vendored",
+      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
+      "outcome": "unsupported",
+      "path": "corpus/kicad-slotted-rounded-board.step",
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 7.8",
+          "KiCad to STEP converter"
+        ],
+        "name": "KiCad",
+        "version": "10.0.0 (kicad-cli pcb export step, Open CASCADE STEP processor 7.8)"
+      },
+      "sha256": "89bca4c4d1a183c1574d7fbe4ee07f88a104a1605ea802a24a629b25be59d9fc",
+      "source_native": {
+        "bounds_mm": [
+          [
+            99.99999999999599,
+            -140.0,
+            0.0
+          ],
+          [
+            160.0,
+            -99.999999999966,
+            1.53
+          ]
+        ],
+        "faces": 14,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 3333.1659232182683
+      },
+      "tags": [
+        "board",
+        "cylinder",
+        "trims-seams",
+        "pocket",
+        "assembly"
+      ],
+      "verdict": "unsupported"
+    },
+    {
+      "expected": "unsupported",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "Placed component assemblies (board plus component occurrence) are refused by the Rust reader; KiCad component placement is only available through the native import_kicad board reader."
+      },
+      "id": "kicad-board-with-part",
+      "import_ms": 0.910875,
+      "location": "vendored",
+      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
+      "outcome": "unsupported",
+      "path": "corpus/kicad-board-with-part.step",
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 7.8",
+          "KiCad to STEP converter"
+        ],
+        "name": "KiCad",
+        "version": "10.0.0 (kicad-cli pcb export step, Open CASCADE STEP processor 7.8)"
+      },
+      "sha256": "c9646efeb5dd01e3335b356e375669ff4a284f17600feacfe43814d68384395d",
+      "source_native": {
+        "bounds_mm": [
+          [
+            100.0,
+            -140.0,
+            0.0
+          ],
+          [
+            160.0,
+            -100.0,
+            21.615000000000002
+          ]
+        ],
+        "faces": 9,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 2,
+        "volume_mm3": 5368.460032938484
+      },
+      "tags": [
+        "board",
+        "multi-body",
+        "placement",
+        "assembly",
+        "cylinder"
+      ],
+      "verdict": "unsupported"
+    },
+    {
+      "expected": "pass",
+      "export_ms": 0.18433300000000002,
+      "finding": null,
+      "id": "occt-annulus",
+      "import_ms": 1.4120000000000001,
+      "location": "repository",
+      "mesh": {
+        "edge_pairs": 300,
+        "maximum_displacement_mm": 0.0,
+        "triangles": 200,
+        "volume_mm3": 116.3912386944132
+      },
+      "native_readback": {
+        "bounds_mm": [
+          [
+            -0.7105049918345436,
+            -12.380303702785666,
+            14.875
+          ],
+          [
+            11.162524281792855,
+            -6.785105479213437,
+            27.125
+          ]
+        ],
+        "faces": 4,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 117.62564681440256
+      },
+      "outcome": "pass",
+      "path": "crates/multicad-rust-kernel/src/step_read/tests/fixtures/occt-annulus.step",
+      "persistence": {
+        "mass_kg": 0.00031758924639888606,
+        "material": "Corpus aluminium 2700 kg/m3",
+        "parts": 1,
+        "project_bytes": 13637,
+        "section": {
+          "curves": 8,
+          "hatch_vectors": 50,
+          "length_exact": true,
+          "length_mm": 18.499999999971582,
+          "plane_z_mm": 21.0
+        }
+      },
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ],
+        "name": "OpenCascade",
+        "version": "7.9 (Open CASCADE STEP processor 7.9)"
+      },
+      "readback": {
+        "bounds_deviation_mm": 8.881784197001252e-16,
+        "bounds_mm": [
+          [
+            -0.7105049918345436,
+            -12.380303702785666,
+            14.875
+          ],
+          [
+            11.162524281792855,
+            -6.785105479213437,
+            27.125
+          ]
+        ],
+        "export_bytes": 5299,
+        "faces": 4,
+        "mesh_deviation_mm": 1.9860273225978185e-15,
+        "reader": {
+          "bounds_mm": [
+            [
+              -0.7105049918345436,
+              -12.380303702785666,
+              14.875
+            ],
+            [
+              11.162524281792855,
+              -6.785105479213437,
+              27.125
+            ]
+          ],
+          "faces": 4,
+          "members": 1,
+          "volume_mm3": 117.62564681440232
+        },
+        "section": {
+          "curves": 8,
+          "hatch_vectors": 0,
+          "length_exact": true,
+          "length_mm": 18.499999999971582,
+          "plane_z_mm": 21.0
+        },
+        "volume_deviation_mm3": 4.263256414560601e-14,
+        "volume_mm3": 117.62564681440229
+      },
+      "section": {
+        "curves": 8,
+        "hatch_vectors": 0,
+        "length_exact": true,
+        "length_mm": 18.499999999971582,
+        "plane_z_mm": 21.0
+      },
+      "sha256": "a2bb0f3ce60329f9d155b5ea9d62470ec90d73d1654a1ea7fd28307af61e04e0",
+      "source": {
+        "bounds_mm": [
+          [
+            -0.7105049918345436,
+            -12.380303702785666,
+            14.875
+          ],
+          [
+            11.162524281792855,
+            -6.7851054792134375,
+            27.125
+          ]
+        ],
+        "faces": 4,
+        "solids": 1,
+        "volume_mm3": 117.62564681440224
+      },
+      "source_native": {
+        "bounds_mm": [
+          [
+            -0.7105049918368547,
+            -12.380303702785666,
+            14.875
+          ],
+          [
+            11.162524281793049,
+            -6.785105479214334,
+            27.125
+          ]
+        ],
+        "faces": 4,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 117.62564681479927
+      },
+      "source_reader": {
+        "bounds_mm": [
+          [
+            -0.7105049918368547,
+            -12.380303702785666,
+            14.875
+          ],
+          [
+            11.162524281793,
+            -6.785105479214334,
+            27.125
+          ]
+        ],
+        "faces": 4,
+        "members": 1,
+        "volume_mm3": 117.62564681440223
+      },
+      "tags": [
+        "cylinder",
+        "hole",
+        "placement",
+        "trims-seams"
+      ],
+      "verdict": "pass"
+    },
+    {
+      "expected": "pass",
+      "export_ms": 0.18070799999999998,
+      "finding": null,
+      "id": "occt-regular-torus",
+      "import_ms": 0.464375,
+      "location": "repository",
+      "mesh": {
+        "edge_pairs": 16224,
+        "maximum_displacement_mm": 0.0,
+        "triangles": 10816,
+        "volume_mm3": 221.39139507060167
+      },
+      "native_readback": {
+        "bounds_mm": [
+          [
+            11.4999999,
+            -2.5000001,
+            -16.5000001
+          ],
+          [
+            22.5000001,
+            10.5000001,
+            -7.4999999
+          ]
+        ],
+        "faces": 1,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 222.0660990245101
+      },
+      "outcome": "pass",
+      "path": "crates/multicad-rust-kernel/src/step_read/tests/fixtures/occt-regular-torus.step",
+      "persistence": {
+        "mass_kg": 0.0005995784673661784,
+        "material": "Corpus aluminium 2700 kg/m3",
+        "parts": 1,
+        "project_bytes": 7696,
+        "section": {
+          "curves": 256,
+          "hatch_vectors": 84,
+          "length_exact": true,
+          "length_mm": 25.96978608529698,
+          "plane_z_mm": -12.0
+        }
+      },
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ],
+        "name": "OpenCascade",
+        "version": "7.9 (Open CASCADE STEP processor 7.9)"
+      },
+      "readback": {
+        "bounds_deviation_mm": 0.0,
+        "bounds_mm": [
+          [
+            11.5,
+            -2.5,
+            -16.5
+          ],
+          [
+            22.5,
+            10.5,
+            -7.5
+          ]
+        ],
+        "export_bytes": 3785,
+        "faces": 1,
+        "mesh_deviation_mm": 0.0,
+        "reader": {
+          "bounds_mm": [
+            [
+              11.5,
+              -2.5,
+              -16.5
+            ],
+            [
+              22.5,
+              10.5,
+              -7.5
+            ]
+          ],
+          "faces": 1,
+          "members": 1,
+          "volume_mm3": 222.06609902451055
+        },
+        "section": {
+          "curves": 256,
+          "hatch_vectors": 0,
+          "length_exact": true,
+          "length_mm": 25.96978608529698,
+          "plane_z_mm": -12.0
+        },
+        "volume_deviation_mm3": 0.0,
+        "volume_mm3": 222.06609902451055
+      },
+      "section": {
+        "curves": 256,
+        "hatch_vectors": 0,
+        "length_exact": true,
+        "length_mm": 25.96978608529698,
+        "plane_z_mm": -12.0
+      },
+      "sha256": "e17f3916d3adba91ed823d9dc604f95c7bac01c98f41e8d8c74dd03784c3e796",
+      "source": {
+        "bounds_mm": [
+          [
+            11.5,
+            -2.5,
+            -16.5
+          ],
+          [
+            22.5,
+            10.5,
+            -7.5
+          ]
+        ],
+        "faces": 1,
+        "solids": 1,
+        "volume_mm3": 222.06609902451055
+      },
+      "source_native": {
+        "bounds_mm": [
+          [
+            11.4999999,
+            -2.5000001,
+            -16.5000001
+          ],
+          [
+            22.5000001,
+            10.5000001,
+            -7.4999999
+          ]
+        ],
+        "faces": 1,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 222.0660990245101
+      },
+      "source_reader": {
+        "bounds_mm": [
+          [
+            11.5,
+            -2.5,
+            -16.5
+          ],
+          [
+            22.5,
+            10.5,
+            -7.5
+          ]
+        ],
+        "faces": 1,
+        "members": 1,
+        "volume_mm3": 222.06609902451055
+      },
+      "tags": [
+        "torus",
+        "revolution",
+        "placement"
+      ],
+      "verdict": "pass"
+    },
+    {
+      "expected": "pass",
+      "export_ms": 0.215125,
+      "finding": null,
+      "id": "kicad-vendored-Mounting_Wuerth_WA-SMST-3.3mm_H1mm_9774010960",
+      "import_ms": 1.139791,
+      "location": "vendored",
+      "mesh": {
+        "edge_pairs": 378,
+        "maximum_displacement_mm": 0.0,
+        "triangles": 252,
+        "volume_mm3": 26.740189422557215
+      },
+      "native_readback": {
+        "bounds_mm": [
+          [
+            -3.0,
+            -3.0,
+            -1.4
+          ],
+          [
+            3.0,
+            3.0,
+            1.0
+          ]
+        ],
+        "faces": 6,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 27.14336052701575
+      },
+      "outcome": "pass",
+      "path": "corpus/kicad-library/Mounting_Wuerth_WA-SMST-3.3mm_H1mm_9774010960.step",
+      "persistence": {
+        "mass_kg": 0.0000732870734229427,
+        "material": "Corpus aluminium 2700 kg/m3",
+        "parts": 1,
+        "project_bytes": 11477,
+        "section": {
+          "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
+          "plane_z_mm": -0.19999999999999996
+        }
+      },
+      "producer": {
+        "file_name": [
+          "KiCAD"
+        ],
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''"
+      },
+      "readback": {
+        "bounds_deviation_mm": 0.0,
+        "bounds_mm": [
+          [
+            -3.0,
+            -3.0,
+            -1.4
+          ],
+          [
+            3.0,
+            3.0,
+            1.0
+          ]
+        ],
+        "export_bytes": 7196,
+        "faces": 6,
+        "mesh_deviation_mm": 0.0,
+        "reader": {
+          "bounds_mm": [
+            [
+              -3.0,
+              -3.0,
+              -1.4
+            ],
+            [
+              3.0,
+              3.0,
+              1.0
+            ]
+          ],
+          "faces": 6,
+          "members": 1,
+          "volume_mm3": 27.143360527015812
+        },
+        "section": {
+          "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
+          "plane_z_mm": -0.19999999999999996
+        },
+        "volume_deviation_mm3": 0.0,
+        "volume_mm3": 27.143360527015815
+      },
+      "section": {
+        "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
+        "plane_z_mm": -0.19999999999999996
+      },
+      "sha256": "4d3fe8355362aee3af15510457641311f569fb1ebfb21e4d6d07bc0e84030976",
+      "source": {
+        "bounds_mm": [
+          [
+            -3.0,
+            -3.0,
+            -1.4
+          ],
+          [
+            3.0,
+            3.0,
+            1.0
+          ]
+        ],
+        "faces": 6,
+        "solids": 1,
+        "volume_mm3": 27.143360527015815
+      },
+      "source_native": {
+        "bounds_mm": [
+          [
+            -3.0,
+            -3.0,
+            -1.4
+          ],
+          [
+            3.0,
+            3.0,
+            1.0
+          ]
+        ],
+        "faces": 6,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 27.14336052701575
+      },
+      "source_reader": {
+        "bounds_mm": [
+          [
+            -3.0,
+            -3.0,
+            -1.4
+          ],
+          [
+            3.0,
+            3.0,
+            1.0
+          ]
+        ],
+        "faces": 6,
+        "members": 1,
+        "volume_mm3": 27.143360527015815
+      },
+      "tags": [
+        "cylinder",
+        "hole"
+      ],
+      "verdict": "pass"
+    },
+    {
+      "expected": "pass",
+      "export_ms": 0.9859999999999999,
+      "finding": null,
+      "id": "kicad-vendored-L_Wuerth_HCM-7070",
+      "import_ms": 21.656959,
+      "location": "vendored",
+      "mesh": {
+        "edge_pairs": 150,
+        "maximum_displacement_mm": 0.0,
+        "triangles": 100,
+        "volume_mm3": 343.08400000000034
+      },
+      "native_readback": {
+        "bounds_mm": [
+          [
+            -3.51,
+            -3.5,
+            0.0
+          ],
+          [
+            3.51,
+            3.5,
+            7.0
+          ]
+        ],
+        "faces": 14,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 343.0839999999999
+      },
+      "outcome": "pass",
+      "path": "corpus/kicad-library/L_Wuerth_HCM-7070.step",
+      "persistence": {
+        "mass_kg": 0.0009263268,
+        "material": "Corpus aluminium 2700 kg/m3",
+        "parts": 1,
+        "project_bytes": 18657,
+        "section": {
+          "curves": 4,
+          "hatch_vectors": 99,
+          "length_exact": true,
+          "length_mm": 28.0,
+          "plane_z_mm": 3.5
+        }
+      },
+      "producer": {
+        "file_name": [
+          "KiCAD"
+        ],
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''"
+      },
+      "readback": {
+        "bounds_deviation_mm": 0.0,
+        "bounds_mm": [
+          [
+            -3.51,
+            -3.5,
+            0.0
+          ],
+          [
+            3.51,
+            3.5,
+            7.0
+          ]
+        ],
+        "export_bytes": 18324,
+        "faces": 14,
+        "mesh_deviation_mm": 8.881784197001252e-16,
+        "reader": {
+          "bounds_mm": [
+            [
+              -3.51,
+              -3.5,
+              0.0
+            ],
+            [
+              3.51,
+              3.5,
+              7.0
+            ]
+          ],
+          "faces": 14,
+          "members": 1,
+          "volume_mm3": 343.084
+        },
+        "section": {
+          "curves": 4,
+          "hatch_vectors": 0,
+          "length_exact": true,
+          "length_mm": 28.0,
+          "plane_z_mm": 3.5
+        },
+        "volume_deviation_mm3": 0.0,
+        "volume_mm3": 343.084
+      },
+      "section": {
+        "curves": 4,
+        "hatch_vectors": 0,
+        "length_exact": true,
+        "length_mm": 28.0,
+        "plane_z_mm": 3.5
+      },
+      "sha256": "36596e4058cb75c05b62ea2d734619924d9103f249649500c4f7b7f6d43cfb06",
+      "source": {
+        "bounds_mm": [
+          [
+            -3.51,
+            -3.5,
+            0.0
+          ],
+          [
+            3.51,
+            3.5,
+            7.0
+          ]
+        ],
+        "faces": 14,
+        "solids": 1,
+        "volume_mm3": 343.084
+      },
+      "source_native": {
+        "bounds_mm": [
+          [
+            -3.51,
+            -3.5,
+            0.0
+          ],
+          [
+            3.51,
+            3.5,
+            7.0
+          ]
+        ],
+        "faces": 16,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 343.08399999999983
+      },
+      "source_reader": {
+        "bounds_mm": [
+          [
+            -3.51,
+            -3.5,
+            0.0
+          ],
+          [
+            3.51,
+            3.5,
+            7.0
+          ]
+        ],
+        "faces": 16,
+        "members": 1,
+        "volume_mm3": 343.08400000000006
+      },
+      "tags": [
+        "box",
+        "planar"
+      ],
+      "verdict": "pass"
+    },
+    {
+      "expected": "pass",
+      "export_ms": 0.453834,
+      "finding": null,
+      "id": "kicad-lib-Pin_D0.7mm_L6.5mm_W1.8mm_FlatFork",
+      "import_ms": 3.952,
+      "location": "kicad-library",
+      "mesh": {
+        "edge_pairs": 318,
+        "maximum_displacement_mm": 0.0,
+        "triangles": 212,
+        "volume_mm3": 3.3354156725605044
+      },
+      "native_readback": {
+        "bounds_mm": [
+          [
+            -0.9,
+            -0.20000000000000068,
+            -1.5
+          ],
+          [
+            0.9,
+            0.2000000000000022,
+            5.0
+          ]
+        ],
+        "faces": 15,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 3.332264398637592
+      },
+      "outcome": "pass",
+      "path": "Connector_Pin.3dshapes/Pin_D0.7mm_L6.5mm_W1.8mm_FlatFork.step",
+      "persistence": {
+        "mass_kg": 8.9971138763215e-6,
+        "material": "Corpus aluminium 2700 kg/m3",
+        "parts": 1,
+        "project_bytes": 25466,
+        "section": {
+          "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
+          "plane_z_mm": 1.75
+        }
+      },
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 7.1",
+          "FreeCAD"
+        ],
+        "name": "FreeCAD",
+        "version": "originating system 'FreeCAD', preprocessor 'Open CASCADE STEP processor 7.1'"
+      },
+      "readback": {
+        "bounds_deviation_mm": 0.0,
+        "bounds_mm": [
+          [
+            -0.9,
+            -0.20000000000000068,
+            -1.5000000000000002
+          ],
+          [
+            0.9,
+            0.20000000000000223,
+            5.0
+          ]
+        ],
+        "export_bytes": 20943,
+        "faces": 15,
+        "mesh_deviation_mm": 0.0,
+        "reader": {
+          "bounds_mm": [
+            [
+              -0.9,
+              -0.20000000000000068,
+              -1.5
+            ],
+            [
+              0.9,
+              0.2000000000000022,
+              5.0
+            ]
+          ],
+          "faces": 15,
+          "members": 1,
+          "volume_mm3": 3.3322643986375926
+        },
+        "section": {
+          "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
+          "plane_z_mm": 1.75
+        },
+        "volume_deviation_mm3": 0.0,
+        "volume_mm3": 3.3322643986375926
+      },
+      "section": {
+        "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
+        "plane_z_mm": 1.75
+      },
+      "sha256": "356605e80acec717c40031621a46e215e935d80c78394d12f850cadd66202a6f",
+      "source": {
+        "bounds_mm": [
+          [
+            -0.9,
+            -0.20000000000000068,
+            -1.5000000000000002
+          ],
+          [
+            0.9,
+            0.20000000000000223,
+            5.0
+          ]
+        ],
+        "faces": 15,
+        "solids": 1,
+        "volume_mm3": 3.3322643986375926
+      },
+      "source_native": {
+        "bounds_mm": [
+          [
+            -0.9,
+            -0.20000000000000112,
+            -1.5
+          ],
+          [
+            0.9,
+            0.20000000000000112,
+            5.0
+          ]
+        ],
+        "faces": 15,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 3.3322643986375913
+      },
+      "source_reader": {
+        "bounds_mm": [
+          [
+            -0.9,
+            -0.2000000000000001,
+            -1.5
+          ],
+          [
+            0.9,
+            0.2000000000000001,
+            5.0
+          ]
+        ],
+        "faces": 15,
+        "members": 1,
+        "volume_mm3": 3.3322643986375926
+      },
+      "tags": [
+        "cylinder",
+        "trims-seams"
+      ],
+      "verdict": "pass"
+    },
+    {
+      "expected": "pass",
+      "export_ms": 1.450375,
+      "finding": null,
+      "id": "kicad-lib-Heatsink_125x35x50mm_3xFixationM3",
+      "import_ms": 39.758165999999996,
+      "location": "kicad-library",
+      "mesh": {
+        "edge_pairs": 2118,
+        "maximum_displacement_mm": 0.0,
+        "triangles": 1412,
+        "volume_mm3": 55200.16578199535
+      },
+      "native_readback": {
+        "bounds_mm": [
+          [
+            -62.5,
+            -2.54,
+            0.0
+          ],
+          [
+            62.24886000000001,
+            32.45298000000001,
+            35.0
+          ]
+        ],
+        "faces": 73,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 55195.21735155099
+      },
+      "outcome": "pass",
+      "path": "Heatsink.3dshapes/Heatsink_125x35x50mm_3xFixationM3.step",
+      "persistence": {
+        "mass_kg": 0.14902708684918775,
+        "material": "Corpus aluminium 2700 kg/m3",
+        "parts": 1,
+        "project_bytes": 118814,
+        "section": {
+          "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
+          "plane_z_mm": 17.5
+        }
+      },
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 7.1",
+          "FreeCAD"
+        ],
+        "name": "FreeCAD",
+        "version": "originating system 'FreeCAD', preprocessor 'Open CASCADE STEP processor 7.1'"
+      },
+      "readback": {
+        "bounds_deviation_mm": 0.0,
+        "bounds_mm": [
+          [
+            -62.5,
+            -2.54,
+            0.0
+          ],
+          [
+            62.24886000000001,
+            32.45298000000001,
+            35.0
+          ]
+        ],
+        "export_bytes": 115093,
+        "faces": 73,
+        "mesh_deviation_mm": 0.0,
+        "reader": {
+          "bounds_mm": [
+            [
+              -62.5,
+              -2.54,
+              0.0
+            ],
+            [
+              62.24886000000001,
+              32.45298000000001,
+              35.0
+            ]
+          ],
+          "faces": 73,
+          "members": 1,
+          "volume_mm3": 55195.21735155103
+        },
+        "section": {
+          "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
+          "plane_z_mm": 17.5
+        },
+        "volume_deviation_mm3": 0.0,
+        "volume_mm3": 55195.21735155102
+      },
+      "section": {
+        "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
+        "plane_z_mm": 17.5
+      },
+      "sha256": "b2012637e0f7d9184043c2545fbea5fa328bd8685fed7c2b2f113a528885ddf3",
+      "source": {
+        "bounds_mm": [
+          [
+            -62.5,
+            -2.54,
+            0.0
+          ],
+          [
+            62.24886000000001,
+            32.45298000000001,
+            35.0
+          ]
+        ],
+        "faces": 73,
+        "solids": 1,
+        "volume_mm3": 55195.21735155102
+      },
+      "source_native": {
+        "bounds_mm": [
+          [
+            -62.50000000000001,
+            -2.54,
+            0.0
+          ],
+          [
+            62.24886,
+            32.452980000000004,
+            35.0
+          ]
+        ],
+        "faces": 73,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 55195.21735154567
+      },
+      "source_reader": {
+        "bounds_mm": [
+          [
+            -62.5,
+            -2.54,
+            0.0
+          ],
+          [
+            62.24886,
+            32.452980000000004,
+            35.0
+          ]
+        ],
+        "faces": 73,
+        "members": 1,
+        "volume_mm3": 55195.21735154605
+      },
+      "tags": [
+        "cylinder",
+        "hole",
+        "planar"
+      ],
+      "verdict": "pass"
+    },
+    {
+      "expected": "pass",
+      "export_ms": 1.246292,
+      "finding": null,
+      "id": "kicad-lib-D_SOD-882",
+      "import_ms": 9.397124999999999,
+      "location": "kicad-library",
+      "mesh": {
+        "edge_pairs": 354,
+        "maximum_displacement_mm": 0.0,
+        "triangles": 236,
+        "volume_mm3": 0.2787
+      },
+      "native_readback": {
+        "bounds_mm": [
+          [
+            -0.5,
+            -0.3,
+            0.0
+          ],
+          [
+            0.5,
+            0.3,
+            0.49
+          ]
+        ],
+        "faces": 21,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 0.27869999999999995
+      },
+      "outcome": "pass",
+      "path": "Diode_SMD.3dshapes/D_SOD-882.step",
+      "persistence": {
+        "mass_kg": 7.524899999999997e-7,
+        "material": "Corpus aluminium 2700 kg/m3",
+        "parts": 1,
+        "project_bytes": 41409,
+        "section": {
+          "curves": 4,
+          "hatch_vectors": 11,
+          "length_exact": true,
+          "length_mm": 3.2,
+          "plane_z_mm": 0.245
+        }
+      },
+      "producer": {
+        "file_name": [
+          "KiCAD"
+        ],
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''"
+      },
+      "readback": {
+        "bounds_deviation_mm": 0.0,
+        "bounds_mm": [
+          [
+            -0.5,
+            -0.3,
+            0.0
+          ],
+          [
+            0.5,
+            0.3,
+            0.49
+          ]
+        ],
+        "export_bytes": 24998,
+        "faces": 21,
+        "mesh_deviation_mm": 0.0,
+        "reader": {
+          "bounds_mm": [
+            [
+              -0.5,
+              -0.3,
+              0.0
+            ],
+            [
+              0.5,
+              0.3,
+              0.49
+            ]
+          ],
+          "faces": 21,
+          "members": 1,
+          "volume_mm3": 0.27869999999999995
+        },
+        "section": {
+          "curves": 4,
+          "hatch_vectors": 0,
+          "length_exact": true,
+          "length_mm": 3.2,
+          "plane_z_mm": 0.245
+        },
+        "volume_deviation_mm3": 0.0,
+        "volume_mm3": 0.2786999999999999
+      },
+      "section": {
+        "curves": 4,
+        "hatch_vectors": 0,
+        "length_exact": true,
+        "length_mm": 3.2,
+        "plane_z_mm": 0.245
+      },
+      "sha256": "b109a9e50feebcf8bae5a230cf805dc06e2eb2b9d976f1922b195c16710c5415",
+      "source": {
+        "bounds_mm": [
+          [
+            -0.5,
+            -0.3,
+            0.0
+          ],
+          [
+            0.5,
+            0.3,
+            0.49
+          ]
+        ],
+        "faces": 21,
+        "solids": 1,
+        "volume_mm3": 0.2786999999999999
+      },
+      "source_native": {
+        "bounds_mm": [
+          [
+            -0.5,
+            -0.3,
+            0.0
+          ],
+          [
+            0.5,
+            0.3,
+            0.49
+          ]
+        ],
+        "faces": 21,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 0.27869999999999995
+      },
+      "source_reader": {
+        "bounds_mm": [
+          [
+            -0.5,
+            -0.3,
+            0.0
+          ],
+          [
+            0.5,
+            0.3,
+            0.49
+          ]
+        ],
+        "faces": 21,
+        "members": 1,
+        "volume_mm3": 0.2787
+      },
+      "tags": [
+        "box",
+        "planar"
+      ],
+      "verdict": "pass"
+    },
+    {
+      "expected": "pass",
+      "export_ms": 1.234541,
+      "finding": null,
+      "id": "kicad-lib-LED_Rectangular_W3.0mm_H2.0mm",
+      "import_ms": 8.375957999999999,
+      "location": "kicad-library",
+      "mesh": {
+        "edge_pairs": 258,
+        "maximum_displacement_mm": 0.0,
+        "triangles": 172,
+        "volume_mm3": 33.75999999999999
+      },
+      "native_readback": {
+        "bounds_mm": [
+          [
+            -0.73,
+            -1.0,
+            -2.5
+          ],
+          [
+            3.27,
+            1.0,
+            8.0
+          ]
+        ],
+        "faces": 20,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 33.760000000000005
+      },
+      "outcome": "pass",
+      "path": "LED_THT.3dshapes/LED_Rectangular_W3.0mm_H2.0mm.step",
+      "persistence": {
+        "mass_kg": 0.000091152,
+        "material": "Corpus aluminium 2700 kg/m3",
+        "parts": 1,
+        "project_bytes": 35233,
+        "section": {
+          "curves": 8,
+          "hatch_vectors": 10,
+          "length_exact": true,
+          "length_mm": 3.2000000000000006,
+          "plane_z_mm": 2.75
+        }
+      },
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 6.8",
+          "FreeCAD"
+        ],
+        "name": "FreeCAD",
+        "version": "originating system 'FreeCAD', preprocessor 'Open CASCADE STEP processor 6.8'"
+      },
+      "readback": {
+        "bounds_deviation_mm": 0.0,
+        "bounds_mm": [
+          [
+            -0.73,
+            -1.0,
+            -2.5
+          ],
+          [
+            3.27,
+            1.0,
+            8.0
+          ]
+        ],
+        "export_bytes": 24549,
+        "faces": 20,
+        "mesh_deviation_mm": 0.0,
+        "reader": {
+          "bounds_mm": [
+            [
+              -0.73,
+              -1.0,
+              -2.5
+            ],
+            [
+              3.27,
+              1.0,
+              8.0
+            ]
+          ],
+          "faces": 20,
+          "members": 1,
+          "volume_mm3": 33.760000000000005
+        },
+        "section": {
+          "curves": 8,
+          "hatch_vectors": 0,
+          "length_exact": true,
+          "length_mm": 3.2000000000000006,
+          "plane_z_mm": 2.75
+        },
+        "volume_deviation_mm3": 0.0,
+        "volume_mm3": 33.76
+      },
+      "section": {
+        "curves": 8,
+        "hatch_vectors": 0,
+        "length_exact": true,
+        "length_mm": 3.2000000000000006,
+        "plane_z_mm": 2.75
+      },
+      "sha256": "dd7b583a18d7417abff59c0ed14ce343abd1441ece2447a2e82c554fb72641b0",
+      "source": {
+        "bounds_mm": [
+          [
+            -0.73,
+            -1.0,
+            -2.5
+          ],
+          [
+            3.27,
+            1.0,
+            8.0
+          ]
+        ],
+        "faces": 20,
+        "solids": 1,
+        "volume_mm3": 33.76
+      },
+      "source_native": {
+        "bounds_mm": [
+          [
+            -0.73,
+            -1.0000000000000002,
+            -2.5
+          ],
+          [
+            3.27,
+            1.0000000000000009,
+            8.0
+          ]
+        ],
+        "faces": 20,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 33.75999999999999
+      },
+      "source_reader": {
+        "bounds_mm": [
+          [
+            -0.73,
+            -1.0,
+            -2.5
+          ],
+          [
+            3.27,
+            1.0,
+            8.0
+          ]
+        ],
+        "faces": 20,
+        "members": 1,
+        "volume_mm3": 33.76
+      },
+      "tags": [
+        "planar"
+      ],
+      "verdict": "pass"
+    },
+    {
+      "expected": "limit",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "OpenCascade 7.9.3 validates this library model as one closed solid (180.852 mm3), but the Rust reader reports its import budget as exceeded. All 965 Limit results in the full library sweep contain TOROIDAL_SURFACE faces; a resource Limit is the wrong classification for these small inputs."
+      },
+      "id": "kicad-vendored-Mounting_Wuerth_WA-SMSE-ExternalM3_H5mm_9771050360",
+      "import_ms": 0.812542,
+      "location": "vendored",
+      "message": "STEP import: STEP exceeds the Rust import budget",
+      "outcome": "limit",
+      "path": "corpus/kicad-library/Mounting_Wuerth_WA-SMSE-ExternalM3_H5mm_9771050360.step",
+      "producer": {
+        "file_name": [
+          "KiCAD"
+        ],
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''"
+      },
+      "sha256": "3d4bed0c43cc1ef6177f6835931b742a71c9f63c4870f958931dc9948f5d4003",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -3.0,
+            -3.0,
+            -0.5
+          ],
+          [
+            3.0,
+            3.0,
+            11.0
+          ]
+        ],
+        "faces": 11,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 180.85163365331434
+      },
+      "tags": [
+        "cone",
+        "revolution",
+        "torus"
+      ],
+      "verdict": "fail"
+    },
+    {
+      "expected": "limit",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "OpenCascade 7.9.3 validates this library model as one closed solid (298.9 mm3), but the Rust reader reports its import budget as exceeded. All 965 Limit results in the full library sweep contain TOROIDAL_SURFACE faces; a resource Limit is the wrong classification for these small inputs."
+      },
+      "id": "kicad-lib-RV_Disc_D9mm_W6.1mm_P5mm",
+      "import_ms": 1.846416,
+      "location": "kicad-library",
+      "message": "STEP import: STEP exceeds the Rust import budget",
+      "outcome": "limit",
+      "path": "Varistor.3dshapes/RV_Disc_D9mm_W6.1mm_P5mm.step",
+      "producer": {
+        "file_name": [
+          "OCC",
+          "kicad StepUp"
+        ],
+        "name": "KiCad",
+        "version": "originating system 'kicad StepUp', preprocessor 'OCC'"
+      },
+      "sha256": "6e077dea223411378c2d1caa9afa280e7b9a9d3179a3e4868c475966301460c4",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -2.0000001000000007,
+            -3.8000000999999997,
+            -3.0
+          ],
+          [
+            7.0000001,
+            2.3000000999999997,
+            9.0300001
+          ]
+        ],
+        "faces": 11,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 298.90011696948113
+      },
+      "tags": [
+        "revolution",
+        "torus"
+      ],
+      "verdict": "fail"
+    },
+    {
+      "expected": "limit",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "OpenCascade 7.9.3 validates this library model as one closed solid (45859.9 mm3), but the Rust reader reports its import budget as exceeded. All 965 Limit results in the full library sweep contain TOROIDAL_SURFACE faces; a resource Limit is the wrong classification for these small inputs."
+      },
+      "id": "kicad-lib-Converter_ACDC_Hi-Link_HLK-20Mxx",
+      "import_ms": 8.353667,
+      "location": "kicad-library",
+      "message": "STEP import: STEP exceeds the Rust import budget",
+      "outcome": "limit",
+      "path": "Converter_ACDC.3dshapes/Converter_ACDC_Hi-Link_HLK-20Mxx.step",
+      "producer": {
+        "file_name": [
+          "KiCAD"
+        ],
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''"
+      },
+      "sha256": "417e979933c0b2461c57d17f03647340e4542c42db646f75d1dd5a9ff9a9057c",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -3.25,
+            -21.25,
+            -4.9
+          ],
+          [
+            54.25,
+            12.25,
+            23.9
+          ]
+        ],
+        "faces": 30,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 45859.918373764885
+      },
+      "tags": [
+        "sphere",
+        "torus"
+      ],
+      "verdict": "fail"
+    },
+    {
+      "expected": "invalid",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "OpenCascade 7.9.3 validates this model as 1 closed solid(s) (147 mm3, BRepCheck valid), but the Rust reader rejects it as invalid STEP geometry; 298 library files share this false rejection in the full sweep."
+      },
+      "id": "kicad-vendored-L_CommonModeChoke_TDK_ACM7060",
+      "import_ms": 2.098542,
+      "location": "vendored",
+      "message": "STEP import: Invalid STEP geometry",
+      "outcome": "invalid",
+      "path": "corpus/kicad-library/L_CommonModeChoke_TDK_ACM7060.step",
+      "producer": {
+        "file_name": [
+          "KiCAD"
+        ],
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''"
+      },
+      "sha256": "27b7ee4ace781c7d74e3a858edf5da894e3df7b198ad619619e571c57b501b42",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -3.5,
+            -3.0,
+            0.0
+          ],
+          [
+            3.5000000000000004,
+            3.0,
+            3.5
+          ]
+        ],
+        "faces": 15,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 146.99999999999994
+      },
+      "tags": [
+        "planar"
+      ],
+      "verdict": "fail"
+    },
+    {
+      "expected": "invalid",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "OpenCascade 7.9.3 validates this model as 1 closed solid(s) (3.37691 mm3, BRepCheck valid), but the Rust reader rejects it as invalid STEP geometry; 298 library files share this false rejection in the full sweep."
+      },
+      "id": "kicad-lib-L_CommonModeChoke_Coilank_ACM2012",
+      "import_ms": 36.337416999999995,
+      "location": "kicad-library",
+      "message": "STEP import: Invalid STEP geometry",
+      "outcome": "invalid",
+      "path": "Inductor_SMD.3dshapes/L_CommonModeChoke_Coilank_ACM2012.step",
+      "producer": {
+        "file_name": [
+          "KiCAD"
+        ],
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''"
+      },
+      "sha256": "a9cc34331f919ba98d2090ef4708ac49e89c224473613be81eaf6a48d6a85e7e",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -1.0,
+            -0.65,
+            0.0
+          ],
+          [
+            1.0,
+            0.65,
+            1.4
+          ]
+        ],
+        "faces": 27,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 3.376905033263797
+      },
+      "tags": [
+        "cylinder"
+      ],
+      "verdict": "fail"
+    },
+    {
+      "expected": "invalid",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "OpenCascade 7.9.3 validates this model as 1 closed solid(s) (8.13669 mm3, BRepCheck valid), but the Rust reader rejects it as invalid STEP geometry; 298 library files share this false rejection in the full sweep."
+      },
+      "id": "kicad-lib-SW_SPST_B3U-3000P-B",
+      "import_ms": 10.706958,
+      "location": "kicad-library",
+      "message": "STEP import: Invalid STEP geometry",
+      "outcome": "invalid",
+      "path": "Button_Switch_SMD.3dshapes/SW_SPST_B3U-3000P-B.step",
+      "producer": {
+        "file_name": [
+          "KiCAD"
+        ],
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''"
+      },
+      "sha256": "83d93fdb593d5750c215ffea7536cf2fca153c2aa05ced02d95648884e571bfd",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -2.0,
+            -1.2500000000000002,
+            -0.5
+          ],
+          [
+            2.0,
+            1.9500000000000002,
+            1.2000000000000002
+          ]
+        ],
+        "faces": 123,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 8.136692016186112
+      },
+      "tags": [
+        "cone"
+      ],
+      "verdict": "fail"
+    },
+    {
+      "expected": "invalid",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "OpenCascade 7.9.3 validates this model as 1 closed solid(s) (44.2398 mm3, BRepCheck valid), but the Rust reader rejects it as invalid STEP geometry; 298 library files share this false rejection in the full sweep."
+      },
+      "id": "kicad-lib-LED_D3.0mm_Horizontal_O1.27mm_Z6.0mm",
+      "import_ms": 4.126709,
+      "location": "kicad-library",
+      "message": "STEP import: Invalid STEP geometry",
+      "outcome": "invalid",
+      "path": "LED_THT.3dshapes/LED_D3.0mm_Horizontal_O1.27mm_Z6.0mm.step",
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 6.8",
+          "FreeCAD"
+        ],
+        "name": "FreeCAD",
+        "version": "originating system 'FreeCAD', preprocessor 'Open CASCADE STEP processor 6.8'"
+      },
+      "sha256": "e0cab2a428f2b9688c6d96d09a8fce2394eb36f1f9921075cc8f21b35afe8b56",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -0.3,
+            -6.57,
+            -2.0
+          ],
+          [
+            3.17,
+            0.3,
+            7.9
+          ]
+        ],
+        "faces": 33,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 44.23980071818441
+      },
+      "tags": [
+        "sphere"
+      ],
+      "verdict": "fail"
+    },
+    {
+      "expected": "invalid",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "The Rust importer reads the boundary but its rebuilt extrusion differs from the imported analytic topology, while OpenCascade 7.9.3 validates the model as one closed solid (168.929 mm3); an internal reconstruction mismatch rather than an input defect."
+      },
+      "id": "kicad-lib-Buzzer_Mallory_AST1109MLTRQ",
+      "import_ms": 28.876416,
+      "location": "kicad-library",
+      "message": "STEP import: Rebuilt STEP extrusion differs from the imported analytic topology",
+      "outcome": "invalid",
+      "path": "Buzzer_Beeper.3dshapes/Buzzer_Mallory_AST1109MLTRQ.step",
+      "producer": {
+        "file_name": [
+          "KiCAD"
+        ],
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''"
+      },
+      "sha256": "d69e777e97e07cc99aaefe1811ce18c08c1f16d499fcd43dfba882bfa98b6311",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -7.5,
+            -4.5,
+            0.0
+          ],
+          [
+            7.5,
+            4.5,
+            1.7
+          ]
+        ],
+        "faces": 26,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 168.92924787004074
+      },
+      "tags": [
+        "cylinder"
+      ],
+      "verdict": "fail"
+    },
+    {
+      "expected": "unsupported",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "STEP assembly product structure with placed occurrences is refused (same cause as occt-two-bodies)."
+      },
+      "id": "kicad-lib-Samtec_HPM-01-05-x-S_Straight_1x01_Pitch5.08mm",
+      "import_ms": 2.492958,
+      "location": "kicad-library",
+      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
+      "outcome": "unsupported",
+      "path": "Connector_Samtec_HPM_THT.3dshapes/Samtec_HPM-01-05-x-S_Straight_1x01_Pitch5.08mm.step",
+      "producer": {
+        "file_name": [
+          "KiCAD"
+        ],
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''"
+      },
+      "sha256": "41d3ccf88f97caf5aefb72e7ede7b6056830098bf2450959b5ad77da37d9bbe7",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -3.175,
+            -2.54,
+            -4.57
+          ],
+          [
+            3.175,
+            2.54,
+            6.35
+          ]
+        ],
+        "faces": 20,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 2,
+        "volume_mm3": 95.81829699999999
+      },
+      "tags": [
+        "assembly",
+        "multi-body"
+      ],
+      "verdict": "unsupported"
+    },
+    {
+      "expected": "unsupported",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "Standalone conical faces outside the certified conical stock-mouth family are refused."
+      },
+      "id": "kicad-lib-Mounting_Wuerth_WA-SMSI-M3_H1mm_9774010360",
+      "import_ms": 0.987041,
+      "location": "kicad-library",
+      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
+      "outcome": "unsupported",
+      "path": "Mounting_Wuerth.3dshapes/Mounting_Wuerth_WA-SMSI-M3_H1mm_9774010360.step",
+      "producer": {
+        "file_name": [
+          "KiCAD"
+        ],
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''"
+      },
+      "sha256": "75b67971219c4b62be41b9e763917f7246a4b42423d581e936a37730a983be93",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -3.0,
+            -3.0,
+            -1.4
+          ],
+          [
+            3.0,
+            3.0,
+            1.0
+          ]
+        ],
+        "faces": 7,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 35.961220486222764
+      },
+      "tags": [
+        "cone"
+      ],
+      "verdict": "unsupported"
+    },
+    {
+      "expected": "unsupported",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "Cylindrical faces outside the certified prism, bore and rounded-edge families (here partial cylinders on a box body) are refused."
+      },
+      "id": "kicad-lib-R_Box_L13.0mm_W4.0mm_P9.00mm",
+      "import_ms": 1.9880840000000002,
+      "location": "kicad-library",
+      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
+      "outcome": "unsupported",
+      "path": "Resistor_THT.3dshapes/R_Box_L13.0mm_W4.0mm_P9.00mm.step",
+      "producer": {
+        "file_name": [
+          "OCC",
+          "kicad StepUp"
+        ],
+        "name": "KiCad",
+        "version": "originating system 'kicad StepUp', preprocessor 'OCC'"
+      },
+      "sha256": "21dd36dd9b264f034a1eb7c2248ab0173b2b9278614ad6442a6cfa8728f544fa",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -2.0,
+            -2.0,
+            -3.0
+          ],
+          [
+            11.0,
+            2.0,
+            8.0
+          ]
+        ],
+        "faces": 10,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 419.0159289474461
+      },
+      "tags": [
+        "cylinder"
+      ],
+      "verdict": "unsupported"
+    },
+    {
+      "expected": "unsupported",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "Planar polyhedral solids whose faces are not orthogonal prisms or certified planar Boolean results are refused."
+      },
+      "id": "kicad-lib-PinSocket_1x01_P2.54mm_Vertical",
+      "import_ms": 9.09225,
+      "location": "kicad-library",
+      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
+      "outcome": "unsupported",
+      "path": "Connector_PinSocket_2.54mm.3dshapes/PinSocket_1x01_P2.54mm_Vertical.step",
+      "producer": {
+        "file_name": [
+          "KiCAD"
+        ],
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''"
+      },
+      "sha256": "431ab52ecf6734bc10315069a4da18b443269a6c5d38b2b5698353719b94376c",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -1.2700000000000002,
+            -1.2700000000000002,
+            -3.1000000000000365
+          ],
+          [
+            1.2700000000000002,
+            1.2700000000000002,
+            8.5
+          ]
+        ],
+        "faces": 36,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 51.64088666666623
+      },
+      "tags": [
+        "planar"
+      ],
+      "verdict": "unsupported"
+    },
+    {
+      "expected": "unsupported",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "General solids of revolution are outside the Rust import families."
+      },
+      "id": "kicad-lib-C_Axial_L5.1mm_D3.1mm_P10.00mm_Horizontal",
+      "import_ms": 1.8988749999999999,
+      "location": "kicad-library",
+      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
+      "outcome": "unsupported",
+      "path": "Capacitor_THT.3dshapes/C_Axial_L5.1mm_D3.1mm_P10.00mm_Horizontal.step",
+      "producer": {
+        "file_name": [
+          "kicad StepUp"
+        ],
+        "name": "KiCad",
+        "version": "originating system 'kicad StepUp', preprocessor ''"
+      },
+      "sha256": "aecb3a544c9105cc507bb98bd8247c449a4477c8826572f83d43cd00eceadab2",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -0.24999999999999967,
+            -1.55,
+            -2.0
+          ],
+          [
+            10.25,
+            1.55,
+            3.1
+          ]
+        ],
+        "faces": 15,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 38.930716758415564
+      },
+      "tags": [
+        "revolution"
+      ],
+      "verdict": "unsupported"
+    },
+    {
+      "expected": "unsupported",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "Spherical faces other than a complete Rust-encoded sphere (here solder-ball caps) are refused."
+      },
+      "id": "kicad-vendored-WLP-4_0.83x0.83mm_P0.4mm",
+      "import_ms": 1.418375,
+      "location": "vendored",
+      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
+      "outcome": "unsupported",
+      "path": "corpus/kicad-library/WLP-4_0.83x0.83mm_P0.4mm.step",
+      "producer": {
+        "file_name": [
+          "KiCAD"
+        ],
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''"
+      },
+      "sha256": "21f5eb82ba804059ee7742d00cb73caaea76dbfb5c01c6bf178260b004e7e0e7",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -0.414,
+            -0.414,
+            -0.006749999999999978
+          ],
+          [
+            0.414,
+            0.414,
+            0.502
+          ]
+        ],
+        "faces": 12,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 0.24959318124574453
+      },
+      "tags": [
+        "sphere"
+      ],
+      "verdict": "unsupported"
+    },
+    {
+      "expected": "unsupported",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "B-spline surface faces outside the certified spline sweep and relief families are refused."
+      },
+      "id": "kicad-lib-D_SOD-923",
+      "import_ms": 3.9890000000000003,
+      "location": "kicad-library",
+      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
+      "outcome": "unsupported",
+      "path": "Diode_SMD.3dshapes/D_SOD-923.step",
+      "producer": {
+        "file_name": [
+          "OCC",
+          "kicad StepUp"
+        ],
+        "name": "KiCad",
+        "version": "originating system 'kicad StepUp', preprocessor 'OCC'"
+      },
+      "sha256": "2ab2eb57942276dc90db0148894bc98e40b6ed97c8a35c3c24e1f40fc146235f",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -0.5000001,
+            -0.3000001,
+            -1e-7
+          ],
+          [
+            0.5000001,
+            0.3000001,
+            0.3700001
+          ]
+        ],
+        "faces": 27,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 0.17402361314366152
+      },
+      "tags": [
+        "spline"
+      ],
+      "verdict": "unsupported"
+    },
+    {
+      "expected": "unsupported",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "SHELL_BASED_SURFACE_MODEL content and multiple solids in one representation are refused."
+      },
+      "id": "kicad-lib-R_LDR_5.2x5.2mm_P3.5mm_Horizontal",
+      "import_ms": 7.408375,
+      "location": "kicad-library",
+      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
+      "outcome": "unsupported",
+      "path": "OptoDevice.3dshapes/R_LDR_5.2x5.2mm_P3.5mm_Horizontal.step",
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 6.8",
+          "FreeCAD"
+        ],
+        "name": "FreeCAD",
+        "version": "originating system 'FreeCAD', preprocessor 'Open CASCADE STEP processor 6.8'"
+      },
+      "sha256": "d6990779de26a64b31a6250145868c66bd32eea8c3bd2d3310082a21b930d954",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -0.85,
+            -0.20000010000000007,
+            -3.0
+          ],
+          [
+            4.35,
+            1.4,
+            7.75
+          ]
+        ],
+        "faces": 64,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 6,
+        "volume_mm3": 21.456942982482083
+      },
+      "tags": [
+        "multi-body",
+        "surface-model",
+        "torus"
+      ],
+      "verdict": "unsupported"
+    },
+    {
+      "expected": "unsupported",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "Toroidal blends combined with multiple solids are refused."
+      },
+      "id": "kicad-lib-Converter_ACDC_MeanWell_IRM-60-xx_THT",
+      "import_ms": 4.534042,
+      "location": "kicad-library",
+      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
+      "outcome": "unsupported",
+      "path": "Converter_ACDC.3dshapes/Converter_ACDC_MeanWell_IRM-60-xx_THT.step",
+      "producer": {
+        "file_name": [
+          "KiCAD"
+        ],
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''"
+      },
+      "sha256": "fcedf2ec6d87d5d594ad242bb4f243ef42758467cda270843a4d993620c09ff1",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -5.3,
+            -47.0,
+            -3.4000001
+          ],
+          [
+            81.7,
+            5.0,
+            29.6
+          ]
+        ],
+        "faces": 48,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 6,
+        "volume_mm3": 133479.602204707
+      },
+      "tags": [
+        "assembly",
+        "multi-body",
+        "sphere",
+        "torus"
+      ],
+      "verdict": "unsupported"
+    },
+    {
+      "expected": "unsupported",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "BREP_WITH_VOIDS other than an orthogonal box with rectangular voids is refused."
+      },
+      "id": "kicad-lib-C_Radial_D6.3mm_H7.0mm_P2.50mm",
+      "import_ms": 15.135,
+      "location": "kicad-library",
+      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
+      "outcome": "unsupported",
+      "path": "Capacitor_THT.3dshapes/C_Radial_D6.3mm_H7.0mm_P2.50mm.step",
+      "producer": {
+        "file_name": [
+          "OCC",
+          "kicad StepUp"
+        ],
+        "name": "KiCad",
+        "version": "originating system 'kicad StepUp', preprocessor 'OCC'"
+      },
+      "sha256": "d83453d10fde051ce32be171f03becbcdeaa455faa38caf366dcf50ba0040fcc",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -1.9000001,
+            -3.1500000999999997,
+            -2.0000001
+          ],
+          [
+            4.400000104723475,
+            3.1500000999999997,
+            7.0000001
+          ]
+        ],
+        "faces": 32,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 210.53063710271775
+      },
+      "tags": [
+        "revolution",
+        "spline",
+        "torus",
+        "voids"
+      ],
+      "verdict": "unsupported"
+    },
+    {
+      "expected": "unsupported",
+      "finding": {
+        "owner": "CAD-290",
+        "summary": "Flat multi-solid representations whose members are outside the supported families are refused."
+      },
+      "id": "kicad-lib-L_Radial_D28.0mm_P29.20mm",
+      "import_ms": 1.172167,
+      "location": "kicad-library",
+      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
+      "outcome": "unsupported",
+      "path": "Inductor_THT.3dshapes/L_Radial_D28.0mm_P29.20mm.step",
+      "producer": {
+        "file_name": [
+          "Open CASCADE STEP processor 6.8",
+          "FreeCAD"
+        ],
+        "name": "FreeCAD",
+        "version": "originating system 'FreeCAD', preprocessor 'Open CASCADE STEP processor 6.8'"
+      },
+      "sha256": "b2990dac771ad98bf2212ec7e3885f60ec72846092a436f80962a89f83c7a9e4",
+      "source_native": {
+        "bounds_mm": [
+          [
+            -0.6,
+            -14.0000001,
+            -3.0
+          ],
+          [
+            29.8,
+            14.0000001,
+            28.1
+          ]
+        ],
+        "faces": 11,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 3,
+        "volume_mm3": 17271.28116497839
+      },
+      "tags": [
+        "multi-body",
+        "torus"
+      ],
+      "verdict": "unsupported"
+    }
+  ],
+  "item": "CAD-345",
+  "kicad_library": "/Applications/KiCad/KiCad.app/Contents/SharedSupport/3dmodels",
+  "native_reference": true,
+  "outcomes": {
+    "invalid": 6,
+    "limit": 4,
+    "pass": 14,
+    "unsupported": 18
+  },
+  "schema": 1,
+  "source": {
+    "commit": "dff6a0f829aa17076552e404c230bb3ea6514d32",
+    "tracked_changes": true
+  },
+  "tolerances": {
+    "bounds_mm": 1e-6,
+    "mesh_linear_deflection_mm": 0.05,
+    "mesh_volume_relative": 0.02,
+    "occt_bounds_mm": 0.001,
+    "occt_volume_relative": 1e-6,
+    "oracle_volume_relative": 1e-9,
+    "reader_tolerance_mm": 1e-7,
+    "section_length_relative": 1e-9,
+    "volume_relative": 1e-9
+  },
+  "verdicts": {
+    "fail": 10,
+    "pass": 14,
+    "unsupported": 18
+  }
+}
