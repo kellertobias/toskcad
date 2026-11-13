@@ -1708,6 +1708,93 @@ fn export_thread_pair_with_stock_extra(
 }
 
 #[test]
+fn default_app_preserves_wood_stock_edits_and_reopen_without_manufacturing_claims() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("wood-stock.tcd");
+    let exports = directory.path().join("exports");
+    std::fs::create_dir(&exports).unwrap();
+    let arguments = [
+        "--project",
+        project.to_str().unwrap(),
+        "--export-dir",
+        exports.to_str().unwrap(),
+    ];
+    let mut client = Client::start(&arguments);
+    let profiles = client.ok("mechanical_part_profiles", json!({}));
+    assert!(
+        profiles["supported_geometry"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("wood_screw"))
+    );
+    assert_eq!(
+        profiles["active_geometry_support"]["wood_screw"]["manufacturing_available"],
+        false
+    );
+    assert!(
+        !profiles["active_geometry_support"]["step_geometry"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("wood_screw"))
+    );
+    let created = client.ok(
+        "set_mechanical_part",
+        json!({"expected_revision":0,"name":"Declared wood stock","recipe":{"kind":"wood_screw"}}),
+    );
+    assert_eq!(created["revision"], 1);
+    let invalid = client.fail(
+        "set_mechanical_part",
+        json!({"expected_revision":1,"feature":created["feature"],"recipe":{
+            "kind":"wood_screw","length_input":{"kind":"underhead","value":length(43.3)}
+        }}),
+    );
+    assert_eq!(invalid["code"], "invalid_document");
+    assert_eq!(client.revision(), 1);
+    let edited = client.ok(
+        "set_mechanical_part",
+        json!({"expected_revision":1,"feature":created["feature"],"recipe":{
+            "kind":"wood_screw","nominal_diameter":length(6.6),
+            "length_input":{"kind":"underhead","value":length(43.3)},
+            "minimum_tip_inclusive_thread_extent":length(26.)
+        }}),
+    );
+    assert_eq!(edited["part"], created["part"]);
+    assert_eq!(edited["revision"], 2);
+    let source = client.ok(
+        "inspect_mechanical_part",
+        json!({"feature":created["feature"]}),
+    );
+    assert_eq!(source["resolved"]["nominal_diameter_mm"], 6.6);
+    assert_eq!(source["resolved"]["underhead_length_mm"], 43.3);
+    assert_eq!(source["resolved"]["manufacturing_available"], false);
+    let volume = client.part_volume();
+    close(
+        volume,
+        3_f64.sqrt() * 50. * 4. + PI * 3.3_f64.powi(2) * 43.3,
+    );
+    client.ok("save_project", json!({"expected_revision":2}));
+    drop(client);
+    let saved = std::fs::read(&project).unwrap();
+    let mut reopened = Client::start(&arguments);
+    let restored = reopened.ok(
+        "inspect_mechanical_part",
+        json!({"feature":created["feature"]}),
+    );
+    assert_eq!(restored["source"], source["source"]);
+    assert_eq!(restored["resolved"], source["resolved"]);
+    close(reopened.part_volume(), volume);
+    let reopened_revision = reopened.revision();
+    let refused = reopened.fail(
+        "export_step",
+        json!({"part":created["part"],"file_name":"wood.step"}),
+    );
+    assert_eq!(refused["code"], "unsupported");
+    assert_eq!(reopened.revision(), reopened_revision);
+    assert_eq!(std::fs::read_dir(&exports).unwrap().count(), 0);
+    assert_eq!(std::fs::read(&project).unwrap(), saved);
+}
+
+#[test]
 fn rust_stdio_exports_verified_m6_hex_screw_after_reopen() {
     export_m6_hex_screw("nominal_basic");
 }
@@ -1756,15 +1843,6 @@ fn export_m6_hex_screw(fit: &str) {
     );
     assert_eq!(validation["omit_display"], true);
     assert_eq!(validation["scope"], "Full");
-    let failed = client.fail(
-        "set_mechanical_part",
-        json!({
-            "expected_revision": 1, "name": "Unsupported wood screw",
-            "recipe": {"kind": "wood_screw"}
-        }),
-    );
-    assert_eq!(failed["code"], "model_failed");
-    assert_eq!(client.revision(), 1);
     let source = client.ok(
         "inspect_mechanical_part",
         json!({"feature": screw["feature"]}),

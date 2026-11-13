@@ -927,7 +927,7 @@ fn parameters(
 pub(super) fn mechanical_part_profiles(_: &dyn Host, call: &Request, _: NoArgs) -> ToolResult {
     if call.backend == GeometryBackend::Rust {
         return Ok(json!({
-            "supported_geometry": ["machine_screw", "hex_nut", "washer", "bearing_envelope"],
+            "supported_geometry": ["machine_screw", "hex_nut", "washer", "bearing_envelope", "wood_screw"],
             "head_forms": ["socket_cap", "external_hex", "pan", "button", "countersunk"],
             "drive_forms": ["hex_socket", "external_hex", "hexalobular"],
             "active_geometry_support": {
@@ -943,11 +943,13 @@ pub(super) fn mechanical_part_profiles(_: &dyn Host, call: &Request, _: NoArgs) 
                 "radial_taper": false,
                 "mesh": true,
                 "threaded_step": true,
-                "threaded_step_scope": "Straight modeled threads and the listed head/drive pairs within source and spline limits. Nominal or fitted threads retain their original phase and a qualified plain shank or head/thread union. Conical recesses must end within the head; wall, floor and actual placement must qualify.",
+                "threaded_step_scope": "Straight modeled threads and the listed head/drive pairs within source and spline limits. Nominal or fitted threads retain their original phase and a qualified plain shank or head/thread union. Qualified conical recesses may continue into the plain shank but must end before the original thread; wall, floor and actual placement must qualify.",
+                "wood_screw": {"representation":"simplified_envelope","head":"external_hex","drive":"external_hex","manufacturing_available":false},
                 "step_geometry": ["washer", "bearing_envelope", "machine_screw", "hex_nut"]
             },
             "machine_screw": "The underhead length runs from the head seat to the tip. Overall length adds the head height. The thread length is its extent ending at the tip, and its frame locates the underhead datum.",
             "nut_thread": "Rust supports modeled hex nuts and cosmetic cylindrical thread envelopes. The thread length sets the nut height.",
+            "wood_screw": "Declared planar hex head and cylindrical stock only, retaining authored dimensions and the reference profile. Actual wood thread and point geometry are unspecified. STEP, manufacturing mesh, outlines and Print exports refuse this envelope, including placed instances and downstream history.",
             "bearing": "External mounting envelope only; races, rolling elements and seals are not modeled"
         }));
     }

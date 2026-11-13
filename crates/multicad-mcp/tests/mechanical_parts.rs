@@ -150,7 +150,13 @@ fn rust_mcp_edits_and_reopens_a_modeled_m6_socket_screw() {
     let profiles = run(&h, "mechanical_part_profiles", json!({}));
     assert_eq!(
         profiles["supported_geometry"],
-        json!(["machine_screw", "hex_nut", "washer", "bearing_envelope"])
+        json!([
+            "machine_screw",
+            "hex_nut",
+            "washer",
+            "bearing_envelope",
+            "wood_screw"
+        ])
     );
     assert_eq!(
         profiles["active_geometry_support"]["head_drive_pairs"],
