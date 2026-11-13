@@ -93,7 +93,10 @@ impl<'s> ClosedBoundaryCertificate<'s> {
             .maximum_work
             .checked_sub(self.work_used())
             .ok_or(Error::Limit)?;
+        // The prerequisite proof is still live during this query, including its
+        // complete fixed 88-domain atlas. It is not retained by the output.
         let peak = std::mem::size_of::<HeadEnvelopeClearance<'_, '_>>()
+            + std::mem::size_of::<Self>()
             + std::mem::size_of::<Cutter>()
             + std::mem::size_of::<Profile>()
             + HeadEnvelopeClearance::scratch_budget_bytes(options.maximum_cells);

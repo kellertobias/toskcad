@@ -171,3 +171,52 @@ fn head_support_limits_invalid_queries_breakthrough_and_cancel_are_atomic() {
         .unwrap();
     assert_eq!(retry.cells(), 1);
 }
+
+#[test]
+fn standalone_head_query_counts_live_closed_atlas_at_the_exact_byte_frontier() {
+    let source = source();
+    let p = straight(
+        source.envelope().entry_radius_mm_bounds()[1] + 1.,
+        source.envelope().tip_depth_mm_bounds()[1] + 1.,
+    );
+    let receipt = {
+        let closed = source
+            .closed_boundary_certificate(Default::default(), None)
+            .unwrap();
+        let old_frontier = std::mem::size_of::<HeadEnvelopeClearance<'_, '_>>()
+            + std::mem::size_of::<Cutter>()
+            + std::mem::size_of::<Profile>()
+            + HeadEnvelopeClearance::scratch_budget_bytes(1);
+        let frontier = old_frontier + std::mem::size_of_val(&closed);
+        for bytes in [old_frontier, frontier - 1] {
+            assert!(matches!(
+                closed.certify_head_envelope(
+                    &p,
+                    HeadEnvelopeOptions {
+                        maximum_cells: 1,
+                        maximum_bytes: bytes,
+                        ..Default::default()
+                    },
+                    None
+                ),
+                Err(Error::Limit)
+            ));
+        }
+        closed
+            .certify_head_envelope(
+                &p,
+                HeadEnvelopeOptions {
+                    maximum_cells: 1,
+                    maximum_bytes: frontier,
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap()
+    };
+    // The input atlas is no longer live: the earned result retains only its
+    // immutable Cutter/Profile borrows, as promised by its returned lifetimes.
+    assert!(std::ptr::eq(receipt.source(), &source));
+    assert_eq!(receipt.cells(), 1);
+    assert!(receipt.minimum_radial_clearance_mm() > 0.99);
+}
