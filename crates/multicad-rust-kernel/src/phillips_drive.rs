@@ -6,8 +6,8 @@ mod classify;
 mod events;
 mod finite_section;
 pub use events::{
-    BoundaryEvents, CubicTrimSpan, EventRole, FiniteTrim, PatchAtlas, PatchBounds, PatchKey,
-    QuadErrorBound, SourceEvent, SurfacePatch, TrimErrorBound, WallKind,
+    BoundaryEvents, BoundaryMesh, CubicTrimSpan, EventRole, FiniteTrim, PatchAtlas, PatchBounds,
+    PatchKey, QuadErrorBound, SourceEvent, SurfacePatch, TrimErrorBound, WallKind,
 };
 pub use finite_section::{
     EdgeRole, SectionBoundary, SectionCurve, SectionEdge, SectionVertex, VertexRole,

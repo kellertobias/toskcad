@@ -4,7 +4,7 @@ use super::*;
 mod geometry;
 #[cfg(test)]
 mod tests;
-mod validate;
+pub(in crate::phillips_drive) mod validate;
 pub use geometry::{LineSupport, Surface};
 pub use validate::TopologyCertificate;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -221,7 +221,7 @@ fn checkpoint(cancel: &dyn Fn() -> bool) -> Result<(), Error> {
         Ok(())
     }
 }
-fn event_key(role: EventRole, quarter: u8, lower: bool) -> VertexKey {
+pub(in crate::phillips_drive) fn event_key(role: EventRole, quarter: u8, lower: bool) -> VertexKey {
     match role {
         EventRole::MouthEnvelope => VertexKey::Mouth {
             quarter,

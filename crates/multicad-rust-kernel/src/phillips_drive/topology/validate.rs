@@ -41,7 +41,7 @@ fn vertex_link(incident: &[usize], pairs: &[(usize, usize)]) -> bool {
     }
     adjacency.iter().all(|a| a.len() == 2) && connected(&adjacency)
 }
-pub(super) fn certify(
+pub(in crate::phillips_drive) fn certify(
     vertices: &[[I; 3]],
     edges: &[[usize; 2]],
     faces: &[Vec<EdgeUse>],

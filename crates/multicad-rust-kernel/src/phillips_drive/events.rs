@@ -7,7 +7,7 @@ mod carrier;
 mod evaluate;
 pub(super) mod patches;
 pub use carrier::{CubicTrimSpan, TrimErrorBound};
-pub use patches::{PatchAtlas, PatchBounds, PatchKey, QuadErrorBound, SurfacePatch};
+pub use patches::{BoundaryMesh, PatchAtlas, PatchBounds, PatchKey, QuadErrorBound, SurfacePatch};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]

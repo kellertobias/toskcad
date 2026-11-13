@@ -1,6 +1,8 @@
 //! Actual source charts and whole-cell bounds, preceding detached mesh publication.
 use super::*;
+mod mesh;
 use crate::tapered_thread::interval::J;
+pub use mesh::BoundaryMesh;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PatchKey {
     Envelope {
@@ -176,7 +178,10 @@ impl<'a> PatchAtlas<'a> {
                 let p = evaluate::trim_state::<J>(events, index, uv[0])?;
                 let r = evaluate::root(p[0] * p[0] + p[1] * p[1])?;
                 let phi = (p[1] / p[0]).atan();
-                let theta = phi + v * (cj(pi() / I::point(2.)) - J::constant(2.) * phi);
+                // The symmetric form retains the authored angle while avoiding
+                // two independent interval occurrences of phi near either rim.
+                let theta = cj(pi() / I::point(4.))
+                    + (v - J::constant(0.5)) * (cj(pi() / I::point(2.)) - J::constant(2.) * phi);
                 let normal = match events.trims[index].envelope {
                     EnvelopeRole::EntryRoundover => {
                         let angle = events.trims[index].parameters[0]
