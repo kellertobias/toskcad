@@ -52,13 +52,16 @@ pub(super) fn finished(work: usize) {
     });
 }
 fn fixture() -> RadialBoundary {
+    fixture_length(6.5, 1e-6)
+}
+fn fixture_length(length: f64, minimum_feature: f64) -> RadialBoundary {
     use crate::axial_pipe_thread::authored::{AuthoredSection, AuthoredSpec, AuthoredThread};
     let p = 25.4 / 28.;
     let source = AuthoredThread::new(
         AuthoredSpec {
             major_radius_mm: 9.728 / 2. - 4. / 32.,
             pitch_mm: p,
-            length_mm: 6.5,
+            length_mm: length,
             radial_taper: 1. / 32.,
             section: AuthoredSection::BsptRounded {
                 depth_mm: p / (3. * 27.5_f64.to_radians().tan()),
@@ -66,7 +69,7 @@ fn fixture() -> RadialBoundary {
             crest_radius_limit_mm: None,
         },
         1e-7,
-        1e-6,
+        minimum_feature,
     )
     .unwrap();
     source
@@ -75,7 +78,7 @@ fn fixture() -> RadialBoundary {
         .ownership
         .bind_surfaces(1e-7, None)
         .unwrap()
-        .certify_axial(1e-7, 1e-6, None)
+        .certify_axial(1e-7, minimum_feature, None)
         .unwrap()
         .certify_caps(None)
         .unwrap()
@@ -153,7 +156,10 @@ fn paired_parallel_bspt_preserves_every_emitted_bit_and_callback_thread() {
     for mesh in &meshes[1..] {
         assert_eq!(meshes[0], *mesh);
     }
-    assert_eq!(hash(&meshes[0]), 0x151193f7799bf12c);
+    // Width-cohort planning adds valid equal-class subdivisions. Both paths
+    // independently pass all source/facet and embedding gates before this
+    // new deterministic literal mesh golden is frozen.
+    assert_eq!(hash(&meshes[0]), 0x11756b273029d41c);
     assert_eq!(body.input(), &original);
     assert!(*callbacks.borrow() > 0);
 }
@@ -384,14 +390,14 @@ fn actual_bspt_per_owner_static_cache_eligibility_keeps_certified_mesh() {
         stats.finished,
         hash(&mesh)
     );
-    assert_eq!(mesh.indices.len() / 3, 179400);
+    assert_eq!(mesh.indices.len() / 3, 186576);
     assert!(
         crate::manufacturing::certify(&mesh)
             .unwrap()
             .signed_volume_mm3
             > 0.
     );
-    assert_eq!(hash(&mesh), 0x151193f7799bf12c);
+    assert_eq!(hash(&mesh), 0x11756b273029d41c);
 }
 
 fn spline_poles(curve: &Curve) -> Option<&[Point]> {
@@ -442,4 +448,105 @@ fn cancellation_inside_actual_large_grid_normal_preflight_preserves_source() {
     assert_eq!(stats.active, Some(Stage::Preflight));
     assert!(stats.calls[Stage::Emit as usize] > 0);
     assert_eq!(body.input(), &original);
+}
+
+#[test]
+fn actual_canonical_eight_mm_bspt_mesh_reaches_manufacturing_quality() {
+    let body = fixture_length(8., 1e-5);
+    let original = body.input().clone();
+    STATS.with(|s| *s.borrow_mut() = Some(Stats::default()));
+    let at = Instant::now();
+    let result = body.tessellate_with_interrupt(
+        Tessellation {
+            deflection: 0.1,
+            angle: 0.3,
+            triangle_limit: 1_000_000,
+        },
+        None,
+    );
+    let stats = STATS.with(|s| s.borrow_mut().take().unwrap());
+    eprintln!(
+        "canonical8 BSPT elapsed={:?}, error={:?}, unfinished={:?}, work={}",
+        at.elapsed(),
+        result.as_ref().err(),
+        stats.active,
+        stats.finished
+    );
+    for stage in [
+        Stage::Prepare,
+        Stage::Emit,
+        Stage::Preflight,
+        Stage::Check,
+        Stage::Cells,
+        Stage::Embedding,
+    ] {
+        let i = stage as usize;
+        eprintln!(
+            "{stage:?} calls={} work={} time={:?}",
+            stats.calls[i], stats.work[i], stats.time[i]
+        );
+    }
+    let mesh = result.expect("actual canonical8 mesh");
+    assert!(
+        crate::manufacturing::certify(&mesh)
+            .unwrap()
+            .signed_volume_mm3
+            > 0.
+    );
+    assert_eq!(body.input(), &original);
+}
+
+#[test]
+fn actual_failed_transverse_cell_is_not_recovered_by_longitudinal_splits() {
+    let body = fixture_length(8., 1e-5);
+    let options = Tessellation {
+        deflection: 0.1,
+        angle: 0.3,
+        triangle_limit: 1_000_000,
+    };
+    let mut w = Work {
+        remaining: DEFAULT_LIMITS.work,
+        interrupt: None,
+    };
+    let p = Prepared::new(&body, options, DEFAULT_LIMITS, &mut w).unwrap();
+    let original: [[f64; 2]; 2] = [[0., 0.0625], [0.2676056338028169, 0.2680457746478873]];
+    for axis in [2, 0, 1] {
+        for part in 0..if axis == 2 { 1 } else { 2 } {
+            let mut range = original;
+            if axis < 2 {
+                let m = range[axis][0].midpoint(range[axis][1]);
+                range[axis][usize::from(part == 0)] = m;
+            }
+            let uv = [
+                [range[0][0], range[1][0]],
+                [range[0][1], range[1][0]],
+                [range[0][1], range[1][1]],
+                [range[0][0], range[1][1]],
+            ];
+            let vertices = uv.map(|uv| p.point(0, uv[0], uv[1], None, &mut w).unwrap());
+            let actual = quad_triangles(vertices);
+            let Side::Tensor(t) = &p.sides[0] else {
+                panic!("tensor")
+            };
+            let mut cache = strip::Cache::new(t, DEFAULT_LIMITS.strips);
+            cache.advance(range[1][0], &mut w).unwrap();
+            let result = p.cell_check(
+                CandidateCell {
+                    side: 0,
+                    range,
+                    vertices,
+                    actual,
+                },
+                None,
+                Some(&mut cache),
+                &mut w,
+            );
+            let expected = if axis == 0 {
+                CellCheck::Match
+            } else {
+                CellCheck::Normal
+            };
+            assert!(result == Ok(expected));
+        }
+    }
 }

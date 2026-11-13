@@ -186,25 +186,14 @@ fn build_with_limits(
         for attempt in 0..3 {
             work.step()?;
             let mut changes = Refinement::new(grid.u.len());
-            #[cfg(test)]
-            let probe = parallel_probe::start(parallel_probe::Stage::Emit, &work);
-            let mesh = prepared.emit(
-                &grid,
-                &ring,
-                shift * (1_u32 << attempt) as f64,
-                options.triangle_limit,
-                &mut work,
-            )?;
-            #[cfg(test)]
-            parallel_probe::end(probe, &work);
             if prepared.limits.preflight
                 && prepared.tensor_cycle
-                && mesh.indices.len() / 3 >= 32768
+                && counts(&grid, options.triangle_limit)?.1 >= 32768
                 && {
                     #[cfg(test)]
                     let probe = parallel_probe::start(parallel_probe::Stage::Preflight, &work);
                     let result = prepared.normal_preflight(
-                        &mesh,
+                        None,
                         &grid,
                         &ring,
                         pass,
@@ -220,6 +209,17 @@ fn build_with_limits(
                 restart = true;
                 break;
             }
+            #[cfg(test)]
+            let probe = parallel_probe::start(parallel_probe::Stage::Emit, &work);
+            let mesh = prepared.emit(
+                &grid,
+                &ring,
+                shift * (1_u32 << attempt) as f64,
+                options.triangle_limit,
+                &mut work,
+            )?;
+            #[cfg(test)]
+            parallel_probe::end(probe, &work);
             #[cfg(test)]
             let probe = parallel_probe::start(parallel_probe::Stage::Check, &work);
             prepared.check(&mesh, &grid, &ring, pass, &mut changes, &mut work)?;

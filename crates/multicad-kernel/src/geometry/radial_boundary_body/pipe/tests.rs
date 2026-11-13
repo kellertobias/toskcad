@@ -417,3 +417,62 @@ fn semantic_provenance_requires_actual_canonical_incidence_not_just_equal_volume
     wrong.root_faces[0] = source.cap_faces[0];
     assert!(AuthoredPipe::new(wrong, boundary.input()).is_err());
 }
+
+#[test]
+fn actual_canonical_bspt_eight_mm_has_complete_owned_boundary() {
+    use multicad_core::{document::Document, model, parameters};
+    let document = Document::new("actual BSPT request").unwrap();
+    let values = parameters::evaluate(&document).unwrap();
+    let intent = model::PipeThreadIntent {
+        form: model::PipeThreadForm::R,
+        size: model::PipeThreadSize::OneEighth,
+        gauge: model::PipeGaugeConvention::Iso7Nominal1994,
+    };
+    let mut parameters = intent.parameters();
+    parameters.length = model::length(8.);
+    let resolved = parameters
+        .resolve(&values, model::ThreadMode::NewExternal)
+        .unwrap();
+    let spec = AuthoredSpec {
+        major_radius_mm: resolved.major_radius_mm,
+        pitch_mm: resolved.pitch_mm,
+        length_mm: resolved.length_mm,
+        radial_taper: resolved.profile.radial_taper,
+        section: AuthoredSection::BsptRounded {
+            depth_mm: resolved.profile.depth_mm,
+        },
+        crest_radius_limit_mm: None,
+    };
+    let source = AuthoredThread::new(spec, 1e-7, 1e-6).unwrap();
+    let raw = source
+        .raw_boundary_ownership(1e-7, None)
+        .expect("actual raw boundary");
+    let body = raw
+        .ownership
+        .bind_surfaces(1e-7, None)
+        .expect("actual support binding");
+    let body = body
+        .certify_axial(1e-7, 1e-6, None)
+        .expect("actual axial chart");
+    let body = body.certify_caps(None).expect("actual caps");
+    let body = body.certify_ordering(None).expect("actual radial order");
+    let body = body.certify_material(1e-7, None).expect("actual material");
+    assert!(body.volume_with_interrupt(1e-5, None).unwrap().volume_mm3[0] > 0.);
+    let solid = Solid::rust_authored_axial_pipe_thread_with_interrupt(
+        spec,
+        EntityId::new(),
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+        None,
+    )
+    .unwrap();
+    let mesh = solid
+        .manufacturing_mesh_with_receipt(MeshOptions {
+            linear_deflection_mm: 0.1,
+            angular_deflection_rad: 0.3,
+            maximum_triangles: 1_000_000,
+        })
+        .unwrap();
+    assert!(mesh.edge_pairs > 0 && mesh.vertex_links > 0);
+    assert_eq!(mesh.removed_exact_zero_triangles, 0);
+}
