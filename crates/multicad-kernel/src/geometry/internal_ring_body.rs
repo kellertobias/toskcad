@@ -132,6 +132,22 @@ impl InternalRingBody {
             .chain(std::iter::once(Edge::Planar(self.ring.rim())))
     }
 
+    /// Exact rims of the straight ring cut at axial height `z`, in the same
+    /// orientation as `end_on_rims`: the cavity followed by the outside rim.
+    pub(crate) fn section_rims(
+        &self,
+        frame: PlaneFrame,
+        z: f64,
+    ) -> impl Iterator<Item = (Edge, AnalyticGeometry)> + '_ {
+        let section = ReferenceFrame {
+            origin_mm: position(frame, [0., 0., z]),
+            u: frame.u,
+            v: frame.v,
+        };
+        self.sides()
+            .map(move |edge| (edge, super::spur_gear_body::rim(edge, section)))
+    }
+
     fn cap(&self, frame: PlaneFrame, index: usize) -> ReferenceFrame {
         let z = index as f64 * self.ring.height_mm();
         ReferenceFrame {

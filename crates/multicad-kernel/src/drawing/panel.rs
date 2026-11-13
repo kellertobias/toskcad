@@ -505,3 +505,226 @@ fn same_curve(a: Curve, b: Curve) -> bool {
 fn same_wire(a: &[Curve], b: &[Curve]) -> bool {
     a.len() == b.len() && a.iter().all(|&a| b.iter().any(|&b| same_curve(a, b)))
 }
+
+/// Sections of straight spur gears and internal rings perpendicular to their
+/// axis. Every cut through the tooth band repeats the exact cap profile, so
+/// the section rims are the same analytic involute, fillet and circle edges.
+/// Geometry behind the plane projects onto those rims, as for any prism.
+pub(super) fn section_straight_gear(
+    input: &DrawingSolid<'_>,
+    options: DrawingProjection,
+    depth: f64,
+) -> Option<Result<Vec<ProjectedVector>, GeometryError>> {
+    use multicad_rust_kernel::spur_gear::Edge as GearEdge;
+    let (placement, height, loops, hubbed): (_, _, Vec<Vec<GearEdge>>, _) =
+        if let Some((body, placement)) = input.solid.spur_gear_body() {
+            let profile = body.profile();
+            let mut loops = vec![profile.outline().iter().map(|edge| edge.edge).collect()];
+            loops.extend(profile.bore().map(|bore| vec![GearEdge::Planar(bore)]));
+            (
+                placement,
+                profile.height_mm(),
+                loops,
+                profile.hub_extensions().iter().any(Option::is_some),
+            )
+        } else if let Some((body, placement)) = input.solid.internal_ring_body() {
+            let ring = &body.ring;
+            (
+                placement,
+                ring.height_mm(),
+                vec![
+                    vec![GearEdge::Planar(ring.rim())],
+                    ring.cavity().iter().map(|edge| edge.edge).collect(),
+                ],
+                false,
+            )
+        } else {
+            return None;
+        };
+    let [u, v, toward_viewer] = planar::view_axes(options.frame);
+    let normal = placement.normal();
+    if dot(normal, u).hypot(dot(normal, v)) > 64. * f64::EPSILON || options.detail.is_some() {
+        return Some(Err(err(
+            GeometryErrorKind::Unsupported,
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        )));
+    }
+    let alignment = dot(normal, toward_viewer);
+    let offset: [f64; 3] = std::array::from_fn(|i| placement.origin[i] - options.frame.origin[i]);
+    let z = (depth - dot(offset, toward_viewer)) / alignment;
+    let tolerance = input.solid.geometry_policy().linear_tolerance_mm;
+    if z < tolerance || z > height - tolerance {
+        if hubbed {
+            return Some(Err(err(
+                GeometryErrorKind::Unsupported,
+                "Rust spur gear sections through or beside a hub are unavailable",
+            )));
+        }
+        // The plane misses the tooth band or touches a cap, so the retained
+        // part is the whole gear or nothing. Its cap depths are measured
+        // from the plane toward the viewer; retained geometry is not above 0.
+        let base = depth - dot(offset, toward_viewer);
+        let ends = [0., height].map(|end| alignment * end - base);
+        let nearest = ends[0].max(ends[1]);
+        let retained = nearest <= tolerance
+            && options
+                .section_depth_mm
+                .is_none_or(|range| nearest + range >= -tolerance);
+        if options.section_only || !retained {
+            return Some(Ok(Vec::new()));
+        }
+        if options.section_u_mm.is_some() || options.section_v_mm.is_some() {
+            return Some(Err(err(
+                GeometryErrorKind::Unsupported,
+                "Rust gear views behind an uncut lateral window are unavailable",
+            )));
+        }
+        let view = DrawingProjection {
+            section_offset_mm: None,
+            section_depth_mm: None,
+            ..options
+        };
+        return project_spur_gear(input, view).or_else(|| project_internal_ring(input, view));
+    }
+    let screen = Screen {
+        origin: options.frame.origin,
+        axes: [u, v],
+        toward_viewer,
+    };
+    let section_point = |[x, y]: Point| {
+        screen.point(std::array::from_fn(|i| {
+            placement.u[i].mul_add(
+                x,
+                placement.v[i].mul_add(y, normal[i].mul_add(z, placement.origin[i])),
+            )
+        }))
+    };
+    let policy = input.solid.geometry_policy();
+    Some((|| {
+        let clipped = options.section_u_mm.is_some() || options.section_v_mm.is_some();
+        let hatch = input
+            .hatch
+            .filter(|hatch| hatch.pattern != multicad_core::materials::HatchPattern::None);
+        let sampled = if clipped || hatch.is_some() {
+            Some(sample_section_loops(
+                &loops,
+                section_point,
+                alignment < 0.,
+                options,
+                hatch.is_some(),
+                policy,
+            )?)
+        } else {
+            None
+        };
+        if clipped {
+            return section::sampled::publish(
+                input,
+                sampled.expect("section window needs samples"),
+                options,
+            );
+        }
+        let rims: Vec<_> = if let Some((body, placement)) = input.solid.spur_gear_body() {
+            body.section_rims(placement, z).collect()
+        } else {
+            let (body, placement) = input.solid.internal_ring_body().expect("classified ring");
+            body.section_rims(placement, z).collect()
+        };
+        let mut vectors = publish_rotary_rims(
+            &screen,
+            rims.iter().copied(),
+            section_point,
+            Vec::new(),
+            options,
+        )?;
+        let section_count = vectors.len();
+        for vector in &mut vectors {
+            vector.role = VectorRole::Section;
+        }
+        if !options.section_only {
+            let mut behind = vectors[..section_count].to_vec();
+            for vector in &mut behind {
+                vector.role = VectorRole::Visible;
+            }
+            vectors.extend(behind);
+        }
+        if let Some((hatch, rings)) = hatch.zip(sampled) {
+            let boundary: Vec<_> = rings
+                .into_iter()
+                .flat_map(|ring| {
+                    ring.iter()
+                        .zip(ring.iter().cycle().skip(1))
+                        .map(|(&a, &b)| [a, b])
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            let mut curves = (options.maximum_curves as usize)
+                .checked_sub(vectors.len())
+                .ok_or_else(|| {
+                    err(
+                        GeometryErrorKind::Limit,
+                        "Gear section exceeds its curve budget",
+                    )
+                })?;
+            let mut points = (options.maximum_points as usize)
+                .checked_sub(
+                    vectors
+                        .iter()
+                        .map(|vector| vector.preview_mm.len())
+                        .sum::<usize>(),
+                )
+                .ok_or_else(|| {
+                    err(
+                        GeometryErrorKind::Limit,
+                        "Gear section exceeds its point budget",
+                    )
+                })?;
+            vectors.extend(section::publish_hatch(
+                0,
+                hatch,
+                &boundary,
+                policy.linear_tolerance_mm,
+                &mut curves,
+                &mut points,
+                &mut multicad_rust_kernel::section_hatch::Budget::default(),
+            )?);
+        }
+        Ok(vectors)
+    })())
+}
+
+fn sample_section_loops(
+    loops: &[Vec<multicad_rust_kernel::spur_gear::Edge>],
+    project: impl Fn(Point) -> Point,
+    reverse: bool,
+    options: DrawingProjection,
+    hatched: bool,
+    policy: GeometryPolicy,
+) -> Result<Vec<Vec<Point>>, GeometryError> {
+    let mut tolerance = options.chord_tolerance_mm / 2.;
+    if hatched {
+        tolerance = tolerance.min(policy.minimum_feature_mm / 4.);
+    }
+    let failed = || {
+        err(
+            GeometryErrorKind::Limit,
+            "Gear section exceeds its chord or point budget",
+        )
+    };
+    let mut remaining = options.maximum_points as usize;
+    let mut rings = Vec::with_capacity(loops.len());
+    for edges in loops {
+        let mut ring = Vec::new();
+        for edge in edges {
+            let mut samples = edge.sample(tolerance, 0.3).map_err(|_| failed())?;
+            samples.pop(); // The following edge supplies the shared endpoint.
+            remaining = remaining.checked_sub(samples.len()).ok_or_else(failed)?;
+            ring.extend(samples.into_iter().map(&project));
+        }
+        if reverse {
+            ring.reverse();
+        }
+        rings.push(ring);
+    }
+    Ok(rings)
+}

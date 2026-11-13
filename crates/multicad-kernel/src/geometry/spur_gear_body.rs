@@ -130,6 +130,26 @@ impl SpurGearBody {
         self.sides().map(move |edge| (edge, rim(edge, cap)))
     }
 
+    /// Exact rims of the straight tooth band cut at axial height `z`, in the
+    /// same orientation as `end_on_rims`. Every section of the band repeats
+    /// the cap profile, so no sampling or reconstruction is involved.
+    pub(crate) fn section_rims(
+        &self,
+        frame: PlaneFrame,
+        z: f64,
+    ) -> impl Iterator<Item = (Edge, AnalyticGeometry)> + '_ {
+        let section = ReferenceFrame {
+            origin_mm: position(frame, [0., 0., z]),
+            u: frame.u,
+            v: frame.v,
+        };
+        self.sides().map(move |edge| (edge, rim(edge, section)))
+    }
+
+    pub(crate) fn profile(&self) -> &Profile {
+        &self.profile
+    }
+
     fn cap(&self, frame: PlaneFrame, index: usize) -> ReferenceFrame {
         let z = index as f64 * self.profile.height_mm();
         Self::cap_at(frame, index, z)

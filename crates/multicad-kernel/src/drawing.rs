@@ -278,6 +278,11 @@ pub fn project_drawing(
         }
         if let Some(depth) = options.section_offset_mm {
             if let [input] = solids
+                && let Some(projection) = panel::section_straight_gear(input, options, depth)
+            {
+                return projection;
+            }
+            if let [input] = solids
                 && input.solid.annulus_body().is_some()
             {
                 return if options.section_only {
