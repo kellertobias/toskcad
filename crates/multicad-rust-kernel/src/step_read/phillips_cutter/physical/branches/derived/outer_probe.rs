@@ -151,3 +151,11 @@ fn actual_outer_and_cavity_mouth_frames_require_explicit_derived_authority() {
         }
     }
 }
+#[test]
+fn decimal_oracle_preserves_valid_real_spellings_across_exponent_signs() {
+    assert_eq!(decimal("1.25E+3"), Q::from_integer(1250.into()));
+    assert_eq!(decimal("1.250E+3"), Q::from_integer(1250.into()));
+    assert_eq!(decimal("-1.25E-3"), Q::new((-1).into(), 800.into()));
+    assert_eq!(decimal("3.125E-2"), Q::new(1.into(), 32.into()));
+    assert_eq!(decimal("0.0E+4"), Q::from_integer(0.into()));
+}
