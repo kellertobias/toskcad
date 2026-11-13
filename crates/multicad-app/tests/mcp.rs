@@ -4589,3 +4589,100 @@ fn default_stdio_profiled_metric_heads_keep_fit_history_and_independent_reopen()
         close(physical.volume_mm3().unwrap(), edited);
     }
 }
+
+#[test]
+fn default_stdio_combined_internal_metric_thread_survives_edit_history_and_reopen() {
+    use multicad_core::{
+        commands::{Actor, Channel, Session},
+        document::Document,
+        model::{self, PrimitiveParameters, PrimitiveRequest, length as mm},
+        project_file::{self, ProjectFile},
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("treated-receiver.tcd");
+    let mut session = Session::new(Document::new("Metric treated receiver").unwrap()).unwrap();
+    let stock = PrimitiveRequest::new(
+        "Stock",
+        PrimitiveParameters::Cylinder {
+            radius: mm(2.5),
+            height: mm(4.),
+            frame: Default::default(),
+        },
+    );
+    let prepared =
+        model::prepare_primitive(&session, 0, Actor::local(Channel::Ui), &stock).unwrap();
+    session.commit(prepared.prepared).unwrap();
+    let mut bytes = Vec::new();
+    project_file::write(
+        &ProjectFile::new(session.document().clone()).unwrap(),
+        &mut bytes,
+        Default::default(),
+    )
+    .unwrap();
+    std::fs::write(&project, bytes).unwrap();
+    let args = [
+        "--project",
+        project.to_str().unwrap(),
+        "--export-dir",
+        directory.path().to_str().unwrap(),
+    ];
+    let mut client = Client::start(&args);
+    let before = client.part_volume();
+    let treatments = |depth: f64| {
+        json!({
+            "start":{"chamfer45":{"radial_depth":length(depth)}},
+            "end":{"cylindrical_relief":{"length":length(0.5),"radial_depth":length(0.125)}}
+        })
+    };
+    let revision = client.revision();
+    let created = client.ok(
+        "set_thread",
+        json!({
+            "expected_revision":revision,"name":"M3 6H treated receiver","mode":"cut_internal",
+            "target_part":stock.body,"family":"iso_metric","fit":"metric_6h_internal",
+            "major_diameter":length(3.),"pitch":length(0.5),"length":length(4.),
+            "minimum_wall":length(0.5),"hand":"left","end_treatments":treatments(0.5)
+        }),
+    );
+    let first = client.part_volume();
+    assert!(first > 0. && first < before);
+    let revision = client.revision();
+    client.ok("set_thread", json!({"expected_revision":revision,"thread":created["thread"],"end_treatments":treatments(0.625)}));
+    let edited = client.part_volume();
+    assert!(edited < first);
+    let revision = client.revision();
+    client.ok("undo", json!({"expected_revision":revision}));
+    close(client.part_volume(), first);
+    let revision = client.revision();
+    client.ok("redo", json!({"expected_revision":revision}));
+    close(client.part_volume(), edited);
+    let absent = directory.path().join("unavailable-treated-receiver.step");
+    client.fail(
+        "export_step",
+        json!({"part":stock.body,"file_name":"unavailable-treated-receiver.step"}),
+    );
+    assert!(!absent.exists());
+    let destination = directory.path().join("unsupported.step");
+    std::fs::write(&destination, b"preserve existing output").unwrap();
+    client.fail(
+        "export_step",
+        json!({"part":stock.body,"file_name":"unsupported.step"}),
+    );
+    assert_eq!(
+        std::fs::read(&destination).unwrap(),
+        b"preserve existing output"
+    );
+    let revision = client.revision();
+    client.ok("save_project", json!({"expected_revision":revision}));
+    let saved = std::fs::read(&project).unwrap();
+    drop(client);
+    let mut reopened = Client::start(&args);
+    close(reopened.part_volume(), edited);
+    let revision = reopened.revision();
+    reopened.fail(
+        "set_thread",
+        json!({"expected_revision":revision,"thread":created["thread"],"length":length(3.)}),
+    );
+    close(reopened.part_volume(), edited);
+    assert_eq!(std::fs::read(&project).unwrap(), saved);
+}
