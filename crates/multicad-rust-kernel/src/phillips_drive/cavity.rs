@@ -3,6 +3,8 @@ use super::*;
 use std::sync::Arc;
 mod host;
 pub use host::HostEnvelopeProof;
+mod screw;
+pub use screw::{PhillipsScrew, ScrewFace};
 
 /// Qualified authored cavity. This retains the finite cutter, not an imported
 /// body. Its volume is a source-expression enclosure; native publication,
@@ -11,6 +13,7 @@ pub use host::HostEnvelopeProof;
 pub struct Cavity {
     source: Arc<Cutter>,
     volume: VolumeBounds,
+    side_faces: Arc<[FaceKey]>,
 }
 impl Cavity {
     pub fn new(source: Cutter, width_mm3: f64, work_limit: usize) -> Result<Self, Error> {
@@ -24,11 +27,19 @@ impl Cavity {
     ) -> Result<Self, Error> {
         // These independent source gates prove finite-cap eligibility and the
         // actual closed incidence, retaining both H0 and shallow-V supports.
-        source.boundary_topology_with_cancel(cancelled)?;
+        let topology = source.boundary_topology_with_cancel(cancelled)?;
+        let side_faces = topology
+            .faces()
+            .iter()
+            .map(|f| f.source_identity())
+            .filter(|key| *key != FaceKey::Mouth)
+            .collect::<Vec<_>>()
+            .into();
         let volume = source.volume_bounds_with_cancel(width_mm3, work_limit, cancelled)?;
         Ok(Self {
             source: Arc::new(source),
             volume,
+            side_faces,
         })
     }
     pub fn source(&self) -> &Cutter {
@@ -36,6 +47,9 @@ impl Cavity {
     }
     pub fn volume(&self) -> VolumeBounds {
         self.volume
+    }
+    pub fn side_face_keys(&self) -> &[FaceKey] {
+        &self.side_faces
     }
     /// Upper radius of the ENTIRE cavity at and below `depth_mm`. All three
     /// actual envelope meridians decrease strictly with depth. Removing the

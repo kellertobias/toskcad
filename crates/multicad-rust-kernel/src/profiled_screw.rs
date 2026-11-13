@@ -153,39 +153,8 @@ impl Screw {
         union: bool,
         recess: Recess,
     ) -> Result<Self, ThreadError> {
-        let major = thread.spec().major_radius_mm;
-        let visible_start_mm = profile.end()[1] - spec.shank_length_mm;
-        if !spec.shank_length_mm.is_finite()
-            || spec.shank_length_mm < 0.
-            || profile.end()[0] < major
-            || visible_start_mm < 0.
-            || (!union && visible_start_mm != 0.)
-            || thread.spec().length_mm - visible_start_mm <= 4. * profile.rounding_error_mm()
-        {
-            return Err(ThreadError::Invalid);
-        }
-        if visible_start_mm > 0.
-            && profile.segments().any(|segment| {
-                if segment.end[1] <= spec.shank_length_mm {
-                    return false;
-                }
-                match segment.curve {
-                    Curve::Line => segment.start[0].min(segment.end[0]) < major,
-                    Curve::Arc {
-                        center, radius_mm, ..
-                    } => {
-                        // Error-free subtraction: comparing the rounded result to a
-                        // distinct f64 is decisive; equality needs its exact residual.
-                        let d = center[0] - radius_mm;
-                        let b = d - center[0];
-                        let residual = (center[0] - (d - b)) - (radius_mm + b);
-                        d < major || (d == major && residual < 0.)
-                    }
-                }
-            })
-        {
-            return Err(ThreadError::Invalid);
-        }
+        let visible_start_mm =
+            qualify_outer_source(&thread, &profile, spec.shank_length_mm, union)?;
         if let Some((drive, _)) = recess.flat_hex_geometry() {
             // A reusable contour may have been admitted with a looser budget.
             // Qualify the literal corners and AF label against this solid's
@@ -376,3 +345,46 @@ fn flat_hex(profile: &Profile, spec: Spec) -> Result<Recess, ThreadError> {
 
 #[cfg(test)]
 mod tests;
+
+/// Shared original-thread/head-union admission; never alters the thread.
+pub(crate) fn qualify_outer_source(
+    thread: &Thread,
+    profile: &Profile,
+    plain_mm: f64,
+    union: bool,
+) -> Result<f64, ThreadError> {
+    let major = thread.spec().major_radius_mm;
+    let visible_start_mm = profile.end()[1] - plain_mm;
+    if !plain_mm.is_finite()
+        || plain_mm < 0.
+        || profile.end()[0] < major
+        || visible_start_mm < 0.
+        || (!union && visible_start_mm != 0.)
+        || thread.spec().length_mm - visible_start_mm <= 4. * profile.rounding_error_mm()
+    {
+        return Err(ThreadError::Invalid);
+    }
+    if visible_start_mm > 0.
+        && profile.segments().any(|segment| {
+            if segment.end[1] <= plain_mm {
+                return false;
+            }
+            match segment.curve {
+                Curve::Line => segment.start[0].min(segment.end[0]) < major,
+                Curve::Arc {
+                    center, radius_mm, ..
+                } => {
+                    // Error-free subtraction: comparing the rounded result to a
+                    // distinct f64 is decisive; equality needs its exact residual.
+                    let d = center[0] - radius_mm;
+                    let b = d - center[0];
+                    let residual = (center[0] - (d - b)) - (radius_mm + b);
+                    d < major || (d == major && residual < 0.)
+                }
+            }
+        })
+    {
+        return Err(ThreadError::Invalid);
+    }
+    Ok(visible_start_mm)
+}
