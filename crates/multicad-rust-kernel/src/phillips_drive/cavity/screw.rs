@@ -1,5 +1,6 @@
 //! Typed authored composition preceding native and physical-file admission.
 use super::*;
+mod geometry;
 use crate::{
     head_profile::Profile,
     helical_thread::Thread,

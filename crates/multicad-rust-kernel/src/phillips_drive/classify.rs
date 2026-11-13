@@ -91,7 +91,24 @@ pub(super) fn point(cutter: &Cutter, p: [f64; 3]) -> Result<Classification, Erro
     if p[2] < 0. || p[2] > e.tip.hi || p[0].abs() > e.entry.hi || p[1].abs() > e.entry.hi {
         return Ok(Classification::Outside);
     }
-    let p = p.map(I::point);
+    enclosure(cutter, p.map(I::point))
+}
+/// Classify the entire literal coordinate enclosure, including placement
+/// subtraction error. A straddling surface remains unresolved.
+pub(super) fn enclosure(cutter: &Cutter, p: [I; 3]) -> Result<Classification, Error> {
+    if p.into_iter().any(|v| !v.valid()) {
+        return Err(Error::Invalid);
+    }
+    let e = &cutter.envelope;
+    if p[2].hi < 0.
+        || p[2].lo > e.tip.hi
+        || p[0].lo > e.entry.hi
+        || p[0].hi < -e.entry.hi
+        || p[1].lo > e.entry.hi
+        || p[1].hi < -e.entry.hi
+    {
+        return Ok(Classification::Outside);
+    }
     let rho = (p[0].square() + p[1].square()).sqrt();
     let r = I::point(cutter.spec.mouth_radius_mm);
     let radial = e.entry - rho;
