@@ -178,7 +178,9 @@ fn unsupported_custom_hanger_keeps_the_previous_document() {
             .err()
             .unwrap();
         assert!(
-            failure.message.contains("hanger bolts require their own connected-material provider"),
+            failure
+                .message
+                .contains("hanger bolts require their own connected-material provider"),
             "{failure:?}"
         );
         assert_eq!(session.document(), &before);
