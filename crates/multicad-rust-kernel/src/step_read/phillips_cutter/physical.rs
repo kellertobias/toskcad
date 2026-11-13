@@ -2,7 +2,9 @@
 //! mass, self-intersection, Phillips gauge or native-publication certificate.
 use super::*;
 
+mod endpoints;
 mod incidence;
+pub use endpoints::{EndpointCouplingBounds, EndpointCouplingOptions};
 mod literal;
 mod supports;
 pub use supports::{

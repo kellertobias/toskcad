@@ -1025,7 +1025,8 @@ pub use phillips_cutter::{
     ParsedPhillipsAxis, ParsedPhillipsBoundary, ParsedPhillipsCurve, ParsedPhillipsEdge,
     ParsedPhillipsFace, ParsedPhillipsMaterialLoop, ParsedPhillipsMaterialUse, ParsedPhillipsMouth,
     ParsedPhillipsSurface, ParsedPhillipsVertex, PhillipsCubicSupportBounds,
-    PhillipsCubicSupportOptions, PhillipsEdgeSupportBound, PhillipsImplicitSupportEnclosure,
+    PhillipsCubicSupportOptions, PhillipsEdgeSupportBound, PhillipsEndpointCouplingBounds,
+    PhillipsEndpointCouplingOptions, PhillipsImplicitSupportEnclosure,
     read_phillips_screw_boundary, read_phillips_screw_boundary_with_interrupt,
 };
 
