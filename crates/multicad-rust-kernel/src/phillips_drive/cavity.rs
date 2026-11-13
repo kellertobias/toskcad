@@ -4,7 +4,7 @@ use std::sync::Arc;
 mod host;
 pub use host::HostEnvelopeProof;
 mod screw;
-pub use screw::{PhillipsScrew, ScrewFace};
+pub use screw::{PhillipsScrew, ScrewFace, SourceVolumeBounds};
 mod mouth;
 pub use mouth::MouthSweepProof;
 

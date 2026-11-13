@@ -19,48 +19,10 @@ pub fn profiled_screw_head_volume_error_bound_mm3(
 ) -> Option<f64> {
     use crate::tapered_thread::interval::I;
     let profile = screw.profile();
-    let error = profile.rounding_error_mm();
-    let mut length =
-        I::point(profile.top()[0]) + I::point(profile.end()[0]) + I::point(profile.end()[1])
-            - I::point(profile.top()[1]);
-    let mut radial = I::point(0.);
-    let mut count = 3.;
-    for segment in profile.segments() {
-        let part = match segment.curve {
-            HeadCurve::Line => {
-                radial.hi = radial.hi.max(segment.start[0]).max(segment.end[0]);
-                ((I::point(segment.end[0]) - I::point(segment.start[0])).square()
-                    + (I::point(segment.end[1]) - I::point(segment.start[1])).square())
-                .sqrt()
-            }
-            HeadCurve::Arc {
-                radius_mm,
-                sweep,
-                center,
-            } => {
-                if radius_mm <= 32. * error {
-                    return None;
-                }
-                radial.hi = radial
-                    .hi
-                    .max((I::point(center[0].abs()) + I::point(radius_mm)).hi);
-                I::point(radius_mm) * I::point(sweep.abs())
-            }
-        };
-        length = length + part;
-        count += 1.;
-    }
-    // Support-center and trim-angle conversion each spend source error. With
-    // r>32e, inverse angular conditioning gives a complete meridian deviation
-    // below16e. Lines/caps are bounded by their two endpoints. The area of a
-    // radius-d tube around a finite planar curve is at most2Ld+pi*d² per
-    // segment; revolving it multiplies by at most2pi*(R+d). This also covers
-    // concave necks, without assuming a convex parallel-body formula.
-    let d = I::point(16.) * I::point(error);
+    let envelope = crate::head_profile::source_volume::precision_envelope(profile)?;
+    let d = envelope.deviation;
+    let r = envelope.radial;
     let pi = I::new(PI.next_down(), PI.next_up());
-    let r = radial + d;
-    let outer =
-        I::point(2.) * pi * r * (I::point(2.) * length * d + I::point(count) * pi * d.square());
     let void = match screw.recess() {
         crate::screw_recess::Recess::FlatHex(_) => {
             let (drive, depth) = screw.recess().flat_hex_geometry()?;
@@ -78,9 +40,8 @@ pub fn profiled_screw_head_volume_error_bound_mm3(
     };
     let frame = Frame::new(placement).ok()?;
     let scale = decode::volume_scale_error(frame).ok()?;
-    let height = I::point(profile.end()[1]) - I::point(profile.top()[1]) + I::point(2.) * d;
-    let jacobian = pi * r.square() * height * I::point(scale);
-    let result = (outer.hi + void.width() + jacobian.hi).next_up();
+    let jacobian = pi * r.square() * envelope.height * I::point(scale);
+    let result = (envelope.volume.hi + void.width() + jacobian.hi).next_up();
     (result.is_finite() && result > 0.).then_some(result)
 }
 

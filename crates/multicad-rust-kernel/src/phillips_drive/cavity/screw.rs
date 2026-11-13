@@ -1,11 +1,16 @@
 //! Typed authored composition preceding native and physical-file admission.
 use super::*;
+<<<<<<< HEAD
 mod geometry;
+=======
+mod volume;
+>>>>>>> 1f862788 (feat: bound actual Phillips screw source volumes)
 use crate::{
     head_profile::Profile,
     helical_thread::Thread,
     profiled_screw::{SourceSpec, qualify_outer_source},
 };
+pub use volume::SourceVolumeBounds;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScrewFace {

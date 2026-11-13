@@ -6,6 +6,7 @@
 
 use crate::helical_thread::ThreadError;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
+pub(crate) mod source_volume;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Role {
