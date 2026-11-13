@@ -205,12 +205,9 @@ fn source_mesh(
             product(product(4., e), up(length(a, ae), length(b, be))),
             product(4., product(e, e)),
         );
-        let ratio = (perturbation / (0.5 * lower).next_down()).next_up();
         // asin(ratio) <= 2 ratio for ratio <= 1/4. Each named policy's
         // actual transfer reserve plus its conditioned source angle is <request.
-        if (!ratio.is_finite()
-            || ratio > 0.25
-            || product(2., ratio) > angle_budget.transfer(options.angle))
+        if !rounding_angle_fits(perturbation, lower, angle_budget.transfer(options.angle))
             && !normal_transfer(
                 axes,
                 a,
@@ -229,8 +226,38 @@ fn source_mesh(
     Ok(mesh)
 }
 
+// A zero/underflowed certified area must use the direct normal proof. A
+// negative denominator can otherwise make a negative ratio look harmless.
+fn rounding_angle_fits(perturbation: f64, normal_lower: f64, angle: f64) -> bool {
+    let denominator = (0.5 * normal_lower).next_down();
+    if !normal_lower.is_finite()
+        || normal_lower <= 0.
+        || !denominator.is_finite()
+        || denominator <= 0.
+        || !perturbation.is_finite()
+        || perturbation < 0.
+    {
+        return false;
+    }
+    let ratio = (perturbation / denominator).next_up();
+    ratio.is_finite() && (0. ..=0.25).contains(&ratio) && product(2., ratio) <= angle
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn underflowed_area_cannot_pass_a_negative_rounding_ratio() {
+        let tiny = f64::from_bits(1);
+        let old_ratio = (tiny / (0.5 * 0_f64).next_down()).next_up();
+        assert!(old_ratio.is_finite() && old_ratio < 0.);
+        for lower in [0., tiny, 2. * tiny, f64::INFINITY] {
+            assert!(!rounding_angle_fits(tiny, lower, 0.3), "lower {lower:e}");
+        }
+        assert!(!rounding_angle_fits(f64::INFINITY, 1., 0.3));
+        assert!(!rounding_angle_fits(-tiny, 1., 0.3));
+        assert!(!rounding_angle_fits(1., 1., 0.3));
+        assert!(rounding_angle_fits(1e-8, 1e-3, 0.3));
+    }
     #[test]
     fn original_entry_source_uses_the_unchanged_standard_transfer() {
         let root = 1. / (4. * 3_f64.sqrt());
