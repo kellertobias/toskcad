@@ -1,6 +1,7 @@
 //! Retained modeled heads share the canonical thread and physical shank.
 use super::*;
 use multicad_kernel::rust_kernel::{head_profile::Head, profiled_screw::Spec};
+mod hexalobular;
 
 pub(super) fn build(
     feature: EntityId,
@@ -11,6 +12,17 @@ pub(super) fn build(
     thread: &ResolvedThread,
     policy: GeometryPolicy,
 ) -> Result<Option<Solid>, ModelError> {
+    if matches!(drive, ResolvedScrewDrive::Hexalobular { .. }) {
+        return hexalobular::build(
+            feature,
+            underhead_length_mm,
+            shank_radius_mm,
+            head,
+            drive,
+            thread,
+            policy,
+        );
+    }
     let ResolvedScrewDrive::HexSocket {
         across_flats_mm,
         depth_mm,
