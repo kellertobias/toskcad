@@ -1,0 +1,2466 @@
+//! Rust drawing capability inventory across body families, view kinds and mixed scenes.
+//!
+//! Every combination is either a named supported regression, which must produce
+//! well-formed vectors, or an explicit unresolved finding, which must refuse with
+//! a typed error. Nothing may silently return an empty or malformed drawing.
+use multicad_core::{
+    document::EntityId,
+    drawings::{VectorCurve, VectorRole},
+    references::Origin,
+};
+use multicad_kernel::{
+    BooleanOperation, DrawingHatch, DrawingProjection, DrawingSolid, GearSweep,
+    GeneratedZaWormWheel, GeometryError, GeometryPolicy, InvoluteGear, PlaneFrame, ProjectedVector,
+    RigidTransform, Solid, SphericalBevelGear, ZaWorm, project_drawing,
+};
+use std::f64::consts::PI;
+
+fn spur(sweep: GearSweep, twist: f64) -> InvoluteGear {
+    let a = 20_f64.to_radians();
+    let pitch = 12.;
+    InvoluteGear {
+        hub: None,
+        teeth: 24,
+        pitch_radius_mm: pitch,
+        base_radius_mm: pitch * a.cos(),
+        tip_radius_mm: pitch + 1.,
+        root_radius_mm: pitch - 1.25,
+        root_fillet_radius_mm: 0.2,
+        half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.tan() - a,
+        face_width_mm: 4.,
+        bore_radius_mm: 3.,
+        twist_rad_per_mm: twist,
+        sweep,
+    }
+}
+
+fn ring() -> InvoluteGear {
+    let a = 20_f64.to_radians();
+    let pitch = 24.;
+    InvoluteGear {
+        hub: None,
+        teeth: 48,
+        pitch_radius_mm: pitch,
+        base_radius_mm: pitch * a.cos(),
+        tip_radius_mm: pitch - 1.,
+        root_radius_mm: pitch + 1.25,
+        root_fillet_radius_mm: 0.2,
+        half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) - a.tan() + a,
+        face_width_mm: 2.,
+        bore_radius_mm: 0.,
+        twist_rad_per_mm: 0.,
+        sweep: GearSweep::InternalSpur {
+            outer_radius_mm: pitch + 4.,
+        },
+    }
+}
+
+fn bevel() -> SphericalBevelGear {
+    let (module, teeth, mate) = (2., 20_u32, 30_u32);
+    let (z, mate) = (f64::from(teeth), f64::from(mate));
+    let alpha = 20_f64.to_radians();
+    let delta = 1_f64.atan2(mate / z);
+    let distance = module * z / (2. * delta.sin());
+    let beta = (delta.sin() * alpha.cos()).asin();
+    let inv = |g: f64| {
+        let sigma = (g.cos() / beta.cos()).acos();
+        sigma / beta.sin() - sigma.sin().atan2(beta.sin() * sigma.cos())
+    };
+    SphericalBevelGear {
+        teeth,
+        pitch_cone_angle_rad: delta,
+        base_cone_angle_rad: beta,
+        tip_cone_angle_rad: delta + (module / distance).atan(),
+        root_cone_angle_rad: delta - (1.25 * module / distance).atan(),
+        outer_cone_distance_mm: distance,
+        face_width_mm: 8.,
+        bore_radius_mm: 3.,
+        half_base_tooth_angle_rad: (PI * module / 2. - 0.05) / (module * z) + inv(delta),
+        root_fillet_radius_mm: module * 0.2,
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Expect {
+    Drawn,
+    Unsupported(&'static str),
+}
+use Expect::{Drawn, Unsupported};
+
+/// Expected outcome of every inventoried combination. `Drawn` combinations
+/// must publish well-formed vectors; each `Unsupported` entry is an explicit
+/// unresolved finding with its exact refusal. Regenerate the table from
+/// `print_rust_drawing_inventory` only together with a reviewed change.
+const EXPECTED: &[(&str, &str, Expect)] = &[
+    ("box", "axial", Drawn),
+    ("box", "axial reversed", Drawn),
+    ("box", "axial hidden", Drawn),
+    ("box", "side", Drawn),
+    ("box", "side hidden", Drawn),
+    ("box", "oblique", Drawn),
+    ("box", "oblique hidden", Drawn),
+    ("box", "axial section", Drawn),
+    ("box", "axial section-only", Drawn),
+    ("box", "axial finite depth", Drawn),
+    ("box", "side section", Drawn),
+    ("box", "side section-only", Drawn),
+    ("box", "side finite depth", Drawn),
+    ("box", "side lateral window", Drawn),
+    ("box", "oblique section", Drawn),
+    ("box", "axial detail", Drawn),
+    ("box", "side detail", Drawn),
+    ("bored box", "axial", Drawn),
+    ("bored box", "axial reversed", Drawn),
+    ("bored box", "axial hidden", Drawn),
+    ("bored box", "side", Drawn),
+    ("bored box", "side hidden", Drawn),
+    ("bored box", "oblique", Drawn),
+    ("bored box", "oblique hidden", Drawn),
+    ("bored box", "axial section", Drawn),
+    ("bored box", "axial section-only", Drawn),
+    ("bored box", "axial finite depth", Drawn),
+    ("bored box", "side section", Drawn),
+    ("bored box", "side section-only", Drawn),
+    ("bored box", "side finite depth", Drawn),
+    ("bored box", "side lateral window", Drawn),
+    (
+        "bored box",
+        "oblique section",
+        Unsupported("Rust retained projection cannot yet clip this curved boundary"),
+    ),
+    ("bored box", "axial detail", Drawn),
+    ("bored box", "side detail", Drawn),
+    ("cylinder", "axial", Drawn),
+    ("cylinder", "axial reversed", Drawn),
+    ("cylinder", "axial hidden", Drawn),
+    ("cylinder", "side", Drawn),
+    ("cylinder", "side hidden", Drawn),
+    ("cylinder", "oblique", Drawn),
+    ("cylinder", "oblique hidden", Drawn),
+    ("cylinder", "axial section", Drawn),
+    ("cylinder", "axial section-only", Drawn),
+    ("cylinder", "axial finite depth", Drawn),
+    ("cylinder", "side section", Drawn),
+    ("cylinder", "side section-only", Drawn),
+    ("cylinder", "side finite depth", Drawn),
+    ("cylinder", "side lateral window", Drawn),
+    (
+        "cylinder",
+        "oblique section",
+        Unsupported("Rust retained projection cannot yet clip this curved boundary"),
+    ),
+    ("cylinder", "axial detail", Drawn),
+    ("cylinder", "side detail", Drawn),
+    ("annulus", "axial", Drawn),
+    ("annulus", "axial reversed", Drawn),
+    ("annulus", "axial hidden", Drawn),
+    ("annulus", "side", Drawn),
+    ("annulus", "side hidden", Drawn),
+    ("annulus", "oblique", Drawn),
+    ("annulus", "oblique hidden", Drawn),
+    ("annulus", "axial section", Drawn),
+    ("annulus", "axial section-only", Drawn),
+    ("annulus", "axial finite depth", Drawn),
+    (
+        "annulus",
+        "side section",
+        Unsupported(
+            "A Rust annulus section with geometry behind the cut requires a transverse plane and no lateral crop",
+        ),
+    ),
+    ("annulus", "side section-only", Drawn),
+    (
+        "annulus",
+        "side finite depth",
+        Unsupported(
+            "A Rust annulus section with geometry behind the cut requires a transverse plane and no lateral crop",
+        ),
+    ),
+    (
+        "annulus",
+        "side lateral window",
+        Unsupported(
+            "A Rust annulus section with geometry behind the cut requires a transverse plane and no lateral crop",
+        ),
+    ),
+    (
+        "annulus",
+        "oblique section",
+        Unsupported(
+            "A Rust annulus section with geometry behind the cut requires a transverse plane and no lateral crop",
+        ),
+    ),
+    ("annulus", "axial detail", Drawn),
+    ("annulus", "side detail", Drawn),
+    ("sphere", "axial", Drawn),
+    ("sphere", "axial reversed", Drawn),
+    ("sphere", "axial hidden", Drawn),
+    ("sphere", "side", Drawn),
+    ("sphere", "side hidden", Drawn),
+    ("sphere", "oblique", Drawn),
+    ("sphere", "oblique hidden", Drawn),
+    ("sphere", "axial section", Drawn),
+    ("sphere", "axial section-only", Drawn),
+    ("sphere", "axial finite depth", Drawn),
+    ("sphere", "side section", Drawn),
+    ("sphere", "side section-only", Drawn),
+    ("sphere", "side finite depth", Drawn),
+    ("sphere", "side lateral window", Drawn),
+    ("sphere", "oblique section", Drawn),
+    ("sphere", "axial detail", Drawn),
+    ("sphere", "side detail", Drawn),
+    ("rounded slot", "axial", Drawn),
+    ("rounded slot", "axial reversed", Drawn),
+    ("rounded slot", "axial hidden", Drawn),
+    ("rounded slot", "side", Drawn),
+    ("rounded slot", "side hidden", Drawn),
+    ("rounded slot", "oblique", Drawn),
+    ("rounded slot", "oblique hidden", Drawn),
+    (
+        "rounded slot",
+        "axial section",
+        Unsupported("Rust retained projection cannot yet clip this curved boundary"),
+    ),
+    ("rounded slot", "axial section-only", Drawn),
+    (
+        "rounded slot",
+        "axial finite depth",
+        Unsupported("Rust retained projection cannot yet clip this curved boundary"),
+    ),
+    ("rounded slot", "side section", Drawn),
+    ("rounded slot", "side section-only", Drawn),
+    ("rounded slot", "side finite depth", Drawn),
+    ("rounded slot", "side lateral window", Drawn),
+    (
+        "rounded slot",
+        "oblique section",
+        Unsupported("Rust retained projection cannot yet clip this curved boundary"),
+    ),
+    ("rounded slot", "axial detail", Drawn),
+    ("rounded slot", "side detail", Drawn),
+    ("spur gear", "axial", Drawn),
+    ("spur gear", "axial reversed", Drawn),
+    ("spur gear", "axial hidden", Drawn),
+    (
+        "spur gear",
+        "side",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "spur gear",
+        "side hidden",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "spur gear",
+        "oblique",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "spur gear",
+        "oblique hidden",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    ("spur gear", "axial section", Drawn),
+    ("spur gear", "axial section-only", Drawn),
+    ("spur gear", "axial finite depth", Drawn),
+    (
+        "spur gear",
+        "side section",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "spur gear",
+        "side section-only",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "spur gear",
+        "side finite depth",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "spur gear",
+        "side lateral window",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "spur gear",
+        "oblique section",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "spur gear",
+        "axial detail",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "spur gear",
+        "side detail",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    ("internal ring", "axial", Drawn),
+    ("internal ring", "axial reversed", Drawn),
+    ("internal ring", "axial hidden", Drawn),
+    (
+        "internal ring",
+        "side",
+        Unsupported("Rust internal ring drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "internal ring",
+        "side hidden",
+        Unsupported("Rust internal ring drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "internal ring",
+        "oblique",
+        Unsupported("Rust internal ring drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "internal ring",
+        "oblique hidden",
+        Unsupported("Rust internal ring drawing currently requires an uncropped axial view"),
+    ),
+    ("internal ring", "axial section", Drawn),
+    ("internal ring", "axial section-only", Drawn),
+    ("internal ring", "axial finite depth", Drawn),
+    (
+        "internal ring",
+        "side section",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "internal ring",
+        "side section-only",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "internal ring",
+        "side finite depth",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "internal ring",
+        "side lateral window",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "internal ring",
+        "oblique section",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "internal ring",
+        "axial detail",
+        Unsupported("Rust internal ring drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "internal ring",
+        "side detail",
+        Unsupported("Rust internal ring drawing currently requires an uncropped axial view"),
+    ),
+    ("helical gear", "axial", Drawn),
+    ("helical gear", "axial reversed", Drawn),
+    ("helical gear", "axial hidden", Drawn),
+    (
+        "helical gear",
+        "side",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "helical gear",
+        "side hidden",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "helical gear",
+        "oblique",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "helical gear",
+        "oblique hidden",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    ("helical gear", "axial section", Drawn),
+    ("helical gear", "axial section-only", Drawn),
+    ("helical gear", "axial finite depth", Drawn),
+    (
+        "helical gear",
+        "side section",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "helical gear",
+        "side section-only",
+        Unsupported("Rust herringbone sections require a plane perpendicular to the gear axis"),
+    ),
+    (
+        "helical gear",
+        "side finite depth",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "helical gear",
+        "side lateral window",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "helical gear",
+        "oblique section",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "helical gear",
+        "axial detail",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "helical gear",
+        "side detail",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    ("herringbone gear", "axial", Drawn),
+    ("herringbone gear", "axial reversed", Drawn),
+    ("herringbone gear", "axial hidden", Drawn),
+    (
+        "herringbone gear",
+        "side",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "herringbone gear",
+        "side hidden",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "herringbone gear",
+        "oblique",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "herringbone gear",
+        "oblique hidden",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    ("herringbone gear", "axial section", Drawn),
+    ("herringbone gear", "axial section-only", Drawn),
+    ("herringbone gear", "axial finite depth", Drawn),
+    (
+        "herringbone gear",
+        "side section",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "herringbone gear",
+        "side section-only",
+        Unsupported("Rust herringbone sections require a plane perpendicular to the gear axis"),
+    ),
+    (
+        "herringbone gear",
+        "side finite depth",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "herringbone gear",
+        "side lateral window",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "herringbone gear",
+        "oblique section",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "herringbone gear",
+        "axial detail",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "herringbone gear",
+        "side detail",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    ("bevel gear", "axial", Drawn),
+    ("bevel gear", "axial reversed", Drawn),
+    ("bevel gear", "axial hidden", Drawn),
+    (
+        "bevel gear",
+        "side",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "bevel gear",
+        "side hidden",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "bevel gear",
+        "oblique",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "bevel gear",
+        "oblique hidden",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    ("bevel gear", "axial section", Drawn),
+    ("bevel gear", "axial section-only", Drawn),
+    ("bevel gear", "axial finite depth", Drawn),
+    (
+        "bevel gear",
+        "side section",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "bevel gear",
+        "side section-only",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "bevel gear",
+        "side finite depth",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "bevel gear",
+        "side lateral window",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "bevel gear",
+        "oblique section",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "bevel gear",
+        "axial detail",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "bevel gear",
+        "side detail",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    ("za worm", "axial", Drawn),
+    ("za worm", "axial reversed", Drawn),
+    ("za worm", "axial hidden", Drawn),
+    (
+        "za worm",
+        "side",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "za worm",
+        "side hidden",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "za worm",
+        "oblique",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "za worm",
+        "oblique hidden",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    ("za worm", "axial section", Drawn),
+    ("za worm", "axial section-only", Drawn),
+    ("za worm", "axial finite depth", Drawn),
+    (
+        "za worm",
+        "side section",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "za worm",
+        "side section-only",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "za worm",
+        "side finite depth",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "za worm",
+        "side lateral window",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "za worm",
+        "oblique section",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "za worm",
+        "axial detail",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "za worm",
+        "side detail",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    ("worm wheel", "axial", Drawn),
+    ("worm wheel", "axial reversed", Drawn),
+    ("worm wheel", "axial hidden", Drawn),
+    (
+        "worm wheel",
+        "side",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "worm wheel",
+        "side hidden",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "worm wheel",
+        "oblique",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "worm wheel",
+        "oblique hidden",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    ("worm wheel", "axial section", Drawn),
+    ("worm wheel", "axial section-only", Drawn),
+    ("worm wheel", "axial finite depth", Drawn),
+    (
+        "worm wheel",
+        "side section",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "worm wheel",
+        "side section-only",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "worm wheel",
+        "side finite depth",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "worm wheel",
+        "side lateral window",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "worm wheel",
+        "oblique section",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "worm wheel",
+        "axial detail",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "worm wheel",
+        "side detail",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    ("box + cylinder overlapping", "axial", Drawn),
+    ("box + cylinder overlapping", "axial reversed", Drawn),
+    ("box + cylinder overlapping", "axial hidden", Drawn),
+    ("box + cylinder overlapping", "side", Drawn),
+    ("box + cylinder overlapping", "side hidden", Drawn),
+    ("box + cylinder overlapping", "oblique", Drawn),
+    ("box + cylinder overlapping", "oblique hidden", Drawn),
+    ("box + cylinder overlapping", "axial section", Drawn),
+    ("box + cylinder overlapping", "axial section-only", Drawn),
+    ("box + cylinder overlapping", "axial finite depth", Drawn),
+    ("box + cylinder overlapping", "side section", Drawn),
+    ("box + cylinder overlapping", "side section-only", Drawn),
+    ("box + cylinder overlapping", "side finite depth", Drawn),
+    ("box + cylinder overlapping", "side lateral window", Drawn),
+    ("box + cylinder overlapping", "oblique section", Drawn),
+    ("box + cylinder overlapping", "axial detail", Drawn),
+    ("box + cylinder overlapping", "side detail", Drawn),
+    ("box + cylinder separated", "axial", Drawn),
+    ("box + cylinder separated", "axial reversed", Drawn),
+    ("box + cylinder separated", "axial hidden", Drawn),
+    ("box + cylinder separated", "side", Drawn),
+    ("box + cylinder separated", "side hidden", Drawn),
+    ("box + cylinder separated", "oblique", Drawn),
+    ("box + cylinder separated", "oblique hidden", Drawn),
+    ("box + cylinder separated", "axial section", Drawn),
+    ("box + cylinder separated", "axial section-only", Drawn),
+    ("box + cylinder separated", "axial finite depth", Drawn),
+    ("box + cylinder separated", "side section", Drawn),
+    ("box + cylinder separated", "side section-only", Drawn),
+    ("box + cylinder separated", "side finite depth", Drawn),
+    ("box + cylinder separated", "side lateral window", Drawn),
+    ("box + cylinder separated", "oblique section", Drawn),
+    ("box + cylinder separated", "axial detail", Drawn),
+    ("box + cylinder separated", "side detail", Drawn),
+    ("box + sphere overlapping", "axial", Drawn),
+    ("box + sphere overlapping", "axial reversed", Drawn),
+    ("box + sphere overlapping", "axial hidden", Drawn),
+    ("box + sphere overlapping", "side", Drawn),
+    ("box + sphere overlapping", "side hidden", Drawn),
+    ("box + sphere overlapping", "oblique", Drawn),
+    ("box + sphere overlapping", "oblique hidden", Drawn),
+    ("box + sphere overlapping", "axial section", Drawn),
+    ("box + sphere overlapping", "axial section-only", Drawn),
+    ("box + sphere overlapping", "axial finite depth", Drawn),
+    ("box + sphere overlapping", "side section", Drawn),
+    ("box + sphere overlapping", "side section-only", Drawn),
+    ("box + sphere overlapping", "side finite depth", Drawn),
+    ("box + sphere overlapping", "side lateral window", Drawn),
+    ("box + sphere overlapping", "oblique section", Drawn),
+    ("box + sphere overlapping", "axial detail", Drawn),
+    ("box + sphere overlapping", "side detail", Drawn),
+    ("box + sphere separated", "axial", Drawn),
+    ("box + sphere separated", "axial reversed", Drawn),
+    ("box + sphere separated", "axial hidden", Drawn),
+    ("box + sphere separated", "side", Drawn),
+    ("box + sphere separated", "side hidden", Drawn),
+    ("box + sphere separated", "oblique", Drawn),
+    ("box + sphere separated", "oblique hidden", Drawn),
+    ("box + sphere separated", "axial section", Drawn),
+    ("box + sphere separated", "axial section-only", Drawn),
+    ("box + sphere separated", "axial finite depth", Drawn),
+    ("box + sphere separated", "side section", Drawn),
+    ("box + sphere separated", "side section-only", Drawn),
+    ("box + sphere separated", "side finite depth", Drawn),
+    ("box + sphere separated", "side lateral window", Drawn),
+    ("box + sphere separated", "oblique section", Drawn),
+    ("box + sphere separated", "axial detail", Drawn),
+    ("box + sphere separated", "side detail", Drawn),
+    (
+        "box + spur gear overlapping",
+        "axial",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + spur gear overlapping",
+        "axial reversed",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + spur gear overlapping",
+        "axial hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + spur gear overlapping",
+        "side",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "box + spur gear overlapping",
+        "side hidden",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "box + spur gear overlapping",
+        "oblique",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + spur gear overlapping",
+        "oblique hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + spur gear overlapping",
+        "axial section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + spur gear overlapping",
+        "axial section-only",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + spur gear overlapping",
+        "axial finite depth",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + spur gear overlapping",
+        "side section",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "box + spur gear overlapping",
+        "side section-only",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "box + spur gear overlapping",
+        "side finite depth",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "box + spur gear overlapping",
+        "side lateral window",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "box + spur gear overlapping",
+        "oblique section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + spur gear overlapping",
+        "axial detail",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + spur gear overlapping",
+        "side detail",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    ("box + spur gear separated", "axial", Drawn),
+    ("box + spur gear separated", "axial reversed", Drawn),
+    ("box + spur gear separated", "axial hidden", Drawn),
+    (
+        "box + spur gear separated",
+        "side",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "box + spur gear separated",
+        "side hidden",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "box + spur gear separated",
+        "oblique",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "box + spur gear separated",
+        "oblique hidden",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    ("box + spur gear separated", "axial section", Drawn),
+    ("box + spur gear separated", "axial section-only", Drawn),
+    ("box + spur gear separated", "axial finite depth", Drawn),
+    (
+        "box + spur gear separated",
+        "side section",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "box + spur gear separated",
+        "side section-only",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "box + spur gear separated",
+        "side finite depth",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "box + spur gear separated",
+        "side lateral window",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "box + spur gear separated",
+        "oblique section",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "box + spur gear separated",
+        "axial detail",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "box + spur gear separated",
+        "side detail",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    ("cylinder + sphere overlapping", "axial", Drawn),
+    ("cylinder + sphere overlapping", "axial reversed", Drawn),
+    ("cylinder + sphere overlapping", "axial hidden", Drawn),
+    ("cylinder + sphere overlapping", "side", Drawn),
+    ("cylinder + sphere overlapping", "side hidden", Drawn),
+    ("cylinder + sphere overlapping", "oblique", Drawn),
+    ("cylinder + sphere overlapping", "oblique hidden", Drawn),
+    ("cylinder + sphere overlapping", "axial section", Drawn),
+    ("cylinder + sphere overlapping", "axial section-only", Drawn),
+    ("cylinder + sphere overlapping", "axial finite depth", Drawn),
+    ("cylinder + sphere overlapping", "side section", Drawn),
+    ("cylinder + sphere overlapping", "side section-only", Drawn),
+    ("cylinder + sphere overlapping", "side finite depth", Drawn),
+    (
+        "cylinder + sphere overlapping",
+        "side lateral window",
+        Drawn,
+    ),
+    ("cylinder + sphere overlapping", "oblique section", Drawn),
+    ("cylinder + sphere overlapping", "axial detail", Drawn),
+    ("cylinder + sphere overlapping", "side detail", Drawn),
+    ("cylinder + sphere separated", "axial", Drawn),
+    ("cylinder + sphere separated", "axial reversed", Drawn),
+    ("cylinder + sphere separated", "axial hidden", Drawn),
+    ("cylinder + sphere separated", "side", Drawn),
+    ("cylinder + sphere separated", "side hidden", Drawn),
+    ("cylinder + sphere separated", "oblique", Drawn),
+    ("cylinder + sphere separated", "oblique hidden", Drawn),
+    ("cylinder + sphere separated", "axial section", Drawn),
+    ("cylinder + sphere separated", "axial section-only", Drawn),
+    ("cylinder + sphere separated", "axial finite depth", Drawn),
+    ("cylinder + sphere separated", "side section", Drawn),
+    ("cylinder + sphere separated", "side section-only", Drawn),
+    ("cylinder + sphere separated", "side finite depth", Drawn),
+    ("cylinder + sphere separated", "side lateral window", Drawn),
+    ("cylinder + sphere separated", "oblique section", Drawn),
+    ("cylinder + sphere separated", "axial detail", Drawn),
+    ("cylinder + sphere separated", "side detail", Drawn),
+    ("cylinder + annulus overlapping", "axial", Drawn),
+    ("cylinder + annulus overlapping", "axial reversed", Drawn),
+    ("cylinder + annulus overlapping", "axial hidden", Drawn),
+    ("cylinder + annulus overlapping", "side", Drawn),
+    ("cylinder + annulus overlapping", "side hidden", Drawn),
+    ("cylinder + annulus overlapping", "oblique", Drawn),
+    ("cylinder + annulus overlapping", "oblique hidden", Drawn),
+    ("cylinder + annulus overlapping", "axial section", Drawn),
+    (
+        "cylinder + annulus overlapping",
+        "axial section-only",
+        Drawn,
+    ),
+    (
+        "cylinder + annulus overlapping",
+        "axial finite depth",
+        Drawn,
+    ),
+    ("cylinder + annulus overlapping", "side section", Drawn),
+    ("cylinder + annulus overlapping", "side section-only", Drawn),
+    ("cylinder + annulus overlapping", "side finite depth", Drawn),
+    (
+        "cylinder + annulus overlapping",
+        "side lateral window",
+        Drawn,
+    ),
+    (
+        "cylinder + annulus overlapping",
+        "oblique section",
+        Unsupported("Rust retained projection cannot yet clip this curved boundary"),
+    ),
+    ("cylinder + annulus overlapping", "axial detail", Drawn),
+    ("cylinder + annulus overlapping", "side detail", Drawn),
+    ("cylinder + annulus separated", "axial", Drawn),
+    ("cylinder + annulus separated", "axial reversed", Drawn),
+    ("cylinder + annulus separated", "axial hidden", Drawn),
+    ("cylinder + annulus separated", "side", Drawn),
+    ("cylinder + annulus separated", "side hidden", Drawn),
+    ("cylinder + annulus separated", "oblique", Drawn),
+    ("cylinder + annulus separated", "oblique hidden", Drawn),
+    ("cylinder + annulus separated", "axial section", Drawn),
+    ("cylinder + annulus separated", "axial section-only", Drawn),
+    ("cylinder + annulus separated", "axial finite depth", Drawn),
+    ("cylinder + annulus separated", "side section", Drawn),
+    ("cylinder + annulus separated", "side section-only", Drawn),
+    ("cylinder + annulus separated", "side finite depth", Drawn),
+    ("cylinder + annulus separated", "side lateral window", Drawn),
+    (
+        "cylinder + annulus separated",
+        "oblique section",
+        Unsupported("Rust retained projection cannot yet clip this curved boundary"),
+    ),
+    ("cylinder + annulus separated", "axial detail", Drawn),
+    ("cylinder + annulus separated", "side detail", Drawn),
+    (
+        "box + internal ring overlapping",
+        "axial",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + internal ring overlapping",
+        "axial reversed",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + internal ring overlapping",
+        "axial hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + internal ring overlapping",
+        "side",
+        Unsupported("Rust internal ring drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "box + internal ring overlapping",
+        "side hidden",
+        Unsupported("Rust internal ring drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "box + internal ring overlapping",
+        "oblique",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + internal ring overlapping",
+        "oblique hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + internal ring overlapping",
+        "axial section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + internal ring overlapping",
+        "axial section-only",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + internal ring overlapping",
+        "axial finite depth",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + internal ring overlapping",
+        "side section",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "box + internal ring overlapping",
+        "side section-only",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "box + internal ring overlapping",
+        "side finite depth",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "box + internal ring overlapping",
+        "side lateral window",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "box + internal ring overlapping",
+        "oblique section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + internal ring overlapping",
+        "axial detail",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "box + internal ring overlapping",
+        "side detail",
+        Unsupported("Rust internal ring drawing currently requires an uncropped axial view"),
+    ),
+    ("box + internal ring separated", "axial", Drawn),
+    ("box + internal ring separated", "axial reversed", Drawn),
+    ("box + internal ring separated", "axial hidden", Drawn),
+    (
+        "box + internal ring separated",
+        "side",
+        Unsupported("Rust internal ring drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "box + internal ring separated",
+        "side hidden",
+        Unsupported("Rust internal ring drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "box + internal ring separated",
+        "oblique",
+        Unsupported("Rust internal ring drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "box + internal ring separated",
+        "oblique hidden",
+        Unsupported("Rust internal ring drawing currently requires an uncropped axial view"),
+    ),
+    ("box + internal ring separated", "axial section", Drawn),
+    ("box + internal ring separated", "axial section-only", Drawn),
+    ("box + internal ring separated", "axial finite depth", Drawn),
+    (
+        "box + internal ring separated",
+        "side section",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "box + internal ring separated",
+        "side section-only",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "box + internal ring separated",
+        "side finite depth",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "box + internal ring separated",
+        "side lateral window",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "box + internal ring separated",
+        "oblique section",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "box + internal ring separated",
+        "axial detail",
+        Unsupported("Rust internal ring drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "box + internal ring separated",
+        "side detail",
+        Unsupported("Rust internal ring drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "spur gear + spur gear overlapping",
+        "axial",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "spur gear + spur gear overlapping",
+        "axial reversed",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "spur gear + spur gear overlapping",
+        "axial hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "spur gear + spur gear overlapping",
+        "side",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "spur gear + spur gear overlapping",
+        "side hidden",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "spur gear + spur gear overlapping",
+        "oblique",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "spur gear + spur gear overlapping",
+        "oblique hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "spur gear + spur gear overlapping",
+        "axial section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "spur gear + spur gear overlapping",
+        "axial section-only",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "spur gear + spur gear overlapping",
+        "axial finite depth",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "spur gear + spur gear overlapping",
+        "side section",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "spur gear + spur gear overlapping",
+        "side section-only",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "spur gear + spur gear overlapping",
+        "side finite depth",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "spur gear + spur gear overlapping",
+        "side lateral window",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "spur gear + spur gear overlapping",
+        "oblique section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "spur gear + spur gear overlapping",
+        "axial detail",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "spur gear + spur gear overlapping",
+        "side detail",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    ("spur gear + spur gear separated", "axial", Drawn),
+    ("spur gear + spur gear separated", "axial reversed", Drawn),
+    ("spur gear + spur gear separated", "axial hidden", Drawn),
+    (
+        "spur gear + spur gear separated",
+        "side",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "spur gear + spur gear separated",
+        "side hidden",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "spur gear + spur gear separated",
+        "oblique",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "spur gear + spur gear separated",
+        "oblique hidden",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    ("spur gear + spur gear separated", "axial section", Drawn),
+    (
+        "spur gear + spur gear separated",
+        "axial section-only",
+        Drawn,
+    ),
+    (
+        "spur gear + spur gear separated",
+        "axial finite depth",
+        Drawn,
+    ),
+    (
+        "spur gear + spur gear separated",
+        "side section",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "spur gear + spur gear separated",
+        "side section-only",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "spur gear + spur gear separated",
+        "side finite depth",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "spur gear + spur gear separated",
+        "side lateral window",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "spur gear + spur gear separated",
+        "oblique section",
+        Unsupported(
+            "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",
+        ),
+    ),
+    (
+        "spur gear + spur gear separated",
+        "axial detail",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "spur gear + spur gear separated",
+        "side detail",
+        Unsupported("Rust spur gear drawing currently requires an uncropped axial view"),
+    ),
+    (
+        "box + bevel gear overlapping",
+        "axial",
+        Unsupported(
+            "Rust bevel drawing supports one gear at a time; scene occlusion is unavailable",
+        ),
+    ),
+    (
+        "box + bevel gear overlapping",
+        "axial reversed",
+        Unsupported(
+            "Rust bevel drawing supports one gear at a time; scene occlusion is unavailable",
+        ),
+    ),
+    (
+        "box + bevel gear overlapping",
+        "axial hidden",
+        Unsupported(
+            "Rust bevel drawing supports one gear at a time; scene occlusion is unavailable",
+        ),
+    ),
+    (
+        "box + bevel gear overlapping",
+        "side",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + bevel gear overlapping",
+        "side hidden",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + bevel gear overlapping",
+        "oblique",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + bevel gear overlapping",
+        "oblique hidden",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + bevel gear overlapping",
+        "axial section",
+        Unsupported(
+            "Rust bevel drawing supports one gear at a time; scene occlusion is unavailable",
+        ),
+    ),
+    (
+        "box + bevel gear overlapping",
+        "axial section-only",
+        Unsupported(
+            "Rust bevel drawing supports one gear at a time; scene occlusion is unavailable",
+        ),
+    ),
+    (
+        "box + bevel gear overlapping",
+        "axial finite depth",
+        Unsupported(
+            "Rust bevel drawing supports one gear at a time; scene occlusion is unavailable",
+        ),
+    ),
+    (
+        "box + bevel gear overlapping",
+        "side section",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + bevel gear overlapping",
+        "side section-only",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + bevel gear overlapping",
+        "side finite depth",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + bevel gear overlapping",
+        "side lateral window",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + bevel gear overlapping",
+        "oblique section",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + bevel gear overlapping",
+        "axial detail",
+        Unsupported(
+            "Rust bevel drawing supports one gear at a time; scene occlusion is unavailable",
+        ),
+    ),
+    (
+        "box + bevel gear overlapping",
+        "side detail",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    ("box + bevel gear separated", "axial", Drawn),
+    ("box + bevel gear separated", "axial reversed", Drawn),
+    ("box + bevel gear separated", "axial hidden", Drawn),
+    (
+        "box + bevel gear separated",
+        "side",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + bevel gear separated",
+        "side hidden",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + bevel gear separated",
+        "oblique",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + bevel gear separated",
+        "oblique hidden",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    ("box + bevel gear separated", "axial section", Drawn),
+    ("box + bevel gear separated", "axial section-only", Drawn),
+    ("box + bevel gear separated", "axial finite depth", Drawn),
+    (
+        "box + bevel gear separated",
+        "side section",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + bevel gear separated",
+        "side section-only",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + bevel gear separated",
+        "side finite depth",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + bevel gear separated",
+        "side lateral window",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + bevel gear separated",
+        "oblique section",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + bevel gear separated",
+        "axial detail",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + bevel gear separated",
+        "side detail",
+        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+    ),
+    (
+        "box + za worm overlapping",
+        "axial",
+        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
+    ),
+    (
+        "box + za worm overlapping",
+        "axial reversed",
+        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
+    ),
+    (
+        "box + za worm overlapping",
+        "axial hidden",
+        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
+    ),
+    (
+        "box + za worm overlapping",
+        "side",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "box + za worm overlapping",
+        "side hidden",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "box + za worm overlapping",
+        "oblique",
+        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
+    ),
+    (
+        "box + za worm overlapping",
+        "oblique hidden",
+        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
+    ),
+    (
+        "box + za worm overlapping",
+        "axial section",
+        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
+    ),
+    (
+        "box + za worm overlapping",
+        "axial section-only",
+        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
+    ),
+    (
+        "box + za worm overlapping",
+        "axial finite depth",
+        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
+    ),
+    (
+        "box + za worm overlapping",
+        "side section",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "box + za worm overlapping",
+        "side section-only",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "box + za worm overlapping",
+        "side finite depth",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "box + za worm overlapping",
+        "side lateral window",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "box + za worm overlapping",
+        "oblique section",
+        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
+    ),
+    (
+        "box + za worm overlapping",
+        "axial detail",
+        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
+    ),
+    (
+        "box + za worm overlapping",
+        "side detail",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    ("box + za worm separated", "axial", Drawn),
+    ("box + za worm separated", "axial reversed", Drawn),
+    ("box + za worm separated", "axial hidden", Drawn),
+    (
+        "box + za worm separated",
+        "side",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "box + za worm separated",
+        "side hidden",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "box + za worm separated",
+        "oblique",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "box + za worm separated",
+        "oblique hidden",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    ("box + za worm separated", "axial section", Drawn),
+    ("box + za worm separated", "axial section-only", Drawn),
+    ("box + za worm separated", "axial finite depth", Drawn),
+    (
+        "box + za worm separated",
+        "side section",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "box + za worm separated",
+        "side section-only",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "box + za worm separated",
+        "side finite depth",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "box + za worm separated",
+        "side lateral window",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "box + za worm separated",
+        "oblique section",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "box + za worm separated",
+        "axial detail",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "box + za worm separated",
+        "side detail",
+        Unsupported(
+            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
+        ),
+    ),
+    (
+        "box + herringbone gear overlapping",
+        "axial",
+        Unsupported(
+            "Rust exact drawing projection for continuous herringbone gears is unavailable",
+        ),
+    ),
+    (
+        "box + herringbone gear overlapping",
+        "axial reversed",
+        Unsupported(
+            "Rust exact drawing projection for continuous herringbone gears is unavailable",
+        ),
+    ),
+    (
+        "box + herringbone gear overlapping",
+        "axial hidden",
+        Unsupported(
+            "Rust exact drawing projection for continuous herringbone gears is unavailable",
+        ),
+    ),
+    (
+        "box + herringbone gear overlapping",
+        "side",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "box + herringbone gear overlapping",
+        "side hidden",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "box + herringbone gear overlapping",
+        "oblique",
+        Unsupported(
+            "Rust exact drawing projection for continuous herringbone gears is unavailable",
+        ),
+    ),
+    (
+        "box + herringbone gear overlapping",
+        "oblique hidden",
+        Unsupported(
+            "Rust exact drawing projection for continuous herringbone gears is unavailable",
+        ),
+    ),
+    (
+        "box + herringbone gear overlapping",
+        "axial section",
+        Unsupported(
+            "Rust exact drawing projection for continuous herringbone gears is unavailable",
+        ),
+    ),
+    (
+        "box + herringbone gear overlapping",
+        "axial section-only",
+        Drawn,
+    ),
+    (
+        "box + herringbone gear overlapping",
+        "axial finite depth",
+        Unsupported(
+            "Rust exact drawing projection for continuous herringbone gears is unavailable",
+        ),
+    ),
+    (
+        "box + herringbone gear overlapping",
+        "side section",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "box + herringbone gear overlapping",
+        "side section-only",
+        Unsupported("Rust herringbone sections require a plane perpendicular to the gear axis"),
+    ),
+    (
+        "box + herringbone gear overlapping",
+        "side finite depth",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "box + herringbone gear overlapping",
+        "side lateral window",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "box + herringbone gear overlapping",
+        "oblique section",
+        Unsupported(
+            "Rust exact drawing projection for continuous herringbone gears is unavailable",
+        ),
+    ),
+    (
+        "box + herringbone gear overlapping",
+        "axial detail",
+        Unsupported(
+            "Rust exact drawing projection for continuous herringbone gears is unavailable",
+        ),
+    ),
+    (
+        "box + herringbone gear overlapping",
+        "side detail",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    ("box + herringbone gear separated", "axial", Drawn),
+    ("box + herringbone gear separated", "axial reversed", Drawn),
+    ("box + herringbone gear separated", "axial hidden", Drawn),
+    (
+        "box + herringbone gear separated",
+        "side",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "box + herringbone gear separated",
+        "side hidden",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "box + herringbone gear separated",
+        "oblique",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "box + herringbone gear separated",
+        "oblique hidden",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    ("box + herringbone gear separated", "axial section", Drawn),
+    (
+        "box + herringbone gear separated",
+        "axial section-only",
+        Drawn,
+    ),
+    (
+        "box + herringbone gear separated",
+        "axial finite depth",
+        Drawn,
+    ),
+    (
+        "box + herringbone gear separated",
+        "side section",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "box + herringbone gear separated",
+        "side section-only",
+        Unsupported("Rust herringbone sections require a plane perpendicular to the gear axis"),
+    ),
+    (
+        "box + herringbone gear separated",
+        "side finite depth",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "box + herringbone gear separated",
+        "side lateral window",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "box + herringbone gear separated",
+        "oblique section",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "box + herringbone gear separated",
+        "axial detail",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    (
+        "box + herringbone gear separated",
+        "side detail",
+        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+    ),
+    ("bored box + rounded slot overlapping", "axial", Drawn),
+    (
+        "bored box + rounded slot overlapping",
+        "axial reversed",
+        Drawn,
+    ),
+    (
+        "bored box + rounded slot overlapping",
+        "axial hidden",
+        Drawn,
+    ),
+    ("bored box + rounded slot overlapping", "side", Drawn),
+    ("bored box + rounded slot overlapping", "side hidden", Drawn),
+    ("bored box + rounded slot overlapping", "oblique", Drawn),
+    (
+        "bored box + rounded slot overlapping",
+        "oblique hidden",
+        Drawn,
+    ),
+    (
+        "bored box + rounded slot overlapping",
+        "axial section",
+        Drawn,
+    ),
+    (
+        "bored box + rounded slot overlapping",
+        "axial section-only",
+        Drawn,
+    ),
+    (
+        "bored box + rounded slot overlapping",
+        "axial finite depth",
+        Drawn,
+    ),
+    (
+        "bored box + rounded slot overlapping",
+        "side section",
+        Drawn,
+    ),
+    (
+        "bored box + rounded slot overlapping",
+        "side section-only",
+        Drawn,
+    ),
+    (
+        "bored box + rounded slot overlapping",
+        "side finite depth",
+        Drawn,
+    ),
+    (
+        "bored box + rounded slot overlapping",
+        "side lateral window",
+        Drawn,
+    ),
+    (
+        "bored box + rounded slot overlapping",
+        "oblique section",
+        Unsupported("Rust machined sections require a stock-aligned cutting plane"),
+    ),
+    (
+        "bored box + rounded slot overlapping",
+        "axial detail",
+        Drawn,
+    ),
+    ("bored box + rounded slot overlapping", "side detail", Drawn),
+    ("bored box + rounded slot separated", "axial", Drawn),
+    (
+        "bored box + rounded slot separated",
+        "axial reversed",
+        Drawn,
+    ),
+    ("bored box + rounded slot separated", "axial hidden", Drawn),
+    ("bored box + rounded slot separated", "side", Drawn),
+    ("bored box + rounded slot separated", "side hidden", Drawn),
+    ("bored box + rounded slot separated", "oblique", Drawn),
+    (
+        "bored box + rounded slot separated",
+        "oblique hidden",
+        Drawn,
+    ),
+    ("bored box + rounded slot separated", "axial section", Drawn),
+    (
+        "bored box + rounded slot separated",
+        "axial section-only",
+        Drawn,
+    ),
+    (
+        "bored box + rounded slot separated",
+        "axial finite depth",
+        Drawn,
+    ),
+    ("bored box + rounded slot separated", "side section", Drawn),
+    (
+        "bored box + rounded slot separated",
+        "side section-only",
+        Drawn,
+    ),
+    (
+        "bored box + rounded slot separated",
+        "side finite depth",
+        Drawn,
+    ),
+    (
+        "bored box + rounded slot separated",
+        "side lateral window",
+        Drawn,
+    ),
+    (
+        "bored box + rounded slot separated",
+        "oblique section",
+        Unsupported("Rust machined sections require a stock-aligned cutting plane"),
+    ),
+    ("bored box + rounded slot separated", "axial detail", Drawn),
+    ("bored box + rounded slot separated", "side detail", Drawn),
+];
+
+const SCENES: &[(&str, &str)] = &[
+    ("box", "cylinder"),
+    ("box", "sphere"),
+    ("box", "spur gear"),
+    ("cylinder", "sphere"),
+    ("cylinder", "annulus"),
+    ("box", "internal ring"),
+    ("spur gear", "spur gear"),
+    ("box", "bevel gear"),
+    ("box", "za worm"),
+    ("box", "herringbone gear"),
+    ("bored box", "rounded slot"),
+];
+
+pub fn families() -> Vec<(&'static str, Result<Solid, GeometryError>)> {
+    let policy = GeometryPolicy::default();
+    let id = EntityId::new;
+    let boxed = Solid::box_solid([20., 12., 8.], policy).unwrap();
+    let cylinder = Solid::cylinder(PlaneFrame::default(), 5., 8., policy).unwrap();
+    let drill = Solid::cylinder(
+        PlaneFrame {
+            origin: [10., 6., -1.],
+            ..Default::default()
+        },
+        2.,
+        10.,
+        policy,
+    )
+    .unwrap();
+    let bored = boxed
+        .boolean(&drill, BooleanOperation::Subtract, policy)
+        .unwrap()
+        .unwrap();
+    let owner = id();
+    let slot = Solid::rust_extrude_rounded_slot(
+        PlaneFrame::default(),
+        [[0., 0.], [6., 0.]],
+        2.,
+        5.,
+        owner,
+        std::array::from_fn(|edge| Origin {
+            source: owner,
+            role: format!("profile.{edge}"),
+        }),
+        policy,
+    )
+    .unwrap();
+    vec![
+        ("box", Ok(boxed)),
+        ("bored box", Ok(bored)),
+        ("cylinder", Ok(cylinder)),
+        (
+            "annulus",
+            Solid::rust_annulus(3., 6., 2.5, id(), PlaneFrame::default(), policy),
+        ),
+        (
+            "sphere",
+            Solid::rust_sphere_named(4., PlaneFrame::default(), id(), policy),
+        ),
+        ("rounded slot", Ok(slot)),
+        (
+            "spur gear",
+            Solid::rust_spur_gear_named(spur(GearSweep::Spur, 0.), id(), policy),
+        ),
+        (
+            "internal ring",
+            Solid::rust_internal_ring_named(ring(), id(), policy),
+        ),
+        (
+            "helical gear",
+            Solid::rust_helical_gear_named(
+                spur(GearSweep::Helical, 15_f64.to_radians().tan() / 12.),
+                id(),
+                policy,
+            ),
+        ),
+        (
+            "herringbone gear",
+            Solid::rust_herringbone_named(
+                spur(GearSweep::Chevron, 15_f64.to_radians().tan() / 12.),
+                id(),
+                policy,
+            ),
+        ),
+        (
+            "bevel gear",
+            Solid::rust_spherical_bevel_gear_named(bevel(), id(), policy),
+        ),
+        (
+            "za worm",
+            Solid::rust_za_worm_named(
+                ZaWorm {
+                    axial_module_mm: 1.,
+                    threaded_length_mm: 20.,
+                    bore_radius_mm: 0.,
+                    axial_thinning_mm: 0.02,
+                },
+                id(),
+                policy,
+            ),
+        ),
+        (
+            "worm wheel",
+            Solid::rust_generated_za_worm_wheel_named(
+                GeneratedZaWormWheel {
+                    teeth: 40,
+                    axial_module_mm: 2.,
+                    face_width_mm: 4.,
+                    bore_radius_mm: 6.,
+                    pitch_thinning_mm: 0.1,
+                },
+                id(),
+                policy,
+            ),
+        ),
+    ]
+}
+
+fn frame(u: [f64; 3], v: [f64; 3]) -> PlaneFrame {
+    PlaneFrame {
+        origin: [0.; 3],
+        u,
+        v,
+    }
+}
+
+pub fn views(center: [f64; 3]) -> Vec<(&'static str, DrawingProjection)> {
+    let s = 0.5_f64.sqrt();
+    let t = (1_f64 / 6.).sqrt();
+    let axial = frame([1., 0., 0.], [0., 1., 0.]);
+    let reversed = frame([1., 0., 0.], [0., -1., 0.]);
+    let side = frame([1., 0., 0.], [0., 0., 1.]);
+    let oblique = frame([s, -s, 0.], [t, t, -2. * t]);
+    let base = DrawingProjection::default();
+    let at = |frame: PlaneFrame| PlaneFrame {
+        origin: center,
+        ..frame
+    };
+    let section = |frame: PlaneFrame| DrawingProjection {
+        frame: at(frame),
+        section_offset_mm: Some(0.),
+        ..base
+    };
+    vec![
+        (
+            "axial",
+            DrawingProjection {
+                frame: axial,
+                ..base
+            },
+        ),
+        (
+            "axial reversed",
+            DrawingProjection {
+                frame: reversed,
+                ..base
+            },
+        ),
+        (
+            "axial hidden",
+            DrawingProjection {
+                frame: axial,
+                hidden_lines: true,
+                ..base
+            },
+        ),
+        (
+            "side",
+            DrawingProjection {
+                frame: side,
+                ..base
+            },
+        ),
+        (
+            "side hidden",
+            DrawingProjection {
+                frame: side,
+                hidden_lines: true,
+                ..base
+            },
+        ),
+        (
+            "oblique",
+            DrawingProjection {
+                frame: oblique,
+                ..base
+            },
+        ),
+        (
+            "oblique hidden",
+            DrawingProjection {
+                frame: oblique,
+                hidden_lines: true,
+                ..base
+            },
+        ),
+        ("axial section", section(axial)),
+        (
+            "axial section-only",
+            DrawingProjection {
+                section_only: true,
+                ..section(axial)
+            },
+        ),
+        (
+            "axial finite depth",
+            DrawingProjection {
+                section_depth_mm: Some(1.),
+                ..section(axial)
+            },
+        ),
+        ("side section", section(side)),
+        (
+            "side section-only",
+            DrawingProjection {
+                section_only: true,
+                ..section(side)
+            },
+        ),
+        (
+            "side finite depth",
+            DrawingProjection {
+                section_depth_mm: Some(1.),
+                ..section(side)
+            },
+        ),
+        (
+            "side lateral window",
+            DrawingProjection {
+                section_u_mm: Some([-2., 2.]),
+                section_v_mm: Some([-2., 2.]),
+                ..section(side)
+            },
+        ),
+        ("oblique section", section(oblique)),
+        (
+            "axial detail",
+            DrawingProjection {
+                frame: axial,
+                detail: Some(([0., 0.], 3.)),
+                ..base
+            },
+        ),
+        (
+            "side detail",
+            DrawingProjection {
+                frame: side,
+                detail: Some(([0., 0.], 3.)),
+                ..base
+            },
+        ),
+    ]
+}
+
+fn hatch() -> Option<DrawingHatch> {
+    Some(DrawingHatch {
+        angle_rad: 0.6,
+        spacing_mm: 0.5,
+        line_width_mm: 0.18,
+        pattern: multicad_core::materials::HatchPattern::Lines,
+    })
+}
+
+pub fn center(solid: &Solid) -> [f64; 3] {
+    let b = solid.bounds().unwrap();
+    std::array::from_fn(|i| (b.min[i] + b.max[i]) / 2.)
+}
+
+pub fn outcome(result: &Result<Vec<ProjectedVector>, GeometryError>) -> String {
+    match result {
+        Ok(vectors) => {
+            let count = |role| vectors.iter().filter(|v| v.role == role).count();
+            format!(
+                "ok v{} h{} s{} x{}",
+                count(VectorRole::Visible),
+                count(VectorRole::Hidden),
+                count(VectorRole::Section),
+                count(VectorRole::Hatch)
+            )
+        }
+        Err(e) => format!("ERR {:?}: {}", e.kind, e.message),
+    }
+}
+
+fn well_formed(vectors: &[ProjectedVector], sources: usize) {
+    for vector in vectors {
+        assert!(vector.source_index < sources);
+        assert!(vector.preview_mm.len() >= 2);
+        assert!(vector.preview_mm.iter().flatten().all(|v| v.is_finite()));
+        if let VectorCurve::Line { a, b } = vector.curve {
+            assert!(a.iter().chain(&b).all(|v| v.is_finite()));
+        }
+    }
+}
+
+#[test]
+#[ignore = "inventory report; run explicitly with --ignored --nocapture"]
+fn print_rust_drawing_inventory() {
+    let families = families();
+    for (name, built) in &families {
+        let solid = match built {
+            Ok(solid) => solid,
+            Err(e) => {
+                println!("INV|{name}|construction|ERR {:?}: {}", e.kind, e.message);
+                continue;
+            }
+        };
+        for (view, options) in views(center(solid)) {
+            let result = project_drawing(
+                &[DrawingSolid {
+                    solid,
+                    hatch: hatch(),
+                }],
+                options,
+            );
+            if let Ok(vectors) = &result {
+                well_formed(vectors, 1);
+            }
+            println!("INV|{name}|{view}|{}", outcome(&result));
+        }
+    }
+    let policy = GeometryPolicy::default();
+    let place = |solid: &Solid, x: f64| {
+        solid
+            .transformed(RigidTransform {
+                rotation: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+                translation_mm: [x, 0., 20.],
+            })
+            .unwrap()
+    };
+    let by_name = |n: &str| {
+        families
+            .iter()
+            .find(|(name, _)| *name == n)
+            .unwrap()
+            .1
+            .as_ref()
+            .ok()
+    };
+    for (a, b) in SCENES {
+        let (Some(first), Some(second)) = (by_name(a), by_name(b)) else {
+            println!("INV|{a} + {b}|construction|ERR missing member");
+            continue;
+        };
+        let _ = policy;
+        for (layout, offset) in [("overlapping", 2.), ("separated", 80.)] {
+            let near = place(second, offset);
+            let scene = [
+                DrawingSolid {
+                    solid: first,
+                    hatch: hatch(),
+                },
+                DrawingSolid {
+                    solid: &near,
+                    hatch: hatch(),
+                },
+            ];
+            for (view, options) in views([2., 0., 10.]) {
+                let result = project_drawing(&scene, options);
+                if let Ok(vectors) = &result {
+                    well_formed(vectors, 2);
+                }
+                println!("INV|{a} + {b} {layout}|{view}|{}", outcome(&result));
+            }
+        }
+    }
+}
+
+/// Every inventoried family, view and two-body scene either draws
+/// well-formed vectors or refuses with its recorded explicit finding.
+#[test]
+fn every_family_view_and_scene_is_a_named_regression_or_finding() {
+    let mut seen = 0;
+    let mut check = |name: &str,
+                     view: &str,
+                     result: Result<Vec<ProjectedVector>, GeometryError>,
+                     sources: usize| {
+        let (_, _, expect) = EXPECTED
+            .iter()
+            .find(|(family, case, _)| *family == name && *case == view)
+            .unwrap_or_else(|| panic!("{name} | {view} is not inventoried"));
+        seen += 1;
+        match (expect, &result) {
+            (Drawn, Ok(vectors)) => well_formed(vectors, sources),
+            (Unsupported(message), Err(error))
+                if error.kind == multicad_kernel::GeometryErrorKind::Unsupported
+                    && error.message == *message => {}
+            _ => panic!(
+                "{name} | {view}: expected {expect:?}, got {}",
+                outcome(&result)
+            ),
+        }
+    };
+    let families = families();
+    for (name, built) in &families {
+        let solid = built.as_ref().unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        for (view, options) in views(center(solid)) {
+            let result = project_drawing(
+                &[DrawingSolid {
+                    solid,
+                    hatch: hatch(),
+                }],
+                options,
+            );
+            check(name, view, result, 1);
+        }
+    }
+    let place = |solid: &Solid, x: f64| {
+        solid
+            .transformed(RigidTransform {
+                rotation: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+                translation_mm: [x, 0., 20.],
+            })
+            .unwrap()
+    };
+    let by_name = |n: &str| {
+        families
+            .iter()
+            .find(|(name, _)| *name == n)
+            .unwrap()
+            .1
+            .as_ref()
+            .unwrap()
+    };
+    for (a, b) in SCENES {
+        for (layout, offset) in [("overlapping", 2.), ("separated", 80.)] {
+            let near = place(by_name(b), offset);
+            let scene = [
+                DrawingSolid {
+                    solid: by_name(a),
+                    hatch: hatch(),
+                },
+                DrawingSolid {
+                    solid: &near,
+                    hatch: hatch(),
+                },
+            ];
+            for (view, options) in views([2., 0., 10.]) {
+                let name = format!("{a} + {b} {layout}");
+                check(&name, view, project_drawing(&scene, options), 2);
+            }
+        }
+    }
+    assert_eq!(seen, EXPECTED.len(), "every inventoried combination ran");
+}
