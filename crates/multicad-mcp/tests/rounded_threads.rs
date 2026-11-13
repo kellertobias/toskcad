@@ -1203,7 +1203,7 @@ fn metric_fit_catalog_owner_preview_and_receipts_keep_standard_limits_separate_f
     let before = h.document();
     let catalog = run(&h, "thread_profiles", json!({}));
     assert_eq!(catalog["metric_fit_presets"].as_array().unwrap().len(), 2);
-    assert_eq!(catalog["end_treatments"]["standalone_thread_only"], true);
+    assert_eq!(catalog["end_treatments"]["standalone_thread_only"], false);
     assert_eq!(h.document(), before);
     for row in model::metric_fit_presets() {
         let report = reviewed_native_thread(model::ThreadFamily::IsoMetric, metric_fit_args(&row));

@@ -675,7 +675,7 @@ pub(super) fn thread_profiles(_: &dyn Host, call: &Request, _: NoArgs) -> ToolRe
         "metric_fit_source":model::METRIC_FIT_SOURCE,"metric_fit_source_url":model::METRIC_FIT_SOURCE_URL,"metric_root_source_url":model::METRIC_ROOT_SOURCE_URL,
         "metric_fit_presets":model::metric_fit_presets(),
         "metric_fit_engagement":{"kinds":["intended_length","normal_group_assumed"],"omitted":"legacy complete-profile length","source_url":model::METRIC_ROOT_SOURCE_URL,"scope":"IS14962-1:2001 clause12 supports explicit normal-group assumption when engagement is unknown. Intent does not prove actual mating overlap, strength or blind clearance; physical geometry and original normal intervals remain independently validated."},
-        "end_treatments":{"family":"iso_metric","starts":[1],"representation":"modeled","standalone_thread_only":true,"start":["flat_cut","chamfer45"],"end":["flat_cut","cylindrical_relief"],"scope":"Custom engineering dimensions inside unchanged authored length; retains at least one full pitch. No DIN76 shoulder relief or natural helical runout."},
+        "end_treatments":{"family":"iso_metric","starts":[1],"representation":"modeled","standalone_thread_only":false,"start":["flat_cut","chamfer45"],"end":["flat_cut","cylindrical_relief"],"scope":"Custom engineering dimensions inside unchanged authored length; retains at least one full pitch. No DIN76 shoulder relief or natural helical runout."},
         "representation_binding":{"parameter_unit":"count","values":{"0":"cosmetic_envelope","1":"modeled"},"authority":"representation_parameter when present; literal otherwise","clear":"clear_representation_parameter","scope":"Exact evaluated values only; omitted edits retain the binding."},
         "metric_presets":model::metric_thread_presets().into_iter().map(|p|json!({"designation":p.designation,"diameter_mm":p.diameter_mm,"pitch_mm":p.pitch_mm})).collect::<Vec<_>>(),
         "unified_source":model::UNIFIED_THREAD_SOURCE,"unified_source_url":model::UNIFIED_THREAD_SOURCE_URL,"unified_profile_source_url":model::UNIFIED_PROFILE_SOURCE_URL,
@@ -704,18 +704,26 @@ pub(super) fn thread_profiles(_: &dyn Host, call: &Request, _: NoArgs) -> ToolRe
             "representations": ["modeled", "cosmetic_envelope"],
             "cosmetic_scope": "new_external only; receiving cuts require modeled geometry",
             "end_treatments": true,
-            "end_treatments_scope": "ISO metric new_external Modeled terminal cylindrical relief with a flat entry; explicit flat/flat is unchanged material. Entry chamfer and receiving end treatments remain unsupported",
+            "end_treatments_scope": "Modeled ISO metric external entry chamfers and terminal reliefs; combined internal 6H chamfer45 plus cylindrical terminal relief supports the exact full-height cylinder stock and flat single-start profile; small entry, partial stock and other unresolved source domains are refused. STEP for this combined internal provider is unsupported",
             "radial_taper": false,
             "step": true,
-            "step_scope": "Standalone straight modeled shafts with one to eight starts, flat or circular roots, and partial, full or overrun cap-entry external cuts and blind or through internal threads in round stock, within the bounded spline budget",
+            "step_scope": "Standalone straight modeled shafts with one to eight starts, flat or circular roots, and partial, full or overrun cap-entry external cuts and blind or through internal threads in round stock, within the bounded spline budget; combined internal entry plus terminal treatments are excluded from STEP",
             "manufacturing_mesh": true,
             "reference_data_includes_other_backends": true
+        });
+        report["active_geometry_support"]["combined_internal_treatments"] = json!({
+            "families":["iso_metric"],"fits":["metric_6h_internal"],"starts":[1],"representation":"modeled",
+            "receiving_stock":"original full-height cylinder with the exact resolved source frame",
+            "profile":"actual flat bands; no rounded-root substitution",
+            "start":"positive chamfer45","end":"positive cylindrical_relief",
+            "scope":"Complete source boundary, minimum wall and precision proofs remain mandatory; unresolved small entries and partial stock are refused",
+            "manufacturing_mesh":true,"step":false
         });
         report["fit"] = json!(
             "ISO metric supports nominal basic and listed historical 6g external and 6H internal fits. UNC/UNF use sourced 2A/2B fits. Straight custom, Trapezoidal, Acme and Buttress profiles use nominal basic dimensions."
         );
         report["manufacturing"] = json!(
-            "Modeled external shafts and cap-entry cylindrical receivers support certified mesh and STEP output within the bounded geometry budget. Source tool length is retained; manufacturing output contains only material within the stock. Cosmetic envelopes are refused for manufacturing output."
+            "Modeled external shafts and cap-entry cylindrical receivers support certified mesh and STEP output within the bounded geometry budget. Source tool length is retained; manufacturing output contains only material within the stock. Combined internal entry and terminal treatments support certified mesh only and explicitly refuse STEP. Cosmetic envelopes are refused for manufacturing output."
         );
     }
     Ok(report)

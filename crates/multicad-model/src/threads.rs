@@ -2,12 +2,13 @@
 mod cosmetic;
 mod end_treatments;
 mod internal;
+mod internal_treatments;
 mod pipe;
 use crate::{ModelError, error};
 use multicad_core::{
     document::EntityId,
     model::{
-        ResolvedThread, ThreadDefinition, ThreadFamily, ThreadHand, ThreadMode,
+        ResolvedThread, ThreadDefinition, ThreadFamily, ThreadFit, ThreadHand, ThreadMode,
         ThreadRepresentation,
     },
     parameters::EvaluatedParameters,
@@ -242,6 +243,22 @@ pub(crate) fn build_rust(
         .as_ref()
         .filter(|ends| ends.start_chamfer_radial_depth_mm != 0. || ends.end_relief_length_mm != 0.);
     if let Some(ends) = terminal {
+        // This combination was refused before entering the legacy receiving
+        // route. Preserve existing plain/single-treatment/exportable providers.
+        if source.mode == ThreadMode::CutInternal
+            && source.parameters.family == ThreadFamily::IsoMetric
+            && ends.start_chamfer_radial_depth_mm > 0.
+            && ends.end_relief_length_mm > 0.
+        {
+            if source.parameters.fit != ThreadFit::Metric6HInternal {
+                return Err(fail(
+                    "Combined internal entry and terminal relief is currently qualified for 6H metric threads only; nominal basic meshing is not yet supported",
+                ));
+            }
+            let target = receiving_target(feature, source, solids)?
+                .ok_or_else(|| fail("Combined internal treatments have no target predecessor"))?;
+            return internal_treatments::build(feature, &thread, target, policy, interrupt);
+        }
         if !matches!(
             source.mode,
             ThreadMode::NewExternal | ThreadMode::CutExternal
