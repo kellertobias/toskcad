@@ -37,6 +37,9 @@ impl Work<'_> {
         if self.interrupt.is_some_and(|f| f()) {
             return Err(Error::Cancelled);
         }
+        if amount > self.remaining {
+            mesh::parallel::refill(&mut self.remaining, amount)?;
+        }
         self.remaining = self.remaining.checked_sub(amount).ok_or(Error::Limit)?;
         Ok(())
     }

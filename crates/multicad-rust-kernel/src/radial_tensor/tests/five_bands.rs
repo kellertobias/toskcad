@@ -1,7 +1,7 @@
 //! Actual five-band geometry and adversarial controls through public stages.
 use super::*;
 
-fn graph(profile: &[[f64; 2]], root_arc: bool) -> BoundaryInput {
+pub(crate) fn graph(profile: &[[f64; 2]], root_arc: bool) -> BoundaryInput {
     let bands = if root_arc {
         profile.len() - 1
     } else {

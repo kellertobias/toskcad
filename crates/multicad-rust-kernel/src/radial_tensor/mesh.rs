@@ -8,6 +8,7 @@ mod cone;
 mod edge;
 mod embedding;
 mod normal_jet;
+pub(super) mod parallel;
 mod preflight;
 mod spline;
 mod strip;
@@ -29,6 +30,10 @@ struct Limits {
     preflight: bool,
     probe_cells: usize,
     compensation_cells: usize,
+    parallel_jobs: usize,
+    parallel_sources: usize,
+    parallel_bytes: usize,
+    parallel_stack: usize,
 }
 const DEFAULT_LIMITS: Limits = Limits {
     work: 512_000_000,
@@ -41,6 +46,10 @@ const DEFAULT_LIMITS: Limits = Limits {
     preflight: true,
     probe_cells: 512,
     compensation_cells: 65536,
+    parallel_jobs: 4096,
+    parallel_sources: 65536,
+    parallel_bytes: 32 * 1024 * 1024,
+    parallel_stack: 1024 * 1024,
 };
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CellCheck {
@@ -150,7 +159,11 @@ fn build_with_limits(
         v: vec![0., 1.],
     };
     counts(&grid, options.triangle_limit)?;
+    #[cfg(test)]
+    let probe = parallel_probe::start(parallel_probe::Stage::Prepare, &work);
     let mut prepared = Prepared::new(body, options, limits, &mut work)?;
+    #[cfg(test)]
+    parallel_probe::end(probe, &work);
     for side in &prepared.sides {
         if let Side::Cone(cone) = side {
             if cone.closure_error >= options.deflection {
@@ -173,6 +186,8 @@ fn build_with_limits(
         for attempt in 0..3 {
             work.step()?;
             let mut changes = Refinement::new(grid.u.len());
+            #[cfg(test)]
+            let probe = parallel_probe::start(parallel_probe::Stage::Emit, &work);
             let mesh = prepared.emit(
                 &grid,
                 &ring,
@@ -180,18 +195,47 @@ fn build_with_limits(
                 options.triangle_limit,
                 &mut work,
             )?;
+            #[cfg(test)]
+            parallel_probe::end(probe, &work);
             if prepared.limits.preflight
                 && prepared.tensor_cycle
                 && mesh.indices.len() / 3 >= 32768
-                && prepared.normal_preflight(&mesh, &grid, &ring, pass, &mut changes, &mut work)?
+                && {
+                    #[cfg(test)]
+                    let probe = parallel_probe::start(parallel_probe::Stage::Preflight, &work);
+                    let result = prepared.normal_preflight(
+                        &mesh,
+                        &grid,
+                        &ring,
+                        pass,
+                        &mut changes,
+                        &mut work,
+                    )?;
+                    #[cfg(test)]
+                    parallel_probe::end(probe, &work);
+                    result
+                }
             {
                 changes.apply(&mut grid, &mut work)?;
                 restart = true;
                 break;
             }
+            #[cfg(test)]
+            let probe = parallel_probe::start(parallel_probe::Stage::Check, &work);
             prepared.check(&mesh, &grid, &ring, pass, &mut changes, &mut work)?;
-            if changes.empty() && changes.embedding(&prepared, &grid, &ring, &mesh, &mut work)? {
+            #[cfg(test)]
+            parallel_probe::end(probe, &work);
+            if changes.empty() && {
+                #[cfg(test)]
+                let probe = parallel_probe::start(parallel_probe::Stage::Embedding, &work);
+                let result = changes.embedding(&prepared, &grid, &ring, &mesh, &mut work)?;
+                #[cfg(test)]
+                parallel_probe::end(probe, &work);
+                result
+            } {
                 work.step()?;
+                #[cfg(test)]
+                parallel_probe::finished(limits.work - work.remaining);
                 return Ok(mesh);
             }
             if changes.empty() {
@@ -404,120 +448,128 @@ impl<'a> Prepared<'a> {
         let options = self.options;
         let compensate = self.limits.compensate_v && self.tensor_cycle;
         let mut accepted = Vec::new();
-        let mut strips = self
-            .sides
-            .iter()
-            .map(|side| match side {
-                Side::Tensor(t) => Some(strip::Cache::new(t, self.limits.strips)),
-                Side::Cone(_) => None,
-            })
-            .collect::<Vec<_>>();
-        for row in 0..grid.v.len() - 1 {
-            for (side, nodes) in grid.u.iter().enumerate() {
-                if let Some(cache) = &mut strips[side] {
-                    cache.advance(grid.v[row], work)?;
-                }
-                // These immutable rail enclosures depend only on this
-                // side and longitudinal row. Reuse them across U cells;
-                // every U blend and actual-facet proof remains separate.
-                let cone_rows = if let Side::Cone(c) = &self.sides[side] {
-                    match c.rows([grid.v[row], grid.v[row + 1]], work) {
-                        Ok(rows) => Some(rows),
-                        Err(Error::Unresolved) => {
-                            changes.mark(self, grid, [side, 0, row], 1, work)?;
-                            continue;
-                        }
-                        Err(error) => return Err(error),
+        #[cfg(test)]
+        let probe = parallel_probe::start(parallel_probe::Stage::Cells, work);
+        let parallel = parallel::check(self, mesh, grid, ring, pass, changes, &mut accepted, work)?;
+        if !parallel {
+            let mut strips = self
+                .sides
+                .iter()
+                .map(|side| match side {
+                    Side::Tensor(t) => Some(strip::Cache::new(t, self.limits.strips)),
+                    Side::Cone(_) => None,
+                })
+                .collect::<Vec<_>>();
+            for row in 0..grid.v.len() - 1 {
+                for (side, nodes) in grid.u.iter().enumerate() {
+                    if let Some(cache) = &mut strips[side] {
+                        cache.advance(grid.v[row], work)?;
                     }
-                } else {
-                    None
-                };
-                for u in 0..nodes.len() - 1 {
-                    work.step()?;
-                    let range = [[nodes[u], nodes[u + 1]], [grid.v[row], grid.v[row + 1]]];
-                    let corner_indices = [
-                        ring.index(side, u, row),
-                        ring.index(side, u + 1, row),
-                        ring.index(side, u + 1, row + 1),
-                        ring.index(side, u, row + 1),
-                    ];
-                    let corners = corner_indices.map(|i| point(mesh, i));
-                    let cell = row * ring.entries.len() + ring.offsets[side] + u;
-                    let actual = std::array::from_fn::<_, 2, _>(|triangle| {
-                        std::array::from_fn::<_, 3, _>(|k| {
-                            let index = mesh.indices[6 * cell + 3 * triangle + k] as usize;
-                            corner_indices
-                                .iter()
-                                .position(|&corner| corner == index)
-                                .expect("constructed quad uses its own corners")
-                        })
-                    });
-                    let topology = actual
-                        .into_iter()
-                        .flatten()
-                        .enumerate()
-                        .fold(0_u64, |key, (i, v)| key | ((v as u64) << (2 * i)));
-                    let mut key = [0_u64; 18];
-                    key[..6].copy_from_slice(&[
-                        side as u64,
-                        range[0][0].to_bits(),
-                        range[0][1].to_bits(),
-                        range[1][0].to_bits(),
-                        range[1][1].to_bits(),
-                        topology,
-                    ]);
-                    for (slot, value) in key[6..].iter_mut().zip(corners.into_iter().flatten()) {
-                        *slot = value.to_bits();
-                    }
-                    // Only successful full certificates are retained. The
-                    // immutable owner/options and exact UV/topology/point
-                    // key prevent reuse across a different actual facet.
-                    work.charge(128)?;
-                    if self.certificates.contains(&key) {
-                        if compensate && accepted.len() < self.limits.compensation_cells {
-                            work.charge(4)?;
-                            accepted.push([side, u, row]);
-                        }
-                        continue;
-                    }
-                    let verdict = match self.cell_check(
-                        CandidateCell {
-                            side,
-                            range,
-                            vertices: corners,
-                            actual,
-                        },
-                        cone_rows.as_ref(),
-                        strips[side].as_mut(),
-                        work,
-                    ) {
-                        Ok(v) => Some(v),
-                        Err(Error::Unresolved) => None,
-                        Err(e) => return Err(e),
-                    };
-                    if compensate
-                        && verdict == Some(CellCheck::Normal)
-                        && accepted.len() < self.limits.compensation_cells
-                    {
-                        work.charge(4)?;
-                        accepted.push([side, u, row]);
-                    }
-                    if verdict == Some(CellCheck::Match) {
-                        if compensate && accepted.len() < self.limits.compensation_cells {
-                            work.charge(4)?;
-                            accepted.push([side, u, row]);
-                        }
-                        work.charge(128)?;
-                        if self.certificates.len() < self.limits.certificates {
-                            self.certificates.insert(key);
+                    // These immutable rail enclosures depend only on this
+                    // side and longitudinal row. Reuse them across U cells;
+                    // every U blend and actual-facet proof remains separate.
+                    let cone_rows = if let Side::Cone(c) = &self.sides[side] {
+                        match c.rows([grid.v[row], grid.v[row + 1]], work) {
+                            Ok(rows) => Some(rows),
+                            Err(Error::Unresolved) => {
+                                changes.mark(self, grid, [side, 0, row], 1, work)?;
+                                continue;
+                            }
+                            Err(error) => return Err(error),
                         }
                     } else {
-                        let axis = self.hint(side, range, pass, work)?;
-                        changes.mark(self, grid, [side, u, row], axis, work)?;
+                        None
+                    };
+                    for u in 0..nodes.len() - 1 {
+                        work.step()?;
+                        let range = [[nodes[u], nodes[u + 1]], [grid.v[row], grid.v[row + 1]]];
+                        let corner_indices = [
+                            ring.index(side, u, row),
+                            ring.index(side, u + 1, row),
+                            ring.index(side, u + 1, row + 1),
+                            ring.index(side, u, row + 1),
+                        ];
+                        let corners = corner_indices.map(|i| point(mesh, i));
+                        let cell = row * ring.entries.len() + ring.offsets[side] + u;
+                        let actual = std::array::from_fn::<_, 2, _>(|triangle| {
+                            std::array::from_fn::<_, 3, _>(|k| {
+                                let index = mesh.indices[6 * cell + 3 * triangle + k] as usize;
+                                corner_indices
+                                    .iter()
+                                    .position(|&corner| corner == index)
+                                    .expect("constructed quad uses its own corners")
+                            })
+                        });
+                        let topology = actual
+                            .into_iter()
+                            .flatten()
+                            .enumerate()
+                            .fold(0_u64, |key, (i, v)| key | ((v as u64) << (2 * i)));
+                        let mut key = [0_u64; 18];
+                        key[..6].copy_from_slice(&[
+                            side as u64,
+                            range[0][0].to_bits(),
+                            range[0][1].to_bits(),
+                            range[1][0].to_bits(),
+                            range[1][1].to_bits(),
+                            topology,
+                        ]);
+                        for (slot, value) in key[6..].iter_mut().zip(corners.into_iter().flatten())
+                        {
+                            *slot = value.to_bits();
+                        }
+                        // Only successful full certificates are retained. The
+                        // immutable owner/options and exact UV/topology/point
+                        // key prevent reuse across a different actual facet.
+                        work.charge(128)?;
+                        if self.certificates.contains(&key) {
+                            if compensate && accepted.len() < self.limits.compensation_cells {
+                                work.charge(4)?;
+                                accepted.push([side, u, row]);
+                            }
+                            continue;
+                        }
+                        let verdict = match self.cell_check(
+                            CandidateCell {
+                                side,
+                                range,
+                                vertices: corners,
+                                actual,
+                            },
+                            cone_rows.as_ref(),
+                            strips[side].as_mut(),
+                            work,
+                        ) {
+                            Ok(v) => Some(v),
+                            Err(Error::Unresolved) => None,
+                            Err(e) => return Err(e),
+                        };
+                        if compensate
+                            && verdict == Some(CellCheck::Normal)
+                            && accepted.len() < self.limits.compensation_cells
+                        {
+                            work.charge(4)?;
+                            accepted.push([side, u, row]);
+                        }
+                        if verdict == Some(CellCheck::Match) {
+                            if compensate && accepted.len() < self.limits.compensation_cells {
+                                work.charge(4)?;
+                                accepted.push([side, u, row]);
+                            }
+                            work.charge(128)?;
+                            if self.certificates.len() < self.limits.certificates {
+                                self.certificates.insert(key);
+                            }
+                        } else {
+                            let axis = self.hint(side, range, pass, work)?;
+                            changes.mark(self, grid, [side, u, row], axis, work)?;
+                        }
                     }
                 }
             }
         }
+        #[cfg(test)]
+        parallel_probe::end(probe, work);
         if compensate {
             changes.compensate(self, grid, mesh, ring, &accepted, work)?;
         }
@@ -970,3 +1022,6 @@ fn quad_triangles(points: [Point; 4]) -> [[usize; 3]; 2] {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(super) mod parallel_probe;
