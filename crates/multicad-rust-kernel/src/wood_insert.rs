@@ -3,7 +3,9 @@
 use crate::{authored_flat_thread::AuthoredThread, tapered_thread::interval::I};
 use num_rational::BigRational;
 
+mod caps;
 mod classify;
+pub use caps::{CapCell, CapCellBounds, CapDomains, CapEnd, CapKnot, CapOptions, Side};
 #[cfg(test)]
 mod tests;
 

@@ -40,7 +40,7 @@ fn source(outer: bool, left: bool, starts: u32, nonbinary: bool) -> AuthoredThre
     )
     .unwrap()
 }
-fn fixture(left: bool, starts: u32, nonbinary: bool) -> Insert {
+pub(super) fn fixture(left: bool, starts: u32, nonbinary: bool) -> Insert {
     Insert::new(
         source(true, left, starts, nonbinary),
         source(false, !left, starts, nonbinary),
