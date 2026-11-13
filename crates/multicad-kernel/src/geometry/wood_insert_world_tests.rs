@@ -5,7 +5,7 @@ use multicad_rust_kernel::{
     helical_thread::Spec,
     wood_insert::Insert,
 };
-fn source(left: bool) -> Insert {
+pub(super) fn source(left: bool) -> Insert {
     let quality = SourceOptions {
         position_limit_mm: 1e-7,
         normal_angle_limit_rad: 1e-7,

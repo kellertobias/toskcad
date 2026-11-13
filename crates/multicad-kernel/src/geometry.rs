@@ -20,6 +20,9 @@ pub(crate) mod circular_pocket_body;
 pub(crate) mod construction;
 mod cosmetic_fastener_body;
 mod entry_chamfer_body;
+mod wood_insert_body;
+use wood_insert_body::WoodInsertBody;
+pub use wood_insert_body::WoodInsertData;
 mod wood_insert_material;
 pub use wood_insert_material::{WoodInsertFaceProperties, WoodInsertMaterial};
 mod helical_body;
@@ -704,6 +707,7 @@ enum SolidBody {
     EntryChamfer(Rc<EntryChamferBody>, PlaneFrame),
     RoundedThreadBore(Rc<RoundedThreadBoreBody>, PlaneFrame),
     InternalThreadTreatment(Rc<InternalThreadTreatmentBody>, PlaneFrame),
+    WoodInsert(Rc<WoodInsertBody>, PlaneFrame),
     HelicalTubeCut(Rc<HelicalTubeBody>, PlaneFrame),
     Linear(Rc<LinearBody>, PlaneFrame),
     Revolved(Rc<RevolutionBody>, PlaneFrame),
@@ -1168,6 +1172,7 @@ impl Solid {
             SolidBody::InternalThreadTreatment(body, frame) => {
                 SolidBody::InternalThreadTreatment(Rc::clone(body), *frame)
             }
+            SolidBody::WoodInsert(body, frame) => SolidBody::WoodInsert(Rc::clone(body), *frame),
             SolidBody::RoundedThread(body, frame) => {
                 SolidBody::RoundedThread(Rc::clone(body), *frame)
             }
@@ -1516,6 +1521,11 @@ impl Solid {
                     )?;
                     SolidBody::Annulus(Rc::clone(body), frame)
                 }
+                SolidBody::WoodInsert(body, frame) => {
+                    let frame = transform.frame(*frame);
+                    body.material(frame, self.policy)?;
+                    SolidBody::WoodInsert(Rc::clone(body), frame)
+                }
                 SolidBody::InternalThreadTreatment(body, frame) => {
                     let frame = transform.frame(*frame);
                     body.validate_frame(frame, self.policy)?;
@@ -1691,6 +1701,23 @@ impl Solid {
         Ok(result)
     }
     pub fn volume_mm3(&self) -> Result<f64, GeometryError> {
+        if let Some((body, frame)) = self.wood_insert_body() {
+            let material = body.material(frame, self.policy)?;
+            let b = material.source();
+            let scale = b
+                .outer()
+                .maximum_radius_mm()
+                .max(b.full_length_mm())
+                .max(1.);
+            let v = material.volume_bounds(
+                multicad_rust_kernel::wood_insert::QueryOptions {
+                    volume_error_mm3: (self.policy.linear_tolerance_mm * scale * scale).max(1e-7),
+                    maximum_cells: 10,
+                },
+                None,
+            )?;
+            return Ok(v[0].midpoint(v[1]));
+        }
         if let Some((body, frame)) = self.helical_body()
             && let Some(interval) = body.phillips_volume(frame)
         {
@@ -1824,6 +1851,9 @@ impl Solid {
         ffi::solid_count(self.occt()?).map_err(|e| native("solid count", e))
     }
     pub fn bounds(&self) -> Result<Bounds, GeometryError> {
+        if let Some((body, frame)) = self.wood_insert_body() {
+            return body.material(frame, self.policy)?.bounds();
+        }
         if let Some((body, frame)) = self.internal_thread_treatment_body() {
             return Ok(body.bounds(frame));
         }
@@ -1996,6 +2026,9 @@ impl Solid {
         crate::planar_contours::extract(self, face, frame, self.policy)
     }
     pub fn faces(&self) -> Result<Vec<Face>, GeometryError> {
+        if let Some((body, frame)) = self.wood_insert_body() {
+            return body.material(frame, self.policy)?.faces(self.policy, None);
+        }
         if let Some((body, frame)) = self.helical_body()
             && let Some(faces) = body.phillips_faces(frame, self.policy)
         {
@@ -2194,6 +2227,14 @@ impl Solid {
             ),
             SolidBody::EntryChamfer(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::InternalThreadTreatment(body, frame) => body.mesh(*frame, rust_options),
+            SolidBody::WoodInsert(body, frame) => body.material(*frame, self.policy)?.mesh(
+                MeshOptions {
+                    linear_deflection_mm: rust_options.deflection,
+                    angular_deflection_rad: rust_options.angle,
+                    maximum_triangles: rust_options.triangle_limit as u32,
+                },
+                None,
+            ),
             SolidBody::Helical(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::RoundedThreadBore(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::RoundedThread(body, frame) => body.mesh(*frame, rust_options),
@@ -2309,6 +2350,7 @@ impl Solid {
             .is_some_and(|(body, _)| body.has_phillips_source())
             || self.has_retained_radial_source()
             || self.internal_thread_treatment_body().is_some()
+            || self.wood_insert_body().is_some()
             || self
                 .rust_compound()
                 .is_some_and(|compound| compound.members().any(Self::has_certified_source_mesh))
@@ -2481,7 +2523,9 @@ impl Solid {
             None => (Vec::new(), Vec::new()),
             Some(deflection) if self.uses_rust_geometry() => {
                 self.validate_display_deflection(deflection)?;
-                let edges = if let Some((body, frame)) = self.internal_thread_treatment_body() {
+                let edges = if let Some((body, frame)) = self.wood_insert_body() {
+                    body.display_edges(frame, deflection, self.policy)?
+                } else if let Some((body, frame)) = self.internal_thread_treatment_body() {
                     body.display_edges(frame, deflection, self.policy)?
                 } else if let Some((body, frame)) = self.rounded_thread_bore_body() {
                     body.display_edges(frame, deflection)?
@@ -2518,6 +2562,9 @@ impl Solid {
     }
 
     pub fn display_edges(&self, deflection_mm: f64) -> Result<Vec<DisplayEdge>, GeometryError> {
+        if let Some((body, frame)) = self.wood_insert_body() {
+            return body.display_edges(frame, deflection_mm, self.policy);
+        }
         self.validate_display_deflection(deflection_mm)?;
         if let Some((body, frame)) = self.internal_thread_treatment_body() {
             return body.display_edges(frame, deflection_mm, self.policy);
@@ -2619,6 +2666,7 @@ impl Solid {
             SolidBody::Annulus(body, _) => body.feature,
             SolidBody::EntryChamfer(body, _) => body.feature,
             SolidBody::InternalThreadTreatment(body, _) => body.feature,
+            SolidBody::WoodInsert(body, _) => body.feature,
             SolidBody::Helical(body, _) => body.feature,
             SolidBody::RoundedThreadBore(body, _) => body.feature,
             SolidBody::RoundedThread(body, _) => body.feature,
@@ -2695,7 +2743,9 @@ impl Solid {
                     self.policy.linear_tolerance_mm,
                 )
             }
-            SolidBody::CosmeticFastener(..) | SolidBody::InternalThreadTreatment(..) => false,
+            SolidBody::CosmeticFastener(..)
+            | SolidBody::InternalThreadTreatment(..)
+            | SolidBody::WoodInsert(..) => false,
             SolidBody::WarpedUnion(body, _) => {
                 multicad_rust_kernel::step::supports_warped_union(&body.geometry)
             }
@@ -2906,9 +2956,9 @@ impl Solid {
                 frame.v,
                 self.policy.linear_tolerance_mm,
             ),
-            SolidBody::CosmeticFastener(..) | SolidBody::InternalThreadTreatment(..) => {
-                Err(step::StepError::Unsupported)
-            }
+            SolidBody::CosmeticFastener(..)
+            | SolidBody::InternalThreadTreatment(..)
+            | SolidBody::WoodInsert(..) => Err(step::StepError::Unsupported),
             SolidBody::Orthogonal(body, frame) => body.append_step(writer, *frame),
             SolidBody::Occt(_) => unreachable!("native STEP dispatched above"),
         }
