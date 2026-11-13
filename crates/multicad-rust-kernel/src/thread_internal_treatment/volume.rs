@@ -1,25 +1,7 @@
-//! Finite source-column integration, independent of any tessellation.
+//! Literal affine source provider and its independent angular-sliver correction.
 use super::*;
 use crate::tapered_thread::interval::I;
-fn clamp(value: I, lower: f64, upper: f64) -> I {
-    I::new(value.lo.clamp(lower, upper), value.hi.clamp(lower, upper))
-}
-struct Work<'a> {
-    left: usize,
-    interrupt: Option<&'a dyn Fn() -> bool>,
-}
-impl Work<'_> {
-    fn step(&mut self) -> Result<(), Error> {
-        if self.interrupt.is_some_and(|check| check()) {
-            return Err(Error::Cancelled);
-        }
-        if self.left == 0 {
-            return Err(Error::Limit);
-        }
-        self.left -= 1;
-        Ok(())
-    }
-}
+use crate::thread_cavity_volume::{self, Source};
 impl Cavity {
     pub fn removed_volume_mm3(&self, options: QueryOptions) -> Result<Enclosure, Error> {
         self.removed_volume_with_interrupt(options, None)
@@ -29,69 +11,12 @@ impl Cavity {
         options: QueryOptions,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Enclosure, Error> {
-        if !options.tolerance_mm3.is_finite() || options.tolerance_mm3 <= 0. {
-            return Err(Error::Invalid);
-        }
-        if options.maximum_cells == 0 || options.maximum_cells > 1_000_000 {
-            return Err(Error::Limit);
-        }
-        let mut work = Work {
-            left: options.maximum_cells,
+        thread_cavity_volume::integrate(
+            self,
+            options,
+            self.phase_advance_volume_reserve(),
             interrupt,
-        };
-        work.step()?;
-        let pi = I::new(
-            std::f64::consts::PI.next_down(),
-            std::f64::consts::PI.next_up(),
-        );
-        let factor = pi / I::point(self.thread.spec().pitch_mm);
-        let mut sum = if self.intent.terminal.is_some() {
-            pi * I::point(self.terminal_radius).square()
-                * (I::point(self.full_length_mm()) - I::point(self.terminal_station))
-        } else {
-            I::point(0.)
-        };
-        // Source dimensions are <=1e7, pitch>=.001, affine slopes<58 and
-        // constructor-owned cone slope encloses the endpoint-derived 45° law.
-        // Restricted phase bands therefore keep every product far below f64
-        // overflow. Query options change subdivision only; the final whole
-        // interval still has to be finite, nonnegative and within accuracy.
-        let knots = self.thread.profile_breaks();
-        let mut pending = Vec::with_capacity(64);
-        for band in 0..5 {
-            pending.push((
-                knots[band],
-                knots[band + 1],
-                band,
-                options.tolerance_mm3 / 10.,
-            ));
-        }
-        while let Some((a, b, band, tolerance)) = pending.pop() {
-            work.step()?;
-            let value = self.volume_cell(a, b, band, factor);
-            if value.width() <= tolerance {
-                sum = sum + value;
-                continue;
-            }
-            let mid = a.midpoint(b);
-            if mid == a || mid == b || tolerance == 0. {
-                return Err(Error::Unresolved);
-            }
-            pending.push((a, mid, band, tolerance / 2.));
-            pending.push((mid, b, band, tolerance / 2.));
-        }
-        // A literal evaluated helical rate need not advance by an exact lead
-        // over true 2pi. Enclose that physical angular sliver separately;
-        // the constant terminal cylinder has no phase dependence.
-        let reserve = self.phase_advance_volume_reserve();
-        let sum = I::new((sum.lo - reserve).next_down(), (sum.hi + reserve).next_up());
-        if !sum.valid() || sum.lo < 0. || sum.width() > options.tolerance_mm3 {
-            return Err(Error::Unresolved);
-        }
-        Ok(Enclosure {
-            lower: sum.lo,
-            upper: sum.hi,
-        })
+        )
     }
     pub(super) fn phase_advance_volume_reserve(&self) -> f64 {
         let pi = I::new(
@@ -144,36 +69,33 @@ impl Cavity {
             slope,
         )
     }
-    fn column(&self, r: I) -> I {
-        let f = I::point(self.terminal_station);
-        let Some(c) = self.intent.entry_depth_mm else {
-            return r.square() * f;
-        };
-        let a = I::point(self.entry_radius);
-        let [lo, hi] = self.entry_slope.expect("validated enabled cone");
-        let k = I::new(lo, hi);
-        let g = clamp((a - r) / k, 0., c);
-        // Two positive physical height columns. This remains correct at both
-        // clamp endpoints, including a last-bit source flank/root discrepancy.
-        r.square() * (f - g) + g * (a.square() - a * k * g + k.square() * g.square() / I::point(3.))
+}
+impl Source for Cavity {
+    fn phase_knots(&self) -> [f64; 6] {
+        self.thread.profile_breaks()
     }
-    fn volume_cell(&self, a: f64, b: f64, band: usize, factor: I) -> I {
-        let width = I::point(b) - I::point(a);
-        let midpoint = (I::point(a) + I::point(b)) / I::point(2.);
-        let (r, _) = self.profile(band, midpoint);
-        let (range, slope) = self.profile(band, I::new(a, b));
-        let f = I::point(self.terminal_station);
-        let extra = if let Some([lo, hi]) = self.entry_slope {
-            I::point(range.magnitude()) / I::new(lo, hi)
-        } else {
-            I::point(0.)
-        };
-        // H(r)=integral max(r,cone(z))² dz is C1 across both clamp thresholds.
-        // H'=2r(F-g); a.e. H''<=2(F+r/k). Thus the first derivative is
-        // Lipschitz and the ordinary midpoint error is valid across a kink;
-        // no high-derivative quadrature is applied across an unsplit MAX.
-        let second = I::point(2.) * slope.square() * (f + extra);
-        let error = second * width.square() / I::point(24.);
-        (self.column(r) + I::new(-error.hi, error.hi)) * width * factor
+    fn profile(&self, band: usize, q: I) -> (I, I) {
+        Cavity::profile(self, band, q)
+    }
+    fn pitch_mm(&self) -> f64 {
+        self.thread.spec().pitch_mm
+    }
+    fn full_length_mm(&self) -> f64 {
+        Cavity::full_length_mm(self)
+    }
+    fn prefix_length_mm(&self) -> f64 {
+        self.terminal_station
+    }
+    fn terminal_radius_mm(&self) -> Option<f64> {
+        self.intent.terminal.map(|_| self.terminal_radius)
+    }
+    fn entry(&self) -> Option<thread_cavity_volume::Entry> {
+        self.intent
+            .entry_depth_mm
+            .map(|depth| thread_cavity_volume::Entry {
+                radius: self.entry_radius,
+                depth,
+                slope: self.entry_slope.expect("validated enabled cone"),
+            })
     }
 }

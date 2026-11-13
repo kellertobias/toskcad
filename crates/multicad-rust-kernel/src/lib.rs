@@ -4,6 +4,7 @@ mod exact_binary;
 
 pub mod annulus;
 pub mod authored_flat_thread;
+pub mod authored_internal_treatment;
 pub mod axial_pipe_thread;
 pub mod axial_profile_stack;
 pub mod bevel_gear;
@@ -63,6 +64,7 @@ pub mod step;
 pub mod step_read;
 pub mod straight_rack;
 pub mod tapered_thread;
+mod thread_cavity_volume;
 pub mod thread_counterbore;
 pub mod thread_end_relief;
 pub mod thread_entry_chamfer;

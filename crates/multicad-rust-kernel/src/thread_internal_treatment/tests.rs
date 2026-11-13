@@ -405,6 +405,24 @@ fn nonbinary_literal_phase_advance_is_enclosed_without_reinterpreting_the_source
             .unwrap();
             let reserve = source.phase_advance_volume_reserve();
             assert!(reserve.is_finite() && reserve > 0.);
+            assert_eq!(
+                source.removed_volume_mm3(QueryOptions {
+                    tolerance_mm3: reserve,
+                    maximum_cells: 1
+                }),
+                Err(Error::Unresolved)
+            );
+            let mut barely_available = 2. * reserve;
+            for _ in 0..4 {
+                barely_available = barely_available.next_up();
+            }
+            assert_eq!(
+                source.removed_volume_mm3(QueryOptions {
+                    tolerance_mm3: barely_available,
+                    ..Default::default()
+                }),
+                Err(Error::Unresolved)
+            );
             let result = source
                 .removed_volume_mm3(QueryOptions {
                     tolerance_mm3: 1e-7 * scale.powi(3),
