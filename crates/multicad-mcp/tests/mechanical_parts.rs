@@ -416,18 +416,23 @@ fn nut_uses_shared_thread_recipe_and_manufacturing_guard_while_bearing_is_explic
     assert_eq!(
         profiles["supported_geometry"],
         json!([
-            "washer",
-            "hex_nut",
-            "bearing_envelope",
             "machine_screw",
+            "hex_nut",
+            "washer",
+            "bearing_envelope",
             "wood_screw"
         ])
     );
+    assert_eq!(
+        profiles["active_geometry_support"]["hex_nut_metric_fits"],
+        json!(["nominal_basic", "metric_6h_internal"])
+    );
+    assert_eq!(profiles["active_geometry_support"]["threaded_step"], true);
     assert!(
-        profiles["catalog_status"]
+        profiles["bearing"]
             .as_str()
             .unwrap()
-            .contains("sourced dimensional references")
+            .contains("envelope only")
     );
 }
 #[test]
