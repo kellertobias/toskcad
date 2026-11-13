@@ -3,10 +3,10 @@
   "entries": [
     {
       "expected": "pass",
-      "export_ms": 0.6342500000000001,
+      "export_ms": 1.95025,
       "finding": null,
       "id": "freecad-drilled-box",
-      "import_ms": 1.929,
+      "import_ms": 14.063915999999999,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 150,
@@ -28,6 +28,7 @@
           ]
         ],
         "faces": 7,
+        "mesh_deviation_mm": 3.972054645195637e-15,
         "reader": "OpenCascade 7.9.3",
         "solids": 1,
         "volume_mm3": 4699.469035085126
@@ -38,7 +39,7 @@
         "mass_kg": 0.012688566394729843,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 12047,
+        "project_bytes": 12043,
         "section": {
           "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
           "plane_z_mm": 9.0
@@ -161,10 +162,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.262709,
+      "export_ms": 0.354166,
       "finding": null,
       "id": "occt-placed-box",
-      "import_ms": 2.098417,
+      "import_ms": 3.149167,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 18,
@@ -186,6 +187,7 @@
           ]
         ],
         "faces": 6,
+        "mesh_deviation_mm": 1.7763568394002505e-15,
         "reader": "OpenCascade 7.9.3",
         "solids": 1,
         "volume_mm3": 3455.9999999999973
@@ -196,7 +198,7 @@
         "mass_kg": 0.0093312,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 19949,
+        "project_bytes": 19956,
         "section": {
           "curves": 4,
           "hatch_vectors": 217,
@@ -325,10 +327,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.169958,
+      "export_ms": 0.21829099999999999,
       "finding": null,
       "id": "occt-cylinder",
-      "import_ms": 0.8144170000000001,
+      "import_ms": 1.1770420000000001,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 144,
@@ -350,6 +352,7 @@
           ]
         ],
         "faces": 3,
+        "mesh_deviation_mm": 0.04731179211313297,
         "reader": "OpenCascade 7.9.3",
         "solids": 1,
         "volume_mm3": 1696.4600329384846
@@ -360,7 +363,7 @@
         "mass_kg": 0.004580442088933918,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 9191,
+        "project_bytes": 9188,
         "section": {
           "curves": 1,
           "hatch_vectors": 120,
@@ -490,10 +493,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.237458,
+      "export_ms": 1.733375,
       "finding": null,
       "id": "occt-torus",
-      "import_ms": 0.609666,
+      "import_ms": 2.3692919999999997,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 33696,
@@ -515,6 +518,7 @@
           ]
         ],
         "faces": 1,
+        "mesh_deviation_mm": 0.032518951357307126,
         "reader": "OpenCascade 7.9.3",
         "solids": 1,
         "volume_mm3": 2131.8345506352966
@@ -525,7 +529,7 @@
         "mass_kg": 0.005755953286715314,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 7553,
+        "project_bytes": 7557,
         "section": {
           "curves": 2,
           "hatch_vectors": 480,
@@ -655,10 +659,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 2.4945000000000004,
+      "export_ms": 4.051334,
       "finding": null,
       "id": "occt-box-void",
-      "import_ms": 11.550542,
+      "import_ms": 146.59425000000002,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 180,
@@ -680,6 +684,7 @@
           ]
         ],
         "faces": 12,
+        "mesh_deviation_mm": 3.794299872214038e-15,
         "reader": "OpenCascade 7.9.3",
         "solids": 1,
         "volume_mm3": 5759.999999999999
@@ -690,7 +695,7 @@
         "mass_kg": 0.015552,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 33611,
+        "project_bytes": 33617,
         "section": {
           "curves": 8,
           "hatch_vectors": 466,
@@ -819,10 +824,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.9970840000000001,
+      "export_ms": 1.0905,
       "finding": null,
       "id": "occt-pocketed-plate",
-      "import_ms": 36.754791000000004,
+      "import_ms": 9.587167,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 171,
@@ -844,6 +849,7 @@
           ]
         ],
         "faces": 13,
+        "mesh_deviation_mm": 0.033507521324616034,
         "reader": "OpenCascade 7.9.3",
         "solids": 1,
         "volume_mm3": 9170.628330588459
@@ -854,7 +860,7 @@
         "mass_kg": 0.02476069649258884,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 37854,
+        "project_bytes": 37862,
         "section": {
           "curves": 5,
           "hatch_vectors": 555,
@@ -991,7 +997,7 @@
         "summary": "A standalone conical frustum (CONICAL_SURFACE between two planar caps) is outside the Rust import families; only certified conical stock mouths and thread treatments are admitted."
       },
       "id": "occt-cone-frustum",
-      "import_ms": 0.616792,
+      "import_ms": 0.649292,
       "location": "vendored",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -1036,7 +1042,7 @@
         "summary": "A valid complete OpenCascade sphere (one SPHERICAL_SURFACE face bounded by its seam and degenerate pole edges) is rejected as invalid STEP geometry, although the matrix lists complete spheres; the reader only admits its own sphere encoding."
       },
       "id": "occt-sphere",
-      "import_ms": 0.204416,
+      "import_ms": 0.216708,
       "location": "vendored",
       "message": "STEP import: Invalid STEP geometry",
       "outcome": "invalid",
@@ -1082,7 +1088,7 @@
         "summary": "General solids of revolution mixing planar, cylindrical and toroidal bands are outside the Rust import families."
       },
       "id": "occt-revolved-vase",
-      "import_ms": 1.150292,
+      "import_ms": 0.915625,
       "location": "vendored",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -1128,7 +1134,7 @@
         "summary": "A 9.6 kB single-spline prism from OpenCascade reports the Rust import budget as exceeded instead of importing or refusing it as unsupported; a resource Limit is the wrong classification for this small input."
       },
       "id": "occt-spline-prism",
-      "import_ms": 0.766167,
+      "import_ms": 0.918166,
       "location": "vendored",
       "message": "STEP import: STEP exceeds the Rust import budget",
       "outcome": "limit",
@@ -1173,7 +1179,7 @@
         "summary": "STEP assembly product structure (NEXT_ASSEMBLY_USAGE_OCCURRENCE, CONTEXT_DEPENDENT_SHAPE_REPRESENTATION, ITEM_DEFINED_TRANSFORMATION) is refused; only one flat ADVANCED_BREP_SHAPE_REPRESENTATION is read."
       },
       "id": "occt-two-bodies",
-      "import_ms": 1.681208,
+      "import_ms": 1.914042,
       "location": "vendored",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -1221,7 +1227,7 @@
         "summary": "KiCad wraps even a bare board in an assembly occurrence with an ITEM_DEFINED_TRANSFORMATION, which the Rust reader refuses; every KiCad board export is currently unsupported."
       },
       "id": "kicad-plate-holes",
-      "import_ms": 0.983584,
+      "import_ms": 1.165458,
       "location": "vendored",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -1269,7 +1275,7 @@
         "summary": "KiCad assembly occurrence placement is refused (same cause as kicad-plate-holes)."
       },
       "id": "kicad-round-board",
-      "import_ms": 0.519459,
+      "import_ms": 0.636375,
       "location": "vendored",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -1316,7 +1322,7 @@
         "summary": "KiCad assembly occurrence placement is refused (same cause as kicad-plate-holes)."
       },
       "id": "kicad-slotted-rounded-board",
-      "import_ms": 1.644416,
+      "import_ms": 2.738417,
       "location": "vendored",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -1364,7 +1370,7 @@
         "summary": "Placed component assemblies (board plus component occurrence) are refused by the Rust reader; KiCad component placement is only available through the native import_kicad board reader."
       },
       "id": "kicad-board-with-part",
-      "import_ms": 0.910875,
+      "import_ms": 1.004375,
       "location": "vendored",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -1407,10 +1413,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.18433300000000002,
+      "export_ms": 0.1825,
       "finding": null,
       "id": "occt-annulus",
-      "import_ms": 1.4120000000000001,
+      "import_ms": 1.284334,
       "location": "repository",
       "mesh": {
         "edge_pairs": 300,
@@ -1432,6 +1438,7 @@
           ]
         ],
         "faces": 4,
+        "mesh_deviation_mm": 0.048297454448823274,
         "reader": "OpenCascade 7.9.3",
         "solids": 1,
         "volume_mm3": 117.62564681440256
@@ -1442,7 +1449,7 @@
         "mass_kg": 0.00031758924639888606,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 13637,
+        "project_bytes": 13639,
         "section": {
           "curves": 8,
           "hatch_vectors": 50,
@@ -1573,10 +1580,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.18070799999999998,
+      "export_ms": 0.171708,
       "finding": null,
       "id": "occt-regular-torus",
-      "import_ms": 0.464375,
+      "import_ms": 0.45508400000000004,
       "location": "repository",
       "mesh": {
         "edge_pairs": 16224,
@@ -1598,6 +1605,7 @@
           ]
         ],
         "faces": 1,
+        "mesh_deviation_mm": 0.021563520680746687,
         "reader": "OpenCascade 7.9.3",
         "solids": 1,
         "volume_mm3": 222.0660990245101
@@ -1738,10 +1746,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.215125,
+      "export_ms": 0.273625,
       "finding": null,
       "id": "kicad-vendored-Mounting_Wuerth_WA-SMST-3.3mm_H1mm_9774010960",
-      "import_ms": 1.139791,
+      "import_ms": 1.4040000000000001,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 378,
@@ -1763,6 +1771,7 @@
           ]
         ],
         "faces": 6,
+        "mesh_deviation_mm": 0.033507521324614736,
         "reader": "OpenCascade 7.9.3",
         "solids": 1,
         "volume_mm3": 27.14336052701575
@@ -1892,10 +1901,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.9859999999999999,
+      "export_ms": 0.9520839999999999,
       "finding": null,
       "id": "kicad-vendored-L_Wuerth_HCM-7070",
-      "import_ms": 21.656959,
+      "import_ms": 31.4635,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 150,
@@ -1917,6 +1926,7 @@
           ]
         ],
         "faces": 14,
+        "mesh_deviation_mm": 4.440892098500626e-16,
         "reader": "OpenCascade 7.9.3",
         "solids": 1,
         "volume_mm3": 343.0839999999999
@@ -1927,7 +1937,7 @@
         "mass_kg": 0.0009263268,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 18657,
+        "project_bytes": 18658,
         "section": {
           "curves": 4,
           "hatch_vectors": 99,
@@ -2055,10 +2065,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.453834,
+      "export_ms": 0.507167,
       "finding": null,
       "id": "kicad-lib-Pin_D0.7mm_L6.5mm_W1.8mm_FlatFork",
-      "import_ms": 3.952,
+      "import_ms": 3.621959,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 318,
@@ -2080,6 +2090,7 @@
           ]
         ],
         "faces": 15,
+        "mesh_deviation_mm": 0.0038082893686066177,
         "reader": "OpenCascade 7.9.3",
         "solids": 1,
         "volume_mm3": 3.332264398637592
@@ -2090,7 +2101,7 @@
         "mass_kg": 8.9971138763215e-6,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 25466,
+        "project_bytes": 25470,
         "section": {
           "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
           "plane_z_mm": 1.75
@@ -2210,10 +2221,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 1.450375,
+      "export_ms": 1.476708,
       "finding": null,
       "id": "kicad-lib-Heatsink_125x35x50mm_3xFixationM3",
-      "import_ms": 39.758165999999996,
+      "import_ms": 106.817584,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 2118,
@@ -2235,6 +2246,7 @@
           ]
         ],
         "faces": 73,
+        "mesh_deviation_mm": 0.010053883933134174,
         "reader": "OpenCascade 7.9.3",
         "solids": 1,
         "volume_mm3": 55195.21735155099
@@ -2245,7 +2257,7 @@
         "mass_kg": 0.14902708684918775,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 118814,
+        "project_bytes": 118813,
         "section": {
           "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
           "plane_z_mm": 17.5
@@ -2366,10 +2378,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 1.246292,
+      "export_ms": 1.618084,
       "finding": null,
       "id": "kicad-lib-D_SOD-882",
-      "import_ms": 9.397124999999999,
+      "import_ms": 359.0525,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 354,
@@ -2391,6 +2403,7 @@
           ]
         ],
         "faces": 21,
+        "mesh_deviation_mm": 1.3877787807814457e-16,
         "reader": "OpenCascade 7.9.3",
         "solids": 1,
         "volume_mm3": 0.27869999999999995
@@ -2401,7 +2414,7 @@
         "mass_kg": 7.524899999999997e-7,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 41409,
+        "project_bytes": 41410,
         "section": {
           "curves": 4,
           "hatch_vectors": 11,
@@ -2529,10 +2542,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 1.234541,
+      "export_ms": 3.307167,
       "finding": null,
       "id": "kicad-lib-LED_Rectangular_W3.0mm_H2.0mm",
-      "import_ms": 8.375957999999999,
+      "import_ms": 102.94749999999999,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 258,
@@ -2554,6 +2567,7 @@
           ]
         ],
         "faces": 20,
+        "mesh_deviation_mm": 6.329245045284193e-16,
         "reader": "OpenCascade 7.9.3",
         "solids": 1,
         "volume_mm3": 33.760000000000005
@@ -2564,7 +2578,7 @@
         "mass_kg": 0.000091152,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 35233,
+        "project_bytes": 35240,
         "section": {
           "curves": 8,
           "hatch_vectors": 10,
@@ -2697,7 +2711,7 @@
         "summary": "OpenCascade 7.9.3 validates this library model as one closed solid (180.852 mm3), but the Rust reader reports its import budget as exceeded. All 965 Limit results in the full library sweep contain TOROIDAL_SURFACE faces; a resource Limit is the wrong classification for these small inputs."
       },
       "id": "kicad-vendored-Mounting_Wuerth_WA-SMSE-ExternalM3_H5mm_9771050360",
-      "import_ms": 0.812542,
+      "import_ms": 0.848792,
       "location": "vendored",
       "message": "STEP import: STEP exceeds the Rust import budget",
       "outcome": "limit",
@@ -2742,7 +2756,7 @@
         "summary": "OpenCascade 7.9.3 validates this library model as one closed solid (298.9 mm3), but the Rust reader reports its import budget as exceeded. All 965 Limit results in the full library sweep contain TOROIDAL_SURFACE faces; a resource Limit is the wrong classification for these small inputs."
       },
       "id": "kicad-lib-RV_Disc_D9mm_W6.1mm_P5mm",
-      "import_ms": 1.846416,
+      "import_ms": 1.885583,
       "location": "kicad-library",
       "message": "STEP import: STEP exceeds the Rust import budget",
       "outcome": "limit",
@@ -2787,7 +2801,7 @@
         "summary": "OpenCascade 7.9.3 validates this library model as one closed solid (45859.9 mm3), but the Rust reader reports its import budget as exceeded. All 965 Limit results in the full library sweep contain TOROIDAL_SURFACE faces; a resource Limit is the wrong classification for these small inputs."
       },
       "id": "kicad-lib-Converter_ACDC_Hi-Link_HLK-20Mxx",
-      "import_ms": 8.353667,
+      "import_ms": 64.200625,
       "location": "kicad-library",
       "message": "STEP import: STEP exceeds the Rust import budget",
       "outcome": "limit",
@@ -2831,7 +2845,7 @@
         "summary": "OpenCascade 7.9.3 validates this model as 1 closed solid(s) (147 mm3, BRepCheck valid), but the Rust reader rejects it as invalid STEP geometry; 298 library files share this false rejection in the full sweep."
       },
       "id": "kicad-vendored-L_CommonModeChoke_TDK_ACM7060",
-      "import_ms": 2.098542,
+      "import_ms": 2.115709,
       "location": "vendored",
       "message": "STEP import: Invalid STEP geometry",
       "outcome": "invalid",
@@ -2874,7 +2888,7 @@
         "summary": "OpenCascade 7.9.3 validates this model as 1 closed solid(s) (3.37691 mm3, BRepCheck valid), but the Rust reader rejects it as invalid STEP geometry; 298 library files share this false rejection in the full sweep."
       },
       "id": "kicad-lib-L_CommonModeChoke_Coilank_ACM2012",
-      "import_ms": 36.337416999999995,
+      "import_ms": 8.514667,
       "location": "kicad-library",
       "message": "STEP import: Invalid STEP geometry",
       "outcome": "invalid",
@@ -2917,7 +2931,7 @@
         "summary": "OpenCascade 7.9.3 validates this model as 1 closed solid(s) (8.13669 mm3, BRepCheck valid), but the Rust reader rejects it as invalid STEP geometry; 298 library files share this false rejection in the full sweep."
       },
       "id": "kicad-lib-SW_SPST_B3U-3000P-B",
-      "import_ms": 10.706958,
+      "import_ms": 65.26,
       "location": "kicad-library",
       "message": "STEP import: Invalid STEP geometry",
       "outcome": "invalid",
@@ -2960,7 +2974,7 @@
         "summary": "OpenCascade 7.9.3 validates this model as 1 closed solid(s) (44.2398 mm3, BRepCheck valid), but the Rust reader rejects it as invalid STEP geometry; 298 library files share this false rejection in the full sweep."
       },
       "id": "kicad-lib-LED_D3.0mm_Horizontal_O1.27mm_Z6.0mm",
-      "import_ms": 4.126709,
+      "import_ms": 4.174791,
       "location": "kicad-library",
       "message": "STEP import: Invalid STEP geometry",
       "outcome": "invalid",
@@ -3004,7 +3018,7 @@
         "summary": "The Rust importer reads the boundary but its rebuilt extrusion differs from the imported analytic topology, while OpenCascade 7.9.3 validates the model as one closed solid (168.929 mm3); an internal reconstruction mismatch rather than an input defect."
       },
       "id": "kicad-lib-Buzzer_Mallory_AST1109MLTRQ",
-      "import_ms": 28.876416,
+      "import_ms": 97.00737500000001,
       "location": "kicad-library",
       "message": "STEP import: Rebuilt STEP extrusion differs from the imported analytic topology",
       "outcome": "invalid",
@@ -3047,7 +3061,7 @@
         "summary": "STEP assembly product structure with placed occurrences is refused (same cause as occt-two-bodies)."
       },
       "id": "kicad-lib-Samtec_HPM-01-05-x-S_Straight_1x01_Pitch5.08mm",
-      "import_ms": 2.492958,
+      "import_ms": 3.053458,
       "location": "kicad-library",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -3091,7 +3105,7 @@
         "summary": "Standalone conical faces outside the certified conical stock-mouth family are refused."
       },
       "id": "kicad-lib-Mounting_Wuerth_WA-SMSI-M3_H1mm_9774010360",
-      "import_ms": 0.987041,
+      "import_ms": 1.295458,
       "location": "kicad-library",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -3134,7 +3148,7 @@
         "summary": "Cylindrical faces outside the certified prism, bore and rounded-edge families (here partial cylinders on a box body) are refused."
       },
       "id": "kicad-lib-R_Box_L13.0mm_W4.0mm_P9.00mm",
-      "import_ms": 1.9880840000000002,
+      "import_ms": 2.2662080000000002,
       "location": "kicad-library",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -3178,7 +3192,7 @@
         "summary": "Planar polyhedral solids whose faces are not orthogonal prisms or certified planar Boolean results are refused."
       },
       "id": "kicad-lib-PinSocket_1x01_P2.54mm_Vertical",
-      "import_ms": 9.09225,
+      "import_ms": 90.620959,
       "location": "kicad-library",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -3221,7 +3235,7 @@
         "summary": "General solids of revolution are outside the Rust import families."
       },
       "id": "kicad-lib-C_Axial_L5.1mm_D3.1mm_P10.00mm_Horizontal",
-      "import_ms": 1.8988749999999999,
+      "import_ms": 55.686458,
       "location": "kicad-library",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -3264,7 +3278,7 @@
         "summary": "Spherical faces other than a complete Rust-encoded sphere (here solder-ball caps) are refused."
       },
       "id": "kicad-vendored-WLP-4_0.83x0.83mm_P0.4mm",
-      "import_ms": 1.418375,
+      "import_ms": 1.737125,
       "location": "vendored",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -3307,7 +3321,7 @@
         "summary": "B-spline surface faces outside the certified spline sweep and relief families are refused."
       },
       "id": "kicad-lib-D_SOD-923",
-      "import_ms": 3.9890000000000003,
+      "import_ms": 75.699917,
       "location": "kicad-library",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -3351,7 +3365,7 @@
         "summary": "SHELL_BASED_SURFACE_MODEL content and multiple solids in one representation are refused."
       },
       "id": "kicad-lib-R_LDR_5.2x5.2mm_P3.5mm_Horizontal",
-      "import_ms": 7.408375,
+      "import_ms": 7.586666,
       "location": "kicad-library",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -3397,7 +3411,7 @@
         "summary": "Toroidal blends combined with multiple solids are refused."
       },
       "id": "kicad-lib-Converter_ACDC_MeanWell_IRM-60-xx_THT",
-      "import_ms": 4.534042,
+      "import_ms": 7.915458999999999,
       "location": "kicad-library",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -3443,7 +3457,7 @@
         "summary": "BREP_WITH_VOIDS other than an orthogonal box with rectangular voids is refused."
       },
       "id": "kicad-lib-C_Radial_D6.3mm_H7.0mm_P2.50mm",
-      "import_ms": 15.135,
+      "import_ms": 11.946625000000001,
       "location": "kicad-library",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -3490,7 +3504,7 @@
         "summary": "Flat multi-solid representations whose members are outside the supported families are refused."
       },
       "id": "kicad-lib-L_Radial_D28.0mm_P29.20mm",
-      "import_ms": 1.172167,
+      "import_ms": 1.160917,
       "location": "kicad-library",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -3540,8 +3554,8 @@
   },
   "schema": 1,
   "source": {
-    "commit": "dff6a0f829aa17076552e404c230bb3ea6514d32",
-    "tracked_changes": true
+    "commit": "46b51923c3c8ccc2ddf6142981aa3923b5d235ac",
+    "tracked_changes": false
   },
   "tolerances": {
     "bounds_mm": 1e-6,
