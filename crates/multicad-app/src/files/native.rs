@@ -358,6 +358,9 @@ impl DocumentStorage for ProjectStore {
     }
 }
 #[cfg(test)]
+#[path = "exchange_recovery_tests.rs"]
+mod exchange_recovery_tests;
+#[cfg(test)]
 #[path = "scenario_tests.rs"]
 mod scenario_tests;
 #[cfg(test)]
