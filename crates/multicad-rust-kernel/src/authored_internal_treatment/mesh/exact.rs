@@ -1,6 +1,6 @@
 //! Bounded exact rational source parameters; never geometric tolerance signs.
 use super::*;
-use num_bigint::Sign;
+use num_bigint::{BigInt, Sign};
 use num_rational::BigRational;
 use num_traits::{ToPrimitive, Zero};
 use std::{cell::Cell, cmp::Ordering, rc::Rc};
@@ -148,6 +148,33 @@ impl Q {
         work.step()?;
         Ok(out.into_boxed_slice())
     }
+    /// Internal compact coordinate token, never a geometry/import descriptor.
+    pub fn decode(bytes: &[u8], work: &mut Work<'_>) -> Result<Self, Error> {
+        work.step()?;
+        let header = bytes.get(..5).ok_or(Error::Unresolved)?;
+        let n = usize::from(u16::from_le_bytes([header[1], header[2]]));
+        let d = usize::from(u16::from_le_bytes([header[3], header[4]]));
+        if n > MAX_BITS as usize / 8 || d > MAX_BITS as usize / 8 {
+            return Err(Error::Limit);
+        }
+        if n == 0 || d == 0 || bytes.len() != 5 + n + d {
+            return Err(Error::Unresolved);
+        }
+        let sign = match header[0] {
+            0 => Sign::Minus,
+            1 => Sign::NoSign,
+            2 => Sign::Plus,
+            _ => return Err(Error::Unresolved),
+        };
+        let words = n.max(d).div_ceil(8);
+        work.charge(1 + words * words)?;
+        let numerator = BigInt::from_bytes_le(sign, &bytes[5..5 + n]);
+        let denominator = BigInt::from_bytes_le(Sign::Plus, &bytes[5 + n..]);
+        if denominator.is_zero() {
+            return Err(Error::Unresolved);
+        }
+        Ok(Self::make(BigRational::new(numerator, denominator), None))
+    }
     /// No rounding assumption about num-rational's nominal conversion is used:
     /// both chosen f64 bounds are checked against the original exact ratio.
     /// Only successful enclosures are cached; cancellation precedes reuse.
@@ -292,5 +319,49 @@ mod proposal_tests {
             ));
         }
         assert_eq!(Q::integer(-1, w).unwrap().sign(), Ordering::Less);
+    }
+}
+#[cfg(test)]
+mod decode_tests {
+    use super::*;
+    #[test]
+    fn compact_exact_parameter_tokens_decode_with_limits_and_zero_denominator_refusal() {
+        let w = &mut Work {
+            remaining: 16_000_000,
+            used: 0,
+            interrupt: None,
+        };
+        for integer in [-1, 0] {
+            let value = Q::integer(integer, w).unwrap();
+            let token = Q::encode(&[&value], w).unwrap();
+            assert_eq!(
+                Q::decode(&token, w).unwrap().cmp(&value, w).unwrap(),
+                Ordering::Equal
+            );
+        }
+        let value = Q::float(0.25, w).unwrap();
+        let encoded = Q::encode(&[&value], w).unwrap();
+        assert_eq!(
+            Q::decode(&encoded, w).unwrap().cmp(&value, w).unwrap(),
+            Ordering::Equal
+        );
+        assert!(matches!(Q::decode(&[], w), Err(Error::Unresolved)));
+        let mut bad = encoded.to_vec();
+        bad[0] = 9;
+        assert!(matches!(Q::decode(&bad, w), Err(Error::Unresolved)));
+        let mut bad = encoded.to_vec();
+        bad[1] = 0;
+        bad[2] = 0;
+        assert!(matches!(Q::decode(&bad, w), Err(Error::Unresolved)));
+        assert!(matches!(
+            Q::decode(&encoded[..encoded.len() - 1], w),
+            Err(Error::Unresolved)
+        ));
+        let mut bad = encoded.to_vec();
+        let denominator = usize::from(u16::from_le_bytes([bad[3], bad[4]]));
+        let end = bad.len();
+        bad[end - denominator..].fill(0);
+        assert!(matches!(Q::decode(&bad, w), Err(Error::Unresolved)));
+        assert!(matches!(Q::decode(&[2, 1, 4, 1, 0], w), Err(Error::Limit)));
     }
 }

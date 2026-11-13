@@ -24,6 +24,27 @@ pub(super) fn shell(
     rows: u32,
     w: &mut Work<'_>,
 ) -> Result<Option<Shell>, Error> {
+    build(body, options, subdivisions, rows, None, w)
+}
+pub(super) fn traced_shell(
+    body: &Cavity,
+    options: Tessellation,
+    subdivisions: usize,
+    rows: u32,
+    w: &mut Work<'_>,
+) -> Result<Option<(Shell, trace::Trace)>, Error> {
+    let mut trace = trace::Trace::new(options.triangle_limit.min(131_072), w)?;
+    let shell = build(body, options, subdivisions, rows, Some(&mut trace), w)?;
+    Ok(shell.map(|shell| (shell, trace)))
+}
+fn build(
+    body: &Cavity,
+    options: Tessellation,
+    subdivisions: usize,
+    rows: u32,
+    mut trace: Option<&mut trace::Trace>,
+    w: &mut Work<'_>,
+) -> Result<Option<Shell>, Error> {
     w.step()?;
     if subdivisions == 0 || subdivisions > 1024 || rows == 0 || rows > 65536 {
         return Err(Error::Limit);
@@ -34,6 +55,9 @@ pub(super) fn shell(
     let periods = (f / body.thread.spec().pitch_mm).ceil();
     let maximum = options.triangle_limit.min(131_072);
     let mut owners = Owners::new(maximum, w)?;
+    if let Some(trace) = &trace {
+        trace.check_memory(owners.memory_bytes())?;
+    }
     let mut mesh = DisplayMesh {
         vertices: vec![],
         indices: vec![],
@@ -76,7 +100,12 @@ pub(super) fn shell(
                                 patch.owned(p, &polygon, body.thread.spec().starts, w)?;
                             let proposed =
                                 u32::try_from(mesh.vertices.len() / 3).map_err(|_| Error::Limit)?;
-                            let vertex = owners.vertex(key, encoded, proposed, w)? as usize;
+                            let reserved = trace.as_ref().map_or(0, |trace| trace.memory_bytes());
+                            let vertex = if reserved == 0 {
+                                owners.vertex(key, encoded, proposed, w)?
+                            } else {
+                                owners.vertex_reserved(key, encoded, proposed, reserved, w)?
+                            } as usize;
                             let angle = rzv[2]
                                 * I::new(
                                     std::f64::consts::TAU.next_down(),
@@ -140,6 +169,13 @@ pub(super) fn shell(
                                 2 => &mut tops,
                                 _ => continue,
                             };
+                            if let Some(trace) = trace.as_deref_mut() {
+                                for position in [a, b] {
+                                    let parameter = &polygon.points[position].v;
+                                    let cache_bytes = owners.memory_bytes();
+                                    trace.remember(ids[position], parameter, cache_bytes, w)?;
+                                }
+                            }
                             append_rim(target, edge, maximum.min(16_384))?;
                         }
                         let points: Vec<[f64; 3]> = ids
@@ -251,5 +287,38 @@ mod grid_tests {
                 Err(Error::Limit)
             ));
         }
+    }
+}
+#[cfg(test)]
+mod trace_tests {
+    use super::*;
+    #[test]
+    fn optional_boundary_trace_keeps_default_cavity_coordinates_and_faces_identical() {
+        let body = super::super::tests::source(false, 1, Some(0.4), true);
+        let options = super::super::tests::options();
+        let mut a = Work {
+            remaining: 16_000_000,
+            used: 0,
+            interrupt: None,
+        };
+        let mut b = Work {
+            remaining: 16_000_000,
+            used: 0,
+            interrupt: None,
+        };
+        let ordinary = shell(&body, options, 1, 64, &mut a).unwrap().unwrap();
+        let (traced, trace) = traced_shell(&body, options, 1, 64, &mut b)
+            .unwrap()
+            .unwrap();
+        assert_eq!(ordinary.mesh, traced.mesh);
+        assert_eq!(ordinary.chord, traced.chord);
+        assert_eq!(ordinary.normal, traced.normal);
+        for edge in traced.mouth.iter().chain(&traced.top) {
+            for &vertex in &edge.vertices {
+                assert!(trace.bounds(vertex, &mut b).is_ok());
+            }
+        }
+        let result = tessellate_candidate(&body, options, None).unwrap();
+        assert_eq!(result.work_used, 3_484_305);
     }
 }

@@ -8,10 +8,12 @@ mod clip;
 mod close;
 mod exact;
 mod jet;
+mod material_mesh;
 mod owners;
 mod regular;
 mod source;
 mod storage;
+mod trace;
 use source::Kind;
 #[derive(Clone, Debug)]
 pub struct Candidate {
@@ -154,3 +156,13 @@ fn append_qualified(
 
 #[cfg(test)]
 mod tests;
+
+impl Material {
+    pub fn tessellate_candidate(
+        &self,
+        options: Tessellation,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Candidate, Error> {
+        material_mesh::tessellate(self, options, interrupt)
+    }
+}

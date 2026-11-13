@@ -24,13 +24,13 @@ fn angle(body: &Cavity, v: Jet) -> Jet {
     )
 }
 #[derive(Clone, Copy)]
-enum Surface {
+pub(super) enum Surface {
     InnerCap,
     Shoulder,
     Terminal,
     OuterCap,
 }
-fn field(body: &Cavity, edge: Edge, station: f64, mode: Surface) -> source::Field {
+pub(super) fn field(body: &Cavity, edge: Edge, station: f64, mode: Surface) -> source::Field {
     let bound = span(edge);
     let v = Jet::constant(I::point(bound.lo))
         .add(Jet::variable(0).scale(I::point(bound.hi) - I::point(bound.lo)));
@@ -85,7 +85,7 @@ fn field(body: &Cavity, edge: Edge, station: f64, mode: Surface) -> source::Fiel
         normal,
     }
 }
-fn source_point(body: &Cavity, v: I, r: f64, z: f64) -> [I; 3] {
+pub(super) fn source_point(body: &Cavity, v: I, r: f64, z: f64) -> [I; 3] {
     // A true complete turn is the SAME authored endpoint; evaluate its one
     // shared vertex at zero while retaining this exact periodic identity.
     let v = if v.lo == 1. && v.hi == 1. {
@@ -108,7 +108,7 @@ fn source_point(body: &Cavity, v: I, r: f64, z: f64) -> [I; 3] {
         I::point(z),
     ]
 }
-fn error(mesh: &DisplayMesh, id: usize, p: [I; 3]) -> f64 {
+pub(super) fn error(mesh: &DisplayMesh, id: usize, p: [I; 3]) -> f64 {
     p.into_iter()
         .zip(&mesh.vertices[id * 3..id * 3 + 3])
         .fold(I::point(0.), |s, (p, l)| {
@@ -143,7 +143,7 @@ fn outer(
     }
     Ok((ids, errors))
 }
-fn quad(
+pub(super) fn quad(
     shell: &mut Shell,
     field: source::Field,
     ids: [usize; 4],
@@ -166,13 +166,14 @@ fn quad(
     }
     Ok(true)
 }
-struct Disk {
-    edge: Edge,
-    ids: [usize; 2],
-    errors: [f64; 2],
-    center: usize,
-    end: u32,
-    mode: Surface,
+#[derive(Clone, Copy)]
+pub(super) struct Disk {
+    pub edge: Edge,
+    pub ids: [usize; 2],
+    pub errors: [f64; 2],
+    pub center: usize,
+    pub end: u32,
+    pub mode: Surface,
 }
 fn cap(
     shell: &mut Shell,
@@ -221,12 +222,16 @@ fn cap(
     shell.normal = shell.normal.max(normal);
     Ok(true)
 }
-pub(super) fn close(
+pub(super) struct Prepared {
+    pub shell: Shell,
+    pub caps: Vec<Disk>,
+}
+pub(super) fn prepare(
     mut shell: Shell,
     body: &Cavity,
     options: Tessellation,
     w: &mut Work<'_>,
-) -> Result<Option<Candidate>, Error> {
+) -> Result<Option<Prepared>, Error> {
     w.step()?;
     let count = shell.mesh.vertices.len() / 3;
     // Both maps are fixed by already bounded exact source vertices; no retained
@@ -317,6 +322,17 @@ pub(super) fn close(
             mode,
         });
     }
+    Ok(Some(Prepared { shell, caps }))
+}
+pub(super) fn close(
+    shell: Shell,
+    body: &Cavity,
+    options: Tessellation,
+    w: &mut Work<'_>,
+) -> Result<Option<Candidate>, Error> {
+    let Some(Prepared { mut shell, caps }) = prepare(shell, body, options, w)? else {
+        return Ok(None);
+    };
     for disk in caps {
         if !cap(&mut shell, body, disk, options, w)? {
             return Ok(None);

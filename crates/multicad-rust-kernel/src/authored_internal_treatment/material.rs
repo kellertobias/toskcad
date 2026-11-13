@@ -81,6 +81,9 @@ impl Material {
     pub fn minimum_wall_mm(&self) -> f64 {
         self.minimum_wall_mm
     }
+    pub(super) fn radius_interval(&self) -> I {
+        ratio(self.stock.circle().radius())
+    }
     pub fn volume_bounds(&self, options: QueryOptions) -> Result<Enclosure, Error> {
         self.volume_bounds_with_interrupt(options, None)
     }

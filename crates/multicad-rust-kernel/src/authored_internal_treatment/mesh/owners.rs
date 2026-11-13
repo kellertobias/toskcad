@@ -83,7 +83,23 @@ impl Owners {
         proposed: u32,
         w: &mut Work<'_>,
     ) -> Result<u32, Error> {
+        self.vertex_reserved(key, coordinates, proposed, 0, w)
+    }
+    pub fn memory_bytes(&self) -> usize {
+        self.bytes
+    }
+    pub fn vertex_reserved(
+        &mut self,
+        key: Key,
+        coordinates: Box<[u8]>,
+        proposed: u32,
+        reserved: usize,
+        w: &mut Work<'_>,
+    ) -> Result<u32, Error> {
         w.step()?;
+        if self.bytes.checked_add(reserved).ok_or(Error::Limit)? > BYTE_LIMIT {
+            return Err(Error::Limit);
+        }
         let mask = self.slots.len() - 1;
         let mut at = key.hash() & mask;
         // At most half the fixed table can be occupied. Probing and coordinate
@@ -111,7 +127,7 @@ impl Owners {
             .bytes
             .checked_add(coordinates.len())
             .ok_or(Error::Limit)?;
-        if next > BYTE_LIMIT {
+        if next.checked_add(reserved).ok_or(Error::Limit)? > BYTE_LIMIT {
             return Err(Error::Limit);
         }
         w.step()?;
@@ -221,5 +237,41 @@ mod resource_tests {
         assert!(owners.bytes <= BYTE_LIMIT);
         assert_eq!(owners.vertex(first, bytes, 99, w).unwrap(), 0);
         assert!(matches!(Owners::new(0, w), Err(Error::Limit)));
+    }
+}
+#[cfg(test)]
+mod reservation_tests {
+    use super::*;
+    #[test]
+    fn shared_boundary_reservations_refuse_before_inserting_or_reusing_points() {
+        let w = &mut Work {
+            remaining: 16_000_000,
+            used: 0,
+            interrupt: None,
+        };
+        let mut owners = Owners::new(2, w).unwrap();
+        let key = Key([Constraint::Rail(0), Constraint::Row(0)]);
+        let reserved = BYTE_LIMIT - owners.memory_bytes() - 16;
+        assert_eq!(
+            owners.vertex_reserved(key, vec![1; 32].into_boxed_slice(), 0, reserved, w),
+            Err(Error::Limit)
+        );
+        assert_eq!(owners.owners.len(), 0);
+        assert_eq!(
+            owners
+                .vertex_reserved(key, vec![1].into_boxed_slice(), 0, 0, w)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            owners.vertex_reserved(key, vec![1].into_boxed_slice(), 1, BYTE_LIMIT, w),
+            Err(Error::Limit)
+        );
+        assert_eq!(
+            owners
+                .vertex(key, vec![1].into_boxed_slice(), 1, w)
+                .unwrap(),
+            0
+        );
     }
 }
