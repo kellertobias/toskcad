@@ -2376,4 +2376,59 @@ mod tests {
         );
         assert!(!step::supports_profiled_screw(&loose, [0.; 3], 1e-7));
     }
+
+    #[test]
+    fn a_valid_physical_torx_floor_cannot_verify_against_a_different_valid_source() {
+        use crate::{
+            hexalobular_drive::{Cone, Drive, TangentSpec},
+            screw_recess::Recess,
+        };
+        let template = screw(true, 1, false);
+        let sources = [1.6, 1.7].map(|tip_depth_mm| {
+            let drive = Drive::from_authored_tangent(
+                TangentSpec {
+                    major_diameter_mm: 2.,
+                    minor_diameter_mm: 1.5,
+                    outer_lobe_radius_mm: 0.2,
+                },
+                Cone {
+                    tip_depth_mm,
+                    depth_per_radius: 1. / 3_f64.sqrt(),
+                },
+            )
+            .unwrap();
+            Screw::new_with_recess(
+                *template.thread(),
+                1.5,
+                template.spec().head.unwrap(),
+                1.,
+                0.1,
+                Recess::conical_hexalobular(drive, 1e-7, 100_000).unwrap(),
+            )
+            .unwrap()
+        });
+        for (i, actual) in sources.iter().enumerate() {
+            let text =
+                step::write_profiled_screw(actual, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
+                    .unwrap();
+            // Both independently valid solids have the identical thread and
+            // exterior head. Only the real finite cavity floor differs.
+            assert!(crate::step_read::read_import_solid(&text, 1e-7).is_ok());
+            assert!(
+                verify_profiled_screw(&text, actual, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7,)
+                    .is_ok()
+            );
+            assert!(
+                verify_profiled_screw(
+                    &text,
+                    &sources[1 - i],
+                    [0.; 3],
+                    [1., 0., 0.],
+                    [0., 1., 0.],
+                    1e-7,
+                )
+                .is_err()
+            );
+        }
+    }
 }
