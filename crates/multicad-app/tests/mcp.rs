@@ -4592,6 +4592,11 @@ fn default_stdio_profiled_metric_heads_keep_fit_history_and_independent_reopen()
 
 #[test]
 fn default_stdio_combined_internal_metric_thread_survives_edit_history_and_reopen() {
+    for fit in ["nominal_basic", "metric_6h_internal"] {
+        exercise_default_combined_internal_fit(fit);
+    }
+}
+fn exercise_default_combined_internal_fit(fit: &str) {
     use multicad_core::{
         commands::{Actor, Channel, Session},
         document::Document,
@@ -4638,8 +4643,8 @@ fn default_stdio_combined_internal_metric_thread_survives_edit_history_and_reope
     let created = client.ok(
         "set_thread",
         json!({
-            "expected_revision":revision,"name":"M3 6H treated receiver","mode":"cut_internal",
-            "target_part":stock.body,"family":"iso_metric","fit":"metric_6h_internal",
+            "expected_revision":revision,"name":"M3 treated receiver","mode":"cut_internal",
+            "target_part":stock.body,"family":"iso_metric","fit":fit,
             "major_diameter":length(3.),"pitch":length(0.5),"length":length(4.),
             "minimum_wall":length(0.5),"hand":"left","end_treatments":treatments(0.5)
         }),
