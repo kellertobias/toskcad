@@ -80,6 +80,11 @@ impl Cavity {
             pending.push((a, mid, band, tolerance / 2.));
             pending.push((mid, b, band, tolerance / 2.));
         }
+        // A literal evaluated helical rate need not advance by an exact lead
+        // over true 2pi. Enclose that physical angular sliver separately;
+        // the constant terminal cylinder has no phase dependence.
+        let reserve = self.phase_advance_volume_reserve();
+        let sum = I::new((sum.lo - reserve).next_down(), (sum.hi + reserve).next_up());
         if !sum.valid() || sum.lo < 0. || sum.width() > options.tolerance_mm3 {
             return Err(Error::Unresolved);
         }
@@ -87,6 +92,41 @@ impl Cavity {
             lower: sum.lo,
             upper: sum.hi,
         })
+    }
+    pub(super) fn phase_advance_volume_reserve(&self) -> f64 {
+        let pi = I::new(
+            std::f64::consts::PI.next_down(),
+            std::f64::consts::PI.next_up(),
+        );
+        let p = I::point(self.thread.spec().pitch_mm);
+        let lead = p * I::point(f64::from(self.thread.spec().starts));
+        let true_rate = lead / (I::point(2.) * pi);
+        let true_rate = if self.thread.spec().left_hand {
+            -true_rate
+        } else {
+            true_rate
+        };
+        let evaluated = self.thread.helical_rate();
+        let delta = (I::point(evaluated) - true_rate).magnitude();
+        let knots = self.thread.profile_breaks();
+        let mut radius = self.entry_radius_mm().unwrap_or(0.);
+        for band in 0..5 {
+            radius = radius.max(
+                self.profile(band, I::new(knots[band], knots[band + 1]))
+                    .0
+                    .hi,
+            );
+        }
+        // At each z the two phase integrals differ by their normalization
+        // and a phase-domain sliver. Bounding both by R^2 gives this outward
+        // (conservative factor-two) reserve, independent of source continuity.
+        (I::point(2.)
+            * pi
+            * I::point(self.terminal_station)
+            * I::point(radius).square()
+            * I::point(delta)
+            / I::point(evaluated.abs()))
+        .hi
     }
     pub(super) fn profile(&self, band: usize, q: I) -> (I, I) {
         let spec = self.thread.spec();

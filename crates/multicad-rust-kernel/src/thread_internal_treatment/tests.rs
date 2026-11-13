@@ -368,3 +368,59 @@ fn large_finite_terminal_cavity_reports_global_precision_floor_after_small_cells
             .is_ok()
     );
 }
+
+#[test]
+fn nonbinary_literal_phase_advance_is_enclosed_without_reinterpreting_the_source() {
+    let base = Spec {
+        major_radius_mm: 2.1,
+        pitch_mm: 0.7,
+        length_mm: 4.6,
+        depth_mm: 0.3,
+        crest_width_mm: 0.15,
+        ..tool(false, 1).spec()
+    };
+    let mut normalized = Vec::new();
+    for scale in [0.1, 1., 1000.] {
+        for left_hand in [false, true] {
+            let spec = Spec {
+                major_radius_mm: base.major_radius_mm * scale,
+                pitch_mm: base.pitch_mm * scale,
+                length_mm: base.length_mm * scale,
+                depth_mm: base.depth_mm * scale,
+                crest_width_mm: base.crest_width_mm * scale,
+                left_hand,
+                ..base
+            };
+            let thread = Thread::new(spec).unwrap();
+            let source = Cavity::new(
+                thread,
+                Intent {
+                    entry_depth_mm: Some(0.4 * scale),
+                    terminal: Some(Terminal {
+                        width_mm: 0.3 * scale,
+                        radial_depth_mm: 0.05 * scale,
+                    }),
+                },
+            )
+            .unwrap();
+            let reserve = source.phase_advance_volume_reserve();
+            assert!(reserve.is_finite() && reserve > 0.);
+            let result = source
+                .removed_volume_mm3(QueryOptions {
+                    tolerance_mm3: 1e-7 * scale.powi(3),
+                    ..Default::default()
+                })
+                .unwrap();
+            assert!(result.upper - result.lower >= 2. * reserve);
+            assert_eq!(source.source_thread(), &thread);
+            normalized.push((result.lower / scale.powi(3), result.upper / scale.powi(3)));
+        }
+    }
+    assert!(
+        normalized
+            .iter()
+            .map(|v| v.0)
+            .fold(f64::NEG_INFINITY, f64::max)
+            <= normalized.iter().map(|v| v.1).fold(f64::INFINITY, f64::min)
+    );
+}
