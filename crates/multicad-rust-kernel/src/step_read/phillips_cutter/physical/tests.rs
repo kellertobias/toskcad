@@ -5,7 +5,7 @@ use crate::{
     phillips_drive::{Cavity, Cutter, PhillipsScrew},
     profiled_screw::SourceSpec,
 };
-fn fixture(index: usize, left: bool, nominal: bool, starts: u32) -> PhillipsScrew {
+pub(super) fn fixture(index: usize, left: bool, nominal: bool, starts: u32) -> PhillipsScrew {
     let (s, d) = crate::phillips_drive::test_fixture(index);
     let cavity = Cavity::new(Cutter::new(s, d).unwrap(), 1e-5, 100_000).unwrap();
     let (rs, pitch, r, h, crown, land, neck) = [

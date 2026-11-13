@@ -15,8 +15,11 @@ mod geometry;
 mod graph;
 mod physical;
 pub use physical::{
-    Axis as ParsedPhillipsAxis, Boundary as ParsedPhillipsBoundary, Curve as ParsedPhillipsCurve,
-    Edge as ParsedPhillipsEdge, Face as ParsedPhillipsFace,
+    Axis as ParsedPhillipsAxis, Boundary as ParsedPhillipsBoundary,
+    CubicSupportBounds as PhillipsCubicSupportBounds,
+    CubicSupportOptions as PhillipsCubicSupportOptions, Curve as ParsedPhillipsCurve,
+    Edge as ParsedPhillipsEdge, EdgeSupportBound as PhillipsEdgeSupportBound,
+    Face as ParsedPhillipsFace, ImplicitSupportEnclosure as PhillipsImplicitSupportEnclosure,
     MaterialLoop as ParsedPhillipsMaterialLoop, MaterialUse as ParsedPhillipsMaterialUse,
     Mouth as ParsedPhillipsMouth, Surface as ParsedPhillipsSurface, Vertex as ParsedPhillipsVertex,
     read_phillips_screw_boundary, read_phillips_screw_boundary_with_interrupt,

@@ -4,6 +4,10 @@ use super::*;
 
 mod incidence;
 mod literal;
+mod supports;
+pub use supports::{
+    CubicSupportBounds, CubicSupportOptions, EdgeSupportBound, ImplicitSupportEnclosure,
+};
 #[cfg(test)]
 mod tests;
 pub use literal::{Axis, Curve, Surface};
