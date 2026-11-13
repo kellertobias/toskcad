@@ -24,9 +24,8 @@ struct Candidate {
 // thresholds below are hints/refusals; they never accept geometric incidence.
 fn candidate(b: &Boundary) -> std::result::Result<Candidate, PhillipsReadError> {
     let fail = PhillipsReadError::Unsupported;
-    if (b.faces().len(), b.edges().len(), b.vertices().len()) != (29, 76, 49) {
-        return Err(fail);
-    }
+    // Boundary is sealed by physical::incidence::read, which requires exactly
+    // 29 faces, 76 edges and 49 vertices before publishing any parsed source.
     let (axis, major, minor) = b
         .faces()
         .iter()
@@ -175,11 +174,18 @@ pub(super) fn scaled_text(scale: f64, posed: bool) -> String {
     s.mouth_radius_mm *= scale;
     s.b_width_mm *= scale;
     s.g_diameter_mm *= scale;
-    let Inner::Rounded { radius_mm } = s.inner else {
-        unreachable!()
-    };
+    // This constructor intentionally scales the fixed H0 fixture, whose typed
+    // source law is checked explicitly rather than carrying an impossible
+    // non-H0 branch through the geometry comparison tests.
+    let inner_radius = 0.25;
+    assert_eq!(
+        s.inner,
+        Inner::Rounded {
+            radius_mm: inner_radius
+        }
+    );
     s.inner = Inner::Rounded {
-        radius_mm: radius_mm * scale,
+        radius_mm: inner_radius * scale,
     };
     d.corner_start_depth_mm *= scale;
     d.corner_end_depth_mm *= scale;
@@ -267,31 +273,59 @@ fn altered_actual_support_or_internal_trim_control_refuses_whole_candidate() {
     assert_ne!(record, changed_record);
     let changed = text.replacen(record, &changed_record, 1);
     let b = read_phillips_body(&changed, 1e-7, 1_000_000).unwrap();
-    assert!(candidate(b.cavity()).and_then(|c| compare(&b, &c)).is_err());
+    // This mutation already violates the proposal's retained torus/cone
+    // relation; it must fail fitting before a source comparator is possible.
+    assert!(candidate(b.cavity()).is_err());
     // A side-plane offset is not used in dimension fitting. Its perturbation
     // must therefore be rejected by the complete support comparator itself.
-    let plane = body.cavity().faces().iter().find(|f|matches!(f.support,Surface::Plane{axis} if axis.normal[0]>0. && axis.normal[1]<0. && axis.normal[2]>0.)).unwrap();
-    let Value::Reference(axis) = entities[&plane.surface_entity][0].args[1] else {
-        panic!()
-    };
-    let Value::Reference(point) = entities[&axis][0].args[1] else {
-        panic!()
-    };
-    let words = part21::numeric_spellings(&entities[&point][0]).unwrap();
-    let record = text
-        .lines()
-        .find(|l| l.starts_with(&format!("#{point}=")))
-        .unwrap();
-    let changed_record = record.replacen(
-        words[0],
-        &format!("{:.17E}", words[0].parse::<f64>().unwrap() + 0.001),
-        1,
-    );
-    assert_ne!(record, changed_record);
-    let changed = text.replacen(record, &changed_record, 1);
-    let b = read_phillips_body(&changed, 1e-7, 1_000_000).unwrap();
-    let c = candidate(b.cavity()).unwrap();
-    assert!(compare(&b, &c).is_err());
+    let mut changed_planes = 0;
+    for plane in body.cavity().faces() {
+        let Surface::Plane { axis } = plane.support else {
+            continue;
+        };
+        if axis.normal[0] <= 0. || axis.normal[1] >= 0. || axis.normal[2] <= 0. {
+            continue;
+        }
+        let axis = reference(&entities[&plane.surface_entity][0].args[1]).unwrap();
+        let point = reference(&entities[&axis][0].args[1]).unwrap();
+        let words = part21::numeric_spellings(&entities[&point][0]).unwrap();
+        let record = text
+            .lines()
+            .find(|l| l.starts_with(&format!("#{point}=")))
+            .unwrap();
+        let changed_record = record.replacen(
+            words[0],
+            &format!("{:.17E}", words[0].parse::<f64>().unwrap() + 0.001),
+            1,
+        );
+        assert_ne!(record, changed_record);
+        let changed = text.replacen(record, &changed_record, 1);
+        let b = read_phillips_body(&changed, 1e-7, 1_000_000).unwrap();
+        let c = candidate(b.cavity()).unwrap();
+        assert!(compare(&b, &c).is_err());
+        // Unlike an offset, an actual reversed support normal also exercises
+        // the dimension proposal's finite search/refusal, before comparison.
+        let direction = reference(&entities[&axis][0].args[2]).unwrap();
+        let words = part21::numeric_spellings(&entities[&direction][0]).unwrap();
+        let record = text
+            .lines()
+            .find(|l| l.starts_with(&format!("#{direction}=")))
+            .unwrap();
+        let mut changed_record = record.to_owned();
+        for word in words {
+            changed_record = changed_record.replacen(
+                word,
+                &format!("{:.17E}", -word.parse::<f64>().unwrap()),
+                1,
+            );
+        }
+        assert_ne!(record, changed_record);
+        let changed = text.replacen(record, &changed_record, 1);
+        let b = read_phillips_body(&changed, 1e-7, 1_000_000).unwrap();
+        assert!(candidate(b.cavity()).and_then(|c| compare(&b, &c)).is_err());
+        changed_planes += 1;
+    }
+    assert!(changed_planes > 0);
     let point = body
         .cavity()
         .edges()
