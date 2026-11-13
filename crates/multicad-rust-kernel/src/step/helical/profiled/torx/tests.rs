@@ -412,6 +412,10 @@ fn independent_torx_cavity_reader_retains_complete_actual_supports_and_curves() 
     assert!(binding.literal_cone_semi_angle_rad().is_some());
     assert!(binding.carriers().iter().all(|c| !c.is_empty()));
     assert!(decoded.spec().head.is_none());
+    assert!(
+        decoded.spec().minimum_wall_mm > 0.1,
+        "physical cavity must retain a dimensional wall lower bound"
+    );
     assert!(decoded.recess().volume_bounds_mm3()[0] > 0.);
     let (readback, imported) = crate::step_read::read_import_solid(&text, 1e-7).unwrap();
     assert!(readback.volume_mm3 > 0.);
@@ -892,13 +896,13 @@ fn public_torx_export_refuses_noncanonical_finite_binding_even_with_a_small_trim
             crate::screw_recess::Recess::conical_hexalobular_from_binding(binding, 0.1, 100_000)
                 .unwrap();
         assert!(recess.source_error_mm() < 1e-7 / 8.);
-        let screw = Screw::from_source_with_union(
-            *physical.thread(),
-            *physical.profile(),
-            physical.spec(),
-            recess,
-        )
-        .unwrap();
+        // A changed recess spends additional spatial reserve. Retain a real
+        // conservative wall instead of reusing the old source's maximal bound.
+        let mut spec = physical.spec();
+        spec.minimum_wall_mm = 0.1;
+        let screw =
+            Screw::from_source_with_union(*physical.thread(), *physical.profile(), spec, recess)
+                .unwrap();
         assert!(!crate::step::supports_profiled_screw(&screw, [0.; 3], 1e-7));
         assert_eq!(
             crate::step::write_profiled_screw(&screw, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7),
