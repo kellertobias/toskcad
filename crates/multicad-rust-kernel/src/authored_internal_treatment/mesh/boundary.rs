@@ -10,6 +10,8 @@ use super::{
 use std::{cmp::Ordering, mem::size_of};
 mod api;
 mod close;
+mod exact_query;
+pub use exact_query::{ExactBoundaryData, ExactBoundaryDomain, ExactBoundaryRational};
 mod loops;
 mod material;
 mod polyline;
