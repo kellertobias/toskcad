@@ -1294,7 +1294,20 @@ fn metric_fit_mcp_partial_edits_clear_cancel_atomic_failures_history_and_saved_r
         "export_step",
         json!({"part":created["part"],"file_name":"metric-fit.step"}),
     );
-    assert!(step["readback_volume_mm3"].as_f64().unwrap() > 0.);
+    assert!(step["readback_volume_mm3"].is_null());
+    assert_eq!(step["step_verification"]["method"], "source_known_boundary");
+    assert!(step["step_verification"]["decoded_volume_mm3"].is_null());
+    let evaluated = run(&reopened, "evaluate_model", json!({}));
+    let current = evaluated["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|part| part["feature"] == feature)
+        .unwrap();
+    let actual = current["volume_mm3"].as_f64().unwrap();
+    let bounds = &step["step_verification"]["source_volume_bounds_mm3"];
+    assert!(bounds[0].as_f64().unwrap() <= actual && actual <= bounds[1].as_f64().unwrap());
+    assert!(dir.path().join("metric-fit.step").is_file());
     run(
         &reopened,
         "set_thread",

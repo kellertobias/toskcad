@@ -258,19 +258,34 @@ fn rust_mcp_models_edits_and_reopens_a_metric_thread_without_fallback() {
     assert_eq!(edit["part"], part);
     assert_eq!(feature(&edit), thread);
     let before_rejection = h.document();
+    let bsw = run(
+        &h,
+        "set_thread",
+        json!({"expected_revision":2,"name":"Supported BSW","family":"bsw",
+            "fit":"whitworth_medium_external","major_diameter":{"value":0.25,"unit":"in"},
+            "pitch":{"value":0.05,"unit":"in"},"length":mm(2.5)}),
+    );
+    let evaluated = run(&h, "evaluate_model", json!({}));
+    let bsw_shape = evaluated["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|part| part["feature"] == bsw["thread"])
+        .unwrap();
+    assert_eq!(bsw_shape["solid_count"], 1);
+    assert!(bsw_shape["volume_mm3"].as_f64().unwrap() > 0.);
+    run(&h, "undo", json!({"expected_revision":3}));
+    assert_eq!(h.document(), before_rejection);
     let rejected = dispatch(
         &h,
         &call(false),
         "set_thread",
-        json!({"expected_revision":2,"name":"Unsupported BSW","family":"bsw",
-            "fit":"whitworth_medium_external","major_diameter":{"value":0.25,"unit":"in"},
-            "pitch":{"value":0.05,"unit":"in"},"length":mm(2.5)}),
+        json!({"expected_revision":4,"name":"Invalid diameter","family":"iso_metric",
+            "major_diameter":mm(0.),"pitch":mm(1.25),"length":mm(2.5)}),
     )
     .unwrap_err();
-    assert!(
-        rejected.message.contains("Rust thread geometry"),
-        "{rejected:?}"
-    );
+    assert_eq!(rejected.code, "invalid_document");
+    assert!(rejected.message.contains("positive"), "{rejected:?}");
     assert_eq!(h.document(), before_rejection);
 
     let step = run(
@@ -282,7 +297,7 @@ fn rust_mcp_models_edits_and_reopens_a_metric_thread_without_fallback() {
     assert!(directory.path().join("thread.step").is_file());
     assert!(!directory.path().join(".thread.step.partial.step").exists());
 
-    run(&h, "save_project", json!({"expected_revision":2}));
+    run(&h, "save_project", json!({"expected_revision":4}));
     drop(h);
     let reopened = open();
     let source = run(&reopened, "inspect_thread", json!({"thread":thread}));
