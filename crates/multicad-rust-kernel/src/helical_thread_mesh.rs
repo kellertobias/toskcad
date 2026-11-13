@@ -22,6 +22,7 @@ pub use external::{shaft_volume_error_bound, tessellate_shaft};
 mod thread_end_relief;
 pub use thread_end_relief::{end_relief_volume_error_bound, tessellate_end_relief};
 mod screw;
+pub use screw::{PhillipsMeshError, PhillipsScrewMesh, tessellate_phillips_screw};
 pub use screw::{profiled_screw_volume_error_bound, tessellate_profiled_screw};
 pub use screw::{screw_volume_error_bound, tessellate_screw};
 

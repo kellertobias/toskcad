@@ -6,7 +6,9 @@ use crate::{
 use std::f64::consts::TAU;
 #[cfg(test)]
 mod contour_tests;
+mod phillips;
 mod torx;
+pub use phillips::{PhillipsMeshError, PhillipsScrewMesh, tessellate_phillips_screw};
 
 fn profiled_options(
     screw: &crate::profiled_screw::Screw,
