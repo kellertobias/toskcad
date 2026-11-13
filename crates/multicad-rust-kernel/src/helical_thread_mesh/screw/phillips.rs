@@ -37,6 +37,9 @@ pub struct PhillipsScrewMesh {
     mesh: DisplayMesh,
     connectivity: MeshProof,
     faces: Vec<ScrewFace>,
+    source_volume: crate::phillips_drive::SourceVolumeBounds,
+    literal_volume_mm3: [f64; 2],
+    volume_difference_bound_mm3: f64,
 }
 impl PhillipsScrewMesh {
     pub fn mesh(&self) -> &DisplayMesh {
@@ -48,6 +51,37 @@ impl PhillipsScrewMesh {
     pub fn faces(&self) -> &[ScrewFace] {
         &self.faces
     }
+    /// Source-only analytic interval paired during this candidate's creation.
+    pub fn source_volume(&self) -> crate::phillips_drive::SourceVolumeBounds {
+        self.source_volume
+    }
+    /// Directed signed-volume evaluation of the actual literal triangles.
+    pub fn literal_volume_mm3(&self) -> [f64; 2] {
+        self.literal_volume_mm3
+    }
+    pub fn volume_difference_bound_mm3(&self) -> f64 {
+        self.volume_difference_bound_mm3
+    }
+}
+// The caller has just certified this owned mesh's finite coordinates, indices
+// and closure. Source dimensions and the five-million-facet resource ceiling
+// bound these local cubic terms far below floating overflow. A local literal
+// vertex is the origin, reducing cancellation without moving any geometry.
+fn literal_volume(mesh: &DisplayMesh) -> I {
+    let origin = mesh.vertices.as_chunks::<3>().0[0];
+    let mut volume = I::point(0.);
+    for tri in mesh.indices.as_chunks::<3>().0 {
+        let [a, b, c] = tri.map(|id| {
+            std::array::from_fn::<_, 3, _>(|i| I::point(point(mesh, id)[i]) - I::point(origin[i]))
+        });
+        let cross = [
+            b[1] * c[2] - b[2] * c[1],
+            b[2] * c[0] - b[0] * c[2],
+            b[0] * c[1] - b[1] * c[0],
+        ];
+        volume = volume + (a[0] * cross[0] + a[1] * cross[1] + a[2] * cross[2]) / I::point(6.);
+    }
+    volume
 }
 fn point(mesh: &DisplayMesh, id: u32) -> [f64; 3] {
     mesh.vertices.as_chunks::<3>().0[id as usize]
@@ -185,6 +219,7 @@ pub fn tessellate_phillips_screw(
 ) -> Result<PhillipsScrewMesh, PhillipsMeshError> {
     check_options(options)?;
     cancel(cancelled)?;
+    let source_volume = screw.source_volume_bounds().map_err(source_error)?;
     let source = screw.cavity().source();
     let witness = screw.cavity().mouth_sweep();
     // Cavity volume admission proves the shared positive front intercepts;
@@ -303,10 +338,16 @@ pub fn tessellate_phillips_screw(
     cancel(cancelled)?;
     let mesh = builder.mesh;
     let connectivity = manufacturing::certify(&mesh)?;
+    let literal = literal_volume(&mesh);
+    let source = source_volume.volume_mm3();
+    let difference = literal - I::new(source[0], source[1]);
     Ok(PhillipsScrewMesh {
         mesh,
         connectivity,
         faces,
+        source_volume,
+        literal_volume_mm3: [literal.lo, literal.hi],
+        volume_difference_bound_mm3: difference.magnitude(),
     })
 }
 

@@ -85,6 +85,20 @@ fn actual_metric_cavity_sews_to_original_thread_head_with_shared_closed_indices(
         assert_eq!(source.thread(), &thread);
         assert_eq!(candidate.faces(), source.faces());
         assert!(candidate.connectivity().signed_volume_mm3 > 0.);
+        let literal = candidate.literal_volume_mm3();
+        assert!(
+            literal[0] <= candidate.connectivity().signed_volume_mm3
+                && candidate.connectivity().signed_volume_mm3 <= literal[1]
+        );
+        let source_bounds = candidate.source_volume().volume_mm3();
+        assert!(
+            source_bounds[0] <= source.nominal_volume_mm3()
+                && source.nominal_volume_mm3() <= source_bounds[1]
+        );
+        assert!(
+            candidate.volume_difference_bound_mm3()
+                >= (candidate.connectivity().signed_volume_mm3 - source.nominal_volume_mm3()).abs()
+        );
         // Diagnostic agreement only. A precise source-to-mesh volume error
         // budget and global 3D embedding remain separate admission gates.
         let nominal = source.nominal_volume_mm3();
@@ -105,6 +119,38 @@ fn actual_metric_cavity_sews_to_original_thread_head_with_shared_closed_indices(
             manufacturing::certify(mesh).unwrap().edge_pairs,
             candidate.connectivity().edge_pairs
         );
+    }
+}
+#[test]
+fn directed_literal_volume_survives_large_exact_translation_without_geometry_changes() {
+    // Binary-rational cube: its exact literal volume remains1/64 even at a
+    // distant origin. This tests arithmetic, not any CAD feature admission.
+    for origin in [[0.; 3], [1e12, -2e12, 3e12]] {
+        let mut mesh = DisplayMesh {
+            vertices: Vec::new(),
+            indices: vec![
+                0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2,
+                7, 6, 3, 0, 4, 3, 4, 7,
+            ],
+            face_indices: vec![0; 12],
+        };
+        for p in [
+            [0., 0., 0.],
+            [0.25, 0., 0.],
+            [0.25, 0.25, 0.],
+            [0., 0.25, 0.],
+            [0., 0., 0.25],
+            [0.25, 0., 0.25],
+            [0.25, 0.25, 0.25],
+            [0., 0.25, 0.25],
+        ] {
+            mesh.vertices
+                .extend(std::array::from_fn::<_, 3, _>(|i| origin[i] + p[i]));
+        }
+        manufacturing::certify(&mesh).unwrap();
+        let interval = literal_volume(&mesh);
+        assert!(interval.lo <= 1. / 64. && 1. / 64. <= interval.hi);
+        assert!(interval.width() < 1e-12);
     }
 }
 #[test]
