@@ -168,7 +168,9 @@ fn rust_mcp_edits_and_reopens_a_modeled_m6_socket_screw() {
             ["socket_cap", "hexalobular"],
             ["pan", "hexalobular"],
             ["button", "hexalobular"],
-            ["countersunk", "hexalobular"]
+            ["countersunk", "hexalobular"],
+            ["pan", "phillips_h"],
+            ["countersunk", "phillips_h"]
         ])
     );
     assert_eq!(
