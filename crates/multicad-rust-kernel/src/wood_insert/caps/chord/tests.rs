@@ -117,3 +117,53 @@ fn cap_coefficient_construction_cancels_at_every_actual_checkpoint_without_sourc
     }
     assert_eq!(body, before);
 }
+
+#[test]
+fn exact_event_cache_selects_every_overlapping_piece_and_preflights_its_storage() {
+    let source = body();
+    let cap = source.cap_domains(CapEnd::Start, options(), None).unwrap();
+    let mut w = work(options(), None).unwrap();
+    let proof = CapProof::new(&cap, &mut w).unwrap();
+    for (cached, encoded) in proof.angles.iter().zip(&cap.angles) {
+        assert_eq!(*cached, encoded.decode(&mut w).unwrap());
+    }
+    for (min, max) in [(-2, -1), (-1, 0), (0, 1), (1, 2), (2, 3)] {
+        let min = Q::from_integer(min.into());
+        let max = Q::from_integer(max.into());
+        let actual = proof
+            .overlapping_cells(&min, &max, &mut w)
+            .unwrap()
+            .collect::<Vec<_>>();
+        let expected = cap
+            .cells()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| {
+                (proof.angles[c.events[1]] > min && proof.angles[c.events[0]] < max).then_some(i)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+    }
+    for end in 1..proof.angles.len() {
+        let min = proof.angles[end - 1].clone();
+        let max = proof.angles[end].clone();
+        assert_eq!(
+            proof.overlapping_cells(&min, &max, &mut w).unwrap(),
+            end - 1..end
+        );
+    }
+    let mut small = work(
+        CapOptions {
+            maximum_bytes: SCRATCH_BYTES + 1024,
+            ..options()
+        },
+        None,
+    )
+    .unwrap();
+    assert!(matches!(CapProof::new(&cap, &mut small), Err(Error::Limit)));
+    w.limit = w.used;
+    assert!(matches!(
+        proof.overlapping_cells(&Q::zero(), &Q::one(), &mut w),
+        Err(Error::Limit)
+    ));
+}

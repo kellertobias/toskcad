@@ -23,7 +23,7 @@ macro_rules! div {
         op($a, $b, Op::Div, $w)?
     };
 }
-pub(super) fn binary_work(x: f64, w: &mut Work<'_>) -> R<Q> {
+fn binary_cost(x: f64) -> R<usize> {
     if !x.is_finite() {
         return Err(Error::Unresolved);
     }
@@ -31,8 +31,7 @@ pub(super) fn binary_work(x: f64, w: &mut Work<'_>) -> R<Q> {
     let exponent = ((bits >> 52) & 0x7ff) as i32;
     let mantissa = bits & ((1_u64 << 52) - 1);
     if exponent == 0 && mantissa == 0 {
-        w.charge(1)?;
-        return Ok(Q::zero());
+        return Ok(1);
     }
     let (mantissa, power) = if exponent == 0 {
         (mantissa, -1074)
@@ -42,9 +41,13 @@ pub(super) fn binary_work(x: f64, w: &mut Work<'_>) -> R<Q> {
     let n = u64::from(64 - mantissa.leading_zeros()) + power.max(0) as u64;
     let d = 1 + (-power).max(0) as u64;
     let words = (n + d).div_ceil(64) as usize;
-    w.charge(1 + words * words)?;
+    Ok(1 + words * words)
+}
+pub(super) fn binary_work(x: f64, w: &mut Work<'_>) -> R<Q> {
+    w.charge(binary_cost(x)?)?;
     Ok(binary(x))
 }
+
 fn interval(q: &Q, w: &mut Work<'_>) -> R<I> {
     let words = (q.numer().bits() + q.denom().bits()).div_ceil(64) as usize;
     w.charge(1 + words * words)?;
@@ -67,9 +70,28 @@ fn interval_proposal(q: &Q, x: f64, w: &mut Work<'_>) -> R<I> {
     Ok(I::new(lo, hi))
 }
 fn coefficients(source: &AuthoredThread, z: &Q, band: u8, k: i64, w: &mut Work<'_>) -> R<[I; 2]> {
-    // These closed radius formulas use<=16 finite source conversions. Their
-    // admitted operands have<=1075bits; reserve the full limb bound first.
-    w.charge(16 * 300)?;
+    w.charge(1)?;
+    let b = source.bands()[usize::from(band)];
+    if b.radius_mm[0] == b.radius_mm[1] {
+        // This source band is exactly constant, independently of phase, period
+        // and z. Its stored finite radius is already an exact binary scalar.
+        return Ok([I::point(b.radius_mm[0]), I::point(0.)]);
+    }
+    // Each radius() converts pitch twice, phase[0] twice, phase[1] once,
+    // radius[0] twice, and radius[1] once. Charge both evaluations using their
+    // actual IEEE bit-length upper bounds, not sixteen worst-case subnormals.
+    for value in [
+        source.spec().pitch_mm,
+        source.spec().pitch_mm,
+        b.phase_mm[0],
+        b.phase_mm[0],
+        b.phase_mm[1],
+        b.radius_mm[0],
+        b.radius_mm[0],
+        b.radius_mm[1],
+    ] {
+        w.charge(2 * binary_cost(value)?)?;
+    }
     let a = radius(source, z, &Q::zero(), band, k, w)?;
     let b = radius(source, z, &Q::one(), band, k, w)?;
     let b = sub!(&b, &a, w);
@@ -223,12 +245,25 @@ fn residual(
 }
 pub(super) struct CapProof<'a> {
     cap: &'a CapDomains,
+    angles: Vec<Q>,
     coefficients: Vec<[[I; 2]; 2]>,
     z: I,
 }
 impl<'a> CapProof<'a> {
     pub fn new(cap: &'a CapDomains, w: &mut Work<'_>) -> R<Self> {
         let z = station(cap.owner(), cap.end());
+        // Decode each immutable exact event once. Rebuilding BigRational values
+        // for every facet previously repeated allocation and normalization.
+        // Each bounded numerator/denominator uses at most MAX_BITS bits; the
+        // 4MiB material-mesh scratch reservation includes this cache and the
+        // existing coefficient/frontier arenas. Direct callers preflight it too.
+        let event_bytes =
+            cap.angles.len() * (std::mem::size_of::<Q>() + 2 * MAX_BITS as usize / 8 + 128);
+        w.memory(SCRATCH_BYTES + event_bytes)?;
+        let mut angles = reserve(cap.angles.len(), w)?;
+        for angle in &cap.angles {
+            angles.push(angle.decode(w)?);
+        }
         let mut cache = reserve(cap.cells().len(), w)?;
         for cell in cap.cells() {
             cache.push([
@@ -254,6 +289,7 @@ impl<'a> CapProof<'a> {
         // potentially tiny requested wall would cause spurious refusals.
         Ok(Self {
             cap,
+            angles,
             coefficients: cache,
             z: I::point(if cap.end() == CapEnd::Start {
                 0.
@@ -261,6 +297,32 @@ impl<'a> CapProof<'a> {
                 cap.owner().full_length_mm()
             }),
         })
+    }
+    fn overlapping_cells(&self, min: &Q, max: &Q, w: &mut Work<'_>) -> R<std::ops::Range<usize>> {
+        // CapDomains owns consecutive, strictly ordered exact events. Select
+        // positive-width intersections by exact comparisons; touching endpoints
+        // remain covered by their adjacent closed source pieces.
+        let count = self.cap.cells().len();
+        let (mut lo, mut hi) = (0, count);
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if cmp(&self.angles[mid + 1], min, w)? != Ordering::Greater {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        let begin = lo;
+        hi = count;
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if cmp(&self.angles[mid], max, w)? == Ordering::Less {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        Ok(begin..lo)
     }
     pub fn certify(
         &self,
@@ -292,14 +354,20 @@ impl<'a> CapProof<'a> {
         let mut checked = 0;
         for shift in 0..=1 {
             let shift_q = Q::from_integer(shift.into());
-            for (index, cell) in self.cap.cells().iter().enumerate() {
-                let lo =
-                    add!(&self.cap.angles[cell.events[0]].decode(w)?, &shift_q, w).max(min.clone());
-                let hi =
-                    add!(&self.cap.angles[cell.events[1]].decode(w)?, &shift_q, w).min(max.clone());
-                if lo >= hi {
-                    continue;
-                }
+            let local_min = sub!(&min, &shift_q, w);
+            let local_max = sub!(&max, &shift_q, w);
+            for index in self.overlapping_cells(&local_min, &local_max, w)? {
+                let cell = &self.cap.cells()[index];
+                let lo = add!(
+                    &self.angles[cell.events[0]].clone().max(local_min.clone()),
+                    &shift_q,
+                    w
+                );
+                let hi = add!(
+                    &self.angles[cell.events[1]].clone().min(local_max.clone()),
+                    &shift_q,
+                    w
+                );
                 let mut c = self.coefficients[index];
                 if shift != 0 {
                     for v in &mut c {

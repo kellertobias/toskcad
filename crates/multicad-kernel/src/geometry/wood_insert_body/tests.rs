@@ -247,3 +247,48 @@ fn semantic_endpoint_roles_do_not_alias_after_constraint_reordering() {
         roles.len()
     );
 }
+
+#[test]
+fn asymmetric_multistart_outer_law_keeps_distinct_faces_and_reference_ids() {
+    use multicad_rust_kernel::authored_flat_thread::{AuthoredThread, SourceOptions};
+    let original = crate::geometry::wood_insert_world_tests::source(false);
+    let mut outer = original.outer().spec();
+    outer.starts = 2;
+    outer.lower_flank_deg = 25.;
+    outer.upper_flank_deg = 35.;
+    let outer = AuthoredThread::new(
+        outer,
+        SourceOptions {
+            position_limit_mm: 1e-7,
+            normal_angle_limit_rad: 1e-7,
+        },
+    )
+    .unwrap();
+    let source = source::Insert::new(outer, *original.inner(), 0.5, None).unwrap();
+    let solid = Solid::rust_wood_insert(
+        source,
+        EntityId::new(),
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+        None,
+    )
+    .unwrap();
+    let topology = solid.topology_snapshot(EntityId::new(), 0).unwrap();
+    topology.validate().unwrap();
+    let faces = solid.faces().unwrap();
+    assert_eq!(faces.len(), 14);
+    let origins = topology
+        .elements
+        .iter()
+        .flat_map(|e| e.origins.iter())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(origins.len(), topology.elements.len());
+    assert!(
+        solid
+            .manufacturing_mesh_with_receipt(Default::default())
+            .unwrap()
+            .vertex_links
+            > 0
+    );
+    assert_eq!(solid.rust_wood_insert_data().unwrap().source, source);
+}
