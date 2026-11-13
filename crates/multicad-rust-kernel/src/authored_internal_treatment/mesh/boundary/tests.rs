@@ -1130,3 +1130,78 @@ fn actual_material_handoff_cancels_each_exact_stock_circle_allocation_and_public
         ));
     }
 }
+
+#[test]
+fn public_query_descriptor_headers_remain_inside_a_tight_real_polyline_allocation_budget() {
+    use crate::{Circle, Rational, cylinder::AxialCylinder};
+    let source = super::super::tests::source(false, 1, Some(0.4), true);
+    let zero = Rational::new(0, 1).unwrap();
+    let stock = AxialCylinder::new(
+        7,
+        Circle::new([zero; 2], Rational::new(5, 2).unwrap()).unwrap(),
+        zero,
+        Rational::new(3715469692580659, 1125899906842624).unwrap(),
+    )
+    .unwrap();
+    let material = Material::new(stock, source, 0.1).unwrap();
+    let options = BoundaryOptions {
+        vertices: 128,
+        curves: 256,
+        cells: 128,
+        ..BoundaryOptions::default()
+    };
+    let baseline = material.boundary_with_interrupt(options, None).unwrap();
+    let id = baseline
+        .curves()
+        .find(|(_, curve)| {
+            matches!(
+                baseline.points()[curve.endpoints()[0] as usize].role(),
+                BoundaryPointRole::StockRim { end: 0 }
+            )
+        })
+        .unwrap()
+        .0;
+    // This actual requested quality produces nearly 500k circle samples: the
+    // output exceeds construction's fixed exact-scratch reservation, allowing a
+    // real smaller budget to distinguish capacity from missing query headers.
+    let quality = 1e-10;
+    let result = baseline.curve_polyline(id, quality, 500_000, None).unwrap();
+    assert!(result.points_mm.len() > 350_000 && result.maximum_error_mm <= quality);
+    let allocated = result.points_mm.capacity() * size_of::<[f64; 3]>();
+    let source_only = baseline.graph.resident() + allocated;
+    let tight = material
+        .boundary_with_interrupt(
+            BoundaryOptions {
+                bytes: source_only,
+                ..options
+            },
+            None,
+        )
+        .unwrap();
+    assert_eq!(tight.graph.resident(), baseline.graph.resident());
+    assert!(matches!(
+        tight.curve_polyline(id, quality, 500_000, None),
+        Err(Error::Limit)
+    ));
+    let exact_budget =
+        source_only + baseline.query_headers() + size_of::<polyline::BoundaryPolyline>();
+    let corrected = material
+        .boundary_with_interrupt(
+            BoundaryOptions {
+                bytes: exact_budget,
+                ..options
+            },
+            None,
+        )
+        .unwrap();
+    let corrected_result = corrected
+        .curve_polyline(id, quality, 500_000, None)
+        .unwrap();
+    assert_eq!(corrected_result.points_mm, result.points_mm);
+    assert!(
+        corrected.retained_bytes() + allocated + size_of::<polyline::BoundaryPolyline>()
+            <= exact_budget
+    );
+    // The same public header reserve applies while wire workspaces are alive.
+    assert!(!corrected.face_loops(0, None).unwrap().is_empty());
+}

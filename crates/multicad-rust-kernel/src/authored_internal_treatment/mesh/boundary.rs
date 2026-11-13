@@ -32,6 +32,9 @@ pub struct BoundaryOptions {
     pub vertices: usize,
     pub curves: usize,
     pub work: usize,
+    /// Aggregate owned graph, query output and dynamic workspace bytes,
+    /// including container descriptors. Fixed call-stack frames are not an
+    /// allocator budget; exact-arithmetic dynamic scratch has its own reserve.
     pub bytes: usize,
 }
 impl Default for BoundaryOptions {

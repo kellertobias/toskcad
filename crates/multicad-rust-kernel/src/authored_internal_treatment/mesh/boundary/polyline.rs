@@ -53,7 +53,11 @@ impl Boundary {
             return Err(Error::Limit);
         }
         let segments = proposal as usize;
-        let mut points = self.graph.buffer::<[f64; 3]>(segments + 1, 0, &mut work)?;
+        let mut points = self.graph.buffer::<[f64; 3]>(
+            segments + 1,
+            self.query_headers() + size_of::<BoundaryPolyline>(),
+            &mut work,
+        )?;
         let mut previous = self.curve_point(id, 0., interrupt)?;
         points.push(previous.point_mm);
         let mut last_t = 0.;

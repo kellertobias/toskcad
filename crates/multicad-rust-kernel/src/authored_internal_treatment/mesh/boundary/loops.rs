@@ -6,6 +6,7 @@ pub struct Coedge {
     pub forward: bool,
 }
 impl Graph {
+    #[cfg(test)]
     pub(super) fn face_loops(
         &self,
         face: u32,

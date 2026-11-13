@@ -127,6 +127,13 @@ fn build(
     })
 }
 impl Boundary {
+    // Public queries retain the Boundary extension beyond Graph. At most eight
+    // dynamic Vec descriptors are live while tracing nested wires (including
+    // construction/return descriptors); reserve them even when moves can share
+    // storage. Their allocated capacities are charged separately by Graph.
+    pub(super) fn query_headers(&self) -> usize {
+        size_of::<Self>() - size_of::<Graph>() + 8 * size_of::<Vec<usize>>()
+    }
     pub fn cavity(&self) -> &Cavity {
         &self.graph.source
     }
@@ -184,7 +191,9 @@ impl Boundary {
         if face >= self.face_count() {
             return Err(Error::Invalid);
         }
-        let result = self.graph.face_loops(face, &mut work)?;
+        let result = self
+            .graph
+            .face_loops_reserved(face, self.query_headers(), &mut work)?;
         work.step()?;
         Ok(result)
     }
