@@ -1,5 +1,6 @@
 //! Actual cylindrical stock minus an explicitly authored shared-boundary MAX
 //! cavity. No display mesh, legacy thread approximation or recipe is material.
+pub(super) mod interval;
 use super::arithmetic::{dot_error, sum_error};
 use super::*;
 use crate::HelicalThread;
