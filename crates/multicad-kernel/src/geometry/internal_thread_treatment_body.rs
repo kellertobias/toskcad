@@ -1,7 +1,10 @@
 //! Actual cylindrical stock minus an explicitly authored shared-boundary MAX
 //! cavity. No display mesh, legacy thread approximation or recipe is material.
+mod display;
+mod faces;
 pub(super) mod interval;
 mod properties;
+mod topology;
 use super::arithmetic::{dot_error, sum_error};
 use super::*;
 use crate::HelicalThread;
@@ -34,6 +37,8 @@ pub(crate) struct InternalThreadTreatmentBody {
     pub(super) feature: EntityId,
     requested_wall: f64,
     stock_topology: TopologySnapshot,
+    creation_frame: PlaneFrame,
+    boundary: std::sync::OnceLock<source::Boundary>,
 }
 fn unsupported(message: &str) -> GeometryError {
     error(
@@ -210,6 +215,8 @@ impl Solid {
             feature,
             requested_wall: cut.minimum_wall_mm,
             stock_topology,
+            creation_frame: frame,
+            boundary: std::sync::OnceLock::new(),
         };
         body.validate_frame(frame, policy)?;
         let bounds = body.bounds(frame);
@@ -332,18 +339,13 @@ impl InternalThreadTreatmentBody {
             })
         })
     }
-    pub(crate) fn unavailable_boundary(&self) -> GeometryError {
-        unsupported(
-            "Exact finite internal-treatment boundary properties are not yet qualified; mesh is not topology",
-        )
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use multicad_rust_kernel::{Circle, Rational};
-    fn fixture_stock(height: Rational, frame: PlaneFrame) -> Solid {
+    pub(super) fn fixture_stock(height: Rational, frame: PlaneFrame) -> Solid {
         let zero = Rational::new(0, 1).unwrap();
         let cylinder = AxialCylinder::new(
             7,
@@ -354,7 +356,11 @@ mod tests {
         .unwrap();
         Solid::build_axial_cylinder(cylinder, frame, None, GeometryPolicy::default()).unwrap()
     }
-    fn cut(frame: PlaneFrame, left_hand: bool, starts: u32) -> InternalThreadTreatmentCut {
+    pub(super) fn cut(
+        frame: PlaneFrame,
+        left_hand: bool,
+        starts: u32,
+    ) -> InternalThreadTreatmentCut {
         InternalThreadTreatmentCut {
             profile: HelicalThread {
                 major_radius_mm: 1.5,
@@ -454,17 +460,14 @@ mod tests {
                         .iter()
                         .any(|o| o.source == EntityId::from_uuid_bits(7)))
             );
-            assert_eq!(
-                result.faces().unwrap_err().kind,
-                GeometryErrorKind::Unsupported
-            );
-            assert_eq!(
-                result
-                    .topology_snapshot(EntityId::new(), 0)
-                    .unwrap_err()
-                    .kind,
-                GeometryErrorKind::Unsupported
-            );
+            let faces = result.faces().unwrap();
+            assert_eq!(faces.len(), actual.material.face_count() as usize);
+            assert!(faces.iter().all(|face| face.area_mm2 > 0.));
+            result
+                .topology_snapshot(EntityId::new(), 0)
+                .unwrap()
+                .validate()
+                .unwrap();
             assert!(!result.supports_step_export());
             assert_eq!(result.share().unwrap().volume_mm3().unwrap(), scalar);
             assert_eq!(stock.volume_mm3().unwrap(), original);

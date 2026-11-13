@@ -372,7 +372,7 @@ fn invalid_options_actual_budget_and_delayed_cancellation() {
     );
 }
 #[test]
-fn native_typed_handoff_uses_actual_occurrence_and_keeps_generic_faces_disabled() {
+fn native_typed_handoff_and_faces_use_actual_occurrence() {
     let p = GeometryPolicy::default();
     let q = |n| Rational::new(n, 1).unwrap();
     let frame = PlaneFrame {
@@ -445,7 +445,7 @@ fn native_typed_handoff_uses_actual_occurrence_and_keeps_generic_faces_disabled(
     for (b, x) in actual.world.centroid_mm.into_iter().zip(frame.origin) {
         encloses(b, x);
     }
-    assert!(solid.faces().is_err());
+    assert!(solid.faces().unwrap().iter().all(|face| face.area_mm2 > 0.));
     assert!(
         solid
             .rust_internal_thread_treatment_world_face_properties_with_interrupt(

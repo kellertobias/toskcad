@@ -1986,8 +1986,8 @@ impl Solid {
         crate::planar_contours::extract(self, face, frame, self.policy)
     }
     pub fn faces(&self) -> Result<Vec<Face>, GeometryError> {
-        if let Some((body, _)) = self.internal_thread_treatment_body() {
-            return Err(body.unavailable_boundary());
+        if let Some((body, frame)) = self.internal_thread_treatment_body() {
+            return body.faces(frame, self.policy);
         }
         if let Some((body, frame)) = self.rounded_cylinder_body() {
             return Ok(body.faces(frame));
@@ -2464,7 +2464,9 @@ impl Solid {
             None => (Vec::new(), Vec::new()),
             Some(deflection) if self.uses_rust_geometry() => {
                 self.validate_display_deflection(deflection)?;
-                let edges = if let Some((body, frame)) = self.rounded_thread_bore_body() {
+                let edges = if let Some((body, frame)) = self.internal_thread_treatment_body() {
+                    body.display_edges(frame, deflection, self.policy)?
+                } else if let Some((body, frame)) = self.rounded_thread_bore_body() {
                     body.display_edges(frame, deflection)?
                 } else if let Some((body, frame)) = self.rounded_thread_body() {
                     body.display_edges(frame, deflection)?
@@ -2500,6 +2502,9 @@ impl Solid {
 
     pub fn display_edges(&self, deflection_mm: f64) -> Result<Vec<DisplayEdge>, GeometryError> {
         self.validate_display_deflection(deflection_mm)?;
+        if let Some((body, frame)) = self.internal_thread_treatment_body() {
+            return body.display_edges(frame, deflection_mm, self.policy);
+        }
         if let Some((body, frame)) = self.rounded_thread_bore_body() {
             return body.display_edges(frame, deflection_mm);
         }
