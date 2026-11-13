@@ -534,4 +534,80 @@ mod tests {
         let degenerate = mesh(&[[0.; 3]; 3], &[[0, 1, 2]]);
         assert!(certify(&degenerate).is_err());
     }
+    #[test]
+    fn authored_internal_treatment_candidates_require_actual_literal_embedding() {
+        use multicad_rust_kernel::{
+            authored_flat_thread::{AuthoredThread, SourceOptions},
+            authored_internal_treatment::{Cavity, Intent, Terminal, tessellate_candidate},
+            display::Tessellation,
+            helical_thread::Spec,
+        };
+        for (left_hand, starts) in [(false, 1), (true, 2)] {
+            let pitch_mid = (2.675 + 2.775) / 2.;
+            let minor_mid = (2.459 + 2.599) / 2.;
+            let thread = AuthoredThread::new(
+                Spec {
+                    major_radius_mm: 1.5,
+                    pitch_mm: 0.5,
+                    length_mm: 3.3,
+                    depth_mm: (3. - minor_mid) / 2.,
+                    crest_width_mm: 0.25 - (3. - pitch_mid) / 3_f64.sqrt(),
+                    lower_flank_deg: 30.,
+                    upper_flank_deg: 30.,
+                    starts,
+                    left_hand,
+                    root_radius_mm: None,
+                },
+                SourceOptions {
+                    position_limit_mm: 1e-7,
+                    normal_angle_limit_rad: 1e-7,
+                },
+            )
+            .unwrap();
+            let cavity = Cavity::new(
+                thread,
+                Intent {
+                    entry_depth_mm: Some(0.4),
+                    terminal: Some(Terminal {
+                        width_mm: 0.3,
+                        radial_depth_mm: 0.05,
+                    }),
+                },
+            )
+            .unwrap();
+            let candidate = tessellate_candidate(
+                &cavity,
+                Tessellation {
+                    deflection: 0.1,
+                    angle: 0.3,
+                    triangle_limit: 1_000_000,
+                },
+                None,
+            )
+            .unwrap();
+            let mesh = Mesh {
+                vertices: candidate.mesh.vertices,
+                indices: candidate.mesh.indices,
+                face_indices: candidate.mesh.face_indices,
+            };
+            let timer = std::time::Instant::now();
+            let pairs = certify(&mesh).unwrap();
+            eprintln!(
+                "actual internal candidate literal embedding {left_hand}/{starts}: {pairs} pairs {:?}",
+                timer.elapsed()
+            );
+            assert!(pairs > 0);
+            let mut overlap = mesh.clone();
+            let first: [u32; 3] = overlap.indices[..3].try_into().unwrap();
+            overlap.indices[3..6].copy_from_slice(&first);
+            assert!(certify(&overlap).is_err());
+            assert_eq!(
+                controlled(&mesh, Some(&|| true), 64_000_000)
+                    .unwrap_err()
+                    .kind,
+                GeometryErrorKind::Cancelled
+            );
+            assert!(controlled(&mesh, None, 1).is_err());
+        }
+    }
 }
