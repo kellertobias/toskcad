@@ -604,7 +604,9 @@ fn bspt_mcp_omitted_edits_undo_reopen_and_failures_retain_canonical_intent() {
             .code,
         "cancelled"
     );
+    let create_started = std::time::Instant::now();
     let created = run(&h, "set_thread", args);
+    eprintln!("actual MCP BSPT8 create {:?}", create_started.elapsed());
     let feature = created["thread"].clone();
     let original = h.document();
     for bad in [
@@ -647,7 +649,22 @@ fn bspt_mcp_omitted_edits_undo_reopen_and_failures_retain_canonical_intent() {
         "export_step",
         json!({"part":created["part"],"file_name":"pipe.step"}),
     );
-    assert!(output["readback_volume_mm3"].as_f64().unwrap() > 0.);
+    assert!(output["bytes"].as_u64().unwrap() > 0);
+    assert!(output["readback_volume_mm3"].is_null());
+    let proof = &output["step_verification"];
+    assert_eq!(proof["method"], "decoded_boundary_enclosure");
+    assert!(proof["decoded_volume_mm3"].is_null());
+    assert!(proof["source_volume_bounds_mm3"].is_null());
+    let members = proof["retained_members"].as_array().unwrap();
+    assert_eq!(members.len(), 1);
+    assert_eq!(members[0]["member_index"], 0);
+    let decoded = members[0]["decoded_volume_bounds_mm3"].as_array().unwrap();
+    let source = members[0]["source_volume_bounds_mm3"].as_array().unwrap();
+    let [dl, du] = [decoded[0].as_f64().unwrap(), decoded[1].as_f64().unwrap()];
+    let [sl, su] = [source[0].as_f64().unwrap(), source[1].as_f64().unwrap()];
+    assert!(dl > 0. && du >= dl && sl > 0. && su >= sl);
+    assert!(dl <= su && sl <= du);
+    assert!(proof["verified_tolerance_mm"].as_f64().unwrap() > 0.);
 }
 #[test]
 fn bspt_nested_nut_and_screw_inspection_keep_the_shared_gauge_receipt() {
