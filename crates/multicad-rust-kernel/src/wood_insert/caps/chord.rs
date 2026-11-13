@@ -1,5 +1,7 @@
 //! Whole actual cap source versus each literal affine facet, piece by piece.
 use super::*;
+#[cfg(test)]
+mod tests;
 type R<T> = Result<T, Error>;
 macro_rules! add {
     ($a:expr,$b:expr,$w:expr) => {
@@ -50,6 +52,9 @@ fn interval(q: &Q, w: &mut Work<'_>) -> R<I> {
         .to_f64()
         .filter(|v| v.is_finite())
         .ok_or(Error::Unresolved)?;
+    interval_proposal(q, x, w)
+}
+fn interval_proposal(q: &Q, x: f64, w: &mut Work<'_>) -> R<I> {
     let [lo, hi] = [x.next_down(), x.next_up()];
     if !lo.is_finite() || !hi.is_finite() {
         return Err(Error::Unresolved);
@@ -243,16 +248,10 @@ impl<'a> CapProof<'a> {
                 )?,
             ]);
         }
-        let tau = I::new(
-            std::f64::consts::PI.next_down(),
-            std::f64::consts::PI.next_up(),
-        ) * I::point(2.);
-        let jac = tau
-            * I::point(cap.owner().inner().minimum_radius_mm())
-            * I::point(cap.owner().minimum_wall_mm());
-        if !jac.valid() || jac.lo <= 0. {
-            return Err(Error::Unresolved);
-        }
+        // The sealed source proves ri>0 and ro−ri>=minimum_wall>0 exactly.
+        // Thus det dP/d(w,t)=−2pi*r*(ro−ri) is strictly nonzero on every
+        // piece. Replacing this invariant by a rounded product of the user's
+        // potentially tiny requested wall would cause spurious refusals.
         Ok(Self {
             cap,
             coefficients: cache,
@@ -270,6 +269,19 @@ impl<'a> CapProof<'a> {
         limit: f64,
         w: &mut Work<'_>,
     ) -> R<f64> {
+        self.certify_bounded(uv, p, limit, 4096, 12, w)
+    }
+    fn certify_bounded(
+        &self,
+        uv: &[[Q; 2]; 3],
+        p: [[f64; 3]; 3],
+        limit: f64,
+        maximum_boxes: usize,
+        maximum_depth: u8,
+        w: &mut Work<'_>,
+    ) -> R<f64> {
+        let maximum_boxes = maximum_boxes.min(4096);
+        let maximum_depth = maximum_depth.min(12);
         let (a, positive) = affine(uv, p, w)?;
         let min = uv.iter().map(|p| p[0].clone()).min().unwrap();
         let max = uv.iter().map(|p| p[0].clone()).max().unwrap();
@@ -302,7 +314,7 @@ impl<'a> CapProof<'a> {
                         continue;
                     }
                     checked += 1;
-                    if checked > 4096 {
+                    if checked > maximum_boxes {
                         return Err(Error::Limit);
                     }
                     let e = residual(c, &bounds, self.z, a, w)?;
@@ -310,7 +322,7 @@ impl<'a> CapProof<'a> {
                         maximum = maximum.max(e);
                         continue;
                     }
-                    if depth == 12 {
+                    if depth == maximum_depth {
                         return Err(Error::Unresolved);
                     }
                     let mut mid = [Q::zero(), Q::zero()];

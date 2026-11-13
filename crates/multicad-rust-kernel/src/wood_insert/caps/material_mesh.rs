@@ -95,6 +95,32 @@ struct Vertex {
     index: usize,
     angle: Angle,
 }
+// Sealed, strictly ordered source parameters on one actual connected cycle.
+// The final seam aliases the first vertex at exactly its parameter+1.
+struct OrderedRing {
+    vertices: Vec<Vertex>,
+}
+impl OrderedRing {
+    fn len(&self) -> usize {
+        self.vertices.len()
+    }
+}
+fn endpoints(edge: [usize; 2], count: usize) -> R<[usize; 2]> {
+    let [a, b] = edge;
+    if a == b || a >= count || b >= count {
+        Err(Error::Unresolved)
+    } else {
+        Ok(edge)
+    }
+}
+fn neighbor(node: &mut Node, other: usize) -> R<()> {
+    if node.degree >= 2 || node.neighbors.contains(&other) {
+        return Err(Error::Unresolved);
+    }
+    node.neighbors[node.degree] = other;
+    node.degree += 1;
+    Ok(())
+}
 fn encoded(q: &Q, m: &mut Memory, w: &mut Work<'_>) -> R<Angle> {
     let maximum =
         q.numer().bits().div_ceil(8).max(1) as usize + q.denom().bits().div_ceil(8).max(1) as usize;
@@ -109,21 +135,17 @@ fn ring(
     offset: usize,
     m: &mut Memory,
     w: &mut Work<'_>,
-) -> R<Vec<Vertex>> {
+) -> R<OrderedRing> {
     let count = shell.mesh().vertices.len() / 3;
     let mut nodes: Vec<Option<Node>> = allocate(count, m, w)?;
     w.charge(count)?;
     nodes.resize_with(count, || None);
     let headers = nodes.capacity() * size_of::<Option<Node>>();
-    let mut unique = 0;
     for edge in 0..shell.rim_count(end) {
         w.charge(1)?;
         let e = shell.rim_edge(end, edge).ok_or(Error::Unresolved)?;
-        let [a, b] = e.vertex_indices;
-        if a == b || a >= count || b >= count {
-            return Err(Error::Unresolved);
-        }
-        for (vertex, neighbor) in [(a, b), (b, a)] {
+        let [a, b] = endpoints(e.vertex_indices, count)?;
+        for (vertex, other) in [(a, b), (b, a)] {
             if nodes[vertex].is_none() {
                 let (q, cost) = shell
                     .exact_rim_turns(vertex, w.limit - w.used, w.interrupt)
@@ -134,16 +156,21 @@ fn ring(
                     degree: 0,
                     angle: encoded(&q, m, w)?,
                 });
-                unique += 1;
             }
-            let n = nodes[vertex].as_mut().unwrap();
-            if n.degree >= 2 || n.neighbors.contains(&neighbor) {
-                return Err(Error::Unresolved);
-            }
-            n.neighbors[n.degree] = neighbor;
-            n.degree += 1;
+            neighbor(nodes[vertex].as_mut().unwrap(), other)?;
         }
     }
+    let ordered = order_nodes(nodes, offset, m, w)?;
+    m.remove(headers);
+    Ok(ordered)
+}
+fn order_nodes(
+    mut nodes: Vec<Option<Node>>,
+    offset: usize,
+    m: &mut Memory,
+    w: &mut Work<'_>,
+) -> R<OrderedRing> {
+    let unique = nodes.iter().filter(|n| n.is_some()).count();
     if unique < 3 {
         return Err(Error::Unresolved);
     }
@@ -223,11 +250,10 @@ fn ring(
     if result.len() != unique {
         return Err(Error::Unresolved);
     }
-    m.remove(headers);
-    Ok(result)
+    Ok(OrderedRing { vertices: result })
 }
-fn point(ring: &[Vertex], index: usize, t: i32, w: &mut Work<'_>) -> R<(usize, [Q; 2])> {
-    let v = &ring[index % ring.len()];
+fn point(ring: &OrderedRing, index: usize, t: i32, w: &mut Work<'_>) -> R<(usize, [Q; 2])> {
+    let v = &ring.vertices[index % ring.len()];
     let mut q = v.angle.decode(w)?;
     if index == ring.len() {
         q = op(&q, &Q::one(), Op::Add, w)?;
@@ -237,8 +263,8 @@ fn point(ring: &[Vertex], index: usize, t: i32, w: &mut Work<'_>) -> R<(usize, [
 fn cap(
     mesh: &mut DisplayMesh,
     source: &CapDomains,
-    outer: &[Vertex],
-    inner: &[Vertex],
+    outer: &OrderedRing,
+    inner: &OrderedRing,
     options: Tessellation,
     w: &mut Work<'_>,
 ) -> R<f64> {
@@ -251,7 +277,6 @@ fn cap(
     } else {
         source.owner().full_length_mm()
     };
-    let mut area = Q::zero();
     while o < outer.len() || i < inner.len() {
         w.charge(1)?;
         let advance_outer = if i == inner.len() {
@@ -284,54 +309,14 @@ fn cap(
         };
         let mut ids = vertices.each_ref().map(|v| v.0);
         let mut uv = vertices.map(|v| v.1);
-        let du1 = op(&uv[1][0], &uv[0][0], Op::Sub, w)?;
-        let du2 = op(&uv[2][0], &uv[0][0], Op::Sub, w)?;
-        let dt1 = op(&uv[1][1], &uv[0][1], Op::Sub, w)?;
-        let dt2 = op(&uv[2][1], &uv[0][1], Op::Sub, w)?;
-        let a = op(&du1, &dt2, Op::Mul, w)?;
-        let b = op(&du2, &dt1, Op::Mul, w)?;
-        let determinant = op(&a, &b, Op::Sub, w)?;
-        if determinant <= Q::zero() {
-            return Err(Error::Unresolved);
-        }
-        area = op(&area, &determinant, Op::Add, w)?;
+        // Each chosen side advances strictly in w on a fixed t=0/1 rail.
+        // Its exact UV determinant equals that positive advance. The two
+        // rails each span exactly1 via the shared periodic seam identity;
+        // their zipper therefore covers the annulus parallelogram once.
         let mut points = ids.map(|id| mesh.vertices[id * 3..id * 3 + 3].try_into().unwrap());
-        if points.iter().any(|p: &[f64; 3]| p[2] != z) {
-            return Err(Error::Unresolved);
-        }
-        // Exact literal planar determinant: no tolerance or rounded normal is used.
-        let x1 = op(
-            &super::chord::binary_work(points[1][0], w)?,
-            &super::chord::binary_work(points[0][0], w)?,
-            Op::Sub,
-            w,
-        )?;
-        let x2 = op(
-            &super::chord::binary_work(points[2][0], w)?,
-            &super::chord::binary_work(points[0][0], w)?,
-            Op::Sub,
-            w,
-        )?;
-        let y1 = op(
-            &super::chord::binary_work(points[1][1], w)?,
-            &super::chord::binary_work(points[0][1], w)?,
-            Op::Sub,
-            w,
-        )?;
-        let y2 = op(
-            &super::chord::binary_work(points[2][1], w)?,
-            &super::chord::binary_work(points[0][1], w)?,
-            Op::Sub,
-            w,
-        )?;
-        let a = op(&x1, &y2, Op::Mul, w)?;
-        let b = op(&x2, &y1, Op::Mul, w)?;
-        let det = op(&a, &b, Op::Sub, w)?;
-        if det.is_zero() {
-            return Err(Error::Unresolved);
-        }
+        let positive = plane_orientation(points, z, w)?;
         let expected_positive = source.end() == CapEnd::End;
-        if (det > Q::zero()) != expected_positive {
+        if positive != expected_positive {
             ids.swap(1, 2);
             uv.swap(1, 2);
             points.swap(1, 2);
@@ -345,12 +330,44 @@ fn cap(
         mesh.face_indices
             .push(if source.end() == CapEnd::Start { 0 } else { 1 });
     }
-    // Sum of signed double areas is exactly2 for the complete unit annulus
-    // parallelogram, regardless of the two independently chosen seam origins.
-    if area != Q::from_integer(2.into()) {
+    Ok(maximum)
+}
+fn plane_orientation(points: [[f64; 3]; 3], z: f64, w: &mut Work<'_>) -> R<bool> {
+    if points.iter().any(|p: &[f64; 3]| p[2] != z) {
         return Err(Error::Unresolved);
     }
-    Ok(maximum)
+    // Exact literal planar determinant: no tolerance or rounded normal is used.
+    let x1 = op(
+        &super::chord::binary_work(points[1][0], w)?,
+        &super::chord::binary_work(points[0][0], w)?,
+        Op::Sub,
+        w,
+    )?;
+    let x2 = op(
+        &super::chord::binary_work(points[2][0], w)?,
+        &super::chord::binary_work(points[0][0], w)?,
+        Op::Sub,
+        w,
+    )?;
+    let y1 = op(
+        &super::chord::binary_work(points[1][1], w)?,
+        &super::chord::binary_work(points[0][1], w)?,
+        Op::Sub,
+        w,
+    )?;
+    let y2 = op(
+        &super::chord::binary_work(points[2][1], w)?,
+        &super::chord::binary_work(points[0][1], w)?,
+        Op::Sub,
+        w,
+    )?;
+    let a = op(&x1, &y2, Op::Mul, w)?;
+    let b = op(&x2, &y1, Op::Mul, w)?;
+    let det = op(&a, &b, Op::Sub, w)?;
+    if det.is_zero() {
+        return Err(Error::Unresolved);
+    }
+    Ok(det > Q::zero())
 }
 fn literal_volume(mesh: &DisplayMesh, w: &mut Work<'_>) -> R<[f64; 2]> {
     let origin: [f64; 3] = mesh.vertices[..3].try_into().unwrap();

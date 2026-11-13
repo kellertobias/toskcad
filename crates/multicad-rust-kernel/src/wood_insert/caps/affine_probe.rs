@@ -22,7 +22,7 @@ fn coeff(source: &AuthoredThread, z: &Q, band: u8, k: i64, w: &mut Work<'_>) -> 
     let slope = sub(&b, &a, w);
     [a, slope]
 }
-fn literal(body: &Insert, z: &Q, u: &Q, t: &Q, w: &mut Work<'_>) -> [f64; 3] {
+pub(super) fn literal(body: &Insert, z: &Q, u: &Q, t: &Q, w: &mut Work<'_>) -> [f64; 3] {
     let r = |source: &AuthoredThread, w: &mut Work<'_>| {
         let (b, k) = band_at(source, z, u, w).unwrap();
         radius(source, z, u, b, k, w).unwrap()

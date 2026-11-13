@@ -238,3 +238,111 @@ fn real_nominal_source_repartitions_without_changing_phase_or_admitting_noop_tre
     assert!(candidate.source_normal_angle_bound_rad() <= options().angle);
     assert!(candidate.rim_count(ShellEnd::Start) > 2 && candidate.rim_count(ShellEnd::End) > 2);
 }
+
+#[test]
+fn actual_shifted_source_footpoints_compare_by_exact_physical_turns_for_both_hands() {
+    use num_rational::BigRational;
+    use num_traits::{One, Zero};
+    for left in [false, true] {
+        let spec = source(false, left, 1).spec();
+        let thread = AuthoredThread::new(
+            spec,
+            crate::authored_flat_thread::SourceOptions {
+                position_limit_mm: 1e-7,
+                normal_angle_limit_rad: 1e-7,
+            },
+        )
+        .unwrap();
+        let mut w = Work {
+            remaining: 16_000_000,
+            used: 0,
+            interrupt: None,
+        };
+        let mut grid = Grid::new();
+        grid.shifted = true;
+        let shell = loop {
+            match chart::traced_chart(
+                ThreadChart::bare(&thread),
+                options(),
+                (grid.subdivisions, grid.rows(), grid.shifted),
+                &mut w,
+            )
+            .unwrap()
+            {
+                Attempt::Complete((shell, trace)) => {
+                    break ThreadShell {
+                        thread,
+                        shell,
+                        trace,
+                        work_used: w.used,
+                    };
+                }
+                Attempt::Refine => grid.advance(false).unwrap(),
+                Attempt::Repartition => grid.advance(true).unwrap(),
+            }
+        };
+        let before = *shell.source();
+        let mut found_after_one = false;
+        let mut selected = None;
+        for end in [ShellEnd::Start, ShellEnd::End] {
+            for i in 0..shell.rim_count(end) {
+                let vertex = shell.rim_edge(end, i).unwrap().vertex_indices[0];
+                let original = shell
+                    .trace
+                    .parameter(vertex, &mut w)
+                    .unwrap()
+                    .rational(&mut w)
+                    .unwrap();
+                found_after_one |= original >= BigRational::one();
+                let (physical, cost) = shell.exact_rim_turns(vertex, 16_000_000, None).unwrap();
+                assert!(
+                    cost > 0 && physical >= BigRational::zero() && physical < BigRational::one()
+                );
+                let mut expected = if original >= BigRational::one() {
+                    original - BigRational::one()
+                } else {
+                    original
+                };
+                if left && !expected.is_zero() {
+                    expected = BigRational::one() - expected;
+                }
+                assert_eq!(physical, expected);
+                selected = Some(vertex);
+            }
+        }
+        assert!(
+            found_after_one,
+            "actual source has a footpoint at the full-period boundary"
+        );
+        let vertex = selected.unwrap();
+        assert!(matches!(
+            shell.exact_rim_turns(usize::MAX, 16_000_000, None),
+            Err(SourceError::Unresolved)
+        ));
+        assert!(matches!(
+            shell.exact_rim_turns(vertex, 0, None),
+            Err(SourceError::Limit)
+        ));
+        let calls = Cell::new(0);
+        let count = || {
+            calls.set(calls.get() + 1);
+            false
+        };
+        shell
+            .exact_rim_turns(vertex, 16_000_000, Some(&count))
+            .unwrap();
+        let total = calls.get();
+        for stop in 1..=total {
+            let n = Cell::new(0);
+            let cancel = || {
+                n.set(n.get() + 1);
+                n.get() == stop
+            };
+            assert!(matches!(
+                shell.exact_rim_turns(vertex, 16_000_000, Some(&cancel)),
+                Err(SourceError::Cancelled)
+            ));
+        }
+        assert_eq!(*shell.source(), before);
+    }
+}
