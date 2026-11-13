@@ -287,11 +287,6 @@ fn real_coincident_floor_wall_join_and_cone_chart_conditioning_fail_closed() {
         ),
         Err(Error::Unresolved)
     ));
-    let atlas = c.boundary_events().unwrap();
-    assert!(matches!(
-        atlas.cone_point(EnvelopeRole::EntryRoundover, I::point(1.), I::point(0.)),
-        Err(Error::Invalid)
-    ));
 }
 
 #[test]
@@ -309,10 +304,10 @@ fn inner_linear_contact_and_round_chart_domains_are_not_repaired() {
         unreachable!()
     };
     assert!(matches!(
-        wall_offset(k, WallKind::Inner, I::new(0., radius_mm)),
+        evaluate::wall_offset(k, WallKind::Inner, I::new(0., radius_mm)),
         Err(Error::Unresolved)
     ));
-    let offset = wall_offset(k, WallKind::Inner, k.join_y).unwrap();
+    let offset = evaluate::wall_offset(k, WallKind::Inner, k.join_y).unwrap();
     zero(offset - k.join_s / k.cos_beta);
 }
 fn scaled(s: Spec, f: f64) -> Spec {

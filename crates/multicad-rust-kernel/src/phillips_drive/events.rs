@@ -3,6 +3,9 @@
 //! rounded or imported support intersections. Manufacturing remains separate.
 use super::*;
 use crate::tapered_thread::interval::J;
+mod carrier;
+mod evaluate;
+pub use carrier::{CubicTrimSpan, TrimErrorBound};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
@@ -104,48 +107,7 @@ impl<'a> BoundaryEvents<'a> {
         if t == 0. || t == 1. {
             return Ok(self.event(trim.ends[t as usize]).point_mm_bounds());
         }
-        let parameter =
-            trim.parameters[0] + (trim.parameters[1] - trim.parameters[0]) * I::point(t);
-        let k = &self.source.corners[0];
-        let point = if trim.envelope == EnvelopeRole::EntryRoundover {
-            let r = I::point(self.source.spec.mouth_radius_mm);
-            let radius = self.source.envelope.entry - r * parameter.sin();
-            let depth = I::point(2.) * r * (parameter / I::point(2.)).sin().square();
-            let rb = self.base - self.beta_tangent * depth;
-            let slope = k.cos_theta / k.sin_theta / k.cos_beta;
-            let offset = rb + (k.join_s - k.join_y * k.cos_theta / k.sin_theta) / k.cos_beta;
-            let [x, y] = volume::line_intersection(j(radius), j(offset), j(slope))
-                .ok_or(Error::Unresolved)?
-                .map(|v| v.v);
-            [x, y, depth]
-        } else {
-            let y = parameter;
-            let offset = wall_offset(k, trim.wall, y)?;
-            self.cone_point(trim.envelope, y, offset)?
-        };
-        // Cone points and literal line-incidence evaluations check their
-        // enclosures. Torus depth is bounded by2*r<=2e7 on this finite chart.
-        Ok(point.map(bounds))
-    }
-    pub(super) fn cone_point(
-        &self,
-        envelope: EnvelopeRole,
-        y: I,
-        offset: I,
-    ) -> Result<[I; 3], Error> {
-        let index = match envelope {
-            EnvelopeRole::OuterFlank => 0,
-            EnvelopeRole::Floor => 1,
-            _ => return Err(Error::Invalid),
-        };
-        cone_point(
-            self.base,
-            self.beta_tangent,
-            self.cone_slopes[index],
-            self.cone_intercepts[index],
-            y,
-            offset,
-        )
+        evaluate::trim_state::<I>(self, index, I::point(t)).map(|p| p.map(bounds))
     }
 }
 fn checkpoint(cancel: &dyn Fn() -> bool) -> Result<(), Error> {
@@ -165,38 +127,9 @@ fn b([lo, hi]: Bounds) -> I {
     I::new(lo, hi)
 }
 fn cone_point(base: I, beta: I, slope: I, intercept: I, y: I, offset: I) -> Result<[I; 3], Error> {
-    let q = beta / slope;
-    let a = base + offset - q * intercept;
-    let denominator = I::point(1.) - q.square();
-    let radicand = a.square() + denominator * y.square();
-    if a.lo <= 0. || denominator.lo <= 0. || radicand.lo <= 0. {
-        return Err(Error::Unresolved);
-    }
-    let r = (a * q + radicand.sqrt()) / denominator;
-    let d = (intercept - r) / slope;
-    let point = [a + q * r, y, d];
-    if point.into_iter().all(I::valid) {
-        Ok(point)
-    } else {
-        Err(Error::Unresolved)
-    }
+    evaluate::cone_point(base, beta, slope, intercept, y, offset)
 }
-fn wall_offset(k: &Corner, wall: WallKind, y: I) -> Result<I, Error> {
-    match wall {
-        WallKind::Outer => Ok((k.join_s + (y - k.join_y) * k.cos_theta / k.sin_theta) / k.cos_beta),
-        WallKind::Inner => match k.inner {
-            SourceInner::ShallowV { sine, cosine } => Ok(y * cosine / sine / k.cos_beta),
-            SourceInner::Rounded { radius_mm } => {
-                let radius = I::point(radius_mm);
-                let radicand = radius.square() - y.square();
-                if radicand.lo <= 0. {
-                    return Err(Error::Unresolved);
-                }
-                Ok(y.square() / (radius + radicand.sqrt()) / k.cos_beta)
-            }
-        },
-    }
-}
+
 fn xy(source: &Cutter, radius: I, rb: I, wall: WallKind) -> Result<[I; 2], Error> {
     let k = &source.corners[0];
     let result = match wall {

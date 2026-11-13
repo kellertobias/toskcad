@@ -5,7 +5,9 @@ use std::f64::consts::PI;
 mod classify;
 mod events;
 mod finite_section;
-pub use events::{BoundaryEvents, EventRole, FiniteTrim, SourceEvent, WallKind};
+pub use events::{
+    BoundaryEvents, CubicTrimSpan, EventRole, FiniteTrim, SourceEvent, TrimErrorBound, WallKind,
+};
 pub use finite_section::{
     EdgeRole, SectionBoundary, SectionCurve, SectionEdge, SectionVertex, VertexRole,
 };
