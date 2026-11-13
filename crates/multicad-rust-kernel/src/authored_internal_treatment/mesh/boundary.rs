@@ -89,6 +89,15 @@ pub struct BoundaryCurve {
     station: Option<u8>,
     uses: [Option<Use>; 2],
 }
+/// Outward coefficients of the actual normalized original source chart:
+/// Q=q_origin+q_span*u, r=r0+ru*u+rv*v, z=z0+zu*u+zv*v.
+/// Angular v spans one exact true revolution; physical trims remain separate.
+#[derive(Clone, Copy, Debug)]
+pub struct BoundaryCellSource {
+    q: [I; 2],
+    radial: [I; 3],
+    axial: [I; 3],
+}
 pub struct BoundaryCell {
     period: i64,
     band: usize,
@@ -97,6 +106,8 @@ pub struct BoundaryCell {
     vertices: [u32; 6],
     count: usize,
     parameters: [[I; 2]; 6],
+    source: BoundaryCellSource,
+    coedges: [BoundaryCoedge; 6],
 }
 struct Graph {
     source: Cavity,
@@ -257,7 +268,7 @@ impl Graph {
         points: [&Point; 2],
         face: u32,
         w: &mut Work<'_>,
-    ) -> Result<(), Error> {
+    ) -> Result<BoundaryCoedge, Error> {
         w.step()?;
         let shared = points[0].active & points[1].active;
         let station = (4..6)
@@ -267,6 +278,7 @@ impl Graph {
             coordinates(patch, polygon.kind, points[0], w)?,
             coordinates(patch, polygon.kind, points[1], w)?,
         ];
+        let forward = (endpoints[0] <= endpoints[1]) == self.source.thread.spec().left_hand;
         self.register(
             endpoints,
             values,
@@ -277,7 +289,10 @@ impl Graph {
             },
             w,
         )
-        .map(|_| ())
+        .map(|curve| BoundaryCoedge {
+            curve: curve as usize,
+            forward,
+        })
     }
     fn register(
         &mut self,
@@ -441,6 +456,11 @@ impl Graph {
                         vertices: [0; 6],
                         count: polygon.points.len(),
                         parameters: [[I::point(0.); 2]; 6],
+                        source: cell_source(&source, &patch, kind, work)?,
+                        coedges: [BoundaryCoedge {
+                            curve: 0,
+                            forward: false,
+                        }; 6],
                     };
                     for (corner, point) in polygon.points.iter().enumerate() {
                         cell.vertices[corner] =
@@ -453,7 +473,7 @@ impl Graph {
                     }
                     for corner in 0..cell.count {
                         let next = (corner + 1) % cell.count;
-                        graph.edge(
+                        cell.coedges[corner] = graph.edge(
                             &patch,
                             &polygon,
                             [cell.vertices[corner], cell.vertices[next]],
@@ -471,6 +491,41 @@ impl Graph {
         Ok(graph)
     }
 }
+fn cell_source(
+    body: &Cavity,
+    patch: &Patch,
+    kind: Kind,
+    w: &mut Work<'_>,
+) -> Result<BoundaryCellSource, Error> {
+    let band = body.thread.bands()[patch.band];
+    let q0 = patch.q0.enclosure(w)?.1;
+    // The exact shared period*p cancels from q1-q0. Retain the original band
+    // endpoints instead of subtracting independently rounded global positions.
+    let dq = I::point(band.phase_mm[1]) - I::point(band.phase_mm[0]);
+    let lead = patch.lead.enclosure(w)?.1; // exact p*starts, not rounded lead_mm
+    let radial = match kind {
+        Kind::Wall => [
+            I::point(band.radius_mm[0]),
+            if band.radius_mm[0] == band.radius_mm[1] {
+                I::point(0.)
+            } else {
+                I::point(band.radius_mm[1]) - I::point(band.radius_mm[0])
+            },
+            I::point(0.),
+        ],
+        Kind::Cone => {
+            let e = body.entry.expect("cone source requires actual entry");
+            let k = I::new(e.slope[0], e.slope[1]);
+            [I::point(e.radius) - k * q0, -k * dq, -k * lead]
+        }
+    };
+    Ok(BoundaryCellSource {
+        q: [q0, dq],
+        radial,
+        axial: [q0, dq, lead],
+    })
+}
+
 fn coordinates(patch: &Patch, kind: Kind, p: &Point, w: &mut Work<'_>) -> Result<[Q; 3], Error> {
     let z = p.q.add(&patch.lead.mul(&p.v, w)?, w)?;
     let r = match kind {

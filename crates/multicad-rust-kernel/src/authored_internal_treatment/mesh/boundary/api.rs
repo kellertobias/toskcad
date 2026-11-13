@@ -166,6 +166,36 @@ impl Boundary {
             .filter(|(_, p)| p.boundary)
             .map(|(i, p)| (i as u32, p))
     }
+    /// Includes actual source-cell seams that logical face merging hides from
+    /// the Native BRep. This is source incidence, never manufacturing triangles.
+    pub fn source_curves(&self) -> impl Iterator<Item = (u32, &BoundaryCurve)> {
+        self.graph
+            .curves
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (i as u32, c))
+    }
+    /// Actual occupied-shell wire of one original source cell. Material reverses
+    /// both order and direction of the void source; no geometry is reauthored.
+    pub fn cell_coedges(
+        &self,
+        index: usize,
+    ) -> Result<impl Iterator<Item = BoundaryCoedge> + '_, Error> {
+        let cell = self.graph.cells.get(index).ok_or(Error::Invalid)?;
+        let material = self.graph.material.is_some();
+        let ascending = self.graph.source.thread.spec().left_hand != material;
+        Ok((0..cell.count).map(move |i| {
+            let mut edge = cell.coedges[if ascending { i } else { cell.count - 1 - i }];
+            if material {
+                edge.forward = !edge.forward;
+            }
+            edge
+        }))
+    }
+    /// Sense of the actual q/v carrier normal in occupied source cells.
+    pub fn cell_surface_same_sense(&self) -> bool {
+        self.graph.source.thread.spec().left_hand != self.graph.material.is_some()
+    }
     pub fn curves(&self) -> impl Iterator<Item = (u32, &BoundaryCurve)> {
         self.graph
             .curves
@@ -241,6 +271,10 @@ impl Boundary {
     }
 }
 impl BoundaryPoint {
+    /// Actual owned cylindrical r,z,v values in the stock-relative source chart.
+    pub fn cylindrical_bounds(&self) -> [Enclosure; 3] {
+        self.rzv.map(interval)
+    }
     pub fn role(&self) -> BoundaryPointRole {
         match self.origin {
             Origin::Parameter { .. } => BoundaryPointRole::Source(self.source_key),
@@ -287,7 +321,21 @@ impl BoundaryCurve {
         [self.base.map(interval), self.delta.map(interval)]
     }
 }
+impl BoundaryCellSource {
+    pub fn q_origin_span_mm(&self) -> [Enclosure; 2] {
+        self.q.map(interval)
+    }
+    pub fn radius_coefficients_mm(&self) -> [Enclosure; 3] {
+        self.radial.map(interval)
+    }
+    pub fn height_coefficients_mm(&self) -> [Enclosure; 3] {
+        self.axial.map(interval)
+    }
+}
 impl BoundaryCell {
+    pub fn source_chart(&self) -> BoundaryCellSource {
+        self.source
+    }
     pub fn period(&self) -> i64 {
         self.period
     }

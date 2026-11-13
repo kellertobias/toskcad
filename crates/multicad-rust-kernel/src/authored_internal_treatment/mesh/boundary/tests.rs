@@ -1205,3 +1205,122 @@ fn public_query_descriptor_headers_remain_inside_a_tight_real_polyline_allocatio
     // The same public header reserve applies while wire workspaces are alive.
     assert!(!corrected.face_loops(0, None).unwrap().is_empty());
 }
+
+#[test]
+fn original_source_cell_wires_and_carriers_preserve_material_orientation_and_exact_lead() {
+    use crate::authored_flat_thread::{AuthoredThread, SourceOptions};
+    use crate::{Circle, Rational, cylinder::AxialCylinder};
+    let base = super::super::tests::source(false, 1, Some(0.4), true);
+    let zero = Rational::new(0, 1).unwrap();
+    let stock = AxialCylinder::new(
+        7,
+        Circle::new([zero; 2], Rational::new(5, 2).unwrap()).unwrap(),
+        zero,
+        Rational::new(3715469692580659, 1125899906842624).unwrap(),
+    )
+    .unwrap();
+    let enclosure = |e: Enclosure| I::new(e.lower, e.upper);
+    for (left_hand, starts, pitch_mm) in [(false, 1, 0.5), (true, 2, 0.5), (false, 3, 0.35)] {
+        let thread = AuthoredThread::new(
+            crate::helical_thread::Spec {
+                left_hand,
+                starts,
+                pitch_mm,
+                depth_mm: 0.15,
+                crest_width_mm: 0.08,
+                ..base.thread.spec()
+            },
+            SourceOptions {
+                position_limit_mm: 1e-7,
+                normal_angle_limit_rad: 1e-7,
+            },
+        )
+        .unwrap();
+        let cavity = Cavity::new(thread, base.intent()).unwrap();
+        let material = Material::new(stock, cavity, 0.1).unwrap();
+        for occupied_material in [false, true] {
+            let boundary = if occupied_material {
+                material.boundary_with_interrupt(BoundaryOptions::default(), None)
+            } else {
+                cavity.boundary_with_interrupt(BoundaryOptions::default(), None)
+            }
+            .unwrap();
+            let curves = boundary
+                .source_curves()
+                .map(|(_, curve)| curve)
+                .collect::<Vec<_>>();
+            assert!(curves.len() > boundary.curves().count());
+            let mut uses = vec![Vec::new(); curves.len()];
+            let same_sense = boundary.cell_surface_same_sense();
+            assert_eq!(same_sense, left_hand != occupied_material);
+            assert!(matches!(
+                boundary.cell_coedges(usize::MAX),
+                Err(Error::Invalid)
+            ));
+            for (index, cell) in boundary.cells().iter().enumerate() {
+                let edges = boundary.cell_coedges(index).unwrap().collect::<Vec<_>>();
+                assert_eq!(edges.len(), cell.points().len());
+                let mut ordered = Vec::new();
+                for (i, edge) in edges.iter().enumerate() {
+                    let endpoints = curves[edge.curve].endpoints();
+                    let start = endpoints[usize::from(!edge.forward)];
+                    let end = endpoints[usize::from(edge.forward)];
+                    let next = edges[(i + 1) % edges.len()];
+                    assert_eq!(
+                        end,
+                        curves[next.curve].endpoints()[usize::from(!next.forward)]
+                    );
+                    ordered.push(start);
+                    uses[edge.curve].push(edge.forward);
+                }
+                let mut expected = cell.points().to_vec();
+                if !same_sense {
+                    expected[1..].reverse();
+                }
+                assert_eq!(ordered, expected);
+                let source = cell.source_chart();
+                let [q0, dq] = source.q_origin_span_mm().map(enclosure);
+                let r = source.radius_coefficients_mm().map(enclosure);
+                let z = source.height_coefficients_mm().map(enclosure);
+                assert!(dq.lo > 0. && z[2].lo > 0.);
+                if starts == 3 {
+                    assert!(z[2].lo < z[2].hi, "literal p*3 is not rounded lead_mm");
+                }
+                let mut center_r = I::point(0.);
+                for corner in 0..cell.points().len() {
+                    let [q, v] = boundary
+                        .cell_parameter_bounds(index, corner)
+                        .unwrap()
+                        .map(enclosure);
+                    let u = (q - q0) / dq;
+                    let rz = [r[0] + r[1] * u + r[2] * v, z[0] + z[1] * u + z[2] * v];
+                    let node = &boundary.points()[cell.points()[corner] as usize];
+                    let actual = node.cylindrical_bounds().map(enclosure);
+                    assert!(rz[0].lo <= actual[0].hi && actual[0].lo <= rz[0].hi);
+                    assert!(rz[1].lo <= actual[1].hi && actual[1].lo <= rz[1].hi);
+                    center_r = center_r + rz[0] / I::point(cell.points().len() as f64);
+                }
+                let signed_tau = I::point(if left_hand {
+                    -std::f64::consts::TAU
+                } else {
+                    std::f64::consts::TAU
+                });
+                let radial_normal =
+                    -dq * signed_tau * center_r * I::point(if same_sense { 1. } else { -1. });
+                assert!(if occupied_material {
+                    radial_normal.hi < 0.
+                } else {
+                    radial_normal.lo > 0.
+                });
+            }
+            for (curve, directions) in curves.iter().zip(uses) {
+                if !curve.physical() {
+                    assert_eq!(directions.len(), 2);
+                }
+                if directions.len() == 2 {
+                    assert_ne!(directions[0], directions[1]);
+                }
+            }
+        }
+    }
+}
