@@ -1,5 +1,6 @@
 //! One actual trim law, evaluated as intervals or normalized Taylor jets.
 use super::*;
+use crate::tapered_thread::interval::J;
 use crate::tapered_thread::{Scalar, Series};
 pub(super) trait Value: Scalar {
     fn bound(v: I) -> Self;
@@ -42,10 +43,30 @@ impl Value for Series<5> {
         self.sin_cos()[0]
     }
 }
+impl Value for J {
+    fn bound(v: I) -> Self {
+        Self {
+            v,
+            ..Self::constant(0.)
+        }
+    }
+    fn parameter(v: I) -> Self {
+        Self::d(v)
+    }
+    fn value(self) -> I {
+        self.v
+    }
+    fn checked(self) -> Result<Self, Error> {
+        J::checked(self).map_err(|_| Error::Unresolved)
+    }
+    fn sine(self) -> Self {
+        self.sin()
+    }
+}
 fn sq<T: Value>(x: T) -> T {
     x * x
 }
-fn root<T: Value>(x: T) -> Result<T, Error> {
+pub(super) fn root<T: Value>(x: T) -> Result<T, Error> {
     if x.value().lo <= 0. {
         return Err(Error::Unresolved);
     }

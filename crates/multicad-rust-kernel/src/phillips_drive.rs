@@ -6,7 +6,8 @@ mod classify;
 mod events;
 mod finite_section;
 pub use events::{
-    BoundaryEvents, CubicTrimSpan, EventRole, FiniteTrim, SourceEvent, TrimErrorBound, WallKind,
+    BoundaryEvents, CubicTrimSpan, EventRole, FiniteTrim, PatchAtlas, PatchBounds, PatchKey,
+    QuadErrorBound, SourceEvent, SurfacePatch, TrimErrorBound, WallKind,
 };
 pub use finite_section::{
     EdgeRole, SectionBoundary, SectionCurve, SectionEdge, SectionVertex, VertexRole,
@@ -212,6 +213,17 @@ impl Cutter {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, Error> {
         source::construct(spec, domain, cancelled)
+    }
+    /// Real support charts and whole-cell derivative bounds for detached mesh
+    /// construction. A patch atlas alone does not authorize manufacturing.
+    pub fn surface_patches(&self) -> Result<PatchAtlas<'_>, Error> {
+        self.surface_patches_with_cancel(&|| false)
+    }
+    pub fn surface_patches_with_cancel(
+        &self,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<PatchAtlas<'_>, Error> {
+        events::patches::construct(self, cancelled)
     }
     /// Closed source incidence with real support ownership. Manufacturing and
     /// literal emitted-file incidence require their separate certificates.

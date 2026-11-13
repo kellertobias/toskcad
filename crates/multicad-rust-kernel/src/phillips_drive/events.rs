@@ -5,7 +5,9 @@ use super::*;
 use crate::tapered_thread::interval::J;
 mod carrier;
 mod evaluate;
+pub(super) mod patches;
 pub use carrier::{CubicTrimSpan, TrimErrorBound};
+pub use patches::{PatchAtlas, PatchBounds, PatchKey, QuadErrorBound, SurfacePatch};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
