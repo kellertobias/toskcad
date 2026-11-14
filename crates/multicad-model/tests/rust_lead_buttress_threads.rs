@@ -328,7 +328,7 @@ fn sourced_lead_and_asymmetric_root_pairs_keep_geometry_phase_history_and_step()
 }
 
 #[test]
-fn rounded_and_tapered_other_families_are_not_enabled_by_straight_admission() {
+fn sourced_rounded_and_tapered_families_keep_their_distinct_admitted_laws() {
     let mut cases: Vec<_> = model::whitworth_thread_presets()
         .into_iter()
         .map(|row| ThreadParameters {
@@ -362,11 +362,14 @@ fn rounded_and_tapered_other_families_are_not_enabled_by_straight_admission() {
         .parameters(),
     );
     for parameters in cases {
-        let s =
-            Session::new(Document::new("Unsupported rounded or tapered family").unwrap()).unwrap();
-        let request = ThreadRequest::new("Unsupported sourced profile", parameters);
+        let s = Session::new(Document::new("Distinct rounded or tapered family").unwrap()).unwrap();
+        let family = parameters.family;
+        let resolved = parameters
+            .resolve(s.parameters(), ThreadMode::NewExternal)
+            .unwrap();
+        let request = ThreadRequest::new("Sourced profile", parameters);
         let candidate = model::prepare_thread(&s, 0, actor(), &request).unwrap();
-        let error = Compiler {
+        let compiled = Compiler {
             omit_display: true,
             ..Default::default()
         }
@@ -375,11 +378,47 @@ fn rounded_and_tapered_other_families_are_not_enabled_by_straight_admission() {
             1,
             GeometryBackend::Rust,
             None,
-        )
-        .err()
-        .expect("Unsupported sourced family must not be rewritten as a straight custom profile");
-        assert_eq!(error.entity, Some(request.feature));
-        assert!(error.message.contains("Rust thread geometry"), "{error}");
+        );
+        if family == ThreadFamily::Npt {
+            // The moving stock-clipped crest still needs its actual closure;
+            // admitting the untrimmed tapered law would change the material.
+            let error = compiled
+                .err()
+                .expect("Moving NPT stock clipping is not certified");
+            assert_eq!(error.entity, Some(request.feature));
+            assert!(error.message.contains("stock clipping"), "{error}");
+        } else {
+            let compiled = compiled.unwrap();
+            let solid = compiled.solid(request.feature).unwrap();
+            assert!(solid.uses_rust_geometry());
+            if family == ThreadFamily::Bspt {
+                let (source, _) = solid
+                    .rust_authored_axial_pipe_thread_source()
+                    .expect("Actual authored pipe law");
+                let spec = source.transport.spec();
+                assert_eq!(spec.major_radius_mm, resolved.major_radius_mm);
+                assert_eq!(spec.pitch_mm, resolved.pitch_mm);
+                assert_eq!(spec.length_mm, resolved.length_mm);
+                assert_eq!(spec.radial_taper, resolved.profile.radial_taper);
+                assert!(matches!(spec.section, multicad_kernel::rust_kernel::axial_pipe_thread::authored::AuthoredSection::BsptRounded { .. }));
+            } else {
+                let data = solid
+                    .rust_rounded_thread_data()
+                    .expect("Actual two-circle rounded law");
+                let spec = data.thread.spec();
+                assert_eq!(spec.major_radius_mm, resolved.major_radius_mm);
+                assert_eq!(spec.pitch_mm, resolved.pitch_mm);
+                assert_eq!(spec.length_mm, resolved.length_mm);
+                assert_eq!(spec.depth_mm, resolved.profile.depth_mm);
+                assert_eq!(
+                    Some(spec.crest_radius_mm),
+                    resolved.profile.rounding_radius_mm
+                );
+                assert_eq!(spec.root_radius_mm, spec.crest_radius_mm);
+                assert_eq!(spec.flank_angle_deg, resolved.profile.lower_flank_deg);
+            }
+            assert!(solid.volume_mm3().unwrap() > 0.);
+        }
         assert_eq!(s.revision(), 0);
     }
 }
