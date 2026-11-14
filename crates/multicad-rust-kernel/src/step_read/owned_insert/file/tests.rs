@@ -3,7 +3,7 @@ use crate::step::{
     Writer,
     insert::{CurveOptions, DomainOptions, DomainPlan, SurfacePlan, TopologyPlan},
 };
-fn compound() -> String {
+pub(super) fn compound() -> String {
     let body = super::super::tests::graph(false, 4.);
     let d = DomainPlan::prepare(&body, DomainOptions::default(), None).unwrap();
     let s = SurfacePlan::prepare(&d, CurveOptions::default(), None).unwrap();
@@ -186,4 +186,85 @@ fn actual_file_and_selected_query_limits_cancellation_and_dangling_references_ar
     let again = file.member(id, Options::default(), None).unwrap();
     assert!(file.shares_arena(&again));
     assert_eq!(again.member_entity(), id);
+}
+pub(super) fn mapped_file() -> (String, u32, u32, u32) {
+    let text = super::super::tests::file(false);
+    let file = File::parse(&text, Options::default(), None).unwrap();
+    let solid = file.represented_solids()[0];
+    let (&rep, records) = file
+        .entities
+        .iter()
+        .find(|(_, r)| matches!(r.as_slice(),[e]if e.name=="ADVANCED_BREP_SHAPE_REPRESENTATION"))
+        .unwrap();
+    let e = &records[0];
+    let context = reference(&e.args[2]).unwrap();
+    let origin = refs(&e.args[1])
+        .unwrap()
+        .into_iter()
+        .find(|&id| id != solid)
+        .unwrap();
+    let records = format!(
+        "#1000000=CARTESIAN_POINT('',(10.,20.,30.));\n#1000001=DIRECTION('',(1.,0.,0.));\n#1000002=DIRECTION('',(0.,1.,0.));\n#1000003=DIRECTION('',(0.,0.,1.));\n#1000004=(CARTESIAN_TRANSFORMATION_OPERATOR(#1000001,#1000002,#1000000,1.)CARTESIAN_TRANSFORMATION_OPERATOR_3D(#1000003)FUNCTIONALLY_DEFINED_TRANSFORMATION('','')GEOMETRIC_REPRESENTATION_ITEM()REPRESENTATION_ITEM(''));\n#1000005=SHAPE_REPRESENTATION('',(#{solid},#{origin}),#{context});\n#1000006=REPRESENTATION_MAP(#{origin},#1000005);\n#1000007=MAPPED_ITEM('',#1000006,#1000004);\nENDSEC;\nEND-ISO-10303-21;"
+    );
+    let text = text.replacen("ENDSEC;\nEND-ISO-10303-21;", &records, 1);
+    let text = super::super::tests::argument_change(&text, rep, 1, "(#1000007)");
+    (text, solid, origin, rep)
+}
+#[test]
+fn actual_mapped_member_preserves_local_body_and_declared_target_ownership() {
+    let (text, solid, origin, _) = mapped_file();
+    let file = File::parse(&text, Options::default(), None).unwrap();
+    assert!(file.represented_solids().is_empty());
+    assert_eq!(file.represented_members().len(), 1);
+    let member = file.represented_members()[0];
+    assert_eq!(member.item_entity(), 1000007);
+    assert_eq!(member.local_solid_entity(), solid);
+    let link = member.mapping_link().unwrap();
+    assert_eq!(link.map_entity(), 1000006);
+    assert_eq!(link.source_representation_entity(), 1000005);
+    assert_eq!(link.source_origin_entity(), origin);
+    assert_eq!(link.operator_entity(), 1000004);
+    let p = file
+        .member(member.item_entity(), Options::default(), None)
+        .unwrap();
+    assert_eq!(p.member_entity(), member.item_entity());
+    assert_eq!(p.local_solid_entity(), solid);
+    assert_eq!(p.mapping_link(), Some(link));
+    let b = p.support_bindings(Options::default(), None).unwrap();
+    let material = b.material_bounds(Options::default(), None).unwrap();
+    assert_eq!(material.bounds_mm()[2], [0., 4.]);
+    let op = p
+        .physical_mapping(link.operator_entity(), Options::default(), None)
+        .unwrap();
+    assert_eq!(op.handedness().unwrap(), 1);
+    let bounds = op.map_box_mm(material.bounds_mm()).unwrap();
+    assert!(bounds[2][0] <= 30. && bounds[2][1] >= 34.);
+    let volume = material
+        .occupied_volume(FluxOptions::default(), None)
+        .unwrap();
+    assert!(volume.volume_mm3()[0] > 0.);
+    assert!(op.volume_scale_bounds().unwrap()[0] <= 1.);
+    // Strict standalone parsing must never drop an actual represented transform.
+    assert!(matches!(
+        parse(&text, Options::default(), None),
+        Err(Error::Unsupported)
+    ));
+}
+#[test]
+fn actual_nonidentity_source_origin_and_nested_map_are_honest_refusals() {
+    let (text, _, origin, _) = mapped_file();
+    let file = File::parse(&text, Options::default(), None).unwrap();
+    let axis = kind(&file.entities, origin, "AXIS2_PLACEMENT_3D").unwrap();
+    let point = reference(&axis.args[1]).unwrap();
+    let shifted = super::super::tests::argument_change(&text, point, 1, "(1.E-1000,0.,0.)");
+    assert!(matches!(
+        File::parse(&shifted, Options::default(), None),
+        Err(Error::Unsupported)
+    ));
+    let nested =
+        super::super::tests::argument_change(&text, 1000005, 1, &format!("(#1000007,#{origin})"));
+    assert!(matches!(
+        File::parse(&nested, Options::default(), None),
+        Err(Error::Unsupported)
+    ));
 }

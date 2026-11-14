@@ -8,7 +8,7 @@ use std::{collections::BTreeMap, mem::size_of, sync::Arc};
 mod correspondence;
 pub use correspondence::{CorrespondenceOptions, SourceCorrespondence};
 mod file;
-pub use file::File;
+pub use file::{File, MappingLink, Member, MemberDocument};
 mod bindings;
 mod flux;
 pub use flux::{FluxOptions, OccupiedVolume, OrientedFlux};
@@ -257,6 +257,8 @@ pub struct Parsed<'input> {
     entities: Arc<BTreeMap<u32, Vec<Entity<'input>>>>,
     source_bytes: usize,
     member: u32,
+    local_solid: u32,
+    mapping: Option<MappingLink>,
     points: Vec<PointLeaf<'input>>,
     curves: Vec<SplineCurve<'input>>,
     tensors: Vec<TensorSurface<'input>>,
@@ -270,6 +272,12 @@ pub struct Parsed<'input> {
 impl<'i> Parsed<'i> {
     pub fn member_entity(&self) -> u32 {
         self.member
+    }
+    pub fn local_solid_entity(&self) -> u32 {
+        self.local_solid
+    }
+    pub fn mapping_link(&self) -> Option<MappingLink> {
+        self.mapping
     }
     pub fn literal_input(&self) -> &'i str {
         self.input
@@ -373,7 +381,8 @@ pub fn parse<'input>(
     interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<Parsed<'input>> {
     let source = File::parse(input, options, interrupt)?;
-    if source.represented_solids().len() != 1
+    if source.represented_members().len() != 1
+        || source.represented_members()[0].mapping_link().is_some()
         || source
             .entities
             .values()
@@ -385,7 +394,7 @@ pub fn parse<'input>(
     }
     decode(
         &source,
-        source.represented_solids()[0],
+        source.represented_members()[0],
         None,
         options,
         interrupt,
@@ -394,7 +403,7 @@ pub fn parse<'input>(
 }
 fn decode<'input>(
     source: &File<'input>,
-    member: u32,
+    member: Member,
     selected: Option<&std::collections::BTreeSet<u32>>,
     options: Options,
     interrupt: Option<&dyn Fn() -> bool>,
@@ -443,7 +452,10 @@ fn decode<'input>(
     // represented solid and retain its complete unchanged material face graph.
     let shell = Shell::new(&entities, 1e-7, false);
     let mut faces = Vec::new();
-    for face in shell.member_faces(member).map_err(Error::from)? {
+    for face in shell
+        .member_faces(member.local_solid_entity())
+        .map_err(Error::from)?
+    {
         faces.push(schema::face(&entities, face, &tensors, &planes, &mut w)?);
     }
     let mut edge_ids = faces
@@ -477,7 +489,9 @@ fn decode<'input>(
         input,
         entities,
         source_bytes: source.retained_budget_bytes(),
-        member,
+        member: member.item_entity(),
+        local_solid: member.local_solid_entity(),
+        mapping: member.mapping_link(),
         points,
         curves,
         tensors,

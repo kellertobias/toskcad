@@ -1,10 +1,15 @@
 //! One original represented file arena shared by explicit member queries.
 use super::*;
 use std::collections::BTreeSet;
+mod representation;
+mod view;
+pub use representation::{MappingLink, Member};
+pub use view::MemberDocument;
 pub struct File<'input> {
     pub(super) input: &'input str,
     pub(super) entities: Arc<BTreeMap<u32, Vec<Entity<'input>>>>,
     solids: Vec<u32>,
+    members: Vec<Member>,
     work: usize,
     bytes: usize,
 }
@@ -59,10 +64,16 @@ impl<'input> File<'input> {
                 }
             }
         }
-        let shell = Shell::new(&entities, 1e-7, false);
-        let solids = shell.represented_solids(false).map_err(Error::from)?;
+        let members = representation::read(&entities, &mut w)?;
+        let solids = members
+            .iter()
+            .filter(|m| m.mapping_link().is_none())
+            .map(|m| m.local_solid_entity())
+            .collect::<Vec<_>>();
         w.step(solids.len())?;
-        bytes = bytes.saturating_add(solids.capacity() * size_of::<u32>());
+        bytes = bytes
+            .saturating_add(solids.capacity() * size_of::<u32>())
+            .saturating_add(members.capacity() * size_of::<Member>());
         if bytes > options.retained_budget_bytes {
             return Err(Error::Limit);
         }
@@ -71,10 +82,15 @@ impl<'input> File<'input> {
             input,
             entities: Arc::new(entities),
             solids,
+            members,
             work: w.used,
             bytes,
         })
     }
+    pub fn represented_members(&self) -> &[Member] {
+        &self.members
+    }
+    /// Unmapped top-level solid items only; mapped instances are explicit members.
     pub fn represented_solids(&self) -> &[u32] {
         &self.solids
     }
@@ -107,10 +123,12 @@ impl<'input> File<'input> {
             interrupt,
         };
         w.step(self.work)?;
-        w.step(self.solids.len())?;
-        if !self.solids.contains(&solid) {
-            return Err(Error::Unsupported);
-        }
+        w.step(self.members.len())?;
+        let member = *self
+            .members
+            .iter()
+            .find(|m| m.item_entity() == solid)
+            .ok_or(Error::Unsupported)?;
         // Same pinned B=6 insertion-only BTree node bound as budget::arena,
         // now with u32 keys and no value payload. All pending IDs are unique.
         let set_bytes = (1 + self.entities.len() / 5)
@@ -121,7 +139,9 @@ impl<'input> File<'input> {
             return Err(Error::Limit);
         }
         let shell = Shell::new(&self.entities, 1e-7, false);
-        let faces = shell.member_faces(solid).map_err(Error::from)?;
+        let faces = shell
+            .member_faces(member.local_solid_entity())
+            .map_err(Error::from)?;
         let mut selected = BTreeSet::new();
         let mut pending = Vec::new();
         pending
@@ -148,7 +168,7 @@ impl<'input> File<'input> {
                 .ok_or(Error::Limit)?,
             ..options
         };
-        decode(self, solid, Some(&selected), child, interrupt, w.used)
+        decode(self, member, Some(&selected), child, interrupt, w.used)
     }
 }
 fn walk(
