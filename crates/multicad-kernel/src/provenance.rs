@@ -1052,6 +1052,13 @@ impl Solid {
         owner: EntityId,
         revision: u64,
     ) -> Result<TopologySnapshot, GeometryError> {
+        if self.repaired_phillips_body().is_some() {
+            return Err(GeometryError {
+                operation: "repaired Phillips topology",
+                kind: GeometryErrorKind::Unsupported,
+                message: "Finite repaired source topology has not been admitted".into(),
+            });
+        }
         if self.uses_rust_geometry() {
             let mut snapshot = if let Some((body, frame)) = self.hanger_body() {
                 body.topology(frame, owner, revision, self.geometry_policy())?

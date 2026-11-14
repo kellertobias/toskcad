@@ -45,6 +45,9 @@ mod orthogonal_body;
 mod parallel_cylinder;
 mod planar_boolean_body;
 mod radial_boundary_body;
+mod repaired_phillips_body;
+use repaired_phillips_body::RepairedPhillipsBody;
+pub use repaired_phillips_body::{RepairedPhillipsMeshBudget, RepairedPhillipsMeshReceipt};
 mod revolution_body;
 mod rounded_cylinder_body;
 mod rounded_slot_body;
@@ -716,6 +719,7 @@ enum SolidBody {
     EntryChamfer(Rc<EntryChamferBody>, PlaneFrame),
     RoundedThreadBore(Rc<RoundedThreadBoreBody>, PlaneFrame),
     InternalThreadTreatment(Rc<InternalThreadTreatmentBody>, PlaneFrame),
+    RepairedPhillips(Rc<RepairedPhillipsBody>, PlaneFrame),
     WoodInsert(Rc<WoodInsertBody>, PlaneFrame),
     Hanger(Rc<HangerBody>, PlaneFrame),
     HelicalTubeCut(Rc<HelicalTubeBody>, PlaneFrame),
@@ -1182,6 +1186,9 @@ impl Solid {
             SolidBody::InternalThreadTreatment(body, frame) => {
                 SolidBody::InternalThreadTreatment(Rc::clone(body), *frame)
             }
+            SolidBody::RepairedPhillips(body, frame) => {
+                SolidBody::RepairedPhillips(Rc::clone(body), *frame)
+            }
             SolidBody::WoodInsert(body, frame) => SolidBody::WoodInsert(Rc::clone(body), *frame),
             SolidBody::Hanger(body, frame) => SolidBody::Hanger(Rc::clone(body), *frame),
             SolidBody::RoundedThread(body, frame) => {
@@ -1545,6 +1552,11 @@ impl Solid {
                     body.material(frame, self.policy)?;
                     SolidBody::WoodInsert(Rc::clone(body), frame)
                 }
+                SolidBody::RepairedPhillips(body, frame) => {
+                    let frame = transform.frame(*frame);
+                    body.validate_frame(frame)?;
+                    SolidBody::RepairedPhillips(Rc::clone(body), frame)
+                }
                 SolidBody::InternalThreadTreatment(body, frame) => {
                     let frame = transform.frame(*frame);
                     body.validate_frame(frame, self.policy)?;
@@ -1720,6 +1732,10 @@ impl Solid {
         Ok(result)
     }
     pub fn volume_mm3(&self) -> Result<f64, GeometryError> {
+        if let Some((body, frame)) = self.repaired_phillips_body() {
+            let [lo, hi] = body.volume(frame)?;
+            return Ok(lo.midpoint(hi));
+        }
         if let Some((body, frame)) = self.hanger_body() {
             return body.volume(frame, self.policy);
         }
@@ -1873,6 +1889,9 @@ impl Solid {
         ffi::solid_count(self.occt()?).map_err(|e| native("solid count", e))
     }
     pub fn bounds(&self) -> Result<Bounds, GeometryError> {
+        if let Some((body, frame)) = self.repaired_phillips_body() {
+            return body.bounds(frame);
+        }
         if let Some((body, frame)) = self.hanger_body() {
             return Ok(body.material(frame, self.policy)?.bounds());
         }
@@ -2051,6 +2070,13 @@ impl Solid {
         crate::planar_contours::extract(self, face, frame, self.policy)
     }
     pub fn faces(&self) -> Result<Vec<Face>, GeometryError> {
+        if self.repaired_phillips_body().is_some() {
+            return Err(error(
+                "repaired Phillips faces",
+                GeometryErrorKind::Unsupported,
+                "Actual repaired face properties have not been admitted",
+            ));
+        }
         if let Some((body, frame)) = self.hanger_body() {
             return body.material(frame, self.policy)?.faces(self.policy, None);
         }
@@ -2255,6 +2281,7 @@ impl Solid {
             ),
             SolidBody::EntryChamfer(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::InternalThreadTreatment(body, frame) => body.mesh(*frame, rust_options),
+            SolidBody::RepairedPhillips(body, frame) => body.mesh(*frame, rust_options, usage),
             SolidBody::Hanger(body, frame) => {
                 body.material(*frame, self.policy)?.mesh(options, None)
             }
@@ -2381,6 +2408,7 @@ impl Solid {
             .is_some_and(|(body, _)| body.has_phillips_source())
             || self.has_retained_radial_source()
             || self.internal_thread_treatment_body().is_some()
+            || self.repaired_phillips_body().is_some()
             || self.wood_insert_body().is_some()
             || self.hanger_body().is_some()
             || self
@@ -2396,6 +2424,12 @@ impl Solid {
             manufacturing,
         };
         const OPERATION: &str = "manufacturing mesh";
+        if let Some((body, frame)) = self.repaired_phillips_body() {
+            // This provider carries its fresh actual-world manifold proof and
+            // consumes one source/placement/embedding work ledger. Do not run a
+            // second unmetered certification or an analytic-volume heuristic.
+            return body.manufacturing(frame, options);
+        }
         let Mesh {
             vertices,
             indices,
@@ -2703,6 +2737,7 @@ impl Solid {
             SolidBody::Annulus(body, _) => body.feature,
             SolidBody::EntryChamfer(body, _) => body.feature,
             SolidBody::InternalThreadTreatment(body, _) => body.feature,
+            SolidBody::RepairedPhillips(body, _) => body.feature,
             SolidBody::WoodInsert(body, _) => body.feature,
             SolidBody::Hanger(body, _) => body.feature,
             SolidBody::Helical(body, _) => body.feature,
@@ -2784,6 +2819,7 @@ impl Solid {
             SolidBody::WoodInsert(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::CosmeticFastener(..)
             | SolidBody::InternalThreadTreatment(..)
+            | SolidBody::RepairedPhillips(..)
             | SolidBody::Hanger(..) => false,
             SolidBody::WarpedUnion(body, _) => {
                 multicad_rust_kernel::step::supports_warped_union(&body.geometry)
@@ -2998,6 +3034,7 @@ impl Solid {
             SolidBody::WoodInsert(body, frame) => body.append_step(writer, *frame, self.policy),
             SolidBody::CosmeticFastener(..)
             | SolidBody::InternalThreadTreatment(..)
+            | SolidBody::RepairedPhillips(..)
             | SolidBody::Hanger(..) => Err(step::StepError::Unsupported),
             SolidBody::Orthogonal(body, frame) => body.append_step(writer, *frame),
             SolidBody::Occt(_) => unreachable!("native STEP dispatched above"),
