@@ -65,7 +65,7 @@ pub(super) fn local_faces(gear: &Herringbone, topology: &Topology) -> Vec<Face> 
         .iter()
         .map(|entry| {
             let ([x, y], length) = transverse_metrics(entry.edge, rate);
-            ([x, y], length * height / 2.)
+            ([x, y], length * gear.band_length_mm())
         })
         .collect::<Vec<_>>();
     topology
@@ -91,7 +91,7 @@ pub(super) fn local_faces(gear: &Herringbone, topology: &Topology) -> Vec<Face> 
                     )
                 }
                 GearFace::Tooth { band, .. } => {
-                    let [lo, hi] = band.axial_interval_mm(height);
+                    let [lo, hi] = gear.band_interval_mm(*band);
                     let ([x, y], area) = wall[(i - 2) % wall.len()];
                     let phases = [lo, hi].map(|z| gear.phase_at(z));
                     let half = (phases[1] - phases[0]) / 2.;
@@ -118,6 +118,29 @@ pub(super) fn local_faces(gear: &Herringbone, topology: &Topology) -> Vec<Face> 
                         None,
                         [0., 0., low.midpoint(high)],
                         TAU * radius * (high - low),
+                    )
+                }
+                GearFace::RootCore => {
+                    let [low, high] = gear.shoulder_heights_mm().expect("gapped gear");
+                    (
+                        None,
+                        [0., 0., low.midpoint(high)],
+                        TAU * gear.root_radius_mm() * (high - low),
+                    )
+                }
+                GearFace::Shoulder { upper, tooth } => {
+                    let heights = gear.shoulder_heights_mm().expect("gapped gear");
+                    let z = heights[usize::from(*upper)];
+                    let (area, radial) = shoulder_area(gear);
+                    // Each tooth end is symmetric about its own center ray.
+                    let angle =
+                        TAU * f64::from(*tooth) / f64::from(gear.teeth()) + gear.phase_at(z);
+                    let (sin, cos) = angle.sin_cos();
+                    let origin = [radial * cos, radial * sin, z];
+                    (
+                        Some((origin, [0., 0., if *upper { -1. } else { 1. }])),
+                        origin,
+                        area,
                     )
                 }
                 GearFace::HubWall { extension } => {
@@ -151,4 +174,44 @@ pub(super) fn local_faces(gear: &Herringbone, topology: &Topology) -> Vec<Face> 
             }
         })
         .collect()
+}
+
+/// Area of one tooth end outside the root circle and the radial distance
+/// of its centroid. The area is exact; the first moment integrates
+/// ∮ x²/2 dy over the outline edges with Gauss–Legendre quadrature of the
+/// parametric derivative, and exactly over the closing root arc.
+fn shoulder_area(gear: &Herringbone) -> (f64, f64) {
+    let profile = gear.profile();
+    let teeth = f64::from(gear.teeth());
+    let bore = profile
+        .bore()
+        .and_then(normal_sweep::Edge::radius_mm)
+        .unwrap_or(0.);
+    let r = gear.root_radius_mm();
+    let area = (profile.area_mm2() + std::f64::consts::PI * (bore * bore - r * r)) / teeth;
+    let outline = profile.outline();
+    let per_tooth = outline.len() / gear.teeth() as usize;
+    let mut moment = 0.;
+    const STEP: f64 = 1e-6;
+    for entry in &outline[..per_tooth - 1] {
+        for (abscissa, weight) in ABSCISSA.into_iter().zip(WEIGHT) {
+            for fraction in [(1. - abscissa) / 2., (1. + abscissa) / 2.] {
+                let [x, _] = entry.edge.point(fraction);
+                let dy = (entry.edge.point(fraction + STEP)[1]
+                    - entry.edge.point(fraction - STEP)[1])
+                    / (2. * STEP);
+                moment += weight / 2. * x * x / 2. * dy;
+            }
+        }
+    }
+    // Close along the root circle from the right foot back to the left
+    // foot: ∫ x²/2 dy = r³/2 ∫ cos³ = r³/2 (sin − sin³/3).
+    let [from, to] = gear.under_tooth_angles(0);
+    let primitive = |t: f64| {
+        let sin = t.sin();
+        r.powi(3) / 2. * (sin - sin.powi(3) / 3.)
+    };
+    moment += primitive(to) - primitive(from);
+    // Tooth 0 is symmetric about +X, so its x moment is the radial moment.
+    (area, moment / area)
 }
