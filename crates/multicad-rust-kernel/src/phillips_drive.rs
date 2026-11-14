@@ -313,6 +313,14 @@ impl Cutter {
     pub fn classify_point_mm(&self, p: [f64; 3]) -> Result<Classification, Error> {
         classify::point(self, p)
     }
+    /// Classify the entire finite closed box against this actual cavity.
+    /// Coordinates use the cutter's mouth chart, with positive Z into the
+    /// cavity. Surface intersections remain unresolved; corner samples do
+    /// not establish containment. Evaluation uses the envelope and at most
+    /// four retained corner cuts, without adaptive subdivision.
+    pub fn classify_box_mm(&self, bounds: [Bounds; 3]) -> Result<Classification, Error> {
+        classify::enclosure(self, bounds.map(|b| I::new(b[0], b[1])))
+    }
 }
 fn bounds(value: I) -> Bounds {
     [value.lo, value.hi]
