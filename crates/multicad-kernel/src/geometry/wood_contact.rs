@@ -1,4 +1,5 @@
 //! Actual retained screw/pilot contact; no generic Boolean exception.
+mod hanger;
 mod insert;
 use super::*;
 use multicad_rust_kernel::wood_thread_contact::{
