@@ -25,6 +25,8 @@ use wood_insert_body::WoodInsertBody;
 pub use wood_insert_body::WoodInsertData;
 mod wood_insert_material;
 pub use wood_insert_material::{WoodInsertFaceProperties, WoodInsertMaterial};
+mod hanger_material;
+pub use hanger_material::HangerMaterial;
 mod helical_body;
 mod helical_tube_body;
 mod herringbone_body;
