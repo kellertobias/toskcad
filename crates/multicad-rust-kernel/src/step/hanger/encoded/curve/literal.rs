@@ -38,7 +38,6 @@ impl LiteralCapCurve<'_, '_, '_> {
 }
 #[derive(Clone, Copy)]
 pub(super) enum Precision {
-    #[cfg(test)]
     Bits64,
     Bits128,
 }
@@ -48,7 +47,6 @@ pub(super) fn quantize(x: &N, w: &mut Work<'_>) -> Result<N, Error> {
 }
 pub(super) fn quantize_at(x: &N, precision: Precision, w: &mut Work<'_>) -> Result<N, Error> {
     let bits = match precision {
-        #[cfg(test)]
         Precision::Bits64 => 64,
         Precision::Bits128 => FRACTION_BITS,
     };

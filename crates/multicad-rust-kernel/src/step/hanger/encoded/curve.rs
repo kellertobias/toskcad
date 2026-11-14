@@ -7,6 +7,8 @@ mod affine_probe;
 mod correction;
 mod literal;
 mod restrict;
+mod vertices;
+pub use vertices::{LiteralVertex, LiteralVertices};
 #[cfg(test)]
 mod trim_probe;
 pub use literal::LiteralCapCurve;
@@ -116,7 +118,12 @@ impl CapCurvePiece<'_, '_> {
         &self.controls
     }
 }
-fn parameter(row: &EncodedMeridian, pitch: &N, phase: &N, w: &mut Work<'_>) -> Result<I, Error> {
+pub(super) fn parameter(
+    row: &EncodedMeridian,
+    pitch: &N,
+    phase: &N,
+    w: &mut Work<'_>,
+) -> Result<I, Error> {
     let a = row.phase[0].number(w)?.div(&row.weights[0].number(w)?, w)?;
     let b = row.phase[row.degree()]
         .number(w)?

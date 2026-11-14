@@ -13,7 +13,10 @@ mod cap;
 pub(super) mod decimal;
 pub use decimal::FiniteDecimal;
 mod curve;
-pub use curve::{CapCurvePiece, LiteralCapCurve, RestrictedCapCurve, RestrictionBounds};
+pub use curve::{
+    CapCurvePiece, LiteralCapCurve, LiteralVertex, LiteralVertices, RestrictedCapCurve,
+    RestrictionBounds,
+};
 mod closed;
 mod finite;
 pub use cap::{CapEndpoint, CapTrace};
