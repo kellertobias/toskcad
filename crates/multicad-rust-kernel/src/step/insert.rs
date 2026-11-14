@@ -9,10 +9,12 @@ mod curves;
 mod domains;
 mod projection;
 mod topology;
+mod writer;
 pub use topology::{
     CapRegularity, EdgeGeometry, FaceGeometry, ShellCoedge, ShellEdge, ShellFace, TopologyPlan,
     WindingBounds,
 };
+pub use writer::write_local_candidate;
 mod surfaces;
 pub use domains::{DomainOptions, DomainPlan, Slab, Station};
 pub use projection::ProjectionBounds;
