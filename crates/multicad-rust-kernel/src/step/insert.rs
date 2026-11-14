@@ -1,5 +1,7 @@
 //! Owned insert export candidates. These source-known carrier certificates do
 //! not admit STEP solids, foreign imports, occupied material or decoded mass.
+mod angular;
+pub mod coupled;
 pub(crate) mod exact_cap;
 use crate::{
     tapered_thread::interval::I,

@@ -116,6 +116,14 @@ impl<'a> DomainPlan<'a> {
         options: DomainOptions,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Self, Error> {
+        Self::prepare_with_knots(boundary, &[], options, interrupt)
+    }
+    pub(crate) fn prepare_with_knots(
+        boundary: &'a Boundary,
+        knots: &[f64],
+        options: DomainOptions,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Self, Error> {
         let mut w = Work::new(options.work, interrupt)?;
         w.charge(1)?;
         if options.maximum_stations == 0
@@ -124,6 +132,13 @@ impl<'a> DomainPlan<'a> {
             || options.maximum_slabs > 131072
             || options.bytes == 0
             || options.bytes > 64 * 1024 * 1024
+        {
+            return Err(Error::Invalid);
+        }
+        w.charge(knots.len().checked_add(1).ok_or(Error::Limit)?)?;
+        if knots.len() > 1025
+            || knots.iter().any(|x| !x.is_finite() || *x < 0. || *x > 1.)
+            || knots.windows(2).any(|k| k[0] >= k[1])
         {
             return Err(Error::Invalid);
         }
@@ -162,6 +177,26 @@ impl<'a> DomainPlan<'a> {
                     )?;
                 }
                 cells[index(side)].push(data);
+            }
+        }
+        // Extra cuts are exact parameters of a retained original carrier.
+        // They subdivide the same authored cells; no original event is removed.
+        for side in [Side::Outer, Side::Inner] {
+            for &knot in knots {
+                w.charge(8)?;
+                let number =
+                    num_rational::BigRational::from_float(knot).expect("finite admitted knot");
+                let (_, n) = number.numer().to_bytes_le();
+                let (_, d) = number.denom().to_bytes_le();
+                insert_parts(
+                    &mut stations[index(side)],
+                    if knot == 0. { 0 } else { 1 },
+                    &n,
+                    &d,
+                    options.maximum_stations,
+                    &mut memory,
+                    &mut w,
+                )?;
             }
         }
         // Quarter cuts are OPTIONAL chart aids. Never create an artificial
