@@ -857,3 +857,6 @@ mod phillips_tests;
 
 #[cfg(test)]
 mod phillips_screw_tests;
+
+#[cfg(test)]
+mod npt_stock_clip_tests;
