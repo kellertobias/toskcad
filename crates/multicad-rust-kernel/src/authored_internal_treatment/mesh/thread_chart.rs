@@ -200,3 +200,25 @@ impl ThreadShell {
         }
     }
 }
+
+#[cfg(test)]
+mod consumption_tests {
+    use super::*;
+    #[test]
+    fn actual_bare_flat_source_wall_can_be_consumed_without_a_nominal_rebuild() {
+        let source = crate::authored_hanger_bolt::tests::fixture(false, false).wood;
+        let shell = source
+            .tessellate_shell(
+                Tessellation {
+                    deflection: 0.1,
+                    angle: 0.3,
+                    triangle_limit: 1_000_000,
+                },
+                16_000_000,
+                None,
+            )
+            .unwrap();
+        let count = shell.mesh().face_indices.len();
+        assert_eq!(shell.into_mesh().face_indices.len(), count);
+    }
+}

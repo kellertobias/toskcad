@@ -389,3 +389,35 @@ mod decode_tests {
         assert!(matches!(Q::decode(&[2, 1, 4, 1, 0], w), Err(Error::Limit)));
     }
 }
+#[cfg(test)]
+mod source_reentry_tests {
+    use super::*;
+    #[test]
+    fn source_rational_entry_validates_size_sign_normalization_work_and_cancel() {
+        let mut w = Work {
+            remaining: 1000000,
+            used: 0,
+            interrupt: None,
+        };
+        let q = Q::from_rational(BigRational::new(2.into(), 4.into()), &mut w).unwrap();
+        assert_eq!(
+            q.rational(&mut w).unwrap(),
+            BigRational::new(1.into(), 2.into())
+        );
+        assert!(Q::from_rational(BigRational::new_raw(1.into(), (-2).into()), &mut w).is_err());
+        let huge = BigInt::from(1) << 8192usize;
+        assert!(Q::from_rational(BigRational::from_integer(huge), &mut w).is_err());
+        let mut limited = Work {
+            remaining: 1,
+            used: 0,
+            interrupt: None,
+        };
+        assert!(Q::from_rational(BigRational::from_integer(1.into()), &mut limited).is_err());
+        let mut cancel = Work {
+            remaining: 1000,
+            used: 0,
+            interrupt: Some(&|| true),
+        };
+        assert!(Q::from_rational(BigRational::from_integer(1.into()), &mut cancel).is_err());
+    }
+}

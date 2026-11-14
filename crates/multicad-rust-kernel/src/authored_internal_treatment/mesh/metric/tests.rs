@@ -585,3 +585,23 @@ fn paired_actual_shell_normal_conditioning_and_v32_proposal() {
         );
     }
 }
+
+#[test]
+fn consuming_shell_keeps_actual_earned_rim_errors_and_detached_mesh() {
+    let source = small_source();
+    let shell = source
+        .tessellate_shell(options(), 16_000_000, None)
+        .unwrap();
+    for end in [ShellEnd::Start, ShellEnd::End] {
+        for i in 0..shell.rim_count(end) {
+            let edge = shell.rim_edge(end, i).unwrap();
+            assert!(
+                edge.point_error_mm
+                    .into_iter()
+                    .all(|e| e.is_finite() && (0. ..0.1).contains(&e))
+            );
+        }
+    }
+    let count = shell.mesh().face_indices.len();
+    assert_eq!(shell.into_mesh().face_indices.len(), count);
+}

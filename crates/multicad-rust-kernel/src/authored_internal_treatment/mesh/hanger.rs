@@ -191,23 +191,7 @@ fn copy_side(
                 transfer::checked(old_points, ids.map(|id| point(mesh, id + offset)), delta, w)?;
             angle = angle.max(bound);
         }
-        let role = face.checked_sub(2).ok_or(E::Unresolved)?;
-        let starts = if metric {
-            source.metric().spec().starts
-        } else {
-            source.wood().spec().starts
-        };
-        if role >= 4 * starts {
-            return Err(E::Unresolved);
-        }
-        let mapped = if metric {
-            5 + role
-        } else {
-            5 + 4 * source.metric().spec().starts + role
-        };
-        if source.face_key(mapped as usize).is_none() {
-            return Err(E::Unresolved);
-        }
+        let mapped = map_face(source, metric, face)?;
         add_triangle(mesh, ids.map(|i| i + offset), mapped, options)?;
     }
     Ok((offset, delta, angle))
@@ -219,6 +203,8 @@ pub(crate) fn hanger_candidate(
     interrupt: Option<&dyn Fn() -> bool>,
 ) -> R<HangerCandidate> {
     options.check().map_err(|_| E::Invalid)?;
+    #[cfg(test)]
+    controls::STAGE.set(0);
     let mut w = Work {
         remaining: maximum_work.min(16_000_000),
         used: 0,
@@ -231,11 +217,15 @@ pub(crate) fn hanger_candidate(
     let metric = source
         .metric()
         .tessellate_shell(options, w.remaining, interrupt)?;
+    #[cfg(test)]
+    controls::STAGE.set(1);
     w.charge(metric.work_used())?;
     memory.charge(metric.retained_bytes())?;
     let wood = source
         .wood()
         .tessellate_shell(options, w.remaining, interrupt)?;
+    #[cfg(test)]
+    controls::STAGE.set(2);
     w.charge(wood.work_used())?;
     memory.charge(wood.retained_bytes())?;
     let circles = caps::circle_count(source.spec().plain_radius_mm, options)?;
@@ -256,15 +246,14 @@ pub(crate) fn hanger_candidate(
     };
     let (mo, delta, transfer) = copy_side(&mut mesh, metric.mesh(), source, true, options, &mut w)?;
     let (wo, _, _) = copy_side(&mut mesh, wood.mesh(), source, false, options, &mut w)?;
-    let mut chord = (I::point(metric.source_chord_bound_mm()) + I::point(delta))
-        .hi
-        .max(wood.source_chord_bound_mm());
-    let normal = (I::point(metric.source_normal_angle_bound_rad()) + I::point(transfer))
-        .hi
-        .max(wood.source_normal_angle_bound_rad());
-    if chord > options.deflection || normal > options.angle {
-        return Err(E::Unresolved);
-    }
+    let metric_error = metric.source_chord_bound_mm();
+    let metric_angle = metric.source_normal_angle_bound_rad();
+    let (metric_chord, metric_normal) =
+        quality(metric_error, delta, metric_angle, transfer, options)?;
+    let mut chord = metric_chord.max(wood.source_chord_bound_mm());
+    let normal = metric_normal.max(wood.source_normal_angle_bound_rad());
+    #[cfg(test)]
+    controls::STAGE.set(3);
     let metric_bottom = ring::read(
         Wall::Metric(&metric),
         ShellEnd::Start,
@@ -272,20 +261,19 @@ pub(crate) fn hanger_candidate(
         &mut memory,
         &mut w,
     )?;
-    let metric_top = ring::read(
-        Wall::Metric(&metric),
-        ShellEnd::End,
-        mo,
-        &mut memory,
-        &mut w,
-    )?;
+    let metric_wall = Wall::Metric(&metric);
+    let metric_top = ring::read(metric_wall, ShellEnd::End, mo, &mut memory, &mut w)?;
     let wood_bottom = ring::read(Wall::Wood(&wood), ShellEnd::Start, wo, &mut memory, &mut w)?;
     let wood_top = ring::read(Wall::Wood(&wood), ShellEnd::End, wo, &mut memory, &mut w)?;
+    #[cfg(test)]
+    controls::STAGE.set(4);
     let bottom_z = point(&mesh, metric_bottom.vertices[0].id)[2];
     let top_z = source.wood().full_length_mm();
     let (plain_bottom, plain_top, plain_chord) =
         caps::plain(&mut mesh, source, circles, options, &mut memory, &mut w)?;
     chord = chord.max(plain_chord);
+    #[cfg(test)]
+    controls::STAGE.set(5);
     for (outer, inner, key, z, plane_error) in [
         (
             &plain_bottom,
@@ -313,30 +301,35 @@ pub(crate) fn hanger_candidate(
         ),
         (&wood_top, None, FaceKey::WoodTip, top_z, 0.),
     ] {
-        chord = chord.max(caps::fill(
+        let cap_bound = caps::fill(
             &mut mesh,
             outer,
             inner,
-            key,
-            z,
-            plane_error,
+            caps::Target {
+                key,
+                z,
+                plane_error,
+            },
             source,
             options,
             &mut w,
-        )?);
+        );
+        chord = chord.max(cap_bound?);
     }
     closed::certify(&mesh, &mut memory, &mut w)?;
-    let volume = source
-        .volume(
-            crate::authored_hanger_bolt::QueryOptions {
-                volume_error_mm3: 1e-7,
-                maximum_cells: 11,
-            },
-            interrupt,
-        )?
-        .material_mm3;
+    #[cfg(test)]
+    controls::STAGE.set(6);
+    #[cfg(test)]
+    controls::STAGE.set(7);
+    let query = crate::authored_hanger_bolt::QueryOptions {
+        volume_error_mm3: 1e-7,
+        maximum_cells: 11,
+    };
+    let volume = source.volume(query, interrupt)?.material_mm3;
     w.charge(256)?;
     let literal = closed::volume(&mesh, &mut w)?;
+    #[cfg(test)]
+    controls::STAGE.set(8);
     w.step()?;
     Ok(HangerCandidate {
         source: *source,
@@ -361,6 +354,66 @@ mod tests {
         fn drop(&mut self) {
             transfer::FORCE_EXPLICIT.set(self.0);
         }
+    }
+    #[test]
+    fn bounded_buffers_typed_errors_and_candidate_moves_preserve_their_contracts() {
+        let mut w = Work {
+            remaining: 1000000,
+            used: 0,
+            interrupt: None,
+        };
+        let mut m = Memory { used: BYTES - 8 };
+        let actual: Vec<u64> = m.allocate(1, &mut w).unwrap();
+        assert_eq!(actual.capacity(), 1);
+        assert!(m.allocate::<u64>(1, &mut w).is_err());
+        let mut m = Memory { used: 0 };
+        assert!(m.allocate::<u64>(usize::MAX, &mut w).is_err());
+        assert!(m.charge(usize::MAX).is_err());
+        for (a, b) in [
+            (Error::Invalid, E::Invalid),
+            (Error::Limit, E::Limit),
+            (Error::Unresolved, E::Unresolved),
+            (Error::Cancelled, E::Cancelled),
+        ] {
+            assert_eq!(E::from(a), b);
+        }
+        use crate::authored_flat_thread::Error as F;
+        for (a, b) in [
+            (F::Invalid, E::Invalid),
+            (F::Limit, E::Limit),
+            (F::Unresolved, E::Unresolved),
+            (F::Cancelled, E::Cancelled),
+            (F::Unsupported, E::Unsupported),
+        ] {
+            assert_eq!(E::from(a), b);
+        }
+        use crate::authored_metric_thread::Error as M;
+        for (a, b) in [
+            (M::Invalid, E::Invalid),
+            (M::Limit, E::Limit),
+            (M::Unresolved, E::Unresolved),
+            (M::Cancelled, E::Cancelled),
+        ] {
+            assert_eq!(E::from(a), b);
+        }
+        let mut mesh = DisplayMesh {
+            vertices: vec![0.; 9],
+            indices: Vec::new(),
+            face_indices: Vec::new(),
+        };
+        assert!(
+            add_triangle(
+                &mut mesh,
+                [0, 1, 2],
+                0,
+                Tessellation {
+                    deflection: 0.1,
+                    angle: 0.3,
+                    triangle_limit: 1
+                }
+            )
+            .is_err()
+        );
     }
     #[test]
     fn actual_rounding_cone_and_projected_divergence_preserve_literal_geometry() {
@@ -407,5 +460,139 @@ mod tests {
         let flux = cone.literal_volume_mm3();
         assert!(tetra[0] <= flux[1] && flux[0] <= tetra[1]);
         assert_eq!(cone.source_volume_mm3(), explicit.source_volume_mm3());
+        let count = cone.mesh().face_indices.len();
+        assert_eq!(cone.into_mesh().face_indices.len(), count);
+    }
+}
+
+fn upper(value: I) -> R<f64> {
+    if value.valid() {
+        Ok(value.hi)
+    } else {
+        Err(E::Unresolved)
+    }
+}
+fn room(length: usize, extra: usize, capacity: usize) -> R<()> {
+    if extra > capacity.saturating_sub(length) {
+        Err(E::Limit)
+    } else {
+        Ok(())
+    }
+}
+fn map_face(source: &Hanger, metric: bool, face: u32) -> R<u32> {
+    let role = face.checked_sub(2).ok_or(E::Unresolved)?;
+    let count = 4 * if metric {
+        source.metric().spec().starts
+    } else {
+        source.wood().spec().starts
+    };
+    if role >= count {
+        return Err(E::Unresolved);
+    }
+    // Disjoint ranges are precisely those exposed by Hanger::face_key.
+    Ok(5 + role
+        + if metric {
+            0
+        } else {
+            4 * source.metric().spec().starts
+        })
+}
+fn quality(
+    chord: f64,
+    delta: f64,
+    angle: f64,
+    transfer: f64,
+    options: Tessellation,
+) -> R<(f64, f64)> {
+    let chord = upper(I::point(chord) + I::point(delta))?;
+    let angle = upper(I::point(angle) + I::point(transfer))?;
+    if chord > options.deflection || angle > options.angle {
+        Err(E::Unresolved)
+    } else {
+        Ok((chord, angle))
+    }
+}
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+    #[test]
+    fn actual_proof_budget_and_face_domain_failures_are_atomic() {
+        let source = Hanger::new(
+            crate::authored_hanger_bolt::tests::fixture(false, false),
+            None,
+        )
+        .unwrap();
+        assert!(map_face(&source, true, 6).is_err());
+        assert!(map_face(&source, false, 0).is_err());
+        let options = Tessellation {
+            deflection: 0.1,
+            angle: 0.3,
+            triangle_limit: 1_000_000,
+        };
+        assert!(quality(0.099, 0.01, 0.2, 0., options).is_err());
+        assert!(quality(0.01, 0., 0.29, 0.02, options).is_err());
+        assert!(upper(I::new(0., f64::INFINITY)).is_err());
+        assert!(upper(I::new(2., 1.)).is_err());
+        assert!(upper(I::point(f64::NAN)).is_err());
+        assert!(room(3, 1, 3).is_err());
+        assert!(room(1, 1, 3).is_ok());
+        let before = source;
+        assert!(
+            hanger_candidate(
+                &source,
+                Tessellation {
+                    triangle_limit: 1,
+                    ..options
+                },
+                16_000_000,
+                None
+            )
+            .is_err()
+        );
+        assert!(hanger_candidate(&source, options, 0, None).is_err());
+        assert!(matches!(
+            hanger_candidate(&source, options, 16_000_000, Some(&|| true)),
+            Err(E::Cancelled)
+        ));
+        assert_eq!(source, before);
+    }
+}
+
+#[cfg(test)]
+mod controls {
+    use super::*;
+    thread_local! { pub(super) static STAGE:std::cell::Cell<u8> = const {std::cell::Cell::new(0)}; }
+    #[test]
+    fn late_cancellation_at_every_actual_pipeline_stage_never_publishes_a_candidate() {
+        let source = Hanger::new(
+            crate::authored_hanger_bolt::tests::fixture(false, false),
+            None,
+        )
+        .unwrap();
+        let before = source;
+        let options = Tessellation {
+            deflection: 0.1,
+            angle: 0.3,
+            triangle_limit: 1_000_000,
+        };
+        for target in 0..=8 {
+            STAGE.set(0);
+            let interrupt = || STAGE.get() >= target;
+            let result = hanger_candidate(&source, options, 16_000_000, Some(&interrupt));
+            assert!(matches!(result, Err(E::Cancelled)), "stage{target}");
+            assert_eq!(source, before);
+        }
+        assert!(matches!(
+            hanger_candidate(
+                &source,
+                Tessellation {
+                    triangle_limit: 41400,
+                    ..options
+                },
+                16_000_000,
+                None
+            ),
+            Err(E::Limit)
+        ));
     }
 }

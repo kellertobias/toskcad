@@ -61,10 +61,7 @@ impl Wall<'_> {
         // Orthogonal radial/tangential components of the ACTUAL C''.
         let curvature =
             ((dd * rate.square() - r).square() + I::point(4.) * (m * rate).square()).sqrt();
-        if !curvature.valid() {
-            return Err(E::Unresolved);
-        }
-        Ok((ids, curvature.hi, error[0].max(error[1])))
+        Ok((ids, upper(curvature)?, error[0].max(error[1])))
     }
     fn minimum(&self) -> f64 {
         match self {
@@ -134,35 +131,17 @@ pub(super) fn read(
     for edge in 0..wall.count(end) {
         w.step()?;
         let ([a, b], curvature, error) = wall.edge(end, edge)?;
-        if a == b || a >= count || b >= count {
-            return Err(E::Unresolved);
-        }
-        for (v, other) in [(a, b), (b, a)] {
-            if nodes[v].is_none() {
-                let q = Q::from_rational(wall.angle(v, w)?, w)?;
-                let angle = Angle::new(&q, m, w)?;
-                nodes[v] = Some(Node {
-                    angle,
-                    links: [Link {
-                        other: usize::MAX,
-                        curvature: 0.,
-                        error: 0.,
-                    }; 2],
-                    degree: 0,
-                });
-            }
-            let node = nodes[v].as_mut().unwrap();
-            if node.degree == 2 || node.links.iter().any(|l| l.other == other) {
-                return Err(E::Unresolved);
-            }
-            node.links[node.degree] = Link {
-                other,
-                curvature,
-                error,
-            };
-            node.degree += 1;
-        }
+        insert(&mut nodes, (a, b, curvature, error), &wall, m, w)?;
     }
+    order(nodes, offset, wall.minimum(), m, w)
+}
+fn order(
+    mut nodes: Vec<Option<Node>>,
+    offset: usize,
+    source_min: f64,
+    m: &mut Memory,
+    w: &mut Work<'_>,
+) -> R<Ring> {
     let unique = nodes.iter().filter(|n| n.is_some()).count();
     if unique < 3 {
         return Err(E::Unresolved);
@@ -171,7 +150,12 @@ pub(super) fn read(
     for (i, node) in nodes.iter().enumerate() {
         w.step()?;
         if let Some(n) = node {
-            if n.degree != 2 {
+            if n.degree != 2
+                || n.links[0].other == n.links[1].other
+                || n.links
+                    .iter()
+                    .any(|l| l.other == i || l.other >= nodes.len() || nodes[l.other].is_none())
+            {
                 return Err(E::Unresolved);
             }
             if start.is_none()
@@ -243,9 +227,9 @@ pub(super) fn read(
         if next == start {
             break;
         }
-        if result.len() >= unique {
-            return Err(E::Unresolved);
-        }
+        // Each iteration consumes one live node. Reaching any earlier node
+        // other than start fails through take/ok_or, so no extra cycle bound
+        // or unbounded retry is needed.
         previous = current;
         current = next;
     }
@@ -255,7 +239,7 @@ pub(super) fn read(
     Ok(Ring {
         vertices: result,
         curve_error,
-        source_min: wall.minimum(),
+        source_min,
     })
 }
 pub(super) struct Graph {
@@ -312,13 +296,11 @@ pub(super) fn graph(ring: &Ring, mesh: &DisplayMesh, w: &mut Work<'_>) -> R<Grap
     let delta = I::point(ring.curve_error);
     let radius = I::point(ring.source_min);
     let error = delta + I::point(lipschitz) * delta / (radius.square() - delta.square()).sqrt();
-    if !error.valid() {
-        return Err(E::Unresolved);
-    }
+    let radial_error = upper(error)?;
     Ok(Graph {
         minimum,
         maximum,
-        radial_error: error.hi,
+        radial_error,
     })
 }
 fn det(a: [f64; 2], b: [f64; 2], w: &mut Work<'_>) -> R<I> {
@@ -350,4 +332,222 @@ pub(super) fn area(points: [[f64; 3]; 3], w: &mut Work<'_>) -> R<Ordering> {
     let ex = Q::float(c[0], w)?.sub(&Q::float(a[0], w)?, w)?;
     let ey = Q::float(c[1], w)?.sub(&Q::float(a[1], w)?, w)?;
     Ok(dx.mul(&ey, w)?.sub(&dy.mul(&ex, w)?, w)?.sign())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn literal_radial_graph_rejects_folded_collapsed_double_winding_and_uncertain_rings() {
+        let (_, mesh, mut ring, _) = super::super::caps::tests::circles();
+        let mut w = Work {
+            remaining: 16_000_000,
+            used: 0,
+            interrupt: None,
+        };
+        let g = graph(&ring, &mesh, &mut w).unwrap();
+        assert!(g.minimum > 1.4 && g.maximum < 1.6 && g.radial_error < 0.1);
+        let mut folded = mesh.clone();
+        let id = ring.vertices[1].id;
+        folded.vertices[id * 3] = -folded.vertices[id * 3];
+        assert!(graph(&ring, &folded, &mut w).is_err());
+        let mut collapsed = mesh.clone();
+        let a = ring.vertices[0].id;
+        let b = ring.vertices[1].id;
+        let p = point(&collapsed, a);
+        collapsed.vertices[b * 3..b * 3 + 3].copy_from_slice(&p);
+        assert!(graph(&ring, &collapsed, &mut w).is_err());
+        let saved = ring.curve_error;
+        ring.curve_error = ring.source_min;
+        assert!(graph(&ring, &mesh, &mut w).is_err());
+        ring.curve_error = saved;
+        let mut m = Memory { used: SCRATCH };
+        let extra = ring
+            .vertices
+            .iter()
+            .map(|v| {
+                let angle = Angle::new(&v.angle.exact(&mut w).unwrap(), &mut m, &mut w).unwrap();
+                Vertex { id: v.id, angle }
+            })
+            .collect::<Vec<_>>();
+        ring.vertices.extend(extra);
+        assert!(graph(&ring, &mesh, &mut w).is_err());
+        assert_eq!(
+            area([[0., 0., 0.], [1., 1., 0.], [2., 2., 0.]], &mut w).unwrap(),
+            Ordering::Equal
+        );
+        let delta = f64::EPSILON;
+        assert_eq!(
+            area(
+                [[1., 1., 0.], [2., 2., 0.], [2., 2. + 2. * delta, 0.]],
+                &mut w
+            )
+            .unwrap(),
+            Ordering::Greater
+        );
+        assert!(det([1., 1.], [1., 1.], &mut w).unwrap().lo == 0.);
+        let near = det([1., 1.], [1., 1_f64.next_up()], &mut w).unwrap();
+        assert!(near.lo > 0.);
+        let last = ring.vertices[0].id;
+        ring.vertices[0].id = usize::MAX;
+        assert!(graph(&ring, &mesh, &mut w).is_err());
+        ring.vertices[0].id = last;
+    }
+}
+
+fn endpoints(a: usize, b: usize, count: usize) -> R<()> {
+    if a == b || a >= count || b >= count {
+        Err(E::Unresolved)
+    } else {
+        Ok(())
+    }
+}
+fn link(node: &mut Node, other: usize, curvature: f64, error: f64) -> R<()> {
+    if node.degree == 2 || node.links.iter().any(|l| l.other == other) {
+        return Err(E::Unresolved);
+    }
+    node.links[node.degree] = Link {
+        other,
+        curvature,
+        error,
+    };
+    node.degree += 1;
+    Ok(())
+}
+fn insert(
+    nodes: &mut [Option<Node>],
+    edge: (usize, usize, f64, f64),
+    wall: &Wall<'_>,
+    m: &mut Memory,
+    w: &mut Work<'_>,
+) -> R<()> {
+    let (a, b, curvature, error) = edge;
+    endpoints(a, b, nodes.len())?;
+    for (v, other) in [(a, b), (b, a)] {
+        if nodes[v].is_none() {
+            let q = Q::from_rational(wall.angle(v, w)?, w)?;
+            let angle = Angle::new(&q, m, w)?;
+            nodes[v] = Some(Node {
+                angle,
+                links: [Link {
+                    other: usize::MAX,
+                    curvature: 0.,
+                    error: 0.,
+                }; 2],
+                degree: 0,
+            });
+        }
+        link(nodes[v].as_mut().unwrap(), other, curvature, error)?;
+    }
+    Ok(())
+}
+#[cfg(test)]
+mod cycle_tests {
+    use super::*;
+    fn nodes(angles: &[f64], m: &mut Memory, w: &mut Work<'_>) -> Vec<Option<Node>> {
+        (0..angles.len())
+            .map(|i| {
+                Some(Node {
+                    angle: Angle::new(&Q::float(angles[i], w).unwrap(), m, w).unwrap(),
+                    links: [
+                        Link {
+                            other: (i + angles.len() - 1) % angles.len(),
+                            curvature: 1.,
+                            error: 0.,
+                        },
+                        Link {
+                            other: (i + 1) % angles.len(),
+                            curvature: 1.,
+                            error: 0.,
+                        },
+                    ],
+                    degree: 2,
+                })
+            })
+            .collect()
+    }
+    #[test]
+    fn exact_source_cycle_contract_refuses_missing_duplicate_crossed_and_wide_edges() {
+        let mut w = Work {
+            remaining: 16_000_000,
+            used: 0,
+            interrupt: None,
+        };
+        let mut m = Memory { used: SCRATCH };
+        assert!(
+            order(
+                nodes(&[0., 0.25, 0.5, 0.75], &mut m, &mut w),
+                0,
+                1.,
+                &mut m,
+                &mut w
+            )
+            .is_ok()
+        );
+        assert!(order(nodes(&[0., 0.1], &mut m, &mut w), 0, 1., &mut m, &mut w).is_err());
+        let mut bad = nodes(&[0., 0.25, 0.5, 0.75], &mut m, &mut w);
+        bad[1].as_mut().unwrap().degree = 1;
+        assert!(order(bad, 0, 1., &mut m, &mut w).is_err());
+        assert!(
+            order(
+                nodes(&[0., 0.5, 0.25, 0.75], &mut m, &mut w),
+                0,
+                1.,
+                &mut m,
+                &mut w
+            )
+            .is_err()
+        );
+        assert!(
+            order(
+                nodes(&[0., 0.1, 0.2], &mut m, &mut w),
+                0,
+                1.,
+                &mut m,
+                &mut w
+            )
+            .is_err()
+        );
+        let mut bad = nodes(&[0., 0.2, 0.4, 0.6, 0.8, 0.9], &mut m, &mut w);
+        for group in [[0, 1, 2], [3, 4, 5]] {
+            for i in 0..3 {
+                let n = bad[group[i]].as_mut().unwrap();
+                n.links[0].other = group[(i + 2) % 3];
+                n.links[1].other = group[(i + 1) % 3];
+            }
+        }
+        assert!(order(bad, 0, 1., &mut m, &mut w).is_err());
+        // A strictly short first edge followed by an actual backwards station.
+        assert!(
+            order(
+                nodes(&[0., 0.25, 0.6, 0.5, 0.9], &mut m, &mut w),
+                0,
+                1.,
+                &mut m,
+                &mut w
+            )
+            .is_err()
+        );
+        // Both cycles have valid sub-half-turn edges; only the first is reached.
+        let mut split = nodes(&[0., 0.3, 0.6, 0.7, 0.8, 0.9], &mut m, &mut w);
+        for group in [[0, 1, 2], [3, 4, 5]] {
+            for i in 0..3 {
+                let n = split[group[i]].as_mut().unwrap();
+                n.links[0].other = group[(i + 2) % 3];
+                n.links[1].other = group[(i + 1) % 3];
+            }
+        }
+        assert!(order(split, 0, 1., &mut m, &mut w).is_err());
+        assert!(endpoints(0, 0, 4).is_err());
+        assert!(endpoints(0, 4, 4).is_err());
+        let mut data = nodes(&[0., 0.25, 0.5, 0.75], &mut m, &mut w);
+        let n = data[0].as_mut().unwrap();
+        assert!(link(n, 1, 1., 0.).is_err());
+        n.degree = 1;
+        n.links[0].other = 1;
+        assert!(link(n, 1, 1., 0.).is_err());
+        let a = Angle::new(&Q::float(0.25, &mut w).unwrap(), &mut m, &mut w).unwrap();
+        let b = Angle::new(&Q::float(0.5, &mut w).unwrap(), &mut m, &mut w).unwrap();
+        assert_eq!(b.cmp(&a, &mut w).unwrap(), Ordering::Greater);
+        assert_eq!(a.cmp(&a, &mut w).unwrap(), Ordering::Equal);
+    }
 }

@@ -57,10 +57,7 @@ pub(super) fn z_only(points: [[f64; 3]; 3], delta: f64) -> R<f64> {
     // The ball B(N,epsilon) excludes zero, preserves orientation, and subtends
     // at most asin(epsilon/||N||). atan form retains directed interval support.
     let angle = (ratio / (I::point(1.) - ratio.square()).sqrt()).atan();
-    if !angle.valid() {
-        return Err(E::Unresolved);
-    }
-    Ok(angle.hi)
+    upper(angle)
 }
 #[cfg(test)]
 pub(super) fn explicit(old: [[f64; 3]; 3], new: [[f64; 3]; 3]) -> R<f64> {
@@ -73,8 +70,36 @@ pub(super) fn explicit(old: [[f64; 3]; 3], new: [[f64; 3]; 3]) -> R<f64> {
     let c = cross(old, new);
     let magnitude = dot(c, c).sqrt();
     let angle = (I::new(0., magnitude.hi) / I::point(projection.lo)).atan();
-    if !angle.valid() {
-        return Err(E::Unresolved);
+    upper(angle)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn real_literal_translation_cone_matches_explicit_normals_and_refuses_uncertainty() {
+        let old = [[1., 0., 0.], [1., 0.1, 0.02], [0.9, 0.05, 0.2]];
+        let new = old.map(|mut p| {
+            p[2] = (p[2] - 12.7) - 2.15;
+            p
+        });
+        let delta = old.into_iter().zip(new).fold(0_f64, |e, (a, b)| {
+            e.max((I::point(a[2]) - I::point(12.7) - I::point(2.15) - I::point(b[2])).magnitude())
+        });
+        let mut w = Work {
+            remaining: 10000,
+            used: 0,
+            interrupt: None,
+        };
+        let cone = checked(old, new, delta, &mut w).unwrap();
+        let explicit_bound = explicit(old, new).unwrap();
+        assert!(cone < 1e-10 && explicit_bound < 1e-10);
+        assert!(z_only(old, 1.).is_err());
+        assert!(z_only([[0.; 3]; 3], delta).is_err());
+        assert!(z_only(old, f64::NAN).is_err());
+        let mut changed = new;
+        changed[1][0] += 0.01;
+        assert!(checked(old, changed, delta, &mut w).is_err());
+        assert!(explicit(old, [new[0], new[2], new[1]]).is_err());
+        assert!(explicit([[0.; 3]; 3], new).is_err());
     }
-    Ok(angle.hi)
 }
