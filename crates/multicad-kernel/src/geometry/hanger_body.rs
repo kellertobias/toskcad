@@ -59,6 +59,9 @@ impl Solid {
     }
 }
 impl HangerBody {
+    pub(super) fn source(&self) -> &Hanger {
+        &self.source
+    }
     pub(super) fn material(
         &self,
         frame: PlaneFrame,

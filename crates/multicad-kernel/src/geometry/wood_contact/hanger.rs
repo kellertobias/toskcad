@@ -2,6 +2,7 @@
 //! not waive clamp, washer, stock-interface or other component collisions.
 use super::*;
 mod passage;
+mod separation;
 mod stack;
 use source::{HangerContact, HangerMating, HangerMatingRequirements};
 #[cfg(test)]
