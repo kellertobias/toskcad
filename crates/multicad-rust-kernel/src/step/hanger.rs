@@ -13,6 +13,8 @@ mod domain;
 pub use domain::{DomainOptions, RootFaceDomain, TrimBounds};
 mod periodic;
 pub use periodic::PeriodicAngular;
+mod body_field;
+pub use body_field::{BodyField, CellSurface, FieldBounds, FieldControl};
 mod field;
 pub use field::{
     BandPiece, CellSeam, HomogeneousControl, MeridianRow, MeridianRowKey, PhaseNode, SeamPoint,
