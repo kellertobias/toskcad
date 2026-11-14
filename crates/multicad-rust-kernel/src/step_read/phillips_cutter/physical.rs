@@ -5,14 +5,20 @@ use super::*;
 mod analytic;
 mod body;
 mod branches;
-pub use body::{Body, VirtualOuterCap, read_phillips_body, read_phillips_body_with_interrupt};
+pub use body::{
+    Body, ExactPointLeaf, OriginalNumericLeaf, OriginalNumericLeaves, OuterCarrierBounds,
+    OuterCarrierOptions, TensorCarrierBound, VirtualOuterCap, read_phillips_body,
+    read_phillips_body_with_interrupt,
+};
 mod endpoints;
 pub use analytic::{AnalyticSupportBounds, AnalyticSupportOptions};
 pub use branches::{
     EdgeSection as IntersectionSection, EdgeTube as IntersectionEdgeTube,
     FiniteLift as AnalyticEdgeLift, FiniteLifts as AnalyticEdgeLifts,
     LiftKind as AnalyticEdgeLiftKind, LiftOptions as AnalyticEdgeLiftOptions,
-    Options as IntersectionTubeOptions, Tubes as IntersectionTubes,
+    Options as IntersectionTubeOptions, SewnEdgeSource, SewnEdgeSources,
+    SewnEvaluation as SewnEdgeEvaluation, SewnOptions as SewnEdgeOptions,
+    SewnParameter as SewnEdgeParameter, Tubes as IntersectionTubes,
 };
 mod incidence;
 pub use endpoints::{EndpointCouplingBounds, EndpointCouplingOptions};
@@ -312,3 +318,16 @@ pub(crate) fn read_member(
     }
     incidence::read(shell, mouth, &views, &entities, work)
 }
+
+pub use branches::{
+    DerivedCavityOptions, DerivedCavityRepresentative, DerivedEdgeCorrespondence,
+    DerivedFaceCorrespondence, DerivedVertexCorrespondence,
+};
+
+pub use branches::ClosedDerivedCavityCertificate;
+
+pub use body::{
+    CommonMouthChart, CommonMouthHeadEnvelope, CommonMouthOptions, CommonTensorTransfer,
+};
+
+pub use body::{ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHeadSupportKind};

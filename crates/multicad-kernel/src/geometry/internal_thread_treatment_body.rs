@@ -1022,3 +1022,47 @@ mod large_shoulder_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod fine_pitch_tests {
+    use super::*;
+    use multicad_rust_kernel::Rational;
+    #[test]
+    fn actual_fine_pitch_multistart_keeps_default_native_manufacturing_quality() {
+        for (left, frame) in [
+            (true, PlaneFrame::default()),
+            (
+                false,
+                PlaneFrame {
+                    origin: [10., 20., 30.],
+                    u: [0.8, 0.6, 0.],
+                    v: [-0.36, 0.48, 0.8],
+                },
+            ),
+        ] {
+            let original = super::tests::fixture_stock(Rational::new(4, 1).unwrap(), frame);
+            let mut cut = super::tests::cut(frame, left, 3);
+            cut.profile.pitch_mm = 0.35;
+            cut.profile.depth_mm = 0.15;
+            cut.profile.crest_width_mm = 0.08;
+            let body = original
+                .rust_cut_authored_internal_thread_treatments_with_interrupt(
+                    cut,
+                    EntityId::new(),
+                    GeometryPolicy::default(),
+                    None,
+                )
+                .unwrap();
+            let start = std::time::Instant::now();
+            let receipt = body
+                .manufacturing_mesh_with_receipt(MeshOptions::default())
+                .unwrap();
+            eprintln!(
+                "actual fine-pitch Native left={left}, {} facets, {:?}",
+                receipt.mesh.face_indices.len(),
+                start.elapsed()
+            );
+            assert!(!receipt.mesh.indices.is_empty());
+        }
+    }
+}

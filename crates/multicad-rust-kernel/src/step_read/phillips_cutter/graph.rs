@@ -3,12 +3,14 @@
 use super::*;
 #[derive(Clone, Copy)]
 pub(super) struct Edge {
+    pub entity: u32,
     pub vertices: [u32; 2],
     pub geometry: u32,
     pub forward: bool,
     pub reversed: bool,
 }
 pub(super) struct Face {
+    pub input_view: usize,
     pub surface: u32,
     pub forward: bool,
 }
@@ -26,6 +28,7 @@ fn edge(shell: &Shell<'_, '_>, id: u32) -> Result<Edge> {
     let vertices = [reference(a)?, reference(b)?];
     require(vertices[0] != vertices[1])?;
     Ok(Edge {
+        entity: id,
         vertices,
         geometry: reference(geometry)?,
         forward: sense(forward)?,
@@ -78,7 +81,7 @@ pub(super) fn read_views(
     let mut edges = BTreeMap::new();
     let mut vertex_ids = BTreeSet::new();
     let mut raw_uses = BTreeMap::<u32, Vec<bool>>::new();
-    for view in views {
+    for (input_view, view) in views.iter().enumerate() {
         work.step(1)?;
         let uses = view.uses.clone();
         for &(id, forward) in &uses {
@@ -89,6 +92,7 @@ pub(super) fn read_views(
         }
         faces.push((
             Face {
+                input_view,
                 surface: view.surface,
                 forward: view.forward,
             },

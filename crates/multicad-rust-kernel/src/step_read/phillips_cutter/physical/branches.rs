@@ -6,7 +6,14 @@ mod functional;
 mod lifts;
 mod matrix;
 pub use lifts::{FiniteLift, FiniteLifts, LiftKind, LiftOptions};
+mod derived;
 mod section;
+mod sewn;
+pub use derived::{
+    ClosedDerivedCavityCertificate, DerivedCavityOptions, DerivedCavityRepresentative,
+    DerivedEdgeCorrespondence, DerivedFaceCorrespondence, DerivedVertexCorrespondence,
+};
+pub use sewn::{SewnEdgeSource, SewnEdgeSources, SewnEvaluation, SewnOptions, SewnParameter};
 use supports::chart::Chart;
 const WORK: usize = 16_000_000;
 const BYTES: usize = 64 * 1024 * 1024;
@@ -347,3 +354,6 @@ impl<'a> Tubes<'a> {
 }
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(super) mod representative;

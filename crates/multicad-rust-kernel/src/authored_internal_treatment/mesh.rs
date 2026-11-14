@@ -7,14 +7,23 @@ mod chart;
 mod clip;
 mod close;
 mod exact;
+mod hanger;
 mod jet;
 mod material_mesh;
+mod metric;
+pub use hanger::HangerCandidate;
+pub(crate) use hanger::hanger_candidate;
+pub(crate) use metric::metric_shell;
+pub use metric::{MetricRimEdge, MetricShell};
 mod owners;
 mod regular;
 mod source;
 mod storage;
+mod thread_chart;
 mod trace;
 use source::Kind;
+use thread_chart::ThreadChart;
+pub use thread_chart::{ShellEnd, ThreadRimEdge, ThreadShell};
 #[derive(Clone, Debug)]
 pub struct Candidate {
     pub mesh: DisplayMesh,
@@ -73,37 +82,36 @@ pub fn tessellate_candidate(
     }
     let mut grid = Grid::new();
     loop {
-        let repartition =
-            match chart::shell_attempt(body, options, grid.subdivisions, grid.rows(), &mut work)? {
-                Attempt::Complete(shell) => {
-                    if let Some(mut candidate) = close::close(shell, body, options, &mut work)? {
-                        candidate.work_used = work.used;
-                        return Ok(candidate);
-                    }
-                    false
+        let repartition = match chart::grid_attempt(body, options, &grid, &mut work)? {
+            Attempt::Complete(shell) => {
+                if let Some(mut candidate) = close::close(shell, body, options, &mut work)? {
+                    candidate.work_used = work.used;
+                    return Ok(candidate);
                 }
-                Attempt::Refine => false,
-                Attempt::Repartition => true,
-            };
+                false
+            }
+            Attempt::Refine => false,
+            Attempt::Repartition => true,
+        };
         grid.advance(repartition)?;
     }
 }
 
-fn wall_face(body: &Cavity, node: Node) -> u32 {
-    let n = body.thread.spec().starts;
+fn wall_face(thread: &AuthoredThread, node: Node) -> u32 {
+    let n = thread.spec().starts;
     let shift = [0, 0, 0, 1, 1][node.band];
     let group = (node.start + shift) % n;
-    let group = if body.thread.spec().left_hand {
+    let group = if thread.spec().left_hand {
         group
     } else {
         (n - group) % n
     };
     2 + 4 * group + [1, 2, 3, 0, 1][node.band]
 }
-fn face(body: &Cavity, node: Node, kind: Kind) -> u32 {
-    let base = 2 + 4 * body.thread.spec().starts;
+fn face(thread: &AuthoredThread, node: Node, kind: Kind) -> u32 {
+    let base = 2 + 4 * thread.spec().starts;
     match kind {
-        Kind::Wall => wall_face(body, node),
+        Kind::Wall => wall_face(thread, node),
         Kind::Cone => base,
     }
 }

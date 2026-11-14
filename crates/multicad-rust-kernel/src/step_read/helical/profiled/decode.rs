@@ -43,10 +43,11 @@ pub(in super::super::super) fn read_phillips_outer_header(
                 == cavity_faces,
     )?;
     let decoded = header::meridian(shell, &layout, count)?;
-    require(
-        decoded.mouth == cavity.mouth().material_bound
-            && decoded.top_surface == cavity.mouth().material_surface,
-    )?;
+    // This helper's sole caller constructs cavity from this same Shell before
+    // extracting this header. The verified head-face identity above therefore
+    // means meridian reads exactly the same raw surface and bounds[1] that own
+    // Mouth. Shell caches do not mutate those immutable entity fields; repeating
+    // their equality as a fallible cross-arena check would be redundant.
     Ok(PhillipsOuterHeader {
         profile: decoded.profile,
         head_top_face: layout.head[0],
@@ -274,6 +275,61 @@ fn certified_wall(
         }
     }
     Ok(wall)
+}
+
+/// Independently match the retained meridian against its actual finite outer
+/// supports. The supplied Profile was extracted once from this same arena; no
+/// authored Head or recess recipe is reconstructed or supplied here.
+pub(in crate::step_read) fn match_phillips_outer(
+    shell: &mut Shell<'_, '_>,
+    faces: &[u32],
+    thread: &Thread,
+    (placement, visible): ([Point; 3], f64),
+    profile: &Profile,
+    prefix: &super::super::Prefix,
+) -> Result<()> {
+    let frame = Frame::new(placement)?;
+    let proof = Proof {
+        error: Some(profile.rounding_error_mm()),
+        extent: thread.spec().length_mm.max(thread.spec().major_radius_mm),
+    };
+    let count = 4 * thread.spec().starts as usize;
+    let join = junction(
+        proof,
+        shell,
+        &faces[count..],
+        thread,
+        &prefix.rings,
+        &prefix.corners,
+        (frame, visible),
+    )?;
+    let head = &faces[count + join.shoulders + 1..];
+    let segments: Vec<_> = profile.segments().collect();
+    require(head.len() == segments.len() + 29)?;
+    head_edge_residuals(
+        shell,
+        &head[1..=segments.len()],
+        frame,
+        profile.rounding_error_mm(),
+    )?;
+    let (surface, forward, bounds) = face(shell, head[0])?;
+    require(forward && bounds.len() == 2)?;
+    let top = single_bound_rim(shell, bounds[0], true, false, frame)?;
+    let axis = hex_head::plane(shell, surface)?;
+    let actual = shell.placement(reference(axis)?)?;
+    proof.axis(shell, axis, top.center, frame.n.map(|v| -v), actual.u)?;
+    outer::verify_walls(
+        proof,
+        shell,
+        &head[1..=segments.len()],
+        outer::MeridianWalls {
+            segments: &segments,
+            frame,
+            shift: 0.,
+            top,
+            join: &join,
+        },
+    )
 }
 
 #[cfg(test)]

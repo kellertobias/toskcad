@@ -174,7 +174,7 @@ fn default_native_nominal_and_six_h_meshes_keep_manufacturing_embedding_and_orig
     unique(&manufacturing.mesh);
 }
 #[test]
-fn unresolved_nonbinary_limit_remains_atomic_and_is_not_a_geometry_waiver() {
+fn nonbinary_source_manufactures_and_real_budget_refusal_remains_atomic() {
     let p = HelicalThread {
         major_radius_mm: 1.5,
         pitch_mm: 0.35,
@@ -193,13 +193,24 @@ fn unresolved_nonbinary_limit_remains_atomic_and_is_not_a_geometry_waiver() {
         .rust_internal_thread_treatment_volume_bounds()
         .unwrap()
         .unwrap();
+    let display = solid.mesh(MeshOptions::default()).unwrap();
+    unique(&display);
+    let manufacturing = solid
+        .manufacturing_mesh_with_receipt(MeshOptions::default())
+        .unwrap();
+    unique(&manufacturing.mesh);
+    assert!(!manufacturing.mesh.indices.is_empty());
+    let limited = MeshOptions {
+        maximum_triangles: 32,
+        ..MeshOptions::default()
+    };
     assert_eq!(
-        solid.mesh(MeshOptions::default()).unwrap_err().kind,
+        solid.mesh(limited).unwrap_err().kind,
         GeometryErrorKind::Limit
     );
     assert_eq!(
         solid
-            .manufacturing_mesh_with_receipt(MeshOptions::default())
+            .manufacturing_mesh_with_receipt(limited)
             .err()
             .unwrap()
             .kind,

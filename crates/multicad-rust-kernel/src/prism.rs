@@ -347,3 +347,20 @@ impl Prism {
         })
     }
 }
+
+#[cfg(test)]
+mod bounds_tests {
+    use super::*;
+    #[test]
+    fn maximum_is_a_real_boundary_corner_and_any_outward_step_leaves_material() {
+        let q = |n, d| Rational::new(n, d).unwrap();
+        let solid = Prism::rectangular(473, [q(7, 3), q(11, 5), q(13, 7)]).unwrap();
+        let maximum = solid.maximum();
+        assert_ne!(solid.classify(maximum).unwrap(), Location::Exterior);
+        for axis in 0..3 {
+            let mut beyond = maximum;
+            beyond[axis] = beyond[axis].checked_add(q(1, 100)).unwrap();
+            assert_eq!(solid.classify(beyond).unwrap(), Location::Exterior);
+        }
+    }
+}

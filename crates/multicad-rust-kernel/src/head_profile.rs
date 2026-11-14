@@ -6,7 +6,12 @@
 
 use crate::helical_thread::ThreadError;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
+mod repaired;
 pub(crate) mod source_volume;
+pub use repaired::{
+    AxialProgress, RepairedHeadError, RepairedHeadMeridian, RepairedHeadOptions,
+    RepairedMeridianBounds, RepairedSegmentCertificate,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Role {

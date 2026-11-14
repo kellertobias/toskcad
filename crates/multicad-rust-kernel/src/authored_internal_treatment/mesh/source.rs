@@ -8,12 +8,24 @@ pub(super) enum Kind {
 #[derive(Clone, Copy)]
 pub(super) enum Normal {
     Radial { angle: I, beta: I, z: I },
+    ScaledRadial { angle: I, radial: I, beta: I, z: I },
     Axial(I),
 }
 impl Normal {
     pub fn components(self, yaw: f64) -> [I; 3] {
         match self {
             Self::Axial(z) => [I::point(0.), I::point(0.), z],
+            Self::ScaledRadial {
+                angle,
+                radial,
+                beta,
+                z,
+            } => {
+                let shifted = angle - I::point(yaw);
+                let c = shifted.cos();
+                let s = shifted.sin();
+                [radial * c - beta * s, radial * s + beta * c, z]
+            }
             Self::Radial { angle, beta, z } => {
                 let shifted = angle - I::point(yaw);
                 let c = shifted.cos();

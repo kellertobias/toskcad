@@ -23,11 +23,17 @@ pub use physical::{
     CubicSupportOptions as PhillipsCubicSupportOptions, Curve as ParsedPhillipsCurve,
     Edge as ParsedPhillipsEdge, EdgeSupportBound as PhillipsEdgeSupportBound,
     EndpointCouplingBounds as PhillipsEndpointCouplingBounds,
-    EndpointCouplingOptions as PhillipsEndpointCouplingOptions, Face as ParsedPhillipsFace,
+    EndpointCouplingOptions as PhillipsEndpointCouplingOptions,
+    ExactPointLeaf as PhillipsExactPointLeaf, Face as ParsedPhillipsFace,
     ImplicitSupportEnclosure as PhillipsImplicitSupportEnclosure, IntersectionEdgeTube,
     IntersectionSection, IntersectionTubeOptions, IntersectionTubes,
     MaterialLoop as ParsedPhillipsMaterialLoop, MaterialUse as ParsedPhillipsMaterialUse,
-    Mouth as ParsedPhillipsMouth, Surface as ParsedPhillipsSurface, Vertex as ParsedPhillipsVertex,
+    Mouth as ParsedPhillipsMouth, OriginalNumericLeaf as PhillipsOriginalNumericLeaf,
+    OriginalNumericLeaves as PhillipsOriginalNumericLeaves,
+    OuterCarrierBounds as PhillipsOuterCarrierBounds,
+    OuterCarrierOptions as PhillipsOuterCarrierOptions, SewnEdgeEvaluation, SewnEdgeOptions,
+    SewnEdgeParameter, SewnEdgeSource, SewnEdgeSources, Surface as ParsedPhillipsSurface,
+    TensorCarrierBound as PhillipsTensorCarrierBound, Vertex as ParsedPhillipsVertex,
     VirtualOuterCap as ParsedPhillipsVirtualOuterCap, read_phillips_body,
     read_phillips_body_with_interrupt, read_phillips_screw_boundary,
     read_phillips_screw_boundary_with_interrupt,
@@ -211,3 +217,18 @@ fn verify(
     let graph = graph::read(&mut shell, &faces, &topology, &pose, tolerance, work)?;
     geometry::verify(&shell, &graph, &topology, &pose, tolerance, work)
 }
+
+pub use physical::{
+    DerivedCavityOptions, DerivedCavityRepresentative, DerivedEdgeCorrespondence,
+    DerivedFaceCorrespondence, DerivedVertexCorrespondence,
+};
+
+pub use physical::ClosedDerivedCavityCertificate;
+
+pub use physical::{
+    CommonMouthChart, CommonMouthHeadEnvelope, CommonMouthOptions, CommonTensorTransfer,
+};
+
+pub use physical::{
+    ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHeadSupportKind,
+};

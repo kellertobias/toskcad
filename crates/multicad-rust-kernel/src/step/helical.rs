@@ -1019,15 +1019,49 @@ pub(crate) fn prepare(
         return Err(StepError::Limit);
     }
 
+    let visible_z = match closure {
+        Closure::Profiled(screw) => screw.visible_thread_interval_mm()[0],
+        _ => 0.,
+    };
+    let crest_clearance = closure.tangent_shank().is_some()
+        || matches!(closure, Closure::Profiled(_))
+        || matches!(closure,Closure::ExternalStock {radius_mm,..} if radius_mm==major);
+    reference_basis(thread, visible_z, tolerance, crest_clearance)
+}
+
+/// Reconstructed local reference carrier only, for measured matching against
+/// retained file controls. It is neither a decoded solid nor file-mass authority.
+pub(crate) fn prepare_retained_reference(
+    thread: &Thread,
+    visible_z: f64,
+    tolerance_mm: f64,
+) -> Result<ThreadSplines, StepError> {
+    if !visible_z.is_finite()
+        || visible_z < 0.
+        || visible_z >= thread.spec().length_mm
+        || !tolerance_mm.is_finite()
+        || tolerance_mm <= 0.
+    {
+        return Err(StepError::InvalidGeometry);
+    }
+    reference_basis(thread, visible_z, tolerance_mm.min(MAX_ERROR_MM), true)
+}
+fn reference_basis(
+    thread: &Thread,
+    visible_z: f64,
+    tolerance: f64,
+    crest_clearance: bool,
+) -> Result<ThreadSplines, StepError> {
+    let spec = thread.spec();
+    let height = spec.length_mm;
+    let major = spec.major_radius_mm;
+    let rate = thread.helical_rate();
+    let spin = height / rate.abs();
     // Use dimensionless angular coordinates and a separable tensor product.
     // XY(p,z) = A(p) B(z), where A carries the radius and B is unit rotation.
     // Bound the factors separately. The product error is at most
     // e_A + R e_B + e_A e_B, leaving room for roundoff and the closure seam.
     let hand = rate.signum();
-    let visible_z = match closure {
-        Closure::Profiled(screw) => screw.visible_thread_interval_mm()[0],
-        _ => 0.,
-    };
     let (axial, heights, visible_start) = if visible_z > 0. {
         let split = visible_z / rate.abs();
         let mut prefix = Spline::new(0., split, [1., 1.], hand, tolerance / (8. * major))?;
@@ -1102,10 +1136,7 @@ pub(crate) fn prepare(
     if bands.iter().any(|band| !band.advances_angle(-hand)) {
         return Err(StepError::Limit);
     }
-    if closure.tangent_shank().is_some()
-        || matches!(closure, Closure::Profiled(_))
-        || matches!(closure,Closure::ExternalStock {radius_mm,..} if radius_mm==major)
-    {
+    if crest_clearance {
         for part in bands.as_chunks::<4>().0 {
             check_shank_clearance(&part[..3], major)?;
         }

@@ -36,3 +36,14 @@ unimplemented = "deny"
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+# Exact geometry and bigint arithmetic are also hot paths in the application
+# opened by ./build. Keep them optimized while the UI retains its dev profile.
+[profile.dev.package.multicad-rust-kernel]
+opt-level = 2
+
+[profile.dev.package.multicad-kernel]
+opt-level = 2
+
+[profile.dev.package.num-bigint]
+opt-level = 2

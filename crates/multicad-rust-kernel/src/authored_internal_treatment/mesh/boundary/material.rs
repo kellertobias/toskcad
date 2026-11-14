@@ -3,7 +3,7 @@ use super::*;
 impl Graph {
     pub(super) fn material(mut self, material: Material, w: &mut Work<'_>) -> Result<Self, Error> {
         w.step()?;
-        if self.source != *material.cavity() || self.material.is_some() {
+        if self.source != Source::treated(*material.cavity()) || self.material.is_some() {
             return Err(Error::Invalid);
         }
         if self.curves.iter().any(|curve| curve.uses[1].is_none()) {

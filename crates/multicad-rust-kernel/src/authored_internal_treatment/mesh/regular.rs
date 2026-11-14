@@ -19,6 +19,7 @@ pub(super) struct Patch {
     pub intercept: Q,
     pub entry: Option<(Q, Q)>,
     pub top: Q,
+    offset: Option<Q>,
 }
 pub(super) struct Polygon {
     pub points: Vec<Point>,
@@ -29,11 +30,31 @@ pub(super) struct Polygon {
     pub rows: u32,
 }
 impl Patch {
+    // Legacy fixtures still build a real treated source; production now
+    // enters the same carrier through its explicit borrowed ThreadChart.
+    #[cfg(test)]
     pub fn new(
         body: &Cavity,
         period: i64,
         band: usize,
         subdivisions: usize,
+        w: &mut Work<'_>,
+    ) -> Result<Self, Error> {
+        Self::from_chart(
+            ThreadChart::treated(body),
+            period,
+            band,
+            subdivisions,
+            false,
+            w,
+        )
+    }
+    pub fn from_chart(
+        body: ThreadChart<'_>,
+        period: i64,
+        band: usize,
+        subdivisions: usize,
+        shifted: bool,
         w: &mut Work<'_>,
     ) -> Result<Self, Error> {
         w.step()?;
@@ -59,7 +80,7 @@ impl Patch {
                 Ok((radius, k))
             })
             .transpose()?;
-        let top = Q::float(body.tail.map_or(body.full_length_mm(), |t| t.station), w)?;
+        let top = Q::float(body.top, w)?;
         Ok(Self {
             band,
             period,
@@ -71,6 +92,9 @@ impl Patch {
             intercept,
             entry,
             top,
+            offset: shifted
+                .then(|| Q::float(sampling::TURN_OFFSET, w))
+                .transpose()?,
         })
     }
     pub fn cell(
@@ -93,8 +117,12 @@ impl Patch {
         let ql = self.q0.add(&span.mul(&fraction(index, w)?, w)?, w)?;
         let qh = self.q0.add(&span.mul(&fraction(index + 1, w)?, w)?, w)?;
         let denominator = Q::integer(i64::from(rows), w)?;
-        let vl = Q::integer(i64::from(row), w)?.div(&denominator, w)?;
-        let vh = Q::integer(i64::from(row + 1), w)?.div(&denominator, w)?;
+        let mut vl = Q::integer(i64::from(row), w)?.div(&denominator, w)?;
+        let mut vh = Q::integer(i64::from(row + 1), w)?.div(&denominator, w)?;
+        if let Some(offset) = &self.offset {
+            vl = vl.add(offset, w)?;
+            vh = vh.add(offset, w)?;
+        }
         // All cuts retain their positive side. No source radius/phase change.
         let mouth = Line::new(one.clone(), self.lead.clone(), zero.clone(), w)?;
         let top = Line::new(
@@ -144,7 +172,7 @@ impl Patch {
     }
     pub fn field(
         &self,
-        body: &Cavity,
+        thread: &AuthoredThread,
         polygon: &Polygon,
         w: &mut Work<'_>,
     ) -> Result<source::Field, Error> {
@@ -170,11 +198,7 @@ impl Patch {
                 let r = q
                     .scale(m)
                     .add(Jet::constant(self.intercept.enclosure(w)?.1));
-                (
-                    r,
-                    -m,
-                    (I::point(1.) / body.thread.angular_gain()) * m / r.value,
-                )
+                (r, -m, (I::point(1.) / thread.angular_gain()) * m / r.value)
             }
             Kind::Cone => {
                 let (a, k) = self.entry.as_ref().ok_or(Error::Invalid)?;
@@ -191,11 +215,7 @@ impl Patch {
                 std::f64::consts::PI.next_down(),
                 std::f64::consts::PI.next_up(),
             );
-        let angle = v.scale(if body.thread.spec().left_hand {
-            -tau
-        } else {
-            tau
-        });
+        let angle = v.scale(if thread.spec().left_hand { -tau } else { tau });
         Ok(source::Field {
             point: [r.mul(angle.cos()), r.mul(angle.sin()), z],
             normal: source::Normal::Radial {
@@ -216,13 +236,21 @@ impl Patch {
     ) -> Result<Footpoint, Error> {
         let zero = Q::integer(0, w)?;
         let one = Q::integer(1, w)?;
-        let wrap = p.v.cmp(&one, w)? == Ordering::Equal;
+        let end = match &self.offset {
+            Some(offset) => one.add(offset, w)?,
+            None => one,
+        };
+        let wrap = p.v.cmp(&end, w)? == Ordering::Equal;
         let q = if wrap {
             p.q.add(&self.lead, w)?
         } else {
             p.q.clone()
         };
-        let v = if wrap { zero } else { p.v.clone() };
+        let v = if wrap {
+            self.offset.clone().unwrap_or(zero)
+        } else {
+            p.v.clone()
+        };
         // Physical r,z are evaluated BEFORE periodic transfer; this exact source
         // identity changes Q and v but leaves both values unchanged.
         let z = p.q.add(&self.lead.mul(&p.v, w)?, w)?;
