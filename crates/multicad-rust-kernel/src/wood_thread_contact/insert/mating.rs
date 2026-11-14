@@ -223,7 +223,7 @@ pub(super) fn physical_gap(gap: &Q, metric: &Metric) -> R<[f64; 2]> {
     Ok([lower, upper])
 }
 
-fn external_periodic_bound(source: &Thread, phase: I) -> (I, bool) {
+pub(super) fn external_periodic_bound(source: &Thread, phase: I) -> (I, bool) {
     match periodic_radius(phase, source.spec().pitch_mm, &mut |p| {
         source.radius_at_phase_interval(p).ok_or(Error::Unsupported)
     }) {
@@ -239,7 +239,7 @@ fn external_periodic_bound(source: &Thread, phase: I) -> (I, bool) {
         }
     }
 }
-fn authored_periodic_bound(source: &AuthoredThread, phase: I) -> (I, bool) {
+pub(super) fn authored_periodic_bound(source: &AuthoredThread, phase: I) -> (I, bool) {
     match periodic_radius(phase, source.spec().pitch_mm, &mut |p| {
         authored_radius(source, p)
     }) {

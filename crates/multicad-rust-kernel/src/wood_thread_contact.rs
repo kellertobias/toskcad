@@ -62,9 +62,10 @@ pub use hanger::{
 mod seated;
 mod separation;
 pub use insert::{
-    InsertContact, InsertMating, MatingExternal, MatingRequirements, MatingScrew, ScrewClearance,
-    ScrewClearanceRequirements, certify_insert, certify_insert_mating,
-    certify_insert_screw_clearance,
+    ClockedInsertMating, ClockedMatingOptions, InsertContact, InsertMating, MatingExternal,
+    MatingRequirements, MatingScrew, ScrewClearance, ScrewClearanceRequirements,
+    certify_clocked_insert_mating, certify_clocked_insert_screw_clearance, certify_insert,
+    certify_insert_mating, certify_insert_screw_clearance,
 };
 pub use seated::{SeatedContact, certify_seated};
 pub use separation::{separated_from_rectangular_prism, separated_from_stock};

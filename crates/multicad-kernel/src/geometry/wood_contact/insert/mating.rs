@@ -58,4 +58,4 @@ pub(super) fn actual_screw(solid: &Solid) -> Option<(MatingScrew<'_>, PlaneFrame
     }
 }
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

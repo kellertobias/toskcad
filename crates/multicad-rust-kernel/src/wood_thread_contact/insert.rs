@@ -2,6 +2,11 @@
 use super::*;
 use crate::wood_insert::{Classification, Insert};
 mod clearance;
+mod clocked;
+pub use clocked::{
+    ClockedInsertMating, ClockedMatingOptions, certify_clocked_insert_mating,
+    certify_clocked_insert_screw_clearance,
+};
 pub(super) mod mating;
 pub use clearance::{ScrewClearance, ScrewClearanceRequirements, certify_insert_screw_clearance};
 pub use mating::{

@@ -6,7 +6,12 @@ use multicad_rust_kernel::{
     helical_thread::Spec,
     wood_insert::Insert,
 };
-fn fixture(left: bool, length: f64, plain: f64, frame: PlaneFrame) -> (Solid, Solid) {
+pub(in crate::geometry::wood_contact) fn fixture(
+    left: bool,
+    length: f64,
+    plain: f64,
+    frame: PlaneFrame,
+) -> (Solid, Solid) {
     let p = 0.5;
     let major = (2.874 + 2.980) / 4.;
     let pitchmid = (2.580 + 2.655) / 2.;

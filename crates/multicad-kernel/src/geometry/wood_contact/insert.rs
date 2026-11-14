@@ -2,6 +2,7 @@
 use super::*;
 use source::InsertContact;
 mod clearance;
+mod clocked;
 mod mating;
 impl Solid {
     pub fn rust_wood_insert_contact(

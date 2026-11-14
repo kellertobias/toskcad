@@ -2,7 +2,7 @@ use super::*;
 use crate::HelicalThread;
 use multicad_core::references::Origin;
 use multicad_rust_kernel::headed_screw::{ScrewHead, ScrewSpec};
-fn fixture(length: f64) -> (Solid, Solid) {
+pub(in crate::geometry::wood_contact) fn fixture(length: f64) -> (Solid, Solid) {
     let policy = GeometryPolicy::default();
     let stock = Solid::box_solid([20.; 3], policy).unwrap();
     let stock = stock
