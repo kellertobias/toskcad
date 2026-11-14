@@ -10,8 +10,11 @@
 //! The actual thread tip cap is retained unchanged.
 //!
 //! The same head's actual derived cavity is strictly contained except its mouth
-//! disk. Replace the head top disk by its concentric source annulus, and reverse
-//! the cavity side atlas. Its exact mouth radius remains the Cutter expression.
+//! disk. Replace the head top disk by the disk minus the ENTIRE actual Cutter
+//! mouth region, and reverse the cavity side atlas. This topological annulus
+//! has a circular outer loop and a shaped inner loop: retain every actual mouth
+//! arc, trace and connector. The entry radius is only an envelope bound, never
+//! a substitute circular hole.
 //! The occupied set is the regular-closed difference of (head union thread)
 //! and cavity. Their only head/thread intersection is the entry disk; the
 //! cavity contacts the outer source only at its mouth disk. Both disks have
@@ -67,6 +70,8 @@ pub enum MaterialFaceSource {
     },
     ThreadTip,
     JoinAnnulus,
+    /// Head top disk minus the actual shaped Cutter mouth region, with every
+    /// finite inner-wire arc/trace/connector retained (not a circular surrogate).
     TopAnnulus,
     /// Material uses the reverse of the original cavity outward orientation.
     ReversedCavity {
