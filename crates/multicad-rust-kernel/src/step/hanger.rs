@@ -9,6 +9,8 @@ use crate::{
     authored_metric_thread::{AuthoredMetricThread, RationalMeridian},
     tapered_thread::interval::I,
 };
+mod domain;
+pub use domain::{DomainOptions, RootFaceDomain, TrimBounds};
 
 pub struct RootSurface {
     source: RationalMeridian,

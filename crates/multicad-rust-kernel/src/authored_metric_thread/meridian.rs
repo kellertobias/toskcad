@@ -15,6 +15,20 @@ pub struct MeridianBounds {
     pub first_derivative_mm: [[f64; 2]; 2],
     pub second_derivative_mm: [[f64; 2]; 2],
 }
+#[derive(Clone, Copy)]
+pub(crate) struct UnitInterval(I);
+impl UnitInterval {
+    pub(crate) fn endpoint(end: bool) -> Self {
+        Self(I::point(if end { 1. } else { 0. }))
+    }
+    pub(crate) fn checked(parameter: [f64; 2]) -> Option<Self> {
+        let t = I::new(parameter[0], parameter[1]);
+        (t.valid() && t.lo >= 0. && t.hi <= 1.).then_some(Self(t))
+    }
+    pub(crate) fn interval(self) -> I {
+        self.0
+    }
+}
 impl AuthoredMetricThread {
     pub fn root_meridian(&self) -> RationalMeridian {
         RationalMeridian { source: *self }
@@ -57,11 +71,8 @@ impl RationalMeridian {
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<MeridianBounds, Error> {
         checkpoint(interrupt)?;
-        let t = I::new(parameter[0], parameter[1]);
-        if !t.valid() || t.lo < 0. || t.hi > 1. {
-            return Err(Error::Invalid);
-        }
-        let result = self.evaluate(t);
+        let t = UnitInterval::checked(parameter).ok_or(Error::Invalid)?;
+        let result = self.in_domain(t);
         checkpoint(interrupt)?;
         Ok(result)
     }
@@ -69,6 +80,9 @@ impl RationalMeridian {
     /// fixed arithmetic in their own aggregate Work/cancellation ledger.
     pub(crate) fn whole_bounds(&self) -> MeridianBounds {
         self.evaluate(I::new(0., 1.))
+    }
+    pub(crate) fn in_domain(&self, t: UnitInterval) -> MeridianBounds {
+        self.evaluate(t.0)
     }
     fn evaluate(&self, t: I) -> MeridianBounds {
         let one = I::point(1.);
