@@ -63,6 +63,50 @@ fn thread_bounds(world: [B; 3], frame: PlaneFrame) -> [[f64; 2]; 3] {
     local.map(|b| [b.lo, b.hi])
 }
 impl Solid {
+    fn disjoint_thread_mating(
+        &self,
+        other: &Self,
+        operation: BooleanOperation,
+    ) -> Option<Result<Option<Self>, GeometryError>> {
+        let retain_left = match operation {
+            BooleanOperation::Intersect => false,
+            BooleanOperation::Subtract => true,
+            BooleanOperation::Union => return None,
+        };
+        let (a, af) = self.helical_body()?;
+        let (b, bf) = other.helical_body()?;
+        if af != bf {
+            return None;
+        }
+        // The profiles use the same actual raw chart, not merely nearly
+        // coaxial metadata. A blind bore needs the entire shaft in its void's
+        // finite axial interval; a through nut has no stock beyond its thread.
+        let (shaft, cavity) = match (&a.form, &b.form) {
+            (HelicalForm::Shaft, HelicalForm::Bore(_))
+                if a.geometry.spec().length_mm <= b.geometry.spec().length_mm =>
+            {
+                (&a.geometry, &b.geometry)
+            }
+            (HelicalForm::Bore(_), HelicalForm::Shaft)
+                if b.geometry.spec().length_mm <= a.geometry.spec().length_mm =>
+            {
+                (&b.geometry, &a.geometry)
+            }
+            (HelicalForm::Shaft, HelicalForm::Nut(_)) => (&a.geometry, &b.geometry),
+            (HelicalForm::Nut(_), HelicalForm::Shaft) => (&b.geometry, &a.geometry),
+            _ => return None,
+        };
+        shaft
+            .prove_profile_containment(cavity, Default::default(), None)
+            .ok()?;
+        // A nonnegative whole-profile gap proves no common INTERIOR. Exact
+        // coincident boundary contact cannot produce a three-dimensional solid.
+        Some(if retain_left {
+            self.share().map(Some)
+        } else {
+            Ok(None)
+        })
+    }
     pub(in crate::geometry) fn contained_thread_boolean(
         &self,
         other: &Self,
@@ -71,6 +115,9 @@ impl Solid {
     ) -> Option<Result<Option<Self>, GeometryError>> {
         if policy.boolean_fuzzy_mm != 0. || self.policy != policy || other.policy != policy {
             return None;
+        }
+        if let Some(result) = self.disjoint_thread_mating(other, operation) {
+            return Some(result);
         }
         let (thread, probe, thread_is_left, body, frame) =
             if let Some((body, frame)) = self.helical_body() {

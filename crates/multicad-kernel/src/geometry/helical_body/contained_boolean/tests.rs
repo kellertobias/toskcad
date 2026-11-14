@@ -1,5 +1,134 @@
 use super::*;
 
+#[test]
+fn actual_same_chart_shafts_clear_finite_cavities_and_nuts_without_waiving_floors_or_phase() {
+    let policy = GeometryPolicy::default();
+    for left in [false, true] {
+        for posed in [false, true] {
+            let frame = frame(posed);
+            let shaft =
+                Solid::rust_helical_thread(spec(left), None, EntityId::new(), frame, policy)
+                    .unwrap();
+            let receiver = Solid::cylinder(frame, 5., 6., policy).unwrap();
+            let cavity_spec = HelicalThread {
+                major_radius_mm: 2.2,
+                ..spec(left)
+            };
+            let bore = receiver
+                .rust_cut_internal_thread(cavity_spec, 1., EntityId::new(), frame, policy)
+                .unwrap();
+            let nut = Solid::rust_hex_nut(
+                HelicalThread {
+                    length_mm: 2.1,
+                    ..cavity_spec
+                },
+                8.,
+                0.5,
+                EntityId::new(),
+                frame,
+                policy,
+            )
+            .unwrap();
+            let prefix = receiver
+                .rust_cut_internal_thread(
+                    HelicalThread {
+                        length_mm: 7.,
+                        ..cavity_spec
+                    },
+                    1.,
+                    EntityId::new(),
+                    frame,
+                    policy,
+                )
+                .unwrap();
+            for cavity in [&bore, &nut, &prefix] {
+                for (a, b) in [(&shaft, cavity), (cavity, &shaft)] {
+                    assert!(
+                        a.boolean(b, BooleanOperation::Intersect, policy)
+                            .unwrap()
+                            .is_none()
+                    );
+                    let remainder = a
+                        .boolean(b, BooleanOperation::Subtract, policy)
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(remainder.volume_mm3().unwrap(), a.volume_mm3().unwrap());
+                    assert!(
+                        a.disjoint_thread_mating(b, BooleanOperation::Union)
+                            .is_none()
+                    );
+                }
+            }
+            // The actual shaft extends into a genuine retained blind floor.
+            let long = Solid::rust_helical_thread(
+                HelicalThread {
+                    length_mm: 5.6,
+                    ..spec(left)
+                },
+                None,
+                EntityId::new(),
+                frame,
+                policy,
+            )
+            .unwrap();
+            let witness = position(frame, [0.1, 0., 4.5]);
+            assert!(long.rust_thread_contains(witness).unwrap());
+            assert!(bore.rust_thread_contains(witness).unwrap());
+            for (a, b) in [(&long, &bore), (&bore, &long)] {
+                assert!(
+                    a.disjoint_thread_mating(b, BooleanOperation::Intersect)
+                        .is_none()
+                );
+            }
+            let wrong = receiver
+                .rust_cut_internal_thread(
+                    HelicalThread {
+                        left_hand: !left,
+                        ..cavity_spec
+                    },
+                    1.,
+                    EntityId::new(),
+                    frame,
+                    policy,
+                )
+                .unwrap();
+            assert!(
+                shaft
+                    .disjoint_thread_mating(&wrong, BooleanOperation::Intersect)
+                    .is_none()
+            );
+            let shifted = bore
+                .transformed(RigidTransform {
+                    translation_mm: [0.01, 0., 0.],
+                    ..Default::default()
+                })
+                .unwrap();
+            assert!(
+                shaft
+                    .disjoint_thread_mating(&shifted, BooleanOperation::Intersect)
+                    .is_none()
+            );
+            let interference = receiver
+                .rust_cut_internal_thread(
+                    HelicalThread {
+                        major_radius_mm: 1.8,
+                        ..cavity_spec
+                    },
+                    1.,
+                    EntityId::new(),
+                    frame,
+                    policy,
+                )
+                .unwrap();
+            assert!(
+                shaft
+                    .disjoint_thread_mating(&interference, BooleanOperation::Intersect)
+                    .is_none()
+            );
+        }
+    }
+}
+
 fn spec(left: bool) -> HelicalThread {
     HelicalThread {
         major_radius_mm: 2.,
