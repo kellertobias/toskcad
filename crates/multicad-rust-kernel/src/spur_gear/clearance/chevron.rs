@@ -20,8 +20,13 @@ pub fn certify_herringbone(
     // outer Jordan regions and nesting, so these coaxial disks remain
     // disjoint even beyond the aligned tooth bands. Interior witnesses
     // continue to refer to real tooth material with the bore excluded.
+    // Gapped chevrons with the same gap repeat their lower band in the
+    // upper band; between the shoulders each keeps only its root disk,
+    // which a Clear tooth band already separates. Other gap mixtures
+    // would need the core-only section and are refused.
     let height = profiles[0].height_mm();
     if height != profiles[1].height_mm()
+        || gears[0].gap_mm() != gears[1].gap_mm()
         || placements.into_iter().any(|p| !p.valid(1e-3))
         || !(1e-7..=1e-3).contains(&tolerance_mm)
     {
@@ -36,7 +41,7 @@ pub fn certify_herringbone(
     let width = if gears.iter().any(|gear| gear.is_helical()) {
         height
     } else {
-        height / 2.
+        gears[0].band_length_mm()
     };
     let mut pending = vec![[0., width]];
     let mut remaining = MAX_INTERVALS;
@@ -247,5 +252,54 @@ mod tests {
             certify_herringbone(pair, clear, f64::NAN, None),
             Err(Error::Invalid)
         );
+    }
+
+    #[test]
+    fn equal_gap_double_helical_pairs_certify_their_bands_and_refuse_mixtures() {
+        let [(spec_a, twist_a), (spec_b, twist_b)] = [24, 36].map(|teeth| {
+            let (spec, twist) = fixture(teeth);
+            (
+                crate::spur_gear::Spec {
+                    face_width_mm: 10.,
+                    ..spec
+                },
+                twist,
+            )
+        });
+        let center = spec_a.pitch_radius_mm + spec_b.pitch_radius_mm;
+        let at_phase = |phase: f64| {
+            let (sin, cos) = phase.sin_cos();
+            [
+                Placement::default(),
+                Placement {
+                    center_mm: [center, 0.],
+                    axes: [[cos, sin], [-sin, cos]],
+                    uncertainty_mm: 0.,
+                },
+            ]
+        };
+        let nominal = at_phase(std::f64::consts::PI * (1. + 1. / 36.));
+        let gapped =
+            |spec, twist, gap| Herringbone::new_gapped(spec, twist, gap, 1e-5, 1e7).unwrap();
+        let a = gapped(spec_a, twist_a, 3.);
+        let b = gapped(spec_b, twist_b, 3.);
+        assert_eq!(
+            certify_herringbone([&a, &b], nominal, 1e-7, None),
+            Ok(ResultKind::Clear)
+        );
+        // Turning B by half a tooth puts its teeth into A's teeth.
+        assert_eq!(
+            certify_herringbone([&a, &b], at_phase(std::f64::consts::PI), 1e-7, None),
+            Ok(ResultKind::CommonInterior)
+        );
+        let narrower = gapped(spec_b, twist_b, 2.);
+        let continuous = Herringbone::new(spec_b, twist_b, 1e-5, 1e7).unwrap();
+        let helical = Herringbone::new_helical(spec_b, twist_b, 1e-5, 1e7).unwrap();
+        for other in [&narrower, &continuous, &helical] {
+            assert_eq!(
+                certify_herringbone([&a, other], nominal, 1e-7, None),
+                Err(Error::Invalid)
+            );
+        }
     }
 }
