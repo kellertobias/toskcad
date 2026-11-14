@@ -33,6 +33,7 @@ pub struct OwnedDerivedMaterial {
     cavity_faces: [CavityFace; 88],
     cavity_count: usize,
     local_volume: [f64; 2],
+    local_enclosure: [[f64; 2]; 3],
     components: [[f64; 2]; 3],
     work: usize,
 }
@@ -64,6 +65,12 @@ impl OwnedDerivedMaterial {
     }
     pub fn local_volume_mm3(&self) -> [f64; 2] {
         self.local_volume
+    }
+    /// Conservative finite envelope of the actual repaired head/thread union.
+    /// The contained cavity only removes material. Construction earned this
+    /// from actual head Part fields and typed thread Bernstein/cap hulls.
+    pub fn local_enclosure_bounds(&self) -> [[f64; 2]; 3] {
+        self.local_enclosure
     }
     pub fn component_volumes_mm3(&self) -> [[f64; 2]; 3] {
         self.components
@@ -193,6 +200,20 @@ impl MaterialVolume<'_, '_, '_> {
         work.step(self.work_used())
             .and_then(|_| work.step(candidate_bound))
             .map_err(|e| read_error(e, &work))?;
+        let mut local_enclosure = source.thread_enclosure;
+        for part in 0..source.head.segment_count() {
+            // Sealed valid index/whole-unit domain handoff; construction
+            // already qualified finite Part fields. This is no nominal Profile.
+            work.step(257).map_err(|e| read_error(e, &work))?;
+            let field = source.head.certified_interval_bounds(part, [0., 1.]);
+            let radius = field.position_mm[0][1];
+            local_enclosure[0][0] = local_enclosure[0][0].min(-radius);
+            local_enclosure[0][1] = local_enclosure[0][1].max(radius);
+            local_enclosure[1][0] = local_enclosure[1][0].min(-radius);
+            local_enclosure[1][1] = local_enclosure[1][1].max(radius);
+            local_enclosure[2][0] = local_enclosure[2][0].min(field.position_mm[1][0]);
+            local_enclosure[2][1] = local_enclosure[2][1].max(field.position_mm[1][1]);
+        }
         let head = source.head.owned_snapshot();
         let thread = source.thread.clone();
         work.step(1).map_err(|e| read_error(e, &work))?;
@@ -212,6 +233,7 @@ impl MaterialVolume<'_, '_, '_> {
             cavity_faces: source.cavity_faces,
             cavity_count: source.cavity_count,
             local_volume: self.local_volume_mm3(),
+            local_enclosure,
             components: self.component_volumes_mm3(),
             work: 0,
         };

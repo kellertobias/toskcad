@@ -61,6 +61,7 @@ pub struct DerivedThreadCarrier<'a, 'input> {
     bounds: Vec<ThreadCarrierTransfer>,
     stations: [f64; 2],
     entry_radius_upper: f64,
+    local_enclosure: [[f64; 2]; 3],
     work: usize,
     retained: usize,
 }
@@ -113,6 +114,7 @@ impl<'a, 'input> DerivedThreadCarrier<'a, 'input> {
             bounds: self.bounds,
             stations: self.stations,
             entry_radius_upper: self.entry_radius_upper,
+            local_enclosure: self.local_enclosure,
             construction_work: self.work,
         })
     }
@@ -124,6 +126,7 @@ pub struct OccupiedDerivedThread<'a, 'input> {
     bounds: Vec<ThreadCarrierTransfer>,
     stations: [f64; 2],
     entry_radius_upper: f64,
+    local_enclosure: [[f64; 2]; 3],
     construction_work: usize,
 }
 impl<'a, 'input> OccupiedDerivedThread<'a, 'input> {
@@ -144,6 +147,9 @@ impl<'a, 'input> OccupiedDerivedThread<'a, 'input> {
     }
     pub fn entry_radius_upper_mm(&self) -> f64 {
         self.entry_radius_upper
+    }
+    pub(crate) fn local_enclosure_bounds(&self) -> [[f64; 2]; 3] {
+        self.local_enclosure
     }
     /// Carrier construction/transfer only. The separate occupied provider keeps
     /// its independently declared hard work budget; this is not its work count.
@@ -413,6 +419,24 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
             {
                 return Err(ReadError::Unsupported);
             }
+            // Private Net is the defining inventory: graph::build emits ONLY
+            // these Tensor cells, their identical Spline rails/rims, and two
+            // finite planar cap fans. Include both actual axis cap centers.
+            // No generic analytic Cone/Circle is filtered or approximated.
+            let mut local_enclosure = [
+                [0., 0.],
+                [0., 0.],
+                [stations[0].min(stations[1]), stations[0].max(stations[1])],
+            ];
+            for net in &nets {
+                work.step(net.poles.len())?;
+                for p in &net.poles {
+                    for axis in 0..3 {
+                        local_enclosure[axis][0] = local_enclosure[axis][0].min(p[axis]);
+                        local_enclosure[axis][1] = local_enclosure[axis][1].max(p[axis]);
+                    }
+                }
+            }
             let input = graph::build(nets, stations, &mut work)?;
             let payload = graph::bytes(&input)
                 .saturating_add(bounds.capacity() * std::mem::size_of::<ThreadCarrierTransfer>());
@@ -430,6 +454,7 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
                 bounds,
                 stations,
                 entry_radius_upper: entry_radius.hi,
+                local_enclosure,
                 work: options.maximum_work - work.remaining,
                 retained,
             })

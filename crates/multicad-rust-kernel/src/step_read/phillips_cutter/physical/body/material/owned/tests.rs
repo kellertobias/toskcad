@@ -61,6 +61,43 @@ fn actual_owned_sources_and_local_volume_survive_all_original_owners() {
         };
         // Parser AST, input String, all source/volume receipts are now gone.
         let head = owned.head().view();
+        let enclosure = owned.local_enclosure_bounds();
+        assert!(
+            enclosure
+                .iter()
+                .all(|b| b[0].is_finite() && b[1].is_finite() && b[0] <= b[1])
+        );
+        // This independent check uses original immutable coefficient/axis
+        // data and actual head queries, never a tessellation-derived bound.
+        for p in &owned.thread().input().vertices {
+            for (axis, b) in enclosure.iter().enumerate() {
+                assert!(b[0] <= p[axis] && p[axis] <= b[1]);
+            }
+        }
+        for axis in owned.thread().cap_axes() {
+            for (i, b) in enclosure.iter().enumerate() {
+                assert!(b[0] <= axis.origin[i] && axis.origin[i] <= b[1]);
+            }
+        }
+        for surface in &owned.thread().input().surfaces {
+            if let crate::radial_tensor::Surface::Tensor(tensor) = surface {
+                for p in tensor.poles() {
+                    for (axis, b) in enclosure.iter().enumerate() {
+                        assert!(b[0] <= p[axis] && p[axis] <= b[1]);
+                    }
+                }
+            }
+        }
+        for part in 0..head.segment_count() {
+            let field = head.evaluate(part, [0., 1.]).unwrap();
+            let radius = field.position_mm[0][1];
+            assert!(enclosure[0][0] <= -radius && radius <= enclosure[0][1]);
+            assert!(enclosure[1][0] <= -radius && radius <= enclosure[1][1]);
+            assert!(
+                enclosure[2][0] <= field.position_mm[1][0]
+                    && field.position_mm[1][1] <= enclosure[2][1]
+            );
+        }
         for (i, expected) in samples.into_iter().enumerate() {
             assert_eq!(
                 head.evaluate(i, [0.125, 0.875]).unwrap().position_mm,
@@ -109,7 +146,12 @@ fn extraction_preflights_resources_and_cancels_without_mutating_original() {
                 .unwrap()
                 .into_owned(options, cancel)
         };
-        let owned = run(Default::default(), None).unwrap();
+        let polls = Cell::new(0usize);
+        let observe = || {
+            polls.set(polls.get() + 1);
+            false
+        };
+        let owned = run(Default::default(), Some(&observe)).unwrap();
         let exact_peak = source
             .volume_bounds(Default::default(), None)
             .unwrap()
@@ -176,7 +218,10 @@ fn extraction_preflights_resources_and_cancels_without_mutating_original() {
             )
             .is_ok()
         );
-        for cutoff in 0..5 {
+        // Keep early construction cancellation plus the actual post-clone and
+        // final-publication polls when additional source fields are introduced.
+        assert!(polls.get() >= 2);
+        for cutoff in (0..5).chain([polls.get() - 2, polls.get() - 1]) {
             let n = Cell::new(0);
             let cancel = || {
                 let k = n.get();
