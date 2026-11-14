@@ -1,6 +1,130 @@
 use super::*;
 
 #[test]
+fn reversed_receiving_stock_keeps_its_actual_third_axis_and_numeric_refusals() {
+    let policy = GeometryPolicy::default();
+    for posed in [false, true] {
+        let frame = frame(posed);
+        let stock_frame = PlaneFrame {
+            origin: position(frame, [0., 0., 6.]),
+            u: frame.u,
+            v: frame.v.map(|v| -v),
+        };
+        let receiver = Solid::cylinder(stock_frame, 5., 6., policy).unwrap();
+        let bore = receiver
+            .rust_cut_internal_thread(spec(false), 1., EntityId::new(), frame, policy)
+            .unwrap();
+        for (point, occupied) in [
+            ([0.1, 0.1, 1.], false),
+            ([0.1, 0.1, 5.], true),
+            ([4.5, 0., 5.], true),
+            ([4.5, 0., 7.], false),
+        ] {
+            let small = probe(frame, point, 0.01, true);
+            let result = bore
+                .boolean(&small, BooleanOperation::Intersect, policy)
+                .unwrap();
+            assert_eq!(result.is_some(), occupied);
+            if let Some(result) = result {
+                assert_eq!(result.volume_mm3().unwrap(), small.volume_mm3().unwrap());
+            }
+        }
+        let (body, _) = bore.helical_body().unwrap();
+        let HelicalForm::Bore(stock) = &body.form else {
+            panic!("actual receiving bore");
+        };
+        assert!(bore_relation(body, stock, [[-f64::MAX, f64::MAX]; 3]).is_none());
+        assert!(bore_relation(body, stock, [[f64::NAN, 1.]; 3]).is_none());
+    }
+}
+
+#[test]
+fn receiving_stock_probes_cover_void_wall_floor_and_real_boundary_crossings() {
+    let policy = GeometryPolicy::default();
+    for left in [false, true] {
+        for posed in [false, true] {
+            let frame = frame(posed);
+            let receiver = Solid::cylinder(frame, 5., 6., policy).unwrap();
+            for length in [4.2, 7.] {
+                let bore = receiver
+                    .rust_cut_internal_thread(
+                        HelicalThread {
+                            length_mm: length,
+                            ..spec(left)
+                        },
+                        1.,
+                        EntityId::new(),
+                        frame,
+                        policy,
+                    )
+                    .unwrap();
+                for (point, occupied) in [
+                    ([0.1, 0.1, 1.], false),
+                    ([4.5, 0.1, 1.], true),
+                    ([5.5, 0.1, 1.], false),
+                    ([0.1, 0.1, -1.], false),
+                    ([0.1, 0.1, 7.], false),
+                    ([0.1, 0.1, 5.], length < 6.),
+                ] {
+                    let small = probe(frame, point, 0.01, true);
+                    // Independent point witnesses agree, while admission uses
+                    // the entire closed box, never only these point samples.
+                    for corner in 0..8 {
+                        let p = std::array::from_fn(|i| {
+                            point[i]
+                                + if corner & (1 << i) == 0 {
+                                    -0.005
+                                } else {
+                                    0.005
+                                }
+                        });
+                        assert_eq!(
+                            bore.rust_thread_contains(position(frame, p)).unwrap(),
+                            occupied
+                        );
+                    }
+                    for (a, b) in [(&bore, &small), (&small, &bore)] {
+                        let result = a.boolean(b, BooleanOperation::Intersect, policy).unwrap();
+                        assert_eq!(result.is_some(), occupied);
+                        if let Some(result) = result {
+                            assert_eq!(result.volume_mm3().unwrap(), small.volume_mm3().unwrap());
+                        }
+                        if !occupied {
+                            assert_eq!(
+                                a.boolean(b, BooleanOperation::Subtract, policy)
+                                    .unwrap()
+                                    .unwrap()
+                                    .volume_mm3()
+                                    .unwrap(),
+                                a.volume_mm3().unwrap()
+                            );
+                        }
+                    }
+                }
+                // Finite cap, outer wall and actual helical wall crossings
+                // must not be converted into an unchanged operand.
+                let (body, _) = bore.helical_body().unwrap();
+                for point in [
+                    [5., 0., 1.],
+                    [4.5, 0., 0.],
+                    [body.geometry.radius(0., 1.), 0., 1.],
+                ] {
+                    let crossing = probe(frame, point, 0.01, true);
+                    assert!(
+                        bore.contained_thread_boolean(
+                            &crossing,
+                            BooleanOperation::Intersect,
+                            policy
+                        )
+                        .is_none()
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn actual_same_chart_shafts_clear_finite_cavities_and_nuts_without_waiving_floors_or_phase() {
     let policy = GeometryPolicy::default();
     for left in [false, true] {

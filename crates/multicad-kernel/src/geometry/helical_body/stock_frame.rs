@@ -53,6 +53,10 @@ impl StoredFrame {
     pub(super) fn local(&self, point: Point) -> Point {
         self.inverse.point(point)
     }
+    /// Retain all three actual affine columns; the third is not u cross v.
+    pub(super) fn source_chart(&self) -> (Point, [Point; 3]) {
+        (self.origin, self.axes)
+    }
     pub(super) fn placed(&self, thread: PlaneFrame) -> PlaneFrame {
         PlaneFrame {
             origin: position(thread, self.origin),

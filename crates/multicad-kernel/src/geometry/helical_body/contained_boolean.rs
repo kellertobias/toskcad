@@ -52,15 +52,50 @@ fn cross(a: [B; 3], b: [B; 3]) -> [B; 3] {
     std::array::from_fn(|i| a[(i + 1) % 3] * b[(i + 2) % 3] - a[(i + 2) % 3] * b[(i + 1) % 3])
 }
 fn thread_bounds(world: [B; 3], frame: PlaneFrame) -> [[f64; 2]; 3] {
-    let [u, v, n] = [frame.u, frame.v, frame.normal()].map(|a| a.map(B::point));
+    chart_bounds(world, frame.origin, [frame.u, frame.v, frame.normal()])
+}
+fn chart_bounds(world: [B; 3], origin: Point, axes: [Point; 3]) -> [[f64; 2]; 3] {
+    let [u, v, n] = axes.map(|a| a.map(B::point));
     let rows = [cross(v, n), cross(n, u), cross(u, v)];
     let determinant = (0..3).fold(B::ZERO, |sum, i| sum + u[i] * rows[0][i]);
-    let offset: [B; 3] = std::array::from_fn(|i| world[i] - B::point(frame.origin[i]));
+    let offset: [B; 3] = std::array::from_fn(|i| world[i] - B::point(origin[i]));
     let local =
         rows.map(|row| (0..3).fold(B::ZERO, |sum, i| sum + row[i] * offset[i]) / determinant);
     // The source predicate below validates these enclosures itself. Invalid
     // arithmetic therefore remains unresolved, without a second admission path.
     local.map(|b| [b.lo, b.hi])
+}
+fn bore_relation(
+    body: &HelicalBody,
+    stock: &BoreStock,
+    bounds: [[f64; 2]; 3],
+) -> Option<BoxClassification> {
+    use BoxClassification::*;
+    // The cavity is the actual finite source (including a retained prefix).
+    // A whole box inside it contains no occupied bore material.
+    let cavity = body.geometry.classify_box(bounds).ok()?;
+    if cavity == Inside {
+        return Some(Outside);
+    }
+    let (origin, axes) = stock.frame_in_thread.source_chart();
+    let [x, y, z] = chart_bounds(bounds.map(|[lo, hi]| B::new(lo, hi)), origin, axes)
+        .map(|[lo, hi]| B::new(lo, hi));
+    let radius_squared = B::point(stock.radius()).square();
+    let rho_squared = x.square() + y.square();
+    if !rho_squared.valid() || !z.valid() {
+        return None;
+    }
+    if rho_squared.lo > radius_squared.hi || z.hi < 0. || z.lo > stock.length() {
+        Some(Outside)
+    } else if cavity == Outside
+        && rho_squared.hi < radius_squared.lo
+        && z.lo > 0.
+        && z.hi < stock.length()
+    {
+        Some(Inside)
+    } else {
+        Some(UnresolvedBoundary)
+    }
 }
 impl Solid {
     fn disjoint_thread_mating(
@@ -126,11 +161,12 @@ impl Solid {
                 let (body, frame) = other.helical_body()?;
                 (other, self, false, body, frame)
             };
-        if !matches!(body.form, HelicalForm::Shaft) {
-            return None;
-        }
         let bounds = thread_bounds(probe_bounds(probe)?, frame);
-        let relation = body.geometry.classify_box(bounds).ok()?;
+        let relation = match &body.form {
+            HelicalForm::Shaft => body.geometry.classify_box(bounds).ok()?,
+            HelicalForm::Bore(stock) => bore_relation(body, stock, bounds)?,
+            _ => return None,
+        };
         match (relation, operation, thread_is_left) {
             (BoxClassification::Inside, BooleanOperation::Intersect, _) => {
                 Some(probe.share().map(Some))
