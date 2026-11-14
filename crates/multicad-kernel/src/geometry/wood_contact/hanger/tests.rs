@@ -4,7 +4,7 @@ use multicad_rust_kernel::{
     authored_hanger_bolt::{Hanger, Spec as HangerSpec},
     authored_metric_thread::{AuthoredMetricThread, Spec as MetricSpec},
 };
-fn fixture(
+pub(super) fn fixture(
     left: bool,
     nonbinary: bool,
     policy: GeometryPolicy,

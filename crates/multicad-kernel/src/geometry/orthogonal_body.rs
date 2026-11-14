@@ -1112,6 +1112,22 @@ impl OrthogonalBody {
         Some((&self.geometry, *pilot))
     }
 
+    /// Original material and its one actual through-bore domain. This getter
+    /// provides ownership only; the contact query independently proves walls,
+    /// complete finite passage and every relevant stock plane.
+    pub(in crate::geometry) fn hanger_through_source(
+        &self,
+    ) -> Option<(&OrthogonalSolid, OrthogonalThroughBore)> {
+        if self.imported_roundoff_mm.is_some() || !self.pockets.is_empty() || !self.slots.is_empty()
+        {
+            return None;
+        }
+        let [bore] = self.through_bores.as_ref() else {
+            return None;
+        };
+        Some((&self.geometry, *bore))
+    }
+
     // Curved cuts only remove material from this actual outer source.
     pub(in crate::geometry) fn wood_envelope_source(&self) -> Option<&OrthogonalSolid> {
         self.imported_roundoff_mm

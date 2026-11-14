@@ -1,6 +1,7 @@
 //! Actual connected hanger source queries. These independent certificates do
 //! not waive clamp, washer, stock-interface or other component collisions.
 use super::*;
+mod passage;
 use source::{HangerContact, HangerMating, HangerMatingRequirements};
 #[cfg(test)]
 mod tests;
