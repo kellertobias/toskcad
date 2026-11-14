@@ -63,6 +63,44 @@ fn immutable_parsed_near_parallel_span_requires_true_exact_angular_fallback() {
         .angular_lower(1., &mut stack, &mut memory, &mut w)
         .unwrap();
     assert!(lower > 0. && lower <= 11. * 2_f64.powi(-100));
+    // Interrupt real finite-curve queries throughout the numeric fallback,
+    // including original-leaf lookup. Each request owns fresh scratch/work.
+    let calls = std::cell::Cell::new(0_usize);
+    let count = || {
+        calls.set(calls.get() + 1);
+        false
+    };
+    let mut counted = Work::new(16_000_000, Some(&count)).unwrap();
+    let mut memory_counted = Memory::new(0, 64 * 1024 * 1024).unwrap();
+    stack.clear();
+    assert_eq!(
+        finite
+            .angular_lower(1., &mut stack, &mut memory_counted, &mut counted)
+            .unwrap(),
+        lower
+    );
+    let total = calls.get();
+    for at in (0..128)
+        .map(|i| total * i / 128)
+        .chain(0..total.min(128))
+        .chain(total.saturating_sub(128)..total)
+    {
+        let n = std::cell::Cell::new(0);
+        let stop = || {
+            let old = n.get();
+            n.set(old + 1);
+            old >= at
+        };
+        let mut limited = Work::new(16_000_000, Some(&stop)).unwrap();
+        let mut memory = Memory::new(0, 64 * 1024 * 1024).unwrap();
+        stack.clear();
+        assert!(matches!(
+            finite.angular_lower(1., &mut stack, &mut memory, &mut limited),
+            Err(Error::Cancelled)
+        ));
+    }
+    stack.clear();
+
     assert!(matches!(
         finite.angular_lower(-1., &mut stack, &mut memory, &mut w),
         Err(Error::Unsupported)

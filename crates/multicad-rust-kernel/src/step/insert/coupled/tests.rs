@@ -544,3 +544,32 @@ fn exact_grid_numeric_domain_and_real_domain_station_limits_are_bounded() {
         ));
     }
 }
+
+#[test]
+fn original_angular_query_domain_refusals_do_not_modify_valid_source_queries() {
+    let mut w = Work::new(16_000_000, None).unwrap();
+    let mut memory = Memory::new(0, 64 * 1024 * 1024).unwrap();
+    for turns in [[0., 0.], [1., 0.], [f64::NAN, 1.], [-257., 0.]] {
+        assert!(matches!(
+            super::super::angular::fit_angular(
+                turns,
+                false,
+                CurveOptions::default(),
+                &mut memory,
+                &mut w
+            ),
+            Err(Error::Invalid)
+        ));
+        assert_eq!(memory.used, 0);
+    }
+    let actual = super::super::angular::fit_angular(
+        [0., 1.],
+        false,
+        CurveOptions::default(),
+        &mut memory,
+        &mut w,
+    )
+    .unwrap();
+    assert!(actual.position_error <= CurveOptions::default().position_error_mm);
+    assert!(actual.derivative_error <= CurveOptions::default().derivative_error_mm);
+}
