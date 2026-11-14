@@ -35,12 +35,12 @@ fn pi() -> I {
 fn constant(v: f64) -> S {
     S::constant(I::point(v))
 }
-fn circle(radius: I, outer: Option<I>, z: f64) -> [I; 4] {
+pub(super) fn circle(radius: I, outer: Option<I>, z: f64) -> [I; 4] {
     let squared = outer.map_or_else(|| radius.square(), |r| (r - radius) * (r + radius));
     let area = pi() * squared;
     [area, I::point(0.), I::point(0.), area * I::point(z)]
 }
-fn cylinder(radius: I, z0: f64, z1: f64) -> [I; 4] {
+pub(super) fn cylinder(radius: I, z0: f64, z1: f64) -> [I; 4] {
     let area = I::point(2.) * pi() * radius * (I::point(z1) - I::point(z0));
     [
         area,

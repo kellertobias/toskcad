@@ -2,7 +2,9 @@
 //! These are source integrals; neither mesh points nor a world-area invariant
 //! define them. A later affine placement needs its own normal-dependent proof.
 use super::*;
+mod hanger;
 mod integrate;
+mod metric;
 mod series;
 mod source;
 #[cfg(test)]
@@ -190,11 +192,25 @@ fn enclosure(i: I) -> Enclosure {
         upper: i.hi,
     }
 }
+struct Measures {
+    area_mm2: Enclosure,
+    first_moment_mm3: [Enclosure; 3],
+    centroid_mm: [Enclosure; 3],
+}
 fn finish(
     face: FaceKey,
     values: [I; 4],
     options: FacePropertyOptions,
 ) -> Result<FaceProperties, Error> {
+    let values = finish_values(values, options)?;
+    Ok(FaceProperties {
+        face,
+        area_mm2: values.area_mm2,
+        first_moment_mm3: values.first_moment_mm3,
+        centroid_mm: values.centroid_mm,
+    })
+}
+fn finish_values(values: [I; 4], options: FacePropertyOptions) -> Result<Measures, Error> {
     let values = checked_values(values)?;
     if values[0].lo <= 0. {
         return Err(Error::Unresolved);
@@ -210,8 +226,7 @@ fn finish(
     {
         return Err(Error::Unresolved);
     }
-    Ok(FaceProperties {
-        face,
+    Ok(Measures {
         area_mm2: enclosure(values[0]),
         first_moment_mm3: std::array::from_fn(|i| enclosure(values[i + 1])),
         centroid_mm: centroid.map(enclosure),

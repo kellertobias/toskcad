@@ -13,9 +13,11 @@ pub use boundary::{
 };
 mod faces;
 pub use faces::FaceKey;
+mod properties;
 #[cfg(test)]
 pub(crate) mod tests;
 mod volume;
+pub use properties::{FaceProperties, FacePropertyOptions};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
     Invalid,
