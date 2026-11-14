@@ -1,7 +1,7 @@
 //! Independent clearance between actual authored cavity bands and original
 //! external literal flank/root supports, over the whole physical phase period.
 use super::*;
-mod phase_error;
+pub(in crate::wood_thread_contact) mod phase_error;
 use crate::{authored_flat_thread::AuthoredThread, helical_thread::Thread};
 #[derive(Clone, Copy)]
 pub enum MatingScrew<'a> {

@@ -2,7 +2,7 @@
 //! No source rate, station or support is normalized or replaced.
 use super::*;
 #[derive(Clone, Copy)]
-pub(super) struct Allowance {
+pub(in crate::wood_thread_contact) struct Allowance {
     pub indexed_mm: f64,
     pub evaluator_mm: f64,
     pub total_mm: f64,
@@ -14,7 +14,10 @@ fn ulp_bound(magnitude: I) -> R<I> {
     }
     Ok(ip(finite(ip(bound.next_up()) - ip(bound))?.hi))
 }
-pub(super) fn measure(thread: &Thread, interrupt: &dyn Fn() -> bool) -> R<Allowance> {
+pub(in crate::wood_thread_contact) fn measure(
+    thread: &Thread,
+    interrupt: &dyn Fn() -> bool,
+) -> R<Allowance> {
     checkpoint(interrupt)?;
     let spec = thread.spec();
     let pitch = ip(spec.pitch_mm);

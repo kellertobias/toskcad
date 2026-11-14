@@ -2,7 +2,7 @@
 use super::*;
 use crate::wood_insert::{Classification, Insert};
 mod clearance;
-mod mating;
+pub(super) mod mating;
 pub use clearance::{ScrewClearance, ScrewClearanceRequirements, certify_insert_screw_clearance};
 pub use mating::{
     InsertMating, MatingExternal, MatingRequirements, MatingScrew, certify_insert_mating,

@@ -1,8 +1,10 @@
-//! Actual authored Hanger wood bite in a retained pilot. A wood-thread
+//! Actual authored Hanger wood bite and retained-nut mating. A wood-thread
 //! portion's intentional material overlap is distinct from all other hardware
 //! and stock collisions; neither a recipe nor an envelope is material proof.
 use super::*;
 use crate::authored_hanger_bolt::{Classification, Hanger};
+mod mating;
+pub use mating::{HangerMating, HangerMatingRequirements, certify_hanger_nut};
 #[cfg(test)]
 mod tests;
 #[derive(Clone, Debug)]

@@ -52,7 +52,9 @@ pub struct Contact {
 }
 mod hanger;
 mod insert;
-pub use hanger::{HangerContact, certify_hanger_wood};
+pub use hanger::{
+    HangerContact, HangerMating, HangerMatingRequirements, certify_hanger_nut, certify_hanger_wood,
+};
 mod separation;
 pub use insert::{
     InsertContact, InsertMating, MatingExternal, MatingRequirements, MatingScrew, ScrewClearance,
