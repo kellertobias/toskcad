@@ -12,16 +12,21 @@ impl Shell<'_, '_> {
         vertices: [u32; 2],
         forward: bool,
     ) -> Result<Curve> {
-        let (mut poles, _) = self.straight_spline_poles(id)?;
-        if !forward {
-            poles.reverse();
-        }
+        let ([low, high], _) = self.straight_spline_poles(id)?;
         let ends = [self.vertex(vertices[0])?, self.vertex(vertices[1])?];
-        if length(sub(ends[0], ends[1])) <= self.tolerance
-            || poles
+        // The vertices may trim the transmitted segment. Both lie on it, in
+        // the direction given by the edge.
+        let axis = sub(high, low);
+        let span = length(axis);
+        let [start, end] = ends.map(|point| dot(sub(point, low), axis) / span);
+        let travel = if forward { end - start } else { start - end };
+        if span <= self.tolerance
+            || travel <= self.tolerance
+            || start.min(end) < -self.tolerance
+            || start.max(end) > span + self.tolerance
+            || ends
                 .into_iter()
-                .zip(ends)
-                .any(|(pole, end)| length(sub(pole, end)) > self.tolerance)
+                .any(|point| length(cross(sub(point, low), axis)) > self.tolerance * span)
         {
             return Err(ReadError::Invalid);
         }

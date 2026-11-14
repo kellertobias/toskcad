@@ -62,6 +62,7 @@ mod round;
 mod rounded_cylinder;
 mod rounded_thread;
 mod rounded_thread_bore;
+mod same_domain;
 pub use rounded_thread::{
     ImportedRoundedThread, read_rounded_thread, read_rounded_thread_compound,
     rounded_thread_import_matches, verify_rounded_thread,
@@ -411,6 +412,7 @@ impl<'a, 'input> Shell<'a, 'input> {
         if face_ids.len() < minimum_faces || distinct.len() != face_ids.len() {
             return Err(ReadError::Invalid);
         }
+        self.outside_regular_families(&face_ids)?;
         let faces = face_ids
             .into_iter()
             .enumerate()
@@ -901,7 +903,10 @@ impl<'a, 'input> Shell<'a, 'input> {
                         | (Face::PartialCylinder(_), Face::Planar { .. })
                 ),
             } {
-                return Err(ReadError::Invalid);
+                // Both faces verified this edge. A round edge between other
+                // supports, such as two faces of one cylinder, is valid
+                // geometry outside the recognized families.
+                return Err(ReadError::Unsupported);
             }
             adjacency[first.face].push(second.face);
             adjacency[second.face].push(first.face);

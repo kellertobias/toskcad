@@ -1068,7 +1068,6 @@ fn valid_equivalent_senses_and_implicit_outer_bound_read_identically() {
 #[test]
 fn degenerate_and_nonmanifold_references_are_rejected() {
     let step = box_step();
-    let base_loop = id(entity(&step, "EDGE_LOOP", 0));
     let bound = id(entity(&step, "FACE_OUTER_BOUND", 0));
     let face = id(entity(&step, "ADVANCED_FACE", 0));
     let face_direction = id(entity(&step, "DIRECTION", 4));
@@ -1113,7 +1112,12 @@ fn degenerate_and_nonmanifold_references_are_rejected() {
         "EDGE_LOOP",
         &format!(
             "'',({})",
-            vec![base_loop; crate::linear_sweep::MAX_PROFILE_VERTICES + 1].join(",")
+            // Repeat one edge use; a loop that listed itself would be a cycle.
+            vec![
+                id(entity(&step, "ORIENTED_EDGE", 0));
+                crate::linear_sweep::MAX_PROFILE_VERTICES + 1
+            ]
+            .join(",")
         ),
     );
     assert_eq!(

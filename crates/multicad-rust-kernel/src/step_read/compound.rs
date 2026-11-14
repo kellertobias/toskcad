@@ -190,16 +190,40 @@ pub(super) fn read_members_retaining_arena<'input, T>(
     single: bool,
     mut member: impl FnMut(&mut Shell<'_, 'input>, u32, bool) -> Result<T>,
 ) -> Result<RetainedMembers<'input, T>> {
-    let entities = parse_entities(input, tolerance)?;
-    let solids = Shell::new(&entities, tolerance, allow_circles).represented_solids(single)?;
+    let mut entities = parse_entities(input, tolerance)?;
+    let transmitted = read_arena(&entities, tolerance, allow_circles, single, &mut member);
+    let Err(ReadError::Invalid | ReadError::Unsupported) = transmitted else {
+        return transmitted.map(|members| (entities, members));
+    };
+    // A refused shell may only differ from a recognized family by faces that
+    // partition one plane. Only a recognized merged boundary replaces the
+    // verdict on the transmitted one.
+    let solids = Shell::new(&entities, tolerance, allow_circles).represented_solids(single);
+    let merged = solids
+        .is_ok_and(|solids| same_domain::unify(&mut entities, &solids, tolerance))
+        .then(|| read_arena(&entities, tolerance, allow_circles, single, &mut member));
+    match merged {
+        Some(Ok(members)) => Ok((entities, members)),
+        _ => transmitted.map(|members| (entities, members)),
+    }
+}
+
+fn read_arena<'input, T>(
+    entities: &BTreeMap<u32, Vec<Entity<'input>>>,
+    tolerance: f64,
+    allow_circles: bool,
+    single: bool,
+    member: &mut impl FnMut(&mut Shell<'_, 'input>, u32, bool) -> Result<T>,
+) -> Result<Vec<T>> {
+    let solids = Shell::new(entities, tolerance, allow_circles).represented_solids(single)?;
     let (topology_count, analytic_candidate) = inspect_flat_entities(entities.values().flatten())?;
-    reject_reference_cycles(&entities, &solids)?;
+    reject_reference_cycles(entities, &solids)?;
     let may_be_warped = allow_circles && analytic_candidate;
     let mut owners = BTreeMap::new();
     let members = solids
         .into_iter()
         .map(|id| {
-            let mut shell = Shell::new(&entities, tolerance, allow_circles);
+            let mut shell = Shell::new(entities, tolerance, allow_circles);
             let result = member(&mut shell, id, may_be_warped)?;
             claim_topology(&shell, id, &mut owners)?;
             Ok(result)
@@ -208,7 +232,7 @@ pub(super) fn read_members_retaining_arena<'input, T>(
     if owners.len() != topology_count {
         return Err(ReadError::Invalid);
     }
-    Ok((entities, members))
+    Ok(members)
 }
 
 /// The topology and geometry below a solid form a hierarchy. A reference
@@ -274,7 +298,7 @@ fn inspect_flat_entities<'a>(
     Ok((count, ellipse || cylinder))
 }
 
-fn topology(name: &str) -> bool {
+pub(super) fn topology(name: &str) -> bool {
     matches!(
         name,
         "MANIFOLD_SOLID_BREP"
