@@ -73,8 +73,7 @@ impl Solid {
                 })?;
                 if let Some((body, frame)) = leaf.wood_insert_body() {
                     if count != 1
-                        || !body.supports_step(frame)
-                        || actual[0].mapping_link().is_some()
+                        || (actual[0].mapping_link().is_none() && frame != PlaneFrame::default())
                     {
                         return Err(fail(
                             GeometryErrorKind::Unsupported,
@@ -105,7 +104,30 @@ impl Solid {
                                 interrupt,
                             )
                             .map_err(read_error)?;
-                        body.verify_parsed(topology, &parsed, bytes, 8192, policy, interrupt)
+                        let proof =
+                            body.verify_parsed(topology, &parsed, bytes, 8192, policy, interrupt)?;
+                        if let Some(link) = actual[0].mapping_link() {
+                            let mapping = parsed
+                                .physical_mapping(
+                                    link.operator_entity(),
+                                    read::Options {
+                                        retained_budget_bytes: bytes,
+                                        ..Default::default()
+                                    },
+                                    interrupt,
+                                )
+                                .map_err(read_error)?;
+                            super::step_pose::transport(
+                                &body.source,
+                                frame,
+                                topology,
+                                &mapping,
+                                proof,
+                                interrupt,
+                            )
+                        } else {
+                            Ok(proof)
+                        }
                     })?;
                     result
                         .members

@@ -394,3 +394,5 @@ mod tests;
 
 mod step_compound;
 pub use step_compound::WoodInsertCompoundStepVerification;
+
+mod step_pose;
