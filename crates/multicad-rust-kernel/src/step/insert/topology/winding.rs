@@ -101,7 +101,7 @@ fn halfplane(poles: &[[f64; 3]], w: &mut Work<'_>) -> Result<(), Error> {
     }
     Err(Error::Unresolved)
 }
-fn crossing(a: [f64; 3], b: [f64; 3], w: &mut Work<'_>) -> Result<i32, Error> {
+pub(super) fn crossing(a: [f64; 3], b: [f64; 3], w: &mut Work<'_>) -> Result<i32, Error> {
     w.charge(1)?;
     let up = a[1] <= 0. && b[1] > 0.;
     let down = b[1] <= 0. && a[1] > 0.;

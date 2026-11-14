@@ -1,6 +1,8 @@
 //! Actual local tensor/annulus incidence; no geometry or mass admission alone.
 use super::*;
 use crate::wood_insert::FaceKey;
+mod caps;
+pub use caps::CapRegularity;
 mod winding;
 pub use winding::WindingBounds;
 #[cfg(test)]
@@ -14,6 +16,14 @@ enum RulingKey {
 pub enum EdgeGeometry {
     Row(usize),
     Ruling,
+}
+impl EdgeGeometry {
+    pub(super) fn row_index(self) -> Option<usize> {
+        match self {
+            Self::Row(index) => Some(index),
+            Self::Ruling => None,
+        }
+    }
 }
 #[derive(Clone, Copy, Debug)]
 pub struct ShellEdge {

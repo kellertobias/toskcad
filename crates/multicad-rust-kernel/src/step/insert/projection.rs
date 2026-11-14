@@ -1,7 +1,7 @@
 //! Local literal tensor projection only. Closure, fan links, cap winding and
 //! occupied material remain SEPARATE obligations; no STEP admission here.
 use super::*;
-mod polynomial;
+pub(super) mod polynomial;
 use polynomial::{P, cross, derivative, dot_xy};
 #[cfg(test)]
 mod tests;

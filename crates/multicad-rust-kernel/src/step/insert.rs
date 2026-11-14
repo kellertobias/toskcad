@@ -10,7 +10,8 @@ mod domains;
 mod projection;
 mod topology;
 pub use topology::{
-    EdgeGeometry, FaceGeometry, ShellCoedge, ShellEdge, ShellFace, TopologyPlan, WindingBounds,
+    CapRegularity, EdgeGeometry, FaceGeometry, ShellCoedge, ShellEdge, ShellFace, TopologyPlan,
+    WindingBounds,
 };
 mod surfaces;
 pub use domains::{DomainOptions, DomainPlan, Slab, Station};
