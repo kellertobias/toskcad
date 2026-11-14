@@ -283,22 +283,37 @@ fn components(
     w: &mut Work<'_>,
 ) -> Result<Vec<u8>> {
     let p = b.source();
-    let mut parents = memory.allocate(p.faces().len(), w).map_err(Error::from)?;
-    parents.extend(0..p.faces().len());
-    for &[a, c] in b.edge_face_indices() {
+    partition_sides(
+        p.faces().len(),
+        &|i| matches!(p.faces()[i].surface(), SurfaceIndex::Tensor(_)),
+        b.edge_face_indices(),
+        memory,
+        w,
+    )
+}
+// This graph check is independent of the geometric charts: exactly two side
+// components are required before radial separation can assign their ownership.
+fn partition_sides(
+    count: usize,
+    is_side: &dyn Fn(usize) -> bool,
+    owners: &[[usize; 2]],
+    memory: &mut Memory,
+    w: &mut Work<'_>,
+) -> Result<Vec<u8>> {
+    let mut parents = memory.allocate(count, w).map_err(Error::from)?;
+    parents.extend(0..count);
+    for &[a, c] in owners {
         w.charge(1).map_err(Error::from)?;
-        if matches!(p.faces()[a].surface(), SurfaceIndex::Tensor(_))
-            && matches!(p.faces()[c].surface(), SurfaceIndex::Tensor(_))
-        {
+        if is_side(a) && is_side(c) {
             let a = root(&mut parents, a, w)?;
             let c = root(&mut parents, c, w)?;
             parents[a] = c;
         }
     }
     let mut roots = [None, None];
-    let mut out = memory.allocate(p.faces().len(), w).map_err(Error::from)?;
-    for (i, f) in p.faces().iter().enumerate() {
-        if matches!(f.surface(), SurfaceIndex::Plane(_)) {
+    let mut out = memory.allocate(count, w).map_err(Error::from)?;
+    for i in 0..count {
+        if !is_side(i) {
             out.push(2);
             continue;
         }
@@ -508,4 +523,55 @@ fn crossing(a: [I; 3], b: [I; 3], w: &mut Work<'_>) -> Result<i32> {
     } else {
         0
     })
+}
+
+#[cfg(test)]
+mod predicate_tests {
+    use super::*;
+    #[test]
+    fn actual_side_graph_partition_requires_two_connected_components() {
+        let mut w = Work::new(16_000_000, None).unwrap();
+        let mut memory = Memory::new(0, 64 * 1024 * 1024).unwrap();
+        assert!(matches!(
+            partition_sides(3, &|_| true, &[[0, 1], [1, 2]], &mut memory, &mut w),
+            Err(Error::Unsupported)
+        ));
+        assert!(matches!(
+            partition_sides(3, &|_| true, &[], &mut memory, &mut w),
+            Err(Error::Unsupported)
+        ));
+        let ids = partition_sides(
+            5,
+            &|i| i != 4,
+            &[[0, 1], [2, 3], [0, 4], [2, 4]],
+            &mut memory,
+            &mut w,
+        )
+        .unwrap();
+        assert_eq!(ids, vec![0, 0, 1, 1, 2]);
+    }
+    #[test]
+    fn ray_and_homotopy_proofs_refuse_ambiguous_axis_crossings_and_origin_hulls() {
+        let mut w = Work::new(16_000_000, None).unwrap();
+        let p = |x, y| [I::point(x), I::point(y), I::point(0.)];
+        assert!(matches!(
+            halfplane(&[p(0., 0.); 12], &mut w),
+            Err(Error::Unsupported)
+        ));
+        assert!(matches!(
+            crossing(
+                [I::point(1.), I::new(-1e-16, 1e-16), I::point(0.)],
+                p(1., 1.),
+                &mut w
+            ),
+            Err(Error::Unsupported)
+        ));
+        assert!(matches!(
+            crossing(p(-1., -1.), p(1., 1.), &mut w),
+            Err(Error::Unsupported)
+        ));
+        assert_eq!(crossing(p(1., -1.), p(1., 1.), &mut w).unwrap(), 1);
+        assert_eq!(crossing(p(1., 1.), p(1., -1.), &mut w).unwrap(), -1);
+        assert_eq!(crossing(p(-1., -1.), p(-1., 1.), &mut w).unwrap(), 0);
+    }
 }

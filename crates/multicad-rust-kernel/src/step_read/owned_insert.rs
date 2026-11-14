@@ -567,11 +567,10 @@ fn validate_references(p: &Parsed<'_>, w: &mut Ledger<'_>) -> Result<()> {
                 .iter()
                 .find(|e| e.name == "GEOMETRIC_REPRESENTATION_CONTEXT")
                 .ok_or(Error::Unsupported)?;
-            let [dimension] = e.args.as_slice() else {
-                return Err(Error::Invalid);
-            };
+            // The initial scan validated this unchanged context component's
+            // single numeric dimension before building Parsed.
             let mut n = Numeric::new(e, w)?;
-            if n.integer(dimension)? != 2 {
+            if n.integer(&e.args[0])? != 2 {
                 return Err(Error::Unsupported);
             }
             n.finish()?;
@@ -585,3 +584,6 @@ mod packet_tests;
 mod schema_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod binding_tests;

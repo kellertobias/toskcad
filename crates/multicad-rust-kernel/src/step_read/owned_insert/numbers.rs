@@ -43,9 +43,11 @@ impl<'input> Scalar<'input> {
         }
         let text = self.spelling.strip_prefix('+').unwrap_or(self.spelling);
         let (mantissa, exponent) = text.split_once('E').unwrap_or((text, "0"));
-        let Ok(exponent) = exponent.parse::<i32>() else {
-            return false;
-        };
+        // A <=64KiB finite decimal rounding to one has exponent magnitude
+        // <=65536 (its mantissa cannot offset a larger order of magnitude).
+        let exponent = exponent
+            .parse::<i32>()
+            .expect("unit literal exponent bounded by token length");
         let fraction = mantissa.split_once('.').map_or(0, |(_, s)| s.len());
         let mut seen = false;
         let mut trailing = 0usize;
@@ -71,7 +73,9 @@ pub(super) struct Numeric<'input> {
 }
 impl<'input> Numeric<'input> {
     pub fn new(entity: &Entity<'input>, w: &mut Ledger<'_>) -> Result<Self> {
-        let source = entity.source.ok_or(Error::Invalid)?;
+        // Only the actual Part21 arena reaches this module; its parser retains
+        // the original source slice for every simple/complex entity component.
+        let source = entity.source.expect("Part21 original source is retained");
         w.step(source.len())?;
         let tokens = part21::numeric_spellings(entity).ok_or(Error::Invalid)?;
         Ok(Self { tokens, next: 0 })
@@ -80,9 +84,7 @@ impl<'input> Numeric<'input> {
         let Value::Number(value) = value else {
             return Err(Error::Invalid);
         };
-        if !value.is_finite() {
-            return Err(Error::Invalid);
-        }
+        // Part21::Parser rejects nonfinite numerical values before publication.
         let spelling = *self.tokens.get(self.next).ok_or(Error::Invalid)?;
         self.next += 1;
         Ok(Scalar {
@@ -108,5 +110,54 @@ impl<'input> Numeric<'input> {
         } else {
             Err(Error::Invalid)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn scalar(text: &str) -> Scalar<'_> {
+        Scalar {
+            value: text.parse().unwrap(),
+            spelling: text,
+        }
+    }
+    #[test]
+    fn exact_unit_and_zero_tests_do_not_confuse_neighboring_decimal_values() {
+        for text in ["1", "+0001.000E0", "10.E-1", "1.0000000000000000E0"] {
+            assert!(scalar(text).is_one());
+        }
+        for text in ["1.0000000000000001", "0.99999999999999999"] {
+            let s = scalar(text);
+            assert_eq!(s.value(), 1.);
+            assert!(!s.is_one());
+            assert!(s.bounds()[0] < 1. && s.bounds()[1] > 1.);
+        }
+        assert!(scalar("-0.E8").is_zero());
+        let tiny = scalar("1.E-1000");
+        assert_eq!(tiny.value(), 0.);
+        assert!(!tiny.is_zero());
+        assert_ne!(tiny.bounds(), [0., 0.]);
+    }
+    #[test]
+    fn actual_original_numeric_cursor_checks_types_consumption_and_exact_schema_integer() {
+        let input = "ISO-10303-21;HEADER;FILE_DESCRIPTION(('test'),'2;1');FILE_NAME('test','',(''),(''),'test','test','');FILE_SCHEMA(('AUTOMOTIVE_DESIGN'));ENDSEC;DATA;#1=CARTESIAN_POINT('',(0.,1.,2.));ENDSEC;END-ISO-10303-21;";
+        let entities = part21::parse(input).unwrap();
+        let e = &entities[&1][0];
+        let mut w = Ledger {
+            used: 0,
+            remaining: 16_000_000,
+            interrupt: None,
+        };
+        let n = Numeric::new(e, &mut w).unwrap();
+        assert!(matches!(n.finish(), Err(Error::Invalid)));
+        let mut n = Numeric::new(e, &mut w).unwrap();
+        assert!(matches!(n.scalar(&Value::Enum("T")), Err(Error::Invalid)));
+        let input = "ISO-10303-21;HEADER;FILE_DESCRIPTION(('test'),'2;1');FILE_NAME('test','',(''),(''),'test','test','');FILE_SCHEMA(('AUTOMOTIVE_DESIGN'));ENDSEC;DATA;#1=B_SPLINE_CURVE_WITH_KNOTS('',0,(),.UNSPECIFIED.,.F.,.F.,(),(),.UNSPECIFIED.);ENDSEC;END-ISO-10303-21;";
+        let entities = part21::parse(input).unwrap();
+        let e = &entities[&1][0];
+        let mut n = Numeric::new(e, &mut w).unwrap();
+        assert_eq!(n.integer(&e.args[1]).unwrap(), 0);
+        n.finish().unwrap();
     }
 }

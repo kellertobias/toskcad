@@ -198,12 +198,12 @@ impl<'i> Parsed<'i> {
                     {
                         return Err(Error::Unsupported);
                     }
-                    let [Some(a), Some(b), Some(c), Some(d)] = corners else {
-                        return Err(Error::Invalid);
-                    };
-                    if (collapsed[0] && a != b) || (collapsed[1] && c != d) {
-                        return Err(Error::Invalid);
-                    }
+                    // The two complete U-constant borders are mandatory above;
+                    // their two endpoints populate all four parameter corners.
+                    let [a, b, c, d] = corners.map(|c| c.expect("complete tensor row corners"));
+                    // Consistent corner IDs and the closed raw wire give zero
+                    // vertex boundary. With one collapsed border omitted, its
+                    // two corner IDs must therefore coincide (all others cancel).
                     tensors.push(TensorBinding {
                         face: face_index,
                         tensor,
@@ -271,13 +271,14 @@ fn same_knots(
     }
     Ok(true)
 }
-fn coords<'a, 'i>(p: &'a Parsed<'i>, id: u32, n: usize) -> Result<&'a [Scalar<'i>]> {
-    let value = p.point(id).ok_or(Error::Invalid)?.coordinates();
-    if value.len() != n {
-        return Err(Error::Invalid);
-    }
-    Ok(value)
+// Every caller uses a plane origin or actual 3D/2D spline pole. Parsed's
+// validate_references already proved existence and the required dimension.
+fn coords<'a, 'i>(p: &'a Parsed<'i>, id: u32) -> &'a [Scalar<'i>] {
+    p.point(id)
+        .expect("Parsed point reference validated")
+        .coordinates()
 }
+
 fn cap_curve(
     p: &Parsed<'_>,
     curve: &SplineCurve<'_>,
@@ -294,8 +295,8 @@ fn cap_curve(
     }
     for (&a, &b) in curve.poles.iter().zip(&uv.poles) {
         w.step(64)?;
-        let xyz = coords(p, a, 3)?;
-        let xy = coords(p, b, 2)?;
+        let xyz = coords(p, a);
+        let xy = coords(p, b);
         if !same(xyz[2], height, w)? || !same(xyz[0], xy[0], w)? || !same(xyz[1], xy[1], w)? {
             return Err(Error::Unsupported);
         }
@@ -322,8 +323,8 @@ fn tensor_curve(
     if uv.degree != 1 || uv.poles.len() != 2 {
         return Err(Error::Unsupported);
     }
-    let a = coords(p, uv.poles[0], 2)?;
-    let b = coords(p, uv.poles[1], 2)?;
+    let a = coords(p, uv.poles[0]);
+    let b = coords(p, uv.poles[1]);
     let values = [
         [bit(a[0], w)?, bit(a[1], w)?],
         [bit(b[0], w)?, bit(b[1], w)?],
@@ -375,24 +376,26 @@ fn border(mut endpoints: [[u8; 2]; 2], same_sense: bool) -> Result<usize> {
     .ok_or(Error::Unsupported)
 }
 fn direction<'i>(p: &Parsed<'i>, id: u32, w: &mut Ledger<'_>) -> Result<[Scalar<'i>; 3]> {
-    let e = kind(&p.entities, id, "DIRECTION")?;
-    let [Value::String(_), values] = e.args.as_slice() else {
-        return Err(Error::Invalid);
-    };
-    let [a, b, c] = list(values)? else {
-        return Err(Error::Unsupported);
-    };
+    // Both axis references were checked as simple DIRECTION('',(x,y,z))
+    // records, including three numeric leaves, before Parsed publication.
+    let e = &p.entities[&id][0];
+    let values = list(&e.args[1]).expect("Parsed direction list validated");
     let mut n = Numeric::new(e, w)?;
-    let out = [n.scalar(a)?, n.scalar(b)?, n.scalar(c)?];
+    let out = [
+        n.scalar(&values[0])?,
+        n.scalar(&values[1])?,
+        n.scalar(&values[2])?,
+    ];
     n.finish()?;
     Ok(out)
 }
+
 fn plane_height<'i>(
     p: &Parsed<'i>,
     plane: &PlaneSurface,
     w: &mut Ledger<'_>,
 ) -> Result<Scalar<'i>> {
-    let origin = coords(p, plane.origin, 3)?;
+    let origin = coords(p, plane.origin);
     let normal = direction(p, plane.normal, w)?;
     let reference = direction(p, plane.reference, w)?;
     // Positive axial ratios normalize to EXACTLY these axes. No proximity,
@@ -409,4 +412,25 @@ fn plane_height<'i>(
         return Err(Error::Unsupported);
     }
     Ok(origin[2])
+}
+#[cfg(test)]
+mod knot_tests {
+    use super::*;
+    #[test]
+    fn actual_different_nonuniform_knot_leaves_are_not_the_same_parameterization() {
+        let original = super::super::tests::file(false);
+        let header = &original[..original.find("DATA;").unwrap() + 5];
+        let text = format!(
+            "{header}#1=B_SPLINE_CURVE_WITH_KNOTS('',1,(#3,#4,#5),.UNSPECIFIED.,.F.,.F.,(2,1,2),(0.,0.25,1.),.UNSPECIFIED.);#2=B_SPLINE_CURVE_WITH_KNOTS('',1,(#3,#4,#5),.UNSPECIFIED.,.F.,.F.,(2,1,2),(0.,0.75,1.),.UNSPECIFIED.);ENDSEC;END-ISO-10303-21;"
+        );
+        let entities = part21::parse(&text).unwrap();
+        let mut w = Ledger {
+            used: 0,
+            remaining: 16_000_000,
+            interrupt: None,
+        };
+        let a = schema::curve(1, simple(&entities, 1).unwrap(), &mut w).unwrap();
+        let b = schema::curve(2, simple(&entities, 2).unwrap(), &mut w).unwrap();
+        assert!(!same_knots(&a, &b.multiplicities, &b.knots, &mut w).unwrap());
+    }
 }

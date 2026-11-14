@@ -656,3 +656,61 @@ fn coherently_translated_actual_z_planes_and_carriers_keep_their_own_datum() {
     assert_eq!(m.bounds_mm()[2], [-10., -6.]);
     assert!(m.minimum_signed_jacobian() > 0.);
 }
+#[test]
+fn actual_face_and_plane_entity_orders_do_not_define_material_or_datum() {
+    let text = file(false);
+    let p = parse(&text, Options::default(), None).unwrap();
+    let shell = p
+        .entities
+        .iter()
+        .find_map(|(&id, e)| matches!(e.as_slice(),[e] if e.name=="CLOSED_SHELL").then_some(id))
+        .unwrap();
+    let reversed = p
+        .faces()
+        .iter()
+        .rev()
+        .map(|f| format!("#{}", f.entity()))
+        .collect::<Vec<_>>()
+        .join(",");
+    let changed = argument_change(&text, shell, 1, &format!("({reversed})"));
+    let p1 = parse(&changed, Options::default(), None).unwrap();
+    let b1 = p1.support_bindings(Options::default(), None).unwrap();
+    let m1 = b1.material_bounds(Options::default(), None).unwrap();
+    assert_eq!(m1.outer_component(), 1);
+    assert_eq!(m1.bounds_mm()[2], [0., 4.]);
+    let [a, c] = [p.planes()[0].entity(), p.planes()[1].entity()];
+    let mut changed = String::with_capacity(text.len());
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'#' {
+            let start = i + 1;
+            let mut end = start;
+            while end < bytes.len() && bytes[end].is_ascii_digit() {
+                end += 1;
+            }
+            let id = text[start..end].parse::<u32>().unwrap();
+            let id = if id == a {
+                c
+            } else if id == c {
+                a
+            } else {
+                id
+            };
+            changed.push_str(&format!("#{id}"));
+            i = end;
+        } else {
+            changed.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    let p1 = parse(&changed, Options::default(), None).unwrap();
+    let b1 = p1.support_bindings(Options::default(), None).unwrap();
+    assert_eq!(b1.cap_heights().map(|h| h.value()), [0., 4.]);
+    assert!(b1.material_bounds(Options::default(), None).is_ok());
+    let limited = Options {
+        retained_budget_bytes: p.retained_budget_bytes() - 1,
+        ..Options::default()
+    };
+    assert!(matches!(parse(&text, limited, None), Err(Error::Limit)));
+}

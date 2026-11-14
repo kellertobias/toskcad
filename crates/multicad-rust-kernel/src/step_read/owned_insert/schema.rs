@@ -131,9 +131,8 @@ pub(super) fn tensor<'i>(id: u32, e: &Entity<'i>, w: &mut Ledger<'_>) -> Result<
     let knots_v = scalars(kv, &mut n)?;
     n.finish()?;
     knot_domain(1, 2, &mu, &ku)?;
-    if ku.len() != 2 {
-        return Err(Error::Unsupported);
-    }
+    // knot_domain(1, 2, ...) already proves ku.len()==2 from its exact
+    // poles==(knots.len()-1)*degree+1 invariant.
     knot_domain(11, rows[0].len(), &multiplicities_v, &knots_v)?;
     Ok(TensorSurface {
         entity: id,
