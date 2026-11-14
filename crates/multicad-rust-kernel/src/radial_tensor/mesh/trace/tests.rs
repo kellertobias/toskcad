@@ -13,8 +13,52 @@ fn verify(body: &RadialBoundary, traced: &TracedMesh<'_>) {
     let mut vertices = 0;
     for (end, rim) in rims.into_iter().enumerate() {
         let mut indices = BTreeSet::new();
-        for point in rim {
+        for (index, point) in rim.iter().enumerate() {
+            // Independent exact-rational evaluation of the outgoing retained
+            // polynomial versus its actual literal chord. The whole-source
+            // certificate must contain these interior residuals, including at
+            // owned knots where POINT identity differs from curve evaluation.
+            let edge = body.input().edges[point.edge];
+            if let Curve::Spline { spans, poles } = &body.input().curves[edge.curve] {
+                let next = &rim[(index + 1) % rim.len()];
+                let upper = if next.side == point.side {
+                    next.uv[0]
+                } else {
+                    1.
+                };
+                let t = (q(point.uv[0]) + q(upper)) / q(2.);
+                let mut coefficients = poles.clone();
+                if edge.forward != point.edge_forward {
+                    coefficients.reverse();
+                }
+                let knots = (0..=*spans)
+                    .map(|i| i as f64 / *spans as f64)
+                    .collect::<Vec<_>>();
+                let span = (0..*spans)
+                    .find(|&i| q(knots[i]) <= t && t <= q(knots[i + 1]))
+                    .unwrap();
+                let local = (&t - q(knots[span])) / (q(knots[span + 1]) - q(knots[span]));
+                let first = super::super::point(&traced.mesh, point.vertex as usize);
+                let last = super::super::point(&traced.mesh, next.vertex as usize);
+                let mut residual = q(0.);
+                for k in 0..3 {
+                    let mut p = coefficients[9 * span..=9 * span + 9]
+                        .iter()
+                        .map(|p| q(p[k]))
+                        .collect::<Vec<_>>();
+                    for n in (1..10).rev() {
+                        for i in 0..n {
+                            p[i] = (q(1.) - &local) * &p[i] + &local * &p[i + 1];
+                        }
+                    }
+                    let error = p[0].clone() - (q(first[k]) + q(last[k])) / q(2.);
+                    residual += if error < q(0.) { -error } else { error };
+                }
+                assert!(residual <= q(point.outgoing_chord_error_mm));
+            }
             assert!(indices.insert(point.vertex));
+            assert!(point.outgoing_chord_error_mm.is_finite());
+            assert!(point.outgoing_chord_error_mm >= 0.);
             assert_eq!(
                 point.cap_role,
                 if end == 0 {

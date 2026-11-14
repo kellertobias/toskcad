@@ -42,6 +42,10 @@ pub struct CapRimFootpoint {
     /// Fresh actual cap-source evaluation enclosure; the emitted literal point
     /// is its midpoint, exactly as in the original mesher. No inverse fitting.
     pub source_position_mm: [[f64; 2]; 3],
+    /// Fresh whole-curve distance to the outgoing literal ring segment,
+    /// with the same ordered source parameter correspondence. This is an
+    /// actual provider result, not the caller's requested deflection.
+    pub outgoing_chord_error_mm: f64,
 }
 /// Ring order is the ORIGINAL side cycle. The start cap's emitted fan uses
 /// the reverse cycle, the end cap uses this cycle. The borrowed immutable
@@ -166,6 +170,21 @@ fn finish<'s>(
                 (0, I::point(2.) * I::point(u))
             };
             let (edge, edge_forward) = group[segment];
+            let (next_side, next_u_index) = ring.entries[(index + 1) % n];
+            let upper = if next_side == side {
+                grid.u[side][next_u_index]
+            } else {
+                1.
+            };
+            let outgoing_chord_error_mm = cap.curve_error(
+                side,
+                [u, upper],
+                [
+                    point(&result.mesh, row * n + index),
+                    point(&result.mesh, row * n + (index + 1) % n),
+                ],
+                work,
+            )?;
             let side_face = source.side_faces()[side];
             result.rims[end].push(CapRimFootpoint {
                 vertex: (row * n + index) as u32,
@@ -185,6 +204,7 @@ fn finish<'s>(
                 edge_forward,
                 edge_parameter: [t.lo, t.hi],
                 source_position_mm: bounds.map(|p| [p.lo, p.hi]),
+                outgoing_chord_error_mm,
             });
         }
     }
