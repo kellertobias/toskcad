@@ -6,7 +6,7 @@ use multicad_rust_kernel::{
     profiled_screw::SourceSpec,
     step, step_read,
 };
-fn source(scale: f64, left: bool, posed: bool) -> Rc<OwnedDerivedMaterial> {
+pub(super) fn source(scale: f64, left: bool, posed: bool) -> Rc<OwnedDerivedMaterial> {
     // Real physical STEP producer data. These values only author the fixture;
     // the import chain earns all support/net/trim fits from the actual text.
     let spec = Spec {

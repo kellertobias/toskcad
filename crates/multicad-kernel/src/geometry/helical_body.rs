@@ -799,6 +799,9 @@ impl Solid {
     /// Query the modeled helical material in world coordinates.
     pub fn rust_thread_contains(&self, point_mm: Point) -> Result<bool, GeometryError> {
         self.policy.point(point_mm)?;
+        if let Some((body, frame)) = self.repaired_phillips_body() {
+            return body.contains(frame, point_mm);
+        }
         if let Some((body, frame)) = self.rounded_thread_bore_body() {
             return Ok(body.contains(frame, point_mm));
         }

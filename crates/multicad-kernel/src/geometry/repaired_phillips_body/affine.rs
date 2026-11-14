@@ -1,6 +1,7 @@
 //! Actual four-column construction map followed by the occurrence map.
 //! Neither map is normalized or substituted by a rigid nominal pose.
 use super::*;
+mod inverse;
 type Point = [f64; 3];
 type BoxPoint = [I; 3];
 fn dot(a: BoxPoint, b: BoxPoint) -> I {

@@ -6,9 +6,11 @@ use multicad_rust_kernel::step_read::PhillipsOwnedDerivedMaterial as OwnedDerive
 use std::cell::RefCell;
 mod affine;
 mod mesh;
+mod query;
 mod workspace;
 use affine::Placement;
 pub use mesh::{RepairedPhillipsMeshBudget, RepairedPhillipsMeshReceipt};
+pub use query::{RepairedPhillipsQuery, RepairedPhillipsQueryOptions};
 type Point = [f64; 3];
 const OPERATION: &str = "repaired Phillips material";
 const WORK: usize = 512_000_000;
