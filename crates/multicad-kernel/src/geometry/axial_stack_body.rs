@@ -1,12 +1,16 @@
 //! Placement and persistent references for an exact axial profile union.
 use super::*;
 use crate::rust_prism_topology::{Builder, position};
-use multicad_core::references::{AnalyticGeometry, ReferenceFrame, TopologyKind, TopologySnapshot};
+use multicad_core::references::{
+    AnalyticGeometry, AnchoredFrame, ReferenceFrame, TopologyKind, TopologySnapshot,
+};
 use multicad_rust_kernel::{
     axial_profile_stack::{self, Curve, Operand, Profile, ProfileStack, Support},
     display, step,
 };
 use std::collections::BTreeSet;
+
+mod blind_counterbore;
 
 type Point = [f64; 3];
 
@@ -14,6 +18,7 @@ pub(crate) struct AxialStackBody {
     pub(super) feature: EntityId,
     geometry: ProfileStack,
     origins: Vec<Vec<Origin>>,
+    inherited_frames: Vec<Vec<AnchoredFrame>>,
 }
 
 fn local(frame: PlaneFrame, point: Point) -> Point {
@@ -219,10 +224,22 @@ impl AxialStackBody {
         origins: Vec<Vec<Origin>>,
         policy: GeometryPolicy,
     ) -> Result<Solid, GeometryError> {
+        Self::place_with_frames(geometry, frame, feature, origins, vec![], policy)
+    }
+
+    fn place_with_frames(
+        geometry: ProfileStack,
+        frame: PlaneFrame,
+        feature: EntityId,
+        origins: Vec<Vec<Origin>>,
+        inherited_frames: Vec<Vec<AnchoredFrame>>,
+        policy: GeometryPolicy,
+    ) -> Result<Solid, GeometryError> {
         let body = Self {
             feature,
             geometry,
             origins,
+            inherited_frames,
         };
         frame.checked_metric_bounds(body.bounds(PlaneFrame::default()), policy)?;
         let bounds = body.bounds(frame);
@@ -404,10 +421,23 @@ impl AxialStackBody {
                     .filter(|neighbor| *neighbor != i),
             );
         }
+        let mut elements = builder.into_elements();
+        for element in &mut elements {
+            if element.key.kind == TopologyKind::Face
+                && let Some(anchors) = self.inherited_frames.get(element.key.ordinal as usize)
+            {
+                element
+                    .frames
+                    .extend(anchors.iter().map(|anchor| AnchoredFrame {
+                        origin: anchor.origin.clone(),
+                        frame: crate::rust_prism_topology::place_frame(frame, anchor.frame),
+                    }));
+            }
+        }
         TopologySnapshot {
             owner,
             revision,
-            elements: builder.into_elements(),
+            elements,
         }
     }
 

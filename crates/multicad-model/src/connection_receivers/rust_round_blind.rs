@@ -23,7 +23,7 @@ pub(super) fn build(
     };
     if resolved.thread.is_some() || resolved.seat.is_some_and(|s| s.0) {
         return Err(fail(
-            "Rust plain blind receivers do not yet support a seat or a thread",
+            "Rust plain blind receivers do not yet support conical seats or threads",
         ));
     }
     let pose = source
@@ -85,10 +85,27 @@ pub(super) fn build(
             )
             .map_err(|cause| error(Some(id), cause));
     }
-    if resolved.seat.is_some() {
-        return Err(fail(
-            "Rust plain blind receivers do not yet support a seat or a thread",
-        ));
+    if let Some((_, diameter, seat_depth)) = resolved.seat {
+        return stock
+            .rust_cut_rectangular_blind_counterbore(
+                multicad_kernel::CylindricalBlindPocketSpec {
+                    radius_mm: resolved.diameter_mm / 2.,
+                    depth_mm: depth,
+                    minimum_wall_mm: resolved.minimum_wall_mm,
+                    minimum_floor_mm: floor,
+                    seat: Some(
+                        multicad_kernel::rust_kernel::cylindrical_blind_pocket::Seat {
+                            radius_mm: diameter / 2.,
+                            depth_mm: seat_depth,
+                        },
+                    ),
+                },
+                frame,
+                id,
+                inputs.policy,
+                interrupt,
+            )
+            .map_err(|cause| error(Some(id), cause));
     }
     let (result, mouth) = stock
         .rust_connection_blind_bore(&tool, resolved.minimum_wall_mm, floor, inputs.policy)
