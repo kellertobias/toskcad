@@ -53,12 +53,26 @@ fn every_actual_component_source_earns_far_separation_without_classifying_overla
     let ring = Annulus::new(1.7, 3.5, 0.2).unwrap();
     let stock = stock();
     let prism = Prism::rectangular(7, [Rational::new(21, 10).unwrap(); 3]).unwrap();
+    let sphere = crate::sphere::Sphere::new(2.3).unwrap();
+    let cylinder = crate::cylinder::AxialCylinder::new(
+        8,
+        crate::Circle::new(
+            [Rational::new(5, 3).unwrap(); 2],
+            Rational::new(7, 3).unwrap(),
+        )
+        .unwrap(),
+        Rational::new(-11, 7).unwrap(),
+        Rational::new(5, 7).unwrap(),
+    )
+    .unwrap();
     let sources = [
         HangerComponent::Hanger(&hanger),
         HangerComponent::Nut(&nut),
         HangerComponent::Annulus(&ring),
         HangerComponent::Stock(&stock),
         HangerComponent::Prism(&prism),
+        HangerComponent::Sphere(&sphere),
+        HangerComponent::Cylinder(&cylinder),
     ];
     for source in sources {
         for posed in [false, true] {
@@ -184,6 +198,67 @@ fn directed_raw_maps_contain_actual_vertices_and_original_rational_prism_corners
                 assert!(q(b.lo).unwrap() <= actual && q(b.hi).unwrap() >= actual);
             }
         }
+    }
+}
+
+#[test]
+fn analytic_primitives_enclose_exact_rational_rims_and_rotation_invariant_sphere() {
+    let rational = |n, d| Rational::new(n, d).unwrap();
+    let cylinder = crate::cylinder::AxialCylinder::new(
+        42,
+        crate::Circle::new([rational(5, 3), rational(-7, 9)], rational(7, 3)).unwrap(),
+        rational(-11, 7),
+        rational(5, 7),
+    )
+    .unwrap();
+    let frame = Frame {
+        origin_mm: [0.3, -7., 1e6 + 0.3],
+        axes: [
+            [0.8, 0.6, 0.],
+            [-0.36, 0.48, 0.8],
+            [0.48, -0.6400000000000001, 0.6],
+        ],
+    };
+    let actual = bounds(PlacedHangerComponent {
+        source: HangerComponent::Cylinder(&cylinder),
+        frame,
+    })
+    .unwrap()
+    .unwrap();
+    for corner in 0..8 {
+        let local = [
+            Q::new(if corner & 1 == 0 { -7 } else { 7 }.into(), 3.into()),
+            Q::new(if corner & 2 == 0 { -7 } else { 7 }.into(), 3.into()),
+            if corner & 4 == 0 {
+                Q::zero()
+            } else {
+                Q::new(5.into(), 7.into())
+            },
+        ];
+        for (i, bound) in actual.iter().enumerate() {
+            let exact = (0..3).fold(q(frame.origin_mm[i]).unwrap(), |sum, j| {
+                sum + q(frame.axes[j][i]).unwrap() * &local[j]
+            });
+            assert!(q(bound.lo).unwrap() <= exact && exact <= q(bound.hi).unwrap());
+        }
+    }
+    let sphere = crate::sphere::Sphere::new(2.3).unwrap();
+    let frame = Frame {
+        axes: [
+            [1_f64.next_down(), 0., 0.],
+            [0., 1., 0.],
+            [0., 0., 1_f64.next_down()],
+        ],
+        ..identity()
+    };
+    let actual = bounds(PlacedHangerComponent {
+        source: HangerComponent::Sphere(&sphere),
+        frame,
+    })
+    .unwrap()
+    .unwrap();
+    for bound in actual {
+        assert!(bound.lo <= -sphere.radius_mm() && bound.hi >= sphere.radius_mm());
     }
 }
 #[test]

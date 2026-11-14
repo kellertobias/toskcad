@@ -1,8 +1,8 @@
 //! Immutable source owners for strict component envelope separation.
 use super::*;
 use multicad_rust_kernel::{
-    annulus::Annulus, authored_hanger_bolt::Hanger, hex_nut::Nut, orthogonal::OrthogonalSolid,
-    prism::Prism,
+    annulus::Annulus, authored_hanger_bolt::Hanger, cylinder::AxialCylinder, hex_nut::Nut,
+    orthogonal::OrthogonalSolid, prism::Prism, sphere::Sphere,
 };
 use source::{HangerComponent, PlacedHangerComponent};
 #[cfg(test)]
@@ -13,6 +13,8 @@ enum Actual<'a> {
     Ring(Annulus, PlaneFrame),
     Stock(&'a OrthogonalSolid, PlaneFrame),
     Prism(&'a Prism, PlaneFrame),
+    Cylinder(&'a AxialCylinder, PlaneFrame),
+    Sphere(Sphere, PlaneFrame),
 }
 impl<'a> Actual<'a> {
     fn read(solid: &'a Solid) -> Option<Self> {
@@ -22,6 +24,10 @@ impl<'a> Actual<'a> {
             Some(Self::Nut(source, frame))
         } else if let Some((source, frame)) = solid.rust_annulus_data() {
             Some(Self::Ring(source, frame))
+        } else if let Some((source, frame)) = solid.axial_cylinder_frame() {
+            Some(Self::Cylinder(source, frame))
+        } else if let Some((body, frame)) = solid.sphere_body() {
+            Some(Self::Sphere(body.geometry(), frame))
         } else if let Some((source, frame)) = solid.orthogonal_body() {
             source
                 .wood_envelope_source()
@@ -39,6 +45,8 @@ impl<'a> Actual<'a> {
             Self::Ring(source, placed) => (HangerComponent::Annulus(source), placed),
             Self::Stock(source, placed) => (HangerComponent::Stock(source), placed),
             Self::Prism(source, placed) => (HangerComponent::Prism(source), placed),
+            Self::Cylinder(source, placed) => (HangerComponent::Cylinder(source), placed),
+            Self::Sphere(source, placed) => (HangerComponent::Sphere(source), placed),
         };
         PlacedHangerComponent {
             source,

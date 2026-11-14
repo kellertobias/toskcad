@@ -1,4 +1,33 @@
 use super::*;
+fn unknown(p: GeometryPolicy) -> Solid {
+    let q = |n| multicad_rust_kernel::Rational::new(n, 1).unwrap();
+    Solid::from_rust_prism(
+        multicad_rust_kernel::prism::Prism::extrude(19, q(10), q(2), q(2)).unwrap(),
+        p,
+    )
+    .unwrap()
+}
+fn unhandled_thread(p: GeometryPolicy) -> Solid {
+    Solid::rust_helical_thread(
+        crate::HelicalThread {
+            major_radius_mm: 1.5,
+            pitch_mm: 0.5,
+            length_mm: 2.,
+            depth_mm: 0.2,
+            crest_width_mm: 0.1,
+            lower_flank_deg: 30.,
+            upper_flank_deg: 30.,
+            radial_taper: 0.,
+            starts: 1,
+            left_hand: false,
+        },
+        None,
+        EntityId::new(),
+        PlaneFrame::default(),
+        p,
+    )
+    .unwrap()
+}
 #[test]
 fn every_actual_stack_owner_uses_outward_source_bounds_and_unknown_geometry_stays_unknown() {
     let p = GeometryPolicy::default();
@@ -13,7 +42,28 @@ fn every_actual_stack_owner_uses_outward_source_bounds_and_unknown_geometry_stay
             ..Default::default()
         })
         .unwrap();
-    for source in [&wood, &hanger, &nut, &ring, &box_source, &stock] {
+    let cylinder = Solid::cylinder(
+        PlaneFrame {
+            origin: [31., -17., 9.],
+            u: [0.8, 0.6, 0.],
+            v: [-0.36, 0.48, 0.8],
+        },
+        1.,
+        2.,
+        p,
+    )
+    .unwrap();
+    let sphere = Solid::rust_sphere_named(2.3, PlaneFrame::default(), EntityId::new(), p).unwrap();
+    for source in [
+        &wood,
+        &hanger,
+        &nut,
+        &ring,
+        &box_source,
+        &stock,
+        &cylinder,
+        &sphere,
+    ] {
         assert_eq!(
             source.rust_hanger_component_separation(&far, None).unwrap(),
             Some(true)
@@ -25,19 +75,20 @@ fn every_actual_stack_owner_uses_outward_source_bounds_and_unknown_geometry_stay
             Some(false)
         );
     }
-    let unknown = Solid::cylinder(PlaneFrame::default(), 1., 2., p).unwrap();
-    assert_eq!(
-        unknown
-            .rust_hanger_component_separation(&far, None)
-            .unwrap(),
-        None
-    );
-    assert_eq!(
-        hanger
-            .rust_hanger_component_separation(&unknown, None)
-            .unwrap(),
-        None
-    );
+    for unknown in [unknown(p), unhandled_thread(p)] {
+        assert_eq!(
+            unknown
+                .rust_hanger_component_separation(&far, None)
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            hanger
+                .rust_hanger_component_separation(&unknown, None)
+                .unwrap(),
+            None
+        );
+    }
     let different = Solid::box_solid(
         [2.; 3],
         GeometryPolicy {
@@ -68,8 +119,9 @@ fn known_and_unknown_source_queries_poll_every_checkpoint_without_changing_sourc
             ..Default::default()
         })
         .unwrap();
-    let unknown = Solid::cylinder(PlaneFrame::default(), 1., 2., p).unwrap();
-    for other in [&far, &unknown] {
+    let unknown = unknown(p);
+    let unhandled_thread = unhandled_thread(p);
+    for other in [&far, &unknown, &unhandled_thread] {
         let n = Cell::new(0);
         hanger
             .rust_hanger_component_separation(

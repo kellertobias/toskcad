@@ -123,7 +123,7 @@ fn actual_prefix_floor_and_other_component_failures_leave_the_canonical_document
                     radius: length(1.),
                     height: length(2.),
                     frame: PrimitiveFrame {
-                        origin: std::array::from_fn(|_| length(100.)),
+                        origin: [length(9.5), length(9.5), length(-8.)],
                         ..Default::default()
                     },
                 }
@@ -192,30 +192,43 @@ fn actual_prefix_floor_and_other_component_failures_leave_the_canonical_document
     }
 }
 #[test]
-fn far_actual_rectangular_material_earns_strict_clearance() {
-    let (doc, r) = support::fixture(ScrewConnectionMode::HangerBolt);
-    let mut session = Session::new(doc).unwrap();
-    let other = PrimitiveRequest::new(
-        "Other actual stock",
+fn far_actual_primitive_material_earns_strict_clearance() {
+    let frame = PrimitiveFrame {
+        origin: [length(100.), length(100.), length(100.)],
+        u: [0.8, 0.6, 0.],
+        v: [-0.36, 0.48, 0.8],
+    };
+    for parameters in [
         PrimitiveParameters::Box {
-            size: [length(2.), length(2.), length(2.)],
-            frame: PrimitiveFrame {
-                origin: [length(100.), length(100.), length(100.)],
-                ..Default::default()
-            },
+            size: std::array::from_fn(|_| length(2.)),
+            frame: frame.clone(),
         },
-    );
-    let candidate = prepare_primitive(&session, 0, actor(), &other).unwrap();
-    session.commit(candidate.prepared).unwrap();
-    let candidate = prepare_screw_connection(&session, session.revision(), actor(), &r).unwrap();
-    assert!(
-        compiler()
-            .compile(candidate.prepared.document(), session.revision() + 1)
-            .unwrap()
-            .snapshot()
-            .screw_connection_checks[0]
-            .native_component_collision_checked
-    );
+        PrimitiveParameters::Cylinder {
+            radius: length(2.),
+            height: length(3.),
+            frame: frame.clone(),
+        },
+        PrimitiveParameters::Sphere {
+            radius: length(2.),
+            frame,
+        },
+    ] {
+        let (doc, r) = support::fixture(ScrewConnectionMode::HangerBolt);
+        let mut session = Session::new(doc).unwrap();
+        let other = PrimitiveRequest::new("Other actual stock", parameters);
+        let candidate = prepare_primitive(&session, 0, actor(), &other).unwrap();
+        session.commit(candidate.prepared).unwrap();
+        let candidate =
+            prepare_screw_connection(&session, session.revision(), actor(), &r).unwrap();
+        assert!(
+            compiler()
+                .compile(candidate.prepared.document(), session.revision() + 1)
+                .unwrap()
+                .snapshot()
+                .screw_connection_checks[0]
+                .native_component_collision_checked
+        );
+    }
 }
 
 #[test]
