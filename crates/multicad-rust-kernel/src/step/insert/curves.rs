@@ -48,7 +48,8 @@ pub(super) fn derivative_basis(w: &mut Work<'_>) -> Result<Basis, Error> {
     }
     Ok(out)
 }
-struct Law {
+#[derive(Clone, Copy)]
+pub(super) struct Law {
     base: V,
     delta: V,
     omega: I,
@@ -59,6 +60,9 @@ impl Law {
         let [base, delta] = source
             .affine_rzv_bounds()
             .map(|v| v.map(|x| I::new(x.lower, x.upper)));
+        Self::from_bounds([base, delta], left)
+    }
+    pub(super) fn from_bounds([base, delta]: [V; 2], left: bool) -> Self {
         let tau = I::new(
             std::f64::consts::PI.next_down(),
             std::f64::consts::PI.next_up(),
@@ -69,6 +73,9 @@ impl Law {
             omega: tau * delta[2],
             tau,
         }
+    }
+    pub(super) fn point(&self, t: f64, w: &mut Work<'_>) -> Result<V, Error> {
+        Ok(self.jets(t, w)?[0])
     }
     fn jets(&self, t: f64, w: &mut Work<'_>) -> Result<[V; 12], Error> {
         w.charge(48)?;
@@ -199,61 +206,89 @@ pub(super) fn prepare(
     }
     let mut n = 1;
     loop {
-        let mut poles = memory.allocate(11 * n + 1, w)?;
-        let mut knots = memory.allocate(n + 1, w)?;
-        let mut pos: f64 = 0.;
-        let mut der: f64 = 0.;
-        for span in 0..n {
-            let a = span as f64 / n as f64;
-            let b = (span + 1) as f64 / n as f64;
-            let h = b - a;
-            knots.push(a);
-            let ja = law.jets(a, w)?;
-            let jb = law.jets(b, w)?;
-            let start = ideals(&ja, h);
-            let end = ideals(&jb, -h);
-            let mut ideal = [[p(0.); 3]; 12];
-            for i in 0..6 {
-                ideal[i] = start[i];
-                ideal[11 - i] = end[i];
-            }
-            let mut local = ideal.map(|v| v.map(|x| x.midpoint()));
-            local[0] = if span == 0 { ends[0] } else { poles[11 * span] };
-            if span + 1 == n {
-                local[11] = ends[1];
-            }
-            if let Some(z) = cap {
-                for p in &mut local {
-                    p[2] = z;
-                }
-            }
-            let (ep, ed) = certify(&law, a, b, &ideal, &local, basis, w)?;
-            pos = pos.max(ep);
-            der = der.max(ed);
-            if span == 0 {
-                poles.push(local[0]);
-            }
-            poles.extend_from_slice(&local[1..]);
-        }
-        knots.push(1.);
-        if pos <= options.position_error_mm && der <= options.derivative_error_mm {
+        let fit = fixed(&law, n, ends, cap, basis, memory, w)?;
+        if fit.position_error_mm <= options.position_error_mm
+            && fit.derivative_error_mm <= options.derivative_error_mm
+        {
             return Ok(CurveCarrier {
                 key,
                 endpoints,
                 degree: 11,
-                knots,
-                poles,
-                position_error_mm: pos,
-                derivative_error_mm: der,
+                knots: fit.knots,
+                poles: fit.poles,
+                position_error_mm: fit.position_error_mm,
+                derivative_error_mm: fit.derivative_error_mm,
             });
         }
-        memory.release(&poles);
-        memory.release(&knots);
+        memory.release(&fit.poles);
+        memory.release(&fit.knots);
         if n > options.maximum_spans_per_curve / 2 {
             return Err(Error::Unresolved);
         }
         n *= 2;
     }
+}
+
+pub(super) struct Fixed {
+    pub knots: Vec<f64>,
+    pub poles: Vec<[f64; 3]>,
+    pub position_error_mm: f64,
+    pub derivative_error_mm: f64,
+}
+/// Fixed dyadic subdivision for coupled rows. Caller supplies n=power-of-two
+/// <=1024; accepting a row never accepts a surface or occupied material.
+pub(super) fn fixed(
+    law: &Law,
+    n: usize,
+    ends: [[f64; 3]; 2],
+    cap: Option<f64>,
+    basis: &Basis,
+    memory: &mut Memory,
+    w: &mut Work<'_>,
+) -> Result<Fixed, Error> {
+    let mut poles = memory.allocate(11 * n + 1, w)?;
+    let mut knots = memory.allocate(n + 1, w)?;
+    let mut pos: f64 = 0.;
+    let mut der: f64 = 0.;
+    for span in 0..n {
+        let a = span as f64 / n as f64;
+        let b = (span + 1) as f64 / n as f64;
+        let h = b - a;
+        knots.push(a);
+        let ja = law.jets(a, w)?;
+        let jb = law.jets(b, w)?;
+        let start = ideals(&ja, h);
+        let end = ideals(&jb, -h);
+        let mut ideal = [[p(0.); 3]; 12];
+        for i in 0..6 {
+            ideal[i] = start[i];
+            ideal[11 - i] = end[i];
+        }
+        let mut local = ideal.map(|v| v.map(|x| x.midpoint()));
+        local[0] = if span == 0 { ends[0] } else { poles[11 * span] };
+        if span + 1 == n {
+            local[11] = ends[1];
+        }
+        if let Some(z) = cap {
+            for p in &mut local {
+                p[2] = z;
+            }
+        }
+        let (ep, ed) = certify(law, a, b, &ideal, &local, basis, w)?;
+        pos = pos.max(ep);
+        der = der.max(ed);
+        if span == 0 {
+            poles.push(local[0]);
+        }
+        poles.extend_from_slice(&local[1..]);
+    }
+    knots.push(1.);
+    Ok(Fixed {
+        knots,
+        poles,
+        position_error_mm: pos,
+        derivative_error_mm: der,
+    })
 }
 
 pub(super) fn recheck(

@@ -97,6 +97,10 @@ fn domain_resources_and_cancellation_refuse_without_publication() {
             ..DomainOptions::default()
         },
         DomainOptions {
+            maximum_stations: 5,
+            ..DomainOptions::default()
+        },
+        DomainOptions {
             maximum_slabs: 1,
             ..DomainOptions::default()
         },

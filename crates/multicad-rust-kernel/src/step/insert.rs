@@ -7,7 +7,9 @@ use crate::{
 use std::mem::size_of;
 mod curves;
 mod domains;
+mod surfaces;
 pub use domains::{DomainOptions, DomainPlan, Slab, Station};
+pub use surfaces::{RowKey, SurfacePatch, SurfacePlan, SurfaceRow, SurfaceVertex, VertexOwner};
 mod resources;
 use resources::{Memory, Work};
 #[cfg(test)]
@@ -31,6 +33,25 @@ pub struct CurveOptions {
     pub work: usize,
     /// Original borrowed graph + owned output + live dynamic workspace.
     pub bytes: usize,
+}
+impl CurveOptions {
+    fn validate(self) -> Result<(), Error> {
+        if !self.position_error_mm.is_finite()
+            || self.position_error_mm <= 0.
+            || !self.derivative_error_mm.is_finite()
+            || self.derivative_error_mm <= 0.
+            || self.maximum_spans_per_curve == 0
+            || self.maximum_spans_per_curve > 1024
+            || self.bytes == 0
+            || self.bytes > 64 * 1024 * 1024
+            || self.work == 0
+            || self.work > 16_000_000
+        {
+            Err(Error::Invalid)
+        } else {
+            Ok(())
+        }
+    }
 }
 impl Default for CurveOptions {
     fn default() -> Self {
@@ -91,17 +112,7 @@ impl<'a> CurvePlan<'a> {
     ) -> Result<Self, Error> {
         let mut work = Work::new(options.work, interrupt)?;
         work.charge(1)?;
-        if !options.position_error_mm.is_finite()
-            || options.position_error_mm <= 0.
-            || !options.derivative_error_mm.is_finite()
-            || options.derivative_error_mm <= 0.
-            || options.maximum_spans_per_curve == 0
-            || options.maximum_spans_per_curve > 1024
-            || options.bytes == 0
-            || options.bytes > 64 * 1024 * 1024
-        {
-            return Err(Error::Invalid);
-        }
+        options.validate()?;
         let mut memory = Memory::new(boundary.retained_bytes(), options.bytes)?;
         memory.add(size_of::<Self>())?;
         memory.add(WORKSPACE_BYTES)?;

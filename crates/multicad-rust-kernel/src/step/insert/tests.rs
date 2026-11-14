@@ -264,8 +264,7 @@ fn bounded_curve_queries_refuse_invalid_precision_resources_and_cancellation() {
         Err(Error::Cancelled)
     ));
 }
-#[test]
-fn real_metric_fixture_has_bounded_curve_plan_and_planar_cap_controls() {
+pub(super) fn metric_graph() -> Boundary {
     use crate::{
         authored_flat_thread::{AuthoredThread, SourceOptions},
         helical_thread::Spec,
@@ -292,7 +291,7 @@ fn real_metric_fixture_has_bounded_curve_plan_and_planar_cap_controls() {
         )
         .unwrap()
     };
-    let body = Insert::new(
+    Insert::new(
         source(5., 2., 1., 0.4),
         source(
             1.5,
@@ -305,7 +304,11 @@ fn real_metric_fixture_has_bounded_curve_plan_and_planar_cap_controls() {
     )
     .unwrap()
     .boundary_with_interrupt(BoundaryOptions::default(), None)
-    .unwrap();
+    .unwrap()
+}
+#[test]
+fn real_metric_fixture_has_bounded_curve_plan_and_planar_cap_controls() {
+    let body = metric_graph();
     let plan = CurvePlan::prepare(&body, CurveOptions::default(), None).unwrap();
     for curve in plan.curves() {
         if let Some(cap) = body
@@ -420,4 +423,26 @@ fn control_rechecks_charge_the_original_arena_external_poles_and_workspace() {
         ),
         Err(Error::Limit)
     ));
+}
+#[test]
+fn frozen_original_curve_control_nets_survive_shared_surface_extraction() {
+    for (left, starts) in [(false, 1), (true, 1), (false, 2)] {
+        let body = graph(left, starts);
+        let plan = CurvePlan::prepare(&body, CurveOptions::default(), None).unwrap();
+        let mut hash = 0xcbf29ce484222325u64;
+        for curve in plan.curves() {
+            for number in curve.knots().iter().chain(curve.poles().iter().flatten()) {
+                for byte in number.to_bits().to_le_bytes() {
+                    hash ^= u64::from(byte);
+                    hash = hash.wrapping_mul(0x100000001b3);
+                }
+            }
+        }
+        let expected = match (left, starts) {
+            (false, 1) => 0x4b8441fc4c4f93f2,
+            (true, 1) => 0x51834d10d9f9a7d1,
+            _ => 0xb3c5152fd6b4cff1,
+        };
+        assert_eq!(hash, expected);
+    }
 }

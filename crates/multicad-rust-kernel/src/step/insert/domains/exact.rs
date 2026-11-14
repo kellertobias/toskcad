@@ -2,8 +2,9 @@
 use super::*;
 use num_bigint::{BigInt, Sign};
 use num_rational::BigRational;
+use num_traits::ToPrimitive;
 #[derive(Clone)]
-pub(super) struct N(pub BigRational);
+pub(in crate::step::insert) struct N(pub BigRational);
 impl N {
     pub fn integer(n: i64) -> Self {
         Self(BigRational::from_integer(n.into()))
@@ -31,6 +32,39 @@ impl N {
             v.denominator_magnitude_le(),
             w,
         )
+    }
+    pub fn enclosure(&self, w: &mut Work<'_>) -> Result<I, Error> {
+        let bits = self.0.numer().bits().max(self.0.denom().bits());
+        let words = (bits as usize).div_ceil(64);
+        w.charge(1 + words * words)?;
+        let proposal = self
+            .0
+            .to_f64()
+            .filter(|x| x.is_finite())
+            .ok_or(Error::Unresolved)?;
+        self.enclose_proposal(proposal, w)
+    }
+    pub fn enclose_proposal(&self, proposal: f64, w: &mut Work<'_>) -> Result<I, Error> {
+        let point = Self(BigRational::from_float(proposal).ok_or(Error::Unresolved)?);
+        match self.cmp(&point, w)? {
+            Ordering::Equal => Ok(I::point(proposal)),
+            Ordering::Less => {
+                let low = proposal.next_down();
+                let exact = BigRational::from_float(low).ok_or(Error::Unresolved)?;
+                if self.cmp(&Self(exact), w)? == Ordering::Less {
+                    return Err(Error::Unresolved);
+                }
+                Ok(I::new(low, proposal))
+            }
+            Ordering::Greater => {
+                let high = proposal.next_up();
+                let exact = BigRational::from_float(high).ok_or(Error::Unresolved)?;
+                if self.cmp(&Self(exact), w)? == Ordering::Greater {
+                    return Err(Error::Unresolved);
+                }
+                Ok(I::new(proposal, high))
+            }
+        }
     }
     fn preflight(&self, other: &Self, operation: u8, w: &mut Work<'_>) -> Result<(), Error> {
         let [a, b, c, d] = [

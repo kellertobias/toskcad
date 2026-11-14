@@ -6,7 +6,7 @@ use crate::{
 };
 use std::cmp::Ordering;
 mod exact;
-use exact::N;
+pub(super) use exact::N;
 #[cfg(test)]
 mod tests;
 const SCRATCH: usize = 16 * 1024 * 1024;
@@ -28,7 +28,8 @@ impl Default for DomainOptions {
         }
     }
 }
-/// One exact original source angular station; all neighboring cells use its ID.
+/// Exact subdivision of the original angular coordinate; all neighboring cells
+/// use its ID. Original corner events and canonical quarter turns stay distinct.
 pub struct Station {
     sign: i8,
     numerator: Vec<u8>,
@@ -44,20 +45,25 @@ impl Station {
     pub fn denominator_magnitude_le(&self) -> &[u8] {
         &self.denominator
     }
-    fn number(&self, w: &mut Work<'_>) -> Result<N, Error> {
+    pub(super) fn number(&self, w: &mut Work<'_>) -> Result<N, Error> {
         N::parts(self.sign, &self.numerator, &self.denominator, w)
     }
-    fn new(
-        v: ExactBoundaryRational<'_>,
+    pub(super) fn cardinal(&self) -> Option<u8> {
+        cardinal_parts(self.sign, &self.numerator, &self.denominator)
+    }
+    fn from_parts(
+        sign: i8,
+        n: &[u8],
+        d: &[u8],
         memory: &mut Memory,
         w: &mut Work<'_>,
     ) -> Result<Self, Error> {
-        let mut numerator = memory.allocate(v.numerator_magnitude_le().len(), w)?;
-        numerator.extend_from_slice(v.numerator_magnitude_le());
-        let mut denominator = memory.allocate(v.denominator_magnitude_le().len(), w)?;
-        denominator.extend_from_slice(v.denominator_magnitude_le());
+        let mut numerator = memory.allocate(n.len(), w)?;
+        numerator.extend_from_slice(n);
+        let mut denominator = memory.allocate(d.len(), w)?;
+        denominator.extend_from_slice(d);
         Ok(Self {
-            sign: v.signum(),
+            sign,
             numerator,
             denominator,
         })
@@ -133,6 +139,18 @@ impl<'a> DomainPlan<'a> {
         ];
         let mut slabs = memory.allocate(options.maximum_slabs, &mut w)?;
         for side in [Side::Outer, Side::Inner] {
+            // Exact authored-turn chart subdivisions, not moved source events.
+            for (sign, n, d) in [(0, 0, 1), (1, 1, 4), (1, 1, 2), (1, 3, 4), (1, 1, 1)] {
+                insert_parts(
+                    &mut stations[index(side)],
+                    sign,
+                    &[n],
+                    &[d],
+                    options.maximum_stations,
+                    &mut memory,
+                    &mut w,
+                )?;
+            }
             let source = boundary.source_boundary(side);
             for cell in 0..source.cells().len() {
                 // Scratch is reused: no decoded BigInts are live during the
@@ -236,7 +254,7 @@ fn index(side: Side) -> usize {
         Side::Inner => 1,
     }
 }
-fn failure(e: SourceError) -> Error {
+pub(super) fn failure(e: SourceError) -> Error {
     match e {
         SourceError::Invalid => Error::Invalid,
         SourceError::Unresolved => Error::Unresolved,
@@ -251,7 +269,26 @@ fn insert_station(
     memory: &mut Memory,
     w: &mut Work<'_>,
 ) -> Result<(), Error> {
-    let number = N::view(value, w)?;
+    insert_parts(
+        stations,
+        value.signum(),
+        value.numerator_magnitude_le(),
+        value.denominator_magnitude_le(),
+        maximum,
+        memory,
+        w,
+    )
+}
+fn insert_parts(
+    stations: &mut Vec<Station>,
+    sign: i8,
+    n: &[u8],
+    d: &[u8],
+    maximum: usize,
+    memory: &mut Memory,
+    w: &mut Work<'_>,
+) -> Result<(), Error> {
+    let number = N::parts(sign, n, d, w)?;
     let mut low = 0;
     let mut high = stations.len();
     while low < high {
@@ -266,9 +303,10 @@ fn insert_station(
         return Err(Error::Limit);
     }
     w.charge(1 + stations.len() - low)?;
-    stations.insert(low, Station::new(value, memory, w)?);
+    stations.insert(low, Station::from_parts(sign, n, d, memory, w)?);
     Ok(())
 }
+
 fn at(polygon: &[[N; 2]], edge: usize, v: &N, w: &mut Work<'_>) -> Result<N, Error> {
     let a = &polygon[edge];
     let b = &polygon[(edge + 1) % polygon.len()];
@@ -321,4 +359,15 @@ fn section(
             == Ordering::Equal;
     }
     Ok((crossings, collapsed))
+}
+
+pub(super) fn cardinal_parts(sign: i8, n: &[u8], d: &[u8]) -> Option<u8> {
+    match (sign, n, d) {
+        (0, _, _) => Some(0),
+        (1, [1], [4]) => Some(1),
+        (1, [1], [2]) => Some(2),
+        (1, [3], [4]) => Some(3),
+        (1, [1], [1]) => Some(4),
+        _ => None,
+    }
 }
