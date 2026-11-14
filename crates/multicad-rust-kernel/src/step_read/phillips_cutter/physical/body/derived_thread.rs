@@ -112,6 +112,8 @@ impl<'a, 'input> DerivedThreadCarrier<'a, 'input> {
             boundary,
             bounds: self.bounds,
             stations: self.stations,
+            entry_radius_upper: self.entry_radius_upper,
+            construction_work: self.work,
         })
     }
 }
@@ -121,6 +123,8 @@ pub struct OccupiedDerivedThread<'a, 'input> {
     boundary: radial::RadialBoundary,
     bounds: Vec<ThreadCarrierTransfer>,
     stations: [f64; 2],
+    entry_radius_upper: f64,
+    construction_work: usize,
 }
 impl<'a, 'input> OccupiedDerivedThread<'a, 'input> {
     pub fn body(&self) -> &'a Body<'input> {
@@ -137,6 +141,30 @@ impl<'a, 'input> OccupiedDerivedThread<'a, 'input> {
     }
     pub fn cap_stations_mm(&self) -> [f64; 2] {
         self.stations
+    }
+    pub fn entry_radius_upper_mm(&self) -> f64 {
+        self.entry_radius_upper
+    }
+    /// Carrier construction/transfer only. The separate occupied provider keeps
+    /// its independently declared hard work budget; this is not its work count.
+    pub fn construction_work_used(&self) -> usize {
+        self.construction_work
+    }
+    /// Original Body once plus the actual occupied source and transfer payload.
+    /// Shared-Body aggregate callers use additional_budget_bytes instead.
+    pub fn retained_budget_bytes(&self) -> usize {
+        self.body
+            .retained_budget_bytes()
+            .saturating_add(self.additional_budget_bytes())
+    }
+    pub(crate) fn additional_budget_bytes(&self) -> usize {
+        (std::mem::size_of::<Self>() - std::mem::size_of::<radial::RadialBoundary>())
+            .saturating_add(self.boundary.retained_budget_bytes())
+            .saturating_add(
+                self.bounds
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<ThreadCarrierTransfer>()),
+            )
     }
 }
 struct Grid {

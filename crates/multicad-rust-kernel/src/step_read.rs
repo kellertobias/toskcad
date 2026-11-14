@@ -1087,3 +1087,9 @@ pub use phillips_cutter::{
     OccupiedDerivedThread as PhillipsOccupiedDerivedThread,
     ThreadCarrierTransfer as PhillipsThreadCarrierTransfer,
 };
+
+pub use phillips_cutter::{
+    ClosedMaterialOptions as PhillipsClosedMaterialOptions,
+    DerivedClosedMaterial as PhillipsDerivedClosedMaterial,
+    MaterialFaceSource as PhillipsMaterialFaceSource,
+};

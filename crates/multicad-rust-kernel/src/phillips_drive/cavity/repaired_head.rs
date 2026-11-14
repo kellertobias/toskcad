@@ -55,6 +55,11 @@ impl<'s, 'h, 'p> RepairedHeadContainment<'s, 'h, 'p> {
             + std::mem::size_of::<Cutter>()
             + self.head.retained_budget_bytes()
     }
+    /// Caller already validates cells<=CELLS. Shared-source aggregate queries
+    /// count their own headers once and add this actual frontier/scratch bound.
+    pub(crate) fn scratch_budget_bytes(cells: usize) -> usize {
+        4 * (cells + 1) * std::mem::size_of::<Cell>() + SCRATCH
+    }
 }
 #[derive(Clone, Copy)]
 struct Cell {
@@ -111,8 +116,7 @@ impl<'s> ClosedBoundaryCertificate<'s> {
             + std::mem::size_of::<Self>()
             + std::mem::size_of::<Cutter>()
             + head.retained_budget_bytes()
-            + 4 * (options.maximum_cells + 1) * std::mem::size_of::<Cell>()
-            + SCRATCH;
+            + RepairedHeadContainment::scratch_budget_bytes(options.maximum_cells);
         if peak > options.maximum_bytes {
             return Err(Error::Limit);
         }

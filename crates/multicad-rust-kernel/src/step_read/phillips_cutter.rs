@@ -236,3 +236,5 @@ pub use physical::{
 pub use physical::{
     DerivedThreadCarrier, DerivedThreadOptions, OccupiedDerivedThread, ThreadCarrierTransfer,
 };
+
+pub use physical::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSource};

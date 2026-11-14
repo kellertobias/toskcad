@@ -245,3 +245,7 @@ mod derived_thread;
 pub use derived_thread::{
     DerivedThreadCarrier, DerivedThreadOptions, OccupiedDerivedThread, ThreadCarrierTransfer,
 };
+
+mod material;
+
+pub use material::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSource};

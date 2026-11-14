@@ -335,3 +335,5 @@ pub use body::{ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHe
 pub use body::{
     DerivedThreadCarrier, DerivedThreadOptions, OccupiedDerivedThread, ThreadCarrierTransfer,
 };
+
+pub use body::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSource};
