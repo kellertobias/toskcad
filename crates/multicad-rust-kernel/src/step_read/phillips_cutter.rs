@@ -238,3 +238,5 @@ pub use physical::{
 };
 
 pub use physical::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSource};
+
+pub use physical::{MaterialVolume, MaterialVolumeOptions};

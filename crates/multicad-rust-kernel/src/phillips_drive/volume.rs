@@ -281,6 +281,15 @@ fn subdivision_point(lo: f64, hi: f64) -> Result<f64, Error> {
         Ok(mid)
     }
 }
+/// Accounted query workspace for the existing bounded evaluator. With <=6
+/// initial cells, work grows by2 and live cells by1 per split. Both Cell Vec
+/// and BinaryHeap therefore hold <=(limit+6)/2 values; pinned geometric growth
+/// plus simultaneous old/new reallocation buffers fit the conservative4x
+/// bound. Knots/Sections/interval temporaries fit the fixed8KiB reserve. This
+/// is logical workspace, not allocator fragmentation or RSS; limit<=1M.
+pub(super) fn scratch_budget_bytes(limit: usize) -> usize {
+    4 * (limit + 7) * (std::mem::size_of::<Cell>() + std::mem::size_of::<(u64, usize)>()) + 8192
+}
 pub(super) fn compute(
     c: &Cutter,
     width: f64,

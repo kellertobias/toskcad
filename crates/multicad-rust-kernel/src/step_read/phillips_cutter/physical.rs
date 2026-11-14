@@ -337,3 +337,5 @@ pub use body::{
 };
 
 pub use body::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSource};
+
+pub use body::{MaterialVolume, MaterialVolumeOptions};

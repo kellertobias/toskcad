@@ -271,5 +271,9 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
         })
     }
 }
+
 #[cfg(test)]
 mod tests;
+
+mod volume;
+pub use volume::{MaterialVolume, MaterialVolumeOptions};

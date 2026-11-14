@@ -1094,3 +1094,8 @@ pub use phillips_cutter::{
     DerivedClosedMaterial as PhillipsDerivedClosedMaterial,
     MaterialFaceSource as PhillipsMaterialFaceSource,
 };
+
+pub use phillips_cutter::{
+    MaterialVolume as PhillipsMaterialVolume,
+    MaterialVolumeOptions as PhillipsMaterialVolumeOptions,
+};

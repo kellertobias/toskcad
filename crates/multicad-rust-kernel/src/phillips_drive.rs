@@ -279,6 +279,10 @@ impl Cutter {
     ) -> Result<VolumeBounds, Error> {
         self.volume_bounds_with_cancel(width_mm3, work_limit, &|| false)
     }
+    /// Aggregate source queries supply the already validated<=1M limit.
+    pub(crate) fn volume_scratch_budget_bytes(limit: usize) -> usize {
+        volume::scratch_budget_bytes(limit)
+    }
     /// Work counts each section-cell evaluation, including initial cells.
     /// Limits above one million evaluations exceed this routine’s resource cap.
     pub fn volume_bounds_with_cancel(

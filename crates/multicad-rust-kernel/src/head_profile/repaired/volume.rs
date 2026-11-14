@@ -40,6 +40,10 @@ impl<'h, 'p> RepairedHeadVolume<'h, 'p> {
     pub fn work_used(&self) -> usize {
         self.work
     }
+    /// Internal aggregate callers validate1<=cells<=CELLS before querying.
+    pub(crate) fn scratch_budget_bytes(cells: usize) -> usize {
+        4 * (cells + 1) * std::mem::size_of::<Cell>() + SCRATCH
+    }
 }
 #[derive(Clone, Copy)]
 struct Cell {
@@ -101,8 +105,7 @@ impl<'p> RepairedHeadMeridian<'p> {
         }
         let peak = std::mem::size_of::<RepairedHeadVolume<'_, '_>>()
             + self.retained_budget_bytes()
-            + 4 * (options.maximum_cells + 1) * std::mem::size_of::<Cell>()
-            + SCRATCH;
+            + RepairedHeadVolume::scratch_budget_bytes(options.maximum_cells);
         if peak > options.maximum_bytes {
             return Err(RepairedHeadError::Limit);
         }
