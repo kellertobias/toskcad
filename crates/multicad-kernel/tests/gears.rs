@@ -105,10 +105,16 @@ fn rust_spur_axial_drawing_preserves_visible_flanks_and_bore() {
         },
         ..options
     };
-    assert_eq!(
-        project_drawing(&inputs, oblique).unwrap_err().kind,
-        GeometryErrorKind::Unsupported
-    );
+    // The side view draws through the scene engine (CAD-346): its extent is
+    // the exact bounding rectangle of the body in X and Z.
+    let side = project_drawing(&inputs, oblique).unwrap();
+    let bounds = inputs[0].solid.bounds().unwrap();
+    for (k, axis) in [0, 2].into_iter().enumerate() {
+        let values = side.iter().flat_map(|v| v.preview_mm.iter().map(|p| p[k]));
+        let low = values.clone().fold(f64::INFINITY, f64::min);
+        let high = values.fold(f64::NEG_INFINITY, f64::max);
+        assert!((low - bounds.min[axis]).abs() < 1e-9 && (high - bounds.max[axis]).abs() < 1e-9);
+    }
 }
 
 #[test]

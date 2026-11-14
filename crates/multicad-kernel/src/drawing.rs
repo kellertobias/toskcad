@@ -322,9 +322,20 @@ fn project_rust(
             return projection;
         }
         if let [input] = solids
-            && let Some(projection) = section::oblique::project_oblique_bore(input, options, depth)
+            && input.solid.oblique_bore_body().is_some()
         {
-            return projection;
+            // The exact cut face, and retained stock that lies wholly behind
+            // it. A finite depth adds a far face, which draws as a scene.
+            if (options.section_only || options.section_depth_mm.is_none())
+                && let Some(projection) =
+                    section::oblique::project_oblique_bore(input, options, depth)
+            {
+                return projection;
+            }
+            return Err(err(
+                GeometryErrorKind::Unsupported,
+                "Rust retained oblique bore sections draw through the scene engine",
+            ));
         }
         if let [input] = solids
             && input.solid.annulus_body().is_some()

@@ -116,4 +116,6 @@ mod prism;
 mod profile;
 mod publish;
 pub(in crate::drawing) use engine::{SceneMember, project};
-pub(in crate::drawing) use families::project_solids;
+// `member` is the per-family registration point for scene members.
+#[allow(unused_imports)]
+pub(in crate::drawing) use families::{member, project_solids};

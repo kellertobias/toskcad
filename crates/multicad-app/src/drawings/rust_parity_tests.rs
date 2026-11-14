@@ -267,13 +267,14 @@ fn rust_worker_draws_bored_stock_and_gear_sections_through_edits_cancellation_an
         original.views
     );
     let warm = started.elapsed();
-    // Hidden edges behind a curved retained section are an explicit finding.
+    // Hidden edges behind a curved retained section draw through the scene
+    // engine (CAD-346): the cut face and the retained outline of the bored
+    // plate. Every rear edge of this view coincides with a visible one.
     let finding = preview(&mut worker, &f.session, f.findings.id);
-    assert!(matches!(
-        &finding.views[&f.findings.views[0].id],
-        ViewEvaluation::Unresolved { message }
-            if message.contains("cannot yet show hidden or tangent edges")
-    ));
+    let hidden = vectors(&finding, f.findings.views[0].id);
+    for role in [VectorRole::Section, VectorRole::Visible] {
+        assert!(hidden.iter().any(|vector| vector.role == role), "{role:?}");
+    }
 
     // A cancelled request publishes nothing, and the worker accepts the next one.
     worker

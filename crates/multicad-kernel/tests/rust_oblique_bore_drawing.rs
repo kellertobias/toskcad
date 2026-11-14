@@ -311,6 +311,52 @@ fn audit() -> (Solid, V, V) {
     (cut(&stock([10, 10, 10]), &tool), base, axis)
 }
 
+/// Lines as ordered end pairs and conics as center, semi-axes and total sweep,
+/// rounded to a nanometre and sorted.
+fn canonical(vectors: &[&ProjectedVector]) -> (Vec<[i64; 4]>, Vec<[i64; 5]>) {
+    let round = |value: f64| (value * 1e9).round() as i64;
+    let mut lines = Vec::new();
+    let mut conics: Vec<[i64; 5]> = Vec::new();
+    for vector in vectors {
+        match vector.curve {
+            VectorCurve::Line { a, b } => {
+                let [a, b] = [a.map(round), b.map(round)];
+                let [first, second] = if a <= b { [a, b] } else { [b, a] };
+                lines.push([first[0], first[1], second[0], second[1]]);
+            }
+            VectorCurve::Ellipse {
+                center,
+                major_mm,
+                minor_mm,
+                start_rad,
+                end_rad,
+                ..
+            } => {
+                let key = [
+                    round(center[0]),
+                    round(center[1]),
+                    round(major_mm),
+                    round(minor_mm),
+                ];
+                // Sweeps add over the pieces of one conic; compare them to a
+                // microradian.
+                let sweep = ((end_rad - start_rad) * 1e12).round() as i64;
+                match conics.iter_mut().find(|known| known[..4] == key) {
+                    Some(known) => known[4] += sweep,
+                    None => conics.push([key[0], key[1], key[2], key[3], sweep]),
+                }
+            }
+            _ => panic!("unexpected curve"),
+        }
+    }
+    for conic in &mut conics {
+        conic[4] = (conic[4] as f64 / 1e6).round() as i64;
+    }
+    lines.sort_unstable();
+    conics.sort_unstable();
+    (lines, conics)
+}
+
 #[test]
 fn corner_cuts_along_the_bore_axis_publish_retained_and_finite_sections() {
     let (solid, base, axis) = audit();
@@ -357,18 +403,18 @@ fn corner_cuts_along_the_bore_axis_publish_retained_and_finite_sections() {
                 .iter()
                 .filter(|v| v.role == VectorRole::Visible)
                 .collect();
-            assert_eq!(
-                sections.iter().map(|v| &v.curve).collect::<Vec<_>>(),
-                only.iter()
-                    .filter(|v| v.role == VectorRole::Section)
-                    .map(|v| &v.curve)
-                    .collect::<Vec<_>>(),
-                "{label} {offset}"
-            );
+            // The same curves, whichever provider publishes them: equal line
+            // sets up to direction and order, and equal conics by center,
+            // semi-axes and total sweep.
+            let only: Vec<_> = only
+                .iter()
+                .filter(|v| v.role == VectorRole::Section)
+                .collect();
+            assert_eq!(canonical(&sections), canonical(&only), "{label} {offset}");
             // Retained geometry behind the cut coincides with its boundary.
             assert_eq!(
-                visible.iter().map(|v| &v.curve).collect::<Vec<_>>(),
-                sections.iter().map(|v| &v.curve).collect::<Vec<_>>(),
+                canonical(&visible),
+                canonical(&sections),
                 "{label} {offset}"
             );
         }
@@ -502,6 +548,99 @@ fn oblique_bore_sections_match_the_native_open_cascade_cut() {
             true,
             &format!("oblique bore {label} section only"),
         );
+    }
+}
+
+/// Plain views and general retained sections drawn by the scene engine
+/// (CAD-346), against native hidden-line removal of the native cut.
+#[cfg(feature = "occt")]
+#[test]
+fn oblique_bore_views_and_retained_sections_match_native_open_cascade() {
+    let center = [5., 4., 3.];
+    let axis = normalized([1., 0.5, 1.]);
+    let base = [0, 1, 2].map(|i| center[i] - 10. * axis[i]);
+    let policy = GeometryPolicy::default();
+    let rust = cut(&stock([10, 8, 6]), &cylinder(base, axis, 1, false, 20));
+    let native = Solid::box_solid([10., 8., 6.], policy)
+        .unwrap()
+        .boolean(
+            &Solid::cylinder(frame(base, axis), 1., 20., policy).unwrap(),
+            BooleanOperation::Subtract,
+            policy,
+        )
+        .unwrap()
+        .unwrap();
+    for (label, frame) in [
+        (
+            "top",
+            PlaneFrame {
+                origin: [0., 0., 3.],
+                ..Default::default()
+            },
+        ),
+        (
+            "front",
+            PlaneFrame {
+                origin: [0., 4., 0.],
+                u: [1., 0., 0.],
+                v: [0., 0., 1.],
+            },
+        ),
+        ("oblique", frame_from(center, normalized([1., -1., 2.]))),
+        ("along the bore", frame_from(center, axis)),
+    ] {
+        let view = DrawingProjection {
+            frame,
+            hidden_lines: true,
+            ..Default::default()
+        };
+        let section = DrawingProjection {
+            section_offset_mm: Some(0.),
+            ..view
+        };
+        for (case, options) in [
+            ("view", view),
+            (
+                "detail",
+                DrawingProjection {
+                    detail: Some(([0.3, 0.2], 2.5)),
+                    ..view
+                },
+            ),
+            ("section", section),
+            (
+                "finite depth",
+                DrawingProjection {
+                    section_depth_mm: Some(1.5),
+                    ..section
+                },
+            ),
+            (
+                "window",
+                DrawingProjection {
+                    section_u_mm: Some([-1.5, 2.25]),
+                    section_v_mm: Some([-2., 1.75]),
+                    ..section
+                },
+            ),
+        ] {
+            let vectors = project_drawing(
+                &[DrawingSolid {
+                    solid: &rust,
+                    hatch: None,
+                }],
+                options,
+            )
+            .unwrap();
+            native_drawing::assert_matches_reference(
+                &vectors,
+                &[&native],
+                options,
+                &[],
+                true,
+                &format!("oblique bore {label} {case}"),
+            );
+        }
     }
 }
 
