@@ -2777,7 +2777,7 @@ impl Solid {
                     self.policy.linear_tolerance_mm,
                 )
             }
-            SolidBody::WoodInsert(body, frame) => body.supports_step(*frame),
+            SolidBody::WoodInsert(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::CosmeticFastener(..)
             | SolidBody::InternalThreadTreatment(..)
             | SolidBody::Hanger(..) => false,

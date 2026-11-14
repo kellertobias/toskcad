@@ -53,9 +53,12 @@ fn step_error(e: GeometryError) -> step::StepError {
     }
 }
 impl WoodInsertBody {
-    pub(in crate::geometry) fn supports_step(&self, frame: PlaneFrame) -> bool {
-        // Posed emission is opened only after actual MAPPED graph binding.
-        frame == PlaneFrame::default()
+    pub(in crate::geometry) fn supports_step(
+        &self,
+        frame: PlaneFrame,
+        policy: GeometryPolicy,
+    ) -> bool {
+        self.material(frame, policy).is_ok()
     }
     pub(super) fn with_plan<T>(
         &self,
@@ -83,11 +86,12 @@ impl WoodInsertBody {
             insert::TopologyPlan::prepare(&surface, WORK, BYTES, interrupt).map_err(plan_error)?;
         f(&topology)
     }
-    fn verify_local(
+    fn verify_candidate(
         &self,
         topology: &insert::TopologyPlan<'_, '_, '_>,
         text: &str,
         capacity_slack: usize,
+        frame: PlaneFrame,
         policy: GeometryPolicy,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<WoodInsertStepVerification, GeometryError> {
@@ -105,8 +109,30 @@ impl WoodInsertBody {
             maximum_work: WORK,
             retained_budget_bytes: read_bytes,
         };
-        let actual = read::parse(text, options, interrupt).map_err(read_error)?;
-        self.verify_parsed(topology, &actual, read_bytes, fixed, policy, interrupt)
+        let file = read::File::parse(text, options, interrupt).map_err(read_error)?;
+        let [member] = file.represented_members() else {
+            return Err(fail(
+                GeometryErrorKind::InvalidResult,
+                "Insert candidate must have one actual occurrence",
+            ));
+        };
+        let actual = file
+            .member(member.item_entity(), options, interrupt)
+            .map_err(read_error)?;
+        let proof = self.verify_parsed(topology, &actual, read_bytes, fixed, policy, interrupt)?;
+        if let Some(link) = member.mapping_link() {
+            let mapping = actual
+                .physical_mapping(link.operator_entity(), options, interrupt)
+                .map_err(read_error)?;
+            super::step_pose::transport(&self.source, frame, topology, &mapping, proof, interrupt)
+        } else if frame == PlaneFrame::default() {
+            Ok(proof)
+        } else {
+            Err(fail(
+                GeometryErrorKind::InvalidResult,
+                "Placed source requires an explicit STEP map",
+            ))
+        }
     }
     pub(super) fn verify_parsed(
         &self,
@@ -182,27 +208,58 @@ impl WoodInsertBody {
         frame: PlaneFrame,
         policy: GeometryPolicy,
     ) -> Result<(), step::StepError> {
-        if !self.supports_step(frame) {
+        if !self.supports_step(frame, policy) {
             return Err(step::StepError::Unsupported);
         }
         self.with_plan(policy, None, |topology| {
-            let text =
-                insert::write_local_candidate(topology, WORK, BYTES, None).map_err(plan_error)?;
-            self.verify_local(topology, &text, text.capacity() - text.len(), policy, None)?;
+            let local = frame == PlaneFrame::default();
+            let text = if local {
+                insert::write_local_candidate(topology, WORK, BYTES, None)
+            } else {
+                insert::write_mapped_candidate(
+                    topology,
+                    frame.origin,
+                    frame.u,
+                    frame.v,
+                    WORK,
+                    BYTES,
+                    None,
+                )
+            }
+            .map_err(plan_error)?;
+            self.verify_candidate(
+                topology,
+                &text,
+                text.capacity() - text.len(),
+                frame,
+                policy,
+                None,
+            )?;
             drop(text);
             // The same immutable topology and encoder emit identical numeric
             // leaves under entity renumbering; existing members retain their
             // own identities through the writer's typed transaction.
-            writer
-                .append_owned_insert_local(topology, WORK, BYTES, None)
-                .map_err(plan_error)
+            if local {
+                writer.append_owned_insert_local(topology, WORK, BYTES, None)
+            } else {
+                writer.append_owned_insert_mapped_candidate(
+                    topology,
+                    frame.origin,
+                    frame.u,
+                    frame.v,
+                    WORK,
+                    BYTES,
+                    None,
+                )
+            }
+            .map_err(plan_error)
         })
         .map_err(step_error)
     }
 }
 impl Solid {
     /// Independent actual file mass plus a distinct measured correspondence
-    /// receipt. Currently one local insert; unrelated/posed files refuse.
+    /// receipt. Exactly one actual local or explicitly mapped occurrence.
     pub fn verify_wood_insert_step_source(
         &self,
         text: &str,
@@ -220,15 +277,8 @@ impl Solid {
             linear_tolerance_mm: self.policy.linear_tolerance_mm.min(tolerance),
             ..self.policy
         };
-        Some(if body.supports_step(frame) {
-            body.with_plan(policy, interrupt, |topology| {
-                body.verify_local(topology, text, 0, policy, interrupt)
-            })
-        } else {
-            Err(fail(
-                GeometryErrorKind::Unsupported,
-                "Actual placed insert STEP mapping is not yet admitted",
-            ))
-        })
+        Some(body.with_plan(policy, interrupt, |topology| {
+            body.verify_candidate(topology, text, 0, frame, policy, interrupt)
+        }))
     }
 }

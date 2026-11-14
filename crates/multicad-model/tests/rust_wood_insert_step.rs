@@ -124,3 +124,124 @@ fn canonical_insert_runs_the_complete_project_export_job() {
     );
     assert_eq!(s.document(), &before);
 }
+
+#[test]
+fn saved_nonbinary_placed_insert_project_runs_normal_export_for_both_hands() {
+    use multicad_core::{
+        document::EntityId,
+        exchange::{Scope, ScopeRoot, SetDefinition, prepare_set},
+        project_file::{self, ProjectFile},
+    };
+    use multicad_model::export::Exporter;
+    let actor = Actor::local(Channel::Mcp);
+    let mut session = Session::new(Document::new("Placed insert project export").unwrap()).unwrap();
+    let mut bodies = Vec::new();
+    for (left, origin) in [(false, [11., -7., 5.]), (true, [-23., 17., 31.])] {
+        let mut parameters = default_custom_connection_wood_insert();
+        let MechanicalPartParameters::CustomConnection { parameters: custom } = &mut parameters
+        else {
+            panic!()
+        };
+        let CustomConnectionHardwareParameters::WoodInsert {
+            outer_thread,
+            inner_thread,
+            frame,
+        } = custom.as_mut()
+        else {
+            panic!()
+        };
+        outer_thread.length = length(4.3);
+        inner_thread.length = length(4.3);
+        outer_thread.hand = if left {
+            ThreadHand::Left
+        } else {
+            ThreadHand::Right
+        };
+        inner_thread.hand = outer_thread.hand;
+        *frame = PrimitiveFrame {
+            origin: origin.map(length),
+            u: [0.8, 0.6, 0.],
+            v: [-0.36, 0.48, 0.8],
+        };
+        let request = MechanicalPartRequest::new(
+            if left { "Left insert" } else { "Right insert" },
+            parameters,
+        );
+        session
+            .commit(
+                prepare_mechanical_part(&session, session.revision(), actor.clone(), &request)
+                    .unwrap()
+                    .prepared,
+            )
+            .unwrap();
+        bodies.push(request.body);
+    }
+    let set = EntityId::new();
+    session
+        .commit(
+            prepare_set(
+                &session,
+                session.revision(),
+                actor.clone(),
+                set,
+                "Placed insert exports",
+                &SetDefinition {
+                    scope: Scope {
+                        root: ScopeRoot::Explicit { entities: bodies },
+                        tags: None,
+                    },
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let before = session.document().clone();
+    let mut bytes = Vec::new();
+    project_file::write(
+        &ProjectFile::new(before.clone()).unwrap(),
+        &mut bytes,
+        Default::default(),
+    )
+    .unwrap();
+    let opened = project_file::read(
+        &mut std::io::Cursor::new(bytes),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap();
+    assert_eq!(opened.project.document, before);
+    let exporter = Exporter::default();
+    let preview = exporter
+        .preview(&opened.project.document, 0, set, &actor, None)
+        .unwrap();
+    assert!(preview.can_run(), "{preview:?}");
+    let directory = tempfile::tempdir().unwrap();
+    let result = exporter
+        .run(
+            &opened.project.document,
+            0,
+            &preview.key,
+            directory.path(),
+            &actor,
+            None,
+        )
+        .unwrap();
+    assert_eq!(result.files.len(), 2);
+    for artifact in &result.files {
+        let path = std::path::Path::new(&result.directory).join(&artifact.artifact.output.filename);
+        let text = std::fs::read_to_string(path).unwrap();
+        let file = multicad_kernel::rust_kernel::step_read::owned_insert::File::parse(
+            &text,
+            Default::default(),
+            None,
+        )
+        .unwrap();
+        let [member] = file.represented_members() else {
+            panic!("exactly one actual exported occurrence")
+        };
+        assert!(member.mapping_link().is_some());
+    }
+    assert_eq!(opened.project.document, before);
+    assert_eq!(session.document(), &before);
+}

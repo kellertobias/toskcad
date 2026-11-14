@@ -236,3 +236,171 @@ fn actual_mapped_insert_checks_raw_frame_correspondence_and_both_volume_authorit
         );
     }
 }
+
+#[test]
+fn normal_native_insert_export_supports_real_placements_and_mixed_assemblies() {
+    let policy = GeometryPolicy::default();
+    let frames = [
+        PlaneFrame {
+            origin: [10., 20., 30.],
+            u: [1., 0., 0.],
+            v: [0., -1., 0.],
+        },
+        PlaneFrame {
+            origin: [1e6, -2e6, 3e6],
+            u: [0.8, 0.6, 0.],
+            v: [0.36, -0.48, -0.8],
+        },
+    ];
+    let directory = tempfile::tempdir().unwrap();
+    let mut inserts = Vec::new();
+    for (left, frame) in [false, true]
+        .into_iter()
+        .flat_map(|h| frames.map(|f| (h, f)))
+    {
+        let solid = Solid::rust_wood_insert(
+            crate::geometry::wood_insert_world_tests::source(left),
+            EntityId::new(),
+            frame,
+            policy,
+            None,
+        )
+        .unwrap();
+        assert!(solid.supports_step_export());
+        let path = directory.path().join("placed.step");
+        solid
+            .write_step(&path)
+            .expect("normal write_step must admit a proved mapped insert");
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("MAPPED_ITEM"));
+        let proof = solid
+            .verify_wood_insert_step_source(&text, 1e-7, None)
+            .unwrap()
+            .unwrap();
+        assert!(proof.maximum_position_error_mm <= 1e-7);
+        assert!(proof.decoded_volume_bounds_mm3[0] <= 231.37317864323353);
+        assert!(proof.decoded_volume_bounds_mm3[1] >= 231.37317864323353);
+        inserts.push(solid);
+    }
+    let sphere = Solid::rust_sphere_named(
+        1.,
+        PlaneFrame {
+            origin: [20., 0., 0.],
+            ..Default::default()
+        },
+        EntityId::new(),
+        policy,
+    )
+    .unwrap();
+    let compound = Solid::compound_named(
+        &[&inserts[0], &sphere, &inserts[3]],
+        EntityId::new(),
+        policy,
+    )
+    .unwrap();
+    let path = directory.path().join("posed-mixed.step");
+    compound.write_step(&path).unwrap();
+    let text = std::fs::read_to_string(path).unwrap();
+    let proof = compound
+        .verify_wood_insert_step_compound(&text, 1e-7, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(proof.members.solid_count, 3);
+    assert_eq!(
+        proof
+            .members
+            .retained_members
+            .iter()
+            .map(|m| m.member_index)
+            .collect::<Vec<_>>(),
+        [0, 2]
+    );
+    assert_eq!(proof.members.decoded_scalar_members.len(), 1);
+    assert_eq!(proof.members.decoded_scalar_members[0].0, 1);
+    assert_eq!(proof.insert_correspondence.len(), 2);
+    assert!(
+        compound
+            .verify_wood_insert_step_compound(&text, 0., None)
+            .unwrap()
+            .is_err()
+    );
+}
+
+#[test]
+fn mixed_insert_and_retained_thread_keep_separate_actual_mass_enclosures() {
+    use crate::HelicalThread;
+    let policy = GeometryPolicy::default();
+    let insert = Solid::rust_wood_insert(
+        crate::geometry::wood_insert_world_tests::source(false),
+        EntityId::new(),
+        PlaneFrame::default(),
+        policy,
+        None,
+    )
+    .unwrap();
+    let profile = HelicalThread {
+        major_radius_mm: 4.,
+        pitch_mm: 1.25,
+        length_mm: 1.25,
+        depth_mm: 0.5,
+        crest_width_mm: 0.25,
+        lower_flank_deg: 12.,
+        upper_flank_deg: 18.,
+        radial_taper: 0.03125,
+        starts: 2,
+        left_hand: true,
+    };
+    let frame = PlaneFrame {
+        origin: [20., 0., 0.],
+        ..Default::default()
+    };
+    let thread = Solid::rust_retained_helical_thread_with_interrupt(
+        profile,
+        EntityId::new(),
+        frame,
+        policy,
+        None,
+    )
+    .unwrap();
+    let compound = Solid::compound_named(&[&thread, &insert], EntityId::new(), policy).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("retained-mixed.step");
+    compound.write_step(&path).unwrap();
+    let text = std::fs::read_to_string(path).unwrap();
+    let proof = compound
+        .verify_wood_insert_step_compound(&text, 1e-7, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(proof.members.solid_count, 2);
+    assert_eq!(proof.members.retained_members.len(), 2);
+    assert!(proof.members.decoded_scalar_members.is_empty());
+    assert_eq!(proof.insert_correspondence.len(), 1);
+    for (index, mass) in proof.members.retained_members.iter().enumerate() {
+        assert_eq!(mass.member_index, index as u32);
+        assert!(mass.decoded_volume_bounds_mm3[0] > 0.);
+        assert!(mass.source_volume_bounds_mm3[0] > 0.);
+    }
+    let wrong_thread = Solid::rust_retained_helical_thread_with_interrupt(
+        HelicalThread {
+            depth_mm: 0.4,
+            ..profile
+        },
+        EntityId::new(),
+        frame,
+        policy,
+        None,
+    )
+    .unwrap();
+    let wrong = Solid::compound_named(&[&wrong_thread, &insert], EntityId::new(), policy).unwrap();
+    assert!(
+        wrong
+            .verify_wood_insert_step_compound(&text, 1e-7, None)
+            .unwrap()
+            .is_err()
+    );
+    assert!(
+        thread
+            .verify_wood_insert_step_compound(&text, 1e-7, None)
+            .is_none()
+    );
+}
