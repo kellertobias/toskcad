@@ -132,3 +132,91 @@ fn native_actual_tiny_trim_sources_produce_mapped_material_candidates_without_ad
         assert_eq!(source.full_length_mm().to_bits(), length.to_bits());
     }
 }
+
+#[test]
+fn actual_tiny_trim_mixed_export_checks_mapping_source_and_atomic_cancellation() {
+    let policy = GeometryPolicy::default();
+    let frame = PlaneFrame {
+        origin: [40., -18., 7.],
+        u: [0.8, 0.6, 0.],
+        v: [-0.36, 0.48, 0.8],
+    };
+    let source = actual_source(4_f64.next_up(), true);
+    let insert = Solid::rust_wood_insert(source, EntityId::new(), frame, policy, None).unwrap();
+    let sphere = Solid::rust_sphere_named(
+        1.,
+        PlaneFrame {
+            origin: [20., 0., 0.],
+            ..Default::default()
+        },
+        EntityId::new(),
+        policy,
+    )
+    .unwrap();
+    let mixed = Solid::compound_named(&[&sphere, &insert], EntityId::new(), policy).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("actual-mixed-tiny-insert.step");
+    mixed.write_step(&path).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let proof = mixed
+        .verify_wood_insert_step_compound(&text, 1e-7, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(proof.members.solid_count, 2);
+    assert_eq!(proof.members.retained_members.len(), 1);
+    assert_eq!(proof.members.decoded_scalar_members.len(), 1);
+    assert_eq!(proof.insert_correspondence[0].0, 1);
+    assert!(proof.insert_correspondence[0].1.maximum_position_error_mm <= 1e-7);
+    let cancelled = mixed
+        .verify_wood_insert_step_compound(&text, 1e-7, Some(&|| true))
+        .unwrap()
+        .err()
+        .unwrap();
+    assert_eq!(cancelled.kind, GeometryErrorKind::Cancelled);
+    let document = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+    let member = document.represented_members()[1];
+    let op = member.mapping_link().unwrap().operator_entity();
+    let prefix = format!("#{op}=");
+    let record = text.lines().find(|l| l.starts_with(&prefix)).unwrap();
+    let attributes = record
+        .split("CARTESIAN_TRANSFORMATION_OPERATOR(")
+        .nth(1)
+        .unwrap()
+        .split(')')
+        .next()
+        .unwrap();
+    let scale = attributes.rsplit(',').next().unwrap();
+    let changed_record = record.replacen(&format!(",{scale})"), ",1.)", 1);
+    assert_ne!(changed_record, record);
+    let changed = text.replacen(record, &changed_record, 1);
+    assert!(
+        mixed
+            .verify_wood_insert_step_compound(&changed, 1e-7, None)
+            .unwrap()
+            .is_err()
+    );
+    // Matching local geometry and scale do not authorize another occurrence.
+    let origin_id: u32 = attributes
+        .split(',')
+        .nth(2)
+        .unwrap()
+        .trim()
+        .trim_start_matches('#')
+        .parse()
+        .unwrap();
+    let origin_prefix = format!("#{origin_id}=");
+    let origin_record = text
+        .lines()
+        .find(|l| l.starts_with(&origin_prefix))
+        .unwrap();
+    let shifted_record = format!("#{origin_id}=CARTESIAN_POINT('',(41.,-18.,7.));");
+    let shifted = text.replacen(origin_record, &shifted_record, 1);
+    let error = mixed
+        .verify_wood_insert_step_compound(&shifted, 1e-7, None)
+        .unwrap()
+        .err()
+        .unwrap();
+    assert_eq!(error.kind, GeometryErrorKind::InvalidResult);
+    assert_eq!(std::fs::read_to_string(path).unwrap(), text);
+    assert_eq!(insert.rust_wood_insert_data().unwrap().source, source);
+}

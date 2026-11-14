@@ -408,3 +408,6 @@ mod step_resource_tests;
 
 #[cfg(test)]
 mod step_coupled_candidate_tests;
+
+mod step_coupled;
+mod step_coupled_pose;

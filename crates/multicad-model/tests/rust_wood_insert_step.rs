@@ -334,3 +334,115 @@ fn composite_entry_boundary_receipts_never_invent_decoded_mass() {
         serde_json::from_value(encoded).unwrap();
     assert_eq!(reopened, receipt);
 }
+
+#[test]
+fn adjacent_binary_length_insert_projects_use_the_normal_export_and_reopen_contract() {
+    use multicad_core::project_file::{self, ProjectFile};
+    for (extent, left, posed) in [
+        (4_f64.next_up(), false, false),
+        (4_f64.next_up(), true, true),
+        (4_f64.next_down(), false, true),
+        (4.5, true, false),
+    ] {
+        let mut session =
+            Session::new(Document::new("Exact finite insert export").unwrap()).unwrap();
+        let mut parameters = default_custom_connection_wood_insert();
+        let MechanicalPartParameters::CustomConnection { parameters: custom } = &mut parameters
+        else {
+            panic!()
+        };
+        let CustomConnectionHardwareParameters::WoodInsert {
+            outer_thread,
+            inner_thread,
+            frame,
+        } = custom.as_mut()
+        else {
+            panic!()
+        };
+        outer_thread.length = length(extent);
+        inner_thread.length = length(extent);
+        outer_thread.hand = if left {
+            ThreadHand::Left
+        } else {
+            ThreadHand::Right
+        };
+        inner_thread.hand = outer_thread.hand;
+        if posed {
+            *frame = PrimitiveFrame {
+                origin: [40., -18., 7.].map(length),
+                u: [0.8, 0.6, 0.],
+                v: [-0.36, 0.48, 0.8],
+            };
+        }
+        let request = MechanicalPartRequest::new("Actual finite insert", parameters);
+        session
+            .commit(
+                prepare_mechanical_part(
+                    &session,
+                    session.revision(),
+                    Actor::local(Channel::Mcp),
+                    &request,
+                )
+                .unwrap()
+                .prepared,
+            )
+            .unwrap();
+        let before = session.document().clone();
+        let mut bytes = Vec::new();
+        project_file::write(
+            &ProjectFile::new(before.clone()).unwrap(),
+            &mut bytes,
+            Default::default(),
+        )
+        .unwrap();
+        let reopened = project_file::read(
+            &mut bytes.as_slice(),
+            Default::default(),
+            &project_file::supported_capabilities(),
+        )
+        .unwrap()
+        .project;
+        assert_eq!(reopened.document, before);
+        let model = Compiler {
+            omit_display: true,
+            ..Default::default()
+        }
+        .compile_with_backend(&reopened.document, 0, GeometryBackend::Rust, None)
+        .unwrap();
+        let solid = model.solid(request.feature).unwrap();
+        let data = solid.rust_wood_insert_data().unwrap();
+        assert_eq!(
+            data.source.outer().full_length_mm().to_bits(),
+            extent.to_bits()
+        );
+        assert_eq!(
+            data.source.inner().full_length_mm().to_bits(),
+            extent.to_bits()
+        );
+        assert_eq!(data.source.outer().spec().left_hand, left);
+        assert_eq!(data.source.inner().spec().left_hand, left);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("exact-insert.step");
+        solid.write_step(&path).unwrap();
+        let shape = &model.snapshot().shapes[&request.feature];
+        let proof = verify_rust_step_shape_receipt(&path, solid, shape, 1e-7).unwrap();
+        assert_eq!(
+            proof.method,
+            StepVerificationMethod::DecodedBoundaryEnclosure
+        );
+        assert_eq!(proof.retained_members.len(), 1);
+        assert_eq!(proof.source_correspondence.len(), 1);
+        assert!(proof.source_correspondence[0].maximum_position_error_mm <= 1e-7);
+        assert!(proof.source_correspondence[0].row_derivative_error_mm <= 1e-6);
+        let member = &proof.retained_members[0];
+        assert!(member.decoded_volume_bounds_mm3[0] > 0.);
+        assert!(
+            member.source_volume_bounds_mm3[0] <= shape.volume_mm3
+                && shape.volume_mm3 <= member.source_volume_bounds_mm3[1]
+        );
+        let mut stale = shape.as_ref().clone();
+        stale.volume_mm3 *= 1.01;
+        assert!(verify_rust_step_shape_receipt(&path, solid, &stale, 1e-7).is_err());
+        assert_eq!(session.document(), &before);
+    }
+}

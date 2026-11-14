@@ -104,7 +104,7 @@ impl Solid {
                         linear_tolerance_mm: leaf.policy.linear_tolerance_mm.min(tolerance),
                         ..leaf.policy
                     };
-                    let proof = body.with_plan(policy, interrupt, |topology| {
+                    let legacy = body.with_plan(policy, interrupt, |topology| {
                         let bytes = BYTES
                             .checked_sub(topology.retained_bytes().saturating_add(8192))
                             .filter(|&n| n > 0)
@@ -149,7 +149,57 @@ impl Solid {
                         } else {
                             Ok(proof)
                         }
-                    })?;
+                    });
+                    let proof = match legacy {
+                        Ok(proof) => Ok(proof),
+                        Err(cause) if cause.kind == GeometryErrorKind::Cancelled => Err(cause),
+                        Err(previous) => {
+                            body.material(frame, policy)?;
+                            body.with_coupled_plan(policy, interrupt, |topology| {
+                                let bytes = BYTES
+                                    .checked_sub(topology.retained_bytes().saturating_add(8192))
+                                    .filter(|&n| n > 0)
+                                    .ok_or_else(|| {
+                                        fail(
+                                            GeometryErrorKind::Limit,
+                                            "Coupled member proof storage limit",
+                                        )
+                                    })?;
+                                let options = read::Options {
+                                    retained_budget_bytes: bytes,
+                                    ..Default::default()
+                                };
+                                let link = actual[0].mapping_link().ok_or_else(|| {
+                                    fail(
+                                        GeometryErrorKind::InvalidResult,
+                                        "Coupled member needs its coefficient-unit mapping",
+                                    )
+                                })?;
+                                let packet = file
+                                    .member_packet(actual[0].item_entity(), options, interrupt)
+                                    .map_err(read_error)?;
+                                let parsed = packet.parsed();
+                                let mapping = parsed
+                                    .physical_mapping(link.operator_entity(), options, interrupt)
+                                    .map_err(read_error)?;
+                                body.verify_coupled_parsed(
+                                    topology,
+                                    parsed,
+                                    &mapping,
+                                    super::step_coupled::ParsedProofScope {
+                                        available: bytes,
+                                        fixed: 8192,
+                                        frame,
+                                        policy,
+                                    },
+                                    interrupt,
+                                )
+                            })
+                            .map_err(|alternative| {
+                                super::step_coupled::preserve_failure(previous, alternative)
+                            })
+                        }
+                    }?;
                     result
                         .members
                         .retained_members

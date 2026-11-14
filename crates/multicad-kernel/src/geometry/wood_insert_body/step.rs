@@ -213,6 +213,22 @@ impl WoodInsertBody {
         frame: PlaneFrame,
         policy: GeometryPolicy,
     ) -> Result<(), step::StepError> {
+        // Retain the existing fast qualified representation whenever it works.
+        // Both appenders roll back their own rejected writer transactions.
+        match self.append_legacy_step(writer, frame, policy) {
+            Ok(()) => Ok(()),
+            Err(step::StepError::Unsupported | step::StepError::Limit) => self
+                .append_coupled_step(writer, frame, policy)
+                .map_err(step_error),
+            Err(cause) => Err(cause),
+        }
+    }
+    fn append_legacy_step(
+        &self,
+        writer: &mut step::Writer,
+        frame: PlaneFrame,
+        policy: GeometryPolicy,
+    ) -> Result<(), step::StepError> {
         if !self.supports_step(frame, policy) {
             return Err(step::StepError::Unsupported);
         }
@@ -282,8 +298,17 @@ impl Solid {
             linear_tolerance_mm: self.policy.linear_tolerance_mm.min(tolerance),
             ..self.policy
         };
-        Some(body.with_plan(policy, interrupt, |topology| {
+        let legacy = body.with_plan(policy, interrupt, |topology| {
             body.verify_candidate(topology, text, 0, frame, policy, interrupt)
-        }))
+        });
+        Some(match legacy {
+            Ok(proof) => Ok(proof),
+            Err(cause) if cause.kind == GeometryErrorKind::Cancelled => Err(cause),
+            Err(previous) => body
+                .verify_coupled_step(text, frame, policy, interrupt)
+                .map_err(|alternative| {
+                    super::step_coupled::preserve_failure(previous, alternative)
+                }),
+        })
     }
 }
