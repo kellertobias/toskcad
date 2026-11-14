@@ -281,3 +281,37 @@ impl<'b, 'c, 'i> MaterialBounds<'b, 'c, 'i> {
         })
     }
 }
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    #[test]
+    fn an_exhausted_shared_ledger_cannot_restart_exact_original_numeric_work() {
+        let text = crate::step_read::owned_insert::tests::file(false);
+        let parsed =
+            crate::step_read::owned_insert::parse(&text, Options::default(), None).unwrap();
+        let scalar = parsed.points()[0].coordinates()[0];
+        let mut memory = Memory::new(0, 64 * 1024 * 1024).unwrap();
+        let mut w = Ledger {
+            used: 0,
+            remaining: 1,
+            interrupt: None,
+        };
+        w.step(1).unwrap();
+        assert!(matches!(
+            equal(scalar, 0, &[], 0, &mut memory, &mut w, None),
+            Err(Error::Limit)
+        ));
+        assert_eq!(w.used, 1);
+        assert_eq!(memory.used, 0);
+        let mut available = Ledger {
+            used: 0,
+            remaining: 16_000_000,
+            interrupt: None,
+        };
+        // The same immutable original leaf remains queryable with a genuinely
+        // new caller budget; the failed query did not mutate its authority.
+        assert!(equal(scalar, 0, &[], 0, &mut memory, &mut available, None).is_ok());
+        assert!(available.used > 0 && available.remaining < 16_000_000);
+    }
+}

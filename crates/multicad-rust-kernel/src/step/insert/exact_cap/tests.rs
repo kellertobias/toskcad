@@ -170,3 +170,97 @@ fn actual_proof_work_storage_cancellation_and_decimal_size_are_bounded() {
     ));
     assert!(run(&values, false, 16_000_000, SCRATCH, None).unwrap() > 0.);
 }
+
+#[test]
+fn exact_numeric_leaf_caches_reject_arena_rebinding_and_oversized_requests() {
+    let a = [String::from("1."), String::from("2."), String::from("3.")];
+    let b = a.clone();
+    let mut memory = Memory::new(0, SCRATCH + 4096).unwrap();
+    let mut w = Work::new(16_000_000, None).unwrap();
+    let mut memo = DecimalMemo::new(1, &mut memory, &mut w).unwrap();
+    let point = LiteralPoint {
+        index: 0,
+        coordinates: std::array::from_fn(|i| a[i].as_str()),
+    };
+    assert_eq!(
+        memo.point(point, &mut memory, &mut w).unwrap()[0].0,
+        BigRational::from_integer(1.into())
+    );
+    assert!(matches!(
+        memo.point(
+            LiteralPoint {
+                index: 0,
+                coordinates: std::array::from_fn(|i| b[i].as_str())
+            },
+            &mut memory,
+            &mut w
+        ),
+        Err(Error::Invalid)
+    ));
+    // Real same-arena reuse remains valid after an unrelated arena was refused.
+    assert!(memo.point(point, &mut memory, &mut w).is_ok());
+    memo.release(&mut memory);
+    for (numerator, bits) in [(vec![1; 2049], 0), (vec![1], 16384)] {
+        let mut memory = Memory::new(0, SCRATCH).unwrap();
+        assert!(matches!(
+            equals_dyadic("1.", 1, &numerator, bits, &mut memory, &mut w),
+            Err(Error::Limit)
+        ));
+    }
+    let mut memory = Memory::new(0, SCRATCH).unwrap();
+    let long = format!("1{}.", "0".repeat(512));
+    assert!(matches!(
+        equals_dyadic(&long, 1, &[1], 0, &mut memory, &mut w),
+        Err(Error::Limit)
+    ));
+}
+
+#[test]
+fn finite_literal_tensor_controls_refuse_false_corner_factors_and_overflowing_derivatives() {
+    for case in 0..3 {
+        let values: [[[String; 3]; 12]; 2] = std::array::from_fn(|r| {
+            std::array::from_fn(|i| {
+                let x = match case {
+                    0 => {
+                        if r == 0 {
+                            "0."
+                        } else {
+                            "1."
+                        }
+                    }
+                    1 => {
+                        if i % 2 == 0 {
+                            "1E308"
+                        } else {
+                            "-1E308"
+                        }
+                    }
+                    _ => {
+                        if r == 0 {
+                            "0."
+                        } else if i % 2 == 0 {
+                            "1E307"
+                        } else {
+                            "-1E307"
+                        }
+                    }
+                };
+                [x.into(), i.to_string(), r.to_string()]
+            })
+        });
+        let tokens = std::array::from_fn(|r| {
+            std::array::from_fn(|i| LiteralPoint {
+                index: r * 12 + i,
+                coordinates: std::array::from_fn(|a| values[r][i][a].as_str()),
+            })
+        });
+        let mut memory = Memory::new(0, SCRATCH + 1024 * 1024).unwrap();
+        let mut w = Work::new(16_000_000, None).unwrap();
+        let mut memo = DecimalMemo::new(24, &mut memory, &mut w).unwrap();
+        let result = tensor_differentials(tokens, case == 0, &mut memo, &mut memory, &mut w);
+        assert!(matches!(
+            (case, result),
+            (0, Err(Error::Invalid)) | (1 | 2, Err(Error::Unresolved))
+        ));
+    }
+}

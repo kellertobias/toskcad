@@ -85,3 +85,28 @@ fn actual_bernstein_positive_and_tangent_controls_subdivide_or_refuse() {
         }
     }
 }
+
+#[test]
+fn finite_ruled_projection_honors_every_actual_work_frontier() {
+    let p = |values: &[f64]| P::controls(&values.iter().map(|v| I::point(*v)).collect::<Vec<_>>());
+    // Actual noncollapsed affine patch S=[1+u,t,u], with negative
+    // cylindrical projection determinant -(1+u) on the entire square.
+    let a = [p(&[1., 1.]), p(&[0., 1.]), p(&[0., 0.])];
+    let b = [p(&[2., 2.]), p(&[0., 1.]), p(&[1., 1.])];
+    let mut complete = Work::new(16_000_000, None).unwrap();
+    let expected = jacobian([a, b], false, &mut complete).unwrap();
+    assert!(expected.iter().all(|p| p.hull().hi < 0.));
+    for limit in 1..complete.used {
+        let mut short = Work::new(limit, None).unwrap();
+        assert!(matches!(
+            jacobian([a, b], false, &mut short),
+            Err(Error::Limit)
+        ));
+        assert!(short.used <= limit);
+    }
+    let mut retry = Work::new(complete.used, None).unwrap();
+    let actual = jacobian([a, b], false, &mut retry).unwrap();
+    for (a, b) in actual.iter().zip(expected) {
+        assert_eq!([a.hull().lo, a.hull().hi], [b.hull().lo, b.hull().hi]);
+    }
+}

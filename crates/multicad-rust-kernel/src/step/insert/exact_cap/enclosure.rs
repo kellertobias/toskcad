@@ -77,6 +77,19 @@ mod tests {
                 assert!(BigRational::from_float(bound.hi).unwrap() >= value.0);
             }
         }
+        // Joint exponent normalization must handle a ratio near one whose
+        // numerator and denominator individually exceed binary64's range.
+        for negative in [false, true] {
+            let huge = BigInt::from(1) << 4096_usize;
+            let n = &huge + BigInt::from(1);
+            let value = N(BigRational::new(
+                if negative { -n } else { n },
+                &huge - BigInt::from(1),
+            ));
+            let bound = rational(&value, &mut w).unwrap();
+            assert!(BigRational::from_float(bound.lo).unwrap() <= value.0);
+            assert!(BigRational::from_float(bound.hi).unwrap() >= value.0);
+        }
         let finite = decimal("1E308", &mut w).unwrap();
         let large_derivative = finite.mul(&N::integer(11), &mut w).unwrap();
         assert!(matches!(

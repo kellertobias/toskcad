@@ -157,7 +157,7 @@ fn actual_source_plan_resource_cancel_precision_refusals_allow_unchanged_retry()
     };
     let baseline = CoupledPlan::prepare(&body, CurveOptions::default(), Some(&count)).unwrap();
     let total = callbacks.get();
-    for point in [0, total / 2, total - 1] {
+    for point in (0..128).map(|i| total * i / 128).chain([total - 1]) {
         let calls = Cell::new(0);
         let stop = || {
             let n = calls.get();
@@ -175,6 +175,20 @@ fn actual_source_plan_resource_cancel_precision_refusals_allow_unchanged_retry()
             CurveOptions {
                 work: baseline.work_used() - 1,
                 ..CurveOptions::default()
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    // Measured actual default-source prerequisite frontier: 216726 weighted
+    // operations admit the original angular/domain proofs but cannot retain
+    // the next shared-row cache request. This is a real caller budget refusal.
+    assert!(matches!(
+        CoupledPlan::prepare(
+            &body,
+            CurveOptions {
+                work: 216726,
+                ..Default::default()
             },
             None
         ),
@@ -331,6 +345,49 @@ fn actual_point_inventory_rejects_incomplete_or_wrong_literal_aliases_without_ch
             registry.complete(&mut w),
             if omit { Err(Error::Unresolved) } else { Ok(()) }
         );
+        // A real alias can be registered repeatedly by the same source row;
+        // a different occupied row cannot rebind it to unrelated coefficients.
+        let (row_index, endpoint, vertex) = plan
+            .rows()
+            .iter()
+            .enumerate()
+            .find_map(|(i, r)| {
+                r.endpoint_owners().iter().enumerate().find_map(|(e, o)| {
+                    if let surfaces::VertexOwner::Original(k) = o {
+                        Some((i, e, *k))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap();
+        let mut separate = aliases::Registry::prepare(&body, &mut memory, &mut w).unwrap();
+        let actual_row = &plan.rows()[row_index];
+        separate
+            .bind(vertex, actual_row, row_index, endpoint, plan.rows(), &mut w)
+            .unwrap();
+        separate
+            .bind(vertex, actual_row, row_index, endpoint, plan.rows(), &mut w)
+            .unwrap();
+        let wrong = plan
+            .rows()
+            .iter()
+            .enumerate()
+            .find(|(_, r)| {
+                r.coefficients()[0]
+                    .iter()
+                    .zip(&actual_row.coefficients()[endpoint * 11])
+                    .any(|(a, b)| {
+                        a.signum() != b.signum()
+                            || a.numerator_magnitude_le() != b.numerator_magnitude_le()
+                    })
+            })
+            .unwrap();
+        assert_eq!(
+            separate.bind(vertex, wrong.1, wrong.0, 0, plan.rows(), &mut w),
+            Err(Error::Unresolved)
+        );
+        separate.release(&mut memory);
         let row = &plan.rows()[0];
         assert!(matches!(
             registry.bind(
@@ -387,6 +444,45 @@ fn real_domain_capabilities_reject_wrong_source_and_missing_angular_refinement()
         &mut w,
     )
     .unwrap();
+    // Genuine capabilities from two immutable source arenas cannot be mixed.
+    // A valid same-source row also refuses a tighter real coefficient budget.
+    let other_curve = admitted::Curve::load(&b, &mut memory, &mut w, None).unwrap();
+    let other_original = b.original(&other_curve, &mut w).unwrap();
+    let refined =
+        DomainPlan::prepare_with_knots(&first, unit.knots(), DomainOptions::default(), None)
+            .unwrap();
+    memory
+        .add(refined.retained_bytes() - first.retained_bytes())
+        .unwrap();
+    let refined_registry = admitted::Registry::prepare(&refined, &mut memory, &mut w).unwrap();
+    let mut checked = false;
+    for request in refined_registry.iter() {
+        if let Ok(span) = request.angular(&unit, &mut w) {
+            let angular = rows::angular_slice(span, &mut w).unwrap();
+            assert!(matches!(
+                rows::row(&angular, &other_original, CurveOptions::default(), &mut w),
+                Err(Error::Invalid)
+            ));
+            let own_curve = admitted::Curve::load(&request, &mut memory, &mut w, None).unwrap();
+            let original = request.original(&own_curve, &mut w).unwrap();
+            assert!(matches!(
+                rows::row(
+                    &angular,
+                    &original,
+                    CurveOptions {
+                        position_error_mm: 1e-30,
+                        derivative_error_mm: 1e-30,
+                        ..Default::default()
+                    },
+                    &mut w
+                ),
+                Err(Error::Unresolved)
+            ));
+            checked = true;
+            break;
+        }
+    }
+    assert!(checked);
     let mut refused = false;
     for row in r1.iter() {
         if matches!(row.angular(&unit, &mut w), Err(Error::Unresolved)) {
@@ -395,4 +491,56 @@ fn real_domain_capabilities_reject_wrong_source_and_missing_angular_refinement()
         }
     }
     assert!(refused);
+}
+
+#[test]
+fn exact_grid_numeric_domain_and_real_domain_station_limits_are_bounded() {
+    let mut w = Work::new(16_000_000, None).unwrap();
+    let huge = N(BigRational::new(
+        BigInt::from(1) << 16304_usize,
+        BigInt::from(1),
+    ));
+    assert!(matches!(
+        number::Grid::rational(&huge, BITS, &mut w),
+        Err(Error::Limit)
+    ));
+    let ordinary = N(BigRational::new(BigInt::from(3), BigInt::from(2)));
+    assert_eq!(
+        number::Grid::rational(&ordinary, 1, &mut w).unwrap().0,
+        BigInt::from(3)
+    );
+    let body = crate::step_read::owned_insert::tests::graph(false, 4.);
+    for knots in [
+        vec![0., 0.],
+        vec![0., f64::NAN],
+        vec![-1., 1.],
+        vec![0.; 1026],
+    ] {
+        assert!(matches!(
+            DomainPlan::prepare_with_knots(&body, &knots, DomainOptions::default(), None),
+            Err(Error::Invalid)
+        ));
+    }
+    // These are additional actual requested subdivision stations, not source
+    // replacements. The same sealed graph must refuse insufficient storage.
+    let knots: Vec<_> = (0..=1024).map(|i| i as f64 / 1024.).collect();
+    assert!(matches!(
+        DomainPlan::prepare_with_knots(
+            &body,
+            &knots,
+            DomainOptions {
+                maximum_stations: 32,
+                ..Default::default()
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    let plan = CoupledPlan::prepare(&body, CurveOptions::default(), None).unwrap();
+    for bytes in [0, 64 * 1024 * 1024 + 1] {
+        assert!(matches!(
+            topology::CoupledTopology::prepare(&plan, 16_000_000, bytes, None),
+            Err(Error::Invalid)
+        ));
+    }
 }

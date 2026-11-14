@@ -30,6 +30,132 @@ fn matched_status(
     let result = m.coupled_source_correspondence(top, &map, Default::default(), None)?;
     Ok((result.work_used(), result.retained_budget_bytes()))
 }
+// Rename actual entity declarations AND all references; geometric ownership is
+// unchanged while the canonical source-to-file ordering is independently tested.
+fn exchange_entity_ids(text: &str, a: u32, b: u32) -> String {
+    let mut out = String::with_capacity(text.len());
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'#' {
+            let start = i + 1;
+            let mut end = start;
+            while end < bytes.len() && bytes[end].is_ascii_digit() {
+                end += 1;
+            }
+            let id: u32 = text[start..end].parse().unwrap();
+            out.push('#');
+            out.push_str(
+                &if id == a {
+                    b
+                } else if id == b {
+                    a
+                } else {
+                    id
+                }
+                .to_string(),
+            );
+            i = end;
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    out
+}
+#[test]
+fn actual_entity_reindexing_preserves_material_but_not_canonical_source_ownership() {
+    use crate::step_read::owned_insert::{
+        CompoundDocument, DocumentOptions, Error as ReadError, Options,
+    };
+    let source = crate::step_read::owned_insert::tests::graph(false, 4.);
+    let plan = CoupledPlan::prepare(&source, CurveOptions::default(), None).unwrap();
+    let top = CoupledTopology::prepare(&plan, 16_000_000, 64 * 1024 * 1024, None).unwrap();
+    let text = top
+        .write_mapped_candidate(
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            16_000_000,
+            64 * 1024 * 1024,
+            None,
+        )
+        .unwrap();
+    let doc = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+    let packet = doc
+        .member_packet(
+            doc.represented_members()[0].item_entity(),
+            Options::default(),
+            None,
+        )
+        .unwrap();
+    let p = packet.parsed();
+    let rows = plan.rows().len();
+    // Actual distinct ruling endpoints are reused by the whole file after the
+    // renaming; the correspondence must still preserve source vertex aliases.
+    for (a, b) in [(rows, rows + 1), (0, rows)] {
+        let changed = exchange_entity_ids(&text, p.edges()[a].entity(), p.edges()[b].entity());
+        assert!(matches!(
+            matched_status(&changed, &top),
+            Err(ReadError::Unsupported)
+        ));
+    }
+    // Reordering actual FACE entities preserves their supports, orientation and
+    // wires, but cannot silently assign their occupied domains to source keys.
+    let first = p.faces()[0].entity();
+    let last = p.faces().last().unwrap().entity();
+    let shell = text.lines().find(|l| l.contains("CLOSED_SHELL(")).unwrap();
+    let changed_shell = exchange_entity_ids(shell, first, last);
+    let changed = text.replacen(shell, &changed_shell, 1);
+    assert!(matches!(
+        matched_status(&changed, &top),
+        Err(ReadError::Unsupported)
+    ));
+    // Distinct triangle/quad patches can have the same face orientation; a
+    // face permutation must not erase the actual finite loop arity.
+    let pair = top
+        .faces()
+        .iter()
+        .enumerate()
+        .find_map(|(i, a)| {
+            top.faces().iter().enumerate().find_map(|(j, b)| {
+                (i < j
+                    && a.same_sense == b.same_sense
+                    && a.loops.len() == b.loops.len()
+                    && a.loops
+                        .iter()
+                        .zip(&b.loops)
+                        .any(|(a, b)| a.len() != b.len()))
+                .then_some((i, j))
+            })
+        })
+        .unwrap();
+    let changed_shell = exchange_entity_ids(
+        shell,
+        p.faces()[pair.0].entity(),
+        p.faces()[pair.1].entity(),
+    );
+    assert!(matches!(
+        matched_status(&text.replacen(shell, &changed_shell, 1), &top),
+        Err(ReadError::Unsupported)
+    ));
+    // A cyclic rotation has exactly the same geometric oriented wire, while
+    // the source-correspondence protocol still requires the earned start edge.
+    let bound = &p.faces()[0].loops()[0];
+    let loop_id = bound.entity();
+    let changed = change_record(&text, loop_id, |line| {
+        let start = line.find("(#").unwrap() + 1;
+        let end = line.rfind(')').unwrap() - 1;
+        let mut fields: Vec<_> = line[start..end].split(',').collect();
+        fields.rotate_left(1);
+        format!("{}{}{}", &line[..start], fields.join(","), &line[end..])
+    });
+    assert!(matches!(
+        matched_status(&changed, &top),
+        Err(ReadError::Unsupported)
+    ));
+    assert!(matched_status(&text, &top).is_ok());
+}
 #[test]
 fn output_growth_admits_old_and_new_buffers_before_allocation() {
     let mut writer = Writer::new();
@@ -103,6 +229,21 @@ fn source_match_rejects_real_unit_and_sub_float_integer_changes_without_healing(
         .next()
         .unwrap();
     let scale = attrs.rsplit(',').next().unwrap();
+    let axis2: u32 = attrs
+        .split(',')
+        .nth(1)
+        .unwrap()
+        .trim_start_matches('#')
+        .parse()
+        .unwrap();
+    let reflected = change_record(&text, axis2, |line| {
+        let at = line.find("DIRECTION(").unwrap();
+        format!("{}DIRECTION('',(0.,-1.,0.));", &line[..at])
+    });
+    assert!(matches!(
+        matched_status(&reflected, &top),
+        Err(ReadError::Unsupported)
+    ));
     for other in ["1.", "$"] {
         let changed = change_record(&text, op, |s| {
             s.replacen(&format!(",{scale})"), &format!(",{other})"), 1)
@@ -112,6 +253,14 @@ fn source_match_rejects_real_unit_and_sub_float_integer_changes_without_healing(
             Err(ReadError::Unsupported)
         ));
     }
+    let other_source = crate::step_read::owned_insert::tests::graph(false, 8.);
+    let other_plan = CoupledPlan::prepare(&other_source, CurveOptions::default(), None).unwrap();
+    let other_top =
+        CoupledTopology::prepare(&other_plan, 16_000_000, 64 * 1024 * 1024, None).unwrap();
+    assert!(matches!(
+        matched_status(&text, &other_top),
+        Err(ReadError::Unsupported)
+    ));
     let height = 4. / plan.coefficient_unit_mm();
     let point = p
         .points()
@@ -649,4 +798,258 @@ fn actual_mapped_numerator_candidates_keep_literal_material_inside_original_quer
         assert!(physical.valid() && physical.lo > 0. && physical.hi < 1000.);
         assert!(physical.width() <= 1e-6);
     }
+}
+
+#[test]
+fn actual_coupled_transaction_cancellation_sweep_restores_all_published_members() {
+    use std::cell::Cell;
+    let source = crate::step_read::owned_insert::tests::graph(false, 4.);
+    let plan = CoupledPlan::prepare(&source, CurveOptions::default(), None).unwrap();
+    let top = CoupledTopology::prepare(&plan, 16_000_000, 64 * 1024 * 1024, None).unwrap();
+    let mut original = Writer::new();
+    original
+        .append_sphere(
+            crate::sphere::Sphere::new(1.).unwrap(),
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+        )
+        .unwrap();
+    let before = original.finish();
+    let count = Cell::new(0_usize);
+    let poll = || {
+        count.set(count.get() + 1);
+        false
+    };
+    let mut baseline = Writer::new();
+    baseline
+        .append_sphere(
+            crate::sphere::Sphere::new(1.).unwrap(),
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+        )
+        .unwrap();
+    baseline
+        .append_coupled_insert_candidate(
+            &top,
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            16_000_000,
+            64 * 1024 * 1024,
+            Some(&poll),
+        )
+        .unwrap();
+    let expected = baseline.finish();
+    assert!(matches!(
+        top.write_mapped_candidate(
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            1,
+            64 * 1024 * 1024,
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    for bytes in [0, 64 * 1024 * 1024 + 1] {
+        let mut invalid = Writer::new();
+        assert_eq!(
+            invalid.append_coupled_insert_candidate(
+                &top,
+                [0.; 3],
+                [1., 0., 0.],
+                [0., 1., 0.],
+                16_000_000,
+                bytes,
+                None
+            ),
+            Err(Error::Invalid)
+        );
+    }
+    let total = count.get();
+    // Interrupt actual in-flight formatting, rows, surface/PCurve construction,
+    // graph publication and representation mapping. Every interrupted attempt
+    // must restore the original sphere, IDs and bytes; retry is deterministic.
+    for stop_at in (0..1024)
+        .map(|i| total * i / 1024)
+        .chain(0..64)
+        .chain((total - 128)..total)
+    {
+        let mut writer = Writer::new();
+        writer
+            .append_sphere(
+                crate::sphere::Sphere::new(1.).unwrap(),
+                [0.; 3],
+                [1., 0., 0.],
+                [0., 1., 0.],
+            )
+            .unwrap();
+        let calls = Cell::new(0_usize);
+        let stop = || {
+            let n = calls.get();
+            calls.set(n + 1);
+            n >= stop_at
+        };
+        assert_eq!(
+            writer.append_coupled_insert_candidate(
+                &top,
+                [0.; 3],
+                [1., 0., 0.],
+                [0., 1., 0.],
+                16_000_000,
+                64 * 1024 * 1024,
+                Some(&stop)
+            ),
+            Err(Error::Cancelled)
+        );
+        assert_eq!(writer.finish(), before);
+    }
+    // Locate the actual publication frontier of the finite 2D trim context
+    // through cancelled real transactions. Bisection observes emitted records,
+    // rather than assuming a fixed callback count from producer internals.
+    let mut absent = 0;
+    let mut present = total;
+    while present - absent > 1 {
+        let stop_at = absent + (present - absent) / 2;
+        let mut writer = Writer::new();
+        writer
+            .append_sphere(
+                crate::sphere::Sphere::new(1.).unwrap(),
+                [0.; 3],
+                [1., 0., 0.],
+                [0., 1., 0.],
+            )
+            .unwrap();
+        let calls = Cell::new(0);
+        let stop = || {
+            let n = calls.get();
+            calls.set(n + 1);
+            n >= stop_at
+        };
+        let seen = Cell::new(false);
+        let result = writer.append_typed(|file| {
+            let result = encode(
+                file,
+                &top,
+                16_000_000,
+                64 * 1024 * 1024,
+                Some(&stop),
+                [[0.; 3], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+            );
+            seen.set(file.data.contains("2D SPACE"));
+            result
+        });
+        assert_eq!(result, Err(Error::Cancelled));
+        assert_eq!(writer.finish(), before);
+        if seen.get() {
+            present = stop_at;
+        } else {
+            absent = stop_at;
+        }
+    }
+    assert!(absent > 0 && present < total);
+    let mut retry = Writer::new();
+    retry
+        .append_sphere(
+            crate::sphere::Sphere::new(1.).unwrap(),
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+        )
+        .unwrap();
+    retry
+        .append_coupled_insert_candidate(
+            &top,
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            16_000_000,
+            64 * 1024 * 1024,
+            None,
+        )
+        .unwrap();
+    assert_eq!(retry.finish(), expected);
+}
+
+#[test]
+fn near_stationary_actual_cap_controls_refuse_unqualified_material_without_healing() {
+    use crate::step_read::owned_insert::{CompoundDocument, DocumentOptions, Options};
+    let source = crate::step_read::owned_insert::tests::graph(false, 4.);
+    let plan = CoupledPlan::prepare(&source, CurveOptions::default(), None).unwrap();
+    let top = CoupledTopology::prepare(&plan, 16_000_000, 64 * 1024 * 1024, None).unwrap();
+    let text = top
+        .write_mapped_candidate(
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            16_000_000,
+            64 * 1024 * 1024,
+            None,
+        )
+        .unwrap();
+    let doc = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+    let packet = doc
+        .member_packet(
+            doc.represented_members()[0].item_entity(),
+            Options::default(),
+            None,
+        )
+        .unwrap();
+    let p = packet.parsed();
+    let b = p.support_bindings(Options::default(), None).unwrap();
+    let curve = b
+        .cap_face_indices()
+        .into_iter()
+        .flat_map(|i| p.faces()[i].loops())
+        .flat_map(|l| l.coedges())
+        .find_map(|c| {
+            let e = p.edge(c.edge).unwrap();
+            let curve = p.curve(e.curve_entity()).unwrap();
+            let first = p.point(curve.pole_entities()[0]).unwrap().coordinates();
+            (first[0].value() > 0. && first[1].value() == 0.).then_some(curve)
+        })
+        .unwrap();
+    let first = p.point(curve.pole_entities()[0]).unwrap().coordinates();
+    let second = p.point(curve.pole_entities()[1]).unwrap().coordinates();
+    let mut changed = text.clone();
+    for point in p.points() {
+        let c = point.coordinates();
+        if c.len() >= 2
+            && c[0].spelling() == second[0].spelling()
+            && c[1].spelling() == second[1].spelling()
+        {
+            changed = change_record(&changed, point.entity(), |_| {
+                format!(
+                    "#{}=CARTESIAN_POINT('',({},1.{}));",
+                    point.entity(),
+                    first[0].spelling(),
+                    if c.len() == 3 {
+                        format!(",{}", c[2].spelling())
+                    } else {
+                        String::new()
+                    }
+                )
+            });
+        }
+    }
+    let doc = CompoundDocument::parse(&changed, DocumentOptions::default(), None).unwrap();
+    let packet = doc
+        .member_packet(
+            doc.represented_members()[0].item_entity(),
+            Options::default(),
+            None,
+        )
+        .unwrap();
+    let b = packet
+        .parsed()
+        .support_bindings(Options::default(), None)
+        .unwrap();
+    let result = b.material_bounds(Options::default(), None);
+    assert!(matches!(
+        result,
+        Err(crate::step_read::owned_insert::Error::Unsupported)
+    ));
+    assert!(matched_status(&text, &top).is_ok());
 }

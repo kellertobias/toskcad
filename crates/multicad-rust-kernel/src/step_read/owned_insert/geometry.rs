@@ -878,6 +878,26 @@ mod predicate_tests {
         assert_eq!(ids, vec![0, 0, 1, 1, 2]);
     }
     #[test]
+    fn finite_convex_control_hulls_refuse_overflowing_radial_norms() {
+        let mut w = Work::new(16_000_000, None).unwrap();
+        let row = [
+            P::controls(&[I::point(1e308)]),
+            P::controls(&[I::point(1e308)]),
+            P::controls(&[I::point(0.)]),
+        ];
+        assert!(matches!(
+            convex_radius([row; 2], &mut w),
+            Err(Error::Unsupported)
+        ));
+        let ordinary = [
+            P::controls(&[I::point(3.)]),
+            P::controls(&[I::point(4.)]),
+            P::controls(&[I::point(0.)]),
+        ];
+        let bounds = convex_radius([ordinary; 2], &mut w).unwrap();
+        assert!(bounds.lo <= 5. && bounds.hi >= 5.);
+    }
+    #[test]
     fn ray_and_homotopy_proofs_refuse_ambiguous_axis_crossings_and_origin_hulls() {
         let mut w = Work::new(16_000_000, None).unwrap();
         let p = |x, y| [I::point(x), I::point(y), I::point(0.)];
