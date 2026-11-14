@@ -8,7 +8,7 @@ pub struct PeriodicAngular {
     work: usize,
     bytes: usize,
 }
-fn radial_proof(position_error: f64, derivative_error: f64) -> Result<f64, Error> {
+pub(super) fn radial_proof(position_error: f64, derivative_error: f64) -> Result<f64, Error> {
     let tau = I::new(
         std::f64::consts::TAU.next_down(),
         std::f64::consts::TAU.next_up(),

@@ -13,6 +13,11 @@ mod domain;
 pub use domain::{DomainOptions, RootFaceDomain, TrimBounds};
 mod periodic;
 pub use periodic::PeriodicAngular;
+mod encoded;
+pub use encoded::{
+    CapEndpoint, CapTrace, EncodedCell, EncodedControl, EncodedField, EncodedMeridian,
+    EncodedScalar,
+};
 mod body_field;
 pub use body_field::{BodyField, CellSurface, FieldBounds, FieldControl};
 mod field;
