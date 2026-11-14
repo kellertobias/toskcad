@@ -27,6 +27,9 @@ mod wood_insert_material;
 pub use wood_insert_material::{WoodInsertFaceProperties, WoodInsertMaterial};
 mod hanger_material;
 pub use hanger_material::HangerMaterial;
+mod hanger_body;
+use hanger_body::HangerBody;
+pub use hanger_body::HangerData;
 mod helical_body;
 mod helical_tube_body;
 mod herringbone_body;
@@ -710,6 +713,7 @@ enum SolidBody {
     RoundedThreadBore(Rc<RoundedThreadBoreBody>, PlaneFrame),
     InternalThreadTreatment(Rc<InternalThreadTreatmentBody>, PlaneFrame),
     WoodInsert(Rc<WoodInsertBody>, PlaneFrame),
+    Hanger(Rc<HangerBody>, PlaneFrame),
     HelicalTubeCut(Rc<HelicalTubeBody>, PlaneFrame),
     Linear(Rc<LinearBody>, PlaneFrame),
     Revolved(Rc<RevolutionBody>, PlaneFrame),
@@ -1175,6 +1179,7 @@ impl Solid {
                 SolidBody::InternalThreadTreatment(Rc::clone(body), *frame)
             }
             SolidBody::WoodInsert(body, frame) => SolidBody::WoodInsert(Rc::clone(body), *frame),
+            SolidBody::Hanger(body, frame) => SolidBody::Hanger(Rc::clone(body), *frame),
             SolidBody::RoundedThread(body, frame) => {
                 SolidBody::RoundedThread(Rc::clone(body), *frame)
             }
@@ -1523,6 +1528,11 @@ impl Solid {
                     )?;
                     SolidBody::Annulus(Rc::clone(body), frame)
                 }
+                SolidBody::Hanger(body, frame) => {
+                    let frame = transform.frame(*frame);
+                    body.material(frame, self.policy)?;
+                    SolidBody::Hanger(Rc::clone(body), frame)
+                }
                 SolidBody::WoodInsert(body, frame) => {
                     let frame = transform.frame(*frame);
                     body.material(frame, self.policy)?;
@@ -1703,6 +1713,9 @@ impl Solid {
         Ok(result)
     }
     pub fn volume_mm3(&self) -> Result<f64, GeometryError> {
+        if let Some((body, frame)) = self.hanger_body() {
+            return body.volume(frame, self.policy);
+        }
         if let Some((body, frame)) = self.wood_insert_body() {
             let material = body.material(frame, self.policy)?;
             let b = material.source();
@@ -1853,6 +1866,9 @@ impl Solid {
         ffi::solid_count(self.occt()?).map_err(|e| native("solid count", e))
     }
     pub fn bounds(&self) -> Result<Bounds, GeometryError> {
+        if let Some((body, frame)) = self.hanger_body() {
+            return Ok(body.material(frame, self.policy)?.bounds());
+        }
         if let Some((body, frame)) = self.wood_insert_body() {
             return body.material(frame, self.policy)?.bounds();
         }
@@ -2028,6 +2044,9 @@ impl Solid {
         crate::planar_contours::extract(self, face, frame, self.policy)
     }
     pub fn faces(&self) -> Result<Vec<Face>, GeometryError> {
+        if let Some((body, _)) = self.hanger_body() {
+            return Err(body.references_pending());
+        }
         if let Some((body, frame)) = self.wood_insert_body() {
             return body.material(frame, self.policy)?.faces(self.policy, None);
         }
@@ -2229,6 +2248,9 @@ impl Solid {
             ),
             SolidBody::EntryChamfer(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::InternalThreadTreatment(body, frame) => body.mesh(*frame, rust_options),
+            SolidBody::Hanger(body, frame) => {
+                body.material(*frame, self.policy)?.mesh(options, None)
+            }
             SolidBody::WoodInsert(body, frame) => body.material(*frame, self.policy)?.mesh(
                 MeshOptions {
                     linear_deflection_mm: rust_options.deflection,
@@ -2353,6 +2375,7 @@ impl Solid {
             || self.has_retained_radial_source()
             || self.internal_thread_treatment_body().is_some()
             || self.wood_insert_body().is_some()
+            || self.hanger_body().is_some()
             || self
                 .rust_compound()
                 .is_some_and(|compound| compound.members().any(Self::has_certified_source_mesh))
@@ -2669,6 +2692,7 @@ impl Solid {
             SolidBody::EntryChamfer(body, _) => body.feature,
             SolidBody::InternalThreadTreatment(body, _) => body.feature,
             SolidBody::WoodInsert(body, _) => body.feature,
+            SolidBody::Hanger(body, _) => body.feature,
             SolidBody::Helical(body, _) => body.feature,
             SolidBody::RoundedThreadBore(body, _) => body.feature,
             SolidBody::RoundedThread(body, _) => body.feature,
@@ -2747,7 +2771,8 @@ impl Solid {
             }
             SolidBody::CosmeticFastener(..)
             | SolidBody::InternalThreadTreatment(..)
-            | SolidBody::WoodInsert(..) => false,
+            | SolidBody::WoodInsert(..)
+            | SolidBody::Hanger(..) => false,
             SolidBody::WarpedUnion(body, _) => {
                 multicad_rust_kernel::step::supports_warped_union(&body.geometry)
             }
@@ -2960,7 +2985,8 @@ impl Solid {
             ),
             SolidBody::CosmeticFastener(..)
             | SolidBody::InternalThreadTreatment(..)
-            | SolidBody::WoodInsert(..) => Err(step::StepError::Unsupported),
+            | SolidBody::WoodInsert(..)
+            | SolidBody::Hanger(..) => Err(step::StepError::Unsupported),
             SolidBody::Orthogonal(body, frame) => body.append_step(writer, *frame),
             SolidBody::Occt(_) => unreachable!("native STEP dispatched above"),
         }

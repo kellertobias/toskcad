@@ -24,6 +24,93 @@ fn actual_uncapped_metric_wall_is_not_a_closed_manufacturing_solid() {
     assert_eq!(failure.operation, "Rust authored hanger manufacturing mesh");
     assert_eq!(source, before);
 }
+
+#[test]
+fn connected_hanger_solid_retains_source_through_share_and_actual_pose() {
+    let source = source(true, true);
+    let feature = EntityId::new();
+    let policy = GeometryPolicy::default();
+    let solid = Solid::rust_hanger(source, feature, PlaneFrame::default(), policy, None).unwrap();
+    assert_eq!(solid.solid_count().unwrap(), 1);
+    assert_eq!(
+        solid.rust_hanger_data(),
+        Some(HangerData {
+            source,
+            frame: PlaneFrame::default()
+        })
+    );
+    let shared = solid.share().unwrap();
+    assert_eq!(shared.rust_hanger_data(), solid.rust_hanger_data());
+    let original_volume = solid.volume_mm3().unwrap();
+    let transform = RigidTransform {
+        rotation: [[0.8, -0.36, 0.48], [0.6, 0.48, -0.64], [0., 0.8, 0.6]],
+        translation_mm: [11., -7., 5.],
+    };
+    let placed = solid.transformed(transform).unwrap();
+    assert_eq!(
+        placed.rust_hanger_data(),
+        Some(HangerData {
+            source,
+            frame: transform.frame(PlaneFrame::default())
+        })
+    );
+    assert!((placed.volume_mm3().unwrap() - original_volume).abs() < 1e-7);
+    let proof = placed
+        .manufacturing_mesh_with_receipt(MeshOptions::default())
+        .unwrap();
+    assert!(proof.edge_pairs > 0 && proof.vertex_links > 0);
+    let bounds = placed.bounds().unwrap();
+    for point in proof.mesh.vertices.as_chunks::<3>().0 {
+        for (axis, coordinate) in point.iter().enumerate() {
+            assert!(bounds.min[axis] <= *coordinate && *coordinate <= bounds.max[axis]);
+        }
+    }
+    assert_eq!(
+        solid.rust_hanger_data().unwrap().frame,
+        PlaneFrame::default()
+    );
+    assert_eq!(solid.rust_hanger_data().unwrap().source, source);
+}
+
+#[test]
+fn incomplete_hanger_interfaces_refuse_without_occt_or_partial_files() {
+    let source = source(false, false);
+    let feature = EntityId::new();
+    let policy = GeometryPolicy::default();
+    assert_eq!(
+        Solid::rust_hanger(source, EntityId::nil(), PlaneFrame::default(), policy, None)
+            .err()
+            .unwrap()
+            .kind,
+        GeometryErrorKind::Input
+    );
+    assert_eq!(
+        Solid::rust_hanger(
+            source,
+            feature,
+            PlaneFrame::default(),
+            policy,
+            Some(&|| true)
+        )
+        .err()
+        .unwrap()
+        .kind,
+        GeometryErrorKind::Cancelled
+    );
+    let solid = Solid::rust_hanger(source, feature, PlaneFrame::default(), policy, None).unwrap();
+    let failure = solid.faces().unwrap_err();
+    assert_eq!(failure.kind, GeometryErrorKind::Unsupported);
+    assert_eq!(failure.operation, "Rust hanger references");
+    assert_eq!(
+        solid.topology_snapshot(feature, 0).unwrap_err().operation,
+        "Rust hanger references"
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("existing.step");
+    std::fs::write(&path, b"retained previous file").unwrap();
+    assert!(solid.write_step(&path).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), b"retained previous file");
+}
 #[test]
 fn authored_hanger_world_manufacturing_retains_source_quality_and_closed_material() {
     for (left, nonbinary, frame) in [
