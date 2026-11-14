@@ -405,3 +405,6 @@ mod step_failure_tests;
 
 #[cfg(test)]
 mod step_resource_tests;
+
+#[cfg(test)]
+mod step_coupled_candidate_tests;
