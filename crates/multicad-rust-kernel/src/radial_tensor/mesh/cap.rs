@@ -95,16 +95,7 @@ impl Cap {
         u: f64,
         work: &mut Work<'_>,
     ) -> Result<[I; 3], Error> {
-        let group = &body.ordered.caps.rims[end][side];
-        let vertex = if u == 0. {
-            Some(caps::ends(body.input(), group[0]).0)
-        } else if u == 1. {
-            Some(caps::ends(body.input(), group[group.len() - 1]).1)
-        } else if u == 0.5 && group.len() == 2 {
-            Some(caps::ends(body.input(), group[0]).1)
-        } else {
-            None
-        };
+        let vertex = self.source_vertex(body, end, side, u);
         if let Some(vertex) = vertex {
             work.step()?;
             return Ok(body.input().vertices[vertex].map(I::point));
@@ -119,6 +110,24 @@ impl Cap {
                     .p
                     .map(|v| v.c[0]))
             }
+        }
+    }
+    pub fn source_vertex(
+        &self,
+        body: &RadialBoundary,
+        end: usize,
+        side: usize,
+        u: f64,
+    ) -> Option<usize> {
+        let group = &body.ordered.caps.rims[end][side];
+        if u == 0. {
+            Some(caps::ends(body.input(), group[0]).0)
+        } else if u == 1. {
+            Some(caps::ends(body.input(), group[group.len() - 1]).1)
+        } else if u == 0.5 && group.len() == 2 {
+            Some(caps::ends(body.input(), group[0]).1)
+        } else {
+            None
         }
     }
     fn segment(&self, side: usize, u: I) -> (&Segment, I) {

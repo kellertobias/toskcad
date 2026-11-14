@@ -11,6 +11,7 @@ pub use axial::AxialBoundary;
 mod caps;
 mod material;
 mod mesh;
+pub use mesh::{CapRimFootpoint, CapRole, CapTraceOptions, TracedMesh};
 mod ordering;
 mod properties;
 mod query;

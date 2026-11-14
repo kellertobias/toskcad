@@ -13,10 +13,12 @@ mod preflight;
 mod spline;
 mod strip;
 mod tensor;
+mod trace;
 use cap::Cap;
 use cone::Cone;
 use spline::Spline;
 use tensor::Tensor;
+pub use trace::{CapRimFootpoint, CapRole, CapTraceOptions, TracedMesh};
 const MAX_TRIANGLES: usize = 4_000_000;
 #[derive(Clone, Copy)]
 struct Limits {
@@ -125,6 +127,17 @@ fn build_with_limits(
     interrupt: Option<&dyn Fn() -> bool>,
     limits: Limits,
 ) -> Result<DisplayMesh, Error> {
+    build_with_output(body, options, interrupt, limits, |_, _, _, mesh, _| {
+        Ok(mesh)
+    })
+}
+fn build_with_output<T>(
+    body: &RadialBoundary,
+    options: Tessellation,
+    interrupt: Option<&dyn Fn() -> bool>,
+    limits: Limits,
+    finish: impl FnOnce(&Prepared<'_>, &Grid, &Ring, DisplayMesh, &mut Work<'_>) -> Result<T, Error>,
+) -> Result<T, Error> {
     if !options.deflection.is_finite()
         || options.deflection <= 0.
         || !options.angle.is_finite()
@@ -236,7 +249,7 @@ fn build_with_limits(
                 work.step()?;
                 #[cfg(test)]
                 parallel_probe::finished(limits.work - work.remaining);
-                return Ok(mesh);
+                return finish(&prepared, &grid, &ring, mesh, &mut work);
             }
             if changes.empty() {
                 continue; // Retry a larger, still certified cap-center shift.
