@@ -587,6 +587,11 @@ fn rust_helical_pair_certifies_full_depth_motion_and_reopens_with_the_same_proof
     rotary_pair_roundtrip(GearFamily::Helical);
 }
 
+#[test]
+fn rust_double_helical_pair_certifies_both_bands_and_reopens_with_the_same_proof() {
+    rotary_pair_roundtrip(GearFamily::DoubleHelical);
+}
+
 fn rotary_pair_roundtrip(family: GearFamily) {
     use multicad_core::project_file::{self, FileLimits, ProjectFile};
     use multicad_kernel::{
@@ -594,7 +599,12 @@ fn rotary_pair_roundtrip(family: GearFamily) {
     };
 
     let (mut session, mut pinion) = fixture();
-    if family == GearFamily::Helical {
+    let twisted = family != GearFamily::Spur;
+    if family == GearFamily::DoubleHelical {
+        pinion.parameters.face_width = length(10.);
+        pinion.parameters.center_gap = length(3.);
+    }
+    if twisted {
         pinion.parameters.family = family;
         pinion.parameters.hand = GearHand::Right;
         pinion.parameters.helix_angle = angle(15.);
@@ -607,7 +617,7 @@ fn rotary_pair_roundtrip(family: GearFamily) {
     let wheel = GearRequest::new(
         "Spur wheel",
         GearParameters {
-            hand: if family == GearFamily::Helical {
+            hand: if twisted {
                 GearHand::Left
             } else {
                 GearHand::None
@@ -638,7 +648,7 @@ fn rotary_pair_roundtrip(family: GearFamily) {
         .compile_with_backend(document, 1, GeometryBackend::Rust, None)
         .unwrap();
     let report = &rust.gear_pair_checks()[&request.pair];
-    let center = if family == GearFamily::Helical {
+    let center = if twisted {
         60. / 15_f64.to_radians().cos()
     } else {
         60.
@@ -659,7 +669,7 @@ fn rotary_pair_roundtrip(family: GearFamily) {
     };
     let wrong_rust = rust.solid(b).unwrap().transformed(wrong).unwrap();
     let a_solid = rust.solid(a).unwrap();
-    let collision = if family == GearFamily::Helical {
+    let collision = if twisted {
         a_solid.certify_rust_herringbone_pair(&wrong_rust, compiler.policy, None)
     } else {
         a_solid.certify_rust_spur_pair(&wrong_rust, compiler.policy, None)
