@@ -121,7 +121,7 @@ fn wood_radius(source: &AuthoredThread, z: I, angle: I) -> Option<I> {
     result.valid().then_some(result)
 }
 
-fn metric_error(error: crate::authored_metric_thread::Error) -> Error {
+pub(super) fn metric_error(error: crate::authored_metric_thread::Error) -> Error {
     match error {
         crate::authored_metric_thread::Error::Invalid => Error::Invalid,
         crate::authored_metric_thread::Error::Limit => Error::Limit,

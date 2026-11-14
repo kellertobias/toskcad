@@ -5,7 +5,12 @@ use crate::{
     authored_flat_thread::AuthoredThread, authored_metric_thread::AuthoredMetricThread,
     tapered_thread::interval::I,
 };
+mod boundary;
 mod classify;
+pub use boundary::{
+    Boundary, BoundaryOptions, Coedge, Component, Curve, CurveBounds, CurveKey, End, Knot,
+    VertexKey,
+};
 mod faces;
 pub use faces::FaceKey;
 #[cfg(test)]
