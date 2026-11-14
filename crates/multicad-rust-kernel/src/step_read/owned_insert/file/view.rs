@@ -25,6 +25,72 @@ impl<'a, 'input> MemberDocument<'a, 'input> {
         self.bytes
     }
 }
+#[derive(Clone, Copy)]
+pub(super) struct Roots {
+    top: u32,
+    context: u32,
+    shape: u32,
+    roots: [u32; 2],
+    header: usize,
+}
+pub(super) fn roots(
+    entities: &BTreeMap<u32, Vec<Entity<'_>>>,
+    input: &str,
+    w: &mut Ledger<'_>,
+) -> Result<Roots> {
+    // These are readonly lookups of a root and link already structurally proved
+    // by representation::read. Cache once, not once per scene member.
+    w.step(entities.len().saturating_mul(2))?;
+    let (&top, r) = entities
+        .iter()
+        .find(|(_, r)| matches!(r.as_slice(),[e]if e.name=="ADVANCED_BREP_SHAPE_REPRESENTATION"))
+        .expect("File root validated");
+    let context = reference(&r[0].args[2]).expect("validated root context reference");
+    let shape = entities
+        .values()
+        .find_map(|r| match r.as_slice() {
+            [
+                Entity {
+                    name: "SHAPE_DEFINITION_REPRESENTATION",
+                    args,
+                    ..
+                },
+            ] => match args.as_slice() {
+                [Value::Reference(shape), Value::Reference(rep)]
+                    if *rep == top
+                        && kind(entities, *shape, "PRODUCT_DEFINITION_SHAPE").is_ok() =>
+                {
+                    Some(*shape)
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("File product link validated");
+    // The retained Part21 arena has <=1,048,576 entities. Searching at
+    // most len+2 positive IDs therefore finds two free u32 IDs; no nominal
+    // max-ID assumption or renumbering of original geometry is needed.
+    let mut fresh = [0_u32; 2];
+    let mut found = 0;
+    let mut next = 1_u32;
+    while found < 2 {
+        w.step(1)?;
+        if !entities.contains_key(&next) {
+            fresh[found] = next;
+            found += 1;
+        }
+        next += 1;
+    }
+    let [root, link] = fresh;
+    let header = header(input, w)?.len();
+    Ok(Roots {
+        top,
+        context,
+        shape,
+        roots: [root, link],
+        header,
+    })
+}
 impl<'input> File<'input> {
     /// Build a one-member representation view from ORIGINAL entity component
     /// slices and IDs, preserving all numeric/ref/string tokens. Only complex
@@ -52,36 +118,12 @@ impl<'input> File<'input> {
         if member.mapping_link().is_some() {
             return Err(Error::Unsupported);
         }
-        let (&top, r) = self
-            .entities
-            .iter()
-            .find(
-                |(_, r)| matches!(r.as_slice(),[e]if e.name=="ADVANCED_BREP_SHAPE_REPRESENTATION"),
-            )
-            .expect("File root validated");
-        let context = reference(&r[0].args[2])?;
-        let shape = self
-            .entities
-            .values()
-            .find_map(|r| match r.as_slice() {
-                [
-                    Entity {
-                        name: "SHAPE_DEFINITION_REPRESENTATION",
-                        args,
-                        ..
-                    },
-                ] => match args.as_slice() {
-                    [Value::Reference(shape), Value::Reference(rep)]
-                        if *rep == top
-                            && kind(&self.entities, *shape, "PRODUCT_DEFINITION_SHAPE").is_ok() =>
-                    {
-                        Some(*shape)
-                    }
-                    _ => None,
-                },
-                _ => None,
-            })
-            .expect("File product link validated");
+        let Roots {
+            top,
+            context,
+            shape,
+            ..
+        } = self.view;
         let set_bytes = (1 + self.entities.len() / 5)
             .saturating_mul(20 * size_of::<usize>() + 11 * size_of::<u32>());
         let pending_bytes = self.entities.len().saturating_mul(size_of::<u32>());
@@ -121,22 +163,8 @@ impl<'input> File<'input> {
         if selected.contains(&top) {
             return Err(Error::Unsupported);
         }
-        // The retained Part21 arena has <=1,048,576 entities. Searching at
-        // most len+2 positive IDs therefore finds two free u32 IDs; no nominal
-        // max-ID assumption or renumbering of original geometry is needed.
-        let mut fresh = [0_u32; 2];
-        let mut found = 0;
-        let mut next = 1_u32;
-        while found < 2 {
-            w.step(1)?;
-            if !self.entities.contains_key(&next) {
-                fresh[found] = next;
-                found += 1;
-            }
-            next += 1;
-        }
-        let [root, link] = fresh;
-        let header = header(self.input, &mut w)?;
+        let [root, link] = self.view.roots;
+        let header = &self.input[..self.view.header];
         let definitions = selected
             .iter()
             .map(|id| {
@@ -171,6 +199,7 @@ impl<'input> File<'input> {
         )
         .map_err(Error::from)?;
         memory.add(text.capacity()).map_err(Error::from)?;
+        w.step(header.len())?;
         text.push_str(header);
         text.push('\n');
         for id in selected {

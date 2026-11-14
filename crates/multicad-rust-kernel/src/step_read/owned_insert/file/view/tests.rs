@@ -125,3 +125,81 @@ fn mapped_view_resource_cancellation_and_high_original_ids_never_drop_a_transfor
         .unwrap();
     assert!(crate::step_read::read_import_solid(view.as_str(), 1e-7).is_ok());
 }
+#[test]
+fn actual_alternative_product_links_and_optional_header_records_preserve_member_geometry() {
+    let original = super::super::tests::compound();
+    let file = File::parse(&original, Options::default(), None).unwrap();
+    let sphere = file.represented_members()[0].item_entity();
+    let (&_top, r) = file
+        .entities
+        .iter()
+        .find(|(_, r)| matches!(r.as_slice(),[e]if e.name=="ADVANCED_BREP_SHAPE_REPRESENTATION"))
+        .unwrap();
+    let ctx = reference(&r[0].args[2]).unwrap();
+    let (&link, r) = file
+        .entities
+        .iter()
+        .find(|(_, r)| matches!(r.as_slice(),[e]if e.name=="SHAPE_DEFINITION_REPRESENTATION"))
+        .unwrap();
+    let shape = reference(&r[0].args[0]).unwrap();
+    let extra = *file.entities.last_key_value().unwrap().0 + 1;
+    let prefix = format!("#{link}=");
+    let text = original.replacen(&prefix, "#4294967295=", 1);
+    let records = format!(
+        "#{extra}=SHAPE_REPRESENTATION('',(#{sphere}),#{ctx});\n#{link}=SHAPE_DEFINITION_REPRESENTATION(#{shape},#{extra});\nENDSEC;\nEND-ISO-10303-21;"
+    );
+    let text = text.replacen("ENDSEC;\nEND-ISO-10303-21;", &records, 1);
+    // The existing parser explicitly permits optional header extension records;
+    // an identifier ending DATA must not be mistaken for the section delimiter.
+    let text = text.replacen("ENDSEC;\nDATA;", "META_DATA();\nENDSEC;\nDATA;", 1);
+    let file = File::parse(&text, Options::default(), None).unwrap();
+    let view = file
+        .local_member_document(sphere, Options::default(), None)
+        .unwrap();
+    assert!(view.as_str().contains("META_DATA();"));
+    assert!(crate::step_read::read_import_solid(view.as_str(), 1e-7).is_ok());
+    let original = super::super::tests::compound();
+    let file = File::parse(&original, Options::default(), None).unwrap();
+    let (&top, _) = file
+        .entities
+        .iter()
+        .find(|(_, r)| matches!(r.as_slice(),[e]if e.name=="ADVANCED_BREP_SHAPE_REPRESENTATION"))
+        .unwrap();
+    let shape = file
+        .entities
+        .iter()
+        .find_map(|(&id, r)| {
+            matches!(r.as_slice(),[e]if e.name=="PRODUCT_DEFINITION_SHAPE").then_some(id)
+        })
+        .unwrap();
+    let changed =
+        super::super::super::tests::argument_change(&original, shape, 2, &format!("#{top}"));
+    let f = File::parse(&changed, Options::default(), None).unwrap();
+    assert!(matches!(
+        f.local_member_document(sphere, Options::default(), None),
+        Err(Error::Unsupported)
+    ));
+}
+#[test]
+fn actual_large_geometry_view_refuses_output_storage_after_reference_scratch_fits() {
+    let text = super::super::super::tests::file(false);
+    let file = File::parse(&text, Options::default(), None).unwrap();
+    let id = file.represented_solids()[0];
+    let view = file
+        .local_member_document(id, Options::default(), None)
+        .unwrap();
+    assert!(matches!(
+        file.local_member_document(
+            id,
+            Options {
+                retained_budget_bytes: view.query_budget_bytes() - 1,
+                ..Options::default()
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    let p = parse(view.as_str(), Options::default(), None).unwrap();
+    let b = p.support_bindings(Options::default(), None).unwrap();
+    assert!(b.material_bounds(Options::default(), None).is_ok());
+}

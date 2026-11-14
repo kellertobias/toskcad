@@ -10,6 +10,7 @@ pub struct File<'input> {
     pub(super) entities: Arc<BTreeMap<u32, Vec<Entity<'input>>>>,
     solids: Vec<u32>,
     members: Vec<Member>,
+    view: view::Roots,
     work: usize,
     bytes: usize,
 }
@@ -65,6 +66,7 @@ impl<'input> File<'input> {
             }
         }
         let members = representation::read(&entities, &mut w)?;
+        let view = view::roots(&entities, input, &mut w)?;
         let solids = members
             .iter()
             .filter(|m| m.mapping_link().is_none())
@@ -83,6 +85,7 @@ impl<'input> File<'input> {
             entities: Arc::new(entities),
             solids,
             members,
+            view,
             work: w.used,
             bytes,
         })
