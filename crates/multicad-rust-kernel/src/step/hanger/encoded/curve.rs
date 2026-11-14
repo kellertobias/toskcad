@@ -2,7 +2,9 @@
 //! These homogeneous supports are not rounded STEP Cartesian poles or a file.
 use super::*;
 mod literal;
+mod restrict;
 pub use literal::LiteralCapCurve;
+pub use restrict::{RestrictedCapCurve, RestrictionBounds};
 use std::cmp::Ordering;
 const DEGREE: usize = 22;
 struct Polynomial {
@@ -61,18 +63,41 @@ fn choose(n: usize, k: usize, w: &mut Work<'_>) -> Result<i64, Error> {
 /// with a separately earned literal encoding bound before serialization.
 pub struct CapCurvePiece<'f, 's> {
     field: &'f EncodedField<'s>,
-    pub source_cell: usize,
-    pub angular_piece: usize,
-    pub end: End,
-    pub phase: [EncodedScalar; 2],
-    pub parameter_bounds: [[f64; 2]; 2],
+    source_cell: usize,
+    angular_piece: usize,
+    end: End,
+    phase: [EncodedScalar; 2],
+    parameter_bounds: [[f64; 2]; 2],
     controls: Vec<[EncodedScalar; 4]>,
-    pub work_used: usize,
-    pub retained_bytes: usize,
+    work_used: usize,
+    retained_bytes: usize,
 }
 impl CapCurvePiece<'_, '_> {
     pub fn field(&self) -> &EncodedField<'_> {
         self.field
+    }
+    pub fn source_cell(&self) -> usize {
+        self.source_cell
+    }
+    pub fn angular_piece(&self) -> usize {
+        self.angular_piece
+    }
+    pub fn end(&self) -> End {
+        self.end
+    }
+    pub fn phase(&self) -> &[EncodedScalar; 2] {
+        &self.phase
+    }
+    pub fn parameter_bounds(&self) -> [[f64; 2]; 2] {
+        self.parameter_bounds
+    }
+    /// Query-local work; borrowed EncodedField preparation is separate.
+    pub fn work_used(&self) -> usize {
+        self.work_used
+    }
+    /// Owned curve storage; borrowed EncodedField storage is separate.
+    pub fn retained_bytes(&self) -> usize {
+        self.retained_bytes
     }
     pub fn degree(&self) -> usize {
         self.controls.len() - 1

@@ -11,7 +11,7 @@ use num_bigint::Sign;
 use num_rational::BigRational;
 mod cap;
 mod curve;
-pub use curve::{CapCurvePiece, LiteralCapCurve};
+pub use curve::{CapCurvePiece, LiteralCapCurve, RestrictedCapCurve, RestrictionBounds};
 mod closed;
 mod finite;
 pub use cap::{CapEndpoint, CapTrace};

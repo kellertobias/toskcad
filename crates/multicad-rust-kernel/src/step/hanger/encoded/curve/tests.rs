@@ -70,10 +70,13 @@ fn actual_root_and_flat_cap_curves_equal_same_surface_and_first_derivatives() {
                     work += curve.work_used;
                     assert_eq!(curve.degree(), 11 * row.degree());
                     assert!(std::ptr::eq(curve.field(), &f));
-                    assert_eq!(curve.source_cell, index);
-                    assert_eq!(curve.angular_piece, piece);
-                    assert_eq!(curve.end, end);
-                    assert!(curve.retained_bytes > 0);
+                    assert_eq!(curve.source_cell(), index);
+                    assert_eq!(curve.angular_piece(), piece);
+                    assert_eq!(curve.end(), end);
+                    assert!(curve.retained_bytes() > 0);
+                    assert!(curve.work_used() > 0);
+                    assert_eq!(curve.parameter_bounds(), curve.parameter_bounds);
+                    assert_eq!(curve.phase(), &curve.phase);
                     intervals.push(curve.phase.each_ref().map(number));
                     let ua = Q::from_float(curve.parameter_bounds[0][1]).unwrap();
                     let ub = Q::from_float(curve.parameter_bounds[1][0]).unwrap();
