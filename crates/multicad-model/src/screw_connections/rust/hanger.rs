@@ -47,31 +47,27 @@ pub(super) fn check(
     let mut related = BTreeSet::new();
     for row in &source.hardware {
         checkpoint(interrupt)?;
-        let ScrewConnectionHardwareSource::Generated { part } = &row.source else {
-            return Err(unsupported());
-        };
-        let path = model::OccurrencePath {
-            root: row.instance,
-            members: vec![],
-        };
-        if evaluated
+        let current = hardware(input.document, input.parameters, evaluated, row, id)?;
+        let leaf = evaluated
             .snapshot()
             .leaf_occurrences
-            .get(&path)
-            .is_none_or(|leaf| leaf.producer != part.feature)
-        {
-            return Err(fail(
-                "Hanger hardware must retain its actual generated physical source",
-            ));
+            .values()
+            .find(|leaf| leaf.path.root == row.instance)
+            .expect("hardware checked its unique current physical leaf");
+        match &row.source {
+            ScrewConnectionHardwareSource::Generated { part } => {
+                if leaf.producer != part.feature {
+                    return Err(fail(
+                        "Hanger hardware must retain its actual generated physical source",
+                    ));
+                }
+            }
+            ScrewConnectionHardwareSource::Library { .. } => {
+                library::qualify(input, evaluated, row, &current, id)?;
+            }
         }
-        related.insert(path);
-        placed.push(hardware(
-            input.document,
-            input.parameters,
-            evaluated,
-            row,
-            id,
-        )?);
+        related.insert(leaf.path.clone());
+        placed.push(current);
     }
     let hanger = placed
         .iter()

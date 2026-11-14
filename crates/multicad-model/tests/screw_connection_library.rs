@@ -1,4 +1,6 @@
 //! Real pinned mechanical Library roles remain associative connection sources.
+#[path = "support/custom_screw_connections.rs"]
+mod custom_fixture;
 #[path = "../../multicad-mcp/tests/support/screw_connection.rs"]
 mod fixture;
 use multicad_core::{
@@ -17,6 +19,136 @@ use multicad_model::{Compiler, EvaluationCache, Model};
 use std::collections::BTreeMap;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
+}
+
+#[test]
+fn actual_pinned_hanger_nut_and_dynamic_ring_keep_sources_through_edit_and_reopen() {
+    for left in [false, true] {
+        let (doc, mut request) = custom_fixture::fixture(ScrewConnectionMode::HangerBolt);
+        let mut ring_parameter = None;
+        for row in &mut request.hardware {
+            let ScrewConnectionHardwareSource::Generated { part } = &row.source else {
+                panic!()
+            };
+            let mut parameters = part.parameters.clone();
+            if left {
+                match &mut parameters {
+                    MechanicalPartParameters::CustomConnection { parameters } => {
+                        let CustomConnectionHardwareParameters::HangerBolt {
+                            wood_thread,
+                            metric_thread,
+                            ..
+                        } = parameters.as_mut()
+                        else {
+                            panic!()
+                        };
+                        wood_thread.hand = ThreadHand::Left;
+                        metric_thread.hand = ThreadHand::Left;
+                    }
+                    MechanicalPartParameters::HexNut { thread, .. } => {
+                        thread.hand = ThreadHand::Left
+                    }
+                    _ => {}
+                }
+            }
+            let dynamic = row.role == ScrewConnectionHardwareRole::NutWasher;
+            let (_, definition, parameter) = author(parameters, dynamic);
+            let pinned = library_row(&definition, row.role, "Pinned actual hardware");
+            if dynamic {
+                ring_parameter = Some((pinned.instance, parameter.unwrap()));
+            }
+            *row = pinned;
+        }
+        let mut session = Session::new(doc).unwrap();
+        let prepared = prepare_screw_connection(&session, 0, actor(), &request).unwrap();
+        let mut cache = EvaluationCache::default();
+        let native = compiler()
+            .compile_cached(&mut cache, prepared.prepared.document(), 1, None)
+            .unwrap();
+        assert!(native.snapshot().screw_connection_checks[0].native_component_collision_checked);
+        for row in &request.hardware {
+            let current = leaf(&native, row.instance);
+            assert!(
+                !current.path.members.is_empty(),
+                "pin must retain mapped member ownership"
+            );
+            let solid = native.leaf_solid(&current.path).unwrap();
+            assert!(
+                solid
+                    .manufacturing_mesh_with_receipt(Default::default())
+                    .unwrap()
+                    .edge_pairs
+                    > 0
+            );
+        }
+        drop(native);
+        session.commit(prepared.prepared).unwrap();
+        let before = session.document().clone();
+        let (record, parameter) = ring_parameter.unwrap();
+        let edit = SymbolEditRequest {
+            record,
+            overrides: BTreeMap::from([(
+                parameter,
+                SymbolValue {
+                    value: 0.27,
+                    unit: "mm".into(),
+                },
+            )]),
+        };
+        let p = symbols::prepare_edit(&session, session.revision(), actor(), &edit).unwrap();
+        let native = compiler()
+            .compile_cached(
+                &mut cache,
+                p.prepared.document(),
+                session.revision() + 1,
+                None,
+            )
+            .unwrap();
+        assert!(native.snapshot().screw_connection_checks[0].native_component_collision_checked);
+        drop(native);
+        session.commit(p.prepared).unwrap();
+        let after = session.document().clone();
+        let opened = reopened(&after);
+        assert!(
+            compiler()
+                .compile(&opened, 0)
+                .unwrap()
+                .snapshot()
+                .screw_connection_checks[0]
+                .native_component_collision_checked
+        );
+        session.undo(session.revision(), actor()).unwrap();
+        assert_eq!(*session.document(), before);
+        session.redo(session.revision(), actor()).unwrap();
+        assert_eq!(*session.document(), after);
+        let invalid = SymbolEditRequest {
+            record,
+            overrides: BTreeMap::from([(
+                parameter,
+                SymbolValue {
+                    value: 100.,
+                    unit: "mm".into(),
+                },
+            )]),
+        };
+        if let Ok(p) = symbols::prepare_edit(&session, session.revision(), actor(), &invalid) {
+            assert!(
+                compiler()
+                    .compile(p.prepared.document(), session.revision() + 1)
+                    .is_err()
+            );
+        }
+        assert_eq!(*session.document(), after);
+        let mut stale = request.clone();
+        let ScrewConnectionHardwareSource::Library { definition, .. } =
+            &mut stale.hardware[0].source
+        else {
+            panic!()
+        };
+        definition.name.push_str(" stale pin");
+        assert!(prepare_screw_connection(&session, session.revision(), actor(), &stale).is_err());
+        assert_eq!(*session.document(), after);
+    }
 }
 fn compiler() -> Compiler {
     Compiler {
