@@ -31,6 +31,10 @@ fn rectangular_receiver_both_ends_keep_real_stock_and_closed_manufacturing_geome
         assert!((cut.volume_mm3().unwrap() - expected).abs() < 1e-9);
         assert_eq!(cut.bounds().unwrap(), source.bounds().unwrap());
         assert_eq!(cut.faces().unwrap().len(), 22);
+        let (bound, actual_frame) = cut.rust_rectangular_blind_counterbore_source().unwrap();
+        assert_eq!(actual_frame, frame);
+        assert_eq!(bound.spec().seat_radius_mm, 6.);
+        assert!(source.rust_rectangular_blind_counterbore_source().is_none());
         let original_topology = source.topology_snapshot(EntityId::new(), 0).unwrap();
         let cut_topology = cut.topology_snapshot(EntityId::new(), 0).unwrap();
         for anchor in original_topology.elements.iter().flat_map(|e| &e.frames) {

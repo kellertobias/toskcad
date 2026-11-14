@@ -4,7 +4,7 @@ use super::*;
 use std::collections::BTreeMap;
 use std::f64::consts::FRAC_PI_2;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RectangularBlindCounterbore {
     pub min_mm: Point2,
     pub max_mm: Point2,
@@ -15,6 +15,20 @@ pub struct RectangularBlindCounterbore {
     pub seat_depth_mm: f64,
     pub minimum_wall_mm: f64,
     pub minimum_floor_mm: f64,
+}
+/// An immutable factory-owned binding of the material and its dimensions.
+/// Callers cannot pair an independently supplied descriptor with another shell.
+pub struct BlindCounterboreSource<'a> {
+    stack: &'a ProfileStack,
+    spec: &'a RectangularBlindCounterbore,
+}
+impl<'a> BlindCounterboreSource<'a> {
+    pub fn stack(&self) -> &'a ProfileStack {
+        self.stack
+    }
+    pub fn spec(&self) -> &'a RectangularBlindCounterbore {
+        self.spec
+    }
 }
 struct Builder {
     vertices: Vec<Point>,
@@ -157,6 +171,11 @@ fn sum_leq(a: f64, b: f64, limit: f64) -> bool {
     sum < limit || (sum == limit && residual <= 0.)
 }
 impl ProfileStack {
+    pub fn rectangular_blind_counterbore_source(&self) -> Option<BlindCounterboreSource<'_>> {
+        self.blind_counterbore
+            .as_ref()
+            .map(|spec| BlindCounterboreSource { stack: self, spec })
+    }
     /// Exact line/circle boundary construction. Source indices are four stock
     /// sides (0..4), back(4), entry(5), seat wall/shoulder(6), bore/floor(7).
     /// This does not approximate a different stock section by its bounds.
@@ -345,6 +364,7 @@ impl ProfileStack {
             vertices: b.vertices,
             edges: b.edges,
             faces: b.faces,
+            blind_counterbore: Some(s),
         })
     }
 }

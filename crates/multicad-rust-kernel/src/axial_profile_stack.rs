@@ -5,7 +5,7 @@ use std::{f64::consts::PI, ops::Range};
 
 mod blind_counterbore;
 mod shell;
-pub use blind_counterbore::RectangularBlindCounterbore;
+pub use blind_counterbore::{BlindCounterboreSource, RectangularBlindCounterbore};
 #[cfg(test)]
 mod tests;
 
@@ -92,6 +92,7 @@ pub struct ProfileStack {
     vertices: Vec<Point>,
     edges: Vec<Edge>,
     faces: Vec<Face>,
+    blind_counterbore: Option<RectangularBlindCounterbore>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

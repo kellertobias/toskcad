@@ -136,6 +136,13 @@ impl Solid {
         }
     }
 
+    pub fn rust_rectangular_blind_counterbore_source(
+        &self,
+    ) -> Option<(axial_profile_stack::BlindCounterboreSource<'_>, PlaneFrame)> {
+        let (body, frame) = self.axial_stack_body()?;
+        Some((body.geometry.rectangular_blind_counterbore_source()?, frame))
+    }
+
     pub(super) fn from_imported_axial_stack(
         geometry: ProfileStack,
         frame: PlaneFrame,

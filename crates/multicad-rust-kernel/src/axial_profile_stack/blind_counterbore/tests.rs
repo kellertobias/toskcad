@@ -163,3 +163,24 @@ fn blind_counterbore_step_is_independently_decoded_as_one_material_solid() {
     assert_eq!(read.face_count, 22);
     assert!((read.volume_mm3 - body.volume_mm3()).abs() < 1e-7);
 }
+
+#[test]
+fn blind_counterbore_descriptor_belongs_to_its_actual_immutable_shell() {
+    let body = ProfileStack::blind_counterbore(spec(), 1e-7, 1e-5).unwrap();
+    let source = body.rectangular_blind_counterbore_source().unwrap();
+    assert!(std::ptr::eq(source.stack(), &body));
+    assert_eq!(*source.spec(), spec());
+    let generic = ProfileStack::union(
+        &[Operand {
+            span_mm: [0., 20.],
+            profile: Profile::Rectangle {
+                min: [-10.; 2],
+                max: [10.; 2],
+            },
+        }],
+        1e-7,
+        1e-5,
+    )
+    .unwrap();
+    assert!(generic.rectangular_blind_counterbore_source().is_none());
+}
