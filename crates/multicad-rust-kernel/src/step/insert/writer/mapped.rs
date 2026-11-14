@@ -90,11 +90,12 @@ fn pose(origin: [f64; 3], u: [f64; 3], v: [f64; 3]) -> Result<[f64; 3], Error> {
         u[2] * v[0] - u[0] * v[2],
         u[0] * v[1] - u[1] * v[0],
     ];
-    // The admitted Gram domain gives |u×v|² >= (1−1e−4)²−1e−8
-    // = .9998. Every input component is <1.001. Two products/subtraction,
+    // The admitted Gram domain gives |u×v|² >= (1−δ)²−δ²
+    // = 1−2δ > .99979 for the literal f64 domain threshold δ=1e−4.
+    // Every input component is <1.001. Two products/subtraction,
     // input serialization and cross serialization together perturb each cross
     // component by <32eps (full ULP reserves also cover subnormals). Thus the
-    // ACTUAL serialized determinant is >.9998−3*1.001*32eps >.9997.
+    // ACTUAL serialized determinant is >.99979−3*1.001*32eps >.9997.
     // A second determinant refusal is unreachable on this bounded domain.
     Ok(n)
 }
@@ -157,6 +158,18 @@ mod tests {
         let d = DomainPlan::prepare(&body, DomainOptions::default(), None).unwrap();
         let s = SurfacePlan::prepare(&d, CurveOptions::default(), None).unwrap();
         let t = TopologyPlan::prepare(&s, 16_000_000, 64 * 1024 * 1024, None).unwrap();
+        assert!(matches!(
+            write_mapped_candidate(
+                &t,
+                [f64::NAN, 0., 0.],
+                [1., 0., 0.],
+                [0., 1., 0.],
+                16_000_000,
+                64 * 1024 * 1024,
+                None
+            ),
+            Err(Error::Invalid)
+        ));
         let seed = || {
             let mut w = Writer::new();
             w.append_sphere(
@@ -221,5 +234,77 @@ mod tests {
             Err(Error::Cancelled)
         );
         assert_eq!(w.finish().unwrap(), expected);
+        // Both late failures occur after the coupled body was fully emitted.
+        let (_, local_work, _) = encode_local(
+            &mut StepFile::new(),
+            &t,
+            16_000_000,
+            64 * 1024 * 1024,
+            None,
+            OUTPUT,
+        )
+        .unwrap();
+        let mut late = seed();
+        assert_eq!(
+            late.append_owned_insert_mapped_candidate(
+                &t,
+                [0.; 3],
+                [1., 0., 0.],
+                [0., 1., 0.],
+                local_work.used + 4096 + 256,
+                64 * 1024 * 1024,
+                None
+            ),
+            Err(Error::Limit)
+        );
+        assert_eq!(late.finish().unwrap(), expected);
+        let polls = std::cell::Cell::new(0);
+        let count = || {
+            polls.set(polls.get() + 1);
+            false
+        };
+        let mut complete = seed();
+        complete
+            .append_owned_insert_mapped_candidate(
+                &t,
+                [0.; 3],
+                [1., 0., 0.],
+                [0., 1., 0.],
+                16_000_000,
+                64 * 1024 * 1024,
+                Some(&count),
+            )
+            .unwrap();
+        let total = polls.get();
+        let completed = complete.finish().unwrap();
+        let polls = std::cell::Cell::new(0);
+        let stop = || {
+            polls.set(polls.get() + 1);
+            polls.get() == total
+        };
+        let mut late = seed();
+        assert_eq!(
+            late.append_owned_insert_mapped_candidate(
+                &t,
+                [0.; 3],
+                [1., 0., 0.],
+                [0., 1., 0.],
+                16_000_000,
+                64 * 1024 * 1024,
+                Some(&stop)
+            ),
+            Err(Error::Cancelled)
+        );
+        late.append_owned_insert_mapped_candidate(
+            &t,
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            16_000_000,
+            64 * 1024 * 1024,
+            None,
+        )
+        .unwrap();
+        assert_eq!(late.finish().unwrap(), completed);
     }
 }
