@@ -109,3 +109,6 @@ impl Cutter {
 
 mod head_envelope;
 pub use head_envelope::{HeadEnvelopeClearance, HeadEnvelopeOptions};
+
+mod repaired_head;
+pub use repaired_head::{RepairedHeadContainment, RepairedHeadContainmentOptions};

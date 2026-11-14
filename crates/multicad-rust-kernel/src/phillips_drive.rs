@@ -6,7 +6,8 @@ mod cavity;
 mod classify;
 pub use cavity::{
     Cavity, HeadEnvelopeClearance, HeadEnvelopeOptions, HostEnvelopeProof, MouthSweepProof,
-    PhillipsScrew, ScrewFace, ScrewFaceProperties, SourceVolumeBounds,
+    PhillipsScrew, RepairedHeadContainment, RepairedHeadContainmentOptions, ScrewFace,
+    ScrewFaceProperties, SourceVolumeBounds,
 };
 mod events;
 mod finite_section;
