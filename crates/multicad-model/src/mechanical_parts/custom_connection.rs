@@ -1,11 +1,31 @@
 //! Authored custom connection hardware, built from actual helical solids.
 use super::*;
 use multicad_core::model::{ResolvedCustomConnectionHardware, ScrewLengthConvention};
+mod hanger;
 pub(super) fn build_rust(
     feature: EntityId,
     source: ResolvedCustomConnectionHardware,
     policy: GeometryPolicy,
 ) -> Result<Solid, ModelError> {
+    if let ResolvedCustomConnectionHardware::HangerBolt {
+        wood_thread,
+        metric_thread,
+        plain_length_mm,
+        plain_radius_mm,
+        frame,
+        ..
+    } = &source
+    {
+        return hanger::build(
+            feature,
+            wood_thread,
+            metric_thread,
+            *plain_length_mm,
+            *plain_radius_mm,
+            *frame,
+            policy,
+        );
+    }
     if let ResolvedCustomConnectionHardware::WoodInsert {
         outer_thread,
         inner_thread,
@@ -82,7 +102,7 @@ pub(super) fn build_rust(
     else {
         return Err(error(
             Some(feature),
-            "Rust hanger bolts require their own connected-material provider",
+            "Rust custom hardware source has no admitted material provider",
         ));
     };
     let head = super::rust_legacy_head(&head, &drive).ok_or_else(|| {
