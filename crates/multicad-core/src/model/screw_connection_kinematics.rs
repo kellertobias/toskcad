@@ -17,6 +17,7 @@ use std::{
     f64::consts::TAU,
 };
 const MAX_SOURCES: usize = 8192;
+mod seating;
 thread_local! {
     // Computation-local recursion protection, not a source cache. Entries are
     // removed on every scope exit, including errors and unwinding.
@@ -415,6 +416,30 @@ pub fn resolve_connection_hardware_pose(
     let grip = model::resolve_screw_connection_grip(document, p, &request, revision, snapshots)?;
     if !grip.is_finite() || grip < 0. {
         return Err(invalid("Connection grip must be finite and nonnegative"));
+    }
+    if request.mode == Mode::HangerBolt
+        && request
+            .hardware
+            .iter()
+            .all(|row| matches!(row.role, Role::HangerBolt | Role::Nut | Role::NutWasher))
+    {
+        // request_for_driver already read this exact current axis and capture
+        // from the immutable document; retain that validated source handoff.
+        let axis =
+            request
+                .axis
+                .source
+                .resolve(document, p, &request.axis.face, revision, snapshots)?;
+        return seating::pose(
+            &request.hardware,
+            &parts,
+            binding.role,
+            grip,
+            axis,
+            p,
+            seating::Options::canonical(),
+        )
+        .map(|(_, pose)| pose);
     }
     let mut head = 0.;
     let mut nut = 0.;
