@@ -64,7 +64,27 @@ impl TopologyPlan<'_, '_, '_> {
                             .product(y.derivative(&mut w)?, &mut w)?
                             .sub(y.product(x.derivative(&mut w)?, &mut w)?, &mut w)?
                             .scale(sign, &mut w)?;
-                        minimum = minimum.min(positive(p, &mut stack, &mut w)?);
+                        let lower = match positive(p, &mut stack, &mut w) {
+                            Ok(lower) => lower,
+                            Err(Error::Unresolved) => {
+                                stack.clear();
+                                w.charge(24 * 64)?;
+                                let text: [[String; 2]; 12] = std::array::from_fn(|i| {
+                                    std::array::from_fn(|axis| format!("{:.16E}", poles[i][axis]))
+                                });
+                                let tokens = std::array::from_fn(|i| {
+                                    std::array::from_fn(|axis| text[i][axis].as_str())
+                                });
+                                crate::step::insert::exact_cap::angular_lower(
+                                    tokens,
+                                    sign < 0.,
+                                    &mut memory,
+                                    &mut w,
+                                )?
+                            }
+                            Err(error) => return Err(error),
+                        };
+                        minimum = minimum.min(lower);
                         count += 1;
                     }
                 }

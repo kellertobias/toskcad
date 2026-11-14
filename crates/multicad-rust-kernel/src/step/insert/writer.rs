@@ -677,3 +677,6 @@ mod append_tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod tiny_trim_tests;

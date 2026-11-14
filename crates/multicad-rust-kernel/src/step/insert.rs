@@ -1,5 +1,6 @@
 //! Owned insert export candidates. These source-known carrier certificates do
 //! not admit STEP solids, foreign imports, occupied material or decoded mass.
+pub(crate) mod exact_cap;
 use crate::{
     tapered_thread::interval::I,
     wood_insert::{Boundary, BoundaryCurveKey, BoundaryVertexKey, Side},
