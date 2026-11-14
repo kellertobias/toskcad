@@ -49,7 +49,12 @@ fn read_member_with<T>(
     ids: Vec<u32>,
     reconstruct: impl FnOnce(&Shell<'_, '_>, &Edges, &Plane, &FaceWire, Point, f64) -> Result<T>,
 ) -> Result<(Readback, Option<T>)> {
-    if ids.len() < 5 || ids.len() > MAX_VERTICES + 7 {
+    // Fewer faces than two caps and three walls is outside this family.
+    // Only an excessive face count is a resource refusal.
+    if ids.len() < 5 {
+        return Err(ReadError::Unsupported);
+    }
+    if ids.len() > MAX_VERTICES + 7 {
         return Err(ReadError::Limit);
     }
     let first_spline_wall = ids
@@ -79,8 +84,16 @@ fn read_member_with<T>(
             } else {
                 &mut caps[side]
             };
-            if destination.replace((cap, face)).is_some() {
-                return Err(ReadError::Invalid);
+            if let Some((other, earlier)) = destination.replace((cap, face)) {
+                // Two positively oriented caps on one side bound a valid
+                // stepped solid outside this family. A reversed cap is invalid.
+                let (cap, face) = destination.as_ref().ok_or(ReadError::Invalid)?;
+                for (plane, wire) in [(&other, &earlier), (cap, face)] {
+                    if section::verify(reader, &edges, plane, wire) == Err(ReadError::Invalid) {
+                        return Err(ReadError::Invalid);
+                    }
+                }
+                return Err(ReadError::Unsupported);
             }
         } else {
             walls.push(face);
@@ -163,7 +176,9 @@ pub(super) fn read_face(
     Ok(FaceWire {
         surface,
         forward,
-        outer: outer.ok_or(ReadError::Invalid)?,
+        // Several unlabeled bounds are valid STEP, but this reader does not
+        // derive the exterior of a curved face from geometry.
+        outer: outer.ok_or(ReadError::Unsupported)?,
         holes,
     })
 }
@@ -178,7 +193,10 @@ fn read_ring(
         return Err(ReadError::Invalid);
     };
     let mut oriented = refs(oriented)?;
-    if oriented.is_empty() || oriented.len() > MAX_VERTICES {
+    if oriented.is_empty() {
+        return Err(ReadError::Invalid);
+    }
+    if oriented.len() > MAX_VERTICES {
         return Err(ReadError::Limit);
     }
     if !forward {

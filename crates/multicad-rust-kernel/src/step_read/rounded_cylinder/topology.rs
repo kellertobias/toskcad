@@ -58,7 +58,8 @@ pub(super) fn face(shell: &Shell<'_, '_>, id: u32, seen: &mut BTreeSet<u32>) -> 
     };
     let ids = refs(oriented)?;
     if ids.len() > 4 {
-        return Err(ReadError::Limit);
+        // A longer valid loop bounds a face outside this family.
+        return Err(ReadError::Unsupported);
     }
     let mut wire = Vec::new();
     for id in ids {

@@ -156,7 +156,7 @@ fn topology_counts_orientation_ownership_and_periodic_domains_are_strict() {
         });
         assert_eq!(
             read_rounded_cylinder(&bad, 1e-7).unwrap_err(),
-            ReadError::Limit
+            ReadError::Unsupported
         );
     }
     for id in ids(&source, "ORIENTED_EDGE") {

@@ -128,6 +128,40 @@ impl<'a> Fixture<'a> {
     fn list(&self, id: u32, field: usize) -> Vec<u32> {
         refs(&self.args(id)[field]).unwrap()
     }
+    /// Copy a face with fresh bounds, loops and edges over the same vertices
+    /// and geometry.
+    fn duplicate(&mut self, id: u32) -> u32 {
+        let entity = &self.records[&id][0];
+        let name = entity.name;
+        if !matches!(
+            name,
+            "ADVANCED_FACE" | "FACE_BOUND" | "FACE_OUTER_BOUND" | "EDGE_LOOP" | "ORIENTED_EDGE"
+        ) && name != "EDGE_CURVE"
+        {
+            return id;
+        }
+        let mut args = entity.args.iter().map(copied).collect::<Vec<_>>();
+        if name == "EDGE_CURVE" {
+            // The vertices and the curve stay shared.
+            args.truncate(5);
+        } else {
+            for value in &mut args {
+                self.remap(value);
+            }
+        }
+        let copy = self.records.keys().next_back().unwrap() + 1;
+        let source = None;
+        self.records
+            .insert(copy, vec![Entity { source, name, args }]);
+        copy
+    }
+    fn remap(&mut self, value: &mut Value<'a>) {
+        match value {
+            Value::Reference(id) => *id = self.duplicate(*id),
+            Value::List(items) => items.iter_mut().for_each(|item| self.remap(item)),
+            _ => {}
+        }
+    }
     fn cap_plane(&self, cap: usize) -> u32 {
         self.id(self.faces[cap], 2)
     }
@@ -146,6 +180,41 @@ impl<'a> Fixture<'a> {
     }
 }
 
+fn copied<'a>(value: &Value<'a>) -> Value<'a> {
+    match value {
+        Value::Reference(id) => Value::Reference(*id),
+        Value::List(items) => Value::List(items.iter().map(copied).collect()),
+        Value::String(text) => Value::String(text),
+        Value::Enum(flag) => Value::Enum(flag),
+        _ => Value::Derived,
+    }
+}
+
+#[test]
+fn a_second_positive_cap_is_a_stepped_solid_outside_this_family() {
+    for cap in [0, 1] {
+        damaged(
+            |f| {
+                let copy = f.duplicate(f.faces[cap]);
+                f.faces.push(copy);
+            },
+            ReadError::Unsupported,
+        );
+    }
+    // Unlabeled bounds are valid, but the exterior is not derived here.
+    damaged(
+        |f| {
+            let bound = f.list(f.faces[0], 1)[0];
+            let copy = f.duplicate(bound);
+            for bound in [bound, copy] {
+                f.records.get_mut(&bound).unwrap()[0].name = "FACE_BOUND";
+            }
+            f.edit(f.faces[0])[1] = Value::List([bound, copy].map(Value::Reference).into());
+        },
+        ReadError::Unsupported,
+    );
+}
+
 fn damaged(edit: impl FnOnce(&mut Fixture<'_>), error: ReadError) {
     let source = write_spur_gear(&profile(20, 2.), ORIGIN, U, V, TOL).unwrap();
     let mut f = Fixture::new(&source);
@@ -155,7 +224,7 @@ fn damaged(edit: impl FnOnce(&mut Fixture<'_>), error: ReadError) {
 
 #[test]
 fn rejects_missing_and_duplicate_topology_or_invalid_cap_geometry() {
-    damaged(|f| f.faces.truncate(4), ReadError::Limit);
+    damaged(|f| f.faces.truncate(4), ReadError::Unsupported);
     damaged(|f| f.faces.push(f.faces[0]), ReadError::Invalid);
     damaged(
         |f| {
@@ -271,7 +340,7 @@ fn rejects_invalid_face_edge_and_extrusion_records() {
             let loop_ = f.id(bound, 1);
             f.edit(loop_)[1] = Value::List(vec![]);
         },
-        ReadError::Limit,
+        ReadError::Invalid,
     );
     damaged(
         |f| {
