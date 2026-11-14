@@ -28,6 +28,7 @@ pub use wood_insert_material::{WoodInsertFaceProperties, WoodInsertMaterial};
 mod hanger_material;
 pub use hanger_material::HangerMaterial;
 mod hanger_body;
+mod source_face_measure;
 use hanger_body::HangerBody;
 pub use hanger_body::HangerData;
 mod helical_body;

@@ -1,4 +1,7 @@
 use super::*;
+use crate::geometry::source_face_measure::{
+    Placement, cardinal, local_options, metric, world_point,
+};
 use multicad_rust_kernel::{
     authored_flat_thread::{AuthoredThread, SourceOptions},
     helical_thread::Spec,
@@ -301,9 +304,9 @@ fn literal_map_primitives_refuse_invalid_singular_reflected_and_exhausted_numeri
     assert!(
         transport(
             &src,
-            Placement {
+            PlaneFrame {
                 origin: [f64::MAX; 3],
-                ..identity
+                ..PlaneFrame::default()
             },
             FaceKey::StartCap,
             options(),
