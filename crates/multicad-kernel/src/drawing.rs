@@ -5,6 +5,8 @@ use multicad_core::drawings::{VectorCurve, VectorRole};
 mod curved;
 mod panel;
 mod planar;
+#[allow(dead_code)]
+mod scene;
 mod section;
 mod sphere;
 mod torus;
