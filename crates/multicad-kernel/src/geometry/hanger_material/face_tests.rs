@@ -183,6 +183,45 @@ fn hanger_world_face_queries_refuse_invalid_and_cancelled_requests_without_chang
     assert_eq!(material, before);
 }
 
+#[test]
+fn large_actual_source_cannot_publish_uncertified_plane_descriptors() {
+    use multicad_rust_kernel::authored_flat_thread::{AuthoredThread, SourceOptions};
+    let mut spec = source(false, false).spec();
+    let mut wood = spec.wood.spec();
+    wood.major_radius_mm = 6_000_000.;
+    spec.wood = AuthoredThread::new(
+        wood,
+        SourceOptions {
+            position_limit_mm: 1e-5,
+            normal_angle_limit_rad: 1e-7,
+        },
+    )
+    .unwrap();
+    let source = Hanger::new(spec, None).unwrap();
+    let policy = GeometryPolicy::default();
+    let material = HangerMaterial::new(source, proper(), policy, None).unwrap();
+    let before = material;
+    // A finite source and a successful local/world measure do not waive the
+    // separate whole-plane error budget at this large physical extent.
+    material
+        .world_face_properties(
+            FaceKey::MetricTip,
+            FacePropertyOptions {
+                area_tolerance_mm2: 1e-3,
+                first_moment_tolerance_mm3: 1e8,
+                centroid_tolerance_mm: 1e-7,
+                ..options()
+            },
+            policy,
+            None,
+        )
+        .unwrap();
+    let failure = material.faces(policy, None).unwrap_err();
+    assert_eq!(failure.kind, GeometryErrorKind::Unsupported);
+    assert_eq!(failure.operation, "Rust source face measure");
+    assert_eq!(material, before);
+}
+
 const GAUSS: [(f64, f64); 8] = [
     (-0.9602898564975363, 0.1012285362903763),
     (-0.7966664774136267, 0.2223810344533745),
