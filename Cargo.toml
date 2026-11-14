@@ -64,5 +64,8 @@ opt-level = 0
 [profile.coverage.package.multicad-precision]
 opt-level = 0
 
+[profile.coverage.package.multicad-kernel]
+opt-level = 0
+
 [profile.coverage.package.num-bigint]
 opt-level = 2
