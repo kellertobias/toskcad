@@ -299,13 +299,46 @@ impl<'a> Patch<'a> {
         let angle = v.scale(tau);
         Ok(source::Field {
             point: [rho.mul(angle.cos()), rho.mul(angle.sin()), z],
-            normal: source::Normal::Radial {
-                angle: angle.value,
-                beta: lead / tau * m / r,
-                z: -m,
-            },
+            normal: self.normal(angle.value, lead / tau, r, m, &bounds),
         })
     }
+    fn normal(
+        &self,
+        angle: I,
+        rate: I,
+        r: I,
+        m: I,
+        bounds: &crate::authored_metric_thread::ProfileBounds,
+    ) -> source::Normal {
+        #[cfg(test)]
+        if super::tests::OLD_ROOT_NORMAL.get() {
+            return source::Normal::Radial {
+                angle,
+                beta: rate * m / r,
+                z: -m,
+            };
+        }
+        if self.band == 2 {
+            // H>=1/2 is source-owned and strictly positive. Multiplying the
+            // actual gradient by H preserves orientation and angle, while
+            // removing the avoidable interval quotients X/H and X/(H*r).
+            let radial = interval(bounds.normal_radial);
+            let z = interval(bounds.normal_axial);
+            source::Normal::ScaledRadial {
+                angle,
+                radial,
+                beta: rate * (-z) / r,
+                z,
+            }
+        } else {
+            source::Normal::Radial {
+                angle,
+                beta: rate * m / r,
+                z: -m,
+            }
+        }
+    }
+
     pub fn identity(
         &self,
         p: &Point,

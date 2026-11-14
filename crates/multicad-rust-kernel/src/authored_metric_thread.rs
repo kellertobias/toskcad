@@ -43,6 +43,10 @@ pub struct ProfileBounds {
     pub radius_mm: [f64; 2],
     pub slope: [f64; 2],
     pub second_derivative_per_mm: [f64; 2],
+    /// Positive homogeneous radial coefficient of the meridian normal.
+    /// On the circle this is H=sqrt(1-X²), not an independent support input.
+    pub normal_radial: [f64; 2],
+    pub normal_axial: [f64; 2],
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AuthoredMetricThread {
@@ -132,9 +136,21 @@ impl AuthoredMetricThread {
         let phase = k[band][0] + (k[band + 1][0] - k[band][0]) * u;
         let root = self.root_radius();
         let r3 = sqrt3();
-        let (radius, slope, second) = match band {
-            1 => (k[1][1] + (k[2][1] - k[1][1]) * u, -r3, I::point(0.)),
-            3 => (k[3][1] + (k[4][1] - k[3][1]) * u, r3, I::point(0.)),
+        let (radius, slope, second, radial, axial) = match band {
+            1 => (
+                k[1][1] + (k[2][1] - k[1][1]) * u,
+                -r3,
+                I::point(0.),
+                I::point(1.),
+                r3,
+            ),
+            3 => (
+                k[3][1] + (k[4][1] - k[3][1]) * u,
+                r3,
+                I::point(0.),
+                I::point(1.),
+                -r3,
+            ),
             2 => {
                 // x/R=sqrt(3)*(u−1/2); h/R>=1/2 over the entire true trim.
                 // Retain this normalized form to avoid subtracting large phase centers.
@@ -145,11 +161,15 @@ impl AuthoredMetricThread {
                     self.center_radius() - root * h,
                     x / h,
                     I::point(1.) / (root * h * h * h),
+                    h,
+                    -x,
                 )
             }
             _ => (
                 I::point(self.spec.major_radius_mm),
                 I::point(0.),
+                I::point(0.),
+                I::point(1.),
                 I::point(0.),
             ),
         };
@@ -160,7 +180,7 @@ impl AuthoredMetricThread {
         } else {
             radius
         };
-        for value in [phase, radius, slope, second] {
+        for value in [phase, radius, slope, second, radial, axial] {
             value.checked().map_err(|_| Error::Unresolved)?;
         }
         Ok(ProfileBounds {
@@ -168,6 +188,8 @@ impl AuthoredMetricThread {
             radius_mm: pair(radius),
             slope: pair(slope),
             second_derivative_per_mm: pair(second),
+            normal_radial: pair(radial),
+            normal_axial: pair(axial),
         })
     }
     /// Exact source envelope. It is not a replacement for material membership.

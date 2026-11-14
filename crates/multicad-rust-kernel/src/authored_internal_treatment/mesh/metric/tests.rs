@@ -78,7 +78,10 @@ fn clipped_root_cell_fan_diagnostic() {
         points.push(literal);
     }
     assert_eq!(polygon.len(), 5);
-    let field = patch.field(&polygon, &strip, &mut w).unwrap();
+    let field = {
+        let _old = OldRoot::new();
+        patch.field(&polygon, &strip, &mut w).unwrap()
+    };
     assert!(matches!(
         qualify_attempt(&field, &points, &errors, [0, 2, 3], options(), &mut w).unwrap(),
         Attempt::Refine
@@ -115,6 +118,7 @@ fn clipped_root_cell_fan_diagnostic() {
         Attempt::Repartition
     ));
 }
+thread_local! { pub(super) static OLD_ROOT_NORMAL:std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 thread_local! { pub(super) static FORCE_CLIP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 struct FullClip;
 impl FullClip {
@@ -290,6 +294,31 @@ fn trace_layout_preflight_counts_the_exact_owned_layout() {
 #[test]
 fn bounded_grid_planning_refuses_extreme_public_quality_without_panicking() {
     let source = small_source();
+    // Public options are checked before Grid::new: the root count is bounded
+    // by ceil((2π/3)/.01)=210 before next_power_of_two is reached.
+    assert!(matches!(
+        source.tessellate_shell(
+            Tessellation {
+                angle: f64::from_bits(1),
+                ..options()
+            },
+            16_000_000,
+            None
+        ),
+        Err(crate::authored_metric_thread::Error::Invalid)
+    ));
+    assert!(matches!(
+        source.tessellate_shell(
+            Tessellation {
+                angle: 0.01,
+                ..options()
+            },
+            16_000_000,
+            None
+        ),
+        Err(crate::authored_metric_thread::Error::Limit)
+    ));
+
     assert!(matches!(
         source.tessellate_shell(
             Tessellation {
@@ -432,4 +461,127 @@ fn genuine_near_grid_cap_repartitions_without_dropping_its_positive_domain() {
         .unwrap();
     assert_eq!(*shell.source(), source);
     assert!(shell.chord <= 0.1 && shell.normal <= 0.3);
+}
+
+#[test]
+fn source_circle_scaling_qualifies_real_root8_facet_without_quality_change() {
+    let source = source(false, false);
+    let grid = Grid {
+        counts: [1, 1, 8, 1, 1],
+        rows: 64,
+        odd: false,
+        shifted: false,
+    };
+    let mut w = Work {
+        remaining: 16_000_000,
+        used: 0,
+        interrupt: None,
+    };
+    let patch = Patch::new(&source, -1, 2, grid, &mut w).unwrap();
+    let strip = patch.strip(0, &mut w).unwrap();
+    let polygon = patch.cell(&strip, 39, &mut w).unwrap();
+    let mut points = Vec::new();
+    let mut errors = Vec::new();
+    for p in &polygon {
+        let (point, error) = literal_point(patch.point(p, &strip, &mut w).unwrap(), 0.1).unwrap();
+        points.push(point);
+        errors.push(error);
+    }
+    let field = patch.field(&polygon, &strip, &mut w).unwrap();
+    let next = qualify_fan(&field, &points, &errors, options(), &mut w).unwrap();
+    let old_field = {
+        let _old = OldRoot::new();
+        patch.field(&polygon, &strip, &mut w).unwrap()
+    };
+    let old = qualify_fan(&old_field, &points, &errors, options(), &mut w).unwrap();
+    eprintln!(
+        "scaledroot8new{} old{}",
+        matches!(next, Attempt::Complete(_)),
+        matches!(old, Attempt::Complete(_))
+    );
+    assert!(matches!(old, Attempt::Refine));
+    assert!(matches!(next, Attempt::Complete(_)));
+    assert!(matches!(
+        qualify_fan(
+            &field,
+            &points,
+            &errors,
+            Tessellation {
+                angle: 0.01,
+                ..options()
+            },
+            &mut w
+        )
+        .unwrap(),
+        Attempt::Refine
+    ));
+    let mut reverse = points.clone();
+    reverse.reverse();
+    let mut reverse_errors = errors.clone();
+    reverse_errors.reverse();
+    let proof = qualify_fan(&field, &reverse, &reverse_errors, options(), &mut w).unwrap();
+    assert!(matches!(proof, Attempt::Complete(_)));
+}
+
+struct OldRoot(bool);
+impl OldRoot {
+    fn new() -> Self {
+        Self(OLD_ROOT_NORMAL.replace(true))
+    }
+}
+impl Drop for OldRoot {
+    fn drop(&mut self) {
+        OLD_ROOT_NORMAL.set(self.0);
+    }
+}
+#[test]
+fn paired_actual_shell_normal_conditioning_and_v32_proposal() {
+    for (left, nb) in [(false, false), (true, true)] {
+        let source = source(left, nb);
+        let now = std::time::Instant::now();
+        let old = {
+            let _old = OldRoot::new();
+            metric_shell(&source, options(), 16_000_000, None).unwrap()
+        };
+        eprintln!(
+            "oldcircleLH{left}nb{nb}:{}facets,{}work,{:?}",
+            old.mesh.face_indices.len(),
+            old.work,
+            now.elapsed()
+        );
+        let now = std::time::Instant::now();
+        let new = metric_shell(&source, options(), 16_000_000, None).unwrap();
+        eprintln!(
+            "scaledcircleLH{left}nb{nb}:{}facets,{}work,{:?}",
+            new.mesh.face_indices.len(),
+            new.work,
+            now.elapsed()
+        );
+        assert_eq!(*old.source(), *new.source());
+        assert!(new.mesh.face_indices.len() < old.mesh.face_indices.len());
+        assert!(new.work < old.work);
+        let grid = Grid {
+            counts: [1, 1, 8, 1, 1],
+            rows: 32,
+            odd: false,
+            shifted: false,
+        };
+        let mut w = Work {
+            remaining: 16_000_000,
+            used: 0,
+            interrupt: None,
+        };
+        let now = std::time::Instant::now();
+        // Coarser angular sampling remains a real rejected proposal; positive
+        // normal conditioning does not waive the requested facet certificate.
+        assert!(matches!(
+            attempt(&source, options(), grid, &mut w).unwrap(),
+            Err(Reason::Refine(2))
+        ));
+        eprintln!(
+            "V32scaledLH{left}nb{nb}:actual root refinement after{}work,{:?}",
+            w.used,
+            now.elapsed()
+        );
+    }
 }

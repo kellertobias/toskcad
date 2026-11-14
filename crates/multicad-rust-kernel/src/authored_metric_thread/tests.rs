@@ -454,3 +454,27 @@ fn detached_shell_error_boundary_preserves_precision_resource_and_cancellation_t
         assert_eq!(shell_error(input), expected);
     }
 }
+
+#[test]
+fn homogeneous_source_root_normals_retain_the_exact_positive_gradient_scale() {
+    let (spec, _) = source(false, false, false);
+    let source = AuthoredMetricThread::new(spec).unwrap();
+    for band in 0..5 {
+        for i in 0..=32 {
+            let u = i as f64 / 32.;
+            let b = source.profile_bounds(band, [u, u]).unwrap();
+            let radial = I::new(b.normal_radial[0], b.normal_radial[1]);
+            let axial = I::new(b.normal_axial[0], b.normal_axial[1]);
+            let slope = I::new(b.slope[0], b.slope[1]);
+            assert!(radial.lo > 0.);
+            let restored = -axial / radial;
+            assert!(restored.lo <= slope.hi && slope.lo <= restored.hi);
+            if band == 2 {
+                let x = 3_f64.sqrt() * (u - 0.5);
+                assert!(b.normal_axial[0] <= -x && -x <= b.normal_axial[1]);
+                let h = (1. - x * x).sqrt();
+                assert!(b.normal_radial[0] <= h && h <= b.normal_radial[1]);
+            }
+        }
+    }
+}
