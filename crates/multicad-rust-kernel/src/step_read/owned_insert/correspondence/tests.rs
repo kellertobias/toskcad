@@ -404,7 +404,7 @@ fn actual_identity_renaming_and_wire_arities_never_infer_source_owners() {
     let polls = std::cell::Cell::new(0);
     let stop = || {
         polls.set(polls.get() + 1);
-        polls.get() == t.edges().len() + 3
+        polls.get() == 4
     };
     assert!(matches!(
         b.source_correspondence(&t, CorrespondenceOptions::default(), Some(&stop)),

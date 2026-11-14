@@ -110,6 +110,7 @@ impl<'b, 'i> SupportBindings<'b, 'i> {
         let mut vertices = memory.account(vertices).map_err(Error::from)?;
         let mut bytes = memory.used;
         vertices.resize(s.vertices().len(), None);
+        let mut position = 0_f64;
         for (source, actual) in expected.edges().iter().zip(p.edges()) {
             w.step(64)?;
             let curve = p
@@ -123,27 +124,27 @@ impl<'b, 'i> SupportBindings<'b, 'i> {
                 return Err(Error::Unsupported);
             }
             for (at, id) in source.ends.into_iter().zip(actual.vertex_entities()) {
-                if vertices[at].is_some_and(|old| old != id) {
-                    return Err(Error::Unsupported);
+                if let Some(old) = vertices[at] {
+                    if old != id {
+                        return Err(Error::Unsupported);
+                    }
+                } else {
+                    vertices[at] = Some(id);
+                    // Measure exactly the used physical endpoints once, at their
+                    // first incident edge. Unused source stations are not body.
+                    w.step(32)?;
+                    let v = p.vertex(id).expect("finite bound actual vertex");
+                    let point = p.point(v.point_entity).expect("finite bound actual point");
+                    position = position.max(distance(
+                        point.coordinates(),
+                        s.vertices()[at].point_mm(),
+                        &mut w,
+                    )?);
                 }
-                vertices[at] = Some(id);
             }
         }
-        // Existing actual vertex IDs are unique. Count+canonical edge endpoint
-        // correspondence forbids unused actual vertices or source vertex aliases.
-        let mut position = 0_f64;
-        for (at, id) in vertices.iter().enumerate() {
-            if let Some(id) = id {
-                w.step(32)?;
-                let v = p.vertex(*id).expect("finite bound actual vertex");
-                let point = p.point(v.point_entity).expect("finite bound actual point");
-                position = position.max(distance(
-                    point.coordinates(),
-                    s.vertices()[at].point_mm(),
-                    &mut w,
-                )?);
-            }
-        }
+        // The map covers every actual edge endpoint, hence every actual vertex.
+        // Equal used-vertex counts make it a bijection of the finite boundaries.
         for (source, actual) in expected.faces().iter().zip(p.faces()) {
             w.step(64)?;
             if source.same_sense != actual.same_sense()
