@@ -121,3 +121,76 @@ fn cosmetic_shaft_is_display_only_until_modeled_and_survives_history_and_reopen(
             < 1e-9
     );
 }
+
+#[test]
+fn print_permission_checks_selected_producers_without_blocking_unrelated_cosmetic_parts() {
+    use multicad_core::{
+        exchange::{AidPolicy, PrintRequest, PrintSource},
+        model::{PrimitiveParameters, PrimitiveRequest},
+    };
+    use multicad_model::export::Exporter;
+    let mut session = Session::new(Document::new("Selected print permission").unwrap()).unwrap();
+    let cosmetic = ThreadRequest::new(
+        "Display-only M8",
+        ThreadParameters {
+            representation: ThreadRepresentation::CosmeticEnvelope,
+            ..Default::default()
+        },
+    );
+    session
+        .commit(
+            model::prepare_thread(&session, session.revision(), actor(), &cosmetic)
+                .unwrap()
+                .prepared,
+        )
+        .unwrap();
+    let printable = PrimitiveRequest::new(
+        "Printable box",
+        PrimitiveParameters::Box {
+            size: [length(2.), length(3.), length(4.)],
+            frame: PrimitiveFrame {
+                origin: [length(20.), length(0.), length(0.)],
+                ..Default::default()
+            },
+        },
+    );
+    session
+        .commit(
+            model::prepare_primitive(&session, session.revision(), actor(), &printable)
+                .unwrap()
+                .prepared,
+        )
+        .unwrap();
+    let unchanged = session.document().clone();
+    let request = |parts| PrintRequest {
+        source: PrintSource::Parts { parts },
+        aids: AidPolicy::IncludeAll,
+        quality: Default::default(),
+        stl_per_part: true,
+    };
+    let exporter = Exporter::default();
+    let denied = exporter
+        .print_preview(
+            session.document(),
+            session.revision(),
+            &request(vec![cosmetic.body]),
+            &actor(),
+            None,
+        )
+        .unwrap_err();
+    assert!(denied.message.contains("cosmetic") && denied.message.contains("Modeled"));
+    let allowed = exporter
+        .print_preview(
+            session.document(),
+            session.revision(),
+            &request(vec![printable.body]),
+            &actor(),
+            None,
+        )
+        .unwrap();
+    assert!(allowed.can_write(), "{allowed:?}");
+    assert_eq!(allowed.objects.len(), 1);
+    assert_eq!(allowed.objects[0].part, printable.body);
+    assert!((allowed.objects[0].volume_mm3 - 24.).abs() < 1e-9);
+    assert_eq!(session.document(), &unchanged);
+}

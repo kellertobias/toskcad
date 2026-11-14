@@ -45,6 +45,38 @@ enum Arrangement<'a> {
     PlateWrite(&'a PrintPlateDefinition),
 }
 
+fn direct_part_head(document: &Document, part: EntityId) -> Option<EntityId> {
+    let EntityData::Part { features, .. } = &document.get(part)?.data else {
+        return None;
+    };
+    features.iter().rev().copied().find(|feature| {
+        matches!(
+            document.get(*feature).map(|entity| &entity.data),
+            Some(EntityData::Feature {
+                suppressed: false,
+                ..
+            })
+        )
+    })
+}
+fn check_manufacturing_history(document: &Document, producer: EntityId) -> Result<(), ExportError> {
+    if let Some(limitation) = model::manufacturing_limitation_in_history(document, producer)
+        .map_err(|e| failure(ErrorKind::Invalid, Some(producer), e))?
+    {
+        let name = document
+            .get(limitation.feature)
+            .map_or_else(|| limitation.feature.to_string(), |e| e.name.clone());
+        return Err(failure(
+            ErrorKind::Unsupported,
+            Some(limitation.feature),
+            format!(
+                "{name}: {} Creating a print package is unavailable.",
+                limitation.message()
+            ),
+        ));
+    }
+    Ok(())
+}
 fn direct_plate_roots(document: &Document, selection: &PrintSelection) -> Option<Vec<EntityId>> {
     let mut roots = Vec::new();
     let mut heads = BTreeSet::new();
@@ -52,20 +84,9 @@ fn direct_plate_roots(document: &Document, selection: &PrintSelection) -> Option
         if !part.occurrence_path.is_empty() || part.role != PrintRole::Finished {
             return None;
         }
-        let EntityData::Part { features, .. } = &document.get(part.part)?.data else {
-            return None;
-        };
-        let head = features.iter().rev().find(|feature| {
-            matches!(
-                document.get(**feature).map(|entity| &entity.data),
-                Some(EntityData::Feature {
-                    suppressed: false,
-                    ..
-                })
-            )
-        })?;
+        let head = direct_part_head(document, part.part)?;
         roots.push(part.part);
-        heads.insert(*head);
+        heads.insert(head);
     }
     // A consumer outside the direct input closure can remove a body from the
     // final assembly. Keep the full membership check for those plates.
@@ -538,6 +559,18 @@ impl GeometryExporter<'_> {
         };
         let manufacturing_limitations = model::has_manufacturing_limitations(document)
             .map_err(|e| failure(ErrorKind::Invalid, None, e))?;
+        // A direct, unconsumed selection has known canonical producers before
+        // geometry exists. Refuse display-only manufacturing here instead of
+        // building unrelated or unsupported physical geometry first. Placed,
+        // aid and consumed-body cases retain the authoritative check below.
+        if manufacturing_limitations && direct_plate_roots(document, &selection).is_some() {
+            for part in &selection.parts {
+                checkpoint(interrupt)?;
+                if let Some(producer) = direct_part_head(document, part.part) {
+                    check_manufacturing_history(document, producer)?;
+                }
+            }
+        }
         let parameters = multicad_core::parameters::evaluate(document)
             .map_err(|e| failure(ErrorKind::Invalid, None, e))?;
         let mut processes = vec![];
@@ -652,22 +685,8 @@ impl GeometryExporter<'_> {
                     }));
                     continue;
                 };
-                if manufacturing_limitations
-                    && let Some(limitation) =
-                        model::manufacturing_limitation_in_history(document, producer)
-                            .map_err(|e| invalid(e.to_string()))?
-                {
-                    let name = document
-                        .get(limitation.feature)
-                        .map_or_else(|| limitation.feature.to_string(), |e| e.name.clone());
-                    return Err(failure(
-                        ErrorKind::Unsupported,
-                        Some(limitation.feature),
-                        format!(
-                            "{name}: {} Creating a print package is unavailable.",
-                            limitation.message()
-                        ),
-                    ));
+                if manufacturing_limitations {
+                    check_manufacturing_history(document, producer)?;
                 }
                 let (pose, bounds_mm, volume) = if let Some(plate) = plate {
                     let placement = plate
