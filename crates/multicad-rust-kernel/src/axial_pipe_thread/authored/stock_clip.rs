@@ -1,13 +1,19 @@
-//! Source-only atlas for an interior NPT stock-cylinder event. No retained
-//! carrier, manufacturing mesh, STEP body or independently decoded mass.
+//! Authored NPT stock-clipping atlas, source cell plans and bounded literal
+//! mesh candidates. Native/STEP/material admission and whole literal embedding
+//! remain separate; no independently decoded file mass is supplied here.
 use super::*;
 use std::mem::size_of;
+mod cells;
+pub use cells::{
+    StockClipCellPlan, StockClipGridLine, StockClipMeshCandidate, StockClipPointOwner,
+};
 mod jets;
 mod sample;
 #[cfg(test)]
 mod tests;
 mod volume;
 pub use jets::{StockClipJets, StockClipPatchLaw};
+
 pub use sample::{StockClipPoint, StockClipSample};
 pub use volume::StockClipVolume;
 const SCRATCH: usize = 16 * 1024;
