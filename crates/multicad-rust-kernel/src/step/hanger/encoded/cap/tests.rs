@@ -151,3 +151,75 @@ fn positive_algebraic_trim_sliver_is_refused_without_welding_or_source_change() 
     ));
     assert_eq!(s.spec(), b.source().spec());
 }
+
+#[test]
+fn shared_trace_ledger_counts_empty_selections_and_retains_identical_source_tokens() {
+    let s = Hanger::new(
+        crate::authored_hanger_bolt::tests::fixture(true, true),
+        None,
+    )
+    .unwrap();
+    let b = s.boundary(BoundaryOptions::default(), None).unwrap();
+    let f = EncodedField::prepare(&b, CurveOptions::default(), None).unwrap();
+    let mut w = Work::new(16_000_000, None).unwrap();
+    w.charge(f.work_used()).unwrap();
+    let mut m = Memory::new(f.retained_bytes(), 64 * 1024 * 1024).unwrap();
+    m.add(SCRATCH + size_of::<CapTrace>()).unwrap();
+    let mut empty = 0;
+    let mut positive = 0;
+    for index in 0..f.cells().len() {
+        for end in [End::Start, End::End] {
+            let old = f
+                .cap_trace(index, end, DomainOptions::default(), None)
+                .unwrap();
+            let before_work = w.used;
+            let before_memory = m.used;
+            let shared = f
+                .cap_trace_with_ledgers(index, end, &mut m, &mut w)
+                .unwrap();
+            assert!(w.used > before_work);
+            match (old, shared) {
+                (None, None) => {
+                    empty += 1;
+                    assert_eq!(m.used, before_memory);
+                }
+                (Some(old), Some(shared)) => {
+                    positive += 1;
+                    assert_eq!(shared.work_used, w.used);
+                    assert_eq!(old.source_curve, shared.source_curve);
+                    assert_eq!(old.source_key, shared.source_key);
+                    assert_eq!(old.cap_face, shared.cap_face);
+                    assert_eq!(number(&old.plane_z), number(&shared.plane_z));
+                    for (a, b) in old.controls().iter().zip(shared.controls()) {
+                        assert_eq!(a.each_ref().map(number), b.each_ref().map(number));
+                    }
+                    for (a, b) in old.endpoints.iter().zip(&shared.endpoints) {
+                        assert_eq!(number(&a.phase), number(&b.phase));
+                        assert_eq!(number(&a.original_parameter), number(&b.original_parameter));
+                        assert_eq!(number(&a.physical_turn), number(&b.physical_turn));
+                        assert_eq!(a.meridian_parameter, b.meridian_parameter);
+                    }
+                    drop((old, shared));
+                    m.used = before_memory;
+                }
+                _ => panic!("shared ledger changed the actual source selection"),
+            }
+        }
+    }
+    assert!(empty > 0 && positive > 0);
+    let calls = std::cell::Cell::new(0);
+    let cancel = || {
+        calls.set(calls.get() + 1);
+        calls.get() > 1
+    };
+    let mut w = Work::new(16_000_000, Some(&cancel)).unwrap();
+    assert!(matches!(
+        f.cap_trace_with_ledgers(0, End::Start, &mut m, &mut w),
+        Err(Error::Cancelled)
+    ));
+    let mut w = Work::new(1, None).unwrap();
+    assert!(matches!(
+        f.cap_trace_with_ledgers(0, End::Start, &mut m, &mut w),
+        Err(Error::Limit)
+    ));
+}

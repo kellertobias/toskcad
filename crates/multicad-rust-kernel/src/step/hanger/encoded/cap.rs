@@ -49,6 +49,19 @@ impl EncodedField<'_> {
         let mut w = super::super::domain::work(options, self.bytes, interrupt)?;
         let mut memory = Memory::new(self.bytes, options.maximum_bytes)?;
         memory.add(SCRATCH)?;
+        self.cap_trace_with_ledgers(index, end, &mut memory, &mut w)
+    }
+    /// The caller owns the SAME immutable field and its live allocation,
+    /// reserves SCRATCH once, and keeps these ledgers for every attempted
+    /// selection (including None). Failure drops the complete local factory.
+    /// work_used is cumulative on the supplied ledger; never charge it again.
+    pub(super) fn cap_trace_with_ledgers(
+        &self,
+        index: usize,
+        end: End,
+        memory: &mut Memory,
+        w: &mut Work<'_>,
+    ) -> Result<Option<CapTrace>, Error> {
         let cell = self.cells.get(index).ok_or(Error::Invalid)?;
         let row = &self.meridians[cell.meridian];
         let source = self.source.source_boundary().source();
@@ -59,41 +72,41 @@ impl EncodedField<'_> {
             let s = source.wood().spec();
             (s.pitch_mm, s.starts, s.left_hand, s.length_mm)
         };
-        let pitch = binary(pitch, &mut w)?;
-        let lead = pitch.mul(&N::integer(i64::from(starts)), &mut w)?;
+        let pitch = binary(pitch, w)?;
+        let lead = pitch.mul(&N::integer(i64::from(starts)), w)?;
         let station = if end == End::Start {
             N::integer(0)
         } else {
-            binary(length, &mut w)?
+            binary(length, w)?
         };
         let shifted = station.sub(
-            &pitch.mul(&N::integer(i64::from(cell.source_key.total_period)), &mut w)?,
-            &mut w,
+            &pitch.mul(&N::integer(i64::from(cell.source_key.total_period)), w)?,
+            w,
         )?;
         let q = row
             .phase
             .iter()
-            .map(|v| v.number(&mut w))
+            .map(|v| v.number(w))
             .collect::<Result<Vec<_>, _>>()?;
         let weights = row
             .weights
             .iter()
-            .map(|v| v.number(&mut w))
+            .map(|v| v.number(w))
             .collect::<Result<Vec<_>, _>>()?;
-        let a = q[0].div(&weights[0], &mut w)?;
-        let b = q[row.degree()].div(&weights[row.degree()], &mut w)?;
-        let lower = shifted.sub(&lead, &mut w)?;
-        let lo = if lower.cmp(&a, &mut w)? == Ordering::Greater {
+        let a = q[0].div(&weights[0], w)?;
+        let b = q[row.degree()].div(&weights[row.degree()], w)?;
+        let lower = shifted.sub(&lead, w)?;
+        let lo = if lower.cmp(&a, w)? == Ordering::Greater {
             lower
         } else {
             a.clone()
         };
-        let hi = if shifted.cmp(&b, &mut w)? == Ordering::Less {
+        let hi = if shifted.cmp(&b, w)? == Ordering::Less {
             shifted.clone()
         } else {
             b.clone()
         };
-        if lo.cmp(&hi, &mut w)? != Ordering::Less {
+        if lo.cmp(&hi, w)? != Ordering::Less {
             w.charge(1)?;
             return Ok(None);
         }
@@ -147,34 +160,30 @@ impl EncodedField<'_> {
             // contains the actual u∈[0,1], so intersection is nonempty.
             Ok(clipped)
         };
-        let p0 = parameter(&lo, &mut w)?;
-        let p1 = parameter(&hi, &mut w)?;
+        let p0 = parameter(&lo, w)?;
+        let p1 = parameter(&hi, w)?;
         if p0.hi >= p1.lo {
             return Err(Error::Unresolved);
         }
-        let (original_a, original_b) = original_domain(self, row, &pitch, &a, &b, &mut w)?;
+        let (original_a, original_b) = original_domain(self, row, &pitch, &a, &b, w)?;
         let mut endpoint = |phase: &N, parameter: I| -> Result<CapEndpoint, Error> {
-            let v = shifted.sub(phase, &mut w)?.div(&lead, &mut w)?;
-            let mut physical = if left {
-                N::integer(1).sub(&v, &mut w)?
-            } else {
-                v
-            };
-            if physical.cmp(&N::integer(1), &mut w)? == Ordering::Equal {
+            let v = shifted.sub(phase, w)?.div(&lead, w)?;
+            let mut physical = if left { N::integer(1).sub(&v, w)? } else { v };
+            if physical.cmp(&N::integer(1), w)? == Ordering::Equal {
                 physical = N::integer(0);
             }
             let unwrapped = if row.piece == BandPiece::CrestLowPhase {
-                phase.add(&pitch, &mut w)?
+                phase.add(&pitch, w)?
             } else {
                 phase.clone()
             };
             let original = unwrapped
-                .sub(&original_a, &mut w)?
-                .div(&original_b.sub(&original_a, &mut w)?, &mut w)?;
+                .sub(&original_a, w)?
+                .div(&original_b.sub(&original_a, w)?, w)?;
             Ok(CapEndpoint {
-                phase: EncodedScalar::retain(phase, &mut memory, &mut w)?,
-                physical_turn: EncodedScalar::retain(&physical, &mut memory, &mut w)?,
-                original_parameter: EncodedScalar::retain(&original, &mut memory, &mut w)?,
+                phase: EncodedScalar::retain(phase, memory, w)?,
+                physical_turn: EncodedScalar::retain(&physical, memory, w)?,
+                original_parameter: EncodedScalar::retain(&original, memory, w)?,
                 meridian_parameter: [parameter.lo, parameter.hi],
             })
         };
@@ -182,36 +191,36 @@ impl EncodedField<'_> {
         let mut plane = station.clone();
         if row.component == Component::Metric {
             plane = plane
-                .sub(&binary(source.metric().full_length_mm(), &mut w)?, &mut w)?
-                .sub(&binary(source.spec().plain_length_mm, &mut w)?, &mut w)?;
+                .sub(&binary(source.metric().full_length_mm(), w)?, w)?
+                .sub(&binary(source.spec().plain_length_mm, w)?, w)?;
         }
-        let plane_z = EncodedScalar::retain(&plane, &mut memory, &mut w)?;
+        let plane_z = EncodedScalar::retain(&plane, memory, w)?;
         let mut den = Vec::with_capacity(q.len());
         let mut num = Vec::with_capacity(q.len());
         for (q, wgt) in q.iter().zip(&weights) {
-            den.push(lead.mul(wgt, &mut w)?);
-            num.push(shifted.mul(wgt, &mut w)?.sub(q, &mut w)?);
+            den.push(lead.mul(wgt, w)?);
+            num.push(shifted.mul(wgt, w)?.sub(q, w)?);
         }
         let degree = row.degree() + 1;
-        let mut controls = memory.allocate(degree + 1, &mut w)?;
+        let mut controls = memory.allocate(degree + 1, w)?;
         for i in 0..=degree {
             let mut u = N::integer(0);
             let mut v = N::integer(0);
             let mut weight = N::integer(0);
             if i > 0 {
-                u = den[i - 1].mul(&N::integer(i as i64), &mut w)?;
-                v = num[i - 1].mul(&N::integer(i as i64), &mut w)?;
+                u = den[i - 1].mul(&N::integer(i as i64), w)?;
+                v = num[i - 1].mul(&N::integer(i as i64), w)?;
                 weight = u.clone();
             }
             if i < degree {
                 let scale = N::integer((degree - i) as i64);
-                v = v.add(&num[i].mul(&scale, &mut w)?, &mut w)?;
-                weight = weight.add(&den[i].mul(&scale, &mut w)?, &mut w)?;
+                v = v.add(&num[i].mul(&scale, w)?, w)?;
+                weight = weight.add(&den[i].mul(&scale, w)?, w)?;
             }
             controls.push([
-                EncodedScalar::retain(&u, &mut memory, &mut w)?,
-                EncodedScalar::retain(&v, &mut memory, &mut w)?,
-                EncodedScalar::retain(&weight, &mut memory, &mut w)?,
+                EncodedScalar::retain(&u, memory, w)?,
+                EncodedScalar::retain(&v, memory, w)?,
+                EncodedScalar::retain(&weight, memory, w)?,
             ]);
         }
         let cap_face = match (row.component, end) {

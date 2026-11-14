@@ -282,20 +282,20 @@ fn finite_affine_chart_earns_same_tensor_lift_and_original_parameter_derivative(
         let mut w = Work::new(16_000_000, None).unwrap();
         w.charge(f.work_used()).unwrap();
         let mut m = Memory::new(f.retained_bytes(), 64 * 1024 * 1024).unwrap();
-        m.add(SCRATCH).unwrap();
+        m.add(SCRATCH + size_of::<CapTrace>()).unwrap();
         let mut maximum = [0_f64; 3];
         let mut count = 0;
         for index in 0..f.cells().len() {
             for end in [End::Start, End::End] {
                 // The retained original curve owns the source parameter and
                 // orientation; the computational v chart never replaces it.
+                let trace_memory = m.used;
                 let Some(trace) = f
-                    .cap_trace(index, end, DomainOptions::default(), None)
+                    .cap_trace_with_ledgers(index, end, &mut m, &mut w)
                     .unwrap()
                 else {
                     continue;
                 };
-                w.charge(trace.work_used).unwrap();
                 for piece in 0..f.angular.coefficients().len() {
                     let Some(cap) = build(&f, index, end, piece, &mut w).unwrap() else {
                         continue;
@@ -410,6 +410,8 @@ fn finite_affine_chart_earns_same_tensor_lift_and_original_parameter_derivative(
                     drop((xyz, encoded_uv));
                     m.used = before;
                 }
+                drop(trace);
+                m.used = trace_memory;
             }
         }
         eprintln!(
