@@ -49,11 +49,11 @@ fn make_file_case(left: bool, length: f64) -> String {
     let t = TopologyPlan::prepare(&s, 16_000_000, 64 * 1024 * 1024, None).unwrap();
     write_local_candidate(&t, 16_000_000, 64 * 1024 * 1024, None).unwrap()
 }
-fn file(left: bool) -> String {
+pub(super) fn file(left: bool) -> String {
     static FILES: std::sync::OnceLock<[String; 2]> = std::sync::OnceLock::new();
     FILES.get_or_init(|| [make_file(false), make_file(true)])[usize::from(left)].clone()
 }
-fn record_change(text: &str, id: u32, change: impl FnOnce(&str) -> String) -> String {
+pub(super) fn record_change(text: &str, id: u32, change: impl FnOnce(&str) -> String) -> String {
     let prefix = format!("#{id}=");
     let line = text.lines().find(|line| line.starts_with(&prefix)).unwrap();
     let next = change(line);
@@ -545,7 +545,7 @@ fn actual_raw_reader_resource_and_cancellation_failures_publish_no_proof() {
         assert_eq!(Error::from(before), after);
     }
 }
-fn argument_change(text: &str, id: u32, index: usize, value: &str) -> String {
+pub(super) fn argument_change(text: &str, id: u32, index: usize, value: &str) -> String {
     record_change(text, id, |line| {
         let open = line.find('(').unwrap();
         let inside = &line[open + 1..line.len() - 2];

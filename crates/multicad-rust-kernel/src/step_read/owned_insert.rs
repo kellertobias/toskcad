@@ -580,4 +580,6 @@ fn validate_references(p: &Parsed<'_>, w: &mut Ledger<'_>) -> Result<()> {
     Ok(())
 }
 #[cfg(test)]
+mod schema_tests;
+#[cfg(test)]
 mod tests;
