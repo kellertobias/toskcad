@@ -47,3 +47,22 @@ opt-level = 2
 
 [profile.dev.package.num-bigint]
 opt-level = 2
+
+# Preserve owned-code line mappings without slowing dependency arithmetic.
+# Run cargo llvm-cov with --profile coverage and without global opt-level flags.
+[profile.coverage]
+inherits = "dev"
+opt-level = 0
+debug = 0
+debug-assertions = true
+overflow-checks = true
+incremental = false
+
+[profile.coverage.package.multicad-rust-kernel]
+opt-level = 0
+
+[profile.coverage.package.multicad-precision]
+opt-level = 0
+
+[profile.coverage.package.num-bigint]
+opt-level = 2
