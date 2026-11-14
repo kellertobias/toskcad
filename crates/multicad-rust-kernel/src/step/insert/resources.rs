@@ -32,6 +32,9 @@ pub(crate) struct Memory {
     limit: usize,
 }
 impl Memory {
+    pub(crate) fn remaining(&self) -> usize {
+        self.limit - self.used
+    }
     pub fn new(used: usize, limit: usize) -> Result<Self, Error> {
         if used > limit {
             Err(Error::Limit)

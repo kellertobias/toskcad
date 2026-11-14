@@ -13,6 +13,7 @@ impl fmt::Write for Counter {
 fn entity(
     file: &mut StepFile,
     args: fmt::Arguments<'_>,
+    memory: &mut Memory,
     w: &mut Work<'_>,
 ) -> Result<Entity, Error> {
     // An encoded-byte unit covers two bounded fmt visits. The first allocates
@@ -20,7 +21,45 @@ fn entity(
     let mut count = Counter(0);
     writeln!(&mut count, "{}={args};", Entity(file.next)).map_err(|_| Error::Limit)?;
     w.charge(count.0 + 1)?;
+    reserve(file, count.0, memory, w)?;
     Ok(file.entity(args))
+}
+fn reserve(
+    file: &mut StepFile,
+    additional: usize,
+    memory: &mut Memory,
+    w: &mut Work<'_>,
+) -> Result<(), Error> {
+    w.charge(1)?;
+    let required = file
+        .data
+        .len()
+        .checked_add(additional)
+        .ok_or(Error::Limit)?;
+    let old = file.data.capacity();
+    if required <= old {
+        return Ok(());
+    }
+    let desired = old.saturating_add((old / 2).max(64 * 1024));
+    // Current memory includes the OLD buffer. A realloc may temporarily retain
+    // BOTH buffers, so admit the complete new capacity, not just its growth.
+    let target = desired.max(required).min(memory.remaining());
+    if target < required {
+        return Err(Error::Limit);
+    }
+    let before = memory.used;
+    memory.add(target)?;
+    // Bulk copy is metered in machine words; allocation in pages. ASCII
+    // formatting visits are separately metered byte-for-byte by entity().
+    w.charge(1 + file.data.len().div_ceil(size_of::<usize>()) + target.div_ceil(4096))?;
+    file.data
+        .try_reserve_exact(target - file.data.len())
+        .map_err(|_| Error::Limit)?;
+    // Keep the actual returned capacity. Pinned RawVec exact growth stores the
+    // requested capacity; this postcheck does not depend on allocator RSS.
+    memory.used = before - old;
+    memory.add(file.data.capacity())?;
+    Ok(())
 }
 struct Scalar<'a> {
     source: &'a Coefficient,
@@ -90,6 +129,7 @@ impl<'a> Scalars<'a> {
                 "CARTESIAN_POINT('',({},{},{}))",
                 self.entries[a].text, self.entries[b].text, self.entries[c].text
             ),
+            memory,
             w,
         )
     }
@@ -123,6 +163,7 @@ fn spline(
     file: &mut StepFile,
     degree: usize,
     points: &[Entity],
+    memory: &mut Memory,
     w: &mut Work<'_>,
 ) -> Result<Entity, Error> {
     let m = degree + 1;
@@ -132,6 +173,7 @@ fn spline(
             "B_SPLINE_CURVE_WITH_KNOTS('',{degree},{},.UNSPECIFIED.,.F.,.F.,({m},{m}),(0.,1.),.UNSPECIFIED.)",
             Entities(points)
         ),
+        memory,
         w,
     )
 }
@@ -140,20 +182,23 @@ fn definition(
     support: Entity,
     curve: Entity,
     context: Entity,
+    memory: &mut Memory,
     w: &mut Work<'_>,
 ) -> Result<Entity, Error> {
     let d = entity(
         file,
         format_args!("DEFINITIONAL_REPRESENTATION('',({curve}),{context})"),
+        memory,
         w,
     )?;
-    entity(file, format_args!("PCURVE('',{support},{d})"), w)
+    entity(file, format_args!("PCURVE('',{support},{d})"), memory, w)
 }
 fn uv_curve(
     file: &mut StepFile,
     support: Entity,
     uv: [[f64; 2]; 2],
     context: Entity,
+    memory: &mut Memory,
     w: &mut Work<'_>,
 ) -> Result<Entity, Error> {
     let mut points = [Entity(0); 2];
@@ -161,11 +206,12 @@ fn uv_curve(
         points[i] = entity(
             file,
             format_args!("CARTESIAN_POINT('',({:.16E},{:.16E}))", p[0], p[1]),
+            memory,
             w,
         )?;
     }
-    let curve = spline(file, 1, &points, w)?;
-    definition(file, support, curve, context, w)
+    let curve = spline(file, 1, &points, memory, w)?;
+    definition(file, support, curve, context, memory, w)
 }
 fn cap_curve<'a>(
     file: &mut StepFile,
@@ -186,13 +232,14 @@ fn cap_curve<'a>(
                 "CARTESIAN_POINT('',({},{}))",
                 scalars.entries[x].text, scalars.entries[y].text
             ),
+            memory,
             w,
         )?);
     }
-    let curve = spline(file, 11, &points, w)?;
+    let curve = spline(file, 11, &points, memory, w)?;
     memory.release(&points);
     drop(points);
-    definition(file, support, curve, context, w)
+    definition(file, support, curve, context, memory, w)
 }
 impl CoupledTopology<'_, '_> {
     /// Source candidate in exact numerator coordinates, with an ACTUAL STEP
@@ -260,26 +307,22 @@ fn encode(
     }
     let mut memory = Memory::new(t.retained_bytes(), maximum_bytes)?;
     let controls = t.plan().rows().len() * 12;
-    let estimate = output_estimate(controls, t.edges().len(), t.faces().len())?;
-    let prior = file.data.capacity();
-    let base = memory.used;
-    memory.add(prior + estimate + 4096)?;
-    memory.used = base;
-    w.charge(1 + estimate.div_ceil(4096))?;
-    file.data
-        .try_reserve_exact(estimate)
-        .map_err(|_| Error::Limit)?;
     memory.add(file.data.capacity() + 4096)?;
     let mut scalars = Scalars::prepare(controls * 3, &mut memory, &mut w)?;
-    emit(file, t, &mut scalars, &mut memory, &mut w).and_then(|body| {
-        map_numerators(
-            file,
-            body,
-            t.plan().rows()[0].coefficients()[0][0].fractional_bits(),
-            map,
-            &mut w,
-        )
-    })
+    let body = emit(file, t, &mut scalars, &mut memory, &mut w)?;
+    let mapped = map_numerators(
+        file,
+        body,
+        t.plan().rows()[0].coefficients()[0][0].fractional_bits(),
+        map,
+        &mut memory,
+        &mut w,
+    )?;
+    // Standalone finish has fixed one-member protocol records. Compound
+    // membership metadata remains governed by the generic Writer contract.
+    reserve(file, 4096, &mut memory, &mut w)?;
+    w.charge(4096)?;
+    Ok(mapped)
 }
 fn emit<'a>(
     file: &mut StepFile,
@@ -295,7 +338,12 @@ fn emit<'a>(
         let [row, p] = vertex.coefficient_reference();
         let point = scalars.point(file, &s.rows()[row].coefficients()[p], memory, w)?;
         xyz.push(point);
-        vertices.push(entity(file, format_args!("VERTEX_POINT('',{point})"), w)?);
+        vertices.push(entity(
+            file,
+            format_args!("VERTEX_POINT('',{point})"),
+            memory,
+            w,
+        )?);
     }
     let mut row_points = memory.allocate(s.rows().len(), w)?;
     let mut curves = memory.allocate(t.edges().len(), w)?;
@@ -311,17 +359,17 @@ fn emit<'a>(
                 scalars.point(file, p, memory, w)?
             });
         }
-        curves.push(spline(file, 11, &points, w)?);
+        curves.push(spline(file, 11, &points, memory, w)?);
         row_points.push(points);
     }
     for edge in &t.edges()[s.rows().len()..] {
-        curves.push(spline(file, 1, &edge.ends.map(|i| xyz[i]), w)?);
+        curves.push(spline(file, 1, &edge.ends.map(|i| xyz[i]), memory, w)?);
     }
     let mut supports = memory.allocate(t.faces().len(), w)?;
     for face in t.faces() {
         supports.push(match face.geometry{
-        FaceGeometry::Tensor(i)=>{let[a,b]=t.patches()[i].rows.map(|r|&row_points[r]);entity(file,format_args!("B_SPLINE_SURFACE_WITH_KNOTS('',1,11,({},{}),.UNSPECIFIED.,.F.,.F.,.F.,(2,2),(12,12),(0.,1.),(0.,1.),.UNSPECIFIED.)",Entities(a),Entities(b)),w)?},
-        FaceGeometry::Cap(_)=>{let edge=&t.edges()[face.loops[0][0].edge];let row=edge.geometry.row_index().expect("cap incidence consists of actual source rows");let z=scalars.index(&s.rows()[row].coefficients()[0][2],memory,w)?;let origin=entity(file,format_args!("CARTESIAN_POINT('',(0.,0.,{}))",scalars.entries[z].text),w)?;let n=entity(file,format_args!("DIRECTION('',(0.,0.,1.))"),w)?;let x=entity(file,format_args!("DIRECTION('',(1.,0.,0.))"),w)?;let axis=entity(file,format_args!("AXIS2_PLACEMENT_3D('',{origin},{n},{x})"),w)?;entity(file,format_args!("PLANE('',{axis})"),w)?},
+        FaceGeometry::Tensor(i)=>{let[a,b]=t.patches()[i].rows.map(|r|&row_points[r]);entity(file,format_args!("B_SPLINE_SURFACE_WITH_KNOTS('',1,11,({},{}),.UNSPECIFIED.,.F.,.F.,.F.,(2,2),(12,12),(0.,1.),(0.,1.),.UNSPECIFIED.)",Entities(a),Entities(b)),memory, w)?},
+        FaceGeometry::Cap(_)=>{let edge=&t.edges()[face.loops[0][0].edge];let row=edge.geometry.row_index().expect("cap incidence consists of actual source rows");let z=scalars.index(&s.rows()[row].coefficients()[0][2],memory,w)?;let origin=entity(file,format_args!("CARTESIAN_POINT('',(0.,0.,{}))",scalars.entries[z].text),memory, w)?;let n=entity(file,format_args!("DIRECTION('',(0.,0.,1.))"),memory, w)?;let x=entity(file,format_args!("DIRECTION('',(1.,0.,0.))"),memory, w)?;let axis=entity(file,format_args!("AXIS2_PLACEMENT_3D('',{origin},{n},{x})"),memory, w)?;entity(file,format_args!("PLANE('',{axis})"),memory, w)?},
     });
     }
     let context = entity(
@@ -329,6 +377,7 @@ fn emit<'a>(
         format_args!(
             "(GEOMETRIC_REPRESENTATION_CONTEXT(2)PARAMETRIC_REPRESENTATION_CONTEXT()REPRESENTATION_CONTEXT('2D SPACE',''))"
         ),
+        memory,
         w,
     )?;
     let mut edge_pcurves = memory.allocate(t.edges().len(), w)?;
@@ -356,7 +405,7 @@ fn emit<'a>(
                         let patch = t.patches()[p];
                         let uv =
                             tensor_uv(patch.rows, patch.rows.map(|r| t.row_endpoints(r)), edge)?;
-                        uv_curve(file, supports[i], uv, context, w)?
+                        uv_curve(file, supports[i], uv, context, memory, w)?
                     }
                 };
                 edge_pcurves[c.edge].push(pc);
@@ -372,12 +421,14 @@ fn emit<'a>(
                 curves[i],
                 Entities(&edge_pcurves[i])
             ),
+            memory,
             w,
         )?;
         let [a, b] = edge.ends.map(|v| vertices[v]);
         edges.push(entity(
             file,
             format_args!("EDGE_CURVE('',{a},{b},{curve},.T.)"),
+            memory,
             w,
         )?);
     }
@@ -391,12 +442,14 @@ fn emit<'a>(
                 oriented.push(entity(
                     file,
                     format_args!("ORIENTED_EDGE('',*,*,{},{sense})", edges[c.edge]),
+                    memory,
                     w,
                 )?);
             }
             let loop_id = entity(
                 file,
                 format_args!("EDGE_LOOP('',{})", Entities(&oriented)),
+                memory,
                 w,
             )?;
             let kind = if j == 0 {
@@ -404,7 +457,12 @@ fn emit<'a>(
             } else {
                 "FACE_BOUND"
             };
-            bounds.push(entity(file, format_args!("{kind}('',{loop_id},.T.)"), w)?);
+            bounds.push(entity(
+                file,
+                format_args!("{kind}('',{loop_id},.T.)"),
+                memory,
+                w,
+            )?);
             memory.release(&oriented);
             drop(oriented);
         }
@@ -416,6 +474,7 @@ fn emit<'a>(
                 Entities(&bounds),
                 supports[i]
             ),
+            memory,
             w,
         )?);
         memory.release(&bounds);
@@ -424,34 +483,54 @@ fn emit<'a>(
     let shell = entity(
         file,
         format_args!("CLOSED_SHELL('',{})", Entities(&faces)),
+        memory,
         w,
     )?;
-    entity(file, format_args!("MANIFOLD_SOLID_BREP('',{shell})"), w)
+    entity(
+        file,
+        format_args!("MANIFOLD_SOLID_BREP('',{shell})"),
+        memory,
+        w,
+    )
 }
 fn map_numerators(
     file: &mut StepFile,
     body: Entity,
     bits: usize,
     [origin, u, v, n]: [[f64; 3]; 4],
+    memory: &mut Memory,
     w: &mut Work<'_>,
 ) -> Result<Entity, Error> {
-    let z = entity(file, format_args!("CARTESIAN_POINT('',(0.,0.,0.))"), w)?;
-    let a = entity(file, format_args!("DIRECTION('',(0.,0.,1.))"), w)?;
-    let b = entity(file, format_args!("DIRECTION('',(1.,0.,0.))"), w)?;
-    let source_axis = entity(file, format_args!("AXIS2_PLACEMENT_3D('',{z},{a},{b})"), w)?;
+    let z = entity(
+        file,
+        format_args!("CARTESIAN_POINT('',(0.,0.,0.))"),
+        memory,
+        w,
+    )?;
+    let a = entity(file, format_args!("DIRECTION('',(0.,0.,1.))"), memory, w)?;
+    let b = entity(file, format_args!("DIRECTION('',(1.,0.,0.))"), memory, w)?;
+    let source_axis = entity(
+        file,
+        format_args!("AXIS2_PLACEMENT_3D('',{z},{a},{b})"),
+        memory,
+        w,
+    )?;
     let length = entity(
         file,
         format_args!("(LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.))"),
+        memory,
         w,
     )?;
     let angle = entity(
         file,
         format_args!("(NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.))"),
+        memory,
         w,
     )?;
     let solid_angle = entity(
         file,
         format_args!("(NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT())"),
+        memory,
         w,
     )?;
     let context = entity(
@@ -459,16 +538,19 @@ fn map_numerators(
         format_args!(
             "(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNIT_ASSIGNED_CONTEXT(({length},{angle},{solid_angle})) REPRESENTATION_CONTEXT('',''))"
         ),
+        memory,
         w,
     )?;
     let local = entity(
         file,
         format_args!("SHAPE_REPRESENTATION('',({body},{source_axis}),{context})"),
+        memory,
         w,
     )?;
     let source = entity(
         file,
         format_args!("REPRESENTATION_MAP({source_axis},{local})"),
+        memory,
         w,
     )?;
     let o = entity(
@@ -477,6 +559,7 @@ fn map_numerators(
             "CARTESIAN_POINT('',({:.16E},{:.16E},{:.16E}))",
             origin[0], origin[1], origin[2]
         ),
+        memory,
         w,
     )?;
     let mut directions = [Entity(0); 3];
@@ -484,6 +567,7 @@ fn map_numerators(
         directions[i] = entity(
             file,
             format_args!("DIRECTION('',({:.16E},{:.16E},{:.16E}))", p[0], p[1], p[2]),
+            memory,
             w,
         )?;
     }
@@ -498,9 +582,15 @@ fn map_numerators(
         format_args!(
             "(CARTESIAN_TRANSFORMATION_OPERATOR({x},{y},{o},{scale})CARTESIAN_TRANSFORMATION_OPERATOR_3D({z})FUNCTIONALLY_DEFINED_TRANSFORMATION('','')GEOMETRIC_REPRESENTATION_ITEM()REPRESENTATION_ITEM(''))"
         ),
+        memory,
         w,
     )?;
-    entity(file, format_args!("MAPPED_ITEM('',{source},{target})"), w)
+    entity(
+        file,
+        format_args!("MAPPED_ITEM('',{source},{target})"),
+        memory,
+        w,
+    )
 }
 #[cfg(test)]
 mod tests;
