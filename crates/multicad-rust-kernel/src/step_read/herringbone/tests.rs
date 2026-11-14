@@ -553,3 +553,125 @@ fn rotated_bore_keeps_its_authored_seam_vertex() {
         Err(ReadError::Invalid),
     );
 }
+
+fn gapped(teeth: u32, hand: f64, bore: f64, gap: f64) -> Herringbone {
+    let beta = 15_f64.to_radians();
+    let pressure = (20_f64.to_radians().tan() / beta.cos()).atan();
+    let module = 2. / beta.cos();
+    let pitch = f64::from(teeth) * module / 2.;
+    Herringbone::new_gapped(
+        Spec {
+            teeth,
+            pitch_radius_mm: pitch,
+            base_radius_mm: pitch * pressure.cos(),
+            tip_radius_mm: pitch + 2.,
+            root_radius_mm: pitch - 2.5,
+            root_fillet_radius_mm: 0.4,
+            half_base_angle_rad: (PI * module / 2. - 0.05) / (2. * pitch) + pressure.tan()
+                - pressure,
+            face_width_mm: 10.,
+            bore_radius_mm: bore,
+        },
+        hand * beta.tan() / pitch,
+        gap,
+        1e-5,
+        1e7,
+    )
+    .unwrap()
+}
+
+#[test]
+fn gapped_readback_checks_the_root_core_arcs_and_every_shoulder() {
+    for (teeth, hand, bore, gap, [origin, u, v]) in [
+        (24, 1., 4., 3., XY),
+        (36, -1., 0., 1., XY),
+        (
+            24,
+            1.,
+            0.,
+            6.,
+            [[13., -7., 20.], [1., 0., 0.], [0., 0.6, 0.8]],
+        ),
+        (
+            24,
+            -1.,
+            4.,
+            3.,
+            [[-9., 11., 3.], [0., 0., 1.], [0.8, 0.6, 0.]],
+        ),
+    ] {
+        let gear = gapped(teeth, hand, bore, gap);
+        let text = write_herringbone(&gear, origin, u, v, TOL).unwrap();
+        let volume = verify_herringbone(&text, &gear, origin, u, v, TOL).unwrap();
+        assert!(
+            (volume - gear.volume_mm3()).abs() < 1e-5,
+            "{volume} != {}",
+            gear.volume_mm3()
+        );
+        // One root core, one bore and one plane per shoulder and end cap.
+        assert_eq!(
+            text.matches("CYLINDRICAL_SURFACE(").count(),
+            1 + usize::from(bore > 0.)
+        );
+        assert_eq!(text.matches("=PLANE(").count(), 2 + 2 * teeth as usize);
+        // The same text is not a different gap, a continuous chevron or
+        // the opposite hand.
+        for other in [
+            gapped(teeth, hand, bore, gap + 0.5),
+            gapped(teeth, -hand, bore, gap),
+            fixture(teeth, hand, bore),
+        ] {
+            assert!(verify_herringbone(&text, &other, origin, u, v, TOL).is_err());
+        }
+    }
+    let continuous = fixture(24, 1., 4.);
+    let text = write_herringbone(&continuous, XY[0], XY[1], XY[2], TOL).unwrap();
+    assert!(verify_herringbone(&text, &gapped(24, 1., 4., 3.), XY[0], XY[1], XY[2], TOL).is_err());
+}
+
+#[test]
+fn gapped_hubs_keep_their_ordinals_after_the_gap_faces() {
+    for bore in [0., 4.] {
+        for span in [[-2., 2.], [8., 12.], [-2., 12.]] {
+            let gear = gapped(24, 1., bore, 3.)
+                .with_hub(
+                    crate::spur_gear::Hub {
+                        radius_mm: 12.,
+                        axial_start_mm: span[0],
+                        axial_end_mm: span[1],
+                    },
+                    1e-5,
+                    1e7,
+                )
+                .unwrap();
+            let text = write_herringbone(&gear, XY[0], XY[1], XY[2], TOL).unwrap();
+            let volume = verify_herringbone(&text, &gear, XY[0], XY[1], XY[2], TOL).unwrap();
+            assert!((volume - gear.volume_mm3()).abs() < 1e-5);
+        }
+    }
+}
+
+#[test]
+fn gapped_readback_refuses_tampered_core_seam_arcs_and_shoulders() {
+    let gear = gapped(24, 1., 4., 3.);
+    let text = write_herringbone(&gear, XY[0], XY[1], XY[2], TOL).unwrap();
+    let root = gear.root_radius_mm();
+    let radius = format!("{root:.16E}");
+    let tampered = [
+        // A wider root core.
+        rewrite(
+            &text,
+            |line| line.contains("CYLINDRICAL_SURFACE(") && line.contains(&radius),
+            |line| line.replace(&radius, &format!("{:.16E}", root + 0.01)),
+        ),
+        // A shoulder plane facing the wrong way.
+        rewrite(
+            &text,
+            |line| line.contains("ADVANCED_FACE(") && line.ends_with(",.T.);"),
+            |line| line.replace(",.T.);", ",.F.);"),
+        ),
+    ];
+    for text in tampered {
+        assert!(verify_herringbone(&text, &gear, XY[0], XY[1], XY[2], TOL).is_err());
+    }
+}

@@ -73,14 +73,22 @@ pub(super) fn verify_member(
     let extension_count = extensions.iter().flatten().count();
     let n = plan.transverse.len();
     let faces = shell.member_faces(solid)?;
+    let stations = plan.levels.len();
+    let last = stations - 1;
     require(
-        faces.len() == 2 * n + 2 + usize::from(bore.is_some()) + 2 * extension_count
+        faces.len()
+            == 2 * n
+                + 2
+                + usize::from(bore.is_some())
+                + gear.gap_face_count() as usize
+                + 2 * extension_count
             && faces.iter().collect::<BTreeSet<_>>().len() == faces.len(),
     )?;
-    let mut rims = [(); 3].map(|()| vec![None; n]);
+    let mut rims = vec![vec![None; n]; stations];
     let mut rails = [(); 2].map(|()| vec![None; n]);
     let mut integral = 0.;
     for band in 0..2 {
+        let station = plan.band_start(band);
         let axial = &plan.spins[band];
         let heights = &plan.heights[band];
         for (index, radial) in plan.transverse.iter().enumerate() {
@@ -97,19 +105,19 @@ pub(super) fn verify_member(
                 return Err(ReadError::Invalid);
             };
             let next_index = (index + 1) % n;
-            register(&mut rims[band][index], bottom)?;
-            register(&mut rims[band + 1][index], top)?;
+            register(&mut rims[station][index], bottom)?;
+            register(&mut rims[station + 1][index], top)?;
             register(&mut rails[band][index], prior)?;
             register(&mut rails[band][next_index], next)?;
         }
     }
-    let rims = resolved(rims)?;
+    let rims = resolved_rows(rims)?;
     let rails = resolved(rails)?;
     let mut edge_ids: BTreeSet<_> = rims.iter().chain(&rails).flatten().copied().collect();
-    require(edge_ids.len() == 5 * n)?;
-    let mut vertices = [(); 3].map(|()| vec![None; n]);
+    require(edge_ids.len() == (stations + 2) * n)?;
+    let mut vertices = vec![vec![None; n]; stations];
     let mut area = 0.;
-    for station in 0..3 {
+    for station in 0..stations {
         let spin = plan.phases[station];
         let z = plan.levels[station];
         for (index, radial) in plan.transverse.iter().enumerate() {
@@ -126,10 +134,11 @@ pub(super) fn verify_member(
             }
         }
     }
-    let vertices = resolved(vertices)?;
+    let vertices = resolved_rows(vertices)?;
     let mut vertex_ids: BTreeSet<_> = vertices.iter().flatten().copied().collect();
-    require(vertex_ids.len() == 3 * n)?;
-    for band in 0..2 {
+    require(vertex_ids.len() == stations * n)?;
+    for (band, rails) in rails.iter().enumerate() {
+        let station = plan.band_start(band);
         let axial = &plan.spins[band];
         for (index, radial) in plan.transverse.iter().enumerate() {
             let points = axial
@@ -137,10 +146,25 @@ pub(super) fn verify_member(
                 .iter()
                 .zip(&plan.heights[band])
                 .map(|(&spin, &z)| frame.world(product(radial.poles[0], spin), z));
-            let (ends, _, _) = trim(shell, rails[band][index], axial, points)?;
-            require(ends == [vertices[band][index], vertices[band + 1][index]])?;
+            let (ends, _, _) = trim(shell, rails[index], axial, points)?;
+            require(ends == [vertices[station][index], vertices[station + 1][index]])?;
         }
     }
+    let core = if gear.is_gapped() {
+        let first = 2 * n + 2 + usize::from(bore.is_some());
+        verify_gap(
+            shell,
+            &faces[first..first + gear.gap_face_count() as usize],
+            gear,
+            &plan,
+            [&rims[1], &rims[2]],
+            [&vertices[1], &vertices[2]],
+            &frame,
+            &mut edge_ids,
+        )?
+    } else {
+        0.
+    };
     let mut bore_rims = [0; 2];
     let mut hub_rims = [[0; 2]; 2];
     let mut circles = CircularChecks {
@@ -148,7 +172,7 @@ pub(super) fn verify_member(
         edges: &mut edge_ids,
         vertices: &mut vertex_ids,
     };
-    for (end, station) in [0, 2].into_iter().enumerate() {
+    for (end, station) in [0, last].into_iter().enumerate() {
         let top = end == 1;
         let z = plan.levels[station];
         let hole_radius = extensions[end].map(|hub| hub.radius_mm).or(bore);
@@ -231,7 +255,7 @@ pub(super) fn verify_member(
     } else {
         0.
     };
-    let volume = area * integral + added - void;
+    let volume = area * integral + core + added - void;
     require(volume.is_finite() && volume > 0.)?;
     Ok(volume)
 }
@@ -297,6 +321,119 @@ impl CircularChecks<'_> {
         )?;
         Ok(id)
     }
+}
+
+/// Verify the seamed root core, the root arcs under each tooth at both
+/// shoulders and every per-tooth shoulder plane. Returns the core volume
+/// inside the root radius between the shoulders.
+#[allow(clippy::too_many_arguments)]
+fn verify_gap(
+    shell: &mut Shell<'_, '_>,
+    faces: &[u32],
+    gear: &Herringbone,
+    plan: &crate::step::herringbone::Charts,
+    rims: [&[u32]; 2],
+    vertices: [&[u32]; 2],
+    frame: &Frame,
+    edges: &mut BTreeSet<u32>,
+) -> Result<f64> {
+    let teeth = plan.under.len();
+    let n = rims[0].len();
+    let per = n / teeth;
+    let root = |tooth: usize| tooth * per + per - 1;
+    let levels = [plan.levels[1], plan.levels[2]];
+    let radius = gear.root_radius_mm();
+    let (surface, forward, bounds) = face(shell, faces[0])?;
+    let [bound] = bounds.as_slice() else {
+        return Err(ReadError::Invalid);
+    };
+    require(forward)?;
+    let [Value::String(_), axis, Value::Number(actual)] =
+        shell.args(surface, "CYLINDRICAL_SURFACE")?
+    else {
+        return Err(ReadError::Invalid);
+    };
+    require(*actual == radius)?;
+    check_axis(
+        shell,
+        axis,
+        frame.world([0.; 2], levels[0]),
+        frame.normal,
+        frame.u,
+    )?;
+    let uses = ring(shell, *bound, true)?;
+    require(uses.len() == 4 * teeth + 2)?;
+    let (bottom, rest) = uses.split_at(2 * teeth);
+    let (seam_up, rest) = rest.split_at(1);
+    let (top, seam_down) = rest.split_at(2 * teeth);
+    let [(seam, true)] = seam_up[..] else {
+        return Err(ReadError::Invalid);
+    };
+    require(seam_down == [(seam, false)] && edges.insert(seam))?;
+    let mut arcs = [vec![0; teeth], vec![0; teeth]];
+    let top = top
+        .iter()
+        .rev()
+        .map(|&(id, sense)| (id, !sense))
+        .collect::<Vec<_>>();
+    for (side, ring) in [bottom, &top[..]].into_iter().enumerate() {
+        // Counterclockwise from the seam: root 0, then arc and root of each
+        // later tooth, closing with the arc under tooth 0.
+        require(ring[0] == (rims[side][root(0)], true))?;
+        for tooth in 1..teeth {
+            let (arc, false) = ring[2 * tooth - 1] else {
+                return Err(ReadError::Invalid);
+            };
+            require(ring[2 * tooth] == (rims[side][root(tooth)], true))?;
+            arcs[side][tooth] = arc;
+        }
+        let (arc, false) = ring[2 * teeth - 1] else {
+            return Err(ReadError::Invalid);
+        };
+        arcs[side][0] = arc;
+        for (tooth, chart) in plan.under.iter().enumerate() {
+            let points = chart
+                .poles
+                .iter()
+                .map(|&p| frame.world(product(p, plan.phases[1]), levels[side]));
+            let (ends, _, _) = trim(shell, arcs[side][tooth], chart, points)?;
+            require(
+                ends == [vertices[side][root(tooth)], vertices[side][tooth * per]]
+                    && edges.insert(arcs[side][tooth]),
+            )?;
+        }
+    }
+    let ends = shell.edge(seam)?;
+    require(
+        matches!(shell.edges[&seam].curve, Curve::Line)
+            && ends == [vertices[0][root(0)], vertices[1][root(0)]],
+    )?;
+    for (side, upper) in [(0, false), (1, true)] {
+        for tooth in 0..teeth {
+            let bounds = cap_bounds(
+                shell,
+                faces[1 + side * teeth + tooth],
+                frame,
+                levels[side],
+                !upper,
+                false,
+            )?;
+            let expected = (tooth * per..root(tooth))
+                .map(|index| (rims[side][index], true))
+                .chain([(arcs[side][tooth], true)])
+                .collect::<Vec<_>>();
+            require(orient(&ring(shell, bounds[0], true)?, !upper) == expected)?;
+        }
+    }
+    Ok(PI * radius * radius * (levels[1] - levels[0]))
+}
+
+fn resolved_rows(values: Vec<Vec<Option<u32>>>) -> Result<Vec<Vec<u32>>> {
+    values
+        .into_iter()
+        .map(|row| row.into_iter().collect::<Option<Vec<_>>>())
+        .collect::<Option<Vec<_>>>()
+        .ok_or(ReadError::Invalid)
 }
 
 fn register(slot: &mut Option<u32>, id: u32) -> Result<()> {
