@@ -10,11 +10,13 @@ pub use bearing::{
     certify_hanger_stack,
 };
 mod passage;
+mod separation;
 pub use mating::{HangerMating, HangerMatingRequirements, certify_hanger_nut};
 pub use passage::{
     HangerPassage, PassageRequirements, ThroughStock, WoodSide, certify_hanger_annulus,
     certify_hanger_through_stock,
 };
+pub use separation::{HangerComponent, PlacedHangerComponent, hanger_component_separation};
 #[cfg(test)]
 mod tests;
 #[derive(Clone, Debug)]

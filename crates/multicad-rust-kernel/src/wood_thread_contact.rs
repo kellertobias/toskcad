@@ -53,10 +53,11 @@ pub struct Contact {
 mod hanger;
 mod insert;
 pub use hanger::{
-    BearingContact, HangerContact, HangerMating, HangerMatingRequirements, HangerPassage,
-    HangerStack, PassageRequirements, PlacedAnnulus, StackRequirements, StackSources, ThroughStock,
-    WoodSide, certify_hanger_annulus, certify_hanger_nut, certify_hanger_stack,
-    certify_hanger_through_stock, certify_hanger_wood,
+    BearingContact, HangerComponent, HangerContact, HangerMating, HangerMatingRequirements,
+    HangerPassage, HangerStack, PassageRequirements, PlacedAnnulus, PlacedHangerComponent,
+    StackRequirements, StackSources, ThroughStock, WoodSide, certify_hanger_annulus,
+    certify_hanger_nut, certify_hanger_stack, certify_hanger_through_stock, certify_hanger_wood,
+    hanger_component_separation,
 };
 mod separation;
 pub use insert::{
