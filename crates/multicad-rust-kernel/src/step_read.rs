@@ -1099,3 +1099,8 @@ pub use phillips_cutter::{
     MaterialVolume as PhillipsMaterialVolume,
     MaterialVolumeOptions as PhillipsMaterialVolumeOptions,
 };
+
+pub use phillips_cutter::{
+    OwnedDerivedMaterial as PhillipsOwnedDerivedMaterial,
+    OwnedMaterialOptions as PhillipsOwnedMaterialOptions,
+};

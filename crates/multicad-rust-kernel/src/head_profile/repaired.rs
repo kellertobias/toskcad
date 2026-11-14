@@ -320,3 +320,37 @@ impl Profile {
 
 mod volume;
 pub use volume::{RepairedHeadVolume, RepairedHeadVolumeOptions};
+
+/// Owned snapshot of the actual qualified repaired source expression. It does
+/// not reconstruct a meridian from a recipe or retain a self-referential view.
+pub struct OwnedRepairedHead {
+    profile: Profile,
+    parts: [Option<Part>; 5],
+    certificates: [Option<RepairedSegmentCertificate>; 5],
+    count: usize,
+    work: usize,
+}
+impl RepairedHeadMeridian<'_> {
+    pub(crate) fn owned_snapshot(&self) -> OwnedRepairedHead {
+        OwnedRepairedHead {
+            profile: *self.profile,
+            parts: self.parts,
+            certificates: self.certificates,
+            count: self.count,
+            work: self.work,
+        }
+    }
+}
+impl OwnedRepairedHead {
+    /// Temporary immutable view through the original source evaluator. All
+    /// stations, corrected arc expressions and certificates are copied exactly.
+    pub fn view(&self) -> RepairedHeadMeridian<'_> {
+        RepairedHeadMeridian {
+            profile: &self.profile,
+            parts: self.parts,
+            certificates: self.certificates,
+            count: self.count,
+            work: self.work,
+        }
+    }
+}

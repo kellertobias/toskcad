@@ -277,3 +277,6 @@ mod tests;
 
 mod volume;
 pub use volume::{MaterialVolume, MaterialVolumeOptions};
+
+mod owned;
+pub use owned::{OwnedDerivedMaterial, OwnedMaterialOptions};

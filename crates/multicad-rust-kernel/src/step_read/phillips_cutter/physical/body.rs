@@ -251,3 +251,5 @@ mod material;
 pub use material::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSource};
 
 pub use material::{MaterialVolume, MaterialVolumeOptions};
+
+pub use material::{OwnedDerivedMaterial, OwnedMaterialOptions};

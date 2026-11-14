@@ -9,7 +9,7 @@ use std::f64::consts::{FRAC_PI_2, PI, TAU};
 mod repaired;
 pub(crate) mod source_volume;
 pub use repaired::{
-    AxialProgress, RepairedHeadError, RepairedHeadMeridian, RepairedHeadOptions,
+    AxialProgress, OwnedRepairedHead, RepairedHeadError, RepairedHeadMeridian, RepairedHeadOptions,
     RepairedHeadVolume, RepairedHeadVolumeOptions, RepairedMeridianBounds,
     RepairedSegmentCertificate,
 };
