@@ -4,6 +4,10 @@ use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 mod classify;
 pub use classify::BoxClassification;
+mod profile_containment;
+pub use profile_containment::{
+    ProfileContainment, ProfileContainmentError, ProfileContainmentOptions,
+};
 mod prefix;
 mod properties;
 pub use prefix::AxialPrefix;
