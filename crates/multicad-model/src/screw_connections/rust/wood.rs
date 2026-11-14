@@ -13,7 +13,7 @@ pub(super) fn check(
     let fail = |message: &str| error(Some(id), message);
     let unsupported = || {
         fail(
-            "Rust direct wood contact currently requires one actual generated wood screw, one blind pilot, and no clamp or washer stack",
+            "Rust direct wood contact currently requires one actual generated wood screw, one blind pilot or counterbore, and no clamp or washer stack",
         )
     };
     let [row] = source.hardware.as_slice() else {
@@ -77,7 +77,7 @@ pub(super) fn check(
     if grip != 0.
         || resolved.station_mm != 0.
         || resolved.thread.is_some()
-        || resolved.seat.is_some()
+        || resolved.seat.is_some_and(|(cone, _, _)| cone)
         || !matches!(
             receiver.source.extent,
             ConnectionReceiverExtent::Blind { .. }
@@ -105,7 +105,7 @@ pub(super) fn check(
     at(
         axis,
         placed_frame(&h.part, h.pose),
-        0.,
+        resolved.seat.map_or(0., |(_, _, depth)| depth),
         input.policy.linear_tolerance_mm,
         id,
     )?;
@@ -115,20 +115,33 @@ pub(super) fn check(
         .leaf_solid(&receiver.source.occurrence)
         .ok_or_else(|| fail("The current pilot has no actual material source"))?;
     checkpoint(interrupt)?;
-    let contact = recipient
-        .rust_direct_wood_contact(
-            h.solid,
-            Requirements {
-                minimum_wall_mm: resolved.minimum_wall_mm,
-                minimum_floor_mm: floor,
-                minimum_engagement_mm: minimum,
-                tip_clearance_mm: clearance,
-                linear_tolerance_mm: input.policy.linear_tolerance_mm,
-                minimum_feature_mm: input.policy.minimum_feature_mm,
-            },
-            interrupt,
-        )
-        .map_err(|e| error(Some(id), e))?;
+    let requirements = Requirements {
+        minimum_wall_mm: resolved.minimum_wall_mm,
+        minimum_floor_mm: floor,
+        minimum_engagement_mm: minimum,
+        tip_clearance_mm: clearance,
+        linear_tolerance_mm: input.policy.linear_tolerance_mm,
+        minimum_feature_mm: input.policy.minimum_feature_mm,
+    };
+    let contact = if let Some((_, diameter, depth)) = resolved.seat {
+        let proof = recipient
+            .rust_seated_direct_wood_contact(h.solid, requirements, interrupt)
+            .map_err(|e| error(Some(id), e))?;
+        if proof.seat_radius_mm != diameter / 2.
+            || proof.seat_depth_mm != depth
+            || proof.bore_radius_mm != resolved.diameter_mm / 2.
+            || Some(proof.bore_depth_mm) != resolved.depth_mm
+        {
+            return Err(fail(
+                "The actual stepped receiving source differs from the current receiver",
+            ));
+        }
+        proof.contact
+    } else {
+        recipient
+            .rust_direct_wood_contact(h.solid, requirements, interrupt)
+            .map_err(|e| error(Some(id), e))?
+    };
     let mut queries = 0;
     for other_path in evaluated.snapshot().leaf_occurrences.keys() {
         if *other_path == path || *other_path == receiver.source.occurrence {
@@ -171,5 +184,5 @@ pub(super) fn check(
         receiver_features:vec![receiver.feature],grip_mm:grip,minimum_engagement_mm:minimum,
         blind_tip_clearance_mm:clearance,actual_engagement_mm:Some(engagement),actual_wood_engagement_mm:Some(engagement),
         native_component_collision_checked:true,
-        scope:"Actual retained flat-root wood screw and blind pilot: complete stock wall/floor, exact shared bearing plane, positive open material bite and all other component collision checks; no clamp/washer, installation or strength certification".into()})
+        scope:"Actual retained flat-root wood screw and blind pilot/counterbore: complete stock wall/floor, exact actual flat bearing plane, positive open material bite and all other component collision checks; no clamp/washer, installation or strength certification".into()})
 }
