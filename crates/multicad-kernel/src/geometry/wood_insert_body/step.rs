@@ -109,17 +109,22 @@ impl WoodInsertBody {
             maximum_work: WORK,
             retained_budget_bytes: read_bytes,
         };
-        let file = read::File::parse(text, options, interrupt).map_err(read_error)?;
+        // Charge the original document once in its explicit global scope,
+        // exactly as mixed verification does. The selected proof below keeps
+        // its unchanged 16M/64MiB limits, including the live source topology.
+        let file = read::CompoundDocument::parse(text, read::DocumentOptions::default(), interrupt)
+            .map_err(read_error)?;
         let [member] = file.represented_members() else {
             return Err(fail(
                 GeometryErrorKind::InvalidResult,
                 "Insert candidate must have one actual occurrence",
             ));
         };
-        let actual = file
-            .member(member.item_entity(), options, interrupt)
+        let packet = file
+            .member_packet(member.item_entity(), options, interrupt)
             .map_err(read_error)?;
-        let proof = self.verify_parsed(topology, &actual, read_bytes, fixed, policy, interrupt)?;
+        let actual = packet.parsed();
+        let proof = self.verify_parsed(topology, actual, read_bytes, fixed, policy, interrupt)?;
         if let Some(link) = member.mapping_link() {
             let mapping = actual
                 .physical_mapping(link.operator_entity(), options, interrupt)

@@ -402,3 +402,6 @@ mod step_mixed_tests;
 
 #[cfg(test)]
 mod step_failure_tests;
+
+#[cfg(test)]
+mod step_resource_tests;

@@ -479,10 +479,20 @@ fn actual_member_count_pose_and_precision_failures_leave_sources_reusable() {
             .unwrap()
             .is_err()
     );
+    // The shared document owns header/input work separately. Comment padding
+    // above16M does not consume the unchanged selected-member proof allowance.
     let padded = format!("/*{}*/{single}", " ".repeat(16_000_000));
+    insert
+        .verify_wood_insert_step_source(&padded, 1e-7, None)
+        .unwrap()
+        .unwrap();
+    drop(padded);
+    // The common Part21 input cap remains64MiB, independent of the document's
+    // larger retained AST/work allowance.
+    let oversized = format!("/*{}*/{single}", " ".repeat(64 * 1024 * 1024));
     assert_eq!(
         insert
-            .verify_wood_insert_step_source(&padded, 1e-7, None)
+            .verify_wood_insert_step_source(&oversized, 1e-7, None)
             .unwrap()
             .unwrap_err()
             .kind,
