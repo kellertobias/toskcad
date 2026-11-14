@@ -50,7 +50,9 @@ pub struct Contact {
     pub witness_volume_lower_mm3: f64,
     pub source_chart_bearing_radial_land_mm: [f64; 2],
 }
+mod hanger;
 mod insert;
+pub use hanger::{HangerContact, certify_hanger_wood};
 mod separation;
 pub use insert::{
     InsertContact, InsertMating, MatingExternal, MatingRequirements, MatingScrew, ScrewClearance,
