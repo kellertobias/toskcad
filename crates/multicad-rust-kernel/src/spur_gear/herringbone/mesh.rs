@@ -639,6 +639,27 @@ mod tests {
     }
 
     #[test]
+    fn inconsistent_root_radius_refuses_gap_shoulder_publication() {
+        let (mut spec, twist) = super::super::tests::fixture(24);
+        spec.face_width_mm = 10.;
+        let mut gear = Herringbone::new_gapped(spec, twist, 3., 1e-5, 1e7).unwrap();
+        let options = Tessellation {
+            deflection: 0.005,
+            angle: 0.15,
+            triangle_limit: 1_000_000,
+        };
+        assert!(gear.mesh(options).is_ok());
+        // Isolate the shoulder validator from the public constructor. Root
+        // arcs on the pitch circle cross both flanks of their tooth, so the
+        // shoulder region must fail instead of publishing overlapping caps.
+        gear.profile.root_radius_mm = spec.pitch_radius_mm;
+        assert_eq!(
+            gear.mesh(options).err(),
+            Some(MeshError::UnresolvedBoundary)
+        );
+    }
+
+    #[test]
     fn narrow_hub_root_clearance_limits_coarse_requested_strip_error() {
         let (mut spec, _) = super::super::tests::fixture(24);
         spec.bore_radius_mm = spec.root_radius_mm - 0.1;
