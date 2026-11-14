@@ -17,9 +17,10 @@ impl Thread {
     }
 }
 
-// Angle is measured in [0,2pi], including both one-sided seam limits. The
-// retained rounded helical rate is not silently replaced by an exact lead.
-fn angle(x: I, y: I) -> I {
+// Keep both one-sided intervals at the angular seam instead of replacing a
+// tiny seam-crossing box by an entire turn. The retained rounded helical rate
+// is applied to BOTH intervals; it is never replaced by an exact lead.
+fn angle(x: I, y: I) -> [Option<I>; 2] {
     let pi = I::new(PI.next_down(), PI.next_up());
     let half = pi / I::point(2.);
     let tau = pi * I::point(2.);
@@ -29,22 +30,25 @@ fn angle(x: I, y: I) -> I {
         (y / x).atan() + pi
     } else if x.hi < 0. && y.hi <= 0. {
         (y / x).atan() - pi
+    } else if x.hi < 0. {
+        // The negative-X seam is continuous in the wrapped [0,2pi] chart.
+        (y / x).atan() + pi
     } else if y.lo > 0. {
         half - (x / y).atan()
     } else if y.hi < 0. {
         -half - (x / y).atan()
     } else {
-        return I::new(0., tau.hi);
+        return [Some(I::new(0., tau.hi)), None];
     };
     // Enclose the actual atan2 evaluator independently of interval atan's
     // endpoint library allowance, as for retained meridian source proofs.
     let a = a + I::new(-16. * f64::EPSILON, 16. * f64::EPSILON);
     if a.lo >= 0. {
-        a
+        [Some(a), None]
     } else if a.hi < 0. {
-        a + tau
+        [Some(a + tau), None]
     } else {
-        I::new(0., tau.hi)
+        [Some(I::new(0., a.hi)), Some(I::new(a.lo, 0.) + tau)]
     }
 }
 fn radius(thread: &Thread, phase: I) -> Option<I> {
@@ -127,17 +131,25 @@ impl Thread {
         if z.hi < 0. || z.lo > self.spec.length_mm || rho.lo > self.spec.major_radius_mm {
             return Ok(Outside);
         }
-        let q = z - I::point(self.helical_rate()) * angle(x, y);
-        let quotient = q / I::point(self.spec.pitch_mm);
-        if !q.valid() || !quotient.valid() {
-            return Ok(UnresolvedBoundary);
-        }
         // Axial rejection above bounds the only boxes for which this is used.
-        // Broad boxes need no unbounded scan: one whole period is sufficient.
-        let radii = phase_radius(self, q, quotient);
+        // Each of at most two angular pieces needs at most one whole period.
+        let radii = angle(x, y).into_iter().flatten().try_fold(
+            I::new(f64::INFINITY, f64::NEG_INFINITY),
+            |radii, angle| {
+                let q = z - I::point(self.helical_rate()) * angle;
+                let quotient = q / I::point(self.spec.pitch_mm);
+                if !q.valid() || !quotient.valid() {
+                    return None;
+                }
+                let piece = phase_radius(self, q, quotient)?;
+                Some(I::new(radii.lo.min(piece.lo), radii.hi.max(piece.hi)))
+            },
+        );
         if !rho.valid() {
             return Ok(UnresolvedBoundary);
         }
+        // Failed piece proofs remain unresolved. Every accepted piece is
+        // independently checked; angle always supplies at least one interval.
         Ok(radii.map_or(UnresolvedBoundary, |radii| {
             if rho.lo > radii.hi {
                 Outside
@@ -172,6 +184,49 @@ mod tests {
             root_radius_mm: rounded.then_some(0.06),
         })
         .unwrap()
+    }
+    #[test]
+    fn small_boxes_across_both_angular_seams_keep_the_actual_wrapped_source_law() {
+        for rounded in [false, true] {
+            for left in [false, true] {
+                for starts in [1, 2] {
+                    let thread = fixture(rounded, left, starts);
+                    for theta in [0., PI] {
+                        for z in [0.23, 0.47, 1.13] {
+                            let radius = thread.radius(theta, z);
+                            for (offset, occupied) in [(-0.001, true), (0.001, false)] {
+                                let centre = [
+                                    (radius + offset) * theta.cos(),
+                                    (radius + offset) * theta.sin(),
+                                    z,
+                                ];
+                                let bounds = centre.map(|v| [v - 1e-6, v + 1e-6]);
+                                assert_eq!(
+                                    thread.classify_box(bounds),
+                                    Ok(if occupied {
+                                        BoxClassification::Inside
+                                    } else {
+                                        BoxClassification::Outside
+                                    }),
+                                    "rounded={rounded},left={left},starts={starts},theta={theta},z={z}"
+                                );
+                                for corner in 0..8 {
+                                    assert_eq!(
+                                        thread.contains(
+                                            std::array::from_fn(
+                                                |i| bounds[i][usize::from(corner & (1 << i) != 0)]
+                                            ),
+                                            0.
+                                        ),
+                                        occupied
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
     #[test]
     fn original_flat_and_rounded_boxes_preserve_inside_outside_and_boundary_uncertainty() {
@@ -216,8 +271,8 @@ mod tests {
                         t.classify_box([[1., 0.], [0., 0.], [1., 1.]]),
                         Err(ThreadError::Invalid)
                     );
-                    // Every strict classified small box agrees with an independent
-                    // dense sampling of the original source's nominal membership.
+                    // All these separated small boxes now classify strictly,
+                    // including both seams. Check independent nominal corners.
                     for n in 0..48 {
                         let theta = n as f64 * TAU / 48.;
                         let z = 0.9 + n as f64 * 0.0123;
@@ -226,13 +281,10 @@ mod tests {
                             let p = [(r + offset) * theta.cos(), (r + offset) * theta.sin(), z];
                             let b = p.map(|v| [v - 1e-7, v + 1e-7]);
                             let class = t.classify_box(b).unwrap();
+                            assert_eq!(class, if offset < 0. { Inside } else { Outside });
                             for bits in 0..8 {
                                 let q = std::array::from_fn(|i| b[i][(bits >> i) & 1]);
-                                match class {
-                                    Inside => assert!(t.contains(q, 0.)),
-                                    Outside => assert!(!t.contains(q, 0.)),
-                                    UnresolvedBoundary => {}
-                                }
+                                assert_eq!(t.contains(q, 0.), class == Inside);
                             }
                         }
                     }
