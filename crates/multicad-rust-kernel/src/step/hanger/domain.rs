@@ -46,7 +46,7 @@ enum TrimKind {
     Cap(End),
     Rail(bool),
 }
-fn work<'a>(
+pub(super) fn work<'a>(
     options: DomainOptions,
     bytes: usize,
     interrupt: Option<&'a dyn Fn() -> bool>,
