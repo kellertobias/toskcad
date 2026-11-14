@@ -500,7 +500,32 @@ fn unrelated_families_curved_proposals_and_fuzzy_or_mismatched_policies_keep_the
     .unwrap();
     let nut =
         Solid::rust_hex_nut(spec(false), 8., 0.5, EntityId::new(), frame(false), policy).unwrap();
-    for (a, b) in [(&small, &sphere), (&thread, &sphere), (&thread, &curved)] {
+    let stock = Solid::box_solid([10., 10., 6.], policy)
+        .unwrap()
+        .transformed(RigidTransform {
+            translation_mm: [-5., -5., 0.],
+            ..Default::default()
+        })
+        .unwrap();
+    let blind = stock
+        .rust_cut_blind_internal_thread(
+            BlindThreadCut {
+                profile: spec(false),
+                entry: frame(false),
+                receiving_radius_mm: 2.,
+                minimum_wall_mm: 1.,
+                minimum_floor_mm: 0.5,
+            },
+            EntityId::new(),
+            policy,
+        )
+        .unwrap();
+    for (a, b) in [
+        (&small, &sphere),
+        (&thread, &sphere),
+        (&thread, &curved),
+        (&blind, &small),
+    ] {
         assert!(
             a.contained_thread_boolean(b, BooleanOperation::Intersect, policy)
                 .is_none()
