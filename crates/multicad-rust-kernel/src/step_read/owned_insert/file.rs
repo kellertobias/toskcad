@@ -201,3 +201,6 @@ fn walk(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod representation_tests;
