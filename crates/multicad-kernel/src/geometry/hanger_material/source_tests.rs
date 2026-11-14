@@ -79,7 +79,7 @@ fn actual_authored_hanger_sources_retain_world_bounds_volume_and_frame() {
         let source = source(left, nonbinary);
         let before = source;
         let body = HangerMaterial::new(source, frame, GeometryPolicy::default(), None).unwrap();
-        let bounds = body.bounds().unwrap();
+        let bounds = body.bounds();
         let local = source.bounds_mm();
         let axes = [frame.u, frame.v, frame.normal()];
         for mask in 0..8 {

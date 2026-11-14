@@ -56,7 +56,7 @@ impl HangerMaterial {
         let local = source.bounds_mm();
         frame.checked_metric_extent(local.map(|b| b[0].abs().max(b[1].abs())), policy)?;
         let result = Self { source, frame };
-        let bounds = result.bounds()?;
+        let bounds = result.bounds();
         policy.point(bounds.min)?;
         policy.point(bounds.max)?;
         checkpoint(interrupt)?;
@@ -68,7 +68,10 @@ impl HangerMaterial {
     pub fn frame(&self) -> PlaneFrame {
         self.frame
     }
-    pub fn bounds(&self) -> Result<Bounds, GeometryError> {
+    /// Infallible after admission: source dimensions and frame origin are
+    /// bounded by 1e7mm and admitted axes are near-unit. Each outward affine
+    /// operation stays finite. World policy limits are checked by `new`.
+    pub fn bounds(&self) -> Bounds {
         let local = self.source.bounds_mm().map(|[lo, hi]| I::new(lo, hi));
         let axes = [self.frame.u, self.frame.v, self.frame.normal()];
         let world: [I; 3] = std::array::from_fn(|i| {
@@ -76,13 +79,10 @@ impl HangerMaterial {
                 s + I::point(axes[j][i]) * local[j]
             })
         });
-        if world.into_iter().any(|v| !v.valid()) {
-            return Err(failure(source::Error::Unresolved));
-        }
-        Ok(Bounds {
+        Bounds {
             min: world.map(|v| v.lo),
             max: world.map(|v| v.hi),
-        })
+        }
     }
     /// Actual source volume under the literal affine frame. This does not
     /// substitute the manufacturing mesh's separately bounded signed volume.
