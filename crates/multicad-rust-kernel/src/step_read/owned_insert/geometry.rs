@@ -101,6 +101,18 @@ impl<'b, 'i> SupportBindings<'b, 'i> {
         manifold(self, &mut memory, &mut w)?;
         let components = components(self, &mut memory, &mut w)?;
         let mut stack = memory.allocate(3 * 32 + 1, &mut w).map_err(Error::from)?;
+        let mut height_checked = memory
+            .allocate(p.points().len(), &mut w)
+            .map_err(Error::from)?;
+        height_checked.resize(p.points().len(), false);
+        let span_count = self
+            .tensors()
+            .iter()
+            .map(|patch| p.tensors()[patch.tensor_index()].knots_v().len() - 1)
+            .sum();
+        // The radius and Jacobian proofs use the SAME literal polynomial nets.
+        // Decode each net once; cache coefficients without rounding or fitting.
+        let mut nets = memory.allocate(span_count, &mut w).map_err(Error::from)?;
         let mut radii = [[f64::INFINITY, 0_f64]; 2];
         let mut bounds = [[f64::INFINITY, f64::NEG_INFINITY]; 3];
         // Radius comes from each actual literal tensor, BEFORE assigning outer/inner.
@@ -109,9 +121,18 @@ impl<'b, 'i> SupportBindings<'b, 'i> {
             let component = components[patch.face_index()] as usize;
             for row in t.rows() {
                 for &id in row {
-                    w.charge(64).map_err(Error::from)?;
-                    height_bound(p, id, heights[1], &mut w)?;
-                    let point = cached(p, &cache, id)?;
+                    // One real POINT lookup serves bounds and memoized height
+                    // validation. The old loop performed two separate lookups.
+                    w.charge(32).map_err(Error::from)?;
+                    let index = p
+                        .points()
+                        .binary_search_by_key(&id, PointLeaf::entity)
+                        .map_err(|_| Error::Invalid)?;
+                    if !height_checked[index] {
+                        height_bound(&p.points()[index], heights, &mut w)?;
+                        height_checked[index] = true;
+                    }
+                    let point = cache[index].ok_or(Error::Invalid)?;
                     for a in 0..3 {
                         bounds[a][0] = bounds[a][0].min(point[a].lo);
                         bounds[a][1] = bounds[a][1].max(point[a].hi);
@@ -120,6 +141,7 @@ impl<'b, 'i> SupportBindings<'b, 'i> {
             }
             for span in 0..t.knots_v().len() - 1 {
                 let data = controls(p, &cache, t, span, false, &mut w)?;
+                nets.push(data);
                 let r = projection::radius_squared(data, &mut w).map_err(Error::from)?;
                 let (r, _) = projection::positive(r, &mut stack, &mut w).map_err(Error::from)?;
                 let r = r.sqrt();
@@ -127,6 +149,8 @@ impl<'b, 'i> SupportBindings<'b, 'i> {
                 radii[component][1] = radii[component][1].max(r.hi);
             }
         }
+        memory.release(&height_checked);
+        drop(height_checked);
         let outer = if radii[0][0] > radii[1][1] {
             0
         } else if radii[1][0] > radii[0][1] {
@@ -135,6 +159,7 @@ impl<'b, 'i> SupportBindings<'b, 'i> {
             return Err(Error::Unsupported);
         };
         let mut minimum = f64::INFINITY;
+        let mut net_index = 0;
         for patch in self.tensors() {
             let t = &p.tensors()[patch.tensor_index()];
             let face = &p.faces()[patch.face_index()];
@@ -148,7 +173,16 @@ impl<'b, 'i> SupportBindings<'b, 'i> {
             for span in 0..t.knots_v().len() - 1 {
                 let reverse = collapsed[1] && span + 2 == t.knots_v().len();
                 let factor = (collapsed[0] && span == 0) || reverse;
-                let data = controls(p, &cache, t, span, reverse, &mut w)?;
+                let mut data = nets[net_index];
+                net_index += 1;
+                if reverse {
+                    w.charge(6 * 12).map_err(Error::from)?;
+                    for row in &mut data {
+                        for axis in row {
+                            axis.c[..=axis.degree].reverse();
+                        }
+                    }
+                }
                 let j = projection::jacobian(data, factor, &mut w).map_err(Error::from)?;
                 let sign = side * same * if reverse { -1. } else { 1. };
                 let j = [
@@ -160,13 +194,15 @@ impl<'b, 'i> SupportBindings<'b, 'i> {
                 minimum = minimum.min(j.lo);
             }
         }
+        memory.release(&nets);
+        drop(nets);
         let cap_min = caps(self, &components, outer, p, &cache, &mut stack, &mut w)?;
         memory.release(&cache);
         drop(cache);
         memory.release(&stack);
         drop(stack);
         memory.used -= SCRATCH;
-        bounds[2] = [0., heights[1].bounds()[1]];
+        bounds[2] = [heights[0].bounds()[0], heights[1].bounds()[1]];
         w.charge(1).map_err(Error::from)?;
         Ok(MaterialBounds {
             binding: self,
@@ -209,32 +245,38 @@ fn controls(
     }
     Ok(rows)
 }
-fn height_bound(p: &Parsed<'_>, id: u32, height: Scalar<'_>, w: &mut Work<'_>) -> Result<()> {
-    let z = p.point(id).ok_or(Error::Invalid)?.coordinates()[2];
-    w.charge(z.spelling().len() + height.spelling().len() + 1)
+fn height_bound(point: &PointLeaf<'_>, heights: [Scalar<'_>; 2], w: &mut Work<'_>) -> Result<()> {
+    let z = point.coordinates()[2];
+    w.charge(z.spelling().len() + heights[0].spelling().len() + heights[1].spelling().len() + 1)
         .map_err(Error::from)?;
-    if !(z.value() > 0. || z.is_zero()) {
+    let equal = |h: Scalar<'_>| {
+        z.spelling() == h.spelling() || (z.is_zero() && h.is_zero()) || (z.is_one() && h.is_one())
+    };
+    // Strict cache order implies strict order of the encoded reals. Equality
+    // requires original-leaf equality, never equality of rounded caches alone.
+    if !(equal(heights[0]) || z.value() > heights[0].value())
+        || !(equal(heights[1]) || z.value() < heights[1].value())
+    {
         return Err(Error::Unsupported);
     }
-    // Strictly ordered correctly-rounded caches prove strict order of the actual
-    // decimal reals. Equal caches NEVER prove equality: require the literal leaf.
-    if z.spelling() == height.spelling()
-        || (z.is_zero() && height.is_zero())
-        || (z.is_one() && height.is_one())
-        || z.value() < height.value()
-    {
-        Ok(())
-    } else {
-        Err(Error::Unsupported)
-    }
+    Ok(())
 }
+
 fn root(parents: &mut [usize], mut i: usize, w: &mut Work<'_>) -> Result<usize> {
+    let mut cursor = i;
     while parents[i] != i {
         w.charge(1).map_err(Error::from)?;
         i = parents[i];
     }
+    while parents[cursor] != i {
+        w.charge(1).map_err(Error::from)?;
+        let next = parents[cursor];
+        parents[cursor] = i;
+        cursor = next;
+    }
     Ok(i)
 }
+
 fn components(
     b: &SupportBindings<'_, '_>,
     memory: &mut Memory,

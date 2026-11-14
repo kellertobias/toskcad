@@ -86,14 +86,16 @@ impl<'i> Parsed<'i> {
             .iter()
             .map(|plane| plane_height(self, plane, &mut w))
             .collect::<Result<Vec<_>>>()?;
-        let start = heights
-            .iter()
-            .position(Scalar::is_zero)
-            .ok_or(Error::Unsupported)?;
-        let end = 1 - start;
-        if heights[end].value() <= 0. {
+        // Different correctly-rounded caches prove strict order of the actual
+        // decimal heights. Equal caches are ambiguous; never invent a datum.
+        let start = if heights[0].value() < heights[1].value() {
+            0
+        } else if heights[1].value() < heights[0].value() {
+            1
+        } else {
             return Err(Error::Unsupported);
-        }
+        };
+        let end = 1 - start;
         let mut support_ids = self
             .faces
             .iter()

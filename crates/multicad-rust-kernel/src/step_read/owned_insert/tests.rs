@@ -1,5 +1,8 @@
 use super::*;
 fn make_file(left: bool) -> String {
+    make_file_case(left, 4.)
+}
+fn make_file_case(left: bool, length: f64) -> String {
     use crate::{
         authored_flat_thread::{AuthoredThread, SourceOptions},
         helical_thread::Spec,
@@ -12,7 +15,7 @@ fn make_file(left: bool) -> String {
     let spec = Spec {
         major_radius_mm: 5.,
         pitch_mm: 2.,
-        length_mm: 4.,
+        length_mm: length,
         depth_mm: 1.,
         crest_width_mm: 0.4,
         lower_flank_deg: 30.,
@@ -305,4 +308,351 @@ fn actual_face_orientation_and_cap_hole_ownership_are_geometry_not_labels() {
         b1.material_bounds(Options::default(), None),
         Err(Error::Unsupported)
     ));
+}
+
+#[test]
+fn actual_metric_nonbinary_edit_lengths_keep_physical_readback_within_fixed_geometry_budget() {
+    for (left, length) in [(false, 4.3), (true, 4.7)] {
+        let text = make_file_case(left, length);
+        let p = parse(&text, Options::default(), None).unwrap();
+        let b = p.support_bindings(Options::default(), None).unwrap();
+        eprintln!(
+            "NONBINARY_SOURCE {left}/{length} faces{} bindwork{} bytes{}",
+            p.faces().len(),
+            b.work_used(),
+            b.retained_budget_bytes()
+        );
+        let proof = b.material_bounds(Options::default(), None).unwrap();
+        eprintln!(
+            "NONBINARY_MATERIAL {left}/{length} work{}",
+            proof.work_used()
+        );
+    }
+}
+#[test]
+fn original_graph_accessors_preserve_all_literal_and_semantic_identities() {
+    let text = file(false);
+    let p = parse(&text, Options::default(), None).unwrap();
+    for curve in p.curves() {
+        assert_eq!(p.curve(curve.entity()).unwrap().entity(), curve.entity());
+        assert_eq!(curve.knots().len(), curve.multiplicities().len());
+    }
+    for plane in p.planes() {
+        assert!(
+            p.literal_input()
+                .contains(&format!("#{}=AXIS2_PLACEMENT_3D", plane.axis_entity()))
+        );
+        assert!(p.point(plane.origin_entity()).is_some());
+        assert!(
+            p.literal_input()
+                .contains(&format!("#{}=PLANE", plane.entity()))
+        );
+    }
+    for edge in p.edges() {
+        assert_eq!(p.edge(edge.entity()).unwrap().entity(), edge.entity());
+        assert!(
+            p.literal_input()
+                .contains(&format!("#{}=SURFACE_CURVE", edge.surface_curve_entity()))
+        );
+        for v in edge.vertex_entities() {
+            assert_eq!(p.vertex(v).unwrap().entity, v);
+        }
+    }
+    for tensor in p.tensors() {
+        assert!(
+            p.literal_input()
+                .contains(&format!("#{}=B_SPLINE_SURFACE_WITH_KNOTS", tensor.entity()))
+        );
+        assert_eq!(tensor.knots_v().len(), tensor.multiplicities_v().len());
+    }
+    assert!(p.point(u32::MAX).is_none());
+    assert!(p.curve(u32::MAX).is_none());
+    assert!(p.edge(u32::MAX).is_none());
+    assert!(p.vertex(u32::MAX).is_none());
+    let b = p.support_bindings(Options::default(), None).unwrap();
+    for t in b.tensors() {
+        for v in t.corner_vertex_entities() {
+            assert!(p.vertex(v).is_some());
+        }
+    }
+    let m = b.material_bounds(Options::default(), None).unwrap();
+    assert!(m.outer_component() < 2);
+    for (i, face) in p.faces().iter().enumerate() {
+        assert_eq!(
+            m.tensor_component(i).is_some(),
+            matches!(face.surface(), SurfaceIndex::Tensor(_))
+        );
+    }
+    assert!(m.tensor_component(usize::MAX).is_none());
+    let bounds = m.bounds_mm();
+    assert_eq!(bounds[2], [0., 4.]);
+    for tensor in p.tensors() {
+        for row in tensor.rows() {
+            for &id in row {
+                for (i, v) in p.point(id).unwrap().coordinates().iter().enumerate() {
+                    assert!(bounds[i][0] <= v.value() && v.value() <= bounds[i][1]);
+                }
+            }
+        }
+    }
+}
+#[test]
+fn actual_raw_reader_resource_and_cancellation_failures_publish_no_proof() {
+    let text = file(false);
+    for options in [
+        Options {
+            maximum_work: 0,
+            ..Options::default()
+        },
+        Options {
+            maximum_work: 16_000_001,
+            ..Options::default()
+        },
+        Options {
+            retained_budget_bytes: 0,
+            ..Options::default()
+        },
+        Options {
+            retained_budget_bytes: 64 * 1024 * 1024 + 1,
+            ..Options::default()
+        },
+    ] {
+        assert!(matches!(parse(&text, options, None), Err(Error::Invalid)));
+    }
+    for options in [
+        Options {
+            maximum_work: 1,
+            ..Options::default()
+        },
+        Options {
+            retained_budget_bytes: 1,
+            ..Options::default()
+        },
+    ] {
+        assert!(matches!(parse(&text, options, None), Err(Error::Limit)));
+    }
+    assert!(matches!(
+        parse(&text, Options::default(), Some(&|| true)),
+        Err(Error::Cancelled)
+    ));
+    let polls = std::cell::Cell::new(0);
+    let stop = || {
+        polls.set(polls.get() + 1);
+        polls.get() > 100
+    };
+    assert!(matches!(
+        parse(&text, Options::default(), Some(&stop)),
+        Err(Error::Cancelled)
+    ));
+    let p = parse(&text, Options::default(), None).unwrap();
+    for options in [
+        Options {
+            maximum_work: 0,
+            ..Options::default()
+        },
+        Options {
+            retained_budget_bytes: 0,
+            ..Options::default()
+        },
+    ] {
+        assert!(matches!(
+            p.support_bindings(options, None),
+            Err(Error::Invalid)
+        ));
+    }
+    assert!(matches!(
+        p.support_bindings(
+            Options {
+                maximum_work: p.work_used(),
+                ..Options::default()
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    assert!(matches!(
+        p.support_bindings(
+            Options {
+                retained_budget_bytes: p.retained_budget_bytes(),
+                ..Options::default()
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    assert!(matches!(
+        p.support_bindings(Options::default(), Some(&|| true)),
+        Err(Error::Cancelled)
+    ));
+    let b = p.support_bindings(Options::default(), None).unwrap();
+    assert!(matches!(
+        b.material_bounds(
+            Options {
+                maximum_work: 0,
+                ..Options::default()
+            },
+            None
+        ),
+        Err(Error::Invalid)
+    ));
+    assert!(matches!(
+        b.material_bounds(
+            Options {
+                retained_budget_bytes: 0,
+                ..Options::default()
+            },
+            None
+        ),
+        Err(Error::Invalid)
+    ));
+    assert!(matches!(
+        b.material_bounds(
+            Options {
+                maximum_work: b.work_used(),
+                ..Options::default()
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    assert!(matches!(
+        b.material_bounds(
+            Options {
+                retained_budget_bytes: b.retained_budget_bytes(),
+                ..Options::default()
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    assert!(matches!(
+        b.material_bounds(Options::default(), Some(&|| true)),
+        Err(Error::Cancelled)
+    ));
+    for (before, after) in [
+        (super::super::ReadError::Invalid, Error::Invalid),
+        (super::super::ReadError::Unsupported, Error::Unsupported),
+        (super::super::ReadError::Limit, Error::Limit),
+    ] {
+        assert_eq!(Error::from(before), after);
+    }
+    for (before, after) in [
+        (crate::step::insert::Error::Invalid, Error::Invalid),
+        (crate::step::insert::Error::Unresolved, Error::Unsupported),
+        (crate::step::insert::Error::Limit, Error::Limit),
+        (crate::step::insert::Error::Cancelled, Error::Cancelled),
+    ] {
+        assert_eq!(Error::from(before), after);
+    }
+}
+fn argument_change(text: &str, id: u32, index: usize, value: &str) -> String {
+    record_change(text, id, |line| {
+        let open = line.find('(').unwrap();
+        let inside = &line[open + 1..line.len() - 2];
+        let mut fields = Vec::new();
+        let mut depth = 0usize;
+        let mut quoted = false;
+        let mut start = 0;
+        for (i, b) in inside.bytes().enumerate() {
+            if b == b'\'' {
+                quoted = !quoted;
+            }
+            if !quoted {
+                if b == b'(' {
+                    depth += 1;
+                }
+                if b == b')' {
+                    depth -= 1;
+                }
+                if b == b',' && depth == 0 {
+                    fields.push(&inside[start..i]);
+                    start = i + 1;
+                }
+            }
+        }
+        fields.push(&inside[start..]);
+        fields[index] = value;
+        format!("{}({});", &line[..open], fields.join(","))
+    })
+}
+#[test]
+fn actual_malformed_schema_records_and_missing_graph_references_are_atomic_refusals() {
+    let text = file(false);
+    let p = parse(&text, Options::default(), None).unwrap();
+    let c = &p.curves()[0];
+    let t = &p.tensors()[0];
+    let plane = &p.planes()[0];
+    let face = &p.faces()[0];
+    let edge = &p.edges()[0];
+    let pc = &edge.pcurves()[0];
+    let vertex = &p.vertices()[0];
+    let point = p
+        .points()
+        .iter()
+        .find(|p| p.coordinates().len() == 3)
+        .unwrap();
+    let bound = &face.loops()[0];
+    let cases = [
+        (point.entity(), 0, ".T."),
+        (point.entity(), 1, "(0.,0.,0.,0.)"),
+        (c.entity(), 1, "3"),
+        (c.entity(), 2, "()"),
+        (c.entity(), 3, ".POLYLINE_FORM."),
+        (c.entity(), 6, "(1,1)"),
+        (c.entity(), 7, "(0.,0.)"),
+        (c.entity(), 7, "(0.,0.5,1.)"),
+        (t.entity(), 1, "2"),
+        (t.entity(), 3, "()"),
+        (t.entity(), 8, "(1,1)"),
+        (t.entity(), 10, "(0.,0.5,1.)"),
+        (t.entity(), 11, "(0.,0.)"),
+        (plane.entity(), 1, "#4294967295"),
+        (plane.axis_entity(), 2, "$"),
+        (face.entity(), 1, "()"),
+        (face.entity(), 3, ".U."),
+        (bound.bound_entity(), 2, ".F."),
+        (edge.entity(), 4, ".F."),
+        (edge.surface_curve_entity(), 3, ".PCURVE_S1."),
+        (pc.entity, 2, "#4294967295"),
+        (pc.representation, 1, "()"),
+        (vertex.entity, 1, "#4294967295"),
+    ];
+    for (id, index, value) in cases {
+        let changed = argument_change(&text, id, index, value);
+        assert!(
+            parse(&changed, Options::default(), None).is_err(),
+            "actualrecord#{id} arg{index}={value}"
+        );
+    }
+    let changed = argument_change(
+        &text,
+        edge.entity(),
+        1,
+        &format!("#{}", edge.vertex_entities()[1]),
+    );
+    assert!(matches!(
+        parse(&changed, Options::default(), None),
+        Err(Error::Unsupported)
+    ));
+}
+#[test]
+fn coherently_translated_actual_z_planes_and_carriers_keep_their_own_datum() {
+    let text = file(false);
+    let p = parse(&text, Options::default(), None).unwrap();
+    let mut changed = text.clone();
+    for point in p.points() {
+        if point.coordinates().len() != 3 {
+            continue;
+        }
+        let c = point.coordinates();
+        let z = c[2].value() - 10.;
+        let value = format!("({},{},{z:.16E})", c[0].spelling(), c[1].spelling());
+        changed = argument_change(&changed, point.entity(), 1, &value);
+    }
+    let p = parse(&changed, Options::default(), None).unwrap();
+    let b = p.support_bindings(Options::default(), None).unwrap();
+    assert_eq!(b.cap_heights().map(|h| h.value()), [-10., -6.]);
+    let m = b.material_bounds(Options::default(), None).unwrap();
+    assert_eq!(m.bounds_mm()[2], [-10., -6.]);
+    assert!(m.minimum_signed_jacobian() > 0.);
 }

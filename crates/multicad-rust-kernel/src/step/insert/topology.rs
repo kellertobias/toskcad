@@ -438,9 +438,19 @@ fn add_link(slots: &mut [Option<usize>; 2], edge: usize) {
     slots[usize::from(slots[0].is_some())] = Some(edge);
 }
 fn root(parents: &mut [usize], mut x: usize, w: &mut Work<'_>) -> Result<usize, Error> {
+    let mut cursor = x;
     while parents[x] != x {
         w.charge(1)?;
         x = parents[x];
+    }
+    // Compress only the scratch proof forest. The representative and all
+    // actual graph/geometry identities remain unchanged; future exact finds
+    // avoid revisiting the same long chain.
+    while parents[cursor] != x {
+        w.charge(1)?;
+        let next = parents[cursor];
+        parents[cursor] = x;
+        cursor = next;
     }
     Ok(x)
 }
