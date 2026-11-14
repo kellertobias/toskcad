@@ -193,6 +193,7 @@ pub(super) fn read_members_retaining_arena<'input, T>(
     let entities = parse_entities(input, tolerance)?;
     let solids = Shell::new(&entities, tolerance, allow_circles).represented_solids(single)?;
     let (topology_count, analytic_candidate) = inspect_flat_entities(entities.values().flatten())?;
+    reject_reference_cycles(&entities, &solids)?;
     let may_be_warped = allow_circles && analytic_candidate;
     let mut owners = BTreeMap::new();
     let members = solids
@@ -208,6 +209,46 @@ pub(super) fn read_members_retaining_arena<'input, T>(
         return Err(ReadError::Invalid);
     }
     Ok((entities, members))
+}
+
+/// The topology and geometry below a solid form a hierarchy. A reference
+/// back to an entity that is still being expanded is malformed, whatever
+/// entity kind the referring attribute expects.
+fn reject_reference_cycles(
+    entities: &BTreeMap<u32, Vec<Entity<'_>>>,
+    solids: &[u32],
+) -> Result<()> {
+    fn collect(value: &Value<'_>, pending: &mut Vec<(u32, bool)>) {
+        match value {
+            Value::Reference(id) => pending.push((*id, false)),
+            Value::List(items) => items.iter().for_each(|item| collect(item, pending)),
+            Value::Typed(entity) => entity.args.iter().for_each(|arg| collect(arg, pending)),
+            _ => {}
+        }
+    }
+    let mut closed = BTreeMap::new();
+    let mut pending = solids.iter().map(|&id| (id, false)).collect::<Vec<_>>();
+    while let Some((id, leaving)) = pending.pop() {
+        if leaving {
+            closed.insert(id, true);
+            continue;
+        }
+        match closed.get(&id) {
+            Some(true) => continue,
+            Some(false) => return Err(ReadError::Invalid),
+            None => {}
+        }
+        closed.insert(id, false);
+        pending.push((id, true));
+        // A dangling reference is reported by the member reader.
+        for entity in entities.get(&id).into_iter().flatten() {
+            entity
+                .args
+                .iter()
+                .for_each(|arg| collect(arg, &mut pending));
+        }
+    }
+    Ok(())
 }
 
 fn inspect_flat_entities<'a>(

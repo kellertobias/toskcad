@@ -488,10 +488,20 @@ impl<'a, 'input> Shell<'a, 'input> {
         let [Value::String(_), items, context] = representation.args.as_slice() else {
             return Err(ReadError::Invalid);
         };
+        // A product shape either owns the solid representation or owns a
+        // shape representation related to it without a transformation.
+        let related = |rep: u32| {
+            rep == representation_id
+                || self.entities.values().any(|components| {
+                    matches!(components.as_slice(), [Entity { name: "SHAPE_REPRESENTATION_RELATIONSHIP", args, .. }]
+                        if matches!(args.as_slice(), [_, _, Value::Reference(a), Value::Reference(b)]
+                            if [*a, *b] == [rep, representation_id] || [*b, *a] == [rep, representation_id]))
+                })
+        };
         let linked = self.entities.values().any(|components| {
             matches!(components.as_slice(), [Entity { name: "SHAPE_DEFINITION_REPRESENTATION", args, .. }]
                 if matches!(args.as_slice(), [Value::Reference(definition), Value::Reference(rep)]
-                    if *rep == representation_id && self.args(*definition, "PRODUCT_DEFINITION_SHAPE").is_ok()))
+                    if related(*rep) && self.args(*definition, "PRODUCT_DEFINITION_SHAPE").is_ok()))
         });
         if !linked {
             return Err(ReadError::Invalid);

@@ -183,14 +183,13 @@ fn malformed_cases() -> Vec<(&'static str, Vec<u8>, &'static str)> {
         (
             "self-cycle.step",
             replace("#19 = EDGE_LOOP('',(#20,", "#19 = EDGE_LOOP('',(#19,"),
-            // Refused, but reported as an unsupported entity type rather than
-            // invalid topology (finding attributed to CAD-290 in the ledger).
-            "unsupported",
+            // A reference cycle below the solid is malformed topology.
+            "invalid",
         ),
         (
             "vertex-cycle.step",
             replace("#22 = VERTEX_POINT('',#23)", "#22 = VERTEX_POINT('',#22)"),
-            "unsupported",
+            "invalid",
         ),
         (
             "duplicate-entity.step",
