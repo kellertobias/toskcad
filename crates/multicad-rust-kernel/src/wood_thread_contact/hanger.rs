@@ -3,7 +3,12 @@
 //! and stock collisions; neither a recipe nor an envelope is material proof.
 use super::*;
 use crate::authored_hanger_bolt::{Classification, Hanger};
+mod bearing;
 mod mating;
+pub use bearing::{
+    BearingContact, HangerStack, PlacedAnnulus, StackRequirements, StackSources,
+    certify_hanger_stack,
+};
 mod passage;
 pub use mating::{HangerMating, HangerMatingRequirements, certify_hanger_nut};
 pub use passage::{

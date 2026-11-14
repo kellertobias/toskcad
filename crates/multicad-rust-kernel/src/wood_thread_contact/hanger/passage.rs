@@ -25,6 +25,10 @@ pub enum WoodSide {
 #[derive(Clone, Debug)]
 pub struct HangerPassage {
     pub radial_clearance_lower_mm: f64,
+    /// Both actual source cap faces contain this complete annular material
+    /// band. Stock uses the original cut radius and independently validated
+    /// protected radius; an Annulus uses its retained inner/outer radii.
+    pub source_cap_annular_land_mm: [f64; 2],
     /// Enclosure of the source PREFIX ENVELOPE radius in the bore chart,
     /// not a measured occupied-source support or a material classification.
     pub source_prefix_envelope_radius_mm: [f64; 2],
@@ -36,7 +40,7 @@ pub struct HangerPassage {
 /// Certify a one-sided enclosure by exact bracketing. In particular a real
 /// value just below MAX may round to MAX; an unnecessary next_up would turn
 /// its valid upper endpoint into infinity. No conversion accuracy is assumed.
-fn directed(value: &Q) -> R<I> {
+pub(super) fn directed(value: &Q) -> R<I> {
     let f = value.to_f64().ok_or(Error::Unsupported)?;
     if !f.is_finite() {
         return Err(Error::Unsupported);
@@ -133,6 +137,7 @@ fn passage(
     frame: Frame,
     domain: Domain,
     req: PassageRequirements,
+    cap_land: [f64; 2],
     interrupt: &dyn Fn() -> bool,
 ) -> R<HangerPassage> {
     scale(frame)?;
@@ -178,6 +183,7 @@ fn passage(
     checkpoint(interrupt)?;
     Ok(HangerPassage {
         radial_clearance_lower_mm: physical.lo.max(req.minimum_radial_clearance_mm),
+        source_cap_annular_land_mm: cap_land,
         source_prefix_envelope_radius_mm: [envelope.lo, envelope.hi],
         wood_envelope_plane_gap_mm: [wood_gap.lo, wood_gap.hi],
         wood_side,
@@ -253,6 +259,7 @@ pub fn certify_hanger_through_stock(
             frame: stock.frame,
         },
         req,
+        [stock.bore.radius_mm, protected.radius_mm],
         interrupt,
     )
 }
@@ -285,6 +292,7 @@ pub fn certify_hanger_annulus(
             frame: ring_frame,
         },
         req,
+        [ring.inner_radius_mm(), ring.outer_radius_mm()],
         interrupt,
     )
 }

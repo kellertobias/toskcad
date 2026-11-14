@@ -73,6 +73,12 @@ fn actual_clamp_and_washer_voids_clear_whole_prefix_and_exact_wood_interface() {
         )
         .unwrap();
         assert_eq!(p.wood_side, WoodSide::AfterEnd);
+        assert_eq!(p.source_cap_annular_land_mm[0], bore.radius_mm);
+        let metric = scale(frame).unwrap();
+        assert!(
+            q(p.source_cap_annular_land_mm[1]).unwrap() - q(bore.radius_mm).unwrap()
+                >= q(1.).unwrap() / q(metric.minimum_scale.lo).unwrap()
+        );
         assert_eq!(p.wood_envelope_plane_gap_mm, [0., 0.]);
         assert!(p.radial_clearance_lower_mm > 0.19);
         let ring = Annulus::new(1.7, 3.5, 0.2).unwrap();
@@ -80,6 +86,10 @@ fn actual_clamp_and_washer_voids_clear_whole_prefix_and_exact_wood_interface() {
         ring_frame.origin_mm = std::array::from_fn(|i| frame.origin_mm[i] - 4.3 * frame.axes[2][i]);
         let r =
             certify_hanger_annulus(&ring, ring_frame, &source, frame, req(), &|| false).unwrap();
+        assert_eq!(
+            r.source_cap_annular_land_mm,
+            [ring.inner_radius_mm(), ring.outer_radius_mm()]
+        );
         assert!(r.wood_envelope_plane_gap_mm[0] > 4.09);
         assert!(r.radial_clearance_lower_mm > 0.19);
     }
