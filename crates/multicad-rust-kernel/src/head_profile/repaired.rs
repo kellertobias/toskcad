@@ -16,7 +16,9 @@
 use super::{Curve, Profile, Role, Segment};
 use crate::tapered_thread::interval::I;
 mod arc;
+mod query;
 use arc::ArcSource;
+pub use query::{RepairedHeadLocation, RepairedHeadQuery, RepairedHeadQueryOptions};
 #[cfg(test)]
 mod tests;
 const WORK: usize = 16_000_000;
