@@ -6,7 +6,7 @@ use crate::{
 };
 use std::cmp::Ordering;
 mod exact;
-pub(super) use exact::N;
+pub(crate) use exact::N;
 #[cfg(test)]
 mod tests;
 const SCRATCH: usize = 16 * 1024 * 1024;

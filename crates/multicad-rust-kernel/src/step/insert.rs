@@ -7,7 +7,7 @@ use crate::{
 };
 use std::mem::size_of;
 mod curves;
-mod domains;
+pub(crate) mod domains;
 pub(crate) mod projection;
 pub(crate) mod topology;
 mod writer;

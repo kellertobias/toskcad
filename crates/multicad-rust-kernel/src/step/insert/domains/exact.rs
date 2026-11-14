@@ -4,7 +4,7 @@ use num_bigint::{BigInt, Sign};
 use num_rational::BigRational;
 use num_traits::ToPrimitive;
 #[derive(Clone)]
-pub(in crate::step::insert) struct N(pub BigRational);
+pub(crate) struct N(pub BigRational);
 impl N {
     pub fn integer(n: i64) -> Self {
         Self(BigRational::from_integer(n.into()))
