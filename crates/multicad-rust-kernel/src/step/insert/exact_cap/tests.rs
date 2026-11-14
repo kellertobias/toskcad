@@ -1,4 +1,58 @@
 use super::*;
+#[test]
+fn literal_sub_ulp_ruled_gaps_and_owned_corner_factors_keep_their_true_jacobian() {
+    for factor in [false, true] {
+        let values: [[[String; 3]; 12]; 2] = std::array::from_fn(|r| {
+            std::array::from_fn(|i| {
+                [
+                    "1.".into(),
+                    i.to_string(),
+                    if r == 0 {
+                        "4.".into()
+                    } else if factor {
+                        format!("4.{i:016}")
+                    } else {
+                        "4.0000000000000001".into()
+                    },
+                ]
+            })
+        });
+        assert_eq!(values[1][1][2].parse::<f64>().unwrap(), 4.);
+        let tokens = std::array::from_fn(|r| {
+            std::array::from_fn(|i| LiteralPoint {
+                index: r * 12 + i,
+                coordinates: std::array::from_fn(|axis| values[r][i][axis].as_str()),
+            })
+        });
+        let mut memory = Memory::new(0, SCRATCH + 1024 * 1024).unwrap();
+        let mut w = Work::new(16_000_000, None).unwrap();
+        let mut memo = DecimalMemo::new(24, &mut memory, &mut w).unwrap();
+        let [d, da, dd] =
+            tensor_differentials(tokens, factor, &mut memo, &mut memory, &mut w).unwrap();
+        let a = std::array::from_fn(|axis| {
+            projection::polynomial::P::controls(&std::array::from_fn::<_, 12, _>(|i| {
+                I::point(if axis == 0 {
+                    1.
+                } else if axis == 1 {
+                    i as f64
+                } else {
+                    4.
+                })
+            }))
+        });
+        let j = projection::jacobian_differentials(a, d, da, dd, factor, &mut w).unwrap();
+        // y=11t, with positive z gap h (or h*t before the owned
+        // factor). The independently known signed determinant is -11h.
+        let expected = if factor { 121e-16 } else { 11e-16 };
+        for p in j {
+            let h = p.hull();
+            assert!(h.lo <= -expected && h.hi >= -expected);
+            assert!(h.hi < 0.);
+        }
+        memo.release(&mut memory);
+        assert_eq!(memory.used, 0);
+    }
+}
 fn line(scale: &str) -> [[String; 2]; 12] {
     std::array::from_fn(|i| [format!("1E{scale}"), format!("{i}E{scale}")])
 }

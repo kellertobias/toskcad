@@ -7,9 +7,9 @@ use num_traits::{One, Signed, Zero};
 mod admitted;
 mod aliases;
 mod number;
-mod reduced;
 mod rows;
-const BITS: usize = 96;
+pub mod topology;
+const BITS: usize = 80;
 const SCRATCH: usize = 16 * 1024 * 1024;
 /// Actual dyadic candidate coefficient; the adjacent-float cache is not its
 /// manufacturing authority. Original bytes and the fixed denominator are.
@@ -167,6 +167,12 @@ impl<'a> CoupledPlan<'a> {
     pub fn source(&self) -> &'a Boundary {
         self.source
     }
+    /// Physical mm represented by one exact coefficient numerator unit.
+    /// This is an owned-source fact; the actual STEP operator must be decoded
+    /// and checked separately rather than assumed from this value.
+    pub fn coefficient_unit_mm(&self) -> f64 {
+        f64::from_bits(((1023 - BITS) as u64) << 52)
+    }
     pub fn domain(&self) -> &DomainPlan<'a> {
         &self.domain
     }
@@ -198,28 +204,19 @@ impl<'a> CoupledPlan<'a> {
         let circle_position =
             options.position_error_mm.min(options.derivative_error_mm) / (8. * radius);
         let circle_derivative = options.derivative_error_mm / (8. * radius);
-        let mut circle_options = CurveOptions {
-            position_error_mm: circle_position / 2.,
-            derivative_error_mm: circle_derivative / 2.,
-            ..options
-        };
-        let (angular, reduced) = loop {
-            let angular =
-                super::angular::fit_angular([0., 1.], false, circle_options, &mut memory, &mut w)?;
-            let reduced = reduced::reduce(&angular, false, &mut memory, &mut w)?;
-            if reduced.errors[0] <= circle_position && reduced.errors[1] <= circle_derivative {
-                break (angular, reduced);
-            }
-            memory.release(&angular.knots);
-            memory.release(&angular.poles);
-            memory.release(&reduced.poles);
-            memory.used -= reduced.poles.len() * 22 * 128;
-            circle_options.position_error_mm /= 4.;
-            circle_options.derivative_error_mm /= 4.;
-        };
+        let unit = super::reduced_unit::fit_reduced_unit(
+            false,
+            CurveOptions {
+                position_error_mm: circle_position,
+                derivative_error_mm: circle_derivative,
+                ..options
+            },
+            &mut memory,
+            &mut w,
+        )?;
         let domain = DomainPlan::prepare_with_knots(
             source,
-            &angular.knots,
+            unit.knots(),
             DomainOptions {
                 bytes: options.bytes - (memory.used - source.retained_bytes()),
                 work: w.remaining(),
@@ -264,9 +261,8 @@ impl<'a> CoupledPlan<'a> {
             let index = if let Some(index) = cached {
                 index
             } else {
-                memory.add(22 * 128)?;
-                let angular =
-                    rows::angular_slice(registered.angular(&angular, &reduced, &mut w)?, &mut w)?;
+                memory.add(46 * 128)?;
+                let angular = rows::angular_slice(registered.angular(&unit, &mut w)?, &mut w)?;
                 cache.push((key, angular));
                 cache.len() - 1
             };
@@ -328,15 +324,11 @@ impl<'a> CoupledPlan<'a> {
         drop(aliases);
         registry.release(&mut memory);
         drop(registry);
-        memory.used -= cache.len() * 22 * 128;
+        memory.used -= cache.len() * 46 * 128;
         memory.release(&cache);
         drop(cache);
-        memory.release(&angular.knots);
-        memory.release(&angular.poles);
-        drop(angular);
-        memory.used -= reduced.poles.len() * 22 * 128;
-        memory.release(&reduced.poles);
-        drop(reduced);
+        unit.release_memory(&mut memory);
+        drop(unit);
         memory.used -= SCRATCH;
         w.charge(1)?;
         Ok(Self {

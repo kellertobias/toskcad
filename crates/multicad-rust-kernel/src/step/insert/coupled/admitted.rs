@@ -100,21 +100,20 @@ impl<'d, 's> DomainRow<'d, 's> {
     }
     pub(super) fn angular<'u>(
         &self,
-        angular: &super::super::angular::AngularCarrier,
-        reduced: &'u reduced::Reduced,
+        unit: &'u ReducedUnitAngular,
         w: &mut Work<'_>,
     ) -> Result<AngularSpan<'u, 'd, 's>, Error> {
         let v = self.range(w)?;
-        let piece = angular
-            .knots
+        let piece = unit
+            .knots()
             .windows(2)
             .position(|k| {
                 v[0].0 >= BigRational::from_float(k[0]).unwrap()
                     && v[1].0 <= BigRational::from_float(k[1]).unwrap()
             })
             .ok_or(Error::Unresolved)?;
-        let a = N(BigRational::from_float(angular.knots[piece]).unwrap());
-        let h = N(BigRational::from_float(angular.knots[piece + 1]).unwrap()).sub(&a, w)?;
+        let a = N(BigRational::from_float(unit.knots()[piece]).unwrap());
+        let h = N(BigRational::from_float(unit.knots()[piece + 1]).unwrap()).sub(&a, w)?;
         let begin = v[0].sub(&a, w)?.div(&h, w)?;
         let end = v[1].sub(&a, w)?.div(&h, w)?;
         // Sorted Domain stations earn v0<v1; the actual containing-piece lookup
@@ -125,8 +124,8 @@ impl<'d, 's> DomainRow<'d, 's> {
                 side: self.key.curve.owner(),
                 interval: self.key.interval,
             },
-            parent: &reduced.poles[piece],
-            errors: reduced.errors,
+            parent: &unit.coefficients()[piece],
+            errors: [unit.position_error(), unit.derivative_error()],
             begin,
             end,
             width: v[1].sub(&v[0], w)?,
@@ -205,7 +204,7 @@ impl OriginalRow<'_, '_> {
 }
 pub(super) struct AngularSpan<'u, 'd, 's> {
     scope: Scope<'d, 's>,
-    parent: &'u [[number::Grid; 2]; 11],
+    parent: &'u [[BigRational; 2]; 11],
     errors: [f64; 2],
     begin: N,
     end: N,
@@ -215,7 +214,7 @@ impl<'u, 'd, 's> AngularSpan<'u, 'd, 's> {
     pub(super) fn scope(&self) -> Scope<'d, 's> {
         self.scope
     }
-    pub(super) fn parent(&self) -> &'u [[number::Grid; 2]; 11] {
+    pub(super) fn parent(&self) -> &'u [[BigRational; 2]; 11] {
         self.parent
     }
     pub(super) fn errors(&self) -> [f64; 2] {

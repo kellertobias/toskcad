@@ -1,7 +1,7 @@
 //! Shared angular polynomial times ORIGINAL exact affine radius/height laws.
 use super::number::{Grid, charge, rounded_ratio};
 use super::*;
-const BITS: usize = 96;
+const BITS: usize = 80;
 type AngularPolynomial = [[N; 2]; 11];
 fn split(
     p: &AngularPolynomial,
@@ -26,6 +26,7 @@ fn split(
 pub(super) struct Slice<'d, 's> {
     scope: admitted::Scope<'d, 's>,
     poles: [[Grid; 2]; 11],
+    elevated: [[BigInt; 2]; 12],
     errors: [f64; 2],
 }
 pub(super) fn angular_slice<'d, 's>(
@@ -35,8 +36,7 @@ pub(super) fn angular_slice<'d, 's>(
     let parent = span.parent();
     let begin = span.begin();
     let end = span.end();
-    let p =
-        std::array::from_fn(|i| std::array::from_fn(|axis| N(parent[i][axis].actual(0., BITS))));
+    let p = std::array::from_fn(|i| std::array::from_fn(|axis| N(parent[i][axis].clone())));
     let (_, right) = split(&p, begin, w)?;
     let ratio = end.sub(begin, w)?.div(&N::integer(1).sub(begin, w)?, w)?;
     let exact = split(&right, &ratio, w)?.0;
@@ -46,11 +46,25 @@ pub(super) fn angular_slice<'d, 's>(
             poles[i][axis] = Grid::rational(&exact[i][axis], BITS, w)?;
         }
     }
+    let mut elevated = std::array::from_fn(|_| std::array::from_fn(|_| BigInt::zero()));
+    for (i, point) in elevated.iter_mut().enumerate() {
+        for (axis, value) in point.iter_mut().enumerate() {
+            w.charge(16)?;
+            *value = if i == 0 {
+                &poles[0][axis].0 * 11
+            } else if i == 11 {
+                &poles[10][axis].0 * 11
+            } else {
+                &poles[i][axis].0 * (11 - i) + &poles[i - 1][axis].0 * i
+            };
+        }
+    }
     let width = span.width().enclosure(w)?;
     let q = I::point(f64::from_bits((1022 - BITS as u64) << 52));
     Ok(Slice {
         scope: span.scope(),
         poles,
+        elevated,
         errors: [
             (I::point(span.errors()[0]) + I::point(2.) * q).hi,
             (I::point(span.errors()[1]) + I::point(40.) * q / width).hi,
@@ -104,6 +118,8 @@ pub(super) fn row(
         Grid::rational(&z[1], BITS, w)?,
     ];
     let mut poles = std::array::from_fn(|_| std::array::from_fn(|_| Grid(BigInt::zero())));
+    let constant_radius = r_grid[0].0 == r_grid[1].0;
+    w.charge(4)?;
     for (i, point) in poles.iter_mut().enumerate() {
         for (axis, coordinate) in point[..2].iter_mut().enumerate() {
             // Two coefficient products, two small weights, sum, quotient and
@@ -118,23 +134,33 @@ pub(super) fn row(
                     .bits()
                     .max(angular.poles[i - 1][axis].0.bits())
             };
-            for _ in 0..8 {
-                charge(
-                    r_grid[0].0.bits().max(r_grid[1].0.bits()) + angular_bits + 8,
-                    w,
-                )?;
+            if constant_radius {
+                for _ in 0..4 {
+                    charge(r_grid[0].0.bits() + angular.elevated[i][axis].bits() + 2, w)?;
+                }
+                *coordinate = Grid(rounded_ratio(
+                    &r_grid[0].0 * &angular.elevated[i][axis],
+                    &(BigInt::from(11) << BITS),
+                ));
+            } else {
+                for _ in 0..8 {
+                    charge(
+                        r_grid[0].0.bits().max(r_grid[1].0.bits()) + angular_bits + 8,
+                        w,
+                    )?;
+                }
+                let a = if i < 11 {
+                    &r_grid[0].0 * &angular.poles[i][axis].0 * (11 - i)
+                } else {
+                    BigInt::zero()
+                };
+                let b = if i > 0 {
+                    &r_grid[1].0 * &angular.poles[i - 1][axis].0 * i
+                } else {
+                    BigInt::zero()
+                };
+                *coordinate = Grid(rounded_ratio(a + b, &(BigInt::from(11) << BITS)));
             }
-            let a = if i < 11 {
-                &r_grid[0].0 * &angular.poles[i][axis].0 * (11 - i)
-            } else {
-                BigInt::zero()
-            };
-            let b = if i > 0 {
-                &r_grid[1].0 * &angular.poles[i - 1][axis].0 * i
-            } else {
-                BigInt::zero()
-            };
-            *coordinate = Grid(rounded_ratio(a + b, &(BigInt::from(11) << BITS)));
         }
         for _ in 0..5 {
             charge(z_grid[0].0.bits().max(z_grid[1].0.bits()) + 8, w)?;

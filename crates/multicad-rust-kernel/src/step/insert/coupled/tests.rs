@@ -20,7 +20,7 @@ fn actual_opt_in_plan_retains_authored_source_and_original_tiny_curve_parameters
             assert_eq!(row.coefficients().len(), 12);
             for point in row.coefficients() {
                 for c in point {
-                    assert_eq!(c.fractional_bits(), 96);
+                    assert_eq!(c.fractional_bits(), 80);
                     assert!(!c.numerator_magnitude_le().is_empty());
                     let [a, b] = c.numeric_bounds_mm();
                     assert!(a.is_finite() && b.is_finite() && a <= b);
@@ -318,12 +318,12 @@ fn actual_point_inventory_rejects_incomplete_or_wrong_literal_aliases_without_ch
         let mut registry = aliases::Registry::prepare(&body, &mut memory, &mut w).unwrap();
         for (index, row) in plan.rows().iter().enumerate() {
             for (endpoint, owner) in row.endpoint_owners().iter().enumerate() {
-                if let surfaces::VertexOwner::Original(vertex) = owner {
-                    if !omit || *vertex != omitted {
-                        registry
-                            .bind(*vertex, row, index, endpoint, plan.rows(), &mut w)
-                            .unwrap();
-                    }
+                if let surfaces::VertexOwner::Original(vertex) = owner
+                    && (!omit || *vertex != omitted)
+                {
+                    registry
+                        .bind(*vertex, row, index, endpoint, plan.rows(), &mut w)
+                        .unwrap();
                 }
             }
         }
@@ -376,8 +376,7 @@ fn real_domain_capabilities_reject_wrong_source_and_missing_angular_refinement()
     let b = r2.iter().next().unwrap();
     let curve = admitted::Curve::load(&a, &mut memory, &mut w, None).unwrap();
     assert!(matches!(b.original(&curve, &mut w), Err(Error::Invalid)));
-    let angular = super::super::angular::fit_angular(
-        [0., 1.],
+    let unit = super::super::reduced_unit::fit_reduced_unit(
         false,
         CurveOptions {
             position_error_mm: 1e-9,
@@ -388,13 +387,9 @@ fn real_domain_capabilities_reject_wrong_source_and_missing_angular_refinement()
         &mut w,
     )
     .unwrap();
-    let reduced = reduced::reduce(&angular, false, &mut memory, &mut w).unwrap();
     let mut refused = false;
     for row in r1.iter() {
-        if matches!(
-            row.angular(&angular, &reduced, &mut w),
-            Err(Error::Unresolved)
-        ) {
+        if matches!(row.angular(&unit, &mut w), Err(Error::Unresolved)) {
             refused = true;
             break;
         }

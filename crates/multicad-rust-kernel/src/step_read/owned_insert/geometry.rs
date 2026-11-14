@@ -85,7 +85,7 @@ impl<'b, 'i> SupportBindings<'b, 'i> {
             if c.len() == 3 {
                 let mut xyz = [I::point(0.); 3];
                 for i in 0..3 {
-                    w.charge(c[i].spelling().len() + 1).map_err(Error::from)?;
+                    w.charge(c[i].bounds_work()).map_err(Error::from)?;
                     let [lo, hi] = c[i].bounds();
                     let x = I::new(lo, hi);
                     if !x.valid() {
@@ -119,38 +119,45 @@ impl<'b, 'i> SupportBindings<'b, 'i> {
         for patch in self.tensors() {
             let t = &p.tensors()[patch.tensor_index()];
             let component = components[patch.face_index()] as usize;
-            for row in t.rows() {
-                for &id in row {
-                    // One real POINT lookup serves bounds and memoized height
-                    // validation. The old loop performed two separate lookups.
-                    w.charge(32).map_err(Error::from)?;
-                    let index = p
-                        .points()
-                        .binary_search_by_key(&id, PointLeaf::entity)
-                        .map_err(|_| Error::Invalid)?;
-                    if !height_checked[index] {
-                        height_bound(&p.points()[index], heights, &mut w)?;
-                        height_checked[index] = true;
-                    }
-                    let point = cache[index].ok_or(Error::Invalid)?;
-                    for a in 0..3 {
-                        bounds[a][0] = bounds[a][0].min(point[a].lo);
-                        bounds[a][1] = bounds[a][1].max(point[a].hi);
-                    }
-                }
-            }
             for span in 0..t.knots_v().len() - 1 {
-                let data = controls(p, &cache, t, span, false, &mut w)?;
-                nets.push(data);
-                let r = projection::radius_squared(data, &mut w).map_err(Error::from)?;
-                let (r, _) = projection::positive(r, &mut stack, &mut w).map_err(Error::from)?;
-                let r = r.sqrt();
+                let mut coordinates = ControlCoordinates {
+                    p,
+                    cache: &cache,
+                    heights,
+                    checked: &mut height_checked,
+                    bounds: &mut bounds,
+                };
+                let net = controls(&mut coordinates, t, span, &mut memory, &mut w)?;
+                nets.push(net);
+                let r = convex_radius(net.data, &mut w)?;
                 radii[component][0] = radii[component][0].min(r.lo);
                 radii[component][1] = radii[component][1].max(r.hi);
             }
         }
         memory.release(&height_checked);
         drop(height_checked);
+        if !(radii[0][0] > radii[1][1] || radii[1][0] > radii[0][1]) {
+            // The cheap convex enclosure is sufficient only when the actual
+            // components separate. Preserve the stronger polynomial proof for
+            // literal nets whose control hulls overlap.
+            radii = [[f64::INFINITY, 0.]; 2];
+            for (patch, data) in self
+                .tensors()
+                .iter()
+                .flat_map(|patch| {
+                    let count = p.tensors()[patch.tensor_index()].knots_v().len() - 1;
+                    std::iter::repeat_n(patch, count)
+                })
+                .zip(&nets)
+            {
+                let r = projection::radius_squared(data.data, &mut w).map_err(Error::from)?;
+                let (r, _) = projection::positive(r, &mut stack, &mut w).map_err(Error::from)?;
+                let r = r.sqrt();
+                let component = components[patch.face_index()] as usize;
+                radii[component][0] = radii[component][0].min(r.lo);
+                radii[component][1] = radii[component][1].max(r.hi);
+            }
+        }
         let outer = if radii[0][0] > radii[1][1] {
             0
         } else if radii[1][0] > radii[0][1] {
@@ -160,6 +167,7 @@ impl<'b, 'i> SupportBindings<'b, 'i> {
         };
         let mut minimum = f64::INFINITY;
         let mut net_index = 0;
+        let mut decimal_memo = None;
         for patch in self.tensors() {
             let t = &p.tensors()[patch.tensor_index()];
             let face = &p.faces()[patch.face_index()];
@@ -173,30 +181,126 @@ impl<'b, 'i> SupportBindings<'b, 'i> {
             for span in 0..t.knots_v().len() - 1 {
                 let reverse = collapsed[1] && span + 2 == t.knots_v().len();
                 let factor = (collapsed[0] && span == 0) || reverse;
-                let mut data = nets[net_index];
+                let mut net = nets[net_index];
                 net_index += 1;
                 if reverse {
                     w.charge(6 * 12).map_err(Error::from)?;
-                    for row in &mut data {
+                    for row in &mut net.data {
                         for axis in row {
                             axis.c[..=axis.degree].reverse();
                         }
                     }
+                    for row in &mut net.points {
+                        row.reverse();
+                    }
                 }
-                let j = projection::jacobian(data, factor, &mut w).map_err(Error::from)?;
+                let data = net.data;
+                let j = if let Some(j) = strip_jacobian(p, &net, factor, &mut w)? {
+                    j
+                } else {
+                    projection::jacobian(data, factor, &mut w).map_err(Error::from)?
+                };
                 let sign = side * same * if reverse { -1. } else { 1. };
                 let j = [
                     j[0].scale(sign, &mut w).map_err(Error::from)?,
                     j[1].scale(sign, &mut w).map_err(Error::from)?,
                     j[2].scale(sign, &mut w).map_err(Error::from)?,
                 ];
-                let (j, _) = projection::positive(j, &mut stack, &mut w).map_err(Error::from)?;
+                // Select arithmetic, never acceptance: almost-stationary angular
+                // rows need literal differences before interval conversion.
+                let tiny_v = data.iter().all(|row| {
+                    let h = [row[0].hull(), row[1].hull()];
+                    let scale = h[0].magnitude().max(h[1].magnitude()).max(1.);
+                    h.iter()
+                        .all(|axis| axis.hi - axis.lo <= 64. * f64::EPSILON * scale)
+                });
+                let tiny_u = [0, 11].into_iter().any(|i| {
+                    (!factor || i != 0)
+                        && (0..3).all(|axis| {
+                            let a = data[0][axis].c[i];
+                            let b = data[1][axis].c[i];
+                            let scale = (0..3)
+                                .map(|a| {
+                                    data[0][a].c[i].magnitude().max(data[1][a].c[i].magnitude())
+                                })
+                                .fold(1_f64, f64::max);
+                            (b - a).magnitude() <= 64. * f64::EPSILON * scale
+                        })
+                });
+                let tiny = tiny_u || tiny_v;
+                w.charge(84).map_err(Error::from)?;
+                let proof = if tiny {
+                    None
+                } else {
+                    Some(projection::positive(j, &mut stack, &mut w))
+                };
+                let proof = if matches!(
+                    proof,
+                    None | Some(Err(crate::step::insert::Error::Unresolved))
+                ) {
+                    stack.clear();
+                    let mut tokens = [[crate::step::insert::exact_cap::LiteralPoint {
+                        index: 0,
+                        coordinates: [""; 3],
+                    }; 12]; 2];
+                    for (r, row) in tokens.iter_mut().enumerate() {
+                        for (i, point) in row.iter_mut().enumerate() {
+                            let index = net.points[r][i];
+                            point.index = index;
+                            for (axis, token) in point.coordinates.iter_mut().enumerate() {
+                                let scalar = p.points()[index].coordinates()[axis];
+                                *token = scalar.spelling();
+                            }
+                        }
+                    }
+                    if decimal_memo.is_none() {
+                        decimal_memo = Some(
+                            crate::step::insert::exact_cap::DecimalMemo::new(
+                                p.points().len(),
+                                &mut memory,
+                                &mut w,
+                            )
+                            .map_err(Error::from)?,
+                        );
+                    }
+                    let [d, da, dd] = crate::step::insert::exact_cap::tensor_differentials(
+                        tokens,
+                        factor,
+                        decimal_memo.as_mut().expect("memo initialized above"),
+                        &mut memory,
+                        &mut w,
+                    )
+                    .map_err(Error::from)?;
+                    let exact =
+                        projection::jacobian_differentials(data[0], d, da, dd, factor, &mut w)
+                            .map_err(Error::from)?;
+                    let signed = [
+                        exact[0].scale(sign, &mut w).map_err(Error::from)?,
+                        exact[1].scale(sign, &mut w).map_err(Error::from)?,
+                        exact[2].scale(sign, &mut w).map_err(Error::from)?,
+                    ];
+                    projection::positive(signed, &mut stack, &mut w)
+                } else {
+                    proof.expect("ordinary interval proof was selected")
+                };
+                let (j, _) = proof.map_err(Error::from)?;
                 minimum = minimum.min(j.lo);
             }
         }
         memory.release(&nets);
         drop(nets);
-        let cap_min = caps(self, &components, outer, p, &cache, &mut stack, &mut w)?;
+        if let Some(memo) = decimal_memo {
+            memo.release(&mut memory);
+        }
+        let cap_min = caps(
+            self,
+            &components,
+            outer,
+            &cache,
+            &mut stack,
+            &mut memory,
+            &mut w,
+        )?;
         memory.release(&cache);
         drop(cache);
         memory.release(&stack);
@@ -217,47 +321,195 @@ impl<'b, 'i> SupportBindings<'b, 'i> {
         })
     }
 }
-fn cached(p: &Parsed<'_>, cache: &[Option<[I; 3]>], id: u32) -> Result<[I; 3]> {
-    let i = p
-        .points()
-        .binary_search_by_key(&id, PointLeaf::entity)
-        .map_err(|_| Error::Invalid)?;
+/// A Bézier tensor is a convex combination of its literal controls. The norm
+/// is convex, and every positive separating projection bounds it from below.
+fn convex_radius(data: [[P; 3]; 2], w: &mut Work<'_>) -> Result<I> {
+    let mut lower = 0_f64;
+    let mut upper = 0_f64;
+    for row in &data {
+        for i in 0..=row[0].degree {
+            w.charge(5).map_err(Error::from)?;
+            let x = row[0].c[i];
+            let y = row[1].c[i];
+            let r = (x * x + y * y).sqrt();
+            if !r.valid() {
+                return Err(Error::Unsupported);
+            }
+            upper = upper.max(r.hi);
+        }
+    }
+    for [dx, dy] in [
+        [1., 0.],
+        [1., 1.],
+        [0., 1.],
+        [-1., 1.],
+        [-1., 0.],
+        [-1., -1.],
+        [0., -1.],
+        [1., -1.],
+    ] {
+        let mut projected = f64::INFINITY;
+        for row in &data {
+            for i in 0..=row[0].degree {
+                w.charge(3).map_err(Error::from)?;
+                projected =
+                    projected.min((row[0].c[i] * I::point(dx) + row[1].c[i] * I::point(dy)).lo);
+            }
+        }
+        let scale = (I::point(dx * dx) + I::point(dy * dy)).sqrt();
+        lower = lower.max((I::point(projected) / scale).lo);
+    }
+    Ok(I::new(lower, upper))
+}
+fn point_index(p: &Parsed<'_>, id: u32, w: &mut Work<'_>) -> Result<usize> {
+    let (mut lo, mut hi) = (0, p.points().len());
+    while lo < hi {
+        w.charge(1).map_err(Error::from)?;
+        let mid = lo + (hi - lo) / 2;
+        match p.points()[mid].entity().cmp(&id) {
+            std::cmp::Ordering::Equal => return Ok(mid),
+            std::cmp::Ordering::Less => lo = mid + 1,
+            std::cmp::Ordering::Greater => hi = mid,
+        }
+    }
+    Err(Error::Invalid)
+}
+fn cached(p: &Parsed<'_>, cache: &[Option<[I; 3]>], id: u32, w: &mut Work<'_>) -> Result<[I; 3]> {
+    let i = point_index(p, id, w)?;
     cache[i].ok_or(Error::Invalid)
 }
+struct ControlCoordinates<'a, 'i> {
+    p: &'a Parsed<'i>,
+    cache: &'a [Option<[I; 3]>],
+    heights: [Scalar<'i>; 2],
+    checked: &'a mut [bool],
+    bounds: &'a mut [[f64; 2]; 3],
+}
+#[derive(Clone, Copy)]
+struct LiteralNet {
+    data: [[P; 3]; 2],
+    points: [[usize; 12]; 2],
+}
 fn controls(
-    p: &Parsed<'_>,
-    cache: &[Option<[I; 3]>],
+    coordinates: &mut ControlCoordinates<'_, '_>,
     t: &TensorSurface<'_>,
     span: usize,
-    reverse: bool,
+    memory: &mut Memory,
     w: &mut Work<'_>,
-) -> Result<[[P; 3]; 2]> {
+) -> Result<LiteralNet> {
     let mut rows = [[P::controls(&[I::point(0.)]); 3]; 2];
+    let mut indices = [[0; 12]; 2];
     for (r, ids) in t.rows().iter().enumerate() {
         let mut points = [[I::point(0.); 3]; 12];
         for (i, point) in points.iter_mut().enumerate() {
-            w.charge(32).map_err(Error::from)?;
-            *point = cached(p, cache, ids[span * 11 + if reverse { 11 - i } else { i }])?;
+            let index = point_index(coordinates.p, ids[span * 11 + i], w)?;
+            indices[r][i] = index;
+            if !coordinates.checked[index] {
+                height_bound(
+                    &coordinates.p.points()[index],
+                    coordinates.heights,
+                    memory,
+                    w,
+                )?;
+                coordinates.checked[index] = true;
+            }
+            *point = coordinates.cache[index].ok_or(Error::Invalid)?;
+            for (axis, value) in point.iter().enumerate() {
+                coordinates.bounds[axis][0] = coordinates.bounds[axis][0].min(value.lo);
+                coordinates.bounds[axis][1] = coordinates.bounds[axis][1].max(value.hi);
+            }
         }
         for a in 0..3 {
             rows[r][a] = P::controls(&std::array::from_fn::<_, 12, _>(|i| points[i][a]));
         }
     }
-    Ok(rows)
+    Ok(LiteralNet {
+        data: rows,
+        points: indices,
+    })
 }
-fn height_bound(point: &PointLeaf<'_>, heights: [Scalar<'_>; 2], w: &mut Work<'_>) -> Result<()> {
-    let z = point.coordinates()[2];
-    w.charge(z.spelling().len() + heights[0].spelling().len() + heights[1].spelling().len() + 1)
+fn strip_jacobian(
+    p: &Parsed<'_>,
+    net: &LiteralNet,
+    factor: bool,
+    w: &mut Work<'_>,
+) -> Result<Option<[P; 3]>> {
+    for axis in 0..2 {
+        for i in 0..12 {
+            w.charge(1).map_err(Error::from)?;
+            let (a, b) = (net.data[0][axis].c[i], net.data[1][axis].c[i]);
+            if a.lo != b.lo || a.hi != b.hi {
+                return Ok(None);
+            }
+            let a = p.points()[net.points[0][i]].coordinates()[axis].spelling();
+            let b = p.points()[net.points[1][i]].coordinates()[axis].spelling();
+            w.charge(a.len() + b.len() + 1).map_err(Error::from)?;
+            if a != b {
+                return Ok(None);
+            }
+        }
+    }
+    // Actual identicalXY coefficients give Dxy=0 on the WHOLE tensor.
+    // Consequently Jac=-Dz*(Ax Ay'-Ay Ax'), independent ofu andZ'.
+    let a = net.data[0];
+    let k = a[0]
+        .product(a[1].derivative(w).map_err(Error::from)?, w)
+        .map_err(Error::from)?
+        .sub(
+            a[1].product(a[0].derivative(w).map_err(Error::from)?, w)
+                .map_err(Error::from)?,
+            w,
+        )
         .map_err(Error::from)?;
+    let mut dz = net.data[1][2].sub(a[2], w).map_err(Error::from)?;
+    if factor {
+        dz.c[0] = I::point(0.);
+        dz = dz.remove_t(w).map_err(Error::from)?;
+    }
+    let j = k
+        .product(dz, w)
+        .map_err(Error::from)?
+        .scale(-1., w)
+        .map_err(Error::from)?;
+    Ok(Some([j; 3]))
+}
+fn height_bound(
+    point: &PointLeaf<'_>,
+    heights: [Scalar<'_>; 2],
+    memory: &mut Memory,
+    w: &mut Work<'_>,
+) -> Result<()> {
+    let z = point.coordinates()[2];
     let equal = |h: Scalar<'_>| {
         z.spelling() == h.spelling() || (z.is_zero() && h.is_zero()) || (z.is_one() && h.is_one())
     };
     // Strict cache order implies strict order of the encoded reals. Equality
     // requires original-leaf equality, never equality of rounded caches alone.
-    if !(equal(heights[0]) || z.value() > heights[0].value())
-        || !(equal(heights[1]) || z.value() < heights[1].value())
-    {
-        return Err(Error::Unsupported);
+    for (i, height) in heights.into_iter().enumerate() {
+        w.charge(1).map_err(Error::from)?;
+        if if i == 0 {
+            z.value() > height.value()
+        } else {
+            z.value() < height.value()
+        } {
+            continue;
+        }
+        // Only an unresolved cache comparison scans original numeric leaves.
+        w.charge(z.spelling().len() + height.spelling().len() + 1)
+            .map_err(Error::from)?;
+        if equal(height) {
+            continue;
+        }
+        let order = crate::step::insert::exact_cap::compare_decimal(
+            z.spelling(),
+            height.spelling(),
+            memory,
+            w,
+        )
+        .map_err(Error::from)?;
+        if (i == 0 && order.is_lt()) || (i == 1 && order.is_gt()) {
+            return Err(Error::Unsupported);
+        }
     }
     Ok(())
 }
@@ -407,11 +659,12 @@ fn caps(
     b: &SupportBindings<'_, '_>,
     components: &[u8],
     outer: u8,
-    p: &Parsed<'_>,
     cache: &[Option<[I; 3]>],
     stack: &mut Vec<projection::Cell>,
+    memory: &mut Memory,
     w: &mut Work<'_>,
 ) -> Result<f64> {
+    let p = b.source();
     let mut minimum = f64::INFINITY;
     for &face_index in &b.cap_face_indices() {
         let face = &p.faces()[face_index];
@@ -441,8 +694,7 @@ fn caps(
                     let span = if co.forward { j } else { spans - 1 - j };
                     let mut points = [[I::point(0.); 3]; 12];
                     for (i, point) in points.iter_mut().enumerate() {
-                        w.charge(32).map_err(Error::from)?;
-                        *point = cached(p, cache, curve.pole_entities()[span * 11 + i])?;
+                        *point = cached(p, cache, curve.pole_entities()[span * 11 + i], w)?;
                     }
                     halfplane(&points, w)?;
                     let [a, c] = if co.forward {
@@ -454,19 +706,48 @@ fn caps(
                     let x = P::controls(&points.map(|v| v[0]));
                     let y = P::controls(&points.map(|v| v[1]));
                     let sign = f64::from(desired) * if co.forward { 1. } else { -1. };
-                    let k = x
-                        .product(y.derivative(w).map_err(Error::from)?, w)
-                        .map_err(Error::from)?
-                        .sub(
-                            y.product(x.derivative(w).map_err(Error::from)?, w)
-                                .map_err(Error::from)?,
-                            w,
-                        )
-                        .map_err(Error::from)?
-                        .scale(sign, w)
-                        .map_err(Error::from)?;
-                    let (bound, _) = projection::positive([k; 3], stack, w).map_err(Error::from)?;
-                    minimum = minimum.min(bound.lo);
+                    let h = [x.hull(), y.hull()];
+                    let scale = h[0].magnitude().max(h[1].magnitude()).max(1.);
+                    w.charge(24).map_err(Error::from)?;
+                    let tiny = h.iter().all(|a| a.hi - a.lo <= 64. * f64::EPSILON * scale);
+                    let proof = if tiny {
+                        None
+                    } else {
+                        let k = x
+                            .product(y.derivative(w).map_err(Error::from)?, w)
+                            .map_err(Error::from)?
+                            .sub(
+                                y.product(x.derivative(w).map_err(Error::from)?, w)
+                                    .map_err(Error::from)?,
+                                w,
+                            )
+                            .map_err(Error::from)?
+                            .scale(sign, w)
+                            .map_err(Error::from)?;
+                        Some(projection::positive([k; 3], stack, w))
+                    };
+                    let lower = if matches!(
+                        proof,
+                        None | Some(Err(crate::step::insert::Error::Unresolved))
+                    ) {
+                        stack.clear();
+                        let mut tokens = [[""; 2]; 12];
+                        for (i, xy) in tokens.iter_mut().enumerate() {
+                            let index = point_index(p, curve.pole_entities()[span * 11 + i], w)?;
+                            for (axis, token) in xy.iter_mut().enumerate() {
+                                *token = p.points()[index].coordinates()[axis].spelling();
+                            }
+                        }
+                        crate::step::insert::exact_cap::angular_lower(tokens, sign < 0., memory, w)
+                            .map_err(Error::from)?
+                    } else {
+                        proof
+                            .expect("ordinary cap proof selected")
+                            .map_err(Error::from)?
+                            .0
+                            .lo
+                    };
+                    minimum = minimum.min(lower);
                 }
             }
             if winding != desired {
@@ -528,6 +809,52 @@ fn crossing(a: [I; 3], b: [I; 3], w: &mut Work<'_>) -> Result<i32> {
 #[cfg(test)]
 mod predicate_tests {
     use super::*;
+    #[test]
+    fn metered_point_lookup_matches_actual_unique_arena_and_charges_real_comparisons() {
+        let text = crate::step_read::owned_insert::tests::file(false);
+        let parsed = parse(&text, Options::default(), None).unwrap();
+        let mut total = 0;
+        for (expected, point) in parsed.points().iter().enumerate() {
+            let mut w = Work::new(16_000_000, None).unwrap();
+            assert_eq!(
+                point_index(&parsed, point.entity(), &mut w).unwrap(),
+                expected
+            );
+            assert_eq!(
+                parsed
+                    .points()
+                    .binary_search_by_key(&point.entity(), PointLeaf::entity),
+                Ok(expected)
+            );
+            total += w.used;
+            if w.used > 1 {
+                let mut short = Work::new(w.used - 1, None).unwrap();
+                assert!(matches!(
+                    point_index(&parsed, point.entity(), &mut short),
+                    Err(Error::Limit)
+                ));
+            }
+        }
+        assert!(total < parsed.points().len() * 32);
+        for absent in [0, u32::MAX] {
+            let mut w = Work::new(16_000_000, None).unwrap();
+            assert!(matches!(
+                point_index(&parsed, absent, &mut w),
+                Err(Error::Invalid)
+            ));
+        }
+        let middle = parsed.points()[parsed.points().len() / 2].entity();
+        let mut one = Work::new(1, None).unwrap();
+        assert_eq!(
+            point_index(&parsed, middle, &mut one).unwrap(),
+            parsed.points().len() / 2
+        );
+        let mut cancelled = Work::new(16_000_000, Some(&|| true)).unwrap();
+        assert!(matches!(
+            point_index(&parsed, middle, &mut cancelled),
+            Err(Error::Cancelled)
+        ));
+    }
     #[test]
     fn actual_side_graph_partition_requires_two_connected_components() {
         let mut w = Work::new(16_000_000, None).unwrap();

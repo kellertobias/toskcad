@@ -18,7 +18,6 @@ pub use topology::{
     WindingBounds,
 };
 pub use writer::{write_local_candidate, write_mapped_candidate};
-mod angular;
 pub(crate) mod reduced_unit;
 pub use reduced_unit::ReducedUnitAngular;
 mod surfaces;

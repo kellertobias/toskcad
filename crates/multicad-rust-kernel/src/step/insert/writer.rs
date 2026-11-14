@@ -1,5 +1,6 @@
 //! Owned local coupled insert candidate. No independent import/mass authority.
 use super::*;
+mod coupled;
 mod mapped;
 use crate::step::{Coordinates, Entities, Entity, StepError, StepFile, Writer};
 pub use mapped::write_mapped_candidate;

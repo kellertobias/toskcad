@@ -2,7 +2,7 @@
 //! occupied material remain SEPARATE obligations; no STEP admission here.
 use super::*;
 pub(crate) mod polynomial;
-use polynomial::{P, cross, derivative, dot_xy};
+use polynomial::{P, derivative, dot_xy};
 #[cfg(test)]
 mod tests;
 const DEPTH: usize = 32;
@@ -116,7 +116,6 @@ pub(crate) fn jacobian(
             p.c[0] = I::point(0.);
         }
     }
-    let original = d;
     if factor {
         // BOTH full U-row controls reference the SAME owned anchor. Their
         // difference's constant coefficient is an identity, not overlapping I.
@@ -125,16 +124,38 @@ pub(crate) fn jacobian(
             *axis = axis.remove_t(w)?;
         }
     }
-    let n0 = cross(d, derivative(a, w)?, w)?;
-    let mut n1 = cross(d, derivative(d, w)?, w)?;
+    jacobian_differentials(a, d, derivative(a, w)?, derivative(d, w)?, factor, w)
+}
+/// Same polynomial identity with independently enclosed literal coefficient
+/// differences. This permits exact decimal subtraction before binary64 bounds.
+pub(crate) fn jacobian_differentials(
+    a: [P; 3],
+    d: [P; 3],
+    da: [P; 3],
+    dd: [P; 3],
+    factor: bool,
+    w: &mut Work<'_>,
+) -> Result<[P; 3], Error> {
+    let cross_xy = |a: [P; 3], b: [P; 3], w: &mut Work<'_>| {
+        a[0].product(b[1], w)?.sub(a[1].product(b[0], w)?, w)
+    };
+    let c = cross_xy(a, d, w)?;
+    let f0 = c
+        .product(da[2], w)?
+        .sub(cross_xy(a, da, w)?.product(d[2], w)?, w)?;
+    let mut f1 = c.product(dd[2], w)?.sub(
+        cross_xy(a, dd, w)?
+            .add(cross_xy(d, da, w)?, w)?
+            .product(d[2], w)?,
+        w,
+    )?;
+    let mut f2 = cross_xy(d, dd, w)?.product(d[2], w)?.scale(-1., w)?;
     if factor {
-        for p in &mut n1 {
-            *p = p.times_t(w)?;
-        }
+        // D_original=t*D. The normalized determinant divided by its one
+        // owned corner factor is J0+u*t*J1+u²*t²*J2.
+        f1 = f1.times_t(w)?;
+        f2 = f2.times_t(w)?.times_t(w)?;
     }
-    let f0 = dot_xy(a, n0, w)?;
-    let f1 = dot_xy(a, n1, w)?.add(dot_xy(original, n0, w)?, w)?;
-    let f2 = dot_xy(original, n1, w)?;
     Ok([
         f0,
         f0.add(f1.scale(0.5, w)?, w)?,

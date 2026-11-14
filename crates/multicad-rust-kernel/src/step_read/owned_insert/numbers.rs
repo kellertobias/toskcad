@@ -12,6 +12,18 @@ impl<'input> Scalar<'input> {
     pub fn spelling(&self) -> &'input str {
         self.spelling
     }
+    /// Cost of the bounds cache query, without charging a second decimal parse.
+    /// Only zero/integer authority scans original text; other finite parsed
+    /// values use two constant-time adjacent-float operations.
+    pub(super) fn bounds_work(&self) -> usize {
+        if self.value == 0. {
+            self.spelling.len() + 1
+        } else if self.value.fract() == 0. && self.value.abs() <= 9_007_199_254_740_992. {
+            self.spelling.len() + 32
+        } else {
+            1
+        }
+    }
     pub fn bounds(&self) -> [f64; 2] {
         // This proves an exact literal integer, rather than assuming every parsed
         // floating integer had that exact source value (e.g. 11.0000000000000001).

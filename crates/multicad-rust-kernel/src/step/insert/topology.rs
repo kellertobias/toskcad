@@ -2,6 +2,7 @@
 use super::*;
 use crate::wood_insert::FaceKey;
 mod caps;
+pub(crate) mod incidence;
 pub use caps::CapRegularity;
 mod winding;
 pub use winding::WindingBounds;
@@ -87,130 +88,11 @@ impl<'s, 'p, 'a> TopologyPlan<'s, 'p, 'a> {
         }
         let mut memory = Memory::new(surface.retained_bytes(), maximum_bytes)?;
         memory.add(size_of::<Self>())?;
-        let mut edges =
-            memory.allocate(surface.rows().len() + 2 * surface.patches().len(), &mut w)?;
-        for (i, row) in surface.rows().iter().enumerate() {
-            w.charge(1)?;
-            edges.push(ShellEdge {
-                ends: row.endpoints(),
-                geometry: EdgeGeometry::Row(i),
-            });
-        }
-        let mut ruling_keys = memory.allocate(surface.patches().len() * 2, &mut w)?;
-        let mut faces = memory.allocate(surface.patches().len() + 2, &mut w)?;
-        for (patch_index, patch) in surface.patches().iter().enumerate() {
-            let slab = &surface.domain().slabs()[patch.slab];
-            let [a, b] = patch.rows.map(|i| &surface.rows()[i]);
-            let mut wire = memory.allocate(4, &mut w)?;
-            if a.endpoints()[0] != b.endpoints()[0] {
-                wire.push(ruling(
-                    surface,
-                    slab,
-                    0,
-                    [a.endpoints()[0], b.endpoints()[0]],
-                    &mut ruling_keys,
-                    &mut edges,
-                    &mut w,
-                )?);
-            }
-            wire.push(ShellCoedge {
-                edge: patch.rows[1],
-                forward: true,
-            });
-            if a.endpoints()[1] != b.endpoints()[1] {
-                wire.push(ruling(
-                    surface,
-                    slab,
-                    1,
-                    [b.endpoints()[1], a.endpoints()[1]],
-                    &mut ruling_keys,
-                    &mut edges,
-                    &mut w,
-                )?);
-            }
-            wire.push(ShellCoedge {
-                edge: patch.rows[0],
-                forward: false,
-            });
-            if !patch.same_sense {
-                wire.reverse();
-                for c in &mut wire {
-                    c.forward = !c.forward;
-                }
-            }
-            let mut loops = memory.allocate(1, &mut w)?;
-            loops.push(wire);
-            faces.push(ShellFace {
-                geometry: FaceGeometry::Tensor(patch_index),
-                same_sense: patch.same_sense,
-                loops,
-            });
-        }
-        for (end, key) in [(0, FaceKey::StartCap), (1, FaceKey::EndCap)] {
-            let source_loops = surface
-                .domain()
-                .boundary()
-                .face_loops(key)
-                .expect("actual paired annular cap");
-            let mut loops = memory.allocate(source_loops.len(), &mut w)?;
-            for source_loop in source_loops {
-                // Each source curve contributes only its retained shared rows;
-                // no disk scaffold or circular-envelope substitute is emitted.
-                w.charge(source_loop.len() * surface.rows().len())?;
-                let count = source_loop
-                    .iter()
-                    .map(|c| {
-                        surface
-                            .rows()
-                            .iter()
-                            .filter(|r| r.key().curve == c.curve)
-                            .count()
-                    })
-                    .sum();
-                let mut wire = memory.allocate(count, &mut w)?;
-                for c in source_loop {
-                    let begin = surface.rows().partition_point(|r| r.key().curve < c.curve);
-                    let finish = surface.rows().partition_point(|r| r.key().curve <= c.curve);
-                    w.charge(
-                        2 * (usize::BITS - surface.rows().len().leading_zeros() + 1) as usize,
-                    )?;
-                    let rows = &surface.rows()[begin..finish];
-                    let original = surface
-                        .domain()
-                        .boundary()
-                        .curve_endpoints(c.curve)
-                        .expect("actual cap curve endpoints");
-                    let first = surface.vertices()
-                        [rows.first().expect("nonempty cap row coverage").endpoints()[0]]
-                        .owner();
-                    let last = surface.vertices()[rows.last().unwrap().endpoints()[1]].owner();
-                    let forward = cap_forward([first, last], original, c.forward)?;
-                    for j in 0..rows.len() {
-                        w.charge(1)?;
-                        wire.push(ShellCoedge {
-                            edge: begin + if forward { j } else { rows.len() - 1 - j },
-                            forward,
-                        });
-                    }
-                }
-                loops.push(wire);
-            }
-            faces.push(ShellFace {
-                geometry: FaceGeometry::Cap(end),
-                same_sense: end == 1,
-                loops,
-            });
-        }
-        memory.release(&ruling_keys);
-        drop(ruling_keys);
-        let used_vertices = verify(
-            surface.vertices().len(),
-            &edges,
-            &faces,
-            &mut memory,
-            &mut w,
-        )?;
-        w.charge(1)?;
+        let incidence::Built {
+            edges,
+            faces,
+            used_vertices,
+        } = incidence::prepare(surface, &mut memory, &mut w)?;
         Ok(Self {
             surface,
             edges,
@@ -223,7 +105,7 @@ impl<'s, 'p, 'a> TopologyPlan<'s, 'p, 'a> {
 }
 #[allow(clippy::too_many_arguments)]
 fn ruling(
-    surface: &SurfacePlan<'_, '_>,
+    surface: &dyn incidence::Input,
     slab: &Slab,
     end: usize,
     ordered: [usize; 2],
@@ -233,7 +115,7 @@ fn ruling(
 ) -> Result<ShellCoedge, Error> {
     let mut source = None;
     if let [VertexOwner::Original(a), VertexOwner::Original(b)] =
-        ordered.map(|i| surface.vertices()[i].owner())
+        ordered.map(|i| surface.vertex_owner(i))
     {
         let component = surface.domain().boundary().source_boundary(slab.side);
         for c in component

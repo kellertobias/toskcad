@@ -33,9 +33,6 @@ impl Grid {
             + BigRational::new(self.0.clone(), BigInt::one() << bits)
     }
 }
-pub(super) fn upper(q: &BigRational, w: &mut Work<'_>) -> Result<f64, Error> {
-    Ok(N(q.clone()).enclosure(w)?.hi)
-}
 pub(super) fn dyadic_text(value: &Grid, bits: usize, w: &mut Work<'_>) -> Result<String, Error> {
     // This typed numerator has denominator2^bits, so reducing factors of2 is
     // exact and needs no generic-rational domain guess or float conversion.

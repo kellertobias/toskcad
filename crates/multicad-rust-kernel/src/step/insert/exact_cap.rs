@@ -1,11 +1,15 @@
 //! Rare-span sign proof from actual decimal coefficients, not float-cache boxes.
-//! All46 retained rationals and bounded bigint temporaries fit this conservative
-//! scratch charge (16Kbit operand/cross-product preflight inherited from N).
+//! Local tensor/arc coordinates and bounded bigint temporaries fit the4MiB
+//! scratch charge (16Kbit operation preflight inherited from N). The retained
+//! immutable-point memo is separately charged before storing fresh clones.
 use super::domains::N;
 use super::*;
 use num_bigint::BigInt;
 use num_rational::BigRational;
 use std::cmp::Ordering;
+mod cache;
+mod enclosure;
+pub(crate) use cache::{DecimalMemo, LiteralPoint};
 pub(crate) const SCRATCH: usize = 4 * 1024 * 1024;
 fn decimal(text: &str, w: &mut Work<'_>) -> Result<N, Error> {
     w.charge(text.len() + 1)?;
@@ -38,6 +42,86 @@ fn decimal(text: &str, w: &mut Work<'_>) -> Result<N, Error> {
     } else {
         BigRational::from_integer(n * ten)
     }))
+}
+/// Original finite decimal ordering when binary64 caches cannot distinguish
+/// actual coefficients. This is a file-value proof, never a tolerance test.
+pub(crate) fn compare_decimal(
+    a: &str,
+    b: &str,
+    memory: &mut Memory,
+    w: &mut Work<'_>,
+) -> Result<Ordering, Error> {
+    memory.add(SCRATCH)?;
+    let a = decimal(a, w)?;
+    let b = decimal(b, w)?;
+    let result = a.cmp(&b, w)?;
+    memory.used -= SCRATCH;
+    Ok(result)
+}
+/// Differential coefficients of the actual encoded tensor. Subtraction and
+/// owned-corner factor removal precede conversion to outward binary64 bounds.
+pub(crate) fn tensor_differentials<'a>(
+    tokens: [[LiteralPoint<'a>; 12]; 2],
+    factor: bool,
+    memo: &mut DecimalMemo<'a>,
+    memory: &mut Memory,
+    w: &mut Work<'_>,
+) -> Result<[[projection::polynomial::P; 3]; 3], Error> {
+    use projection::polynomial::P;
+    memory.add(SCRATCH)?;
+    let mut rows: [[[N; 12]; 3]; 2] =
+        std::array::from_fn(|_| std::array::from_fn(|_| std::array::from_fn(|_| N::integer(0))));
+    for r in 0..2 {
+        for i in 0..12 {
+            for (axis, value) in memo.point(tokens[r][i], memory, w)?.into_iter().enumerate() {
+                rows[r][axis][i] = value;
+            }
+        }
+    }
+    let zero = P::controls(&[I::point(0.)]);
+    let mut out = [[zero; 3]; 3];
+    for axis in 0..3 {
+        let mut d: [N; 12] = std::array::from_fn(|_| N::integer(0));
+        for (i, x) in d.iter_mut().enumerate() {
+            *x = rows[1][axis][i].sub(&rows[0][axis][i], w)?;
+        }
+        let degree = if factor { 10 } else { 11 };
+        if factor {
+            if d[0].cmp(&N::integer(0), w)? != Ordering::Equal {
+                return Err(Error::Invalid);
+            }
+            for i in 0..11 {
+                d[i] = d[i + 1]
+                    .mul(&N::integer(11), w)?
+                    .div(&N::integer((i + 1) as i64), w)?;
+            }
+        }
+        let mut reduced = [I::point(0.); 12];
+        for i in 0..=degree {
+            reduced[i] = enclosure::rational(&d[i], w)?;
+        }
+        out[0][axis] = P::controls(&reduced[..=degree]);
+        let mut da = [I::point(0.); 11];
+        for (i, x) in da.iter_mut().enumerate() {
+            *x = enclosure::rational(
+                &rows[0][axis][i + 1]
+                    .sub(&rows[0][axis][i], w)?
+                    .mul(&N::integer(11), w)?,
+                w,
+            )?;
+        }
+        out[1][axis] = P::controls(&da);
+        let mut dd = [I::point(0.); 11];
+        for i in 0..degree {
+            dd[i] = enclosure::rational(
+                &d[i + 1].sub(&d[i], w)?.mul(&N::integer(degree as i64), w)?,
+                w,
+            )?;
+        }
+        out[2][axis] = P::controls(&dd[..degree]);
+    }
+    memory.used -= SCRATCH;
+    Ok(out)
 }
 fn choose(n: usize, k: usize) -> i64 {
     let mut value = 1;

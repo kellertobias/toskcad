@@ -129,13 +129,6 @@ impl P {
         I::new(lo, hi)
     }
 }
-pub(super) fn cross(a: [P; 3], b: [P; 3], w: &mut Work<'_>) -> Result<[P; 3], Error> {
-    Ok([
-        a[1].product(b[2], w)?.sub(a[2].product(b[1], w)?, w)?,
-        a[2].product(b[0], w)?.sub(a[0].product(b[2], w)?, w)?,
-        a[0].product(b[1], w)?.sub(a[1].product(b[0], w)?, w)?,
-    ])
-}
 pub(super) fn dot_xy(a: [P; 3], b: [P; 3], w: &mut Work<'_>) -> Result<P, Error> {
     a[0].product(b[0], w)?.add(a[1].product(b[1], w)?, w)
 }

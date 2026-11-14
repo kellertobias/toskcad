@@ -68,7 +68,7 @@ fn dot(a: [I; 3], b: [I; 3]) -> I {
         .zip(b)
         .fold(I::point(0.), |sum, (a, b)| sum + a * b)
 }
-fn pose(origin: [f64; 3], u: [f64; 3], v: [f64; 3]) -> Result<[f64; 3], Error> {
+pub(super) fn pose(origin: [f64; 3], u: [f64; 3], v: [f64; 3]) -> Result<[f64; 3], Error> {
     if origin.into_iter().chain(u).chain(v).any(|x| !x.is_finite()) {
         return Err(Error::Invalid);
     }
