@@ -4,6 +4,7 @@ mod exact_binary;
 
 pub mod annulus;
 pub mod authored_flat_thread;
+pub mod authored_hanger_bolt;
 pub mod authored_internal_treatment;
 pub mod authored_metric_thread;
 pub mod axial_pipe_thread;
