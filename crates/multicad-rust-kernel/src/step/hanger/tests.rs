@@ -11,7 +11,7 @@ fn source(pitch: f64, left_hand: bool) -> AuthoredMetricThread {
     })
     .unwrap()
 }
-fn bezier(mut p: Vec<[f64; 3]>, t: f64) -> [f64; 3] {
+pub(super) fn bezier(mut p: Vec<[f64; 3]>, t: f64) -> [f64; 3] {
     for n in (1..p.len()).rev() {
         for i in 0..n {
             p[i] = std::array::from_fn(|k| p[i][k] * (1. - t) + p[i + 1][k] * t);

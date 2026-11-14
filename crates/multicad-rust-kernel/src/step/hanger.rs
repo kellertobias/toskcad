@@ -11,6 +11,8 @@ use crate::{
 };
 mod domain;
 pub use domain::{DomainOptions, RootFaceDomain, TrimBounds};
+mod periodic;
+pub use periodic::PeriodicAngular;
 
 pub struct RootSurface {
     source: RationalMeridian,

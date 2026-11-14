@@ -16,6 +16,33 @@ pub(crate) fn fit_angular(
     memory: &mut Memory,
     w: &mut Work<'_>,
 ) -> Result<AngularCarrier, Error> {
+    fit(turns, left, options, None, memory, w)
+}
+/// Only this source-owned unit circle has the proved exact periodic endpoint.
+/// No tolerance/proximity equates endpoints of arbitrary curve domains.
+pub(crate) fn fit_closed_unit(
+    left: bool,
+    options: CurveOptions,
+    memory: &mut Memory,
+    w: &mut Work<'_>,
+) -> Result<AngularCarrier, Error> {
+    fit(
+        [0., 1.],
+        left,
+        options,
+        Some([[1., 0., 0.], [1., 0., 1.]]),
+        memory,
+        w,
+    )
+}
+fn fit(
+    turns: [f64; 2],
+    left: bool,
+    options: CurveOptions,
+    ends: Option<[[f64; 3]; 2]>,
+    memory: &mut Memory,
+    w: &mut Work<'_>,
+) -> Result<AngularCarrier, Error> {
     w.charge(1)?;
     options.validate()?;
     if turns.iter().any(|v| !v.is_finite() || v.abs() > 256.) || turns[0] >= turns[1] {
@@ -28,7 +55,10 @@ pub(crate) fn fit_angular(
         [[p(1.), p(turns[0]), p(turns[0])], [p(0.), delta, delta]],
         left,
     );
-    let ends = [law.point(0., w)?, law.point(1., w)?].map(|v| v.map(I::midpoint));
+    let ends = match ends {
+        Some(owned) => owned,
+        None => [law.point(0., w)?, law.point(1., w)?].map(|v| v.map(I::midpoint)),
+    };
     let basis = curves::derivative_basis(w)?;
     let mut n = 1;
     loop {

@@ -18,6 +18,7 @@ pub use topology::{
 pub use writer::{write_local_candidate, write_mapped_candidate};
 mod angular;
 mod surfaces;
+pub(crate) use angular::fit_closed_unit;
 pub(crate) use angular::{AngularCarrier, fit_angular};
 pub use domains::{DomainOptions, DomainPlan, Slab, Station};
 pub use projection::ProjectionBounds;
