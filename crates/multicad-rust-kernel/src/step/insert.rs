@@ -17,6 +17,8 @@ pub use topology::{
 };
 pub use writer::{write_local_candidate, write_mapped_candidate};
 mod angular;
+pub(crate) mod reduced_unit;
+pub use reduced_unit::ReducedUnitAngular;
 mod surfaces;
 pub(crate) use angular::fit_closed_unit;
 pub(crate) use angular::{AngularCarrier, fit_angular};
