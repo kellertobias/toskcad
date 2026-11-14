@@ -2,9 +2,11 @@
 #[path = "../../multicad-model/tests/support/custom_screw_connections.rs"]
 mod fixture;
 use multicad_core::{
-    commands::{Actor, Channel},
+    commands::{Actor, Channel, Session},
+    document::{Document, EntityId, Placement},
     model::*,
     project_file::{self, ProjectFile},
+    symbols::{self, SymbolAuthorRequest, SymbolKind, SymbolPlaceRequest},
 };
 use multicad_mcp::{
     Headless, Workspace,
@@ -19,7 +21,52 @@ fn call(cancel: bool) -> Call {
     }
 }
 fn lifecycle(mode: ScrewConnectionMode) {
+    lifecycle_with_pins(mode, false)
+}
+fn lifecycle_with_pins(mode: ScrewConnectionMode, pinned: bool) {
     let (original, mut request) = fixture::fixture(mode);
+    if pinned {
+        for row in &mut request.hardware {
+            let ScrewConnectionHardwareSource::Generated { part } = &row.source else {
+                panic!()
+            };
+            let part =
+                MechanicalPartRequest::new("Pinned current material", part.parameters.clone());
+            let mut author = Session::new(Document::new("Library material").unwrap()).unwrap();
+            let p = prepare_mechanical_part(&author, 0, Actor::local(Channel::Mcp), &part).unwrap();
+            author.commit(p.prepared).unwrap();
+            let definition = SymbolAuthorRequest::new(
+                "Physical pin",
+                part.body,
+                SymbolKind::Static,
+                vec![],
+                None,
+            );
+            let p = symbols::prepare_author(
+                &author,
+                author.revision(),
+                Actor::local(Channel::Mcp),
+                &definition,
+            )
+            .unwrap();
+            author.commit(p.prepared).unwrap();
+            let definition =
+                symbols::read_definition(author.document(), definition.definition).unwrap();
+            let placement = SymbolPlaceRequest::from_definition(
+                EntityId::new(),
+                &definition,
+                "Hardware",
+                Default::default(),
+                Placement::default(),
+            )
+            .unwrap();
+            row.instance = placement.instance;
+            row.source = ScrewConnectionHardwareSource::Library {
+                definition: Box::new(definition),
+                placement: Box::new(placement),
+            };
+        }
+    }
     let stock_features = request
         .receivers
         .iter()
@@ -178,7 +225,30 @@ fn lifecycle(mode: ScrewConnectionMode) {
     )
     .unwrap();
     assert_eq!(removed["revision"], 3);
-    assert_eq!(host.document(), original);
+    if pinned {
+        // Library definitions are reusable assets; removing a connection
+        // removes its instances/drivers/cuts, retaining the imported pins.
+        let mut expected = original
+            .entities()
+            .map(|e| (e.id, e.clone()))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        for row in &request.hardware {
+            let ScrewConnectionHardwareSource::Library { placement, .. } = &row.source else {
+                panic!()
+            };
+            let entity = good.get(placement.definition).unwrap();
+            expected.insert(entity.id, entity.clone());
+        }
+        assert_eq!(
+            host.document()
+                .entities()
+                .map(|e| (e.id, e.clone()))
+                .collect::<std::collections::BTreeMap<_, _>>(),
+            expected
+        );
+    } else {
+        assert_eq!(host.document(), original);
+    }
 }
 #[test]
 fn direct_wood_full_mcp_lifecycle() {
@@ -191,6 +261,10 @@ fn female_insert_full_mcp_lifecycle() {
 #[test]
 fn distinct_hanger_full_mcp_lifecycle() {
     lifecycle(ScrewConnectionMode::HangerBolt)
+}
+#[test]
+fn pinned_hanger_nut_and_washer_full_mcp_lifecycle() {
+    lifecycle_with_pins(ScrewConnectionMode::HangerBolt, true)
 }
 
 #[test]

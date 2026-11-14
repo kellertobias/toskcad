@@ -23,7 +23,7 @@ fn actor() -> Actor {
 
 #[test]
 fn actual_pinned_hanger_nut_and_dynamic_ring_keep_sources_through_edit_and_reopen() {
-    for left in [false, true] {
+    for (left, posed) in [(false, false), (true, false), (false, true), (true, true)] {
         let (doc, mut request) = custom_fixture::fixture(ScrewConnectionMode::HangerBolt);
         let mut ring_parameter = None;
         for row in &mut request.hardware {
@@ -60,10 +60,52 @@ fn actual_pinned_hanger_nut_and_dynamic_ring_keep_sources_through_edit_and_reope
             *row = pinned;
         }
         let mut session = Session::new(doc).unwrap();
-        let prepared = prepare_screw_connection(&session, 0, actor(), &request).unwrap();
+        if posed {
+            let u = [0.8, 0.6, 0.];
+            let v = [-0.36, 0.48, 0.8];
+            let n = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            for (i, row) in request.receivers.iter().enumerate() {
+                let feature = row.source.input.producer;
+                let mut primitive = read_primitive(session.document(), feature).unwrap();
+                let PrimitiveParameters::Box { frame, size } = &mut primitive.parameters else {
+                    panic!()
+                };
+                let origin = if i == 1 {
+                    size[2] = length(32.);
+                    n.map(|x| -32. * x)
+                } else {
+                    [0.; 3]
+                };
+                *frame = PrimitiveFrame {
+                    origin: origin.map(length),
+                    u,
+                    v,
+                };
+                let p = prepare_primitive_edit(
+                    &session,
+                    session.revision(),
+                    actor(),
+                    feature,
+                    &primitive.parameters,
+                )
+                .unwrap();
+                session.commit(p.prepared).unwrap();
+            }
+        }
+        let prepared =
+            prepare_screw_connection(&session, session.revision(), actor(), &request).unwrap();
         let mut cache = EvaluationCache::default();
         let native = compiler()
-            .compile_cached(&mut cache, prepared.prepared.document(), 1, None)
+            .compile_cached(
+                &mut cache,
+                prepared.prepared.document(),
+                session.revision() + 1,
+                None,
+            )
             .unwrap();
         assert!(native.snapshot().screw_connection_checks[0].native_component_collision_checked);
         for row in &request.hardware {
