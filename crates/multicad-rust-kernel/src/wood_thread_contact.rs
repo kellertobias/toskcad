@@ -59,12 +59,14 @@ pub use hanger::{
     certify_hanger_nut, certify_hanger_stack, certify_hanger_through_stock, certify_hanger_wood,
     hanger_component_separation,
 };
+mod seated;
 mod separation;
 pub use insert::{
     InsertContact, InsertMating, MatingExternal, MatingRequirements, MatingScrew, ScrewClearance,
     ScrewClearanceRequirements, certify_insert, certify_insert_mating,
     certify_insert_screw_clearance,
 };
+pub use seated::{SeatedContact, certify_seated};
 pub use separation::{separated_from_rectangular_prism, separated_from_stock};
 
 type R<T> = Result<T, Error>;

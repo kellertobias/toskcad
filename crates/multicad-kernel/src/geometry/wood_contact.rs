@@ -26,6 +26,50 @@ fn source_error(cause: source::Error) -> GeometryError {
     )
 }
 impl Solid {
+    /// Actual stepped receiving source and original custom screw contact.
+    pub fn rust_seated_direct_wood_contact(
+        &self,
+        screw: &Self,
+        requirements: Requirements,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<source::SeatedContact, GeometryError> {
+        self.policy.validate()?;
+        if self.policy != screw.policy
+            || self.policy.boolean_fuzzy_mm != 0.
+            || requirements.linear_tolerance_mm != self.policy.linear_tolerance_mm
+            || requirements.minimum_feature_mm != self.policy.minimum_feature_mm
+        {
+            return Err(error(
+                "Seated wood contact",
+                GeometryErrorKind::Input,
+                "Contact requires the actual source geometry policies",
+            ));
+        }
+        let unsupported = || {
+            error(
+                "Seated wood contact",
+                GeometryErrorKind::Unsupported,
+                "Contact requires an actual rectangular blind counterbore and original regular headed screw",
+            )
+        };
+        let (stock, stock_frame) = self
+            .rust_rectangular_blind_counterbore_source()
+            .ok_or_else(unsupported)?;
+        let (screw, screw_frame) = screw
+            .rust_machine_screw_geometry()
+            .ok_or_else(unsupported)?;
+        stock_frame.checked(self.policy)?;
+        screw_frame.checked(self.policy)?;
+        source::certify_seated(
+            stock,
+            frame(stock_frame),
+            screw,
+            frame(screw_frame),
+            requirements,
+            &|| interrupt.is_some_and(|f| f()),
+        )
+        .map_err(source_error)
+    }
     /// A strict outward source-envelope separation proof. Unknown source
     /// families and overlapping envelopes grant no disjointness authority.
     pub fn rust_wood_separated_from(
@@ -425,3 +469,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod seated_tests;
