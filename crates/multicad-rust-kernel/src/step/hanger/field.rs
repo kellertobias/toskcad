@@ -2,6 +2,8 @@
 //! These are approximation points, not a positive feature/sewn-body proof.
 use super::*;
 use crate::authored_hanger_bolt::{Boundary, Component, Knot};
+mod rows;
+pub use rows::{BandPiece, CellSeam, HomogeneousControl, MeridianRow, MeridianRowKey};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PhaseNode {
     Knot(Knot),

@@ -14,7 +14,10 @@ pub use domain::{DomainOptions, RootFaceDomain, TrimBounds};
 mod periodic;
 pub use periodic::PeriodicAngular;
 mod field;
-pub use field::{PhaseNode, SeamPoint, SourceField, StationKey};
+pub use field::{
+    BandPiece, CellSeam, HomogeneousControl, MeridianRow, MeridianRowKey, PhaseNode, SeamPoint,
+    SourceField, StationKey,
+};
 
 pub struct RootSurface {
     source: RationalMeridian,
