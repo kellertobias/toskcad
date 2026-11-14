@@ -27,6 +27,14 @@ pub struct StepRetainedMemberReceipt {
     pub decoded_volume_bounds_mm3: [f64; 2],
     pub source_volume_bounds_mm3: [f64; 2],
 }
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StepSourceCorrespondenceReceipt {
+    pub member_index: u32,
+    pub maximum_position_error_mm: f64,
+    /// Absolute error in the original whole-row parameter; not normal angle.
+    pub row_derivative_error_mm: f64,
+    pub ruling_derivative_error_mm: f64,
+}
 /// Distinguishes decoded file mass from certified authored-source mass.
 /// Missing decoded mass is explicit; source support tolerance is not a
 /// substitute for an independently integrated file-volume error bound.
@@ -40,6 +48,8 @@ pub struct StepVerificationReceipt {
     /// zero-width contributions to a retained whole-file enclosure.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub decoded_scalar_members: Vec<(u32, f64)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_correspondence: Vec<StepSourceCorrespondenceReceipt>,
     pub source_volume_bounds_mm3: Option<[f64; 2]>,
     /// Actual full-checker parameter, not a measured combined boundary error.
     pub verified_tolerance_mm: Option<f64>,
@@ -55,6 +65,7 @@ impl StepVerificationReceipt {
             decoded_volume_mm3: Some(volume),
             retained_members: vec![],
             decoded_scalar_members: vec![],
+            source_correspondence: vec![],
             source_volume_bounds_mm3: None,
             verified_tolerance_mm: None,
             maximum_polynomial_trim_error_mm: None,
@@ -147,6 +158,19 @@ fn verify(
             .ok_or_else(|| io("Missing source model"))?;
         let topology = rust_step_topology(model, artifact)?;
         let solid = artifact_solid(model, artifact)?;
+        if let Some(proof) = verify_owned_insert_step(
+            path,
+            solid,
+            (
+                artifact.solid_count,
+                artifact.volume_mm3,
+                artifact.bounds_mm,
+            ),
+            artifact.producer,
+            tolerance,
+        ) {
+            return proof.map(|_| ());
+        }
         if let Some(proof) = verify_retained_step(
             path,
             solid,
@@ -265,6 +289,19 @@ pub fn verify_rust_step_shape_receipt(
             "STEP verification needs a finite positive tolerance",
         ));
     }
+    if let Some(proof) = verify_owned_insert_step(
+        path,
+        solid,
+        (
+            shape.solid_count,
+            shape.volume_mm3,
+            [shape.bounds.min, shape.bounds.max],
+        ),
+        shape.producer,
+        tolerance,
+    ) {
+        return proof;
+    }
     if let Some(proof) = verify_retained_step(
         path,
         solid,
@@ -292,6 +329,75 @@ pub fn verify_rust_step_shape_receipt(
         return proof;
     }
     verify_rust_step_shape(path, solid, shape, tolerance).map(StepVerificationReceipt::decoded)
+}
+fn verify_owned_insert_step(
+    path: &Path,
+    solid: &Solid,
+    expected: StepMetrics,
+    producer: EntityId,
+    tolerance: f64,
+) -> Option<Result<StepVerificationReceipt, ExportError>> {
+    solid.rust_wood_insert_data()?;
+    Some((|| {
+        if !tolerance.is_finite()
+            || tolerance <= 0.
+            || !expected.1.is_finite()
+            || expected.1 <= 0.
+            || expected.2.into_iter().flatten().any(|v| !v.is_finite())
+        {
+            return Err(failure(
+                ErrorKind::Invalid,
+                Some(producer),
+                "Insert source snapshot needs finite bounds, positive mass and verification tolerance",
+            ));
+        }
+        let bounds = solid.bounds().map_err(io)?;
+        verify_step_dimensions(
+            producer,
+            expected,
+            (
+                solid.solid_count().map_err(io)?,
+                solid.volume_mm3().map_err(io)?,
+                [bounds.min, bounds.max],
+            ),
+            tolerance,
+        )?;
+        let input = read_step_source(path, producer)?;
+        let proof = solid
+            .verify_wood_insert_step_source(&input, tolerance, None)
+            .expect("actual retained insert source")
+            .map_err(|e| {
+                failure(
+                    if e.kind == multicad_kernel::GeometryErrorKind::Limit {
+                        ErrorKind::Budget
+                    } else {
+                        ErrorKind::Invalid
+                    },
+                    Some(producer),
+                    format!("Actual insert file proof failed:{e}"),
+                )
+            })?;
+        Ok(StepVerificationReceipt {
+            method: StepVerificationMethod::DecodedBoundaryEnclosure,
+            decoded_volume_mm3: None,
+            retained_members: vec![StepRetainedMemberReceipt {
+                member_index: 0,
+                decoded_volume_bounds_mm3: proof.decoded_volume_bounds_mm3,
+                source_volume_bounds_mm3: proof.source_volume_bounds_mm3,
+            }],
+            decoded_scalar_members: vec![],
+            source_correspondence: vec![StepSourceCorrespondenceReceipt {
+                member_index: 0,
+                maximum_position_error_mm: proof.maximum_position_error_mm,
+                row_derivative_error_mm: proof.maximum_row_derivative_error_mm,
+                ruling_derivative_error_mm: proof.maximum_ruling_derivative_error_mm,
+            }],
+            source_volume_bounds_mm3: None,
+            verified_tolerance_mm: Some(proof.verified_tolerance_mm),
+            maximum_polynomial_trim_error_mm: None,
+            analytic_closure_tolerance_mm: None,
+        })
+    })())
 }
 fn verify_retained_step(
     path: &Path,
@@ -373,6 +479,7 @@ fn verify_retained_step(
                 })
                 .collect(),
             decoded_scalar_members: proof.decoded_scalar_members,
+            source_correspondence: vec![],
             source_volume_bounds_mm3: None,
             verified_tolerance_mm: Some(tolerance),
             maximum_polynomial_trim_error_mm: None,
@@ -444,6 +551,7 @@ fn verify_source_known_step(
             decoded_volume_mm3: None,
             retained_members: vec![],
             decoded_scalar_members: vec![],
+            source_correspondence: vec![],
             source_volume_bounds_mm3: Some(proof.source_volume_bounds_mm3),
             verified_tolerance_mm: Some(proof.verified_tolerance_mm),
             maximum_polynomial_trim_error_mm: Some(proof.maximum_polynomial_trim_error_mm),

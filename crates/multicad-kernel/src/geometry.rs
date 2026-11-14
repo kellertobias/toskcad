@@ -22,7 +22,7 @@ mod cosmetic_fastener_body;
 mod entry_chamfer_body;
 mod wood_insert_body;
 use wood_insert_body::WoodInsertBody;
-pub use wood_insert_body::WoodInsertData;
+pub use wood_insert_body::{WoodInsertData, WoodInsertStepVerification};
 mod wood_insert_material;
 pub use wood_insert_material::{WoodInsertFaceProperties, WoodInsertMaterial};
 mod hanger_material;
@@ -2775,9 +2775,9 @@ impl Solid {
                     self.policy.linear_tolerance_mm,
                 )
             }
+            SolidBody::WoodInsert(body, frame) => body.supports_step(*frame),
             SolidBody::CosmeticFastener(..)
             | SolidBody::InternalThreadTreatment(..)
-            | SolidBody::WoodInsert(..)
             | SolidBody::Hanger(..) => false,
             SolidBody::WarpedUnion(body, _) => {
                 multicad_rust_kernel::step::supports_warped_union(&body.geometry)
@@ -2989,9 +2989,9 @@ impl Solid {
                 frame.v,
                 self.policy.linear_tolerance_mm,
             ),
+            SolidBody::WoodInsert(body, frame) => body.append_step(writer, *frame, self.policy),
             SolidBody::CosmeticFastener(..)
             | SolidBody::InternalThreadTreatment(..)
-            | SolidBody::WoodInsert(..)
             | SolidBody::Hanger(..) => Err(step::StepError::Unsupported),
             SolidBody::Orthogonal(body, frame) => body.append_step(writer, *frame),
             SolidBody::Occt(_) => unreachable!("native STEP dispatched above"),
