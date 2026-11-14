@@ -145,6 +145,18 @@ struct Local {
     current: Rc<Cell<usize>>,
 }
 thread_local! {static LOCAL:RefCell<Option<Rc<Local>>>=const{RefCell::new(None)};}
+/// An explicitly bounded nested query must neither refill from, nor return
+/// its unrelated balance to, an active worker's lease. Restore on panic too.
+pub(super) fn local_budget<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Rc<Local>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            LOCAL.with(|slot| slot.replace(self.0.take()));
+        }
+    }
+    let _restore = Restore(LOCAL.with(|slot| slot.replace(None)));
+    f()
+}
 pub(super) fn refill(balance: &mut usize, needed: usize) -> Result<(), Error> {
     LOCAL.with(|slot| {
         let local = slot.borrow().clone().ok_or(Error::Limit)?;
@@ -209,6 +221,61 @@ fn ledger_refunds_unused_credits_on_success_error_and_panic() {
         assert_eq!(remaining + spent, BATCH * 4);
         assert!(LOCAL.with(|s| s.borrow().is_none()));
     }
+}
+
+#[test]
+fn independent_source_queries_cannot_refill_or_refund_a_workers_lease() {
+    let source = crate::radial_tensor::tests::material();
+    let bounds = [[0.1, 0.1], [0.2, 0.2], [4., 4.]];
+    let query_cost = source
+        .classify_box(bounds, Default::default(), None)
+        .unwrap()
+        .work_used();
+    let initial = BATCH * 4;
+    let pool = Pool::new(initial);
+    run(Arc::clone(&pool), Rc::new(Cell::new(0)), |w| {
+        w.charge(7)?;
+        let before = w.remaining;
+        assert_eq!(
+            source
+                .classify_box(
+                    bounds,
+                    crate::radial_tensor::BoxQueryOptions {
+                        maximum_work: query_cost - 1
+                    },
+                    None
+                )
+                .err(),
+            Some(Error::Limit)
+        );
+        assert_eq!(w.remaining, before);
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| local_budget(|| panic!(
+                "independent query callback"
+            ))))
+            .is_err()
+        );
+        assert_eq!(
+            source
+                .classify_box(bounds, Default::default(), None)
+                .unwrap()
+                .work_used(),
+            query_cost
+        );
+        w.charge(query_cost)?;
+        w.charge(BATCH)?;
+        Ok(())
+    })
+    .unwrap();
+    let (available, spent, refills) = pool.finish().unwrap();
+    assert_eq!(spent, 7 + query_cost + BATCH);
+    assert_eq!(available + spent, initial);
+    assert_eq!(refills, 2);
+    let (_, waits) = pool.timing();
+    assert_eq!(
+        waits, 0,
+        "independent queries must not wait on worker credits"
+    );
 }
 
 #[test]

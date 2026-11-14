@@ -20,7 +20,7 @@ pub use caps::CapBoundary;
 pub use material::RadialBoundary;
 pub use ordering::OrderedBoundary;
 pub use properties::{FaceProperties, MassProperties, VolumeProperties};
-pub use query::{Collars, Location};
+pub use query::{BoxQuery, BoxQueryOptions, Collars, Location};
 mod trims;
 pub use trims::TrimmedBoundary;
 #[cfg(test)]
