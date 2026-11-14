@@ -3,6 +3,7 @@
 use super::*;
 use crate::geometry::internal_thread_treatment_body::interval::Interval as B;
 use multicad_rust_kernel::helical_thread::BoxClassification;
+mod headed;
 
 fn exact(value: Rational) -> B {
     // Rational::as_f64 rounds once. Both neighbours enclose the original
@@ -165,6 +166,8 @@ impl Solid {
         let relation = match &body.form {
             HelicalForm::Shaft => body.geometry.classify_box(bounds).ok()?,
             HelicalForm::Bore(stock) => bore_relation(body, stock, bounds)?,
+            HelicalForm::Screw(source) => headed::screw_relation(source, bounds),
+            HelicalForm::Nut(source) => headed::nut_relation(source, bounds),
             _ => return None,
         };
         match (relation, operation, thread_is_left) {

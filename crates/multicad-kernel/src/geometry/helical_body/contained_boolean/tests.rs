@@ -500,17 +500,18 @@ fn unrelated_families_curved_proposals_and_fuzzy_or_mismatched_policies_keep_the
     .unwrap();
     let nut =
         Solid::rust_hex_nut(spec(false), 8., 0.5, EntityId::new(), frame(false), policy).unwrap();
-    for (a, b) in [
-        (&small, &sphere),
-        (&thread, &sphere),
-        (&thread, &curved),
-        (&nut, &small),
-    ] {
+    for (a, b) in [(&small, &sphere), (&thread, &sphere), (&thread, &curved)] {
         assert!(
             a.contained_thread_boolean(b, BooleanOperation::Intersect, policy)
                 .is_none()
         );
     }
+    assert!(
+        nut.contained_thread_boolean(&small, BooleanOperation::Intersect, policy)
+            .expect("a probe wholly inside the retained threaded cavity is proved empty")
+            .unwrap()
+            .is_none()
+    );
     for changed in [
         GeometryPolicy {
             boolean_fuzzy_mm: 1e-6,
