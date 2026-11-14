@@ -180,7 +180,9 @@ pub(super) fn evaluate(
         )
         .max(length)
         .max(1.);
-    integrate::parts(&parts, extent, options, work)
+    let densities: Vec<&dyn integrate::Density> =
+        parts.iter().map(|p| p as &dyn integrate::Density).collect();
+    integrate::parts(&densities, extent, options, work)
 }
 impl Part {
     pub fn field(&self, u: I) -> Result<[S; 4], Error> {
@@ -261,5 +263,11 @@ impl Part {
             *out = v.checked()?
         }
         Ok(checked)
+    }
+}
+
+impl integrate::Density for Part {
+    fn field(&self, u: I) -> Result<[S; 4], Error> {
+        Part::field(self, u)
     }
 }
