@@ -5,6 +5,8 @@ use std::f64::consts::PI;
 
 const FRAME_EPS: f64 = 1e-10;
 
+mod blind_counterbore;
+
 struct Frame {
     origin: Point,
     axes: [Point; 3],
@@ -362,7 +364,10 @@ fn support_matches(face: &Face, support: Support, frame: &Frame) -> bool {
         // The STEP face validator already certifies these supports against the
         // exact circular rims and their generators. The oriented loop check
         // above also preserves the outward surface sense.
-        (Face::HalfCylinder(_) | Face::PartialCylinder(_), Support::Cylinder { .. }) => true,
+        (
+            Face::HalfCylinder(_) | Face::PartialCylinder(_),
+            Support::Cylinder { .. } | Support::InwardCylinder { .. },
+        ) => true,
         _ => false,
     }
 }

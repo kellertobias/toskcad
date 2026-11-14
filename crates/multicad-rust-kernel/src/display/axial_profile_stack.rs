@@ -31,7 +31,9 @@ pub fn axial_profile_stack(
                     .sum::<usize>()
                     - 2
             }
-            Support::Cylinder { .. } => 2 * counts[face.boundary[0].edge],
+            Support::Cylinder { .. } | Support::InwardCylinder { .. } => {
+                2 * counts[face.boundary[0].edge]
+            }
         })
         .sum::<usize>();
     if triangles > options.triangle_limit {
@@ -103,7 +105,7 @@ pub fn axial_profile_stack(
                     mesh.triangle(triangle.map(|i| polygon[i]), ordinal);
                 }
             }
-            Support::Cylinder { .. } => {
+            Support::Cylinder { .. } | Support::InwardCylinder { .. } => {
                 let low = oriented(face.boundary[0]);
                 let mut high = oriented(face.boundary[2]);
                 high.reverse();

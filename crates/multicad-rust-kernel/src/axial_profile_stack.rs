@@ -3,7 +3,9 @@
 use crate::normal_sweep::Edge as Edge2;
 use std::{f64::consts::PI, ops::Range};
 
+mod blind_counterbore;
 mod shell;
+pub use blind_counterbore::RectangularBlindCounterbore;
 #[cfg(test)]
 mod tests;
 
@@ -56,6 +58,11 @@ pub enum Support {
     },
     /// This boundary wall is outward on the circle.
     Cylinder {
+        center_mm: Point2,
+        radius_mm: f64,
+    },
+    /// Material faces into a retained circular cavity.
+    InwardCylinder {
         center_mm: Point2,
         radius_mm: f64,
     },
