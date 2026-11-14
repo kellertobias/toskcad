@@ -69,10 +69,10 @@ fn norm(c: &[N], w: &mut Work<'_>) -> Result<I, Error> {
     }
     Ok(s)
 }
-struct Probe {
-    work: usize,
-    position: f64,
-    derivative: f64,
+pub(super) struct Probe {
+    pub(super) work: usize,
+    pub(super) position: f64,
+    pub(super) derivative: f64,
     vertex_error: f64,
     parameter: [N; 2],
     stages: [usize; 7],
@@ -80,6 +80,9 @@ struct Probe {
     uv: super::literal::CartesianCap,
 }
 fn run(curve: &CapCurvePiece<'_, '_>) -> Result<Probe, Error> {
+    run_with_limit(curve, 16_000_000)
+}
+pub(super) fn run_with_limit(curve: &CapCurvePiece<'_, '_>, limit: usize) -> Result<Probe, Error> {
     let f = curve.field;
     let cell = f.cells[curve.source_cell];
     let row = &f.meridians[cell.meridian];
@@ -91,7 +94,7 @@ fn run(curve: &CapCurvePiece<'_, '_>) -> Result<Probe, Error> {
         let v = s.wood().spec();
         (v.pitch_mm, v.starts, v.left_hand, v.length_mm)
     };
-    let mut w = Work::new(16_000_000, None)?;
+    let mut w = Work::new(limit, None)?;
     w.charge(f.work_used() + curve.work_used)?;
     let mut m = Memory::new(f.retained_bytes() + curve.retained_bytes, 64 * 1024 * 1024)?;
     m.add(SCRATCH)?;

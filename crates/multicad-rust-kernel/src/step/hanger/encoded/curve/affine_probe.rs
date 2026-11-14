@@ -273,7 +273,7 @@ fn only_actual_constant_positive_weights_earn_the_affine_chart() {
 }
 
 #[test]
-fn finite_affine_chart_earns_same_tensor_lift_and_original_parameter_derivative() {
+fn finite_mixed_charts_earn_same_tensor_lift_under_one_actual_work_ledger() {
     use super::literal::{Precision, encode_cap_at, quantize_at};
     for (left, nb) in [(false, false), (true, true)] {
         let s = Hanger::new(crate::authored_hanger_bolt::tests::fixture(left, nb), None).unwrap();
@@ -285,6 +285,8 @@ fn finite_affine_chart_earns_same_tensor_lift_and_original_parameter_derivative(
         m.add(SCRATCH + size_of::<CapTrace>()).unwrap();
         let mut maximum = [0_f64; 3];
         let mut count = 0;
+        let mut root_count = 0;
+        let mut root_work = 0;
         for index in 0..f.cells().len() {
             for end in [End::Start, End::End] {
                 // The retained original curve owns the source parameter and
@@ -298,6 +300,38 @@ fn finite_affine_chart_earns_same_tensor_lift_and_original_parameter_derivative(
                 };
                 for piece in 0..f.angular.coefficients().len() {
                     let Some(cap) = build(&f, index, end, piece, &mut w).unwrap() else {
+                        if f.meridians[f.cells[index].meridian].degree() == 2
+                            && root_overlap(&f, index, end, piece, &trace, &mut w).unwrap()
+                        {
+                            // Exact overlap selection avoids performing an
+                            // unreceipted empty standalone root query. The
+                            // entire actual positive support/proof increment
+                            // is debited before the next attempted piece.
+                            let curve = f
+                                .cap_curve_piece(
+                                    index,
+                                    end,
+                                    piece,
+                                    DomainOptions {
+                                        maximum_work: w.remaining(),
+                                        ..DomainOptions::default()
+                                    },
+                                    None,
+                                )
+                                .unwrap()
+                                .unwrap();
+                            let proof = super::trim_probe::run_with_limit(
+                                &curve,
+                                f.work_used() + w.remaining(),
+                            )
+                            .unwrap();
+                            let increment = proof.work - f.work_used();
+                            w.charge(increment).unwrap();
+                            root_work += increment;
+                            root_count += 1;
+                            maximum[0] = maximum[0].max(proof.position);
+                            maximum[1] = maximum[1].max(proof.derivative);
+                        }
                         continue;
                     };
                     count += 1;
@@ -415,9 +449,51 @@ fn finite_affine_chart_earns_same_tensor_lift_and_original_parameter_derivative(
             }
         }
         eprintln!(
-            "finite affine caps left={left} nb={nb} count={count} field+selection+trace+support+encoding+lift_work={} errors={maximum:?}",
+            "finite mixed caps left={left} nb={nb} affine={count} root={root_count} root_increment={root_work} field+selection+trace+support+encoding+lift_work={} [C0all,D1finiteAll,D1originalAffine]={maximum:?}; streaming cap probe, excludes field serialization/closed material",
             w.used
         );
         assert!(count >= 36);
+        assert_eq!(count + root_count, if nb { 48 } else { 44 });
     }
+}
+
+fn root_overlap(
+    f: &EncodedField<'_>,
+    index: usize,
+    end: End,
+    piece: usize,
+    trace: &CapTrace,
+    w: &mut Work<'_>,
+) -> Result<bool, Error> {
+    let cell = f.cells[index];
+    let source = f.source.source_boundary().source();
+    let spec = source.metric().spec();
+    let pitch = binary(spec.pitch_mm, w)?;
+    let lead = pitch.mul(&N::integer(i64::from(spec.starts)), w)?;
+    let station = if end == End::Start {
+        N::integer(0)
+    } else {
+        binary(spec.length_mm, w)?
+    };
+    let shift = station.sub(
+        &pitch.mul(&N::integer(i64::from(cell.source_key.total_period)), w)?,
+        w,
+    )?;
+    let a = binary(f.angular.knots()[piece], w)?;
+    let b = binary(f.angular.knots()[piece + 1], w)?;
+    let lower = shift.sub(&lead.mul(&b, w)?, w)?;
+    let upper = shift.sub(&lead.mul(&a, w)?, w)?;
+    let first = trace.endpoints[0].phase.number(w)?;
+    let last = trace.endpoints[1].phase.number(w)?;
+    let lo = if first.cmp(&lower, w)? == Ordering::Greater {
+        first
+    } else {
+        lower
+    };
+    let hi = if last.cmp(&upper, w)? == Ordering::Less {
+        last
+    } else {
+        upper
+    };
+    Ok(lo.cmp(&hi, w)? == Ordering::Less)
 }
