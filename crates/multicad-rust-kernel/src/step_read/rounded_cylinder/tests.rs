@@ -122,13 +122,10 @@ fn topology_counts_orientation_ownership_and_periodic_domains_are_strict() {
             let first = reference(&items[0]).unwrap();
             *items = (0..count).map(|_| Value::Reference(first)).collect();
         });
+        // Neither face count is a resource refusal.
         assert_eq!(
             read_rounded_cylinder(&bad, 1e-7).unwrap_err(),
-            if count == 6 {
-                ReadError::Limit
-            } else {
-                ReadError::Unsupported
-            }
+            ReadError::Unsupported
         );
     }
     refused(&edit(&source, shell, |e| {
