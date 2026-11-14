@@ -7,8 +7,14 @@ use crate::{
 use std::mem::size_of;
 mod curves;
 mod domains;
+mod projection;
+mod topology;
+pub use topology::{
+    EdgeGeometry, FaceGeometry, ShellCoedge, ShellEdge, ShellFace, TopologyPlan, WindingBounds,
+};
 mod surfaces;
 pub use domains::{DomainOptions, DomainPlan, Slab, Station};
+pub use projection::ProjectionBounds;
 pub use surfaces::{RowKey, SurfacePatch, SurfacePlan, SurfaceRow, SurfaceVertex, VertexOwner};
 mod resources;
 use resources::{Memory, Work};
