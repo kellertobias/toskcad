@@ -10,7 +10,14 @@ use crate::{
 use num_bigint::Sign;
 use num_rational::BigRational;
 mod cap;
+mod closed;
+mod finite;
 pub use cap::{CapEndpoint, CapTrace};
+pub use closed::{
+    ClosedCoedge, ClosedCurve, ClosedEdge, ClosedFace, ClosedFaceKind, ClosedField, ClosedVertex,
+    FieldVolume,
+};
+pub use finite::{FiniteCell, FiniteCorner, FiniteDomains, FiniteEdge, FiniteVertex};
 const SCRATCH: usize = 16 * 1024 * 1024;
 /// Canonical exact coefficient, owned compactly; no retained bigint arena.
 #[derive(Clone, Debug, PartialEq, Eq)]

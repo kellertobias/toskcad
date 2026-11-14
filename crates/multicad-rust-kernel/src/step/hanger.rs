@@ -18,6 +18,11 @@ pub use encoded::{
     CapEndpoint, CapTrace, EncodedCell, EncodedControl, EncodedField, EncodedMeridian,
     EncodedScalar,
 };
+pub use encoded::{
+    ClosedCoedge, ClosedCurve, ClosedEdge, ClosedFace, ClosedFaceKind, ClosedField, ClosedVertex,
+    FieldVolume,
+};
+pub use encoded::{FiniteCell, FiniteCorner, FiniteDomains, FiniteEdge, FiniteVertex};
 mod body_field;
 pub use body_field::{BodyField, CellSurface, FieldBounds, FieldControl};
 mod field;

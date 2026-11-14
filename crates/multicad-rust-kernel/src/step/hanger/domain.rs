@@ -51,6 +51,13 @@ pub(super) fn work<'a>(
     bytes: usize,
     interrupt: Option<&'a dyn Fn() -> bool>,
 ) -> Result<Work<'a>, Error> {
+    Ok(ledgers(options, bytes, interrupt)?.0)
+}
+pub(super) fn ledgers<'a>(
+    options: DomainOptions,
+    bytes: usize,
+    interrupt: Option<&'a dyn Fn() -> bool>,
+) -> Result<(Work<'a>, Memory), Error> {
     let mut w = Work::new(options.maximum_work, interrupt)?;
     w.charge(1)?;
     if options.maximum_bytes == 0 || options.maximum_bytes > 64 * 1024 * 1024 {
@@ -58,7 +65,7 @@ pub(super) fn work<'a>(
     }
     let mut memory = Memory::new(bytes, options.maximum_bytes)?;
     memory.add(SCRATCH)?;
-    Ok(w)
+    Ok((w, memory))
 }
 impl<'a> RootFaceDomain<'a> {
     pub fn prepare(
