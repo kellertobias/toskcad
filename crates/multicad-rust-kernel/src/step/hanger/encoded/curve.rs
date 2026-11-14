@@ -1,6 +1,8 @@
 //! Actual 3D cap curves composed from the SAME exact scalar and angular owners.
 //! These homogeneous supports are not rounded STEP Cartesian poles or a file.
 use super::*;
+mod literal;
+pub use literal::LiteralCapCurve;
 use std::cmp::Ordering;
 const DEGREE: usize = 22;
 struct Polynomial {
