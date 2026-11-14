@@ -4,7 +4,13 @@ use super::{Error, I, bounds, ceiling, interval};
 use crate::tapered_thread::Series;
 use std::f64::consts::PI;
 mod boundary;
+mod stock_clip;
 pub use boundary::RawAuthoredBoundary;
+pub use stock_clip::{
+    StockClipBand, StockClipCoedge, StockClipCurve, StockClipFace, StockClipOptions,
+    StockClipPatch, StockClipPlan, StockClipPoint, StockClipRail, StockClipSample, StockClipSlab,
+    StockClipStation, StockClipVertex, StockClipVolume,
+};
 #[cfg(test)]
 mod tests;
 #[derive(Clone, Copy, Debug, PartialEq)]
