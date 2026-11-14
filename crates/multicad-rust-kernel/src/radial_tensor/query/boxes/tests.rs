@@ -191,12 +191,7 @@ fn whole_box_query_uses_one_exact_balance_and_cancels_before_publication() {
             .location(),
         Location::Inside
     );
-    for bounds in [
-        [[1., 0.]; 3],
-        [[f64::NAN, 0.]; 3],
-        [[0., f64::INFINITY]; 3],
-        [[0., 1e7_f64.next_up()]; 3],
-    ] {
+    for bounds in [[[1., 0.]; 3], [[f64::NAN, 0.]; 3], [[0., f64::INFINITY]; 3]] {
         assert_eq!(
             body.classify_box(bounds, Default::default(), None)
                 .err()
@@ -215,6 +210,19 @@ fn whole_box_query_uses_one_exact_balance_and_cancels_before_publication() {
         .err()
         .unwrap(),
         Error::Invalid
+    );
+    // Coordinate enclosures may extend beyond a model's input policy after
+    // a valid inverse placement. They are mathematical boxes, not new model
+    // coordinates; a finite far-away axial box is still provably Outside.
+    assert_eq!(
+        body.classify_box(
+            [[0.1, 0.2], [0.1, 0.2], [-1e7 - 1., -1e7]],
+            Default::default(),
+            None
+        )
+        .unwrap()
+        .location(),
+        Location::Outside
     );
 }
 

@@ -53,9 +53,7 @@ impl RadialBoundary {
             };
             work.step()?;
             let p = bounds.map(|[lo, hi]| I::new(lo, hi));
-            if options.maximum_work > MAX_WORK
-                || p.into_iter().any(|p| !p.valid() || p.magnitude() > 1e7)
-            {
+            if options.maximum_work > MAX_WORK || p.into_iter().any(|p| !p.valid()) {
                 return Err(Error::Invalid);
             }
             // Fixed affine projection, collar/core arithmetic and final
