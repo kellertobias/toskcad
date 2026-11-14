@@ -15,6 +15,9 @@ impl<'a> Work<'a> {
             interrupt,
         })
     }
+    pub fn remaining(&self) -> usize {
+        self.remaining
+    }
     pub fn charge(&mut self, n: usize) -> Result<(), Error> {
         if self.interrupt.is_some_and(|f| f()) {
             return Err(Error::Cancelled);

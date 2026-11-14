@@ -6,6 +6,8 @@ use crate::{
 };
 use std::mem::size_of;
 mod curves;
+mod domains;
+pub use domains::{DomainOptions, DomainPlan, Slab, Station};
 mod resources;
 use resources::{Memory, Work};
 #[cfg(test)]

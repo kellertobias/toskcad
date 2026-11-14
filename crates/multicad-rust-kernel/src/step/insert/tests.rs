@@ -10,7 +10,7 @@ fn invalid_and_cancelled_requests_fail_before_publication() {
     assert_eq!(w.charge(2), Err(Error::Limit));
     assert!(matches!(Memory::new(2, 1), Err(Error::Limit)));
 }
-fn graph(left: bool, starts: u32) -> Boundary {
+pub(super) fn graph(left: bool, starts: u32) -> Boundary {
     use crate::{
         authored_flat_thread::{AuthoredThread, SourceOptions},
         helical_thread::Spec,
