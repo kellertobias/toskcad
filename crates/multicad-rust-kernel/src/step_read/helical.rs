@@ -230,7 +230,7 @@ pub(super) fn verify_member(
     let count = splines.bands.len();
     require(faces.len() == closure.face_count(count, thread.spec().major_radius_mm))?;
     let mut flux = 0.;
-    let Prefix { rings, corners } = verify_prefix(
+    let Prefix { rings, corners, .. } = verify_prefix(
         shell,
         &faces[..count],
         &splines,
@@ -569,6 +569,7 @@ pub(super) struct PrefixContract {
     pub exit_crests: bool,
 }
 pub(super) struct Prefix {
+    pub rails: Vec<[u32; 2]>,
     pub rings: [Vec<u32>; 2],
     pub corners: Vec<[[u32; 2]; 2]>,
 }
@@ -678,7 +679,11 @@ pub(super) fn verify_prefix(
     }
     require((0..count).all(|i| rails[i][1] == rails[(i + 1) % count][0]))?;
 
-    Ok(Prefix { rings, corners })
+    Ok(Prefix {
+        rails,
+        rings,
+        corners,
+    })
 }
 
 pub(super) fn tensor_surface(

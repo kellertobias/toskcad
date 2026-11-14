@@ -15,6 +15,10 @@ pub struct TensorCarrierBound {
     pub surface_entity: u32,
     pub control_rows: usize,
     pub control_columns: usize,
+    /// Earned actual EDGE_CURVE identities, in increasing radial parameter.
+    pub long_rails: [u32; 2],
+    pub entry_vertex_entity: u32,
+    pub entry_control_column: usize,
     /// Uniform tensor carrier distance from the reconstructed reference carrier
     /// under per-cell Bernstein reparameterization, including numeric conversion.
     pub control_deviation_mm: f64,
@@ -160,6 +164,9 @@ impl<'input> Body<'input> {
                         surface_entity: surface,
                         control_rows: controls.len(),
                         control_columns: basis.axial.poles.len(),
+                        long_rails: [0; 2],
+                        entry_vertex_entity: 0,
+                        entry_control_column: basis.visible_start,
                         control_deviation_mm: maximum,
                         tip_plane_distance_mm,
                         entry_circle_distance_mm,
@@ -167,6 +174,13 @@ impl<'input> Body<'input> {
                     Ok(())
                 },
             )?;
+            // verify_prefix appends exactly one tensor/ownership tuple per
+            // basis band before success; no zip truncation or guessed rail IDs.
+            for (i, tensor) in tensors.iter_mut().enumerate() {
+                work.step(1)?;
+                tensor.long_rails = prefix.rails[i];
+                tensor.entry_vertex_entity = prefix.corners[i][0][0];
+            }
             work.step(1)?;
             // The real tip cap uses the exact retained rim/vertex identities.
             helical::verify_plain_tip(

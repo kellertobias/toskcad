@@ -240,3 +240,8 @@ mod closed_head;
 pub use closed_head::{
     ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHeadSupportKind,
 };
+
+mod derived_thread;
+pub use derived_thread::{
+    DerivedThreadCarrier, DerivedThreadOptions, OccupiedDerivedThread, ThreadCarrierTransfer,
+};

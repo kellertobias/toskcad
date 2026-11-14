@@ -251,6 +251,14 @@ fn reference(value: &Value<'_>) -> Result<u32> {
     }
 }
 
+/// Total typed list accessor; numeric/reference records remain distinct.
+fn list<'a, 'input>(value: &'a Value<'input>) -> Result<&'a [Value<'input>]> {
+    match value {
+        Value::List(items) => Ok(items),
+        _ => Err(ReadError::Invalid),
+    }
+}
+
 fn refs(value: &Value<'_>) -> Result<Vec<u32>> {
     let Value::List(items) = value else {
         return Err(ReadError::Invalid);
@@ -1071,4 +1079,11 @@ pub use phillips_cutter::{
     ClosedRepairedHead as PhillipsClosedRepairedHead,
     HeadSupportTransfer as PhillipsHeadSupportTransfer,
     RawHeadSupportKind as PhillipsRawHeadSupportKind,
+};
+
+pub use phillips_cutter::{
+    DerivedThreadCarrier as PhillipsDerivedThreadCarrier,
+    DerivedThreadOptions as PhillipsDerivedThreadOptions,
+    OccupiedDerivedThread as PhillipsOccupiedDerivedThread,
+    ThreadCarrierTransfer as PhillipsThreadCarrierTransfer,
 };

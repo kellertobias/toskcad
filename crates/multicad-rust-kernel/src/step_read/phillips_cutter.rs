@@ -232,3 +232,7 @@ pub use physical::{
 pub use physical::{
     ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHeadSupportKind,
 };
+
+pub use physical::{
+    DerivedThreadCarrier, DerivedThreadOptions, OccupiedDerivedThread, ThreadCarrierTransfer,
+};
