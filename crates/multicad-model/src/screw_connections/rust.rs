@@ -5,6 +5,7 @@ use multicad_core::model::{ResolvedScrewHead, ScrewConnectionHardwareSource};
 use multicad_kernel::rust_kernel::helical_thread::Thread;
 mod blind;
 mod conical;
+mod hanger;
 mod insert;
 mod library;
 mod washers;
@@ -48,6 +49,8 @@ pub(crate) fn validate(
             wood::check(&input, &source, evaluated, interrupt)?
         } else if source.mode == Mode::WoodInsert {
             insert::check(&input, &source, evaluated, interrupt)?
+        } else if source.mode == Mode::HangerBolt {
+            hanger::check(&input, &source, evaluated, interrupt)?
         } else if source.mode == Mode::TappedReceiver {
             blind::check(&input, &source, evaluated, interrupt)?
         } else {

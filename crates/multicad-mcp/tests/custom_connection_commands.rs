@@ -192,3 +192,57 @@ fn female_insert_full_mcp_lifecycle() {
 fn distinct_hanger_full_mcp_lifecycle() {
     lifecycle(ScrewConnectionMode::HangerBolt)
 }
+
+#[test]
+fn hanger_step_refusal_is_atomic_for_document_and_destination() {
+    let (original, request) = fixture::fixture(ScrewConnectionMode::HangerBolt);
+    let dir = tempfile::tempdir().unwrap();
+    let host = Headless::new(
+        Workspace::new(original).unwrap(),
+        Some(dir.path().into()),
+        false,
+    );
+    dispatch(
+        &host,
+        &call(false),
+        "set_screw_connection",
+        json!({"expected_revision":0,"request":request}),
+    )
+    .unwrap();
+    let row = request
+        .hardware
+        .iter()
+        .find(|h| h.role == ScrewConnectionHardwareRole::HangerBolt)
+        .unwrap();
+    let ScrewConnectionHardwareSource::Generated { part } = &row.source else {
+        panic!()
+    };
+    let before = host.document();
+    for existing in [false, true] {
+        let file_name = if existing {
+            "existing.step"
+        } else {
+            "new.step"
+        };
+        let path = dir.path().join(file_name);
+        if existing {
+            std::fs::write(&path, b"Existing user data").unwrap();
+        }
+        let result = dispatch(
+            &host,
+            &call(false),
+            "export_step",
+            json!({"part":part.body,"file_name":file_name}),
+        );
+        assert!(
+            result.is_err(),
+            "unsupported Hanger exchange must not publish"
+        );
+        assert_eq!(host.document(), before);
+        if existing {
+            assert_eq!(std::fs::read(&path).unwrap(), b"Existing user data");
+        } else {
+            assert!(!path.exists());
+        }
+    }
+}

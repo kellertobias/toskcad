@@ -130,6 +130,17 @@ fn actual_handed_edited_and_reopened_sources_keep_floor_mating_and_material_proo
     let mut session = Session::new(doc).unwrap();
     let prepared = prepare_screw_connection(&session, 0, Actor::local(Channel::Mcp), &r).unwrap();
     check(&compile_sources(prepared.prepared.document(), 1, &r), &r);
+    assert!(
+        Compiler {
+            omit_display: true,
+            ..Default::default()
+        }
+        .compile(prepared.prepared.document(), 1)
+        .unwrap()
+        .snapshot()
+        .screw_connection_checks[0]
+            .native_component_collision_checked
+    );
     session.commit(prepared.prepared).unwrap();
     let row = r
         .hardware
@@ -154,6 +165,17 @@ fn actual_handed_edited_and_reopened_sources_keep_floor_mating_and_material_proo
     )
     .unwrap();
     let edited = compile_sources(candidate.prepared.document(), session.revision() + 1, &r);
+    assert!(
+        Compiler {
+            omit_display: true,
+            ..Default::default()
+        }
+        .compile(candidate.prepared.document(), session.revision() + 1)
+        .unwrap()
+        .snapshot()
+        .screw_connection_checks[0]
+            .native_component_collision_checked
+    );
     let proof = check(&edited, &r);
     assert!(proof.wood.tip_clearance_mm[0] >= 1. && proof.wood.engagement_mm[0] >= 2.);
     let hanger = r
@@ -262,7 +284,16 @@ fn actual_proper_and_large_source_frames_need_no_compiler_geometry_relocation() 
             prepare_screw_connection(&session, session.revision(), Actor::local(Channel::Mcp), &r)
                 .unwrap();
         let compiled = compile_sources(prepared.prepared.document(), session.revision() + 1, &r);
+        let normal = Compiler {
+            omit_display: true,
+            ..Default::default()
+        }
+        .compile(prepared.prepared.document(), session.revision() + 1);
         if case == 2 {
+            assert!(
+                normal.is_err(),
+                "original source stock overlap must not be waived"
+            );
             // The exact original-stock gap is about -2.2737e-15mm. Hardware
             // authoring must never relocate those stock bodies or waive it.
             assert_eq!(
@@ -271,6 +302,10 @@ fn actual_proper_and_large_source_frames_need_no_compiler_geometry_relocation() 
             );
         } else {
             check(&compiled, &r);
+            assert!(
+                normal.unwrap().snapshot().screw_connection_checks[0]
+                    .native_component_collision_checked
+            );
         }
     }
 }
