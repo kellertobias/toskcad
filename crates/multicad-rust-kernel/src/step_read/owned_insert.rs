@@ -6,6 +6,8 @@ use super::{
 };
 use std::{collections::BTreeMap, mem::size_of};
 mod bindings;
+mod flux;
+pub use flux::{FluxOptions, OccupiedVolume, OrientedFlux};
 mod geometry;
 mod numbers;
 pub use bindings::{SupportBindings, TensorBinding};
