@@ -121,6 +121,10 @@ fn hanger_world_face_queries_refuse_invalid_and_cancelled_requests_without_chang
             ..options()
         },
         FacePropertyOptions {
+            maximum_cells: 1,
+            ..options()
+        },
+        FacePropertyOptions {
             area_tolerance_mm2: f64::NAN,
             ..options()
         },
@@ -154,6 +158,28 @@ fn hanger_world_face_queries_refuse_invalid_and_cancelled_requests_without_chang
             GeometryErrorKind::Cancelled
         );
     }
+    let key = FaceKey::MetricThread {
+        start: 0,
+        band: ThreadBandRole::Root,
+    };
+    calls.set(0);
+    material
+        .world_face_properties(key, options(), policy, Some(&count))
+        .unwrap();
+    let last = calls.get();
+    calls.set(0);
+    let cancel = || {
+        calls.set(calls.get() + 1);
+        calls.get() == last
+    };
+    assert_eq!(
+        material
+            .world_face_properties(key, options(), policy, Some(&cancel))
+            .unwrap_err()
+            .kind,
+        GeometryErrorKind::Cancelled
+    );
+    assert_eq!(calls.get(), last);
     assert_eq!(material, before);
 }
 
