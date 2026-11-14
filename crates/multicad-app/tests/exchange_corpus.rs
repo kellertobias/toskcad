@@ -134,6 +134,21 @@ fn bounds_of(solid: &Solid) -> [[f64; 3]; 2] {
 
 /// Independent Part 21 readback of every member, without the importer's
 /// reconstruction.
+/// Face supports independent of how one surface is divided into faces: the
+/// total boundary area and the part of it carried by planes.
+fn supports_of(solid: &Solid) -> Value {
+    let faces = solid.faces().unwrap();
+    let area = |planar: bool| -> f64 {
+        let chosen = faces.iter().filter(|f| planar <= f.plane.is_some());
+        chosen.map(|f| f.area_mm2).sum()
+    };
+    json!({
+        "area_mm2": area(false),
+        "planar_area_mm2": area(true),
+        "planar_faces": faces.iter().filter(|f| f.plane.is_some()).count(),
+    })
+}
+
 fn independent_readback(text: &str) -> Result<Value, step_read::ReadError> {
     let tolerance = GeometryPolicy::default().linear_tolerance_mm;
     let members = step_read::read_analytic_compound(text, tolerance)?;
@@ -635,12 +650,28 @@ fn run_entry(entry: &Value, row: &mut Value) {
     }
     let faces = solid.faces().unwrap().len();
     let solids = solid.solid_count().unwrap();
+    let supports = supports_of(&solid);
     row["source"] = json!({
         "volume_mm3": volume,
         "bounds_mm": bounds,
         "faces": faces,
         "solids": solids,
+        "supports": supports,
     });
+    if let Some(native) = row["source_native"]["supports"].as_object() {
+        // OpenCascade keeps every transmitted face, so only quantities that
+        // do not depend on the division of a surface are compared.
+        for field in ["area_mm2", "planar_area_mm2"] {
+            let (native, rust) = (
+                native[field].as_f64().unwrap(),
+                supports[field].as_f64().unwrap(),
+            );
+            assert!(
+                (native - rust).abs() <= OCCT_VOLUME_RELATIVE * native.max(1.),
+                "{id}: OpenCascade source {field} {native} != {rust}"
+            );
+        }
+    }
     if let Some(oracle) = entry.get("oracle") {
         let expected = oracle["volume_mm3"].as_f64().unwrap();
         assert!(
@@ -663,6 +694,16 @@ fn run_entry(entry: &Value, row: &mut Value) {
             oracle["solids"].as_u64().unwrap(),
             "{id}: solids"
         );
+        if let Some(expected) = oracle["area_mm2"].as_f64() {
+            let area = supports["area_mm2"].as_f64().unwrap();
+            assert!(
+                close(area, expected, ORACLE_VOLUME_RELATIVE),
+                "{id}: boundary area {area} differs from the analytic {expected}"
+            );
+        }
+        if let Some(expected) = oracle["planar_faces"].as_u64() {
+            assert_eq!(supports["planar_faces"], expected, "{id}: planar faces");
+        }
     }
     // An independent parse of the source boundary agrees with the
     // reconstructed solid.
@@ -684,6 +725,7 @@ fn run_entry(entry: &Value, row: &mut Value) {
     row["source_reader"] = reader;
     let (source_mesh, mesh) = checked_mesh(&solid, id);
     row["mesh"] = mesh;
+    row["source_native_mesh_deviation_mm"] = native_source_deviation(&path, &source_mesh);
     let source_section = section(&solid, None);
     check_section(entry, &source_section);
     row["section"] = source_section.clone();
@@ -785,6 +827,7 @@ fn native_source(path: &Path) -> Value {
                 "bounds_mm": bounds_of(&native),
                 "solids": solids,
                 "faces": native.faces().map(|f| f.len()).ok(),
+                "supports": supports_of(&native),
             }),
             (volume, solids) => json!({
                 "reader": "OpenCascade 7.9.3",
@@ -793,6 +836,25 @@ fn native_source(path: &Path) -> Value {
         },
         Err(error) => json!({ "reader": "OpenCascade 7.9.3", "error": error.to_string() }),
     }
+}
+
+#[cfg(not(feature = "occt"))]
+fn native_source_deviation(_: &Path, _: &multicad_kernel::Mesh) -> Value {
+    json!("not built; run with --features occt")
+}
+
+/// The Rust mesh of the imported source against OpenCascade's own
+/// tessellation of the transmitted source boundary.
+#[cfg(feature = "occt")]
+fn native_source_deviation(path: &Path, rust_mesh: &multicad_kernel::Mesh) -> Value {
+    let native = Solid::read_step(path, GeometryPolicy::default()).unwrap();
+    let native_mesh = native.mesh(mesh_options()).unwrap();
+    let deviation = mesh_deviation(rust_mesh, &native_mesh, 4. * MESH_DEFLECTION_MM);
+    assert!(
+        deviation <= 2. * MESH_DEFLECTION_MM,
+        "OpenCascade source tessellation deviates {deviation} mm from the Rust import"
+    );
+    json!(deviation)
 }
 
 #[cfg(not(feature = "occt"))]
