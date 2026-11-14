@@ -518,9 +518,8 @@ fn real_head_lands_necks_and_hexalobular_or_hex_recesses_match_independent_volum
     }
 }
 
-#[test]
-fn true_cc_phillips_h0_through_h4_preserve_real_wings_rounding_depth_and_step() {
-    let cases = [
+fn canonical_phillips_cases() -> [MechanicalPartParameters; 6] {
+    [
         recipe(
             ScrewHead::Pan {
                 profile: Box::new(model::CrownedScrewHeadParameters {
@@ -610,7 +609,11 @@ fn true_cc_phillips_h0_through_h4_preserve_real_wings_rounding_depth_and_step() 
             8.,
             1.25,
         ),
-    ];
+    ]
+}
+#[test]
+fn true_cc_phillips_h0_through_h4_preserve_real_wings_rounding_depth_and_step() {
+    let cases = canonical_phillips_cases();
     let dir = tempfile::tempdir().unwrap();
     for (index, p) in cases.into_iter().enumerate() {
         let mut s = session();
@@ -853,4 +856,52 @@ fn native_profile_minimum_feature_rejects_thin_annulus_and_floor_but_allows_coun
     let tip = -head.height_mm() + drive.removed_depth_mm();
     probe(solid, [0., 0., tip - 0.03], false);
     probe(solid, [0., 0., tip + 0.03], true);
+}
+
+#[test]
+fn canonical_phillips_h0_h4_both_hands_compile_display_and_manufacture_without_step_claim() {
+    use multicad_model::GeometryBackend;
+    for (index, parameters) in canonical_phillips_cases().into_iter().enumerate() {
+        for left in [false, true] {
+            let mut parameters = parameters.clone();
+            let MechanicalPartParameters::MachineScrew { thread, .. } = &mut parameters else {
+                unreachable!()
+            };
+            thread.hand = if left {
+                model::ThreadHand::Left
+            } else {
+                model::ThreadHand::Right
+            };
+            let mut session = session();
+            let request = add(&mut session, parameters);
+            let compiled = Compiler::default()
+                .compile_with_backend(
+                    session.document(),
+                    session.revision(),
+                    GeometryBackend::Rust,
+                    None,
+                )
+                .unwrap();
+            assert!(
+                !compiled.snapshot().shapes[&request.feature]
+                    .mesh
+                    .indices
+                    .is_empty()
+            );
+            let solid = compiled.solid(request.feature).unwrap();
+            let (source, _) = solid.rust_phillips_screw_geometry().unwrap();
+            assert_eq!(source.thread().spec().left_hand, left);
+            assert_eq!(
+                source.spec().shank_length_mm,
+                6. - source.thread().spec().length_mm
+            );
+            assert!(solid.faces().unwrap().iter().all(|f| f.area_mm2 > 0.));
+            let mesh = solid
+                .manufacturing_mesh_with_receipt(Default::default())
+                .unwrap();
+            assert!(mesh.edge_pairs > 0 && mesh.vertex_links > 0, "case{index}");
+            assert!(solid.rust_phillips_mesh_volume_pair().is_some());
+            assert!(!solid.supports_step_export());
+        }
+    }
 }
