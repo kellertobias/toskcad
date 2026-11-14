@@ -15,8 +15,8 @@ mod periodic;
 pub use periodic::PeriodicAngular;
 mod encoded;
 pub use encoded::{
-    CapEndpoint, CapTrace, EncodedCell, EncodedControl, EncodedField, EncodedMeridian,
-    EncodedScalar,
+    CapCurvePiece, CapEndpoint, CapTrace, EncodedCell, EncodedControl, EncodedField,
+    EncodedMeridian, EncodedScalar,
 };
 pub use encoded::{
     ClosedCoedge, ClosedCurve, ClosedEdge, ClosedFace, ClosedFaceKind, ClosedField, ClosedVertex,

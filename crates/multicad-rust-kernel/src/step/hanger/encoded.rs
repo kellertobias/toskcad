@@ -10,6 +10,8 @@ use crate::{
 use num_bigint::Sign;
 use num_rational::BigRational;
 mod cap;
+mod curve;
+pub use curve::CapCurvePiece;
 mod closed;
 mod finite;
 pub use cap::{CapEndpoint, CapTrace};
