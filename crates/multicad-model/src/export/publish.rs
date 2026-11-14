@@ -20,6 +20,7 @@ pub enum StepVerificationMethod {
     DecodedBoundary,
     DecodedBoundaryEnclosure,
     SourceKnownBoundary,
+    MixedMemberBoundary,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StepRetainedMemberReceipt {
@@ -34,6 +35,16 @@ pub struct StepSourceCorrespondenceReceipt {
     /// Absolute error in the original whole-row parameter; not normal angle.
     pub row_derivative_error_mm: f64,
     pub ruling_derivative_error_mm: f64,
+}
+/// A source-known member has a checked actual finite boundary, but its
+/// volume bounds come from the authored source rather than independent file mass.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StepSourceKnownMemberReceipt {
+    pub member_index: u32,
+    pub source_volume_bounds_mm3: [f64; 2],
+    pub verified_tolerance_mm: f64,
+    pub maximum_polynomial_trim_error_mm: f64,
+    pub analytic_closure_tolerance_mm: f64,
 }
 /// Distinguishes decoded file mass from certified authored-source mass.
 /// Missing decoded mass is explicit; source support tolerance is not a
@@ -50,6 +61,8 @@ pub struct StepVerificationReceipt {
     pub decoded_scalar_members: Vec<(u32, f64)>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_correspondence: Vec<StepSourceCorrespondenceReceipt>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_known_members: Vec<StepSourceKnownMemberReceipt>,
     pub source_volume_bounds_mm3: Option<[f64; 2]>,
     /// Actual full-checker parameter, not a measured combined boundary error.
     pub verified_tolerance_mm: Option<f64>,
@@ -66,6 +79,7 @@ impl StepVerificationReceipt {
             retained_members: vec![],
             decoded_scalar_members: vec![],
             source_correspondence: vec![],
+            source_known_members: vec![],
             source_volume_bounds_mm3: None,
             verified_tolerance_mm: None,
             maximum_polynomial_trim_error_mm: None,
@@ -158,7 +172,7 @@ fn verify(
             .ok_or_else(|| io("Missing source model"))?;
         let topology = rust_step_topology(model, artifact)?;
         let solid = artifact_solid(model, artifact)?;
-        if let Some(proof) = verify_owned_insert_step(
+        if let Some(proof) = verify_partitioned_step(
             path,
             solid,
             (
@@ -254,7 +268,10 @@ pub fn verify_rust_step_shape(
     shape: &crate::ShapeSnapshot,
     tolerance: f64,
 ) -> Result<f64, ExportError> {
-    if solid.rust_thread_entry_chamfer_data().is_some() || solid.has_retained_radial_source() {
+    if solid.rust_thread_entry_chamfer_data().is_some()
+        || solid.has_retained_radial_source()
+        || solid.has_partitioned_step_source()
+    {
         return Err(failure(
             ErrorKind::Unsupported,
             Some(shape.producer),
@@ -289,7 +306,7 @@ pub fn verify_rust_step_shape_receipt(
             "STEP verification needs a finite positive tolerance",
         ));
     }
-    if let Some(proof) = verify_owned_insert_step(
+    if let Some(proof) = verify_partitioned_step(
         path,
         solid,
         (
@@ -330,14 +347,14 @@ pub fn verify_rust_step_shape_receipt(
     }
     verify_rust_step_shape(path, solid, shape, tolerance).map(StepVerificationReceipt::decoded)
 }
-fn verify_owned_insert_step(
+fn verify_partitioned_step(
     path: &Path,
     solid: &Solid,
     expected: StepMetrics,
     producer: EntityId,
     tolerance: f64,
 ) -> Option<Result<StepVerificationReceipt, ExportError>> {
-    if !solid.has_wood_insert_step_source() {
+    if !solid.has_partitioned_step_source() {
         return None;
     }
     Some((|| {
@@ -366,7 +383,7 @@ fn verify_owned_insert_step(
         )?;
         let input = read_step_source(path, producer)?;
         let proof = solid
-            .verify_wood_insert_step_compound(&input, tolerance, None)
+            .verify_partitioned_step_source(&input, tolerance, None)
             .expect("actual retained insert source")
             .map_err(|e| {
                 failure(
@@ -380,7 +397,11 @@ fn verify_owned_insert_step(
                 )
             })?;
         Ok(StepVerificationReceipt {
-            method: StepVerificationMethod::DecodedBoundaryEnclosure,
+            method: if proof.source_known_members.is_empty() {
+                StepVerificationMethod::DecodedBoundaryEnclosure
+            } else {
+                StepVerificationMethod::MixedMemberBoundary
+            },
             decoded_volume_mm3: None,
             retained_members: proof
                 .members
@@ -401,6 +422,17 @@ fn verify_owned_insert_step(
                     maximum_position_error_mm: p.maximum_position_error_mm,
                     row_derivative_error_mm: p.maximum_row_derivative_error_mm,
                     ruling_derivative_error_mm: p.maximum_ruling_derivative_error_mm,
+                })
+                .collect(),
+            source_known_members: proof
+                .source_known_members
+                .into_iter()
+                .map(|(member_index, p)| StepSourceKnownMemberReceipt {
+                    member_index,
+                    source_volume_bounds_mm3: p.source_volume_bounds_mm3,
+                    verified_tolerance_mm: p.verified_tolerance_mm,
+                    maximum_polynomial_trim_error_mm: p.maximum_polynomial_trim_error_mm,
+                    analytic_closure_tolerance_mm: p.analytic_closure_tolerance_mm,
                 })
                 .collect(),
             source_volume_bounds_mm3: None,
@@ -491,6 +523,7 @@ fn verify_retained_step(
                 .collect(),
             decoded_scalar_members: proof.decoded_scalar_members,
             source_correspondence: vec![],
+            source_known_members: vec![],
             source_volume_bounds_mm3: None,
             verified_tolerance_mm: Some(tolerance),
             maximum_polynomial_trim_error_mm: None,
@@ -563,6 +596,7 @@ fn verify_source_known_step(
             retained_members: vec![],
             decoded_scalar_members: vec![],
             source_correspondence: vec![],
+            source_known_members: vec![],
             source_volume_bounds_mm3: Some(proof.source_volume_bounds_mm3),
             verified_tolerance_mm: Some(proof.verified_tolerance_mm),
             maximum_polynomial_trim_error_mm: Some(proof.maximum_polynomial_trim_error_mm),

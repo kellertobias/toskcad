@@ -245,3 +245,92 @@ fn saved_nonbinary_placed_insert_project_runs_normal_export_for_both_hands() {
     assert_eq!(opened.project.document, before);
     assert_eq!(session.document(), &before);
 }
+
+#[test]
+fn composite_entry_boundary_receipts_never_invent_decoded_mass() {
+    use multicad_core::document::EntityId;
+    use multicad_kernel::{GeometryPolicy, HelicalThread, Mesh, PlaneFrame, Solid};
+    use multicad_model::ShapeSnapshot;
+    use std::sync::Arc;
+    let policy = GeometryPolicy::default();
+    let root = 1. / (4. * 3_f64.sqrt());
+    let spec = HelicalThread {
+        major_radius_mm: 3.,
+        pitch_mm: 1.,
+        length_mm: 6.6,
+        depth_mm: 0.875 * 3_f64.sqrt() / 2. - root,
+        crest_width_mm: 0.125,
+        lower_flank_deg: 30.,
+        upper_flank_deg: 30.,
+        radial_taper: 0.,
+        starts: 1,
+        left_hand: true,
+    };
+    let entry = Solid::rust_helical_thread_entry_chamfer(
+        spec,
+        Some(root),
+        0.3,
+        None,
+        EntityId::new(),
+        PlaneFrame::default(),
+        policy,
+    )
+    .unwrap();
+    let sphere = Solid::rust_sphere_named(
+        1.,
+        PlaneFrame {
+            origin: [20., 0., 0.],
+            ..Default::default()
+        },
+        EntityId::new(),
+        policy,
+    )
+    .unwrap();
+    // This is an actual Native source snapshot consumed through the public
+    // Model receipt API. Empty display arrays match omit_display compilation.
+    let owner = EntityId::new();
+    let solid = Solid::compound_named(&[&entry, &sphere], owner, policy).unwrap();
+    assert!(!solid.has_wood_insert_step_source());
+    assert!(solid.has_partitioned_step_source());
+    let shape = ShapeSnapshot {
+        producer: owner,
+        bounds: solid.bounds().unwrap(),
+        volume_mm3: solid.volume_mm3().unwrap(),
+        solid_count: solid.solid_count().unwrap(),
+        mesh: Arc::new(Mesh {
+            vertices: vec![],
+            indices: vec![],
+            face_indices: vec![],
+        }),
+        topology: solid.topology_snapshot(owner, 0).unwrap(),
+        edges: Arc::new(vec![]),
+        vertices: Arc::new(vec![]),
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("entry-composite.step");
+    solid.write_step(&path).unwrap();
+    let receipt = verify_rust_step_shape_receipt(&path, &solid, &shape, 1e-7).unwrap();
+    assert_eq!(receipt.method, StepVerificationMethod::MixedMemberBoundary);
+    assert!(receipt.decoded_volume_mm3.is_none());
+    assert!(receipt.retained_members.is_empty());
+    assert_eq!(receipt.decoded_scalar_members.len(), 1);
+    assert_eq!(receipt.decoded_scalar_members[0].0, 1);
+    assert_eq!(receipt.source_known_members.len(), 1);
+    assert_eq!(receipt.source_known_members[0].member_index, 0);
+    assert!(
+        receipt.source_known_members[0].source_volume_bounds_mm3[0] <= entry.volume_mm3().unwrap()
+    );
+    assert!(
+        receipt.source_known_members[0].source_volume_bounds_mm3[1] >= entry.volume_mm3().unwrap()
+    );
+    assert!(multicad_model::export::verify_rust_step_shape(&path, &solid, &shape, 1e-7).is_err());
+    let encoded = serde_json::to_value(&receipt).unwrap();
+    assert!(
+        encoded["source_known_members"][0]
+            .get("decoded_volume_mm3")
+            .is_none()
+    );
+    let reopened: multicad_model::export::StepVerificationReceipt =
+        serde_json::from_value(encoded).unwrap();
+    assert_eq!(reopened, receipt);
+}

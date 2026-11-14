@@ -393,6 +393,9 @@ mod step_tests;
 mod tests;
 
 mod step_compound;
-pub use step_compound::WoodInsertCompoundStepVerification;
+pub use step_compound::PartitionedStepVerification;
 
 mod step_pose;
+
+#[cfg(test)]
+mod step_mixed_tests;

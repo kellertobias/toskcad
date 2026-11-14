@@ -23,7 +23,7 @@ mod entry_chamfer_body;
 mod wood_insert_body;
 use wood_insert_body::WoodInsertBody;
 pub use wood_insert_body::{
-    WoodInsertCompoundStepVerification, WoodInsertData, WoodInsertStepVerification,
+    PartitionedStepVerification, WoodInsertData, WoodInsertStepVerification,
 };
 mod wood_insert_material;
 pub use wood_insert_material::{WoodInsertFaceProperties, WoodInsertMaterial};
@@ -2762,7 +2762,7 @@ impl Solid {
             SolidBody::RustCompound(compound) => compound
                 .members()
                 .all(|member| member.supports_step_shell(false)),
-            SolidBody::EntryChamfer(..) => standalone,
+            SolidBody::EntryChamfer(..) => true,
             SolidBody::Helical(body, frame) => {
                 (standalone || body.has_importable_step_closure())
                     && body.supports_step(*frame, self.policy)

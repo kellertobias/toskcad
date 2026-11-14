@@ -4,9 +4,11 @@ use super::*;
 use multicad_rust_kernel::{step_read, step_read::owned_insert as read};
 const BYTES: usize = 64 * 1024 * 1024;
 #[derive(Clone, Debug, PartialEq)]
-pub struct WoodInsertCompoundStepVerification {
+pub struct PartitionedStepVerification {
     pub members: RetainedStepVerification,
     pub insert_correspondence: Vec<(u32, WoodInsertStepVerification)>,
+    /// Authored boundary binding with SOURCE-integral mass, never decoded mass.
+    pub source_known_members: Vec<(u32, EntryChamferBoundaryProof)>,
 }
 fn leaves<'a>(solid: &'a Solid, output: &mut Vec<&'a Solid>) {
     if let Some(compound) = solid.rust_compound() {
@@ -25,15 +27,31 @@ impl Solid {
         self.rust_compound()
             .is_some_and(|c| c.members().any(Self::has_wood_insert_step_source))
     }
-    /// Keep decoded scalar contracts distinct from independently integrated
-    /// insert/radial intervals. Every represented occurrence must be matched.
+    /// Source families requiring explicit per-member mass provenance.
+    pub fn has_partitioned_step_source(&self) -> bool {
+        self.has_wood_insert_step_source()
+            || (self.rust_compound().is_some() && contains_entry(self))
+    }
     pub fn verify_wood_insert_step_compound(
         &self,
         text: &str,
         tolerance: f64,
         interrupt: Option<&dyn Fn() -> bool>,
-    ) -> Option<Result<WoodInsertCompoundStepVerification, GeometryError>> {
+    ) -> Option<Result<PartitionedStepVerification, GeometryError>> {
         if !self.has_wood_insert_step_source() {
+            return None;
+        }
+        self.verify_partitioned_step_source(text, tolerance, interrupt)
+    }
+    /// Keep decoded scalar contracts distinct from independently integrated
+    /// insert/radial intervals. Every represented occurrence must be matched.
+    pub fn verify_partitioned_step_source(
+        &self,
+        text: &str,
+        tolerance: f64,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Option<Result<PartitionedStepVerification, GeometryError>> {
+        if !self.has_partitioned_step_source() {
             return None;
         }
         Some((|| {
@@ -41,10 +59,11 @@ impl Solid {
                 return Err(fail(GeometryErrorKind::Input, "Invalid STEP tolerance"));
             }
             let file =
-                read::File::parse(text, read::Options::default(), interrupt).map_err(read_error)?;
+                read::CompoundDocument::parse(text, read::DocumentOptions::default(), interrupt)
+                    .map_err(read_error)?;
             let mut sources = Vec::new();
             leaves(self, &mut sources);
-            let mut result = WoodInsertCompoundStepVerification {
+            let mut result = PartitionedStepVerification {
                 members: RetainedStepVerification {
                     solid_count: 0,
                     bounds_mm: [[f64::INFINITY; 3], [f64::NEG_INFINITY; 3]],
@@ -52,6 +71,7 @@ impl Solid {
                     decoded_scalar_members: vec![],
                 },
                 insert_correspondence: vec![],
+                source_known_members: vec![],
             };
             let mut cursor = 0usize;
             for leaf in sources {
@@ -94,8 +114,8 @@ impl Solid {
                                     "Insert member proof storage limit",
                                 )
                             })?;
-                        let parsed = file
-                            .member(
+                        let packet = file
+                            .member_packet(
                                 actual[0].item_entity(),
                                 read::Options {
                                     retained_budget_bytes: bytes,
@@ -104,8 +124,9 @@ impl Solid {
                                 interrupt,
                             )
                             .map_err(read_error)?;
+                        let parsed = packet.parsed();
                         let proof =
-                            body.verify_parsed(topology, &parsed, bytes, 8192, policy, interrupt)?;
+                            body.verify_parsed(topology, parsed, bytes, 8192, policy, interrupt)?;
                         if let Some(link) = actual[0].mapping_link() {
                             let mapping = parsed
                                 .physical_mapping(
@@ -177,6 +198,48 @@ impl Solid {
                             include(&mut result.members.bounds_mm, proof.bounds_mm);
                             continue;
                         }
+                        if let Some(proof) =
+                            leaf.verify_entry_chamfer_step_with_tolerance(view.as_str(), tolerance)
+                        {
+                            let proof = proof?;
+                            include(
+                                &mut result.members.bounds_mm,
+                                source_enclosure(leaf, proof.verified_tolerance_mm)?,
+                            );
+                            result
+                                .source_known_members
+                                .push(((cursor + offset) as u32, proof));
+                            continue;
+                        }
+                        // Reuse the ordinary part's independent finite-file
+                        // verifier, with the requested policy bound on a shared
+                        // immutable source. No source geometry is regenerated.
+                        let mut scoped = leaf.share()?;
+                        scoped.policy.linear_tolerance_mm =
+                            scoped.policy.linear_tolerance_mm.min(tolerance);
+                        if let Some(volume) = scoped
+                            .verify_helical_step(view.as_str())
+                            .or_else(|| scoped.verify_normal_relief_step(view.as_str()))
+                            .or_else(|| scoped.verify_herringbone_step(view.as_str()))
+                            .or_else(|| scoped.verify_bevel_step(view.as_str()))
+                            .or_else(|| scoped.verify_worm_step(view.as_str()))
+                        {
+                            let volume = volume.map_err(|e| {
+                                fail(
+                                    GeometryErrorKind::InvalidResult,
+                                    format!("Authored member verification failed:{e:?}"),
+                                )
+                            })?;
+                            include(
+                                &mut result.members.bounds_mm,
+                                source_enclosure(leaf, scoped.policy.linear_tolerance_mm)?,
+                            );
+                            result
+                                .members
+                                .decoded_scalar_members
+                                .push(((cursor + offset) as u32, volume));
+                            continue;
+                        }
                         let members = step_read::read_analytic_compound_with_helical_cuts(
                             view.as_str(),
                             tolerance,
@@ -238,4 +301,21 @@ fn include(bounds: &mut [[f64; 3]; 2], other: [[f64; 3]; 2]) {
         bounds[0][k] = bounds[0][k].min(other[0][k]);
         bounds[1][k] = bounds[1][k].max(other[1][k]);
     }
+}
+
+// Finite boundary verifiers prove source correspondence. Expand the source
+// envelope by that actual position budget; do not call it an exact file box.
+fn source_enclosure(source: &Solid, tolerance: f64) -> Result<[[f64; 3]; 2], GeometryError> {
+    let b = source.bounds()?;
+    Ok([
+        b.min.map(|x| (x - tolerance).next_down()),
+        b.max.map(|x| (x + tolerance).next_up()),
+    ])
+}
+
+fn contains_entry(solid: &Solid) -> bool {
+    solid.rust_thread_entry_chamfer_data().is_some()
+        || solid
+            .rust_compound()
+            .is_some_and(|c| c.members().any(contains_entry))
 }

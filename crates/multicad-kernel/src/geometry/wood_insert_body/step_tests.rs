@@ -404,3 +404,138 @@ fn mixed_insert_and_retained_thread_keep_separate_actual_mass_enclosures() {
             .is_none()
     );
 }
+
+#[test]
+fn actual_member_count_pose_and_precision_failures_leave_sources_reusable() {
+    let policy = GeometryPolicy::default();
+    let source = crate::geometry::wood_insert_world_tests::source(false);
+    let insert =
+        Solid::rust_wood_insert(source, EntityId::new(), PlaneFrame::default(), policy, None)
+            .unwrap();
+    let sphere = Solid::rust_sphere_named(
+        1.,
+        PlaneFrame {
+            origin: [20., 0., 0.],
+            ..Default::default()
+        },
+        EntityId::new(),
+        policy,
+    )
+    .unwrap();
+    let compound = Solid::compound_named(&[&insert, &sphere], EntityId::new(), policy).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("members.step");
+    compound.write_step(&path).unwrap();
+    let multiple = std::fs::read_to_string(&path).unwrap();
+    // The first member really matches; the extra member must still refuse.
+    assert!(
+        insert
+            .verify_partitioned_step_source(&multiple, 1e-7, None)
+            .unwrap()
+            .is_err()
+    );
+    insert.write_step(&path).unwrap();
+    let single = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        compound
+            .verify_partitioned_step_source(&single, 1e-7, None)
+            .unwrap()
+            .is_err()
+    );
+    let placed = Solid::rust_wood_insert(
+        source,
+        EntityId::new(),
+        PlaneFrame {
+            origin: [0., 0., 1.],
+            ..Default::default()
+        },
+        policy,
+        None,
+    )
+    .unwrap();
+    assert!(
+        placed
+            .verify_partitioned_step_source(&single, 1e-7, None)
+            .unwrap()
+            .is_err()
+    );
+    assert!(
+        placed
+            .verify_wood_insert_step_source(&single, 1e-7, None)
+            .unwrap()
+            .is_err()
+    );
+    for tolerance in [0., -1., f64::NAN, f64::INFINITY, f64::from_bits(1)] {
+        assert!(
+            insert
+                .verify_wood_insert_step_source(&single, tolerance, None)
+                .unwrap()
+                .is_err()
+        );
+    }
+    assert!(
+        insert
+            .verify_wood_insert_step_source("not a STEP document", 1e-7, None)
+            .unwrap()
+            .is_err()
+    );
+    let padded = format!("/*{}*/{single}", " ".repeat(16_000_000));
+    assert_eq!(
+        insert
+            .verify_wood_insert_step_source(&padded, 1e-7, None)
+            .unwrap()
+            .unwrap_err()
+            .kind,
+        GeometryErrorKind::Limit
+    );
+    assert_eq!(
+        insert
+            .verify_wood_insert_step_source(&single, 1e-7, Some(&|| true))
+            .unwrap()
+            .unwrap_err()
+            .kind,
+        GeometryErrorKind::Cancelled
+    );
+    insert
+        .verify_partitioned_step_source(&single, 1e-7, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(insert.rust_wood_insert_data().unwrap().source, source);
+}
+#[test]
+fn invalid_native_append_placement_keeps_the_actual_writer_transaction_unchanged() {
+    use multicad_rust_kernel::{sphere::Sphere, step::Writer};
+    let seed = || {
+        let mut w = Writer::new();
+        w.append_sphere(
+            Sphere::new(1.).unwrap(),
+            [20., 0., 0.],
+            [1., 0., 0.],
+            [0., 1., 0.],
+        )
+        .unwrap();
+        w
+    };
+    let insert = Solid::rust_wood_insert(
+        crate::geometry::wood_insert_world_tests::source(false),
+        EntityId::new(),
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+        None,
+    )
+    .unwrap();
+    let (body, _) = insert.wood_insert_body().unwrap();
+    let mut writer = seed();
+    assert!(
+        body.append_step(
+            &mut writer,
+            PlaneFrame {
+                origin: [f64::NAN, 0., 0.],
+                ..Default::default()
+            },
+            GeometryPolicy::default()
+        )
+        .is_err()
+    );
+    assert_eq!(writer.finish().unwrap(), seed().finish().unwrap());
+}
