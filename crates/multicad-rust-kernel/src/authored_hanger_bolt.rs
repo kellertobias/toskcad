@@ -9,7 +9,7 @@ mod classify;
 mod faces;
 pub use faces::FaceKey;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 mod volume;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -149,4 +149,18 @@ fn pi() -> I {
         std::f64::consts::PI.next_down(),
         std::f64::consts::PI.next_up(),
     )
+}
+
+// Detached closed candidate; Native manufacturing must still qualify the actual
+// placed vertices and global literal embedding before publication.
+pub use crate::authored_internal_treatment::HangerCandidate as Candidate;
+impl Hanger {
+    pub fn tessellate_candidate(
+        &self,
+        options: crate::display::Tessellation,
+        maximum_work: usize,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Candidate, Error> {
+        crate::authored_internal_treatment::hanger_candidate(self, options, maximum_work, interrupt)
+    }
 }

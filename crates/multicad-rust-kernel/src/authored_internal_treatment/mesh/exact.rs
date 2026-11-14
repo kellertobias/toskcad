@@ -12,6 +12,23 @@ struct Value {
 #[derive(Clone)]
 pub(super) struct Q(Rc<Value>);
 impl Q {
+    /// Re-enter the bounded scalar arena from an owned source query. Validate
+    /// size/sign and precharge normalization before any library GCD or clone.
+    pub fn from_rational(number: BigRational, work: &mut Work<'_>) -> Result<Self, Error> {
+        work.step()?;
+        let bits = number.numer().bits().max(number.denom().bits());
+        if bits > MAX_BITS {
+            return Err(Error::Limit);
+        }
+        if number.denom().sign() != Sign::Plus {
+            return Err(Error::Unresolved);
+        }
+        let words = (bits as usize).div_ceil(64).max(1);
+        work.charge(1 + words * words)?;
+        let number = BigRational::new(number.numer().clone(), number.denom().clone());
+        Ok(Self::make(number, None))
+    }
+
     pub fn float(value: f64, work: &mut Work<'_>) -> Result<Self, Error> {
         work.step()?;
         if !value.is_finite() {

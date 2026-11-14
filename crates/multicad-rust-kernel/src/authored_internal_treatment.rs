@@ -11,6 +11,8 @@ pub use properties::{FaceKey, FaceProperties, FacePropertyOptions, ThreadBandRol
 mod tests;
 mod volume;
 pub use material::Material;
+pub use mesh::HangerCandidate;
+pub(crate) use mesh::hanger_candidate;
 pub(crate) use mesh::metric_shell;
 pub use mesh::{Candidate, ShellEnd, ThreadRimEdge, ThreadShell, tessellate_candidate};
 pub use mesh::{MetricRimEdge, MetricShell};

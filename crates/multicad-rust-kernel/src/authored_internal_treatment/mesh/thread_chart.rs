@@ -152,6 +152,9 @@ impl ThreadShell {
         work.step()?;
         Ok((value, work.used))
     }
+    pub fn into_mesh(self) -> DisplayMesh {
+        self.shell.mesh
+    }
     pub fn source(&self) -> &AuthoredThread {
         &self.thread
     }

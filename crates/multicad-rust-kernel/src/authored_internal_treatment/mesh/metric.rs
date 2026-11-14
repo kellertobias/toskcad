@@ -24,6 +24,7 @@ pub struct MetricRimEdge {
     pub angular_turns: [[f64; 2]; 2],
     pub source_period: i64,
     pub source_band: usize,
+    pub point_error_mm: [f64; 2],
 }
 pub struct MetricShell {
     source: AuthoredMetricThread,
@@ -35,6 +36,9 @@ pub struct MetricShell {
     work: usize,
 }
 impl MetricShell {
+    pub fn into_mesh(self) -> DisplayMesh {
+        self.mesh
+    }
     pub fn source(&self) -> &AuthoredMetricThread {
         &self.source
     }
@@ -349,6 +353,7 @@ fn attempt(
                             ],
                             source_period: period,
                             source_band: band,
+                            point_error_mm: [errors[a], errors[b]],
                         });
                     }
                     let points: Vec<[f64; 3]> = ids

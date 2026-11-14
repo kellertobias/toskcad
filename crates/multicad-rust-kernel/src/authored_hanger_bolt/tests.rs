@@ -3,7 +3,7 @@ use crate::{
     authored_flat_thread::SourceOptions, authored_metric_thread::Spec as MetricSpec,
     helical_thread::Spec as WoodSpec,
 };
-pub(super) fn fixture(left: bool, nb: bool) -> Spec {
+pub(crate) fn fixture(left: bool, nb: bool) -> Spec {
     let p = 0.5;
     let major = (2.874 + 2.980) / 4.;
     let pd = (2.580 + 2.655) / 2.;
@@ -398,4 +398,63 @@ fn independent_hands_and_starts_change_phase_but_not_complete_angular_volume() {
         source.classify_box(point(-1.3, 0., -13.), None),
         Ok(Classification::Inside)
     );
+}
+
+#[test]
+fn actual_canonical_closed_candidate_preserves_connected_source_and_both_volumes() {
+    let source = Hanger::new(fixture(false, false), None).unwrap();
+    let now = std::time::Instant::now();
+    let c = source
+        .tessellate_candidate(
+            crate::display::Tessellation {
+                deflection: 0.1,
+                angle: 0.3,
+                triangle_limit: 1_000_000,
+            },
+            16_000_000,
+            None,
+        )
+        .unwrap();
+    eprintln!(
+        "closedhanger{}facets,{}work,{:?},chord{},normal{},source{:?},literal{:?}",
+        c.mesh().face_indices.len(),
+        c.work_used(),
+        now.elapsed(),
+        c.source_chord_bound_mm(),
+        c.source_normal_angle_bound_rad(),
+        c.source_volume_mm3(),
+        c.literal_volume_mm3()
+    );
+    assert_eq!(c.source(), &source);
+    assert!(c.source_chord_bound_mm() <= 0.1 && c.source_normal_angle_bound_rad() <= 0.3);
+    assert!(c.literal_volume_mm3()[0] > 0.);
+    for &face in &c.mesh().face_indices {
+        assert!(source.face_key(face as usize).is_some());
+    }
+}
+#[test]
+fn actual_nonbinary_left_hand_closed_candidate_keeps_full_source_and_quota() {
+    let source = Hanger::new(fixture(true, true), None).unwrap();
+    let now = std::time::Instant::now();
+    let c = source
+        .tessellate_candidate(
+            crate::display::Tessellation {
+                deflection: 0.1,
+                angle: 0.3,
+                triangle_limit: 1_000_000,
+            },
+            16_000_000,
+            None,
+        )
+        .unwrap();
+    eprintln!(
+        "closedLHhanger{}facets,{}work,{:?},chord{},normal{}",
+        c.mesh().face_indices.len(),
+        c.work_used(),
+        now.elapsed(),
+        c.source_chord_bound_mm(),
+        c.source_normal_angle_bound_rad()
+    );
+    assert_eq!(c.source(), &source);
+    assert!(c.work_used() <= 16_000_000);
 }
