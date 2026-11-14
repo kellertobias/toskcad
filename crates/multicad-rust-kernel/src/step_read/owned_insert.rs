@@ -4,7 +4,9 @@ use super::{
     Shell,
     part21::{self, Entity, Value},
 };
-use std::{collections::BTreeMap, mem::size_of};
+use std::{collections::BTreeMap, mem::size_of, sync::Arc};
+mod file;
+pub use file::File;
 mod bindings;
 mod flux;
 pub use flux::{FluxOptions, OccupiedVolume, OrientedFlux};
@@ -248,7 +250,9 @@ impl Edge {
 }
 pub struct Parsed<'input> {
     input: &'input str,
-    entities: BTreeMap<u32, Vec<Entity<'input>>>,
+    entities: Arc<BTreeMap<u32, Vec<Entity<'input>>>>,
+    source_bytes: usize,
+    member: u32,
     points: Vec<PointLeaf<'input>>,
     curves: Vec<SplineCurve<'input>>,
     tensors: Vec<TensorSurface<'input>>,
@@ -260,6 +264,9 @@ pub struct Parsed<'input> {
     bytes: usize,
 }
 impl<'i> Parsed<'i> {
+    pub fn member_entity(&self) -> u32 {
+        self.member
+    }
     pub fn literal_input(&self) -> &'i str {
         self.input
     }
@@ -361,49 +368,68 @@ pub fn parse<'input>(
     options: Options,
     interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<Parsed<'input>> {
-    if options.maximum_work == 0
-        || options.maximum_work > 16_000_000
-        || options.retained_budget_bytes == 0
-        || options.retained_budget_bytes > 64 * 1024 * 1024
+    let source = File::parse(input, options, interrupt)?;
+    if source.represented_solids().len() != 1
+        || source
+            .entities
+            .values()
+            .filter(|r| matches!(r.as_slice(),[e]if e.name=="MANIFOLD_SOLID_BREP"))
+            .count()
+            != 1
     {
-        return Err(Error::Invalid);
+        return Err(Error::Unsupported);
     }
+    decode(
+        &source,
+        source.represented_solids()[0],
+        None,
+        options,
+        interrupt,
+        source.work_used(),
+    )
+}
+fn decode<'input>(
+    source: &File<'input>,
+    member: u32,
+    selected: Option<&std::collections::BTreeSet<u32>>,
+    options: Options,
+    interrupt: Option<&dyn Fn() -> bool>,
+    starting_work: usize,
+) -> Result<Parsed<'input>> {
     let mut w = Ledger {
         used: 0,
         remaining: options.maximum_work,
         interrupt,
     };
-    w.step(input.len())?;
-    let entities = part21::parse(input).map_err(Error::from)?;
-    let retained = budget::arena(input, &entities, &mut w)?;
-    if retained > options.retained_budget_bytes {
-        return Err(Error::Limit);
-    }
+    w.step(starting_work)?;
+    let input = source.input;
+    let entities = Arc::clone(&source.entities);
+
     let mut points = Vec::new();
     let mut curves = Vec::new();
     let mut tensors = Vec::new();
     let mut planes = Vec::new();
-    for (&id, records) in &entities {
+    let mut record = |id, records: &Vec<Entity<'input>>| -> Result<()> {
         w.step(1)?;
-        for e in records {
-            if e.name == "GEOMETRIC_REPRESENTATION_CONTEXT" {
-                let [dimension] = e.args.as_slice() else {
-                    return Err(Error::Invalid);
-                };
-                let mut n = Numeric::new(e, &mut w)?;
-                if !matches!(n.integer(dimension)?, 2 | 3) {
-                    return Err(Error::Unsupported);
-                }
-                n.finish()?;
-            }
-        }
-        let [e] = records.as_slice() else { continue };
+        let [e] = records.as_slice() else {
+            return Ok(());
+        };
         match e.name {
             "CARTESIAN_POINT" => points.push(schema::point(id, e, &mut w)?),
             "B_SPLINE_CURVE_WITH_KNOTS" => curves.push(schema::curve(id, e, &mut w)?),
             "B_SPLINE_SURFACE_WITH_KNOTS" => tensors.push(schema::tensor(id, e, &mut w)?),
             "PLANE" => planes.push(schema::plane(&entities, id, e)?),
             _ => {}
+        }
+        Ok(())
+    };
+    if let Some(selected) = selected {
+        for &id in selected {
+            record(id, entities.get(&id).ok_or(Error::Invalid)?)?;
+        }
+    } else {
+        for (&id, e) in entities.iter() {
+            record(id, e)?;
         }
     }
     if planes.len() != 2 || tensors.is_empty() {
@@ -412,17 +438,8 @@ pub fn parse<'input>(
     // No source recipe or product label selects the body. Follow the actual
     // represented solid and retain its complete unchanged material face graph.
     let shell = Shell::new(&entities, 1e-7, false);
-    let solids = shell.represented_solids(true).map_err(Error::from)?;
-    if entities
-        .values()
-        .filter(|r| matches!(r.as_slice(),[e] if e.name=="MANIFOLD_SOLID_BREP"))
-        .count()
-        != 1
-    {
-        return Err(Error::Unsupported);
-    }
     let mut faces = Vec::new();
-    for face in shell.member_faces(solids[0]).map_err(Error::from)? {
+    for face in shell.member_faces(member).map_err(Error::from)? {
         faces.push(schema::face(&entities, face, &tensors, &planes, &mut w)?);
     }
     let mut edge_ids = faces
@@ -455,6 +472,8 @@ pub fn parse<'input>(
     let mut p = Parsed {
         input,
         entities,
+        source_bytes: source.retained_budget_bytes(),
+        member,
         points,
         curves,
         tensors,

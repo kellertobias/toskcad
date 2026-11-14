@@ -2,14 +2,10 @@ use super::*;
 fn make_file(left: bool) -> String {
     make_file_case(left, 4.)
 }
-fn make_file_case(left: bool, length: f64) -> String {
+pub(super) fn graph(left: bool, length: f64) -> crate::wood_insert::Boundary {
     use crate::{
         authored_flat_thread::{AuthoredThread, SourceOptions},
         helical_thread::Spec,
-        step::insert::{
-            CurveOptions, DomainOptions, DomainPlan, SurfacePlan, TopologyPlan,
-            write_local_candidate,
-        },
         wood_insert::{BoundaryOptions, Insert},
     };
     let spec = Spec {
@@ -40,10 +36,16 @@ fn make_file_case(left: bool, length: f64) -> String {
         options,
     )
     .unwrap();
-    let body = Insert::new(outer, inner, 0.5, None)
+    Insert::new(outer, inner, 0.5, None)
         .unwrap()
         .boundary_with_interrupt(BoundaryOptions::default(), None)
-        .unwrap();
+        .unwrap()
+}
+fn make_file_case(left: bool, length: f64) -> String {
+    use crate::step::insert::{
+        CurveOptions, DomainOptions, DomainPlan, SurfacePlan, TopologyPlan, write_local_candidate,
+    };
+    let body = graph(left, length);
     let d = DomainPlan::prepare(&body, DomainOptions::default(), None).unwrap();
     let s = SurfacePlan::prepare(&d, CurveOptions::default(), None).unwrap();
     let t = TopologyPlan::prepare(&s, 16_000_000, 64 * 1024 * 1024, None).unwrap();

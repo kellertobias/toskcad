@@ -38,7 +38,9 @@ pub(super) fn arena(
     Ok(bytes)
 }
 pub(super) fn packet(p: &Parsed<'_>, w: &mut Ledger<'_>) -> Result<usize> {
-    let mut b = arena(p.input, &p.entities, w)?.saturating_add(size_of::<Parsed<'_>>());
+    // Immutable File already measured and retained the same original arena.
+    // Each query charges that shared source once, not a second AST traversal.
+    let mut b = p.source_bytes.saturating_add(size_of::<Parsed<'_>>());
     b = b.saturating_add(allocation(&p.points));
     for point in &p.points {
         w.step(1)?;
