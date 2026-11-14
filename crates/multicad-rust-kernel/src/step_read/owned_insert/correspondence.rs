@@ -5,6 +5,8 @@ use crate::{
     step::insert::{EdgeGeometry, FaceGeometry, TopologyPlan},
     tapered_thread::interval::I,
 };
+mod coupled;
+pub use coupled::CoupledSourceCorrespondence;
 #[derive(Clone, Copy, Debug)]
 pub struct CorrespondenceOptions {
     pub position_limit_mm: f64,

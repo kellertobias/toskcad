@@ -6,7 +6,9 @@ use super::{
 };
 use std::{collections::BTreeMap, mem::size_of, sync::Arc};
 mod correspondence;
-pub use correspondence::{CorrespondenceOptions, SourceCorrespondence};
+pub use correspondence::{
+    CorrespondenceOptions, CoupledSourceCorrespondence, SourceCorrespondence,
+};
 mod file;
 pub use file::{
     CompoundDocument, DocumentOptions, File, MappingLink, Member, MemberDocument, MemberPacket,

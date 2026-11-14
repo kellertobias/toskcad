@@ -327,6 +327,29 @@ fn actual_mapped_numerator_candidates_keep_literal_material_inside_original_quer
             "NUMERATOR_MATERIAL {left}/{length:?}: {}work",
             material.work_used()
         );
+        let correspondence = material
+            .coupled_source_correspondence(&top, &mapping, Default::default(), None)
+            .unwrap();
+        assert!(std::ptr::eq(correspondence.actual(), &bindings));
+        assert!(std::ptr::eq(correspondence.material(), &material));
+        assert!(std::ptr::eq(correspondence.expected(), &top));
+        assert!(std::ptr::eq(correspondence.mapping(), &mapping));
+        assert_eq!(
+            correspondence.coefficient_unit_mm(),
+            plan.coefficient_unit_mm()
+        );
+        assert!(correspondence.position_error_mm() <= 1e-7);
+        assert!(correspondence.row_derivative_error_mm() <= 1e-6);
+        assert!(correspondence.ruling_derivative_error_mm() > 0.);
+        assert!(correspondence.work_used() <= 64_000_000);
+        assert!(correspondence.retained_budget_bytes() <= 64 * 1024 * 1024);
+        eprintln!(
+            "COUPLED_SOURCE_MATCH {left}/{length:?}: {}work {}bytes C0{} D1{}",
+            correspondence.work_used(),
+            correspondence.retained_budget_bytes(),
+            correspondence.position_error_mm(),
+            correspondence.row_derivative_error_mm()
+        );
         let scale = mapping.volume_scale_bounds().unwrap();
         let raw_width = (I::point(5e-7) / I::point(scale[1])).lo;
         let volume = material

@@ -58,6 +58,54 @@ pub(crate) fn compare_decimal(
     memory.used -= SCRATCH;
     Ok(result)
 }
+/// Exact ORIGINAL decimal value versus a source-owned dyadic. The selected
+/// body graph and STEP mapping remain separate proof obligations.
+pub(crate) fn equals_dyadic(
+    text: &str,
+    sign: i8,
+    numerator: &[u8],
+    fractional_bits: usize,
+    memory: &mut Memory,
+    w: &mut Work<'_>,
+) -> Result<bool, Error> {
+    memory.add(SCRATCH)?;
+    w.charge(numerator.len() + 1)?;
+    if numerator.len() > 2048 || fractional_bits > 16383 {
+        return Err(Error::Limit);
+    }
+    let sign = if sign < 0 {
+        num_bigint::Sign::Minus
+    } else if sign > 0 {
+        num_bigint::Sign::Plus
+    } else {
+        num_bigint::Sign::NoSign
+    };
+    let intended = BigInt::from_bytes_le(sign, numerator);
+    // The canonical candidate encodes INTEGER real tokens. Avoid building and
+    // reducing a denominator when the actual grammar already gives one.
+    let equal = if fractional_bits == 0 && text.ends_with('.') {
+        w.charge(text.len() + 1)?;
+        if text.len() > 512 {
+            return Err(Error::Limit);
+        }
+        let actual =
+            BigInt::parse_bytes(&text.as_bytes()[..text.len() - 1], 10).ok_or(Error::Invalid)?;
+        w.charge(1 + (actual.bits().max(intended.bits()) as usize).div_ceil(32))?;
+        actual == intended
+    } else {
+        let actual = decimal(text, w)?;
+        let bits = intended.bits() + fractional_bits as u64 + 1;
+        let words = (bits as usize).div_ceil(64);
+        w.charge(1 + words * words)?;
+        let expected = N(BigRational::new(
+            intended,
+            BigInt::from(1) << fractional_bits,
+        ));
+        actual.cmp(&expected, w)? == Ordering::Equal
+    };
+    memory.used -= SCRATCH;
+    Ok(equal)
+}
 /// Differential coefficients of the actual encoded tensor. Subtraction and
 /// owned-corner factor removal precede conversion to outward binary64 bounds.
 pub(crate) fn tensor_differentials<'a>(

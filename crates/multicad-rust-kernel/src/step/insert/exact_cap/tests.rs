@@ -1,5 +1,40 @@
 use super::*;
 #[test]
+fn exact_file_integer_and_scale_matching_never_uses_floating_aliases() {
+    let mut w = Work::new(16_000_000, None).unwrap();
+    let mut memory = Memory::new(0, SCRATCH).unwrap();
+    for text in ["9007199254740993.", "+9007199254740993.E0"] {
+        let value = BigInt::from(9_007_199_254_740_993_u64);
+        assert_eq!(text.parse::<f64>().unwrap(), 9_007_199_254_740_992.);
+        assert!(equals_dyadic(text, 1, &value.to_bytes_le().1, 0, &mut memory, &mut w).unwrap());
+        assert!(
+            !equals_dyadic(
+                text,
+                1,
+                &BigInt::from(9_007_199_254_740_992_u64).to_bytes_le().1,
+                0,
+                &mut memory,
+                &mut w
+            )
+            .unwrap()
+        );
+    }
+    for (text, matched) in [
+        ("0.125", true),
+        ("1.25E-1", true),
+        ("0.125000000000000001", false),
+    ] {
+        assert_eq!(text.parse::<f64>().unwrap(), 0.125);
+        assert_eq!(
+            equals_dyadic(text, 1, &[1], 3, &mut memory, &mut w).unwrap(),
+            matched
+        );
+    }
+    assert!(equals_dyadic("-0.", 0, &[], 0, &mut memory, &mut w).unwrap());
+    assert!(equals_dyadic("-2.", -1, &[2], 0, &mut memory, &mut w).unwrap());
+    assert_eq!(memory.used, 0);
+}
+#[test]
 fn literal_sub_ulp_ruled_gaps_and_owned_corner_factors_keep_their_true_jacobian() {
     for factor in [false, true] {
         let values: [[[String; 3]; 12]; 2] = std::array::from_fn(|r| {
