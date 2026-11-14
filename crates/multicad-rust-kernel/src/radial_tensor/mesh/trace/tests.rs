@@ -202,6 +202,29 @@ fn trace_metadata_work_and_cancel_refusals_leave_source_and_old_path_reusable() 
         .tessellate_with_cap_trace(options, Default::default(), None)
         .unwrap();
     let exact = trace.retained_metadata_bytes();
+    let work = trace.work_used();
+    assert!(
+        body.tessellate_with_cap_trace_budget(options, Default::default(), work, None)
+            .is_ok()
+    );
+    assert!(matches!(
+        body.tessellate_with_cap_trace_budget(options, Default::default(), work - 1, None),
+        Err(Error::Limit)
+    ));
+    assert!(matches!(
+        body.tessellate_with_cap_trace_budget(
+            options,
+            Default::default(),
+            DEFAULT_LIMITS.work + 1,
+            None
+        ),
+        Err(Error::Invalid)
+    ));
+    assert!(matches!(
+        body.tessellate_with_cap_trace_budget(options, Default::default(), work, Some(&|| true)),
+        Err(Error::Cancelled)
+    ));
+
     let traced_calls = Cell::new(0);
     let traced_poll = || {
         traced_calls.set(traced_calls.get() + 1);
@@ -287,7 +310,7 @@ fn trace_metadata_work_and_cancel_refusals_leave_source_and_old_path_reusable() 
                 ring,
                 mesh,
                 Default::default(),
-                work
+                (limits.work, work)
             )
         ),
         Err(Error::Limit)

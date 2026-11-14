@@ -50,6 +50,7 @@ pub struct TracedMesh<'s> {
     source: &'s RadialBoundary,
     mesh: DisplayMesh,
     rims: [Vec<CapRimFootpoint>; 2],
+    work: usize,
 }
 impl<'s> TracedMesh<'s> {
     pub fn source(&self) -> &'s RadialBoundary {
@@ -60,6 +61,11 @@ impl<'s> TracedMesh<'s> {
     }
     pub fn cap_rims(&self) -> [&[CapRimFootpoint]; 2] {
         [&self.rims[0], &self.rims[1]]
+    }
+    /// Actual logical provider charges, including all original source proofs,
+    /// literal embedding and fresh trace work. Not process instructions/RSS.
+    pub fn work_used(&self) -> usize {
+        self.work
     }
     pub fn retained_metadata_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
@@ -84,7 +90,16 @@ impl RadialBoundary {
         trace: CapTraceOptions,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<TracedMesh<'_>, Error> {
-        if trace.maximum_bytes > BYTES {
+        self.tessellate_with_cap_trace_budget(options, trace, DEFAULT_LIMITS.work, interrupt)
+    }
+    pub(crate) fn tessellate_with_cap_trace_budget(
+        &self,
+        options: Tessellation,
+        trace: CapTraceOptions,
+        maximum_work: usize,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<TracedMesh<'_>, Error> {
+        if maximum_work > DEFAULT_LIMITS.work || trace.maximum_bytes > BYTES {
             return Err(Error::Invalid);
         }
         capacity(std::mem::size_of::<TracedMesh<'_>>(), trace.maximum_bytes)?;
@@ -92,9 +107,20 @@ impl RadialBoundary {
             self,
             options,
             interrupt,
-            DEFAULT_LIMITS,
+            Limits {
+                work: maximum_work,
+                ..DEFAULT_LIMITS
+            },
             |prepared, grid, ring, mesh, work| {
-                finish(self, prepared, grid, ring, mesh, trace, work)
+                finish(
+                    self,
+                    prepared,
+                    grid,
+                    ring,
+                    mesh,
+                    trace,
+                    (maximum_work, work),
+                )
             },
         )
     }
@@ -106,8 +132,9 @@ fn finish<'s>(
     ring: &Ring,
     mesh: DisplayMesh,
     options: CapTraceOptions,
-    work: &mut Work<'_>,
+    budget: (usize, &mut Work<'_>),
 ) -> Result<TracedMesh<'s>, Error> {
+    let (initial_work, work) = budget;
     // counts() already bounds n<=2M. Both exact-capacity requests are checked
     // against the caller's lower budget BEFORE allocation, then actual Vec
     // capacities are checked before filling. No additional grid/mesh candidate.
@@ -120,6 +147,7 @@ fn finish<'s>(
         source,
         mesh,
         rims: std::array::from_fn(|_| Vec::with_capacity(n)),
+        work: 0,
     };
     capacity(result.retained_metadata_bytes(), options.maximum_bytes)?;
     for end in 0..2 {
@@ -161,6 +189,7 @@ fn finish<'s>(
         }
     }
     work.step()?;
+    result.work = initial_work - work.remaining;
     Ok(result)
 }
 #[cfg(test)]
