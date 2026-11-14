@@ -18,7 +18,7 @@ pub struct WoodInsertStepVerification {
     pub maximum_ruling_derivative_error_mm: f64,
     pub verified_tolerance_mm: f64,
 }
-fn fail(kind: GeometryErrorKind, message: impl Into<String>) -> GeometryError {
+pub(super) fn fail(kind: GeometryErrorKind, message: impl Into<String>) -> GeometryError {
     error("Rust insert STEP", kind, message)
 }
 fn plan_error(e: insert::Error) -> GeometryError {
@@ -32,7 +32,7 @@ fn plan_error(e: insert::Error) -> GeometryError {
         format!("Actual insert encoder proof failed:{e:?}"),
     )
 }
-fn read_error(e: read::Error) -> GeometryError {
+pub(super) fn read_error(e: read::Error) -> GeometryError {
     fail(
         match e {
             read::Error::Invalid => GeometryErrorKind::InvalidResult,
@@ -57,7 +57,7 @@ impl WoodInsertBody {
         // Posed emission is opened only after actual MAPPED graph binding.
         frame == PlaneFrame::default()
     }
-    fn with_plan<T>(
+    pub(super) fn with_plan<T>(
         &self,
         policy: GeometryPolicy,
         interrupt: Option<&dyn Fn() -> bool>,
@@ -106,6 +106,21 @@ impl WoodInsertBody {
             retained_budget_bytes: read_bytes,
         };
         let actual = read::parse(text, options, interrupt).map_err(read_error)?;
+        self.verify_parsed(topology, &actual, read_bytes, fixed, policy, interrupt)
+    }
+    pub(super) fn verify_parsed(
+        &self,
+        topology: &insert::TopologyPlan<'_, '_, '_>,
+        actual: &read::Parsed<'_>,
+        read_bytes: usize,
+        fixed: usize,
+        policy: GeometryPolicy,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<WoodInsertStepVerification, GeometryError> {
+        let options = read::Options {
+            maximum_work: WORK,
+            retained_budget_bytes: read_bytes,
+        };
         let binding = actual
             .support_bindings(options, interrupt)
             .map_err(read_error)?;

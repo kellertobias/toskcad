@@ -337,7 +337,9 @@ fn verify_owned_insert_step(
     producer: EntityId,
     tolerance: f64,
 ) -> Option<Result<StepVerificationReceipt, ExportError>> {
-    solid.rust_wood_insert_data()?;
+    if !solid.has_wood_insert_step_source() {
+        return None;
+    }
     Some((|| {
         if !tolerance.is_finite()
             || tolerance <= 0.
@@ -364,7 +366,7 @@ fn verify_owned_insert_step(
         )?;
         let input = read_step_source(path, producer)?;
         let proof = solid
-            .verify_wood_insert_step_source(&input, tolerance, None)
+            .verify_wood_insert_step_compound(&input, tolerance, None)
             .expect("actual retained insert source")
             .map_err(|e| {
                 failure(
@@ -380,20 +382,29 @@ fn verify_owned_insert_step(
         Ok(StepVerificationReceipt {
             method: StepVerificationMethod::DecodedBoundaryEnclosure,
             decoded_volume_mm3: None,
-            retained_members: vec![StepRetainedMemberReceipt {
-                member_index: 0,
-                decoded_volume_bounds_mm3: proof.decoded_volume_bounds_mm3,
-                source_volume_bounds_mm3: proof.source_volume_bounds_mm3,
-            }],
-            decoded_scalar_members: vec![],
-            source_correspondence: vec![StepSourceCorrespondenceReceipt {
-                member_index: 0,
-                maximum_position_error_mm: proof.maximum_position_error_mm,
-                row_derivative_error_mm: proof.maximum_row_derivative_error_mm,
-                ruling_derivative_error_mm: proof.maximum_ruling_derivative_error_mm,
-            }],
+            retained_members: proof
+                .members
+                .retained_members
+                .into_iter()
+                .map(|member| StepRetainedMemberReceipt {
+                    member_index: member.member_index,
+                    decoded_volume_bounds_mm3: member.decoded_volume_bounds_mm3,
+                    source_volume_bounds_mm3: member.source_volume_bounds_mm3,
+                })
+                .collect(),
+            decoded_scalar_members: proof.members.decoded_scalar_members,
+            source_correspondence: proof
+                .insert_correspondence
+                .into_iter()
+                .map(|(member_index, p)| StepSourceCorrespondenceReceipt {
+                    member_index,
+                    maximum_position_error_mm: p.maximum_position_error_mm,
+                    row_derivative_error_mm: p.maximum_row_derivative_error_mm,
+                    ruling_derivative_error_mm: p.maximum_ruling_derivative_error_mm,
+                })
+                .collect(),
             source_volume_bounds_mm3: None,
-            verified_tolerance_mm: Some(proof.verified_tolerance_mm),
+            verified_tolerance_mm: Some(tolerance),
             maximum_polynomial_trim_error_mm: None,
             analytic_closure_tolerance_mm: None,
         })

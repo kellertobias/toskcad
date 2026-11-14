@@ -36,3 +36,62 @@ fn actual_native_retained_insert_exports_through_the_normal_solid_path() {
         assert_eq!(solid.rust_wood_insert_data().unwrap().source, source);
     }
 }
+
+#[test]
+fn actual_mixed_insert_export_checks_every_original_member() {
+    let policy = GeometryPolicy::default();
+    let insert = Solid::rust_wood_insert(
+        crate::geometry::wood_insert_world_tests::source(false),
+        EntityId::new(),
+        PlaneFrame::default(),
+        policy,
+        None,
+    )
+    .unwrap();
+    let sphere = Solid::rust_sphere_named(
+        1.,
+        PlaneFrame {
+            origin: [20., 0., 0.],
+            ..Default::default()
+        },
+        EntityId::new(),
+        policy,
+    )
+    .unwrap();
+    let compound = Solid::compound_named(&[&sphere, &insert], EntityId::new(), policy).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("mixed.step");
+    compound.write_step(&path).unwrap();
+    let text = std::fs::read_to_string(path).unwrap();
+    let proof = compound
+        .verify_wood_insert_step_compound(&text, 1e-7, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(proof.members.solid_count, 2);
+    assert_eq!(proof.members.retained_members[0].member_index, 1);
+    assert_eq!(proof.members.decoded_scalar_members.len(), 1);
+    assert_eq!(proof.insert_correspondence[0].0, 1);
+    let wrong_sphere = Solid::rust_sphere_named(
+        2.,
+        PlaneFrame {
+            origin: [20., 0., 0.],
+            ..Default::default()
+        },
+        EntityId::new(),
+        policy,
+    )
+    .unwrap();
+    let wrong = Solid::compound_named(&[&wrong_sphere, &insert], EntityId::new(), policy).unwrap();
+    assert!(
+        wrong
+            .verify_wood_insert_step_compound(&text, 1e-7, None)
+            .unwrap()
+            .is_err()
+    );
+    assert!(
+        insert
+            .verify_wood_insert_step_compound(&text, 1e-7, None)
+            .unwrap()
+            .is_err()
+    );
+}

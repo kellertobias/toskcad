@@ -22,7 +22,9 @@ mod cosmetic_fastener_body;
 mod entry_chamfer_body;
 mod wood_insert_body;
 use wood_insert_body::WoodInsertBody;
-pub use wood_insert_body::{WoodInsertData, WoodInsertStepVerification};
+pub use wood_insert_body::{
+    WoodInsertCompoundStepVerification, WoodInsertData, WoodInsertStepVerification,
+};
 mod wood_insert_material;
 pub use wood_insert_material::{WoodInsertFaceProperties, WoodInsertMaterial};
 mod hanger_material;
