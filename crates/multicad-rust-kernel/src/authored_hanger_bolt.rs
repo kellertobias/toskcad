@@ -6,6 +6,8 @@ use crate::{
     tapered_thread::interval::I,
 };
 mod classify;
+mod faces;
+pub use faces::FaceKey;
 #[cfg(test)]
 mod tests;
 mod volume;
