@@ -9,6 +9,7 @@ mod box_void;
 mod compound;
 mod curve;
 mod helical;
+pub mod owned_insert;
 #[cfg(test)]
 pub(crate) use helical::profiled::read_torx_cavity_fixture;
 #[cfg(test)]
