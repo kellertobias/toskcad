@@ -10,7 +10,8 @@ mod repaired;
 pub(crate) mod source_volume;
 pub use repaired::{
     AxialProgress, RepairedHeadError, RepairedHeadMeridian, RepairedHeadOptions,
-    RepairedMeridianBounds, RepairedSegmentCertificate,
+    RepairedHeadVolume, RepairedHeadVolumeOptions, RepairedMeridianBounds,
+    RepairedSegmentCertificate,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

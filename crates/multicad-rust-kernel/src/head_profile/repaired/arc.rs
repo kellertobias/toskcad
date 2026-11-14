@@ -142,3 +142,32 @@ impl ArcSource {
         [p, derivative]
     }
 }
+
+impl ArcSource {
+    /// Fifth geometry jet of the SAME normalized-ray+cubic source. Only c0
+    /// intersections use the already proved unit-domain identities; derivative
+    /// coefficients are retained, never clamped or replaced by samples.
+    pub(super) fn position_jet(
+        self,
+        t: crate::tapered_thread::Series<6>,
+    ) -> [crate::tapered_thread::Series<6>; 2] {
+        use crate::tapered_thread::{Scalar, Series};
+        let c = Series::<6>::interval;
+        let w = std::array::from_fn::<_, 2, _>(|i| c(self.a[i]) + t * c(self.b[i] - self.a[i]));
+        let u = t - c(I::point(0.5));
+        let mut q = c(I::point(0.25)) - u * u;
+        q.c[0] = I::new(q.c[0].lo.max(0.), q.c[0].hi.min(0.25));
+        let mut s2 = c(I::point(1.)) - c(I::point(2.) * (I::point(1.) - self.dot)) * q;
+        let lower = ((I::point(1.) + I::point(self.dot.lo)) / I::point(2.)).lo;
+        s2.c[0] = I::new(s2.c[0].lo.max(lower), s2.c[0].hi.min(1.));
+        let n = s2.sqrt();
+        let mut h = t * t * (c(I::point(3.)) - c(I::point(2.)) * t);
+        h.c[0] = I::new(h.c[0].lo.max(0.), h.c[0].hi.min(1.));
+        std::array::from_fn(|i| {
+            c(I::point(self.center[i]))
+                + c(I::point(self.radius)) * w[i] / n
+                + c(self.delta[0][i])
+                + c(self.delta[1][i] - self.delta[0][i]) * h
+        })
+    }
+}

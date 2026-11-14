@@ -301,3 +301,6 @@ impl Profile {
         Ok(result)
     }
 }
+
+mod volume;
+pub use volume::{RepairedHeadVolume, RepairedHeadVolumeOptions};
