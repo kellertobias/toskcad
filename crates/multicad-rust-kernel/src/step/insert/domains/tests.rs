@@ -101,6 +101,12 @@ fn domain_resources_and_cancellation_refuse_without_publication() {
             ..DomainOptions::default()
         },
         DomainOptions {
+            // All genuine stations fit; the OPTIONAL chart subdivision must
+            // still charge its retained insertion before publication.
+            maximum_stations: 11,
+            ..DomainOptions::default()
+        },
+        DomainOptions {
             maximum_slabs: 1,
             ..DomainOptions::default()
         },
@@ -238,4 +244,34 @@ fn bounded_rational_primitive_and_source_error_mapping_preserve_failures() {
         num_bigint::BigInt::from(1) << 16384,
     ));
     assert!(matches!(huge.add(&one, &mut work), Err(Error::Limit)));
+}
+#[test]
+fn optional_quarter_cut_is_omitted_without_losing_any_genuine_near_half_event() {
+    let body = graph(false, 1);
+    let plan = DomainPlan::prepare(&body, DomainOptions::default(), None).unwrap();
+    let mut w = Work::new(16_000_000, None).unwrap();
+    let half = num_rational::BigRational::new(1.into(), 2.into());
+    let station_values = plan
+        .stations(Side::Inner)
+        .iter()
+        .map(|s| s.number(&mut w).unwrap().0)
+        .collect::<Vec<_>>();
+    assert!(!station_values.contains(&half));
+    assert!(
+        station_values.iter().any(|v| v > &half
+            && v - &half < num_rational::BigRational::new(1.into(), (1u64 << 40).into()))
+    );
+    for side in [Side::Outer, Side::Inner] {
+        let values = plan
+            .stations(side)
+            .iter()
+            .map(|s| s.number(&mut w).unwrap().0)
+            .collect::<Vec<_>>();
+        for cell in 0..body.cells(side).len() {
+            let original = plan.exact_cell(side, cell).unwrap();
+            for row in 0..original.row_count() {
+                assert!(values.contains(&raw(original.coordinate(row, 1).unwrap())));
+            }
+        }
+    }
 }

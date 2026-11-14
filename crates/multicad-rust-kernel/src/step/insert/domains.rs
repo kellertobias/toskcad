@@ -139,18 +139,6 @@ impl<'a> DomainPlan<'a> {
         ];
         let mut slabs = memory.allocate(options.maximum_slabs, &mut w)?;
         for side in [Side::Outer, Side::Inner] {
-            // Exact authored-turn chart subdivisions, not moved source events.
-            for (sign, n, d) in [(0, 0, 1), (1, 1, 4), (1, 1, 2), (1, 3, 4), (1, 1, 1)] {
-                insert_parts(
-                    &mut stations[index(side)],
-                    sign,
-                    &[n],
-                    &[d],
-                    options.maximum_stations,
-                    &mut memory,
-                    &mut w,
-                )?;
-            }
             let source = boundary.source_boundary(side);
             for cell in 0..source.cells().len() {
                 // Scratch is reused: no decoded BigInts are live during the
@@ -174,6 +162,39 @@ impl<'a> DomainPlan<'a> {
                     )?;
                 }
                 cells[index(side)].push(data);
+            }
+        }
+        // Quarter cuts are OPTIONAL chart aids. Never create an artificial
+        // sub-ULP strip beside a genuine event: only the aid is omitted, while
+        // every original rational event/owner remains unchanged. This dyadic
+        // steering margin is not a geometry tolerance or acceptance criterion.
+        for side in [Side::Outer, Side::Inner] {
+            for (n, d) in [(1u8, 4u8), (1, 2), (3, 4)] {
+                let q = N::parts(1, &[n], &[d], &mut w)?;
+                let margin = N(num_rational::BigRational::new(1.into(), 1_048_576.into()));
+                let low = q.sub(&margin, &mut w)?;
+                let high = q.add(&margin, &mut w)?;
+                let mut near = false;
+                for event in &stations[index(side)] {
+                    let value = event.number(&mut w)?;
+                    if value.cmp(&low, &mut w)? != Ordering::Less
+                        && value.cmp(&high, &mut w)? != Ordering::Greater
+                    {
+                        near = true;
+                        break;
+                    }
+                }
+                if !near {
+                    insert_parts(
+                        &mut stations[index(side)],
+                        1,
+                        &[n],
+                        &[d],
+                        options.maximum_stations,
+                        &mut memory,
+                        &mut w,
+                    )?;
+                }
             }
         }
         for side in [Side::Outer, Side::Inner] {
