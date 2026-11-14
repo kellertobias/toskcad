@@ -587,3 +587,14 @@ mod tests;
 
 #[cfg(test)]
 mod binding_tests;
+#[cfg(test)]
+pub(crate) fn represented_member_faces_fixture(input: &str) -> Result<Vec<Vec<u32>>> {
+    let entities = part21::parse(input).map_err(Error::from)?;
+    let shell = Shell::new(&entities, 1e-7, false);
+    shell
+        .represented_solids(false)
+        .map_err(Error::from)?
+        .into_iter()
+        .map(|id| shell.member_faces(id).map_err(Error::from))
+        .collect()
+}

@@ -18,6 +18,39 @@ pub fn write_local_candidate(
     maximum_bytes: usize,
     interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<String, Error> {
+    let mut writer = Writer::new();
+    writer.append_owned_insert_local(topology, maximum_work, maximum_bytes, interrupt)?;
+    writer.finish().map_err(Error::from)
+}
+impl Writer {
+    /// Append the qualified local coupled BRep through the same atomic
+    /// compound transaction as other members. Geometry remains at its actual
+    /// local datum; this method does not imply placed Native admission.
+    ///
+    /// `maximum_bytes` covers the retained insert proof arenas, complete output
+    /// String, and encoding scratch. Pre-existing generic Writer point-cache
+    /// and solid-index metadata remain governed by its separate compound limits;
+    /// this is not a whole-process allocator-peak claim. Failed appends restore
+    /// published records/IDs while retaining allocation capacity, as Writer does.
+    pub fn append_owned_insert_local(
+        &mut self,
+        topology: &TopologyPlan<'_, '_, '_>,
+        maximum_work: usize,
+        maximum_bytes: usize,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<(), Error> {
+        self.append_typed(|file| {
+            encode_local(file, topology, maximum_work, maximum_bytes, interrupt)
+        })
+    }
+}
+fn encode_local(
+    file: &mut StepFile,
+    topology: &TopologyPlan<'_, '_, '_>,
+    maximum_work: usize,
+    maximum_bytes: usize,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<Entity, Error> {
     let mut w = Work::new(maximum_work, interrupt)?;
     w.charge(topology.work_used())?;
     if maximum_bytes == 0 || maximum_bytes > 64 * 1024 * 1024 {
@@ -25,12 +58,12 @@ pub fn write_local_candidate(
     }
     let surface = topology.surface();
     let mut memory = Memory::new(topology.retained_bytes(), maximum_bytes)?;
-    // Fixed writer/receipt headers and final one-solid representation scratch.
-    memory.add(4096)?;
-    // The child counts its SurfacePlan once; the TopologyPlan's additional
-    // live arena and our fixed scratch remain reserved in the parent ledger.
+    let prior_capacity = file.data.capacity();
+    // The entire live String is counted once, including earlier compound members.
+    let fixed = 4096usize.checked_add(prior_capacity).ok_or(Error::Limit)?;
+    memory.add(fixed)?;
     let projection_bytes = maximum_bytes
-        .checked_sub(topology.retained_bytes() - surface.retained_bytes() + 4096)
+        .checked_sub(topology.retained_bytes() - surface.retained_bytes() + fixed)
         .ok_or(Error::Limit)?;
     let p = surface.projection_bounds(
         w.remaining() + surface.work_used(),
@@ -43,12 +76,10 @@ pub fn write_local_candidate(
     }
     let caps = topology.cap_regularity_bounds(
         w.remaining() + topology.work_used(),
-        maximum_bytes - 4096,
+        maximum_bytes - fixed,
         interrupt,
     )?;
     w.charge(caps.work_used - topology.work_used())?;
-    // Fixed conservative peak covers all encoded coefficient/reference tokens,
-    // their format scratch, output capacity growth, and typed entity arrays.
     let controls = surface
         .rows()
         .iter()
@@ -58,18 +89,15 @@ pub fn write_local_candidate(
     let base = memory.used;
     memory.add(estimate)?;
     memory.used = base;
-    let mut writer = Writer::new();
-    writer.append_typed(|file| {
-        file.data
-            .try_reserve_exact(estimate)
-            .map_err(|_| Error::Limit)?;
-        memory.add(file.data.capacity())?;
-        emit(file, topology, &mut w, &mut memory)
-    })?;
-    let output = writer.finish().map_err(Error::from)?;
+    file.data
+        .try_reserve_exact(estimate)
+        .map_err(|_| Error::Limit)?;
+    memory.add(file.data.capacity() - prior_capacity)?;
+    let solid = emit(file, topology, &mut w, &mut memory)?;
     w.charge(1)?;
-    Ok(output)
+    Ok(solid)
 }
+
 fn point(file: &mut StepFile, p: [f64; 3], w: &mut Work<'_>) -> Result<Entity, Error> {
     w.charge(128)?;
     Ok(file.entity(format_args!("CARTESIAN_POINT('',{})", Coordinates(p))))
@@ -315,7 +343,13 @@ mod tests {
                 Err(Error::Invalid)
             ));
         }
-        for bytes in [t.retained_bytes(), t.retained_bytes() + 4096] {
+        for bytes in [
+            t.retained_bytes(),
+            t.retained_bytes() + 4096,
+            // Parent arenas/output fit; the actual projection child's proof
+            // workspace is the next allocation and must refuse atomically.
+            t.retained_bytes() + 4096 + StepFile::new().data.capacity() + 1,
+        ] {
             assert!(matches!(
                 write_local_candidate(&t, 16_000_000, bytes, None),
                 Err(Error::Limit)
@@ -526,5 +560,115 @@ mod tests {
             assert!(!text.contains("=LINE("));
             eprintln!("LOCAL_STEP {kind}: {}bytes", text.len());
         }
+    }
+}
+#[cfg(test)]
+mod append_tests {
+    use super::*;
+    fn seed() -> Writer {
+        let mut writer = Writer::new();
+        writer
+            .append_sphere(
+                crate::sphere::Sphere::new(1.).unwrap(),
+                [20., 0., 0.],
+                [1., 0., 0.],
+                [0., 1., 0.],
+            )
+            .unwrap();
+        writer
+    }
+    #[test]
+    fn actual_public_append_preserves_mixed_members_and_retries_after_partial_failures() {
+        let body = super::super::tests::metric_graph();
+        let d = DomainPlan::prepare(&body, DomainOptions::default(), None).unwrap();
+        let s = SurfacePlan::prepare(&d, CurveOptions::default(), None).unwrap();
+        let t = TopologyPlan::prepare(&s, 16_000_000, 64 * 1024 * 1024, None).unwrap();
+        let polls = std::cell::Cell::new(0);
+        let probe = || {
+            polls.set(polls.get() + 1);
+            false
+        };
+        let mut expected = seed();
+        expected
+            .append_owned_insert_local(&t, 16_000_000, 64 * 1024 * 1024, Some(&probe))
+            .unwrap();
+        let total = polls.get();
+        assert!(total > 100);
+        let expected = expected.finish().unwrap();
+        let original = seed().finish().unwrap();
+        let projection = s
+            .projection_bounds(16_000_000, 64 * 1024 * 1024, None)
+            .unwrap();
+        let caps = t
+            .cap_regularity_bounds(16_000_000, 64 * 1024 * 1024, None)
+            .unwrap();
+        let partial_budget = projection.work_used - s.work_used() + caps.work_used + 2000;
+        for cancel in [false, true] {
+            let mut writer = seed();
+            let polls = std::cell::Cell::new(0);
+            let stop = || {
+                polls.set(polls.get() + 1);
+                cancel && polls.get() == total - 20
+            };
+            assert_eq!(
+                writer.append_owned_insert_local(
+                    &t,
+                    if cancel { 16_000_000 } else { partial_budget },
+                    64 * 1024 * 1024,
+                    Some(&stop)
+                ),
+                Err(if cancel {
+                    Error::Cancelled
+                } else {
+                    Error::Limit
+                })
+            );
+            // Rebuild the same seed for a direct publication check. A second
+            // retry additionally checks restored IDs and retained-capacity paths.
+            if !cancel {
+                assert_eq!(writer.finish().unwrap(), original);
+                continue;
+            }
+            writer
+                .append_owned_insert_local(&t, 16_000_000, 64 * 1024 * 1024, None)
+                .unwrap();
+            assert_eq!(writer.finish().unwrap(), expected);
+        }
+        let mut mixed = seed();
+        mixed
+            .append_owned_insert_local(&t, 16_000_000, 64 * 1024 * 1024, None)
+            .unwrap();
+        mixed
+            .append_sphere(
+                crate::sphere::Sphere::new(2.).unwrap(),
+                [-20., 0., 0.],
+                [1., 0., 0.],
+                [0., 1., 0.],
+            )
+            .unwrap();
+        let text = mixed.finish().unwrap();
+        let faces =
+            crate::step_read::owned_insert::represented_member_faces_fixture(&text).unwrap();
+        assert_eq!(faces.len(), 3);
+        assert_eq!(
+            faces.iter().filter(|f| f.len() == t.faces().len()).count(),
+            1
+        );
+        let all = faces
+            .iter()
+            .flatten()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(all.len(), faces.iter().map(Vec::len).sum::<usize>());
+        // The current independent single-body packet intentionally does not
+        // confuse a mixed compound with one occupied insert.
+        assert!(matches!(
+            crate::step_read::owned_insert::parse(
+                &text,
+                crate::step_read::owned_insert::Options::default(),
+                None
+            ),
+            Err(crate::step_read::owned_insert::Error::Unsupported)
+        ));
     }
 }
