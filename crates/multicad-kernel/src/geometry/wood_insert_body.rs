@@ -399,3 +399,6 @@ mod step_pose;
 
 #[cfg(test)]
 mod step_mixed_tests;
+
+#[cfg(test)]
+mod step_failure_tests;
