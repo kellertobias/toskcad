@@ -290,3 +290,40 @@ fn genuine_subnormal_plain_station_is_retained_and_off_plane_endpoint_is_refused
     ));
     assert_eq!(s.spec().plain_length_mm, f64::from_bits(1));
 }
+
+#[test]
+fn numeric_encoder_checkpoints_cover_lcm_and_quantizer_without_partial_receipts() {
+    use std::cell::Cell;
+    let calls = Cell::new(0);
+    let observe = || {
+        calls.set(calls.get() + 1);
+        false
+    };
+    // Different positive rational weights require genuine LCM/GCD work;
+    // these are numeric primitive inputs, never a fabricated source body.
+    let h = (0..=11)
+        .map(|i| {
+            let weight = N(Q::new(1.into(), (3 + 2 * i).into()));
+            [weight.clone(), weight.clone(), N::integer(0), weight]
+        })
+        .collect::<Vec<_>>();
+    let mut w = Work::new(16_000_000, Some(&observe)).unwrap();
+    let mut m = Memory::new(0, 64 * 1024 * 1024).unwrap();
+    encode_cap(&h, None, CurveOptions::default(), &mut m, &mut w).unwrap();
+    for stop in 1..=calls.get() {
+        let count = Cell::new(0);
+        let cancel = || {
+            count.set(count.get() + 1);
+            count.get() >= stop
+        };
+        let mut w = Work::new(16_000_000, Some(&cancel)).unwrap();
+        let mut m = Memory::new(0, 64 * 1024 * 1024).unwrap();
+        assert!(
+            matches!(
+                encode_cap(&h, None, CurveOptions::default(), &mut m, &mut w),
+                Err(Error::Cancelled)
+            ),
+            "stop={stop}"
+        );
+    }
+}

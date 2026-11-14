@@ -77,6 +77,8 @@ fn actual_root_and_flat_cap_curves_equal_same_surface_and_first_derivatives() {
                     assert!(curve.work_used() > 0);
                     assert_eq!(curve.parameter_bounds(), curve.parameter_bounds);
                     assert_eq!(curve.phase(), &curve.phase);
+                    assert_eq!(curve.surface_trace().source_curve, trace.source_curve);
+                    assert_eq!(curve.surface_trace().controls(), trace.controls());
                     intervals.push(curve.phase.each_ref().map(number));
                     let ua = Q::from_float(curve.parameter_bounds[0][1]).unwrap();
                     let ub = Q::from_float(curve.parameter_bounds[1][0]).unwrap();
@@ -291,5 +293,19 @@ fn actual_cap_prefix_cancellation_resource_and_positive_sliver_refusals_are_atom
         );
     }
     assert_eq!(s.spec(), b.source().spec());
+    let final_bytes = f.retained_bytes() + SCRATCH + successful.retained_bytes();
+    assert!(matches!(
+        f.cap_curve_piece(
+            index,
+            End::End,
+            2,
+            DomainOptions {
+                maximum_bytes: final_bytes - 1,
+                ..DomainOptions::default()
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
     assert!(successful.work_used > 0);
 }

@@ -3,7 +3,7 @@ use crate::authored_hanger_bolt::{BoundaryOptions, Hanger};
 use crate::step::hanger::encoded::cap::tests::{bezier, number};
 use num_traits::{One, Signed, Zero};
 type Q = BigRational;
-fn jet(c: Vec<[Q; 4]>, u: &Q) -> ([Q; 3], [Q; 3]) {
+pub(in crate::step::hanger::encoded::curve) fn jet(c: Vec<[Q; 4]>, u: &Q) -> ([Q; 3], [Q; 3]) {
     let n = Q::from_integer((c.len() - 1).into());
     let d: Vec<[Q; 4]> = c
         .windows(2)

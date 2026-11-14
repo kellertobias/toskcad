@@ -1,8 +1,14 @@
 //! Actual 3D cap curves composed from the SAME exact scalar and angular owners.
 //! These homogeneous supports are not rounded STEP Cartesian poles or a file.
 use super::*;
+#[cfg(test)]
+mod affine_probe;
+#[cfg(test)]
+mod correction;
 mod literal;
 mod restrict;
+#[cfg(test)]
+mod trim_probe;
 pub use literal::LiteralCapCurve;
 pub use restrict::{RestrictedCapCurve, RestrictionBounds};
 use std::cmp::Ordering;
@@ -63,6 +69,7 @@ fn choose(n: usize, k: usize, w: &mut Work<'_>) -> Result<i64, Error> {
 /// with a separately earned literal encoding bound before serialization.
 pub struct CapCurvePiece<'f, 's> {
     field: &'f EncodedField<'s>,
+    surface_trace: CapTrace,
     source_cell: usize,
     angular_piece: usize,
     end: End,
@@ -75,6 +82,9 @@ pub struct CapCurvePiece<'f, 's> {
 impl CapCurvePiece<'_, '_> {
     pub fn field(&self) -> &EncodedField<'_> {
         self.field
+    }
+    pub fn surface_trace(&self) -> &CapTrace {
+        &self.surface_trace
     }
     pub fn source_cell(&self) -> usize {
         self.source_cell
@@ -300,9 +310,30 @@ impl<'s> EncodedField<'s> {
             EncodedScalar::retain(&lo, &mut memory, &mut w)?,
             EncodedScalar::retain(&hi, &mut memory, &mut w)?,
         ];
+        let payload = |x: &EncodedScalar| x.n.len() + x.d.len();
+        memory.add(
+            trace.control_storage_bytes()
+                + trace
+                    .controls()
+                    .iter()
+                    .flatten()
+                    .map(payload)
+                    .sum::<usize>()
+                + payload(&trace.plane_z)
+                + trace
+                    .endpoints
+                    .iter()
+                    .map(|e| {
+                        payload(&e.phase)
+                            + payload(&e.physical_turn)
+                            + payload(&e.original_parameter)
+                    })
+                    .sum::<usize>(),
+        )?;
         w.charge(1)?;
         Ok(Some(CapCurvePiece {
             field: self,
+            surface_trace: trace,
             source_cell: index,
             angular_piece,
             end,

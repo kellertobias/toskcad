@@ -82,7 +82,7 @@ fn split<const D: usize>(
     drop(work);
     Ok([left, right])
 }
-fn restrict<const D: usize>(
+pub(super) fn restrict<const D: usize>(
     h: &[[N; D]],
     a: &N,
     b: &N,
@@ -124,7 +124,7 @@ fn restrict<const D: usize>(
     drop(discard);
     Ok(out)
 }
-fn chosen(
+pub(super) fn chosen(
     row: &EncodedMeridian,
     phase: &N,
     enclosure: [f64; 2],
@@ -157,7 +157,7 @@ fn chosen(
 /// exact restricted domain. Z=constant is structural, so distant axial datums
 /// do not create false derivative amplification through a quotient estimate.
 #[cfg(test)]
-fn derivatives(h: &[[N; 4]], span: &N, w: &mut Work<'_>) -> Result<[f64; 2], Error> {
+pub(super) fn derivatives(h: &[[N; 4]], span: &N, w: &mut Work<'_>) -> Result<[f64; 2], Error> {
     let n = h.len() - 1;
     let mut a = 0_f64;
     let mut da = 0_f64;
@@ -302,7 +302,7 @@ fn scalar_jet(h: &[[N; 3]], axis: usize, span: &N, w: &mut Work<'_>) -> Result<S
         second: second.hi,
     })
 }
-fn amplification(t: I, degree: usize, w: &mut Work<'_>) -> Result<I, Error> {
+pub(super) fn amplification(t: I, degree: usize, w: &mut Work<'_>) -> Result<I, Error> {
     // Bernstein basis L1 sum is (|t|+|1-t|)^degree, also outside[0,1].
     // That convex piecewise-linear base attains its maximum at a range end.
     w.charge(32 * (degree + 1))?;
@@ -537,4 +537,4 @@ impl<'f, 's> CapCurvePiece<'f, 's> {
     }
 }
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
