@@ -1065,3 +1065,10 @@ pub use phillips_cutter::{
     CommonMouthOptions as PhillipsCommonMouthOptions,
     CommonTensorTransfer as PhillipsCommonTensorTransfer,
 };
+
+pub use phillips_cutter::{
+    ClosedHeadOptions as PhillipsClosedHeadOptions,
+    ClosedRepairedHead as PhillipsClosedRepairedHead,
+    HeadSupportTransfer as PhillipsHeadSupportTransfer,
+    RawHeadSupportKind as PhillipsRawHeadSupportKind,
+};

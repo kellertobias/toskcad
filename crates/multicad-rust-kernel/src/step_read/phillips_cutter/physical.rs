@@ -329,3 +329,5 @@ pub use branches::ClosedDerivedCavityCertificate;
 pub use body::{
     CommonMouthChart, CommonMouthHeadEnvelope, CommonMouthOptions, CommonTensorTransfer,
 };
+
+pub use body::{ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHeadSupportKind};

@@ -235,3 +235,8 @@ mod common_mouth;
 pub use common_mouth::{
     CommonMouthChart, CommonMouthHeadEnvelope, CommonMouthOptions, CommonTensorTransfer,
 };
+
+mod closed_head;
+pub use closed_head::{
+    ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHeadSupportKind,
+};

@@ -378,3 +378,4 @@ fn common_chart_budgets_foreign_receipts_and_all_query_cancellation_phases_refus
     );
 }
 mod closed_head_probe;
+mod head_transfer_probe;
