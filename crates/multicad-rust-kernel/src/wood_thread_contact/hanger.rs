@@ -4,7 +4,12 @@
 use super::*;
 use crate::authored_hanger_bolt::{Classification, Hanger};
 mod mating;
+mod passage;
 pub use mating::{HangerMating, HangerMatingRequirements, certify_hanger_nut};
+pub use passage::{
+    HangerPassage, PassageRequirements, ThroughStock, WoodSide, certify_hanger_annulus,
+    certify_hanger_through_stock,
+};
 #[cfg(test)]
 mod tests;
 #[derive(Clone, Debug)]

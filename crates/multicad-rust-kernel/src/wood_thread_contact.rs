@@ -53,7 +53,9 @@ pub struct Contact {
 mod hanger;
 mod insert;
 pub use hanger::{
-    HangerContact, HangerMating, HangerMatingRequirements, certify_hanger_nut, certify_hanger_wood,
+    HangerContact, HangerMating, HangerMatingRequirements, HangerPassage, PassageRequirements,
+    ThroughStock, WoodSide, certify_hanger_annulus, certify_hanger_nut,
+    certify_hanger_through_stock, certify_hanger_wood,
 };
 mod separation;
 pub use insert::{
