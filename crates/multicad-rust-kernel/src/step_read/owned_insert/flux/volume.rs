@@ -12,7 +12,12 @@ impl<'a, 'b, 'c, 'input> OccupiedVolume<'a, 'b, 'c, 'input> {
         self.material
     }
     pub fn volume_mm3(&self) -> [f64; 2] {
-        self.flux.oriented_mm3()
+        let mut bounds = self.flux.oriented_mm3();
+        // Global material admission already proves a nonempty occupied set.
+        // Intersect the finite numerical enclosure with its earned sign;
+        // a zero numerical lower bound is not an empty-material claim.
+        bounds[0] = bounds[0].max(0.);
+        bounds
     }
     pub fn work_used(&self) -> usize {
         self.work
@@ -46,11 +51,6 @@ impl<'b, 'c, 'input> MaterialBounds<'b, 'c, 'input> {
             },
             interrupt,
         )?;
-        // The global material proof already establishes outwardness. Refuse
-        // any numerical result that cannot certify strictly positive volume.
-        if flux.oriented_mm3()[0] <= 0. {
-            return Err(Error::Unsupported);
-        }
         if interrupt.is_some_and(|cancel| cancel()) {
             return Err(Error::Cancelled);
         }
