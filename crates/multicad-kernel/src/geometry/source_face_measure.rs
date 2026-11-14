@@ -276,3 +276,61 @@ fn up(a: f64, b: f64) -> f64 {
 fn product(a: f64, b: f64) -> f64 {
     (a * b).next_up()
 }
+
+pub(super) fn midpoint(values: [B; 3]) -> Result<([f64; 3], f64), GeometryError> {
+    if values.into_iter().any(|v| !v.valid()) {
+        return Err(refused());
+    }
+    let point = values.map(|v| v.lo.midpoint(v.hi));
+    let e = values
+        .into_iter()
+        .zip(point)
+        .fold(0., |s, (b, p)| up(s, (B::point(p) - b).magnitude()));
+    Ok((point, e))
+}
+pub(super) fn center(values: [B; 3], policy: GeometryPolicy) -> Result<[f64; 3], GeometryError> {
+    let (p, e) = midpoint(values)?;
+    if e > policy.linear_tolerance_mm / 8. {
+        return Err(refused());
+    }
+    Ok(p)
+}
+
+pub(super) type PlaneSupport = ([f64; 3], [f64; 3]);
+pub(super) fn plane(
+    frame: PlaneFrame,
+    z: B,
+    radius: f64,
+    up: bool,
+    policy: GeometryPolicy,
+) -> Result<PlaneSupport, GeometryError> {
+    let u = frame.u.map(B::point);
+    let v = frame.v.map(B::point);
+    let cross = [(1, 2), (2, 0), (0, 1)].map(|(j, k)| u[j] * v[k] - u[k] * v[j]);
+    let length = cross
+        .into_iter()
+        .fold(B::ZERO, |s, v| s + v.square())
+        .sqrt();
+    if !length.valid() || length.lo <= 0. {
+        return Err(refused());
+    }
+    let orientation = if up { 1. } else { -1. };
+    let unit = cross.map(|v| B::point(orientation) * v / length);
+    let (normal, normal_error) = midpoint(unit)?;
+    let point =
+        std::array::from_fn(|i| B::point(frame.origin[i]) + B::point(frame.normal()[i]) * z);
+    let (point, point_error) = midpoint(point)?;
+    let extent = B::point(radius)
+        * frame
+            .u
+            .into_iter()
+            .chain(frame.v)
+            .fold(B::ZERO, |s, v| s + B::point(v.abs()));
+    let error =
+        B::point(point_error) * (B::ONE + B::point(normal_error)) + B::point(normal_error) * extent;
+    if normal_error > 1e-12 || !error.valid() || error.hi > policy.linear_tolerance_mm / 8. {
+        return Err(refused());
+    }
+    policy.point(point)?;
+    Ok((point, normal))
+}

@@ -2,7 +2,9 @@
 //! These APIs do not establish finite boundary incidence or Solid admission.
 use super::*;
 use crate::geometry::internal_thread_treatment_body::interval::Interval as B;
-use crate::geometry::source_face_measure::positive;
+#[cfg(test)]
+use crate::geometry::source_face_measure::midpoint;
+use crate::geometry::source_face_measure::{PlaneSupport, center, positive};
 use multicad_rust_kernel::authored_internal_treatment::Enclosure;
 use multicad_rust_kernel::wood_insert::{FaceKey, FaceProperties, FacePropertyOptions};
 #[cfg(test)]
@@ -13,13 +15,6 @@ pub struct WoodInsertFaceProperties {
     pub world: FaceProperties,
     pub area_jacobian: Enclosure,
     pub local_centroid_reweighting_error_mm: [f64; 3],
-}
-fn refused() -> GeometryError {
-    error(
-        "Rust wood insert face measure",
-        GeometryErrorKind::Unsupported,
-        "Actual world face measure exceeds its precision bound",
-    )
 }
 impl WoodInsertMaterial {
     /// Bounded world measures; the literal frame is never normalized.
@@ -134,28 +129,6 @@ fn transport(
     Ok(result)
 }
 
-fn up(a: f64, b: f64) -> f64 {
-    (a + b).next_up()
-}
-fn midpoint(values: [B; 3]) -> Result<([f64; 3], f64), GeometryError> {
-    if values.into_iter().any(|v| !v.valid()) {
-        return Err(refused());
-    }
-    let point = values.map(|v| v.lo.midpoint(v.hi));
-    let e = values
-        .into_iter()
-        .zip(point)
-        .fold(0., |s, (b, p)| up(s, (B::point(p) - b).magnitude()));
-    Ok((point, e))
-}
-fn center(values: [B; 3], policy: GeometryPolicy) -> Result<[f64; 3], GeometryError> {
-    let (p, e) = midpoint(values)?;
-    if e > policy.linear_tolerance_mm / 8. {
-        return Err(refused());
-    }
-    Ok(p)
-}
-type PlaneSupport = ([f64; 3], [f64; 3]);
 fn plane(
     material: &Insert,
     frame: PlaneFrame,
@@ -167,37 +140,16 @@ fn plane(
         FaceKey::EndCap => material.full_length_mm(),
         _ => return Ok(None),
     };
-    let u = frame.u.map(B::point);
-    let v = frame.v.map(B::point);
-    let cross = [(1, 2), (2, 0), (0, 1)].map(|(j, k)| u[j] * v[k] - u[k] * v[j]);
-    let length = cross
-        .into_iter()
-        .fold(B::ZERO, |s, v| s + v.square())
-        .sqrt();
-    if !length.valid() || length.lo <= 0. {
-        return Err(refused());
-    }
-    let orientation = if face == FaceKey::StartCap { -1. } else { 1. };
-    let unit = cross.map(|v| B::point(orientation) * v / length);
-    let (normal, normal_error) = midpoint(unit)?;
-    let point = std::array::from_fn(|i| {
-        B::point(frame.origin[i]) + B::point(frame.normal()[i]) * B::point(z)
-    });
-    let (point, point_error) = midpoint(point)?;
-    let extent = B::point(material.outer().maximum_radius_mm())
-        * frame
-            .u
-            .into_iter()
-            .chain(frame.v)
-            .fold(B::ZERO, |s, v| s + B::point(v.abs()));
-    let error =
-        B::point(point_error) * (B::ONE + B::point(normal_error)) + B::point(normal_error) * extent;
-    if normal_error > 1e-12 || !error.valid() || error.hi > policy.linear_tolerance_mm / 8. {
-        return Err(refused());
-    }
-    policy.point(point)?;
-    Ok(Some((point, normal)))
+    crate::geometry::source_face_measure::plane(
+        frame,
+        B::point(z),
+        material.outer().maximum_radius_mm(),
+        face == FaceKey::EndCap,
+        policy,
+    )
+    .map(Some)
 }
+
 impl WoodInsertMaterial {
     /// Source-role descriptors only; no finite boundary incidence is implied.
     pub fn faces(
