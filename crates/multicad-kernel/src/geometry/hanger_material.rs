@@ -3,7 +3,9 @@
 use super::internal_thread_treatment_body::interval::Interval as I;
 use super::*;
 use multicad_rust_kernel::authored_hanger_bolt::{self as source, Hanger, QueryOptions};
+mod faces;
 mod mesh;
+pub use faces::HangerFaceProperties;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HangerMaterial {
@@ -110,6 +112,8 @@ impl HangerMaterial {
     }
 }
 
+#[cfg(test)]
+mod face_tests;
 #[cfg(test)]
 mod mesh_tests;
 #[cfg(test)]

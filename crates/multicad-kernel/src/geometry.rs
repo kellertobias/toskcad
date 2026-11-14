@@ -26,7 +26,7 @@ pub use wood_insert_body::WoodInsertData;
 mod wood_insert_material;
 pub use wood_insert_material::{WoodInsertFaceProperties, WoodInsertMaterial};
 mod hanger_material;
-pub use hanger_material::HangerMaterial;
+pub use hanger_material::{HangerFaceProperties, HangerMaterial};
 mod hanger_body;
 mod source_face_measure;
 use hanger_body::HangerBody;
@@ -2045,8 +2045,8 @@ impl Solid {
         crate::planar_contours::extract(self, face, frame, self.policy)
     }
     pub fn faces(&self) -> Result<Vec<Face>, GeometryError> {
-        if let Some((body, _)) = self.hanger_body() {
-            return Err(body.references_pending());
+        if let Some((body, frame)) = self.hanger_body() {
+            return body.material(frame, self.policy)?.faces(self.policy, None);
         }
         if let Some((body, frame)) = self.wood_insert_body() {
             return body.material(frame, self.policy)?.faces(self.policy, None);

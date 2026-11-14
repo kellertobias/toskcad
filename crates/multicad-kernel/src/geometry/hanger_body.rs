@@ -89,11 +89,4 @@ impl HangerBody {
         )?;
         Ok(bounds[0].midpoint(bounds[1]))
     }
-    pub(crate) fn references_pending(&self) -> GeometryError {
-        error(
-            "Rust hanger face measures",
-            GeometryErrorKind::Unsupported,
-            "Connected Hanger faces need qualified source area and centroid measures",
-        )
-    }
 }

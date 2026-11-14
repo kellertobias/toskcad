@@ -73,7 +73,7 @@ fn connected_hanger_solid_retains_source_through_share_and_actual_pose() {
 }
 
 #[test]
-fn incomplete_hanger_interfaces_refuse_without_occt_or_partial_files() {
+fn hanger_step_refuses_without_occt_or_partial_files() {
     let source = source(false, false);
     let feature = EntityId::new();
     let policy = GeometryPolicy::default();
@@ -98,9 +98,7 @@ fn incomplete_hanger_interfaces_refuse_without_occt_or_partial_files() {
         GeometryErrorKind::Cancelled
     );
     let solid = Solid::rust_hanger(source, feature, PlaneFrame::default(), policy, None).unwrap();
-    let failure = solid.faces().unwrap_err();
-    assert_eq!(failure.kind, GeometryErrorKind::Unsupported);
-    assert_eq!(failure.operation, "Rust hanger face measures");
+    assert_eq!(solid.faces().unwrap().len(), 13);
     solid
         .topology_snapshot(feature, 0)
         .unwrap()
