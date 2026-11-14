@@ -460,7 +460,9 @@ fn rust_spur_reports_unavailable_geometry_before_recipe_commit() {
     let parameters = GearParameters {
         family: GearFamily::DoubleHelical,
         hand: GearHand::Right,
-        helix_angle: angle(15.),
+        // The bands of this double-helical gear twist less than the Rust
+        // provider can certify, so its geometry is refused.
+        helix_angle: angle(1e-7),
         center_gap: length(1.),
         ..request.parameters
     };
@@ -474,7 +476,7 @@ fn rust_spur_reports_unavailable_geometry_before_recipe_commit() {
     assert!(
         error
             .message
-            .starts_with("Rust gear geometry currently requires"),
+            .contains("Invalid analytic twisted gear profile"),
         "{error}"
     );
     assert_eq!(session.revision(), 1);
