@@ -2,10 +2,12 @@
 //! carrier, manufacturing mesh, STEP body or independently decoded mass.
 use super::*;
 use std::mem::size_of;
+mod jets;
 mod sample;
 #[cfg(test)]
 mod tests;
 mod volume;
+pub use jets::{StockClipJets, StockClipPatchLaw};
 pub use sample::{StockClipPoint, StockClipSample};
 pub use volume::StockClipVolume;
 const SCRATCH: usize = 16 * 1024;

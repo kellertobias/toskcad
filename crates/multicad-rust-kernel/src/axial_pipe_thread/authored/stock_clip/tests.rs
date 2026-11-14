@@ -739,3 +739,188 @@ fn every_actual_source_query_stage_honors_work_bytes_and_cancellation() {
     }
     assert_eq!(*plan.source(), source);
 }
+#[test]
+fn mixed_source_jets_keep_original_chart_and_match_independent_differences() {
+    let mut spec = super::super::tests::source(1. / 32.).spec();
+    spec.crest_radius_limit_mm = Some(0.405 * 25.4 / 2.);
+    let source = AuthoredThread::new(spec, 1e-7, 1e-5).unwrap();
+    let plan = source
+        .stock_clip_plan(StockClipOptions::default(), None)
+        .unwrap();
+    let opt = StockClipOptions::default();
+    let mid = |p: StockClipPoint| p.position_mm().map(|a| a[0] + (a[1] - a[0]) * 0.5);
+    for patch in plan.patches() {
+        let law = plan.patch_law(patch, opt, None).unwrap();
+        assert!(std::ptr::eq(law.plan(), &plan));
+        assert_eq!(law.patch(), patch);
+        let (u, v, h) = (0.37, 0.43, 1e-5);
+        let jet = law.jets([u, u], [v, v], opt, None).unwrap();
+        assert_eq!(
+            jet.sample().point().position_mm(),
+            plan.point_bounds(patch, [u, u], [v, v], opt, None)
+                .unwrap()
+                .position_mm()
+        );
+        let p = |a, b| mid(plan.point_bounds(patch, [a, a], [b, b], opt, None).unwrap());
+        let center = p(u, v);
+        let up = p(u + h, v);
+        let um = p(u - h, v);
+        let vp = p(u, v + h);
+        let vm = p(u, v - h);
+        let pp = p(u + h, v + h);
+        let pm = p(u + h, v - h);
+        let mp = p(u - h, v + h);
+        let mm = p(u - h, v - h);
+        let derivatives = [
+            (
+                jet.du(),
+                std::array::from_fn::<_, 3, _>(|i| (up[i] - um[i]) / (2. * h)),
+            ),
+            (
+                jet.dv(),
+                std::array::from_fn(|i| (vp[i] - vm[i]) / (2. * h)),
+            ),
+            (
+                jet.duu(),
+                std::array::from_fn(|i| (up[i] - 2. * center[i] + um[i]) / (h * h)),
+            ),
+            (
+                jet.duv(),
+                std::array::from_fn(|i| (pp[i] - pm[i] - mp[i] + mm[i]) / (4. * h * h)),
+            ),
+            (
+                jet.dvv(),
+                std::array::from_fn(|i| (vp[i] - 2. * center[i] + vm[i]) / (h * h)),
+            ),
+        ];
+        for (bound, fd) in derivatives {
+            for i in 0..3 {
+                let allowance = 1e-3 * (1. + fd[i].abs());
+                assert!(
+                    fd[i] >= bound[i][0] - allowance && fd[i] <= bound[i][1] + allowance,
+                    "{patch:?} {bound:?} {fd:?}"
+                );
+            }
+        }
+        let broad = law.jets([u - h, u + h], [v - h, v + h], opt, None).unwrap();
+        for (outer, inner) in [
+            (broad.du(), jet.du()),
+            (broad.dv(), jet.dv()),
+            (broad.duu(), jet.duu()),
+            (broad.duv(), jet.duv()),
+            (broad.dvv(), jet.dvv()),
+        ] {
+            for i in 0..3 {
+                assert!(outer[i][0] <= inner[i][0] && outer[i][1] >= inner[i][1]);
+            }
+        }
+        for (u, v) in [(0., 0.), (1., 0.), (0., 1.), (1., 1.)] {
+            let j = law.jets([u, u], [v, v], opt, None).unwrap();
+            assert_eq!(
+                j.sample().point().position_mm(),
+                plan.point_bounds(patch, [u, u], [v, v], opt, None)
+                    .unwrap()
+                    .position_mm()
+            );
+        }
+    }
+}
+#[test]
+fn mixed_source_jet_queries_keep_work_bytes_cancel_and_invalid_domain_boundaries() {
+    let mut spec = super::super::tests::source(1. / 32.).spec();
+    spec.crest_radius_limit_mm = Some(0.405 * 25.4 / 2.);
+    let source = AuthoredThread::new(spec, 1e-7, 1e-5).unwrap();
+    let options = StockClipOptions::default();
+    let plan = source.stock_clip_plan(options, None).unwrap();
+    let patch = plan.patches()[0];
+    let law = plan.patch_law(patch, options, None).unwrap();
+    let jet = law.jets([0.2, 0.4], [0.3, 0.5], options, None).unwrap();
+    for (work, bytes) in [
+        (law.work_used(), law.retained_budget_bytes()),
+        (jet.work_used(), jet.retained_budget_bytes()),
+    ] {
+        assert!(work > 128 && bytes > plan.retained_budget_bytes());
+    }
+    assert!(matches!(
+        plan.patch_law(
+            patch,
+            StockClipOptions {
+                maximum_work: law.work_used() - 1,
+                ..options
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    assert!(
+        plan.patch_law(
+            patch,
+            StockClipOptions {
+                maximum_work: law.work_used(),
+                maximum_bytes: law.retained_budget_bytes()
+            },
+            None
+        )
+        .is_ok()
+    );
+    assert!(matches!(
+        plan.patch_law(
+            patch,
+            StockClipOptions {
+                maximum_bytes: law.retained_budget_bytes() - 1,
+                ..options
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    assert!(matches!(
+        plan.patch_law(patch, options, Some(&|| true)),
+        Err(Error::Cancelled)
+    ));
+    assert!(matches!(
+        law.jets([-0.1, 0.], [0., 1.], options, None),
+        Err(Error::Invalid)
+    ));
+    assert!(matches!(
+        law.jets([0., 1.], [0., 1.], options, Some(&|| true)),
+        Err(Error::Cancelled)
+    ));
+    assert!(matches!(
+        law.jets(
+            [0.2, 0.4],
+            [0.3, 0.5],
+            StockClipOptions {
+                maximum_work: jet.work_used() - 1,
+                ..options
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    assert!(
+        law.jets(
+            [0.2, 0.4],
+            [0.3, 0.5],
+            StockClipOptions {
+                maximum_work: jet.work_used(),
+                maximum_bytes: jet.retained_budget_bytes()
+            },
+            None
+        )
+        .is_ok()
+    );
+    assert!(matches!(
+        law.jets(
+            [0.2, 0.4],
+            [0.3, 0.5],
+            StockClipOptions {
+                maximum_bytes: jet.retained_budget_bytes() - 1,
+                ..options
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    assert_eq!(*plan.source(), source);
+}

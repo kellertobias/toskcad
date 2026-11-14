@@ -7,9 +7,9 @@ mod boundary;
 mod stock_clip;
 pub use boundary::RawAuthoredBoundary;
 pub use stock_clip::{
-    StockClipBand, StockClipCoedge, StockClipCurve, StockClipFace, StockClipOptions,
-    StockClipPatch, StockClipPlan, StockClipPoint, StockClipRail, StockClipSample, StockClipSlab,
-    StockClipStation, StockClipVertex, StockClipVolume,
+    StockClipBand, StockClipCoedge, StockClipCurve, StockClipFace, StockClipJets, StockClipOptions,
+    StockClipPatch, StockClipPatchLaw, StockClipPlan, StockClipPoint, StockClipRail,
+    StockClipSample, StockClipSlab, StockClipStation, StockClipVertex, StockClipVolume,
 };
 #[cfg(test)]
 mod tests;

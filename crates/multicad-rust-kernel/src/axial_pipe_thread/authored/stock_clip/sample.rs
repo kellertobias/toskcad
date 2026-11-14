@@ -45,7 +45,7 @@ impl StockClipSample {
         self.normal
     }
 }
-fn unit_parameter(p: [f64; 2]) -> Result<I, Error> {
+pub(super) fn unit_parameter(p: [f64; 2]) -> Result<I, Error> {
     let p = interval(p)?;
     if p.lo < 0. || p.hi > 1. {
         return Err(Error::Invalid);
