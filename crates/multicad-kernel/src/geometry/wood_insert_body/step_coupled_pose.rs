@@ -3,7 +3,7 @@
 //! and source raw frame remain separate authorities.
 use super::step::{fail, read_error};
 use super::*;
-use multicad_rust_kernel::{step_read::owned_insert as read, wood_insert::Side};
+use multicad_rust_kernel::wood_insert::Side;
 fn interval([lo, hi]: [f64; 2]) -> B {
     B::new(lo, hi)
 }
@@ -24,20 +24,69 @@ fn root_sum(s: B) -> Result<f64, GeometryError> {
 fn norm(v: [B; 3]) -> Result<f64, GeometryError> {
     root_sum(v.into_iter().fold(B::ZERO, |s, x| s + x.square()))
 }
-pub(super) fn transport(
-    source: &source::Insert,
-    frame: PlaneFrame,
-    boundary: &source::Boundary,
-    mapping: &read::PhysicalMapping<'_, '_>,
-    mut proof: WoodInsertStepVerification,
-    interrupt: Option<&dyn Fn() -> bool>,
-) -> Result<WoodInsertStepVerification, GeometryError> {
-    if mapping.handedness().map_err(read_error)? != 1 {
+// Transfer a nonnegative source-error bound through a measured operator
+// difference. Overflow is a numerical refusal, never a cleared uncertainty.
+fn propagated_error(previous: f64, operator: f64, bound: f64) -> Result<f64, GeometryError> {
+    // Exact unit transport needs no multiplication reserve; this preserves
+    // the original C0 addition order/bounds as well as its physical units.
+    let transferred = if operator == 1. {
+        B::point(bound)
+    } else {
+        B::point(operator) * B::point(bound)
+    };
+    let result = B::point(previous) + transferred;
+    Ok(checked(result)?.hi)
+}
+// These numeric stages are also defined for finite transport inputs beyond
+// admitted frame magnitudes: unrepresentable output must refuse, not saturate.
+fn matrix_norm(delta: [[B; 3]; 3]) -> Result<f64, GeometryError> {
+    root_sum(
+        delta
+            .into_iter()
+            .flatten()
+            .fold(B::ZERO, |s, x| s + x.square()),
+    )
+}
+fn derivative_errors(
+    previous: [f64; 2],
+    matrix: f64,
+    derivative: f64,
+    ruling: f64,
+) -> Result<[f64; 2], GeometryError> {
+    let row = propagated_error(previous[0], matrix, derivative)?;
+    propagated_error(previous[1], matrix, ruling).map(|ruling| [row, ruling])
+}
+fn scaled_volume(volume: B, scale: B) -> Result<B, GeometryError> {
+    checked(volume * scale)
+}
+fn source_determinant(frame: PlaneFrame) -> Result<B, GeometryError> {
+    let [u, v, n] = [frame.u, frame.v, frame.normal()].map(|a| a.map(B::point));
+    let cross = [
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+    ];
+    let det = checked((0..3).fold(B::ZERO, |s, k| s + cross[k] * n[k]))?;
+    if det.lo <= 0. {
         return Err(fail(
-            GeometryErrorKind::InvalidResult,
-            "Insert mapping reverses material orientation",
+            GeometryErrorKind::Unsupported,
+            "Source frame determinant is unresolved",
         ));
     }
+    Ok(det)
+}
+pub(super) fn transport(
+    frame: PlaneFrame,
+    local: super::step_coupled::QualifiedLocal<'_, '_, '_, '_>,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<WoodInsertStepVerification, GeometryError> {
+    // The private local receipt earned SAME-mapping handedness==1 in
+    // owned_insert/correspondence/coupled.rs before publication. It also
+    // carries the source/boundary and raw, not already world, verification.
+    let source = local.source();
+    let boundary = local.boundary();
+    let mapping = local.mapping();
+    let mut proof = local.proof();
     // The caller earned ACTUAL scale == owned coefficient unit exactly.
     // Work in physical-local mm: normalized EXPRESS columns are orthogonal,
     // so their exact Euclidean operator norm is one (not the tiny grid scale).
@@ -52,8 +101,8 @@ pub(super) fn transport(
             s + delta[j][k] * bounds[j]
         })
     });
-    let position =
-        checked(B::point(norm(placement)?) + B::point(proof.maximum_position_error_mm))?.hi;
+    let placement_error = norm(placement)?;
+    let position = propagated_error(proof.maximum_position_error_mm, 1., placement_error)?;
     if position > proof.verified_tolerance_mm {
         return Err(fail(
             GeometryErrorKind::InvalidResult,
@@ -61,27 +110,18 @@ pub(super) fn transport(
         ));
     }
     // Frobenius norm bounds the actual linear-map difference in every direction.
-    let matrix = root_sum(
-        delta
-            .into_iter()
-            .flatten()
-            .fold(B::ZERO, |s, x| s + x.square()),
-    )?;
+    let matrix = matrix_norm(delta)?;
     let mut derivative = 0_f64;
-    let mut work = 0usize;
+    // BoundaryOptions::validate (authored_internal_treatment/mesh/boundary/api.rs)
+    // caps each sealed component at 8192 source curves. Even counting both
+    // independently gives 2*8192*128=2,097,152 logical units, below 16M.
+    // The insert constructor also subtracts outer curves from inner's budget.
     for side in [Side::Outer, Side::Inner] {
         for (_, curve) in boundary.source_boundary(side).source_curves() {
             if interrupt.is_some_and(|f| f()) {
                 return Err(fail(
                     GeometryErrorKind::Cancelled,
                     "Coupled source derivative verification superseded",
-                ));
-            }
-            work = work.saturating_add(128);
-            if work > 16_000_000 {
-                return Err(fail(
-                    GeometryErrorKind::Limit,
-                    "Coupled source derivative work limit",
                 ));
             }
             // This is the ORIGINAL immutable curve's affine r/z/turn law,
@@ -94,36 +134,22 @@ pub(super) fn transport(
             derivative = derivative.max(root_sum(squared)?);
         }
     }
-    let row_error = checked(
-        B::point(proof.maximum_row_derivative_error_mm) + B::point(matrix) * B::point(derivative),
-    )?
-    .hi;
     let ruling_bound = norm(bounds.map(|b| B::point(b.hi) - B::point(b.lo)))?;
-    let ruling_error = checked(
-        B::point(proof.maximum_ruling_derivative_error_mm)
-            + B::point(matrix) * B::point(ruling_bound),
-    )?
-    .hi;
+    let [row_error, ruling_error] = derivative_errors(
+        [
+            proof.maximum_row_derivative_error_mm,
+            proof.maximum_ruling_derivative_error_mm,
+        ],
+        matrix,
+        derivative,
+        ruling_bound,
+    )?;
     // Source frame has literal u/v/cross columns. Its actual determinant is
     // independent of STEP's normalized orthogonal operator and uniform scale.
-    let [u, v, n] = actual.map(|a| a.map(B::point));
-    let cross = [
-        u[1] * v[2] - u[2] * v[1],
-        u[2] * v[0] - u[0] * v[2],
-        u[0] * v[1] - u[1] * v[0],
-    ];
-    let det = checked((0..3).fold(B::ZERO, |s, k| s + cross[k] * n[k]))?;
-    if det.lo <= 0. {
-        return Err(fail(
-            GeometryErrorKind::Unsupported,
-            "Source frame determinant is unresolved",
-        ));
-    }
-    let decoded = checked(
-        interval(proof.decoded_volume_bounds_mm3)
-            * interval(mapping.volume_scale_bounds().map_err(read_error)?),
-    )?;
-    let source_volume = checked(interval(proof.source_volume_bounds_mm3) * det)?;
+    let det = source_determinant(frame)?;
+    let decoded_scale = interval(mapping.volume_scale_bounds().map_err(read_error)?);
+    let decoded = scaled_volume(interval(proof.decoded_volume_bounds_mm3), decoded_scale)?;
+    let source_volume = scaled_volume(interval(proof.source_volume_bounds_mm3), det)?;
     let local = [proof.decoded_bounds_mm[0], proof.decoded_bounds_mm[1]];
     let mapped = mapping
         .map_box_mm(std::array::from_fn(|k| [local[0][k], local[1][k]]))
@@ -141,4 +167,42 @@ pub(super) fn transport(
         ));
     }
     Ok(proof)
+}
+
+#[cfg(test)]
+mod controls {
+    use super::*;
+    #[test]
+    fn actual_numeric_metric_and_error_transport_refuse_unrepresentable_bounds() {
+        let rounded_zero = root_sum(B::new(-f64::from_bits(1), 0.)).unwrap();
+        assert!((0. ..=f64::from_bits(1)).contains(&rounded_zero));
+        assert!(norm([B::point(3.), B::point(4.), B::point(0.)]).unwrap() >= 5.);
+        assert!(norm([B::point(f64::MAX); 3]).is_err());
+        assert!(checked(B::new(f64::NAN, 1.)).is_err());
+        assert!(propagated_error(f64::MAX, 2., f64::MAX).is_err());
+        assert!(propagated_error(0.1, 1., 0.2).unwrap() >= 0.1 + 0.2);
+        assert!(propagated_error(0.1, 0.5, 0.4).unwrap() >= 0.1 + 0.2);
+        assert!(matrix_norm([[B::point(f64::MAX); 3]; 3]).is_err());
+        assert!(matrix_norm([[B::ZERO; 3]; 3]).unwrap() < 1e-100);
+        assert!(derivative_errors([0., 0.], 2., f64::MAX, 1.).is_err());
+        assert!(derivative_errors([0., 0.], 2., 1., f64::MAX).is_err());
+        let errors = derivative_errors([0.1, 0.2], 0.5, 0.4, 0.6).unwrap();
+        assert!(errors[0] >= 0.3 && errors[1] >= 0.5);
+        assert!(scaled_volume(B::point(f64::MAX), B::point(2.)).is_err());
+        let scaled = scaled_volume(B::point(2.), B::point(3.)).unwrap();
+        assert!(scaled.lo <= 6. && scaled.hi >= 6.);
+        let det = source_determinant(PlaneFrame {
+            u: [1. + 1e-10, 0., 0.],
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(det.lo > 1.);
+        assert!(
+            source_determinant(PlaneFrame {
+                u: [0.; 3],
+                ..Default::default()
+            })
+            .is_err()
+        );
+    }
 }

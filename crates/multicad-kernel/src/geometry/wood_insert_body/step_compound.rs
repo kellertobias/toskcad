@@ -156,15 +156,10 @@ impl Solid {
                         Err(previous) => {
                             body.material(frame, policy)?;
                             body.with_coupled_plan(policy, interrupt, |topology| {
-                                let bytes = BYTES
-                                    .checked_sub(topology.retained_bytes().saturating_add(8192))
-                                    .filter(|&n| n > 0)
-                                    .ok_or_else(|| {
-                                        fail(
-                                            GeometryErrorKind::Limit,
-                                            "Coupled member proof storage limit",
-                                        )
-                                    })?;
+                                let scope = super::step_coupled::selected_scope(
+                                    topology, 0, 8192, BYTES, frame, policy,
+                                )?;
+                                let bytes = scope.available;
                                 let options = read::Options {
                                     retained_budget_bytes: bytes,
                                     ..Default::default()
@@ -183,16 +178,7 @@ impl Solid {
                                     .physical_mapping(link.operator_entity(), options, interrupt)
                                     .map_err(read_error)?;
                                 body.verify_coupled_parsed(
-                                    topology,
-                                    parsed,
-                                    &mapping,
-                                    super::step_coupled::ParsedProofScope {
-                                        available: bytes,
-                                        fixed: 8192,
-                                        frame,
-                                        policy,
-                                    },
-                                    interrupt,
+                                    topology, parsed, &mapping, scope, interrupt,
                                 )
                             })
                             .map_err(|alternative| {

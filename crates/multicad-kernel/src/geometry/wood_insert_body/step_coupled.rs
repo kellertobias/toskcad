@@ -39,11 +39,73 @@ pub(super) fn preserve_failure(
         _ => previous,
     }
 }
+#[derive(Clone, Copy)]
 pub(super) struct ParsedProofScope {
     pub available: usize,
     pub fixed: usize,
     pub frame: PlaneFrame,
     pub policy: GeometryPolicy,
+}
+/// Published only after the same actual mapping/material/source correspondence
+/// and independent raw flux have all succeeded. Keep their binding together.
+#[derive(Clone)]
+pub(super) struct QualifiedLocal<'s, 'm, 'p, 'i> {
+    source: &'s source::Insert,
+    boundary: &'s source::Boundary,
+    mapping: &'m read::PhysicalMapping<'p, 'i>,
+    proof: WoodInsertStepVerification,
+}
+impl<'s, 'm, 'p, 'i> QualifiedLocal<'s, 'm, 'p, 'i> {
+    pub(super) fn source(&self) -> &'s source::Insert {
+        self.source
+    }
+    pub(super) fn boundary(&self) -> &'s source::Boundary {
+        self.boundary
+    }
+    pub(super) fn mapping(&self) -> &'m read::PhysicalMapping<'p, 'i> {
+        self.mapping
+    }
+    pub(super) fn proof(self) -> WoodInsertStepVerification {
+        self.proof
+    }
+}
+// Selected topology, owned candidate slack and proof payload share this cap.
+// CompoundDocument separately bounds its whole-document arena at 512 MiB;
+// this selected-proof contract is not a whole-query or RSS bound.
+pub(super) fn selected_scope(
+    topology: &CoupledTopology<'_, '_>,
+    slack: usize,
+    reserve: usize,
+    maximum: usize,
+    frame: PlaneFrame,
+    policy: GeometryPolicy,
+) -> Result<ParsedProofScope, GeometryError> {
+    if maximum > BYTES {
+        return Err(input(
+            "Selected insert arena cannot raise its hard byte cap",
+        ));
+    }
+    let fixed = slack.checked_add(reserve);
+    let (fixed, available) = fixed
+        .and_then(|fixed| {
+            maximum
+                .checked_sub(topology.retained_bytes())
+                .and_then(|left| left.checked_sub(fixed))
+                .filter(|&left| left > 0)
+                .map(|left| (fixed, left))
+        })
+        .ok_or_else(|| {
+            fail(
+                GeometryErrorKind::Limit,
+                "Coupled source leaves no selected-file arena",
+            )
+        })?;
+    Ok(ParsedProofScope {
+        available,
+        fixed,
+        frame,
+        policy,
+    })
 }
 impl WoodInsertBody {
     pub(super) fn with_coupled_plan<T>(
@@ -75,16 +137,15 @@ impl WoodInsertBody {
         policy: GeometryPolicy,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<WoodInsertStepVerification, GeometryError> {
-        let fixed = SCRATCH + size_of::<WoodInsertStepVerification>() + slack;
-        let available = BYTES
-            .checked_sub(topology.retained_bytes().saturating_add(fixed))
-            .filter(|&n| n > 0)
-            .ok_or_else(|| {
-                fail(
-                    GeometryErrorKind::Limit,
-                    "Coupled source leaves no selected-file arena",
-                )
-            })?;
+        let scope = selected_scope(
+            topology,
+            slack,
+            SCRATCH + size_of::<WoodInsertStepVerification>(),
+            BYTES,
+            frame,
+            policy,
+        )?;
+        let available = scope.available;
         let options = read::Options {
             maximum_work: WORK,
             retained_budget_bytes: available,
@@ -111,18 +172,7 @@ impl WoodInsertBody {
         let mapping = actual
             .physical_mapping(link.operator_entity(), options, interrupt)
             .map_err(read_error)?;
-        self.verify_coupled_parsed(
-            topology,
-            actual,
-            &mapping,
-            ParsedProofScope {
-                available,
-                fixed,
-                frame,
-                policy,
-            },
-            interrupt,
-        )
+        self.verify_coupled_parsed(topology, actual, &mapping, scope, interrupt)
     }
     pub(super) fn verify_coupled_parsed(
         &self,
@@ -132,10 +182,21 @@ impl WoodInsertBody {
         scope: ParsedProofScope,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<WoodInsertStepVerification, GeometryError> {
+        let proof = self.coupled_local_proof(topology, actual, mapping, scope, interrupt)?;
+        super::step_coupled_pose::transport(scope.frame, proof, interrupt)
+    }
+    pub(super) fn coupled_local_proof<'s, 'm, 'p, 'i>(
+        &'s self,
+        topology: &CoupledTopology<'_, '_>,
+        actual: &read::Parsed<'_>,
+        mapping: &'m read::PhysicalMapping<'p, 'i>,
+        scope: ParsedProofScope,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<QualifiedLocal<'s, 'm, 'p, 'i>, GeometryError> {
         let ParsedProofScope {
             available,
             fixed,
-            frame,
+            frame: _,
             policy,
         } = scope;
         let options = read::Options {
@@ -196,14 +257,12 @@ impl WoodInsertBody {
             maximum_ruling_derivative_error_mm: correspondence.ruling_derivative_error_mm(),
             verified_tolerance_mm: policy.linear_tolerance_mm,
         };
-        super::step_coupled_pose::transport(
-            &self.source,
-            frame,
-            self.boundary(),
+        Ok(QualifiedLocal {
+            source: &self.source,
+            boundary: self.boundary(),
             mapping,
             proof,
-            interrupt,
-        )
+        })
     }
     pub(super) fn append_coupled_step(
         &self,
@@ -216,27 +275,39 @@ impl WoodInsertBody {
             let text = topology
                 .write_mapped_candidate(frame.origin, frame.u, frame.v, WORK, BYTES, None)
                 .map_err(plan_error)?;
-            self.verify_coupled_candidate(
-                topology,
-                &text,
-                text.capacity() - text.len(),
-                frame,
-                policy,
-                None,
-            )?;
-            drop(text);
-            writer
-                .append_coupled_insert_candidate(
-                    topology,
-                    frame.origin,
-                    frame.u,
-                    frame.v,
-                    WORK,
-                    BYTES,
-                    None,
-                )
-                .map_err(plan_error)
+            self.append_verified_candidate(topology, text, frame, policy, writer)
         })
+    }
+    // Own the actual candidate through verification, then release its buffers
+    // BEFORE publishing the independently proved topology into the writer.
+    fn append_verified_candidate(
+        &self,
+        topology: &CoupledTopology<'_, '_>,
+        text: String,
+        frame: PlaneFrame,
+        policy: GeometryPolicy,
+        writer: &mut step::Writer,
+    ) -> Result<(), GeometryError> {
+        self.verify_coupled_candidate(
+            topology,
+            &text,
+            text.capacity() - text.len(),
+            frame,
+            policy,
+            None,
+        )?;
+        drop(text);
+        writer
+            .append_coupled_insert_candidate(
+                topology,
+                frame.origin,
+                frame.u,
+                frame.v,
+                WORK,
+                BYTES,
+                None,
+            )
+            .map_err(plan_error)
     }
     pub(super) fn verify_coupled_step(
         &self,
@@ -251,3 +322,6 @@ impl WoodInsertBody {
         })
     }
 }
+
+#[cfg(test)]
+mod controls;

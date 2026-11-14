@@ -9,7 +9,7 @@ use multicad_rust_kernel::{
     },
     step_read::owned_insert::{CompoundDocument, DocumentOptions, FluxOptions, Options},
 };
-fn actual_source(length: f64, left: bool) -> source::Insert {
+pub(super) fn actual_source(length: f64, left: bool) -> source::Insert {
     let original = crate::geometry::wood_insert_world_tests::source(left);
     let quality = SourceOptions {
         position_limit_mm: 1e-7,
