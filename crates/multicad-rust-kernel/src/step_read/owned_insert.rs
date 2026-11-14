@@ -8,7 +8,9 @@ use std::{collections::BTreeMap, mem::size_of, sync::Arc};
 mod correspondence;
 pub use correspondence::{CorrespondenceOptions, SourceCorrespondence};
 mod file;
-pub use file::{File, MappingLink, Member, MemberDocument};
+pub use file::{
+    CompoundDocument, DocumentOptions, File, MappingLink, Member, MemberDocument, MemberPacket,
+};
 mod bindings;
 mod flux;
 pub use flux::{FluxOptions, OccupiedVolume, OrientedFlux};

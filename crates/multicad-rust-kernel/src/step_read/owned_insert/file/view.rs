@@ -103,13 +103,24 @@ impl<'input> File<'input> {
         options: Options,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<MemberDocument<'a, 'input>> {
+        self.member_document_scoped(item, options, interrupt, self.work, self.bytes)
+    }
+    pub(super) fn member_document_scoped<'a>(
+        &'a self,
+        item: u32,
+        options: Options,
+        interrupt: Option<&dyn Fn() -> bool>,
+        initial_work: usize,
+        source_bytes: usize,
+    ) -> Result<MemberDocument<'a, 'input>> {
         valid(options)?;
         let mut w = Ledger {
             used: 0,
             remaining: options.maximum_work,
             interrupt,
         };
-        w.step(self.work)?;
+        w.step(initial_work)?;
+        w.step(self.members.len())?;
         let member = *self
             .members
             .iter()
@@ -127,9 +138,7 @@ impl<'input> File<'input> {
         let set_bytes = (1 + self.entities.len() / 5)
             .saturating_mul(20 * size_of::<usize>() + 11 * size_of::<u32>());
         let pending_bytes = self.entities.len().saturating_mul(size_of::<u32>());
-        let fixed = self
-            .bytes
-            .saturating_add(size_of::<MemberDocument<'_, '_>>());
+        let fixed = source_bytes.saturating_add(size_of::<MemberDocument<'_, '_>>());
         if fixed
             .saturating_add(set_bytes)
             .saturating_add(pending_bytes)

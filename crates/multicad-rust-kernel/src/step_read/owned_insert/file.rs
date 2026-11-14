@@ -1,7 +1,9 @@
 //! One original represented file arena shared by explicit member queries.
 use super::*;
 use std::collections::BTreeSet;
+mod document;
 mod representation;
+pub use document::{CompoundDocument, DocumentOptions, MemberPacket};
 mod view;
 pub use representation::{MappingLink, Member};
 pub use view::MemberDocument;
@@ -33,9 +35,22 @@ impl<'input> File<'input> {
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Self> {
         valid(options)?;
+        Self::parse_scoped(
+            input,
+            options.maximum_work,
+            options.retained_budget_bytes,
+            interrupt,
+        )
+    }
+    fn parse_scoped(
+        input: &'input str,
+        maximum_work: usize,
+        maximum_bytes: usize,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Self> {
         let mut w = Ledger {
             used: 0,
-            remaining: options.maximum_work,
+            remaining: maximum_work,
             interrupt,
         };
         w.step(input.len())?;
@@ -47,7 +62,7 @@ impl<'input> File<'input> {
                 + size_of::<BTreeMap<u32, Vec<Entity<'_>>>>()
                 + 2 * size_of::<usize>(),
         );
-        if bytes > options.retained_budget_bytes {
+        if bytes > maximum_bytes {
             return Err(Error::Limit);
         }
         for records in entities.values() {
@@ -76,7 +91,7 @@ impl<'input> File<'input> {
         bytes = bytes
             .saturating_add(solids.capacity() * size_of::<u32>())
             .saturating_add(members.capacity() * size_of::<Member>());
-        if bytes > options.retained_budget_bytes {
+        if bytes > maximum_bytes {
             return Err(Error::Limit);
         }
         w.step(1)?;

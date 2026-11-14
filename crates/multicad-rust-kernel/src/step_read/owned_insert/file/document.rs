@@ -1,0 +1,263 @@
+//! Shared document storage and selected-member queries have separate budgets.
+//! The original input (at most64MiB) and full AST are charged ONCE to the
+//! document. A live packet/view is additional storage/work: its receipt does
+//! not include the document and must never be reported as the combined peak.
+use super::*;
+
+#[derive(Clone, Copy, Debug)]
+pub struct DocumentOptions {
+    pub maximum_work: usize,
+    pub retained_budget_bytes: usize,
+}
+impl Default for DocumentOptions {
+    fn default() -> Self {
+        Self {
+            maximum_work: 512_000_000,
+            retained_budget_bytes: 512 * 1024 * 1024,
+        }
+    }
+}
+/// One validated representation arena. No solid, source recipe, or mass claim.
+pub struct CompoundDocument<'input> {
+    source: File<'input>,
+}
+/// Selected original records, with immutable original representation ownership.
+/// Borrowing the document keeps its arena/input authority alive independently
+/// of the bounded packet AST. No geometry or numeric leaf is reconstructed.
+pub struct MemberPacket<'document, 'input> {
+    document: &'document CompoundDocument<'input>,
+    parsed: Parsed<'input>,
+    bytes: usize,
+}
+impl<'document, 'input> MemberPacket<'document, 'input> {
+    pub fn document(&self) -> &'document CompoundDocument<'input> {
+        self.document
+    }
+    pub fn parsed(&self) -> &Parsed<'input> {
+        &self.parsed
+    }
+    pub fn work_used(&self) -> usize {
+        self.parsed.work_used()
+    }
+    pub fn query_budget_bytes(&self) -> usize {
+        self.bytes
+    }
+}
+impl<'input> CompoundDocument<'input> {
+    pub fn parse(
+        input: &'input str,
+        options: DocumentOptions,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Self> {
+        if options.maximum_work == 0
+            || options.maximum_work > 512_000_000
+            || options.retained_budget_bytes == 0
+            || options.retained_budget_bytes > 512 * 1024 * 1024
+        {
+            return Err(Error::Invalid);
+        }
+        Ok(Self {
+            source: File::parse_scoped(
+                input,
+                options.maximum_work,
+                options.retained_budget_bytes,
+                interrupt,
+            )?,
+        })
+    }
+    pub fn represented_members(&self) -> &[Member] {
+        self.source.represented_members()
+    }
+    pub fn literal_input(&self) -> &'input str {
+        self.source.input
+    }
+    pub fn work_used(&self) -> usize {
+        self.source.work
+    }
+    pub fn retained_budget_bytes(&self) -> usize {
+        self.source.bytes
+    }
+    /// Local ordinary-member graph view. Its query ledger starts at zero;
+    /// global document work/storage is separately reported by this document.
+    pub fn local_member_document<'a>(
+        &'a self,
+        item: u32,
+        options: Options,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<MemberDocument<'a, 'input>> {
+        self.source
+            .member_document_scoped(item, options, interrupt, 0, 0)
+    }
+    /// Decode ONLY the selected actual dependency closure. Original IDs,
+    /// component/numeric slices, source origin and map/operator are retained.
+    /// The unchanged16M/64MiB packet limits include closure scratch, copied AST
+    /// and decoded arrays; document storage/work is an additional live scope.
+    pub fn member_packet<'a>(
+        &'a self,
+        item: u32,
+        options: Options,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<MemberPacket<'a, 'input>> {
+        valid(options)?;
+        let mut w = Ledger {
+            used: 0,
+            remaining: options.maximum_work,
+            interrupt,
+        };
+        w.step(self.source.members.len())?;
+        let member = *self
+            .source
+            .members
+            .iter()
+            .find(|m| m.item_entity() == item)
+            .ok_or(Error::Unsupported)?;
+        let count = self.source.entities.len();
+        let set_bytes =
+            (1 + count / 5).saturating_mul(20 * size_of::<usize>() + 11 * size_of::<u32>());
+        let pending_bytes = count.saturating_mul(size_of::<u32>());
+        let fixed = size_of::<File<'_>>()
+            + size_of::<MemberPacket<'_, '_>>()
+            + size_of::<BTreeMap<u32, Vec<Entity<'_>>>>()
+            + 2 * size_of::<usize>();
+        if fixed
+            .saturating_add(set_bytes)
+            .saturating_add(pending_bytes)
+            > options.retained_budget_bytes
+        {
+            return Err(Error::Limit);
+        }
+        let mut selected = BTreeSet::new();
+        let mut pending = Vec::new();
+        pending.try_reserve_exact(count).map_err(|_| Error::Limit)?;
+        if fixed
+            .saturating_add(set_bytes)
+            .saturating_add(pending.capacity() * size_of::<u32>())
+            > options.retained_budget_bytes
+        {
+            return Err(Error::Limit);
+        }
+        selected.insert(item);
+        pending.push(item);
+        while let Some(id) = pending.pop() {
+            w.step(1)?;
+            let records = self.source.entities.get(&id).ok_or(Error::Invalid)?;
+            for e in records {
+                walk(
+                    &self.source.entities,
+                    &e.args,
+                    &mut selected,
+                    &mut pending,
+                    &mut w,
+                )?;
+            }
+        }
+        drop(pending);
+        // Original nested Vec capacities are an upper bound for exact-length
+        // copies. Preflight the selected AST before allocating any copied node.
+        let mut bytes = fixed.saturating_add((1 + selected.len() / 5).saturating_mul(
+            20 * size_of::<usize>() + 11 * (size_of::<u32>() + size_of::<Vec<Entity<'_>>>()),
+        ));
+        for id in &selected {
+            bytes = bytes.saturating_add(record_bytes(&self.source.entities[id], &mut w)?);
+        }
+        if bytes.saturating_add(set_bytes) > options.retained_budget_bytes {
+            return Err(Error::Limit);
+        }
+        let mut entities = BTreeMap::new();
+        for id in &selected {
+            entities.insert(*id, copy_records(&self.source.entities[id], &mut w)?);
+        }
+        // Actual capacities, including possible allocator excess, are checked
+        // before decoded publication; the original document remains unchanged.
+        let measured = budget::arena("", &entities, &mut w)?.saturating_add(fixed);
+        let bytes = bytes.max(measured);
+        if bytes.saturating_add(set_bytes) > options.retained_budget_bytes {
+            return Err(Error::Limit);
+        }
+        drop(selected);
+        let packet = File {
+            input: self.source.input,
+            entities: Arc::new(entities),
+            solids: vec![],
+            members: vec![],
+            view: self.source.view,
+            work: 0,
+            bytes,
+        };
+        let parsed = decode(&packet, member, None, options, interrupt, w.used)?;
+        let bytes = parsed
+            .retained_budget_bytes()
+            .max(bytes.saturating_add(set_bytes))
+            .max(
+                fixed
+                    .saturating_add(set_bytes)
+                    .saturating_add(pending_bytes),
+            );
+        Ok(MemberPacket {
+            document: self,
+            parsed,
+            bytes,
+        })
+    }
+}
+fn record_bytes(records: &Vec<Entity<'_>>, w: &mut Ledger<'_>) -> Result<usize> {
+    let mut n = records.capacity().saturating_mul(size_of::<Entity<'_>>());
+    for e in records {
+        n = n.saturating_add(value_bytes(&e.args, w)?);
+    }
+    Ok(n)
+}
+fn value_bytes(values: &Vec<Value<'_>>, w: &mut Ledger<'_>) -> Result<usize> {
+    let mut n = values.capacity().saturating_mul(size_of::<Value<'_>>());
+    for v in values {
+        w.step(1)?;
+        n = n.saturating_add(match v {
+            Value::List(v) => value_bytes(v, w)?,
+            Value::Typed(e) => value_bytes(&e.args, w)?,
+            _ => 0,
+        });
+    }
+    Ok(n)
+}
+fn copy_records<'a>(records: &[Entity<'a>], w: &mut Ledger<'_>) -> Result<Vec<Entity<'a>>> {
+    let mut result = Vec::new();
+    result
+        .try_reserve_exact(records.len())
+        .map_err(|_| Error::Limit)?;
+    for e in records {
+        w.step(1)?;
+        result.push(Entity {
+            source: e.source,
+            name: e.name,
+            args: copy_values(&e.args, w)?,
+        });
+    }
+    Ok(result)
+}
+fn copy_values<'a>(values: &[Value<'a>], w: &mut Ledger<'_>) -> Result<Vec<Value<'a>>> {
+    let mut result = Vec::new();
+    result
+        .try_reserve_exact(values.len())
+        .map_err(|_| Error::Limit)?;
+    for v in values {
+        w.step(1)?;
+        result.push(match v {
+            Value::String(s) => Value::String(s),
+            Value::Enum(s) => Value::Enum(s),
+            Value::Reference(id) => Value::Reference(*id),
+            Value::Number(n) => Value::Number(*n),
+            Value::List(v) => Value::List(copy_values(v, w)?),
+            Value::Omitted => Value::Omitted,
+            Value::Derived => Value::Derived,
+            Value::Typed(e) => Value::Typed(Entity {
+                source: e.source,
+                name: e.name,
+                args: copy_values(&e.args, w)?,
+            }),
+        });
+    }
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests;
