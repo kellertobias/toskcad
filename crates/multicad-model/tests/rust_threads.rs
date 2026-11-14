@@ -37,6 +37,126 @@ fn m8_volume(length_mm: f64) -> f64 {
 }
 
 #[test]
+fn contained_thread_intersection_preserves_exact_output_history_and_independent_step() {
+    use multicad_core::model::{BooleanRequest, Operation, PrimitiveFrame};
+    use multicad_kernel::{GeometryPolicy, Solid};
+    for hand in [ThreadHand::Right, ThreadHand::Left] {
+        let mut session = Session::new(Document::new("Thread contained Boolean").unwrap()).unwrap();
+        let parameters = ThreadParameters {
+            hand,
+            frame: PrimitiveFrame {
+                origin: [length(11.), length(-7.), length(5.)],
+                u: [0.8, 0.6, 0.],
+                v: [-0.36, 0.48, 0.8],
+            },
+            ..Default::default()
+        };
+        let frame = parameters
+            .resolve(session.parameters(), ThreadMode::NewExternal)
+            .unwrap()
+            .frame;
+        let thread = ThreadRequest::new("Original M8 source", parameters);
+        session
+            .commit(
+                model::prepare_thread(&session, session.revision(), actor(), &thread)
+                    .unwrap()
+                    .prepared,
+            )
+            .unwrap();
+        let local = [0.4, 0.1, 1.];
+        let origin = std::array::from_fn(|i| {
+            length(
+                frame.origin[i]
+                    + frame.u[i] * local[0]
+                    + frame.v[i] * local[1]
+                    + frame.n[i] * local[2],
+            )
+        });
+        let small = PrimitiveRequest::new(
+            "Contained exact box",
+            PrimitiveParameters::Box {
+                size: std::array::from_fn(|_| length(0.1)),
+                frame: PrimitiveFrame {
+                    origin,
+                    u: frame.u,
+                    v: frame.v,
+                },
+            },
+        );
+        session
+            .commit(
+                model::prepare_primitive(&session, session.revision(), actor(), &small)
+                    .unwrap()
+                    .prepared,
+            )
+            .unwrap();
+        let before = session.document().clone();
+        let operation = BooleanRequest::new(
+            Operation::Intersect,
+            BodyInput {
+                body: thread.body,
+                producer: thread.feature,
+            },
+            vec![BodyInput {
+                body: small.body,
+                producer: small.feature,
+            }],
+        );
+        let prepared =
+            model::prepare_boolean(&session, session.revision(), actor(), &operation).unwrap();
+        let checked = rust(prepared.prepared.document(), session.revision() + 1);
+        assert_eq!(checked.snapshot().bodies[&thread.body], operation.feature);
+        assert!(!checked.snapshot().bodies.contains_key(&small.body));
+        let output = checked.solid(operation.feature).unwrap();
+        assert!(output.uses_rust_geometry());
+        assert!((output.volume_mm3().unwrap() - 0.001).abs() < 1e-12);
+        assert!(
+            output
+                .manufacturing_mesh_with_receipt(Default::default())
+                .unwrap()
+                .edge_pairs
+                > 0
+        );
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("actual-contained-result.step");
+        output.write_step(&path).unwrap();
+        let decoded = Solid::read_step(&path, GeometryPolicy::default()).unwrap();
+        assert!((decoded.volume_mm3().unwrap() - 0.001).abs() < 1e-12);
+        assert_eq!(*session.document(), before);
+        session.commit(prepared.prepared).unwrap();
+        let after = session.document().clone();
+        session.undo(session.revision(), actor()).unwrap();
+        assert_eq!(*session.document(), before);
+        session.redo(session.revision(), actor()).unwrap();
+        assert_eq!(*session.document(), after);
+        let mut bytes = Vec::new();
+        project_file::write(
+            &ProjectFile::new(after).unwrap(),
+            &mut bytes,
+            Default::default(),
+        )
+        .unwrap();
+        let opened = project_file::read(
+            &mut bytes.as_slice(),
+            Default::default(),
+            &project_file::supported_capabilities(),
+        )
+        .unwrap();
+        let reopened = rust(&opened.project.document, 0);
+        assert!(
+            (reopened
+                .solid(operation.feature)
+                .unwrap()
+                .volume_mm3()
+                .unwrap()
+                - 0.001)
+                .abs()
+                < 1e-12
+        );
+    }
+}
+
+#[test]
 fn long_custom_m8_keeps_geometry_and_cap_intent_through_edit_history_and_reopen() {
     let mut session = Session::new(Document::new("Rust M8 threads").unwrap()).unwrap();
     let before = session.document().clone();

@@ -1,0 +1,277 @@
+use super::*;
+
+fn spec(left: bool) -> HelicalThread {
+    HelicalThread {
+        major_radius_mm: 2.,
+        pitch_mm: 0.7,
+        length_mm: 4.2,
+        depth_mm: 0.35,
+        crest_width_mm: 0.1,
+        lower_flank_deg: 30.,
+        upper_flank_deg: 35.,
+        radial_taper: 0.,
+        starts: 1,
+        left_hand: left,
+    }
+}
+fn polygon(side: f64, reverse: bool) -> Solid {
+    let d = Rational::parse_decimal(&side.to_string()).unwrap();
+    let z = Rational::new(0, 1).unwrap();
+    let source = multicad_rust_kernel::polygon::PolygonPrism::new(
+        vec![vec![[z, z], [d, z], [d, d], [z, d]]],
+        d,
+    )
+    .unwrap();
+    let feature = EntityId::new();
+    let origins: Vec<_> = (0..4)
+        .map(|i| Origin {
+            source: feature,
+            role: format!("actual.edge.{i}"),
+        })
+        .collect();
+    Solid::from_polygon_prism_sweep(
+        source,
+        PlaneFrame::default(),
+        reverse,
+        feature,
+        &origins,
+        &[false; 4],
+        GeometryPolicy::default(),
+    )
+    .unwrap()
+}
+fn probe(frame: PlaneFrame, centre: Point, side: f64, prism: bool) -> Solid {
+    let policy = GeometryPolicy::default();
+    let solid = if prism {
+        let d = Rational::parse_decimal(&side.to_string()).unwrap();
+        Solid::rust_box(
+            EntityId::new().uuid_bits(),
+            [d; 3],
+            PlaneFrame::default(),
+            policy,
+        )
+        .unwrap()
+    } else {
+        polygon(side, false)
+    };
+    let translation_mm = position(frame, centre.map(|v| v - side / 2.));
+    let n = frame.normal();
+    solid
+        .transformed(RigidTransform {
+            rotation: std::array::from_fn(|i| [frame.u[i], frame.v[i], n[i]]),
+            translation_mm,
+        })
+        .unwrap()
+}
+fn frame(posed: bool) -> PlaneFrame {
+    if posed {
+        PlaneFrame {
+            origin: [11., -7., 5.],
+            u: [0.8, 0.6, 0.],
+            v: [-0.36, 0.48, 0.8],
+        }
+    } else {
+        PlaneFrame::default()
+    }
+}
+
+#[test]
+fn whole_source_relations_return_only_exact_unchanged_operands_or_empty_material() {
+    let policy = GeometryPolicy::default();
+    for left in [false, true] {
+        for posed in [false, true] {
+            let frame = frame(posed);
+            let thread =
+                Solid::rust_helical_thread(spec(left), None, EntityId::new(), frame, policy)
+                    .unwrap();
+            let before = thread.volume_mm3().unwrap();
+            for prism in [false, true] {
+                for inside in [false, true] {
+                    let small = probe(
+                        frame,
+                        [if inside { 0.4 } else { 2.5 }, 0.1, 1.],
+                        0.01,
+                        prism,
+                    );
+                    let small_volume = small.volume_mm3().unwrap();
+                    for reverse in [false, true] {
+                        let (a, b) = if reverse {
+                            (&small, &thread)
+                        } else {
+                            (&thread, &small)
+                        };
+                        for operation in [
+                            BooleanOperation::Union,
+                            BooleanOperation::Subtract,
+                            BooleanOperation::Intersect,
+                        ] {
+                            let expected = match (inside, operation, reverse) {
+                                (true, BooleanOperation::Union, _) => Some(Some(before)),
+                                (true, BooleanOperation::Intersect, _) => Some(Some(small_volume)),
+                                (true, BooleanOperation::Subtract, true)
+                                | (false, BooleanOperation::Intersect, _) => Some(None),
+                                (false, BooleanOperation::Subtract, _) => {
+                                    Some(Some(if reverse { small_volume } else { before }))
+                                }
+                                _ => None,
+                            };
+                            if let Some(expected) = expected {
+                                let actual = a.boolean(b, operation, policy).unwrap();
+                                assert_eq!(actual.is_some(), expected.is_some());
+                                if let Some(expected) = expected {
+                                    assert_eq!(actual.unwrap().volume_mm3().unwrap(), expected);
+                                }
+                            } else {
+                                assert!(a.contained_thread_boolean(b, operation, policy).is_none());
+                            }
+                        }
+                    }
+                    assert_eq!(thread.volume_mm3().unwrap(), before);
+                    assert_eq!(small.volume_mm3().unwrap(), small_volume);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn reverse_sweeps_keep_the_actual_negative_axial_extent() {
+    let policy = GeometryPolicy::default();
+    for posed in [false, true] {
+        let frame = frame(posed);
+        let thread =
+            Solid::rust_helical_thread(spec(false), None, EntityId::new(), frame, policy).unwrap();
+        let n = frame.normal();
+        for x in [0.4, 2.5] {
+            let probe = polygon(0.01, true)
+                .transformed(RigidTransform {
+                    rotation: std::array::from_fn(|i| [frame.u[i], frame.v[i], n[i]]),
+                    translation_mm: position(frame, [x, 0.1, 1.]),
+                })
+                .unwrap();
+            let intersection = thread
+                .boolean(&probe, BooleanOperation::Intersect, policy)
+                .unwrap();
+            assert_eq!(intersection.is_some(), x < 2.);
+            if let Some(intersection) = intersection {
+                assert_eq!(
+                    intersection.volume_mm3().unwrap(),
+                    probe.volume_mm3().unwrap()
+                );
+            }
+        }
+    }
+}
+#[test]
+fn actual_flank_probes_use_all_box_points_and_boundary_crossings_stay_unresolved() {
+    let policy = GeometryPolicy::default();
+    for left in [false, true] {
+        for posed in [false, true] {
+            let frame = frame(posed);
+            let thread =
+                Solid::rust_helical_thread(spec(left), None, EntityId::new(), frame, policy)
+                    .unwrap();
+            let (source, _) = thread.helical_body().unwrap();
+            for z in [0.23, 0.47, 1.13] {
+                let radius = source.geometry.radius(0., z);
+                for (offset, occupied) in [(-0.001, true), (0.001, false)] {
+                    let small = probe(frame, [radius + offset, 0., z], 0.00002, false);
+                    let result = thread
+                        .boolean(&small, BooleanOperation::Intersect, policy)
+                        .unwrap();
+                    assert_eq!(result.is_some(), occupied);
+                    if let Some(result) = result {
+                        assert_eq!(result.volume_mm3().unwrap(), small.volume_mm3().unwrap());
+                    }
+                }
+                let crossing = probe(frame, [radius, 0., z], 0.01, false);
+                assert!(
+                    thread
+                        .contained_thread_boolean(&crossing, BooleanOperation::Intersect, policy)
+                        .is_none()
+                );
+            }
+            let cap = probe(frame, [0.4, 0., 0.], 0.01, false);
+            assert!(
+                thread
+                    .contained_thread_boolean(&cap, BooleanOperation::Intersect, policy)
+                    .is_none()
+            );
+        }
+    }
+}
+
+#[test]
+fn rounded_root_probes_retain_the_actual_circle_for_both_hands_and_poses() {
+    let policy = GeometryPolicy::default();
+    for left in [false, true] {
+        for posed in [false, true] {
+            let frame = frame(posed);
+            let mut parameters = spec(left);
+            parameters.upper_flank_deg = 30.;
+            parameters.depth_mm = (0.7 - 0.1) / (2. * 30_f64.to_radians().tan())
+                - 0.06 * (1. / 30_f64.to_radians().sin() - 1.);
+            let thread =
+                Solid::rust_helical_thread(parameters, Some(0.06), EntityId::new(), frame, policy)
+                    .unwrap();
+            let (source, _) = thread.helical_body().unwrap();
+            for z in [0.32, 0.35, 0.38] {
+                let radius = source.geometry.radius(0., z);
+                for (offset, occupied) in [(-0.001, true), (0.001, false)] {
+                    let small = probe(frame, [radius + offset, 0., z], 0.00002, false);
+                    let result = thread
+                        .boolean(&small, BooleanOperation::Intersect, policy)
+                        .unwrap();
+                    assert_eq!(result.is_some(), occupied);
+                    if let Some(result) = result {
+                        assert_eq!(result.volume_mm3().unwrap(), small.volume_mm3().unwrap());
+                    }
+                }
+            }
+        }
+    }
+}
+#[test]
+fn unrelated_families_curved_proposals_and_fuzzy_or_mismatched_policies_keep_their_dispatch() {
+    let policy = GeometryPolicy::default();
+    let thread =
+        Solid::rust_helical_thread(spec(false), None, EntityId::new(), frame(false), policy)
+            .unwrap();
+    let small = probe(frame(false), [0.4, 0., 1.], 0.01, false);
+    let sphere = Solid::rust_sphere_named(0.01, frame(false), EntityId::new(), policy).unwrap();
+    let q = |n| Rational::new(n, 1).unwrap();
+    let curved = Solid::from_rust_prism(
+        multicad_rust_kernel::prism::Prism::extrude(42, q(10), q(2), q(2)).unwrap(),
+        policy,
+    )
+    .unwrap();
+    let nut =
+        Solid::rust_hex_nut(spec(false), 8., 0.5, EntityId::new(), frame(false), policy).unwrap();
+    for (a, b) in [
+        (&small, &sphere),
+        (&thread, &sphere),
+        (&thread, &curved),
+        (&nut, &small),
+    ] {
+        assert!(
+            a.contained_thread_boolean(b, BooleanOperation::Intersect, policy)
+                .is_none()
+        );
+    }
+    for changed in [
+        GeometryPolicy {
+            boolean_fuzzy_mm: 1e-6,
+            ..policy
+        },
+        GeometryPolicy {
+            linear_tolerance_mm: 1e-6,
+            ..policy
+        },
+    ] {
+        assert!(
+            thread
+                .contained_thread_boolean(&small, BooleanOperation::Intersect, changed)
+                .is_none()
+        );
+    }
+}
