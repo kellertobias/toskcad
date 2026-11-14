@@ -287,10 +287,10 @@ pub(crate) fn screw_hardware_connection_evaluation_dependencies(
 ) -> Result<Option<BTreeSet<EntityId>>, DocumentError> {
     Ok(screw_hardware_connection_pose_projection(document, id)?.map(|p| p.geometry_dependencies))
 }
-fn signed_turn(hand: model::ThreadHand, station: f64, pitch: f64) -> Result<f64, DocumentError> {
-    if !station.is_finite() || !pitch.is_finite() || pitch <= 0. {
+fn signed_turn(hand: model::ThreadHand, station: f64, lead: f64) -> Result<f64, DocumentError> {
+    if !station.is_finite() || !lead.is_finite() || lead <= 0. {
         return Err(invalid(
-            "Connection phase requires a finite station and positive pitch",
+            "Connection phase requires a finite station and positive thread lead",
         ));
     }
     let sign = if hand == model::ThreadHand::Right {
@@ -298,7 +298,7 @@ fn signed_turn(hand: model::ThreadHand, station: f64, pitch: f64) -> Result<f64,
     } else {
         -1.
     };
-    Ok(sign * TAU * station.rem_euclid(pitch) / pitch)
+    Ok(sign * TAU * station.rem_euclid(lead) / lead)
 }
 fn resolved_rows(
     document: &Document,
@@ -450,12 +450,12 @@ pub fn resolve_connection_hardware_pose(
         } else {
             grip
         };
-        let Some((start, pitch, hand)) = reference else {
+        let Some((start, lead, hand)) = reference else {
             return Err(invalid(
                 "Metric receiving thread requires an actual metric screw phase reference",
             ));
         };
-        screw_roll = signed_turn(hand, start - entry, pitch)?;
+        screw_roll = signed_turn(hand, start - entry, lead)?;
     }
     let mut head_station = screw_station;
     let mut nut_station = if request.mode == Mode::HangerBolt {
@@ -484,12 +484,12 @@ pub fn resolve_connection_hardware_pose(
                 } else {
                     grip + nut
                 };
-                let Some((start, pitch, hand)) = reference else {
+                let Some((start, lead, hand)) = reference else {
                     return Err(invalid(
                         "Nut placement requires a known metric phase reference",
                     ));
                 };
-                (at, screw_roll + signed_turn(hand, at - start, pitch)?)
+                (at, screw_roll + signed_turn(hand, at - start, lead)?)
             }
             Role::Screw => (screw_station, screw_roll),
             Role::HangerBolt | Role::Insert => (grip, 0.),

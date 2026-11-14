@@ -17,6 +17,40 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(test)]
+mod phase_tests;
+/// Resolve the ordinary temporary composition driver from its actual typed
+/// source. Published associative drivers use the live kinematics projection.
+fn composition_thread_phase(
+    part: &ResolvedMechanicalPart,
+    bearing_station: f64,
+    grip: f64,
+) -> Option<(f64, f64, ThreadHand)> {
+    match part {
+        ResolvedMechanicalPart::MachineScrew {
+            underhead_length_mm,
+            thread,
+            ..
+        } => Some((
+            *underhead_length_mm - thread.length_mm + bearing_station,
+            thread.lead_mm,
+            thread.hand,
+        )),
+        ResolvedMechanicalPart::CustomConnection { parameters } => match parameters.as_ref() {
+            ResolvedCustomConnectionHardware::HangerBolt {
+                metric_thread,
+                plain_length_mm,
+                ..
+            } => Some((
+                grip - plain_length_mm - metric_thread.length_mm,
+                metric_thread.lead_mm,
+                metric_thread.hand,
+            )),
+            _ => None,
+        },
+        _ => None,
+    }
+}
 pub const SCREW_CONNECTION_TYPE: &str = "model.screw_connection";
 pub const SCREW_CONNECTION_CAPABILITY: &str = "model.screw_connection.1";
 pub const SCREW_CONNECTION_GRIP_CAPABILITY: &str = "model.screw_connection.face_grip.1";
@@ -936,30 +970,7 @@ pub fn prepare_screw_connection(
     } else {
         resolve_screw_connection_head_station(request, scratch.parameters(), screw.1, head_sum)?
     };
-    let screw_data = match screw.1 {
-        ResolvedMechanicalPart::MachineScrew {
-            underhead_length_mm,
-            thread,
-            ..
-        } => Some((
-            *underhead_length_mm - thread.length_mm + bearing_station,
-            thread.pitch_mm,
-            thread.hand,
-        )),
-        ResolvedMechanicalPart::CustomConnection { parameters } => match parameters.as_ref() {
-            ResolvedCustomConnectionHardware::HangerBolt {
-                metric_thread,
-                plain_length_mm,
-                ..
-            } => Some((
-                grip - plain_length_mm - metric_thread.length_mm,
-                metric_thread.pitch_mm,
-                metric_thread.hand,
-            )),
-            _ => None,
-        },
-        _ => None,
-    };
+    let screw_data = composition_thread_phase(screw.1, bearing_station, grip);
     let mut screw_roll = 0.;
     if request.mode == ScrewConnectionMode::TappedReceiver {
         let receiver = request
@@ -967,7 +978,7 @@ pub fn prepare_screw_connection(
             .iter()
             .find(|r| matches!(r.source.cut, ConnectionReceiverCut::Tapped { .. }))
             .ok_or_else(|| error("Tapped mode requires an actual threaded receiver"))?;
-        if let Some((start, pitch, hand)) = screw_data {
+        if let Some((start, lead, hand)) = screw_data {
             let sign = if hand == ThreadHand::Right { 1. } else { -1. };
             screw_roll = sign
                 * std::f64::consts::TAU
@@ -977,7 +988,7 @@ pub fn prepare_screw_connection(
                         Unit::Millimeter,
                         scratch.parameters(),
                     )?)
-                / pitch;
+                / lead;
         }
     }
     let mut head_station = bearing_station;
@@ -1007,12 +1018,12 @@ pub fn prepare_screw_connection(
                 } else {
                     grip + nut_sum
                 };
-                let roll = screw_data.map_or(0., |(start, pitch, hand)| {
+                let roll = screw_data.map_or(0., |(start, lead, hand)| {
                     screw_roll
                         + if hand == ThreadHand::Right { 1. } else { -1. }
                             * std::f64::consts::TAU
                             * (station - start)
-                            / pitch
+                            / lead
                 });
                 (station, roll)
             }
@@ -1020,9 +1031,9 @@ pub fn prepare_screw_connection(
             ScrewConnectionHardwareRole::HangerBolt => (grip, 0.),
             ScrewConnectionHardwareRole::Insert => (
                 grip,
-                screw_data.map_or(0., |(start, pitch, hand)| {
+                screw_data.map_or(0., |(start, lead, hand)| {
                     let sign = if hand == ThreadHand::Right { 1. } else { -1. };
-                    screw_roll + sign * std::f64::consts::TAU * (grip - start) / pitch
+                    screw_roll + sign * std::f64::consts::TAU * (grip - start) / lead
                 }),
             ),
         };
