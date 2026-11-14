@@ -1,5 +1,5 @@
 //! Shared document storage and selected-member queries have separate budgets.
-//! The original input (at most64MiB) and full AST are charged ONCE to the
+//! The original input (at most 64MiB) and full AST are charged ONCE to the
 //! document. A live packet/view is additional storage/work: its receipt does
 //! not include the document and must never be reported as the combined peak.
 use super::*;
@@ -90,7 +90,7 @@ impl<'input> CompoundDocument<'input> {
     }
     /// Decode ONLY the selected actual dependency closure. Original IDs,
     /// component/numeric slices, source origin and map/operator are retained.
-    /// The unchanged16M/64MiB packet limits include closure scratch, copied AST
+    /// The unchanged 16M/64MiB packet limits include closure scratch, copied AST
     /// and decoded arrays; document storage/work is an additional live scope.
     pub fn member_packet<'a>(
         &'a self,
@@ -119,28 +119,29 @@ impl<'input> CompoundDocument<'input> {
             + size_of::<MemberPacket<'_, '_>>()
             + size_of::<BTreeMap<u32, Vec<Entity<'_>>>>()
             + 2 * size_of::<usize>();
-        if fixed
-            .saturating_add(set_bytes)
-            .saturating_add(pending_bytes)
-            > options.retained_budget_bytes
-        {
-            return Err(Error::Limit);
-        }
+        admit_bytes(
+            fixed
+                .saturating_add(set_bytes)
+                .saturating_add(pending_bytes),
+            options.retained_budget_bytes,
+        )?;
         let mut selected = BTreeSet::new();
         let mut pending = Vec::new();
         pending.try_reserve_exact(count).map_err(|_| Error::Limit)?;
-        if fixed
-            .saturating_add(set_bytes)
-            .saturating_add(pending.capacity() * size_of::<u32>())
-            > options.retained_budget_bytes
-        {
-            return Err(Error::Limit);
-        }
+        let pending_bytes = pending.capacity().saturating_mul(size_of::<u32>());
+        // Pinned rust58cf8f9c raw_vec::grow_exact sets cap=len+additional,
+        // and set_ptr_and_cap stores that requested count (including Global).
+        // For this new non-ZST Vec, capacity=count: the preflight above already
+        // admits the allocation. Keep measured capacity in the peak receipt.
         selected.insert(item);
         pending.push(item);
         while let Some(id) = pending.pop() {
             w.step(1)?;
-            let records = self.source.entities.get(&id).ok_or(Error::Invalid)?;
+            let records = self
+                .source
+                .entities
+                .get(&id)
+                .expect("validated member or checked dependency before enqueue");
             for e in records {
                 walk(
                     &self.source.entities,
@@ -160,20 +161,21 @@ impl<'input> CompoundDocument<'input> {
         for id in &selected {
             bytes = bytes.saturating_add(record_bytes(&self.source.entities[id], &mut w)?);
         }
-        if bytes.saturating_add(set_bytes) > options.retained_budget_bytes {
-            return Err(Error::Limit);
-        }
+        admit_bytes(
+            bytes.saturating_add(set_bytes),
+            options.retained_budget_bytes,
+        )?;
         let mut entities = BTreeMap::new();
         for id in &selected {
             entities.insert(*id, copy_records(&self.source.entities[id], &mut w)?);
         }
-        // Actual capacities, including possible allocator excess, are checked
-        // before decoded publication; the original document remains unchanged.
+        // On the same pinned RawVec contract every copied Vec has capacity=len
+        // <= the original capacity charged above. Map node count is unchanged.
+        // Thus measured<=preflight bytes; no second fallible admission is needed.
+        // See rust-lang/rust58cf8f9c35b355199727627d07ae34a4e2846d67
+        // library/alloc/src/raw_vec/mod.rs::grow_exact/set_ptr_and_cap.
         let measured = budget::arena("", &entities, &mut w)?.saturating_add(fixed);
         let bytes = bytes.max(measured);
-        if bytes.saturating_add(set_bytes) > options.retained_budget_bytes {
-            return Err(Error::Limit);
-        }
         drop(selected);
         let packet = File {
             input: self.source.input,
@@ -199,6 +201,12 @@ impl<'input> CompoundDocument<'input> {
             bytes,
         })
     }
+}
+fn admit_bytes(bytes: usize, maximum: usize) -> Result<()> {
+    if bytes > maximum {
+        return Err(Error::Limit);
+    }
+    Ok(())
 }
 fn record_bytes(records: &Vec<Entity<'_>>, w: &mut Ledger<'_>) -> Result<usize> {
     let mut n = records.capacity().saturating_mul(size_of::<Entity<'_>>());
