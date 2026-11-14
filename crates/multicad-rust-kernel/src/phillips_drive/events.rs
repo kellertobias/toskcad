@@ -360,3 +360,7 @@ pub(super) fn construct<'a>(
 }
 #[cfg(test)]
 mod tests;
+
+pub use patches::{
+    MeshCurveKey, MeshPointKey, MeshRow, MouthFootpoint, MouthTraceOptions, TracedMouthMesh,
+};

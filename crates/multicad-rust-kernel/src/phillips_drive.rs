@@ -334,3 +334,7 @@ pub use embedding::{
     CertifiedPatchDomain, CertifiedTrimDomain, ClosedBoundaryCertificate, ClosedBoundaryOptions,
     ClosedBoundaryReserves, OutwardOrientationWitness, SourceChartSide,
 };
+
+pub use events::{
+    MeshCurveKey, MeshPointKey, MeshRow, MouthFootpoint, MouthTraceOptions, TracedMouthMesh,
+};

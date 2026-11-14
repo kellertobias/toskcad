@@ -5,7 +5,20 @@ use crate::display::{DisplayMesh, MeshError, Tessellation};
 use crate::manufacturing::{self, MeshProof};
 use std::collections::HashMap;
 mod schema;
+mod trace;
+pub use PointKey as MeshPointKey;
 use schema::{Complex, Side};
+pub use schema::{Curve as MeshCurveKey, Row as MeshRow};
+pub use trace::{MouthFootpoint, MouthTraceOptions, TracedMouthMesh};
+trait Progress {
+    fn charge(&mut self, count: usize) -> Result<(), Error>;
+}
+struct Uncounted;
+impl Progress for Uncounted {
+    fn charge(&mut self, _: usize) -> Result<(), Error> {
+        Ok(())
+    }
+}
 
 /// A closed indexed source approximation. This is not a manufacturing receipt:
 /// global geometric embedding and the head/cavity union remain separate gates.
@@ -35,7 +48,7 @@ impl BoundaryMesh {
     }
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-enum PointKey {
+pub enum PointKey {
     Anchor(usize),
     Edge(usize, u64),
     Interior(usize, u64, u64),
@@ -248,7 +261,7 @@ fn budget(counts: [usize; 8], patches: &[SurfacePatch], limit: usize) -> Result<
     }
     Ok(())
 }
-impl PatchAtlas<'_> {
+impl<'s> PatchAtlas<'s> {
     /// Produce a conformal approximation without welding coordinates or repairing
     /// winding. The result does not assert a globally embedded manufacturing solid.
     pub fn boundary_mesh(&self, options: Tessellation) -> Result<BoundaryMesh, Error> {
@@ -265,8 +278,32 @@ impl PatchAtlas<'_> {
         &self,
         options: Tessellation,
         cancel: &dyn Fn() -> bool,
-        mut counts: [usize; 8],
+        counts: [usize; 8],
     ) -> Result<BoundaryMesh, Error> {
+        self.refine_with_output(
+            options,
+            cancel,
+            counts,
+            &mut Uncounted,
+            |builder, connectivity, distance, normals, _| {
+                Ok(BoundaryMesh {
+                    mesh: builder.mesh,
+                    connectivity,
+                    source_distance_mm: distance,
+                    normal_chord: normals,
+                    refinement: builder.complex.certificate,
+                })
+            },
+        )
+    }
+    fn refine_with_output<P: Progress, T>(
+        &self,
+        options: Tessellation,
+        cancel: &dyn Fn() -> bool,
+        mut counts: [usize; 8],
+        progress: &mut P,
+        finish: impl FnOnce(Builder<'_, 's>, MeshProof, f64, f64, &mut P) -> Result<T, Error>,
+    ) -> Result<T, Error> {
         options.check().map_err(mesh_error)?;
         if counts.iter().any(|count| !count.is_power_of_two()) {
             return Err(Error::Invalid);
@@ -275,6 +312,7 @@ impl PatchAtlas<'_> {
         loop {
             checkpoint(cancel)?;
             budget(counts, &self.patches, options.triangle_limit)?;
+            progress.charge(4 * self.patches.len())?;
             let mut builder = Builder::new(self, cancel)?;
             let mut refine = [false; 8];
 
@@ -287,6 +325,7 @@ impl PatchAtlas<'_> {
                 for u in 0..nu {
                     for v in 0..nv {
                         checkpoint(cancel)?;
+                        progress.charge(1)?;
                         if refine[gu] || refine[gv] {
                             continue;
                         }
@@ -340,6 +379,7 @@ impl PatchAtlas<'_> {
                             // Shared source grids refine globally; no hanging edge vertices.
                             // Prefer the coarser parameter direction, retaining full mixed error.
                             if bound.positional_error_mm() <= options.deflection {
+                                progress.charge(4)?;
                                 let axis = normal_direction(&builder, index, uv);
                                 refine[[gu, gv][axis]] = true;
                             } else if nu <= nv {
@@ -353,14 +393,9 @@ impl PatchAtlas<'_> {
             }
 
             if !refine.into_iter().any(|v| v) {
+                progress.charge(builder.mesh.indices.len())?;
                 let connectivity = manufacturing::certify(&builder.mesh).map_err(mesh_error)?;
-                return Ok(BoundaryMesh {
-                    mesh: builder.mesh,
-                    connectivity,
-                    source_distance_mm: distance,
-                    normal_chord: normals,
-                    refinement: builder.complex.certificate,
-                });
+                return finish(builder, connectivity, distance, normals, progress);
             }
             for (count, refine) in counts.iter_mut().zip(refine) {
                 if refine {

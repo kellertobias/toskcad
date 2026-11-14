@@ -1,7 +1,7 @@
 //! Source-owned chart refinement; collapsed sides are semantic identities.
 use super::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) enum Row {
+pub enum Row {
     Mouth,
     Entry,
     Floor,
@@ -41,7 +41,7 @@ pub(super) enum Node {
     Apex,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) enum Curve {
+pub enum Curve {
     Circle(Row, u8),
     Trim(usize, u8, bool),
     Trace(usize, u8, bool),

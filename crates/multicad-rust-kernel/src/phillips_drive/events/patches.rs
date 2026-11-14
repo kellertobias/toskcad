@@ -468,3 +468,7 @@ impl PatchAtlas<'_> {
         mesh::chart_incidence(self, cancel)
     }
 }
+
+pub use mesh::{
+    MeshCurveKey, MeshPointKey, MeshRow, MouthFootpoint, MouthTraceOptions, TracedMouthMesh,
+};
