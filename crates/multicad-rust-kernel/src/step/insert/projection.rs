@@ -1,14 +1,14 @@
 //! Local literal tensor projection only. Closure, fan links, cap winding and
 //! occupied material remain SEPARATE obligations; no STEP admission here.
 use super::*;
-pub(super) mod polynomial;
+pub(crate) mod polynomial;
 use polynomial::{P, cross, derivative, dot_xy};
 #[cfg(test)]
 mod tests;
 const DEPTH: usize = 32;
 const SCRATCH: usize = 256 * 1024;
 #[derive(Clone, Copy)]
-struct Cell {
+pub(crate) struct Cell {
     p: [P; 3],
     depth: usize,
 }
@@ -102,7 +102,11 @@ fn literal(x: f64) -> I {
         I::new(x.next_down(), x.next_up())
     }
 }
-fn jacobian([a, b]: [[P; 3]; 2], factor: bool, w: &mut Work<'_>) -> Result<[P; 3], Error> {
+pub(crate) fn jacobian(
+    [a, b]: [[P; 3]; 2],
+    factor: bool,
+    w: &mut Work<'_>,
+) -> Result<[P; 3], Error> {
     let mut d = [a[0]; 3];
     for axis in 0..3 {
         d[axis] = b[axis].sub(a[axis], w)?;
@@ -137,10 +141,14 @@ fn jacobian([a, b]: [[P; 3]; 2], factor: bool, w: &mut Work<'_>) -> Result<[P; 3
         f0.add(f1, w)?.add(f2, w)?,
     ])
 }
-fn radius_squared([a, b]: [[P; 3]; 2], w: &mut Work<'_>) -> Result<[P; 3], Error> {
+pub(crate) fn radius_squared([a, b]: [[P; 3]; 2], w: &mut Work<'_>) -> Result<[P; 3], Error> {
     Ok([dot_xy(a, a, w)?, dot_xy(a, b, w)?, dot_xy(b, b, w)?])
 }
-fn positive(p: [P; 3], stack: &mut Vec<Cell>, w: &mut Work<'_>) -> Result<(I, usize), Error> {
+pub(crate) fn positive(
+    p: [P; 3],
+    stack: &mut Vec<Cell>,
+    w: &mut Work<'_>,
+) -> Result<(I, usize), Error> {
     stack.push(Cell { p, depth: 0 });
     let mut total = I::new(f64::INFINITY, f64::NEG_INFINITY);
     let mut cells = 0;

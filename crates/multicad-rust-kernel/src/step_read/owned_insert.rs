@@ -6,8 +6,10 @@ use super::{
 };
 use std::{collections::BTreeMap, mem::size_of};
 mod bindings;
+mod geometry;
 mod numbers;
 pub use bindings::{SupportBindings, TensorBinding};
+pub use geometry::MaterialBounds;
 use numbers::Numeric;
 pub use numbers::Scalar;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,6 +20,16 @@ pub enum Error {
     Cancelled,
 }
 type Result<T> = std::result::Result<T, Error>;
+impl From<crate::step::insert::Error> for Error {
+    fn from(e: crate::step::insert::Error) -> Self {
+        match e {
+            crate::step::insert::Error::Invalid => Self::Invalid,
+            crate::step::insert::Error::Unresolved => Self::Unsupported,
+            crate::step::insert::Error::Limit => Self::Limit,
+            crate::step::insert::Error::Cancelled => Self::Cancelled,
+        }
+    }
+}
 impl From<super::ReadError> for Error {
     fn from(e: super::ReadError) -> Self {
         match e {

@@ -1,7 +1,7 @@
 //! Bounded Bernstein algebra for this family's degree<=32 literal tensors.
 use super::*;
 #[derive(Clone, Copy)]
-pub(in crate::step::insert) struct P {
+pub(crate) struct P {
     pub degree: usize,
     pub c: [I; 33],
 }

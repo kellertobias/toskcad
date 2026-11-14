@@ -7,8 +7,8 @@ use crate::{
 use std::mem::size_of;
 mod curves;
 mod domains;
-mod projection;
-mod topology;
+pub(crate) mod projection;
+pub(crate) mod topology;
 mod writer;
 pub use topology::{
     CapRegularity, EdgeGeometry, FaceGeometry, ShellCoedge, ShellEdge, ShellFace, TopologyPlan,
@@ -19,7 +19,7 @@ mod surfaces;
 pub use domains::{DomainOptions, DomainPlan, Slab, Station};
 pub use projection::ProjectionBounds;
 pub use surfaces::{RowKey, SurfacePatch, SurfacePlan, SurfaceRow, SurfaceVertex, VertexOwner};
-mod resources;
+pub(crate) mod resources;
 use resources::{Memory, Work};
 #[cfg(test)]
 mod tests;

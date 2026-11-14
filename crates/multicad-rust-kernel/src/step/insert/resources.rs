@@ -1,5 +1,5 @@
 use super::*;
-pub(super) struct Work<'a> {
+pub(crate) struct Work<'a> {
     pub used: usize,
     remaining: usize,
     interrupt: Option<&'a dyn Fn() -> bool>,
@@ -27,7 +27,7 @@ impl<'a> Work<'a> {
         Ok(())
     }
 }
-pub(super) struct Memory {
+pub(crate) struct Memory {
     pub used: usize,
     limit: usize,
 }

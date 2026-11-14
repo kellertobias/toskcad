@@ -304,7 +304,7 @@ struct Use {
     face: usize,
     forward: bool,
 }
-fn verify(
+pub(crate) fn verify(
     vertices: usize,
     edges: &[ShellEdge],
     faces: &[ShellFace],

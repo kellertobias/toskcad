@@ -26,6 +26,7 @@ pub struct SupportBindings<'a, 'i> {
     source: &'a Parsed<'i>,
     tensors: Vec<TensorBinding>,
     caps: [usize; 2],
+    heights: [Scalar<'i>; 2],
     owners: Vec<[usize; 2]>,
     work: usize,
     bytes: usize,
@@ -39,6 +40,9 @@ impl<'a, 'i> SupportBindings<'a, 'i> {
     }
     pub fn cap_face_indices(&self) -> [usize; 2] {
         self.caps
+    }
+    pub fn cap_heights(&self) -> [Scalar<'i>; 2] {
+        self.heights
     }
     pub fn edge_face_indices(&self) -> &[[usize; 2]] {
         &self.owners
@@ -237,6 +241,7 @@ impl<'i> Parsed<'i> {
             source: self,
             tensors,
             caps: [a, b],
+            heights: [heights[start], heights[end]],
             owners,
             work: w.used,
             bytes,
