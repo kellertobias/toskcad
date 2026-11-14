@@ -2,7 +2,7 @@ use super::*;
 fn make_file(left: bool) -> String {
     make_file_case(left, 4.)
 }
-pub(super) fn graph(left: bool, length: f64) -> crate::wood_insert::Boundary {
+pub(crate) fn graph(left: bool, length: f64) -> crate::wood_insert::Boundary {
     use crate::{
         authored_flat_thread::{AuthoredThread, SourceOptions},
         helical_thread::Spec,

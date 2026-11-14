@@ -1,6 +1,8 @@
 //! Owned local coupled insert candidate. No independent import/mass authority.
 use super::*;
+mod mapped;
 use crate::step::{Coordinates, Entities, Entity, StepError, StepFile, Writer};
+pub use mapped::write_mapped_candidate;
 impl From<StepError> for Error {
     fn from(e: StepError) -> Self {
         match e {
@@ -40,17 +42,19 @@ impl Writer {
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<(), Error> {
         self.append_typed(|file| {
-            encode_local(file, topology, maximum_work, maximum_bytes, interrupt)
+            encode_local(file, topology, maximum_work, maximum_bytes, interrupt, 0)
+                .map(|(solid, _, _)| solid)
         })
     }
 }
-fn encode_local(
+fn encode_local<'cancel>(
     file: &mut StepFile,
     topology: &TopologyPlan<'_, '_, '_>,
     maximum_work: usize,
     maximum_bytes: usize,
-    interrupt: Option<&dyn Fn() -> bool>,
-) -> Result<Entity, Error> {
+    interrupt: Option<&'cancel dyn Fn() -> bool>,
+    extra_output: usize,
+) -> Result<(Entity, Work<'cancel>, Memory), Error> {
     let mut w = Work::new(maximum_work, interrupt)?;
     w.charge(topology.work_used())?;
     if maximum_bytes == 0 || maximum_bytes > 64 * 1024 * 1024 {
@@ -85,7 +89,8 @@ fn encode_local(
         .iter()
         .map(|r| r.poles().len())
         .sum::<usize>();
-    let estimate = output_estimate(controls, topology.edges().len(), topology.faces().len())?;
+    let estimate = output_estimate(controls, topology.edges().len(), topology.faces().len())?
+        .saturating_add(extra_output);
     let base = memory.used;
     memory.add(estimate)?;
     memory.used = base;
@@ -95,7 +100,7 @@ fn encode_local(
     memory.add(file.data.capacity() - prior_capacity)?;
     let solid = emit(file, topology, &mut w, &mut memory)?;
     w.charge(1)?;
-    Ok(solid)
+    Ok((solid, w, memory))
 }
 
 fn point(file: &mut StepFile, p: [f64; 3], w: &mut Work<'_>) -> Result<Entity, Error> {

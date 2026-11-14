@@ -14,7 +14,7 @@ pub use topology::{
     CapRegularity, EdgeGeometry, FaceGeometry, ShellCoedge, ShellEdge, ShellFace, TopologyPlan,
     WindingBounds,
 };
-pub use writer::write_local_candidate;
+pub use writer::{write_local_candidate, write_mapped_candidate};
 mod surfaces;
 pub use domains::{DomainOptions, DomainPlan, Slab, Station};
 pub use projection::ProjectionBounds;

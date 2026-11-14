@@ -620,7 +620,7 @@ mod packet_tests;
 #[cfg(test)]
 mod schema_tests;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 #[cfg(test)]
 mod binding_tests;
