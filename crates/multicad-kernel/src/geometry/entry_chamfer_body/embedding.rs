@@ -439,9 +439,8 @@ pub(in crate::geometry) fn certify_with_budget<'a>(
         }
         match (one.children, two.children) {
             (None, None) => {
-                if fans[one.triangle].is_some() && fans[one.triangle] == fans[two.triangle] {
-                    continue;
-                }
+                // Leaf fan IDs are copied from these same triangles by build;
+                // equal proved fans already returned at the node-pair guard.
                 pairs += 1;
                 if !pair(points, triangles[one.triangle], triangles[two.triangle]) {
                     return Err(refused());
@@ -469,6 +468,60 @@ mod tests {
             indices: triangles.iter().flatten().copied().collect(),
             face_indices: vec![0; triangles.len()],
         }
+    }
+    #[test]
+    fn incomplete_or_duplicated_literal_fans_never_gain_a_separation_shortcut() {
+        let p = [
+            [0., 0., 0.],
+            [1., 0., 0.],
+            [1., 1., 0.],
+            [0., 1., 0.],
+            [-1., 1., 0.],
+            [-1., 0., 0.],
+            [-1., -1., 0.],
+        ];
+        // Two distinct, nondegenerate triangles leave the same directed rim
+        // vertex. Face labels cannot turn this into an embedded full fan.
+        let duplicated = [[0, 1, 2], [0, 1, 3], [0, 3, 4]];
+        assert!(fans(&p, &duplicated, &[0; 3]).iter().all(Option::is_none));
+        assert!(certify(&mesh(&p, &duplicated)).is_err());
+        let open = [[0, 1, 2], [0, 2, 3], [0, 3, 4]];
+        assert!(fans(&p, &open, &[0; 3]).iter().all(Option::is_none));
+        // This open disk is geometrically embedded, but it must use actual
+        // triangle-pair proofs, not the complete one-winding fan shortcut.
+        assert!(certify(&mesh(&p, &open)).unwrap() > 0);
+        let two_cycles = [
+            [0, 1, 2],
+            [0, 2, 3],
+            [0, 3, 1],
+            [0, 4, 5],
+            [0, 5, 6],
+            [0, 6, 4],
+        ];
+        assert!(fans(&p, &two_cycles, &[0; 6]).iter().all(Option::is_none));
+        // The lower cone predicate conservatively refuses a collapsed ray;
+        // the full mesh path also checks facet degeneracy independently.
+        assert!(!rays_separate([
+            vector([0.; 3]),
+            vector([1., 0., 0.]),
+            vector([0., 1., 0.]),
+            vector([0., 0., 1.])
+        ]));
+    }
+    #[test]
+    fn literal_embedding_memory_preflight_refuses_excessive_triangle_count() {
+        let m = Mesh {
+            vertices: vec![0., 0., 0., 1., 0., 0., 0., 1., 0.],
+            indices: [0, 1, 2].repeat(1_000_001),
+            face_indices: vec![0; 1_000_001],
+        };
+        assert_eq!(
+            m.prove_literal_embedding(64_000_000, None)
+                .err()
+                .unwrap()
+                .kind,
+            GeometryErrorKind::Limit
+        );
     }
     #[test]
     fn exact_mesh_receipt_spends_only_the_callers_remaining_work_and_cancels_atomically() {
