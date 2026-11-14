@@ -2548,7 +2548,9 @@ impl Solid {
             None => (Vec::new(), Vec::new()),
             Some(deflection) if self.uses_rust_geometry() => {
                 self.validate_display_deflection(deflection)?;
-                let edges = if let Some((body, frame)) = self.wood_insert_body() {
+                let edges = if let Some((body, frame)) = self.hanger_body() {
+                    body.display_edges(frame, deflection, self.policy)?
+                } else if let Some((body, frame)) = self.wood_insert_body() {
                     body.display_edges(frame, deflection, self.policy)?
                 } else if let Some((body, frame)) = self.internal_thread_treatment_body() {
                     body.display_edges(frame, deflection, self.policy)?
@@ -2588,6 +2590,9 @@ impl Solid {
 
     pub fn display_edges(&self, deflection_mm: f64) -> Result<Vec<DisplayEdge>, GeometryError> {
         self.validate_display_deflection(deflection_mm)?;
+        if let Some((body, frame)) = self.hanger_body() {
+            return body.display_edges(frame, deflection_mm, self.policy);
+        }
         if let Some((body, frame)) = self.wood_insert_body() {
             return body.display_edges(frame, deflection_mm, self.policy);
         }

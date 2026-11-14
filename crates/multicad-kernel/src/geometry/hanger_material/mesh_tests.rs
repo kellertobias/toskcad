@@ -100,16 +100,139 @@ fn incomplete_hanger_interfaces_refuse_without_occt_or_partial_files() {
     let solid = Solid::rust_hanger(source, feature, PlaneFrame::default(), policy, None).unwrap();
     let failure = solid.faces().unwrap_err();
     assert_eq!(failure.kind, GeometryErrorKind::Unsupported);
-    assert_eq!(failure.operation, "Rust hanger references");
-    assert_eq!(
-        solid.topology_snapshot(feature, 0).unwrap_err().operation,
-        "Rust hanger references"
-    );
+    assert_eq!(failure.operation, "Rust hanger face measures");
+    solid
+        .topology_snapshot(feature, 0)
+        .unwrap()
+        .validate()
+        .unwrap();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("existing.step");
     std::fs::write(&path, b"retained previous file").unwrap();
     assert!(solid.write_step(&path).is_err());
     assert_eq!(std::fs::read(&path).unwrap(), b"retained previous file");
+}
+
+#[test]
+fn hanger_finite_references_and_overlays_follow_original_sources_and_actual_pose() {
+    use multicad_core::references::{AnalyticGeometry, TopologyKind};
+    use std::collections::BTreeSet;
+    let feature = EntityId::new();
+    let policy = GeometryPolicy::default();
+    for left in [false, true] {
+        let original = source(left, true);
+        let frame = PlaneFrame {
+            origin: [11., -7., 5.],
+            u: [0.8, 0.6, 0.],
+            v: [-0.36, 0.48, 0.8],
+        };
+        let solid = Solid::rust_hanger(original, feature, frame, policy, None).unwrap();
+        let display = solid.topology_with_display(feature, 9, Some(0.01)).unwrap();
+        display.topology.validate().unwrap();
+        let counts = [TopologyKind::Face, TopologyKind::Edge, TopologyKind::Vertex].map(|kind| {
+            display
+                .topology
+                .elements
+                .iter()
+                .filter(|e| e.key.kind == kind)
+                .count()
+        });
+        assert_eq!(counts, [13, 26, 18]);
+        assert_eq!(display.edges.len(), 26);
+        assert_eq!(display.vertices.len(), 18);
+        let origins: BTreeSet<_> = display
+            .topology
+            .elements
+            .iter()
+            .flat_map(|e| e.origins.iter().cloned())
+            .collect();
+        assert_eq!(origins.len(), 57);
+        assert!(
+            origins
+                .iter()
+                .all(|o| o.source == feature && o.role.starts_with("hanger/"))
+        );
+        assert_eq!(
+            solid
+                .topology_with_display(feature, 9, None)
+                .unwrap()
+                .topology,
+            display.topology
+        );
+        assert_eq!(solid.display_vertices().unwrap(), display.vertices);
+        assert_eq!(solid.display_edges(0.01).unwrap(), display.edges);
+        let finer = solid
+            .topology_with_display(feature, 9, Some(0.005))
+            .unwrap();
+        assert_eq!(finer.topology, display.topology);
+        let b = original.boundary(Default::default(), None).unwrap();
+        let axes = [frame.u, frame.v, frame.normal()];
+        for (curve, edge) in b.curves().iter().zip(&display.edges) {
+            // Independently evaluate interior source points, then find the
+            // closest literal polyline segment using Euclidean projection.
+            for t in [0.137, 0.371, 0.829] {
+                let p = b
+                    .curve_bounds(curve.key, [t, t], None)
+                    .unwrap()
+                    .point_mm
+                    .map(|[lo, hi]| lo.midpoint(hi));
+                let p = std::array::from_fn::<_, 3, _>(|i| {
+                    frame.origin[i] + (0..3).map(|j| axes[j][i] * p[j]).sum::<f64>()
+                });
+                let distance = edge
+                    .points_mm
+                    .windows(2)
+                    .map(|s| {
+                        let d = std::array::from_fn::<_, 3, _>(|i| s[1][i] - s[0][i]);
+                        let length2 = d.into_iter().map(|x| x * x).sum::<f64>();
+                        let q = ((0..3).map(|i| (p[i] - s[0][i]) * d[i]).sum::<f64>() / length2)
+                            .clamp(0., 1.);
+                        (0..3)
+                            .map(|i| (p[i] - s[0][i] - q * d[i]).powi(2))
+                            .sum::<f64>()
+                            .sqrt()
+                    })
+                    .fold(f64::INFINITY, f64::min);
+                assert!(distance <= 0.01, "{curve:?}: {distance}");
+            }
+        }
+        assert_eq!(
+            display
+                .topology
+                .elements
+                .iter()
+                .filter(|e| matches!(e.geometry, Some(AnalyticGeometry::Plane { .. })))
+                .count(),
+            4
+        );
+        let mut spec = original.spec();
+        spec.plain_length_mm += 0.7;
+        let edited = Solid::rust_hanger(
+            multicad_rust_kernel::authored_hanger_bolt::Hanger::new(spec, None).unwrap(),
+            feature,
+            frame,
+            policy,
+            None,
+        )
+        .unwrap();
+        let updated = edited.topology_snapshot(feature, 10).unwrap();
+        assert_eq!(
+            updated
+                .elements
+                .iter()
+                .map(|e| (&e.key, &e.origins, &e.boundary))
+                .collect::<Vec<_>>(),
+            display
+                .topology
+                .elements
+                .iter()
+                .map(|e| (&e.key, &e.origins, &e.boundary))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(solid.rust_hanger_data().unwrap().source, original);
+        assert!(solid.topology_snapshot(EntityId::nil(), 0).is_err());
+        assert!(solid.display_edges(f64::NAN).is_err());
+    }
 }
 #[test]
 fn authored_hanger_world_manufacturing_retains_source_quality_and_closed_material() {

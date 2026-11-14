@@ -1,6 +1,9 @@
 //! Retained connected Hanger geometry. Finite reference admission is separate.
 use super::*;
 use multicad_rust_kernel::authored_hanger_bolt::{Hanger, QueryOptions};
+mod display;
+mod topology;
+use multicad_rust_kernel::authored_hanger_bolt as source;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HangerData {
@@ -10,6 +13,7 @@ pub struct HangerData {
 pub(crate) struct HangerBody {
     source: Hanger,
     pub(super) feature: EntityId,
+    boundary: source::Boundary,
 }
 impl Solid {
     pub fn rust_hanger(
@@ -23,8 +27,18 @@ impl Solid {
             return Err(input("Hanger needs its original feature identity"));
         }
         HangerMaterial::new(source, frame, policy, interrupt)?;
+        let boundary = source
+            .boundary(source::BoundaryOptions::default(), interrupt)
+            .map_err(super::hanger_material::failure)?;
         Ok(Self {
-            body: SolidBody::Hanger(Rc::new(HangerBody { source, feature }), frame),
+            body: SolidBody::Hanger(
+                Rc::new(HangerBody {
+                    source,
+                    feature,
+                    boundary,
+                }),
+                frame,
+            ),
             policy,
             provenance: vec![],
             rust_origins: vec![],
@@ -77,9 +91,9 @@ impl HangerBody {
     }
     pub(crate) fn references_pending(&self) -> GeometryError {
         error(
-            "Rust hanger references",
+            "Rust hanger face measures",
             GeometryErrorKind::Unsupported,
-            "Connected Hanger geometry has no qualified finite reference handoff yet",
+            "Connected Hanger faces need qualified source area and centroid measures",
         )
     }
 }

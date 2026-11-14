@@ -11,7 +11,7 @@ pub struct HangerMaterial {
     frame: PlaneFrame,
 }
 
-fn failure(cause: source::Error) -> GeometryError {
+pub(super) fn failure(cause: source::Error) -> GeometryError {
     error(
         "Rust authored hanger",
         match cause {
