@@ -342,5 +342,5 @@ pub use body::{MaterialVolume, MaterialVolumeOptions};
 
 pub use body::{
     DelegatedWorkspaceBounds, JoinedMaterialCandidate, JoinedMeshOptions, OwnedDerivedMaterial,
-    OwnedMaterialOptions,
+    OwnedMaterialOptions, OwnedMaterialQuery, OwnedMaterialQueryError, OwnedMaterialQueryOptions,
 };

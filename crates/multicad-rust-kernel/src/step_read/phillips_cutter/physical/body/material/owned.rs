@@ -4,7 +4,9 @@ use crate::head_profile::OwnedRepairedHead;
 use std::sync::Arc;
 const SCRATCH: usize = 16384;
 mod mesh;
+mod query;
 pub use mesh::{DelegatedWorkspaceBounds, JoinedMaterialCandidate, JoinedMeshOptions};
+pub use query::{OwnedMaterialQuery, OwnedMaterialQueryError, OwnedMaterialQueryOptions};
 #[derive(Clone, Copy)]
 pub struct OwnedMaterialOptions {
     pub maximum_work: usize,

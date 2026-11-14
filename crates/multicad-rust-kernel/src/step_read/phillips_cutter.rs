@@ -243,5 +243,5 @@ pub use physical::{MaterialVolume, MaterialVolumeOptions};
 
 pub use physical::{
     DelegatedWorkspaceBounds, JoinedMaterialCandidate, JoinedMeshOptions, OwnedDerivedMaterial,
-    OwnedMaterialOptions,
+    OwnedMaterialOptions, OwnedMaterialQuery, OwnedMaterialQueryError, OwnedMaterialQueryOptions,
 };

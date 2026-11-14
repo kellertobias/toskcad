@@ -288,5 +288,5 @@ pub use volume::{MaterialVolume, MaterialVolumeOptions};
 mod owned;
 pub use owned::{
     DelegatedWorkspaceBounds, JoinedMaterialCandidate, JoinedMeshOptions, OwnedDerivedMaterial,
-    OwnedMaterialOptions,
+    OwnedMaterialOptions, OwnedMaterialQuery, OwnedMaterialQueryError, OwnedMaterialQueryOptions,
 };

@@ -1106,4 +1106,7 @@ pub use phillips_cutter::{
     JoinedMeshOptions as PhillipsJoinedMeshOptions,
     OwnedDerivedMaterial as PhillipsOwnedDerivedMaterial,
     OwnedMaterialOptions as PhillipsOwnedMaterialOptions,
+    OwnedMaterialQuery as PhillipsOwnedMaterialQuery,
+    OwnedMaterialQueryError as PhillipsOwnedMaterialQueryError,
+    OwnedMaterialQueryOptions as PhillipsOwnedMaterialQueryOptions,
 };

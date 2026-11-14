@@ -254,5 +254,5 @@ pub use material::{MaterialVolume, MaterialVolumeOptions};
 
 pub use material::{
     DelegatedWorkspaceBounds, JoinedMaterialCandidate, JoinedMeshOptions, OwnedDerivedMaterial,
-    OwnedMaterialOptions,
+    OwnedMaterialOptions, OwnedMaterialQuery, OwnedMaterialQueryError, OwnedMaterialQueryOptions,
 };
