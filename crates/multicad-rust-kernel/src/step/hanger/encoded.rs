@@ -10,6 +10,8 @@ use crate::{
 use num_bigint::Sign;
 use num_rational::BigRational;
 mod cap;
+pub(super) mod decimal;
+pub use decimal::FiniteDecimal;
 mod curve;
 pub use curve::{CapCurvePiece, LiteralCapCurve, RestrictedCapCurve, RestrictionBounds};
 mod closed;
