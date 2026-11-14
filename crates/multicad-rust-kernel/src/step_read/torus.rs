@@ -394,7 +394,8 @@ mod tests {
         invalid(&edit(&text, "EDGE_CURVE(", |line| {
             line.replacen(
                 &format!(",{},", entity_id("VERTEX_POINT(")),
-                &format!(",{},", entity_id("EDGE_LOOP(")),
+                // Another kind without a reference cycle back to this edge.
+                &format!(",{},", entity_id("CARTESIAN_POINT(")),
                 1,
             )
         }));

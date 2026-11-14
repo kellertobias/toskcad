@@ -451,6 +451,35 @@ fn read_cylinder_extrema_away_from_the_seam_and_measure_volume() {
 }
 
 #[test]
+fn a_periodic_wall_with_a_second_bound_is_outside_the_round_families() {
+    let source = cylinder_step();
+    let support = id(entity(&source, "CYLINDRICAL_SURFACE", 0));
+    let faces = |wall: bool| {
+        let lines = source
+            .lines()
+            .filter(|line| line.contains("=ADVANCED_FACE("));
+        let mut chosen = lines.filter(move |line| line.contains(&format!("),{support},")) == wall);
+        chosen.next().unwrap()
+    };
+    let (wall, cap) = (faces(true), faces(false));
+    let bound = |face: &str| {
+        let start = face.find("(#").unwrap() + 1;
+        face[start..face.find("),").unwrap()].to_owned()
+    };
+    // The cap rim is used once more, so the shell is not a balanced pinch.
+    let holed = source.replacen(
+        wall,
+        &wall.replacen(&bound(wall), &format!("{},{}", bound(wall), bound(cap)), 1),
+        1,
+    );
+    assert_ne!(holed, source);
+    assert_eq!(
+        read_analytic_solid(&holed, TOLERANCE),
+        Err(ReadError::Unsupported)
+    );
+}
+
+#[test]
 fn selected_planar_circle_pcurve_must_match_the_full_master_rim() {
     let source = cylinder_step();
     let circle = id(entity(&source, "CIRCLE", 1));

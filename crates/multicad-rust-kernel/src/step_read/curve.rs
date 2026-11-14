@@ -2,6 +2,7 @@ use super::*;
 use std::f64::consts::TAU;
 
 mod bilinear;
+mod extrusion_rim;
 mod planar_circle;
 
 struct LinePcurve {
@@ -78,6 +79,9 @@ impl Shell<'_, '_> {
                 )?,
                 "B_SPLINE_SURFACE_WITH_KNOTS" => {
                     self.verify_bilinear_line_master(curve_3d, surface, curve, vertices)?
+                }
+                "SURFACE_OF_LINEAR_EXTRUSION" => {
+                    self.verify_extrusion_rim_master(curve_3d, surface, curve)?
                 }
                 _ => return Err(ReadError::Unsupported),
             }

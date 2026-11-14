@@ -49,9 +49,9 @@ fn read_member_with<T>(
     ids: Vec<u32>,
     reconstruct: impl FnOnce(&Shell<'_, '_>, &Edges, &Plane, &FaceWire, Point, f64) -> Result<T>,
 ) -> Result<(Readback, Option<T>)> {
-    // Fewer faces than two caps and three walls is outside this family.
-    // Only an excessive face count is a resource refusal.
-    if ids.len() < 5 {
+    // Two caps and two walls bound the smallest spline prism. Only an
+    // excessive face count is a resource refusal.
+    if ids.len() < 4 {
         return Err(ReadError::Unsupported);
     }
     if ids.len() > MAX_VERTICES + 7 {
@@ -254,7 +254,8 @@ fn read_edge(reader: &mut Shell<'_, '_>, id: u32) -> Result<EdgeData> {
     };
     let vertices = [reference(start)?, reference(end)?];
     let forward = sense(forward)?;
-    let id = reference(curve)?;
+    // A surface curve is admitted only after its master agrees with this 3D geometry.
+    let id = reader.edge_geometry(reference(curve)?, vertices)?;
     let geometry = match reader.simple(id)?.name {
         "LINE" => Geometry::Analytic(reader.line_curve(id, vertices, forward)?),
         "CIRCLE" => Geometry::Analytic(reader.circle_curve(id, vertices, forward)?),
@@ -379,7 +380,14 @@ fn verify_wall(
         }
         (Geometry::Cubic { id, curve }, Geometry::Cubic { curve: top, .. }) => {
             let (support, axis) = reader.spline_extrusion(wall.surface)?;
-            if support != *id
+            // The swept curve is the lower rim or a copy displaced along the axis.
+            let swept = support == *id
+                || reader.spline_curve(support).is_ok_and(|basis| {
+                    let travel = sub(curve.poles_mm()[0], basis.poles_mm()[0]);
+                    length(cross(travel, axis)) <= reader.tolerance
+                        && basis.translated(curve, travel, reader.tolerance)
+                });
+            if !swept
                 || wall.forward != lower.forward
                 || lower.forward == upper.forward
                 || !same_direction(axis, normal)

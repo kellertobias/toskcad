@@ -192,20 +192,25 @@ pub(super) fn read_members_retaining_arena<'input, T>(
 ) -> Result<RetainedMembers<'input, T>> {
     let mut entities = parse_entities(input, tolerance)?;
     let transmitted = read_arena(&entities, tolerance, allow_circles, single, &mut member);
-    let Err(ReadError::Invalid | ReadError::Unsupported) = transmitted else {
-        return transmitted.map(|members| (entities, members));
+    let error = match transmitted {
+        Ok(members) => return Ok((entities, members)),
+        Err(ReadError::Limit) => return Err(ReadError::Limit),
+        Err(error) => error,
     };
     // A refused shell may only differ from a recognized family by faces that
     // partition one plane. Only a recognized merged boundary replaces the
     // verdict on the transmitted one.
     let solids = Shell::new(&entities, tolerance, allow_circles).represented_solids(single);
-    let merged = solids
-        .is_ok_and(|solids| same_domain::unify(&mut entities, &solids, tolerance))
-        .then(|| read_arena(&entities, tolerance, allow_circles, single, &mut member));
-    match merged {
-        Some(Ok(members)) => Ok((entities, members)),
-        _ => transmitted.map(|members| (entities, members)),
+    let merged = match solids {
+        Ok(solids) => same_domain::unify(&mut entities, &solids, tolerance),
+        Err(_) => false,
+    };
+    if merged
+        && let Ok(members) = read_arena(&entities, tolerance, allow_circles, single, &mut member)
+    {
+        return Ok((entities, members));
     }
+    Err(error)
 }
 
 fn read_arena<'input, T>(
