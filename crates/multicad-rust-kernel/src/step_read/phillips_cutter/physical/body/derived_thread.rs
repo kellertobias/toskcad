@@ -8,7 +8,12 @@ use crate::{
 };
 mod chart;
 mod graph;
+mod join;
 mod reduce;
+pub use join::{
+    ContactThreadCarrier, DyadicParameter, RimContact, RimContactId, RimDomainEnd, RimDomainRole,
+    RimKnot, RimSignDomain, ThreadContactOptions,
+};
 const WORK: usize = 16_000_000;
 const BYTES: usize = 64 * 1024 * 1024;
 const SCRATCH: usize = 1024 * 1024;
@@ -187,6 +192,11 @@ struct Raw {
     rails: [u32; 2],
     entry: usize,
 }
+#[derive(Clone, Copy)]
+struct Proposal {
+    limits: DerivedThreadOptions,
+    u_parts: usize,
+}
 struct Net {
     forward: bool,
     spans: [usize; 2],
@@ -316,12 +326,39 @@ fn bound_error(e: ReadError, w: &Work<'_>) -> PhillipsReadError {
         e.into()
     }
 }
+fn valid_options(options: DerivedThreadOptions) -> bool {
+    options.maximum_distance_mm.is_finite()
+        && options.maximum_distance_mm > 0.
+        && options.maximum_distance_mm <= 1e-7
+        && options.maximum_cell_derivative_mm.is_finite()
+        && options.maximum_cell_derivative_mm > 0.
+        && options.maximum_cell_derivative_mm <= 1e-7
+        && options.maximum_controls <= MAX_POINTS
+        && options.maximum_work <= WORK
+        && options.maximum_bytes <= BYTES
+}
 impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
     pub fn derived_thread_carrier(
         &self,
         options: DerivedThreadOptions,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> std::result::Result<DerivedThreadCarrier<'a, 'input>, PhillipsReadError> {
+        self.with_candidate(options, interrupt, 1, |_, head_radius, entry_radius, _| {
+            if (I::point(head_radius) - entry_radius).lo <= options.maximum_distance_mm {
+                return Err(ReadError::Unsupported);
+            }
+            Ok(())
+        })
+        .map(|(source, ())| source)
+    }
+    fn with_candidate<C>(
+        &self,
+        options: DerivedThreadOptions,
+        interrupt: Option<&dyn Fn() -> bool>,
+        // Sealed callers use1 (original public path) or4 (nominal prototype).
+        u_parts: usize,
+        certify: impl FnOnce(&[Net], f64, I, &mut Work<'_>) -> Result<C>,
+    ) -> std::result::Result<(DerivedThreadCarrier<'a, 'input>, C), PhillipsReadError> {
         let mut work = Work {
             remaining: options.maximum_work,
             interrupt,
@@ -329,16 +366,7 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
         };
         let result = (|| {
             work.step(1)?;
-            if !options.maximum_distance_mm.is_finite()
-                || options.maximum_distance_mm <= 0.
-                || options.maximum_distance_mm > 1e-7
-                || !options.maximum_cell_derivative_mm.is_finite()
-                || options.maximum_cell_derivative_mm <= 0.
-                || options.maximum_cell_derivative_mm > 1e-7
-                || options.maximum_controls > MAX_POINTS
-                || options.maximum_work > WORK
-                || options.maximum_bytes > BYTES
-            {
+            if !valid_options(options) {
                 return Err(ReadError::Invalid);
             }
             work.step(self.work_used())?;
@@ -365,13 +393,13 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
                 .iter()
                 .map(|r| r.ids.len() * r.ids[0].len())
                 .sum::<usize>();
-            // Each candidate grid has width<=rawWidth,height<=4rawHeight.
-            // The64MiB ID frontier bounds raw controls<=16,777,216, so the
-            // total<=67,108,864 fits usize even on32bit targets.
+            // At most four exact subdivisions in each axis: candidate size
+            // <=16*rawControls. The64MiB ID frontier bounds raw controls
+            // <=16,777,216, so this fits usize even on32bit targets.
             let candidate_points = raw
                 .iter()
                 .map(|r| {
-                    (9 * ((r.ids.len() - 1) / 11) + 1)
+                    (u_parts * 9 * ((r.ids.len() - 1) / 11) + 1)
                         * (36 * ((r.ids[0].len() - 1 - r.entry) / 11) + 1)
                 })
                 .sum::<usize>();
@@ -397,7 +425,16 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
             let mut bounds = Vec::with_capacity(raw.len());
             for r in &raw {
                 let (net, mut bound) = construct(
-                    r, &shell, &mapping, &elevation, stations, options, &mut work,
+                    r,
+                    &shell,
+                    &mapping,
+                    &elevation,
+                    stations,
+                    Proposal {
+                        limits: options,
+                        u_parts,
+                    },
+                    &mut work,
                 )?;
                 bound.source_face_index = 2 + nets.len();
                 nets.push(net);
@@ -414,11 +451,12 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
                     entry_radius.hi = entry_radius.hi.max(radius.hi);
                 }
             }
-            if (I::point(self.virtual_bottom_station()[0]) - entry_radius).lo
-                <= options.maximum_distance_mm
-            {
-                return Err(ReadError::Unsupported);
-            }
+            let contact = certify(
+                &nets,
+                self.virtual_bottom_station()[0],
+                entry_radius,
+                &mut work,
+            )?;
             // Private Net is the defining inventory: graph::build emits ONLY
             // these Tensor cells, their identical Spline rails/rims, and two
             // finite planar cap fans. Include both actual axis cap centers.
@@ -447,17 +485,20 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
             // <4B/control (each face>=10x37). Actual capacities are charged
             // above; this stronger live preflight also bounds final retention.
             work.step(1)?;
-            Ok(DerivedThreadCarrier {
-                body,
-                chart: self.chart(),
-                input,
-                bounds,
-                stations,
-                entry_radius_upper: entry_radius.hi,
-                local_enclosure,
-                work: options.maximum_work - work.remaining,
-                retained,
-            })
+            Ok((
+                DerivedThreadCarrier {
+                    body,
+                    chart: self.chart(),
+                    input,
+                    bounds,
+                    stations,
+                    entry_radius_upper: entry_radius.hi,
+                    local_enclosure,
+                    work: options.maximum_work - work.remaining,
+                    retained,
+                },
+                contact,
+            ))
         })();
         result.map_err(|e| bound_error(e, &work))
     }
@@ -490,11 +531,18 @@ fn construct(
     mapping: &chart::Chart,
     elevation: &reduce::Elevation,
     stations: [f64; 2],
-    options: DerivedThreadOptions,
+    proposal: Proposal,
     work: &mut Work<'_>,
 ) -> Result<(Net, ThreadCarrierTransfer)> {
+    let Proposal {
+        limits: options,
+        u_parts,
+    } = proposal;
     let [width, height] = [r.ids.len(), r.ids[0].len()];
-    let spans = [(width - 1) / 11, 4 * ((height - 1 - r.entry) / 11)];
+    let spans = [
+        u_parts * ((width - 1) / 11),
+        4 * ((height - 1 - r.entry) / 11),
+    ];
     let h = 9 * spans[1] + 1;
     let w = 9 * spans[0] + 1;
     let mut output = vec![[f64::NAN; 3]; w * h];
@@ -519,7 +567,7 @@ fn construct(
         surface_entity: r.surface,
         original_v_start_cell: r.entry / 11,
         original_rail_entities: r.rails,
-        original_cells: [spans[0], spans[1] / 4],
+        original_cells: [spans[0] / u_parts, spans[1] / 4],
         source_cells: spans,
         ..Default::default()
     };
@@ -528,81 +576,108 @@ fn construct(
             // Three binary restrictions for each of two 12x12 interval grids.
             // Each has 12*66*3 weighted coordinate averages;20k includes copies.
             work.step(20_000)?;
-            let worlds = restrict_v(std::array::from_fn(|i| {
-                std::array::from_fn(|j| original[u + i][v + j])
-            }));
-            let locals = restrict_v(std::array::from_fn(|i| {
-                std::array::from_fn(|j| local[u + i][v + j])
-            }));
-            for (child, (actual, local)) in worlds.into_iter().zip(locals).enumerate() {
-                // Work units bound fixed three-coordinate coefficient operations,
-                // not CPU FLOPs. With precomputed weights: <3828 proposal,
-                //1584 elevation,700 transport,144 differences,1344 hull and
-                //400 storage/check operations;10k covers this complete cell.
-                work.step(10_000)?;
-                let nominal = local.map(|row| row.map(|p| p.map(|x| x.lo / 2. + x.hi / 2.)));
-                let columns = std::array::from_fn::<_, 12, _>(|j| {
-                    reduce::reduce(std::array::from_fn(|i| nominal[i][j]))
-                });
-                let mut q = std::array::from_fn::<_, 10, _>(|i| {
-                    reduce::reduce(std::array::from_fn(|j| columns[j][i]))
-                });
-                for row in &mut q {
-                    if v == r.entry && child == 0 {
-                        row[0][2] = stations[0];
-                    }
-                    if v + 11 == height - 1 && child == 3 {
-                        row[9][2] = stations[1];
-                    }
+            let world = std::array::from_fn(|i| std::array::from_fn(|j| original[u + i][v + j]));
+            let local = std::array::from_fn(|i| std::array::from_fn(|j| local[u + i][v + j]));
+            // Original source unchanged: split the actual interval polynomial
+            // by exact1/2 de Casteljau, then measure each new proposal back
+            // in the ORIGINAL cell parameter, not its quarter's parameter.
+            let us = if u_parts == 1 {
+                vec![world]
+            } else {
+                restrict_v(std::array::from_fn(|j| {
+                    std::array::from_fn(|i| world[i][j])
+                }))
+                .map(|p| std::array::from_fn(|i| std::array::from_fn(|j| p[j][i])))
+                .to_vec()
+            };
+            let ls = if u_parts == 1 {
+                vec![local]
+            } else {
+                restrict_v(std::array::from_fn(|j| {
+                    std::array::from_fn(|i| local[i][j])
+                }))
+                .map(|p| std::array::from_fn(|i| std::array::from_fn(|j| p[j][i])))
+                .to_vec()
+            };
+            for (uchild, (world, local)) in us.into_iter().zip(ls).enumerate() {
+                // The outer20k charge covers original V splitting, or the new
+                // U split. Each U-quarter's two V restrictions add20k.
+                if u_parts != 1 {
+                    work.step(20_000)?;
                 }
-                proposal_domain(&q)?;
-                let raised_v =
-                    q.map(|row| elevation.apply(row.map(|p| mapping.world(p.map(I::point)))));
-                let raised = std::array::from_fn::<_, 12, _>(|j| {
-                    elevation.apply(std::array::from_fn(|i| raised_v[i][j]))
-                });
-                let difference = std::array::from_fn::<_, 12, _>(|i| {
-                    std::array::from_fn::<_, 12, _>(|j| {
-                        std::array::from_fn::<_, 3, _>(|a| actual[i][j][a] - raised[j][i][a])
-                    })
-                });
-                for i in 0..12 {
-                    for j in 0..12 {
-                        let e = reduce::l1(difference[i][j]);
-                        require(e.is_finite())?;
-                        bound.distance_mm = bound.distance_mm.max(e);
-                        if i < 11 {
-                            let e = reduce::l1(std::array::from_fn(|a| {
-                                I::point(11.) * (difference[i + 1][j][a] - difference[i][j][a])
-                            }));
-                            require(e.is_finite())?;
-                            bound.derivative_mm[0] = bound.derivative_mm[0].max(e);
+                let worlds = restrict_v(world);
+                let locals = restrict_v(local);
+                for (child, (actual, local)) in worlds.into_iter().zip(locals).enumerate() {
+                    // Work units bound fixed three-coordinate coefficient operations,
+                    // not CPU FLOPs. With precomputed weights: <3828 proposal,
+                    //1584 elevation,700 transport,144 differences,1344 hull and
+                    //400 storage/check operations;10k covers this complete cell.
+                    work.step(10_000)?;
+                    let nominal = local.map(|row| row.map(|p| p.map(|x| x.lo / 2. + x.hi / 2.)));
+                    let columns = std::array::from_fn::<_, 12, _>(|j| {
+                        reduce::reduce(std::array::from_fn(|i| nominal[i][j]))
+                    });
+                    let mut q = std::array::from_fn::<_, 10, _>(|i| {
+                        reduce::reduce(std::array::from_fn(|j| columns[j][i]))
+                    });
+                    for row in &mut q {
+                        if v == r.entry && child == 0 {
+                            row[0][2] = stations[0];
                         }
-                        if j < 11 {
-                            let e = reduce::l1(std::array::from_fn(|a| {
-                                I::point(44.) * (difference[i][j + 1][a] - difference[i][j][a])
-                            }));
-                            require(e.is_finite())?;
-                            bound.derivative_mm[1] = bound.derivative_mm[1].max(e);
+                        if v + 11 == height - 1 && child == 3 {
+                            row[9][2] = stations[1];
                         }
                     }
-                }
-                if bound.distance_mm > options.maximum_distance_mm
-                    || bound
-                        .derivative_mm
-                        .iter()
-                        .any(|&x| x > options.maximum_cell_derivative_mm)
-                {
-                    return Err(ReadError::Unsupported);
-                }
-                for (i, row) in q.into_iter().enumerate() {
-                    for (j, p) in row.into_iter().enumerate() {
-                        let index =
-                            (u / 11 * 9 + i) * h + (((v - r.entry) / 11 * 4 + child) * 9 + j);
-                        if output[index][0].is_nan() {
-                            output[index] = p
-                        } else {
-                            require(output[index] == p)?;
+                    proposal_domain(&q)?;
+                    let raised_v =
+                        q.map(|row| elevation.apply(row.map(|p| mapping.world(p.map(I::point)))));
+                    let raised = std::array::from_fn::<_, 12, _>(|j| {
+                        elevation.apply(std::array::from_fn(|i| raised_v[i][j]))
+                    });
+                    let difference = std::array::from_fn::<_, 12, _>(|i| {
+                        std::array::from_fn::<_, 12, _>(|j| {
+                            std::array::from_fn::<_, 3, _>(|a| actual[i][j][a] - raised[j][i][a])
+                        })
+                    });
+                    for i in 0..12 {
+                        for j in 0..12 {
+                            let e = reduce::l1(difference[i][j]);
+                            require(e.is_finite())?;
+                            bound.distance_mm = bound.distance_mm.max(e);
+                            if i < 11 {
+                                let e = reduce::l1(std::array::from_fn(|a| {
+                                    I::point(11. * u_parts as f64)
+                                        * (difference[i + 1][j][a] - difference[i][j][a])
+                                }));
+                                require(e.is_finite())?;
+                                bound.derivative_mm[0] = bound.derivative_mm[0].max(e);
+                            }
+                            if j < 11 {
+                                let e = reduce::l1(std::array::from_fn(|a| {
+                                    I::point(44.) * (difference[i][j + 1][a] - difference[i][j][a])
+                                }));
+                                require(e.is_finite())?;
+                                bound.derivative_mm[1] = bound.derivative_mm[1].max(e);
+                            }
+                        }
+                    }
+                    if bound.distance_mm > options.maximum_distance_mm
+                        || bound
+                            .derivative_mm
+                            .iter()
+                            .any(|&x| x > options.maximum_cell_derivative_mm)
+                    {
+                        return Err(ReadError::Unsupported);
+                    }
+                    for (i, row) in q.into_iter().enumerate() {
+                        for (j, p) in row.into_iter().enumerate() {
+                            let index = ((u / 11 * u_parts + uchild) * 9 + i) * h
+                                + (((v - r.entry) / 11 * 4 + child) * 9 + j);
+                            if output[index][0].is_nan() {
+                                output[index] = p
+                            } else {
+                                require(output[index] == p)?;
+                            }
                         }
                     }
                 }

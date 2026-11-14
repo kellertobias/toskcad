@@ -234,7 +234,9 @@ pub use physical::{
 };
 
 pub use physical::{
-    DerivedThreadCarrier, DerivedThreadOptions, OccupiedDerivedThread, ThreadCarrierTransfer,
+    ContactThreadCarrier, DerivedThreadCarrier, DerivedThreadOptions, DyadicParameter,
+    OccupiedDerivedThread, RimContact, RimContactId, RimDomainEnd, RimDomainRole, RimKnot,
+    RimSignDomain, ThreadCarrierTransfer, ThreadContactOptions,
 };
 
 pub use physical::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSource};

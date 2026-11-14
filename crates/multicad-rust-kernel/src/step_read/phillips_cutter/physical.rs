@@ -333,7 +333,9 @@ pub use body::{
 pub use body::{ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHeadSupportKind};
 
 pub use body::{
-    DerivedThreadCarrier, DerivedThreadOptions, OccupiedDerivedThread, ThreadCarrierTransfer,
+    ContactThreadCarrier, DerivedThreadCarrier, DerivedThreadOptions, DyadicParameter,
+    OccupiedDerivedThread, RimContact, RimContactId, RimDomainEnd, RimDomainRole, RimKnot,
+    RimSignDomain, ThreadCarrierTransfer, ThreadContactOptions,
 };
 
 pub use body::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSource};

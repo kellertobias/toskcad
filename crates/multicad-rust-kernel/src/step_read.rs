@@ -1110,3 +1110,11 @@ pub use phillips_cutter::{
     OwnedMaterialQueryError as PhillipsOwnedMaterialQueryError,
     OwnedMaterialQueryOptions as PhillipsOwnedMaterialQueryOptions,
 };
+
+pub use phillips_cutter::{
+    ContactThreadCarrier as PhillipsContactThreadCarrier,
+    DyadicParameter as PhillipsDyadicParameter, RimContact as PhillipsRimContact,
+    RimContactId as PhillipsRimContactId, RimDomainEnd as PhillipsRimDomainEnd,
+    RimDomainRole as PhillipsRimDomainRole, RimKnot as PhillipsRimKnot,
+    RimSignDomain as PhillipsRimSignDomain, ThreadContactOptions as PhillipsThreadContactOptions,
+};

@@ -243,7 +243,9 @@ pub use closed_head::{
 
 mod derived_thread;
 pub use derived_thread::{
-    DerivedThreadCarrier, DerivedThreadOptions, OccupiedDerivedThread, ThreadCarrierTransfer,
+    ContactThreadCarrier, DerivedThreadCarrier, DerivedThreadOptions, DyadicParameter,
+    OccupiedDerivedThread, RimContact, RimContactId, RimDomainEnd, RimDomainRole, RimKnot,
+    RimSignDomain, ThreadCarrierTransfer, ThreadContactOptions,
 };
 
 mod material;
