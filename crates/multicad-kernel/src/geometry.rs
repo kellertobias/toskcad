@@ -65,6 +65,7 @@ use bevel_body::BevelBody;
 pub use circular_pocket_body::CircularPocketTool;
 use cosmetic_fastener_body::CosmeticFastenerBody;
 use entry_chamfer_body::EntryChamferBody;
+pub use entry_chamfer_body::LiteralMeshEmbedding;
 pub use entry_chamfer_body::{EntryChamferBoundaryProof, EntryChamferData, EntryChamferEdge};
 use helical_body::HelicalBody;
 pub use helical_body::PhillipsMeshVolumePair;
