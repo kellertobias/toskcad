@@ -12,6 +12,23 @@ struct Value {
 #[derive(Clone)]
 pub(super) struct Q(Rc<Value>);
 impl Q {
+    /// Re-enter the bounded scalar arena from an owned source query. Validate
+    /// size/sign and precharge normalization before any library GCD or clone.
+    pub fn from_rational(number: BigRational, work: &mut Work<'_>) -> Result<Self, Error> {
+        work.step()?;
+        let bits = number.numer().bits().max(number.denom().bits());
+        if bits > MAX_BITS {
+            return Err(Error::Limit);
+        }
+        if number.denom().sign() != Sign::Plus {
+            return Err(Error::Unresolved);
+        }
+        let words = (bits as usize).div_ceil(64).max(1);
+        work.charge(1 + words * words)?;
+        let number = BigRational::new(number.numer().clone(), number.denom().clone());
+        Ok(Self::make(number, None))
+    }
+
     pub fn float(value: f64, work: &mut Work<'_>) -> Result<Self, Error> {
         work.step()?;
         if !value.is_finite() {
@@ -116,6 +133,13 @@ impl Q {
             Sign::NoSign => Ordering::Equal,
             Sign::Plus => Ordering::Greater,
         }
+    }
+    /// Ephemeral exact query value. Callers compact before arena retention.
+    pub fn rational(&self, work: &mut Work<'_>) -> Result<BigRational, Error> {
+        work.charge(
+            1 + (self.0.number.numer().bits() + self.0.number.denom().bits()).div_ceil(64) as usize,
+        )?;
+        Ok(self.0.number.clone())
     }
     /// A newly allocated compact representation has no historical BigInt
     /// capacity. Headers and magnitude bytes are charged before allocation;
@@ -363,5 +387,37 @@ mod decode_tests {
         bad[end - denominator..].fill(0);
         assert!(matches!(Q::decode(&bad, w), Err(Error::Unresolved)));
         assert!(matches!(Q::decode(&[2, 1, 4, 1, 0], w), Err(Error::Limit)));
+    }
+}
+#[cfg(test)]
+mod source_reentry_tests {
+    use super::*;
+    #[test]
+    fn source_rational_entry_validates_size_sign_normalization_work_and_cancel() {
+        let mut w = Work {
+            remaining: 1000000,
+            used: 0,
+            interrupt: None,
+        };
+        let q = Q::from_rational(BigRational::new(2.into(), 4.into()), &mut w).unwrap();
+        assert_eq!(
+            q.rational(&mut w).unwrap(),
+            BigRational::new(1.into(), 2.into())
+        );
+        assert!(Q::from_rational(BigRational::new_raw(1.into(), (-2).into()), &mut w).is_err());
+        let huge = BigInt::from(1) << 8192usize;
+        assert!(Q::from_rational(BigRational::from_integer(huge), &mut w).is_err());
+        let mut limited = Work {
+            remaining: 1,
+            used: 0,
+            interrupt: None,
+        };
+        assert!(Q::from_rational(BigRational::from_integer(1.into()), &mut limited).is_err());
+        let mut cancel = Work {
+            remaining: 1000,
+            used: 0,
+            interrupt: Some(&|| true),
+        };
+        assert!(Q::from_rational(BigRational::from_integer(1.into()), &mut cancel).is_err());
     }
 }

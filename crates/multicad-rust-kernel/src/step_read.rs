@@ -53,7 +53,10 @@ pub use phillips_cutter::{
     IntersectionSection as PhillipsIntersectionSection,
     IntersectionTubeOptions as PhillipsIntersectionTubeOptions,
     IntersectionTubes as PhillipsIntersectionTubes, PhillipsReadError, PhillipsSourceKnownProof,
-    verify_phillips_cutter_source_known, verify_phillips_cutter_source_known_with_interrupt,
+    SewnEdgeEvaluation as PhillipsSewnEdgeEvaluation, SewnEdgeOptions as PhillipsSewnEdgeOptions,
+    SewnEdgeParameter as PhillipsSewnEdgeParameter, SewnEdgeSource as PhillipsSewnEdgeSource,
+    SewnEdgeSources as PhillipsSewnEdgeSources, verify_phillips_cutter_source_known,
+    verify_phillips_cutter_source_known_with_interrupt,
 };
 mod round;
 mod rounded_cylinder;
@@ -1034,12 +1037,38 @@ pub use phillips_cutter::{
     ParsedPhillipsMouth, ParsedPhillipsSurface, ParsedPhillipsVertex,
     ParsedPhillipsVirtualOuterCap, PhillipsAnalyticSupportBounds, PhillipsAnalyticSupportOptions,
     PhillipsCubicSupportBounds, PhillipsCubicSupportOptions, PhillipsEdgeSupportBound,
-    PhillipsEndpointCouplingBounds, PhillipsEndpointCouplingOptions,
-    PhillipsImplicitSupportEnclosure, read_phillips_body, read_phillips_body_with_interrupt,
-    read_phillips_screw_boundary, read_phillips_screw_boundary_with_interrupt,
+    PhillipsEndpointCouplingBounds, PhillipsEndpointCouplingOptions, PhillipsExactPointLeaf,
+    PhillipsImplicitSupportEnclosure, PhillipsOriginalNumericLeaf, PhillipsOriginalNumericLeaves,
+    PhillipsOuterCarrierBounds, PhillipsOuterCarrierOptions, PhillipsTensorCarrierBound,
+    read_phillips_body, read_phillips_body_with_interrupt, read_phillips_screw_boundary,
+    read_phillips_screw_boundary_with_interrupt,
 };
 
 #[cfg(test)]
 mod tests;
 
 pub use helical::{PhillipsScrewSourceKnownProof, verify_phillips_screw_source_known};
+
+pub use phillips_cutter::{
+    DerivedCavityOptions as PhillipsDerivedCavityOptions,
+    DerivedCavityRepresentative as PhillipsDerivedCavityRepresentative,
+    DerivedEdgeCorrespondence as PhillipsDerivedEdgeCorrespondence,
+    DerivedFaceCorrespondence as PhillipsDerivedFaceCorrespondence,
+    DerivedVertexCorrespondence as PhillipsDerivedVertexCorrespondence,
+};
+
+pub use phillips_cutter::ClosedDerivedCavityCertificate as PhillipsClosedDerivedCavityCertificate;
+
+pub use phillips_cutter::{
+    CommonMouthChart as PhillipsCommonMouthChart,
+    CommonMouthHeadEnvelope as PhillipsCommonMouthHeadEnvelope,
+    CommonMouthOptions as PhillipsCommonMouthOptions,
+    CommonTensorTransfer as PhillipsCommonTensorTransfer,
+};
+
+pub use phillips_cutter::{
+    ClosedHeadOptions as PhillipsClosedHeadOptions,
+    ClosedRepairedHead as PhillipsClosedRepairedHead,
+    HeadSupportTransfer as PhillipsHeadSupportTransfer,
+    RawHeadSupportKind as PhillipsRawHeadSupportKind,
+};

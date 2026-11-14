@@ -243,12 +243,29 @@ fn uncertain_or_overflowed_stencils_fall_through_to_full_literal_source_checks()
             }
         }
     }
+    for (side, source) in p.sides.iter().enumerate() {
+        if matches!(source, Side::Tensor(_)) {
+            assert_eq!(
+                p.probe_normal(
+                    Some(&candidate),
+                    &g,
+                    &ring,
+                    [side, 0, 0],
+                    0,
+                    &mut BTreeMap::new(),
+                    &mut w
+                )
+                .unwrap(),
+                None
+            );
+        }
+    }
     let mut changes = Refinement::new(g.u.len());
     assert!(
-        !p.normal_preflight(&candidate, &g, &ring, 0, &mut changes, &mut w)
+        p.normal_preflight(Some(&candidate), &g, &ring, 0, &mut changes, &mut w)
             .unwrap()
     );
-    assert!(changes.empty());
+    assert!(!changes.empty());
     for side in &mut p.sides {
         if let Side::Tensor(t) = side {
             for patch in &mut t.cells {
@@ -263,12 +280,29 @@ fn uncertain_or_overflowed_stencils_fall_through_to_full_literal_source_checks()
     for x in &mut candidate.vertices {
         *x *= 1e74;
     }
+    for (side, source) in p.sides.iter().enumerate() {
+        if matches!(source, Side::Tensor(_)) {
+            assert_eq!(
+                p.probe_normal(
+                    Some(&candidate),
+                    &g,
+                    &ring,
+                    [side, 0, 0],
+                    0,
+                    &mut BTreeMap::new(),
+                    &mut w
+                )
+                .unwrap(),
+                None
+            );
+        }
+    }
     let mut changes = Refinement::new(g.u.len());
     assert!(
-        !p.normal_preflight(&candidate, &g, &ring, 0, &mut changes, &mut w)
+        p.normal_preflight(Some(&candidate), &g, &ring, 0, &mut changes, &mut w)
             .unwrap()
     );
-    assert!(changes.empty());
+    assert!(!changes.empty());
     assert_eq!(
         p.check(&candidate, &g, &ring, 0, &mut changes, &mut w)
             .err(),

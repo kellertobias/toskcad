@@ -4,7 +4,7 @@ pub struct BoundaryPolyline {
     pub points_mm: Vec<[f64; 3]>,
     pub maximum_error_mm: f64,
 }
-impl Boundary {
+impl<S> Boundary<S> {
     /// Stock-relative source curve. Every actual segment includes the numerical
     /// endpoint error; the source owns the exact periodic endpoint identity.
     pub fn curve_polyline(
@@ -14,8 +14,25 @@ impl Boundary {
         point_limit: usize,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<BoundaryPolyline, Error> {
+        self.curve_polyline_accounted(
+            (id, deflection_mm, point_limit),
+            self.graph.limits.work,
+            0,
+            interrupt,
+        )
+        .map(|(line, _)| line)
+    }
+    /// Compound callers charge all already-live source packets and output arenas.
+    pub(crate) fn curve_polyline_accounted(
+        &self,
+        request: (u32, f64, usize),
+        maximum_work: usize,
+        reserved_bytes: usize,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<(BoundaryPolyline, usize), Error> {
+        let (id, deflection_mm, point_limit) = request;
         let mut work = Work {
-            remaining: self.graph.limits.work,
+            remaining: maximum_work.min(16_000_000),
             used: 0,
             interrupt,
         };
@@ -55,7 +72,10 @@ impl Boundary {
         let segments = proposal as usize;
         let mut points = self.graph.buffer::<[f64; 3]>(
             segments + 1,
-            self.query_headers() + size_of::<BoundaryPolyline>(),
+            self.query_headers()
+                .checked_add(size_of::<BoundaryPolyline>())
+                .and_then(|n| n.checked_add(reserved_bytes))
+                .ok_or(Error::Limit)?,
             &mut work,
         )?;
         let mut previous = self.curve_point(id, 0., interrupt)?;
@@ -79,9 +99,12 @@ impl Boundary {
             last_t = t;
         }
         work.step()?;
-        Ok(BoundaryPolyline {
-            points_mm: points,
-            maximum_error_mm: maximum,
-        })
+        Ok((
+            BoundaryPolyline {
+                points_mm: points,
+                maximum_error_mm: maximum,
+            },
+            work.used,
+        ))
     }
 }

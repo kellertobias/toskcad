@@ -4,7 +4,9 @@ mod exact_binary;
 
 pub mod annulus;
 pub mod authored_flat_thread;
+pub mod authored_hanger_bolt;
 pub mod authored_internal_treatment;
+pub mod authored_metric_thread;
 pub mod axial_pipe_thread;
 pub mod axial_profile_stack;
 pub mod bevel_gear;
@@ -18,6 +20,7 @@ pub mod cylinder;
 pub mod cylindrical_blind_pocket;
 pub mod display;
 mod drawing_events;
+pub mod hanger_bolt;
 pub mod head_profile;
 pub mod headed_screw;
 pub mod helical_receiver;
@@ -77,6 +80,8 @@ pub mod torus;
 pub mod trim_curve;
 pub mod trimmed_sweep;
 pub mod warped_union;
+pub mod wood_insert;
+pub mod wood_thread_contact;
 pub mod worm_gear;
 
 pub use multicad_precision::{Error, GridCoordinate, Quantum, Rational, parse_length_mm};

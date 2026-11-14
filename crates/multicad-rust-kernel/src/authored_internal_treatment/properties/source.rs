@@ -49,15 +49,37 @@ fn cylinder(radius: I, z0: f64, z1: f64) -> [I; 4] {
         area * (I::point(z0) + I::point(z1)) / I::point(2.),
     ]
 }
+/// Borrowed actual material domain; bare threads have neither treatment.
+#[derive(Clone, Copy)]
+pub(super) struct Domain<'a> {
+    thread: &'a AuthoredThread,
+    entry: Option<Entry>,
+    tail: Option<Tail>,
+}
+impl<'a> Domain<'a> {
+    pub fn treated(body: &'a Cavity) -> Self {
+        Self {
+            thread: &body.thread,
+            entry: body.entry,
+            tail: body.tail,
+        }
+    }
+    pub fn bare(thread: &'a AuthoredThread) -> Self {
+        Self {
+            thread,
+            entry: None,
+            tail: None,
+        }
+    }
+}
 pub(super) fn evaluate(
-    body: &Cavity,
-    material: Option<&Material>,
+    body: Domain<'_>,
+    stock: Option<I>,
     face: FaceKey,
     options: FacePropertyOptions,
     work: &mut integrate::Work<'_>,
 ) -> Result<[I; 4], Error> {
-    let length = body.full_length_mm();
-    let stock = material.map(Material::radius_interval);
+    let length = body.thread.full_length_mm();
     let kind = match face {
         FaceKey::MaterialOuterWall => {
             return Ok(cylinder(stock.ok_or(Error::Invalid)?, 0., length));
@@ -114,7 +136,8 @@ pub(super) fn evaluate(
     for period in 0..spec.starts {
         for (band, b) in body.thread.bands().into_iter().enumerate() {
             work.checkpoint()?;
-            if matches!(kind, Kind::Wall) && body.thread_face_key(i64::from(period), band)? != face
+            if matches!(kind, Kind::Wall)
+                && thread_face_key(body.thread, i64::from(period), band)? != face
             {
                 continue;
             }
@@ -148,7 +171,13 @@ pub(super) fn evaluate(
         }
     }
     let extent = stock
-        .map_or(body.maximum_radius_mm(), |r| r.hi)
+        .map_or(
+            body.thread
+                .maximum_radius_mm()
+                .max(body.entry.map_or(0., |e| e.radius))
+                .max(body.tail.map_or(0., |t| t.radius)),
+            |r| r.hi,
+        )
         .max(length)
         .max(1.);
     integrate::parts(&parts, extent, options, work)

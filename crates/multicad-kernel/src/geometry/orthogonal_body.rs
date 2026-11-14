@@ -1097,6 +1097,30 @@ fn imported_origin(
 }
 
 impl OrthogonalBody {
+    pub(in crate::geometry) fn wood_contact_source(
+        &self,
+    ) -> Option<(&OrthogonalSolid, OrthogonalPocket)> {
+        if self.imported_roundoff_mm.is_some()
+            || !self.slots.is_empty()
+            || !self.through_bores.is_empty()
+        {
+            return None;
+        }
+        let [pilot] = self.pockets.as_ref() else {
+            return None;
+        };
+        Some((&self.geometry, *pilot))
+    }
+
+    // Curved cuts only remove material from this actual outer source.
+    pub(in crate::geometry) fn wood_envelope_source(&self) -> Option<&OrthogonalSolid> {
+        self.imported_roundoff_mm
+            .is_none()
+            .then_some(&self.geometry)
+    }
+    pub(in crate::geometry) fn wood_obstruction_source(&self) -> Option<&OrthogonalSolid> {
+        (!self.has_curved_cuts() && self.imported_roundoff_mm.is_none()).then_some(&self.geometry)
+    }
     pub(crate) fn drawing_stock(&self) -> DrawingStock<'_> {
         DrawingStock {
             cells: self.geometry.cells(),

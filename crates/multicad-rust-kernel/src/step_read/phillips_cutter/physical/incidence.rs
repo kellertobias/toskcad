@@ -37,6 +37,7 @@ pub(super) fn read(
             raw.insert(
                 id,
                 graph::Edge {
+                    entity: id,
                     vertices,
                     geometry: reference(geometry)?,
                     forward: crate::step_read::sense(forward)?,

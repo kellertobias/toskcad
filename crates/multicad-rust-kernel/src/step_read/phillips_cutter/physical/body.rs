@@ -3,6 +3,10 @@
 //! publication receipt. No expected authoring source or gauge is accepted.
 use super::*;
 use crate::step_read::helical_import::{law::Law, seed::TensorHeader};
+mod outer;
+mod retained;
+pub use outer::{OuterCarrierBounds, OuterCarrierOptions, TensorCarrierBound};
+pub use retained::{ExactPointLeaf, OriginalNumericLeaf, OriginalNumericLeaves};
 #[cfg(test)]
 mod tests;
 
@@ -30,8 +34,12 @@ pub struct Body<'input> {
     cap: VirtualOuterCap,
     tensor_face_count: usize,
     tolerance: f64,
+    retained_budget_bytes: usize,
 }
 impl<'input> Body<'input> {
+    pub(super) fn source_entities(&self) -> &BTreeMap<u32, Vec<Entity<'input>>> {
+        &self.entities
+    }
     pub fn cavity(&self) -> &Boundary {
         &self.cavity
     }
@@ -71,22 +79,26 @@ impl<'input> Body<'input> {
         &self,
         index: usize,
     ) -> std::result::Result<Vec<Vec<Point>>, PhillipsReadError> {
-        let result = (|| {
-            let id = *self
-                .tensor_face_entities()
-                .get(index)
-                .ok_or(ReadError::Invalid)?;
-            let shell = Shell::new(&self.entities, self.tolerance, true);
-            let (surface, _, _) = helical::face(&shell, id)?;
-            let args = shell.args(surface, "B_SPLINE_SURFACE_WITH_KNOTS")?;
-            let Value::List(rows) = args.get(3).ok_or(ReadError::Invalid)? else {
-                return Err(ReadError::Invalid);
-            };
-            rows.iter()
-                .map(|row| refs(row)?.into_iter().map(|id| shell.point(id)).collect())
-                .collect()
-        })();
-        result.map_err(PhillipsReadError::from)
+        self.literal_tensor_control_points_raw(index)
+            .map_err(PhillipsReadError::from)
+    }
+    pub(super) fn literal_tensor_control_points_raw(
+        &self,
+        index: usize,
+    ) -> Result<Vec<Vec<Point>>> {
+        let id = *self
+            .tensor_face_entities()
+            .get(index)
+            .ok_or(ReadError::Invalid)?;
+        let shell = Shell::new(&self.entities, self.tolerance, true);
+        let (surface, _, _) = helical::face(&shell, id)?;
+        let args = shell.args(surface, "B_SPLINE_SURFACE_WITH_KNOTS")?;
+        let Value::List(rows) = args.get(3).ok_or(ReadError::Invalid)? else {
+            return Err(ReadError::Invalid);
+        };
+        rows.iter()
+            .map(|row| refs(row)?.into_iter().map(|id| shell.point(id)).collect())
+            .collect()
     }
 }
 fn plane(shell: &Shell<'_, '_>, id: u32) -> Result<Plane> {
@@ -196,7 +208,7 @@ pub fn read_phillips_body_with_interrupt<'input>(
             .filter_map(|f| f.material_entity)
             .collect(),
     };
-    Ok(Body {
+    let mut body = Body {
         input,
         entities,
         material_faces: faces,
@@ -209,5 +221,22 @@ pub fn read_phillips_body_with_interrupt<'input>(
         cap,
         tensor_face_count: count,
         tolerance,
-    })
+        retained_budget_bytes: 0,
+    };
+    let budget = retained::budget(&body, &mut work);
+    if work.cancelled.get() {
+        return Err(PhillipsReadError::Cancelled);
+    }
+    body.retained_budget_bytes = budget.map_err(PhillipsReadError::from)?;
+    Ok(body)
 }
+
+mod common_mouth;
+pub use common_mouth::{
+    CommonMouthChart, CommonMouthHeadEnvelope, CommonMouthOptions, CommonTensorTransfer,
+};
+
+mod closed_head;
+pub use closed_head::{
+    ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHeadSupportKind,
+};

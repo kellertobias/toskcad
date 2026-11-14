@@ -95,3 +95,28 @@ impl AxialCylinder {
         self.bounds
     }
 }
+
+#[cfg(test)]
+mod bounds_tests {
+    use super::*;
+    #[test]
+    fn fractional_support_extrema_touch_every_retained_bound() {
+        let q = |n, d| Rational::new(n, d).unwrap();
+        let center = [q(-5, 3), q(7, 9)];
+        let circle = Circle::new(center, q(2, 5)).unwrap();
+        let cylinder = AxialCylinder::new(472, circle, q(-13, 11), q(11, 7)).unwrap();
+        let [low, high] = cylinder.bounds();
+        for axis in 0..2 {
+            assert_eq!(
+                low[axis],
+                center[axis].checked_sub(circle.radius()).unwrap()
+            );
+            assert_eq!(
+                high[axis],
+                center[axis].checked_add(circle.radius()).unwrap()
+            );
+        }
+        assert_eq!(low[2], cylinder.bottom());
+        assert_eq!(high[2], cylinder.top());
+    }
+}

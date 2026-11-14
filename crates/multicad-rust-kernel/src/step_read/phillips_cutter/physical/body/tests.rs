@@ -148,7 +148,7 @@ fn a_changed_literal_tensor_is_retained_and_never_replaced_by_the_inferred_heade
         PhillipsReadError::Cancelled
     );
 }
-fn argument(text: &str, id: u32, index: usize, replacement: &str) -> String {
+pub(super) fn argument(text: &str, id: u32, index: usize, replacement: &str) -> String {
     let line = text
         .lines()
         .find(|l| l.starts_with(&format!("#{id}=")))

@@ -78,7 +78,10 @@ fn annulus(body: &Cavity, disk: &Disk, radius: I) -> source::Field {
 }
 fn link(disk: &Disk, trace: &Trace, w: &mut Work<'_>) -> Result<Link, Error> {
     w.step()?;
-    let ends = disk.edge.v.map(|v| v.lo == 1. && v.hi == 1.);
+    let ends = disk
+        .edge
+        .v
+        .map(|v| v.lo == trace.end() && v.hi == trace.end());
     let order = match ends {
         [true, false] => Ordering::Greater,
         [false, true] => Ordering::Less,
@@ -121,7 +124,7 @@ fn ring(
         }
         next[link.from] = i;
         let v = trace.bounds(link.angle, w)?;
-        if v.lo == 0. && v.hi == 0. && start.replace(link.from).is_some() {
+        if v.lo == trace.origin() && v.hi == trace.origin() && start.replace(link.from).is_some() {
             return Err(Error::Unresolved);
         }
     }
@@ -243,7 +246,7 @@ fn outer_wall(
             for [end, index] in tri {
                 let node = rings[end][index % counts[end]];
                 let v = if index == counts[end] {
-                    I::point(1.)
+                    I::point(trace.end())
                 } else {
                     trace.bounds(node.angle, w)?
                 };
@@ -501,20 +504,18 @@ pub(super) fn tessellate(
     }
     let mut grid = Grid::new();
     loop {
-        let repartition =
-            match chart::traced_attempt(body, options, grid.subdivisions, grid.rows(), &mut w)? {
-                Attempt::Complete((shell, trace)) => {
-                    if let Some(prepared) = close::prepare(shell, body, options, &mut w)?
-                        && let Some(candidate) =
-                            assemble(material, prepared, trace, options, &mut w)?
-                    {
-                        return Ok(candidate);
-                    }
-                    false
+        let repartition = match chart::traced_grid_attempt(body, options, &grid, &mut w)? {
+            Attempt::Complete((shell, trace)) => {
+                if let Some(prepared) = close::prepare(shell, body, options, &mut w)?
+                    && let Some(candidate) = assemble(material, prepared, trace, options, &mut w)?
+                {
+                    return Ok(candidate);
                 }
-                Attempt::Refine => false,
-                Attempt::Repartition => true,
-            };
+                false
+            }
+            Attempt::Refine => false,
+            Attempt::Repartition => true,
+        };
         grid.advance(repartition)?;
     }
 }
@@ -897,7 +898,12 @@ mod tests {
             .caps
             .iter()
             .filter(|d| d.end == 0)
-            .find(|d| d.edge.v.iter().any(|v| v.lo == 1. && v.hi == 1.))
+            .find(|d| {
+                d.edge
+                    .v
+                    .iter()
+                    .any(|v| v.lo == trace.end() && v.hi == trace.end())
+            })
             .unwrap();
         let expected = link(&closing, &trace, w).unwrap();
         closing.edge.v.swap(0, 1);

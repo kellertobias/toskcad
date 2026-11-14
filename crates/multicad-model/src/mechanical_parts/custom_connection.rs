@@ -6,6 +6,71 @@ pub(super) fn build_rust(
     source: ResolvedCustomConnectionHardware,
     policy: GeometryPolicy,
 ) -> Result<Solid, ModelError> {
+    if let ResolvedCustomConnectionHardware::WoodInsert {
+        outer_thread,
+        inner_thread,
+        ..
+    } = source
+    {
+        use multicad_kernel::rust_kernel::{
+            authored_flat_thread::{AuthoredThread, SourceOptions},
+            helical_thread::Spec,
+            wood_insert::Insert,
+        };
+        let (outer, outer_root, frame) = crate::threads::rust_profile(feature, &outer_thread)?;
+        let (inner, inner_root, inner_frame) =
+            crate::threads::rust_profile(feature, &inner_thread)?;
+        if outer_root.is_some() || inner_root.is_some() || frame != inner_frame {
+            return Err(error(
+                Some(feature),
+                "Paired insert requires its actual shared frame and flat wood/internal profiles",
+            ));
+        }
+        let make = |p: multicad_kernel::HelicalThread| {
+            AuthoredThread::new(
+                Spec {
+                    major_radius_mm: p.major_radius_mm,
+                    pitch_mm: p.pitch_mm,
+                    length_mm: p.length_mm,
+                    depth_mm: p.depth_mm,
+                    crest_width_mm: p.crest_width_mm,
+                    lower_flank_deg: p.lower_flank_deg,
+                    upper_flank_deg: p.upper_flank_deg,
+                    starts: p.starts,
+                    left_hand: p.left_hand,
+                    root_radius_mm: None,
+                },
+                SourceOptions {
+                    position_limit_mm: policy.linear_tolerance_mm / 16.,
+                    normal_angle_limit_rad: policy.linear_tolerance_mm
+                        / (16. * p.major_radius_mm.max(1.)),
+                },
+            )
+            .map_err(|cause| {
+                error(
+                    Some(feature),
+                    format!("Actual insert thread source cannot be certified: {cause:?}"),
+                )
+            })
+        };
+        let source = Insert::new(
+            make(outer)?,
+            make(inner)?,
+            outer_thread
+                .minimum_wall_mm
+                .max(inner_thread.minimum_wall_mm)
+                .max(policy.minimum_feature_mm),
+            None,
+        )
+        .map_err(|cause| {
+            error(
+                Some(feature),
+                format!("Paired insert material cannot be certified: {cause:?}"),
+            )
+        })?;
+        return Solid::rust_wood_insert(source, feature, frame, policy, None)
+            .map_err(|cause| error(Some(feature), cause));
+    }
     let ResolvedCustomConnectionHardware::WoodScrew {
         wood_thread,
         plain_length_mm,
@@ -17,7 +82,7 @@ pub(super) fn build_rust(
     else {
         return Err(error(
             Some(feature),
-            "Rust custom inserts and hanger bolts require their own connected-material providers",
+            "Rust hanger bolts require their own connected-material provider",
         ));
     };
     let head = super::rust_legacy_head(&head, &drive).ok_or_else(|| {

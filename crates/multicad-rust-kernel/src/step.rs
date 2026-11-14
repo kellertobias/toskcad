@@ -35,6 +35,7 @@ pub(crate) mod helical;
 pub mod helical_trim;
 mod helical_tube_cut;
 pub(crate) mod herringbone;
+pub mod insert;
 pub use helical_tube_cut::{supports_helical_tube_cut, write_helical_tube_cut};
 pub use herringbone::{supports_herringbone, write_herringbone};
 mod nonplanar_loft;

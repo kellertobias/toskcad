@@ -9,6 +9,14 @@ pub enum BoxClassification {
     UnresolvedBoundary,
 }
 
+impl Thread {
+    /// Both one-sided literal support laws at finite phase joins. The caller
+    /// supplies a closed subinterval of one original axial period.
+    pub(crate) fn radius_at_phase_interval(&self, phase: I) -> Option<I> {
+        radius(self, phase)
+    }
+}
+
 // Angle is measured in [0,2pi], including both one-sided seam limits. The
 // retained rounded helical rate is not silently replaced by an exact lead.
 fn angle(x: I, y: I) -> I {

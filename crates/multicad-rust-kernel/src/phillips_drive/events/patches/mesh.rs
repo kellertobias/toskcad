@@ -372,3 +372,24 @@ impl PatchAtlas<'_> {
 }
 #[cfg(test)]
 mod tests;
+
+// Reuse only semantic source incidence, never the detached mesh builder.
+pub(super) fn chart_incidence(
+    atlas: &PatchAtlas<'_>,
+    cancel: &dyn Fn() -> bool,
+) -> Result<super::ChartIncidence, Error> {
+    let complex = Complex::build(atlas, cancel)?;
+    // Sealed atlas construction has4trims*4quarters*5charts+8cap/fan charts.
+    // Complex::build pushes one side tuple per actual chart and certifies links,
+    // opposite oriented edge uses and Euler2 using shared semantic identities.
+    let sides = std::array::from_fn(|i| {
+        complex.sides[i].map(|s| match s {
+            Side::Curve(id) => crate::phillips_drive::SourceChartSide::Curve(id),
+            Side::Collapsed(id) => crate::phillips_drive::SourceChartSide::Collapsed(id),
+        })
+    });
+    Ok(super::ChartIncidence {
+        topology: complex.certificate,
+        sides,
+    })
+}

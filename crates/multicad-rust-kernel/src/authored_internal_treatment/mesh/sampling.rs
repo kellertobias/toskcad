@@ -3,6 +3,9 @@ use super::*;
 pub(super) const MAX_ROWS: u32 = 65_536;
 pub(super) const MAX_SUBDIVISIONS: usize = 1024;
 const ALTERNATE_OFFSET: u32 = 3;
+// Half the finest permitted angular cell: no legal dyadic row places the
+// original cut on this shifted sampling seam. Source phase stays unchanged.
+pub(super) const TURN_OFFSET: f64 = 1. / (2. * MAX_ROWS as f64);
 pub(super) enum Attempt<T> {
     Complete(T),
     Refine,
@@ -12,6 +15,7 @@ pub(super) struct Grid {
     pub subdivisions: usize,
     base_rows: u32,
     alternative: bool,
+    pub shifted: bool,
 }
 impl Grid {
     pub fn new() -> Self {
@@ -19,6 +23,7 @@ impl Grid {
             subdivisions: 1,
             base_rows: 64,
             alternative: false,
+            shifted: false,
         }
     }
     pub fn rows(&self) -> u32 {
@@ -32,6 +37,9 @@ impl Grid {
     pub fn advance(&mut self, repartition: bool) -> Result<(), Error> {
         if repartition && !self.alternative && self.base_rows <= MAX_ROWS - ALTERNATE_OFFSET {
             self.alternative = true;
+        } else if repartition && !self.shifted && self.base_rows < MAX_ROWS {
+            self.shifted = true;
+            self.alternative = false;
         } else {
             if self.subdivisions >= MAX_SUBDIVISIONS || self.base_rows >= MAX_ROWS {
                 return Err(Error::Limit);

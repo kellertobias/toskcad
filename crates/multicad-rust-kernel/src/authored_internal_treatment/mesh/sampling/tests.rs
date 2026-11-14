@@ -93,6 +93,13 @@ fn real_alternate_failure_returns_to_original_refinement_and_never_retries_error
         Ok(Attempt::Repartition)
     ));
     grid.advance(true).unwrap();
+    assert_eq!(
+        (grid.subdivisions, grid.rows(), grid.shifted),
+        (1, 64, true)
+    );
+    grid.advance(true).unwrap();
+    assert_eq!((grid.subdivisions, grid.rows()), (1, 67));
+    grid.advance(true).unwrap();
     assert_eq!((grid.subdivisions, grid.rows()), (2, 128));
     let mut cancelled = Work {
         remaining: 16_000_000,
@@ -288,4 +295,151 @@ fn actual_large_terminal_uses_local_conforming_shoulders_without_refining_the_th
     let proof = crate::manufacturing::certify(&candidate.mesh).unwrap();
     assert!(proof.signed_volume_mm3 > 0. && proof.vertex_links > 0);
     assert!(candidate.work_used < 4_000_000);
+}
+
+#[test]
+fn shifted_sampling_seam_preserves_actual_fine_pitch_source_and_closed_material() {
+    use crate::{Circle, Rational, cylinder::AxialCylinder};
+    let body = source(true);
+    let original = body;
+    let start = std::time::Instant::now();
+    let candidate = tessellate_candidate(&body, quality(), None).unwrap();
+    eprintln!(
+        "fine-pitch cavity {} facets, {} work, {:?}",
+        candidate.mesh.face_indices.len(),
+        candidate.work_used,
+        start.elapsed()
+    );
+    assert!(candidate.source_chord_bound_mm <= quality().deflection);
+    assert!(candidate.source_normal_angle_bound_rad <= quality().angle);
+    assert!(candidate.work_used < 16_000_000);
+    assert!(
+        crate::manufacturing::certify(&candidate.mesh)
+            .unwrap()
+            .signed_volume_mm3
+            > 0.
+    );
+    assert_eq!(body, original);
+    let zero = Rational::new(0, 1).unwrap();
+    let stock = AxialCylinder::new(
+        7,
+        Circle::new([zero; 2], Rational::new(5, 2).unwrap()).unwrap(),
+        zero,
+        Rational::new(4, 1).unwrap(),
+    )
+    .unwrap();
+    let material = super::super::super::Material::new(stock, body, 0.5).unwrap();
+    let start = std::time::Instant::now();
+    let candidate = material.tessellate_candidate(quality(), None).unwrap();
+    eprintln!(
+        "fine-pitch material {} facets, {} work, {:?}",
+        candidate.mesh.face_indices.len(),
+        candidate.work_used,
+        start.elapsed()
+    );
+    assert!(candidate.source_chord_bound_mm <= quality().deflection);
+    assert!(candidate.source_normal_angle_bound_rad <= quality().angle);
+    assert!(
+        crate::manufacturing::certify(&candidate.mesh)
+            .unwrap()
+            .signed_volume_mm3
+            > 0.
+    );
+    assert_eq!(*material.cavity(), original);
+}
+
+#[test]
+fn actual_shift_fallback_cancels_before_and_during_new_source_sampling() {
+    let body = source(true);
+    let original = body;
+    let calls = std::cell::Cell::new(0usize);
+    let count = || {
+        calls.set(calls.get() + 1);
+        false
+    };
+    let mut w = Work {
+        remaining: 16_000_000,
+        used: 0,
+        interrupt: Some(&count),
+    };
+    let mut grid = Grid::new();
+    for _ in 0..2 {
+        assert!(matches!(
+            chart::grid_attempt(&body, quality(), &grid, &mut w),
+            Ok(Attempt::Repartition)
+        ));
+        grid.advance(true).unwrap();
+    }
+    assert!(grid.shifted);
+    let boundary = calls.get();
+    for stop in [boundary - 1, boundary, boundary + 1, boundary + 10_000] {
+        calls.set(0);
+        let cancel = || {
+            calls.set(calls.get() + 1);
+            calls.get() > stop
+        };
+        assert_eq!(
+            tessellate_candidate(&body, quality(), Some(&cancel)).unwrap_err(),
+            Error::Cancelled
+        );
+        assert_eq!(body, original);
+    }
+}
+
+#[test]
+fn actual_extreme_terminal_cap_requests_angular_refinement_and_keeps_real_work_limit() {
+    let base = source(false);
+    let thread = AuthoredThread::new(
+        crate::helical_thread::Spec {
+            depth_mm: 0.25,
+            crest_width_mm: 0.125,
+            ..base.thread.spec()
+        },
+        SourceOptions {
+            position_limit_mm: 1e-7,
+            normal_angle_limit_rad: 1e-7,
+        },
+    )
+    .unwrap();
+    let body = Cavity::new(
+        thread,
+        Intent {
+            terminal: Some(Terminal {
+                width_mm: 0.5,
+                radial_depth_mm: 100.,
+            }),
+            ..base.intent()
+        },
+    )
+    .unwrap();
+    let unchanged = body;
+    let mut w = work();
+    let Attempt::Complete(shell) = chart::shell_attempt(&body, quality(), 1, 64, &mut w).unwrap()
+    else {
+        panic!("actual side should qualify");
+    };
+    assert!(
+        close::close(shell, &body, quality(), &mut w)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        tessellate_candidate(&body, quality(), None).unwrap_err(),
+        Error::Limit
+    );
+    assert_eq!(body, unchanged);
+}
+
+#[test]
+fn actual_traced_retry_cancels_before_its_angular_table_allocation() {
+    let body = source(true);
+    let mut w = Work {
+        remaining: 16_000_000,
+        used: 0,
+        interrupt: Some(&|| true),
+    };
+    assert!(matches!(
+        chart::traced_grid_attempt(&body, quality(), &Grid::new(), &mut w),
+        Err(Error::Cancelled)
+    ));
 }

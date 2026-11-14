@@ -66,17 +66,27 @@ impl Cavity {
     /// conservative section bound, never a claim that the cavity is circular.
     /// At an uncertain source join both owning analytic expressions contribute.
     pub fn radial_suffix_bound_mm(&self, depth_mm: f64) -> Result<f64, Error> {
+        self.source.radial_suffix_bound_mm(depth_mm)
+    }
+}
+
+#[cfg(test)]
+mod tests;
+
+impl Cutter {
+    /// Upper radius of the entire validated authored envelope below depth.
+    pub fn radial_suffix_bound_mm(&self, depth_mm: f64) -> Result<f64, Error> {
         if !depth_mm.is_finite() || depth_mm < 0. {
             return Err(Error::Invalid);
         }
-        let e = &self.source.envelope;
+        let e = &self.envelope;
         if depth_mm >= e.tip.hi {
             return Ok(0.);
         }
         let d = I::point(depth_mm);
         let mut upper: f64 = 0.;
         if depth_mm <= e.join.hi {
-            let r = I::point(self.source.spec.mouth_radius_mm);
+            let r = I::point(self.spec.mouth_radius_mm);
             let square = r.square() - (d - r).square();
             // The active roundover domain is 0<=d<=join<r. Its exact
             // radicand is nonnegative, including the mouth endpoint zero.
@@ -85,9 +95,7 @@ impl Cavity {
         }
         if depth_mm >= e.join.lo && depth_mm <= e.flank.hi {
             upper = upper.max(
-                (I::point(self.source.spec.mouth_diameter_mm) / I::point(2.)
-                    - d * e.sin_a / e.cos_a)
-                    .hi,
+                (I::point(self.spec.mouth_diameter_mm) / I::point(2.) - d * e.sin_a / e.cos_a).hi,
             );
         }
         if depth_mm >= e.flank.lo {
@@ -99,5 +107,5 @@ impl Cavity {
     }
 }
 
-#[cfg(test)]
-mod tests;
+mod head_envelope;
+pub use head_envelope::{HeadEnvelopeClearance, HeadEnvelopeOptions};

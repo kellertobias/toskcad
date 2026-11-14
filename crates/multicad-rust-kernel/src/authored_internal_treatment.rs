@@ -5,13 +5,17 @@ use crate::tapered_thread::interval::I;
 pub use crate::thread_internal_treatment::{Enclosure, Error, Intent, QueryOptions, Terminal};
 mod material;
 mod mesh;
-mod properties;
+pub(crate) mod properties;
 pub use properties::{FaceKey, FaceProperties, FacePropertyOptions, ThreadBandRole};
 #[cfg(test)]
 mod tests;
 mod volume;
 pub use material::Material;
-pub use mesh::{Candidate, tessellate_candidate};
+pub use mesh::HangerCandidate;
+pub(crate) use mesh::hanger_candidate;
+pub(crate) use mesh::metric_shell;
+pub use mesh::{Candidate, ShellEnd, ThreadRimEdge, ThreadShell, tessellate_candidate};
+pub use mesh::{MetricRimEdge, MetricShell};
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Entry {
     radius: f64,
@@ -176,4 +180,5 @@ impl Cavity {
 pub use mesh::boundary::{
     Boundary, BoundaryCell, BoundaryCellSource, BoundaryCoedge, BoundaryConstraint, BoundaryCurve,
     BoundaryOptions, BoundaryPoint, BoundaryPointKey, BoundaryPointRole, BoundaryPolyline,
+    ExactBoundaryData, ExactBoundaryDomain, ExactBoundaryRational, ThreadBoundary,
 };
