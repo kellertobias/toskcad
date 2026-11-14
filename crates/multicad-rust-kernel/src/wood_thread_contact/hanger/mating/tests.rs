@@ -330,19 +330,10 @@ fn actual_near_axis_metric_requires_a_resolved_angular_annulus_even_with_loose_i
 }
 
 #[test]
-fn exact_support_phase_and_gap_publication_keep_all_numerical_resource_guards() {
+fn phase_publication_keeps_all_numerical_resource_guards() {
     use num_bigint::BigInt;
-    let zero = Q::zero();
-    let one = q(1.).unwrap();
-    assert_eq!(
-        axial_corner(&one, [&zero, &zero, &one], [2., 3., 4.], &one).unwrap(),
-        q(4.).unwrap()
-    );
     let huge = Q::from_integer(BigInt::from(1_u8) << 17000);
-    assert!(matches!(
-        axial_corner(&huge, [&zero, &zero, &one], [0., 0., 1.], &zero),
-        Err(Error::Limit)
-    ));
+    assert!(matches!(bounded(huge), Err(Error::Limit)));
     let mut map = Alignment {
         scale: ip(1.),
         angle: 0.,
@@ -368,9 +359,61 @@ fn exact_support_phase_and_gap_publication_keep_all_numerical_resource_guards() 
         phase_offset(&map, ip(0.1), ip(0.1), ip(0.5), false, allowance),
         Err(Error::Unsupported)
     ));
-    assert!(physical_gap(ip(2.), ip(1.), ip(1.), 0., ip(1.)).unwrap().lo <= 1.);
-    assert!(matches!(
-        physical_gap(ip(2.), ip(1.), ip(1.), 0., ip(f64::INFINITY)),
-        Err(Error::Unsupported)
-    ));
+}
+#[test]
+fn earned_source_domains_keep_exact_support_and_checked_gap_oracles() {
+    let (source, nut, frame) = fixture(false, 1, false);
+    let tiny = f64::from_bits(1);
+    let u = [1., tiny, tiny];
+    let v = [-tiny, 1., tiny];
+    let from = Frame {
+        origin_mm: [1e7, -1e7, 1e7],
+        axes: [u, v, cross_f64(u, v)],
+    };
+    let to = Frame {
+        origin_mm: [-1e7, 1e7, -1e7],
+        ..identity()
+    };
+    scale(from).unwrap();
+    scale(to).unwrap();
+    let (o, a) = affine(to, from, &|| false).unwrap();
+    let large = Nut::new(*nut.thread(), 1e7).unwrap();
+    let shift =
+        -q(source.spec().plain_length_mm).unwrap() - q(source.metric().full_length_mm()).unwrap();
+    for xy in crate::headed_screw::hex_vertices(large.across_flats_mm()) {
+        for z in [0., large.thread().spec().length_mm] {
+            let xyz = [q(xy[0]).unwrap(), q(xy[1]).unwrap(), q(z).unwrap()];
+            let actual = axial_corner(&o[2], [&a[0][2], &a[1][2], &a[2][2]], xyz.clone(), &shift);
+            let oracle =
+                &o[2] + &a[0][2] * &xyz[0] + &a[1][2] * &xyz[1] + &a[2][2] * &xyz[2] - &shift;
+            assert_eq!(actual, oracle);
+            assert!(actual.numer().bits() + actual.denom().bits() < 8704);
+            assert!(bounded(actual).is_ok());
+        }
+    }
+    for perturb in [false, true] {
+        let mut placed = frame;
+        if perturb {
+            placed.axes[0][0] = placed.axes[0][0].next_up();
+        }
+        let metric = scale(placed).unwrap();
+        let map = align(&source, identity(), placed, &|| false).unwrap();
+        let allowance = phase_error::measure(nut.thread(), &|| false).unwrap();
+        for k in 0..32 {
+            let phase = I::new(f64::from(k) * 0.5 / 32., f64::from(k + 1) * 0.5 / 32.);
+            let external = continuous_radius(source.metric(), phase).unwrap();
+            let inner = retained_periodic(nut.thread(), phase, allowance.total_mm).unwrap();
+            let low =
+                finite(ip(inner.lo) - ip(map.scale.hi) * ip(external.hi) - ip(map.radial)).unwrap();
+            let high =
+                finite(ip(inner.hi) - ip(map.scale.lo) * ip(external.lo) + ip(map.radial)).unwrap();
+            let oracle = finite(
+                I::new(low.lo, high.hi) * I::new(metric.minimum_scale.lo, metric.maximum_scale.hi),
+            )
+            .unwrap();
+            let actual = physical_gap(inner, external, &map, &metric);
+            assert_eq!([actual.lo, actual.hi], [oracle.lo, oracle.hi]);
+            assert!(actual.checked().is_ok());
+        }
+    }
 }

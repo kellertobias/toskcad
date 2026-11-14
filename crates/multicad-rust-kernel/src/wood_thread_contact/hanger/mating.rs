@@ -228,10 +228,17 @@ fn retained_periodic(source: &Thread, phase: I, pad: f64) -> R<I> {
     }
     finite(result)
 }
-/// Exact axial support of one actual hex-prism corner. The bounded scalar
-/// handoff retains the same rational resource guard for every accumulation.
-fn axial_corner(o: &Q, a: [&Q; 3], xyz: [f64; 3], shift: &Q) -> R<Q> {
-    bounded(o + a[0] * q(xyz[0])? + a[1] * q(xyz[1])? + a[2] * q(xyz[2])? - shift)
+/// Exact support of a typed finite Nut corner after `scale` and `affine`.
+/// All binary64 fields share D=2^1074. Axes<=2 give integer determinant
+/// <=3231 bits; relative-column numerators<=3231 and origin numerators<=3254.
+/// Finite Nut corners and the symbolic shoulder shift are <=2e7. On common
+/// denominator det*D, the complete corner has <8704 combined numerator and
+/// denominator bits, below bounded()'s 16384 cap. Rational normalization cannot
+/// increase that common representation. The affine constructor's checks and
+/// the caller's finite coordinate conversions remain authoritative; repeating
+/// a generic overflow check on this earned domain would be unreachable.
+fn axial_corner(o: &Q, a: [&Q; 3], xyz: [Q; 3], shift: &Q) -> Q {
+    o + a[0] * &xyz[0] + a[1] * &xyz[1] + a[2] * &xyz[2] - shift
 }
 /// Complete directed phase uncertainty, including original finite evaluation
 /// and the possible true-angle period wrap. No angle normalization changes law.
@@ -257,12 +264,19 @@ fn phase_offset(
             + I::new(-error, error),
     )
 }
-/// Radial correspondence gap in the actual nut chart, then bounded actual
-/// affine length transport. This does not claim minimum Euclidean flank gap.
-fn physical_gap(inner: I, external: I, scale: I, radial: f64, world_scale: I) -> R<I> {
-    let low = finite(ip(inner.lo) - ip(scale.hi) * ip(external.hi) - ip(radial))?;
-    let high = finite(ip(inner.hi) - ip(scale.lo) * ip(external.lo) + ip(radial))?;
-    finite(I::new(low.lo, high.hi) * world_scale)
+/// Radial correspondence on checked actual source intervals, not minimum
+/// Euclidean flank distance. Thread admission gives slopes<58, root-center
+/// radius<1e9 and dimensions<=1e7. The finite original phase reserve is<.001;
+/// retained_radius checks the whole extended circle domain and all finite
+/// bounds. Authored radii are positive. Checked near-isometric frames give
+/// scale<2; the independently admitted residual is<.002. Thus all products
+/// below stay below 1e12, including directed rounding, and are finite. Positive
+/// radius/scale ordering gives low<=high. No generic unknown interval reaches
+/// this source-owned handoff; source/frame/phase failures still propagate.
+fn physical_gap(inner: I, external: I, map: &Alignment, metric: &Metric) -> I {
+    let low = ip(inner.lo) - ip(map.scale.hi) * ip(external.hi) - ip(map.radial);
+    let high = ip(inner.hi) - ip(map.scale.lo) * ip(external.lo) + ip(map.radial);
+    I::new(low.lo, high.hi) * I::new(metric.minimum_scale.lo, metric.maximum_scale.hi)
 }
 fn finite_nut_span(
     source: &Hanger,
@@ -277,12 +291,8 @@ fn finite_nut_span(
     for xy in crate::headed_screw::hex_vertices(nut.across_flats_mm()) {
         for z in [0., nut.thread().spec().length_mm] {
             checkpoint(interrupt)?;
-            let p = axial_corner(
-                &o[2],
-                [&a[0][2], &a[1][2], &a[2][2]],
-                [xy[0], xy[1], z],
-                &shift,
-            )?;
+            let xyz = [q(xy[0])?, q(xy[1])?, q(z)?];
+            let p = axial_corner(&o[2], [&a[0][2], &a[1][2], &a[2][2]], xyz, &shift);
             bounds = Some(bounds.map_or_else(
                 || (p.clone(), p.clone()),
                 |(lo, hi)| (lo.min(p.clone()), hi.max(p.clone())),
@@ -391,13 +401,7 @@ pub fn certify_hanger_nut(
         let phase = I::new(a, b);
         let external = continuous_radius(e, phase)?;
         let inner = retained_periodic(i, phase + offset, allowance.total_mm)?;
-        let physical = physical_gap(
-            inner,
-            external,
-            map.scale,
-            map.radial,
-            I::new(nut_metric.minimum_scale.lo, nut_metric.maximum_scale.hi),
-        )?;
+        let physical = physical_gap(inner, external, &map, &nut_metric);
         if physical.lo >= req.minimum_radial_clearance_mm {
             clearance = clearance.min(physical.lo);
             proved += 1;
