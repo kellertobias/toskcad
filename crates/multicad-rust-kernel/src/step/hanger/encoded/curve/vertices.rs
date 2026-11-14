@@ -70,7 +70,18 @@ fn footpoint(
     corner: &FiniteCorner,
     w: &mut Work<'_>,
 ) -> Result<([I; 2], N, f64), Error> {
-    let owner = f.cells[cell.source_cell];
+    footpoint_at(f, cell.source_cell, &corner.phase, &corner.turn, w)
+}
+// Inputs are retained source-domain corners or cap events whose exact phase
+// and turn have already been intersected with this SAME source cell.
+fn footpoint_at(
+    f: &EncodedField<'_>,
+    source_cell: usize,
+    phase: &EncodedScalar,
+    turn: &EncodedScalar,
+    w: &mut Work<'_>,
+) -> Result<([I; 2], N, f64), Error> {
+    let owner = f.cells[source_cell];
     let row = &f.meridians[owner.meridian];
     let source = f.source.source_boundary().source();
     let (pitch, starts, left) = if row.component == Component::Metric {
@@ -81,8 +92,8 @@ fn footpoint(
         (s.pitch_mm, s.starts, s.left_hand)
     };
     let pitch = binary(pitch, w)?;
-    let q = corner.phase.number(w)?;
-    let v = corner.turn.number(w)?;
+    let q = phase.number(w)?;
+    let v = turn.number(w)?;
     let u = parameter(row, &pitch, &q, w)?;
     let mut meridian = Vec::with_capacity(row.degree() + 1);
     for i in 0..=row.degree() {
@@ -281,3 +292,6 @@ impl<'d, 'f, 's> ClosedField<'d, 'f, 's> {
 }
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod events_probe;
