@@ -21,7 +21,7 @@ use std::{
 };
 
 mod blind;
-mod contained_boolean;
+pub(in crate::geometry) mod contained_boolean;
 mod end_relief;
 mod external;
 pub(super) mod full_height;

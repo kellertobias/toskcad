@@ -19,7 +19,7 @@ fn world_bounds(local: [B; 3], frame: PlaneFrame) -> [B; 3] {
         })
     })
 }
-fn probe_bounds(probe: &Solid) -> Option<[B; 3]> {
+pub(in crate::geometry) fn probe_bounds(probe: &Solid) -> Option<[B; 3]> {
     if let Some((source, frame)) = probe.rust_prism_frame() {
         if source.rounded_end().is_some() {
             return None;
@@ -55,7 +55,11 @@ fn cross(a: [B; 3], b: [B; 3]) -> [B; 3] {
 fn thread_bounds(world: [B; 3], frame: PlaneFrame) -> [[f64; 2]; 3] {
     chart_bounds(world, frame.origin, [frame.u, frame.v, frame.normal()])
 }
-fn chart_bounds(world: [B; 3], origin: Point, axes: [Point; 3]) -> [[f64; 2]; 3] {
+pub(in crate::geometry) fn chart_bounds(
+    world: [B; 3],
+    origin: Point,
+    axes: [Point; 3],
+) -> [[f64; 2]; 3] {
     let [u, v, n] = axes.map(|a| a.map(B::point));
     let rows = [cross(v, n), cross(n, u), cross(u, v)];
     let determinant = (0..3).fold(B::ZERO, |sum, i| sum + u[i] * rows[0][i]);
@@ -155,13 +159,13 @@ impl Solid {
         if let Some(result) = self.disjoint_thread_mating(other, operation) {
             return Some(result);
         }
-        let (thread, probe, thread_is_left, body, frame) =
-            if let Some((body, frame)) = self.helical_body() {
-                (self, other, true, body, frame)
-            } else {
-                let (body, frame) = other.helical_body()?;
-                (other, self, false, body, frame)
-            };
+        let (probe, thread_is_left, body, frame) = if let Some((body, frame)) = self.helical_body()
+        {
+            (other, true, body, frame)
+        } else {
+            let (body, frame) = other.helical_body()?;
+            (self, false, body, frame)
+        };
         let bounds = thread_bounds(probe_bounds(probe)?, frame);
         let relation = match &body.form {
             HelicalForm::Shaft => body.geometry.classify_box(bounds).ok()?,
@@ -170,20 +174,32 @@ impl Solid {
             HelicalForm::Nut(source) => headed::nut_relation(source, bounds),
             _ => return None,
         };
-        match (relation, operation, thread_is_left) {
-            (BoxClassification::Inside, BooleanOperation::Intersect, _) => {
-                Some(probe.share().map(Some))
-            }
-            (BoxClassification::Inside, BooleanOperation::Union, _) => {
-                Some(thread.share().map(Some))
-            }
-            (BoxClassification::Inside, BooleanOperation::Subtract, false)
-            | (BoxClassification::Outside, BooleanOperation::Intersect, _) => Some(Ok(None)),
-            (BoxClassification::Outside, BooleanOperation::Subtract, _) => {
-                Some(self.share().map(Some))
-            }
-            _ => None,
+        whole_operand_result(self, other, thread_is_left, relation, operation)
+    }
+}
+
+/// Only an earned whole-probe relation may reuse either original operand.
+pub(in crate::geometry) fn whole_operand_result(
+    lhs: &Solid,
+    rhs: &Solid,
+    source_is_left: bool,
+    relation: BoxClassification,
+    operation: BooleanOperation,
+) -> Option<Result<Option<Solid>, GeometryError>> {
+    let (source, probe) = if source_is_left {
+        (lhs, rhs)
+    } else {
+        (rhs, lhs)
+    };
+    match (relation, operation, source_is_left) {
+        (BoxClassification::Inside, BooleanOperation::Intersect, _) => {
+            Some(probe.share().map(Some))
         }
+        (BoxClassification::Inside, BooleanOperation::Union, _) => Some(source.share().map(Some)),
+        (BoxClassification::Inside, BooleanOperation::Subtract, false)
+        | (BoxClassification::Outside, BooleanOperation::Intersect, _) => Some(Ok(None)),
+        (BoxClassification::Outside, BooleanOperation::Subtract, _) => Some(lhs.share().map(Some)),
+        _ => None,
     }
 }
 

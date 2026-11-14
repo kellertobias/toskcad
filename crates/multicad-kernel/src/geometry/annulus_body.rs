@@ -10,6 +10,7 @@ use multicad_rust_kernel::annulus::Annulus;
 use std::{collections::BTreeSet, f64::consts::TAU};
 
 mod boolean;
+mod contained_boolean;
 mod mirror;
 
 pub(crate) struct AnnulusBody {
