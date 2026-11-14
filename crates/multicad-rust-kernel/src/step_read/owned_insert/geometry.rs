@@ -9,6 +9,8 @@ use crate::{
     },
     tapered_thread::interval::I,
 };
+mod cap_span;
+
 const SCRATCH: usize = 256 * 1024;
 pub struct MaterialBounds<'a, 'b, 'i> {
     binding: &'a SupportBindings<'b, 'i>,
@@ -692,61 +694,17 @@ fn caps(
                 let spans = curve.knots().len() - 1;
                 for j in 0..spans {
                     let span = if co.forward { j } else { spans - 1 - j };
-                    let mut points = [[I::point(0.); 3]; 12];
-                    for (i, point) in points.iter_mut().enumerate() {
-                        *point = cached(p, cache, curve.pole_entities()[span * 11 + i], w)?;
-                    }
-                    halfplane(&points, w)?;
+                    let finite = cap_span::ParsedCapSpan::load(p, curve.entity(), span, cache, w)?;
+                    let points = finite.points();
+                    halfplane(points, w)?;
                     let [a, c] = if co.forward {
                         [points[0], points[11]]
                     } else {
                         [points[11], points[0]]
                     };
                     winding += crossing(a, c, w)?;
-                    let x = P::controls(&points.map(|v| v[0]));
-                    let y = P::controls(&points.map(|v| v[1]));
                     let sign = f64::from(desired) * if co.forward { 1. } else { -1. };
-                    let h = [x.hull(), y.hull()];
-                    let scale = h[0].magnitude().max(h[1].magnitude()).max(1.);
-                    w.charge(24).map_err(Error::from)?;
-                    let tiny = h.iter().all(|a| a.hi - a.lo <= 64. * f64::EPSILON * scale);
-                    let proof = if tiny {
-                        None
-                    } else {
-                        let k = x
-                            .product(y.derivative(w).map_err(Error::from)?, w)
-                            .map_err(Error::from)?
-                            .sub(
-                                y.product(x.derivative(w).map_err(Error::from)?, w)
-                                    .map_err(Error::from)?,
-                                w,
-                            )
-                            .map_err(Error::from)?
-                            .scale(sign, w)
-                            .map_err(Error::from)?;
-                        Some(projection::positive([k; 3], stack, w))
-                    };
-                    let lower = if matches!(
-                        proof,
-                        None | Some(Err(crate::step::insert::Error::Unresolved))
-                    ) {
-                        stack.clear();
-                        let mut tokens = [[""; 2]; 12];
-                        for (i, xy) in tokens.iter_mut().enumerate() {
-                            let index = point_index(p, curve.pole_entities()[span * 11 + i], w)?;
-                            for (axis, token) in xy.iter_mut().enumerate() {
-                                *token = p.points()[index].coordinates()[axis].spelling();
-                            }
-                        }
-                        crate::step::insert::exact_cap::angular_lower(tokens, sign < 0., memory, w)
-                            .map_err(Error::from)?
-                    } else {
-                        proof
-                            .expect("ordinary cap proof selected")
-                            .map_err(Error::from)?
-                            .0
-                            .lo
-                    };
+                    let lower = finite.angular_lower(sign, stack, memory, w)?;
                     minimum = minimum.min(lower);
                 }
             }
