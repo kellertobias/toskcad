@@ -1175,13 +1175,90 @@ mod tests {
             Error::Limit
         );
         let (material, p, screw, frame, req) = fixture(false, 1);
+        // A real pilot leaving only a one-ulp radial bite cannot contain this
+        // provider's strict binary64 box witness. Keep that genuine refusal.
+        let unresolved = pilot(
+            &material,
+            screw.thread().spec().major_radius_mm.next_down(),
+            false,
+        );
+        assert_eq!(
+            run(&material, unresolved, &screw, frame, req).unwrap_err(),
+            Error::Unsupported
+        );
         let mut narrow = screw.thread().spec();
         narrow.crest_width_mm = 1e-15;
         let narrow = Screw::new(Thread::new(narrow).unwrap(), screw.spec()).unwrap();
-        assert_eq!(
-            run(&material, p, &narrow, frame, req).unwrap_err(),
-            Error::Unsupported
+        // A narrow crest is not intrinsically unresolvable: the seam-aware
+        // whole-box query can now earn a real interior witness. Check it
+        // independently instead of requiring the former angular ambiguity.
+        let contact = run(&material, p, &narrow, frame, req).unwrap();
+        let w = contact.thread_witness_mm;
+        assert!(w.iter().all(|[lo, hi]| lo < hi));
+        assert_eq!(frame.origin_mm, p.center_mm);
+        assert_eq!(frame.axes, [[1., 0., 0.], [0., -1., 0.], [0., 0., -1.]]);
+        let y = q(w[1][0]).unwrap().abs().max(q(w[1][1]).unwrap().abs());
+        let angular = &y / q(w[0][0]).unwrap(); // |atan(y/x)| <= |y/x|.
+        let thread = narrow.thread();
+        let rate = q(thread.helical_rate()).unwrap().abs();
+        let tau = std::f64::consts::TAU;
+        let turn_error = [tau.next_down(), tau.next_up()]
+            .into_iter()
+            .map(|v| (&rate * q(v).unwrap() - q(thread.spec().pitch_mm).unwrap()).abs())
+            .max()
+            .unwrap();
+        let axial = w[2]
+            .into_iter()
+            .map(|z| (q(z).unwrap() - q(6.).unwrap()).abs())
+            .max()
+            .unwrap();
+        let numeric = q(64. * f64::EPSILON * thread.spec().length_mm).unwrap();
+        let phase_error = axial + rate * angular + turn_error + numeric;
+        // Both retained 30-degree flank slopes are <64; this conservative
+        // lower radius covers the entire tiny wrapped phase interval.
+        assert!(phase_error < q(1e-9).unwrap());
+        let radius_lower =
+            q(thread.spec().major_radius_mm).unwrap() - q(64.).unwrap() * phase_error;
+        let radius_upper = q(w[0][1]).unwrap() + y;
+        assert!(radius_lower > radius_upper);
+        // The cardinal source chart maps the whole witness into the retained
+        // stock cell and strictly outside its actual finite pilot.
+        let world = [
+            [
+                q(10.).unwrap() + q(w[0][0]).unwrap(),
+                q(10.).unwrap() + q(w[0][1]).unwrap(),
+            ],
+            [
+                q(10.).unwrap() - q(w[1][1]).unwrap(),
+                q(10.).unwrap() - q(w[1][0]).unwrap(),
+            ],
+            [
+                q(20.).unwrap() - q(w[2][1]).unwrap(),
+                q(20.).unwrap() - q(w[2][0]).unwrap(),
+            ],
+        ];
+        assert!(
+            material
+                .cells()
+                .iter()
+                .any(|cell| (0..3).all(|i| q(cell.min[i]).unwrap() < world[i][0]
+                    && world[i][1] < q(cell.max[i]).unwrap()))
         );
+        assert!(q(w[0][0]).unwrap() > q(p.radius_mm).unwrap());
+        assert!(w[2][0] > 0. && w[2][1] < p.depth_mm);
+        let actual_volume = w
+            .into_iter()
+            .fold(Q::from_integer(1.into()), |v, [lo, hi]| {
+                v * (q(hi).unwrap() - q(lo).unwrap())
+            });
+        assert!(q(contact.witness_volume_lower_mm3).unwrap() > Q::zero());
+        assert!(q(contact.witness_volume_lower_mm3).unwrap() <= actual_volume);
+        for corner in 0..8 {
+            assert!(narrow.contains(
+                std::array::from_fn(|i| w[i][usize::from(corner & (1 << i) != 0)]),
+                0.
+            ));
+        }
         let mut small = screw.thread().spec();
         small.major_radius_mm = 0.001;
         small.depth_mm = 2_f64.powi(-54);
