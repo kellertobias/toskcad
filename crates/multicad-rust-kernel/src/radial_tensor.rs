@@ -14,6 +14,7 @@ mod mesh;
 mod ordering;
 mod properties;
 mod query;
+mod storage;
 pub use caps::CapBoundary;
 pub use material::RadialBoundary;
 pub use ordering::OrderedBoundary;
