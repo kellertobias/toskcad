@@ -49,8 +49,8 @@ fn authored_hanger_world_manufacturing_retains_source_quality_and_closed_materia
         assert_eq!(proof.maximum_displacement_mm, 0.);
         let bounds = material.bounds();
         for point in proof.mesh.vertices.as_chunks::<3>().0 {
-            for axis in 0..3 {
-                assert!(bounds.min[axis] <= point[axis] && point[axis] <= bounds.max[axis]);
+            for (axis, coordinate) in point.iter().enumerate() {
+                assert!(bounds.min[axis] <= *coordinate && *coordinate <= bounds.max[axis]);
             }
         }
         let volume = material.volume_bounds(volume_options(), None).unwrap();
