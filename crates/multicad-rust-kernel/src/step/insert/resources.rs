@@ -59,7 +59,7 @@ impl Memory {
     }
     // Admission uses ACTUAL retained capacity, including allocator overcapacity.
     // Keep this final check independently usable for a completed allocation.
-    pub(super) fn account<T>(&mut self, out: Vec<T>) -> Result<Vec<T>, Error> {
+    pub(crate) fn account<T>(&mut self, out: Vec<T>) -> Result<Vec<T>, Error> {
         let bytes = out
             .capacity()
             .checked_mul(size_of::<T>())

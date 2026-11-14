@@ -5,6 +5,8 @@ use super::{
     part21::{self, Entity, Value},
 };
 use std::{collections::BTreeMap, mem::size_of, sync::Arc};
+mod correspondence;
+pub use correspondence::{CorrespondenceOptions, SourceCorrespondence};
 mod file;
 pub use file::File;
 mod bindings;
