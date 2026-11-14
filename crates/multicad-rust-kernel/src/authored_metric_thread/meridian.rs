@@ -61,6 +61,16 @@ impl RationalMeridian {
         if !t.valid() || t.lo < 0. || t.hi > 1. {
             return Err(Error::Invalid);
         }
+        let result = self.evaluate(t);
+        checkpoint(interrupt)?;
+        Ok(result)
+    }
+    /// Sealed source and a compile-time valid domain; callers account its
+    /// fixed arithmetic in their own aggregate Work/cancellation ledger.
+    pub(crate) fn whole_bounds(&self) -> MeridianBounds {
+        self.evaluate(I::new(0., 1.))
+    }
+    fn evaluate(&self, t: I) -> MeridianBounds {
         let one = I::point(1.);
         let p = I::point(self.source.spec.pitch_mm);
         let r = self.source.root_radius();
@@ -81,13 +91,11 @@ impl RationalMeridian {
         // With u=1/2+x/(2W), X=sqrt(3)*(u-1/2) and
         // H=(3/2-W)/W>0. Thus q=3p/8+(p/4)u and radius=C-R*H
         // are the SAME original profile expressions, including both tangents.
-        let result = MeridianBounds {
+        MeridianBounds {
             point_mm: [q, radius].map(pair),
             first_derivative_mm: [dq, dr].map(pair),
             second_derivative_mm: [ddq, ddr].map(pair),
-        };
-        checkpoint(interrupt)?;
-        Ok(result)
+        }
     }
 }
 

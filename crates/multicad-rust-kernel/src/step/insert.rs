@@ -16,7 +16,9 @@ pub use topology::{
     WindingBounds,
 };
 pub use writer::{write_local_candidate, write_mapped_candidate};
+mod angular;
 mod surfaces;
+pub(crate) use angular::{AngularCarrier, fit_angular};
 pub use domains::{DomainOptions, DomainPlan, Slab, Station};
 pub use projection::ProjectionBounds;
 pub use surfaces::{RowKey, SurfacePatch, SurfacePlan, SurfaceRow, SurfaceVertex, VertexOwner};
@@ -45,7 +47,7 @@ pub struct CurveOptions {
     pub bytes: usize,
 }
 impl CurveOptions {
-    fn validate(self) -> Result<(), Error> {
+    pub(crate) fn validate(self) -> Result<(), Error> {
         if !self.position_error_mm.is_finite()
             || self.position_error_mm <= 0.
             || !self.derivative_error_mm.is_finite()
