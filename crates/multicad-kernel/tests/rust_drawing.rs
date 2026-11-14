@@ -196,12 +196,21 @@ fn orthogonal_boolean_hole_preserves_the_trimmed_opening() {
 fn unsupported_geometry_and_over_budget_output_fail_atomically() {
     let box_ = rust_box([10, 10, 3], PlaneFrame::default());
     let native = Solid::box_solid([5., 5., 3.], GeometryPolicy::default()).unwrap();
-    assert_eq!(
-        project_drawing(&sources(&[&box_, &native]), DrawingProjection::default())
-            .unwrap_err()
-            .kind,
-        GeometryErrorKind::Unsupported
-    );
+    let mixed = project_drawing(&sources(&[&box_, &native]), DrawingProjection::default());
+    if native.uses_rust_geometry() {
+        // Without OpenCascade both boxes are Rust solids sharing three face
+        // planes; the scene engine (CAD-346) draws the union's visible edges.
+        let mut lengths: Vec<_> = mixed
+            .unwrap()
+            .iter()
+            .map(line)
+            .map(|[[x1, y1], [x2, y2]]| (x2 - x1).hypot(y2 - y1))
+            .collect();
+        lengths.sort_by(f64::total_cmp);
+        assert_eq!(lengths, [5., 5., 5., 5., 10., 10., 10., 10.]);
+    } else {
+        assert_eq!(mixed.unwrap_err().kind, GeometryErrorKind::Unsupported);
+    }
     assert_eq!(
         project_drawing(
             &sources(&[&box_]),

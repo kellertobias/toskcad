@@ -147,17 +147,16 @@ fn separated_members_draw_as_the_union_of_their_exact_drawings() {
 }
 
 #[test]
-fn overlapping_members_and_exhausted_budgets_refuse_explicitly() {
+fn overlapping_members_draw_and_exhausted_budgets_refuse_explicitly() {
     let gear = spur();
     // The plate lies under the gear in the axial view.
     let plate = stock(-5.);
     for (label, options) in options() {
-        let error = draw(&[&gear, &plate], options).unwrap_err();
-        assert_eq!(
-            error.kind,
-            GeometryErrorKind::Unsupported,
-            "{label}: {error:?}"
-        );
+        // Overlapping members draw as one occluding scene (CAD-346).
+        let vectors = draw(&[&gear, &plate], options).unwrap();
+        for source in 0..2 {
+            assert!(vectors.iter().any(|v| v.source_index == source), "{label}");
+        }
     }
     let apart = stock(-50.);
     let error = draw(

@@ -11,8 +11,8 @@ use multicad_core::{
     references::Origin,
 };
 use multicad_kernel::{
-    BooleanOperation, DrawingHatch, DrawingProjection, DrawingSolid, GeometryErrorKind,
-    GeometryPolicy, PlaneFrame, ProjectedVector, Solid, project_drawing,
+    BooleanOperation, DrawingHatch, DrawingProjection, DrawingSolid, GeometryPolicy, PlaneFrame,
+    ProjectedVector, Solid, project_drawing,
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
 };
 
@@ -395,7 +395,7 @@ fn corner_cuts_along_the_bore_axis_publish_retained_and_finite_sections() {
 }
 
 #[test]
-fn views_and_unsupported_retained_sections_remain_explicit_findings() {
+fn views_and_general_retained_sections_draw() {
     let (solid, ..) = audit();
     let view = PlaneFrame {
         origin: [0.; 3],
@@ -435,11 +435,12 @@ fn views_and_unsupported_retained_sections_remain_explicit_findings() {
             ..Default::default()
         },
     ] {
-        let error = draw(&solid, options).unwrap_err();
-        assert_eq!(
-            error.kind,
-            GeometryErrorKind::Unsupported,
-            "{options:?}: {error:?}"
+        // These draw through the scene engine (CAD-346); `rust_scene_bore.rs`
+        // certifies their geometry.
+        let vectors = draw(&solid, options).unwrap();
+        assert!(
+            vectors.iter().any(|v| v.role == VectorRole::Visible),
+            "{options:?}"
         );
     }
 }

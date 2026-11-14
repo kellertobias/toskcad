@@ -6,8 +6,8 @@
 //! and the bore of radius 2 runs along +Z through (10, 6).
 use multicad_core::drawings::{VectorCurve, VectorRole};
 use multicad_kernel::{
-    BooleanOperation, DrawingHatch, DrawingProjection, DrawingSolid, GeometryErrorKind,
-    GeometryPolicy, PlaneFrame, ProjectedVector, Solid, project_drawing,
+    BooleanOperation, DrawingHatch, DrawingProjection, DrawingSolid, GeometryPolicy, PlaneFrame,
+    ProjectedVector, Solid, project_drawing,
 };
 
 #[cfg(feature = "occt")]
@@ -577,10 +577,13 @@ fn oblique_sections_only_keep_the_exact_elliptical_void() {
 }
 
 #[test]
-fn an_oblique_section_through_the_bore_is_an_explicit_finding() {
+fn an_oblique_section_through_the_bore_draws_its_cut_face_and_hatch() {
     let s = 0.5_f64.sqrt();
     let t = (1_f64 / 6.).sqrt();
-    let error = project_drawing(
+    // The scene engine (CAD-346) draws the retained stock behind the plane.
+    // The bore meets the oblique plane in an ellipse with semi-axes 2 mm and
+    // 2 / cos(axis, normal) = 2 * sqrt(3) mm.
+    let vectors = project_drawing(
         &[DrawingSolid {
             solid: &bored(),
             hatch: hatch(),
@@ -591,8 +594,31 @@ fn an_oblique_section_through_the_bore_is_an_explicit_finding() {
             ..Default::default()
         },
     )
-    .unwrap_err();
-    assert_eq!(error.kind, GeometryErrorKind::Unsupported);
+    .unwrap();
+    let rim: Vec<_> = vectors
+        .iter()
+        .filter(|vector| vector.role == VectorRole::Section)
+        .filter_map(|vector| match vector.curve {
+            VectorCurve::Ellipse {
+                major_mm, minor_mm, ..
+            } => Some([major_mm, minor_mm]),
+            _ => None,
+        })
+        .collect();
+    assert!(!rim.is_empty());
+    for [major, minor] in rim {
+        assert!((major - 2. * 3_f64.sqrt()).abs() < 1e-9 && (minor - 2.).abs() < 1e-9);
+    }
+    assert!(
+        vectors
+            .iter()
+            .any(|vector| vector.role == VectorRole::Hatch)
+    );
+    assert!(
+        vectors
+            .iter()
+            .any(|vector| vector.role == VectorRole::Visible)
+    );
 }
 
 #[cfg(feature = "occt")]

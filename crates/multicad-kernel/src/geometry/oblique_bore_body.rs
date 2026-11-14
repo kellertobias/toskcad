@@ -349,6 +349,11 @@ impl Solid {
 }
 
 impl ObliqueBoreBody {
+    /// The exact retained boundary in the stock chart, for drawing scenes.
+    pub(crate) fn geometry(&self) -> &ObliqueBore {
+        &self.geometry
+    }
+
     /// The stock box and the finite tool cylinder in world coordinates, for
     /// exact drawing sections. (CAD-346 drawing access.)
     pub(crate) fn drawing_box_and_tool(&self, frame: PlaneFrame) -> DrawingBoxAndTool {

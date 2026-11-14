@@ -101,6 +101,19 @@ pub(in crate::drawing) trait Member: Send + Sync {
     fn section(&self, depth: f64, tolerance_mm: f64) -> Result<Vec<Loop>, GeometryError>;
 }
 
+// Shared by the family members' refusals.
+#[allow(dead_code)]
 pub(in crate::drawing) fn unsupported(message: &'static str) -> GeometryError {
     err(GeometryErrorKind::Unsupported, message)
 }
+
+mod arrange;
+mod bore;
+mod engine;
+mod families;
+mod paths;
+mod prism;
+mod profile;
+mod publish;
+pub(in crate::drawing) use engine::{SceneMember, project};
+pub(in crate::drawing) use families::project_solids;

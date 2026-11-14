@@ -462,7 +462,8 @@ fn transverse_annulus_section_depth_distinguishes_cut_retained_and_empty_views()
     assert!(draw(3., Some(0.4)).is_empty());
     let retained = draw(3., Some(1.));
     assert_eq!(retained, project(&ring, DrawingProjection::default()));
-    let unsupported = project_drawing(
+    // A section along the axis cuts the wall in two rectangles (CAD-346).
+    let lengthwise = project_drawing(
         &[DrawingSolid {
             solid: &ring,
             hatch: None,
@@ -476,10 +477,17 @@ fn transverse_annulus_section_depth_distinguishes_cut_retained_and_empty_views()
             ..Default::default()
         },
     );
-    assert_eq!(
-        unsupported.unwrap_err().kind,
-        GeometryErrorKind::Unsupported
-    );
+    let cut: Vec<_> = lengthwise
+        .unwrap()
+        .into_iter()
+        .filter(|vector| vector.role == VectorRole::Section)
+        .collect();
+    assert_eq!(cut.len(), 8);
+    assert!(cut.iter().all(|vector| matches!(
+        vector.curve,
+        VectorCurve::Line { a, b } if a[0].abs().min(b[0].abs()) >= 3. - 1e-9
+            && a[0].abs().max(b[0].abs()) <= 6. + 1e-9
+    )));
 }
 
 #[test]

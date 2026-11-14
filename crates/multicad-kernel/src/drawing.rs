@@ -5,7 +5,6 @@ use multicad_core::drawings::{VectorCurve, VectorRole};
 mod curved;
 mod panel;
 mod planar;
-#[allow(dead_code)]
 mod scene;
 mod section;
 mod sphere;
@@ -213,6 +212,157 @@ fn project_separated(
     })())
 }
 
+fn project_rust(
+    solids: &[DrawingSolid<'_>],
+    options: DrawingProjection,
+) -> Result<Vec<ProjectedVector>, GeometryError> {
+    if solids.iter().any(|input| !input.solid.uses_rust_geometry()) {
+        return Err(err(
+            GeometryErrorKind::Unsupported,
+            "Rust drawing projection requires all sources to use Rust geometry",
+        ));
+    }
+    // Bored rectangular prisms draw through the equivalent orthogonal
+    // stock, which the curved, aperture and section providers qualify.
+    let equivalents = solids
+        .iter()
+        .map(|input| input.solid.drawing_bored_equivalent().transpose())
+        .collect::<Result<Vec<_>, _>>()?;
+    if equivalents.iter().any(Option::is_some) {
+        let inputs: Vec<_> = solids
+            .iter()
+            .zip(&equivalents)
+            .map(|(input, equivalent)| DrawingSolid {
+                solid: equivalent.as_ref().unwrap_or(input.solid),
+                hatch: input.hatch,
+            })
+            .collect();
+        return project_drawing(&inputs, options);
+    }
+    if let Some(projection) = project_separated(solids, options) {
+        return projection;
+    }
+    if solids
+        .iter()
+        .any(|input| input.solid.oblique_bore_body().is_some())
+        && (solids.len() > 1 || options.section_offset_mm.is_none())
+    {
+        return Err(err(
+            GeometryErrorKind::Unsupported,
+            "Rust oblique bore drawings currently support sections of one solid or separated scenes",
+        ));
+    }
+    if let [input] = solids
+        && let Some((sphere, frame)) = input.solid.sphere_body()
+        && (options.section_offset_mm.is_none()
+            || options.section_only
+            || (options.section_depth_mm.is_none()
+                && options.section_u_mm.is_none()
+                && options.section_v_mm.is_none()))
+    {
+        return sphere::project(input, frame.origin, sphere.radius_mm(), options);
+    }
+    if let [input] = solids
+        && let Some((torus, frame)) = input.solid.torus_body()
+    {
+        return torus::project(input, frame, torus.radii_mm(), options);
+    }
+    if !options.section_only
+        && let [input] = solids
+        && let Some(projection) = panel::project_herringbone(input, options)
+    {
+        return projection;
+    }
+    if let [input] = solids
+        && let Some(projection) = panel::project_worm_gearing(input, options)
+    {
+        return projection;
+    }
+    if solids.iter().any(|input| contains_worm(input.solid)) {
+        return Err(err(
+            GeometryErrorKind::Unsupported,
+            "Rust worm and worm-wheel drawings support one placed gear at a time",
+        ));
+    }
+    if let [input] = solids
+        && let Some(projection) = panel::project_bevel(input, options)
+    {
+        return projection;
+    }
+    if solids.iter().any(|input| contains_bevel(input.solid)) {
+        return Err(err(
+            GeometryErrorKind::Unsupported,
+            "Rust bevel drawing supports one gear at a time; scene occlusion is unavailable",
+        ));
+    }
+    if !options.section_only && solids.iter().any(|input| contains_herringbone(input.solid)) {
+        return Err(err(
+            GeometryErrorKind::Unsupported,
+            "Rust exact drawing projection for continuous herringbone gears is unavailable",
+        ));
+    }
+    if let [input] = solids
+        && let Some(projection) = panel::project_spline_sweep(input, options)
+    {
+        return projection;
+    }
+    if solids
+        .iter()
+        .any(|input| panel::contains_spline_sweep(input.solid))
+    {
+        return Err(err(
+            GeometryErrorKind::Unsupported,
+            "Rust spline sweep drawing supports one solid at a time; scene occlusion is unavailable",
+        ));
+    }
+    if let Some(depth) = options.section_offset_mm {
+        if let [input] = solids
+            && let Some(projection) = panel::section_straight_gear(input, options, depth)
+        {
+            return projection;
+        }
+        if let [input] = solids
+            && let Some(projection) = section::oblique::project_oblique_bore(input, options, depth)
+        {
+            return projection;
+        }
+        if let [input] = solids
+            && input.solid.annulus_body().is_some()
+        {
+            return if options.section_only {
+                section::project_circular(input, options, depth)
+            } else {
+                curved::project_annulus_depth(input, options, depth)
+            };
+        }
+        return section::project(solids, options, depth);
+    }
+    if let [input] = solids
+        && input.solid.nonplanar_loft_body().is_some()
+    {
+        return section::project_loft_view(input, options);
+    }
+    if solids.iter().any(|input| contains_loft(input.solid)) {
+        return section::project_loft_scene(&projection_members(solids), options);
+    }
+    if let [input] = solids
+        && let Some(projection) = panel::project(input, options)
+            .or_else(|| panel::project_chamfered_bores(input, options))
+            .or_else(|| panel::project_normal_sweep(input, options))
+            .or_else(|| panel::project_spur_gear(input, options))
+            .or_else(|| panel::project_internal_ring(input, options))
+    {
+        return projection;
+    }
+    if solids
+        .iter()
+        .any(|input| curved::needs_curved_scene(input.solid))
+    {
+        return curved::project_scene(solids, options);
+    }
+    planar::project(solids, options)
+}
+
 pub fn project_drawing(
     solids: &[DrawingSolid<'_>],
     options: DrawingProjection,
@@ -274,152 +424,15 @@ pub fn project_drawing(
         }
     }
     if solids.iter().any(|input| input.solid.uses_rust_geometry()) {
-        if solids.iter().any(|input| !input.solid.uses_rust_geometry()) {
-            return Err(err(
-                GeometryErrorKind::Unsupported,
-                "Rust drawing projection requires all sources to use Rust geometry",
-            ));
-        }
-        // Bored rectangular prisms draw through the equivalent orthogonal
-        // stock, which the curved, aperture and section providers qualify.
-        let equivalents = solids
-            .iter()
-            .map(|input| input.solid.drawing_bored_equivalent().transpose())
-            .collect::<Result<Vec<_>, _>>()?;
-        if equivalents.iter().any(Option::is_some) {
-            let inputs: Vec<_> = solids
-                .iter()
-                .zip(&equivalents)
-                .map(|(input, equivalent)| DrawingSolid {
-                    solid: equivalent.as_ref().unwrap_or(input.solid),
-                    hatch: input.hatch,
-                })
-                .collect();
-            return project_drawing(&inputs, options);
-        }
-        if let Some(projection) = project_separated(solids, options) {
-            return projection;
-        }
-        if solids
-            .iter()
-            .any(|input| input.solid.oblique_bore_body().is_some())
-            && (solids.len() > 1 || options.section_offset_mm.is_none())
-        {
-            return Err(err(
-                GeometryErrorKind::Unsupported,
-                "Rust oblique bore drawings currently support sections of one solid or separated scenes",
-            ));
-        }
-        if let [input] = solids
-            && let Some((sphere, frame)) = input.solid.sphere_body()
-            && (options.section_offset_mm.is_none()
-                || options.section_only
-                || (options.section_depth_mm.is_none()
-                    && options.section_u_mm.is_none()
-                    && options.section_v_mm.is_none()))
-        {
-            return sphere::project(input, frame.origin, sphere.radius_mm(), options);
-        }
-        if let [input] = solids
-            && let Some((torus, frame)) = input.solid.torus_body()
-        {
-            return torus::project(input, frame, torus.radii_mm(), options);
-        }
-        if !options.section_only
-            && let [input] = solids
-            && let Some(projection) = panel::project_herringbone(input, options)
-        {
-            return projection;
-        }
-        if let [input] = solids
-            && let Some(projection) = panel::project_worm_gearing(input, options)
-        {
-            return projection;
-        }
-        if solids.iter().any(|input| contains_worm(input.solid)) {
-            return Err(err(
-                GeometryErrorKind::Unsupported,
-                "Rust worm and worm-wheel drawings support one placed gear at a time",
-            ));
-        }
-        if let [input] = solids
-            && let Some(projection) = panel::project_bevel(input, options)
-        {
-            return projection;
-        }
-        if solids.iter().any(|input| contains_bevel(input.solid)) {
-            return Err(err(
-                GeometryErrorKind::Unsupported,
-                "Rust bevel drawing supports one gear at a time; scene occlusion is unavailable",
-            ));
-        }
-        if !options.section_only && solids.iter().any(|input| contains_herringbone(input.solid)) {
-            return Err(err(
-                GeometryErrorKind::Unsupported,
-                "Rust exact drawing projection for continuous herringbone gears is unavailable",
-            ));
-        }
-        if let [input] = solids
-            && let Some(projection) = panel::project_spline_sweep(input, options)
-        {
-            return projection;
-        }
-        if solids
-            .iter()
-            .any(|input| panel::contains_spline_sweep(input.solid))
-        {
-            return Err(err(
-                GeometryErrorKind::Unsupported,
-                "Rust spline sweep drawing supports one solid at a time; scene occlusion is unavailable",
-            ));
-        }
-        if let Some(depth) = options.section_offset_mm {
-            if let [input] = solids
-                && let Some(projection) = panel::section_straight_gear(input, options, depth)
-            {
-                return projection;
+        // The family providers keep the views they qualify. Every other
+        // request draws through the exact-curve scene engine when all of its
+        // bodies have scene members.
+        return match project_rust(solids, options) {
+            Err(error) if error.kind == GeometryErrorKind::Unsupported => {
+                scene::project_solids(solids, options).unwrap_or(Err(error))
             }
-            if let [input] = solids
-                && let Some(projection) =
-                    section::oblique::project_oblique_bore(input, options, depth)
-            {
-                return projection;
-            }
-            if let [input] = solids
-                && input.solid.annulus_body().is_some()
-            {
-                return if options.section_only {
-                    section::project_circular(input, options, depth)
-                } else {
-                    curved::project_annulus_depth(input, options, depth)
-                };
-            }
-            return section::project(solids, options, depth);
-        }
-        if let [input] = solids
-            && input.solid.nonplanar_loft_body().is_some()
-        {
-            return section::project_loft_view(input, options);
-        }
-        if solids.iter().any(|input| contains_loft(input.solid)) {
-            return section::project_loft_scene(&projection_members(solids), options);
-        }
-        if let [input] = solids
-            && let Some(projection) = panel::project(input, options)
-                .or_else(|| panel::project_chamfered_bores(input, options))
-                .or_else(|| panel::project_normal_sweep(input, options))
-                .or_else(|| panel::project_spur_gear(input, options))
-                .or_else(|| panel::project_internal_ring(input, options))
-        {
-            return projection;
-        }
-        if solids
-            .iter()
-            .any(|input| curved::needs_curved_scene(input.solid))
-        {
-            return curved::project_scene(solids, options);
-        }
-        return planar::project(solids, options);
+            result => result,
+        };
     }
     let (center, radius) = options.detail.unwrap_or(([0.; 2], 1.));
     let data = ffi::DrawingOptionsData {

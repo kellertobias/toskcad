@@ -413,7 +413,7 @@ fn lateral_windows_clip_the_sampled_section_inside_the_window() {
 }
 
 #[test]
-fn hub_sections_and_inclined_planes_remain_explicit_findings() {
+fn hub_sections_and_inclined_planes_draw_their_cut_faces() {
     let policy = GeometryPolicy::default();
     let hubbed = Solid::rust_spur_gear_named(
         spur(
@@ -447,7 +447,9 @@ fn hub_sections_and_inclined_planes_remain_explicit_findings() {
             },
         ),
     ] {
-        let error = project_drawing(
+        // Both draw through the scene engine (CAD-346); their geometry is
+        // certified in `rust_scene_gear.rs`.
+        let vectors = project_drawing(
             &[DrawingSolid {
                 solid,
                 hatch: hatch(),
@@ -458,8 +460,10 @@ fn hub_sections_and_inclined_planes_remain_explicit_findings() {
                 ..Default::default()
             },
         )
-        .unwrap_err();
-        assert_eq!(error.kind, GeometryErrorKind::Unsupported, "{error:?}");
+        .unwrap();
+        for role in [VectorRole::Section, VectorRole::Hatch] {
+            assert!(vectors.iter().any(|vector| vector.role == role));
+        }
     }
 }
 
