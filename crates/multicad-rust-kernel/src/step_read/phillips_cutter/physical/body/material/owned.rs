@@ -3,6 +3,8 @@ use super::*;
 use crate::head_profile::OwnedRepairedHead;
 use std::sync::Arc;
 const SCRATCH: usize = 16384;
+mod mesh;
+pub use mesh::{DelegatedWorkspaceBounds, JoinedMaterialCandidate, JoinedMeshOptions};
 #[derive(Clone, Copy)]
 pub struct OwnedMaterialOptions {
     pub maximum_work: usize,
@@ -218,3 +220,6 @@ impl MaterialVolume<'_, '_, '_> {
 }
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod mesh_probe;

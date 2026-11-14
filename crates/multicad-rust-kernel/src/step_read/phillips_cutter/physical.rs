@@ -340,4 +340,7 @@ pub use body::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSource}
 
 pub use body::{MaterialVolume, MaterialVolumeOptions};
 
-pub use body::{OwnedDerivedMaterial, OwnedMaterialOptions};
+pub use body::{
+    DelegatedWorkspaceBounds, JoinedMaterialCandidate, JoinedMeshOptions, OwnedDerivedMaterial,
+    OwnedMaterialOptions,
+};

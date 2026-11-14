@@ -284,4 +284,7 @@ mod volume;
 pub use volume::{MaterialVolume, MaterialVolumeOptions};
 
 mod owned;
-pub use owned::{OwnedDerivedMaterial, OwnedMaterialOptions};
+pub use owned::{
+    DelegatedWorkspaceBounds, JoinedMaterialCandidate, JoinedMeshOptions, OwnedDerivedMaterial,
+    OwnedMaterialOptions,
+};

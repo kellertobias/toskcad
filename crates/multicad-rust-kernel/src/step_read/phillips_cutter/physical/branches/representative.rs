@@ -166,6 +166,30 @@ pub(in crate::step_read::phillips_cutter::physical) fn scaled_text(
     scale: f64,
     posed: bool,
 ) -> String {
+    scaled_text_with_hand(scale, posed, posed)
+}
+pub(in crate::step_read::phillips_cutter::physical) fn scaled_text_with_hand(
+    scale: f64,
+    posed: bool,
+    left_hand: bool,
+) -> String {
+    scaled_text_with_length(scale, posed, left_hand, 2. * scale)
+}
+pub(in crate::step_read::phillips_cutter::physical) fn scaled_text_with_length(
+    scale: f64,
+    posed: bool,
+    left_hand: bool,
+    length_mm: f64,
+) -> String {
+    scaled_text_with_neck(scale, posed, left_hand, length_mm, 0.1 * scale)
+}
+pub(in crate::step_read::phillips_cutter::physical) fn scaled_text_with_neck(
+    scale: f64,
+    posed: bool,
+    left_hand: bool,
+    length_mm: f64,
+    neck_radius_mm: f64,
+) -> String {
     use crate::{
         head_profile::{Head, Profile},
         helical_thread::{Spec as ThreadSpec, Thread},
@@ -199,18 +223,18 @@ pub(in crate::step_read::phillips_cutter::physical) fn scaled_text(
         height_mm: 1.6 * scale,
         crown_radius_mm: 3.2 * scale,
         top_land_radius_mm: 1.25 * scale,
-        neck_radius_mm: 0.1 * scale,
+        neck_radius_mm,
     };
     let thread = Thread::new(ThreadSpec {
         major_radius_mm: 0.97 * scale,
         pitch_mm: 0.4 * scale,
-        length_mm: 2. * scale,
+        length_mm,
         depth_mm: 0.24 * scale,
         crest_width_mm: 0.05 * scale,
         lower_flank_deg: 30.,
         upper_flank_deg: 30.,
         starts: 1,
-        left_hand: posed,
+        left_hand,
         root_radius_mm: None,
     })
     .unwrap();

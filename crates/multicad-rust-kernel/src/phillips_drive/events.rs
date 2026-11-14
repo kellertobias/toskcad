@@ -77,6 +77,10 @@ pub struct BoundaryEvents<'a> {
     pub(super) cone_intercepts: [I; 2],
 }
 impl<'a> BoundaryEvents<'a> {
+    pub(crate) fn retained_heap_bytes(&self) -> usize {
+        self.mouth.retained_heap_bytes()
+    }
+
     pub fn source(&self) -> &'a Cutter {
         self.source
     }

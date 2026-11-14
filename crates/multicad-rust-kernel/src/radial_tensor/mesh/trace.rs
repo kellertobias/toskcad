@@ -55,6 +55,7 @@ pub struct TracedMesh<'s> {
     mesh: DisplayMesh,
     rims: [Vec<CapRimFootpoint>; 2],
     work: usize,
+    quality: Tessellation,
 }
 impl<'s> TracedMesh<'s> {
     pub fn source(&self) -> &'s RadialBoundary {
@@ -65,6 +66,10 @@ impl<'s> TracedMesh<'s> {
     }
     pub fn cap_rims(&self) -> [&[CapRimFootpoint]; 2] {
         [&self.rims[0], &self.rims[1]]
+    }
+    /// Exact quality whose full source/facet/embedding checks earned this receipt.
+    pub fn tessellation(&self) -> Tessellation {
+        self.quality
     }
     /// Actual logical provider charges, including all original source proofs,
     /// literal embedding and fresh trace work. Not process instructions/RSS.
@@ -152,6 +157,7 @@ fn finish<'s>(
         mesh,
         rims: std::array::from_fn(|_| Vec::with_capacity(n)),
         work: 0,
+        quality: prepared.options,
     };
     capacity(result.retained_metadata_bytes(), options.maximum_bytes)?;
     for end in 0..2 {

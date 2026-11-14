@@ -126,6 +126,18 @@ pub struct BoundaryTopology<'a> {
     certificate: TopologyCertificate,
 }
 impl<'a> BoundaryTopology<'a> {
+    pub(crate) fn retained_heap_bytes(&self) -> usize {
+        self.events.retained_heap_bytes()
+            + self.vertices.capacity() * std::mem::size_of::<BoundaryVertex>()
+            + self.edges.capacity() * std::mem::size_of::<BoundaryEdge>()
+            + self.faces.capacity() * std::mem::size_of::<BoundaryFace>()
+            + self
+                .faces
+                .iter()
+                .map(|f| f.uses.capacity() * std::mem::size_of::<EdgeUse>())
+                .sum::<usize>()
+    }
+
     pub fn events(&self) -> &BoundaryEvents<'a> {
         &self.events
     }

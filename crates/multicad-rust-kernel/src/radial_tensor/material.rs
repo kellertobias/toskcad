@@ -33,6 +33,10 @@ impl RadialBoundary {
     pub fn side_faces(&self) -> &[usize] {
         &self.ordered.caps.sides
     }
+    /// Actual validated finite cap-plane axes, in physical start/end order.
+    pub fn cap_axes(&self) -> [Axis; 2] {
+        self.ordered.caps.axial.cap_axes
+    }
     pub fn cap_rims(&self, end: usize) -> Option<&[Vec<(usize, bool)>]> {
         self.ordered.caps.rims.get(end).map(Vec::as_slice)
     }

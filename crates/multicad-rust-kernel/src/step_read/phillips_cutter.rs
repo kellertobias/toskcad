@@ -241,4 +241,7 @@ pub use physical::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSou
 
 pub use physical::{MaterialVolume, MaterialVolumeOptions};
 
-pub use physical::{OwnedDerivedMaterial, OwnedMaterialOptions};
+pub use physical::{
+    DelegatedWorkspaceBounds, JoinedMaterialCandidate, JoinedMeshOptions, OwnedDerivedMaterial,
+    OwnedMaterialOptions,
+};
