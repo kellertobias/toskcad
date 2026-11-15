@@ -133,6 +133,153 @@ fn actual_hanger_schema_fields_refuse_invalid_geometry_and_topology() {
             "{name}{path:?}={replacement}: {error:?}"
         );
     }
+    let shell = arena
+        .values()
+        .flatten()
+        .find(|entity| entity.name == "CLOSED_SHELL")
+        .unwrap();
+    let Value::List(faces) = &shell.args[1] else {
+        unreachable!()
+    };
+    let face_ids = faces
+        .iter()
+        .map(|value| match value {
+            Value::Reference(id) => *id,
+            _ => unreachable!(),
+        })
+        .collect::<Vec<_>>();
+    let mut duplicate = face_ids.clone();
+    duplicate.push(face_ids[0]);
+    for ids in [&duplicate[..], &face_ids[..face_ids.len() - 1]] {
+        let references = format!(
+            "({})",
+            ids.iter()
+                .map(|id| format!("#{id}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let component = shell.source.unwrap();
+        let changed = replace_argument(component, &[1], &references);
+        let input = original.replacen(component, &changed, 1);
+        assert!(part21::parse(&input).is_ok());
+        assert!(matches!(
+            decode(&input, Default::default(), None),
+            Err(Error::Invalid)
+        ));
+    }
+    let edge = arena
+        .values()
+        .flatten()
+        .find(|entity| entity.name == "EDGE_CURVE")
+        .unwrap();
+    let Value::Reference(first_vertex) = edge.args[1] else {
+        unreachable!()
+    };
+    let component = edge.source.unwrap();
+    let changed = replace_argument(component, &[2], &format!("#{first_vertex}"));
+    let input = original.replacen(component, &changed, 1);
+    assert!(part21::parse(&input).is_ok());
+    assert!(matches!(
+        decode(&input, Default::default(), None),
+        Err(Error::Unsupported)
+    ));
+    let (point_id, _) = arena
+        .iter()
+        .find(|(_, entities)| entities[0].name == "CARTESIAN_POINT")
+        .unwrap();
+    let plane = arena
+        .values()
+        .flatten()
+        .find(|entity| entity.name == "PLANE")
+        .unwrap()
+        .source
+        .unwrap();
+    let changed = replace_argument(plane, &[1], &format!("#{point_id}"));
+    let input = original.replacen(plane, &changed, 1);
+    assert!(part21::parse(&input).is_ok());
+    assert!(matches!(
+        decode(&input, Default::default(), None),
+        Err(Error::Unsupported)
+    ));
+
+    let complex = arena
+        .values()
+        .find(|entities| {
+            entities.len() > 1 && entities.iter().any(|e| e.name == "RATIONAL_B_SPLINE_CURVE")
+        })
+        .unwrap();
+    let rational = complex
+        .iter()
+        .find(|e| e.name == "RATIONAL_B_SPLINE_CURVE")
+        .unwrap()
+        .source
+        .unwrap();
+    let missing = original.replacen(rational, "", 1);
+    assert!(part21::parse(&missing).is_ok());
+    assert!(matches!(
+        decode(&missing, Default::default(), None),
+        Err(Error::Unsupported)
+    ));
+    let duplicate = rational.replacen("RATIONAL_B_SPLINE_CURVE", "B_SPLINE_CURVE", 1);
+    let duplicate = original.replacen(rational, &duplicate, 1);
+    // Duplicate complex component names are rejected by the shared parser,
+    // before the Hanger-specific semantic layer can consume the record.
+    assert!(part21::parse(&duplicate).is_err());
+    assert!(matches!(
+        decode(&duplicate, Default::default(), None),
+        Err(Error::Invalid)
+    ));
+
+    let decoded = decode(original, Default::default(), None).unwrap();
+    let point_2d = decoded
+        .points()
+        .values()
+        .find(|p| p.coordinates().len() == 2)
+        .unwrap()
+        .entity();
+    let curve = decoded
+        .curves()
+        .values()
+        .find(|curve| {
+            decoded.points()[&curve.point_entities()[0]]
+                .coordinates()
+                .len()
+                == 3
+        })
+        .unwrap();
+    let entities = &arena[&curve.entity()];
+    let (name, controls) = if entities.len() == 1 {
+        ("B_SPLINE_CURVE_WITH_KNOTS", 2)
+    } else {
+        ("B_SPLINE_CURVE", 1)
+    };
+    let component = entities
+        .iter()
+        .find(|e| e.name == name)
+        .unwrap()
+        .source
+        .unwrap();
+    let changed = replace_argument(component, &[controls, 0], &format!("#{point_2d}"));
+    let input = original.replacen(component, &changed, 1);
+    assert!(part21::parse(&input).is_ok());
+    assert!(matches!(
+        decode(&input, Default::default(), None),
+        Err(Error::Invalid)
+    ));
+    let tensor = arena
+        .values()
+        .flatten()
+        .find(|e| e.name == "B_SPLINE_SURFACE")
+        .unwrap()
+        .source
+        .unwrap();
+    let changed = replace_argument(tensor, &[2, 0, 0], &format!("#{point_2d}"));
+    let input = original.replacen(tensor, &changed, 1);
+    assert!(part21::parse(&input).is_ok());
+    assert!(matches!(
+        decode(&input, Default::default(), None),
+        Err(Error::Invalid)
+    ));
     assert!(
         !decode(original, ReadOptions::default(), None)
             .unwrap()

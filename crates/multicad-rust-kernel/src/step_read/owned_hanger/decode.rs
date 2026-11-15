@@ -8,12 +8,12 @@ fn one<'a, 'i>(arena: &'a Arena<'i>, id: u32, name: &str) -> Result<&'a Entity<'
     Ok(&e[0])
 }
 fn component<'a, 'i>(entities: &'a [Entity<'i>], name: &str) -> Result<&'a Entity<'i>, Error> {
-    let mut found = entities.iter().filter(|e| e.name == name);
-    let out = found.next().ok_or(Error::Unsupported)?;
-    if found.next().is_some() {
-        return Err(Error::Invalid);
-    }
-    Ok(out)
+    // Every arena comes directly from part21::parse, whose record parser
+    // rejects duplicate component names. Do not rescan each sealed record.
+    entities
+        .iter()
+        .find(|e| e.name == name)
+        .ok_or(Error::Unsupported)
 }
 fn components(entities: &[Entity<'_>], names: &[&str]) -> Result<(), Error> {
     if entities.len() != names.len() {
