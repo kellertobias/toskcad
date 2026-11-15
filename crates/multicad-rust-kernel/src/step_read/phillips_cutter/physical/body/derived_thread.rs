@@ -17,9 +17,10 @@ pub use analytic::{
     CommonChartPeriodicThreadRepair, OwnedPeriodicMaterial, PeriodicAuthoredApproximation,
     PeriodicClosedMaterial, PeriodicCurveOwner, PeriodicCurveQuery, PeriodicFaceProperties,
     PeriodicFiniteCurve, PeriodicFiniteCurves, PeriodicFiniteKind, PeriodicFiniteOptions,
-    PeriodicLiteralCertificate, PeriodicMaterialFace, PeriodicMaterialOptions,
-    PeriodicMaterialProvenance, PeriodicMaterialVolume, PeriodicOwnedMaterialQuery,
-    PeriodicOwnedOptions, PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicThreadBounds,
+    PeriodicGeometryApproximation, PeriodicLiteralCertificate, PeriodicMaterialFace,
+    PeriodicMaterialOptions, PeriodicMaterialProvenance, PeriodicMaterialVolume,
+    PeriodicOwnedMaterialQuery, PeriodicOwnedOptions, PeriodicProposalOrigin,
+    PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicThreadBounds,
     PeriodicThreadCorrespondence, PeriodicThreadRepair, PeriodicThreadSource,
     PeriodicVolumeOptions,
 };

@@ -696,3 +696,118 @@ fn actual_periodic_edge_display_selects_every_finite_owner_and_sews_original_ver
         assert!(!part.supports_step_export());
     }
 }
+
+#[test]
+fn actual_independently_decoded_periodic_material_keeps_owners_and_qualifies_native_geometry() {
+    for (left, posed) in [(false, false), (true, true)] {
+        let original = source(left, 0.5);
+        let proposal = original
+            .authored_mesh_approximation(16_000_000, None)
+            .unwrap();
+        let (origin, u, v) = if posed {
+            ([105., -20., 60.], [0.8, 0.6, 0.], [0.36, -0.48, -0.8])
+        } else {
+            ([0.; 3], [1., 0., 0.], [0., 1., 0.])
+        };
+        let text = multicad_rust_kernel::step::write_phillips_screw(
+            proposal.proposal(),
+            origin,
+            u,
+            v,
+            1e-7,
+        )
+        .unwrap();
+        let decoded = super::super::tests::decoded_periodic(&text);
+        assert_eq!(decoded.original_input(), Some(text.as_str()));
+        assert!(matches!(
+            decoded.provenance(),
+            multicad_rust_kernel::step_read::PhillipsPeriodicMaterialProvenance::Decoded { .. }
+        ));
+        let before = decoded.world_volume_mm3();
+        let strict = GeometryPolicy {
+            minimum_feature_mm: 0.2,
+            ..Default::default()
+        };
+        assert_eq!(
+            Solid::rust_periodic_repaired_phillips_material(
+                Rc::clone(&decoded),
+                feature(),
+                PlaneFrame::default(),
+                strict,
+                None
+            )
+            .err()
+            .unwrap()
+            .kind,
+            GeometryErrorKind::Unsupported
+        );
+        assert_eq!(
+            Solid::rust_periodic_repaired_phillips_material(
+                Rc::clone(&decoded),
+                feature(),
+                PlaneFrame::default(),
+                GeometryPolicy {
+                    minimum_feature_mm: f64::NAN,
+                    ..Default::default()
+                },
+                None
+            )
+            .err()
+            .unwrap()
+            .kind,
+            GeometryErrorKind::Input
+        );
+        assert_eq!(
+            Solid::rust_periodic_repaired_phillips_material(
+                Rc::clone(&decoded),
+                feature(),
+                PlaneFrame::default(),
+                strict,
+                Some(&|| true)
+            )
+            .err()
+            .unwrap()
+            .kind,
+            GeometryErrorKind::Cancelled
+        );
+        assert_eq!(decoded.world_volume_mm3(), before);
+        let part = Solid::rust_periodic_repaired_phillips_material(
+            Rc::clone(&decoded),
+            feature(),
+            PlaneFrame::default(),
+            Default::default(),
+            None,
+        )
+        .unwrap();
+        assert!(part.rust_repaired_phillips_source().is_none());
+        assert!(std::ptr::eq(
+            part.rust_periodic_repaired_phillips_source().unwrap().0,
+            decoded.as_ref()
+        ));
+        let faces = part.faces().unwrap();
+        assert!(faces.iter().all(|f| f.area_mm2 > 0.));
+        let topology = part
+            .topology_with_display(EntityId::new(), 13, Some(0.05))
+            .unwrap();
+        assert!(!topology.edges.is_empty());
+        let q = MeshOptions {
+            linear_deflection_mm: 0.05,
+            angular_deflection_rad: 0.3,
+            maximum_triangles: 1_000_000,
+        };
+        let (display, receipt) = part
+            .rust_periodic_repaired_phillips_display_mesh_with_receipt(q, Default::default(), None)
+            .unwrap();
+        assert!(std::ptr::eq(receipt.source(), decoded.as_ref()));
+        assert!(receipt.embedding_pairs() > 0);
+        let manufacturing = part.manufacturing_mesh_with_receipt(q).unwrap();
+        assert_eq!(manufacturing.mesh, display);
+        assert!(manufacturing.edge_pairs > 0 && manufacturing.vertex_links > 0);
+        assert!(!part.supports_step_export());
+        eprintln!(
+            "actual decoded native periodic left{left} pose{posed}: faces{} facets{}",
+            faces.len(),
+            display.indices.len() / 3
+        );
+    }
+}

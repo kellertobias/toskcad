@@ -20,7 +20,7 @@ impl RepairedPhillipsBody {
             // contract. It does not claim a scratch-byte receipt. This cache's
             // actual capacity is charged to every subsequent mesh query.
             let approximation = source
-                .authored_mesh_approximation(16_000_000, None)
+                .mesh_approximation(16_000_000, None)
                 .map_err(source_failure)?;
             let properties = approximation
                 .source_face_properties(

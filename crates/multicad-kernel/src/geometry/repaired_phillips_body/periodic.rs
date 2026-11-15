@@ -105,6 +105,25 @@ impl Solid {
         policy: GeometryPolicy,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Self, GeometryError> {
+        if matches!(
+            source.provenance(),
+            multicad_rust_kernel::step_read::PhillipsPeriodicMaterialProvenance::Decoded { .. }
+        ) {
+            checkpoint(interrupt)?;
+            policy.validate()?;
+            // Imported ownership has no authored minimum-wall request. Use
+            // the independently earned ACTUAL repaired-material clearances;
+            // a numerical producer's smaller proposal-only margin is irrelevant.
+            if source
+                .containment_clearances_mm()
+                .into_iter()
+                .any(|v| v < policy.minimum_feature_mm)
+            {
+                return Err(unsupported(
+                    "Actual decoded cavity clearances do not establish the policy minimum feature",
+                ));
+            }
+        }
         let body =
             RepairedPhillipsBody::new_source(Source::Periodic(source), feature, policy, interrupt)?;
         body.validate_frame(occurrence)?;

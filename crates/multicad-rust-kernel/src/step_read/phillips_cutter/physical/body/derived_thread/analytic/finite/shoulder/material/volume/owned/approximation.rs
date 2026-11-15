@@ -9,8 +9,16 @@ pub use literal::PeriodicLiteralCertificate;
 pub use properties::PeriodicFaceProperties;
 #[cfg(test)]
 mod tests;
-pub struct PeriodicAuthoredApproximation<'s> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PeriodicProposalOrigin {
+    AuthoredSeed,
+    DecodedSeed,
+}
+/// Numerical producer proposal tied to the exact owning periodic source.
+/// Authored/decoded seed identity is explicit; neither seed defines geometry.
+pub struct PeriodicGeometryApproximation<'s> {
     owner: &'s OwnedPeriodicMaterial,
+    origin: PeriodicProposalOrigin,
     proposal: PhillipsScrew,
     position: f64,
     derivative: [f64; 2],
@@ -19,7 +27,13 @@ pub struct PeriodicAuthoredApproximation<'s> {
     normal_coefficients: [[[f64; 2]; 2]; 4],
     head_position: f64,
 }
-impl PeriodicAuthoredApproximation<'_> {
+/// Compatibility name for the authored-only factory. A decoded proposal is
+/// obtained explicitly through mesh_approximation and reports DecodedSeed.
+pub type PeriodicAuthoredApproximation<'s> = PeriodicGeometryApproximation<'s>;
+impl PeriodicGeometryApproximation<'_> {
+    pub fn proposal_origin(&self) -> PeriodicProposalOrigin {
+        self.origin
+    }
     pub fn source(&self) -> &OwnedPeriodicMaterial {
         self.owner
     }
@@ -56,6 +70,23 @@ impl OwnedPeriodicMaterial {
         maximum_work: usize,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> FResult<PeriodicAuthoredApproximation<'_>> {
+        self.geometry_approximation_impl(maximum_work, interrupt, true)
+    }
+    /// A neutral producer input. The complete source/field correspondence and
+    /// actual emitted-literal qualification still run against this owner.
+    pub fn mesh_approximation(
+        &self,
+        maximum_work: usize,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> FResult<PeriodicGeometryApproximation<'_>> {
+        self.geometry_approximation_impl(maximum_work, interrupt, false)
+    }
+    fn geometry_approximation_impl(
+        &self,
+        maximum_work: usize,
+        interrupt: Option<&dyn Fn() -> bool>,
+        authored_only: bool,
+    ) -> FResult<PeriodicGeometryApproximation<'_>> {
         let mut work = Work {
             remaining: maximum_work,
             interrupt,
@@ -66,13 +97,36 @@ impl OwnedPeriodicMaterial {
             if maximum_work > WORK {
                 return Err(PhillipsReadError::Invalid);
             }
-            let PeriodicMaterialProvenance::Authored {
-                thread,
-                profile,
-                source_spec,
-            } = &self.provenance
-            else {
+            if authored_only
+                && !matches!(self.provenance, PeriodicMaterialProvenance::Authored { .. })
+            {
                 return Err(PhillipsReadError::Unsupported);
+            }
+            let (thread, profile, mut source_spec, origin) = match &self.provenance {
+                PeriodicMaterialProvenance::Authored {
+                    thread,
+                    profile,
+                    source_spec,
+                } => (
+                    *thread,
+                    *profile,
+                    *source_spec,
+                    PeriodicProposalOrigin::AuthoredSeed,
+                ),
+                PeriodicMaterialProvenance::Decoded {
+                    thread_proposal, ..
+                } => (
+                    *thread_proposal,
+                    *self.head.view().profile_proposal(),
+                    crate::profiled_screw::SourceSpec {
+                        head: None,
+                        shank_length_mm: 0.,
+                        // This lower bound was earned against the actual
+                        // decoded head/cavity. It changes no geometric law.
+                        minimum_wall_mm: self.containment[0].min(self.containment[1]),
+                    },
+                    PeriodicProposalOrigin::DecodedSeed,
+                ),
             };
             let head = self
                 .head
@@ -82,6 +136,16 @@ impl OwnedPeriodicMaterial {
                     crate::step_read::phillips_cutter::physical::body::closed_head::repaired_error,
                 )?;
             work.step(head.work_used)?;
+            if origin == PeriodicProposalOrigin::DecodedSeed {
+                // This is only a proposal-constructor request, not a material
+                // thickness or same-height clearance claim. Leave room for
+                // the measured head deviation, then ask for half the remainder.
+                // The old constructor independently proves its COMPLETE raw
+                // profile/thread/cavity host; this hint cannot bypass that gate.
+                let available = I::point(source_spec.minimum_wall_mm) - I::point(head.position_mm);
+                require(available.valid() && available.lo > 0.)?;
+                source_spec.minimum_wall_mm = (available / I::point(2.)).lo;
+            }
             let rotation = rotation::Rotation::new(&mut work)?;
             let real_rate =
                 I::point(2.) * rotation.pi(&mut work)? / I::point(self.thread.pitch_mm());
@@ -169,10 +233,11 @@ impl OwnedPeriodicMaterial {
                 .map_err(cavity_error)?;
             work.step(1_000_000)?;
             let proposal =
-                PhillipsScrew::new(*thread, *profile, *source_spec, cavity, 1_000_000, &cancel)
+                PhillipsScrew::new(thread, profile, source_spec, cavity, 1_000_000, &cancel)
                     .map_err(cavity_error)?;
             work.step(1)?;
-            Ok(PeriodicAuthoredApproximation {
+            Ok(PeriodicGeometryApproximation {
+                origin,
                 owner: self,
                 proposal,
                 position,

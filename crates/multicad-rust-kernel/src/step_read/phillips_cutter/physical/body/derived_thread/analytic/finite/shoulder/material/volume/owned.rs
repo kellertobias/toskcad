@@ -9,7 +9,8 @@ mod curves;
 pub use curves::PeriodicCurveQuery;
 mod authored;
 pub use approximation::{
-    PeriodicAuthoredApproximation, PeriodicFaceProperties, PeriodicLiteralCertificate,
+    PeriodicAuthoredApproximation, PeriodicFaceProperties, PeriodicGeometryApproximation,
+    PeriodicLiteralCertificate, PeriodicProposalOrigin,
 };
 mod query;
 pub use query::PeriodicOwnedMaterialQuery;
@@ -60,6 +61,9 @@ impl PeriodicCurveOwner {
 #[allow(clippy::large_enum_variant)]
 pub enum PeriodicMaterialProvenance {
     Decoded {
+        /// Original decoded proposal used to seed the separately qualified
+        /// periodic source. This is never an exact geometry/source getter.
+        thread_proposal: crate::helical_thread::Thread,
         original_input: Arc<str>,
         original_curve_owners: [PeriodicCurveOwner; 17],
         thread_transfers: [AnalyticThreadTransfer; 4],
@@ -278,6 +282,7 @@ impl PeriodicMaterialVolume<'_, '_, '_> {
                 std::array::from_fn(|i| join.finite_curves().thread().transfers()[i]);
             let mut owned = OwnedPeriodicMaterial {
                 provenance: PeriodicMaterialProvenance::Decoded {
+                    thread_proposal: join.finite_curves().thread().body().thread,
                     original_input: Arc::<str>::from(raw),
                     original_curve_owners: owners,
                     thread_transfers,

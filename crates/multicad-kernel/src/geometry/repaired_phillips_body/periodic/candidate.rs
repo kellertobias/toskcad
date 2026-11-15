@@ -117,7 +117,7 @@ pub(in crate::geometry::repaired_phillips_body) fn build<'s>(
 ) -> Result<PeriodicCandidate<'s>, GeometryError> {
     checkpoint(interrupt)?;
     let approximation = source
-        .authored_mesh_approximation(o.maximum_work.min(16_000_000), interrupt)
+        .mesh_approximation(o.maximum_work.min(16_000_000), interrupt)
         .map_err(source_failure)?;
     let mut remaining = o
         .maximum_work

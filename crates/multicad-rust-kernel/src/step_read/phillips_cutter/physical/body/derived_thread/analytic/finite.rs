@@ -6,9 +6,10 @@ mod shoulder;
 pub use shoulder::{
     AuthoredPeriodicOptions, OwnedPeriodicMaterial, PeriodicAuthoredApproximation,
     PeriodicClosedMaterial, PeriodicCurveOwner, PeriodicCurveQuery, PeriodicFaceProperties,
-    PeriodicLiteralCertificate, PeriodicMaterialFace, PeriodicMaterialOptions,
-    PeriodicMaterialProvenance, PeriodicMaterialVolume, PeriodicOwnedMaterialQuery,
-    PeriodicOwnedOptions, PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicVolumeOptions,
+    PeriodicGeometryApproximation, PeriodicLiteralCertificate, PeriodicMaterialFace,
+    PeriodicMaterialOptions, PeriodicMaterialProvenance, PeriodicMaterialVolume,
+    PeriodicOwnedMaterialQuery, PeriodicOwnedOptions, PeriodicProposalOrigin,
+    PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicVolumeOptions,
 };
 type FResult<T> = std::result::Result<T, PhillipsReadError>;
 const FINITE_TOTAL: usize = 48_000_000;

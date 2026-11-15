@@ -5,6 +5,10 @@ fn actual_authored_m2_proposal_is_only_a_bounded_approximation_of_the_owned_mate
         let owner = super::super::query::tests::owned(left, 0.03);
         let receipt = owner.authored_mesh_approximation(WORK, None).unwrap();
         assert!(std::ptr::eq(receipt.source(), &owner));
+        assert_eq!(
+            receipt.proposal_origin(),
+            PeriodicProposalOrigin::AuthoredSeed
+        );
         assert!(
             receipt.maximum_position_error_mm() > 0. && receipt.maximum_position_error_mm() < 1e-8
         );
@@ -211,6 +215,55 @@ fn actual_decoded_owner_does_not_fabricate_authored_provenance_for_a_mesh_propos
             owner.authored_mesh_approximation(WORK, None),
             Err(PhillipsReadError::Unsupported)
         ));
+        let receipt = owner.mesh_approximation(WORK, None).unwrap();
+        assert_eq!(
+            receipt.proposal_origin(),
+            PeriodicProposalOrigin::DecodedSeed
+        );
+        assert!(std::ptr::eq(receipt.source(), &owner));
+        assert!(matches!(
+            owner.provenance(),
+            PeriodicMaterialProvenance::Decoded { .. }
+        ));
+        assert!(receipt.maximum_position_error_mm() < 1e-7);
+        assert!(owner.mesh_approximation(receipt.work_used(), None).is_ok());
+        assert!(matches!(
+            owner.mesh_approximation(receipt.work_used() - 1, None),
+            Err(PhillipsReadError::Limit)
+        ));
+        assert!(matches!(
+            owner.mesh_approximation(0, None),
+            Err(PhillipsReadError::Limit)
+        ));
+        assert!(matches!(
+            owner.mesh_approximation(WORK + 1, None),
+            Err(PhillipsReadError::Invalid)
+        ));
+        assert!(matches!(
+            owner.mesh_approximation(WORK, Some(&|| true)),
+            Err(PhillipsReadError::Cancelled)
+        ));
+        let mesh = crate::helical_thread_mesh::tessellate_phillips_screw(
+            receipt.proposal(),
+            crate::display::Tessellation {
+                deflection: 0.05,
+                angle: 0.3,
+                triangle_limit: 1_000_000,
+            },
+            &|| false,
+        )
+        .unwrap();
+        let literal = receipt
+            .certify_literal(&mesh, 0.1, 512_000_000, 64 * 1024 * 1024, None)
+            .unwrap();
+        assert!(std::ptr::eq(literal.source(), &owner));
+        assert!(literal.maximum_outer_vertex_error_mm() < 1e-7);
+        eprintln!(
+            "decoded proposal literal C0 {} peak {} work {}",
+            literal.maximum_surface_error_mm(),
+            literal.accounted_peak_bytes(),
+            literal.work_used()
+        );
     });
 }
 

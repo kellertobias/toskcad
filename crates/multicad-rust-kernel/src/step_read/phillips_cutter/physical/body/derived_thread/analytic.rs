@@ -10,9 +10,10 @@ pub use finite::{
     AuthoredPeriodicOptions, OwnedPeriodicMaterial, PeriodicAuthoredApproximation,
     PeriodicClosedMaterial, PeriodicCurveOwner, PeriodicCurveQuery, PeriodicFaceProperties,
     PeriodicFiniteCurve, PeriodicFiniteCurves, PeriodicFiniteKind, PeriodicFiniteOptions,
-    PeriodicLiteralCertificate, PeriodicMaterialFace, PeriodicMaterialOptions,
-    PeriodicMaterialProvenance, PeriodicMaterialVolume, PeriodicOwnedMaterialQuery,
-    PeriodicOwnedOptions, PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicVolumeOptions,
+    PeriodicGeometryApproximation, PeriodicLiteralCertificate, PeriodicMaterialFace,
+    PeriodicMaterialOptions, PeriodicMaterialProvenance, PeriodicMaterialVolume,
+    PeriodicOwnedMaterialQuery, PeriodicOwnedOptions, PeriodicProposalOrigin,
+    PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicVolumeOptions,
 };
 mod periodic;
 mod rotation;

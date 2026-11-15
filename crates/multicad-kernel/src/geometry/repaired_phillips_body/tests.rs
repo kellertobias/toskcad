@@ -6,7 +6,7 @@ use multicad_rust_kernel::{
     profiled_screw::SourceSpec,
     step, step_read,
 };
-pub(super) fn source(scale: f64, left: bool, posed: bool) -> Rc<OwnedDerivedMaterial> {
+fn source_text(scale: f64, left: bool, posed: bool) -> String {
     // Real physical STEP producer data. These values only author the fixture;
     // the import chain earns all support/net/trim fits from the actual text.
     let spec = Spec {
@@ -72,8 +72,26 @@ pub(super) fn source(scale: f64, left: bool, posed: bool) -> Rc<OwnedDerivedMate
     } else {
         ([0.; 3], [1., 0., 0.], [0., 1., 0.])
     };
-    let text = step::write_phillips_screw(&screw, origin, u, v, 1e-7).unwrap();
-    let body = step_read::read_phillips_body(&text, 1e-7, 1_000_000).unwrap();
+    step::write_phillips_screw(&screw, origin, u, v, 1e-7).unwrap()
+}
+enum DecodedSource {
+    Retained(Rc<OwnedDerivedMaterial>),
+    Periodic(Rc<OwnedPeriodicMaterial>),
+}
+pub(super) fn source(scale: f64, left: bool, posed: bool) -> Rc<OwnedDerivedMaterial> {
+    match decoded_source(&source_text(scale, left, posed), false) {
+        DecodedSource::Retained(source) => source,
+        DecodedSource::Periodic(_) => unreachable!("requested retained proof"),
+    }
+}
+pub(super) fn decoded_periodic(text: &str) -> Rc<OwnedPeriodicMaterial> {
+    match decoded_source(text, true) {
+        DecodedSource::Periodic(source) => source,
+        DecodedSource::Retained(_) => unreachable!("requested periodic proof"),
+    }
+}
+fn decoded_source(text: &str, periodic: bool) -> DecodedSource {
+    let body = step_read::read_phillips_body(text, 1e-7, 1_000_000).unwrap();
     let outer = body
         .outer_carrier_bounds(
             step_read::PhillipsOuterCarrierOptions {
@@ -130,6 +148,24 @@ pub(super) fn source(scale: f64, left: bool, posed: bool) -> Rc<OwnedDerivedMate
     let head = common
         .closed_repaired_head(Default::default(), None)
         .unwrap();
+    if periodic {
+        let field = head
+            .common_chart_periodic_thread_repair(Default::default(), None)
+            .unwrap();
+        let finite = head
+            .periodic_thread_finite_curves(&field, Default::default(), None)
+            .unwrap();
+        let join = head
+            .periodic_shared_crest_shoulder(&finite, Default::default(), None)
+            .unwrap();
+        let material = head
+            .periodic_closed_material(&join, Default::default(), None)
+            .unwrap();
+        let volume = material.volume_bounds(Default::default(), None).unwrap();
+        let source = volume.owned_source(Default::default(), None).unwrap();
+        assert_eq!(source.original_input(), Some(text));
+        return DecodedSource::Periodic(Rc::new(source));
+    }
     let thread = head
         .derived_thread_carrier(Default::default(), None)
         .unwrap()
@@ -144,7 +180,7 @@ pub(super) fn source(scale: f64, left: bool, posed: bool) -> Rc<OwnedDerivedMate
         .into_owned(Default::default(), None)
         .unwrap();
     assert_eq!(owned.original_input(), text);
-    Rc::new(owned)
+    DecodedSource::Retained(Rc::new(owned))
 }
 fn feature() -> EntityId {
     EntityId::from_uuid_bits(0x00ca_d352_0000_0000_0000_0000_0000_0001)
