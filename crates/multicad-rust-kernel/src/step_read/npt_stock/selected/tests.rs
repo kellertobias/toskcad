@@ -150,7 +150,7 @@ fn selected_dependency_walk_checks_real_missing_typed_and_resource_boundaries() 
     ));
     assert_eq!(document.literal_input(), text);
 }
-fn mapped(text: &str, y: &str, scale: &str) -> String {
+pub(super) fn mapped(text: &str, y: &str, scale: &str) -> String {
     let document = CompoundDocument::parse(text, DocumentOptions::default(), None).unwrap();
     let solid = document.represented_members()[0].item_entity();
     let representation = document
@@ -176,7 +176,7 @@ fn mapped(text: &str, y: &str, scale: &str) -> String {
         1,
     )
 }
-fn contains_point(bounds: [[f64; 2]; 3], point: [f64; 3]) {
+pub(super) fn contains_point(bounds: [[f64; 2]; 3], point: [f64; 3]) {
     for (bound, point) in bounds.into_iter().zip(point) {
         assert!(
             bound[0] <= point && point <= bound[1] && bound[1] - bound[0] < 1e-10,

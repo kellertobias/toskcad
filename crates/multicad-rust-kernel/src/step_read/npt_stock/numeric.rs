@@ -127,3 +127,14 @@ pub(super) fn equal(a: &str, b: &str, budget: &mut Budget<'_>) -> Result<bool> {
 pub(super) fn expected(s: Scalar<'_>, value: f64, budget: &mut Budget<'_>) -> Result<bool> {
     equal(s.spelling, &format!("{value:.16E}"), budget)
 }
+
+// The owned geometry copier preserves the same original component spelling,
+// binary64 cache and outward bounds. This constructs a borrowing view of that
+// immutable copy, never a new numeric or material admission.
+pub(super) fn retained_scalar(value: f64, bounds: [f64; 2], spelling: &str) -> Scalar<'_> {
+    Scalar {
+        value,
+        bounds,
+        spelling,
+    }
+}

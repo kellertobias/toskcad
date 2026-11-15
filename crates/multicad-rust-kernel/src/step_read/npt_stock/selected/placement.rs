@@ -24,7 +24,7 @@ fn mapping_error(error: crate::step_read::owned_insert::Error) -> Error {
         crate::step_read::owned_insert::Error::Cancelled => Error::Cancelled,
     }
 }
-fn transport(
+pub(super) fn transport(
     columns: [[I; 3]; 3],
     mut origin: [I; 3],
     input: [[f64; 2]; 3],

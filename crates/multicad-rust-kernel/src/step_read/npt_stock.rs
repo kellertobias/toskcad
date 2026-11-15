@@ -11,7 +11,7 @@ mod numeric;
 mod selected;
 pub use material::{MaterialOptions, Occupied, Projection};
 pub use numeric::Scalar;
-pub use selected::{Placement, Selected};
+pub use selected::{OwnedMaterial, Placement, Selected};
 mod parse;
 mod records;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
