@@ -4127,7 +4127,8 @@ fn rust_stdio_rounded_families_edit_history_export_blind_import_and_reopen() {
             capabilities["modeled_new_external_fit_classes"],
             json!([fit])
         );
-        assert_eq!(capabilities["supported"], false); // Legacy field still means the complete family, including receivers.
+        assert_eq!(capabilities["supported"], true);
+        assert_eq!(capabilities["modeled_cut_internal_supported"], true);
         let imperial = matches!(family, ThreadFamily::Bsw | ThreadFamily::Bsf);
         let diameter_input = if imperial {
             json!({"value":diameter/25.4,"unit":"in"})
