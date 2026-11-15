@@ -17,8 +17,8 @@ mod encoded;
 pub use encoded::{
     AffineCapPiece, BoundAffineCap, BoundRootCap, CapCurvePiece, CapEndpoint, CapEvent, CapEvents,
     CapSegment, CapTrace, EncodedCell, EncodedControl, EncodedField, EncodedMeridian,
-    EncodedScalar, EndpointArithmetic, FiniteDecimal, LiteralCapCurve, LiteralVertex,
-    LiteralVertices, RestrictedCapCurve, RestrictionBounds, SidePole, SideSupport,
+    EncodedScalar, EndpointArithmetic, FiniteDecimal, LiteralCapCurve, LiteralSideSupport,
+    LiteralVertex, LiteralVertices, RestrictedCapCurve, RestrictionBounds, SidePole, SideSupport,
     SideSupportBatch, SideSupportKind,
 };
 pub use encoded::{

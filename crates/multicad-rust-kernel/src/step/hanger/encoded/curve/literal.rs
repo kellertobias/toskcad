@@ -131,7 +131,6 @@ pub(super) fn encode_cap_at(
     w: &mut Work<'_>,
     precision: Precision,
 ) -> Result<CartesianCap, Error> {
-    let degree = h.len() - 1;
     let plane = h[0][2].div(&h[0][3], w)?;
     // CapCurvePiece structurally owns Z=plane*W. Preserve that exact
     // dyadic station, including subnormal positive plain-length offsets.
@@ -143,6 +142,28 @@ pub(super) fn encode_cap_at(
             }
         }
     }
+    encode_at(h, endpoints, options, memory, w, precision, Some(plane))
+}
+/// Whole-curve three-coordinate quotient proof. Side curves retain varying Z.
+pub(super) fn encode_spatial_at(
+    h: &[[N; 4]],
+    options: CurveOptions,
+    memory: &mut Memory,
+    w: &mut Work<'_>,
+    precision: Precision,
+) -> Result<CartesianCap, Error> {
+    encode_at(h, None, options, memory, w, precision, None)
+}
+fn encode_at(
+    h: &[[N; 4]],
+    endpoints: Option<&[[EncodedScalar; 3]; 2]>,
+    options: CurveOptions,
+    memory: &mut Memory,
+    w: &mut Work<'_>,
+    precision: Precision,
+    plane: Option<N>,
+) -> Result<CartesianCap, Error> {
+    let degree = h.len() - 1;
     let weight = finite_weights(h, memory, w)?;
     let mut poles = memory.allocate(h.len(), w)?;
     let mut weights = memory.allocate(h.len(), w)?;
@@ -162,7 +183,9 @@ pub(super) fn encode_cap_at(
         let mut sum = p(0.);
         for axis in 0..3 {
             let actual = row[axis].div(&row[3], w)?;
-            chosen[axis] = if axis == 2 {
+            chosen[axis] = if axis == 2
+                && let Some(plane) = &plane
+            {
                 w.charge(512)?;
                 plane.clone()
             } else {

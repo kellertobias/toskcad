@@ -13,7 +13,7 @@ mod jets;
 pub use bound_affine::BoundAffineCap;
 mod literal;
 mod side;
-pub use side::{SidePole, SideSupport, SideSupportBatch, SideSupportKind};
+pub use side::{LiteralSideSupport, SidePole, SideSupport, SideSupportBatch, SideSupportKind};
 mod restrict;
 mod vertices;
 pub use vertices::{CapEvent, CapEvents, CapSegment, LiteralVertex, LiteralVertices};

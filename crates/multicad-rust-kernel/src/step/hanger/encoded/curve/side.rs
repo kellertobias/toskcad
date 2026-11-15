@@ -253,5 +253,7 @@ fn prepare_cached<'f, 's>(
         bytes: m.used - before - (cache.retained_bytes() - cache_before),
     })
 }
+mod literal;
 #[cfg(test)]
 mod tests;
+pub use literal::LiteralSideSupport;
