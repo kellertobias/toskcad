@@ -117,4 +117,4 @@ mod face_tests;
 #[cfg(test)]
 mod mesh_tests;
 #[cfg(test)]
-mod source_tests;
+pub(in crate::geometry) mod source_tests;

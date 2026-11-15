@@ -6,7 +6,7 @@ use multicad_rust_kernel::{
     helical_thread::Spec as WoodSpec,
 };
 
-pub(super) fn source(left: bool, nonbinary: bool) -> Hanger {
+pub(in crate::geometry) fn source(left: bool, nonbinary: bool) -> Hanger {
     let major = (2.874 + 2.980) / 4.;
     let pitch_mid = (2.580 + 2.655) / 2.;
     Hanger::new(

@@ -9,6 +9,9 @@ pub struct PartitionedStepVerification {
     pub insert_correspondence: Vec<(u32, WoodInsertStepVerification)>,
     /// Authored boundary binding with SOURCE-integral mass, never decoded mass.
     pub source_known_members: Vec<(u32, EntryChamferBoundaryProof)>,
+    /// Independently decoded supports closed by an explicit bounded healing.
+    /// These intervals are not raw-file occupied mass.
+    pub healed_members: Vec<(u32, HealedHangerStepVerification)>,
 }
 fn leaves<'a>(solid: &'a Solid, output: &mut Vec<&'a Solid>) {
     if let Some(compound) = solid.rust_compound() {
@@ -31,6 +34,7 @@ impl Solid {
     pub fn has_partitioned_step_source(&self) -> bool {
         self.has_wood_insert_step_source()
             || self.clipped_npt_body().is_some()
+            || self.hanger_body().is_some()
             || self
                 .rust_compound()
                 .is_some_and(|compound| compound.members().any(Self::has_partitioned_step_source))
@@ -76,6 +80,7 @@ impl Solid {
                 },
                 insert_correspondence: vec![],
                 source_known_members: vec![],
+                healed_members: vec![],
             };
             let mut cursor = 0usize;
             for leaf in sources {
@@ -223,6 +228,23 @@ impl Solid {
                         });
                     include(&mut result.members.bounds_mm, proof.decoded_bounds_mm);
                     result.insert_correspondence.push((cursor as u32, proof));
+                } else if let Some((body, frame)) = leaf.hanger_body() {
+                    assert_eq!(count, 1, "single connected hanger source");
+                    let proof = body.verify_step_member(
+                        &file,
+                        actual[0],
+                        frame,
+                        GeometryPolicy {
+                            linear_tolerance_mm: leaf.policy.linear_tolerance_mm.min(tolerance),
+                            ..leaf.policy
+                        },
+                        interrupt,
+                    )?;
+                    include(
+                        &mut result.members.bounds_mm,
+                        proof.correspondence_enclosure_mm,
+                    );
+                    result.healed_members.push((cursor as u32, proof));
                 } else {
                     let mut decoded = Vec::with_capacity(count);
                     for (offset, member) in actual.iter().enumerate() {

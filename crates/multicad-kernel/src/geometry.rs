@@ -36,7 +36,7 @@ pub use hanger_material::{HangerFaceProperties, HangerMaterial};
 mod hanger_body;
 mod source_face_measure;
 use hanger_body::HangerBody;
-pub use hanger_body::HangerData;
+pub use hanger_body::{HangerData, HealedHangerStepVerification};
 mod helical_body;
 mod helical_tube_body;
 mod herringbone_body;
@@ -2887,11 +2887,11 @@ impl Solid {
             }
             SolidBody::WoodInsert(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::ClippedNpt(body) => body.supports_step(self.policy),
+            SolidBody::Hanger(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
             | SolidBody::InternalThreadTreatment(..)
-            | SolidBody::RepairedPhillips(..)
-            | SolidBody::Hanger(..) => false,
+            | SolidBody::RepairedPhillips(..) => false,
             SolidBody::WarpedUnion(body, _) => {
                 multicad_rust_kernel::step::supports_warped_union(&body.geometry)
             }
@@ -3104,11 +3104,11 @@ impl Solid {
             ),
             SolidBody::WoodInsert(body, frame) => body.append_step(writer, *frame, self.policy),
             SolidBody::ClippedNpt(body) => body.append_step(writer, self.policy),
+            SolidBody::Hanger(body, frame) => body.append_step(writer, *frame, self.policy),
             SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
             | SolidBody::InternalThreadTreatment(..)
-            | SolidBody::RepairedPhillips(..)
-            | SolidBody::Hanger(..) => Err(step::StepError::Unsupported),
+            | SolidBody::RepairedPhillips(..) => Err(step::StepError::Unsupported),
             SolidBody::Orthogonal(body, frame) => body.append_step(writer, *frame),
             SolidBody::Occt(_) => unreachable!("native STEP dispatched above"),
         }

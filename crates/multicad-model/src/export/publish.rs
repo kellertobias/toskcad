@@ -21,6 +21,23 @@ pub enum StepVerificationMethod {
     DecodedBoundaryEnclosure,
     SourceKnownBoundary,
     MixedMemberBoundary,
+    DecodedSupportHealing,
+}
+/// Mass of independently decoded supports after the reported bounded sewing.
+/// Raw-file occupied mass and healed-cap derivative bounds are not asserted.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StepHealedMemberReceipt {
+    pub member_index: u32,
+    pub healed_volume_bounds_mm3: [f64; 2],
+    pub source_volume_bounds_mm3: [f64; 2],
+    pub source_to_raw_position_error_mm: f64,
+    pub sewing_correspondence_bound_mm: f64,
+    pub source_to_healed_position_error_mm: f64,
+    pub source_support_derivative_error_mm: [f64; 2],
+    pub original_coedge_derivative_error_mm: f64,
+    pub verified_tolerance_mm: f64,
+    pub matched_entities: usize,
+    pub literal_binding_work: usize,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StepRetainedMemberReceipt {
@@ -63,6 +80,8 @@ pub struct StepVerificationReceipt {
     pub source_correspondence: Vec<StepSourceCorrespondenceReceipt>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_known_members: Vec<StepSourceKnownMemberReceipt>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub healed_members: Vec<StepHealedMemberReceipt>,
     pub source_volume_bounds_mm3: Option<[f64; 2]>,
     /// Actual full-checker parameter, not a measured combined boundary error.
     pub verified_tolerance_mm: Option<f64>,
@@ -80,6 +99,7 @@ impl StepVerificationReceipt {
             decoded_scalar_members: vec![],
             source_correspondence: vec![],
             source_known_members: vec![],
+            healed_members: vec![],
             source_volume_bounds_mm3: None,
             verified_tolerance_mm: None,
             maximum_polynomial_trim_error_mm: None,
@@ -397,7 +417,16 @@ fn verify_partitioned_step(
                 )
             })?;
         Ok(StepVerificationReceipt {
-            method: if proof.source_known_members.is_empty() {
+            method: if !proof.healed_members.is_empty() {
+                if proof.source_known_members.is_empty()
+                    && proof.members.retained_members.is_empty()
+                    && proof.members.decoded_scalar_members.is_empty()
+                {
+                    StepVerificationMethod::DecodedSupportHealing
+                } else {
+                    StepVerificationMethod::MixedMemberBoundary
+                }
+            } else if proof.source_known_members.is_empty() {
                 StepVerificationMethod::DecodedBoundaryEnclosure
             } else {
                 StepVerificationMethod::MixedMemberBoundary
@@ -437,6 +466,23 @@ fn verify_partitioned_step(
                 .collect(),
             source_volume_bounds_mm3: None,
             verified_tolerance_mm: Some(tolerance),
+            healed_members: proof
+                .healed_members
+                .into_iter()
+                .map(|(member_index, p)| StepHealedMemberReceipt {
+                    member_index,
+                    healed_volume_bounds_mm3: p.healed_volume_bounds_mm3,
+                    source_volume_bounds_mm3: p.source_volume_bounds_mm3,
+                    source_to_raw_position_error_mm: p.source_to_raw_position_error_mm,
+                    sewing_correspondence_bound_mm: p.sewing_correspondence_bound_mm,
+                    source_to_healed_position_error_mm: p.source_to_healed_position_error_mm,
+                    source_support_derivative_error_mm: p.source_support_derivative_error_mm,
+                    original_coedge_derivative_error_mm: p.original_coedge_derivative_error_mm,
+                    verified_tolerance_mm: p.verified_tolerance_mm,
+                    matched_entities: p.matched_entities,
+                    literal_binding_work: p.literal_binding_work,
+                })
+                .collect(),
             maximum_polynomial_trim_error_mm: None,
             analytic_closure_tolerance_mm: None,
         })
@@ -524,6 +570,7 @@ fn verify_retained_step(
             decoded_scalar_members: proof.decoded_scalar_members,
             source_correspondence: vec![],
             source_known_members: vec![],
+            healed_members: vec![],
             source_volume_bounds_mm3: None,
             verified_tolerance_mm: Some(tolerance),
             maximum_polynomial_trim_error_mm: None,
@@ -597,6 +644,7 @@ fn verify_source_known_step(
             decoded_scalar_members: vec![],
             source_correspondence: vec![],
             source_known_members: vec![],
+            healed_members: vec![],
             source_volume_bounds_mm3: Some(proof.source_volume_bounds_mm3),
             verified_tolerance_mm: Some(proof.verified_tolerance_mm),
             maximum_polynomial_trim_error_mm: Some(proof.maximum_polynomial_trim_error_mm),

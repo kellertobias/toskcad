@@ -3,8 +3,10 @@ use super::*;
 use multicad_rust_kernel::authored_hanger_bolt::{Hanger, QueryOptions};
 mod contained_boolean;
 mod display;
+mod step;
 mod topology;
 use multicad_rust_kernel::authored_hanger_bolt as source;
+pub use step::HealedHangerStepVerification;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HangerData {
@@ -15,6 +17,8 @@ pub(crate) struct HangerBody {
     source: Hanger,
     pub(super) feature: EntityId,
     boundary: source::Boundary,
+    qualified_step:
+        std::cell::RefCell<Option<Rc<multicad_rust_kernel::step::hanger::QualifiedHangerStep>>>,
 }
 impl Solid {
     pub fn rust_hanger(
@@ -37,6 +41,7 @@ impl Solid {
                     source,
                     feature,
                     boundary,
+                    qualified_step: std::cell::RefCell::new(None),
                 }),
                 frame,
             ),
