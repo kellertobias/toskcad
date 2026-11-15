@@ -226,6 +226,7 @@ fn thread_material_along_lines_agrees_with_source_containment() {
     for left_hand in [false, true] {
         solids.push(two_start(left_hand, frame));
         solids.push(rounded_bore(left_hand, frame));
+        solids.push(chamfered(left_hand, left_hand, frame));
     }
     for left_hand in [false, true] {
         let root = 1. / (4. * 3_f64.sqrt());
@@ -312,7 +313,7 @@ fn thread_material_along_lines_agrees_with_source_containment() {
         for r in [0.5, 2.5, 2.8, 3.05] {
             lines.push((world([r, 0.3, -1.]), axis));
         }
-        lines.push((world([-4., 0.37, 0.]), frame.u));
+        lines.push((world([-4., 0.37, 1e-3]), frame.u));
         lines
     };
     let mut covered = 0;
@@ -641,11 +642,14 @@ fn thread_sections_lie_on_the_source_boundary() {
     let double = two_start(true, PlaneFrame::default());
     let bore = rounded_bore(false, PlaneFrame::default());
     let bore_thread = *bore.rust_rounded_thread_bore_data().unwrap().bore.thread();
+    let chamfer = chamfered(true, true, PlaneFrame::default());
+    let chamfer_data = chamfer.rust_thread_entry_chamfer_data().unwrap().source;
     for (label, solid, center) in [
         ("rounded", &rounded, 2.35),
         ("relief", &relief, 3.3),
         ("two-start", &double, 3.3),
         ("bore", &bore, 2.35),
+        ("chamfer", &chamfer, 0.8),
     ] {
         for (origin, [u, v]) in frames(center) {
             let frame = PlaneFrame { origin, u, v };
@@ -680,7 +684,18 @@ fn thread_sections_lie_on_the_source_boundary() {
                     let radius = x.hypot(y);
                     let theta = y.atan2(x);
                     let on = |value: f64| value.abs() < 1e-6;
-                    let ok = if label == "bore" {
+                    let ok = if label == "chamfer" {
+                        let material = chamfer_data.material_length_mm();
+                        let top = chamfer_data.full_length_mm();
+                        let neck = chamfer_data.terminal_relief().unwrap().neck_radius_mm();
+                        let bound = chamfer_data.radius(theta, z.clamp(0., top));
+                        (on(radius - bound) && z > -1e-9 && z < top + 1e-9)
+                            || (on(z) && radius <= bound + 1e-6)
+                            || (on(z - material)
+                                && radius >= neck - 1e-6
+                                && radius <= chamfer_data.radius(theta, material) + 1e-6)
+                            || (on(z - top) && radius <= neck + 1e-6)
+                    } else if label == "bore" {
                         let bound = bore_thread.radius(theta, z.clamp(0., 3.7 * p));
                         let length = 3.7 * p;
                         (on(radius - bound) && z > -1e-9 && z < length + 1e-9)
@@ -755,7 +770,12 @@ fn thread_sections_lie_on_the_source_boundary() {
                         _ => None,
                     })
                     .sum();
-                let exact = if label == "bore" {
+                let exact = if label == "chamfer" {
+                    // The axial cut at 0.37 mm above the centre lies past the
+                    // cone, where the area is the thread's.
+                    let thread = chamfer_data.source_thread();
+                    thread.volume_mm3() / thread.spec().length_mm
+                } else if label == "bore" {
                     PI * 25. - bore_thread.volume_mm3() / (3.7 * p)
                 } else if label == "rounded" {
                     rounded_thread.volume_mm3() / (3.7 * p)
@@ -967,4 +987,33 @@ fn thread_occluding_contours_agree_with_a_depth_map_oracle() {
             );
         }
     }
+}
+
+/// An ISO-like thread with an entry chamfer and, optionally, a terminal relief.
+fn chamfered(left_hand: bool, terminal: bool, frame: PlaneFrame) -> crate::Solid {
+    let root = 1. / (4. * 3_f64.sqrt());
+    crate::Solid::rust_helical_thread_entry_chamfer(
+        crate::HelicalThread {
+            major_radius_mm: 3.,
+            pitch_mm: 1.,
+            length_mm: 6.6,
+            depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().tan()) - root,
+            crest_width_mm: 0.125,
+            lower_flank_deg: 30.,
+            upper_flank_deg: 30.,
+            radial_taper: 0.,
+            starts: 1,
+            left_hand,
+        },
+        Some(root),
+        0.3,
+        terminal.then_some(multicad_rust_kernel::thread_end_relief::Intent {
+            width_mm: 0.6,
+            radial_depth_mm: 0.1,
+        }),
+        multicad_core::document::EntityId::new(),
+        frame,
+        GeometryPolicy::default(),
+    )
+    .unwrap()
 }
