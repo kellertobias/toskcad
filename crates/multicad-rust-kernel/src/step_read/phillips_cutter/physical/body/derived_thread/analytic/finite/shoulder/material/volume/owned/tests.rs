@@ -242,16 +242,10 @@ fn actual_owned_periodic_export_proposal_has_independent_file_derived_material()
         text.len(),
         now.elapsed()
     );
-    let mut decoded = None;
-    crate::step_read::phillips_cutter::physical::body::common_mouth::tests::derived_thread_probe::with_head(&text,&mut|head| {
-        let field=head.common_chart_periodic_thread_repair(Default::default(),None).unwrap();
-        let finite=head.periodic_thread_finite_curves(&field,Default::default(),None).unwrap();
-        let join=head.periodic_shared_crest_shoulder(&finite,Default::default(),None).unwrap();
-        let material=head.periodic_closed_material(&join,Default::default(),None).unwrap();
-        let volume=material.volume_bounds(Default::default(),None).unwrap();
-        decoded=Some(volume.owned_source(Default::default(),None).unwrap());
-    });
-    let decoded = decoded.unwrap();
+    let read =
+        crate::step_read::read_periodic_phillips_material(&text, Default::default(), None).unwrap();
+    assert_eq!(read.reserved_delegated_work(), 224_000_000);
+    let decoded = read.into_material();
     let thread_match = source
         .thread()
         .finite_correspondence(

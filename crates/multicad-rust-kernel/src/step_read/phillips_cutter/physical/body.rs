@@ -4,6 +4,11 @@
 use super::*;
 use crate::step_read::helical_import::{law::Law, seed::TensorHeader};
 mod outer;
+mod periodic_read;
+pub use periodic_read::{
+    PeriodicMaterialRead, PeriodicReadError, PeriodicReadOptions, PeriodicReadStage,
+    read_periodic_phillips_material, read_periodic_phillips_material_with_progress,
+};
 mod retained;
 pub use outer::{OuterCarrierBounds, OuterCarrierOptions, TensorCarrierBound};
 pub use retained::{ExactPointLeaf, OriginalNumericLeaf, OriginalNumericLeaves};

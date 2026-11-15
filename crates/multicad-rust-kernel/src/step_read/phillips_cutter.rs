@@ -259,3 +259,8 @@ pub use physical::{
     DelegatedWorkspaceBounds, JoinedMaterialCandidate, JoinedMeshOptions, OwnedDerivedMaterial,
     OwnedMaterialOptions, OwnedMaterialQuery, OwnedMaterialQueryError, OwnedMaterialQueryOptions,
 };
+
+pub use physical::{
+    PeriodicMaterialRead, PeriodicReadError, PeriodicReadOptions, PeriodicReadStage,
+    read_periodic_phillips_material, read_periodic_phillips_material_with_progress,
+};

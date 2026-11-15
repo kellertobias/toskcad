@@ -1161,3 +1161,11 @@ pub use phillips_cutter::{
     RimDomainRole as PhillipsRimDomainRole, RimKnot as PhillipsRimKnot,
     RimSignDomain as PhillipsRimSignDomain, ThreadContactOptions as PhillipsThreadContactOptions,
 };
+
+pub use phillips_cutter::{
+    PeriodicMaterialRead as PhillipsPeriodicMaterialRead,
+    PeriodicReadError as PhillipsPeriodicReadError,
+    PeriodicReadOptions as PhillipsPeriodicReadOptions,
+    PeriodicReadStage as PhillipsPeriodicReadStage, read_periodic_phillips_material,
+    read_periodic_phillips_material_with_progress,
+};

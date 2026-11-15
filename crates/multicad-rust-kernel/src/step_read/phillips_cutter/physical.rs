@@ -358,3 +358,8 @@ pub use body::{
     DelegatedWorkspaceBounds, JoinedMaterialCandidate, JoinedMeshOptions, OwnedDerivedMaterial,
     OwnedMaterialOptions, OwnedMaterialQuery, OwnedMaterialQueryError, OwnedMaterialQueryOptions,
 };
+
+pub use body::{
+    PeriodicMaterialRead, PeriodicReadError, PeriodicReadOptions, PeriodicReadStage,
+    read_periodic_phillips_material, read_periodic_phillips_material_with_progress,
+};
