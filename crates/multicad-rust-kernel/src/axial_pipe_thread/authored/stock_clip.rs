@@ -4,9 +4,11 @@
 use super::*;
 use std::mem::size_of;
 mod cells;
+mod curve_law;
 pub use cells::{
     StockClipCellPlan, StockClipGridLine, StockClipMeshCandidate, StockClipPointOwner,
 };
+pub use curve_law::{StockClipCurveLaw, StockClipCurveTaylor};
 mod jets;
 mod measures;
 mod polyline;
