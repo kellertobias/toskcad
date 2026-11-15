@@ -41,6 +41,15 @@ impl Default for AuthoredPeriodicOptions {
     }
 }
 impl OwnedPeriodicMaterial {
+    /// Route eligibility only, never a geometry/material certificate. Other
+    /// families keep their existing producer. Once eligible, an actual factory
+    /// failure must be reported rather than silently falling back to that path.
+    pub fn supports_authored_family(thread: &Thread, profile: &Profile, spec: SourceSpec) -> bool {
+        thread.spec().starts == 1
+            && thread.spec().root_radius_mm.is_none()
+            && matches!(spec.head, Some(crate::head_profile::Head::Crowned { .. }))
+            && profile.end()[0] == thread.spec().major_radius_mm
+    }
     pub fn from_authored(
         source: &PhillipsScrew,
         o: AuthoredPeriodicOptions,
@@ -90,7 +99,7 @@ impl OwnedPeriodicMaterial {
                 return Err(PhillipsReadError::Invalid);
             }
             work.step(32768)?;
-            if thread.spec().starts != 1 || thread.spec().root_radius_mm.is_some() {
+            if !Self::supports_authored_family(thread, profile, spec) {
                 return Err(PhillipsReadError::Unsupported);
             }
             crate::profiled_screw::qualify_outer_source(

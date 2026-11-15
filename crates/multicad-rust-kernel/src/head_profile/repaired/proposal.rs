@@ -18,7 +18,7 @@ pub struct RepairedProposalTransfer {
 // sweep of magnitude<3. No reduction or transcendental library allowance is
 // needed on this complete domain. Taylor degree63 has Lagrange remainder
 // |x|^64/64! because every real sine/cosine derivative has magnitude<=1.
-pub(super) fn rotation(angle: I) -> Result<[I; 2], RepairedHeadError> {
+pub(crate) fn rotation(angle: I) -> Result<[I; 2], RepairedHeadError> {
     if !angle.valid() || angle.magnitude() > 7. {
         return Err(RepairedHeadError::Unresolved);
     }

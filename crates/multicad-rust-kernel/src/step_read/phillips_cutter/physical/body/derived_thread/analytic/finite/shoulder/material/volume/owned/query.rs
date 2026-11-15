@@ -12,7 +12,7 @@ use crate::{
 mod angle;
 mod profile;
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
 const MAX: usize = 18_008_192;
 const THREAD_WORK: usize = 2_000_000;
 type R<T> = std::result::Result<T, E>;

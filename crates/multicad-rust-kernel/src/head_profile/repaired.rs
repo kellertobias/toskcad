@@ -18,6 +18,7 @@ use crate::tapered_thread::interval::I;
 mod arc;
 mod proposal;
 pub use proposal::RepairedProposalTransfer;
+pub(crate) use proposal::rotation as proposal_rotation;
 mod query;
 use arc::ArcSource;
 pub use query::{RepairedHeadLocation, RepairedHeadQuery, RepairedHeadQueryOptions};

@@ -1,5 +1,5 @@
 use super::*;
-pub(super) fn owned(left: bool, plain: f64) -> OwnedPeriodicMaterial {
+pub(in super::super) fn owned(left: bool, plain: f64) -> OwnedPeriodicMaterial {
     let source = crate::step_read::phillips_cutter::physical::tests::fixture(0, left, true, 1);
     let mut spec = source.spec();
     spec.shank_length_mm = plain;

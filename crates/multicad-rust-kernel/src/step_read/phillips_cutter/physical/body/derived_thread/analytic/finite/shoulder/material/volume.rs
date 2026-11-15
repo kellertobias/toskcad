@@ -9,7 +9,8 @@ use crate::{
     phillips_drive::Cutter,
 };
 pub use owned::{
-    AuthoredPeriodicOptions, OwnedPeriodicMaterial, PeriodicCurveOwner, PeriodicMaterialProvenance,
+    AuthoredPeriodicOptions, OwnedPeriodicMaterial, PeriodicAuthoredApproximation,
+    PeriodicCurveOwner, PeriodicLiteralCertificate, PeriodicMaterialProvenance,
     PeriodicOwnedMaterialQuery, PeriodicOwnedOptions,
 };
 #[cfg(test)]

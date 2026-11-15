@@ -2,6 +2,11 @@ use super::*;
 #[test]
 fn direct_authored_metric_factory_does_not_need_a_step_reader_or_decoded_owner() {
     let source = crate::step_read::phillips_cutter::physical::tests::fixture(0, false, true, 1);
+    assert!(OwnedPeriodicMaterial::supports_authored_family(
+        source.thread(),
+        source.profile(),
+        source.spec()
+    ));
     let start = std::time::Instant::now();
     let owned = OwnedPeriodicMaterial::from_authored(&source, Default::default(), None).unwrap();
     assert!(matches!(
@@ -319,6 +324,21 @@ fn direct_authored_parts_validate_requested_geometry_and_operation_frontiers() {
     ));
     let countersunk =
         crate::step_read::phillips_cutter::physical::tests::fixture(2, false, true, 1);
+    assert!(!OwnedPeriodicMaterial::supports_authored_family(
+        countersunk.thread(),
+        countersunk.profile(),
+        countersunk.spec()
+    ));
+    assert!(!OwnedPeriodicMaterial::supports_authored_family(
+        annular.thread(),
+        annular.profile(),
+        annular.spec()
+    ));
+    assert!(!OwnedPeriodicMaterial::supports_authored_family(
+        &multi,
+        source.profile(),
+        source.spec()
+    ));
     assert!(matches!(
         OwnedPeriodicMaterial::from_authored(&countersunk, o, None),
         Err(PhillipsReadError::Unsupported)

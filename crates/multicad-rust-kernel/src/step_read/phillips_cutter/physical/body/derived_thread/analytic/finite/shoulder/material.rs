@@ -13,7 +13,8 @@ use crate::phillips_drive::{
     FaceKey as CavityFace, RepairedHeadContainment, RepairedHeadContainmentOptions,
 };
 pub use volume::{
-    AuthoredPeriodicOptions, OwnedPeriodicMaterial, PeriodicCurveOwner, PeriodicMaterialProvenance,
+    AuthoredPeriodicOptions, OwnedPeriodicMaterial, PeriodicAuthoredApproximation,
+    PeriodicCurveOwner, PeriodicLiteralCertificate, PeriodicMaterialProvenance,
     PeriodicMaterialVolume, PeriodicOwnedMaterialQuery, PeriodicOwnedOptions,
     PeriodicVolumeOptions,
 };
