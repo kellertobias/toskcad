@@ -149,6 +149,7 @@ fn prepare<'f, 's>(
     };
     m.add(size_of::<SideSupport<'_, '_>>())?;
     let mut poles = m.allocate(count, w)?;
+    let mut cache = super::super::decimal::DecimalCache::new(m, w)?;
     for i in 0..count {
         let (u, v) = if let Some(u) = fixed_u {
             (u, i)
@@ -171,11 +172,11 @@ fn prepare<'f, 's>(
         ];
         let weight = EncodedScalar::retain(&h[3], m, w)?;
         let step_point = [
-            super::super::decimal::decimal(&point[0], m, w)?,
-            super::super::decimal::decimal(&point[1], m, w)?,
-            super::super::decimal::decimal(&point[2], m, w)?,
+            cache.format(&point[0], m, w)?,
+            cache.format(&point[1], m, w)?,
+            cache.format(&point[2], m, w)?,
         ];
-        let step_weight = super::super::decimal::decimal(&h[3], m, w)?;
+        let step_weight = cache.format(&h[3], m, w)?;
         poles.push(SidePole {
             point: encoded,
             weight,
@@ -183,6 +184,7 @@ fn prepare<'f, 's>(
             step_weight,
         });
     }
+    cache.release(m);
     w.charge(1)?;
     Ok(SideSupport {
         field,

@@ -15,6 +15,8 @@ pub use vertices::{LiteralVertex, LiteralVertices};
 mod side_probe;
 #[cfg(test)]
 mod trim_probe;
+#[cfg(test)]
+mod unit_probe;
 pub use literal::LiteralCapCurve;
 pub use restrict::{RestrictedCapCurve, RestrictionBounds};
 use std::cmp::Ordering;

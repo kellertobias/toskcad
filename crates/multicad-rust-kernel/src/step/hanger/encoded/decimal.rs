@@ -1,5 +1,7 @@
 //! Exact finite STEP REAL text; no conversion through a floating-point value.
 use super::*;
+mod cache;
+pub(in crate::step::hanger) use cache::DecimalCache;
 use num_bigint::BigInt;
 use num_traits::{One, Zero};
 
@@ -91,11 +93,23 @@ fn encode(value: &N, m: &mut Memory, w: &mut Work<'_>) -> Result<FiniteDecimal, 
     let mut integer = value.0.numer().clone();
     integer <<= scale - twos;
     integer *= BigInt::from(5_u32).pow((scale - fives) as u32);
+    let text = emit(&integer, scale, bits, m, w)?;
+    m.used -= scratch;
+    Ok(text)
+}
+// The caller precharges numeric radix conversion and holds its scratch reserve.
+fn emit(
+    integer: &BigInt,
+    scale: usize,
+    digits_bound: usize,
+    m: &mut Memory,
+    w: &mut Work<'_>,
+) -> Result<FiniteDecimal, Error> {
     let digits = integer.to_str_radix(10);
     let exponent = scale.to_string();
     // A binary-bit bound also bounds decimal digits. Reserve before writing;
     // count the allocator's actual capacity while all scratch is still live.
-    let capacity = bits + 2 + 2 + exponent.len();
+    let capacity = digits_bound + 2 + 2 + exponent.len();
     m.add(size_of::<FiniteDecimal>() + capacity)?;
     w.charge(1 + capacity)?;
     // This bounded allocation follows the same preflight as the bigint and
@@ -110,7 +124,6 @@ fn encode(value: &N, m: &mut Memory, w: &mut Work<'_>) -> Result<FiniteDecimal, 
         text.push_str(&exponent);
     }
     w.charge(1)?;
-    m.used -= scratch;
     Ok(FiniteDecimal(text))
 }
 
