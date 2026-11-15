@@ -4,147 +4,7 @@ use crate::authored_hanger_bolt::{BoundaryOptions, Hanger};
 use crate::step::hanger::encoded::cap::tests::{bezier, number};
 use num_traits::{One, Zero};
 type Q = BigRational;
-struct AffineCap {
-    controls: Vec<[N; 4]>,
-    trim: [N; 2],
-    uv: [[N; 2]; 2],
-    // Original meridian-u and angular-v derivatives in basis t.
-    derivative: [N; 2],
-    reversed: bool,
-}
-fn relation(h: &[[N; 3]], w: &mut Work<'_>) -> Result<Option<[[N; 2]; 2]>, Error> {
-    if h.len() != 2
-        || h[0][2].cmp(&h[1][2], w)? != Ordering::Equal
-        || h[0][2].cmp(&N::integer(0), w)? != Ordering::Greater
-    {
-        return Ok(None);
-    }
-    Ok(Some([
-        [h[0][0].div(&h[0][2], w)?, h[0][1].div(&h[0][2], w)?],
-        [h[1][0].div(&h[1][2], w)?, h[1][1].div(&h[1][2], w)?],
-    ]))
-}
-fn build(
-    field: &EncodedField<'_>,
-    index: usize,
-    end: End,
-    piece: usize,
-    w: &mut Work<'_>,
-) -> Result<Option<AffineCap>, Error> {
-    w.charge(1)?;
-    let cell = field.cells[index];
-    let row = &field.meridians[cell.meridian];
-    // ONE actual coefficient gate: a real rounded-root row reaches the
-    // same fallback as any non-affine/projective row. Do not preclassify by
-    // a degree label and leave its retained-coefficient check unreachable.
-    let input = (0..=row.degree())
-        .map(|i| {
-            Ok([
-                row.radius[i].number(w)?,
-                row.phase[i].number(w)?,
-                row.weights[i].number(w)?,
-            ])
-        })
-        .collect::<Result<Vec<_>, Error>>()?;
-    let Some([[r0, q0], [r1, q1]]) = relation(&input, w)? else {
-        return Ok(None);
-    };
-    let source = field.source.source_boundary().source();
-    let (pitch, starts, left, length) = if row.component == Component::Metric {
-        let s = source.metric().spec();
-        (s.pitch_mm, s.starts, s.left_hand, s.length_mm)
-    } else {
-        let s = source.wood().spec();
-        (s.pitch_mm, s.starts, s.left_hand, s.length_mm)
-    };
-    let pitch = binary(pitch, w)?;
-    let lead = pitch.mul(&N::integer(i64::from(starts)), w)?;
-    let station = if end == End::Start {
-        N::integer(0)
-    } else {
-        binary(length, w)?
-    };
-    let shift = station.sub(
-        &pitch.mul(&N::integer(i64::from(cell.source_key.total_period)), w)?,
-        w,
-    )?;
-    let a = binary(field.angular.knots()[piece], w)?;
-    let b = binary(field.angular.knots()[piece + 1], w)?;
-    let from = shift.sub(&q1, w)?.div(&lead, w)?;
-    let to = shift.sub(&q0, w)?.div(&lead, w)?;
-    let lo = if from.cmp(&a, w)? == Ordering::Greater {
-        from
-    } else {
-        a.clone()
-    };
-    let hi = if to.cmp(&b, w)? == Ordering::Less {
-        to
-    } else {
-        b.clone()
-    };
-    if lo.cmp(&hi, w)? != Ordering::Less {
-        return Ok(None);
-    }
-    let width = b.sub(&a, w)?;
-    let qspan = q1.sub(&q0, w)?;
-    let ua = shift
-        .sub(&lead.mul(&a, w)?, w)?
-        .sub(&q0, w)?
-        .div(&qspan, w)?;
-    let ub = shift
-        .sub(&lead.mul(&b, w)?, w)?
-        .sub(&q0, w)?
-        .div(&qspan, w)?;
-    let ra = r0.add(&r1.sub(&r0, w)?.mul(&ua, w)?, w)?;
-    let rb = r0.add(&r1.sub(&r0, w)?.mul(&ub, w)?, w)?;
-    let ap = if left {
-        field.angular.coefficients().len() - 1 - piece
-    } else {
-        piece
-    };
-    let coefficients = &field.angular.coefficients()[ap];
-    let mut z = station;
-    if row.component == Component::Metric {
-        z = z
-            .sub(&binary(source.metric().full_length_mm(), w)?, w)?
-            .sub(&binary(source.spec().plain_length_mm, w)?, w)?;
-    }
-    let mut controls = Vec::with_capacity(12);
-    for i in 0usize..=11 {
-        let mut xy = [N::integer(0), N::integer(0)];
-        for (j, r, scale) in [(i, &ra, 11 - i), (i.wrapping_sub(1), &rb, i)] {
-            if scale == 0 {
-                continue;
-            }
-            let j = if left { 10 - j } else { j };
-            for (out, c) in xy.iter_mut().zip(&coefficients[j]) {
-                w.charge(512)?;
-                *out = out.add(
-                    &r.mul(&N(c.clone()), w)?.mul(&N::integer(scale as i64), w)?,
-                    w,
-                )?;
-            }
-        }
-        controls.push([
-            xy[0].clone(),
-            xy[1].clone(),
-            z.mul(&N::integer(11), w)?,
-            N::integer(11),
-        ]);
-    }
-    let trim = [
-        lo.sub(&a, w)?.div(&width, w)?,
-        hi.sub(&a, w)?.div(&width, w)?,
-    ];
-    let du = ub.sub(&ua, w)?;
-    Ok(Some(AffineCap {
-        controls,
-        trim,
-        uv: [[ua, a], [ub, b]],
-        derivative: [du, width],
-        reversed: true,
-    }))
-}
+use super::affine::{build, relation};
 #[test]
 fn exact_angular_chart_retains_actual_affine_tensor_and_reverses_source_parameter() {
     for (left, nb) in [(false, false), (true, true)] {
@@ -884,5 +744,122 @@ fn actual_nonbinary_pitches_earn_inward_trims_and_every_bound_carrier_checkpoint
             Some(Error::Cancelled),
             "bound carrier stop={stop}"
         );
+    }
+}
+#[test]
+fn source_owned_affine_support_api_retains_exact_controls_and_refusals() {
+    for (left, nb) in [(false, false), (true, true)] {
+        let source =
+            Hanger::new(crate::authored_hanger_bolt::tests::fixture(left, nb), None).unwrap();
+        let boundary = source.boundary(BoundaryOptions::default(), None).unwrap();
+        let field = EncodedField::prepare(&boundary, CurveOptions::default(), None).unwrap();
+        let mut positive = 0;
+        let mut absent = 0;
+        for cell in 0..field.cells.len() {
+            for end in [End::Start, End::End] {
+                for piece in 0..field.angular.coefficients().len() {
+                    let options = DomainOptions::default();
+                    let result = field
+                        .affine_cap_piece(cell, end, piece, options, None)
+                        .unwrap();
+                    let mut work = Work::new(16_000_000, None).unwrap();
+                    let raw = build(&field, cell, end, piece, &mut work).unwrap();
+                    match (result, raw) {
+                        (Some(literal), Some(raw)) => {
+                            positive += 1;
+                            assert!(std::ptr::eq(literal.field(), &field));
+                            assert_eq!(literal.source_cell(), cell);
+                            assert_eq!(literal.end(), end);
+                            assert_eq!(literal.angular_piece(), piece);
+                            assert!(literal.original_phase_reversed());
+                            assert!(literal.retained_bytes() > 0);
+                            for (a, b) in literal.controls().iter().zip(&raw.controls) {
+                                for (axis, q) in a.iter().zip(b) {
+                                    assert_eq!(axis.number(&mut work).unwrap().0, q.0);
+                                }
+                            }
+                            for i in 0..2 {
+                                assert_eq!(
+                                    literal.trim()[i].number(&mut work).unwrap().0,
+                                    raw.trim[i].0
+                                );
+                                assert_eq!(
+                                    literal.chart_derivative()[i].number(&mut work).unwrap().0,
+                                    raw.derivative[i].0
+                                );
+                                for axis in 0..2 {
+                                    assert_eq!(
+                                        literal.surface_endpoints()[i][axis]
+                                            .number(&mut work)
+                                            .unwrap()
+                                            .0,
+                                        raw.uv[i][axis].0
+                                    );
+                                }
+                            }
+                            let used = literal.work_used();
+                            assert!(
+                                field
+                                    .affine_cap_piece(
+                                        cell,
+                                        end,
+                                        piece,
+                                        DomainOptions {
+                                            maximum_work: used,
+                                            ..options
+                                        },
+                                        None
+                                    )
+                                    .unwrap()
+                                    .is_some()
+                            );
+                            assert!(matches!(
+                                field.affine_cap_piece(
+                                    cell,
+                                    end,
+                                    piece,
+                                    DomainOptions {
+                                        maximum_work: used - 1,
+                                        ..options
+                                    },
+                                    None
+                                ),
+                                Err(Error::Limit)
+                            ));
+                        }
+                        (None, None) => {
+                            absent += 1;
+                        }
+                        _ => panic!("source carrier differs"),
+                    }
+                }
+            }
+        }
+        assert!(positive > 0 && absent > 0);
+        assert!(matches!(
+            field.affine_cap_piece(usize::MAX, End::Start, 0, DomainOptions::default(), None),
+            Err(Error::Invalid)
+        ));
+        assert!(matches!(
+            field.affine_cap_piece(0, End::Start, usize::MAX, DomainOptions::default(), None),
+            Err(Error::Invalid)
+        ));
+        assert!(matches!(
+            field.affine_cap_piece(
+                0,
+                End::Start,
+                0,
+                DomainOptions {
+                    maximum_bytes: field.retained_bytes(),
+                    ..Default::default()
+                },
+                None
+            ),
+            Err(Error::Limit)
+        ));
+        assert!(matches!(
+            field.affine_cap_piece(0, End::Start, 0, DomainOptions::default(), Some(&|| true)),
+            Err(Error::Cancelled)
+        ));
     }
 }

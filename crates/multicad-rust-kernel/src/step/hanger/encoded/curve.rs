@@ -1,6 +1,8 @@
 //! Actual 3D cap curves composed from the SAME exact scalar and angular owners.
 //! These homogeneous supports are not rounded STEP Cartesian poles or a file.
 use super::*;
+mod affine;
+pub use affine::AffineCapPiece;
 #[cfg(test)]
 mod affine_probe;
 #[cfg(test)]
