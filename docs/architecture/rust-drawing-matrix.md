@@ -33,6 +33,10 @@ The thread end relief (CAD-290 `rust_thread_end_relief_data`: material thread, c
 | thread entry chamfer | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 |
 | internal thread | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 |
 | rounded thread bore | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| axial pipe thread | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 |
+| internal thread treatment | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 |
+| hex nut | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 |
+| machine screw | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 |
 | za worm | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | F13 | F13 | F13 | F13 |
 | worm wheel | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | F13 | F13 | F13 | F13 |
 | box + cylinder overlapping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -65,6 +69,7 @@ The thread end relief (CAD-290 `rust_thread_end_relief_data`: material thread, c
 - **F13** (43 cells): Rust worm and worm-wheel drawings require an uncropped view along the gear axis
 - **F16** (11 cells): Rust worm and worm-wheel drawings support one placed gear at a time
 - **F17** (9 cells): Rust exact drawing projection for continuous herringbone gears is unavailable
-- **F18** (54 cells): Rust planar drawing projection requires straight edges and planar faces
+- **F18** (108 cells): Rust planar drawing projection requires straight edges and planar faces
+- **F19** (18 cells): Original stock face ancestry is unresolved
 
-613 of 774 combinations draw; 161 are explicit findings. No combination returns an invalid or partial result.
+613 of 846 combinations draw; 233 are explicit findings. No combination returns an invalid or partial result.
