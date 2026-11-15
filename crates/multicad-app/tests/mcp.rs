@@ -9,6 +9,96 @@ use std::{
 };
 
 const RELATIVE: f64 = 1e-7;
+#[test]
+fn default_stdio_hanger_projects_export_with_healing_receipts_and_reopen_unchanged() {
+    use multicad_core::{
+        commands::{Actor, Channel, Session},
+        document::Document,
+        model::*,
+        project_file::{self, ProjectFile},
+    };
+    for left in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let project = directory.path().join("hanger.tcd");
+        let mut session = Session::new(Document::new("Hanger app export").unwrap()).unwrap();
+        let mut parameters = default_custom_connection_hanger_bolt();
+        let MechanicalPartParameters::CustomConnection { parameters: custom } = &mut parameters
+        else {
+            panic!()
+        };
+        let CustomConnectionHardwareParameters::HangerBolt {
+            wood_thread,
+            metric_thread,
+            ..
+        } = custom.as_mut()
+        else {
+            panic!()
+        };
+        let hand = if left {
+            ThreadHand::Left
+        } else {
+            ThreadHand::Right
+        };
+        wood_thread.hand = hand;
+        metric_thread.hand = hand;
+        let source = MechanicalPartRequest::new("Physical hanger", parameters);
+        session
+            .commit(
+                prepare_mechanical_part(&session, 0, Actor::local(Channel::Ui), &source)
+                    .unwrap()
+                    .prepared,
+            )
+            .unwrap();
+        project_file::write(
+            &ProjectFile::new(session.document().clone()).unwrap(),
+            &mut std::fs::File::create(&project).unwrap(),
+            Default::default(),
+        )
+        .unwrap();
+        let original = std::fs::read(&project).unwrap();
+        let arguments = [
+            "--project",
+            project.to_str().unwrap(),
+            "--export-dir",
+            directory.path().to_str().unwrap(),
+        ];
+        let mut client = Client::start(&arguments);
+        let volume = client.part_volume();
+        assert!(volume > 0.);
+        let revision = client.revision();
+        let first = client.ok(
+            "export_step",
+            json!({"part":source.body,"file_name":"first.step"}),
+        );
+        assert!(first["readback_volume_mm3"].is_null());
+        assert_eq!(
+            first["step_verification"]["method"],
+            "decoded_support_healing"
+        );
+        assert_eq!(
+            first["step_verification"]["healed_members"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(client.revision(), revision);
+        assert_eq!(std::fs::read(&project).unwrap(), original);
+        drop(client);
+        let mut reopened = Client::start(&arguments);
+        close(reopened.part_volume(), volume);
+        let second = reopened.ok(
+            "export_step",
+            json!({"part":source.body,"file_name":"second.step"}),
+        );
+        assert_eq!(first["step_verification"], second["step_verification"]);
+        assert_eq!(
+            std::fs::read(directory.path().join("first.step")).unwrap(),
+            std::fs::read(directory.path().join("second.step")).unwrap()
+        );
+        assert_eq!(std::fs::read(&project).unwrap(), original);
+    }
+}
 fn close(actual: f64, expected: f64) {
     assert!(
         (actual - expected).abs() <= RELATIVE * expected.abs().max(1.),
