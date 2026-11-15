@@ -100,12 +100,30 @@ fn normal(surface: &Surface, uv: [f64; 2]) -> Point {
     }
 }
 
+/// Mean lengths of the two parameter derivatives over the triangle corners
+/// where they do not vanish.
+fn metric(surface: &Surface, cells: &[Cell]) -> [f64; 2] {
+    let mut sums = [(0., 0usize); 2];
+    for uv in cells.iter().flat_map(|cell| cell.uv) {
+        let (_, derivatives) = surface.evaluate(uv);
+        for (sum, derivative) in sums.iter_mut().zip(derivatives) {
+            let length = norm(derivative);
+            if length > 0. {
+                *sum = (sum.0 + length, sum.1 + 1);
+            }
+        }
+    }
+    sums.map(|(total, count)| if count > 0 { total / count as f64 } else { 1. })
+}
+
 struct Refiner<'a> {
     surface: &'a Surface,
     positions: &'a mut Vec<Point>,
     locals: Vec<Local>,
     cells: Vec<Cell>,
     fixed: BTreeSet<(u32, u32)>,
+    /// Typical lengths of the parameter directions on this face.
+    metric: [f64; 2],
     deflection: f64,
     angle: f64,
     deviation: f64,
@@ -149,10 +167,17 @@ impl Refiner<'_> {
                 continue;
             }
             ensure(uses.len() == 2, Error::Unsupported)?;
-            lengths.insert((a, b), distance(from.position, to.position));
             let (index, i) = uses[0];
             let cell = &self.cells[index];
             let [from, to] = [i, (i + 1) % 3].map(|k| self.locals[cell.vertices[k] as usize]);
+            // Sides are compared by their parameter extent scaled to the
+            // face: a chord across most of a small circle can be shorter
+            // than one across half of it, which would starve the longer
+            // span of splits.
+            let (start, end) = (cell.along(i, 0.), cell.along(i, 1.));
+            let extent =
+                ((end[0] - start[0]) * self.metric[0]).hypot((end[1] - start[1]) * self.metric[1]);
+            lengths.insert((a, b), extent);
             // The chord against the surface along it; three stations see
             // a side that crosses the surface at its middle.
             let mut deviation: f64 = 0.;
@@ -162,7 +187,7 @@ impl Refiner<'_> {
                     deviation.max(distance(self.surface.evaluate(cell.along(i, s)).0, chord));
             }
             // A chord far below the deflection cannot stray by it.
-            let resolved = lengths[&(a, b)] <= 1e-3 * self.deflection;
+            let resolved = distance(from.position, to.position) <= 1e-3 * self.deflection;
             if !resolved
                 && (deviation > self.deflection || turn(from.normal, to.normal) > self.angle)
             {
@@ -358,7 +383,9 @@ impl Builder<'_> {
                 }
             }
         }
+        let metric = metric(surface, &cells);
         let mut refiner = Refiner {
+            metric,
             surface,
             positions: &mut self.mesh.positions,
             locals,

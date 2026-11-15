@@ -34,6 +34,10 @@ const BUMPS: &str = fixture!("corpus/kicad-library/WLP-4_0.83x0.83mm_P0.4mm.step
 /// at a thin angle along curved edges.
 const WEDGES: &str = include_str!("fixtures/D_SOD-923.step");
 
+/// KiCad library model, copied with its licence header like `WEDGES`: a
+/// disc whose revolved B-spline faces close near their axis.
+const DISC: &str = include_str!("fixtures/RV_Disc_D9mm_W6.1mm_P5mm.step");
+
 fn solids(text: &str) -> Result<Vec<Solid>> {
     read_solids(text, TOLERANCE, None)
 }
@@ -505,4 +509,14 @@ fn thin_wedges_along_curved_edges_mesh_without_folds() {
     assert!(close(area, 2.053_581_607_713_32, 1e-9), "{area}");
     certified(&solid, 0.05);
     certified(&solid, 0.005);
+}
+
+#[test]
+fn revolved_faces_closing_near_their_axis_refine_to_the_deflection() {
+    // OpenCascade 7.9.3 measures 298.900116969481 mm3 and 234.676869 mm2.
+    let solid = solid(DISC);
+    assert!(close(solid.volume_mm3(), 298.900_116_969_481, 1e-9));
+    let area: f64 = solid.faces().iter().map(|face| face.area_mm2).sum();
+    assert!(close(area, 234.676_869_496_623, 1e-7), "{area}");
+    certified(&solid, 0.05);
 }
