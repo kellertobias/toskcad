@@ -340,3 +340,57 @@ fn actual_public_topology_and_input_budget_frontiers() {
             .is_some()
     );
 }
+#[test]
+fn genuine_unsupported_chart_boundary_and_curve_frontiers() {
+    let s = spec(false);
+    let p = GeometryPolicy::default();
+    let feature = EntityId::new();
+    let frame = PlaneFrame {
+        u: [0., 1., 0.],
+        v: [-1., 0., 0.],
+        ..Default::default()
+    };
+    let rotated_phase =
+        crate::geometry::construction::cylinder(frame, 5.1435, s.length_mm + 2., feature, p)
+            .unwrap();
+    assert!(
+        rotated_phase
+            .rust_cut_external_npt_stock(s, EntityId::new(), frame, p, None)
+            .is_err()
+    );
+    let box_stock = Solid::box_solid([5.; 3], p).unwrap();
+    assert!(
+        box_stock
+            .rust_cut_external_npt_stock(s, EntityId::new(), PlaneFrame::default(), p, None)
+            .is_err()
+    );
+    let stock = crate::geometry::construction::cylinder(
+        PlaneFrame::default(),
+        5.1435,
+        s.length_mm + 2.,
+        feature,
+        p,
+    )
+    .unwrap();
+    let solid = stock
+        .rust_cut_external_npt_stock(s, EntityId::new(), PlaneFrame::default(), p, None)
+        .unwrap();
+    assert!(
+        solid
+            .rust_external_npt_stock_contains([5.1435, 0., s.length_mm + 1.])
+            .is_err()
+    );
+    let body = solid.external_npt_stock_body().unwrap();
+    let q = multicad_rust_kernel::display::Tessellation {
+        deflection: 1e-30,
+        angle: 0.2,
+        triangle_limit: 100,
+    };
+    assert!(body.sample_edge(0, q).unwrap().is_err());
+    let q = multicad_rust_kernel::display::Tessellation {
+        deflection: 0.02,
+        angle: 0.2,
+        triangle_limit: 1,
+    };
+    assert!(body.sample_edge(17, q).unwrap().is_err());
+}
