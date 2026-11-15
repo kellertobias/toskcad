@@ -1,5 +1,5 @@
 //! Engine regressions that need members built directly in view space.
-use super::paths::{Lift, ProfilePath};
+use super::paths::{Lift, ProfilePath, dot3};
 use super::prism::{Band, Prism};
 use super::*;
 use multicad_rust_kernel::{normal_sweep, spur_gear::Edge};
@@ -228,6 +228,7 @@ fn thread_material_along_lines_agrees_with_source_containment() {
         solids.push(rounded_bore(left_hand, frame));
         solids.push(chamfered(left_hand, left_hand, frame));
         solids.push(screw(left_hand, left_hand, frame));
+        solids.push(treated(left_hand, 1 + u32::from(left_hand), frame));
     }
     for left_hand in [false, true] {
         let root = 1. / (4. * 3_f64.sqrt());
@@ -324,11 +325,8 @@ fn thread_material_along_lines_agrees_with_source_containment() {
             let spans = member.line(start, direction).unwrap().unwrap();
             // March from t = -12 to 12 in steps of 2 um.
             let steps = 12_000;
-            let inside = |t: f64| {
-                solid
-                    .rust_thread_contains(std::array::from_fn(|i| start[i] + t * direction[i]))
-                    .unwrap()
-            };
+            let inside =
+                |t: f64| contains(solid, std::array::from_fn(|i| start[i] + t * direction[i]));
             let mut mismatches = 0;
             for i in 0..=steps {
                 let t = -12. + 24. * i as f64 / steps as f64;
@@ -475,11 +473,13 @@ fn thread_visibility_agrees_with_source_containment_marching() {
     let t = (1_f64 / 6.).sqrt();
     let double = two_start(false, PlaneFrame::default());
     let bore = rounded_bore(true, PlaneFrame::default());
+    let treatment = treated(false, 1, PlaneFrame::default());
     for (solid, center) in [
         (&rounded, 2.35),
         (&relief, 3.3),
         (&double, 3.3),
         (&bore, 2.35),
+        (&treatment, 3.25),
     ] {
         for [u, v] in [
             [[1., 0., 0.], [0., 0., 1.]],
@@ -509,10 +509,8 @@ fn thread_visibility_agrees_with_source_containment_marching() {
             let covered = |q: P3| {
                 (1..4000).any(|i| {
                     let ahead = [q[0], q[1], q[2] + 1e-4 + 2e-3 * f64::from(i)];
-                    solid.rust_thread_contains(world(ahead)).unwrap()
-                        && solid
-                            .rust_thread_contains(world([q[0], q[1], ahead[2] - 5e-5]))
-                            .unwrap()
+                    contains(solid, world(ahead))
+                        && contains(solid, world([q[0], q[1], ahead[2] - 5e-5]))
                 })
             };
             let near = |role: VectorRole, point: P2| {
@@ -647,6 +645,8 @@ fn thread_sections_lie_on_the_source_boundary() {
     let chamfer_data = chamfer.rust_thread_entry_chamfer_data().unwrap().source;
     let socket_screw = screw(true, false, PlaneFrame::default());
     let hex_screw = screw(false, true, PlaneFrame::default());
+    let treatment = treated(true, 2, PlaneFrame::default());
+    let treatment_data = treatment.rust_internal_thread_treatment_data().unwrap();
     for (label, solid, center) in [
         ("rounded", &rounded, 2.35),
         ("relief", &relief, 3.3),
@@ -655,6 +655,7 @@ fn thread_sections_lie_on_the_source_boundary() {
         ("chamfer", &chamfer, 0.8),
         ("socket screw", &socket_screw, 0.5),
         ("hex screw", &hex_screw, 1.5),
+        ("treatment", &treatment, 3.25),
     ] {
         for (origin, [u, v]) in frames(center) {
             let frame = PlaneFrame { origin, u, v };
@@ -747,6 +748,16 @@ fn thread_sections_lie_on_the_source_boundary() {
                                 && radius >= neck - 1e-6
                                 && radius <= chamfer_data.radius(theta, material) + 1e-6)
                             || (on(z - top) && radius <= neck + 1e-6)
+                    } else if label == "treatment" {
+                        let cavity = treatment_data.material.cavity();
+                        let length = cavity.full_length_mm();
+                        let stock = treatment_data.material.stock().circle().radius().as_f64();
+                        let bound = cavity.radius_mm(theta, z.clamp(0., length));
+                        (on(radius - bound) && z > -1e-9 && z < length + 1e-9)
+                            || (on(radius - stock) && z > -1e-9 && z < length + 1e-9)
+                            || ((on(z) || on(z - length))
+                                && radius >= bound - 1e-6
+                                && radius <= stock + 1e-6)
                     } else if label == "bore" {
                         let bound = bore_thread.radius(theta, z.clamp(0., 3.7 * p));
                         let length = 3.7 * p;
@@ -812,7 +823,7 @@ fn thread_sections_lie_on_the_source_boundary() {
                     let w: [f64; 3] = std::array::from_fn(|k| {
                         frame.origin[k] + view.axes[0][k] * q[0] + view.axes[1][k] * q[1]
                     });
-                    inside += usize::from(solid.rust_thread_contains(w).unwrap());
+                    inside += usize::from(contains(solid, w));
                 }
             }
             let grid = inside as f64 * step * step;
@@ -839,6 +850,22 @@ fn thread_sections_lie_on_the_source_boundary() {
                     thread.volume_mm3() / thread.spec().length_mm
                 } else if label == "bore" {
                     PI * 25. - bore_thread.volume_mm3() / (3.7 * p)
+                } else if label == "treatment" {
+                    // Past the entry cone: the stock disc less the cavity's
+                    // section, pi times the mean of R^2 over one pitch.
+                    let cavity = treatment_data.material.cavity();
+                    let thread = cavity.source_thread();
+                    let mean: f64 = thread
+                        .bands()
+                        .iter()
+                        .map(|band| {
+                            let [a, b] = band.radius_mm;
+                            (band.phase_mm[1] - band.phase_mm[0]) * (a * a + a * b + b * b) / 3.
+                        })
+                        .sum::<f64>()
+                        / thread.spec().pitch_mm;
+                    let stock = treatment_data.material.stock().circle().radius().as_f64();
+                    PI * (stock * stock - mean)
                 } else if label == "rounded" {
                     rounded_thread.volume_mm3() / (3.7 * p)
                 } else {
@@ -910,6 +937,76 @@ fn rounded_bore(left_hand: bool, frame: PlaneFrame) -> crate::Solid {
     .unwrap()
 }
 
+/// An authored internal thread treatment: a radius-4.5 stock less an ISO-like
+/// internal thread cavity with an entry cone, placed by `frame`.
+fn treated(left_hand: bool, starts: u32, frame: PlaneFrame) -> crate::Solid {
+    use multicad_rust_kernel::{Circle, Rational, cylinder::AxialCylinder};
+    let policy = GeometryPolicy::default();
+    let zero = Rational::new(0, 1).unwrap();
+    let stock = AxialCylinder::new(
+        7,
+        Circle::new([zero; 2], Rational::new(9, 2).unwrap()).unwrap(),
+        zero,
+        Rational::new(13, 2).unwrap(),
+    )
+    .unwrap();
+    let pitch = 0.5 * f64::from(starts);
+    let treated = crate::Solid::from_axial_cylinder(stock, PlaneFrame::default(), policy)
+        .unwrap()
+        .rust_cut_authored_internal_thread_treatments_with_interrupt(
+            crate::InternalThreadTreatmentCut {
+                profile: crate::HelicalThread {
+                    major_radius_mm: 3.,
+                    pitch_mm: pitch,
+                    length_mm: 6.5,
+                    depth_mm: 5. * 3_f64.sqrt() / 16. * pitch,
+                    crest_width_mm: pitch / 8.,
+                    lower_flank_deg: 30.,
+                    upper_flank_deg: 30.,
+                    radial_taper: 0.,
+                    starts,
+                    left_hand,
+                },
+                intent: multicad_rust_kernel::authored_internal_treatment::Intent {
+                    entry_depth_mm: Some(0.8),
+                    terminal: None,
+                },
+                minimum_wall_mm: 0.5,
+                frame: PlaneFrame::default(),
+            },
+            multicad_core::document::EntityId::new(),
+            policy,
+            None,
+        )
+        .unwrap();
+    let n = frame.normal();
+    treated
+        .transformed(crate::RigidTransform {
+            rotation: std::array::from_fn(|i| [frame.u[i], frame.v[i], n[i]]),
+            translation_mm: frame.origin,
+        })
+        .unwrap()
+}
+
+/// Source containment: the thread solids' own test, or for a treated bore
+/// the actual stock less the authored cavity's nominal evaluation.
+fn contains(solid: &crate::Solid, w: P3) -> bool {
+    match solid.rust_internal_thread_treatment_data() {
+        Some(data) => {
+            let frame = data.frame;
+            let offset: P3 = std::array::from_fn(|i| w[i] - frame.origin[i]);
+            let local = [frame.u, frame.v, frame.normal()].map(|axis| dot3(axis, offset));
+            let stock = data.material.stock().circle().radius().as_f64();
+            let length = data.material.cavity().full_length_mm();
+            local[0].hypot(local[1]) < stock
+                && local[2] > 0.
+                && local[2] < length
+                && !data.material.cavity().contains_void(local, 0.)
+        }
+        None => solid.rust_thread_contains(w).unwrap(),
+    }
+}
+
 /// An independent depth-map oracle for thread drawings: the first material
 /// along each pixel's sight line is found by marching the source solid's
 /// containment test alone. Wherever that depth jumps between neighbouring
@@ -943,10 +1040,12 @@ fn thread_occluding_contours_agree_with_a_depth_map_oracle() {
     .unwrap();
     let s = 0.5_f64.sqrt();
     let t = (1_f64 / 6.).sqrt();
+    let treatment = treated(false, 2, PlaneFrame::default());
     for (label, solid, center) in [
         ("rounded", &rounded, 2.35),
         ("relief", &relief, 3.3),
         ("bore", &bore, 2.35),
+        ("treatment", &treatment, 3.25),
     ] {
         for [u, v] in [[[1., 0., 0.], [0., 0., 1.]], [[s, -s, 0.], [t, t, -2. * t]]] {
             let frame = PlaneFrame {
@@ -967,7 +1066,7 @@ fn thread_occluding_contours_agree_with_a_depth_map_oracle() {
                     frame.origin[i] + (0..3).map(|j| view.axes[j][i] * q[j]).sum::<f64>()
                 })
             };
-            let inside = |q: P3| solid.rust_thread_contains(world(q)).unwrap();
+            let inside = |q: P3| contains(solid, world(q));
             // First material from the viewer, refined by bisection.
             let depth = |x: f64, y: f64| -> Option<f64> {
                 let (top, bottom, step) = (8., -8., 0.01);

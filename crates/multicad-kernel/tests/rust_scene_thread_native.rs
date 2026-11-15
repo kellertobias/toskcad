@@ -1,6 +1,6 @@
 //! OpenCascade 7.9.3 references for thread drawings through the scene engine
-//! (CAD-346): a terminal thread relief and a rounded thread, imported from
-//! their own STEP export.
+//! (CAD-346): threads imported from their own STEP export, and a treated
+//! internal thread bore rebuilt by an OpenCascade Boolean.
 //!
 //! Only cut faces are compared. OpenCascade's hidden-line removal of these
 //! imported helicoidal B-spline faces is not a reference: measured in the
@@ -131,12 +131,20 @@ fn cases(origin: [f64; 3]) -> Vec<(String, DrawingProjection)> {
     cases
 }
 
-fn check(label: &str, solid: &Solid, origin: [f64; 3]) -> Vec<String> {
-    let only = std::env::var("THREAD_CASE").ok();
+/// The solid's own STEP export, imported by OpenCascade.
+fn imported(solid: &Solid) -> Solid {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("thread.step");
     solid.write_step(&path).unwrap();
-    let native = Solid::read_step(&path, solid.geometry_policy()).unwrap();
+    Solid::read_step(&path, solid.geometry_policy()).unwrap()
+}
+
+fn check(label: &str, solid: &Solid, origin: [f64; 3]) -> Vec<String> {
+    compare(label, solid, &imported(solid), origin)
+}
+
+fn compare(label: &str, solid: &Solid, native: &Solid, origin: [f64; 3]) -> Vec<String> {
+    let only = std::env::var("THREAD_CASE").ok();
     let mut failures = Vec::new();
     let mut unavailable = Vec::new();
     for (name, options) in cases(origin) {
@@ -152,7 +160,7 @@ fn check(label: &str, solid: &Solid, origin: [f64; 3]) -> Vec<String> {
         // case has no native reference and is reported, never skipped silently.
         let reference = match project_drawing(
             &[DrawingSolid {
-                solid: &native,
+                solid: native,
                 hatch: None,
             }],
             options,
@@ -356,4 +364,137 @@ fn rounded_thread_bore_matches_native_open_cascade() {
 fn rounded_thread_matches_native_open_cascade() {
     assert!(check("rounded", &rounded(false), [0.2, 0.1, 2.35]).is_empty());
     assert!(check("rounded left", &rounded(true), [0.2, 0.1, 2.35]).is_empty());
+}
+
+/// A radius-4.5 authored stock less an ISO-like internal thread cavity with
+/// an entry cone.
+fn treated() -> Solid {
+    use multicad_kernel::rust_kernel::{Circle, Rational, cylinder::AxialCylinder};
+    let policy = GeometryPolicy::default();
+    let zero = Rational::new(0, 1).unwrap();
+    let stock = AxialCylinder::new(
+        7,
+        Circle::new([zero; 2], Rational::new(9, 2).unwrap()).unwrap(),
+        zero,
+        Rational::new(13, 2).unwrap(),
+    )
+    .unwrap();
+    Solid::from_axial_cylinder(stock, PlaneFrame::default(), policy)
+        .unwrap()
+        .rust_cut_authored_internal_thread_treatments_with_interrupt(
+            multicad_kernel::InternalThreadTreatmentCut {
+                profile: HelicalThread {
+                    major_radius_mm: 3.,
+                    pitch_mm: 1.,
+                    length_mm: 6.5,
+                    depth_mm: 5. * 3_f64.sqrt() / 16.,
+                    crest_width_mm: 0.125,
+                    lower_flank_deg: 30.,
+                    upper_flank_deg: 30.,
+                    radial_taper: 0.,
+                    starts: 1,
+                    left_hand: false,
+                },
+                intent: multicad_kernel::rust_kernel::authored_internal_treatment::Intent {
+                    entry_depth_mm: Some(0.8),
+                    terminal: None,
+                },
+                minimum_wall_mm: 0.5,
+                frame: PlaneFrame::default(),
+            },
+            EntityId::new(),
+            policy,
+            None,
+        )
+        .unwrap()
+}
+
+/// The treated bore's OpenCascade reference, built without the treatment's
+/// own export (which has none): the revolved stock less the entry cone and
+/// a core inside the minor radius, less the imported external thread of the
+/// same profile, one pitch longer at each end so no cap is coplanar.
+fn treated_reference() -> Solid {
+    use multicad_kernel::{BooleanOperation, CurvedEdge2d, CurvedProfile, RevolutionAxis};
+    let policy = GeometryPolicy::default();
+    let minor = 3. - 5. * 3_f64.sqrt() / 16.;
+    let entry = minor + 0.8;
+    // The cone r = entry - z, continued inside the minor radius to the core.
+    let core = minor - 0.2;
+    let points = [
+        [entry, 0.],
+        [4.5, 0.],
+        [4.5, 6.5],
+        [core, 6.5],
+        [core, entry - core],
+    ];
+    let stock = Solid::revolve_curved_profile(
+        &CurvedProfile {
+            frame: PlaneFrame {
+                origin: [0.; 3],
+                u: [1., 0., 0.],
+                v: [0., 0., 1.],
+            },
+            outer: (0..points.len())
+                .map(|i| CurvedEdge2d::Line {
+                    a: points[i],
+                    b: points[(i + 1) % points.len()],
+                })
+                .collect(),
+            holes: vec![],
+        },
+        RevolutionAxis {
+            origin_mm: [0.; 3],
+            direction: [0., 0., 1.],
+        },
+        std::f64::consts::TAU,
+        policy,
+    )
+    .unwrap();
+    let plug = Solid::rust_helical_thread(
+        HelicalThread {
+            major_radius_mm: 3.,
+            pitch_mm: 1.,
+            length_mm: 8.5,
+            depth_mm: 5. * 3_f64.sqrt() / 16.,
+            crest_width_mm: 0.125,
+            lower_flank_deg: 30.,
+            upper_flank_deg: 30.,
+            radial_taper: 0.,
+            starts: 1,
+            left_hand: false,
+        },
+        None,
+        EntityId::new(),
+        PlaneFrame {
+            origin: [0., 0., -1.],
+            ..PlaneFrame::default()
+        },
+        policy,
+    )
+    .unwrap();
+    stock
+        .boolean(&imported(&plug), BooleanOperation::Subtract, policy)
+        .unwrap()
+        .unwrap()
+}
+
+#[test]
+fn internal_thread_treatment_matches_native_open_cascade() {
+    // Cuts through the entry cone zone and through the whole bore.
+    let (solid, native) = (treated(), treated_reference());
+    let mut unavailable = compare("treatment cone", &solid, &native, [0.2, 0.1, 0.4]);
+    unavailable.extend(compare("treatment", &solid, &native, [0.2, 0.1, 3.25]));
+    // Measured: as for the external chamfer, OpenCascade 7.9.3 cannot publish
+    // a side or oblique cut that crosses the cone zone of its own Boolean
+    // result ("Projected curve family is unsupported"): 7 of the 12 cuts.
+    // Every axial cut, including one through the cone zone, and the oblique
+    // cut beside the cone are compared; the others are certified against the
+    // source in drawing::scene::tests.
+    assert!(
+        unavailable.len() == 7
+            && unavailable
+                .iter()
+                .all(|label| label.contains("side") || label.contains("oblique")),
+        "{unavailable:?}"
+    );
 }
