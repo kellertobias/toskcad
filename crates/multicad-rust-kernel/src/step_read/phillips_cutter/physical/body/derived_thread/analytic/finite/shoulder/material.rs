@@ -8,9 +8,11 @@
 //! Positive full-rank common affine transport preserves this closure and
 //! orientation. Raw material, mass and manufacturing-file admission are separate.
 use super::*;
+mod volume;
 use crate::phillips_drive::{
     FaceKey as CavityFace, RepairedHeadContainment, RepairedHeadContainmentOptions,
 };
+pub use volume::{PeriodicMaterialVolume, PeriodicVolumeOptions};
 #[cfg(test)]
 mod tests;
 const CELLS: usize = 65536;

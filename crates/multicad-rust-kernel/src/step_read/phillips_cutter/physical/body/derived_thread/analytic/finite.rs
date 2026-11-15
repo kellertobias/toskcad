@@ -4,8 +4,8 @@ use super::*;
 mod circle;
 mod shoulder;
 pub use shoulder::{
-    PeriodicClosedMaterial, PeriodicMaterialFace, PeriodicMaterialOptions, PeriodicShoulderOptions,
-    PeriodicShoulderRepair,
+    PeriodicClosedMaterial, PeriodicMaterialFace, PeriodicMaterialOptions, PeriodicMaterialVolume,
+    PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicVolumeOptions,
 };
 type FResult<T> = std::result::Result<T, PhillipsReadError>;
 const FINITE_TOTAL: usize = 48_000_000;

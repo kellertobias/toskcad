@@ -362,6 +362,15 @@ fn actual_five_nominal_metric_heads_and_posed_left_hand_join_matrix() {
                 assert!(material.containment().axial_floor_clearance_mm() > 1e-7);
                 assert!(material.containment().minimum_radial_clearance_mm() > 1e-7);
                 assert!(material.boundary_faces().count() > 30);
+                let volume = material.volume_bounds(Default::default(), None).unwrap();
+                let world = volume.world_volume_mm3();
+                assert!(world[0] > 0. && world[1] - world[0] <= 1e-6);
+                eprintln!(
+                    "NOMINAL PERIODIC MASS index{index} left{left} world{world:?} new{} known{}",
+                    volume.new_work_used(),
+                    volume.total_work_used()
+                );
+
                 assert!(
                     join.original_complement().distance_mm < 1e-7
                         && join.plane_distance_mm() < 1e-7

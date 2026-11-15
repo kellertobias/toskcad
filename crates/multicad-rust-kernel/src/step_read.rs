@@ -1108,11 +1108,13 @@ pub use phillips_cutter::{
     PeriodicFiniteOptions as PhillipsPeriodicFiniteOptions,
     PeriodicMaterialFace as PhillipsPeriodicMaterialFace,
     PeriodicMaterialOptions as PhillipsPeriodicMaterialOptions,
+    PeriodicMaterialVolume as PhillipsPeriodicMaterialVolume,
     PeriodicShoulderOptions as PhillipsPeriodicShoulderOptions,
     PeriodicShoulderRepair as PhillipsPeriodicShoulderRepair,
     PeriodicThreadBounds as PhillipsPeriodicThreadBounds,
     PeriodicThreadRepair as PhillipsPeriodicThreadRepair,
     PeriodicThreadSource as PhillipsPeriodicThreadSource,
+    PeriodicVolumeOptions as PhillipsPeriodicVolumeOptions,
     ThreadCarrierTransfer as PhillipsThreadCarrierTransfer,
 };
 
