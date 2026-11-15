@@ -58,7 +58,7 @@ impl RepairedPhillipsQuery<'_> {
         self.remaining
     }
 }
-fn query_failure(cause: E) -> GeometryError {
+pub(super) fn query_failure(cause: E) -> GeometryError {
     let kind = match cause {
         E::Cancelled
         | E::Head(H::Cancelled)
@@ -75,7 +75,7 @@ fn query_failure(cause: E) -> GeometryError {
         format!("Retained repaired material source query refused: {cause:?}"),
     )
 }
-fn exhausted() -> GeometryError {
+pub(super) fn exhausted() -> GeometryError {
     failure(
         GeometryErrorKind::Limit,
         "Repaired material query work exhausted",
@@ -89,6 +89,10 @@ impl RepairedPhillipsBody {
         options: RepairedPhillipsQueryOptions,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<RepairedPhillipsQuery<'_>, GeometryError> {
+        let source = self
+            .source
+            .retained()
+            .ok_or_else(|| unsupported("Use the explicit periodic source query API"))?;
         checkpoint(interrupt)?;
         if options.maximum_work > MAXIMUM_WORK
             || options.maximum_head_cells == 0
@@ -104,8 +108,7 @@ impl RepairedPhillipsBody {
         // These are numerical query enclosures, not new authored coordinates:
         // inverse uncertainty may extend beyond model coordinate input limits.
         let local = self.placement(frame)?.inverse_bounds(world)?;
-        let query = self
-            .source
+        let query = source
             .classify_local_box(
                 local,
                 SourceOptions {
@@ -119,7 +122,7 @@ impl RepairedPhillipsBody {
         checkpoint(interrupt)?;
         remaining = remaining.checked_sub(1).ok_or_else(exhausted)?;
         Ok(RepairedPhillipsQuery {
-            source: &self.source,
+            source,
             world,
             local,
             occurrence: frame,
@@ -140,10 +143,14 @@ impl RepairedPhillipsBody {
             let b = I::point(v) + I::new(-tolerance, tolerance);
             [b.lo, b.hi]
         });
-        match self
-            .classify(frame, world, Default::default(), None)?
-            .location()
-        {
+        let location = if self.source.periodic().is_some() {
+            self.classify_periodic(frame, world, Default::default(), None)?
+                .location()
+        } else {
+            self.classify(frame, world, Default::default(), None)?
+                .location()
+        };
+        match location {
             Classification::Inside => Ok(true),
             Classification::Outside => Ok(false),
             Classification::UnresolvedBoundary => Err(unsupported(

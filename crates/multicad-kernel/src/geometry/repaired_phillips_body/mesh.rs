@@ -33,14 +33,14 @@ struct Key {
 }
 impl Key {
     fn new(
-        source: &OwnedDerivedMaterial,
+        source: &Source,
         frame: PlaneFrame,
         quality: Tessellation,
         local: Tessellation,
         budget: RepairedPhillipsMeshBudget,
     ) -> Self {
         Self {
-            owner: source as *const OwnedDerivedMaterial as usize,
+            owner: source.identity(),
             effective: [local.deflection.to_bits(), local.angle.to_bits()],
             quality: [quality.deflection.to_bits(), quality.angle.to_bits()],
             triangles: quality.triangle_limit,
@@ -87,6 +87,9 @@ struct Metadata {
     validator_peak: usize,
     combined: usize,
     cached: bool,
+    periodic_literal_volume: Option<[f64; 2]>,
+    periodic_mass_difference: Option<f64>,
+    periodic_surface_error: Option<f64>,
     #[cfg(test)]
     timings: [std::time::Duration; 4],
 }
@@ -96,6 +99,78 @@ struct Metadata {
 pub struct RepairedPhillipsMeshReceipt<'s> {
     source: &'s OwnedDerivedMaterial,
     metadata: Metadata,
+}
+/// Fresh or exact-key cached proof attached to the distinct owned periodic
+/// material. Its source getter cannot return a retained polynomial receipt.
+pub struct PeriodicRepairedPhillipsMeshReceipt<'s> {
+    source: &'s OwnedPeriodicMaterial,
+    metadata: Metadata,
+}
+impl PeriodicRepairedPhillipsMeshReceipt<'_> {
+    pub fn source(&self) -> &OwnedPeriodicMaterial {
+        self.source
+    }
+    pub fn occurrence(&self) -> PlaneFrame {
+        self.metadata.occurrence
+    }
+    pub fn quality(&self) -> MeshOptions {
+        let q = self.metadata.quality;
+        MeshOptions {
+            linear_deflection_mm: q.deflection,
+            angular_deflection_rad: q.angle,
+            maximum_triangles: q.triangle_limit as u32,
+        }
+    }
+    pub fn new_source_volume_mm3(&self) -> [f64; 2] {
+        self.metadata.volume
+    }
+    pub fn literal_signed_volume_mm3(&self) -> f64 {
+        self.metadata.proof.signed_volume_mm3
+    }
+    pub fn embedding_pairs(&self) -> usize {
+        self.metadata.embedding_pairs
+    }
+    pub fn query_work_used(&self) -> usize {
+        self.metadata.query_work
+    }
+    pub fn remaining_work(&self) -> usize {
+        self.metadata.remaining
+    }
+    pub fn source_work_used(&self) -> usize {
+        self.metadata.source_work
+    }
+    pub fn consumer_accounted_peak_bytes(&self) -> usize {
+        self.metadata.consumer_peak
+    }
+    pub fn producer_combined_upper_bound_bytes(&self) -> usize {
+        self.metadata.producer_peak
+    }
+    pub fn validator_workspace_upper_bound_bytes(&self) -> usize {
+        self.metadata.validator_peak
+    }
+    pub fn combined_live_upper_bound_bytes(&self) -> usize {
+        self.metadata.combined
+    }
+    pub fn reused_display_receipt(&self) -> bool {
+        self.metadata.cached
+    }
+    pub fn literal_volume_enclosure_mm3(&self) -> [f64; 2] {
+        self.metadata
+            .periodic_literal_volume
+            .expect("periodic cold path and exact-owner cache retain its directed literal integral")
+    }
+    /// Direct interval difference of this actual literal mesh and the distinct
+    /// authoritative periodic source; no scalar equality is asserted.
+    pub fn source_volume_error_bound_mm3(&self) -> f64 {
+        self.metadata.periodic_mass_difference.expect(
+            "periodic cold path measures the same owned source against its literal triangles",
+        )
+    }
+    pub fn local_source_surface_error_mm(&self) -> f64 {
+        self.metadata
+            .periodic_surface_error
+            .expect("periodic candidate retains its directed whole-source surface certificate")
+    }
 }
 impl RepairedPhillipsMeshReceipt<'_> {
     pub fn source(&self) -> &OwnedDerivedMaterial {
@@ -403,17 +478,14 @@ impl RepairedPhillipsBody {
         // storage BEFORE the provider allocates its own source buffers.
         let native_only = work.held - self.source.retained_budget_bytes();
         let provider_bytes = work.maximum - native_only - SCRATCH;
-        let candidate = self
-            .source
-            .joined_mesh_candidate(
-                JoinedMeshOptions {
-                    tessellation: local,
-                    maximum_work: work.remaining,
-                    maximum_bytes: provider_bytes,
-                },
-                work.interrupt,
-            )
-            .map_err(source_failure)?;
+        let candidate = self.source.joined_mesh_candidate(
+            JoinedMeshOptions {
+                tessellation: local,
+                maximum_work: work.remaining,
+                maximum_bytes: provider_bytes,
+            },
+            work.interrupt,
+        )?;
         work.charge(candidate.work_used())?;
         #[cfg(test)]
         let source_time = start.elapsed();
@@ -533,6 +605,15 @@ impl RepairedPhillipsBody {
         };
         work.charge(used)?;
         let volume = self.volume(frame)?;
+        let (periodic_literal_volume, periodic_mass_difference) =
+            if self.source.periodic().is_some() {
+                work.charge(mesh.indices.len().saturating_mul(128))?;
+                let literal = periodic::candidate::literal_volume(&mesh)?;
+                let difference = I::new(literal[0], literal[1]) - I::new(volume[0], volume[1]);
+                (Some(literal), Some(difference.magnitude()))
+            } else {
+                (None, None)
+            };
         checkpoint(work.interrupt)?;
         let used = budget.maximum_work - work.remaining;
         Ok((
@@ -554,6 +635,9 @@ impl RepairedPhillipsBody {
                 validator_peak,
                 combined: producer_peak + work.peak + validator_peak,
                 cached: false,
+                periodic_literal_volume,
+                periodic_mass_difference,
+                periodic_surface_error: candidate.periodic_surface_error(),
                 #[cfg(test)]
                 timings: [source_time, placement_time, manifold_time, start.elapsed()],
             },
@@ -593,6 +677,47 @@ impl RepairedPhillipsBody {
     }
 }
 impl Solid {
+    fn periodic_repaired_mesh_query(
+        &self,
+        options: MeshOptions,
+        budget: RepairedPhillipsMeshBudget,
+        usage: MeshUse,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<(Mesh, PeriodicRepairedPhillipsMeshReceipt<'_>), GeometryError> {
+        let (body, frame) = self
+            .repaired_phillips_body()
+            .ok_or_else(|| unsupported("Solid has no periodic repaired source"))?;
+        let source = body
+            .source
+            .periodic()
+            .ok_or_else(|| unsupported("Use the retained repaired source mesh API"))?;
+        let q = Tessellation {
+            deflection: options.linear_deflection_mm,
+            angle: options.angular_deflection_rad,
+            triangle_limit: options.maximum_triangles as usize,
+        };
+        let (mesh, metadata) = body.controlled(frame, q, usage, budget, interrupt)?;
+        Ok((
+            mesh,
+            PeriodicRepairedPhillipsMeshReceipt { source, metadata },
+        ))
+    }
+    pub fn rust_periodic_repaired_phillips_mesh_with_receipt(
+        &self,
+        options: MeshOptions,
+        budget: RepairedPhillipsMeshBudget,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<(Mesh, PeriodicRepairedPhillipsMeshReceipt<'_>), GeometryError> {
+        self.periodic_repaired_mesh_query(options, budget, MeshUse::Manufacturing, interrupt)
+    }
+    pub fn rust_periodic_repaired_phillips_display_mesh_with_receipt(
+        &self,
+        options: MeshOptions,
+        budget: RepairedPhillipsMeshBudget,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<(Mesh, PeriodicRepairedPhillipsMeshReceipt<'_>), GeometryError> {
+        self.periodic_repaired_mesh_query(options, budget, MeshUse::Display, interrupt)
+    }
     fn repaired_mesh_query(
         &self,
         options: MeshOptions,
@@ -603,19 +728,17 @@ impl Solid {
         let (body, frame) = self
             .repaired_phillips_body()
             .ok_or_else(|| unsupported("Solid has no repaired Phillips source"))?;
+        let source = body
+            .source
+            .retained()
+            .ok_or_else(|| unsupported("Use the explicit periodic source mesh API"))?;
         let quality = Tessellation {
             deflection: options.linear_deflection_mm,
             angle: options.angular_deflection_rad,
             triangle_limit: options.maximum_triangles as usize,
         };
         let (mesh, metadata) = body.controlled(frame, quality, usage, budget, interrupt)?;
-        Ok((
-            mesh,
-            RepairedPhillipsMeshReceipt {
-                source: &body.source,
-                metadata,
-            },
-        ))
+        Ok((mesh, RepairedPhillipsMeshReceipt { source, metadata }))
     }
     /// Fresh complete repaired-source/placement/embedding proof. Display reuse
     /// is deliberately unavailable on this manufacturing query.

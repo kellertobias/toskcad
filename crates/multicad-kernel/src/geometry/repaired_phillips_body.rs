@@ -2,14 +2,21 @@
 //! Raw STEP provenance is retained, but is not exact raw-material authority.
 use super::internal_thread_treatment_body::interval::Interval as I;
 use super::*;
-use multicad_rust_kernel::step_read::PhillipsOwnedDerivedMaterial as OwnedDerivedMaterial;
+use multicad_rust_kernel::step_read::{
+    PhillipsOwnedDerivedMaterial as OwnedDerivedMaterial,
+    PhillipsOwnedPeriodicMaterial as OwnedPeriodicMaterial,
+};
 use std::cell::RefCell;
 mod affine;
+mod periodic;
+pub use periodic::PeriodicRepairedPhillipsQuery;
 mod mesh;
 mod query;
 mod workspace;
 use affine::Placement;
-pub use mesh::{RepairedPhillipsMeshBudget, RepairedPhillipsMeshReceipt};
+pub use mesh::{
+    PeriodicRepairedPhillipsMeshReceipt, RepairedPhillipsMeshBudget, RepairedPhillipsMeshReceipt,
+};
 pub use query::{RepairedPhillipsQuery, RepairedPhillipsQueryOptions};
 type Point = [f64; 3];
 const OPERATION: &str = "repaired Phillips material";
@@ -18,8 +25,72 @@ const BYTES: usize = 64 * 1024 * 1024;
 #[cfg(test)]
 mod tests;
 
+enum Source {
+    Retained(Rc<OwnedDerivedMaterial>),
+    Periodic(Rc<OwnedPeriodicMaterial>),
+}
+impl Source {
+    fn retained(&self) -> Option<&OwnedDerivedMaterial> {
+        if let Self::Retained(s) = self {
+            Some(s)
+        } else {
+            None
+        }
+    }
+    fn periodic(&self) -> Option<&OwnedPeriodicMaterial> {
+        if let Self::Periodic(s) = self {
+            Some(s)
+        } else {
+            None
+        }
+    }
+    fn chart(&self) -> multicad_rust_kernel::step_read::PhillipsCommonMouthChart {
+        match self {
+            Self::Retained(s) => s.chart(),
+            Self::Periodic(s) => s.chart(),
+        }
+    }
+    fn local_enclosure_bounds(&self) -> [[f64; 2]; 3] {
+        match self {
+            Self::Retained(s) => s.local_enclosure_bounds(),
+            Self::Periodic(s) => s.local_enclosure_bounds(),
+        }
+    }
+    fn local_volume_mm3(&self) -> [f64; 2] {
+        match self {
+            Self::Retained(s) => s.local_volume_mm3(),
+            Self::Periodic(s) => s.local_volume_mm3(),
+        }
+    }
+    fn retained_budget_bytes(&self) -> usize {
+        match self {
+            Self::Retained(s) => s.retained_budget_bytes(),
+            Self::Periodic(s) => s.retained_budget_bytes(),
+        }
+    }
+    fn identity(&self) -> usize {
+        match self {
+            Self::Retained(s) => Rc::as_ptr(s) as usize,
+            Self::Periodic(s) => Rc::as_ptr(s) as usize,
+        }
+    }
+    fn joined_mesh_candidate(
+        &self,
+        options: multicad_rust_kernel::step_read::PhillipsJoinedMeshOptions,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<periodic::candidate::Candidate<'_>, GeometryError> {
+        match self {
+            Self::Retained(s) => s
+                .joined_mesh_candidate(options, interrupt)
+                .map(periodic::candidate::Candidate::Retained)
+                .map_err(source_failure),
+            Self::Periodic(s) => periodic::candidate::build(s, options, interrupt)
+                .map(periodic::candidate::Candidate::Periodic),
+        }
+    }
+}
 pub(crate) struct RepairedPhillipsBody {
-    source: Rc<OwnedDerivedMaterial>,
+    source: Source,
     pub(super) feature: EntityId,
     policy: GeometryPolicy,
     local_bounds: Bounds,
@@ -77,6 +148,14 @@ impl RepairedPhillipsBody {
         policy: GeometryPolicy,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Self, GeometryError> {
+        Self::new_source(Source::Retained(source), feature, policy, interrupt)
+    }
+    fn new_source(
+        source: Source,
+        feature: EntityId,
+        policy: GeometryPolicy,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Self, GeometryError> {
         checkpoint(interrupt)?;
         policy.validate()?;
         if feature.is_nil() {
@@ -89,7 +168,17 @@ impl RepairedPhillipsBody {
                 "Repaired material requires its original feature and no Boolean fuzz",
             ));
         }
-        check_source_storage(&source, BYTES)?;
+        if let Some(retained) = source.retained() {
+            check_source_storage(retained, BYTES)?;
+        } else if source.retained_budget_bytes().saturating_add(
+            std::mem::size_of::<RepairedPhillipsBody>() + 8 * std::mem::size_of::<usize>(),
+        ) > BYTES
+        {
+            return Err(failure(
+                GeometryErrorKind::Limit,
+                "Periodic source ownership exceeds native storage",
+            ));
+        }
         // The sealed source earned this from actual typed thread cells/caps
         // and actual repaired head fields. Its cavity only removes material.
         let envelope = source.local_enclosure_bounds();
@@ -163,7 +252,7 @@ impl Solid {
     }
     pub fn rust_repaired_phillips_source(&self) -> Option<(&OwnedDerivedMaterial, PlaneFrame)> {
         self.repaired_phillips_body()
-            .map(|(body, frame)| (body.source.as_ref(), frame))
+            .and_then(|(body, frame)| body.source.retained().map(|source| (source, frame)))
     }
     /// Interval for the NEW repaired material under both actual affine maps.
     /// It is neither a decoded raw-material scalar nor a literal-mesh volume.

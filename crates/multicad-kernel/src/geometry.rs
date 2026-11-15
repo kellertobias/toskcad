@@ -55,8 +55,8 @@ mod radial_boundary_body;
 mod repaired_phillips_body;
 use repaired_phillips_body::RepairedPhillipsBody;
 pub use repaired_phillips_body::{
-    RepairedPhillipsMeshBudget, RepairedPhillipsMeshReceipt, RepairedPhillipsQuery,
-    RepairedPhillipsQueryOptions,
+    PeriodicRepairedPhillipsMeshReceipt, PeriodicRepairedPhillipsQuery, RepairedPhillipsMeshBudget,
+    RepairedPhillipsMeshReceipt, RepairedPhillipsQuery, RepairedPhillipsQueryOptions,
 };
 mod revolution_body;
 mod rounded_cylinder_body;
