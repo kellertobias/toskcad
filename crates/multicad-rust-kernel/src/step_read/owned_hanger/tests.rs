@@ -245,6 +245,52 @@ fn actual_trimmed_candidate_is_independently_decoded_from_literal_step_entities(
                     .surface_lifts(LiftOptions::default(), None)
                     .is_err()
             );
+            // Weld two nonadjacent topology vertices in the actual file.
+            // Edge ownership and face-loop directions remain otherwise intact;
+            // the resulting point has two local cycles and is not a manifold.
+            let first = *decoded.vertices().keys().next().unwrap();
+            let second = *decoded
+                .vertices()
+                .keys()
+                .find(|&&v| {
+                    v != first
+                        && decoded
+                            .edges()
+                            .values()
+                            .all(|e| !(e.vertices().contains(&first) && e.vertices().contains(&v)))
+                })
+                .unwrap();
+            let mut pinched = file.as_str().to_owned();
+            let lines = decoded
+                .edges()
+                .values()
+                .filter(|e| e.vertices().contains(&second))
+                .map(|e| e.entity())
+                .collect::<Vec<_>>();
+            for id in lines {
+                let prefix = format!("#{id}=EDGE_CURVE(");
+                let begin = pinched.find(&prefix).unwrap();
+                let end = begin + pinched[begin..].find(';').unwrap() + 1;
+                let old = pinched[begin..end].to_owned();
+                let changed = old.replace(&format!("#{second},"), &format!("#{first},"));
+                assert_ne!(old, changed);
+                pinched.replace_range(begin..end, &changed);
+            }
+            assert!(matches!(
+                decode(&pinched, ReadOptions::default(), None),
+                Err(Error::Invalid)
+            ));
+            for dimension in [2, 3] {
+                let changed = file.as_str().replacen(
+                    &format!("GEOMETRIC_REPRESENTATION_CONTEXT({dimension})"),
+                    &format!("GEOMETRIC_REPRESENTATION_CONTEXT({dimension}.00000000000000000001)"),
+                    1,
+                );
+                assert!(matches!(
+                    decode(&changed, ReadOptions::default(), None),
+                    Err(Error::Invalid)
+                ));
+            }
             let centimetres =
                 file.as_str()
                     .replacen("SI_UNIT(.MILLI.,.METRE.)", "SI_UNIT(.CENTI.,.METRE.)", 1);

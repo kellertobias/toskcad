@@ -9,6 +9,7 @@ use std::{
 mod bernstein;
 mod decode;
 mod lifts;
+mod links;
 mod numbers;
 pub use lifts::{EdgeLift, LiftOptions, SurfaceLifts};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

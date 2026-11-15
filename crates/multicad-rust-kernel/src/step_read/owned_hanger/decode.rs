@@ -332,6 +332,27 @@ fn plane(arena: &Arena<'_>, id: u32) -> Result<Plane, Error> {
         reference: reference(&a.args[3])?,
     })
 }
+fn direction(
+    arena: &Arena<'_>,
+    id: u32,
+    expected: [bool; 3],
+    b: &mut Budget<'_>,
+) -> Result<(), Error> {
+    let d = one(arena, id, "DIRECTION")?;
+    if d.args.len() != 2 || number_list(&d.args[1])?.len() != 3 {
+        return Err(Error::Invalid);
+    }
+    let coordinates = numeric(d, b)?;
+    if coordinates.len() != 3
+        || coordinates
+            .iter()
+            .zip(expected)
+            .any(|(v, one)| if one { !v.is_one() } else { !v.is_zero() })
+    {
+        return Err(Error::Unsupported);
+    }
+    Ok(())
+}
 fn active(arena: &Arena<'_>, b: &mut Budget<'_>) -> Result<(u32, u32, Vec<u32>), Error> {
     let mut shape = arena
         .values()
@@ -372,22 +393,17 @@ fn active(arena: &Arena<'_>, b: &mut Budget<'_>) -> Result<(u32, u32, Vec<u32>),
             return Err(Error::Unsupported);
         }
         for (position, expected) in [(2, [false, false, true]), (3, [true, false, false])] {
-            let direction = one(arena, reference(&axis.args[position])?, "DIRECTION")?;
-            let coordinates = numeric(direction, b)?;
-            if coordinates.len() != 3
-                || coordinates
-                    .iter()
-                    .zip(expected)
-                    .any(|(v, one)| if one { !v.is_one() } else { !v.is_zero() })
-            {
-                return Err(Error::Unsupported);
-            }
+            direction(arena, reference(&axis.args[position])?, expected, b)?;
         }
     }
     if solids.len() != 1 {
         return Err(Error::Unsupported);
     }
     let context = arena.get(&reference(&rep.args[2])?).ok_or(Error::Invalid)?;
+    let dim = numeric(component(context, "GEOMETRIC_REPRESENTATION_CONTEXT")?, b)?;
+    if dim.len() != 1 || nat(dim[0])? != 3 {
+        return Err(Error::Unsupported);
+    }
     let units = component(context, "GLOBAL_UNIT_ASSIGNED_CONTEXT")?;
     let ids = refs(units.args.first().ok_or(Error::Invalid)?)?;
     let mut millimetre = 0;
@@ -417,7 +433,7 @@ fn active(arena: &Arena<'_>, b: &mut Budget<'_>) -> Result<(u32, u32, Vec<u32>),
     }
     Ok((solid, shell, faces))
 }
-fn pcurve(arena: &Arena<'_>, id: u32) -> Result<Pcurve, Error> {
+fn pcurve(arena: &Arena<'_>, id: u32, b: &mut Budget<'_>) -> Result<Pcurve, Error> {
     let e = one(arena, id, "PCURVE")?;
     if e.args.len() != 3 {
         return Err(Error::Invalid);
@@ -434,7 +450,8 @@ fn pcurve(arena: &Arena<'_>, id: u32) -> Result<Pcurve, Error> {
     let context = arena.get(&reference(&rep.args[2])?).ok_or(Error::Invalid)?;
     component(context, "PARAMETRIC_REPRESENTATION_CONTEXT")?;
     let dimension = component(context, "GEOMETRIC_REPRESENTATION_CONTEXT")?;
-    if !matches!(dimension.args.as_slice(), [Value::Number(2.)]) {
+    let dim = numeric(dimension, b)?;
+    if dim.len() != 1 || nat(dim[0])? != 2 {
         return Err(Error::Unsupported);
     }
     Ok(Pcurve {
@@ -442,7 +459,7 @@ fn pcurve(arena: &Arena<'_>, id: u32) -> Result<Pcurve, Error> {
         curve: curves[0],
     })
 }
-fn edge(arena: &Arena<'_>, id: u32) -> Result<Edge, Error> {
+fn edge(arena: &Arena<'_>, id: u32, b: &mut Budget<'_>) -> Result<Edge, Error> {
     let e = one(arena, id, "EDGE_CURVE")?;
     if e.args.len() != 5 {
         return Err(Error::Invalid);
@@ -463,7 +480,7 @@ fn edge(arena: &Arena<'_>, id: u32) -> Result<Edge, Error> {
         entity: id,
         vertices,
         curve: reference(&s.args[1])?,
-        pcurves: [pcurve(arena, ids[0])?, pcurve(arena, ids[1])?],
+        pcurves: [pcurve(arena, ids[0], b)?, pcurve(arena, ids[1], b)?],
         same_sense: boolean(&e.args[4])?,
     })
 }
@@ -567,11 +584,7 @@ pub(super) fn read<'i>(
             (plane.normal, ["0.", "0.", "1."]),
             (plane.reference, ["1.", "0.", "0."]),
         ] {
-            let d = one(&arena, id, "DIRECTION")?;
-            let n = numeric(d, &mut b)?;
-            if n.len() != 3 || n.iter().zip(expected).any(|(n, e)| n.text != e) {
-                return Err(Error::Unsupported);
-            }
+            direction(&arena, id, expected.map(|v| v == "1."), &mut b)?;
         }
     }
     let mut faces = Vec::new();
@@ -626,7 +639,7 @@ pub(super) fn read<'i>(
                 let id = reference(&e.args[3])?;
                 let forward = boolean(&e.args[4])?;
                 if let std::collections::btree_map::Entry::Vacant(slot) = edges.entry(id) {
-                    slot.insert(edge(&arena, id)?);
+                    slot.insert(edge(&arena, id, &mut b)?);
                 }
                 let edge = edges.get(&id).ok_or(Error::Invalid)?;
                 if !edge.pcurves.iter().any(|pc| pc.surface == surface) {
@@ -694,6 +707,7 @@ pub(super) fn read<'i>(
             }
         }
     }
+    super::links::validate(&faces, &edges, vertices.len(), &mut b)?;
     let contribution = faces
         .iter()
         .map(|f| 2 - f.loops.len() as isize)
