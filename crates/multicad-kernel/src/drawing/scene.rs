@@ -123,6 +123,7 @@ mod bevel;
 mod bore;
 mod engine;
 mod families;
+mod helix;
 mod paths;
 mod prism;
 mod profile;

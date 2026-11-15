@@ -14,6 +14,8 @@ Spherical bevel gears are scene members too (`scene/bevel.rs`): every face is ru
 
 ZA worms and generated worm wheels are scene members as well (`scene/worm.rs`): both are slabs about their axis whose section at every height is star shaped, bounded by a closed chain of exact patches — the four helicoidal bands of the worm thread (crest, root and two ruled flanks per turn) and, per wheel sector, the two tip lands and the five generating patches of the provider (two conjugate flanks trimmed where they leave the blank, two tip-edge sweeps and the root torus). Edges are the patch junctions and both end-plane section chains; outlines are the traced zero sets of the exact normal against the sight line; a sight line ends on isolated roots of the radial margin against the provider's boundary radius, each interval decided by the provider's membership predicate; planes across the axis cut the exact section chain and every other plane is traced on each patch. Uncropped axial views without crops keep the axial worm provider. The member unit tests certify sight intervals against the provider's predicate in six views (both gears, with and without bore), outline normals within 1e-9 of perpendicular with no uncovered sign change of `n·d`, and closed, oriented sections whose areas agree with a rotated scan-line quadrature within 1e-3; the axial-plane cut of a worm reproduces its straight-sided profile. `rust_scene_worm.rs` certifies published section vertices within 5.1e-7 mm of the provider boundary (bound: twice the engine's 4e-7 mm weld), exact hiding behind a plate and crop bounds, and compares 108 single-gear and box-scene cases with OpenCascade 7.9.3: every native curve lies on a Rust curve within 0.011 mm outside the two worm axial details, and the 12 section-only cuts agree both ways within 0.0099 mm. Measured OpenCascade deviations on the STEP-exchanged worm: its hidden-line removal omits the helicoid flank silhouettes of side and oblique views and draws the bore generators as visible through the core, and its axial detail publishes the hidden root circle beyond the detail circle; the Rust-to-native role comparison of whole views is therefore reported but not asserted.
 
+The thread end relief (CAD-290 `rust_thread_end_relief_data`: material thread, cylindrical neck, shoulder and far disk) and the rounded thread (`rust_rounded_thread_data`) draw through the scene member in `drawing/scene/helix.rs`: exact rails, cap curves, contour curves and cut-face curves of the helicoidal profile of line segments and circular arcs. `drawing::scene::tests` certifies material along lines, contour conditions, visibility and cut faces against the source solids' own containment, normals and volumes; `rust_scene_thread_native.rs` compares every cut face with OpenCascade 7.9.3. OpenCascade's hidden-line removal of the imported helicoidal faces is not used as a reference: it publishes rear crest helices as visible and omits the flank contours.
+
 | Family or scene | ax | ax rev | ax hid | side | side hid | obl | obl hid | ax sec | ax only | ax depth | side sec | side only | side depth | side win | obl sec | obl only | ax det | side det |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | box | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -29,6 +31,8 @@ ZA worms and generated worm wheels are scene members as well (`scene/worm.rs`): 
 | herringbone gear | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | double-helical gear | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | bevel gear | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| thread end relief | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| rounded thread | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | za worm | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | worm wheel | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | box + cylinder overlapping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -58,4 +62,4 @@ ZA worms and generated worm wheels are scene members as well (`scene/worm.rs`): 
 
 None.
 
-All 666 combinations draw; no explicit findings remain. No combination returns an invalid or partial result.
+All 702 combinations draw; no explicit findings remain. No combination returns an invalid or partial result.

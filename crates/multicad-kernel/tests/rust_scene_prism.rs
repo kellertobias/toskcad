@@ -617,3 +617,125 @@ fn two_close_passages_through_another_body_are_both_found() {
     // Hidden stretches under a visible one publish once, as visible.
     assert!(close(&hidden, &[[-reach, reach]]), "hidden {hidden:?}");
 }
+
+/// The block-in-cylinder scene of the close-passage test, drawn once by the
+/// curved scene provider (two bodies) and once by the scene engine (a far
+/// gear added). Every published block edge is checked against independent
+/// membership marching along its sight lines: a point is hidden exactly when
+/// material of either body lies between it and the viewer. Each front edge
+/// is also completely covered by published pieces.
+#[test]
+fn block_in_cylinder_visibility_agrees_with_membership_marching_in_both_providers() {
+    use multicad_kernel::RigidTransform;
+    let depth = 4.995;
+    let block = Solid::rust_box(
+        EntityId::new().uuid_bits(),
+        [
+            Rational::new(93, 10).unwrap(),
+            Rational::new(599, 200).unwrap(),
+            Rational::new(2, 1).unwrap(),
+        ],
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+    )
+    .unwrap()
+    .transformed(RigidTransform {
+        rotation: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+        translation_mm: [-4.4, -depth, 2.],
+    })
+    .unwrap();
+    let options = DrawingProjection {
+        frame: PlaneFrame {
+            origin: [0.; 3],
+            u: [1., 0., 0.],
+            v: [0., 0., 1.],
+        },
+        hidden_lines: true,
+        ..Default::default()
+    };
+    // Material in front of (x, y, z) when looking along +Y from negative Y.
+    let covered = |x: f64, y: f64, z: f64| {
+        let steps = 20_000;
+        (1..steps).any(|i| {
+            let ahead = y - 20. * f64::from(i) / f64::from(steps);
+            let in_cylinder = x.hypot(ahead) < RADIUS && z > 0. && z < HEIGHT;
+            let in_block = x > -4.4 && x < 4.9 && ahead > -depth && ahead < -2. && z > 2. && z < 4.;
+            (in_cylinder || in_block) && y - ahead > 1e-3
+        })
+    };
+    let cylinder = cylinder();
+    let gear = spur(60.);
+    for (label, solids) in [
+        ("curved provider", vec![&cylinder, &block]),
+        ("scene engine", vec![&cylinder, &block, &gear]),
+    ] {
+        let inputs: Vec<_> = solids
+            .iter()
+            .map(|&solid| DrawingSolid { solid, hatch: None })
+            .collect();
+        let vectors = project_drawing(&inputs, options).unwrap();
+        let reach = (RADIUS * RADIUS - depth * depth).sqrt();
+        for level in [2., 4.] {
+            // The front edge at this level: covered by published pieces of
+            // both roles, hidden exactly over the cylinder's sliver.
+            let mut pieces: Vec<([f64; 2], bool)> = Vec::new();
+            for vector in vectors.iter().filter(|vector| vector.source_index == 1) {
+                let VectorCurve::Line { a, b } = vector.curve else {
+                    continue;
+                };
+                if (a[1] - level).abs() > 1e-12 || (b[1] - level).abs() > 1e-12 {
+                    continue;
+                }
+                let hidden = vector.role == VectorRole::Hidden;
+                let [lo, hi] = [a[0].min(b[0]), a[0].max(b[0])];
+                // Sample the piece away from its ends; the front edge is at
+                // y = -depth, the rear edge at y = -2 behind the block.
+                for q in [0.1, 0.5, 0.9] {
+                    let x = lo + (hi - lo) * q;
+                    let front = covered(x, -depth, level);
+                    let rear = covered(x, -2., level);
+                    // A visible piece is the front edge; a hidden piece is
+                    // the front edge where covered or the rear edge.
+                    if hidden {
+                        assert!(front || rear, "{label}: hidden at x = {x}");
+                    } else {
+                        assert!(!front, "{label}: visible at x = {x}, z = {level}");
+                    }
+                }
+                pieces.push(([lo, hi], hidden));
+            }
+            let visible: Vec<[f64; 2]> = pieces.iter().filter(|p| !p.1).map(|p| p.0).collect();
+            let mut covered_front: Vec<[f64; 2]> = visible.clone();
+            covered_front.extend(
+                pieces
+                    .iter()
+                    .filter(|p| p.1 && p.0[0] > -reach - 1e-5 && p.0[1] < reach + 1e-5)
+                    .map(|p| p.0),
+            );
+            covered_front.sort_by(|a, b| a[0].total_cmp(&b[0]));
+            let mut end = -4.4;
+            for [lo, hi] in covered_front {
+                assert!(
+                    lo <= end + 1e-5,
+                    "{label}: front edge gap at x = {end}, z = {level}"
+                );
+                end = end.max(hi);
+            }
+            assert!(
+                (end - 4.9).abs() < 1e-9,
+                "{label}: front edge ends at {end}"
+            );
+            // Both providers place the transitions within 1e-5 mm of the
+            // exact roots +-sqrt(25 - 4.995^2).
+            for [lo, hi] in visible {
+                for x in [lo, hi] {
+                    let distance = (x.abs() - reach)
+                        .abs()
+                        .min((x + 4.4).abs())
+                        .min((x - 4.9).abs());
+                    assert!(distance < 1e-5, "{label}: visible end at {x}");
+                }
+            }
+        }
+    }
+}

@@ -22,6 +22,7 @@ pub(in crate::drawing) fn member(
         .or_else(|| extrusion(solid, view))
         .or_else(|| bore::Bore::new(solid, view).map(|bore| Ok(Box::new(bore) as Box<dyn Member>)))
         .or_else(|| super::bevel::member(solid, view))
+        .or_else(|| super::helix::member(solid, view))
 }
 
 /// Draw whole solids through the scene engine when every leaf has a member.

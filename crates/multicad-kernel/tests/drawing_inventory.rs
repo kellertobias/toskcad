@@ -10,8 +10,9 @@ use multicad_core::{
 };
 use multicad_kernel::{
     BooleanOperation, DrawingHatch, DrawingProjection, DrawingSolid, GearSweep,
-    GeneratedZaWormWheel, GeometryError, GeometryPolicy, InvoluteGear, PlaneFrame, ProjectedVector,
-    RigidTransform, Solid, SphericalBevelGear, ZaWorm, project_drawing,
+    GeneratedZaWormWheel, GeometryError, GeometryPolicy, HelicalThread, InvoluteGear, PlaneFrame,
+    ProjectedVector, RigidTransform, Solid, SphericalBevelGear, ZaWorm, project_drawing,
+    rust_kernel::rounded_thread::Spec as RoundedThreadSpec,
 };
 use std::f64::consts::PI;
 
@@ -327,6 +328,42 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ("bevel gear", "oblique section-only", Drawn),
     ("bevel gear", "axial detail", Drawn),
     ("bevel gear", "side detail", Drawn),
+    ("thread end relief", "axial", Drawn),
+    ("thread end relief", "axial reversed", Drawn),
+    ("thread end relief", "axial hidden", Drawn),
+    ("thread end relief", "side", Drawn),
+    ("thread end relief", "side hidden", Drawn),
+    ("thread end relief", "oblique", Drawn),
+    ("thread end relief", "oblique hidden", Drawn),
+    ("thread end relief", "axial section", Drawn),
+    ("thread end relief", "axial section-only", Drawn),
+    ("thread end relief", "axial finite depth", Drawn),
+    ("thread end relief", "side section", Drawn),
+    ("thread end relief", "side section-only", Drawn),
+    ("thread end relief", "side finite depth", Drawn),
+    ("thread end relief", "side lateral window", Drawn),
+    ("thread end relief", "oblique section", Drawn),
+    ("thread end relief", "oblique section-only", Drawn),
+    ("thread end relief", "axial detail", Drawn),
+    ("thread end relief", "side detail", Drawn),
+    ("rounded thread", "axial", Drawn),
+    ("rounded thread", "axial reversed", Drawn),
+    ("rounded thread", "axial hidden", Drawn),
+    ("rounded thread", "side", Drawn),
+    ("rounded thread", "side hidden", Drawn),
+    ("rounded thread", "oblique", Drawn),
+    ("rounded thread", "oblique hidden", Drawn),
+    ("rounded thread", "axial section", Drawn),
+    ("rounded thread", "axial section-only", Drawn),
+    ("rounded thread", "axial finite depth", Drawn),
+    ("rounded thread", "side section", Drawn),
+    ("rounded thread", "side section-only", Drawn),
+    ("rounded thread", "side finite depth", Drawn),
+    ("rounded thread", "side lateral window", Drawn),
+    ("rounded thread", "oblique section", Drawn),
+    ("rounded thread", "oblique section-only", Drawn),
+    ("rounded thread", "axial detail", Drawn),
+    ("rounded thread", "side detail", Drawn),
     ("za worm", "axial", Drawn),
     ("za worm", "axial reversed", Drawn),
     ("za worm", "axial hidden", Drawn),
@@ -1143,6 +1180,51 @@ pub fn families() -> Vec<(&'static str, Result<Solid, GeometryError>)> {
             "bevel gear",
             Solid::rust_spherical_bevel_gear_named(bevel(), id(), policy),
         ),
+        (
+            "thread end relief",
+            Solid::rust_helical_thread_end_relief(
+                HelicalThread {
+                    major_radius_mm: 3.,
+                    pitch_mm: 1.,
+                    length_mm: 6.6,
+                    depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().tan())
+                        - 1. / (4. * 3_f64.sqrt()),
+                    crest_width_mm: 0.125,
+                    lower_flank_deg: 30.,
+                    upper_flank_deg: 30.,
+                    radial_taper: 0.,
+                    starts: 1,
+                    left_hand: false,
+                },
+                Some(1. / (4. * 3_f64.sqrt())),
+                0.6,
+                0.1,
+                id(),
+                PlaneFrame::default(),
+                policy,
+            ),
+        ),
+        ("rounded thread", {
+            let p = 1.27;
+            let a = 27.5_f64.to_radians();
+            let r = p * a.cos() / (12. * (1. - a.sin()));
+            Solid::rust_rounded_thread(
+                RoundedThreadSpec {
+                    major_radius_mm: 3.175,
+                    pitch_mm: p,
+                    length_mm: 3.7 * p,
+                    depth_mm: p / (3. * a.tan()),
+                    crest_radius_mm: r,
+                    root_radius_mm: r,
+                    flank_angle_deg: 27.5,
+                    starts: 1,
+                    left_hand: false,
+                },
+                id(),
+                PlaneFrame::default(),
+                policy,
+            )
+        }),
         (
             "za worm",
             Solid::rust_za_worm_named(
