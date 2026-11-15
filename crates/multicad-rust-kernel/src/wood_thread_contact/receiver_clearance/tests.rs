@@ -471,3 +471,147 @@ fn actual_reversed_extent_and_filled_collinear_section_keep_material_semantics()
         Err(Error::Unsupported)
     ));
 }
+fn screw(length: f64) -> crate::profiled_screw::Screw {
+    use crate::{
+        head_profile::Head,
+        helical_thread::{Spec, Thread},
+        profiled_screw::{Screw, Spec as ScrewSpec},
+    };
+    let thread = Thread::new(Spec {
+        major_radius_mm: 3.92,
+        pitch_mm: 1.25,
+        length_mm: length,
+        depth_mm: 0.65,
+        crest_width_mm: 0.15,
+        lower_flank_deg: 30.,
+        upper_flank_deg: 30.,
+        starts: 1,
+        left_hand: false,
+        root_radius_mm: None,
+    })
+    .unwrap();
+    Screw::new_with_shank_radius(
+        thread,
+        4.,
+        ScrewSpec {
+            head: Head::Countersunk {
+                radius_mm: 8.,
+                height_mm: 4.4,
+                included_angle_deg: 90.,
+                edge_chamfer_mm: 0.05,
+                neck_radius_mm: 0.4,
+            },
+            shank_length_mm: 1.25,
+            socket_across_flats_mm: 5.,
+            socket_depth_mm: 3.2,
+            minimum_wall_mm: 0.5,
+        },
+    )
+    .unwrap()
+}
+#[test]
+fn actual_full_screw_clears_slot_but_long_tip_and_inward_head_do_not() {
+    let source = screw(8.35);
+    let member = profile(1.);
+    let receiving = ReceivingSweep {
+        source: &member,
+        frame: identity(),
+        occurrence: identity(),
+        reverse: false,
+    };
+    let placement = ProfiledScrewPlacement {
+        source: &source,
+        frame: Frame {
+            origin_mm: [20., 0.65, 40.],
+            axes: [[0., 0., 1.], [1., 0., 0.], [0., 1., 0.]],
+        },
+    };
+    let control = || ReceiverClearanceOptions {
+        maximum_work: 16_000_000,
+        ..options()
+    };
+    let now = std::time::Instant::now();
+    let proof =
+        certify_profiled_screw_receiver_clearance(placement, receiving, control(), &|| false)
+            .unwrap();
+    eprintln!(
+        "actual full screw {:?} work={} upper={}",
+        now.elapsed(),
+        proof.work_used,
+        proof.overlap_volume_upper_mm3
+    );
+    assert!(std::ptr::eq(proof.screw().source, &source));
+    assert!(std::ptr::eq(proof.receiver().source, &member));
+    assert_eq!(
+        proof.boundary_owners.len(),
+        source.profile().segments().count() + 1
+    );
+    assert!(proof.boundary_owners.last().unwrap().len() >= 2);
+    let mut narrowed_rings = member.rings().to_vec();
+    for edge in &mut narrowed_rings[0] {
+        if let Edge::Line { a, b } = edge {
+            for p in [a, b] {
+                if p[1] == 0. || p[1] == 4.5 {
+                    if p[0] == 16. {
+                        p[0] = 16.1;
+                    }
+                    if p[0] == 24. {
+                        p[0] = 23.9;
+                    }
+                }
+            }
+        }
+    }
+    let narrowed = Sweep::new(narrowed_rings, 100., 1e-7, 1e-5).unwrap();
+    // Actual occupied witnesses diagnose the deliberately altered control;
+    // clearance itself uses only whole-source bounds and original edge proofs.
+    assert!(narrowed.contains([23.95, 0.2, 40.], 0.));
+    assert!(source.contains([0., 3.95, -0.45], 0.));
+    assert!(matches!(
+        certify_profiled_screw_receiver_clearance(
+            placement,
+            ReceivingSweep {
+                source: &narrowed,
+                ..receiving
+            },
+            control(),
+            &|| false
+        ),
+        Err(Error::Unsupported)
+    ));
+    let long = screw(14.);
+    assert!(matches!(
+        certify_profiled_screw_receiver_clearance(
+            ProfiledScrewPlacement {
+                source: &long,
+                ..placement
+            },
+            receiving,
+            control(),
+            &|| false
+        ),
+        Err(Error::Unsupported)
+    ));
+    let mut inward = placement;
+    inward.frame.origin_mm[1] += 0.8;
+    assert!(matches!(
+        certify_profiled_screw_receiver_clearance(inward, receiving, control(), &|| false),
+        Err(Error::Unsupported)
+    ));
+    assert!(matches!(
+        certify_profiled_screw_receiver_clearance(placement, receiving, control(), &|| true),
+        Err(Error::Cancelled)
+    ));
+    assert!(matches!(
+        certify_profiled_screw_receiver_clearance(
+            placement,
+            receiving,
+            ReceiverClearanceOptions {
+                maximum_work: 1,
+                ..control()
+            },
+            &|| false
+        ),
+        Err(Error::Limit)
+    ));
+}

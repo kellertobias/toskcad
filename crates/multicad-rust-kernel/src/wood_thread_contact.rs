@@ -61,8 +61,9 @@ pub use hanger::{
 };
 mod receiver_clearance;
 pub use receiver_clearance::{
-    Line8ReceiverClearance, ReceiverClearanceOptions, ReceivingSweep,
-    certify_line8_receiver_clearance,
+    Line8ReceiverClearance, ProfiledScrewPlacement, ProfiledScrewReceiverClearance,
+    ReceiverClearanceOptions, ReceivingSweep, certify_line8_receiver_clearance,
+    certify_profiled_screw_receiver_clearance,
 };
 mod seated;
 mod separation;

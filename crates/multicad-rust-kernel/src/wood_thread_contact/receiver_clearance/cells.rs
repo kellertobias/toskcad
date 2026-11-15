@@ -107,6 +107,61 @@ impl Cell {
         if owners.len() < 3 || vertices.first() == vertices.last() {
             return Ok(None);
         }
+        Self::qualify(outer, vertices, owners, work)
+    }
+    pub fn mouth(
+        outer: &[Edge],
+        first: usize,
+        second: usize,
+        ranges: &[[Q; 2]; 2],
+        work: &mut Work<'_>,
+    ) -> R<Option<Self>> {
+        work.charge(64)?;
+        let (Edge::Line { a, b }, Edge::Line { a: c, b: d }) = (outer[first], outer[second]) else {
+            return Ok(None);
+        };
+        let a = point(a)?;
+        let b = point(b)?;
+        let c = point(c)?;
+        let d = point(d)?;
+        for along in 0..2 {
+            let across = 1 - along;
+            if a[across] != b[across]
+                || c[across] != d[across]
+                || a[along] != d[along]
+                || b[along] != c[along]
+                || a[along] == b[along]
+                || a[across] == c[across]
+            {
+                continue;
+            }
+            let low = a[along]
+                .clone()
+                .min(b[along].clone())
+                .min(ranges[along][0].clone());
+            let high = a[along]
+                .clone()
+                .max(b[along].clone())
+                .max(ranges[along][1].clone());
+            let mut vertices = vec![a.clone(), b.clone(), c.clone(), d.clone()];
+            for (i, v) in vertices.iter_mut().enumerate() {
+                let lower = if i == 0 || i == 3 {
+                    a[along] < b[along]
+                } else {
+                    b[along] < a[along]
+                };
+                v[along] = if lower { low.clone() } else { high.clone() };
+            }
+            return Self::qualify(outer, vertices, vec![first, second], work);
+        }
+        Ok(None)
+    }
+    fn qualify(
+        outer: &[Edge],
+        vertices: Vec<[Q; 2]>,
+        owners: Vec<usize>,
+        work: &mut Work<'_>,
+    ) -> R<Option<Self>> {
         let mut planes = Vec::with_capacity(vertices.len());
         let mut area = Q::zero();
         for i in 0..vertices.len() {
@@ -133,9 +188,37 @@ impl Cell {
         // Every foreign original owner is separated from the cell interior.
         // Arc disks (including finite endpoints) earn a conservative plane
         // separator. This also permits a winding-preserving chord homotopy.
-        for (index, edge) in outer.iter().copied().enumerate() {
+        for edge in outer.iter().copied() {
             work.charge(owners.len() + 1)?;
-            if owners.contains(&index) {
+            if let Edge::Line { a, b } = edge {
+                // Exact strict half-plane clipping: boundary contact is allowed.
+                // A line's AABB can straddle a corner even when the line does not.
+                let a = point(a)?;
+                let b = point(b)?;
+                let mut lo = Q::zero();
+                let mut hi = Q::from_integer(1.into());
+                let mut separated = false;
+                for p in &planes {
+                    work.charge(32)?;
+                    let v = evaluate(p, &a)?;
+                    let d = bounded(evaluate(p, &b)? - &v)?;
+                    if d.is_zero() {
+                        if v >= Q::zero() {
+                            separated = true;
+                            break;
+                        }
+                    } else {
+                        let t = bounded(-v / &d)?;
+                        if d > Q::zero() {
+                            hi = hi.min(t);
+                        } else {
+                            lo = lo.max(t);
+                        }
+                    }
+                }
+                if !separated && lo < hi {
+                    return Ok(None);
+                }
                 continue;
             }
             let bounds = edge_bounds(edge, work)?;

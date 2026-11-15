@@ -3,8 +3,13 @@
 use super::*;
 use crate::normal_sweep::{Edge, Sweep};
 mod cells;
+mod screw;
 mod stock;
 use cells::Cell;
+pub use screw::{
+    ProfiledScrewPlacement, ProfiledScrewReceiverClearance,
+    certify_profiled_screw_receiver_clearance,
+};
 use stock::StockEnvelope;
 #[derive(Clone, Copy)]
 pub struct ReceivingSweep<'a> {
