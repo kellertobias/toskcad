@@ -1,6 +1,8 @@
 //! The bevel member against the provider's exact membership predicate and
 //! independently evaluated surface normals.
 use super::*;
+
+mod drawn;
 use crate::{GeometryPolicy, RigidTransform, SphericalBevelGear};
 use multicad_core::document::EntityId;
 
