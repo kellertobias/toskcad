@@ -8,8 +8,9 @@ pub use clamp::{
     InsertClampContact, InsertClampRequirements, InsertClampSources, certify_insert_clamp,
 };
 pub use clocked::{
-    ClockedInsertMating, ClockedMatingOptions, certify_clocked_insert_mating,
-    certify_clocked_insert_screw_clearance,
+    ClockedInsertMating, ClockedLine8Mating, ClockedLine8Placement, ClockedMatingBounds,
+    ClockedMatingOptions, certify_clocked_insert_mating, certify_clocked_insert_screw_clearance,
+    certify_clocked_line8_mating,
 };
 pub(super) mod mating;
 pub use clearance::{ScrewClearance, ScrewClearanceRequirements, certify_insert_screw_clearance};

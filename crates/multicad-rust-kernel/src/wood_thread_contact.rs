@@ -62,10 +62,11 @@ pub use hanger::{
 mod seated;
 mod separation;
 pub use insert::{
-    ClockedInsertMating, ClockedMatingOptions, InsertClampContact, InsertClampRequirements,
-    InsertClampSources, InsertContact, InsertMating, InsetInsertContact, MatingExternal,
-    MatingRequirements, MatingScrew, ScrewClearance, ScrewClearanceRequirements,
-    certify_clocked_insert_mating, certify_clocked_insert_screw_clearance, certify_insert,
+    ClockedInsertMating, ClockedLine8Mating, ClockedLine8Placement, ClockedMatingBounds,
+    ClockedMatingOptions, InsertClampContact, InsertClampRequirements, InsertClampSources,
+    InsertContact, InsertMating, InsetInsertContact, MatingExternal, MatingRequirements,
+    MatingScrew, ScrewClearance, ScrewClearanceRequirements, certify_clocked_insert_mating,
+    certify_clocked_insert_screw_clearance, certify_clocked_line8_mating, certify_insert,
     certify_insert_clamp, certify_insert_mating, certify_insert_screw_clearance,
     certify_inset_insert,
 };
