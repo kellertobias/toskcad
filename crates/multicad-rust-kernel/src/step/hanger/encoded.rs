@@ -15,7 +15,7 @@ pub use decimal::FiniteDecimal;
 mod curve;
 pub use curve::{
     CapCurvePiece, LiteralCapCurve, LiteralVertex, LiteralVertices, RestrictedCapCurve,
-    RestrictionBounds, SidePole, SideSupport, SideSupportKind,
+    RestrictionBounds, SidePole, SideSupport, SideSupportBatch, SideSupportKind,
 };
 mod closed;
 mod finite;

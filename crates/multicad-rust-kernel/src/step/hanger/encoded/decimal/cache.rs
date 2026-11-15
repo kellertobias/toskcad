@@ -25,6 +25,9 @@ impl DecimalCache {
         }
         result
     }
+    pub(in crate::step::hanger) fn retained_bytes(&self) -> usize {
+        self.bytes
+    }
     pub(in crate::step::hanger) fn release(self, m: &mut Memory) {
         let bytes = self.bytes;
         drop(self);

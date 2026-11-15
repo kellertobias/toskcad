@@ -235,3 +235,96 @@ fn actual_side_support_limits_cancellation_and_invalid_owners_are_atomic() {
         assert_eq!(a.weight(), b.weight());
     }
 }
+#[test]
+fn actual_shared_batch_retains_every_source_owner_and_same_decimal_geometry() {
+    for (left, nb) in [(false, false), (true, true)] {
+        let source =
+            Hanger::new(crate::authored_hanger_bolt::tests::fixture(left, nb), None).unwrap();
+        let boundary = source.boundary(BoundaryOptions::default(), None).unwrap();
+        let field = EncodedField::prepare(&boundary, CurveOptions::default(), None).unwrap();
+        let mut requests = Vec::new();
+        for meridian in 0..field.meridians.len() {
+            let cell = field
+                .cells
+                .iter()
+                .position(|c| c.meridian == meridian)
+                .unwrap();
+            for kind in kinds(&field) {
+                requests.push((cell, kind));
+            }
+        }
+        let batch = field
+            .side_support_batch(&requests, DomainOptions::default(), None)
+            .unwrap();
+        assert_eq!(batch.supports().len(), 180);
+        assert!(batch.retained_bytes() > size_of::<SideSupportBatch<'_, '_>>());
+        assert!(batch.work_used() + field.work_used() < 16_000_000);
+        for (support, &(cell, kind)) in batch.supports().iter().zip(&requests) {
+            assert!(std::ptr::eq(support.field(), &field));
+            assert_eq!(support.source_cell(), cell);
+            assert_eq!(support.kind(), kind);
+            for pole in support.poles() {
+                for axis in 0..3 {
+                    let mut w = Work::new(16_000_000, None).unwrap();
+                    assert_eq!(
+                        exact_text(pole.step_point()[axis].as_str()),
+                        pole.point()[axis].number(&mut w).unwrap().0
+                    );
+                }
+            }
+        }
+        let work = batch.work_used();
+        drop(batch);
+        assert!(
+            field
+                .side_support_batch(
+                    &requests,
+                    DomainOptions {
+                        maximum_work: work,
+                        ..Default::default()
+                    },
+                    None
+                )
+                .is_ok()
+        );
+        assert!(matches!(
+            field.side_support_batch(
+                &requests,
+                DomainOptions {
+                    maximum_work: work - 1,
+                    ..Default::default()
+                },
+                None
+            ),
+            Err(Error::Limit)
+        ));
+        assert!(matches!(
+            field.side_support_batch(
+                &requests,
+                DomainOptions {
+                    maximum_bytes: field.retained_bytes(),
+                    ..Default::default()
+                },
+                None
+            ),
+            Err(Error::Limit)
+        ));
+        assert!(matches!(
+            field.side_support_batch(&requests, DomainOptions::default(), Some(&|| true)),
+            Err(Error::Cancelled)
+        ));
+        assert!(matches!(
+            field.side_support_batch(
+                &[(usize::MAX, kinds(&field)[0])],
+                DomainOptions::default(),
+                None
+            ),
+            Err(Error::Invalid)
+        ));
+        let empty = field
+            .side_support_batch(&[], DomainOptions::default(), None)
+            .unwrap();
+        assert!(empty.supports().is_empty());
+        eprintln!("source-owned exact batch left={left} nb={nb}work={work}");
+    }
+}

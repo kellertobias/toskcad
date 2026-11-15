@@ -7,7 +7,7 @@ mod affine_probe;
 mod correction;
 mod literal;
 mod side;
-pub use side::{SidePole, SideSupport, SideSupportKind};
+pub use side::{SidePole, SideSupport, SideSupportBatch, SideSupportKind};
 mod restrict;
 mod vertices;
 pub use vertices::{LiteralVertex, LiteralVertices};

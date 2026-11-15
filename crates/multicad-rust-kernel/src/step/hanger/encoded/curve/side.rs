@@ -83,7 +83,52 @@ impl SideSupport<'_, '_> {
         self.bytes
     }
 }
+/// Source-owned exact supports, sharing only mathematical constants. Distinct
+/// requests retain distinct source owners even if their numeric poles coincide.
+pub struct SideSupportBatch<'f, 's> {
+    supports: Vec<SideSupport<'f, 's>>,
+    work: usize,
+    bytes: usize,
+}
+impl<'f, 's> SideSupportBatch<'f, 's> {
+    pub fn supports(&self) -> &[SideSupport<'f, 's>] {
+        &self.supports
+    }
+    pub fn work_used(&self) -> usize {
+        self.work
+    }
+    pub fn retained_bytes(&self) -> usize {
+        self.bytes
+    }
+}
 impl<'s> EncodedField<'s> {
+    /// All requests use one caller work/byte balance and one exact constant
+    /// cache. Preparation of the borrowed field is charged separately.
+    pub fn side_support_batch(
+        &self,
+        requests: &[(usize, SideSupportKind)],
+        options: DomainOptions,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<SideSupportBatch<'_, 's>, Error> {
+        let (mut w, mut m) = crate::step::hanger::domain::ledgers(options, self.bytes, interrupt)?;
+        m.add(super::super::SCRATCH)?;
+        let base = m.used;
+        m.add(size_of::<SideSupportBatch<'_, '_>>())?;
+        let mut supports = m.allocate(requests.len(), &mut w)?;
+        let mut cache = super::super::decimal::DecimalCache::new(&mut m, &mut w)?;
+        for &(cell, kind) in requests {
+            supports.push(prepare_cached(
+                self, cell, kind, &mut cache, &mut m, &mut w,
+            )?);
+        }
+        cache.release(&mut m);
+        w.charge(1)?;
+        Ok(SideSupportBatch {
+            supports,
+            work: w.used,
+            bytes: m.used - base,
+        })
+    }
     pub fn side_support(
         &self,
         cell: usize,
@@ -107,6 +152,20 @@ fn prepare<'f, 's>(
     m: &mut Memory,
     w: &mut Work<'_>,
 ) -> Result<SideSupport<'f, 's>, Error> {
+    let mut cache = super::super::decimal::DecimalCache::new(m, w)?;
+    let output = prepare_cached(field, cell, kind, &mut cache, m, w)?;
+    cache.release(m);
+    Ok(output)
+}
+fn prepare_cached<'f, 's>(
+    field: &'f EncodedField<'s>,
+    cell: usize,
+    kind: SideSupportKind,
+    cache: &mut super::super::decimal::DecimalCache,
+    m: &mut Memory,
+    w: &mut Work<'_>,
+) -> Result<SideSupport<'f, 's>, Error> {
+    let cache_before = cache.retained_bytes();
     let before = m.used;
     let start_work = w.used;
     w.charge(1)?;
@@ -149,7 +208,6 @@ fn prepare<'f, 's>(
     };
     m.add(size_of::<SideSupport<'_, '_>>())?;
     let mut poles = m.allocate(count, w)?;
-    let mut cache = super::super::decimal::DecimalCache::new(m, w)?;
     for i in 0..count {
         let (u, v) = if let Some(u) = fixed_u {
             (u, i)
@@ -184,7 +242,6 @@ fn prepare<'f, 's>(
             step_weight,
         });
     }
-    cache.release(m);
     w.charge(1)?;
     Ok(SideSupport {
         field,
@@ -193,7 +250,7 @@ fn prepare<'f, 's>(
         parameter,
         poles,
         work: w.used - start_work,
-        bytes: m.used - before,
+        bytes: m.used - before - (cache.retained_bytes() - cache_before),
     })
 }
 #[cfg(test)]
