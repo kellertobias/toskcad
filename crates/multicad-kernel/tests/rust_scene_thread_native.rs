@@ -131,13 +131,14 @@ fn cases(origin: [f64; 3]) -> Vec<(String, DrawingProjection)> {
     cases
 }
 
-fn check(label: &str, solid: &Solid, origin: [f64; 3]) {
+fn check(label: &str, solid: &Solid, origin: [f64; 3]) -> Vec<String> {
     let only = std::env::var("THREAD_CASE").ok();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("thread.step");
     solid.write_step(&path).unwrap();
     let native = Solid::read_step(&path, solid.geometry_policy()).unwrap();
     let mut failures = Vec::new();
+    let mut unavailable = Vec::new();
     for (name, options) in cases(origin) {
         let label = format!("{label} {name}");
         if only
@@ -147,7 +148,25 @@ fn check(label: &str, solid: &Solid, origin: [f64; 3]) {
             continue;
         }
         let rust = project(solid, options);
-        let reference = project(&native, options);
+        // OpenCascade cannot publish every curve family it computes; such a
+        // case has no native reference and is reported, never skipped silently.
+        let reference = match project_drawing(
+            &[DrawingSolid {
+                solid: &native,
+                hatch: None,
+            }],
+            options,
+        ) {
+            Ok(reference) => reference,
+            Err(error) => {
+                println!(
+                    "{{\"case\":\"{label}\",\"native_unavailable\":\"{}\"}}",
+                    error.message
+                );
+                unavailable.push(label.clone());
+                continue;
+            }
+        };
         let tangent = project(
             solid,
             DrawingProjection {
@@ -193,15 +212,92 @@ fn check(label: &str, solid: &Solid, origin: [f64; 3]) {
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");
+    unavailable
 }
 
 #[test]
 fn thread_end_relief_matches_native_open_cascade() {
-    check("relief", &relief(), [0.2, 0.1, 3.3]);
+    assert!(check("relief", &relief(), [0.2, 0.1, 3.3]).is_empty());
+}
+
+fn rounded_bore() -> Solid {
+    let p = 1.27;
+    let a = 27.5_f64.to_radians();
+    let r = p * a.cos() / (12. * (1. - a.sin()));
+    Solid::rust_rounded_thread_bore(
+        Spec {
+            major_radius_mm: 3.175,
+            pitch_mm: p,
+            length_mm: 3.7 * p,
+            depth_mm: p / (3. * a.tan()),
+            crest_radius_mm: r,
+            root_radius_mm: r,
+            flank_angle_deg: 27.5,
+            starts: 1,
+            left_hand: false,
+        },
+        5.,
+        EntityId::new(),
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+    )
+    .unwrap()
+}
+
+fn chamfered(terminal: bool) -> Solid {
+    let root = 1. / (4. * 3_f64.sqrt());
+    Solid::rust_helical_thread_entry_chamfer(
+        HelicalThread {
+            major_radius_mm: 3.,
+            pitch_mm: 1.,
+            length_mm: 6.6,
+            depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().tan()) - root,
+            crest_width_mm: 0.125,
+            lower_flank_deg: 30.,
+            upper_flank_deg: 30.,
+            radial_taper: 0.,
+            starts: 1,
+            left_hand: false,
+        },
+        Some(root),
+        0.3,
+        terminal.then_some(multicad_kernel::rust_kernel::thread_end_relief::Intent {
+            width_mm: 0.6,
+            radial_depth_mm: 0.1,
+        }),
+        EntityId::new(),
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn thread_entry_chamfer_matches_native_open_cascade() {
+    // Cuts through the cone zone and through the whole thread.
+    let mut unavailable = check("chamfer", &chamfered(false), [0.2, 0.1, 0.15]);
+    unavailable.extend(check("chamfer relief", &chamfered(true), [0.2, 0.1, 3.3]));
+    // Measured: OpenCascade 7.9.3 cannot publish any side or oblique cut that
+    // crosses the cone zone of the imported chamfer ("Projected curve family
+    // is unsupported"): 7 of the 12 cuts. Every axial cut and the oblique cut
+    // beside the cone are compared; the others are certified against the
+    // source in drawing::scene::tests.
+    assert!(
+        unavailable.len() == 7
+            && unavailable
+                .iter()
+                .all(|label| label.contains("side") || label.contains("oblique")),
+        "{unavailable:?}"
+    );
+}
+
+#[test]
+fn rounded_thread_bore_matches_native_open_cascade() {
+    assert!(check("bore", &rounded_bore(), [0.2, 0.1, 2.35]).is_empty());
 }
 
 #[test]
 fn rounded_thread_matches_native_open_cascade() {
-    check("rounded", &rounded(false), [0.2, 0.1, 2.35]);
-    check("rounded left", &rounded(true), [0.2, 0.1, 2.35]);
+    assert!(check("rounded", &rounded(false), [0.2, 0.1, 2.35]).is_empty());
+    assert!(check("rounded left", &rounded(true), [0.2, 0.1, 2.35]).is_empty());
 }

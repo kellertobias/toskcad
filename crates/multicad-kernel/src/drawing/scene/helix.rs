@@ -9,12 +9,13 @@
 //!
 //! Exactness: rails, cap curves, outline curves and section curves are exact
 //! evaluable paths (closed-form points, or closed-form roots of the meridian
-//! line and the profile). Material along a line is isolated with a proven
-//! Lipschitz bound, so no crossing is lost except where the line stays within
-//! about 1e-12 of the surface. The flattening of helical paths and the
-//! location of a few events on them (outline existence, z-range ends, cap
-//! levels of section branches) use dense sampling and bisection on the exact
-//! functions rather than a proven bound.
+//! line and the profile). Every event is isolated with a proven bound: line
+//! material, section sweep events, outline existence (roots of the
+//! discriminant), contour ends on the caps, and branch ends on the caps (the
+//! exact cap chord ends). Helices and cap curves flatten with proven
+//! curvature bounds. Contour and section branch paths still flatten
+//! adaptively: near a branch end their parametrisation has a square-root
+//! singularity, so no uniform derivative bound exists.
 use super::paths::{Lift, Segment, add, dot3, scaled};
 use super::prism::{Band, Prism};
 use super::profile::merge;
@@ -97,6 +98,39 @@ impl Span {
             Self::Line { a, b } => (a[1] == b[1]).then_some(0.5 * (a[0] + b[0])),
             Self::Arc { center, range, .. } => {
                 (range[0] <= center[0] && center[0] <= range[1]).then_some(center[0])
+            }
+        }
+    }
+
+    /// Phases inside the span where the radius equals `radius`.
+    fn at_radius(&self, radius: f64) -> Vec<f64> {
+        let [lo, hi] = self.range();
+        let within = |phi: &f64| *phi > lo && *phi < hi;
+        match *self {
+            Self::Line { a, b } => {
+                if a[1] == b[1] || (a[1] - radius) * (b[1] - radius) >= 0. {
+                    return Vec::new();
+                }
+                vec![a[0] + (b[0] - a[0]) * (radius - a[1]) / (b[1] - a[1])]
+                    .into_iter()
+                    .filter(within)
+                    .collect()
+            }
+            Self::Arc {
+                center,
+                radius: rho,
+                sign,
+                ..
+            } => {
+                let dr = radius - center[1];
+                if sign * dr < 0. || dr.abs() >= rho {
+                    return Vec::new();
+                }
+                let w = ((rho - dr.abs()) * (rho + dr.abs())).sqrt();
+                [center[0] - w, center[0] + w]
+                    .into_iter()
+                    .filter(within)
+                    .collect()
             }
         }
     }
@@ -336,6 +370,48 @@ impl Profile {
     }
 }
 
+/// Phases (z in the meridian chart of a placed span) where a span meets the
+/// entry cone's generator `r = entry + slope z`, inside the cone's length.
+fn cone_crossings(span: &Span, cone: &Cone) -> Vec<f64> {
+    let [lo, hi] = span.range();
+    let mut output = Vec::new();
+    match *span {
+        Span::Line { a, b } => {
+            let fa = a[1] - cone.radius(a[0]);
+            let fb = b[1] - cone.radius(b[0]);
+            if fa != fb && (fa > 0.) != (fb > 0.) {
+                output.push(a[0] + (b[0] - a[0]) * fa / (fa - fb));
+            }
+        }
+        Span::Arc {
+            center,
+            radius,
+            sign,
+            ..
+        } => {
+            // (z - zc)^2 + (e + s z - rc)^2 = radius^2.
+            let k = cone.slope;
+            let w = cone.entry - center[1];
+            let qa = 1. + k * k;
+            let qb = -2. * center[0] + 2. * k * w;
+            let qc = center[0] * center[0] + w * w - radius * radius;
+            let disc = qb * qb - 4. * qa * qc;
+            if disc >= 0. {
+                let root = disc.sqrt();
+                for z in [(-qb - root) / (2. * qa), (-qb + root) / (2. * qa)] {
+                    if sign * (cone.radius(z) - center[1]) >= 0. {
+                        output.push(z);
+                    }
+                }
+            }
+        }
+    }
+    output
+        .into_iter()
+        .filter(|z| *z >= lo && *z <= hi && *z >= 0. && *z <= cone.length)
+        .collect()
+}
+
 /// The center of the circle through three points.
 fn circle(a: P2, b: P2, c: P2) -> Option<P2> {
     let d = 2. * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
@@ -350,7 +426,13 @@ fn circle(a: P2, b: P2, c: P2) -> Option<P2> {
 }
 
 /// Distance from the surface, in millimetres, below which a line is not
-/// resolved further.
+/// resolved further. Harmless: an unresolved stretch is one where the line
+/// stays within this distance of the surface on both sides, so any material
+/// it misses is thinner than 1e-10 mm across the line and at most as long as
+/// the stretch, where the Lipschitz bound times the length is below the same
+/// distance. The engine hides only behind more than 1e-6 of the scene scale,
+/// and the linear tolerance of every source is at least 1e-7 mm, so neither
+/// visibility nor any published boundary depends on such material.
 const RESOLVED: f64 = 1e-10;
 
 /// Roots of `f` on `[a, b]` with `|f'| <= lipschitz`: a stretch is excluded
@@ -362,6 +444,9 @@ fn isolate(
     output: &mut Vec<f64>,
 ) -> Result<(), GeometryError> {
     let width = 1e-13 * a.abs().max(b.abs()).max(1.);
+    // A function as steep as its bound reaches equality in the exclusion
+    // test at a simple root; rounding must never turn that into exclusion.
+    let lipschitz = lipschitz * (1. + 1e-6) + 1e-12;
     let mut pending = vec![(a, f(a), b, f(b))];
     let mut work = 0usize;
     while let Some((a, fa, b, fb)) = pending.pop() {
@@ -372,13 +457,16 @@ fn isolate(
                 "Thread drawing root isolation exceeded its work budget",
             ));
         }
-        if fa.abs() + fb.abs() > lipschitz * (b - a) {
+        // A sign change proves a root; rounding of the two values must never
+        // exclude it.
+        let change = (fa <= 0.) != (fb <= 0.);
+        if !change && fa.abs() + fb.abs() > lipschitz * (b - a) {
             continue;
         }
         // Where the function cannot leave a band of `RESOLVED` around zero,
         // the line stays that close to the surface: keep only sign changes.
         if b - a <= width || lipschitz * (b - a) <= RESOLVED {
-            if (fa <= 0.) != (fb <= 0.) {
+            if change {
                 output.push(0.5 * (a + b));
             }
             continue;
@@ -517,8 +605,15 @@ impl Path for Cap {
     }
 
     fn flatten(&self, tolerance_mm: f64) -> Vec<f64> {
-        let start = ((self.range[1] - self.range[0]).abs() * 16.).ceil() as usize;
-        adaptive(&|t| self.point(t), tolerance_mm, start)
+        // |d2P/dtheta2| <= k^2 |R''| + 2 |k R'| + R inside one span, so a
+        // chord over an angle h deviates by at most that bound times h^2 / 8.
+        let profile = &self.law.profile;
+        let k = self.law.rate.abs();
+        let second = k * k * profile.curvature + 2. * k * profile.slope + profile.maximum;
+        let step = (8. * tolerance_mm / second).sqrt().min(0.5);
+        let count = ((self.range[1] - self.range[0]).abs() / step).ceil();
+        let count = (count as usize).clamp(1, 1 << 20);
+        (0..=count).map(|i| i as f64 / count as f64).collect()
     }
 
     fn paper(&self, [from, to]: [f64; 2]) -> Option<Curve> {
@@ -550,6 +645,19 @@ struct Outline {
 impl Outline {
     /// The outline angle at a phase, if the branch exists there.
     fn angle(law: &Law, span: &Span, view: P3, sign: f64, phi: f64) -> Option<f64> {
+        Self::angle_within(law, span, view, sign, phi, 0.)
+    }
+
+    /// As `angle`, admitting the branch up to a relative `slack` beyond its
+    /// end, where the acos term is evaluated at its limit.
+    fn angle_within(
+        law: &Law,
+        span: &Span,
+        view: P3,
+        sign: f64,
+        phi: f64,
+        slack: f64,
+    ) -> Option<f64> {
         let [r, slope] = span.eval(phi);
         let rho = view[0].hypot(view[1]);
         let alpha = view[1].atan2(view[0]);
@@ -557,20 +665,18 @@ impl Outline {
         let b = law.rate * slope * rho;
         let c = -r * slope * view[2];
         let norm = a.hypot(b);
-        if norm <= 1e-300 || c.abs() > norm {
+        if norm <= 1e-300 || c.abs() > norm * (1. + slack) {
             return None;
         }
         // atan2(b, a) is continuous as pi + atan2(-b, -a) since a < 0.
-        Some(alpha + PI + (-b).atan2(-a) + sign * (c / norm).acos())
+        Some(alpha + PI + (-b).atan2(-a) + sign * (c / norm).clamp(-1., 1.).acos())
     }
 
     fn at(&self, phi: f64) -> P3 {
-        let theta =
-            Self::angle(&self.law, &self.span, self.view, self.sign, phi).unwrap_or_else(|| {
-                // At a branch end the root is the limit of the acos term.
-                let inner = Self::angle(&self.law, &self.span, self.view, self.sign, phi);
-                inner.unwrap_or(0.)
-            });
+        // Branch ends are isolated roots of the discriminant, where rounding
+        // can put the acos argument just beyond one: take its limit there.
+        let theta = Self::angle_within(&self.law, &self.span, self.view, self.sign, phi, 1e-9)
+            .unwrap_or(f64::NAN);
         let r = self.span.eval(phi)[0];
         self.law
             .surface(r, theta, phi + self.law.rate * theta + self.copy)
@@ -686,13 +792,192 @@ pub(in crate::drawing) struct Thread {
     /// Material z range of the threaded part.
     z: [f64; 2],
     neck: Option<(f64, [f64; 2], Prism)>,
+    /// For a threaded bore: the outer stock radius and its cylinder. The
+    /// material is then outside the helicoid and inside the stock.
+    stock: Option<(f64, Prism)>,
+    /// For an entry chamfer: the cone trimming the crests near the entry.
+    cone: Option<Cone>,
     tolerance: f64,
+}
+
+/// The entry cone `r = entry + slope z` on `0 <= z <= length`; beyond it the
+/// thread is untrimmed.
+#[derive(Clone, Copy, Debug)]
+struct Cone {
+    entry: f64,
+    length: f64,
+    slope: f64,
+}
+
+impl Cone {
+    fn radius(&self, z: f64) -> f64 {
+        self.entry + self.slope * z
+    }
+
+    /// The seam station where the helicoid radius `r` meets the cone.
+    fn station(&self, r: f64) -> f64 {
+        ((r - self.entry) / self.slope).clamp(0., self.length)
+    }
+
+    fn keeps(&self, r: f64, z: f64, tolerance: f64) -> bool {
+        z >= self.length - tolerance || r <= self.radius(z) + tolerance
+    }
+
+    /// Parameters of the unit-direction local line `s + t d` inside the
+    /// cone's solid: past its end, or within its radius.
+    fn line(&self, s: P3, d: P3) -> Vec<[f64; 2]> {
+        let far = 1e9;
+        let mut output = Vec::new();
+        // Past the cone's end.
+        if d[2].abs() <= 1e-15 {
+            if s[2] >= self.length {
+                output.push([-far, far]);
+            }
+        } else {
+            let t = (self.length - s[2]) / d[2];
+            output.push(if d[2] > 0. { [t, far] } else { [-far, t] });
+        }
+        // r^2 < C(z)^2 with C(z) > 0.
+        let k = self.slope;
+        let c0 = self.entry + k * s[2];
+        let a = d[0] * d[0] + d[1] * d[1] - k * k * d[2] * d[2];
+        let b = 2. * (s[0] * d[0] + s[1] * d[1]) - 2. * k * d[2] * c0;
+        let c = s[0] * s[0] + s[1] * s[1] - c0 * c0;
+        let mut inside: Vec<[f64; 2]> = Vec::new();
+        if a.abs() <= 1e-15 {
+            if b.abs() <= 1e-15 {
+                if c < 0. {
+                    inside.push([-far, far]);
+                }
+            } else {
+                let t = -c / b;
+                inside.push(if b > 0. { [-far, t] } else { [t, far] });
+            }
+        } else {
+            let disc = b * b - 4. * a * c;
+            if disc > 0. {
+                let root = disc.sqrt();
+                let [t1, t2] = [(-b - root) / (2. * a), (-b + root) / (2. * a)];
+                let [t1, t2] = [t1.min(t2), t1.max(t2)];
+                if a > 0. {
+                    inside.push([t1, t2]);
+                } else {
+                    inside.push([-far, t1]);
+                    inside.push([t2, far]);
+                }
+            } else if a < 0. {
+                inside.push([-far, far]);
+            }
+        }
+        // Keep the nappe with a positive radius.
+        let positive = if d[2].abs() <= 1e-15 {
+            if c0 > 0. { [-far, far] } else { [0., 0.] }
+        } else {
+            let t = -c0 / (k * d[2]);
+            if k * d[2] > 0. { [t, far] } else { [-far, t] }
+        };
+        output.extend(profile::intersect(&merge(inside, 0.), &[positive]));
+        merge(output, 0.)
+    }
+}
+
+/// A seam where the helicoid meets the entry cone: for each phase in range
+/// the point at the cone station of its radius.
+struct Seam {
+    law: Arc<Law>,
+    span: Span,
+    cone: Cone,
+    copy: f64,
+    range: [f64; 2],
+}
+
+impl Seam {
+    fn at(&self, phi: f64) -> (P3, f64, f64) {
+        let r = self.span.eval(phi)[0];
+        let z = self.cone.station(r);
+        let theta = (z - phi - self.copy) / self.law.rate;
+        ([r, theta, z], r, theta)
+    }
+}
+
+impl Path for Seam {
+    fn point(&self, t: f64) -> P3 {
+        let phi = self.range[0] + (self.range[1] - self.range[0]) * t;
+        let ([r, theta, z], _, _) = self.at(phi);
+        self.law.surface(r, theta, z)
+    }
+
+    fn flatten(&self, tolerance_mm: f64) -> Vec<f64> {
+        adaptive(&|t| self.point(t), tolerance_mm, 16)
+    }
+
+    fn paper(&self, [from, to]: [f64; 2]) -> Option<Curve> {
+        // On a cylindrical band the seam is a circle at the cone's end.
+        let r = self.span.flat()?;
+        let law = &self.law;
+        let c = law.view([0., 0., self.cone.length]);
+        let [x, y] = [law.axes[0], law.axes[1]];
+        let theta = |t: f64| {
+            let phi = self.range[0] + (self.range[1] - self.range[0]) * t;
+            (self.cone.length - phi - self.copy) / law.rate
+        };
+        let [a, b] = [theta(from), theta(to)];
+        paths::conic(
+            [c[0], c[1]],
+            [r * x[0], r * x[1]],
+            [r * y[0], r * y[1]],
+            a,
+            b - a,
+        )
+    }
+}
+
+/// The section of the entry cone by the local plane `n . p = c`, over the
+/// angles in `range`: `z = (c - q entry) / (q slope + n_z)`.
+struct ConeCut {
+    law: Arc<Law>,
+    cone: Cone,
+    plane: (P3, f64),
+    range: [f64; 2],
+}
+
+impl ConeCut {
+    fn local(cone: &Cone, (n, c): (P3, f64), theta: f64) -> Option<P3> {
+        let q = n[0] * theta.cos() + n[1] * theta.sin();
+        let denominator = q * cone.slope + n[2];
+        if denominator.abs() <= 1e-14 {
+            return None;
+        }
+        let z = (c - q * cone.entry) / denominator;
+        let r = cone.radius(z);
+        Some([r * theta.cos(), r * theta.sin(), z])
+    }
+}
+
+impl Path for ConeCut {
+    fn point(&self, t: f64) -> P3 {
+        let theta = self.range[0] + (self.range[1] - self.range[0]) * t;
+        let p = Self::local(&self.cone, self.plane, theta).unwrap_or([f64::NAN; 3]);
+        self.law.view(p)
+    }
+
+    fn flatten(&self, tolerance_mm: f64) -> Vec<f64> {
+        adaptive(&|t| self.point(t), tolerance_mm, 16)
+    }
+
+    fn paper(&self, _: [f64; 2]) -> Option<Curve> {
+        None
+    }
 }
 
 pub(in crate::drawing) fn member(
     solid: &Solid,
     view: &View,
 ) -> Option<Result<Box<dyn Member>, GeometryError>> {
+    build(solid, view).map(|built| built.map(|thread| Box::new(thread) as Box<dyn Member>))
+}
+
+fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
     let invalid = || {
         err(
             GeometryErrorKind::InvalidResult,
@@ -728,7 +1013,7 @@ pub(in crate::drawing) fn member(
                 }],
                 tolerance,
             )?;
-            Ok(Box::new(Thread {
+            Ok(Thread {
                 law: Arc::new(Law {
                     origin,
                     axes,
@@ -738,8 +1023,100 @@ pub(in crate::drawing) fn member(
                 }),
                 z: [0., span[0]],
                 neck: Some((neck, span, prism)),
+                stock: None,
+                cone: None,
                 tolerance,
-            }) as Box<dyn Member>)
+            })
+        })());
+    }
+    if let Some(data) = solid.rust_thread_entry_chamfer_data() {
+        let chamfer = data.source;
+        let tool = chamfer.source_thread();
+        let Some(profile) = Profile::from_helical(tool) else {
+            return Some(Err(invalid()));
+        };
+        let (origin, axes) = place(data.frame);
+        let spec = tool.spec();
+        let material = chamfer.material_length_mm();
+        let cone = Cone {
+            entry: chamfer.entry_radius_mm(),
+            length: chamfer.entry_length_mm(),
+            slope: (spec.major_radius_mm - chamfer.entry_radius_mm()) / chamfer.entry_length_mm(),
+        };
+        return Some((|| {
+            let neck = match chamfer.terminal_relief() {
+                Some(relief) => {
+                    let radius = relief.neck_radius_mm();
+                    let span = [material, chamfer.full_length_mm()];
+                    let prism = Prism::new(
+                        origin,
+                        axes,
+                        vec![Band {
+                            rings: vec![vec![Edge::Planar(normal_sweep::Edge::Circle {
+                                center: [0.; 2],
+                                radius_mm: radius,
+                                clockwise: false,
+                            })]],
+                            axis: span,
+                        }],
+                        tolerance,
+                    )?;
+                    Some((radius, span, prism))
+                }
+                None => None,
+            };
+            Ok(Thread {
+                law: Arc::new(Law {
+                    origin,
+                    axes,
+                    profile,
+                    rate: tool.helical_rate(),
+                    starts: spec.starts,
+                }),
+                z: [0., material],
+                neck,
+                stock: None,
+                cone: Some(cone),
+                tolerance,
+            })
+        })());
+    }
+    if let Some(data) = solid.rust_rounded_thread_bore_data() {
+        let thread = data.bore.thread();
+        let Some(profile) = Profile::from_rounded(thread) else {
+            return Some(Err(invalid()));
+        };
+        let (origin, axes) = place(data.frame);
+        let spec = thread.spec();
+        let radius = data.bore.radius_mm();
+        return Some((|| {
+            let prism = Prism::new(
+                origin,
+                axes,
+                vec![Band {
+                    rings: vec![vec![Edge::Planar(normal_sweep::Edge::Circle {
+                        center: [0.; 2],
+                        radius_mm: radius,
+                        clockwise: false,
+                    })]],
+                    axis: [0., spec.length_mm],
+                }],
+                tolerance,
+            )?;
+            Ok(Thread {
+                law: Arc::new(Law {
+                    origin,
+                    axes,
+                    profile,
+                    rate: thread.helical_rate(),
+                    starts: spec.starts,
+                }),
+                z: [0., spec.length_mm],
+                neck: None,
+                stock: Some((radius, prism)),
+                cone: None,
+                tolerance,
+            })
         })());
     }
     let data = solid.rust_rounded_thread_data()?;
@@ -748,7 +1125,7 @@ pub(in crate::drawing) fn member(
     };
     let (origin, axes) = place(data.frame);
     let spec = data.thread.spec();
-    Some(Ok(Box::new(Thread {
+    Some(Ok(Thread {
         law: Arc::new(Law {
             origin,
             axes,
@@ -758,8 +1135,10 @@ pub(in crate::drawing) fn member(
         }),
         z: [0., spec.length_mm],
         neck: None,
+        stock: None,
+        cone: None,
         tolerance,
-    })))
+    }))
 }
 
 impl Thread {
@@ -885,11 +1264,11 @@ impl Thread {
             )
         };
         let phase_rate = d[2].abs() + rate.abs() * rho / profile.minimum;
-        let lipschitz = profile.slope * phase_rate + rho + 1e-12;
+        let lipschitz = (profile.slope * phase_rate + rho) * (1. + 1e-6) + 1e-12;
         let second = profile.curvature * phase_rate * phase_rate
             + profile.slope * rate.abs() * 2. * rho * rho / (profile.minimum * profile.minimum)
-            + rho * rho / profile.minimum
-            + 1e-12;
+            + rho * rho / profile.minimum;
+        let second = second * (1. + 1e-6) + 1e-12;
         let width = 1e-13 * a.abs().max(b.abs()).max(1.);
         let mut output = Vec::new();
         let mut pending = vec![(a, g(a), b, g(b))];
@@ -903,7 +1282,8 @@ impl Thread {
                 ));
             }
             let h = b - a;
-            if fa.abs() + fb.abs() > lipschitz * h {
+            let change = (fa <= 0.) != (fb <= 0.);
+            if !change && fa.abs() + fb.abs() > lipschitz * h {
                 continue;
             }
             // Second order: from either end, within one span of the profile.
@@ -913,11 +1293,11 @@ impl Thread {
                 let room = (phi - lo).min(hi - phi);
                 phase_rate * h < room && value.abs() > derivative.abs() * h + 0.5 * second * h * h
             });
-            if excluded {
+            if excluded && !change {
                 continue;
             }
             if h <= width || lipschitz * h <= RESOLVED {
-                if (fa <= 0.) != (fb <= 0.) {
+                if change {
                     output.push(0.5 * (a + b));
                 }
                 continue;
@@ -1006,6 +1386,20 @@ impl Thread {
             });
         }
         let mut spans = self.threaded(s, d)?;
+        if let Some(cone) = &self.cone {
+            spans = profile::intersect(&spans, &cone.line(s, d));
+        }
+        if let Some((_, prism)) = &self.stock {
+            // Inside the stock cylinder and outside the thread's helicoid.
+            let outer = match prism.line(self.law.view(s), self.view_vector(d)) {
+                Some(outer) => outer?,
+                None => Vec::new(),
+            };
+            return Ok(profile::exclusive(&outer, &spans, 0.)
+                .into_iter()
+                .filter(|[a, b]| b > a)
+                .collect());
+        }
         if let Some((_, _, prism)) = &self.neck
             && let Some(neck) = prism.line(self.law.view(s), self.view_vector(d))
         {
@@ -1041,7 +1435,18 @@ impl Thread {
         let rate = self.rate();
         for m in 0..self.law.starts {
             let base = phi + f64::from(m) * self.pitch();
-            let ends = self.z.map(|z| (z - base) / rate);
+            // On an entry chamfer the helix starts at its cone station.
+            let low = self.cone.map_or(self.z[0], |cone| {
+                if radius > cone.entry {
+                    self.z[0].max(cone.station(radius))
+                } else {
+                    self.z[0]
+                }
+            });
+            if self.z[1] - low <= 1e-12 {
+                continue;
+            }
+            let ends = [low, self.z[1]].map(|z| (z - base) / rate);
             let [a, b] = [ends[0].min(ends[1]), ends[0].max(ends[1])];
             // Split where the radius turns perpendicular to the sight: there
             // the helix touches the contour of the cylinder through it, and
@@ -1077,31 +1482,13 @@ impl Thread {
 
     /// The cap curve at `level` as pieces of at most a quarter turn.
     fn cap(&self, level: f64) -> Vec<Arc<dyn Path>> {
-        let profile = &self.law.profile;
-        let rate = self.rate();
         let mut output: Vec<Arc<dyn Path>> = Vec::new();
-        // theta in [0, 2pi): phi = level - rate * theta.
-        let mut cuts = vec![0., TAU];
-        for m in self.copies() {
-            for span in &profile.spans {
-                let phi = span.range()[0] + m as f64 * self.pitch();
-                let theta = (level - phi) / rate;
-                if theta > 0. && theta < TAU {
-                    cuts.push(theta);
-                }
-            }
-        }
-        cuts.sort_by(f64::total_cmp);
-        cuts.dedup_by(|a, b| (*a - *b).abs() <= 1e-14);
-        for pair in cuts.windows(2) {
-            let mid = 0.5 * (pair[0] + pair[1]);
-            let (index, base) = profile.locate(level - rate * mid);
-            let span = profile.spans[index].shifted(base);
-            let count = ((pair[1] - pair[0]) / (PI / 2.)).ceil().max(1.) as usize;
+        for (span, [a, b], _) in self.cap_pieces(level) {
+            let count = ((b - a) / (PI / 2.)).ceil().max(1.) as usize;
             for k in 0..count {
                 let range = [
-                    pair[0] + (pair[1] - pair[0]) * k as f64 / count as f64,
-                    pair[0] + (pair[1] - pair[0]) * (k + 1) as f64 / count as f64,
+                    a + (b - a) * k as f64 / count as f64,
+                    a + (b - a) * (k + 1) as f64 / count as f64,
                 ];
                 output.push(Arc::new(Cap {
                     law: self.law.clone(),
@@ -1114,7 +1501,7 @@ impl Thread {
         output
     }
 
-    fn outlines(&self, output: &mut Vec<Candidate>) {
+    fn outlines(&self, output: &mut Vec<Candidate>) -> Result<(), GeometryError> {
         let view = self.local_vector([0., 0., 1.]);
         let rho = view[0].hypot(view[1]);
         let profile = &self.law.profile;
@@ -1127,7 +1514,11 @@ impl Thread {
                     self.helix(phi, span.eval(phi)[0], Kind::Outline, output);
                 }
             }
-            return;
+            return Ok(());
+        }
+        let mut ends = self.contour_on_caps(view)?;
+        if self.cone.is_some() {
+            ends.extend(self.contour_on_seams(view)?);
         }
         for span in &profile.spans {
             if span.flat().is_some() {
@@ -1136,44 +1527,253 @@ impl Thread {
                 self.flat_outlines(span, view, output);
                 continue;
             }
+            // Phase ranges where the branches exist: D = A^2 + B^2 - C^2 >= 0
+            // with A = -R rho, B = k R' rho, C = -R R' v_z, isolated with a
+            // proven Lipschitz bound of D.
+            let [a, b] = span.range();
+            let k = self.rate();
+            let (rmax, slope, curvature) = (profile.maximum, profile.slope, profile.curvature);
+            let vz2 = view[2] * view[2];
+            let discriminant = |phi: f64| {
+                let [r, d] = span.eval(phi);
+                r * r * rho * rho + k * k * d * d * rho * rho - r * r * d * d * vz2
+            };
+            let lipschitz = 2. * rmax * slope * rho * rho
+                + 2. * k * k * slope * curvature * rho * rho
+                + 2. * rmax * slope * (slope * slope + rmax * curvature) * vz2
+                + 1e-12;
+            let mut roots = Vec::new();
+            isolate(&discriminant, [a, b], lipschitz, &mut roots)?;
+            let mut stops = vec![a];
+            stops.extend(roots.into_iter().filter(|x| *x > a && *x < b));
+            stops.push(b);
+            let ranges: Vec<[f64; 2]> = stops
+                .windows(2)
+                .filter(|pair| pair[1] > pair[0] && discriminant(0.5 * (pair[0] + pair[1])) >= 0.)
+                .map(|pair| [pair[0], pair[1]])
+                .collect();
             for sign in [-1., 1.] {
-                // Phase ranges where the branch exists.
-                let [a, b] = span.range();
-                let samples = 256;
-                let exists = |phi: f64| Outline::angle(&self.law, span, view, sign, phi).is_some();
-                let mut ranges = Vec::new();
-                let mut start = exists(a).then_some(a);
-                let mut previous = (a, exists(a));
-                for i in 1..=samples {
-                    let phi = a + (b - a) * i as f64 / samples as f64;
-                    let state = exists(phi);
-                    if state != previous.1 {
-                        let [mut lo, mut hi] = [previous.0, phi];
-                        for _ in 0..80 {
-                            let mid = 0.5 * (lo + hi);
-                            if exists(mid) == previous.1 {
-                                lo = mid;
-                            } else {
-                                hi = mid;
-                            }
-                        }
-                        let edge = if previous.1 { lo } else { hi };
-                        if state {
-                            start = Some(edge);
-                        } else if let Some(s) = start.take() {
-                            ranges.push([s, edge]);
-                        }
-                    }
-                    previous = (phi, state);
-                }
-                if let Some(s) = start {
-                    ranges.push([s, b]);
-                }
-                for range in ranges {
-                    self.outline_copies(span, sign, range, view, output);
+                for &range in &ranges {
+                    self.outline_copies(span, sign, range, view, &ends, output);
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Spans of the cap curve at `level` over `theta` in `[0, 2pi]`, each
+    /// within one span of the profile.
+    fn cap_pieces(&self, level: f64) -> Vec<(Span, [f64; 2], bool)> {
+        let profile = &self.law.profile;
+        let rate = self.rate();
+        let trim = self
+            .cone
+            .filter(|cone| level < cone.length)
+            .map(|cone| cone.radius(level));
+        let mut cuts = vec![0., TAU];
+        for m in self.copies() {
+            for span in &profile.spans {
+                let shifted = span.shifted(m as f64 * self.pitch());
+                let mut phases = vec![shifted.range()[0]];
+                if let Some(radius) = trim {
+                    phases.extend(shifted.at_radius(radius));
+                }
+                for phi in phases {
+                    let theta = (level - phi) / rate;
+                    if theta > 0. && theta < TAU {
+                        cuts.push(theta);
+                    }
+                }
+            }
+        }
+        cuts.sort_by(f64::total_cmp);
+        cuts.dedup_by(|a, b| (*a - *b).abs() <= 1e-14);
+        cuts.windows(2)
+            .map(|pair| {
+                let mid = 0.5 * (pair[0] + pair[1]);
+                let (index, base) = profile.locate(level - rate * mid);
+                let span = profile.spans[index].shifted(base);
+                match trim {
+                    // Where the thread reaches beyond the cone, the cap ends
+                    // on the cone's circle.
+                    Some(radius) if span.eval(level - rate * mid)[0] > radius => {
+                        let [a, b] = span.range();
+                        (
+                            Span::Line {
+                                a: [a, radius],
+                                b: [b, radius],
+                            },
+                            [pair[0], pair[1]],
+                            true,
+                        )
+                    }
+                    _ => (span, [pair[0], pair[1]], false),
+                }
+            })
+            .collect()
+    }
+
+    /// Angles on each cap curve where the surface normal is perpendicular to
+    /// the sight: there contour curves end on the cap. Isolated with a proven
+    /// Lipschitz bound of `n . v` along the cap curve.
+    fn contour_on_caps(&self, view: P3) -> Result<Vec<(f64, f64)>, GeometryError> {
+        let profile = &self.law.profile;
+        let k = self.rate();
+        let rho = view[0].hypot(view[1]);
+        let alpha = view[1].atan2(view[0]);
+        let (rmax, slope, curvature) = (profile.maximum, profile.slope, profile.curvature);
+        let lipschitz = rho * (k.abs() * slope + rmax)
+            + rho * k.abs() * (k.abs() * curvature + slope)
+            + view[2].abs() * k.abs() * (slope * slope + rmax * curvature)
+            + 1e-12;
+        let mut output = Vec::new();
+        for level in self.z {
+            for (span, range, cone) in self.cap_pieces(level) {
+                if cone {
+                    continue;
+                }
+                let g = |theta: f64| {
+                    let [r, d] = span.eval(level - k * theta);
+                    let psi = theta - alpha;
+                    -r * rho * psi.cos() + k * d * rho * psi.sin() + r * d * view[2]
+                };
+                let mut roots = Vec::new();
+                isolate(&g, range, lipschitz, &mut roots)?;
+                output.extend(roots.into_iter().map(|theta| (level, theta)));
+            }
+        }
+        Ok(output)
+    }
+
+    /// Phase sub-ranges of each span, with the span, where the helicoid
+    /// reaches beyond the cone's entry radius: there it meets the cone.
+    fn seam_ranges(&self) -> Vec<(Span, [f64; 2])> {
+        let Some(cone) = self.cone else {
+            return Vec::new();
+        };
+        let mut output = Vec::new();
+        for span in &self.law.profile.spans {
+            let [a, b] = span.range();
+            let mut stops = vec![a];
+            stops.extend(span.at_radius(cone.entry));
+            stops.push(b);
+            stops.sort_by(f64::total_cmp);
+            for pair in stops.windows(2) {
+                if pair[1] - pair[0] > 1e-13 && span.eval(0.5 * (pair[0] + pair[1]))[0] > cone.entry
+                {
+                    output.push((*span, [pair[0], pair[1]]));
+                }
+            }
+        }
+        output
+    }
+
+    /// Seam curves between the helicoid and the entry cone.
+    fn seams(&self) -> Vec<Seam> {
+        let Some(cone) = self.cone else {
+            return Vec::new();
+        };
+        let mut output = Vec::new();
+        for (span, range) in self.seam_ranges() {
+            for m in 0..self.law.starts {
+                output.push(Seam {
+                    law: self.law.clone(),
+                    span,
+                    cone,
+                    copy: f64::from(m) * self.pitch(),
+                    range,
+                });
+            }
+        }
+        output
+    }
+
+    /// Bounds of the seam point's derivative and of the derivative of its
+    /// angle with respect to the phase.
+    fn seam_rates(&self, cone: &Cone) -> (f64, f64) {
+        let profile = &self.law.profile;
+        let turn = (profile.slope / cone.slope + 1.) / self.rate().abs();
+        (
+            profile.slope + profile.maximum * turn + profile.slope / cone.slope,
+            turn,
+        )
+    }
+
+    /// Points on the seams where the helicoid's normal is perpendicular to
+    /// the sight: contour curves end there. Proven Lipschitz isolation.
+    fn contour_on_seams(&self, view: P3) -> Result<Vec<(f64, f64)>, GeometryError> {
+        let Some(cone) = self.cone else {
+            return Ok(Vec::new());
+        };
+        let profile = &self.law.profile;
+        let k = self.rate();
+        let rho = view[0].hypot(view[1]);
+        let alpha = view[1].atan2(view[0]);
+        let (_, turn) = self.seam_rates(&cone);
+        let (rmax, slope, curvature) = (profile.maximum, profile.slope, profile.curvature);
+        let lipschitz = rho * (slope + rmax * turn + k.abs() * curvature + k.abs() * slope * turn)
+            + view[2].abs() * (slope * slope + rmax * curvature)
+            + 1e-12;
+        let mut output = Vec::new();
+        for seam in self.seams() {
+            let g = |phi: f64| {
+                let (_, _, theta) = seam.at(phi);
+                let [r, d] = seam.span.eval(phi);
+                let psi = theta - alpha;
+                -r * rho * psi.cos() + k * d * rho * psi.sin() + r * d * view[2]
+            };
+            let mut roots = Vec::new();
+            isolate(&g, seam.range, lipschitz, &mut roots)?;
+            for phi in roots {
+                let ([_, theta, z], _, _) = seam.at(phi);
+                output.push((z, theta));
+            }
+        }
+        Ok(output)
+    }
+
+    /// Contour generators of the entry cone, where it bounds the material.
+    fn cone_contours(&self, output: &mut Vec<Candidate>) -> Result<(), GeometryError> {
+        let Some(cone) = self.cone else {
+            return Ok(());
+        };
+        let view = self.local_vector([0., 0., 1.]);
+        let rho = view[0].hypot(view[1]);
+        if rho <= 1e-9 {
+            return Ok(());
+        }
+        let ratio = cone.slope * view[2] / rho;
+        if ratio.abs() >= 1. {
+            return Ok(());
+        }
+        let alpha = view[1].atan2(view[0]);
+        let profile = &self.law.profile;
+        let k = self.rate();
+        for sign in [-1., 1.] {
+            let theta = alpha + sign * ratio.acos();
+            let (sin, cos) = theta.sin_cos();
+            // The cone bounds the material where its radius is below the
+            // thread's: roots of R(z - k theta) - C(z) along the generator.
+            let f = |z: f64| profile.radius(z - k * theta) - cone.radius(z);
+            let span = [self.z[0], cone.length.min(self.z[1])];
+            let mut stops = vec![span[0], span[1]];
+            isolate(&f, span, profile.slope + cone.slope, &mut stops)?;
+            stops.sort_by(f64::total_cmp);
+            stops.dedup_by(|x, y| (*x - *y).abs() <= 1e-13);
+            for pair in stops.windows(2) {
+                if pair[1] - pair[0] > 1e-13 && f(0.5 * (pair[0] + pair[1])) > 0. {
+                    let at = |z: f64| {
+                        let r = cone.radius(z);
+                        self.law.view([r * cos, r * sin, z])
+                    };
+                    output.push(Candidate {
+                        kind: Kind::Outline,
+                        path: Arc::new(Segment(at(pair[0]), at(pair[1]))),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     fn outline_copies(
@@ -1182,33 +1782,54 @@ impl Thread {
         sign: f64,
         range: [f64; 2],
         view: P3,
+        ends: &[(f64, f64)],
         output: &mut Vec<Candidate>,
     ) {
         let law = &self.law;
-        let base = |phi: f64| -> f64 {
-            let theta = Outline::angle(law, span, view, sign, phi).unwrap_or(0.);
-            phi + law.rate * theta
-        };
-        let samples = 128;
-        let zs: Vec<f64> = (0..=samples)
-            .map(|i| base(range[0] + (range[1] - range[0]) * i as f64 / samples as f64))
-            .collect();
-        let lo = zs.iter().copied().fold(f64::INFINITY, f64::min);
-        let hi = zs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let k = law.rate;
+        let angle = |phi: f64| Outline::angle(law, span, view, sign, phi);
+        // theta lies within 3pi/2 of alpha + pi, which bounds z = phi + k theta.
+        let alpha = view[1].atan2(view[0]);
+        let reach = k.abs() * 1.5 * PI;
+        let lo = range[0] + k * (alpha + PI) - reach;
+        let hi = range[1] + k * (alpha + PI) + reach;
         let first = ((self.z[0] - hi) / self.pitch()).floor() as i64 - 1;
         let last = ((self.z[1] - lo) / self.pitch()).ceil() as i64 + 1;
+        let middle = 0.5 * (range[0] + range[1]);
         for m in first..=last {
             let copy = m as f64 * self.pitch();
-            let outline = Outline {
-                law: law.clone(),
-                span: *span,
-                sign,
-                copy,
-                range,
-                view,
-            };
-            let z = |t: f64| base(outline.phi(t)) + copy;
-            for piece in self.within(&z, samples) {
+            let z = |phi: f64| angle(phi).map(|theta| phi + k * theta + copy);
+            // Ends on a cap: contour points of the cap curves on this branch.
+            let mut stops = vec![range[0], range[1]];
+            for &(level, theta) in ends {
+                let phi = level - k * theta;
+                let phi = phi - self.pitch() * ((phi - middle) / self.pitch()).round();
+                if phi <= range[0] || phi >= range[1] {
+                    continue;
+                }
+                let Some(own) = angle(phi) else { continue };
+                let turn = (own - theta).rem_euclid(TAU);
+                let same = turn.min(TAU - turn) < 1e-7;
+                if same && z(phi).is_some_and(|value| (value - level).abs() < 1e-7) {
+                    stops.push(phi);
+                }
+            }
+            stops.sort_by(f64::total_cmp);
+            stops.dedup_by(|x, y| (*x - *y).abs() <= 1e-13);
+            for pair in stops.windows(2) {
+                let mid = 0.5 * (pair[0] + pair[1]);
+                let radius = span.eval(mid)[0];
+                let inside = z(mid).is_some_and(|value| {
+                    value > self.z[0]
+                        && value < self.z[1]
+                        && self
+                            .cone
+                            .is_none_or(|cone| cone.keeps(radius, value, 1e-12))
+                });
+                if !inside || pair[1] - pair[0] <= 1e-13 {
+                    continue;
+                }
+                let width = range[1] - range[0];
                 output.push(Candidate {
                     kind: Kind::Outline,
                     path: Arc::new(Range {
@@ -1220,49 +1841,11 @@ impl Thread {
                             range,
                             view,
                         }),
-                        range: piece,
+                        range: [(pair[0] - range[0]) / width, (pair[1] - range[0]) / width],
                     }),
                 });
             }
         }
-    }
-
-    /// Parameter ranges of `[0, 1]` where `z(t)` lies in the material range.
-    fn within(&self, z: &dyn Fn(f64) -> f64, samples: usize) -> Vec<[f64; 2]> {
-        let inside = |t: f64| {
-            let value = z(t);
-            value > self.z[0] && value < self.z[1]
-        };
-        let mut output = Vec::new();
-        let mut start = inside(0.).then_some(0.);
-        let mut previous = (0., inside(0.));
-        for i in 1..=samples {
-            let t = i as f64 / samples as f64;
-            let state = inside(t);
-            if state != previous.1 {
-                let [mut lo, mut hi] = [previous.0, t];
-                for _ in 0..80 {
-                    let mid = 0.5 * (lo + hi);
-                    if inside(mid) == previous.1 {
-                        lo = mid;
-                    } else {
-                        hi = mid;
-                    }
-                }
-                let edge = 0.5 * (lo + hi);
-                if state {
-                    start = Some(edge);
-                } else if let Some(s) = start.take() {
-                    output.push([s, edge]);
-                }
-            }
-            previous = (t, state);
-        }
-        if let Some(s) = start {
-            output.push([s, 1.]);
-        }
-        output.retain(|[a, b]| b - a > 1e-12);
-        output
     }
 
     /// Generators of a cylindrical band where the radius is perpendicular to
@@ -1277,7 +1860,14 @@ impl Thread {
             for m in self.copies() {
                 let shift = rate * theta + m as f64 * self.pitch();
                 let [z0, z1] = [a + shift, b + shift];
-                let [lo, hi] = [z0.max(self.z[0]), z1.min(self.z[1])];
+                let low = self.cone.map_or(self.z[0], |cone| {
+                    if r > cone.entry {
+                        self.z[0].max(cone.station(r))
+                    } else {
+                        self.z[0]
+                    }
+                });
+                let [lo, hi] = [z0.max(low), z1.min(self.z[1])];
                 if hi - lo > 1e-12 {
                     let (sin, cos) = theta.sin_cos();
                     output.push(Candidate {
@@ -1322,58 +1912,110 @@ impl Thread {
                             continue;
                         }
                         let local = span.shifted(m as f64 * self.pitch() + rate * angle);
-                        let point = |z: f64| {
-                            let r = local.eval(z)[0];
-                            law.view([side * r * h[0], side * r * h[1], z])
-                        };
-                        let path: Arc<dyn Path> = match local {
-                            Span::Line { .. } => Arc::new(Segment(point(lo), point(hi))),
-                            Span::Arc {
-                                center,
-                                radius,
-                                sign,
-                                ..
-                            } => {
-                                // A circular arc in the plane: exact conic.
-                                let lift = Lift {
-                                    origin: law.view([0.; 3]),
-                                    x: self.view_vector([0., 0., 1.]),
-                                    y: self.view_vector([side * h[0], side * h[1], 0.]),
-                                };
-                                let start = (lo - center[0]) / radius;
-                                let end = (hi - center[0]) / radius;
-                                let angle_of = |x: f64| {
-                                    let x = x.clamp(-1., 1.);
-                                    sign * (1. - x * x).max(0.).sqrt()
-                                };
-                                let a = [
-                                    center[0] + radius * start,
-                                    center[1] + radius * angle_of(start),
-                                ];
-                                let b =
-                                    [center[0] + radius * end, center[1] + radius * angle_of(end)];
-                                Arc::new(paths::ProfilePath {
-                                    edge: Edge::Planar(normal_sweep::Edge::Arc {
-                                        center,
-                                        a,
-                                        b,
-                                        clockwise: sign > 0.,
-                                    }),
-                                    range: [0., 1.],
-                                    lift,
-                                    straight: false,
-                                })
+                        // On an entry chamfer only the part inside the cone
+                        // bounds the material.
+                        let mut stops = vec![lo, hi];
+                        if let Some(cone) = &self.cone {
+                            stops.extend(
+                                cone_crossings(&local, cone)
+                                    .into_iter()
+                                    .filter(|z| *z > lo && *z < hi),
+                            );
+                        }
+                        stops.sort_by(f64::total_cmp);
+                        for pair in stops.windows(2) {
+                            let [lo, hi] = [pair[0], pair[1]];
+                            let mid = 0.5 * (lo + hi);
+                            if hi - lo <= 1e-12
+                                || self
+                                    .cone
+                                    .is_some_and(|cone| !cone.keeps(local.eval(mid)[0], mid, 1e-12))
+                            {
+                                continue;
                             }
-                        };
-                        output.push(path);
+                            let point = |z: f64| {
+                                let r = local.eval(z)[0];
+                                law.view([side * r * h[0], side * r * h[1], z])
+                            };
+                            let path: Arc<dyn Path> = match local {
+                                Span::Line { .. } => Arc::new(Segment(point(lo), point(hi))),
+                                Span::Arc {
+                                    center,
+                                    radius,
+                                    sign,
+                                    ..
+                                } => {
+                                    // A circular arc in the plane: exact conic.
+                                    let lift = Lift {
+                                        origin: law.view([0.; 3]),
+                                        x: self.view_vector([0., 0., 1.]),
+                                        y: self.view_vector([side * h[0], side * h[1], 0.]),
+                                    };
+                                    let start = (lo - center[0]) / radius;
+                                    let end = (hi - center[0]) / radius;
+                                    let angle_of = |x: f64| {
+                                        let x = x.clamp(-1., 1.);
+                                        sign * (1. - x * x).max(0.).sqrt()
+                                    };
+                                    let a = [
+                                        center[0] + radius * start,
+                                        center[1] + radius * angle_of(start),
+                                    ];
+                                    let b = [
+                                        center[0] + radius * end,
+                                        center[1] + radius * angle_of(end),
+                                    ];
+                                    Arc::new(paths::ProfilePath {
+                                        edge: Edge::Planar(normal_sweep::Edge::Arc {
+                                            center,
+                                            a,
+                                            b,
+                                            clockwise: sign > 0.,
+                                        }),
+                                        range: [0., 1.],
+                                        lift,
+                                        straight: false,
+                                    })
+                                }
+                            };
+                            output.push(path);
+                        }
+                    }
+                }
+                // The entry cone's generator where it bounds the material.
+                if let Some(cone) = &self.cone {
+                    let top = cone.length.min(self.z[1]);
+                    let f = |z: f64| profile.radius(z - rate * angle) - cone.radius(z);
+                    let mut stops = vec![self.z[0], top];
+                    isolate(&f, [self.z[0], top], profile.slope + cone.slope, &mut stops)?;
+                    stops.sort_by(f64::total_cmp);
+                    for pair in stops.windows(2) {
+                        if pair[1] - pair[0] > 1e-13 && f(0.5 * (pair[0] + pair[1])) > 0. {
+                            let at = |z: f64| {
+                                let r = side * cone.radius(z);
+                                law.view([r * h[0], r * h[1], z])
+                            };
+                            output.push(Arc::new(Segment(at(pair[0]), at(pair[1]))));
+                        }
                     }
                 }
             }
             for level in self.z {
-                let reach = |angle: f64| profile.radius(level - rate * angle);
-                let a = law.view([reach(theta) * h[0], reach(theta) * h[1], level]);
-                let b = law.view([-reach(theta + PI) * h[0], -reach(theta + PI) * h[1], level]);
-                output.push(Arc::new(Segment(b, a)));
+                let trim = self
+                    .cone
+                    .filter(|cone| level < cone.length)
+                    .map_or(f64::INFINITY, |cone| cone.radius(level));
+                let reach = |angle: f64| profile.radius(level - rate * angle).min(trim);
+                let at = |s: f64| law.view([s * h[0], s * h[1], level]);
+                let [right, left] = [reach(theta), -reach(theta + PI)];
+                match &self.stock {
+                    // A bore's cap is the annulus between thread and stock.
+                    Some((radius, _)) => {
+                        output.push(Arc::new(Segment(at(right), at(*radius))));
+                        output.push(Arc::new(Segment(at(-radius), at(left))));
+                    }
+                    None => output.push(Arc::new(Segment(at(left), at(right)))),
+                }
             }
             return Ok(output);
         }
@@ -1393,7 +2035,15 @@ impl Thread {
                     let (sin, cos) = theta.sin_cos();
                     for m in self.copies() {
                         let shift = rate * theta + m as f64 * self.pitch();
-                        let [lo, hi] = [(a + shift).max(self.z[0]), (b + shift).min(self.z[1])];
+                        // On an entry chamfer the band starts at its station.
+                        let low = self.cone.map_or(self.z[0], |cone| {
+                            if radius > cone.entry {
+                                self.z[0].max(cone.station(radius))
+                            } else {
+                                self.z[0]
+                            }
+                        });
+                        let [lo, hi] = [(a + shift).max(low), (b + shift).min(self.z[1])];
                         if hi - lo > 1e-12 {
                             output.push(Arc::new(Segment(
                                 law.view([radius * cos, radius * sin, lo]),
@@ -1403,6 +2053,107 @@ impl Thread {
                     }
                 }
             }
+        }
+        // Chords of the caps; their ends are where section branches meet a cap.
+        let mut chords = Vec::new();
+        for level in self.z {
+            let mut level_chords = self.cap_chord(n, c, level)?;
+            if let Some(cone) = self.cone.filter(|cone| level < cone.length)
+                && let Some(disc) = self.disc_chord(n, c, level, cone.radius(level))
+            {
+                // On an entry chamfer the cap is also within the cone.
+                let d = [n[1] / nxy, -n[0] / nxy, 0.];
+                let offset = (c - n[2] * level) / (nxy * nxy);
+                let foot = [n[0] * offset, n[1] * offset, level];
+                let base = add(foot, scaled(d, -dot3(foot, d)));
+                let stations: Vec<[f64; 2]> = level_chords
+                    .iter()
+                    .map(|[a, b]| [dot3(*a, d), dot3(*b, d)])
+                    .collect();
+                level_chords = profile::intersect(&stations, &[disc])
+                    .into_iter()
+                    .map(|[a, b]| [add(base, scaled(d, a)), add(base, scaled(d, b))])
+                    .collect();
+            } else if self.cone.is_some_and(|cone| level < cone.length) {
+                level_chords.clear();
+            }
+            chords.extend(level_chords);
+        }
+        let mut chord_ends: Vec<P3> = chords.iter().flatten().copied().collect();
+        // Where section branches meet the entry cone: the plane's crossings
+        // of the seams, isolated with a proven Lipschitz bound.
+        let mut seam_points = Vec::new();
+        if let Some(cone) = &self.cone {
+            let (lipschitz, _) = self.seam_rates(cone);
+            for seam in self.seams() {
+                let h = |phi: f64| {
+                    let ([r, theta, z], _, _) = seam.at(phi);
+                    dot3(n, [r * theta.cos(), r * theta.sin(), z]) - c
+                };
+                let mut roots = Vec::new();
+                isolate(&h, seam.range, lipschitz + 1e-12, &mut roots)?;
+                for phi in roots {
+                    let ([r, theta, z], _, _) = seam.at(phi);
+                    seam_points.push([r * theta.cos(), r * theta.sin(), z]);
+                }
+            }
+            chord_ends.extend(seam_points.iter().copied());
+            // The cone's own section between its ends and the seams.
+            let mut events = vec![0., TAU];
+            let base = n[1].atan2(n[0]);
+            for q in [
+                c / cone.entry,
+                (c - n[2] * cone.length) / cone.radius(cone.length),
+                -n[2] / cone.slope,
+            ] {
+                let ratio = q / nxy;
+                if ratio.abs() < 1. {
+                    for sign in [-1., 1.] {
+                        events.push((base + sign * ratio.acos()).rem_euclid(TAU));
+                    }
+                }
+            }
+            events.extend(seam_points.iter().map(|p| p[1].atan2(p[0]).rem_euclid(TAU)));
+            events.sort_by(f64::total_cmp);
+            events.dedup_by(|x, y| (*x - *y).abs() <= 1e-13);
+            for pair in events.windows(2) {
+                let mid = 0.5 * (pair[0] + pair[1]);
+                let Some(p) = ConeCut::local(cone, (n, c), mid) else {
+                    continue;
+                };
+                let inside = p[2] > self.z[0]
+                    && p[2] < cone.length.min(self.z[1])
+                    && cone.radius(p[2]) < profile.radius(p[2] - rate * mid);
+                if inside && pair[1] - pair[0] > 1e-13 {
+                    output.push(Arc::new(ConeCut {
+                        law: law.clone(),
+                        cone: *cone,
+                        plane: (n, c),
+                        range: [pair[0], pair[1]],
+                    }));
+                }
+            }
+        }
+        if let Some((radius, _)) = &self.stock {
+            // A bore's caps are annuli: the stock chord less the thread's.
+            let d = [n[1] / nxy, -n[0] / nxy, 0.];
+            let mut annular = Vec::new();
+            for level in self.z {
+                let offset = (c - n[2] * level) / (nxy * nxy);
+                let foot = [n[0] * offset, n[1] * offset, level];
+                let base = add(foot, scaled(d, -dot3(foot, d)));
+                let inner: Vec<[f64; 2]> = chords
+                    .iter()
+                    .filter(|[a, _]| (a[2] - level).abs() <= 1e-12)
+                    .map(|[a, b]| [dot3(*a, d), dot3(*b, d)])
+                    .collect();
+                let outer: Vec<[f64; 2]> =
+                    self.disc_chord(n, c, level, *radius).into_iter().collect();
+                for [a, b] in profile::exclusive(&outer, &inner, 1e-12) {
+                    annular.push([add(base, scaled(d, a)), add(base, scaled(d, b))]);
+                }
+            }
+            chords = annular;
         }
         // General plane: sweep the meridian half-plane once around the axis.
         for m in self.copies() {
@@ -1455,22 +2206,45 @@ impl Thread {
                             range: [pair[0], pair[1]],
                             touching: [touch(pair[0]), touch(pair[1])],
                         });
-                        let z = |t: f64| law.local(sweep.point(t))[2];
-                        for piece in self.within(&z, 64) {
-                            output.push(Arc::new(Range {
-                                path: sweep.clone(),
-                                range: piece,
-                            }));
+                        // The branch leaves the material only through a cap,
+                        // at an end of that cap's exact chord.
+                        let mut stops = vec![0., 1.];
+                        for point in &chord_ends {
+                            let theta = point[1].atan2(point[0]).rem_euclid(TAU);
+                            for theta in [theta, theta + TAU, theta - TAU] {
+                                if theta <= pair[0] || theta >= pair[1] {
+                                    continue;
+                                }
+                                let t = (theta - pair[0]) / (pair[1] - pair[0]);
+                                let q = law.local(sweep.point(t));
+                                let d = add(q, scaled(*point, -1.));
+                                if dot3(d, d).sqrt() < 1e-6 {
+                                    stops.push(t);
+                                }
+                            }
+                        }
+                        stops.sort_by(f64::total_cmp);
+                        stops.dedup_by(|x, y| (*x - *y).abs() <= 1e-13);
+                        for piece in stops.windows(2) {
+                            let q = law.local(sweep.point(0.5 * (piece[0] + piece[1])));
+                            let z = q[2];
+                            let kept = self
+                                .cone
+                                .is_none_or(|cone| cone.keeps(q[0].hypot(q[1]), z, 1e-12));
+                            if kept && z > self.z[0] && z < self.z[1] && piece[1] - piece[0] > 1e-13
+                            {
+                                output.push(Arc::new(Range {
+                                    path: sweep.clone(),
+                                    range: [piece[0], piece[1]],
+                                }));
+                            }
                         }
                     }
                 }
             }
         }
-        // Chords of the caps.
-        for level in self.z {
-            for [a, b] in self.cap_chord(n, c, level)? {
-                output.push(Arc::new(Segment(law.view(a), law.view(b))));
-            }
+        for [a, b] in chords {
+            output.push(Arc::new(Segment(law.view(a), law.view(b))));
         }
         Ok(output)
     }
@@ -1524,7 +2298,10 @@ impl Thread {
 
 impl Member for Thread {
     fn bounds(&self) -> [P3; 2] {
-        let reach = self.law.profile.maximum;
+        let reach = self
+            .stock
+            .as_ref()
+            .map_or(self.law.profile.maximum, |(radius, _)| *radius);
         let top = self.neck.as_ref().map_or(self.z[1], |(_, span, _)| span[1]);
         let mut lo = [f64::INFINITY; 3];
         let mut hi = [f64::NEG_INFINITY; 3];
@@ -1549,8 +2326,18 @@ impl Member for Thread {
                 path,
             }));
         }
-        self.outlines(&mut output);
+        self.outlines(&mut output)?;
+        self.cone_contours(&mut output)?;
+        for seam in self.seams() {
+            output.push(Candidate {
+                kind: Kind::Edge,
+                path: Arc::new(seam),
+            });
+        }
         if let Some((_, _, prism)) = &self.neck {
+            output.extend(prism.candidates(tolerance_mm)?);
+        }
+        if let Some((_, prism)) = &self.stock {
             output.extend(prism.candidates(tolerance_mm)?);
         }
         Ok(output)
@@ -1567,6 +2354,24 @@ impl Member for Thread {
         let n = self.local_vector([0., 0., 1.]);
         let c = depth - self.law.origin[2];
         let mut output = self.thread_section(n, c, 1.)?;
+        if let Some((_, prism)) = &self.stock {
+            // The stock wall; its cap chords are replaced by the annuli.
+            let cap = |path: &Arc<dyn Path>| {
+                let [a, b] = [0., 1.].map(|t| self.law.local(path.point(t))[2]);
+                self.z.iter().any(|level| {
+                    (a - level).abs() <= 4. * self.tolerance
+                        && (b - level).abs() <= 4. * self.tolerance
+                }) && matches!(path.paper([0., 1.]), Some(Curve::Line(_)))
+            };
+            let axial = n[0].hypot(n[1]) <= 1e-12;
+            output.extend(
+                prism
+                    .section(depth, tolerance_mm)?
+                    .into_iter()
+                    .flatten()
+                    .filter(|path| axial || !cap(path)),
+            );
+        }
         if let Some((_, span, prism)) = &self.neck {
             // The shoulder: the thread's chord at the junction less the neck's.
             let junction = span[0];

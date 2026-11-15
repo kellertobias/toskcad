@@ -10,9 +10,15 @@ use multicad_core::{
 };
 use multicad_kernel::{
     BooleanOperation, DrawingHatch, DrawingProjection, DrawingSolid, GearSweep,
-    GeneratedZaWormWheel, GeometryError, GeometryPolicy, HelicalThread, InvoluteGear, PlaneFrame,
-    ProjectedVector, RigidTransform, Solid, SphericalBevelGear, ZaWorm, project_drawing,
-    rust_kernel::rounded_thread::Spec as RoundedThreadSpec,
+    GeneratedZaWormWheel, GeometryError, GeometryPolicy, HelicalThread, InternalThreadTreatmentCut,
+    InvoluteGear, PlaneFrame, ProjectedVector, RigidTransform, Solid, SphericalBevelGear, ZaWorm,
+    project_drawing,
+    rust_kernel::{
+        authored_internal_treatment::Intent as TreatmentIntent,
+        axial_pipe_thread::authored::{AuthoredSection as PipeSection, AuthoredSpec as PipeSpec},
+        headed_screw::{ScrewHead, ScrewSpec},
+        rounded_thread::Spec as RoundedThreadSpec,
+    },
 };
 use std::f64::consts::PI;
 
@@ -32,6 +38,23 @@ fn spur(sweep: GearSweep, twist: f64) -> InvoluteGear {
         bore_radius_mm: 3.,
         twist_rad_per_mm: twist,
         sweep,
+    }
+}
+
+/// The ISO-like 60 degree thread of the CAD-290 fixtures.
+fn iso_thread(starts: u32) -> HelicalThread {
+    let root = 1. / (4. * 3_f64.sqrt());
+    HelicalThread {
+        major_radius_mm: 3.,
+        pitch_mm: 1.,
+        length_mm: 6.6,
+        depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().tan()) - root,
+        crest_width_mm: 0.125,
+        lower_flank_deg: 30.,
+        upper_flank_deg: 30.,
+        radial_taper: 0.,
+        starts,
+        left_hand: false,
     }
 }
 
@@ -81,17 +104,17 @@ fn bevel() -> SphericalBevelGear {
     }
 }
 
-/// The measured outcome of an inventoried combination. Every combination
-/// currently draws; an explicit refusal returns here as a variant carrying
-/// its exact message only together with a reviewed finding.
+/// The measured outcome of an inventoried combination: `Drawn` publishes
+/// well-formed vectors; each `Unsupported` entry is an explicit unresolved
+/// finding with its exact typed refusal.
 #[derive(Clone, Copy, Debug)]
 enum Expect {
     Drawn,
+    Unsupported(&'static str),
 }
-use Expect::Drawn;
+use Expect::{Drawn, Unsupported};
 
-/// Expected outcome of every inventoried combination: each must publish
-/// well-formed vectors. Regenerate the table from
+/// Expected outcome of every inventoried combination. Regenerate the table from
 /// `print_rust_drawing_inventory` only together with a reviewed change.
 const EXPECTED: &[(&str, &str, Expect)] = &[
     ("box", "axial", Drawn),
@@ -364,6 +387,600 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ("rounded thread", "oblique section-only", Drawn),
     ("rounded thread", "axial detail", Drawn),
     ("rounded thread", "side detail", Drawn),
+    (
+        "helical thread",
+        "axial",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "helical thread",
+        "axial reversed",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "helical thread",
+        "axial hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "helical thread",
+        "side",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "helical thread",
+        "side hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "helical thread",
+        "oblique",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "helical thread",
+        "oblique hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "helical thread",
+        "axial section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "helical thread",
+        "axial section-only",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "helical thread",
+        "axial finite depth",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "helical thread",
+        "side section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "helical thread",
+        "side section-only",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "helical thread",
+        "side finite depth",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "helical thread",
+        "side lateral window",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "helical thread",
+        "oblique section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "helical thread",
+        "oblique section-only",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "helical thread",
+        "axial detail",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "helical thread",
+        "side detail",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    ("two-start thread relief", "axial", Drawn),
+    ("two-start thread relief", "axial reversed", Drawn),
+    ("two-start thread relief", "axial hidden", Drawn),
+    ("two-start thread relief", "side", Drawn),
+    ("two-start thread relief", "side hidden", Drawn),
+    ("two-start thread relief", "oblique", Drawn),
+    ("two-start thread relief", "oblique hidden", Drawn),
+    ("two-start thread relief", "axial section", Drawn),
+    ("two-start thread relief", "axial section-only", Drawn),
+    ("two-start thread relief", "axial finite depth", Drawn),
+    ("two-start thread relief", "side section", Drawn),
+    ("two-start thread relief", "side section-only", Drawn),
+    ("two-start thread relief", "side finite depth", Drawn),
+    ("two-start thread relief", "side lateral window", Drawn),
+    ("two-start thread relief", "oblique section", Drawn),
+    ("two-start thread relief", "oblique section-only", Drawn),
+    ("two-start thread relief", "axial detail", Drawn),
+    ("two-start thread relief", "side detail", Drawn),
+    ("thread entry chamfer", "axial", Drawn),
+    ("thread entry chamfer", "axial reversed", Drawn),
+    ("thread entry chamfer", "axial hidden", Drawn),
+    ("thread entry chamfer", "side", Drawn),
+    ("thread entry chamfer", "side hidden", Drawn),
+    ("thread entry chamfer", "oblique", Drawn),
+    ("thread entry chamfer", "oblique hidden", Drawn),
+    ("thread entry chamfer", "axial section", Drawn),
+    ("thread entry chamfer", "axial section-only", Drawn),
+    ("thread entry chamfer", "axial finite depth", Drawn),
+    ("thread entry chamfer", "side section", Drawn),
+    ("thread entry chamfer", "side section-only", Drawn),
+    ("thread entry chamfer", "side finite depth", Drawn),
+    ("thread entry chamfer", "side lateral window", Drawn),
+    ("thread entry chamfer", "oblique section", Drawn),
+    ("thread entry chamfer", "oblique section-only", Drawn),
+    ("thread entry chamfer", "axial detail", Drawn),
+    ("thread entry chamfer", "side detail", Drawn),
+    (
+        "internal thread",
+        "axial",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "internal thread",
+        "axial reversed",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "internal thread",
+        "axial hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "internal thread",
+        "side",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "internal thread",
+        "side hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "internal thread",
+        "oblique",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "internal thread",
+        "oblique hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "internal thread",
+        "axial section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "internal thread",
+        "axial section-only",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "internal thread",
+        "axial finite depth",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "internal thread",
+        "side section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "internal thread",
+        "side section-only",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "internal thread",
+        "side finite depth",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "internal thread",
+        "side lateral window",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "internal thread",
+        "oblique section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "internal thread",
+        "oblique section-only",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "internal thread",
+        "axial detail",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "internal thread",
+        "side detail",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    ("rounded thread bore", "axial", Drawn),
+    ("rounded thread bore", "axial reversed", Drawn),
+    ("rounded thread bore", "axial hidden", Drawn),
+    ("rounded thread bore", "side", Drawn),
+    ("rounded thread bore", "side hidden", Drawn),
+    ("rounded thread bore", "oblique", Drawn),
+    ("rounded thread bore", "oblique hidden", Drawn),
+    ("rounded thread bore", "axial section", Drawn),
+    ("rounded thread bore", "axial section-only", Drawn),
+    ("rounded thread bore", "axial finite depth", Drawn),
+    ("rounded thread bore", "side section", Drawn),
+    ("rounded thread bore", "side section-only", Drawn),
+    ("rounded thread bore", "side finite depth", Drawn),
+    ("rounded thread bore", "side lateral window", Drawn),
+    ("rounded thread bore", "oblique section", Drawn),
+    ("rounded thread bore", "oblique section-only", Drawn),
+    ("rounded thread bore", "axial detail", Drawn),
+    ("rounded thread bore", "side detail", Drawn),
+    (
+        "axial pipe thread",
+        "axial",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "axial pipe thread",
+        "axial reversed",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "axial pipe thread",
+        "axial hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "axial pipe thread",
+        "side",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "axial pipe thread",
+        "side hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "axial pipe thread",
+        "oblique",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "axial pipe thread",
+        "oblique hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "axial pipe thread",
+        "axial section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "axial pipe thread",
+        "axial section-only",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "axial pipe thread",
+        "axial finite depth",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "axial pipe thread",
+        "side section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "axial pipe thread",
+        "side section-only",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "axial pipe thread",
+        "side finite depth",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "axial pipe thread",
+        "side lateral window",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "axial pipe thread",
+        "oblique section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "axial pipe thread",
+        "oblique section-only",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "axial pipe thread",
+        "axial detail",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "axial pipe thread",
+        "side detail",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "internal thread treatment",
+        "axial",
+        Unsupported("Original stock face ancestry is unresolved"),
+    ),
+    (
+        "internal thread treatment",
+        "axial reversed",
+        Unsupported("Original stock face ancestry is unresolved"),
+    ),
+    (
+        "internal thread treatment",
+        "axial hidden",
+        Unsupported("Original stock face ancestry is unresolved"),
+    ),
+    (
+        "internal thread treatment",
+        "side",
+        Unsupported("Original stock face ancestry is unresolved"),
+    ),
+    (
+        "internal thread treatment",
+        "side hidden",
+        Unsupported("Original stock face ancestry is unresolved"),
+    ),
+    (
+        "internal thread treatment",
+        "oblique",
+        Unsupported("Original stock face ancestry is unresolved"),
+    ),
+    (
+        "internal thread treatment",
+        "oblique hidden",
+        Unsupported("Original stock face ancestry is unresolved"),
+    ),
+    (
+        "internal thread treatment",
+        "axial section",
+        Unsupported("Original stock face ancestry is unresolved"),
+    ),
+    (
+        "internal thread treatment",
+        "axial section-only",
+        Unsupported("Original stock face ancestry is unresolved"),
+    ),
+    (
+        "internal thread treatment",
+        "axial finite depth",
+        Unsupported("Original stock face ancestry is unresolved"),
+    ),
+    (
+        "internal thread treatment",
+        "side section",
+        Unsupported("Original stock face ancestry is unresolved"),
+    ),
+    (
+        "internal thread treatment",
+        "side section-only",
+        Unsupported("Original stock face ancestry is unresolved"),
+    ),
+    (
+        "internal thread treatment",
+        "side finite depth",
+        Unsupported("Original stock face ancestry is unresolved"),
+    ),
+    (
+        "internal thread treatment",
+        "side lateral window",
+        Unsupported("Original stock face ancestry is unresolved"),
+    ),
+    (
+        "internal thread treatment",
+        "oblique section",
+        Unsupported("Original stock face ancestry is unresolved"),
+    ),
+    (
+        "internal thread treatment",
+        "oblique section-only",
+        Unsupported("Original stock face ancestry is unresolved"),
+    ),
+    (
+        "internal thread treatment",
+        "axial detail",
+        Unsupported("Original stock face ancestry is unresolved"),
+    ),
+    (
+        "internal thread treatment",
+        "side detail",
+        Unsupported("Original stock face ancestry is unresolved"),
+    ),
+    (
+        "hex nut",
+        "axial",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "hex nut",
+        "axial reversed",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "hex nut",
+        "axial hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "hex nut",
+        "side",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "hex nut",
+        "side hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "hex nut",
+        "oblique",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "hex nut",
+        "oblique hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "hex nut",
+        "axial section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "hex nut",
+        "axial section-only",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "hex nut",
+        "axial finite depth",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "hex nut",
+        "side section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "hex nut",
+        "side section-only",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "hex nut",
+        "side finite depth",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "hex nut",
+        "side lateral window",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "hex nut",
+        "oblique section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "hex nut",
+        "oblique section-only",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "hex nut",
+        "axial detail",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "hex nut",
+        "side detail",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "machine screw",
+        "axial",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "machine screw",
+        "axial reversed",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "machine screw",
+        "axial hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "machine screw",
+        "side",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "machine screw",
+        "side hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "machine screw",
+        "oblique",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "machine screw",
+        "oblique hidden",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "machine screw",
+        "axial section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "machine screw",
+        "axial section-only",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "machine screw",
+        "axial finite depth",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "machine screw",
+        "side section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "machine screw",
+        "side section-only",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "machine screw",
+        "side finite depth",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "machine screw",
+        "side lateral window",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "machine screw",
+        "oblique section",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "machine screw",
+        "oblique section-only",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "machine screw",
+        "axial detail",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
+    (
+        "machine screw",
+        "side detail",
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
+    ),
     ("za worm", "axial", Drawn),
     ("za worm", "axial reversed", Drawn),
     ("za worm", "axial hidden", Drawn),
@@ -1226,6 +1843,170 @@ pub fn families() -> Vec<(&'static str, Result<Solid, GeometryError>)> {
             )
         }),
         (
+            "helical thread",
+            Solid::rust_helical_thread(
+                iso_thread(1),
+                Some(1. / (4. * 3_f64.sqrt())),
+                id(),
+                PlaneFrame::default(),
+                policy,
+            ),
+        ),
+        (
+            "two-start thread relief",
+            Solid::rust_helical_thread_end_relief(
+                HelicalThread {
+                    pitch_mm: 0.5,
+                    length_mm: 6.6,
+                    crest_width_mm: 0.0625,
+                    depth_mm: (0.5 - 0.0625) / (2. * 30_f64.to_radians().tan())
+                        - 0.5 / (4. * 3_f64.sqrt()),
+                    ..iso_thread(2)
+                },
+                Some(0.5 / (4. * 3_f64.sqrt())),
+                0.6,
+                0.1,
+                id(),
+                PlaneFrame::default(),
+                policy,
+            ),
+        ),
+        (
+            "thread entry chamfer",
+            Solid::rust_helical_thread_entry_chamfer(
+                iso_thread(1),
+                Some(1. / (4. * 3_f64.sqrt())),
+                0.3,
+                None,
+                id(),
+                PlaneFrame::default(),
+                policy,
+            ),
+        ),
+        (
+            "internal thread",
+            Solid::cylinder(PlaneFrame::default(), 5., 4., policy).and_then(|stock| {
+                stock.rust_cut_internal_thread(
+                    HelicalThread {
+                        length_mm: 5.2,
+                        depth_mm: 5. * 3_f64.sqrt() / 16.,
+                        ..iso_thread(1)
+                    },
+                    0.2,
+                    id(),
+                    PlaneFrame::default(),
+                    policy,
+                )
+            }),
+        ),
+        ("rounded thread bore", {
+            let p = 1.27;
+            let a = 27.5_f64.to_radians();
+            let r = p * a.cos() / (12. * (1. - a.sin()));
+            Solid::rust_rounded_thread_bore(
+                RoundedThreadSpec {
+                    major_radius_mm: 3.175,
+                    pitch_mm: p,
+                    length_mm: 3.7 * p,
+                    depth_mm: p / (3. * a.tan()),
+                    crest_radius_mm: r,
+                    root_radius_mm: r,
+                    flank_angle_deg: 27.5,
+                    starts: 1,
+                    left_hand: false,
+                },
+                5.,
+                id(),
+                PlaneFrame::default(),
+                policy,
+            )
+        }),
+        ("axial pipe thread", {
+            let p = 25.4 / 28.;
+            Solid::rust_authored_axial_pipe_thread_with_interrupt(
+                PipeSpec {
+                    major_radius_mm: 9.728 / 2. - 4. / 32.,
+                    pitch_mm: p,
+                    length_mm: 6.5,
+                    radial_taper: 1. / 32.,
+                    section: PipeSection::BsptRounded {
+                        depth_mm: p / (3. * 27.5_f64.to_radians().tan()),
+                    },
+                    crest_radius_limit_mm: None,
+                },
+                id(),
+                PlaneFrame::default(),
+                policy,
+                None,
+            )
+        }),
+        (
+            "internal thread treatment",
+            Solid::cylinder(PlaneFrame::default(), 2.5, 4., policy).and_then(|stock| {
+                stock.rust_cut_authored_internal_thread_treatments_with_interrupt(
+                    InternalThreadTreatmentCut {
+                        profile: HelicalThread {
+                            major_radius_mm: 1.5,
+                            pitch_mm: 0.5,
+                            length_mm: 4.,
+                            depth_mm: 5. * 3_f64.sqrt() / 32.,
+                            crest_width_mm: 0.0625,
+                            lower_flank_deg: 30.,
+                            upper_flank_deg: 30.,
+                            radial_taper: 0.,
+                            starts: 1,
+                            left_hand: false,
+                        },
+                        intent: TreatmentIntent {
+                            entry_depth_mm: Some(0.5),
+                            terminal: None,
+                        },
+                        minimum_wall_mm: 0.5,
+                        frame: PlaneFrame::default(),
+                    },
+                    id(),
+                    policy,
+                    None,
+                )
+            }),
+        ),
+        (
+            "hex nut",
+            Solid::rust_hex_nut(
+                HelicalThread {
+                    major_radius_mm: 1.55,
+                    pitch_mm: 0.5,
+                    length_mm: 2.4,
+                    depth_mm: 0.28,
+                    crest_width_mm: 0.08,
+                    ..iso_thread(1)
+                },
+                5.5,
+                0.2,
+                id(),
+                PlaneFrame::default(),
+                policy,
+            ),
+        ),
+        (
+            "machine screw",
+            Solid::rust_machine_screw(
+                iso_thread(1),
+                Some(1. / (4. * 3_f64.sqrt())),
+                ScrewSpec {
+                    head: ScrewHead::ExternalHex {
+                        across_flats_mm: 10.,
+                        height_mm: 4.,
+                    },
+                    shank_length_mm: 0.,
+                    shank_radius_mm: 3.,
+                },
+                id(),
+                PlaneFrame::default(),
+                policy,
+            ),
+        ),
+        (
             "za worm",
             Solid::rust_za_worm_named(
                 ZaWorm {
@@ -1512,8 +2293,8 @@ fn print_rust_drawing_inventory() {
     }
 }
 
-/// Every inventoried family, view and two-body scene draws well-formed
-/// vectors.
+/// Every inventoried family, view and two-body scene either draws
+/// well-formed vectors or refuses with its recorded explicit finding.
 #[test]
 fn every_family_view_and_scene_is_a_named_regression_or_finding() {
     let mut seen = 0;
@@ -1528,6 +2309,9 @@ fn every_family_view_and_scene_is_a_named_regression_or_finding() {
         seen += 1;
         match (expect, &result) {
             (Drawn, Ok(vectors)) => well_formed(vectors, sources),
+            (Unsupported(message), Err(error))
+                if error.kind == multicad_kernel::GeometryErrorKind::Unsupported
+                    && error.message == *message => {}
             _ => panic!(
                 "{name} | {view}: expected {expect:?}, got {}",
                 outcome(&result)
@@ -1698,8 +2482,16 @@ fn invalid_requests_and_exhausted_budgets_refuse_atomically_for_every_family_and
         }
         // One curve or one point fewer than the full drawing needs refuses
         // the whole drawing.
-        let full =
-            project_drawing(scene, base).unwrap_or_else(|e| panic!("{name} | full drawing: {e:?}"));
+        // A family that refuses this view refuses it with its typed finding;
+        // the budget checks apply to every drawing that publishes.
+        let full = match project_drawing(scene, base) {
+            Ok(full) => full,
+            Err(error) if error.kind == multicad_kernel::GeometryErrorKind::Unsupported => {
+                checked += 1;
+                return;
+            }
+            Err(error) => panic!("{name} | full drawing: {error:?}"),
+        };
         let points: usize = full.iter().map(|v| v.preview_mm.len()).sum();
         let mut budgets = vec![(
             "one point short",

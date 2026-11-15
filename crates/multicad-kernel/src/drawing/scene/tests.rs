@@ -224,6 +224,11 @@ fn thread_material_along_lines_agrees_with_source_containment() {
     };
     let mut solids = Vec::new();
     for left_hand in [false, true] {
+        solids.push(two_start(left_hand, frame));
+        solids.push(rounded_bore(left_hand, frame));
+        solids.push(chamfered(left_hand, left_hand, frame));
+    }
+    for left_hand in [false, true] {
         let root = 1. / (4. * 3_f64.sqrt());
         solids.push(
             Solid::rust_helical_thread_end_relief(
@@ -308,7 +313,7 @@ fn thread_material_along_lines_agrees_with_source_containment() {
         for r in [0.5, 2.5, 2.8, 3.05] {
             lines.push((world([r, 0.3, -1.]), axis));
         }
-        lines.push((world([-4., 0.37, 0.]), frame.u));
+        lines.push((world([-4., 0.37, 1e-3]), frame.u));
         lines
     };
     let mut covered = 0;
@@ -467,7 +472,14 @@ fn thread_visibility_agrees_with_source_containment_marching() {
     .unwrap();
     let s = 0.5_f64.sqrt();
     let t = (1_f64 / 6.).sqrt();
-    for (solid, center) in [(&rounded, 2.35), (&relief, 3.3)] {
+    let double = two_start(false, PlaneFrame::default());
+    let bore = rounded_bore(true, PlaneFrame::default());
+    for (solid, center) in [
+        (&rounded, 2.35),
+        (&relief, 3.3),
+        (&double, 3.3),
+        (&bore, 2.35),
+    ] {
         for [u, v] in [
             [[1., 0., 0.], [0., 0., 1.]],
             [[s, -s, 0.], [t, t, -2. * t]],
@@ -613,6 +625,10 @@ fn thread_sections_lie_on_the_source_boundary() {
     .unwrap();
     let rounded_thread = rounded.rust_rounded_thread_data().unwrap().thread;
     let (relief_data, _) = relief.rust_thread_end_relief_data().unwrap();
+    let double_data = two_start(true, PlaneFrame::default())
+        .rust_thread_end_relief_data()
+        .unwrap()
+        .0;
     let s = 0.5_f64.sqrt();
     let t = (1_f64 / 6.).sqrt();
     let frames = |center: f64| {
@@ -623,7 +639,18 @@ fn thread_sections_lie_on_the_source_boundary() {
             ([0.3, -0.2, center + 0.37], [[1., 0., 0.], [0., 1., 0.]]),
         ]
     };
-    for (label, solid, center) in [("rounded", &rounded, 2.35), ("relief", &relief, 3.3)] {
+    let double = two_start(true, PlaneFrame::default());
+    let bore = rounded_bore(false, PlaneFrame::default());
+    let bore_thread = *bore.rust_rounded_thread_bore_data().unwrap().bore.thread();
+    let chamfer = chamfered(true, true, PlaneFrame::default());
+    let chamfer_data = chamfer.rust_thread_entry_chamfer_data().unwrap().source;
+    for (label, solid, center) in [
+        ("rounded", &rounded, 2.35),
+        ("relief", &relief, 3.3),
+        ("two-start", &double, 3.3),
+        ("bore", &bore, 2.35),
+        ("chamfer", &chamfer, 0.8),
+    ] {
         for (origin, [u, v]) in frames(center) {
             let frame = PlaneFrame { origin, u, v };
             let view = View::new(frame);
@@ -646,7 +673,7 @@ fn thread_sections_lie_on_the_source_boundary() {
                 options,
             )
             .unwrap()
-            .unwrap();
+            .unwrap_or_else(|error| panic!("{label} {origin:?} {u:?}: {error:?}"));
             let mut checked = 0;
             for vector in vectors.iter().filter(|v| v.role == VectorRole::Section) {
                 for q in &vector.preview_mm {
@@ -657,12 +684,36 @@ fn thread_sections_lie_on_the_source_boundary() {
                     let radius = x.hypot(y);
                     let theta = y.atan2(x);
                     let on = |value: f64| value.abs() < 1e-6;
-                    let ok = if label == "rounded" {
+                    let ok = if label == "chamfer" {
+                        let material = chamfer_data.material_length_mm();
+                        let top = chamfer_data.full_length_mm();
+                        let neck = chamfer_data.terminal_relief().unwrap().neck_radius_mm();
+                        let bound = chamfer_data.radius(theta, z.clamp(0., top));
+                        (on(radius - bound) && z > -1e-9 && z < top + 1e-9)
+                            || (on(z) && radius <= bound + 1e-6)
+                            || (on(z - material)
+                                && radius >= neck - 1e-6
+                                && radius <= chamfer_data.radius(theta, material) + 1e-6)
+                            || (on(z - top) && radius <= neck + 1e-6)
+                    } else if label == "bore" {
+                        let bound = bore_thread.radius(theta, z.clamp(0., 3.7 * p));
+                        let length = 3.7 * p;
+                        (on(radius - bound) && z > -1e-9 && z < length + 1e-9)
+                            || (on(radius - 5.) && z > -1e-9 && z < length + 1e-9)
+                            || ((on(z) || on(z - length))
+                                && radius >= bound - 1e-6
+                                && radius <= 5. + 1e-6)
+                    } else if label == "rounded" {
                         let bound = rounded_thread.radius(theta, z.clamp(0., 3.7 * p));
                         let length = 3.7 * p;
                         (on(radius - bound) && z > -1e-9 && z < length + 1e-9)
                             || ((on(z) || on(z - length)) && radius <= bound + 1e-6)
                     } else {
+                        let relief_data = if label == "relief" {
+                            relief_data
+                        } else {
+                            double_data
+                        };
                         let thread = relief_data.material_thread();
                         let [junction, top] = [
                             relief_data.material_length_mm(),
@@ -693,8 +744,8 @@ fn thread_sections_lie_on_the_source_boundary() {
             // Independent area of the cut by containment on a fine grid.
             let step = 0.01;
             let mut inside = 0usize;
-            for i in -400..400 {
-                for j in -400..400 {
+            for i in -600..600 {
+                for j in -600..600 {
                     let q = [(f64::from(i) + 0.5) * step, (f64::from(j) + 0.5) * step];
                     let w: [f64; 3] = std::array::from_fn(|k| {
                         frame.origin[k] + view.axes[0][k] * q[0] + view.axes[1][k] * q[1]
@@ -719,10 +770,22 @@ fn thread_sections_lie_on_the_source_boundary() {
                         _ => None,
                     })
                     .sum();
-                let exact = if label == "rounded" {
+                let exact = if label == "chamfer" {
+                    // The axial cut at 0.37 mm above the centre lies past the
+                    // cone, where the area is the thread's.
+                    let thread = chamfer_data.source_thread();
+                    thread.volume_mm3() / thread.spec().length_mm
+                } else if label == "bore" {
+                    PI * 25. - bore_thread.volume_mm3() / (3.7 * p)
+                } else if label == "rounded" {
                     rounded_thread.volume_mm3() / (3.7 * p)
                 } else {
-                    let thread = relief_data.material_thread();
+                    let data = if label == "relief" {
+                        relief_data
+                    } else {
+                        double_data
+                    };
+                    let thread = data.material_thread();
                     thread.volume_mm3() / thread.spec().length_mm
                 };
                 assert!(
@@ -732,4 +795,225 @@ fn thread_sections_lie_on_the_source_boundary() {
             }
         }
     }
+}
+
+/// A two-start ISO-like thread with a terminal relief.
+fn two_start(left_hand: bool, frame: PlaneFrame) -> crate::Solid {
+    let root = 0.5 / (4. * 3_f64.sqrt());
+    crate::Solid::rust_helical_thread_end_relief(
+        crate::HelicalThread {
+            major_radius_mm: 3.,
+            pitch_mm: 0.5,
+            length_mm: 6.6,
+            depth_mm: (0.5 - 0.0625) / (2. * 30_f64.to_radians().tan()) - root,
+            crest_width_mm: 0.0625,
+            lower_flank_deg: 30.,
+            upper_flank_deg: 30.,
+            radial_taper: 0.,
+            starts: 2,
+            left_hand,
+        },
+        Some(root),
+        0.6,
+        0.1,
+        multicad_core::document::EntityId::new(),
+        frame,
+        GeometryPolicy::default(),
+    )
+    .unwrap()
+}
+
+/// A rounded thread bore through a radius-5 stock.
+fn rounded_bore(left_hand: bool, frame: PlaneFrame) -> crate::Solid {
+    let p = 1.27;
+    let a = 27.5_f64.to_radians();
+    let r = p * a.cos() / (12. * (1. - a.sin()));
+    crate::Solid::rust_rounded_thread_bore(
+        multicad_rust_kernel::rounded_thread::Spec {
+            major_radius_mm: 3.175,
+            pitch_mm: p,
+            length_mm: 3.7 * p,
+            depth_mm: p / (3. * a.tan()),
+            crest_radius_mm: r,
+            root_radius_mm: r,
+            flank_angle_deg: 27.5,
+            starts: 1,
+            left_hand,
+        },
+        5.,
+        multicad_core::document::EntityId::new(),
+        frame,
+        GeometryPolicy::default(),
+    )
+    .unwrap()
+}
+
+/// An independent depth-map oracle for thread drawings: the first material
+/// along each pixel's sight line is found by marching the source solid's
+/// containment test alone. Wherever that depth jumps between neighbouring
+/// pixels, or a pixel's sight line starts or stops meeting material, an
+/// occluding contour or edge is seen there, and a published visible vector
+/// must pass within two and a half pixels.
+#[test]
+fn thread_occluding_contours_agree_with_a_depth_map_oracle() {
+    use crate::DrawingSolid;
+    let relief = two_start(false, PlaneFrame::default());
+    let bore = rounded_bore(true, PlaneFrame::default());
+    let p = 1.27;
+    let a = 27.5_f64.to_radians();
+    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let rounded = crate::Solid::rust_rounded_thread(
+        multicad_rust_kernel::rounded_thread::Spec {
+            major_radius_mm: 3.175,
+            pitch_mm: p,
+            length_mm: 3.7 * p,
+            depth_mm: p / (3. * a.tan()),
+            crest_radius_mm: r,
+            root_radius_mm: r,
+            flank_angle_deg: 27.5,
+            starts: 1,
+            left_hand: false,
+        },
+        multicad_core::document::EntityId::new(),
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+    )
+    .unwrap();
+    let s = 0.5_f64.sqrt();
+    let t = (1_f64 / 6.).sqrt();
+    for (label, solid, center) in [
+        ("rounded", &rounded, 2.35),
+        ("relief", &relief, 3.3),
+        ("bore", &bore, 2.35),
+    ] {
+        for [u, v] in [[[1., 0., 0.], [0., 0., 1.]], [[s, -s, 0.], [t, t, -2. * t]]] {
+            let frame = PlaneFrame {
+                origin: [0.1, -0.05, center],
+                u,
+                v,
+            };
+            let view = View::new(frame);
+            let options = DrawingProjection {
+                frame,
+                ..Default::default()
+            };
+            let vectors = project_solids(&[DrawingSolid { solid, hatch: None }], options)
+                .unwrap()
+                .unwrap();
+            let world = |q: P3| -> [f64; 3] {
+                std::array::from_fn(|i| {
+                    frame.origin[i] + (0..3).map(|j| view.axes[j][i] * q[j]).sum::<f64>()
+                })
+            };
+            let inside = |q: P3| solid.rust_thread_contains(world(q)).unwrap();
+            // First material from the viewer, refined by bisection.
+            let depth = |x: f64, y: f64| -> Option<f64> {
+                let (top, bottom, step) = (8., -8., 0.01);
+                let mut z = top;
+                while z > bottom {
+                    let next = z - step;
+                    if inside([x, y, next]) {
+                        let [mut hi, mut lo] = [z, next];
+                        for _ in 0..30 {
+                            let mid = 0.5 * (hi + lo);
+                            if inside([x, y, mid]) {
+                                lo = mid
+                            } else {
+                                hi = mid
+                            }
+                        }
+                        return Some(lo);
+                    }
+                    z = next;
+                }
+                None
+            };
+            let pixel = 0.05;
+            let count = 200;
+            let grid: Vec<Vec<Option<f64>>> = (0..count)
+                .map(|i| {
+                    (0..count)
+                        .map(|j| {
+                            depth(
+                                -5. + pixel * (i as f64 + 0.5),
+                                -5. + pixel * (j as f64 + 0.5),
+                            )
+                        })
+                        .collect()
+                })
+                .collect();
+            let near_visible = |x: f64, y: f64| {
+                vectors
+                    .iter()
+                    .filter(|v| v.role == VectorRole::Visible)
+                    .any(|v| {
+                        v.preview_mm.windows(2).any(|w| {
+                            let [[a0, a1], [b0, b1]] = [w[0], w[1]];
+                            let [dx, dy] = [b0 - a0, b1 - a1];
+                            let along = (((x - a0) * dx + (y - a1) * dy)
+                                / (dx * dx + dy * dy).max(1e-300))
+                            .clamp(0., 1.);
+                            (x - a0 - along * dx).hypot(y - a1 - along * dy) < 2.5 * pixel
+                        })
+                    })
+            };
+            let (mut seen, mut missing) = (0, Vec::new());
+            for i in 0..count - 1 {
+                for j in 0..count - 1 {
+                    for (k, l) in [(i + 1, j), (i, j + 1)] {
+                        let jump = match (grid[i][j], grid[k][l]) {
+                            (Some(a), Some(b)) => (a - b).abs() > 0.3,
+                            (None, None) => false,
+                            _ => true,
+                        };
+                        if !jump {
+                            continue;
+                        }
+                        seen += 1;
+                        let x = -5. + pixel * (0.5 * (i + k) as f64 + 0.5);
+                        let y = -5. + pixel * (0.5 * (j + l) as f64 + 0.5);
+                        if !near_visible(x, y) {
+                            missing.push([x, y]);
+                        }
+                    }
+                }
+            }
+            assert!(seen > 100, "{label}: {seen}");
+            assert!(
+                missing.is_empty(),
+                "{label} {u:?}: {} of {seen}: {:?}",
+                missing.len(),
+                &missing[..missing.len().min(6)]
+            );
+        }
+    }
+}
+
+/// An ISO-like thread with an entry chamfer and, optionally, a terminal relief.
+fn chamfered(left_hand: bool, terminal: bool, frame: PlaneFrame) -> crate::Solid {
+    let root = 1. / (4. * 3_f64.sqrt());
+    crate::Solid::rust_helical_thread_entry_chamfer(
+        crate::HelicalThread {
+            major_radius_mm: 3.,
+            pitch_mm: 1.,
+            length_mm: 6.6,
+            depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().tan()) - root,
+            crest_width_mm: 0.125,
+            lower_flank_deg: 30.,
+            upper_flank_deg: 30.,
+            radial_taper: 0.,
+            starts: 1,
+            left_hand,
+        },
+        Some(root),
+        0.3,
+        terminal.then_some(multicad_rust_kernel::thread_end_relief::Intent {
+            width_mm: 0.6,
+            radial_depth_mm: 0.1,
+        }),
+        multicad_core::document::EntityId::new(),
+        frame,
+        GeometryPolicy::default(),
+    )
+    .unwrap()
 }

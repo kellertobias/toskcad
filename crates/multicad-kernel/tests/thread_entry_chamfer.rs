@@ -133,17 +133,20 @@ fn retained_entry_material_publishes_actual_faces_mesh_and_source_known_file_pro
         .kind,
         multicad_kernel::GeometryErrorKind::Unsupported
     );
-    assert_eq!(
-        multicad_kernel::project_drawing(
-            &[multicad_kernel::DrawingSolid {
-                solid: &body,
-                hatch: None
-            }],
-            Default::default()
-        )
-        .unwrap_err()
-        .kind,
-        multicad_kernel::GeometryErrorKind::Unsupported
+    // The exact drawing of this material is certified by the scene engine
+    // (CAD-346, drawing::scene::tests); here it only has to be published.
+    let drawing = multicad_kernel::project_drawing(
+        &[multicad_kernel::DrawingSolid {
+            solid: &body,
+            hatch: None,
+        }],
+        Default::default(),
+    )
+    .unwrap();
+    assert!(
+        drawing
+            .iter()
+            .any(|vector| vector.role == multicad_core::drawings::VectorRole::Visible)
     );
     let mesh = body.manufacturing_mesh(MeshOptions::default()).unwrap();
     assert!(!mesh.vertices.is_empty());
