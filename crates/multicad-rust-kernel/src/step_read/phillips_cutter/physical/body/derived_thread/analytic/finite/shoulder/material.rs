@@ -155,19 +155,30 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
             let closed = self.common_mouth().closed_cavity();
             let local = closed.local_source_certificate();
             let head: &'s RepairedHeadMeridian<'s> = self.source();
+            // The join's closed-head proof already includes BOTH immutable
+            // child prerequisites: common_mouth -> closed_cavity -> local,
+            // and closed_repaired_head -> this exact head source constructor.
+            // Preserve the standalone child's16M cap while giving it only the
+            // caller's remaining NEW work after those already-paid prefixes.
+            let child_prefix = local.work_used() + head.work_used();
+            let child_limit = work.remaining.saturating_add(child_prefix).min(WORK);
             let containment = local
                 .certify_repaired_head(
                     head,
                     RepairedHeadContainmentOptions {
                         minimum_clearance_mm: o.minimum_clearance_mm,
                         maximum_cells: o.maximum_cells,
-                        maximum_work: work.remaining,
+                        maximum_work: child_limit,
                         maximum_bytes: o.maximum_bytes,
                     },
                     interrupt,
                 )
                 .map_err(cavity_error)?;
-            work.step(containment.work_used())?;
+            let incremental = containment
+                .work_used()
+                .checked_sub(child_prefix)
+                .expect("containment receipt includes its validated immutable prerequisites");
+            work.step(incremental)?;
             let mut cavity_faces = [CavityFace::Mouth; 88];
             let mut count = 0;
             for domain in local.patch_domains() {

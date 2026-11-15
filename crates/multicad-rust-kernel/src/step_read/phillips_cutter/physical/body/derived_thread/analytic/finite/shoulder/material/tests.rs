@@ -25,6 +25,20 @@ fn actual_m2_distinct_periodic_material_retains_shaped_cavity_and_complete_bound
             material.inherited_work_used() + material.new_work_used()
         );
         assert!(material.retained_budget_bytes() < BYTES);
+        let local = head
+            .common_mouth()
+            .closed_cavity()
+            .local_source_certificate();
+        let already_paid = local.work_used() + head.source().work_used();
+        assert_eq!(
+            material.new_work_used(),
+            1 + METADATA
+                + (material.containment().work_used() - already_paid)
+                + local.patch_domains().len()
+                + 1
+        );
+        assert!(material.new_work_used() < material.containment().work_used());
+
         let faces = material.boundary_faces().collect::<Vec<_>>();
         assert_eq!(
             faces
