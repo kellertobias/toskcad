@@ -195,6 +195,9 @@ impl<'document, 'input> Parsed<'document, 'input> {
         }
         let lower = self.points[heights[0]].coordinates[2];
         let upper = self.points[heights[1]].coordinates[2];
+        // parse::body already seals false lateral face senses, matching
+        // the outward -S_u x S_v used by J<0 and z_v>0. Cap senses remain
+        // structurally admissible in either direction and are checked here.
         if lower.bounds()[1] >= upper.bounds()[0]
             || self.faces[caps[0]].forward
             || !self.faces[caps[1]].forward

@@ -84,7 +84,7 @@ fn changed_record(text: &str, id: u32, change: impl FnOnce(&str) -> String) -> S
     text.replacen(record, &changed, 1)
 }
 #[test]
-fn actual_cap_orientation_flags_cannot_hide_behind_zero_cap_flux() {
+fn actual_face_senses_must_match_the_proved_source_orientation() {
     let text = super::super::tests::fixture(false);
     let document = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
     let parsed = Parsed::parse(
@@ -94,11 +94,7 @@ fn actual_cap_orientation_flags_cannot_hide_behind_zero_cap_flux() {
         None,
     )
     .unwrap();
-    for face in parsed
-        .faces()
-        .iter()
-        .filter(|face| matches!(face.support(), Support::Plane { .. }))
-    {
+    for face in parsed.faces() {
         let wrong = changed_record(&text, face.entity(), |record| {
             if face.forward() {
                 record.replacen(",.T.)", ",.F.)", 1)
@@ -112,12 +108,14 @@ fn actual_cap_orientation_flags_cannot_hide_behind_zero_cap_flux() {
             document.represented_members()[0].item_entity(),
             Default::default(),
             None,
-        )
-        .unwrap();
-        assert!(matches!(
-            parsed.projection(Default::default(), None),
-            Err(Error::Unsupported)
-        ));
+        );
+        match face.support() {
+            Support::Tensor(_) => assert!(matches!(parsed, Err(Error::Unsupported))),
+            Support::Plane { .. } => assert!(matches!(
+                parsed.unwrap().projection(Default::default(), None),
+                Err(Error::Unsupported)
+            )),
+        }
     }
 }
 #[test]
