@@ -350,3 +350,54 @@ fn exact_operator_resource_frontiers_and_every_cancel_checkpoint_preserve_input(
         map.axes()
     );
 }
+#[test]
+fn neutral_operator_entry_keeps_its_document_independent_resource_contract() {
+    let text = fixture(["(0.,2.,0.)", "(-3.,0.,0.)", "(0.,0.,5.)"], "1.");
+    let document = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+    let baseline =
+        evaluate_neutral_operator(document.records(), OP, Default::default(), None).unwrap();
+    assert_eq!(baseline.handedness, 1);
+    assert!(baseline.work > 512 && baseline.bytes > SCRATCH);
+    for options in [
+        Options {
+            maximum_work: 0,
+            ..Default::default()
+        },
+        Options {
+            maximum_work: 16_000_001,
+            ..Default::default()
+        },
+        Options {
+            retained_budget_bytes: 0,
+            ..Default::default()
+        },
+        Options {
+            retained_budget_bytes: 64 * 1024 * 1024 + 1,
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            evaluate_neutral_operator(document.records(), OP, options, None),
+            Err(Error::Invalid)
+        ));
+    }
+    for options in [
+        Options {
+            maximum_work: baseline.work - 1,
+            ..Default::default()
+        },
+        Options {
+            retained_budget_bytes: baseline.bytes - 1,
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            evaluate_neutral_operator(document.records(), OP, options, None),
+            Err(Error::Limit)
+        ));
+    }
+    assert!(matches!(
+        evaluate_neutral_operator(document.records(), OP, Default::default(), Some(&|| true)),
+        Err(Error::Cancelled)
+    ));
+}

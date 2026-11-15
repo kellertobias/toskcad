@@ -17,7 +17,7 @@ mod bindings;
 mod flux;
 pub use flux::{FluxOptions, OccupiedVolume, OrientedFlux};
 mod geometry;
-mod mapping;
+pub(in crate::step_read) mod mapping;
 pub use mapping::PhysicalMapping;
 mod numbers;
 pub use bindings::{SupportBindings, TensorBinding};

@@ -1,40 +1,36 @@
 use super::*;
 use records::*;
 mod bindings;
+mod selection;
 mod topology;
-fn points<'input>(
-    records: &BTreeMap<u32, Vec<Entity<'input>>>,
+fn append_point<'input>(
+    id: u32,
+    values: &[Entity<'input>],
+    points: &mut Vec<Point<'input>>,
     budget: &mut Budget<'_>,
-) -> Result<Vec<Point<'input>>> {
-    budget.step(records.len())?;
-    let count=records.values().filter(|values|matches!(values.as_slice(),[Entity {name:"CARTESIAN_POINT",args,..}]if matches!(args.as_slice(),[_,Value::List(p)]if p.len()==3))).count();
-    if count > 262_144 + 4096 {
-        return Err(Error::Limit);
+) -> Result<()> {
+    let [entity] = values else {
+        return Ok(());
+    };
+    if entity.name != "CARTESIAN_POINT"
+        || !matches!(entity.args.as_slice(),[_,Value::List(p)]if p.len()==3)
+    {
+        return Ok(());
     }
-    let mut points = budget.allocate(count)?;
-    for (&id, values) in records {
-        let [entity] = values.as_slice() else {
-            continue;
-        };
-        if entity.name != "CARTESIAN_POINT"
-            || !matches!(entity.args.as_slice(),[_,Value::List(p)]if p.len()==3)
-        {
-            continue;
-        }
-        let coordinates = point(entity, 3, budget)?;
-        let fixed = coordinates
-            .as_slice()
-            .try_into()
-            .expect("three actual coordinates");
-        budget.release(&coordinates);
-        drop(coordinates);
-        points.push(Point {
-            id,
-            coordinates: fixed,
-        });
-    }
-    Ok(points)
+    let coordinates = point(entity, 3, budget)?;
+    let fixed = coordinates
+        .as_slice()
+        .try_into()
+        .expect("three actual coordinates");
+    budget.release(&coordinates);
+    drop(coordinates);
+    points.push(Point {
+        id,
+        coordinates: fixed,
+    });
+    Ok(())
 }
+
 fn curve<'input>(
     records: &BTreeMap<u32, Vec<Entity<'input>>>,
     points: &[Point<'input>],
@@ -183,6 +179,33 @@ pub(super) fn body<'document, 'input>(
     if member.item_entity() != solid || member.mapping_link().is_some() {
         return Err(Error::Unsupported);
     }
+    decode(document, solid, solid, budget)
+}
+pub(super) fn selected_body<'document, 'input>(
+    document: &'document CompoundDocument<'input>,
+    item: u32,
+    options: Options,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<(
+    Parsed<'document, 'input>,
+    super::super::owned_insert::Member,
+)> {
+    let mut budget = Budget::new(options, interrupt)?;
+    budget.step(1 + document.represented_members().len())?;
+    let member = *document
+        .represented_members()
+        .iter()
+        .find(|member| member.item_entity() == item)
+        .ok_or(Error::Unsupported)?;
+    let parsed = decode(document, member.local_solid_entity(), item, budget)?;
+    Ok((parsed, member))
+}
+fn decode<'document, 'input>(
+    document: &'document CompoundDocument<'input>,
+    solid: u32,
+    selected: u32,
+    mut budget: Budget<'_>,
+) -> Result<Parsed<'document, 'input>> {
     let records = document.records();
     let entity = kind(records, solid, "MANIFOLD_SOLID_BREP", &mut budget)?;
     let [Value::String(_), shell] = entity.args.as_slice() else {
@@ -196,7 +219,7 @@ pub(super) fn body<'document, 'input>(
     if face_ids.len() != 10 {
         return Err(Error::Unsupported);
     }
-    let points = points(records, &mut budget)?;
+    let (points, dependencies) = selection::points(records, selected, &mut budget)?;
     let mut tensors = budget.allocate(8)?;
     let mut vertices = budget.allocate(12)?;
     let mut curves = budget.allocate(20)?;
@@ -278,6 +301,7 @@ pub(super) fn body<'document, 'input>(
     Ok(Parsed {
         document,
         solid,
+        dependencies,
         points,
         vertices,
         curves,

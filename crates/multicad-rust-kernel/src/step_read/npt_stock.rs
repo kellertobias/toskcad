@@ -8,8 +8,10 @@ use std::{collections::BTreeMap, mem::size_of};
 mod material;
 mod moments;
 mod numeric;
+mod selected;
 pub use material::{MaterialOptions, Occupied, Projection};
 pub use numeric::Scalar;
+pub use selected::{Placement, Selected};
 mod parse;
 mod records;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -213,6 +215,7 @@ impl Face {
 pub struct Parsed<'document, 'input> {
     document: &'document CompoundDocument<'input>,
     solid: u32,
+    dependencies: Vec<u32>,
     points: Vec<Point<'input>>,
     vertices: Vec<Vertex>,
     curves: Vec<Curve>,

@@ -252,6 +252,55 @@ fn evaluate_operator(
         scale,
     })
 }
+/// Calculation-only operator proof over the original neutral arena. It does
+/// not establish which represented member owns this operator.
+pub(in crate::step_read) struct OperatorEvaluation {
+    pub(in crate::step_read) origin: [[f64; 2]; 3],
+    pub(in crate::step_read) axes: [[[f64; 2]; 3]; 3],
+    pub(in crate::step_read) scale: [f64; 2],
+    pub(in crate::step_read) handedness: i8,
+    pub(in crate::step_read) work: usize,
+    pub(in crate::step_read) bytes: usize,
+}
+pub(in crate::step_read) fn evaluate_neutral_operator(
+    records: &BTreeMap<u32, Vec<Entity<'_>>>,
+    operator: u32,
+    options: Options,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<OperatorEvaluation> {
+    if options.maximum_work == 0
+        || options.maximum_work > 16_000_000
+        || options.retained_budget_bytes == 0
+        || options.retained_budget_bytes > 64 * 1024 * 1024
+    {
+        return Err(Error::Invalid);
+    }
+    let bytes = SCRATCH + size_of::<OperatorEvaluation>();
+    if bytes > options.retained_budget_bytes {
+        return Err(Error::Limit);
+    }
+    let mut work = Ledger {
+        used: 0,
+        remaining: options.maximum_work,
+        interrupt,
+    };
+    work.step(512)?;
+    let MappingValues {
+        origin,
+        axes,
+        scale,
+    } = evaluate_operator(records, operator, &mut work)?;
+    work.step(32)?;
+    let handedness = basis_handedness(axes)?;
+    Ok(OperatorEvaluation {
+        origin: origin.map(bounds),
+        axes: axes.map(|v| v.map(bounds)),
+        scale: bounds(scale),
+        handedness,
+        work: work.used,
+        bytes,
+    })
+}
 impl<'input> Parsed<'input> {
     /// Read the actual complex operator's original numeric leaves. A caller
     /// must separately prove that this entity maps its represented member.
