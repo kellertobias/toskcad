@@ -710,10 +710,24 @@ pub(super) fn section(
     depth: f64,
     _tolerance_mm: f64,
 ) -> Result<Vec<Loop>, GeometryError> {
-    let plane = Plane {
+    let mut plane = Plane {
         normal: core.sight,
         level: depth - core.origin[2],
     };
+    // A plane containing a meridian face has a plane function that vanishes
+    // identically on the face, its rims and the cap generators there. The
+    // section is the region with material immediately behind the plane, so
+    // such a plane is displaced by `band` behind it: the face then lies
+    // strictly in front of the cut and the cut of the material behind the
+    // face converges to the face, which bounds it exactly by its rays and
+    // rims. The displacement is far below every drawing tolerance.
+    let band = 1e-12 * core.scale;
+    if core.meridians().iter().any(|&(_, _, radial, _)| {
+        let normal = [-radial[1], radial[0], 0.];
+        (1. - dot3(normal, plane.normal).abs()) <= 1e-12 && plane.level.abs() <= band
+    }) {
+        plane.level -= band;
+    }
     let [lo, hi] = core.bounds;
     if depth <= lo[2] || depth >= hi[2] {
         return Ok(Vec::new());

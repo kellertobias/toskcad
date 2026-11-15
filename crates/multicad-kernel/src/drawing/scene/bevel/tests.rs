@@ -630,3 +630,195 @@ fn material_in_front_of_an_edge_is_found_by_marching_the_membership() {
         }
     }
 }
+
+/// A nine-tooth gear with meridian flanks; no meridian plane carries a
+/// second meridian face on the far side of the axis.
+fn meridian_gear(placed: bool) -> Solid {
+    let solid = Solid::rust_spherical_bevel_gear_named(
+        specification(2., 9, 13, 8., 3.),
+        EntityId::new(),
+        GeometryPolicy::default(),
+    )
+    .unwrap();
+    assert!(solid.bevel_body().unwrap().0.geometry.has_meridian());
+    if placed {
+        solid.transformed(PLACED).unwrap()
+    } else {
+        solid
+    }
+}
+
+fn gear_in(solid: &Solid, frame: PlaneFrame) -> Gear {
+    let (body, placement) = solid.bevel_body().unwrap();
+    Gear {
+        core: Arc::new(Core::new(
+            body.geometry.clone(),
+            placement,
+            &View::new(frame),
+        )),
+    }
+}
+
+/// Strictly inside: the point and its neighbors turned about the gear axis
+/// by a small angle either way are material. This open-set test does not
+/// depend on the rounding of a point lying on a meridian face.
+fn interior(core: &Core, local: P3) -> bool {
+    [-1e-9, 0., 1e-9].into_iter().all(|turn: f64| {
+        let (sin, cos) = turn.sin_cos();
+        let p = [
+            cos * local[0] - sin * local[1],
+            sin * local[0] + cos * local[1],
+            local[2],
+        ];
+        core.inside(p)
+    })
+}
+
+#[test]
+fn sight_lines_in_meridian_planes_are_decided_exactly() {
+    for placed in [false, true] {
+        let solid = meridian_gear(placed);
+        let (_, frame) = solid.bevel_body().unwrap();
+        for (label, [u, v]) in [
+            ("axial", [frame.u, frame.v]),
+            ("reversed", [frame.v, frame.u]),
+        ] {
+            let gear = gear_in(
+                &solid,
+                PlaneFrame {
+                    origin: [1., 2., 3.],
+                    u,
+                    v,
+                },
+            );
+            let core = &gear.core;
+            let planes = core.meridians();
+            assert_eq!(planes.len(), 18);
+            let mut checked = 0;
+            for &(sector, piece, ..) in planes.iter().step_by(5) {
+                // Lines through the face, through its rims and through the
+                // rays at both ends of the face.
+                let mut points = Vec::new();
+                for s in [0., 0.3, 0.7, 1.] {
+                    let u = core.direction(sector, piece, s).0;
+                    let [toe, heel] = [End::Toe, End::Heel].map(|end| core.reach(end, u));
+                    for f in [0., 0.4, 1.] {
+                        points.push(scaled(u, toe + (heel - toe) * f));
+                    }
+                }
+                for local in points {
+                    let target = core.to_view(local);
+                    let reference = gear.sight([target[0], target[1]]).unwrap();
+                    // Perturbing the paper point by rounding-sized amounts
+                    // leaves the answer unchanged.
+                    for (dx, dy) in [(1e-14, 0.), (0., -1e-14), (-3e-15, 2e-15)] {
+                        let other = gear.sight([target[0] + dx, target[1] + dy]).unwrap();
+                        assert_eq!(
+                            other.len(),
+                            reference.len(),
+                            "{label}: {other:?} {reference:?}"
+                        );
+                        for (a, b) in other.iter().zip(&reference) {
+                            assert!((a[0] - b[0]).abs() + (a[1] - b[1]).abs() <= 1e-9);
+                        }
+                    }
+                    let [lo, hi] = gear.bounds();
+                    let steps = 4000;
+                    for k in 0..=steps {
+                        let z =
+                            lo[2] - 0.5 + (hi[2] - lo[2] + 1.) * f64::from(k) / f64::from(steps);
+                        if reference.iter().flatten().any(|end| (end - z).abs() < 0.01) {
+                            continue;
+                        }
+                        let expected = interior(core, core.to_local([target[0], target[1], z]));
+                        let reported = reference.iter().any(|[a, b]| *a < z && z < *b);
+                        assert_eq!(
+                            expected, reported,
+                            "{label} placed {placed}: depth {z} on {target:?}"
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+            assert!(checked > 100_000, "{checked}");
+        }
+    }
+}
+
+/// Winding number of chained loops about a paper point.
+fn winding(loops: &[Loop], point: P2) -> i32 {
+    let mut angle = 0.;
+    for paths in loops {
+        for path in paths {
+            let stops = path.flatten(1e-4);
+            for pair in stops.windows(2) {
+                let [a, b] = [pair[0], pair[1]].map(|t| {
+                    let p = path.point(t);
+                    (p[1] - point[1]).atan2(p[0] - point[0])
+                });
+                angle += (b - a + PI).rem_euclid(TAU) - PI;
+            }
+        }
+    }
+    (angle / TAU).round() as i32
+}
+
+#[test]
+fn section_planes_containing_a_meridian_face_keep_the_material_behind() {
+    let solid = meridian_gear(false);
+    let gear = gear_in(&solid, PlaneFrame::default());
+    let (sector, piece, radial, _) = gear.core.meridians()[0];
+    let normal = [-radial[1], radial[0], 0.];
+    let face = gear.core.bevel.side_area_mm2(gear.core.pieces[piece]);
+    let mut behind_sides = 0;
+    for flip in [false, true] {
+        // The viewer looks along ∓ the meridian normal: u × v = ±normal.
+        let [u, v] = if flip {
+            [radial, [0., 0., 1.]]
+        } else {
+            [[0., 0., 1.], radial]
+        };
+        let gear = gear_in(
+            &solid,
+            PlaneFrame {
+                origin: [1., 2., 3.],
+                u,
+                v,
+            },
+        );
+        let core = &gear.core;
+        let toward = core.sight;
+        assert!((dot3(toward, normal).abs() - 1.).abs() <= 1e-12);
+        let depth = core.origin[2];
+        let label = format!("flip {flip}");
+        let loops = gear.section(depth, 1e-3).unwrap();
+        let area = loop_area(&label, &gear, depth, &loops);
+        let [behind, front] = [-1e-7, 1e-7].map(|h| scanned_area(&gear, depth + h));
+        println!(
+            "{{\"case\":\"{label}\",\"loops\":{area},\"behind\":{behind},\"front\":{front},\"face\":{face}}}"
+        );
+        assert!(
+            (area - behind).abs() <= 2e-3 * behind + 2e-2,
+            "{label}: {area} against {behind} behind"
+        );
+        // The face is the whole difference between the two sides.
+        assert!(
+            ((behind - front).abs() - face).abs() <= 0.02 * face,
+            "{label}"
+        );
+        // A point in the middle of the face lies in the section exactly
+        // when the tooth is behind the plane.
+        let u = core.direction(sector, piece, 0.5).0;
+        let r = 0.5 * (core.reach(End::Toe, u) + core.reach(End::Heel, u));
+        let middle = core.to_view(scaled(u, r));
+        let tooth_behind = core.inside(core.to_local([middle[0], middle[1], depth - 1e-6]));
+        behind_sides += usize::from(tooth_behind);
+        assert_eq!(
+            winding(&loops, [middle[0], middle[1]]),
+            i32::from(tooth_behind),
+            "{label}"
+        );
+        assert_eq!(behind > front, tooth_behind, "{label}");
+    }
+    assert_eq!(behind_sides, 1);
+}

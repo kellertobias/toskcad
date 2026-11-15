@@ -327,6 +327,38 @@ impl Core {
         self.bevel.classify(local, 0.) == Containment::Inside
     }
 
+    /// Meridian flank planes of the gear: sector, piece, unit radial
+    /// direction of the half-plane and the polar band of the face, ascending.
+    fn meridians(&self) -> Vec<(u32, usize, P3, [f64; 2])> {
+        let mut output = Vec::new();
+        for sector in 0..self.teeth {
+            for (piece, _) in self
+                .pieces
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| meridian(**p))
+            {
+                let [a, b] = [0., 1.].map(|s| self.direction(sector, piece, s).0);
+                let length = a[0].hypot(a[1]);
+                let radial = [a[0] / length, a[1] / length, 0.];
+                let [ga, gb] = [a, b].map(|u| u[2].clamp(-1., 1.).acos());
+                output.push((sector, piece, radial, [ga.min(gb), ga.max(gb)]));
+            }
+        }
+        output
+    }
+
+    /// Whether a point lies on a meridian face whose plane contains the
+    /// line of sight: such a point is on the boundary, never strictly
+    /// inside, whatever the rounding of its azimuth.
+    fn on_face(planes: &[(u32, usize, P3, [f64; 2])], local: P3) -> bool {
+        planes.iter().any(|&(_, _, radial, [lo, hi])| {
+            let length = norm(local);
+            let gamma = (local[2] / length).clamp(-1., 1.).acos();
+            dot3(local, radial) > 0. && lo <= gamma && gamma <= hi
+        })
+    }
+
     /// Outline function `det[d, u, T]` of a fillet or involute cone with its
     /// derivative, `T` the unit tangent of the piece.
     fn limb(&self, sector: u32, piece: usize, s: f64) -> (f64, f64) {
@@ -645,6 +677,31 @@ impl Member for Gear {
         if let Some(bore) = core.bore {
             roots::quadratic(flat[1], flat[0], radial - bore * bore, &mut stops);
         }
+        // A line lying in a meridian plane meets the meridian face along a
+        // whole stretch: its plane function vanishes identically, so the
+        // face is decided by exact case analysis instead of root finding.
+        // The stretch ends where the line crosses the cones of the face's
+        // polar band.
+        let band = 1e-12 * core.scale;
+        let planes: Vec<_> = core
+            .meridians()
+            .into_iter()
+            .filter(|&(_, _, radial, _)| {
+                let normal = [-radial[1], radial[0], 0.];
+                dot3(normal, d).abs() <= 1e-12 && dot3(normal, start).abs() <= band
+            })
+            .collect();
+        for &(_, _, _, gammas) in &planes {
+            for gamma in gammas {
+                let c = gamma.cos().powi(2);
+                roots::quadratic(
+                    d[2] * d[2] - c,
+                    start[2] * d[2] - c * dot3(start, d),
+                    start[2] * start[2] - c * dot3(start, start),
+                    &mut stops,
+                );
+            }
+        }
         // Flank cones: the ruling u lies in the plane through the apex and
         // the line where m · u = 0 with m = start × d.
         let moment = cross(start, d);
@@ -665,6 +722,15 @@ impl Member for Gear {
                     .iter()
                     .enumerate()
                     .filter(|(_, piece)| flank(**piece))
+                    // The fillet and involute next to a meridian are tangent
+                    // to its plane along the joint ruling and lie on one
+                    // side of it, so they meet the plane only there: at the
+                    // band cones already among the stops.
+                    .filter(|(index, _)| {
+                        !planes
+                            .iter()
+                            .any(|&(k, piece, ..)| k == sector && index.abs_diff(piece) <= 1)
+                    })
                 {
                     let eval = |s: f64| {
                         let (u, du) = core.direction(sector, index, s);
@@ -698,7 +764,10 @@ impl Member for Gear {
             // grazes a surface inside the interval; two of three decide.
             let inside = [0.25, 0.5, 0.75]
                 .into_iter()
-                .filter(|f| core.inside(add(start, scaled(d, pair[0] + (pair[1] - pair[0]) * f))))
+                .filter(|f| {
+                    let local = add(start, scaled(d, pair[0] + (pair[1] - pair[0]) * f));
+                    !Core::on_face(&planes, local) && core.inside(local)
+                })
                 .count();
             if inside >= 2 {
                 match output.last_mut() {
