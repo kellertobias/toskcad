@@ -367,3 +367,61 @@ fn actual_authored_periodic_native_ownership_mass_and_whole_box_queries() {
         }
     }
 }
+
+#[test]
+fn actual_periodic_source_topology_retains_two_sided_finite_incidence() {
+    use multicad_core::references::TopologyKind;
+    for left in [false, true] {
+        let source = source(left, 0.5);
+        let part = Solid::rust_periodic_repaired_phillips_material(
+            Rc::clone(&source),
+            feature(),
+            PlaneFrame::default(),
+            Default::default(),
+            None,
+        )
+        .unwrap();
+        let snapshot = part.topology_snapshot(feature(), 7).unwrap();
+        snapshot.validate().unwrap();
+        assert_eq!(snapshot.revision, 7);
+        let faces: Vec<_> = snapshot
+            .elements
+            .iter()
+            .filter(|e| e.key.kind == TopologyKind::Face)
+            .collect();
+        assert_eq!(faces.len(), source.face_count());
+        let edges: Vec<_> = snapshot
+            .elements
+            .iter()
+            .filter(|e| e.key.kind == TopologyKind::Edge)
+            .collect();
+        for edge in &edges {
+            assert_eq!(edge.boundary.len(), 2);
+            for origin in &edge.origins {
+                assert_eq!(
+                    faces.iter().filter(|f| f.boundary.contains(origin)).count(),
+                    2
+                );
+            }
+        }
+        assert!(
+            edges
+                .iter()
+                .any(|e| e.origins.iter().any(|o| o.role == "thread/cap/0/rim/3")
+                    && e.boundary.iter().any(|o| o.role.starts_with("screw.head/")))
+        );
+        assert!(!edges.iter().any(|e| {
+            e.origins
+                .iter()
+                .any(|o| o.role == "screw.head/thread.junction/3")
+        }));
+        for vertex in snapshot
+            .elements
+            .iter()
+            .filter(|e| e.key.kind == TopologyKind::Vertex)
+        {
+            assert!(!vertex.boundary.is_empty());
+            assert!(vertex.geometry.is_some());
+        }
+    }
+}

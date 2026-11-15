@@ -6,6 +6,7 @@ use multicad_rust_kernel::{
     phillips_drive::Classification, step_read::PhillipsOwnedMaterialQueryOptions as SourceOptions,
 };
 pub(super) mod candidate;
+mod topology;
 const SOURCE_WORK: usize = 18_008_192;
 const INVERSE_WORK: usize = 1024;
 const MAX: usize = SOURCE_WORK + INVERSE_WORK + 1;

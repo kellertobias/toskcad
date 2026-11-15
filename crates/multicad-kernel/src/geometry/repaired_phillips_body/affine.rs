@@ -115,6 +115,24 @@ impl Placement {
         self.occurrence
             .point(self.construction.point(self.shifted(p)))
     }
+    /// A representative of the actual source point, accepted only when the
+    /// complete directed construction/occurrence enclosure fits the reserve.
+    pub(super) fn bounded_point(&self, p: [I; 3], reserve: f64) -> Result<Point, GeometryError> {
+        let world = self.exact(p);
+        if world.iter().any(|v| !v.valid()) || !reserve.is_finite() || reserve < 0. {
+            return Err(unsupported("Source reference point is unresolved"));
+        }
+        let point = world.map(|v| v.lo.midpoint(v.hi));
+        let error = world.into_iter().zip(point).fold(I::ZERO, |s, (v, p)| {
+            s + I::point((v - I::point(p)).magnitude())
+        });
+        if !error.valid() || error.hi > reserve {
+            return Err(unsupported(
+                "Source reference point reaches the precision floor",
+            ));
+        }
+        Ok(point)
+    }
     pub(super) fn is_identity(&self) -> bool {
         let identity = [[0.; 3], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.]];
         // This is the FULL material map, including the symbolic station
