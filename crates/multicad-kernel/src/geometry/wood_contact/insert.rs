@@ -1,8 +1,10 @@
 //! Paired insert source contact with one actual retained blind pilot.
 use super::*;
 use source::InsertContact;
+mod clamp;
 mod clearance;
 mod clocked;
+mod inset;
 mod mating;
 impl Solid {
     pub fn rust_wood_insert_contact(

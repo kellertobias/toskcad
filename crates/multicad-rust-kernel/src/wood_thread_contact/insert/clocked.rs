@@ -376,4 +376,4 @@ pub fn certify_clocked_insert_screw_clearance(
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

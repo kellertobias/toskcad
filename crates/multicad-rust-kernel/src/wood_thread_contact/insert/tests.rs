@@ -384,3 +384,45 @@ fn a_real_overhanging_stock_cell_is_not_waived_by_local_pilot_contact() {
         Error::Unsupported
     );
 }
+
+#[test]
+fn managed_real_inset_preserves_original_source_and_consumes_actual_floor_gap() {
+    use std::cell::Cell;
+    for left in [false, true] {
+        let (material, pilot, insert, original, req) = fixture(left, 1);
+        let source = || Stock {
+            material: &material,
+            pilot,
+            frame: identity(),
+        };
+        let mut placed = original;
+        placed.origin_mm[2] -= 1e-9;
+        let proof = certify_inset_insert(source(), &insert, placed, req, 1e-7, &|| false).unwrap();
+        assert!(proof.inset_mm[0] > 0. && proof.inset_mm[1] < 1e-7);
+        assert!(proof.contact.tip_clearance_mm[0] > 1.99 && proof.contact.tip_clearance_mm[1] < 2.);
+        assert_eq!(insert.full_length_mm(), 4.);
+        assert!(certify_insert(source(), &insert, placed, req, &|| false).is_err());
+        for max in [-1., f64::NAN, 1e-3, 1e-10] {
+            assert!(certify_inset_insert(source(), &insert, placed, req, max, &|| false).is_err());
+        }
+        let mut outside = original;
+        outside.origin_mm[2] += 1e-9;
+        assert!(certify_inset_insert(source(), &insert, outside, req, 1e-7, &|| false).is_err());
+        let calls = Cell::new(0);
+        certify_inset_insert(source(), &insert, placed, req, 1e-7, &|| {
+            calls.set(calls.get() + 1);
+            false
+        })
+        .unwrap();
+        for stop in 1..=calls.get() {
+            let n = Cell::new(0);
+            assert!(matches!(
+                certify_inset_insert(source(), &insert, placed, req, 1e-7, &|| {
+                    n.set(n.get() + 1);
+                    n.get() == stop
+                }),
+                Err(Error::Cancelled)
+            ));
+        }
+    }
+}

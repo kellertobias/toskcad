@@ -10,7 +10,7 @@ fn identity() -> Frame {
         axes: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
     }
 }
-fn fixture(left: bool) -> (Insert, Screw, Frame) {
+pub(in crate::wood_thread_contact::insert) fn fixture(left: bool) -> (Insert, Screw, Frame) {
     let p = 0.5;
     let major = (2.874 + 2.980) / 4.;
     let pitch_mid = (2.580 + 2.655) / 2.;

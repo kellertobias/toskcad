@@ -62,10 +62,12 @@ pub use hanger::{
 mod seated;
 mod separation;
 pub use insert::{
-    ClockedInsertMating, ClockedMatingOptions, InsertContact, InsertMating, MatingExternal,
+    ClockedInsertMating, ClockedMatingOptions, InsertClampContact, InsertClampRequirements,
+    InsertClampSources, InsertContact, InsertMating, InsetInsertContact, MatingExternal,
     MatingRequirements, MatingScrew, ScrewClearance, ScrewClearanceRequirements,
     certify_clocked_insert_mating, certify_clocked_insert_screw_clearance, certify_insert,
-    certify_insert_mating, certify_insert_screw_clearance,
+    certify_insert_clamp, certify_insert_mating, certify_insert_screw_clearance,
+    certify_inset_insert,
 };
 pub use seated::{SeatedContact, certify_seated};
 pub use separation::{separated_from_rectangular_prism, separated_from_stock};
@@ -105,6 +107,22 @@ fn enclosure(v: &Q) -> R<I> {
     } else {
         Ok(r)
     }
+}
+/// Exact literal affine point evaluation followed by checked outward caches.
+/// These data-derived datum intervals are not a contact/geometry tolerance.
+fn world_point(frame: Frame, point: [Q; 3], interrupt: &dyn Fn() -> bool) -> R<[[f64; 2]; 3]> {
+    let mut out = [[0.; 2]; 3];
+    for (i, slot) in out.iter_mut().enumerate() {
+        let mut value = q(frame.origin_mm[i])?;
+        for (j, p) in point.iter().enumerate() {
+            value = bounded(value + q(frame.axes[j][i])? * p)?;
+        }
+        let v = enclosure(&value)?;
+        *slot = [v.lo, v.hi];
+    }
+    // Publish the completed exact-source query only after a fresh poll.
+    checkpoint(interrupt)?;
+    Ok(out)
 }
 fn ip(v: f64) -> I {
     I::point(v)
