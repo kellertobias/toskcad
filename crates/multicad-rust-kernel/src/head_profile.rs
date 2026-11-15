@@ -10,10 +10,10 @@ mod repaired;
 pub(crate) use repaired::proposal_rotation;
 pub(crate) mod source_volume;
 pub use repaired::{
-    AxialProgress, OwnedRepairedHead, RepairedHeadError, RepairedHeadLocation,
-    RepairedHeadMeridian, RepairedHeadOptions, RepairedHeadQuery, RepairedHeadQueryOptions,
-    RepairedHeadVolume, RepairedHeadVolumeOptions, RepairedMeridianBounds,
-    RepairedProposalTransfer, RepairedSegmentCertificate,
+    AxialProgress, OwnedRepairedHead, RepairedHeadCorrespondence, RepairedHeadError,
+    RepairedHeadLocation, RepairedHeadMeridian, RepairedHeadOptions, RepairedHeadQuery,
+    RepairedHeadQueryOptions, RepairedHeadVolume, RepairedHeadVolumeOptions,
+    RepairedMeridianBounds, RepairedProposalTransfer, RepairedSegmentCertificate,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

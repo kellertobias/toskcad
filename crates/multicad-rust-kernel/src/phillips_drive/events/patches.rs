@@ -1,8 +1,10 @@
 //! Actual source charts and whole-cell bounds, preceding detached mesh publication.
 use super::*;
+mod correspondence;
 mod mesh;
 mod properties;
 use crate::tapered_thread::interval::J;
+pub use correspondence::{PatchCorrespondence, PatchCorrespondenceOptions};
 pub use mesh::BoundaryMesh;
 pub use properties::{FaceProperties, FacePropertyOptions};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

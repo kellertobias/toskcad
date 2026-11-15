@@ -16,7 +16,9 @@
 use super::{Curve, Profile, Role, Segment};
 use crate::tapered_thread::interval::I;
 mod arc;
+mod correspondence;
 mod proposal;
+pub use correspondence::RepairedHeadCorrespondence;
 pub use proposal::RepairedProposalTransfer;
 pub(crate) use proposal::rotation as proposal_rotation;
 mod query;

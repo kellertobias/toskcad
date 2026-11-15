@@ -222,3 +222,93 @@ fn actual_periodic_ownership_obeys_new_total_and_live_peak_budgets() {
         assert!(volume.owned_source(o, None).is_ok());
     });
 }
+
+#[test]
+fn actual_owned_periodic_export_proposal_has_independent_file_derived_material() {
+    let original = degree11::tests::fixture::actual_source();
+    let source = OwnedPeriodicMaterial::from_authored(&original, Default::default(), None).unwrap();
+    let proposal = source.authored_mesh_approximation(WORK, None).unwrap();
+    let now = std::time::Instant::now();
+    let text = crate::step::write_phillips_screw(
+        proposal.proposal(),
+        [0.; 3],
+        [1., 0., 0.],
+        [0., 1., 0.],
+        1e-7,
+    )
+    .unwrap();
+    eprintln!(
+        "PERIODIC STEP proposal {}bytes {:?}",
+        text.len(),
+        now.elapsed()
+    );
+    let mut decoded = None;
+    crate::step_read::phillips_cutter::physical::body::common_mouth::tests::derived_thread_probe::with_head(&text,&mut|head| {
+        let field=head.common_chart_periodic_thread_repair(Default::default(),None).unwrap();
+        let finite=head.periodic_thread_finite_curves(&field,Default::default(),None).unwrap();
+        let join=head.periodic_shared_crest_shoulder(&finite,Default::default(),None).unwrap();
+        let material=head.periodic_closed_material(&join,Default::default(),None).unwrap();
+        let volume=material.volume_bounds(Default::default(),None).unwrap();
+        decoded=Some(volume.owned_source(Default::default(),None).unwrap());
+    });
+    let decoded = decoded.unwrap();
+    let ca = source.cavity().surface_patches().unwrap();
+    let cb = decoded.cavity().surface_patches().unwrap();
+    let cavity_match = ca
+        .source_correspondence(&cb, Default::default(), None)
+        .unwrap();
+    eprintln!("actual decoded cavity correspondence {:?}", cavity_match);
+
+    let head_match = source
+        .head()
+        .view()
+        .translated_correspondence(
+            &decoded.head().view(),
+            source.head_z_shift_mm(),
+            decoded.head_z_shift_mm(),
+            WORK,
+            None,
+        )
+        .unwrap();
+    eprintln!("actual decoded head correspondence {:?}", head_match);
+    assert!(head_match.position_mm < 1e-7 && head_match.derivative_mm < 1e-7);
+    eprintln!(
+        "STEP CAVITY specs {:?}/{:?} domain {:?}/{:?}",
+        source.cavity().spec(),
+        decoded.cavity().spec(),
+        source.cavity().domain(),
+        decoded.cavity().domain()
+    );
+    assert_eq!(decoded.original_input(), Some(text.as_str()));
+    assert!(
+        decoded
+            .original_curve_owners()
+            .unwrap()
+            .iter()
+            .all(|c| c.face_entity > 0 && c.edge_entity > 0 && c.curve_entity > 0)
+    );
+    assert!(decoded.local_volume_mm3()[0] > 0.);
+    eprintln!(
+        "PERIODIC STEP actual-file derived {:?} knownwork{} bytes{} elapsed{:?}\nsource chart{:?} headShift{} mouth{:?} caps{:?} head {:?}/{:?}\ndecoded chart{:?} shift{} mouth{:?} caps{:?} head {:?}/{:?}\nradii {:?}/{:?}\nphase {:?}/{:?}",
+        decoded.world_volume_mm3(),
+        decoded.total_work_used(),
+        decoded.retained_budget_bytes(),
+        now.elapsed(),
+        source.chart(),
+        source.head_z_shift_mm(),
+        source.cavity_mouth_expression_mm(),
+        source.cap_expressions_mm(),
+        source.head().view().station(0),
+        source.head_bottom_station_mm(),
+        decoded.chart(),
+        decoded.head_z_shift_mm(),
+        decoded.cavity_mouth_expression_mm(),
+        decoded.cap_expressions_mm(),
+        decoded.head().view().station(0),
+        decoded.head_bottom_station_mm(),
+        source.thread().radius_nodes_mm(),
+        decoded.thread().radius_nodes_mm(),
+        source.thread().phase_node_expressions_mm(),
+        decoded.thread().phase_node_expressions_mm()
+    );
+}

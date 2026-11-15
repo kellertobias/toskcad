@@ -8,8 +8,8 @@ mod evaluate;
 pub(super) mod patches;
 pub use carrier::{CubicTrimSpan, TrimErrorBound};
 pub use patches::{
-    BoundaryMesh, FaceProperties, FacePropertyOptions, PatchAtlas, PatchBounds, PatchKey,
-    QuadErrorBound, SurfacePatch,
+    BoundaryMesh, FaceProperties, FacePropertyOptions, PatchAtlas, PatchBounds,
+    PatchCorrespondence, PatchCorrespondenceOptions, PatchKey, QuadErrorBound, SurfacePatch,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

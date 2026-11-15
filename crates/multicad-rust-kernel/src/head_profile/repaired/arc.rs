@@ -217,3 +217,52 @@ impl ArcSource {
         })
     }
 }
+
+impl ArcSource {
+    pub(super) fn correspondence(
+        self,
+        other: Self,
+        z_shift: I,
+    ) -> Result<[I; 2], RepairedHeadError> {
+        let mag = |v: [I; 2]| I::point(v[0].magnitude()) + I::point(v[1].magnitude());
+        let da = std::array::from_fn(|i| self.a[i] - other.a[i]);
+        let db = std::array::from_fn(|i| self.b[i] - other.b[i]);
+        let dw = I::point(mag(da).hi.max(mag(db).hi));
+        let dv = mag(std::array::from_fn(|i| db[i] - da[i]));
+        let lower =
+            ((I::point(1.) + I::point(self.dot.lo.min(other.dot.lo))) / I::point(2.)).sqrt();
+        ensure(finite(lower) && lower.lo > 0.)?;
+        let lower = I::point(lower.lo);
+        // Normalizing either chord obeys ||qa-qb||<=2||wa-wb||/nmin.
+        let direction = I::point(2.) * dw / lower;
+        let va = mag(std::array::from_fn(|i| self.b[i] - self.a[i]));
+        let vb = mag(std::array::from_fn(|i| other.b[i] - other.a[i]));
+        // q'=(I-qq^T)v/|w|. Unit-vector projectors have norm<=1;
+        // their difference has norm<=2||qa-qb||, and inverse norms
+        // differ by at most ||wa-wb||/nmin².
+        let derivative =
+            dv / lower + vb * dw / lower.square() + I::point(2.) * direction * vb / lower;
+        let radius_delta = I::point((I::point(self.radius) - I::point(other.radius)).magnitude());
+        let center = mag([
+            I::point(self.center[0]) - I::point(other.center[0]),
+            I::point(self.center[1]) - I::point(other.center[1]) - z_shift,
+        ]);
+        let corrections = [0, 1].map(|end| {
+            mag(std::array::from_fn(|i| {
+                self.delta[end][i] - other.delta[end][i]
+            }))
+        });
+        let correction_change = mag(std::array::from_fn(|i| {
+            (self.delta[1][i] - other.delta[1][i]) - (self.delta[0][i] - other.delta[0][i])
+        }));
+        let position = center
+            + radius_delta
+            + I::point(other.radius) * direction
+            + I::point(corrections[0].hi.max(corrections[1].hi));
+        let derivative = radius_delta * va / lower
+            + I::point(other.radius) * derivative
+            + I::point(1.5) * correction_change;
+        ensure([position, derivative].into_iter().all(finite))?;
+        Ok([position, derivative])
+    }
+}
