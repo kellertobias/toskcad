@@ -550,3 +550,61 @@ mod tests {
         assert_eq!(boundary.conical_face_count(), 1);
     }
 }
+
+#[test]
+fn second_actual_translated_candidate_earns_nonzero_pl_and_collar_correspondence() {
+    use crate::{axial_pipe_thread::authored::StockClipPlacement, step::orthogonal_seats};
+    let source = super::super::super::tests::source();
+    let baseline =
+        StockClipPlacement::new([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]], [0.; 3]).unwrap();
+    for (distance, accepted) in [(2e-10, true), (2e-9, false), (2e-6, false)] {
+        let moved = StockClipPlacement::new(baseline.matrix(), [distance, 0., 0.]).unwrap();
+        let candidate = orthogonal_seats::candidate(
+            &source,
+            moved,
+            orthogonal_seats::Options::default(),
+            &|| false,
+        )
+        .unwrap();
+        let document = CompoundDocument::parse(
+            candidate.as_str(),
+            owned_insert::DocumentOptions::default(),
+            None,
+        )
+        .unwrap();
+        let boundary = decode(
+            &document,
+            document.represented_members()[0].item_entity(),
+            Options::default(),
+            &|| false,
+        )
+        .unwrap();
+        let material = boundary
+            .heal_material(MaterialOptions::default(), &|| false)
+            .unwrap();
+        let matched = material.check_original(
+            &source,
+            baseline,
+            candidate.face_entities(),
+            TransferOptions::default(),
+            &|| false,
+        );
+        if accepted {
+            let proof = matched.unwrap();
+            let c = proof.source_to_raw_correspondence();
+            eprintln!(
+                "actual second candidate shift={distance} C0={} D1={}",
+                c.maximum_position_error_mm(),
+                c.maximum_normalized_derivative_error_mm()
+            );
+            assert!(c.maximum_position_error_mm() >= distance);
+            assert!(c.maximum_normalized_derivative_error_mm() > 1e-9);
+            assert!(
+                proof.source_to_healed_position_error_mm() < 1e-7
+                    && proof.source_to_healed_normalized_derivative_error_mm() < 1e-7
+            );
+        } else {
+            assert!(matches!(matched, Err(Error::Unsupported)));
+        }
+    }
+}
