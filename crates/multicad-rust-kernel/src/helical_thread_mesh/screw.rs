@@ -9,7 +9,8 @@ mod contour_tests;
 mod phillips;
 mod torx;
 pub use phillips::{
-    PhillipsMeshError, PhillipsScrewMesh, tessellate_phillips_screw,
+    PhillipsCavityVertex, PhillipsHeadVertex, PhillipsMeshError, PhillipsScrewMesh,
+    PhillipsThreadVertex, PhillipsThreadVertexKind, tessellate_phillips_screw,
     tessellate_phillips_screw_with_work,
 };
 
@@ -391,6 +392,27 @@ impl HeadMesh<'_, '_> {
         faces: (u32, impl Fn(u32) -> u32),
         options: Tessellation,
     ) -> Result<Vec<u32>, MeshError> {
+        self.profile_outer_with_witnesses(
+            profile,
+            plain,
+            visible_start,
+            shaft_rim,
+            faces,
+            options,
+            None,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn profile_outer_with_witnesses(
+        &mut self,
+        profile: &crate::head_profile::Profile,
+        plain: f64,
+        visible_start: f64,
+        shaft_rim: &[u32],
+        faces: (u32, impl Fn(u32) -> u32),
+        options: Tessellation,
+        mut witnesses: Option<&mut Vec<phillips::PhillipsHeadVertex>>,
+    ) -> Result<Vec<u32>, MeshError> {
         use crate::head_profile::Curve;
         self.builder.charge(256 * self.angles.len() + 128)?;
         let shank_radius = profile.end()[0];
@@ -407,6 +429,17 @@ impl HeadMesh<'_, '_> {
         let mut previous = top.clone();
         let segments: Vec<_> = profile.segments().collect();
         for (index, segment) in segments.iter().enumerate() {
+            if let Some(w) = witnesses.as_deref_mut() {
+                self.builder.charge(previous.len())?;
+                w.extend(previous.iter().enumerate().map(|(j, &vertex)| {
+                    phillips::PhillipsHeadVertex {
+                        vertex,
+                        segment: index,
+                        parameter: 0.,
+                        angle: self.angles[j],
+                    }
+                }));
+            }
             let subdivisions = match segment.curve {
                 Curve::Line => 1.,
                 Curve::Arc {
@@ -421,12 +454,24 @@ impl HeadMesh<'_, '_> {
             }
             for step in 1..=subdivisions as usize {
                 self.builder.charge(128 * self.angles.len() + 128)?;
-                let point = segment.point(step as f64 / subdivisions);
+                let parameter = step as f64 / subdivisions;
+                let point = segment.point(parameter);
                 let next = if index + 1 == segments.len() && step == subdivisions as usize {
                     join.clone()
                 } else {
                     self.ring(point[1] - plain, |_| point[0])
                 };
+                if let Some(w) = witnesses.as_deref_mut() {
+                    self.builder.charge(next.len())?;
+                    w.extend(next.iter().enumerate().map(|(j, &vertex)| {
+                        phillips::PhillipsHeadVertex {
+                            vertex,
+                            segment: index,
+                            parameter,
+                            angle: self.angles[j],
+                        }
+                    }));
+                }
                 self.wall(&previous, &next, |_| Ok(faces.1(index as u32)), false)?;
                 previous = next;
             }

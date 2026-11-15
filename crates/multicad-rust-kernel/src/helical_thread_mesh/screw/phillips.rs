@@ -6,6 +6,41 @@ use crate::{
     tapered_thread::interval::I,
 };
 use std::collections::{BTreeMap, BTreeSet};
+#[derive(Clone, Copy, Debug)]
+pub enum PhillipsThreadVertexKind {
+    Grid {
+        fraction: f64,
+        phase: f64,
+        period: i64,
+    },
+    CapColumn {
+        fraction: f64,
+        cap: usize,
+        rail: Option<(i64, f64)>,
+    },
+    CapRail {
+        phase: f64,
+        period: i64,
+        cap: usize,
+    },
+}
+#[derive(Clone, Copy, Debug)]
+pub struct PhillipsThreadVertex {
+    pub vertex: u32,
+    pub kind: PhillipsThreadVertexKind,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct PhillipsHeadVertex {
+    pub vertex: u32,
+    pub segment: usize,
+    pub parameter: f64,
+    pub angle: f64,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct PhillipsCavityVertex {
+    pub vertex: u32,
+    pub original: [f64; 3],
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PhillipsMeshError {
     Geometry(MeshError),
@@ -42,8 +77,38 @@ pub struct PhillipsScrewMesh {
     volume_difference_bound_mm3: f64,
     work: usize,
     handoffs: [usize; 3],
+    thread_vertices: Vec<PhillipsThreadVertex>,
+    head_vertices: Vec<PhillipsHeadVertex>,
+    cavity_vertices: Vec<PhillipsCavityVertex>,
+    cavity_distance: f64,
+    proposal: PhillipsScrew,
 }
 impl PhillipsScrewMesh {
+    pub fn proposal(&self) -> &PhillipsScrew {
+        &self.proposal
+    }
+    pub fn retained_budget_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.mesh.vertices.capacity() * 8
+            + (self.mesh.indices.capacity() + self.mesh.face_indices.capacity()) * 4
+            + self.faces.capacity() * std::mem::size_of::<ScrewFace>()
+            + self.thread_vertices.capacity() * std::mem::size_of::<PhillipsThreadVertex>()
+            + self.head_vertices.capacity() * std::mem::size_of::<PhillipsHeadVertex>()
+            + self.cavity_vertices.capacity() * std::mem::size_of::<PhillipsCavityVertex>()
+            + 65536
+    }
+    pub fn thread_vertices(&self) -> &[PhillipsThreadVertex] {
+        &self.thread_vertices
+    }
+    pub fn head_vertices(&self) -> &[PhillipsHeadVertex] {
+        &self.head_vertices
+    }
+    pub fn cavity_vertices(&self) -> &[PhillipsCavityVertex] {
+        &self.cavity_vertices
+    }
+    pub fn cavity_source_distance_mm(&self) -> f64 {
+        self.cavity_distance
+    }
     /// New bounded-path logical cell, trace, copy and proof units. This is
     /// neither a CPU instruction count nor an allocator/RSS measurement.
     pub fn work_used(&self) -> usize {
@@ -387,7 +452,8 @@ fn phillips_counted(
         angles: shoulder.iter().map(|&(angle, _)| angle).collect(),
     };
     let shaft: Vec<_> = shoulder.into_iter().map(|(_, id)| id).collect();
-    let outer = shell.profile_outer(
+    let mut head_vertices = Vec::new();
+    let outer = shell.profile_outer_with_witnesses(
         screw.profile(),
         screw.spec().shank_length_mm,
         screw.visible_thread_interval_mm()[0],
@@ -396,6 +462,7 @@ fn phillips_counted(
             face(ScrewFace::ProfileWall(i))
         }),
         working,
+        Some(&mut head_vertices),
     )?;
     let mut used = BTreeSet::new();
     for (tri, &f) in cavity
@@ -411,10 +478,16 @@ fn phillips_counted(
         }
     }
     let mut ids = vec![None; cavity.mesh().vertices.len() / 3];
+    let mut cavity_vertices = Vec::new();
     for old in used {
         cancel(cancelled)?;
         let [x, y, d] = point(cavity.mesh(), old);
-        ids[old as usize] = Some(shell.push([x, y, screw.head_top_z() + d]));
+        let vertex = shell.push([x, y, screw.head_top_z() + d]);
+        cavity_vertices.push(PhillipsCavityVertex {
+            vertex,
+            original: [x, y, d],
+        });
+        ids[old as usize] = Some(vertex);
     }
     for (tri, &f) in cavity
         .mesh()
@@ -456,6 +529,42 @@ fn phillips_counted(
         cancelled,
     )?;
     cancel(cancelled)?;
+    let mut thread_vertices = Vec::with_capacity(builder.vertex_ids.len());
+    work.step(
+        builder.vertex_ids.len().saturating_mul(32)
+            + head_vertices.len().saturating_mul(32)
+            + cavity_vertices.len().saturating_mul(32),
+    )?;
+    for (&key, &vertex) in &builder.vertex_ids {
+        let kind = match key {
+            super::super::VertexKey::Grid(column, rail) => PhillipsThreadVertexKind::Grid {
+                fraction: builder.fraction(column),
+                phase: builder.rail_phase(rail),
+                period: rail.div_euclid(builder.strips.len() as i64),
+            },
+            super::super::VertexKey::CapColumn(column, cap) => {
+                PhillipsThreadVertexKind::CapColumn {
+                    fraction: builder.fraction(column),
+                    cap,
+                    rail: builder.cap_rails.get(&(column, cap)).map(|&rail| {
+                        (
+                            rail.div_euclid(builder.strips.len() as i64),
+                            builder.rail_phase(rail),
+                        )
+                    }),
+                }
+            }
+            super::super::VertexKey::CapRail(rail, cap) => PhillipsThreadVertexKind::CapRail {
+                phase: builder.rail_phase(rail),
+                period: rail.div_euclid(builder.strips.len() as i64),
+                cap,
+            },
+        };
+        thread_vertices.push(PhillipsThreadVertex { vertex, kind });
+    }
+    thread_vertices.sort_unstable_by_key(|p| p.vertex);
+    head_vertices.sort_unstable_by_key(|p| (p.vertex, p.segment));
+    cavity_vertices.sort_unstable_by_key(|p| p.vertex);
     let mesh = builder.mesh;
     let before_proof = maximum_work - work.remaining.get();
     work.step(
@@ -477,6 +586,11 @@ fn phillips_counted(
         volume_difference_bound_mm3: difference.magnitude(),
         work: maximum_work - work.remaining.get(),
         handoffs: [after_cavity, before_planar, before_proof],
+        thread_vertices,
+        head_vertices,
+        cavity_vertices,
+        cavity_distance: cavity.source_distance_mm(),
+        proposal: screw.clone(),
     })
 }
 
