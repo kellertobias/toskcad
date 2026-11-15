@@ -7,8 +7,8 @@ mod domain;
 mod material;
 mod plane;
 pub use material::{
-    PeriodicClosedMaterial, PeriodicMaterialFace, PeriodicMaterialOptions, PeriodicMaterialVolume,
-    PeriodicVolumeOptions,
+    OwnedPeriodicMaterial, PeriodicClosedMaterial, PeriodicCurveOwner, PeriodicMaterialFace,
+    PeriodicMaterialOptions, PeriodicMaterialVolume, PeriodicOwnedOptions, PeriodicVolumeOptions,
 };
 #[cfg(test)]
 mod tests;

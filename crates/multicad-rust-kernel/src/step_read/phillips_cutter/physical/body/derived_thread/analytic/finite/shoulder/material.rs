@@ -12,7 +12,10 @@ mod volume;
 use crate::phillips_drive::{
     FaceKey as CavityFace, RepairedHeadContainment, RepairedHeadContainmentOptions,
 };
-pub use volume::{PeriodicMaterialVolume, PeriodicVolumeOptions};
+pub use volume::{
+    OwnedPeriodicMaterial, PeriodicCurveOwner, PeriodicMaterialVolume, PeriodicOwnedOptions,
+    PeriodicVolumeOptions,
+};
 #[cfg(test)]
 mod tests;
 const CELLS: usize = 65536;

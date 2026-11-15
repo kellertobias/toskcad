@@ -2,10 +2,12 @@
 //! real periodic radial section integral - complete Cutter section integral.
 //! No old Profile volume, original-file mass or mesh enters this result.
 use super::*;
+mod owned;
 use crate::{
     head_profile::{RepairedHeadVolume, RepairedHeadVolumeOptions},
     phillips_drive::Cutter,
 };
+pub use owned::{OwnedPeriodicMaterial, PeriodicCurveOwner, PeriodicOwnedOptions};
 #[cfg(test)]
 mod tests;
 const BASE: usize = 16 * 1024;
