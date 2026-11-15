@@ -16,7 +16,9 @@ pub use finite::{
 };
 mod periodic;
 mod rotation;
-pub use periodic::{PeriodicThreadBounds, PeriodicThreadRepair, PeriodicThreadSource};
+pub use periodic::{
+    PeriodicThreadBounds, PeriodicThreadCorrespondence, PeriodicThreadRepair, PeriodicThreadSource,
+};
 const TOTAL: usize = 32_000_000;
 const SCRATCH_ANALYTIC: usize = 2 * 1024 * 1024;
 #[derive(Clone, Copy)]

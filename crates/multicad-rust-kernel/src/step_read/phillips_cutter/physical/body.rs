@@ -254,9 +254,9 @@ pub use derived_thread::{
     PeriodicLiteralCertificate, PeriodicMaterialFace, PeriodicMaterialOptions,
     PeriodicMaterialProvenance, PeriodicMaterialVolume, PeriodicOwnedMaterialQuery,
     PeriodicOwnedOptions, PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicThreadBounds,
-    PeriodicThreadRepair, PeriodicThreadSource, PeriodicVolumeOptions, RimContact, RimContactId,
-    RimDomainEnd, RimDomainRole, RimKnot, RimSignDomain, ThreadCarrierTransfer,
-    ThreadContactOptions,
+    PeriodicThreadCorrespondence, PeriodicThreadRepair, PeriodicThreadSource,
+    PeriodicVolumeOptions, RimContact, RimContactId, RimDomainEnd, RimDomainRole, RimKnot,
+    RimSignDomain, ThreadCarrierTransfer, ThreadContactOptions,
 };
 
 mod material;

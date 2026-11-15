@@ -1123,6 +1123,7 @@ pub use phillips_cutter::{
     PeriodicShoulderOptions as PhillipsPeriodicShoulderOptions,
     PeriodicShoulderRepair as PhillipsPeriodicShoulderRepair,
     PeriodicThreadBounds as PhillipsPeriodicThreadBounds,
+    PeriodicThreadCorrespondence as PhillipsPeriodicThreadCorrespondence,
     PeriodicThreadRepair as PhillipsPeriodicThreadRepair,
     PeriodicThreadSource as PhillipsPeriodicThreadSource,
     PeriodicVolumeOptions as PhillipsPeriodicVolumeOptions,

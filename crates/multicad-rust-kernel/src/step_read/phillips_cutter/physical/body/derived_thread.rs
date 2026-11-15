@@ -20,7 +20,8 @@ pub use analytic::{
     PeriodicLiteralCertificate, PeriodicMaterialFace, PeriodicMaterialOptions,
     PeriodicMaterialProvenance, PeriodicMaterialVolume, PeriodicOwnedMaterialQuery,
     PeriodicOwnedOptions, PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicThreadBounds,
-    PeriodicThreadRepair, PeriodicThreadSource, PeriodicVolumeOptions,
+    PeriodicThreadCorrespondence, PeriodicThreadRepair, PeriodicThreadSource,
+    PeriodicVolumeOptions,
 };
 pub use degree11::{CoherentDegree11ThreadCarrier, Degree11ThreadFace, Degree11ThreadOptions};
 pub use join::{

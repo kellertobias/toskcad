@@ -7,6 +7,8 @@
 //! proves a radial Jordan side and two disk caps for this thread source alone;
 //! no head/cavity union or raw-file exact-material claim follows.
 use super::*;
+mod correspondence;
+pub use correspondence::PeriodicThreadCorrespondence;
 #[derive(Clone, Copy, Debug)]
 pub struct PeriodicThreadSource {
     phase: [f64; 4],

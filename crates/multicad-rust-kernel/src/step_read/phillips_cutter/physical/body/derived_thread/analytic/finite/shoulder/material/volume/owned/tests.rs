@@ -252,6 +252,20 @@ fn actual_owned_periodic_export_proposal_has_independent_file_derived_material()
         decoded=Some(volume.owned_source(Default::default(),None).unwrap());
     });
     let decoded = decoded.unwrap();
+    let thread_match = source
+        .thread()
+        .finite_correspondence(
+            decoded.thread(),
+            source.cap_expressions_mm(),
+            decoded.cap_expressions_mm(),
+            WORK,
+            None,
+        )
+        .unwrap();
+    eprintln!("actual decoded periodic field correspondence {thread_match:?}");
+    assert!(
+        thread_match.position_mm < 1e-7 && thread_match.du_mm < 1e-7 && thread_match.dv_mm < 1e-7
+    );
     let ca = source.cavity().surface_patches().unwrap();
     let cb = decoded.cavity().surface_patches().unwrap();
     let cavity_match = ca
