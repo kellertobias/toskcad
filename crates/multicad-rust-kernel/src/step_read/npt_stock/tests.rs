@@ -102,10 +102,14 @@ fn actual_packet_parses_numeric_leaves_coupled_boundary_controls_and_closed_owni
                 Support::Tensor(index) => {
                     assert!(index < 8);
                     assert!(!face.forward());
+                    let mut sides = face.tensor_sides().unwrap();
+                    sides.sort_unstable();
+                    assert_eq!(sides, [0, 1, 2, 3]);
                 }
                 Support::Plane { height } => {
                     caps += 1;
                     assert!(height < parsed.points().len());
+                    assert_eq!(face.tensor_sides(), None);
                 }
             }
         }

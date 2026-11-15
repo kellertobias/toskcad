@@ -196,6 +196,7 @@ pub struct Face {
     id: u32,
     support: Support,
     coedges: [Coedge; 4],
+    tensor_sides: Option<[usize; 4]>,
     forward: bool,
 }
 impl Face {
@@ -207,6 +208,12 @@ impl Face {
     }
     pub fn coedges(&self) -> &[Coedge; 4] {
         &self.coedges
+    }
+    /// Original PCurve-to-tensor boundary binding in coedge order. Sides are
+    /// 0: u=0, 1: v=1, 2: u=1, 3: v=0. Plane faces return None.
+    /// A cyclic wire rotation preserves these validated owners.
+    pub fn tensor_sides(&self) -> Option<[usize; 4]> {
+        self.tensor_sides
     }
     pub fn forward(&self) -> bool {
         self.forward

@@ -196,7 +196,7 @@ pub(super) fn face(
     face: &Face,
     support_id: u32,
     budget: &mut Budget<'_>,
-) -> Result<()> {
+) -> Result<Option<[usize; 4]>> {
     let BindingInput {
         records,
         points,
@@ -268,5 +268,5 @@ pub(super) fn face(
     {
         return Err(Error::Unsupported);
     }
-    Ok(())
+    Ok(matches!(face.support, Support::Tensor(_)).then_some(sides))
 }

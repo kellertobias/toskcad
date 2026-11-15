@@ -10,6 +10,84 @@ fn replace_field(text: &str, id: u32, index: usize, replacement: &str) -> String
 }
 
 #[test]
+fn actual_rotated_wires_retain_original_tensor_side_owners_after_parser_destruction() {
+    for quarter in [false, true] {
+        let text = fixture(quarter);
+        let document = CompoundDocument::parse(&text, Default::default(), None).unwrap();
+        let parsed = Parsed::parse(
+            &document,
+            document.represented_members()[0].item_entity(),
+            Default::default(),
+            None,
+        )
+        .unwrap();
+        let face = parsed
+            .faces
+            .iter()
+            .find(|face| face.tensor_sides().is_some())
+            .unwrap();
+        let face_id = face.entity();
+        let original_sides = face.tensor_sides().unwrap();
+        let original_edges = face
+            .coedges
+            .map(|coedge| parsed.edges[coedge.edge].entity());
+        let records = document.records();
+        let bounds = records::list(&records[&face_id][0].args[1]).unwrap();
+        let bound = records::reference(&bounds[0]).unwrap();
+        let wire = records::reference(&records[&bound][0].args[1]).unwrap();
+        let coedges = records::list(&records[&wire][0].args[1]).unwrap();
+        let ids = coedges
+            .iter()
+            .map(|value| records::reference(value).unwrap())
+            .collect::<Vec<_>>();
+        for shift in 1..4 {
+            let references = (0..4)
+                .map(|i| format!("#{}", ids[(i + shift) % 4]))
+                .collect::<Vec<_>>()
+                .join(",");
+            let changed = replace_field(&text, wire, 1, &format!("({references})"));
+            let owned = {
+                let document = CompoundDocument::parse(&changed, Default::default(), None).unwrap();
+                let selected = Selected::parse(
+                    &document,
+                    document.represented_members()[0].item_entity(),
+                    Default::default(),
+                    None,
+                )
+                .unwrap();
+                let borrowed = selected
+                    .parsed()
+                    .faces()
+                    .iter()
+                    .find(|f| f.entity() == face_id)
+                    .unwrap();
+                assert_eq!(
+                    borrowed.tensor_sides().unwrap(),
+                    std::array::from_fn(|i| original_sides[(i + shift) % 4])
+                );
+                selected.retain(Default::default(), None).unwrap()
+            };
+            // No neutral parser or selected proof remains alive here. The
+            // retained side travels with its actual owning edge, not its row.
+            let retained = owned
+                .faces()
+                .iter()
+                .find(|f| f.entity() == face_id)
+                .unwrap();
+            let sides = retained.tensor_sides().unwrap();
+            for (i, coedge) in retained.coedges().iter().enumerate() {
+                assert_eq!(sides[i], original_sides[(i + shift) % 4]);
+                assert_eq!(
+                    owned.edges()[coedge.edge_index()].entity(),
+                    original_edges[(i + shift) % 4]
+                );
+            }
+        }
+        assert_eq!(document.literal_input(), text);
+    }
+}
+
+#[test]
 fn actual_closed_file_cannot_identify_nonadjacent_interior_vertex_fans() {
     let text = fixture(false);
     let document = CompoundDocument::parse(&text, Default::default(), None).unwrap();

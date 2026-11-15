@@ -273,13 +273,14 @@ fn decode<'document, 'input>(
             &mut edges,
             &mut budget,
         )?;
-        let face = Face {
+        let mut face = Face {
             id,
             support,
             coedges,
+            tensor_sides: None,
             forward,
         };
-        bindings::face(
+        face.tensor_sides = bindings::face(
             bindings::BindingInput {
                 records,
                 points: &points,

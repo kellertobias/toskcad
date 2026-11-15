@@ -314,6 +314,7 @@ impl Selected<'_, '_> {
                 id: face.id,
                 support: face.support,
                 coedges: face.coedges,
+                tensor_sides: face.tensor_sides,
                 forward: face.forward,
             });
         }
