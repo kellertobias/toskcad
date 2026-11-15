@@ -129,3 +129,81 @@ pub(super) fn volume_only<const N: usize>(
     values[0].checked()?;
     Ok(values)
 }
+
+#[derive(Clone, Copy)]
+pub(super) enum Selection {
+    All,
+    Volume,
+    Surface,
+}
+impl Selection {
+    pub fn indices(self) -> std::ops::Range<usize> {
+        match self {
+            Self::All => 0..QUANTITIES,
+            Self::Volume => 0..1,
+            Self::Surface => 10..QUANTITIES,
+        }
+    }
+    pub fn evaluate<const N: usize>(
+        self,
+        density: Density,
+        jet: source::Jet<N>,
+        chart: &axial::Chart,
+        center: f64,
+    ) -> Result<[Series<N>; QUANTITIES], Error> {
+        match self {
+            Self::All => evaluate(density, jet, chart, center),
+            Self::Volume => volume_only(density, jet, chart, center),
+            Self::Surface => surface_only(density, jet, chart, center),
+        }
+    }
+}
+/// Area and its three centered first moments only. All mass/inertia slots
+/// remain exact zeros; no volume accuracy is silently requested by a face query.
+fn surface_only<const N: usize>(
+    density: Density,
+    jet: source::Jet<N>,
+    chart: &axial::Chart,
+    center: f64,
+) -> Result<[Series<N>; QUANTITIES], Error> {
+    let source::Jet {
+        p: [x, y, z],
+        tangent: du,
+        normal: q,
+    } = jet;
+    let mut values = [Series::constant(0.); QUANTITIES];
+    match density {
+        Density::Tensor => {
+            values[10] = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2]).sqrt();
+            values[11] = x * values[10];
+            values[12] = y * values[10];
+            values[13] = (z - Series::constant(center)) * values[10];
+        }
+        Density::Cone => {
+            let rho2 = x * x + y * y;
+            let rho = rho2.sqrt();
+            let cos = x / rho;
+            let sin = y / rho;
+            let angle_rate = (x * du[1] - y * du[0]) / rho2;
+            let z = z - Series::constant(center);
+            let scale = (I::point(1.) + chart.slope.square()).sqrt();
+            values[10] = -Series::interval(scale) * primitive(z, 1, 0, chart, center) * angle_rate;
+            values[11] =
+                -Series::interval(scale) * primitive(z, 2, 0, chart, center) * cos * angle_rate;
+            values[12] =
+                -Series::interval(scale) * primitive(z, 2, 0, chart, center) * sin * angle_rate;
+            values[13] = -Series::interval(scale) * primitive(z, 1, 1, chart, center) * angle_rate;
+        }
+        Density::Cap(station) => {
+            let radial = x * du[1] - y * du[0];
+            values[10] = radial / Series::constant(2.);
+            values[11] = x * radial / Series::constant(3.);
+            values[12] = y * radial / Series::constant(3.);
+            values[13] = Series::interval(station - I::point(center)) * values[10];
+        }
+    }
+    for value in &values[10..] {
+        value.checked()?;
+    }
+    Ok(values)
+}

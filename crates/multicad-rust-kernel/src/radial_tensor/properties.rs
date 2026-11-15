@@ -28,6 +28,7 @@ pub struct MassProperties {
 mod bounds;
 pub(super) mod faces;
 mod integrate;
+mod surface;
 mod volume;
 use measure::QUANTITIES;
 pub use volume::VolumeProperties;
@@ -89,7 +90,7 @@ impl RadialBoundary {
                 integrate::Accuracy {
                     scales,
                     epsilon,
-                    volume_only: false,
+                    selection: measure::Selection::All,
                 },
                 &mut work,
             )?;

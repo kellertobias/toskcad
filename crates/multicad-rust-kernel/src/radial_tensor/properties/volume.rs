@@ -48,7 +48,7 @@ impl RadialBoundary {
                 integrate::Accuracy {
                     scales: [bounds.volume_scale; QUANTITIES],
                     epsilon,
-                    volume_only: true,
+                    selection: measure::Selection::Volume,
                 },
                 &mut work,
             )?;

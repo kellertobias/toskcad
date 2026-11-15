@@ -1,12 +1,12 @@
 //! One cumulative adaptive source-integration budget; no partial publication.
 use super::*;
-use measure::{Density, QUANTITIES, Values};
+use measure::{Density, QUANTITIES, Selection, Values};
 use source::Source;
 use std::collections::BTreeMap;
 pub(super) struct Accuracy {
     pub scales: Values,
     pub epsilon: f64,
-    pub volume_only: bool,
+    pub selection: Selection,
 }
 #[derive(Clone, Copy)]
 pub(super) struct Limits {
@@ -51,15 +51,15 @@ pub(super) fn with_limits(
     let Accuracy {
         scales,
         epsilon,
-        volume_only,
+        selection,
     } = accuracy;
     let mut heap: BTreeMap<u64, Vec<Cell>> = BTreeMap::new();
     let mut count = 0;
     let mut total = [I::point(0.); QUANTITIES];
     for source in sources {
-        for cell in ready(source, 0, density, chart, center, limits, volume_only, work)? {
-            for (sum, value) in total.iter_mut().zip(cell.value) {
-                *sum = *sum + value;
+        for cell in ready(source, 0, density, chart, center, limits, selection, work)? {
+            for i in selection.indices() {
+                total[i] = total[i] + cell.value[i];
             }
             insert(&mut heap, cell, &scales);
             count += 1;
@@ -78,8 +78,8 @@ pub(super) fn with_limits(
             total = [I::point(0.); QUANTITIES];
             for cell in heap.values().flatten() {
                 work.charge(QUANTITIES)?;
-                for (sum, value) in total.iter_mut().zip(cell.value) {
-                    *sum = *sum + value;
+                for i in selection.indices() {
+                    total[i] = total[i] + cell.value[i];
                 }
             }
         }
@@ -106,10 +106,10 @@ pub(super) fn with_limits(
         }
         let along_v = old.source.dimensions() == 2 && old.depth % 2 == 1;
         let children = old.source.subdivide(along_v)?;
-        for (sum, value) in total.iter_mut().zip(old.value) {
-            *sum = I::new(
-                (I::point(sum.lo) - I::point(value.lo)).lo,
-                (I::point(sum.hi) - I::point(value.hi)).hi,
+        for i in selection.indices() {
+            total[i] = I::new(
+                (I::point(total[i].lo) - I::point(old.value[i].lo)).lo,
+                (I::point(total[i].hi) - I::point(old.value[i].hi)).hi,
             );
         }
         for child in children {
@@ -120,11 +120,11 @@ pub(super) fn with_limits(
                 chart,
                 center,
                 limits,
-                volume_only,
+                selection,
                 work,
             )? {
-                for (sum, value) in total.iter_mut().zip(cell.value) {
-                    *sum = *sum + value;
+                for i in selection.indices() {
+                    total[i] = total[i] + cell.value[i];
                 }
                 insert(&mut heap, cell, &scales);
                 count += 1;
@@ -152,16 +152,20 @@ fn ready(
     chart: &axial::Chart,
     center: f64,
     limits: Limits,
-    volume_only: bool,
+    selection: Selection,
     work: &mut Work<'_>,
 ) -> Result<Vec<Cell>, Error> {
     let mut pending = vec![(source, depth)];
     let mut ready = Vec::new();
     while let Some((source, depth)) = pending.pop() {
-        let enclosure = if volume_only {
-            quadrature::volume_enclosure(&source, density, chart, center, work)
-        } else {
-            quadrature::enclosure(&source, density, chart, center, work)
+        let enclosure = match selection {
+            Selection::All => quadrature::enclosure(&source, density, chart, center, work),
+            Selection::Volume => {
+                quadrature::volume_enclosure(&source, density, chart, center, work)
+            }
+            Selection::Surface => {
+                quadrature::surface_enclosure(&source, density, chart, center, work)
+            }
         };
         match enclosure {
             Ok(value) => ready.push(Cell {
