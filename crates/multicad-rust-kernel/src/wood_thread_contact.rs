@@ -59,6 +59,11 @@ pub use hanger::{
     certify_hanger_nut, certify_hanger_stack, certify_hanger_through_stock, certify_hanger_wood,
     hanger_component_separation,
 };
+mod receiver_clearance;
+pub use receiver_clearance::{
+    Line8ReceiverClearance, ReceiverClearanceOptions, ReceivingSweep,
+    certify_line8_receiver_clearance,
+};
 mod seated;
 mod separation;
 pub use insert::{
