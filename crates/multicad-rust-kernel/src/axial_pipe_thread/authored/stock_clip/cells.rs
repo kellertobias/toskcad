@@ -198,9 +198,43 @@ fn rail_law(plan: &StockClipPlan, slab: StockClipSlab, rail: StockClipRail, shif
     };
     (a, I::new(raw.lo.max(0.98), raw.hi.min(1.02)))
 }
-fn exact_product(a: f64, b: f64) -> [f64; 2] {
+// Lowest occupied dyadic exponent of a finite, nonzero binary64 number.
+fn lowest_bit(value: f64) -> i32 {
+    let bits = value.to_bits();
+    let exponent = ((bits >> 52) & 0x7ff) as i32;
+    let fraction = bits & ((1u64 << 52) - 1);
+    let (significand, quantum) = if exponent == 0 {
+        (fraction, -1074)
+    } else {
+        (fraction | (1u64 << 52), exponent - 1075)
+    };
+    quantum + significand.trailing_zeros() as i32
+}
+fn exact_product(a: f64, b: f64) -> Option<[f64; 2]> {
+    if !a.is_finite() || !b.is_finite() {
+        return None;
+    }
     let value = a * b;
-    [value, a.mul_add(b, -value)]
+    if !value.is_finite() {
+        return None;
+    }
+    if a == 0. || b == 0. {
+        return Some([value, 0.]);
+    }
+    // FMA's residual is exact only if its full dyadic tail is representable.
+    // In the sealed source calls p/N and L/M (optionally /32) have lowest
+    // bits >=-78; bounded integer indices cannot lower that exponent.
+    // The explicit applicability check also protects this numeric primitive
+    // from tiny future inputs, instead of equating rounded zero products.
+    if lowest_bit(a) + lowest_bit(b) < -1074 {
+        return None;
+    }
+    Some([value, a.mul_add(b, -value)])
+}
+fn same_products(a: [f64; 2], b: [f64; 2]) -> bool {
+    exact_product(a[0], a[1])
+        .zip(exact_product(b[0], b[1]))
+        .is_some_and(|(a, b)| a == b)
 }
 fn exact_difference(a: f64, b: f64) -> [f64; 2] {
     let value = a - b;
@@ -266,20 +300,22 @@ impl Builder<'_> {
             Cut::Z(j) => I::point(j as f64) * self.dz,
         }
     }
-    // Exact binary-source identities only. All operands are normal and
-    // bounded by authored p>=.001, L,R<=1e7, N<=512,M<=2048; products
-    // and their residuals cannot overflow or underflow. FMA and TwoDiff
-    // therefore retain the complete exact dyadic value, not overlapping I.
+    // Exact binary-source identities only. Product witnesses explicitly
+    // qualify residual representability; lack of a witness never equals a
+    // second failure. The bounded source difference cannot overflow.
     fn same_height(&self, tags: Tags, cut: Cut) -> bool {
         if let (Some(StockClipStation::Contact), Cut::Z(j)) = (tags.station, cut) {
-            return exact_difference(
-                self.plan.stock_radius_limit_mm(),
-                self.plan.source.spec.major_radius_mm,
-            ) == exact_product(
+            return exact_product(
                 self.plan.source.spec.radial_taper
                     * (self.plan.source.spec.length_mm / self.m as f64),
                 j as f64,
-            );
+            )
+            .is_some_and(|p| {
+                p == exact_difference(
+                    self.plan.stock_radius_limit_mm(),
+                    self.plan.source.spec.major_radius_mm,
+                )
+            });
         }
         let Some((0, shift)) = tags.rail else {
             return false;
@@ -292,21 +328,22 @@ impl Builder<'_> {
         let coefficient = (if shift { self.n as i32 } else { 0 }) - k;
         let step = self.plan.source.spec.pitch_mm / self.n as f64;
         match (cut, tags.z, tags.station) {
-            (Cut::Z(j), _, _) | (_, Some(j), _) => {
-                exact_product(step, coefficient as f64)
-                    == exact_product(self.plan.source.spec.length_mm / self.m as f64, j as f64)
-            }
+            (Cut::Z(j), _, _) | (_, Some(j), _) => same_products(
+                [step, coefficient as f64],
+                [self.plan.source.spec.length_mm / self.m as f64, j as f64],
+            ),
             // Original Start/End stations always retain their exact z=0/M
             // grid tags; the preceding branch already handles both.
-            (_, _, Some(StockClipStation::Contact)) => {
-                exact_product(
-                    step * self.plan.source.spec.radial_taper,
-                    coefficient as f64,
-                ) == exact_difference(
+            (_, _, Some(StockClipStation::Contact)) => exact_product(
+                step * self.plan.source.spec.radial_taper,
+                coefficient as f64,
+            )
+            .is_some_and(|p| {
+                p == exact_difference(
                     self.plan.stock_radius_limit_mm(),
                     self.plan.source.spec.major_radius_mm,
                 )
-            }
+            }),
             _ => false,
         }
     }
@@ -366,7 +403,10 @@ impl Builder<'_> {
         lower: bool,
         patch: StockClipPatch,
     ) -> Result<Vec<V>, Error> {
-        self.work.charge(256)?;
+        // At most eight classifications, their bounded dyadic witnesses,
+        // and two rail/grid intersections. Charge the complete stage before
+        // evaluating it; the whole request's 512M ceiling is unchanged.
+        self.work.charge(512)?;
         let mut out = Vec::with_capacity(8);
         if input.is_empty() {
             return Ok(out);

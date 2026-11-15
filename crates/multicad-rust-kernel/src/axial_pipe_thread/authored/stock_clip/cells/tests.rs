@@ -548,3 +548,35 @@ fn late_source_and_literal_cancellation_stop_before_publication() {
     );
     assert_eq!(*plan.source().source(), source);
 }
+#[test]
+fn exact_product_witness_requires_the_full_dyadic_tail_not_rounded_zero() {
+    let tiny = f64::from_bits(1);
+    assert_eq!(exact_product(tiny, 0.5), None);
+    assert_eq!(exact_product(tiny, 1.5), None);
+    assert!(!same_products([tiny, 0.5], [tiny, 0.5])); // two failures are not equality
+    assert_eq!(exact_product(tiny, 1.), Some([tiny, 0.]));
+    assert!(same_products([tiny, 1.], [tiny, 1.]));
+    assert_eq!(
+        exact_product(f64::MIN_POSITIVE, 0.5),
+        Some([f64::MIN_POSITIVE * 0.5, 0.])
+    );
+    assert_eq!(exact_product(0., tiny), Some([0., 0.]));
+    assert_eq!(exact_product(f64::MAX, 2.), None);
+    assert_eq!(exact_product(f64::NAN, 0.), None);
+    let step = 2f64.powi(-52);
+    assert_eq!(
+        exact_product(1. + step, 1. - step),
+        Some([1., -2f64.powi(-104)])
+    );
+    // The smallest admitted source pitch/length, largest grid divisors and
+    // taper factor stay at least 996 binary orders above the excluded tail.
+    for value in [0.001, 1., 1e7] {
+        for divisor in [4., 512., 2048.] {
+            let a = value / divisor / 32.;
+            assert!(lowest_bit(a) >= -78);
+            for index in [-66560., -1., 0., 1., 66560.] {
+                assert!(exact_product(a, index).is_some());
+            }
+        }
+    }
+}
