@@ -275,6 +275,62 @@ fn actual_hanger_retained_memory_frontiers_refuse_and_recover() {
 }
 
 #[test]
+fn actual_coedge_orientation_and_vertex_point_dimensions_are_checked() {
+    let source = Hanger::new(
+        crate::authored_hanger_bolt::tests::fixture(false, false),
+        None,
+    )
+    .unwrap();
+    let file =
+        crate::step::hanger::export_qualified_hanger(&source, Default::default(), None).unwrap();
+    let original = file.as_str();
+    let arena = part21::parse(original).unwrap();
+    let oriented = arena
+        .values()
+        .flatten()
+        .find(|e| e.name == "ORIENTED_EDGE")
+        .unwrap();
+    let flipped = match oriented.args[4] {
+        Value::Enum("T") => ".F.",
+        Value::Enum("F") => ".T.",
+        _ => unreachable!(),
+    };
+    let component = oriented.source.unwrap();
+    let changed = replace_argument(component, &[4], flipped);
+    let input = original.replacen(component, &changed, 1);
+    assert!(part21::parse(&input).is_ok());
+    assert!(matches!(
+        decode(&input, Default::default(), None),
+        Err(Error::Invalid)
+    ));
+
+    // Keep every curve's original points and dimensions. Only the vertex's
+    // binding is changed to a genuine existing pcurve point in this file.
+    let planar_point = arena
+        .iter()
+        .find_map(|(&id, entities)| {
+            let e = &entities[0];
+            (e.name == "CARTESIAN_POINT" && matches!(&e.args[1], Value::List(v) if v.len() == 2))
+                .then_some(id)
+        })
+        .unwrap();
+    let vertex = arena
+        .values()
+        .flatten()
+        .find(|e| e.name == "VERTEX_POINT")
+        .unwrap();
+    let component = vertex.source.unwrap();
+    let changed = replace_argument(component, &[1], &format!("#{planar_point}"));
+    let input = original.replacen(component, &changed, 1);
+    assert!(part21::parse(&input).is_ok());
+    assert!(matches!(
+        decode(&input, Default::default(), None),
+        Err(Error::Invalid)
+    ));
+    assert!(decode(original, Default::default(), None).is_ok());
+}
+
+#[test]
 fn actual_hanger_schema_fields_refuse_invalid_geometry_and_topology() {
     let source = Hanger::new(
         crate::authored_hanger_bolt::tests::fixture(false, false),
