@@ -140,6 +140,76 @@ fn actual_pcurve_owners_directions_and_tensor_side_lengths_cannot_be_substituted
 }
 
 #[test]
+fn coincident_actual_coefficients_cannot_hide_a_noncyclic_parameter_boundary() {
+    let text = fixture(false);
+    let document = CompoundDocument::parse(&text, Default::default(), None).unwrap();
+    let parsed = Parsed::parse(
+        &document,
+        document.represented_members()[0].item_entity(),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let face = &parsed.faces[0];
+    let Support::Tensor(index) = face.support else {
+        panic!()
+    };
+    let tensor = &parsed.tensors[index];
+    let point = parsed.points[tensor.poles[0]].id;
+    let point_reference = format!("#{point}");
+    let poles = format!("({})", vec![point_reference.clone(); 23].join(","));
+    let grid = format!("({})", vec![poles.clone(); 23].join(","));
+    let mut changed = change_record(&text, tensor.id, |line| {
+        let mut args = fields(line);
+        args[3] = &grid;
+        args[8] = "(12,11,12)";
+        args[9] = "(12,11,12)";
+        args[10] = "(0.,0.5,1.)";
+        args[11] = "(0.,0.5,1.)";
+        with_fields(line, &args)
+    });
+    let records = document.records();
+    let mut pcurves = Vec::new();
+    let mut vertices = std::collections::BTreeSet::new();
+    for coedge in face.coedges {
+        let edge = &parsed.edges[coedge.edge];
+        changed = change_record(&changed, parsed.curves[edge.curve].id, |line| {
+            let mut args = fields(line);
+            args[2] = &poles;
+            args[6] = "(12,11,12)";
+            args[7] = "(0.,0.5,1.)";
+            with_fields(line, &args)
+        });
+        vertices.extend(edge.vertices);
+        pcurves.push(
+            *edge
+                .pcurves
+                .iter()
+                .find(
+                    |id| matches!(records[id][0].args[1], Value::Reference(id) if id == tensor.id),
+                )
+                .unwrap(),
+        );
+    }
+    for vertex in vertices {
+        let vertex = parsed.vertices[vertex];
+        if parsed.points[vertex.point].id != point {
+            changed = replace_field(&changed, vertex.id, 1, &point_reference);
+        }
+    }
+    let Value::Reference(a) = records[&pcurves[2]][0].args[2] else {
+        panic!()
+    };
+    let Value::Reference(b) = records[&pcurves[3]][0].args[2] else {
+        panic!()
+    };
+    changed = replace_field(&changed, pcurves[2], 2, &format!("#{b}"));
+    changed = replace_field(&changed, pcurves[3], 2, &format!("#{a}"));
+    assert_eq!(rejected(&changed), Error::Unsupported);
+    assert_eq!(document.literal_input(), text);
+}
+
+#[test]
 fn actual_tensor_rows_and_curve_subdivision_counts_must_match_the_neutral_schema() {
     let text = fixture(false);
     let tensor = record_id(&text, "=B_SPLINE_SURFACE_WITH_KNOTS(", 0);
