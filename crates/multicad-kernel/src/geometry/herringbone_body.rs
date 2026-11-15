@@ -10,7 +10,7 @@ use multicad_rust_kernel::{
     normal_sweep,
     spur_gear::{
         Edge, Error, Spec,
-        herringbone::{Curve, Face as GearFace, Herringbone, Ring, Topology},
+        herringbone::{Curve, Face as GearFace, Herringbone, Topology},
     },
 };
 use std::collections::BTreeSet;
@@ -42,6 +42,23 @@ impl Solid {
         Self::rust_twisted_gear_named(spec, feature, policy, GearSweep::Helical)
     }
 
+    /// A double-helical gear whose opposite-hand bands are separated by
+    /// its authored central gap and joined by the root core.
+    pub fn rust_double_helical_named(
+        spec: InvoluteGear,
+        feature: EntityId,
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        let GearSweep::GappedChevron { gap_mm } = spec.sweep else {
+            return Err(error(
+                "twisted gear",
+                GeometryErrorKind::Unsupported,
+                "Rust double-helical gear requires a central gap",
+            ));
+        };
+        Self::rust_twisted_gear_named(spec, feature, policy, GearSweep::GappedChevron { gap_mm })
+    }
+
     fn rust_twisted_gear_named(
         spec: InvoluteGear,
         feature: EntityId,
@@ -60,10 +77,12 @@ impl Solid {
         if feature.is_nil() {
             return Err(input("Twisted gear feature identity must not be nil"));
         }
-        let construct = if required_sweep == GearSweep::Helical {
-            Herringbone::new_helical
-        } else {
-            Herringbone::new
+        let construct = |spec, twist, minimum, maximum| match required_sweep {
+            GearSweep::Helical => Herringbone::new_helical(spec, twist, minimum, maximum),
+            GearSweep::GappedChevron { gap_mm } => {
+                Herringbone::new_gapped(spec, twist, gap_mm, minimum, maximum)
+            }
+            _ => Herringbone::new(spec, twist, minimum, maximum),
         };
         let geometry = construct(
             Spec {
@@ -240,6 +259,10 @@ impl HerringboneBody {
         self.geometry.is_helical()
     }
 
+    pub(crate) fn is_gapped(&self) -> bool {
+        self.geometry.is_gapped()
+    }
+
     pub(crate) fn section(&self, frame: PlaneFrame, z: f64, outward: f64) -> ReferenceFrame {
         let (sin, cos) = self.geometry.phase_at(z).sin_cos();
         ReferenceFrame {
@@ -281,13 +304,26 @@ impl HerringboneBody {
                 incident[vertex as usize].extend([a, b]);
             }
             let described = match edge.curve {
-                Curve::Rim { ring, edge } => {
-                    let z = match ring {
-                        Ring::Start => 0.,
-                        Ring::Apex => height / 2.,
-                        Ring::End => height,
-                    };
-                    Some(spur_gear_body::rim(edge, self.section(frame, z, 1.)))
+                Curve::Rim { ring, edge } => Some(spur_gear_body::rim(
+                    edge,
+                    self.section(frame, geometry.ring_height_mm(ring), 1.),
+                )),
+                Curve::UnderTooth {
+                    ring,
+                    angles,
+                    radius_mm,
+                } => {
+                    let [a, b] =
+                        angles.map(|angle| [radius_mm * angle.cos(), radius_mm * angle.sin()]);
+                    Some(spur_gear_body::rim(
+                        Edge::Planar(normal_sweep::Edge::Arc {
+                            center: [0.; 2],
+                            a,
+                            b,
+                            clockwise: true,
+                        }),
+                        self.section(frame, geometry.ring_height_mm(ring), 1.),
+                    ))
                 }
                 Curve::BoreRim { end, radius_mm } => Some(spur_gear_body::rim(
                     Edge::Planar(normal_sweep::Edge::Circle {
@@ -316,10 +352,12 @@ impl HerringboneBody {
                         v: frame.v,
                     },
                 )),
-                Curve::BoreSeam { .. } | Curve::HubSeam { .. } => Some(AnalyticGeometry::Line {
-                    a_mm: position(frame, t.vertices_mm[edge.vertices[0] as usize]),
-                    b_mm: position(frame, t.vertices_mm[edge.vertices[1] as usize]),
-                }),
+                Curve::BoreSeam { .. } | Curve::HubSeam { .. } | Curve::RootSeam { .. } => {
+                    Some(AnalyticGeometry::Line {
+                        a_mm: position(frame, t.vertices_mm[edge.vertices[0] as usize]),
+                        b_mm: position(frame, t.vertices_mm[edge.vertices[1] as usize]),
+                    })
+                }
                 Curve::Rail { .. } => None,
             };
             if let Some(curve) = described {
@@ -335,6 +373,14 @@ impl HerringboneBody {
                     if *end { height } else { 0. },
                     if *end { 1. } else { -1. },
                 )),
+                GearFace::Shoulder { upper, .. } => {
+                    let [lower, upper_z] = geometry.shoulder_heights_mm().expect("gapped gear");
+                    Some(if *upper {
+                        self.section(frame, upper_z, -1.)
+                    } else {
+                        self.section(frame, lower, 1.)
+                    })
+                }
                 GearFace::HubCap { extension } => Some(ReferenceFrame {
                     origin_mm: position(frame, [0., 0., extension.end_z_mm]),
                     u: frame.u,
@@ -375,8 +421,7 @@ impl HerringboneBody {
         let Curve::Rail { point: [x, y], .. } = curve else {
             return None;
         };
-        let height = self.geometry.profile().height_mm();
-        let sweep = self.geometry.phase_at(height / 2.).abs();
+        let sweep = self.geometry.phase_at(self.geometry.band_length_mm()).abs();
         let max_span = (8. * options.deflection / x.hypot(y))
             .sqrt()
             .min(options.angle);

@@ -33,7 +33,6 @@ impl Herringbone {
         let [dx, dy, dz] = direction.map(|x| x / magnitude);
         let radial = [dx, dy];
         let q = length(radial);
-        let height = self.profile.height_mm();
         if q == 0. {
             return self
                 .axial_bounds()
@@ -43,9 +42,9 @@ impl Herringbone {
                 * magnitude;
         }
         let azimuth = angle(radial);
-        let mid = height * 0.5;
         let mut best = f64::NEG_INFINITY;
-        for z in [0., mid, height] {
+        for &ring in self.rings() {
+            let z = self.ring_height_mm(ring);
             let phase = self.phase_at(z);
             let projected = rotate(radial, -phase);
             for item in self.profile.outline() {
@@ -53,7 +52,7 @@ impl Herringbone {
             }
         }
         for band in [Band::Lower, Band::Upper] {
-            let [low, high] = band.axial_interval_mm(height);
+            let [low, high] = self.band_interval_mm(band);
             let phase = self.phase_at(low);
             let high_phase = self.phase_at(high);
             let slope = self.band_twist_rad_per_mm(band);
@@ -83,6 +82,10 @@ impl Herringbone {
                     }
                 }
             }
+        }
+        // The root core attains its support on one of its end circles.
+        if let Some(ends) = self.shoulder_heights_mm() {
+            best = best.max(q * self.profile.root_radius_mm + (dz * ends[0]).max(dz * ends[1]));
         }
         if let Some(hub) = self.profile.hub() {
             best =

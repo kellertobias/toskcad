@@ -238,8 +238,19 @@ pub(crate) struct Charts {
     pub(crate) transverse: Vec<Chart>,
     pub(crate) spins: [Chart; 2],
     pub(crate) heights: [Vec<f64>; 2],
-    pub(crate) phases: [[f64; 2]; 3],
-    pub(crate) levels: [f64; 3],
+    /// Rotation and height of every tooth-outline station: start, apex and
+    /// end, or start, both gap shoulders and end.
+    pub(crate) phases: Vec<[f64; 2]>,
+    pub(crate) levels: Vec<f64>,
+    /// Unrotated root arcs under each tooth, right foot to left foot.
+    pub(crate) under: Vec<Chart>,
+}
+
+impl Charts {
+    /// First tooth-outline station of a band.
+    pub(crate) fn band_start(&self, band: usize) -> usize {
+        if band == 0 { 0 } else { self.levels.len() - 2 }
+    }
 }
 
 pub(crate) fn prepare(
@@ -253,7 +264,7 @@ pub(crate) fn prepare(
     let tolerance = tolerance.min(MAX_ERROR_MM);
     let profile = gear.profile();
     let height = profile.height_mm();
-    let middle = height * 0.5;
+    let middle = gear.band_length_mm();
     let [lo, hi] = gear.bounds();
     let extent = |i: usize| lo[i].abs().max(hi[i].abs());
     let radius = extent(0).hypot(extent(1));
@@ -281,15 +292,37 @@ pub(crate) fn prepare(
             z.iter().rev().map(|z| height - z).collect::<Vec<_>>(),
         )
     };
-    let phases = [
-        [1., 0.],
-        upper.poles[0],
-        *upper.poles.last().expect("rotation endpoints"),
-    ];
+    let mut phases = vec![[1., 0.], upper.poles[0]];
+    let mut levels = vec![0., middle];
+    if gear.is_gapped() {
+        // Both shoulders end their bands at the same rotation.
+        phases.push(upper.poles[0]);
+        levels.push(height - middle);
+    }
+    phases.push(*upper.poles.last().expect("rotation endpoints"));
+    levels.push(height);
     let spins = [spin, upper];
     let heights = [z, upper_z];
-    let levels = [0., middle, height];
     let outline = profile.outline();
+    // Root arcs end exactly at the outline vertices that start each tooth
+    // and its root edge, so shared station vertices match bit for bit.
+    let teeth = gear.teeth() as usize;
+    let per = outline.len() / teeth.max(1);
+    let under = (0..if gear.is_gapped() { teeth } else { 0 })
+        .map(|tooth| {
+            let [a, b] = [tooth * per + per - 1, tooth * per].map(|i| outline[i].edge.point(0.));
+            Chart::transverse(
+                Edge::Planar(PlanarEdge::Arc {
+                    center: [0.; 2],
+                    a,
+                    b,
+                    clockwise: true,
+                }),
+                [a, b],
+                tolerance,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let count = outline.len();
     let transverse = outline
         .iter()
@@ -314,6 +347,7 @@ pub(crate) fn prepare(
         heights,
         phases,
         levels,
+        under,
     })
 }
 
@@ -323,48 +357,55 @@ pub(super) fn encode(
     placement: Placement,
     tolerance: f64,
 ) -> Result<Entity, StepError> {
+    let charts = prepare(gear, placement.origin, tolerance)?;
+    let starts = [charts.band_start(0), charts.band_start(1)];
     let Charts {
         transverse,
         spins,
         heights,
         phases,
         levels,
-    } = prepare(gear, placement.origin, tolerance)?;
+        under,
+    } = charts;
     let profile = gear.profile();
     let count = transverse.len();
-    let height = levels[2];
-    let stations = [0, 1, 2].map(|level| {
-        transverse
-            .iter()
-            .map(|chart| {
-                file.vertex(
-                    placement.point_f64(product(chart.poles[0], phases[level]), levels[level]),
-                )
-            })
-            .collect::<Vec<_>>()
-    });
-    let rims = [0, 1, 2].map(|level| {
-        transverse
-            .iter()
-            .enumerate()
-            .map(|(index, chart)| {
-                let next = (index + 1) % count;
-                let [a, b] = [stations[level][index], stations[level][next]];
-                if chart.degree == 1 {
-                    return line_edge(file, a, b);
-                }
-                let points = chart.poles.iter().map(|&point| {
-                    placement.point_f64(product(point, phases[level]), levels[level])
-                });
-                Ok(chart.edge(file, [a, b], points))
-            })
-            .collect::<Result<Vec<_>, _>>()
-    });
-    let [start, apex, end] = rims;
-    let rims = [start?, apex?, end?];
+    let last = levels.len() - 1;
+    let height = levels[last];
+    let stations = (0..levels.len())
+        .map(|level| {
+            transverse
+                .iter()
+                .map(|chart| {
+                    file.vertex(
+                        placement.point_f64(product(chart.poles[0], phases[level]), levels[level]),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let rims = (0..levels.len())
+        .map(|level| {
+            transverse
+                .iter()
+                .enumerate()
+                .map(|(index, chart)| {
+                    let next = (index + 1) % count;
+                    let [a, b] = [stations[level][index], stations[level][next]];
+                    if chart.degree == 1 {
+                        return line_edge(file, a, b);
+                    }
+                    let points = chart.poles.iter().map(|&point| {
+                        placement.point_f64(product(point, phases[level]), levels[level])
+                    });
+                    Ok(chart.edge(file, [a, b], points))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     let mut faces = Vec::with_capacity(2 * count + 3);
     for (band, axial) in spins.iter().enumerate() {
+        let station = starts[band];
         let heights = &heights[band];
         let rails = transverse
             .iter()
@@ -377,7 +418,7 @@ pub(super) fn encode(
                     .map(|(&spin, &z)| placement.point_f64(product(chart.poles[0], spin), z));
                 axial.edge(
                     file,
-                    [stations[band][index], stations[band + 1][index]],
+                    [stations[station][index], stations[station + 1][index]],
                     points,
                 )
             })
@@ -420,9 +461,9 @@ pub(super) fn encode(
                 ))
             };
             let wire = [
-                (rims[band][index], true),
+                (rims[station][index], true),
                 (rails[next], true),
-                (rims[band + 1][index], false),
+                (rims[station + 1][index], false),
                 (rails[index], false),
             ]
             .map(|(edge, sense)| file.oriented_edge(edge, sense));
@@ -449,7 +490,7 @@ pub(super) fn encode(
     } else {
         None
     };
-    for (end, ring) in [(&rims[0], false), (&rims[2], true)]
+    for (end, ring) in [(&rims[0], false), (&rims[last], true)]
         .into_iter()
         .enumerate()
     {
@@ -472,11 +513,31 @@ pub(super) fn encode(
         let normal = placement.normal.map(|n| if top { n } else { -n });
         faces.push(file.face(&loops, point, normal, placement.u));
     }
+    // The bore wall precedes the gap faces, which precede hub faces.
+    let mut gap = Vec::new();
+    if gear.is_gapped() {
+        encode_gap(
+            file,
+            gear,
+            &placement,
+            [&stations[1], &stations[2]],
+            [&rims[1], &rims[2]],
+            (phases[1], [levels[1], levels[2]]),
+            &under,
+            &mut gap,
+        )?;
+    }
     if let Some(bore) = bore {
         faces.push(bore.wall(file, false));
     }
-    if let Some(hub) = hub {
-        faces.extend(hub.faces);
+    match hub {
+        Some(hub) => {
+            let bore_walls = usize::from(profile.bore().is_some());
+            faces.extend(&hub.faces[..bore_walls]);
+            faces.extend(gap);
+            faces.extend(&hub.faces[bore_walls..]);
+        }
+        None => faces.extend(gap),
     }
     let solid = file.solid(&faces);
     if file.next + 128 > MAX_STEP_ENTITIES
@@ -485,6 +546,95 @@ pub(super) fn encode(
         return Err(StepError::Limit);
     }
     Ok(solid)
+}
+
+/// Root arcs under every tooth at both shoulders, the seamed root-core
+/// cylinder between them and the per-tooth shoulder planes, in the same
+/// order as the analytic topology.
+#[allow(clippy::too_many_arguments)]
+fn encode_gap(
+    file: &mut StepFile,
+    gear: &Herringbone,
+    placement: &Placement,
+    stations: [&[Vertex]; 2],
+    rims: [&[Entity]; 2],
+    (phase, levels): ([f64; 2], [f64; 2]),
+    under: &[Chart],
+    faces: &mut Vec<Entity>,
+) -> Result<(), StepError> {
+    let teeth = under.len();
+    let per = rims[0].len() / teeth;
+    let root = |tooth: usize| tooth * per + per - 1;
+    let arcs = [0, 1].map(|side| {
+        under
+            .iter()
+            .enumerate()
+            .map(|(tooth, chart)| {
+                let points = chart
+                    .poles
+                    .iter()
+                    .map(|&p| placement.point_f64(product(p, phase), levels[side]));
+                chart.edge(
+                    file,
+                    [stations[side][root(tooth)], stations[side][tooth * per]],
+                    points,
+                )
+            })
+            .collect::<Vec<_>>()
+    });
+    // Counterclockwise root ring from the seam vertex at the first root edge.
+    let ring = |side: usize| {
+        let mut uses = vec![(rims[side][root(0)], true)];
+        for tooth in 1..teeth {
+            uses.extend([(arcs[side][tooth], false), (rims[side][root(tooth)], true)]);
+        }
+        uses.push((arcs[side][0], false));
+        uses
+    };
+    let center = file.point(placement.point_f64([0.; 2], levels[0]));
+    let axis = file.axis(center, placement.normal, placement.u);
+    let radius = gear.root_radius_mm();
+    let surface = file.entity(format_args!("CYLINDRICAL_SURFACE('',{axis},{radius:.16E})"));
+    let seam = line_edge(file, stations[0][root(0)], stations[1][root(0)])?;
+    let mut uses = ring(0);
+    uses.push((seam, true));
+    uses.extend(
+        ring(1)
+            .into_iter()
+            .rev()
+            .map(|(edge, sense)| (edge, !sense)),
+    );
+    uses.push((seam, false));
+    let edges = uses
+        .into_iter()
+        .map(|(edge, sense)| file.oriented_edge(edge, sense))
+        .collect::<Vec<_>>();
+    let bound = file.bound(&edges, true);
+    faces.push(file.face_on(&[bound], surface, true));
+    for (side, upper) in [(0, false), (1, true)] {
+        let point = file.point(placement.point_f64([0.; 2], levels[side]));
+        let normal = placement.normal.map(|x| if upper { -x } else { x });
+        for (tooth, &arc) in arcs[side].iter().enumerate() {
+            let mut uses = (tooth * per..root(tooth))
+                .map(|index| (rims[side][index], true))
+                .chain([(arc, true)])
+                .collect::<Vec<_>>();
+            if upper {
+                uses = uses
+                    .into_iter()
+                    .rev()
+                    .map(|(edge, sense)| (edge, !sense))
+                    .collect();
+            }
+            let edges = uses
+                .into_iter()
+                .map(|(edge, sense)| file.oriented_edge(edge, sense))
+                .collect::<Vec<_>>();
+            let bound = file.bound(&edges, true);
+            faces.push(file.face(&[bound], point, normal, placement.u));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -12,7 +12,10 @@ fn check(
     policy: GeometryPolicy,
     interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<(), ModelError> {
-    let result = if matches!(family, GearFamily::Herringbone | GearFamily::Helical) {
+    let result = if matches!(
+        family,
+        GearFamily::Herringbone | GearFamily::Helical | GearFamily::DoubleHelical
+    ) {
         a.certify_rust_herringbone_pair(b, policy, interrupt)
     } else if family == GearFamily::InternalRing {
         a.certify_rust_internal_pair(b, policy, interrupt)
@@ -91,7 +94,10 @@ pub(crate) fn validate(
             || !(internal
                 || matches!(
                     family,
-                    GearFamily::Spur | GearFamily::Herringbone | GearFamily::Helical
+                    GearFamily::Spur
+                        | GearFamily::Herringbone
+                        | GearFamily::Helical
+                        | GearFamily::DoubleHelical
                 ))
             || resolved.gears.iter().enumerate().any(|(index, gear)| {
                 !gear.rotary().is_some_and(|rotary| {
@@ -103,7 +109,7 @@ pub(crate) fn validate(
         {
             return Err(error(
                 Some(pair),
-                "Rust gear-pair interference requires unshifted external spur, helical or continuous herringbone members, or an internal ring with a spur pinion; spur hubs require an additional certificate",
+                "Rust gear-pair interference requires unshifted external spur, helical, continuous herringbone or equal-gap double-helical members, or an internal ring with a spur pinion; spur hubs require an additional certificate",
             ));
         }
         let family = if internal {

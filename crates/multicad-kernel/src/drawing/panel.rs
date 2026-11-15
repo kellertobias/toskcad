@@ -92,6 +92,12 @@ pub(super) fn section_herringbone(
     depth: f64,
 ) -> Option<Result<Vec<ProjectedVector>, GeometryError>> {
     let (body, placement) = input.solid.herringbone_body()?;
+    if body.is_gapped() {
+        return Some(Err(err(
+            GeometryErrorKind::Unsupported,
+            herringbone_projection::GAPPED_DRAWING,
+        )));
+    }
     let [u, v, toward_viewer] = planar::view_axes(options.frame);
     let normal = placement.normal();
     if dot(normal, u).hypot(dot(normal, v)) > 64. * f64::EPSILON || options.detail.is_some() {

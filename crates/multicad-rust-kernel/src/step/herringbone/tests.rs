@@ -233,3 +233,39 @@ fn exact_arc_chart_has_positive_weights_and_meets_the_authored_radius() {
         assert!(((x - 2.).hypot(y - 2.) - 2.).abs() < 1e-14);
     }
 }
+
+#[test]
+fn gap_below_axial_resolution_refuses_a_zero_length_core_seam() {
+    use crate::spur_gear::Spec;
+    use std::f64::consts::PI;
+    let beta = 15_f64.to_radians();
+    let pressure = (20_f64.to_radians().tan() / beta.cos()).atan();
+    let module = 2. / beta.cos();
+    let pitch = 12. * module;
+    let spec = Spec {
+        teeth: 24,
+        pitch_radius_mm: pitch,
+        base_radius_mm: pitch * pressure.cos(),
+        tip_radius_mm: pitch + 2.,
+        root_radius_mm: pitch - 2.5,
+        root_fillet_radius_mm: 0.4,
+        half_base_angle_rad: (PI * module / 2. - 0.05) / (2. * pitch) + pressure.tan() - pressure,
+        face_width_mm: 10.,
+        bore_radius_mm: 4.,
+    };
+    let twist = beta.tan() / pitch;
+    let [origin, u, v] = [[0.; 3], [1., 0., 0.], [0., 1., 0.]];
+    let gear = Herringbone::new_gapped(spec, twist, 3., 1e-5, 1e7).unwrap();
+    assert!(write_herringbone(&gear, origin, u, v, 1e-7).is_ok());
+    // A caller-chosen minimum below the resolution of the face width admits
+    // a gap whose shoulders round to one level. The core seam between them
+    // has no direction, so the writer refuses instead of emitting it.
+    let gap = f64::MIN_POSITIVE;
+    let gear = Herringbone::new_gapped(spec, twist, gap, gap, 1e7).unwrap();
+    assert!(gear.is_gapped());
+    assert_eq!(gear.shoulder_heights_mm(), Some([5., 5.]));
+    assert!(matches!(
+        write_herringbone(&gear, origin, u, v, 1e-7),
+        Err(StepError::InvalidGeometry)
+    ));
+}
