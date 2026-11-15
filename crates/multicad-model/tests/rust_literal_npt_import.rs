@@ -248,3 +248,281 @@ fn actual_literal_npt_import_compiles_displays_and_reopens_without_external_sour
         );
     }
 }
+
+#[test]
+fn actual_literal_export_worker_keeps_decoded_mass_intervals_and_atomic_publication() {
+    use multicad_core::{
+        document::EntityId,
+        exchange::{ExportReply, ExportResult, Scope, ScopeRoot, SetDefinition, prepare_set},
+    };
+    use multicad_kernel::{RigidTransform, Solid};
+    use multicad_model::export::{
+        ExportWorker, Exporter, StepVerificationMethod, verify_rust_step_shape_receipt,
+    };
+    use std::{
+        cell::Cell,
+        path::Path,
+        time::{Duration, Instant},
+    };
+    fn reply(worker: &ExportWorker, id: EntityId) -> ExportReply {
+        let deadline = Instant::now() + Duration::from_secs(90);
+        loop {
+            if let Some(r) = worker.poll() {
+                assert_eq!(r.id, id);
+                return r;
+            }
+            assert!(Instant::now() < deadline, "Literal export worker timed out");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+    for mixed in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let input = directory.path().join("actual.step");
+        let original = text(false);
+        let source =
+            Solid::import_rust_step(&original, EntityId::new(), Default::default()).unwrap();
+        let pose = RigidTransform {
+            translation_mm: [11., -5., 3.],
+            ..Default::default()
+        };
+        let moved = source.transformed(pose).unwrap();
+        let mut writer = multicad_kernel::rust_kernel::step::Writer::new();
+        let candidate = multicad_kernel::rust_kernel::step::literal_npt::verify_placed_replay(
+            source.rust_literal_npt_source().unwrap(),
+            moved.rust_literal_npt_occurrence().unwrap(),
+            Default::default(),
+            None,
+        )
+        .unwrap();
+        writer
+            .append_verified_literal_npt(&candidate, Default::default(), None)
+            .unwrap();
+        if mixed {
+            writer
+                .append_box(
+                    [2, 3, 4].map(|n| multicad_kernel::rust_kernel::Rational::new(n, 1).unwrap()),
+                    [-20., 0., 0.],
+                    [1., 0., 0.],
+                    [0., 1., 0.],
+                )
+                .unwrap();
+            let candidate = multicad_kernel::rust_kernel::step::literal_npt::verify_exact_replay(
+                source.rust_literal_npt_source().unwrap(),
+                Default::default(),
+                None,
+            )
+            .unwrap();
+            writer
+                .append_verified_literal_npt(&candidate, Default::default(), None)
+                .unwrap();
+        }
+        std::fs::write(&input, writer.finish().unwrap()).unwrap();
+        let imported = read_step_file_with_backend(&input, GeometryBackend::Rust).unwrap();
+        let mut session = Session::new(Document::new("Literal export workflow").unwrap()).unwrap();
+        let actor = Actor::local(Channel::Ui);
+        let prepared = prepare_step_import(&session, 0, actor.clone(), &imported).unwrap();
+        let part = prepared.model.outputs[0].body;
+        session.commit(prepared.model.prepared).unwrap();
+        std::fs::remove_file(&input).unwrap();
+        use multicad_core::model::{
+            self, BodyInput, NumericTransform, TransformRequest, angle, length,
+        };
+        let original_model = Compiler {
+            omit_display: true,
+            ..Default::default()
+        }
+        .compile_with_backend(
+            session.document(),
+            session.revision(),
+            GeometryBackend::Rust,
+            None,
+        )
+        .unwrap();
+        let producer = original_model.snapshot().bodies[&part];
+        let transform = TransformRequest::new(
+            BodyInput {
+                body: part,
+                producer,
+            },
+            NumericTransform {
+                translation: [length(3.), length(-2.), length(5.)],
+                axis: [1., 2., 3.],
+                angle: angle(19.),
+                ..Default::default()
+            },
+        );
+        let prepared =
+            model::prepare_transform(&session, session.revision(), actor.clone(), &transform)
+                .unwrap();
+        session.commit(prepared.prepared).unwrap();
+
+        let set = EntityId::new();
+        let prepared = prepare_set(
+            &session,
+            session.revision(),
+            actor.clone(),
+            set,
+            "Actual STEP",
+            &SetDefinition {
+                scope: Scope {
+                    root: ScopeRoot::Explicit {
+                        entities: vec![part],
+                    },
+                    tags: None,
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        session.commit(prepared).unwrap();
+        let mut saved = Vec::new();
+        project_file::write(
+            &ProjectFile::new(session.document().clone()).unwrap(),
+            &mut saved,
+            Default::default(),
+        )
+        .unwrap();
+        let reopened = project_file::read(
+            &mut saved.as_slice(),
+            Default::default(),
+            &project_file::supported_capabilities(),
+        )
+        .unwrap()
+        .project;
+        assert_eq!(&reopened.document, session.document());
+        session = Session::new(reopened.document).unwrap();
+        let model = Compiler::default()
+            .compile_with_backend(
+                session.document(),
+                session.revision(),
+                GeometryBackend::Rust,
+                None,
+            )
+            .unwrap();
+        let snapshot = model.snapshot();
+        let producer = snapshot.bodies[&part];
+        let solid = model.solid(producer).unwrap();
+        let shape = &snapshot.shapes[&producer];
+        let direct = directory.path().join("direct.step");
+        solid.write_step(&direct).unwrap();
+        let actual = std::fs::read_to_string(&direct).unwrap();
+        if !mixed {
+            solid
+                .verify_literal_npt_step(&actual, 1e-7)
+                .unwrap_or_else(|e| panic!("Fresh direct mixed={mixed}: {e:?}"));
+        }
+        let kinds = multicad_kernel::rust_kernel::step_read::read_source_compound(&actual, 1e-7)
+            .unwrap()
+            .iter()
+            .map(|m| match m {
+                multicad_kernel::rust_kernel::step_read::SourceImport::LiteralNpt(_) => "literal",
+                multicad_kernel::rust_kernel::step_read::SourceImport::Analytic(_) => "analytic",
+                multicad_kernel::rust_kernel::step_read::SourceImport::Radial(_) => "radial",
+            })
+            .collect::<Vec<_>>();
+        solid
+            .verify_literal_npt_step_compound(&actual, 1e-7)
+            .unwrap()
+            .unwrap_or_else(|e| panic!("Fresh compound mixed={mixed} kinds={kinds:?}: {e:?}"));
+        let worker =
+            ExportWorker::with_geometry_backend(Exporter::default(), GeometryBackend::Rust)
+                .unwrap();
+        let id = worker
+            .preview(session.document(), session.revision(), set, actor.clone())
+            .unwrap();
+        let ExportResult::Preview(preview) = reply(&worker, id).result else {
+            panic!("Expected preview");
+        };
+        let preview = preview.unwrap();
+        assert!(preview.can_run(), "{preview:?}");
+        let output = tempfile::tempdir().unwrap();
+        let id = worker
+            .run(
+                session.document(),
+                session.revision(),
+                &preview.key,
+                output.path(),
+                actor.clone(),
+            )
+            .unwrap();
+        let ExportResult::Run(run) = reply(&worker, id).result else {
+            panic!("Expected run");
+        };
+        let run = run.unwrap();
+        assert_eq!(run.files.len(), 1);
+        let path = Path::new(&run.directory).join(&run.files[0].artifact.output.filename);
+        let published = std::fs::read_to_string(&path).unwrap();
+        let proof = verify_rust_step_shape_receipt(&path, solid, shape, 1e-7).unwrap();
+        assert_eq!(
+            proof.method,
+            StepVerificationMethod::DecodedBoundaryEnclosure
+        );
+        assert_eq!(proof.decoded_volume_mm3, None);
+        assert_eq!(proof.retained_members.len(), if mixed { 2 } else { 1 });
+        assert_eq!(proof.decoded_scalar_members.len(), usize::from(mixed));
+        for member in &proof.retained_members {
+            assert!(member.decoded_volume_bounds_mm3[0] > 0.);
+            assert!(member.decoded_volume_bounds_mm3[1] >= member.decoded_volume_bounds_mm3[0]);
+            assert!(member.source_volume_bounds_mm3[0] > 0.);
+        }
+        let reopened =
+            Solid::import_rust_step(&published, EntityId::new(), Default::default()).unwrap();
+        assert_eq!(reopened.solid_count().unwrap(), if mixed { 3 } else { 1 });
+        assert!((reopened.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < 1e-5);
+        let mut stale = shape.as_ref().clone();
+        stale.bounds.min[0] += 1.;
+        assert!(verify_rust_step_shape_receipt(&path, solid, &stale, 1e-7).is_err());
+        let failed_root = tempfile::tempdir().unwrap();
+        let poisoned = Cell::new(false);
+        let mut wrong = multicad_kernel::rust_kernel::step::Writer::new();
+        wrong
+            .append_box(
+                [7, 8, 9].map(|n| multicad_kernel::rust_kernel::Rational::new(n, 1).unwrap()),
+                [0.; 3],
+                [1., 0., 0.],
+                [0., 1., 0.],
+            )
+            .unwrap();
+        let wrong = wrong.finish().unwrap();
+        let poison = || {
+            if !poisoned.get() {
+                for entry in std::fs::read_dir(failed_root.path()).unwrap().flatten() {
+                    if entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(".multicad-export-")
+                    {
+                        let staged = entry.path().join(&preview.artifacts[0].output.filename);
+                        if staged.is_file() {
+                            std::fs::write(staged, &wrong).unwrap();
+                            poisoned.set(true);
+                        }
+                    }
+                }
+            }
+            false
+        };
+        let before = session.document().clone();
+        let error = Exporter::default()
+            .run(
+                session.document(),
+                session.revision(),
+                &preview.key,
+                failed_root.path(),
+                &actor,
+                Some(&poison),
+            )
+            .unwrap_err();
+        assert!(poisoned.get());
+        assert_eq!(error.kind, multicad_core::exchange::ErrorKind::Invalid);
+        assert_eq!(session.document(), &before);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), published);
+        assert!(
+            std::fs::read_dir(failed_root.path()).unwrap().all(|e| e
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".lock"))
+        );
+    }
+}

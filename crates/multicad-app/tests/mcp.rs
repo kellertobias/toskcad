@@ -5154,6 +5154,37 @@ fn default_stdio_literal_npt_import_survives_source_removal_history_and_reopen()
             1
         );
         let revision = reopened.revision();
+        let exported = reopened.ok(
+            "export_step",
+            json!({"part":imported["parts"][0],"file_name":"literal-reexport.step"}),
+        );
+        assert!(exported["readback_volume_mm3"].is_null());
+        assert_eq!(
+            exported["step_verification"]["method"],
+            "decoded_boundary_enclosure"
+        );
+        let ranges = exported["step_verification"]["retained_members"]
+            .as_array()
+            .unwrap();
+        assert_eq!(ranges.len(), 1);
+        let interval = ranges[0]["decoded_volume_bounds_mm3"].as_array().unwrap();
+        assert!(interval[0].as_f64().unwrap() > 0. && interval[0].as_f64() <= interval[1].as_f64());
+        assert_eq!(reopened.revision(), revision);
+        let cold_project = directory.path().join("independent-reimport.tcd");
+        let mut independent = Client::start(&[
+            "--project",
+            cold_project.to_str().unwrap(),
+            "--export-dir",
+            directory.path().to_str().unwrap(),
+        ]);
+        independent.ok(
+            "import_step",
+            json!({"expected_revision":0,"file_name":"literal-reexport.step"}),
+        );
+        close(independent.part_volume(), volume);
+        independent.ok("save_project", json!({"expected_revision":1}));
+        drop(independent);
+
         std::fs::write(
             &input,
             literal_npt_text(quarter).replace("CLOSED_SHELL", "OPEN_SHELL"),

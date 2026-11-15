@@ -291,6 +291,7 @@ pub fn verify_rust_step_shape(
     if solid.rust_thread_entry_chamfer_data().is_some()
         || solid.has_retained_radial_source()
         || solid.has_partitioned_step_source()
+        || solid.has_literal_npt_source()
     {
         return Err(failure(
             ErrorKind::Unsupported,
@@ -495,7 +496,7 @@ fn verify_retained_step(
     producer: EntityId,
     tolerance: f64,
 ) -> Option<Result<StepVerificationReceipt, ExportError>> {
-    if !solid.has_retained_radial_source() {
+    if !solid.has_retained_radial_source() && !solid.has_literal_npt_source() {
         return None;
     }
     Some((|| {
@@ -534,20 +535,23 @@ fn verify_retained_step(
             tolerance,
         )?;
         let input = read_step_source(path, producer)?;
-        let proof = solid
-            .verify_retained_step_source(&input, tolerance)
-            .expect("typed retained source")
-            .map_err(|cause| {
-                failure(
-                    if cause == step_read::ReadError::Limit {
-                        ErrorKind::Budget
-                    } else {
-                        ErrorKind::Invalid
-                    },
-                    Some(producer),
-                    format!("Retained STEP boundary proof failed: {cause:?}"),
-                )
-            })?;
+        let proof = if solid.has_literal_npt_source() {
+            solid.verify_literal_npt_step_compound(&input, tolerance)
+        } else {
+            solid.verify_retained_step_source(&input, tolerance)
+        }
+        .expect("typed retained source")
+        .map_err(|cause| {
+            failure(
+                if cause == step_read::ReadError::Limit {
+                    ErrorKind::Budget
+                } else {
+                    ErrorKind::Invalid
+                },
+                Some(producer),
+                format!("Retained STEP boundary proof failed: {cause:?}"),
+            )
+        })?;
         if proof.solid_count != expected.0 {
             return Err(failure(
                 ErrorKind::Invalid,
