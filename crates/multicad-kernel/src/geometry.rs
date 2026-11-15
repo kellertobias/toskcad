@@ -61,6 +61,7 @@ mod radial_boundary_body;
 mod repaired_phillips_body;
 use repaired_phillips_body::RepairedPhillipsBody;
 pub use repaired_phillips_body::{
+    DecodedPeriodicPhillipsStepVerification, PeriodicPhillipsStepCandidateResources,
     PeriodicRepairedPhillipsMeshReceipt, PeriodicRepairedPhillipsQuery, RepairedPhillipsMeshBudget,
     RepairedPhillipsMeshReceipt, RepairedPhillipsQuery, RepairedPhillipsQueryOptions,
 };
