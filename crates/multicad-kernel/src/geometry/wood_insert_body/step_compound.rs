@@ -30,6 +30,10 @@ impl Solid {
     /// Source families requiring explicit per-member mass provenance.
     pub fn has_partitioned_step_source(&self) -> bool {
         self.has_wood_insert_step_source()
+            || self.clipped_npt_body().is_some()
+            || self
+                .rust_compound()
+                .is_some_and(|compound| compound.members().any(Self::has_partitioned_step_source))
             || (self.rust_compound().is_some() && contains_entry(self))
     }
     pub fn verify_wood_insert_step_compound(
@@ -186,6 +190,29 @@ impl Solid {
                             })
                         }
                     }?;
+                    result
+                        .members
+                        .retained_members
+                        .push(RetainedStepMemberMass {
+                            member_index: cursor as u32,
+                            decoded_volume_bounds_mm3: proof.decoded_volume_bounds_mm3,
+                            source_volume_bounds_mm3: proof.source_volume_bounds_mm3,
+                        });
+                    include(&mut result.members.bounds_mm, proof.decoded_bounds_mm);
+                    result.insert_correspondence.push((cursor as u32, proof));
+                } else if let Some(body) = leaf.clipped_npt_body() {
+                    // Solid::solid_count returns exactly one for this sealed
+                    // body variant; represented-file counts are checked above.
+                    assert_eq!(count, 1, "single owned NPT source");
+                    let proof = body.verify_step_member(
+                        &file,
+                        actual[0],
+                        GeometryPolicy {
+                            linear_tolerance_mm: leaf.policy.linear_tolerance_mm.min(tolerance),
+                            ..leaf.policy
+                        },
+                        interrupt,
+                    )?;
                     result
                         .members
                         .retained_members

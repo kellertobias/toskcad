@@ -136,6 +136,79 @@ fn actual_required_radial_allowance_edit_keeps_native_source_properties() {
             .unwrap();
     }
 }
+
+#[test]
+fn actual_npt_export_receipts_keep_member_mass_and_reject_a_different_source() {
+    let policy = GeometryPolicy::default();
+    let parts = [false, true].map(|quarter| {
+        Solid::rust_authored_axial_pipe_thread_with_interrupt(
+            spec(quarter),
+            EntityId::new(),
+            PlaneFrame::default(),
+            policy,
+            None,
+        )
+        .unwrap()
+    });
+    let ordinary = Solid::box_solid([1., 2., 3.], policy)
+        .unwrap()
+        .transformed(RigidTransform {
+            translation_mm: [30., 0., 0.],
+            ..Default::default()
+        })
+        .unwrap();
+    let compound =
+        Solid::compound_named(&[&parts[0], &ordinary, &parts[1]], EntityId::new(), policy).unwrap();
+    assert!(compound.has_partitioned_step_source());
+    let file = tempfile::NamedTempFile::new().unwrap();
+    compound.write_step(file.path()).unwrap();
+    let text = std::fs::read_to_string(file.path()).unwrap();
+    let proof = compound
+        .verify_partitioned_step_source(&text, 1e-7, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(proof.members.solid_count, 3);
+    assert_eq!(proof.members.retained_members.len(), 2);
+    assert_eq!(proof.members.decoded_scalar_members, [(1, 6.)]);
+    assert_eq!(proof.insert_correspondence.len(), 2);
+    assert_eq!(proof.insert_correspondence[0].0, 0);
+    assert_eq!(proof.insert_correspondence[1].0, 2);
+    for (_, correspondence) in &proof.insert_correspondence {
+        assert!(correspondence.maximum_position_error_mm <= 1e-7);
+        assert!(correspondence.maximum_row_derivative_error_mm <= 1e-6);
+        assert!(correspondence.maximum_ruling_derivative_error_mm <= 1e-6);
+    }
+    assert!(matches!(
+        compound.verify_partitioned_step_source(&text, 1e-7, Some(&|| true)),
+        Some(Err(GeometryError {
+            kind: GeometryErrorKind::Cancelled,
+            ..
+        }))
+    ));
+    parts[1].write_step(file.path()).unwrap();
+    let different = std::fs::read_to_string(file.path()).unwrap();
+    assert!(
+        parts[0]
+            .verify_partitioned_step_source(&different, 1e-7, None)
+            .unwrap()
+            .is_err()
+    );
+    let placed = parts[1]
+        .transformed(RigidTransform {
+            translation_mm: [1., 0., 0.],
+            ..Default::default()
+        })
+        .unwrap();
+    assert!(matches!(
+        placed.verify_partitioned_step_source(&different, 1e-7, None),
+        Some(Err(GeometryError {
+            kind: GeometryErrorKind::Unsupported,
+            ..
+        }))
+    ));
+    assert!(placed.write_step(file.path()).is_err());
+    assert_eq!(std::fs::read_to_string(file.path()).unwrap(), different);
+}
 #[test]
 fn native_source_scalars_do_not_require_unrequested_fixed_absolute_precision() {
     let mut s = spec(false);

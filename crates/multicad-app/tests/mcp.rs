@@ -3525,6 +3525,31 @@ fn rust_stdio_tapered_cosmetic_envelopes_reopen_and_refuse_manufacturing_atomica
             let revision = reopened.revision();
             reopened.ok("redo", json!({"expected_revision":revision}));
             close(reopened.part_volume(), modeled);
+            if !custom {
+                let revision = reopened.revision();
+                let exported = reopened.ok(
+                    "export_step",
+                    json!({"part":part,"file_name":"modeled-npt.step"}),
+                );
+                assert!(directory.path().join("modeled-npt.step").is_file());
+                assert!(exported["readback_volume_mm3"].is_null());
+                assert_eq!(
+                    exported["step_verification"]["retained_members"]
+                        .as_array()
+                        .unwrap()
+                        .len(),
+                    1
+                );
+                assert_eq!(
+                    exported["step_verification"]["source_correspondence"]
+                        .as_array()
+                        .unwrap()
+                        .len(),
+                    1
+                );
+                assert_eq!(reopened.revision(), revision);
+                assert_eq!(std::fs::read(&project).unwrap(), bytes);
+            }
             let revision = reopened.revision();
             reopened.ok("undo", json!({"expected_revision":revision}));
         }

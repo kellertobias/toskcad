@@ -145,9 +145,10 @@ fn rust_bspt_mcp_creation_is_physical_atomic_and_reopens() {
 }
 #[test]
 fn active_nominal_npt_stock_clips_keep_actual_material_and_closed_manufacturing() {
+    let dir = tempfile::tempdir().unwrap();
     let h = Headless::with_geometry_backend(
         Workspace::new(Document::new("NPT clip gap").unwrap()).unwrap(),
-        None,
+        Some(dir.path().into()),
         false,
         GeometryBackend::Rust,
     );
@@ -185,4 +186,25 @@ fn active_nominal_npt_stock_clips_keep_actual_material_and_closed_manufacturing(
     assert_eq!(receipt.removed_exact_zero_triangles, 0);
     let inspected = run(&h, "inspect_thread", json!({"thread":feature}));
     assert_eq!(inspected["source"]["parameters"]["npt"], json!(i));
+    let before_export = h.document();
+    let exported = run(
+        &h,
+        "export_step",
+        json!({"part":created["part"],"file_name":"nominal-npt.step"}),
+    );
+    assert!(dir.path().join("nominal-npt.step").is_file());
+    assert!(!dir.path().join(".nominal-npt.step.partial.step").exists());
+    assert!(exported["readback_volume_mm3"].is_null());
+    let decoded =
+        &exported["step_verification"]["retained_members"][0]["decoded_volume_bounds_mm3"];
+    assert!(decoded[0].as_f64().unwrap() > 470.);
+    assert!(decoded[1].as_f64().unwrap() < 471.);
+    assert_eq!(
+        exported["step_verification"]["source_correspondence"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(h.document(), before_export);
 }
