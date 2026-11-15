@@ -164,8 +164,12 @@ pub(crate) fn unroll(
 ) -> Result<Option<UvLoop>> {
     let periods = surface.periods();
     let mut free = Vec::with_capacity(points.len());
+    // Each point is sought from its predecessor: loop points lie close
+    // together, and a global search per point would scale with the net.
+    let mut previous: Option<[f64; 2]> = None;
     for point in &points {
-        let uv = surface.invert(point.position, None);
+        let uv = surface.invert(point.position, previous);
+        previous = Some(uv);
         ensure(
             distance(surface.evaluate(uv).0, point.position) <= tolerance,
             Error::Invalid,

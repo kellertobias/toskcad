@@ -328,9 +328,17 @@ impl Surface {
 
     fn closest(&self, point: Point, seed: Option<[f64; 2]>) -> [f64; 2] {
         let residual = |uv: [f64; 2]| distance(self.evaluate(uv).0, point);
+        // Newton from the few candidates nearest the point: evaluating every
+        // candidate is cheap, refining every one is not.
         let global = || {
+            let mut ranked: Vec<(f64, [f64; 2])> = self
+                .candidates(point)
+                .into_iter()
+                .map(|uv| (residual(uv), uv))
+                .collect();
+            ranked.sort_by(|a, b| a.0.total_cmp(&b.0));
             let mut best = (f64::INFINITY, [0.; 2]);
-            for candidate in self.candidates(point) {
+            for &(_, candidate) in ranked.iter().take(4) {
                 let refined = self.newton(point, candidate);
                 let d = residual(refined);
                 if d < best.0 {
@@ -343,9 +351,16 @@ impl Surface {
             Some(seed) => {
                 let local = self.newton(point, seed);
                 let d = residual(local);
-                // A seeded search that lands off the point fell into another
-                // basin; the global search then decides.
-                if d <= 1e-9 * (1. + norm(point)) {
+                // A seeded search that settles on a foot point, where the
+                // offset meets both tangents squarely, keeps it; one that
+                // lands elsewhere fell into another basin and the global
+                // search decides.
+                let (s, tangents) = self.evaluate(local);
+                let offset = sub(point, s);
+                let square = tangents
+                    .iter()
+                    .all(|t| dot(offset, *t).abs() <= 1e-6 * norm(offset) * norm(*t));
+                if d <= 1e-9 * (1. + norm(point)) || square {
                     return local;
                 }
                 let (other, uv) = global();
