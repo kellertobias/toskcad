@@ -1,4 +1,6 @@
+mod degree22;
 use super::*;
+pub(super) use degree22::Polynomial22;
 pub(super) type Poly = Vec<Z>;
 const BITS: u64 = 8192;
 pub(super) struct Arithmetic<'w, 'i> {

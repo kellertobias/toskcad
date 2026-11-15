@@ -1084,6 +1084,12 @@ pub use phillips_cutter::{
 
 pub use phillips_cutter::{
     CoherentDegree11ThreadCarrier as PhillipsCoherentDegree11ThreadCarrier,
+    Degree11ContactOptions as PhillipsDegree11ContactOptions,
+    Degree11DomainEnd as PhillipsDegree11DomainEnd,
+    Degree11RimContact as PhillipsDegree11RimContact,
+    Degree11RimContactId as PhillipsDegree11RimContactId,
+    Degree11RimKnot as PhillipsDegree11RimKnot, Degree11SignDomain as PhillipsDegree11SignDomain,
+    Degree11ThreadContacts as PhillipsDegree11ThreadContacts,
     Degree11ThreadFace as PhillipsDegree11ThreadFace,
     Degree11ThreadOptions as PhillipsDegree11ThreadOptions,
     DerivedThreadCarrier as PhillipsDerivedThreadCarrier,

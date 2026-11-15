@@ -223,6 +223,30 @@ pub(super) fn certify(
         });
     }
     let coefficients = a.bernstein(&p)?;
+    certify_coefficients(p, coefficients, a, budget)
+}
+/// Distinct fixed degree22 entry. Its producer accepts exactly12 actual poles;
+/// it cannot silently widen the old degree18 scratch/work contract.
+pub(super) fn certify22(
+    p: exact::Polynomial22,
+    a: &mut Arithmetic<'_, '_>,
+    budget: &mut Budget,
+) -> Result<Certificate> {
+    // The common Sturm fallback already charges19*128 for source clones. Add
+    // the extra four coefficients here BEFORE any possible degree22 fallback.
+    a.work.step(4 * 128)?;
+    if p.degree() == 0 {
+        return certify(p.into_polynomial(), a, budget);
+    }
+    let coefficients = a.bernstein22(&p)?;
+    certify_coefficients(p.into_polynomial(), coefficients, a, budget)
+}
+fn certify_coefficients(
+    p: Poly,
+    coefficients: Poly,
+    a: &mut Arithmetic<'_, '_>,
+    budget: &mut Budget,
+) -> Result<Certificate> {
     let mut roots = Vec::new();
     if coefficients[0].is_zero() {
         roots.push(Root {

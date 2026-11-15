@@ -1,6 +1,11 @@
 //! Source-bound sign domains of the actual repaired thread rim and head circle.
 //! This is not a sewn material, occupied proof, manufacturing mesh or file mass.
 use super::*;
+mod degree11;
+pub use degree11::{
+    Degree11ContactOptions, Degree11DomainEnd, Degree11RimContact, Degree11RimContactId,
+    Degree11RimKnot, Degree11SignDomain, Degree11ThreadContacts,
+};
 use std::mem::size_of;
 #[cfg(test)]
 mod tests;

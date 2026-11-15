@@ -13,8 +13,10 @@ mod join;
 mod reduce;
 pub use degree11::{CoherentDegree11ThreadCarrier, Degree11ThreadFace, Degree11ThreadOptions};
 pub use join::{
-    ContactThreadCarrier, DyadicParameter, RimContact, RimContactId, RimDomainEnd, RimDomainRole,
-    RimKnot, RimSignDomain, ThreadContactOptions,
+    ContactThreadCarrier, Degree11ContactOptions, Degree11DomainEnd, Degree11RimContact,
+    Degree11RimContactId, Degree11RimKnot, Degree11SignDomain, Degree11ThreadContacts,
+    DyadicParameter, RimContact, RimContactId, RimDomainEnd, RimDomainRole, RimKnot, RimSignDomain,
+    ThreadContactOptions,
 };
 const WORK: usize = 16_000_000;
 const BYTES: usize = 64 * 1024 * 1024;

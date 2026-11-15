@@ -333,9 +333,11 @@ pub use body::{
 pub use body::{ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHeadSupportKind};
 
 pub use body::{
-    CoherentDegree11ThreadCarrier, ContactThreadCarrier, Degree11ThreadFace, Degree11ThreadOptions,
-    DerivedThreadCarrier, DerivedThreadOptions, DyadicParameter, OccupiedDerivedThread, RimContact,
-    RimContactId, RimDomainEnd, RimDomainRole, RimKnot, RimSignDomain, ThreadCarrierTransfer,
+    CoherentDegree11ThreadCarrier, ContactThreadCarrier, Degree11ContactOptions, Degree11DomainEnd,
+    Degree11RimContact, Degree11RimContactId, Degree11RimKnot, Degree11SignDomain,
+    Degree11ThreadContacts, Degree11ThreadFace, Degree11ThreadOptions, DerivedThreadCarrier,
+    DerivedThreadOptions, DyadicParameter, OccupiedDerivedThread, RimContact, RimContactId,
+    RimDomainEnd, RimDomainRole, RimKnot, RimSignDomain, ThreadCarrierTransfer,
     ThreadContactOptions,
 };
 

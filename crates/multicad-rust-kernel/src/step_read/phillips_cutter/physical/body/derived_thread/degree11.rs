@@ -299,4 +299,4 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

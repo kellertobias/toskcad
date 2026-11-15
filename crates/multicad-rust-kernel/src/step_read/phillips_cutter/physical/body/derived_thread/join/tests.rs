@@ -3,7 +3,7 @@ use super::roots::DyadicParameter as Dyad;
 use super::roots::*;
 use super::*;
 use num_bigint::BigInt as Z;
-fn actual_h0_text(left: bool, posed: bool) -> String {
+pub(super) fn actual_h0_text(left: bool, posed: bool) -> String {
     use crate::{
         head_profile::Profile, helical_thread::Thread, phillips_drive::PhillipsScrew,
         profiled_screw::SourceSpec,
@@ -579,7 +579,7 @@ fn source_parameter_owner_aliases_and_actual_contact_interning_are_exact() {
     });
 }
 
-fn offnominal_text(radius: f64, x: f64, y: f64) -> String {
+pub(super) fn offnominal_text(radius: f64, x: f64, y: f64) -> String {
     use crate::{
         head_profile::{Head, Profile},
         helical_thread::Thread,
