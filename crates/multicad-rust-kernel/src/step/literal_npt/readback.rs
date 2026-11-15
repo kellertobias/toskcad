@@ -1,7 +1,7 @@
 //! Fresh actual-file qualification shared by emitted replay and Model readback.
 use super::*;
 /// Fresh actual-file query. Its aggregate128MiB live scope is separate from
-/// replay Options; each selected geometry/material/binding child keeps64MiB.
+/// replay Options; each document/geometry/material/binding child keeps64MiB.
 #[derive(Clone, Copy)]
 pub struct ReadbackOptions {
     pub maximum_work: usize,
@@ -90,7 +90,7 @@ pub fn verify_readback(
         actual_text,
         DocumentOptions {
             maximum_work: work.available(512_000_000)?,
-            retained_budget_bytes: room(options.maximum_bytes, reserved)?,
+            retained_budget_bytes: room(options.maximum_bytes, reserved)?.min(BYTES),
         },
         interrupt,
     )
