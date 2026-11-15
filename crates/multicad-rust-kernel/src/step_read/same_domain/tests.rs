@@ -286,6 +286,11 @@ fn a_partitioned_top_imports_as_the_same_box() {
     assert_eq!(expected.volume_mm3, 24.);
     assert_eq!(proof.volume_mm3, 24.);
     assert_eq!(proof.bounds_mm, [[0.; 3], [4., 3., 2.]]);
+    // The exact rational prism of the same extents is the mass oracle.
+    let [length, width, height] = [4, 3, 2].map(|extent| Rational::new(extent, 1).unwrap());
+    let exact = crate::prism::Prism::rectangular(1, [length, width, height]).unwrap();
+    assert_eq!(exact.volume().as_f64(), proof.volume_mm3);
+    assert_eq!(exact.area().as_f64() * 2., proof.volume_mm3);
     assert_eq!([proof.face_count, proof.edges_mm.len()], [6, 12]);
     assert!(proof.circles.is_empty());
     assert_eq!(
