@@ -354,11 +354,15 @@ fn actual_source_references_edges_cap_wires_and_scalar_enclosures_stay_owned() {
     }
     let file = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(file.path(), b"preserved").unwrap();
-    assert_eq!(
-        solid.write_step(file.path()).unwrap_err().kind,
-        GeometryErrorKind::Unsupported
-    );
-    assert_eq!(std::fs::read(file.path()).unwrap(), b"preserved");
+    solid.write_step(file.path()).unwrap();
+    let exported = std::fs::read_to_string(file.path()).unwrap();
+    let proof = solid
+        .verify_partitioned_step_source(&exported, policy.linear_tolerance_mm, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(proof.members.retained_members.len(), 1);
+    assert_eq!(proof.insert_correspondence.len(), 1);
+    assert_eq!(solid.rust_clipped_npt_volume_bounds_mm3().unwrap(), v);
     let foreign =
         Solid::rust_sphere_named(1., PlaneFrame::default(), EntityId::new(), policy).unwrap();
     assert!(foreign.rust_clipped_npt_source().is_none());
