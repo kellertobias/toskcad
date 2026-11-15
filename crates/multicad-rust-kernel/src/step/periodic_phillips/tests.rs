@@ -1,5 +1,5 @@
 use super::*;
-fn source(left: bool, extra: f64) -> Material {
+pub(super) fn source(left: bool, extra: f64) -> Material {
     use crate::{
         head_profile::{Head, Profile},
         helical_thread::{Spec as ThreadSpec, Thread},
@@ -62,7 +62,7 @@ fn source(left: bool, extra: f64) -> Material {
     )
     .unwrap()
 }
-fn occurrence(posed: bool) -> [[f64; 3]; 4] {
+pub(super) fn occurrence(posed: bool) -> [[f64; 3]; 4] {
     if posed {
         [
             [105., -20., 60.],

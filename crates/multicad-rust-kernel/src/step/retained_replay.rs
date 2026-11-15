@@ -11,9 +11,38 @@ pub(crate) trait Budget {
     type Error;
     fn step(&mut self, n: usize) -> Result<(), Self::Error>;
     fn observe(&mut self, n: usize) -> Result<(), Self::Error>;
-    fn used(&self) -> usize;
     fn invalid() -> Self::Error;
     fn limit() -> Self::Error;
+}
+// Every counted preflight/emit operation checks its child cap BEFORE doing
+// work. The original NPT facade supplies sixteen million; new consumers may
+// choose a separately named cap without resetting their shared outer ledger.
+struct EncodingBudget<'a, W: Budget> {
+    caller: &'a mut W,
+    used: usize,
+    maximum: usize,
+}
+impl<W: Budget> Budget for EncodingBudget<'_, W> {
+    type Error = W::Error;
+    fn step(&mut self, n: usize) -> Result<(), Self::Error> {
+        let used = self
+            .used
+            .checked_add(n)
+            .filter(|n| *n <= self.maximum)
+            .ok_or(W::limit())?;
+        self.caller.step(n)?;
+        self.used = used;
+        Ok(())
+    }
+    fn observe(&mut self, n: usize) -> Result<(), Self::Error> {
+        self.caller.observe(n)
+    }
+    fn invalid() -> Self::Error {
+        W::invalid()
+    }
+    fn limit() -> Self::Error {
+        W::limit()
+    }
 }
 #[derive(Clone)]
 pub(crate) struct Node {
@@ -67,7 +96,12 @@ pub(crate) fn encode<W: Budget>(
     work: &mut W,
     maximum_encoding_work: usize,
 ) -> Result<Trace, W::Error> {
-    let before = work.used();
+    let mut bounded = EncodingBudget {
+        caller: work,
+        used: 0,
+        maximum: maximum_encoding_work,
+    };
+    let work = &mut bounded;
     let start = file.next;
     let end = start.checked_add(view.record_count()).ok_or(W::limit())?;
     if end - 1 > crate::step_read::MAX_STEP_ENTITIES {
@@ -154,9 +188,6 @@ pub(crate) fn encode<W: Budget>(
             id: u32::try_from(id).expect("bounded STEP entity range"),
             body: body_start..body_end,
         });
-        if work.used() - before > maximum_encoding_work {
-            return Err(W::limit());
-        }
     }
     work.observe(base + file.data.capacity() + nodes.capacity() * size_of::<Node>() + FIXED)?;
     Ok(Trace {

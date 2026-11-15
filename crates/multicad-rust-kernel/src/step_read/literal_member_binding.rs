@@ -4,6 +4,8 @@
 //! survive; only entity numbering may change.
 use super::{owned_insert::CompoundDocument, part21::Entity};
 use std::collections::BTreeMap;
+mod selected;
+pub(crate) use selected::{SelectedRecords, selected_records};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {

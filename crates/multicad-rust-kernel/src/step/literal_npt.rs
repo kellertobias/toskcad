@@ -222,9 +222,6 @@ impl retained_replay::Budget for Ledger<'_> {
     fn observe(&mut self, n: usize) -> Result<()> {
         self.observe(n)
     }
-    fn used(&self) -> usize {
-        self.used
-    }
     fn invalid() -> Error {
         Error::Invalid
     }

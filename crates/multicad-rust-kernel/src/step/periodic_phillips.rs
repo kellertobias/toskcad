@@ -181,5 +181,7 @@ pub fn export(
     })
 }
 
+mod replay;
+pub use replay::{AppendOptions, AppendReceipt};
 #[cfg(test)]
 mod tests;
