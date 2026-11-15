@@ -19,7 +19,8 @@ impl HelixPcurve {
         &self.v_shift
     }
 }
-pub struct CompactHelix<'b, 'c, 'd, 'f, 's> {
+pub struct CompactHelix<'b, 'g, 'c, 'd, 'f, 's> {
+    vertices: &'g LiteralVertices<'c, 'd, 'f, 's>,
     source: &'b CompactBoundary<'c, 'd, 'f, 's>,
     edge: usize,
     surface: usize,
@@ -31,9 +32,12 @@ pub struct CompactHelix<'b, 'c, 'd, 'f, 's> {
     work: usize,
     bytes: usize,
 }
-impl CompactHelix<'_, '_, '_, '_, '_> {
+impl CompactHelix<'_, '_, '_, '_, '_, '_> {
     pub fn source(&self) -> &CompactBoundary<'_, '_, '_, '_> {
         self.source
+    }
+    pub fn vertices_source(&self) -> &LiteralVertices<'_, '_, '_, '_> {
+        self.vertices
     }
     pub fn edge(&self) -> usize {
         self.edge
@@ -105,13 +109,13 @@ fn boundary_row(
     Ok((surfaces.cells()[cell.source_cell].surface(), u))
 }
 impl<'c, 'd, 'f, 's> CompactBoundary<'c, 'd, 'f, 's> {
-    pub fn helix<'b>(
+    pub fn helix<'b, 'g>(
         &'b self,
         edge: usize,
-        vertices: &LiteralVertices<'_, 'd, 'f, 's>,
+        vertices: &'g LiteralVertices<'c, 'd, 'f, 's>,
         options: DomainOptions,
         interrupt: Option<&dyn Fn() -> bool>,
-    ) -> Result<Option<CompactHelix<'b, 'c, 'd, 'f, 's>>, Error> {
+    ) -> Result<Option<CompactHelix<'b, 'g, 'c, 'd, 'f, 's>>, Error> {
         if !std::ptr::eq(vertices.source(), self.source()) {
             return Err(Error::Invalid);
         }
@@ -126,7 +130,7 @@ impl<'c, 'd, 'f, 's> CompactBoundary<'c, 'd, 'f, 's> {
         w.charge(self.work_used() + vertices.work_used() - self.source().work_used())?;
         m.add(SCRATCH)?;
         let base = m.used;
-        m.add(size_of::<CompactHelix<'_, '_, '_, '_, '_>>())?;
+        m.add(size_of::<CompactHelix<'_, '_, '_, '_, '_, '_>>())?;
         let mut faces = Vec::new();
         for (i, face) in self.source().faces().iter().enumerate() {
             for c in face.loops().iter().flatten() {
@@ -244,6 +248,7 @@ impl<'c, 'd, 'f, 's> CompactBoundary<'c, 'd, 'f, 's> {
         ];
         w.charge(1)?;
         Ok(Some(CompactHelix {
+            vertices,
             source: self,
             edge,
             surface,

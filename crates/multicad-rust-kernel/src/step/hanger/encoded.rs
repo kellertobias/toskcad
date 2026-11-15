@@ -562,3 +562,6 @@ pub use compact::{CompactHelix, HelixPcurve};
 pub use compact::{CapTopology, TrimEdge, TrimEdgeKind, TrimFace, TrimVertex};
 
 pub use compact::PlainWall;
+
+mod candidate;
+pub use candidate::{CapLiteral, FileOptions, StepCandidate, encode_candidate};
