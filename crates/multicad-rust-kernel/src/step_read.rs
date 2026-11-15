@@ -1083,6 +1083,9 @@ pub use phillips_cutter::{
 };
 
 pub use phillips_cutter::{
+    CoherentDegree11ThreadCarrier as PhillipsCoherentDegree11ThreadCarrier,
+    Degree11ThreadFace as PhillipsDegree11ThreadFace,
+    Degree11ThreadOptions as PhillipsDegree11ThreadOptions,
     DerivedThreadCarrier as PhillipsDerivedThreadCarrier,
     DerivedThreadOptions as PhillipsDerivedThreadOptions,
     OccupiedDerivedThread as PhillipsOccupiedDerivedThread,

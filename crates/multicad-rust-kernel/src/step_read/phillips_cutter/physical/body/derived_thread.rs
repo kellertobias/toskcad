@@ -7,9 +7,11 @@ use crate::{
     tapered_thread::{RetainedTensor, interval::I},
 };
 mod chart;
+mod degree11;
 mod graph;
 mod join;
 mod reduce;
+pub use degree11::{CoherentDegree11ThreadCarrier, Degree11ThreadFace, Degree11ThreadOptions};
 pub use join::{
     ContactThreadCarrier, DyadicParameter, RimContact, RimContactId, RimDomainEnd, RimDomainRole,
     RimKnot, RimSignDomain, ThreadContactOptions,

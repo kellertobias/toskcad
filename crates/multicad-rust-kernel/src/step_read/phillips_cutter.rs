@@ -234,9 +234,10 @@ pub use physical::{
 };
 
 pub use physical::{
-    ContactThreadCarrier, DerivedThreadCarrier, DerivedThreadOptions, DyadicParameter,
-    OccupiedDerivedThread, RimContact, RimContactId, RimDomainEnd, RimDomainRole, RimKnot,
-    RimSignDomain, ThreadCarrierTransfer, ThreadContactOptions,
+    CoherentDegree11ThreadCarrier, ContactThreadCarrier, Degree11ThreadFace, Degree11ThreadOptions,
+    DerivedThreadCarrier, DerivedThreadOptions, DyadicParameter, OccupiedDerivedThread, RimContact,
+    RimContactId, RimDomainEnd, RimDomainRole, RimKnot, RimSignDomain, ThreadCarrierTransfer,
+    ThreadContactOptions,
 };
 
 pub use physical::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSource};
