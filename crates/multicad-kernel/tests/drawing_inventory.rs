@@ -455,183 +455,39 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ("za worm", "axial", Drawn),
     ("za worm", "axial reversed", Drawn),
     ("za worm", "axial hidden", Drawn),
-    (
-        "za worm",
-        "side",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "za worm",
-        "side hidden",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "za worm",
-        "oblique",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "za worm",
-        "oblique hidden",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
+    ("za worm", "side", Drawn),
+    ("za worm", "side hidden", Drawn),
+    ("za worm", "oblique", Drawn),
+    ("za worm", "oblique hidden", Drawn),
     ("za worm", "axial section", Drawn),
     ("za worm", "axial section-only", Drawn),
     ("za worm", "axial finite depth", Drawn),
-    (
-        "za worm",
-        "side section",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "za worm",
-        "side section-only",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "za worm",
-        "side finite depth",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "za worm",
-        "side lateral window",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "za worm",
-        "oblique section",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "za worm",
-        "oblique section-only",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "za worm",
-        "axial detail",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "za worm",
-        "side detail",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
+    ("za worm", "side section", Drawn),
+    ("za worm", "side section-only", Drawn),
+    ("za worm", "side finite depth", Drawn),
+    ("za worm", "side lateral window", Drawn),
+    ("za worm", "oblique section", Drawn),
+    ("za worm", "oblique section-only", Drawn),
+    ("za worm", "axial detail", Drawn),
+    ("za worm", "side detail", Drawn),
     ("worm wheel", "axial", Drawn),
     ("worm wheel", "axial reversed", Drawn),
     ("worm wheel", "axial hidden", Drawn),
-    (
-        "worm wheel",
-        "side",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "worm wheel",
-        "side hidden",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "worm wheel",
-        "oblique",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "worm wheel",
-        "oblique hidden",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
+    ("worm wheel", "side", Drawn),
+    ("worm wheel", "side hidden", Drawn),
+    ("worm wheel", "oblique", Drawn),
+    ("worm wheel", "oblique hidden", Drawn),
     ("worm wheel", "axial section", Drawn),
     ("worm wheel", "axial section-only", Drawn),
     ("worm wheel", "axial finite depth", Drawn),
-    (
-        "worm wheel",
-        "side section",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "worm wheel",
-        "side section-only",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "worm wheel",
-        "side finite depth",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "worm wheel",
-        "side lateral window",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "worm wheel",
-        "oblique section",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "worm wheel",
-        "oblique section-only",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "worm wheel",
-        "axial detail",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "worm wheel",
-        "side detail",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
+    ("worm wheel", "side section", Drawn),
+    ("worm wheel", "side section-only", Drawn),
+    ("worm wheel", "side finite depth", Drawn),
+    ("worm wheel", "side lateral window", Drawn),
+    ("worm wheel", "oblique section", Drawn),
+    ("worm wheel", "oblique section-only", Drawn),
+    ("worm wheel", "axial detail", Drawn),
+    ("worm wheel", "side detail", Drawn),
     ("box + cylinder overlapping", "axial", Drawn),
     ("box + cylinder overlapping", "axial reversed", Drawn),
     ("box + cylinder overlapping", "axial hidden", Drawn),
@@ -1166,200 +1022,42 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
         "side detail",
         Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
     ),
-    (
-        "box + za worm overlapping",
-        "axial",
-        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
-    ),
-    (
-        "box + za worm overlapping",
-        "axial reversed",
-        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
-    ),
-    (
-        "box + za worm overlapping",
-        "axial hidden",
-        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
-    ),
-    (
-        "box + za worm overlapping",
-        "side",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "box + za worm overlapping",
-        "side hidden",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "box + za worm overlapping",
-        "oblique",
-        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
-    ),
-    (
-        "box + za worm overlapping",
-        "oblique hidden",
-        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
-    ),
-    (
-        "box + za worm overlapping",
-        "axial section",
-        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
-    ),
-    (
-        "box + za worm overlapping",
-        "axial section-only",
-        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
-    ),
-    (
-        "box + za worm overlapping",
-        "axial finite depth",
-        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
-    ),
-    (
-        "box + za worm overlapping",
-        "side section",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "box + za worm overlapping",
-        "side section-only",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "box + za worm overlapping",
-        "side finite depth",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "box + za worm overlapping",
-        "side lateral window",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "box + za worm overlapping",
-        "oblique section",
-        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
-    ),
-    (
-        "box + za worm overlapping",
-        "oblique section-only",
-        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
-    ),
-    (
-        "box + za worm overlapping",
-        "axial detail",
-        Unsupported("Rust worm and worm-wheel drawings support one placed gear at a time"),
-    ),
-    (
-        "box + za worm overlapping",
-        "side detail",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
+    ("box + za worm overlapping", "axial", Drawn),
+    ("box + za worm overlapping", "axial reversed", Drawn),
+    ("box + za worm overlapping", "axial hidden", Drawn),
+    ("box + za worm overlapping", "side", Drawn),
+    ("box + za worm overlapping", "side hidden", Drawn),
+    ("box + za worm overlapping", "oblique", Drawn),
+    ("box + za worm overlapping", "oblique hidden", Drawn),
+    ("box + za worm overlapping", "axial section", Drawn),
+    ("box + za worm overlapping", "axial section-only", Drawn),
+    ("box + za worm overlapping", "axial finite depth", Drawn),
+    ("box + za worm overlapping", "side section", Drawn),
+    ("box + za worm overlapping", "side section-only", Drawn),
+    ("box + za worm overlapping", "side finite depth", Drawn),
+    ("box + za worm overlapping", "side lateral window", Drawn),
+    ("box + za worm overlapping", "oblique section", Drawn),
+    ("box + za worm overlapping", "oblique section-only", Drawn),
+    ("box + za worm overlapping", "axial detail", Drawn),
+    ("box + za worm overlapping", "side detail", Drawn),
     ("box + za worm separated", "axial", Drawn),
     ("box + za worm separated", "axial reversed", Drawn),
     ("box + za worm separated", "axial hidden", Drawn),
-    (
-        "box + za worm separated",
-        "side",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "box + za worm separated",
-        "side hidden",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "box + za worm separated",
-        "oblique",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "box + za worm separated",
-        "oblique hidden",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
+    ("box + za worm separated", "side", Drawn),
+    ("box + za worm separated", "side hidden", Drawn),
+    ("box + za worm separated", "oblique", Drawn),
+    ("box + za worm separated", "oblique hidden", Drawn),
     ("box + za worm separated", "axial section", Drawn),
     ("box + za worm separated", "axial section-only", Drawn),
     ("box + za worm separated", "axial finite depth", Drawn),
-    (
-        "box + za worm separated",
-        "side section",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "box + za worm separated",
-        "side section-only",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "box + za worm separated",
-        "side finite depth",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "box + za worm separated",
-        "side lateral window",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "box + za worm separated",
-        "oblique section",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "box + za worm separated",
-        "oblique section-only",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "box + za worm separated",
-        "axial detail",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
-    (
-        "box + za worm separated",
-        "side detail",
-        Unsupported(
-            "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
-        ),
-    ),
+    ("box + za worm separated", "side section", Drawn),
+    ("box + za worm separated", "side section-only", Drawn),
+    ("box + za worm separated", "side finite depth", Drawn),
+    ("box + za worm separated", "side lateral window", Drawn),
+    ("box + za worm separated", "oblique section", Drawn),
+    ("box + za worm separated", "oblique section-only", Drawn),
+    ("box + za worm separated", "axial detail", Drawn),
+    ("box + za worm separated", "side detail", Drawn),
     (
         "box + herringbone gear overlapping",
         "axial",

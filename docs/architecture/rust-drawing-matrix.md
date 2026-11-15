@@ -22,8 +22,8 @@ Requests that the family providers refuse draw through the exact-curve scene eng
 | helical gear | ✓ | ✓ | ✓ | F10 | F10 | F10 | F10 | ✓ | ✓ | ✓ | F10 | F11 | F10 | F10 | F10 | F11 | F10 | F10 |
 | herringbone gear | ✓ | ✓ | ✓ | F10 | F10 | F10 | F10 | ✓ | ✓ | ✓ | F10 | F11 | F10 | F10 | F10 | F11 | F10 | F10 |
 | bevel gear | ✓ | ✓ | ✓ | F12 | F12 | F12 | F12 | ✓ | ✓ | ✓ | F12 | F12 | F12 | F12 | F12 | F12 | F12 | F12 |
-| za worm | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | F13 | F13 | F13 | F13 |
-| worm wheel | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | F13 | F13 | F13 | F13 |
+| za worm | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| worm wheel | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | box + cylinder overlapping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | box + cylinder separated | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | box + sphere overlapping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -40,8 +40,8 @@ Requests that the family providers refuse draw through the exact-curve scene eng
 | spur gear + spur gear separated | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | box + bevel gear overlapping | F15 | F15 | F15 | F12 | F12 | F12 | F12 | F15 | F15 | F15 | F12 | F12 | F12 | F12 | F12 | F12 | F15 | F12 |
 | box + bevel gear separated | ✓ | ✓ | ✓ | F12 | F12 | F12 | F12 | ✓ | ✓ | ✓ | F12 | F12 | F12 | F12 | F12 | F12 | F12 | F12 |
-| box + za worm overlapping | F16 | F16 | F16 | F13 | F13 | F16 | F16 | F16 | F16 | F16 | F13 | F13 | F13 | F13 | F16 | F16 | F16 | F13 |
-| box + za worm separated | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | F13 | F13 | F13 | F13 |
+| box + za worm overlapping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| box + za worm separated | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | box + herringbone gear overlapping | F17 | F17 | F17 | F10 | F10 | F17 | F17 | F17 | ✓ | F17 | F10 | F11 | F10 | F10 | F17 | F11 | F17 | F10 |
 | box + herringbone gear separated | ✓ | ✓ | ✓ | F10 | F10 | F10 | F10 | ✓ | ✓ | ✓ | F10 | F11 | F10 | F10 | F10 | F11 | F10 | F10 |
 | bored box + rounded slot overlapping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -52,9 +52,7 @@ Requests that the family providers refuse draw through the exact-curve scene eng
 - **F10** (36 cells): Rust herringbone projection requires an uncropped axial view
 - **F11** (8 cells): Rust herringbone sections require a plane perpendicular to the gear axis
 - **F12** (35 cells): Rust bevel drawing requires an uncropped view along the gear axis
-- **F13** (43 cells): Rust worm and worm-wheel drawings require an uncropped view along the gear axis
 - **F15** (7 cells): Rust bevel drawing supports one gear at a time; scene occlusion is unavailable
-- **F16** (11 cells): Rust worm and worm-wheel drawings support one placed gear at a time
 - **F17** (9 cells): Rust exact drawing projection for continuous herringbone gears is unavailable
 
-499 of 648 combinations draw; 149 are explicit findings. No combination returns an invalid or partial result.
+553 of 648 combinations draw; 95 are explicit findings. No combination returns an invalid or partial result.
