@@ -8,6 +8,8 @@ use multicad_rust_kernel::step_read::{
 };
 use std::cell::RefCell;
 mod affine;
+mod step;
+pub use step::{DecodedPeriodicPhillipsStepVerification, PeriodicPhillipsStepCandidateResources};
 mod periodic;
 pub use periodic::PeriodicRepairedPhillipsQuery;
 mod mesh;
@@ -22,6 +24,29 @@ type Point = [f64; 3];
 const OPERATION: &str = "repaired Phillips material";
 const WORK: usize = 512_000_000;
 const BYTES: usize = 64 * 1024 * 1024;
+
+fn periodic_enclosure_bounds(s: &OwnedPeriodicMaterial) -> [[f64; 2]; 3] {
+    let mut bounds = s.local_enclosure_bounds();
+    let head = s.head().view();
+    // The sealed repaired meridian certifies axial order between
+    // these exact shared stations. Its whole-segment interval hull
+    // can overshoot them; that overshoot is not physical material.
+    let top = head.station(0).expect("sealed head first station");
+    let bottom = head
+        .station(head.segment_count())
+        .expect("sealed head last station");
+    let shift = I::point(s.head_z_shift_mm());
+    let top = I::point(top[1]) - shift;
+    let bottom = I::point(bottom[1]) - shift;
+    let caps = s
+        .cap_expressions_mm()
+        .map(|[a, b]| I::point(a) + I::point(b));
+    bounds[2] = [
+        top.lo.min(caps[0].lo).min(caps[1].lo),
+        bottom.hi.max(caps[0].hi).max(caps[1].hi),
+    ];
+    bounds
+}
 #[cfg(test)]
 mod tests;
 
@@ -53,28 +78,7 @@ impl Source {
     fn local_enclosure_bounds(&self) -> [[f64; 2]; 3] {
         match self {
             Self::Retained(s) => s.local_enclosure_bounds(),
-            Self::Periodic(s) => {
-                let mut bounds = s.local_enclosure_bounds();
-                let head = s.head().view();
-                // The sealed repaired meridian certifies axial order between
-                // these exact shared stations. Its whole-segment interval hull
-                // can overshoot them; that overshoot is not physical material.
-                let top = head.station(0).expect("sealed head first station");
-                let bottom = head
-                    .station(head.segment_count())
-                    .expect("sealed head last station");
-                let shift = I::point(s.head_z_shift_mm());
-                let top = I::point(top[1]) - shift;
-                let bottom = I::point(bottom[1]) - shift;
-                let caps = s
-                    .cap_expressions_mm()
-                    .map(|[a, b]| I::point(a) + I::point(b));
-                bounds[2] = [
-                    top.lo.min(caps[0].lo).min(caps[1].lo),
-                    bottom.hi.max(caps[0].hi).max(caps[1].hi),
-                ];
-                bounds
-            }
+            Self::Periodic(s) => periodic_enclosure_bounds(s),
         }
     }
     fn local_volume_mm3(&self) -> [f64; 2] {

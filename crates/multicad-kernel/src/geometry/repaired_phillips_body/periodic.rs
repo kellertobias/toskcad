@@ -15,7 +15,7 @@ const SOURCE_WORK: usize = 18_008_192;
 const INVERSE_WORK: usize = 1024;
 const MAX: usize = SOURCE_WORK + INVERSE_WORK + 1;
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
 pub struct PeriodicRepairedPhillipsQuery<'s> {
     source: &'s OwnedPeriodicMaterial,
     world: [[f64; 2]; 3],

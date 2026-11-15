@@ -5,7 +5,10 @@ use multicad_rust_kernel::{
     phillips_drive::{Cutter, Domain, Inner, Spec},
     profiled_screw::SourceSpec,
 };
-fn source(left: bool, plain: f64) -> Rc<OwnedPeriodicMaterial> {
+pub(in crate::geometry::repaired_phillips_body) fn source(
+    left: bool,
+    plain: f64,
+) -> Rc<OwnedPeriodicMaterial> {
     let head = Head::Crowned {
         radius_mm: 2.,
         height_mm: 1.6,
