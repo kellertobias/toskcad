@@ -1276,3 +1276,83 @@ fn a_lune_between_two_meridians_closes_at_both_poles() {
     );
     certified(&lune, 0.01);
 }
+
+#[test]
+fn spline_constructors_refuse_inconsistent_nets_with_their_kind() {
+    let line = vec![[0., 0., 0.], [1., 0., 0.]];
+    let curve =
+        |degree, points: Vec<Point>, weights, knots: Vec<f64>, multiplicities: Vec<usize>| {
+            NurbsCurve::new(degree, points, weights, knots, multiplicities).map(|_| ())
+        };
+    assert_eq!(
+        curve(1, line.clone(), None, vec![0., 1.], vec![2, 2]),
+        Ok(())
+    );
+    assert_eq!(
+        curve(0, line.clone(), None, vec![0., 1.], vec![1, 1]),
+        Err(Error::Invalid)
+    );
+    assert_eq!(
+        curve(1, line.clone(), None, vec![0., 1.], vec![2]),
+        Err(Error::Invalid)
+    );
+    assert_eq!(
+        curve(2, line.clone(), None, vec![0., 1.], vec![3, 3]),
+        Err(Error::Limit)
+    );
+    assert_eq!(
+        curve(1, line.clone(), None, vec![1., 0.], vec![2, 2]),
+        Err(Error::Invalid)
+    );
+    assert_eq!(
+        curve(1, line.clone(), None, vec![0., 1.], vec![3, 2]),
+        Err(Error::Invalid)
+    );
+    assert_eq!(
+        curve(1, line.clone(), None, vec![0., 1., 2.], vec![2, 1, 2]),
+        Err(Error::Invalid)
+    );
+    assert_eq!(
+        curve(1, line.clone(), Some(vec![1.]), vec![0., 1.], vec![2, 2]),
+        Err(Error::Invalid)
+    );
+    assert_eq!(
+        curve(
+            1,
+            line.clone(),
+            Some(vec![1., 0.]),
+            vec![0., 1.],
+            vec![2, 2]
+        ),
+        Err(Error::Invalid)
+    );
+    let surface = |counts, points: Vec<Point>| {
+        NurbsSurface::new(
+            [1, 1],
+            counts,
+            points,
+            None,
+            [vec![0., 1.], vec![0., 1.]],
+            [vec![2, 2], vec![2, 2]],
+        )
+        .map(|_| ())
+    };
+    let square = vec![[0., 0., 0.], [0., 1., 0.], [1., 0., 0.], [1., 1., 0.]];
+    assert_eq!(surface([2, 2], square.clone()), Ok(()));
+    assert_eq!(surface([2, 3], square.clone()), Err(Error::Invalid));
+    assert_eq!(
+        surface([300, 300], vec![[0.; 3]; 90_000]),
+        Err(Error::Limit)
+    );
+    // A degree above the admitted maximum.
+    assert_eq!(
+        curve(
+            nurbs::MAX_DEGREE + 1,
+            vec![[0.; 3]; 40],
+            None,
+            vec![0., 1.],
+            vec![34, 34]
+        ),
+        Err(Error::Invalid)
+    );
+}
