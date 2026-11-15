@@ -1,5 +1,5 @@
 use super::*;
-type Basis = [[I; 12]; 12];
+pub(super) type Basis = [[I; 12]; 12];
 fn p(x: f64) -> I {
     I::point(x)
 }
@@ -28,7 +28,7 @@ pub(super) fn basis(work: &mut Work<'_>) -> Result<Basis, Error> {
     }
     Ok(basis)
 }
-fn owner(curve: StockClipCurve, index: usize, count: usize) -> CurvePointOwner {
+pub(super) fn owner(curve: StockClipCurve, index: usize, count: usize) -> CurvePointOwner {
     if index == 0 {
         return CurvePointOwner::Vertex(curve.endpoints()[0]);
     }

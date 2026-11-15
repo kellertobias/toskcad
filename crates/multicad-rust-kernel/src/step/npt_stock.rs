@@ -13,6 +13,8 @@ use crate::{
 };
 use std::mem::size_of;
 mod curves;
+mod surfaces;
+pub use surfaces::{SurfaceCellCertificate, SurfaceOptions, SurfacePatch, SurfacePlan};
 #[cfg(test)]
 mod tests;
 

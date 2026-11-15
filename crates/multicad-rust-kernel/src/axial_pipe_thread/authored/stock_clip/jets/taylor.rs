@@ -17,6 +17,7 @@ fn scale(a: C, b: I) -> C {
 #[derive(Clone, Copy, Debug)]
 pub struct StockClipPatchTaylor {
     coefficients: [[[[f64; 2]; 3]; N]; N],
+    coefficient_norm: [[f64; N]; N],
     work: usize,
     preparation_work: usize,
     bytes: usize,
@@ -24,6 +25,11 @@ pub struct StockClipPatchTaylor {
 impl StockClipPatchTaylor {
     pub fn coefficients_mm(&self) -> &[[[[f64; 2]; 3]; N]; N] {
         &self.coefficients
+    }
+    /// Outward L1 bounds of the SAME original mixed coefficients. Unit
+    /// complex rotation is retained, rather than interval-independent XY.
+    pub fn coefficient_l1_bounds_mm(&self) -> &[[f64; N]; N] {
+        &self.coefficient_norm
     }
     pub fn work_used(&self) -> usize {
         self.work
@@ -66,18 +72,23 @@ impl StockClipPatchLaw<'_> {
         let u = sample::unit_parameter(u)?;
         let v = sample::unit_parameter(v)?;
         // Fixed recurrence: complex coefficients use <=2664 interval
-        // operations, radius products/additions <=2162, scalar/phase setup
-        // <128. Trig enclosure, bound publication and fixed loop overhead
-        // together fit the remaining >3000 units. Prepared-law work is
+        // operations, radius products/additions <=2162, final rotations
+        // <=1014, norm bounds <=1014, scalar/phase setup <128. Trig,
+        // bound publication and fixed overhead fit the >3000 remaining
+        // units. Prepared-law work is
         // reported separately; this call does not recompute its corners.
-        meter.charge(8192)?;
+        meter.charge(10_240)?;
         let [r, q, z]: [[I; 4]; 3] =
             std::array::from_fn(|j| scalar(self.corners.map(|p| p[j]), u, v));
         let omega = I::point(2.) * pi() / I::point(self.plan.source.spec.pitch_mm);
         let theta: [I; 4] = std::array::from_fn(|j| (z[j] - q[j]) * omega);
         let zero = I::point(0.);
         let mut exponential = [[[zero; 2]; N]; N];
-        exponential[0][0] = [theta[0].cos(), theta[0].sin()];
+        // E=exp(i theta0)*H. H retains every theta_u/theta_v/theta_uv
+        // coefficient while the exact unit rotation is factored ONCE.
+        exponential[0][0] = [I::point(1.), zero];
+        let rotation = [theta[0].cos(), theta[0].sin()];
+        let sqrt_two = I::point(2.).sqrt();
         for j in 1..N {
             exponential[0][j] = scale(
                 mul([zero, theta[2]], exponential[0][j - 1]),
@@ -95,6 +106,7 @@ impl StockClipPatchLaw<'_> {
                 exponential[i][j] = scale(value, I::point(1.) / I::point(i as f64));
             }
         }
+        let mut coefficient_norm = [[0.; N]; N];
         let coefficients = std::array::from_fn(|i| {
             std::array::from_fn(|j| {
                 let mut xy = scale(exponential[i][j], r[0]);
@@ -114,6 +126,14 @@ impl StockClipPatchLaw<'_> {
                     (1, 1) => z[3],
                     _ => zero,
                 };
+                // ||R H||_1 <=sqrt(2)||H||_2 <=sqrt(2)||H||_1.
+                // The latter conservative bound avoids squaring any high
+                // coefficient and retains the public L1 interpretation.
+                coefficient_norm[i][j] = (sqrt_two
+                    * (I::point(xy[0].magnitude()) + I::point(xy[1].magnitude()))
+                    + I::point(axial.magnitude()))
+                .hi;
+                let xy = mul(rotation, xy);
                 [bounds(xy[0]), bounds(xy[1]), bounds(axial)]
             })
         });
@@ -125,6 +145,7 @@ impl StockClipPatchLaw<'_> {
         meter.charge(1)?;
         Ok(StockClipPatchTaylor {
             coefficients,
+            coefficient_norm,
             work: meter.used,
             preparation_work: self.work,
             bytes: retained + SCRATCH,

@@ -59,6 +59,8 @@ fn original_mixed_orders_include_bilinear_angular_coupling_and_match_independent
             assert!(actual.retained_budget_bytes() > law.retained_budget_bytes());
             for (i, row) in c.iter().enumerate() {
                 for (j, coefficient) in row.iter().enumerate() {
+                    let observed_l1 = coefficient.iter().map(|b| mid(*b).abs()).sum::<f64>();
+                    assert!(observed_l1 <= actual.coefficient_l1_bounds_mm()[i][j] * (1. + 1e-8));
                     let mut xy = [0.; 2];
                     for (di, dj, radius) in [
                         (0, 0, fields[0][0]),
@@ -105,6 +107,8 @@ fn original_mixed_orders_include_bilinear_angular_coupling_and_match_independent
                 .unwrap();
             for (i, row) in c.iter().enumerate() {
                 for (j, coefficient) in row.iter().enumerate() {
+                    let observed_l1 = coefficient.iter().map(|b| mid(*b).abs()).sum::<f64>();
+                    assert!(observed_l1 <= whole.coefficient_l1_bounds_mm()[i][j] * (1. + 1e-8));
                     for (axis, component) in coefficient.iter().enumerate() {
                         let b = whole.coefficients_mm()[i][j][axis];
                         assert!(b[0] <= mid(*component) && mid(*component) <= b[1]);

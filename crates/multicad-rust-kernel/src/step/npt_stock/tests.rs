@@ -1,6 +1,6 @@
 use super::*;
 use crate::axial_pipe_thread::authored::{AuthoredSection, AuthoredSpec, AuthoredThread};
-fn source(quarter: bool) -> StockClipPlan {
+pub(super) fn source(quarter: bool) -> StockClipPlan {
     let (tpi, e1, l1, l2, od, max) = if quarter {
         (18., 0.49163, 0.2278, 0.4018, 0.540, 0.088)
     } else {
@@ -30,7 +30,7 @@ fn source(quarter: bool) -> StockClipPlan {
     .stock_clip_plan(Default::default(), None)
     .unwrap()
 }
-fn evaluate<const N: usize>(mut poles: [[f64; 3]; N], t: f64) -> [f64; 3] {
+pub(super) fn evaluate<const N: usize>(mut poles: [[f64; 3]; N], t: f64) -> [f64; 3] {
     for level in (1..N).rev() {
         for i in 0..level {
             let next = poles[i + 1];
@@ -256,4 +256,266 @@ fn candidate_errors_remain_source_only_and_preserve_whole_request_limits() {
         CurvePlan::new(&source, options, Some(&cancel)),
         Err(Error::Cancelled)
     ));
+}
+
+#[test]
+fn actual_shared_surface_candidates_keep_original_source_and_whole_work_quota() {
+    for quarter in [false, true] {
+        let source = source(quarter);
+        let original = *source.source();
+        let contact = source.contact_height_bounds_mm();
+        let options = CurveOptions::default();
+        let curves = CurvePlan::new(&source, options, None).unwrap();
+        let result = SurfacePlan::new(curves, options.into(), None).unwrap();
+        eprintln!(
+            "NPT SURFACE COMPLETE quarter={quarter} work={} bytes={} controls={}",
+            result.work_used(),
+            result.retained_budget_bytes(),
+            result
+                .patches()
+                .iter()
+                .map(|p| p.poles_mm().len())
+                .sum::<usize>()
+        );
+        assert_eq!(result.patches().len(), 8);
+        assert!(result.work_used() <= options.maximum_work);
+        for patch in result.patches() {
+            let law = source
+                .patch_law(patch.source_patch(), Default::default(), None)
+                .unwrap();
+            let dims = patch.spans().map(|n| 11 * n + 1);
+            assert_eq!(patch.poles_mm().len(), dims[0] * dims[1]);
+            assert_eq!(patch.cells().len(), patch.spans()[0] * patch.spans()[1]);
+            for (side, edge) in patch.source_patch().coedges().into_iter().enumerate() {
+                let curve = result
+                    .curves()
+                    .curves()
+                    .iter()
+                    .find(|c| c.source_curve() == edge.curve)
+                    .unwrap();
+                let count = if side % 2 == 0 { dims[1] } else { dims[0] };
+                for index in 0..count {
+                    let span = (index / 11).min(curve.spans().len() - 1);
+                    let expected = curve.spans()[span].poles_mm()[index - 11 * span];
+                    let [u, v] = match side {
+                        0 => [0, index],
+                        1 => [index, dims[1] - 1],
+                        2 => [dims[0] - 1, index],
+                        _ => [index, 0],
+                    };
+                    assert_eq!(patch.poles_mm()[u * dims[1] + v], expected);
+                }
+            }
+            for (index, cell) in patch.cells().iter().enumerate() {
+                assert!(cell.position_error_mm() <= options.position_error_mm);
+                assert!(
+                    cell.original_derivative_error_mm()
+                        .iter()
+                        .all(|e| *e <= options.derivative_error_mm)
+                );
+                let i = index / patch.spans()[1];
+                let j = index % patch.spans()[1];
+                for [u, v] in [[0., 0.], [0.13, 0.29], [0.5, 0.5], [0.91, 0.83], [1., 1.]] {
+                    let rows: [[f64; 3]; 12] = std::array::from_fn(|a| {
+                        evaluate(
+                            std::array::from_fn::<_, 12, _>(|b| {
+                                patch.poles_mm()[(11 * i + a) * dims[1] + 11 * j + b]
+                            }),
+                            v,
+                        )
+                    });
+                    let actual = evaluate(rows, u);
+                    let domain = cell.domain();
+                    let uv = [
+                        domain[0][0] + u * (domain[0][1] - domain[0][0]),
+                        domain[1][0] + v * (domain[1][1] - domain[1][0]),
+                    ];
+                    let jets = law
+                        .jets([uv[0], uv[0]], [uv[1], uv[1]], Default::default(), None)
+                        .unwrap();
+                    let expected = jets.sample().point().position_mm();
+                    let du = evaluate(
+                        std::array::from_fn::<_, 11, _>(|a| {
+                            std::array::from_fn(|axis| {
+                                11. * (rows[a + 1][axis] - rows[a][axis])
+                                    / (domain[0][1] - domain[0][0])
+                            })
+                        }),
+                        u,
+                    );
+                    let dv_rows = std::array::from_fn::<_, 12, _>(|a| {
+                        evaluate(
+                            std::array::from_fn::<_, 11, _>(|b| {
+                                std::array::from_fn(|axis| {
+                                    11. * (patch.poles_mm()
+                                        [(11 * i + a) * dims[1] + 11 * j + b + 1][axis]
+                                        - patch.poles_mm()[(11 * i + a) * dims[1] + 11 * j + b]
+                                            [axis])
+                                        / (domain[1][1] - domain[1][0])
+                                })
+                            }),
+                            v,
+                        )
+                    });
+                    let dv = evaluate(dv_rows, u);
+                    for axis in 0..3 {
+                        let middle = expected[axis][0].midpoint(expected[axis][1]);
+                        assert!((actual[axis] - middle).abs() <= cell.position_error_mm() + 1e-10);
+                        for (direction, (observed, expected)) in
+                            [(du, jets.du()), (dv, jets.dv())].into_iter().enumerate()
+                        {
+                            let middle = expected[axis][0].midpoint(expected[axis][1]);
+                            assert!(
+                                (observed[axis] - middle).abs()
+                                    <= cell.original_derivative_error_mm()[direction] + 1e-10
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(*source.source(), original);
+        assert_eq!(source.contact_height_bounds_mm(), contact);
+    }
+}
+
+#[test]
+fn shared_surface_failures_keep_real_source_and_one_aggregate_resource_boundary() {
+    let source = source(false);
+    let original = *source.source();
+    let options = CurveOptions::default();
+    let make = || CurvePlan::new(&source, options, None).unwrap();
+    let result = SurfacePlan::new(make(), options.into(), None).unwrap();
+    assert!(std::ptr::eq(result.curves().source(), &source));
+    for bad in [
+        CurveOptions {
+            maximum_spans_per_curve: 1,
+            ..options
+        },
+        CurveOptions {
+            maximum_work: result.work_used() - 1,
+            ..options
+        },
+        CurveOptions {
+            maximum_bytes: result.retained_budget_bytes() - 1,
+            ..options
+        },
+        CurveOptions {
+            maximum_work: 1,
+            ..options
+        },
+        CurveOptions {
+            maximum_bytes: 1,
+            ..options
+        },
+    ] {
+        assert!(matches!(
+            SurfacePlan::new(make(), bad.into(), None),
+            Err(Error::Limit)
+        ));
+    }
+    assert_eq!(
+        SurfacePlan::new(
+            make(),
+            CurveOptions {
+                maximum_work: result.work_used(),
+                maximum_bytes: result.retained_budget_bytes(),
+                ..options
+            }
+            .into(),
+            None
+        )
+        .unwrap()
+        .work_used(),
+        result.work_used()
+    );
+    assert!(matches!(
+        SurfacePlan::new(
+            make(),
+            CurveOptions {
+                position_error_mm: 0.,
+                ..options
+            }
+            .into(),
+            None
+        ),
+        Err(Error::Invalid)
+    ));
+    assert!(matches!(
+        SurfacePlan::new(
+            make(),
+            CurveOptions {
+                position_error_mm: 1e-14,
+                derivative_error_mm: 1e-14,
+                ..options
+            }
+            .into(),
+            None
+        ),
+        Err(Error::Unresolved)
+    ));
+    assert!(matches!(
+        SurfacePlan::new(make(), options.into(), Some(&|| true)),
+        Err(Error::Cancelled)
+    ));
+    let polls = std::cell::Cell::new(0usize);
+    let count = || {
+        polls.set(polls.get() + 1);
+        false
+    };
+    SurfacePlan::new(make(), options.into(), Some(&count)).unwrap();
+    let seen = std::cell::Cell::new(0usize);
+    let cancel = || {
+        seen.set(seen.get() + 1);
+        seen.get() == polls.get()
+    };
+    assert!(matches!(
+        SurfacePlan::new(make(), options.into(), Some(&cancel)),
+        Err(Error::Cancelled)
+    ));
+    let controls = result
+        .patches()
+        .iter()
+        .map(|p| p.poles_mm().len())
+        .sum::<usize>();
+    assert!(matches!(
+        SurfacePlan::new(
+            make(),
+            SurfaceOptions {
+                query: options,
+                maximum_control_points: controls - 1
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    for maximum_control_points in [0, 262_145] {
+        assert!(matches!(
+            SurfacePlan::new(
+                make(),
+                SurfaceOptions {
+                    query: options,
+                    maximum_control_points
+                },
+                None
+            ),
+            Err(Error::Invalid)
+        ));
+    }
+    assert_eq!(
+        SurfacePlan::new(
+            make(),
+            SurfaceOptions {
+                query: options,
+                maximum_control_points: controls
+            },
+            None
+        )
+        .unwrap()
+        .patches()
+        .len(),
+        8
+    );
+    assert_eq!(SurfaceOptions::default().maximum_control_points, 262_144);
+    assert_eq!(*source.source(), original);
 }
