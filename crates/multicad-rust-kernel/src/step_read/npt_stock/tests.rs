@@ -1,4 +1,5 @@
 use super::*;
+mod guards;
 use crate::axial_pipe_thread::authored::{AuthoredSection, AuthoredSpec, AuthoredThread};
 use crate::step::npt_stock::{CurveOptions, CurvePlan, SurfacePlan, write_source_candidate};
 use crate::step_read::owned_insert::DocumentOptions;
