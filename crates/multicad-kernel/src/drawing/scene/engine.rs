@@ -566,10 +566,134 @@ fn border_strands(path: &Arc<dyn Path>, limits: &[&Limit], flat: f64, eps: f64) 
 }
 
 /// Parameters within one arranged piece of a strand where the exact path
-/// enters or leaves another member's material. Between two paper events the
-/// member's sight intervals vary continuously along the piece, so the number
-/// of interval ends behind the path changes exactly at such a passage.
+/// enters or leaves another member's material.
+///
+/// A member that answers `Member::line` is certified: a straight path meets
+/// the member exactly where that line's material intervals end. A curved
+/// path is replaced by its chords, which stay within the flattening tolerance
+/// of the curve: every passage of a chord is found exactly and refined onto
+/// the curve, so any covered stretch reaching deeper than the flattening
+/// tolerance into the member is found however close it lies to another.
+/// Other members are probed through `sight`, which is not certified.
 fn pierce(
+    scene: &Scene<'_>,
+    strand: &Strand,
+    member: usize,
+    [from, to]: [f64; 2],
+    output: &mut Vec<f64>,
+) -> Result<(), GeometryError> {
+    let target = &scene.members[member].member;
+    // Whether the exact path point is inside the member by more than the
+    // coincidence tolerance; a point in its surface is outside.
+    let inside = |t: f64| -> Result<bool, GeometryError> {
+        let p = strand.path.point(t);
+        Ok(target
+            .sight([p[0], p[1]])?
+            .into_iter()
+            .any(|[a, b]| a + scene.eps < p[2] && p[2] < b - scene.eps))
+    };
+    // Chords of the piece: the whole piece when the path is straight.
+    let straight = matches!(strand.path.paper([from, to]), Some(Curve::Line(_))) && {
+        let [a, m, b] = [from, 0.5 * (from + to), to].map(|t| strand.path.point(t));
+        let d = paths::add(b, paths::scaled(a, -1.));
+        let e = paths::add(m, paths::scaled(a, -1.));
+        let c = cross3(d, e);
+        dot3(c, c).sqrt() <= 1e-12 * dot3(d, d).max(1e-300)
+    };
+    let mut stops = vec![from];
+    if !straight {
+        stops.extend(strand.ts.iter().copied().filter(|t| *t > from && *t < to));
+    }
+    stops.push(to);
+    let mut certified = true;
+    for pair in stops.windows(2) {
+        let [ta, tb] = [pair[0], pair[1]];
+        let [a, b] = [ta, tb].map(|t| strand.path.point(t));
+        let delta = paths::add(b, paths::scaled(a, -1.));
+        let length = dot3(delta, delta).sqrt();
+        if length <= 1e-300 {
+            continue;
+        }
+        let direction = paths::scaled(delta, 1. / length);
+        let Some(spans) = target.line(a, direction) else {
+            certified = false;
+            break;
+        };
+        let spans = spans?;
+        // The chord's exact passages split it into stretches that are
+        // wholly inside or outside. Sample the exact path once in each, and
+        // locate a passage between neighbours whose states differ. The curve
+        // stays within the flattening tolerance of its chord, so a stretch
+        // whose exact sample agrees with its neighbours holds no passage
+        // reaching deeper than that tolerance, and a path resting in the
+        // member's surface is never split.
+        let mut cuts: Vec<f64> = spans
+            .into_iter()
+            .flatten()
+            .map(|end| end / length)
+            .filter(|fraction| *fraction > 0. && *fraction < 1.)
+            .map(|fraction| ta + (tb - ta) * fraction)
+            .collect();
+        if cuts.is_empty() {
+            continue;
+        }
+        cuts.sort_by(f64::total_cmp);
+        let mut bounds = vec![ta];
+        bounds.extend(cuts);
+        bounds.push(tb);
+        let mut samples = Vec::with_capacity(bounds.len() - 1);
+        for pair in bounds.windows(2) {
+            let t = 0.5 * (pair[0] + pair[1]);
+            samples.push((t, inside(t)?));
+        }
+        // Between neighbouring samples lies exactly one passage of the
+        // chord. It is the exact passage of a straight path; on a curve it
+        // is refined by bisection on the exact path.
+        for (index, pair) in samples.windows(2).enumerate() {
+            let [(mut lo, state), (mut hi, other)] = [pair[0], pair[1]];
+            let cut = bounds[index + 1];
+            if state == other {
+                continue;
+            }
+            if straight {
+                output.push(cut);
+                continue;
+            }
+            let strict = |t: f64| -> Result<bool, GeometryError> {
+                let p = strand.path.point(t);
+                Ok(target
+                    .sight([p[0], p[1]])?
+                    .into_iter()
+                    .any(|[a, b]| a < p[2] && p[2] < b))
+            };
+            let low = strict(lo)?;
+            if low == strict(hi)? {
+                output.push(cut);
+                continue;
+            }
+            for _ in 0..64 {
+                let mid = 0.5 * (lo + hi);
+                if mid <= lo || mid >= hi {
+                    break;
+                }
+                if strict(mid)? == low {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            output.push(0.5 * (lo + hi));
+        }
+    }
+    if certified {
+        return Ok(());
+    }
+    probe(scene, strand, member, [from, to], output)
+}
+
+/// Uncertified passages for members without `Member::line`: sample the
+/// number of the member's interval ends behind the path and bisect changes.
+fn probe(
     scene: &Scene<'_>,
     strand: &Strand,
     member: usize,
