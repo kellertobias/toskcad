@@ -1,4 +1,5 @@
 use super::*;
+mod source_readback;
 fn stock(quarter: bool) -> crate::axial_pipe_thread::authored::StockClipPlan {
     use crate::axial_pipe_thread::authored::{AuthoredSection, AuthoredSpec, AuthoredThread};
     let (tpi, e1, l1, l2, od, max) = if quarter {
