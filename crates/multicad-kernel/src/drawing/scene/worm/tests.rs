@@ -372,7 +372,8 @@ fn sections_are_closed_oriented_boundaries_of_the_membership_predicate() {
                 let ends: Vec<[P3; 2]> =
                     pieces.iter().map(|p| [p.point(0.), p.point(1.)]).collect();
                 for (i, piece) in pieces.iter().enumerate() {
-                    for t in [0., 0.25, 0.5, 0.75, 1.] {
+                    for step in 0..=64 {
+                        let t = f64::from(step) / 64.;
                         let p = piece.point(t);
                         assert!((p[2] - depth).abs() < 1e-9, "{name} {label}");
                         assert_eq!(
@@ -459,46 +460,4 @@ fn the_axial_plane_section_of_a_worm_is_its_straight_sided_profile() {
     }
     // Two flanks per turn on both sides of the axis, less the cut turns.
     assert!(flanks >= 4 * 5, "{flanks}");
-}
-
-#[test]
-#[ignore = "diagnostic"]
-fn debug_area() {
-    let pick = |name: &str, default: usize| {
-        std::env::var(name)
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(default)
-    };
-    let solid = &solids()[pick("W_SOLID", 1)].1;
-    let frame = views()[pick("W_VIEW", 4)].1;
-    let fraction = pick("W_FRACTION", 83) as f64 / 100.;
-    let body = built(solid, frame);
-    let [lo, hi] = body.bounds();
-    let depth = lo[2] + (hi[2] - lo[2]) * fraction;
-    let pieces = body.cut(depth).unwrap();
-    let inner = &body.0;
-    for (i, piece) in pieces.iter().enumerate() {
-        let a = area(std::slice::from_ref(piece));
-        let [p, q] = [0., 1.].map(|t| inner.local(piece.point(t)));
-        println!(
-            "{i} {p:.4?} r{:.3} -> {q:.4?} r{:.3} area={a:.5}",
-            p[0].hypot(p[1]),
-            q[0].hypot(q[1])
-        );
-    }
-    let rows = 4000;
-    let h = (hi[1] - lo[1]) / rows as f64;
-    let mut total = 0.;
-    for row in 0..rows {
-        let y = lo[1] + (row as f64 + 0.5) * h;
-        let a = inner.local([0., y, depth]);
-        let d = [inner.axes[0][0], inner.axes[1][0], inner.axes[2][0]];
-        for [p, q] in inner.intervals(a, d, true).unwrap() {
-            total += (q - p) * h;
-        }
-    }
-    println!("lines {total}");
-    println!("total {}", area(&pieces));
-    println!("quad {}", quadrature(solid, &body, depth));
 }

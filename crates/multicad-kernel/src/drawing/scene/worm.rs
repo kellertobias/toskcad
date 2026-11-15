@@ -204,7 +204,7 @@ impl Inner {
         let resolution = 2.5e-7 * self.scale;
         let mut budget = 4_000_000_usize;
         for [from, to] in zones {
-            if !(to - from > 0.) {
+            if to <= from || to.is_nan() || from.is_nan() {
                 continue;
             }
             let mut stack = vec![(from, to, margin(from), margin(to))];
