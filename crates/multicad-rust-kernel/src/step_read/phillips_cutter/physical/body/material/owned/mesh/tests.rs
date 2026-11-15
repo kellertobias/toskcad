@@ -583,3 +583,154 @@ fn actual_cap_three_span_parameter_uses_literal_rounded_knots() {
         }
     }
 }
+
+#[test]
+fn actual_public_producer_cancellation_tracks_component_array_frontiers() {
+    // Derive locations from THIS host's actual certified components. The old
+    // fraction of one historical callback total drifts when a source mesher
+    // changes its facet count; no synthetic body or production stage hook is
+    // needed to exercise the public caller's real copy/join refusal paths.
+    let source = super::super::mesh_probe::owned_neck(1., false, false, 0.4, 0.125);
+    let original = source.original_input().to_owned();
+    let query = JoinedMeshOptions {
+        tessellation: Tessellation {
+            deflection: 0.2,
+            angle: 0.5,
+            ..JoinedMeshOptions::default().tessellation
+        },
+        ..Default::default()
+    };
+    let polls = std::cell::Cell::new(0usize);
+    let observe = || {
+        polls.set(polls.get() + 1);
+        false
+    };
+    // Reproduce only the public PREPARATION contract to retain its earned
+    // components. Budget and callback conditions are identical to the caller;
+    // equal final meshes alone do not imply equal construction callbacks.
+    let mut prefix = Work {
+        remaining: MESH_WORK,
+        held: source.retained_budget_bytes(),
+        peak: 0,
+        maximum_bytes: MESH_BYTES,
+        maximum_triangles: query.tessellation.triangle_limit,
+        delegated: Default::default(),
+        interrupt: Some(&observe),
+    };
+    prefix.storage(0).unwrap();
+    prefix
+        .charge(source.thread().input().surfaces.len())
+        .unwrap();
+    prefix.delegated.retained_thread_bytes =
+        delegated::retained(source.thread(), query.tessellation.triangle_limit).unwrap();
+    let trace = source
+        .thread()
+        .tessellate_with_cap_trace_budget(
+            query.tessellation,
+            Default::default(),
+            prefix.remaining,
+            prefix.interrupt,
+        )
+        .unwrap();
+    prefix.charge(trace.work_used()).unwrap();
+    prefix.held += mesh_bytes(trace.mesh()) + trace.retained_metadata_bytes();
+    prefix.storage(0).unwrap();
+    let parts = components(
+        &source,
+        &trace,
+        source_quality(query.tessellation).unwrap(),
+        &mut prefix,
+    )
+    .unwrap();
+    let public_prefix = polls.get();
+    let assembly = assemble(&parts, MESH_WORK, prefix.clone()).unwrap();
+    let total_manual = polls.get();
+    let assembly_polls = total_manual - public_prefix;
+    polls.set(0);
+    let public = source.joined_mesh_candidate(query, Some(&observe)).unwrap();
+    let public_polls = polls.get();
+    assert_eq!(public.mesh(), assembly.mesh());
+    assert_eq!(public_polls, total_manual);
+    // Observe the real angular/head preparation once. The remaining copy and
+    // transfer routines poll once per actual vertex/facet and twice per copy
+    // reservation; those source-array counts avoid guessed global ratios.
+    polls.set(0);
+    let mut preparation = prefix.clone();
+    preparation.interrupt = Some(&observe);
+    let mut angular = angular_from_trace(source.thread(), &trace, &mut preparation).unwrap();
+    preparation.held += angular.capacity() * std::mem::size_of::<Angular<'_>>();
+    preparation.storage(0).unwrap();
+    let head = make_head(&source, &mut angular, query.tessellation, &mut preparation).unwrap();
+    preparation.held += mesh_bytes(&head.mesh) + (head.top.capacity() + head.bottom.capacity()) * 4;
+    preparation.storage(0).unwrap();
+    let before_copies = public_prefix + polls.get();
+    let copy_polls = |mesh: &DisplayMesh| 2 + mesh.vertices.len() / 3 + mesh.face_indices.len();
+    let before_cavity = before_copies + copy_polls(trace.mesh()) + copy_polls(&head.mesh);
+    let cavity = parts.cavity.boundary_mesh().mesh();
+    let after_cavity = before_cavity + copy_polls(cavity);
+    let transfer_polls = cavity.vertices.len() / 3 + cavity.face_indices.len();
+    let mouth_faces = parts.atlas.topology().faces();
+    let kept_thread = trace
+        .mesh()
+        .face_indices
+        .iter()
+        .filter(|&&f| f != 0)
+        .count();
+    let kept_cavity = cavity
+        .face_indices
+        .iter()
+        .filter(|&&f| mouth_faces[f as usize].source_identity() != CavityFace::Mouth)
+        .count();
+    let reversed_polls = kept_thread + head.mesh.face_indices.len() + kept_cavity;
+    let before_wire_storage = after_cavity + 1 + transfer_polls + reversed_polls;
+    let before_join = before_wire_storage + 1;
+    let join_face =
+        (source.head().view().segment_count() + source.thread().side_faces().len() + 1) as u32;
+    let join_triangles = public
+        .mesh()
+        .face_indices
+        .iter()
+        .filter(|&&f| f == join_face)
+        .count();
+    assert!(join_triangles > 0);
+    // Plane: one source-boundary charge, one pre-CDT allocation check, then
+    // the actual post-CDT reservation. Its triangle count comes from the
+    // successful PUBLIC mesh, not a formula that assumes a polygon shape.
+    let before_top = before_join + 4 + join_triangles;
+    let marks = [
+        ("cavity copy", before_cavity),
+        ("cavity copy work handoff", after_cavity),
+        ("literal cavity translation", after_cavity + 1),
+        ("joining wire storage", before_wire_storage),
+        ("actual join post-CDT storage", before_join + 2),
+        ("actual top plane", before_top),
+    ];
+    for (phase, stop) in marks {
+        assert!(stop < public_polls);
+        let calls = std::cell::Cell::new(0usize);
+        let cancel = || {
+            let at = calls.get();
+            calls.set(at + 1);
+            at == stop
+        };
+        assert!(
+            matches!(
+                source.joined_mesh_candidate(query, Some(&cancel)),
+                Err(PhillipsReadError::Cancelled)
+            ),
+            "{phase}"
+        );
+        assert_eq!(calls.get(), stop + 1, "{phase}");
+        assert_eq!(source.original_input(), original, "{phase}");
+    }
+    let recovered = source.joined_mesh_candidate(query, None).unwrap();
+    assert!(std::ptr::eq(recovered.source(), &source));
+    assert_eq!(public.mesh(), recovered.mesh());
+    assert_eq!(
+        public.certified_tessellation().deflection,
+        recovered.certified_tessellation().deflection
+    );
+    eprintln!(
+        "PUBLIC JOIN FRONTIERS public{public_polls} assembly{assembly_polls} prefix{public_prefix} marks{marks:?}"
+    );
+}
