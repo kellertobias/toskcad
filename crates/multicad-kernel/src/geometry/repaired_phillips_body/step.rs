@@ -268,5 +268,6 @@ impl Solid {
         })())
     }
 }
+mod members;
 #[cfg(test)]
 mod tests;

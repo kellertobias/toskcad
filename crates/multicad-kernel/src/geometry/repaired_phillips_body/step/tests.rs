@@ -115,3 +115,58 @@ fn actual_native_periodic_step_writes_freshly_verifies_reopens_and_preserves_ato
         );
     }
 }
+
+#[test]
+fn actual_native_compound_members_keep_explicit_order_and_fresh_independent_receipts() {
+    let a = part(false, PlaneFrame::default());
+    let b = part(
+        true,
+        PlaneFrame {
+            origin: [5., 12., 18.],
+            u: [0., 1., 0.],
+            v: [1., 0., 0.],
+        },
+    );
+    let mut writer = multicad_rust_kernel::step::Writer::new();
+    let first = a
+        .append_periodic_phillips_step(&mut writer, None)
+        .unwrap()
+        .unwrap();
+    let second = b
+        .append_periodic_phillips_step(&mut writer, None)
+        .unwrap()
+        .unwrap();
+    assert!(first.matched_entities > 0 && second.matched_entities > 0);
+    let text = writer.finish().unwrap();
+    for (index, source) in [(0, &a), (1, &b)] {
+        let proof = source
+            .verify_periodic_phillips_step_member(&text, index, 1e-7, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(proof.represented_member_count, 2);
+        assert_eq!(proof.member_index, index);
+        assert!(proof.selection_work > 0 && proof.selection_query_peak_bytes > 0);
+        assert!(proof.decoded_volume_bounds_mm3[0] > 0.);
+        assert!(proof.maximum_world_position_error_mm <= 1e-7);
+        assert!(
+            source
+                .verify_periodic_phillips_step_source(&text, 1e-7, None)
+                .unwrap()
+                .is_err()
+        );
+        assert!(
+            source
+                .verify_periodic_phillips_step_member(&text, 2, 1e-7, None)
+                .unwrap()
+                .is_err()
+        );
+        assert_eq!(
+            source
+                .verify_periodic_phillips_step_member(&text, 1 - index, 1e-7, None)
+                .unwrap()
+                .unwrap_err()
+                .kind,
+            GeometryErrorKind::Unsupported
+        );
+    }
+}
