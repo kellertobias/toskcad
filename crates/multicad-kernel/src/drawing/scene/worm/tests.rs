@@ -461,3 +461,564 @@ fn the_axial_plane_section_of_a_worm_is_its_straight_sided_profile() {
     // Two flanks per turn on both sides of the axis, less the cut turns.
     assert!(flanks >= 4 * 5, "{flanks}");
 }
+
+/// The generated wheel and oblique frame of `tests/rust_scene_worm.rs`.
+fn compared_wheel() -> (Solid, PlaneFrame) {
+    let (s, c) = 0.1_f64.sin_cos();
+    let solid = Solid::rust_generated_za_worm_wheel_named(
+        GeneratedZaWormWheel {
+            teeth: 32,
+            axial_module_mm: 1.,
+            face_width_mm: 1.6,
+            bore_radius_mm: 5.,
+            pitch_thinning_mm: 0.03,
+        },
+        EntityId::new(),
+        GeometryPolicy::default(),
+    )
+    .unwrap()
+    .transformed(RigidTransform {
+        rotation: [[c, -s, 0.], [s, c, 0.], [0., 0., 1.]],
+        translation_mm: [0.; 3],
+    })
+    .unwrap();
+    let r = 0.5_f64.sqrt();
+    let t = (1_f64 / 6.).sqrt();
+    (
+        solid,
+        PlaneFrame {
+            origin: [0.3, -0.2, 0.1],
+            u: [r, -r, 0.],
+            v: [t, t, -2. * t],
+        },
+    )
+}
+
+/// Boundary crossings of the exact membership predicate along the sight line
+/// through `paper`, between depths `from` and `to` in `steps` samples.
+fn crossings(inside: &dyn Fn(P3) -> bool, paper: P2, [from, to]: [f64; 2], steps: usize) -> usize {
+    let mut last = inside([paper[0], paper[1], from]);
+    let mut count = 0;
+    for i in 1..=steps {
+        let z = from + (to - from) * i as f64 / steps as f64;
+        let now = inside([paper[0], paper[1], z]);
+        count += usize::from(now != last);
+        last = now;
+    }
+    count
+}
+
+/// Roles of the published vectors that run along a curve through a paper
+/// point: within the publishing chord tolerance of it and parallel to the
+/// curve's paper tangent there, so that crossing curves do not count.
+fn roles_at(vectors: &[ProjectedVector], paper: P2, tangent: P2) -> Vec<VectorRole> {
+    // Published chords stay within half of the default 0.01 mm chord
+    // tolerance of the exact curve.
+    let reach = 0.0055;
+    let mut roles = Vec::new();
+    for vector in vectors {
+        let near = vector.preview_mm.windows(2).any(|pair| {
+            let [a, b] = [pair[0], pair[1]];
+            let d = [b[0] - a[0], b[1] - a[1]];
+            let length = d[0].hypot(d[1]);
+            let s = (((paper[0] - a[0]) * d[0] + (paper[1] - a[1]) * d[1])
+                / (length * length).max(1e-300))
+            .clamp(0., 1.);
+            let gap = (a[0] + s * d[0] - paper[0]).hypot(a[1] + s * d[1] - paper[1]);
+            let sine = (d[0] * tangent[1] - d[1] * tangent[0]).abs() / length.max(1e-300);
+            gap <= reach && sine < 0.2
+        });
+        if near && !roles.contains(&vector.role) {
+            roles.push(vector.role);
+        }
+    }
+    roles
+}
+
+/// Material angle in degrees around a curve point, from the exact predicate
+/// on a small circle in the plane normal to the curve: 180 on a smooth
+/// surface, otherwise the dihedral angle of the crease.
+fn material_angle(own: &dyn Fn(P3) -> bool, path: &dyn Path, t: f64, radius: f64) -> f64 {
+    let p = path.point(t);
+    let tangent = unit(sub(
+        path.point((t + 1e-5).min(1.)),
+        path.point((t - 1e-5).max(0.)),
+    ));
+    let seed = if tangent[0].abs() < 0.9 {
+        [1., 0., 0.]
+    } else {
+        [0., 1., 0.]
+    };
+    let e1 = unit(cross(tangent, seed));
+    let e2 = cross(tangent, e1);
+    let samples = 1440;
+    let inside = (0..samples)
+        .filter(|&i| {
+            let (s, c) = (TAU * f64::from(i) / f64::from(samples)).sin_cos();
+            own(add(p, add(scaled(e1, radius * c), scaled(e2, radius * s))))
+        })
+        .count();
+    360. * inside as f64 / f64::from(samples)
+}
+
+/// Material counts for the proofs only where the provider's margin exceeds
+/// this many millimetres: a march along a surface it grazes (a bore wall or
+/// the root cylinder seen along the axis) meets no material, as the member
+/// contract requires, while real material lies at least 0.01 mm deep.
+const STRICT: f64 = 1e-9;
+
+/// One member of a scene with its candidates and its own exact predicate.
+type ScenePart<'a> = (&'a str, Vec<Candidate>, &'a dyn Fn(P3) -> bool);
+
+/// What one sample of a candidate proves.
+#[derive(Default)]
+struct Proof {
+    folds: usize,
+    creases: usize,
+    seams: usize,
+    roles: usize,
+    unpublished: usize,
+}
+
+/// A sample point of a candidate is proved against the exact predicates:
+///
+/// - an outline is a fold: sight lines just either side of it cross the
+///   boundary of its solid a number of times differing by two near its
+///   depth (offsets of 1e-5 mm keep the fold sliver inside the window even
+///   on the 21 mm tip cylinder), so `n · d` changes sign across it;
+/// - an edge is a crease: the material angle around it differs from a flat
+///   180 degrees by more than five, and a smooth seam is flat;
+/// - the published role is hidden exactly when marching from just in front
+///   of the point toward the viewer meets material of any solid.
+#[allow(clippy::too_many_arguments)]
+fn prove(
+    kind: Kind,
+    path: &dyn Path,
+    t: f64,
+    own: &dyn Fn(P3) -> bool,
+    scene: &dyn Fn(P3) -> bool,
+    top: f64,
+    vectors: &[ProjectedVector],
+    proof: &mut Proof,
+    label: &str,
+) {
+    let p = path.point(t);
+    match kind {
+        Kind::Outline => {
+            let [a, b] = [path.point(t - 1e-4), path.point(t + 1e-4)];
+            let tangent = [b[0] - a[0], b[1] - a[1]];
+            let length = tangent[0].hypot(tangent[1]);
+            assert!(
+                length > 1e-9,
+                "{label} t={t}: outline without a paper tangent"
+            );
+            let side = [-tangent[1] / length, tangent[0] / length];
+            let [left, right] = [1., -1.].map(|sign: f64| {
+                crossings(
+                    own,
+                    [p[0] + sign * 1e-5 * side[0], p[1] + sign * 1e-5 * side[1]],
+                    [p[2] - 0.25, p[2] + 0.25],
+                    10_000,
+                )
+            });
+            assert_eq!(
+                left.abs_diff(right),
+                2,
+                "{label} t={t}: no fold across the outline at {p:?} ({left} vs {right})"
+            );
+            proof.folds += 1;
+        }
+        Kind::Edge => {
+            let angle = material_angle(own, path, t, 1e-3);
+            assert!(
+                (angle - 180.).abs() > 5.,
+                "{label} t={t}: edge at {p:?} is flat ({angle} degrees)"
+            );
+            proof.creases += 1;
+        }
+        Kind::Smooth => {
+            let angle = material_angle(own, path, t, 1e-3);
+            assert!(
+                (angle - 180.).abs() <= 1.,
+                "{label} t={t}: smooth seam at {p:?} is a crease ({angle} degrees)"
+            );
+            proof.seams += 1;
+            return;
+        }
+    }
+    let [a, b] = [
+        path.point((t - 1e-4).max(0.)),
+        path.point((t + 1e-4).min(1.)),
+    ];
+    let tangent = [b[0] - a[0], b[1] - a[1]];
+    let length = tangent[0].hypot(tangent[1]);
+    if length < 1e-12 {
+        // The curve runs along the sight line here.
+        proof.unpublished += 1;
+        return;
+    }
+    let roles = roles_at(
+        vectors,
+        [p[0], p[1]],
+        [tangent[0] / length, tangent[1] / length],
+    );
+    if roles.is_empty() {
+        // Pieces shorter than the engine's merge distance near a visibility
+        // transition or a crossing publish without this exact point.
+        proof.unpublished += 1;
+        return;
+    }
+    let start = p[2] + 1e-3;
+    let steps = (((top - start) / 2e-3).ceil() as usize).max(1);
+    let covered = (0..=steps).any(|i| {
+        let z = start + (top - start) * i as f64 / steps as f64;
+        scene([p[0], p[1], z])
+    });
+    let expected = if covered {
+        VectorRole::Hidden
+    } else {
+        VectorRole::Visible
+    };
+    assert!(
+        roles.contains(&expected),
+        "{label} t={t}: published {roles:?} at {p:?}, marching says {expected:?}"
+    );
+    proof.roles += 1;
+}
+
+/// Whether a candidate's paper image passes within `reach` of a point.
+fn passes(c: &Candidate, target: P2, reach: f64) -> bool {
+    c.path.flatten(0.0025).windows(2).any(|pair| {
+        let [a, b] = [c.path.point(pair[0]), c.path.point(pair[1])];
+        let d = [b[0] - a[0], b[1] - a[1]];
+        let s = (((target[0] - a[0]) * d[0] + (target[1] - a[1]) * d[1])
+            / (d[0] * d[0] + d[1] * d[1]).max(1e-300))
+        .clamp(0., 1.);
+        (a[0] + s * d[0] - target[0]).hypot(a[1] + s * d[1] - target[1]) < reach
+    })
+}
+
+/// The curves behind the measured OpenCascade deviations of the oblique wheel
+/// view (a hidden edge meeting a corner 0.60 mm from any native curve, a
+/// visibility change at a vertex 0.035 mm from the native one) and a sample
+/// of every other edge and outline of the view are proved against the
+/// provider's predicate.
+#[test]
+fn oblique_wheel_curves_are_creases_and_folds_with_marched_visibility() {
+    let (solid, frame) = compared_wheel();
+    let body = built(&solid, frame);
+    let inner = &body.0;
+    let (wheel, _) = solid.rust_worm_wheel().unwrap();
+    let own = |p: P3| wheel.classify(inner.local(p), STRICT) == Containment::Inside;
+    let top = body.bounds()[1][2];
+    let vectors = crate::project_drawing(
+        &[crate::DrawingSolid {
+            solid: &solid,
+            hatch: None,
+        }],
+        crate::DrawingProjection {
+            frame,
+            hidden_lines: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let candidates = body.candidates(0.0025).unwrap();
+    let mut proof = Proof::default();
+    for (label, target) in [
+        ("hidden corner", [6.568499986795132, 9.658492277809218]),
+        ("visible end", [-4.217254641741771, 9.149364469823032]),
+    ] {
+        let found: Vec<&Candidate> = candidates
+            .iter()
+            .filter(|c| passes(c, target, 1e-6))
+            .collect();
+        assert!(
+            found.len() >= 3,
+            "{label}: {} curves through {target:?}",
+            found.len()
+        );
+        for c in found {
+            for i in 1..20 {
+                let t = f64::from(i) / 20.;
+                prove(
+                    c.kind,
+                    c.path.as_ref(),
+                    t,
+                    &own,
+                    &own,
+                    top,
+                    &vectors,
+                    &mut proof,
+                    label,
+                );
+            }
+        }
+    }
+    let outlines: Vec<&Candidate> = candidates
+        .iter()
+        .filter(|c| c.kind == Kind::Outline)
+        .collect();
+    let mut random = Random(11);
+    for _ in 0..40 {
+        let c = outlines[(random.next() * outlines.len() as f64) as usize];
+        let t = 0.05 + 0.9 * random.next();
+        prove(
+            c.kind,
+            c.path.as_ref(),
+            t,
+            &own,
+            &own,
+            top,
+            &vectors,
+            &mut proof,
+            "outline",
+        );
+    }
+    for _ in 0..80 {
+        let c = &candidates[(random.next() * candidates.len() as f64) as usize];
+        let t = 0.05 + 0.9 * random.next();
+        prove(
+            c.kind,
+            c.path.as_ref(),
+            t,
+            &own,
+            &own,
+            top,
+            &vectors,
+            &mut proof,
+            "sample",
+        );
+    }
+    println!(
+        "folds {} creases {} seams {} roles {} unpublished {}",
+        proof.folds, proof.creases, proof.seams, proof.roles, proof.unpublished
+    );
+    assert!(
+        proof.folds >= 30 && proof.creases >= 50 && proof.roles >= 120,
+        "too few proved samples"
+    );
+}
+
+/// The box edges behind the measured deviations of the oblique box-and-wheel
+/// scene (0.28 mm visible, 1.27 mm hidden) are proved the same way, with the
+/// interpenetrating wheel and the exact box both covering them.
+#[test]
+fn oblique_box_and_wheel_edges_have_marched_visibility() {
+    let (wheel_solid, _) = compared_wheel();
+    let wheel_solid = wheel_solid
+        .transformed(RigidTransform {
+            rotation: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+            translation_mm: [3., 2., 1.],
+        })
+        .unwrap();
+    let r = |v: i64| multicad_rust_kernel::Rational::new(v, 1).unwrap();
+    let block = Solid::rust_box(
+        EntityId::new().uuid_bits(),
+        [r(8), r(6), r(5)],
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+    )
+    .unwrap();
+    let s = 0.5_f64.sqrt();
+    let t = (1_f64 / 6.).sqrt();
+    let frame = PlaneFrame {
+        origin: [1., 1., 1.],
+        u: [s, -s, 0.],
+        v: [t, t, -2. * t],
+    };
+    let view = View::new(frame);
+    let gear = built(&wheel_solid, frame);
+    let (wheel, _) = wheel_solid.rust_worm_wheel().unwrap();
+    let bounds = block.bounds().unwrap();
+    let world = |p: P3| -> [f64; 3] {
+        std::array::from_fn(|i| {
+            view.origin[i]
+                + p[0] * view.axes[0][i]
+                + p[1] * view.axes[1][i]
+                + p[2] * view.axes[2][i]
+        })
+    };
+    let in_box = |p: P3| {
+        let w = world(p);
+        (0..3).all(|i| bounds.min[i] + STRICT < w[i] && w[i] < bounds.max[i] - STRICT)
+    };
+    let in_wheel = |p: P3| wheel.classify(gear.0.local(p), STRICT) == Containment::Inside;
+    let scene = |p: P3| in_box(p) || in_wheel(p);
+    let member = super::super::member(&block, &view).unwrap().unwrap();
+    let top = member.bounds()[1][2].max(gear.bounds()[1][2]);
+    let mut proof = Proof::default();
+    for (label, target, hidden) in [
+        ("visible box edge", [0., 3.429285639896448], false),
+        (
+            "hidden box edge",
+            [std::f64::consts::SQRT_2, 4.24578222082414],
+            true,
+        ),
+    ] {
+        let vectors = crate::project_drawing(
+            &[
+                crate::DrawingSolid {
+                    solid: &block,
+                    hatch: None,
+                },
+                crate::DrawingSolid {
+                    solid: &wheel_solid,
+                    hatch: None,
+                },
+            ],
+            crate::DrawingProjection {
+                frame,
+                hidden_lines: hidden,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut found = 0;
+        let members: [ScenePart<'_>; 2] = [
+            ("box", member.candidates(0.0025).unwrap(), &in_box),
+            ("wheel", gear.candidates(0.0025).unwrap(), &in_wheel),
+        ];
+        for (name, candidates, own) in &members {
+            for c in candidates.iter().filter(|c| passes(c, target, 3e-3)) {
+                println!("{label}: {name} {:?}", c.kind);
+                found += 1;
+                for i in 1..40 {
+                    let t = f64::from(i) / 40.;
+                    // Without hidden lines a covered point publishes nothing
+                    // and counts as unpublished.
+                    prove(
+                        c.kind,
+                        c.path.as_ref(),
+                        t,
+                        *own,
+                        &scene,
+                        top,
+                        &vectors,
+                        &mut proof,
+                        label,
+                    );
+                }
+            }
+        }
+        if found == 0 {
+            for (name, candidates, _) in &members {
+                for c in candidates.iter().filter(|c| passes(c, target, 5e-2)) {
+                    println!(
+                        "{label}: near {name} {:?} {:?} {:?}",
+                        c.kind,
+                        c.path.point(0.),
+                        c.path.point(1.)
+                    );
+                }
+            }
+            for v in &vectors {
+                if v.preview_mm
+                    .iter()
+                    .any(|p| (p[0] - target[0]).hypot(p[1] - target[1]) < 5e-2)
+                {
+                    println!(
+                        "{label}: vector {} {:?} {:?}",
+                        v.source_index, v.role, v.preview_mm
+                    );
+                }
+            }
+        }
+        assert!(found > 0, "{label}: no curve through {target:?}");
+    }
+    println!(
+        "box scene folds {} creases {} roles {} unpublished {}",
+        proof.folds, proof.creases, proof.roles, proof.unpublished
+    );
+    assert!(
+        proof.creases + proof.folds >= 40 && proof.roles >= 20,
+        "too few proved samples"
+    );
+}
+
+/// The axial worm detail of `tests/rust_scene_worm.rs`, where OpenCascade
+/// publishes the hidden root circle beyond the detail circle: every published
+/// piece lies inside the 3 mm circle, and the role of every curve inside it
+/// (the hidden root land and the visible bore and crest among them) matches
+/// marching through the provider's predicate.
+#[test]
+fn axial_worm_detail_is_cropped_and_its_roles_marched() {
+    let (s, c) = 0.1_f64.sin_cos();
+    let solid = worm(1., 20., 2.)
+        .transformed(RigidTransform {
+            rotation: [[c, -s, 0.], [s, c, 0.], [0., 0., 1.]],
+            translation_mm: [0.; 3],
+        })
+        .unwrap();
+    let frame = PlaneFrame {
+        origin: [0.3, -0.2, 0.4],
+        u: [1., 0., 0.],
+        v: [0., 1., 0.],
+    };
+    let (centre, radius) = ([0.5, 0.25], 3.);
+    let vectors = crate::project_drawing(
+        &[crate::DrawingSolid {
+            solid: &solid,
+            hatch: None,
+        }],
+        crate::DrawingProjection {
+            frame,
+            detail: Some((centre, radius)),
+            hidden_lines: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(vectors.iter().any(|v| v.role == VectorRole::Hidden));
+    assert!(vectors.iter().any(|v| v.role == VectorRole::Visible));
+    for vector in &vectors {
+        for p in &vector.preview_mm {
+            let gap = (p[0] - centre[0]).hypot(p[1] - centre[1]);
+            assert!(
+                gap <= radius + 1e-6,
+                "published {p:?} is {gap} mm from the centre"
+            );
+        }
+    }
+    let body = built(&solid, frame);
+    let inner = &body.0;
+    let (screw, _) = solid.rust_worm().unwrap();
+    let own = |p: P3| screw.classify(inner.local(p), STRICT) == Containment::Inside;
+    let top = body.bounds()[1][2];
+    let mut proof = Proof::default();
+    let mut root_hidden = 0;
+    for candidate in body.candidates(0.0025).unwrap() {
+        for i in 1..64 {
+            let t = f64::from(i) / 64.;
+            let p = candidate.path.point(t);
+            if (p[0] - centre[0]).hypot(p[1] - centre[1]) > radius - 0.05 {
+                continue;
+            }
+            let before = proof.roles;
+            prove(
+                candidate.kind,
+                candidate.path.as_ref(),
+                t,
+                &own,
+                &own,
+                top,
+                &vectors,
+                &mut proof,
+                "axial detail",
+            );
+            let local = inner.local(p);
+            let on_root = (local[0].hypot(local[1]) - screw.root_radius_mm()).abs() < 1e-9;
+            if on_root && proof.roles > before {
+                root_hidden += 1;
+            }
+        }
+    }
+    println!(
+        "axial detail creases {} roles {} unpublished {} root samples {root_hidden}",
+        proof.creases, proof.roles, proof.unpublished
+    );
+    assert!(
+        proof.roles >= 40 && root_hidden >= 5,
+        "too few proved samples"
+    );
+}

@@ -598,9 +598,14 @@ mod native {
             let forward = deviation(&rust, &reference, true);
             let backward = deviation(&reference, &complete, false);
             println!(
-                "{{\"case\":\"{label}\",\"rust_to_native_mm\":{},\"native_to_rust_mm\":{},\"rust\":{},\"native\":{}}}",
+                "{{\"case\":\"{label}\",\"rust_to_native_mm\":{},\"native_to_rust_mm\":{},\"rust_worst\":[{},{}],\"rust_role\":\"{:?}\",\"native_worst\":[{},{}],\"rust\":{},\"native\":{}}}",
                 forward.0,
                 backward.0,
+                forward.1[0],
+                forward.1[1],
+                forward.2,
+                backward.1[0],
+                backward.1[1],
                 rust.len(),
                 reference.len()
             );
