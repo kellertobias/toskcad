@@ -12,10 +12,14 @@ use crate::{
     tapered_thread::interval::I,
 };
 use std::mem::size_of;
+mod correspondence;
 mod curves;
+pub use correspondence::{CorrespondenceOptions, CorrespondenceReceipt};
 mod surfaces;
 pub use surfaces::{SurfaceCellCertificate, SurfaceOptions, SurfacePatch, SurfacePlan};
+mod verified;
 mod writer;
+pub use verified::{VerifiedAppendReceipt, VerifiedCandidate, VerifiedOptions, VerifiedReceipt};
 pub use writer::{CandidateFile, EncodingReceipt, write_source_candidate};
 #[cfg(test)]
 mod tests;
