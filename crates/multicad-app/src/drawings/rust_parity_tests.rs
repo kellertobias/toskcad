@@ -268,13 +268,22 @@ fn rust_worker_draws_bored_stock_and_gear_sections_through_edits_cancellation_an
     );
     let warm = started.elapsed();
     // Hidden edges behind a curved retained section draw through the scene
-    // engine (CAD-346): the cut face and the retained outline of the bored
-    // plate. Every rear edge of this view coincides with a visible one.
+    // engine (CAD-346). The plane y = 5 through the bore axis retains the
+    // half plate behind it: its rear face and the two half rims of the bore
+    // project onto the outline of the cut face and the cap lines across the
+    // open bore, and the bore's outline generators lie in the cut plane.
+    // Every rear edge therefore coincides with a visible one and the view
+    // has no hidden line.
     let finding = preview(&mut worker, &f.session, f.findings.id);
     let hidden = vectors(&finding, f.findings.views[0].id);
     for role in [VectorRole::Section, VectorRole::Visible] {
         assert!(hidden.iter().any(|vector| vector.role == role), "{role:?}");
     }
+    assert!(
+        hidden
+            .iter()
+            .all(|vector| vector.role != VectorRole::Hidden)
+    );
 
     // A cancelled request publishes nothing, and the worker accepts the next one.
     worker
