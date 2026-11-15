@@ -29,11 +29,6 @@
       ],
       "expected": "pass",
       "verdict": "pass",
-      "section_finding": {
-        "owner": "CAD-346",
-        "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
-        "summary": "A horizontal section through the imported FreeCAD drilled box (prism with a cylindrical through-bore) is refused by the Rust drawing projection, while OpenCascade blind-bore and pocket imports section correctly."
-      },
       "oracle": {
         "volume_mm3": 4699.469035085127,
         "bounds_mm": [
@@ -403,11 +398,6 @@
         "area_mm2": 588.9224380856431,
         "planar_faces": 3,
         "note": "The cubic Bezier (20,0) (20,12) (0,12) (0,0) closed by its chord encloses exactly 144 mm2 and is extruded 6 mm; its arc length 30.153739680940525 mm is integrated numerically."
-      },
-      "section_finding": {
-        "owner": "CAD-346",
-        "error": "drawing projection: Rust spline sweep drawing requires an uncropped axial projection",
-        "summary": "A horizontal section through the imported cubic prism is refused by the Rust drawing projection, which draws spline sweeps only in an uncropped axial view."
       }
     },
     {
@@ -636,12 +626,7 @@
         "hole"
       ],
       "expected": "pass",
-      "verdict": "pass",
-      "section_finding": {
-        "owner": "CAD-346",
-        "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
-        "summary": "A horizontal section through an imported solid with cylindrical faces is refused by the Rust drawing projection (same refusal as freecad-drilled-box)."
-      }
+      "verdict": "pass"
     },
     {
       "id": "kicad-vendored-L_Wuerth_HCM-7070",
@@ -688,12 +673,7 @@
         "trims-seams"
       ],
       "expected": "pass",
-      "verdict": "pass",
-      "section_finding": {
-        "owner": "CAD-346",
-        "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
-        "summary": "A horizontal section through an imported solid with cylindrical faces is refused by the Rust drawing projection (same refusal as freecad-drilled-box)."
-      }
+      "verdict": "pass"
     },
     {
       "id": "kicad-lib-Heatsink_125x35x50mm_3xFixationM3",
@@ -718,12 +698,7 @@
         "planar"
       ],
       "expected": "pass",
-      "verdict": "pass",
-      "section_finding": {
-        "owner": "CAD-346",
-        "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
-        "summary": "A horizontal section through an imported solid with cylindrical faces is refused by the Rust drawing projection (same refusal as freecad-drilled-box)."
-      }
+      "verdict": "pass"
     },
     {
       "id": "kicad-lib-D_SOD-882",
@@ -1297,12 +1272,7 @@
         "planar"
       ],
       "expected": "pass",
-      "verdict": "pass",
-      "section_finding": {
-        "owner": "CAD-346",
-        "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
-        "summary": "A horizontal section through the imported chip resistor, whose rounded ends are cylindrical faces, is refused by the Rust drawing projection."
-      }
+      "verdict": "pass"
     },
     {
       "id": "kicad-lib-QFN-32-1EP_4x4mm_P0.4mm_EP2.9x2.9mm",

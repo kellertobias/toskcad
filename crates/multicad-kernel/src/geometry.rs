@@ -2828,7 +2828,7 @@ impl Solid {
             .map_err(|e| error(operation, GeometryErrorKind::InvalidResult, e.to_string()))
     }
 
-    fn append_step(
+    pub(crate) fn append_step(
         &self,
         writer: &mut multicad_rust_kernel::step::Writer,
     ) -> Result<(), multicad_rust_kernel::step::StepError> {

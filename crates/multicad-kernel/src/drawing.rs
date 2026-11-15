@@ -134,6 +134,25 @@ pub fn project_drawing(
     solids: &[DrawingSolid<'_>],
     options: DrawingProjection,
 ) -> Result<Vec<ProjectedVector>, GeometryError> {
+    let result = project_drawing_with_families(solids, options);
+    // A plane section that the family projectors refuse is cut through the
+    // exact boundary the solids export, retained as written.
+    match (&result, options.section_offset_mm) {
+        (Err(error), Some(offset))
+            if error.kind == GeometryErrorKind::Unsupported
+                && options.section_only
+                && solids.iter().all(|input| input.solid.uses_rust_geometry()) =>
+        {
+            imported::section_through_export(solids, options, offset).unwrap_or(result)
+        }
+        _ => result,
+    }
+}
+
+fn project_drawing_with_families(
+    solids: &[DrawingSolid<'_>],
+    options: DrawingProjection,
+) -> Result<Vec<ProjectedVector>, GeometryError> {
     let policy = GeometryPolicy::default();
     let frame = options.frame.checked(policy)?;
     if solids.is_empty()

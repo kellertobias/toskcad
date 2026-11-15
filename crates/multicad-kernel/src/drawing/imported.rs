@@ -59,3 +59,27 @@ pub(super) fn section(
     }
     Some(Ok(vectors))
 }
+
+/// Section solids through their exported boundary: each solid is written
+/// to STEP with its exact supports and read back as a retained boundary.
+/// `None` when a solid has no exact export or the export does not read
+/// back, so the family refusal stands.
+pub(super) fn section_through_export(
+    solids: &[DrawingSolid<'_>],
+    options: DrawingProjection,
+    offset: f64,
+) -> Option<Result<Vec<ProjectedVector>, GeometryError>> {
+    let retained = solids
+        .iter()
+        .map(|input| input.solid.retained_boundary())
+        .collect::<Option<Vec<_>>>()?;
+    let inputs: Vec<_> = solids
+        .iter()
+        .zip(&retained)
+        .map(|(input, solid)| DrawingSolid {
+            solid,
+            hatch: input.hatch,
+        })
+        .collect();
+    section(&inputs, options, offset)
+}
