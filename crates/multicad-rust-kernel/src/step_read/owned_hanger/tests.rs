@@ -141,6 +141,138 @@ fn actual_trimmed_candidate_is_independently_decoded_from_literal_step_entities(
             assert_ne!(edge.pcurves()[0].surface, edge.pcurves()[1].surface);
             let _ = edge.same_sense();
         }
+        let grid = ExactPoleGrid::prepare(&decoded, GridOptions::default(), None).unwrap();
+        assert!(std::ptr::eq(grid.source(), &decoded));
+        assert!(grid.denominator().signum() == 1);
+        use num_bigint::{BigInt, Sign};
+        use num_rational::BigRational;
+        let integer = |v: &PoleInteger| {
+            BigInt::from_bytes_le(
+                match v.signum() {
+                    -1 => Sign::Minus,
+                    0 => Sign::NoSign,
+                    _ => Sign::Plus,
+                },
+                v.numerator_magnitude_le(),
+            )
+        };
+        let denominator = integer(grid.denominator());
+        assert_eq!(
+            denominator,
+            (BigInt::from(1) << grid.denominator_powers()[0])
+                * BigInt::from(5).pow(grid.denominator_powers()[1])
+        );
+        let mut powers = BTreeMap::new();
+        for (&id, point) in grid.points() {
+            for (numerator, original) in point.iter().zip(decoded.points()[&id].coordinates()) {
+                let text = original.spelling();
+                let (mantissa, exp) = text.split_once('E').unwrap_or((text, "0"));
+                let fraction = mantissa.split_once('.').map_or(0, |(_, s)| s.len());
+                let exp = exp.parse::<i32>().unwrap() - fraction as i32;
+                let digits = mantissa.replace('.', "");
+                let n = BigInt::parse_bytes(digits.as_bytes(), 10).unwrap();
+                let power = powers
+                    .entry(exp.unsigned_abs())
+                    .or_insert_with(|| BigInt::from(10).pow(exp.unsigned_abs()));
+                let expected = if exp >= 0 {
+                    BigRational::from_integer(n * &*power)
+                } else {
+                    BigRational::new(n, power.clone())
+                };
+                assert_eq!(
+                    BigRational::new(integer(numerator), denominator.clone()),
+                    expected
+                );
+            }
+        }
+        assert!(matches!(
+            ExactPoleGrid::prepare(
+                &decoded,
+                GridOptions {
+                    maximum_preparation_work: grid.preparation_work_used() - 1,
+                    ..GridOptions::default()
+                },
+                None
+            ),
+            Err(Error::Limit)
+        ));
+        assert!(matches!(
+            ExactPoleGrid::prepare(
+                &decoded,
+                GridOptions {
+                    maximum_bytes: 1,
+                    ..GridOptions::default()
+                },
+                None
+            ),
+            Err(Error::Limit)
+        ));
+        assert!(matches!(
+            ExactPoleGrid::prepare(&decoded, GridOptions::default(), Some(&|| true)),
+            Err(Error::Cancelled)
+        ));
+        eprintln!(
+            "actual physical grid left={left} powers={:?} work={} aggregate={} bytes={} points={}",
+            grid.denominator_powers(),
+            grid.preparation_work_used(),
+            grid.aggregate_known_work_used(),
+            grid.retained_bytes(),
+            grid.points().len()
+        );
+        let polar = PolarSupports::prepare(&grid, PolarOptions::default(), None).unwrap();
+        assert!(matches!(
+            PolarSupports::prepare(
+                &grid,
+                PolarOptions {
+                    maximum_work: polar.preparation_work_used() - 1,
+                    ..PolarOptions::default()
+                },
+                None
+            ),
+            Err(Error::Limit)
+        ));
+        assert!(matches!(
+            PolarSupports::prepare(
+                &grid,
+                PolarOptions {
+                    maximum_bytes: 1,
+                    ..PolarOptions::default()
+                },
+                None
+            ),
+            Err(Error::Limit)
+        ));
+        assert!(matches!(
+            PolarSupports::prepare(&grid, PolarOptions::default(), Some(&|| true)),
+            Err(Error::Cancelled)
+        ));
+        assert!(std::ptr::eq(polar.grid(), &grid));
+        assert_eq!(polar.strips().len(), 10);
+        for strip in polar.strips() {
+            assert!(strip.tensor_index() < decoded.tensors().len());
+            assert!(strip.radius_controls_mm().iter().all(|v| v[0] > 0.));
+            assert_eq!(strip.phase_controls_mm()[0], [0., 0.]);
+            assert!(strip.phase_start_mm()[0] >= 0.);
+            assert!(strip.phase_width_mm()[0] > 0.);
+            assert!(matches!(strip.lower_plane_index(), 0 | 2));
+            assert_eq!(strip.left_hand(), left);
+            assert!(strip.weight_bounds().iter().all(|v| v[0] > 0.));
+        }
+        assert_eq!(polar.plane_entities().len(), 4);
+        assert_eq!(
+            polar.angular_piece_count(),
+            polar.angular_coefficients().len()
+        );
+        eprintln!(
+            "actual polar supports left={left} work={} aggregate={} bytes={} plain={:?} leads={:?} origins={:?} planes={:?}",
+            polar.preparation_work_used(),
+            polar.aggregate_known_work_used(),
+            polar.retained_bytes(),
+            polar.plain_radius_mm().unwrap(),
+            polar.thread_leads_mm().unwrap(),
+            polar.phase_origins_mm().unwrap(),
+            polar.plane_heights_mm().unwrap()
+        );
         let lifts = decoded.surface_lifts(LiftOptions::default(), None).unwrap();
         assert!(std::ptr::eq(lifts.source(), &decoded));
         assert_eq!(lifts.edges().len(), decoded.edges().len());

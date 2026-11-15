@@ -8,8 +8,12 @@ use std::{
 };
 mod bernstein;
 mod decode;
+mod grid;
+mod polar;
+pub use polar::{PolarOptions, PolarStrip, PolarSupports};
 mod lifts;
 mod links;
+pub use grid::{ExactPoleGrid, GridOptions, PoleInteger};
 mod numbers;
 pub use lifts::{EdgeLift, LiftOptions, SurfaceLifts};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
