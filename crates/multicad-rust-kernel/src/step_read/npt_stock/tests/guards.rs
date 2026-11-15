@@ -79,6 +79,67 @@ fn actual_closed_file_cannot_identify_nonadjacent_interior_vertex_fans() {
 }
 
 #[test]
+fn actual_pcurve_owners_directions_and_tensor_side_lengths_cannot_be_substituted() {
+    let text = fixture(false);
+    let document = CompoundDocument::parse(&text, Default::default(), None).unwrap();
+    let parsed = Parsed::parse(
+        &document,
+        document.represented_members()[0].item_entity(),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let face = parsed
+        .faces
+        .iter()
+        .find(|face| match face.support {
+            Support::Tensor(index) => {
+                let spans = parsed.tensors[index].spans;
+                spans[0] != spans[1]
+            }
+            _ => false,
+        })
+        .unwrap();
+    let records = document.records();
+    let Value::Reference(support) = records[&face.id][0].args[2] else {
+        panic!()
+    };
+    let binding = |coedge: Coedge| {
+        let edge = &parsed.edges[coedge.edge];
+        let pc = *edge
+            .pcurves
+            .iter()
+            .find(|id| matches!(records[id][0].args[1], Value::Reference(id) if id == support))
+            .unwrap();
+        let Value::Reference(rep) = records[&pc][0].args[2] else {
+            panic!()
+        };
+        let Value::List(items) = &records[&rep][0].args[1] else {
+            panic!()
+        };
+        let Value::Reference(curve) = items[0] else {
+            panic!()
+        };
+        (pc, rep, curve)
+    };
+    let (pc, rep, _) = binding(face.coedges[0]);
+    let other = parsed.edges[face.coedges[0].edge]
+        .pcurves
+        .into_iter()
+        .find(|id| *id != pc)
+        .unwrap();
+    let duplicate = replace_field(&text, other, 1, &format!("#{support}"));
+    assert_eq!(rejected(&duplicate), Error::Invalid);
+    let (_, _, opposite) = binding(face.coedges[2]);
+    let reversed = replace_field(&text, rep, 1, &format!("(#{opposite})"));
+    assert_eq!(rejected(&reversed), Error::Unsupported);
+    let (_, _, next) = binding(face.coedges[1]);
+    let wrong_length = replace_field(&text, rep, 1, &format!("(#{next})"));
+    assert_eq!(rejected(&wrong_length), Error::Unsupported);
+    assert_eq!(document.literal_input(), text);
+}
+
+#[test]
 fn actual_tensor_rows_and_curve_subdivision_counts_must_match_the_neutral_schema() {
     let text = fixture(false);
     let tensor = record_id(&text, "=B_SPLINE_SURFACE_WITH_KNOTS(", 0);
