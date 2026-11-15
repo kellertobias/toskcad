@@ -583,6 +583,31 @@ fn malformed_and_unplaced_structure_is_refused_with_its_kind() {
     for (index, (text, kind)) in cases.iter().enumerate() {
         assert_eq!(refused(text), *kind, "case {index}");
     }
+    // A shape stated for an occurrence or a property places nothing: the
+    // same shape as the product's reads, another is left without a place,
+    // and a dangling one is invalid.
+    let occurrence_shape = with(TWO, "#20000=SHAPE_DEFINITION_REPRESENTATION(#375,#36);");
+    assert_eq!(read(&occurrence_shape).occurrences().len(), 2);
+    let property = "#20001=PROPERTY_DEFINITION('','',#5);\
+        #20000=SHAPE_DEFINITION_REPRESENTATION(#20001,#20002);\
+        #20002=SHAPE_REPRESENTATION('',(#11),#23);";
+    assert_eq!(read(&with(TWO, property)).occurrences().len(), 2);
+    let elsewhere = swap(
+        TWO,
+        "#378 = SHAPE_DEFINITION_REPRESENTATION(#379,#385);",
+        "#378 = SHAPE_DEFINITION_REPRESENTATION(#492,#385);",
+    );
+    assert_eq!(refused(&elsewhere), Error::Unsupported);
+    for dangling in [
+        "(#99999,#385)",
+        "(#20000,#385);#20000=PRODUCT_DEFINITION_SHAPE('','',#99999)",
+    ] {
+        let text = with(
+            TWO,
+            &format!("#20001=SHAPE_DEFINITION_REPRESENTATION{dangling};"),
+        );
+        assert_eq!(refused(&text), Error::Invalid, "{dangling}");
+    }
     // The cylinder's shape, occurrence and placement removed: its solid is
     // left without a place.
     let mut text = TWO.to_owned();

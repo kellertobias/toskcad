@@ -188,6 +188,16 @@ fn arity<'a, 'i, const N: usize>(args: &'a [Value<'i>]) -> Result<&'a [Value<'i>
     args.try_into().ok().ok_or(ReadError::Invalid)
 }
 
+/// The attributes of `id` when it is a simple `name` entity, or `None` for
+/// any other entity. A missing entity is invalid.
+fn kind<'s, 'i>(source: &'s Source<'i>, id: u32, name: &str) -> Result<Option<&'s [Value<'i>]>> {
+    match source.args(id, name) {
+        Ok(args) => Ok(Some(args)),
+        Err(ReadError::Invalid) => Err(ReadError::Invalid),
+        Err(_) => Ok(None),
+    }
+}
+
 fn pair(args: &[Value<'_>]) -> Result<[u32; 2]> {
     let [_, _, first, second] = arity(args)?;
     Ok([reference(first)?, reference(second)?])
@@ -372,11 +382,15 @@ pub(super) fn read(source: &Source<'_>) -> Result<Assembly<u32>> {
     let mut defined = BTreeMap::new();
     let mut names = BTreeMap::new();
     for [shape, representation] in shapes {
-        let [_, _, definition] = arity(source.args(shape, "PRODUCT_DEFINITION_SHAPE")?)?;
+        // A shape of anything but a product definition, such as of an
+        // occurrence or a property, places nothing; a solid that only such a
+        // shape holds is refused below.
+        let Some(args) = kind(source, shape, "PRODUCT_DEFINITION_SHAPE")? else {
+            continue;
+        };
+        let [_, _, definition] = arity(args)?;
         let definition = reference(definition)?;
-        // A shape of anything but a product definition, such as an
-        // occurrence, leaves its solids unplaced and is refused below.
-        let Ok(args) = source.args(definition, "PRODUCT_DEFINITION") else {
+        let Some(args) = kind(source, definition, "PRODUCT_DEFINITION")? else {
             continue;
         };
         let [_, _, formation, _] = arity(args)?;
