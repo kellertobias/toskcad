@@ -325,3 +325,81 @@ fn two_verified_npt_members_with_an_ordinary_box_share_actual_encoder_budget() {
         second.accounted_peak_bytes()
     );
 }
+#[test]
+fn verified_cancellation_reaches_actual_document_and_decoder_phase_boundaries() {
+    let source = super::super::tests::source(false);
+    let plan = SurfacePlan::new(
+        CurvePlan::new(&source, Default::default(), None).unwrap(),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let encoded_calls = std::cell::Cell::new(0usize);
+    let file = write_source_candidate(
+        &plan,
+        16_000_000,
+        64 * 1024 * 1024,
+        Some(&|| {
+            encoded_calls.set(encoded_calls.get() + 1);
+            false
+        }),
+    )
+    .unwrap();
+    let document_calls = std::cell::Cell::new(0usize);
+    CompoundDocument::parse(
+        file.as_str(),
+        DocumentOptions::default(),
+        Some(&|| {
+            document_calls.set(document_calls.get() + 1);
+            false
+        }),
+    )
+    .unwrap();
+    // Pipeline orchestration, encoding, then its publication charge precede
+    // the actual document. Its publication charge precedes the selected reader.
+    for checkpoint in [
+        encoded_calls.get() + 3,
+        encoded_calls.get() + document_calls.get() + 4,
+    ] {
+        let count = std::cell::Cell::new(0usize);
+        let stop = || {
+            count.set(count.get() + 1);
+            count.get() >= checkpoint
+        };
+        assert!(matches!(
+            plan.verify_candidate(Default::default(), Some(&stop)),
+            Err(Error::Cancelled)
+        ));
+        assert_eq!(count.get(), checkpoint);
+    }
+}
+#[test]
+fn genuine_unrepresentable_flat_land_cannot_promote_a_generated_packet() {
+    use crate::axial_pipe_thread::authored::{AuthoredSection, AuthoredThread};
+    let standard = super::super::tests::source(false);
+    let mut spec = standard.source().spec();
+    let AuthoredSection::NptFlat { depth_mm, .. } = spec.section else {
+        unreachable!()
+    };
+    spec.section = AuthoredSection::NptFlat {
+        depth_mm,
+        flat_width_mm: 1e-16,
+    };
+    let source = AuthoredThread::new(spec, 1e-7, 1e-6)
+        .unwrap()
+        .stock_clip_plan(Default::default(), None)
+        .unwrap();
+    let plan = SurfacePlan::new(
+        CurvePlan::new(&source, Default::default(), None).unwrap(),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    // This is a real accepted analytic source, not a forged SurfacePlan. Its
+    // positive crest land is below representable physical pole separation.
+    // Independent literal geometry must refuse the degenerate candidate.
+    assert!(matches!(
+        plan.verify_candidate(Default::default(), None),
+        Err(Error::Unresolved)
+    ));
+}

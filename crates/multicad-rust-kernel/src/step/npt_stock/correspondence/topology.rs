@@ -68,11 +68,15 @@ pub(super) fn qualify(
                 .iter()
                 .position(|v| v.owner() == owner)
                 .expect("original source vertex");
-            if (vertices[index] != usize::MAX && vertices[index] != target)
-                || (vertex_owners[target] != usize::MAX && vertex_owners[target] != index)
-            {
-                return Ok(None);
-            }
+            // Oriented face/edge bijection glues every connected original
+            // vertex link. All actual vertices are edge endpoints; coverage
+            // gives a surjection between two12-element registries, hence a
+            // bijection. A conflict is an internal graph invariant break.
+            assert!(
+                (vertices[index] == usize::MAX || vertices[index] == target)
+                    && (vertex_owners[target] == usize::MAX || vertex_owners[target] == index),
+                "earned vertex-link bijection"
+            );
             vertices[index] = target;
             vertex_owners[target] = index;
         }
@@ -98,9 +102,11 @@ pub(super) fn qualify(
                 actual = Some(face.forward());
             }
         }
-        if actual != expected {
-            return Ok(None);
-        }
+        // Exact UV edge binding and matching orientation preserve the three
+        // original station ranks. Actual z_v>0 makes vertical edges strictly
+        // increasing; the global cap-height range forces low vertices to rank0
+        // and high vertices to rank2. Material already earned their face senses.
+        assert_eq!(actual, expected, "earned cap station and sense");
     }
     Ok(Some(Topology { edges, vertices }))
 }

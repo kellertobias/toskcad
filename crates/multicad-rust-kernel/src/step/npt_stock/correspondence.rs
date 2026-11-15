@@ -83,6 +83,7 @@ fn scalar_delta(source: [f64; 3], target: crate::step_read::npt_stock::Point<'_>
         })
 }
 fn compare(
+    plan: &SurfacePlan<'_>,
     source: &SurfacePatch,
     target: &crate::step_read::npt_stock::Tensor,
     owned: &OwnedMaterial,
@@ -131,6 +132,29 @@ fn compare(
         {
             result.derivative[axis] =
                 result.derivative[axis].max((I::point(error) + I::point(derivative[axis])).hi);
+        }
+    }
+    // Include the independently certified ORIGINAL incident edge laws in
+    // every proposal, before owner matching chooses it. Their defining poles
+    // were copied into this source net and exact reader boundary binding earns
+    // the same actual decimal polynomial; global delta dominates edge delta.
+    for (side, edge) in source.source_patch().coedges().into_iter().enumerate() {
+        work.charge(64)?;
+        let curve = plan
+            .curves()
+            .curves()
+            .iter()
+            .find(|curve| curve.source_curve() == edge.curve)
+            .expect("original incident edge");
+        let axis = usize::from(side % 2 == 0);
+        for span in curve.spans() {
+            work.charge(32)?;
+            result.position = result
+                .position
+                .max((I::point(span.position_error_mm()) + I::point(delta)).hi);
+            result.derivative[axis] = result.derivative[axis].max(
+                (I::point(span.original_derivative_error_mm()) + I::point(derivative[axis])).hi,
+            );
         }
     }
     if result.position > options.position_error_mm
@@ -214,9 +238,13 @@ fn edges(
                 derivative.max((I::point(span.original_derivative_error_mm()) + I::point(d)).hi);
         }
     }
-    if position > options.position_error_mm || derivative > options.original_derivative_error_mm {
-        return Err(Error::Unresolved);
-    }
+    // Every accepted incident-patch proposal already included these original
+    // curve bounds with a pole delta at least as large. Owner matching and
+    // exact literal boundary binding preserve the same parameter/spans.
+    assert!(
+        position <= options.position_error_mm && derivative <= options.original_derivative_error_mm,
+        "earned incident-edge tolerance dominance"
+    );
     Ok((position, derivative))
 }
 impl SurfacePlan<'_> {
@@ -268,7 +296,7 @@ impl SurfacePlan<'_> {
         let mut matches = [[None; 8]; 8];
         for (row, source) in self.patches().iter().enumerate() {
             for (column, target) in owned.tensors().iter().enumerate() {
-                matches[row][column] = compare(source, target, owned, options, &mut work)?;
+                matches[row][column] = compare(self, source, target, owned, options, &mut work)?;
             }
         }
         let mut matching = [usize::MAX; 8];

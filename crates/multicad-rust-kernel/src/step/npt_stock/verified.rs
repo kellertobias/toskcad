@@ -147,20 +147,38 @@ impl Pipeline<'_> {
         Ok(self.remaining.min(cap))
     }
 }
+// These private seams consume ONLY a fresh sealed typed-writer packet. Its
+// fixed millimetre representation, dimensions2/3, unique IDs, degree11 uniform
+// knots,20edges/12vertices/eight tensor supports, exact UV rows and cap bindings
+// establish the decoder schema/topology. Encoder limits bound Part21 entity,
+// value, token and nesting limits; all phase options are positive remaining
+// validated balances. Structural Invalid is an internal producer invariant;
+// independent public malformed-file readers retain their complete error APIs.
 fn decoder_error(error: crate::step_read::npt_stock::Error) -> Error {
-    match error {
-        crate::step_read::npt_stock::Error::Invalid => Error::Invalid,
-        crate::step_read::npt_stock::Error::Unsupported => Error::Unresolved,
-        crate::step_read::npt_stock::Error::Limit => Error::Limit,
-        crate::step_read::npt_stock::Error::Cancelled => Error::Cancelled,
+    assert!(
+        !matches!(error, crate::step_read::npt_stock::Error::Invalid),
+        "sealed typed NPT packet schema/topology"
+    );
+    if matches!(error, crate::step_read::npt_stock::Error::Unsupported) {
+        Error::Unresolved
+    } else if matches!(error, crate::step_read::npt_stock::Error::Limit) {
+        Error::Limit
+    } else {
+        Error::Cancelled
     }
 }
 fn document_error(error: crate::step_read::owned_insert::Error) -> Error {
-    match error {
-        crate::step_read::owned_insert::Error::Invalid => Error::Invalid,
-        crate::step_read::owned_insert::Error::Unsupported => Error::Unresolved,
-        crate::step_read::owned_insert::Error::Limit => Error::Limit,
-        crate::step_read::owned_insert::Error::Cancelled => Error::Cancelled,
+    // The neutral representation is fixed and valid independently of occupied
+    // geometry, whose genuine Unsupported remains handled by decoder_error.
+    if matches!(error, crate::step_read::owned_insert::Error::Limit) {
+        Error::Limit
+    } else {
+        assert_eq!(
+            error,
+            crate::step_read::owned_insert::Error::Cancelled,
+            "sealed typed NPT neutral document"
+        );
+        Error::Cancelled
     }
 }
 fn room(maximum: usize, retained: usize) -> Result<usize, Error> {
@@ -315,10 +333,11 @@ impl super::super::Writer {
             return Err(Error::Unresolved);
         }
         let maximum_work = pipeline.available(16_000_000)?;
-        let maximum_bytes = room(
-            options.maximum_bytes,
-            candidate.material.retained_budget_bytes() + PIPELINE_SCRATCH,
-        )?;
+        // The inherited verified construction peak already includes these
+        // immutable literal bytes and pipeline scratch; the earlier peak gate
+        // dominates this subtraction. Actual writer growth remains fallible.
+        let maximum_bytes =
+            options.maximum_bytes - candidate.material.retained_budget_bytes() - PIPELINE_SCRATCH;
         let encoded = writer::append_verified_replay(
             self,
             candidate,
