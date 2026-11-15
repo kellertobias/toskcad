@@ -550,3 +550,87 @@ fn retained_exports_verify_only_against_their_own_boundary() {
         Err(ReadError::Invalid)
     );
 }
+
+/// A millimetre/radian Part 21 file around `body`, whose representation
+/// holds the solids `items`.
+fn part21(items: &str, body: &str) -> String {
+    format!(
+        "ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION((''),'2;1');\nFILE_NAME('t','',(''),(''),'','','');\n\
+         FILE_SCHEMA(('AUTOMOTIVE_DESIGN'));\nENDSEC;\nDATA;\n\
+         #900=ADVANCED_BREP_SHAPE_REPRESENTATION('',({items}),#901);\n\
+         #901=(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#905))\
+         GLOBAL_UNIT_ASSIGNED_CONTEXT((#902,#903,#904))REPRESENTATION_CONTEXT('',''));\n\
+         #902=(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.));\n\
+         #903=(NAMED_UNIT(*)PLANE_ANGLE_UNIT()SI_UNIT($,.RADIAN.));\n\
+         #904=(NAMED_UNIT(*)SI_UNIT($,.STERADIAN.)SOLID_ANGLE_UNIT());\n\
+         #905=UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-07),#902,'','');\n\
+         {body}ENDSEC;\nEND-ISO-10303-21;\n"
+    )
+}
+
+/// An elliptic cylinder, semiaxes 3 and 2 mm and 5 mm tall: two planar
+/// caps bounded by ellipses and a linear extrusion of the lower ellipse.
+const ELLIPTIC: &str = "\
+#1=CARTESIAN_POINT('',(0.,0.,0.));#2=CARTESIAN_POINT('',(0.,0.,5.));\
+#3=DIRECTION('',(0.,0.,1.));#4=DIRECTION('',(1.,0.,0.));\
+#5=AXIS2_PLACEMENT_3D('',#1,#3,#4);#6=AXIS2_PLACEMENT_3D('',#2,#3,#4);\
+#7=ELLIPSE('',#5,3.,2.);#8=ELLIPSE('',#6,3.,2.);\
+#9=VERTEX_POINT('',#10);#10=CARTESIAN_POINT('',(3.,0.,0.));\
+#11=VERTEX_POINT('',#12);#12=CARTESIAN_POINT('',(3.,0.,5.));\
+#13=EDGE_CURVE('',#9,#9,#7,.T.);#14=EDGE_CURVE('',#11,#11,#8,.T.);\
+#15=VECTOR('',#3,1.);#16=LINE('',#10,#15);#17=EDGE_CURVE('',#9,#11,#16,.T.);\
+#20=PLANE('',#5);#21=PLANE('',#6);#22=SURFACE_OF_LINEAR_EXTRUSION('',#7,#15);\
+#30=ORIENTED_EDGE('',*,*,#13,.F.);#31=EDGE_LOOP('',(#30));#32=FACE_OUTER_BOUND('',#31,.T.);\
+#33=ADVANCED_FACE('',(#32),#20,.F.);\
+#40=ORIENTED_EDGE('',*,*,#14,.T.);#41=EDGE_LOOP('',(#40));#42=FACE_OUTER_BOUND('',#41,.T.);\
+#43=ADVANCED_FACE('',(#42),#21,.T.);\
+#50=ORIENTED_EDGE('',*,*,#13,.T.);#51=ORIENTED_EDGE('',*,*,#17,.T.);\
+#52=ORIENTED_EDGE('',*,*,#14,.F.);#53=ORIENTED_EDGE('',*,*,#17,.F.);\
+#54=EDGE_LOOP('',(#50,#51,#52,#53));#55=FACE_BOUND('',#54,.T.);\
+#56=ADVANCED_FACE('',(#55),#22,.T.);\
+#60=CLOSED_SHELL('',(#33,#43,#56));#61=MANIFOLD_SOLID_BREP('',#60);\n";
+
+/// Perimeter of an ellipse by a fine midpoint rule, independent of the
+/// provider's quadrature.
+fn perimeter(a: f64, b: f64) -> f64 {
+    let n = 200_000;
+    (0..n)
+        .map(|k| {
+            let t = (k as f64 + 0.5) / n as f64 * 2. * PI;
+            (a * t.sin()).hypot(b * t.cos()) * 2. * PI / n as f64
+        })
+        .sum()
+}
+
+#[test]
+fn elliptic_cylinder_matches_its_closed_forms_and_round_trips() {
+    let text = part21("#61", ELLIPTIC);
+    let elliptic = solid(&text);
+    assert!(
+        close(elliptic.volume_mm3(), 30. * PI, 1e-12),
+        "{}",
+        elliptic.volume_mm3()
+    );
+    let areas = sorted_areas(&elliptic);
+    assert!(close(areas[0], 6. * PI, 1e-12) && close(areas[1], 6. * PI, 1e-12));
+    assert!(close(areas[2], 5. * perimeter(3., 2.), 1e-9), "{areas:?}");
+    let [low, high] = elliptic.bounds_mm();
+    assert!(distance(low, [-3., -2., 0.]) < 1e-9 && distance(high, [3., 2., 5.]) < 1e-9);
+    certified(&elliptic, 0.01);
+    let loops =
+        section::section(&elliptic, [0., 0., 2.5], [0., 0., 1.], options(0.001), None).unwrap();
+    assert_eq!(loops.len(), 1);
+    assert!(
+        loops[0]
+            .iter()
+            .all(|p| ((p[0] / 3.).hypot(p[1] / 2.) - 1.).abs() < 1e-9)
+    );
+    let mut writer = crate::step::Writer::new();
+    writer.append_brep(&elliptic).unwrap();
+    let back = solid(&writer.finish().unwrap());
+    assert!(close(back.volume_mm3(), 30. * PI, 1e-12));
+    let turned = elliptic
+        .moved(&|p| [p[1], -p[0], p[2]], &|p| [p[1], -p[0], p[2]])
+        .unwrap();
+    assert!(distance(turned.bounds_mm()[0], [-2., -3., 0.]) < 1e-9);
+}
