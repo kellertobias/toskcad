@@ -115,6 +115,7 @@ mod paths;
 mod prism;
 mod profile;
 mod publish;
+mod worm;
 pub(in crate::drawing) use engine::{SceneMember, project};
 // `member` is the per-family registration point for scene members.
 #[allow(unused_imports)]

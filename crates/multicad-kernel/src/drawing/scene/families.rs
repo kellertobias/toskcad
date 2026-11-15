@@ -18,6 +18,7 @@ pub(in crate::drawing) fn member(
     // HOOK bevel: spherical bevel gears (`scene/bevel.rs`).
     // HOOK worm: ZA worms and worm wheels (`scene/worm.rs`).
     gear(solid, view)
+        .or_else(|| super::worm::member(solid, view))
         .or_else(|| extrusion(solid, view))
         .or_else(|| bore::Bore::new(solid, view).map(|bore| Ok(Box::new(bore) as Box<dyn Member>)))
 }
