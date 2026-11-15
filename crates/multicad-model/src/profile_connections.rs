@@ -641,9 +641,10 @@ impl Builder<'_> {
         )?;
         Ok(nut)
     }
-    fn rust_nut_receivers(
+    fn rust_hardware_receivers(
         &self,
-        nut: &Solid,
+        hardware: &Solid,
+        screw: bool,
         request: &model::ProfileConnectionRequest,
         access_bores: Option<EntityId>,
     ) -> Result<(), ModelError> {
@@ -662,17 +663,27 @@ impl Builder<'_> {
                 self.inputs.revision,
                 self.inputs.snapshots,
             ))?;
-            self.checked(nut.rust_line8_receiver_clearance(
-                self.solid(producer)?,
-                RigidTransform {
-                    rotation: pose.rotation,
-                    translation_mm: pose.translation_mm,
-                },
-                HARDWARE_CLEARANCE_VOLUME_MM3,
-                None,
-            ))?;
+            let occurrence = RigidTransform {
+                rotation: pose.rotation,
+                translation_mm: pose.translation_mm,
+            };
+            if screw {
+                self.checked(hardware.rust_profiled_screw_receiver_clearance(
+                    self.solid(producer)?,
+                    occurrence,
+                    HARDWARE_CLEARANCE_VOLUME_MM3,
+                    None,
+                ))?;
+            } else {
+                self.checked(hardware.rust_line8_receiver_clearance(
+                    self.solid(producer)?,
+                    occurrence,
+                    HARDWARE_CLEARANCE_VOLUME_MM3,
+                    None,
+                ))?;
+            }
         }
-        if self.checked(nut.solid_count())? != 1 {
+        if self.checked(hardware.solid_count())? != 1 {
             return Err(self.fail("Each retained connector component must be one physical solid"));
         }
         Ok(())
@@ -724,12 +735,14 @@ pub(crate) fn build(
                         "Rust profile connections do not yet support the intersecting barrel screw passage and head seat",
                     )),
                 },
-                ProfilePartRole::Screw(index) => builder
-                    .screw(request.kind, frames.fasteners[index], backend)
-                    .map(|result| result.0),
+                ProfilePartRole::Screw(index) => {
+                    let screw = builder.screw(request.kind, frames.fasteners[index], backend)?.0;
+                    builder.rust_hardware_receivers(&screw, true, &request, output.access_bores)?;
+                    Ok(screw)
+                },
                 ProfilePartRole::Nut(index) => {
                     let nut=builder.nut(request.kind,request.nut,frames.fasteners[index],backend)?;
-                    builder.rust_nut_receivers(&nut,&request,output.access_bores)?;
+                    builder.rust_hardware_receivers(&nut,false,&request,output.access_bores)?;
                     Ok(nut)
                 },
             },

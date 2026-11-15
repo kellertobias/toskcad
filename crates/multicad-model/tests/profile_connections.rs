@@ -2,6 +2,8 @@
 mod line8_cache;
 #[path = "profile_connections/line8_nuts.rs"]
 mod line8_nuts;
+#[path = "profile_connections/line8_screws.rs"]
+mod line8_screws;
 use multicad_core::{
     commands::{Actor, Channel, Request, Session},
     document::{Document, Entity, EntityData, EntityId, Mutation},
