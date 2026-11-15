@@ -1,3 +1,5 @@
+#[path = "profile_connections/line8_cache.rs"]
+mod line8_cache;
 #[path = "profile_connections/line8_nuts.rs"]
 mod line8_nuts;
 use multicad_core::{

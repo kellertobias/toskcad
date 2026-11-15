@@ -1,6 +1,6 @@
 use super::*;
 use multicad_kernel::RigidTransform;
-fn fixture(
+pub(super) fn fixture(
     case: usize,
     variant: ProfileConnectionNut,
 ) -> (
@@ -66,7 +66,7 @@ fn fixture(
     session.commit(draft.prepared).unwrap();
     (session, members, request, outputs)
 }
-fn compiler() -> Compiler {
+pub(super) fn compiler() -> Compiler {
     Compiler {
         omit_display: true,
         ..Default::default()

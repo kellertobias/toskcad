@@ -40,7 +40,11 @@
 //! module are always evaluated, and so is every feature whose closure
 //! contains such a feature, an Instance, an Assembly, or a sketch targeted by
 //! an occurrence reference. A new provider is therefore uncached until it is
-//! audited and added here.
+//! audited and added here. Original Rust joining-plate outputs additionally use
+//! the shared bounded occurrence-pose projection: absolute driver/structure
+//! fingerprints replace only their explicit pose links, while every geometry,
+//! parameter and reference supplier remains in the ordinary audited closure.
+//! Generic Instance/Assembly consumers remain uncacheable.
 //!
 //! Fence geometry reads its declared run/type/path/level/parameter closure.
 //! A miss validates the complete run before returning any member solid, even
@@ -78,6 +82,8 @@ use std::{
     sync::Arc,
 };
 
+mod profile_connections;
+
 /// Default bound on the estimated size of entries not used by the latest
 /// compile (kept for undo/redo and toggled edits).
 pub const DEFAULT_RETAINED_BYTES: usize = 256 * 1024 * 1024;
@@ -114,6 +120,7 @@ pub fn cacheable_type(type_id: &str) -> bool {
         model::SHEET_PROFILE_CUT_TYPE,
         model::MEMBER_TYPE,
         model::HARDWARE_TYPE,
+        model::PROFILE_CONNECTION_OUTPUT_TYPE,
         model::AID_TYPE,
         model::imports::STEP_BODY_TYPE,
         model::imports::BOARD_TYPE,
@@ -579,6 +586,8 @@ type Edges = (Vec<EntityId>, Vec<EntityId>);
 /// One compile's view of the cache.
 pub(crate) struct Session<'a> {
     cache: &'a mut EvaluationCache,
+    backend: GeometryBackend,
+    profile_poses: BTreeMap<EntityId, Option<Arc<profile_connections::PoseInputs>>>,
     document: &'a Document,
     parameters: &'a EvaluatedParameters,
     salt: Vec<u8>,
@@ -613,6 +622,8 @@ impl<'a> Session<'a> {
             .collect();
         Self {
             cache,
+            backend,
+            profile_poses: BTreeMap::new(),
             document,
             parameters,
             salt,
@@ -627,17 +638,37 @@ impl<'a> Session<'a> {
             },
         }
     }
+    fn profile_pose(&mut self, id: EntityId) -> Option<Arc<profile_connections::PoseInputs>> {
+        if let Some(found) = self.profile_poses.get(&id) {
+            return found.clone();
+        }
+        let found = profile_connections::project(self.document, id).map(Arc::new);
+        self.profile_poses.insert(id, found.clone());
+        found
+    }
     /// Evaluation-dependency and mention edges of an entity.
     fn edges(&mut self, id: EntityId) -> Option<Edges> {
         if let Some(found) = self.edges.get(&id) {
             return found.clone();
         }
         let computed = (|| {
+            let projection = if profile_connections::source(self.document, id) {
+                Some(self.profile_pose(id)?)
+            } else {
+                None
+            };
             let entity = self.document.get(id)?;
-            let evaluation: BTreeSet<_> = self.document.evaluation_dependencies(id).ok()?;
+            let mut evaluation: BTreeSet<_> = self.document.evaluation_dependencies(id).ok()?;
             let mut mentioned = BTreeSet::new();
             mentions(&serde_json::to_value(entity).ok()?, &mut mentioned);
             mentioned.remove(&id);
+            if let Some(projection) = projection {
+                for id in &projection.omitted {
+                    evaluation.remove(id);
+                    mentioned.remove(id);
+                }
+                evaluation.extend(projection.geometry.iter().copied());
+            }
             let mentioned = mentioned
                 .into_iter()
                 .filter(|m| !evaluation.contains(m) && self.document.get(*m).is_some())
@@ -652,8 +683,17 @@ impl<'a> Session<'a> {
             return *found;
         }
         let computed = (|| {
+            let projection = if profile_connections::source(self.document, id) {
+                Some(self.profile_pose(id)?)
+            } else {
+                None
+            };
             let entity = self.document.get(id)?;
             let mut bytes = serde_json::to_vec(entity).ok()?;
+            if let Some(projection) = projection {
+                bytes.extend(b"|absolute-profile-poses|");
+                bytes.extend(projection.fingerprint.0);
+            }
             match (&entity.data, visit) {
                 (EntityData::Parameter { .. }, _) => {
                     bytes.extend(b"|value|");
@@ -699,6 +739,13 @@ impl<'a> Session<'a> {
                 continue;
             }
             match &entity.data {
+                EntityData::Feature { definition, .. }
+                    if definition.type_id == model::PROFILE_CONNECTION_OUTPUT_TYPE
+                        && (self.backend != GeometryBackend::Rust
+                            || !profile_connections::output(self.document, id)) =>
+                {
+                    return None;
+                }
                 EntityData::Instance { .. } | EntityData::Assembly { .. } => return None,
                 EntityData::Feature { definition, .. } if !cacheable_type(&definition.type_id) => {
                     return None;
