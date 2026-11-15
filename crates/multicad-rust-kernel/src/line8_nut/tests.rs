@@ -553,3 +553,76 @@ fn public_material_queries_reject_nonfinite_precision_and_overflowing_boxes() {
     assert_eq!(receipt.work_used(), 2048);
     assert_eq!(receipt.bounds_mm3(), before);
 }
+
+#[test]
+fn finite_owner_queries_enforce_ranges_budgets_and_late_cancel_without_publication() {
+    let source = nut();
+    let edge = Edge::Crown(0);
+    let vertex = Vertex::Crown(0);
+    assert_eq!(
+        source.vertex_bounds(vertex, 2047, None).err(),
+        Some(Error::Limit)
+    );
+    assert_eq!(
+        source.curve_bounds(edge, [0., 1.], 2047, None).err(),
+        Some(Error::Limit)
+    );
+    for range in [[f64::NAN, 1.], [0., f64::INFINITY], [-0.1, 1.], [0., 1.1]] {
+        assert_eq!(
+            source.curve_bounds(edge, range, 2048, None).err(),
+            Some(Error::Invalid)
+        );
+    }
+    for invalid in [
+        Edge::StockEnd { end: 2, side: 0 },
+        Edge::StockEnd { end: 0, side: 8 },
+        Edge::SplitRail { corner: 3, end: 0 },
+        Edge::SplitRail { corner: 4, end: 2 },
+        Edge::ReliefStart(4),
+        Edge::Helix(4),
+        Edge::ThreadRing { end: 2, role: 0 },
+        Edge::ThreadRing { end: 0, role: 4 },
+    ] {
+        assert_eq!(invalid.endpoints(), Err(Error::Invalid));
+        assert_eq!(
+            source.curve_bounds(invalid, [0., 1.], 2048, None).err(),
+            Some(Error::Invalid)
+        );
+    }
+    for invalid in [
+        Vertex::Stock { end: 2, corner: 0 },
+        Vertex::Stock { end: 0, corner: 8 },
+        Vertex::ReliefStart(4),
+        Vertex::Thread {
+            end: 2,
+            junction: 0,
+        },
+        Vertex::Thread {
+            end: 0,
+            junction: 4,
+        },
+    ] {
+        assert_eq!(
+            source.vertex_bounds(invalid, 2048, None).err(),
+            Some(Error::Invalid)
+        );
+    }
+    for curve in [false, true] {
+        let calls = std::cell::Cell::new(0);
+        let late = || {
+            calls.set(calls.get() + 1);
+            calls.get() == 2
+        };
+        let result = if curve {
+            source.curve_bounds(edge, [0., 1.], 2048, Some(&late))
+        } else {
+            source.vertex_bounds(vertex, 2048, Some(&late))
+        };
+        assert_eq!(result.err(), Some(Error::Cancelled));
+        assert_eq!(calls.get(), 2);
+    }
+    let a = source.vertex_bounds(vertex, 2048, None).unwrap();
+    let b = source.curve_bounds(edge, [0., 0.], 2048, None).unwrap();
+    assert_eq!(a.position_mm(), b.position_mm());
+    assert_eq!(a.work_used(), b.work_used());
+}
