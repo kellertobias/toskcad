@@ -287,3 +287,70 @@ fn a_refusal_of_both_readers_keeps_the_first_reason() {
     assert_eq!(ReadError::from(Error::Cancelled), ReadError::Invalid);
     assert_eq!(ReadError::from(Error::Limit), ReadError::Limit);
 }
+
+#[test]
+fn sections_lie_on_the_exact_boundary_and_close() {
+    // The frustum's radius falls from 8 to 4 over 10 mm: 6 mm at mid-height.
+    let frustum = solid(FRUSTUM);
+    let loops =
+        section::section(&frustum, [0., 0., 5.], [0., 0., 1.], options(0.01), None).unwrap();
+    assert_eq!(loops.len(), 1);
+    let radial = loops[0]
+        .iter()
+        .map(|p| (p[0].hypot(p[1]) - 6.).abs())
+        .fold(0., f64::max);
+    let axial = loops[0]
+        .iter()
+        .map(|p| (p[2] - 5.).abs())
+        .fold(0., f64::max);
+    assert!(
+        radial < 1e-9 && axial < 1e-12,
+        "{radial:e} {axial:e} {}",
+        loops[0].len()
+    );
+    let length = section::length(&loops[0]);
+    assert!(length < 12. * PI && length > 12. * PI * 0.999, "{length}");
+    // Material is left of the loop seen against the normal: counter-clockwise.
+    let turn: f64 = (0..loops[0].len())
+        .map(|i| {
+            let (a, b) = (loops[0][i], loops[0][(i + 1) % loops[0].len()]);
+            a[0] * b[1] - b[0] * a[1]
+        })
+        .sum();
+    assert!(turn > 0.);
+
+    // A box with a void: the outer rectangle and the void's, as four
+    // straight sides each.
+    let hollow = solid(VOID);
+    let mut loops =
+        section::section(&hollow, [0., 0., 5.], [0., 0., 1.], options(0.01), None).unwrap();
+    loops.sort_by(|a, b| section::length(a).total_cmp(&section::length(b)));
+    assert_eq!(loops.iter().map(Vec::len).collect::<Vec<_>>(), [4, 4]);
+    assert!(close(section::length(&loops[1]), 100., 1e-12));
+
+    // A plane that misses the solid cuts nothing, and an interrupt stops it.
+    assert!(
+        section::section(&frustum, [0., 0., 50.], [0., 0., 1.], options(0.01), None)
+            .unwrap()
+            .is_empty()
+    );
+    let stop = || true;
+    let stopped = section::section(
+        &frustum,
+        [0., 0., 5.],
+        [0., 0., 1.],
+        options(0.01),
+        Some(&stop),
+    );
+    assert_eq!(stopped.unwrap_err(), Error::Cancelled);
+
+    // A sphere cut off-centre: a circle of radius 4 at height 3.
+    let sphere = solid(SPHERE);
+    let loops = section::section(&sphere, [0., 0., 3.], [0., 0., 1.], options(0.01), None).unwrap();
+    assert_eq!(loops.len(), 1);
+    assert!(
+        loops[0]
+            .iter()
+            .all(|p| (p[0].hypot(p[1]) - 4.).abs() < 1e-9)
+    );
+}

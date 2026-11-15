@@ -174,7 +174,15 @@ impl Solid {
             return Err(invalid("STEP import needs a source identity"));
         }
         let tolerance = policy.linear_tolerance_mm;
-        let mut members = step_read::read_source_compound(input, tolerance).map_err(|cause| {
+        let recognised = step_read::read_source_compound(input, tolerance);
+        if recognised.is_err() {
+            // Outside the recognised families the solid keeps its imported
+            // boundary. When that is refused too, the first refusal stands.
+            if let Ok(retained) = Self::import_rust_brep(input, feature, policy) {
+                return Ok(retained);
+            }
+        }
+        let mut members = recognised.map_err(|cause| {
             let (kind, message) = match cause {
                 ReadError::Invalid => (GeometryErrorKind::InvalidResult, "Invalid STEP geometry"),
                 ReadError::Limit => (

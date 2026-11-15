@@ -12,6 +12,7 @@ mod mass;
 pub mod mesh;
 pub mod nurbs;
 mod polygon;
+pub mod section;
 pub mod solid;
 pub mod surface;
 

@@ -3,6 +3,7 @@
 use crate::{GeometryError, GeometryErrorKind, GeometryPolicy, PlaneFrame, Solid, ffi};
 use multicad_core::drawings::{VectorCurve, VectorRole};
 mod curved;
+mod imported;
 mod panel;
 mod planar;
 mod section;
@@ -195,6 +196,12 @@ pub fn project_drawing(
                 GeometryErrorKind::Unsupported,
                 "Rust drawing projection requires all sources to use Rust geometry",
             ));
+        }
+        if options.section_only
+            && let Some(offset) = options.section_offset_mm
+            && let Some(vectors) = imported::section(solids, options, offset)
+        {
+            return vectors;
         }
         if let [input] = solids
             && let Some((sphere, frame)) = input.solid.sphere_body()

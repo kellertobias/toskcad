@@ -1091,6 +1091,8 @@ impl Solid {
                 body.topology(frame, owner, revision)
             } else if let Some((body, frame)) = self.sphere_body() {
                 body.topology(frame, owner, revision)
+            } else if let Some(body) = self.imported_brep_body() {
+                body.topology(owner, revision)
             } else if let Some((body, frame)) = self.rounded_cylinder_body() {
                 body.topology(frame, owner, revision)
             } else if let Some((body, frame)) = self.torus_body() {

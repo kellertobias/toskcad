@@ -49,6 +49,20 @@ impl Edge {
     }
 }
 
+impl Edge {
+    /// Points along the edge whose chords stay within `deflection` and
+    /// turn by at most `angle`.
+    pub fn polyline(&self, deflection: f64, angle: f64) -> Result<Vec<Point>> {
+        let parameters = self
+            .curve
+            .sample(self.range[0], self.range[1], deflection, angle)?;
+        Ok(parameters
+            .into_iter()
+            .map(|t| self.curve.evaluate(t).0)
+            .collect())
+    }
+}
+
 /// One trim loop: oriented edge uses, or a lone vertex.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Loop {

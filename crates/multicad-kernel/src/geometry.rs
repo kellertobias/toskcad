@@ -30,6 +30,7 @@ pub use hanger_material::HangerMaterial;
 mod helical_body;
 mod helical_tube_body;
 mod herringbone_body;
+pub(crate) mod imported_brep_body;
 mod internal_ring_body;
 mod linear_body;
 mod nonplanar_loft_body;
@@ -89,6 +90,7 @@ use rounded_slot_body::RoundedSlotBody;
 use rounded_thread_body::RoundedThreadBody;
 pub use rounded_thread_body::{RoundedThreadData, RoundedThreadMassProperties};
 mod internal_thread_treatment_body;
+use imported_brep_body::ImportedBrepBody;
 use internal_thread_treatment_body::InternalThreadTreatmentBody;
 pub use internal_thread_treatment_body::{
     InternalThreadFaceProperties, InternalThreadTreatmentCut, InternalThreadTreatmentData,
@@ -731,6 +733,7 @@ enum SolidBody {
     AxialStack(Rc<AxialStackBody>, PlaneFrame),
     RustCompound(Rc<RustCompound>),
     Orthogonal(Rc<OrthogonalBody>, PlaneFrame),
+    ImportedBrep(Rc<ImportedBrepBody>),
     PlanarBoolean(Rc<PlanarBooleanBody>, PlaneFrame),
     WarpedUnion(Rc<WarpedUnionBody>, PlaneFrame),
 }
@@ -1203,6 +1206,7 @@ impl Solid {
             SolidBody::Bevel(body, frame) => SolidBody::Bevel(Rc::clone(body), *frame),
             SolidBody::Worm(body, frame) => SolidBody::Worm(Rc::clone(body), *frame),
             SolidBody::Sphere(body, frame) => SolidBody::Sphere(Rc::clone(body), *frame),
+            SolidBody::ImportedBrep(body) => SolidBody::ImportedBrep(Rc::clone(body)),
             SolidBody::Torus(body, frame) => SolidBody::Torus(Rc::clone(body), *frame),
             SolidBody::RoundedCylinder(body, frame) => {
                 SolidBody::RoundedCylinder(Rc::clone(body), *frame)
@@ -1633,6 +1637,9 @@ impl Solid {
                     frame.checked_metric_extent([body.geometry.radius_mm(); 3], self.policy)?;
                     SolidBody::Sphere(Rc::clone(body), frame)
                 }
+                SolidBody::ImportedBrep(body) => {
+                    SolidBody::ImportedBrep(Rc::new(body.transformed(transform)?))
+                }
                 SolidBody::Torus(body, frame) => {
                     let frame = transform.frame(*frame);
                     let major = body.geometry.major_radius_mm();
@@ -1741,6 +1748,9 @@ impl Solid {
         }
         if let Some((body, _)) = self.sphere_body() {
             return Ok(body.geometry.volume_mm3());
+        }
+        if let Some(body) = self.imported_brep_body() {
+            return Ok(body.solid.volume_mm3());
         }
         if let Some((body, _)) = self.spur_gear_body() {
             return Ok(body.profile.volume_mm3());
@@ -1870,6 +1880,9 @@ impl Solid {
         }
         if let Some((body, frame)) = self.sphere_body() {
             return Ok(body.bounds(frame));
+        }
+        if let Some(body) = self.imported_brep_body() {
+            return Ok(body.bounds());
         }
         if let Some((body, frame)) = self.spur_gear_body() {
             return Ok(body.bounds(frame));
@@ -2050,6 +2063,9 @@ impl Solid {
         }
         if let Some((body, frame)) = self.sphere_body() {
             return Ok(vec![body.face(frame)]);
+        }
+        if let Some(body) = self.imported_brep_body() {
+            return Ok(body.faces());
         }
         if let Some((body, frame)) = self.spur_gear_body() {
             return Ok(body.faces(frame));
@@ -2273,6 +2289,7 @@ impl Solid {
             }
             SolidBody::Bevel(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::Worm(body, frame) => body.mesh(*frame, rust_options),
+            SolidBody::ImportedBrep(body) => body.mesh(rust_options),
             SolidBody::Sphere(body, frame) => {
                 crate::rust_display::placed_mesh(body.geometry.mesh(rust_options), *frame, false)
             }
@@ -2637,6 +2654,9 @@ impl Solid {
         if let Some((body, frame)) = self.radial_boundary_body() {
             return body.sample_edge(frame, ordinal, options);
         }
+        if let Some(body) = self.imported_brep_body() {
+            return body.sample_edge(ordinal, options);
+        }
         let (member, local) = self.rust_compound()?.edge_source(ordinal)?;
         member.sample_non_analytic_edge(local, options)
     }
@@ -2688,6 +2708,7 @@ impl Solid {
             SolidBody::Bevel(body, _) => body.feature,
             SolidBody::Worm(body, _) => body.feature,
             SolidBody::Sphere(body, _) => body.feature,
+            SolidBody::ImportedBrep(body) => body.feature,
             SolidBody::Torus(body, _) => body.feature,
             SolidBody::RoundedCylinder(body, _) => body.feature,
             SolidBody::AxialStack(body, _) => body.feature,
@@ -2725,6 +2746,7 @@ impl Solid {
             | SolidBody::AxialStack(..)
             | SolidBody::Sphere(..)
             | SolidBody::Torus(..)
+            | SolidBody::ImportedBrep(..)
             | SolidBody::RoundedSlot(..) => true,
             SolidBody::Prism(prism, _) => prism.rounded_end().is_none(),
             SolidBody::RustCompound(compound) => compound
@@ -2941,6 +2963,7 @@ impl Solid {
             SolidBody::Sphere(body, frame) => {
                 writer.append_sphere(body.geometry, frame.origin, frame.u, frame.v)
             }
+            SolidBody::ImportedBrep(body) => writer.append_brep(&body.solid),
             SolidBody::RoundedCylinder(body, frame) => writer.append_rounded_cylinder(
                 &body.geometry,
                 frame.origin,
