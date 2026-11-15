@@ -15,6 +15,7 @@ pub mod circular_distance;
 pub mod circular_pockets;
 pub mod conical_screw_seat;
 pub mod cosmetic_fastener;
+pub mod cosmetic_profiled_screw;
 pub mod curved_projection;
 pub mod cylinder;
 pub mod cylindrical_blind_pocket;

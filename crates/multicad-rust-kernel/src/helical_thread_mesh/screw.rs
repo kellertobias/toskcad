@@ -31,6 +31,24 @@ pub fn tessellate_profiled_screw(
     screw: &crate::profiled_screw::Screw,
     options: Tessellation,
 ) -> Result<DisplayMesh, MeshError> {
+    profiled_mesh(screw, options, false)
+}
+
+/// Explicit display envelope: the original physical head/recess is retained,
+/// while the thread interval has its nominal smooth cylindrical boundary.
+/// Manufacturing callers must keep selecting the modeled source path above.
+pub fn tessellate_profiled_cosmetic_screw(
+    screw: &crate::profiled_screw::Screw,
+    options: Tessellation,
+) -> Result<DisplayMesh, MeshError> {
+    profiled_mesh(screw, options, true)
+}
+
+fn profiled_mesh(
+    screw: &crate::profiled_screw::Screw,
+    options: Tessellation,
+    cosmetic: bool,
+) -> Result<DisplayMesh, MeshError> {
     use crate::profiled_screw::Face;
     let options = profiled_options(screw, options)?;
     let radius = screw.profile().support([1., 0., 0.]);
@@ -40,7 +58,11 @@ pub fn tessellate_profiled_screw(
         return Err(MeshError::BudgetExceeded);
     }
     let thread = screw.thread();
-    let strips = phase_strips(thread, TAU / angular_steps, options)?;
+    let strips = if cosmetic {
+        vec![]
+    } else {
+        phase_strips(thread, TAU / angular_steps, options)?
+    };
     let mut builder = Builder::new(thread, angular_steps as usize, strips, options);
     let coupling = screw.source_error_mm() / screw.recess().maximum_radius_bound_mm();
     match screw.recess() {
@@ -57,16 +79,38 @@ pub fn tessellate_profiled_screw(
         }
     }
     builder.lower = screw.visible_thread_interval_mm()[0];
-    builder.build_wall()?;
-    let [mut shoulder, tip] = std::mem::take(&mut builder.caps);
-    builder.add_cap(1, tip)?;
-    Builder::sort_ring(&mut shoulder)?;
     let faces = screw.faces();
     let face = |f| {
         faces
             .iter()
             .position(|&candidate| candidate == f)
             .expect("profiled screw face") as u32
+    };
+    let shoulder = if cosmetic {
+        let angles = (0..builder.steps)
+            .map(|i| TAU * builder.fraction(i))
+            .collect();
+        let mut shell = HeadMesh {
+            builder: &mut builder,
+            angles,
+        };
+        let radius = thread.spec().major_radius_mm;
+        let lower = shell.ring(screw.visible_thread_interval_mm()[0], |_| radius);
+        let tip = shell.ring(thread.spec().length_mm, |_| radius);
+        shell.wall(&lower, &tip, |_| Ok(face(Face::ThreadWall(0))), false)?;
+        let center = shell.push([0., 0., thread.spec().length_mm]);
+        for (&a, &b) in tip.iter().zip(tip.iter().cycle().skip(1)) {
+            shell
+                .builder
+                .triangle([center, a, b], face(Face::ThreadTip))?;
+        }
+        shell.angles.into_iter().zip(lower).collect()
+    } else {
+        builder.build_wall()?;
+        let [mut shoulder, tip] = std::mem::take(&mut builder.caps);
+        builder.add_cap(1, tip)?;
+        Builder::sort_ring(&mut shoulder)?;
+        shoulder
     };
     let mut shell = HeadMesh {
         builder: &mut builder,

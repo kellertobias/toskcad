@@ -308,3 +308,116 @@ fn cylindrical_socket_caps_keep_true_torx_cavity_and_full_original_threads() {
         }
     }
 }
+
+#[test]
+fn cosmetic_profiled_torx_retains_real_head_and_conical_drive_with_one_smooth_shaft() {
+    for scale in [0.125, 1., 8.] {
+        for left in [false, true] {
+            for union in [false, true] {
+                let source = screw(scale, left, union, false);
+                let before = source.clone();
+                let mesh = tessellate_profiled_cosmetic_screw(&source, options(scale)).unwrap();
+                let proof = certify(&mesh).unwrap();
+                let r = source.thread().spec().major_radius_mm;
+                let interval = source.visible_thread_interval_mm();
+                let expected = source.volume_mm3() - source.visible_thread_volume_mm3()
+                    + PI * r * r * (interval[1] - interval[0]);
+                assert!(
+                    (proof.signed_volume_mm3 - expected).abs() < 0.1 * scale.powi(3),
+                    "{} != {}",
+                    proof.signed_volume_mm3,
+                    expected
+                );
+                let faces = source.faces();
+                let body = faces
+                    .iter()
+                    .position(|f| *f == Face::ThreadWall(0))
+                    .unwrap() as u32;
+                for (triangle, face) in mesh
+                    .indices
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .zip(&mesh.face_indices)
+                {
+                    if *face == body {
+                        for vertex in triangle {
+                            let [x, y, z] = mesh.vertices.as_chunks::<3>().0[*vertex as usize];
+                            assert!((x.hypot(y) - r).abs() < 1e-12 * scale);
+                            assert!(z == interval[0] || z == interval[1]);
+                        }
+                    }
+                }
+                for arc in source.recess().hexalobular_geometry().unwrap().arcs() {
+                    assert!(mesh.vertices.as_chunks::<3>().0.contains(&[
+                        arc.start_mm[0],
+                        arc.start_mm[1],
+                        source.head_top_z()
+                    ]));
+                }
+                assert_eq!(source, before);
+            }
+        }
+    }
+}
+
+#[test]
+fn cosmetic_profiled_source_has_its_own_cylinder_volume_faces_and_queries() {
+    use crate::cosmetic_profiled_screw::Envelope;
+    for union in [false, true] {
+        let source = screw(1., false, union, false);
+        let before = source.clone();
+        let body = Envelope::new(source);
+        assert_eq!(body.head_source(), &before);
+        assert_eq!(body, body.clone());
+        let interval = body.shaft_interval_mm();
+        let r = body.shaft_radius_mm();
+        assert!(
+            !body
+                .faces()
+                .iter()
+                .any(|f| matches!(f,Face::ThreadWall(i) if *i!=0))
+        );
+        assert_eq!(
+            body.faces().contains(&Face::ThreadShoulder),
+            before.profile().end()[0] != r
+        );
+        let mesh = body.mesh(options(1.)).unwrap();
+        let proof = certify(&mesh).unwrap();
+        assert!((proof.signed_volume_mm3 - body.volume_mm3()).abs() < 0.1);
+        assert!((mesh.face_indices.iter().copied().max().unwrap() as usize) < body.faces().len());
+        assert_eq!(body.support([0., 0., 1.]), interval[1]);
+        assert_eq!(body.support([0., 0., -1.]), -before.head_top_z());
+        assert_eq!(body.support([0.; 3]), 0.);
+        assert!(body.support([f64::NAN, 0., 0.]).is_nan());
+        assert!(!body.contains([f64::NAN, 0., 0.], 0.));
+        assert!(!body.contains([0.; 3], -1.));
+        assert!(!body.contains([0.; 3], f64::NAN));
+        assert!(!body.contains([0., 0., before.head_top_z()], 0.));
+        assert!(!body.contains([r * 2., 0., interval[1]], 0.));
+        assert!(!body.contains([0., 0., interval[1] + 1.], 0.));
+        let z = interval[0].midpoint(interval[1]);
+        let mut fills_old_groove = false;
+        for i in 0..128 {
+            let a = TAU * i as f64 / 128.;
+            let p = [r * 0.99 * a.cos(), r * 0.99 * a.sin(), z];
+            assert!(body.contains(p, 0.));
+            fills_old_groove |= !before.contains(p, 0.);
+        }
+        assert!(fills_old_groove);
+        assert!(
+            body.mesh(Tessellation {
+                triangle_limit: 2,
+                ..options(1.)
+            })
+            .is_err()
+        );
+        assert!(
+            body.mesh(Tessellation {
+                angle: 0.,
+                ..options(1.)
+            })
+            .is_err()
+        );
+    }
+}
