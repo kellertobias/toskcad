@@ -2,6 +2,7 @@
 //! Original finite coedges remain bounded correspondence records; their raw
 //! occupied set and mass are not asserted. No authoring recipe is used.
 use super::*;
+mod query;
 use super::{
     bernstein::{self as poly, Algebra, Polynomial},
     polar::{PolarStrip, PolarSupports},
@@ -9,6 +10,7 @@ use super::{
 use num_bigint::{BigInt, Sign};
 use num_rational::BigRational;
 use num_traits::{ToPrimitive, Zero};
+pub use query::{PointLocation, PointQuery, QueryOptions};
 #[derive(Clone, Copy)]
 pub struct HealingOptions {
     pub maximum_work: usize,

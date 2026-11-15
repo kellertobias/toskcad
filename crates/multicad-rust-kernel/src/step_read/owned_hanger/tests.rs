@@ -326,6 +326,91 @@ fn actual_trimmed_candidate_is_independently_decoded_from_literal_step_entities(
         );
         assert!(occupied.angular_norm_bounds()[0] > 0.);
         assert!(occupied.healed_volume_bounds_mm3()[0] > 0.);
+        let mut resolved = 0;
+        let mut tested = 0;
+        let mut most_work = (0, [0.; 3]);
+        for z in [-12.713, -7.132, -0.713, 0.713, 5.132, 11.713] {
+            for r in [0.7, 1.13, 1.37, 1.63, 1.83, 2.03] {
+                for angle in [0., 0.173_f64, 1.371, 2.713, 4.113, 5.839] {
+                    let point = [r * angle.cos(), r * angle.sin(), z];
+                    let oracle = source.classify_box(point.map(|v| [v, v]), None).unwrap();
+                    let query = occupied
+                        .classify_point(point, QueryOptions::default(), None)
+                        .unwrap();
+                    tested += 1;
+                    if query.work_used() > most_work.0 {
+                        most_work = (query.work_used(), point);
+                    }
+                    if query.location() != PointLocation::Unresolved {
+                        resolved += 1;
+                        let expected = match oracle {
+                            crate::authored_hanger_bolt::Classification::Inside => {
+                                PointLocation::Inside
+                            }
+                            crate::authored_hanger_bolt::Classification::Outside => {
+                                PointLocation::Outside
+                            }
+                            crate::authored_hanger_bolt::Classification::UnresolvedBoundary => {
+                                continue;
+                            }
+                        };
+                        assert_eq!(
+                            query.location(),
+                            expected,
+                            "decoded point {point:?} left={left}"
+                        );
+                    }
+                    assert!(query.work_used() > 0);
+                }
+            }
+        }
+        eprintln!("healed independent point query left={left} resolved={resolved}/{tested}");
+        assert!(resolved * 10 > tested * 9);
+        assert!(matches!(
+            occupied.classify_point(
+                most_work.1,
+                QueryOptions {
+                    maximum_work: most_work.0 - 1,
+                    ..QueryOptions::default()
+                },
+                None
+            ),
+            Err(Error::Limit)
+        ));
+        assert!(matches!(
+            occupied.classify_point(
+                most_work.1,
+                QueryOptions {
+                    maximum_bytes: 1,
+                    ..QueryOptions::default()
+                },
+                None
+            ),
+            Err(Error::Limit)
+        ));
+        assert!(matches!(
+            occupied.classify_point(most_work.1, QueryOptions::default(), Some(&|| true)),
+            Err(Error::Cancelled)
+        ));
+        assert!(matches!(
+            occupied.classify_point([f64::NAN, 0., 0.], QueryOptions::default(), None),
+            Err(Error::Invalid)
+        ));
+        assert_eq!(
+            occupied
+                .classify_point([0., 0., 1000.], QueryOptions::default(), None)
+                .unwrap()
+                .location(),
+            PointLocation::Outside
+        );
+        assert_eq!(
+            occupied
+                .classify_point([0., 0., 0.], QueryOptions::default(), None)
+                .unwrap()
+                .location(),
+            PointLocation::Unresolved
+        );
+        eprintln!("healed point maximum work left={left} {}", most_work.0);
         eprintln!(
             "healed actual field left={left} work={} aggregate={} bytes={} volume={:?} sewing={} jacobian={}",
             occupied.admission_work_used(),
