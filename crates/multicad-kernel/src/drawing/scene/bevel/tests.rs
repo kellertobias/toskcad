@@ -1,6 +1,8 @@
 //! The bevel member against the provider's exact membership predicate and
 //! independently evaluated surface normals.
 use super::*;
+
+mod drawn;
 use crate::{GeometryPolicy, RigidTransform, SphericalBevelGear};
 use multicad_core::document::EntityId;
 
@@ -392,6 +394,9 @@ fn every_turn_of_a_face_normal_has_an_outline() {
     }
 }
 
+/// Section paths published as exact ellipse arcs.
+static CONICS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// Signed area of chained section loops from fine chords, checking closure,
 /// the plane, the boundary and the material side on the way.
 fn loop_area(name: &str, gear: &Gear, depth: f64, loops: &[Loop]) -> f64 {
@@ -415,6 +420,76 @@ fn loop_area(name: &str, gear: &Gear, depth: f64, loops: &[Loop]) -> f64 {
             }
             for pair in points.windows(2) {
                 area += 0.5 * (pair[0][0] * pair[1][1] - pair[1][0] * pair[0][1]);
+            }
+            // Certified chords: the curve stays within the tolerance of
+            // every chord, for a coarse and a fine request.
+            for tolerance in [2e-2, 1e-4] {
+                let stops = path.flatten(tolerance);
+                assert!(stops.len() < 20_000, "{name}: {} stops", stops.len());
+                assert_eq!((stops[0], *stops.last().unwrap()), (0., 1.));
+                for pair in stops.windows(2) {
+                    assert!(pair[1] > pair[0]);
+                    let [a, b] = [pair[0], pair[1]].map(|t| path.point(t));
+                    let chord = sub(b, a);
+                    for k in 1..8 {
+                        let offset = sub(
+                            path.point(pair[0] + (pair[1] - pair[0]) * f64::from(k) / 8.),
+                            a,
+                        );
+                        let along = if dot3(chord, chord) > 0. {
+                            (dot3(offset, chord) / dot3(chord, chord)).clamp(0., 1.)
+                        } else {
+                            0.
+                        };
+                        let off = norm(sub(offset, scaled(chord, along)));
+                        assert!(
+                            off <= tolerance * (1. + 1e-9) + 1e-12,
+                            "{name}: chord sag {off} beyond {tolerance}"
+                        );
+                    }
+                }
+            }
+            // An exact paper curve carries the whole path.
+            match path.paper([0., 1.]) {
+                Some(Curve::Ellipse(ellipse)) => {
+                    let [first, last] = ellipse.trim.map(|angle| ellipse.point(angle));
+                    let [p, q] = [0., 1.].map(|t| path.point(t));
+                    let gap = |a: P2, b: P3| (a[0] - b[0]).hypot(a[1] - b[1]);
+                    assert!(
+                        (gap(first, p) + gap(last, q)).min(gap(first, q) + gap(last, p)) <= 1e-9,
+                        "{name}: ellipse ends"
+                    );
+                    for k in 0..=32 {
+                        let point = path.point(f64::from(k) / 32.);
+                        let offset = [point[0] - ellipse.center[0], point[1] - ellipse.center[1]];
+                        let x =
+                            (offset[0] * ellipse.u[0] + offset[1] * ellipse.u[1]) / ellipse.major;
+                        let y =
+                            (offset[0] * ellipse.v[0] + offset[1] * ellipse.v[1]) / ellipse.minor;
+                        assert!(
+                            (x.hypot(y) - 1.).abs() * ellipse.minor <= 1e-8,
+                            "{name}: point off its ellipse"
+                        );
+                        let angle = (y.atan2(x) - ellipse.trim[0]).rem_euclid(TAU);
+                        let span = ellipse.trim[1] - ellipse.trim[0];
+                        assert!(
+                            angle <= span + 1e-7 || angle >= TAU - 1e-7,
+                            "{name}: point outside the ellipse trim"
+                        );
+                    }
+                    CONICS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                Some(Curve::Line([a, b])) => {
+                    for k in 0..=8 {
+                        let point = path.point(f64::from(k) / 8.);
+                        let chord = [b[0] - a[0], b[1] - a[1]];
+                        let off = ((point[0] - a[0]) * chord[1] - (point[1] - a[1]) * chord[0])
+                            .abs()
+                            / chord[0].hypot(chord[1]).max(1e-300);
+                        assert!(off <= 1e-9, "{name}: point off its line");
+                    }
+                }
+                None => {}
             }
             let length: f64 = points.windows(2).map(|w| norm(sub(w[1], w[0]))).sum();
             if length > 0.05 {
@@ -501,6 +576,9 @@ fn sections_bound_the_material_in_the_plane() {
             assert!(gear.section(hi[2] + 1., 1e-3).unwrap().is_empty());
         }
     }
+    // Bore cuts and closed cuts of the cones are ellipse arcs.
+    let conics = CONICS.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(conics >= 40, "{conics} elliptic section paths");
 }
 
 /// The engine hides a point when a sight interval extends in front of it.
@@ -551,6 +629,272 @@ fn material_in_front_of_an_edge_is_found_by_marching_the_membership() {
                 covered > 0 && open > 0,
                 "{name} {label}: {covered} covered, {open} open"
             );
+        }
+    }
+}
+
+/// A nine-tooth gear with meridian flanks; no meridian plane carries a
+/// second meridian face on the far side of the axis.
+fn meridian_gear(placed: bool) -> Solid {
+    let solid = Solid::rust_spherical_bevel_gear_named(
+        specification(2., 9, 13, 8., 3.),
+        EntityId::new(),
+        GeometryPolicy::default(),
+    )
+    .unwrap();
+    assert!(solid.bevel_body().unwrap().0.geometry.has_meridian());
+    if placed {
+        solid.transformed(PLACED).unwrap()
+    } else {
+        solid
+    }
+}
+
+fn gear_in(solid: &Solid, frame: PlaneFrame) -> Gear {
+    let (body, placement) = solid.bevel_body().unwrap();
+    Gear {
+        core: Arc::new(Core::new(
+            body.geometry.clone(),
+            placement,
+            &View::new(frame),
+        )),
+    }
+}
+
+/// Strictly inside: the point and its neighbors turned about the gear axis
+/// by a small angle either way are material. This open-set test does not
+/// depend on the rounding of a point lying on a meridian face.
+fn interior(core: &Core, local: P3) -> bool {
+    [-1e-9, 0., 1e-9].into_iter().all(|turn: f64| {
+        let (sin, cos) = turn.sin_cos();
+        let p = [
+            cos * local[0] - sin * local[1],
+            sin * local[0] + cos * local[1],
+            local[2],
+        ];
+        core.inside(p)
+    })
+}
+
+#[test]
+fn sight_lines_in_meridian_planes_are_decided_exactly() {
+    for placed in [false, true] {
+        let solid = meridian_gear(placed);
+        let (_, frame) = solid.bevel_body().unwrap();
+        for (label, [u, v]) in [
+            ("axial", [frame.u, frame.v]),
+            ("reversed", [frame.v, frame.u]),
+        ] {
+            let gear = gear_in(
+                &solid,
+                PlaneFrame {
+                    origin: [1., 2., 3.],
+                    u,
+                    v,
+                },
+            );
+            let core = &gear.core;
+            let planes = core.meridians();
+            assert_eq!(planes.len(), 18);
+            let mut checked = 0;
+            for &(sector, piece, ..) in planes.iter().step_by(5) {
+                // Lines through the face, through its rims and through the
+                // rays at both ends of the face.
+                let mut points = Vec::new();
+                for s in [0., 0.3, 0.7, 1.] {
+                    let u = core.direction(sector, piece, s).0;
+                    let [toe, heel] = [End::Toe, End::Heel].map(|end| core.reach(end, u));
+                    for f in [0., 0.4, 1.] {
+                        points.push(scaled(u, toe + (heel - toe) * f));
+                    }
+                }
+                for local in points {
+                    let target = core.to_view(local);
+                    let reference = gear.sight([target[0], target[1]]).unwrap();
+                    // Perturbing the paper point by rounding-sized amounts
+                    // leaves the answer unchanged.
+                    for (dx, dy) in [(1e-14, 0.), (0., -1e-14), (-3e-15, 2e-15)] {
+                        let other = gear.sight([target[0] + dx, target[1] + dy]).unwrap();
+                        assert_eq!(
+                            other.len(),
+                            reference.len(),
+                            "{label}: {other:?} {reference:?}"
+                        );
+                        for (a, b) in other.iter().zip(&reference) {
+                            assert!((a[0] - b[0]).abs() + (a[1] - b[1]).abs() <= 1e-9);
+                        }
+                    }
+                    let [lo, hi] = gear.bounds();
+                    let steps = 4000;
+                    for k in 0..=steps {
+                        let z =
+                            lo[2] - 0.5 + (hi[2] - lo[2] + 1.) * f64::from(k) / f64::from(steps);
+                        if reference.iter().flatten().any(|end| (end - z).abs() < 0.01) {
+                            continue;
+                        }
+                        let expected = interior(core, core.to_local([target[0], target[1], z]));
+                        let reported = reference.iter().any(|[a, b]| *a < z && z < *b);
+                        assert_eq!(
+                            expected, reported,
+                            "{label} placed {placed}: depth {z} on {target:?}"
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+            assert!(checked > 100_000, "{checked}");
+        }
+    }
+}
+
+/// Winding number of chained loops about a paper point.
+fn winding(loops: &[Loop], point: P2) -> i32 {
+    let mut angle = 0.;
+    for paths in loops {
+        for path in paths {
+            let stops = path.flatten(1e-4);
+            for pair in stops.windows(2) {
+                let [a, b] = [pair[0], pair[1]].map(|t| {
+                    let p = path.point(t);
+                    (p[1] - point[1]).atan2(p[0] - point[0])
+                });
+                angle += (b - a + PI).rem_euclid(TAU) - PI;
+            }
+        }
+    }
+    (angle / TAU).round() as i32
+}
+
+#[test]
+fn section_planes_containing_a_meridian_face_keep_the_material_behind() {
+    let solid = meridian_gear(false);
+    let gear = gear_in(&solid, PlaneFrame::default());
+    let (sector, piece, radial, _) = gear.core.meridians()[0];
+    let normal = [-radial[1], radial[0], 0.];
+    let face = gear.core.bevel.side_area_mm2(gear.core.pieces[piece]);
+    let mut behind_sides = 0;
+    for flip in [false, true] {
+        // The viewer looks along ∓ the meridian normal: u × v = ±normal.
+        let [u, v] = if flip {
+            [radial, [0., 0., 1.]]
+        } else {
+            [[0., 0., 1.], radial]
+        };
+        let gear = gear_in(
+            &solid,
+            PlaneFrame {
+                origin: [1., 2., 3.],
+                u,
+                v,
+            },
+        );
+        let core = &gear.core;
+        let toward = core.sight;
+        assert!((dot3(toward, normal).abs() - 1.).abs() <= 1e-12);
+        let depth = core.origin[2];
+        let label = format!("flip {flip}");
+        let loops = gear.section(depth, 1e-3).unwrap();
+        let area = loop_area(&label, &gear, depth, &loops);
+        let [behind, front] = [-1e-7, 1e-7].map(|h| scanned_area(&gear, depth + h));
+        println!(
+            "{{\"case\":\"{label}\",\"loops\":{area},\"behind\":{behind},\"front\":{front},\"face\":{face}}}"
+        );
+        assert!(
+            (area - behind).abs() <= 2e-3 * behind + 2e-2,
+            "{label}: {area} against {behind} behind"
+        );
+        // The face is the whole difference between the two sides.
+        assert!(
+            ((behind - front).abs() - face).abs() <= 0.02 * face,
+            "{label}"
+        );
+        // A point in the middle of the face lies in the section exactly
+        // when the tooth is behind the plane.
+        let u = core.direction(sector, piece, 0.5).0;
+        let r = 0.5 * (core.reach(End::Toe, u) + core.reach(End::Heel, u));
+        let middle = core.to_view(scaled(u, r));
+        let tooth_behind = core.inside(core.to_local([middle[0], middle[1], depth - 1e-6]));
+        behind_sides += usize::from(tooth_behind);
+        assert_eq!(
+            winding(&loops, [middle[0], middle[1]]),
+            i32::from(tooth_behind),
+            "{label}"
+        );
+        assert_eq!(behind > front, tooth_behind, "{label}");
+    }
+    assert_eq!(behind_sides, 1);
+}
+
+#[test]
+fn line_intervals_are_the_material_along_any_line() {
+    let mut random = Random(11);
+    for (name, solid) in gears()
+        .into_iter()
+        .chain([("meridian", meridian_gear(true))])
+    {
+        for (label, gear) in views(&solid).into_iter().take(4).skip(2) {
+            let core = &gear.core;
+            let [lo, hi] = gear.bounds();
+            let mut spans = 0;
+            for _ in 0..600 {
+                let start: P3 = std::array::from_fn(|k| random.between(lo[k] - 2., hi[k] + 2.));
+                let mut direction: P3 = std::array::from_fn(|_| random.between(-1., 1.));
+                let length = norm(direction);
+                direction = scaled(direction, random.between(0.3, 3.) / length);
+                let intervals = gear.line(start, direction).unwrap().unwrap();
+                spans += intervals.len();
+                for pair in intervals.windows(2) {
+                    assert!(pair[0][1] < pair[1][0], "{name} {label}: order");
+                }
+                let at = |s: f64| add(start, scaled(direction, s));
+                for &[a, b] in &intervals {
+                    assert!(b > a);
+                    for s in [a, b] {
+                        assert!(
+                            on_boundary(core, at(s), 1e-9),
+                            "{name} {label}: end {s} off the boundary"
+                        );
+                    }
+                }
+                // The parameter range crossing the bounds box.
+                let reach = 2. * norm(sub(hi, lo)) / norm(direction) + 10.;
+                for _ in 0..16 {
+                    let s = random.between(-reach, reach);
+                    if intervals.iter().flatten().any(|end| (end - s).abs() < 1e-7) {
+                        continue;
+                    }
+                    let expected = core.inside(core.to_local(at(s)));
+                    let reported = intervals.iter().any(|[a, b]| *a < s && s < *b);
+                    assert_eq!(
+                        expected, reported,
+                        "{name} {label}: {start:?} {direction:?} at {s}"
+                    );
+                }
+                // A start moved far along the line keeps the intervals.
+                let shift = 1e3;
+                let moved = gear.line(at(-shift), direction).unwrap().unwrap();
+                assert_eq!(moved.len(), intervals.len(), "{name} {label}: moved start");
+                for (a, b) in moved.iter().zip(&intervals) {
+                    assert!(
+                        (a[0] - shift - b[0]).abs() + (a[1] - shift - b[1]).abs() <= 1e-9 * shift
+                    );
+                }
+            }
+            assert!(spans > 100, "{name} {label}: {spans} intervals");
+            // Along the view normal the line is the line of sight.
+            for _ in 0..200 {
+                let paper = [random.between(lo[0], hi[0]), random.between(lo[1], hi[1])];
+                let sight = gear.sight(paper).unwrap();
+                let line = gear
+                    .line([paper[0], paper[1], 0.], [0., 0., 1.])
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(sight.len(), line.len());
+                for (a, b) in sight.iter().zip(&line) {
+                    assert!((a[0] - b[0]).abs() + (a[1] - b[1]).abs() <= 1e-9);
+                }
+            }
+            assert!(gear.line([0.; 3], [0.; 3]).unwrap().is_err());
         }
     }
 }

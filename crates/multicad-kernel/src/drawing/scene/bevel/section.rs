@@ -181,70 +181,245 @@ impl Path for Cut {
         {
             return stops.clone();
         }
-        let first = match self.chart {
-            Chart::Sweep(_) => 8,
-            Chart::Along { .. } => 1,
-        };
         let mut stops = vec![0.];
-        for i in 0..first {
-            let [a, b] = [i, i + 1].map(|k| k as f64 / first as f64);
-            self.refine(
-                [a, b],
-                [self.local(a), self.local(b)],
-                tolerance_mm,
-                0,
-                &mut stops,
-            );
-        }
+        self.refine([0., 1.], tolerance_mm, 0, &mut stops);
         *cache = Some((tolerance_mm.to_bits(), stops.clone()));
         stops
     }
 
     fn paper(&self, range: [f64; 2]) -> Option<Curve> {
-        match self.chart {
-            Chart::Along { s: [a, b], .. } if a == b => {
-                let [p, q] = range.map(|t| self.point(t));
-                Some(Curve::Line([[p[0], p[1]], [q[0], q[1]]]))
+        let [p, q] = range.map(|t| self.point(t));
+        let line = Some(Curve::Line([[p[0], p[1]], [q[0], q[1]]]));
+        if matches!(self.chart, Chart::Along { s: [a, b], .. } if a == b) {
+            return line;
+        }
+        let core = &self.core;
+        // The quadric (x − a)ᵀ M (x − a) = k of the face in view space.
+        let (apex, axis, cosine2, radius2) = match self.sheet {
+            Sheet::Bore => ([0.; 3], [0., 0., 1.], None, core.bore?.powi(2)),
+            Sheet::Cap(end) => (
+                [0., 0., core.bevel.back_cone_apex_mm(end)],
+                [0., 0., 1.],
+                Some(core.pitch[0].powi(2)),
+                0.,
+            ),
+            Sheet::Side { sector, piece } => match core.pieces[piece] {
+                Piece::RootLeft | Piece::RootRight => {
+                    ([0.; 3], [0., 0., 1.], Some(core.root.cos().powi(2)), 0.)
+                }
+                Piece::Tip => ([0.; 3], [0., 0., 1.], Some(core.tip.cos().powi(2)), 0.),
+                Piece::MeridianLeft | Piece::MeridianRight => return line,
+                Piece::FilletLeft | Piece::FilletRight => {
+                    let shape = core.shapes[piece];
+                    (
+                        [0.; 3],
+                        core.turn(sector, shape.axis),
+                        Some(shape.cosine.powi(2)),
+                        0.,
+                    )
+                }
+                Piece::InvoluteLeft | Piece::InvoluteRight => return None,
+            },
+        };
+        let apex = core.to_view(apex);
+        let axis = core.vector(axis);
+        let form = |i: usize, j: usize| {
+            let unit = f64::from(u8::from(i == j));
+            match cosine2 {
+                Some(cosine2) => axis[i] * axis[j] - cosine2 * unit,
+                None => unit - axis[i] * axis[j],
             }
-            _ => None,
+        };
+        let [a, b, c] = [form(0, 0), form(0, 1), form(1, 1)];
+        let m = [form(0, 2), form(1, 2)];
+        let dz = p[2] - apex[2];
+        let det = a * c - b * b;
+        // Both eigenvalues of the paper form must share the sign of the
+        // constant for an ellipse.
+        let mean = 0.5 * (a + c);
+        let spread = (0.25 * (a - c) * (a - c) + b * b).sqrt();
+        let values = [mean + spread, mean - spread];
+        if det.abs() <= 1e-12 || values[0] * values[1] <= 0. {
+            return None;
+        }
+        let solved = [(c * m[0] - b * m[1]) / det, (a * m[1] - b * m[0]) / det];
+        let center = [apex[0] - dz * solved[0], apex[1] - dz * solved[1]];
+        let constant = radius2 - dz * dz * (form(2, 2) - m[0] * solved[0] - m[1] * solved[1]);
+        let turn = 0.5 * (2. * b).atan2(a - c);
+        let (sin, cos) = turn.sin_cos();
+        // `values[0]` belongs to (cos, sin), `values[1]` to (−sin, cos).
+        let radii = [constant / values[0], constant / values[1]];
+        if !(radii[0] > 0. && radii[1] > 0.) {
+            return None;
+        }
+        let radii = radii.map(f64::sqrt);
+        let directions = [[cos, sin], [-sin, cos]];
+        let angle = |point: P3| {
+            let offset = [point[0] - center[0], point[1] - center[1]];
+            let [x, y] = [0, 1]
+                .map(|k| (offset[0] * directions[k][0] + offset[1] * directions[k][1]) / radii[k]);
+            (y.atan2(x), x.hypot(y))
+        };
+        let start = angle(p);
+        let mut sweep = 0.;
+        let mut previous = start.0;
+        let scale = radii[0].min(radii[1]);
+        if scale.is_nan() || scale <= 1e-6 * core.scale {
+            return None;
+        }
+        for step in 1..=16 {
+            let t = range[0] + (range[1] - range[0]) * f64::from(step) / 16.;
+            let (next, radius) = angle(self.point(t));
+            // Fall back to chords unless the cut lies on this ellipse.
+            if radius.is_nan() || (radius - 1.).abs() * scale > 1e-9 * core.scale {
+                return None;
+            }
+            sweep += (next - previous + PI).rem_euclid(TAU) - PI;
+            previous = next;
+        }
+        if sweep.abs() < 1e-12 {
+            return line;
+        }
+        super::super::paths::conic(
+            center,
+            directions[0].map(|v| v * radii[0]),
+            directions[1].map(|v| v * radii[1]),
+            start.0,
+            sweep,
+        )
+    }
+}
+
+/// Bounds of the derivatives of a strip's plane terms and rulings.
+struct Rates {
+    /// |α'|, |α''|, |β'|, |β''|.
+    alpha: [f64; 2],
+    beta: [f64; 2],
+    /// |dir'|, |dir''| and |base'|, |base''|.
+    direction: [f64; 2],
+    base: [f64; 2],
+}
+
+impl Core {
+    fn rates(&self, sheet: Sheet, plane: Plane) -> Rates {
+        let across = plane.normal[0].hypot(plane.normal[1]);
+        match sheet {
+            Sheet::Side { piece, .. } => {
+                let Shape {
+                    speed, curvature, ..
+                } = self.shapes[piece];
+                Rates {
+                    alpha: [speed, curvature],
+                    beta: [0.; 2],
+                    direction: [speed, curvature],
+                    base: [0.; 2],
+                }
+            }
+            Sheet::Cap(_) => Rates {
+                alpha: [self.pitch[1] * across; 2],
+                beta: [0.; 2],
+                direction: [self.pitch[1]; 2],
+                base: [0.; 2],
+            },
+            Sheet::Bore => {
+                let bore = self.bore.unwrap_or(0.);
+                Rates {
+                    alpha: [0.; 2],
+                    beta: [bore * across; 2],
+                    direction: [0.; 2],
+                    base: [bore; 2],
+                }
+            }
         }
     }
 }
 
 impl Cut {
-    /// Append the stops of `(a, b]`, halving until the curve stays within
-    /// half the tolerance of each chord at its quarter points.
-    fn refine(
-        &self,
-        [a, b]: [f64; 2],
-        [p, q]: [P3; 2],
-        tolerance: f64,
-        depth: u32,
-        stops: &mut Vec<f64>,
-    ) {
-        let chord = sub(q, p);
-        let length = dot3(chord, chord);
-        let mid = 0.5 * (a + b);
-        let middle = self.local(mid);
-        let off = |point: P3| {
-            let offset = sub(point, p);
-            let along = if length > 0. {
-                (dot3(offset, chord) / length).clamp(0., 1.)
-            } else {
-                0.
-            };
-            norm(sub(offset, scaled(chord, along)))
-        };
-        let worst = [0.25, 0.75]
-            .map(|f| off(self.local(a + (b - a) * f)))
-            .into_iter()
-            .fold(off(middle), f64::max);
-        if worst <= 0.5 * tolerance || depth >= 24 {
+    /// Certified bound of the distance between the cut over a range of its
+    /// chart and the chord of that range: an eighth of the squared width
+    /// times a bound of the second derivative, or half a bound of the arc
+    /// length, whichever is smaller.
+    fn sag(&self, [t0, t1]: [f64; 2]) -> f64 {
+        let core = &self.core;
+        let rates = core.rates(self.sheet, self.plane);
+        let [a1, a2] = rates.alpha;
+        let [b1, b2] = rates.beta;
+        let [d1, d2] = rates.direction;
+        let [e1, e2] = rates.base;
+        match self.chart {
+            Chart::Sweep([a, b]) => {
+                // p = base + q dir with q = β / α:
+                // q' = (β' − q α') / α, q'' = (β'' − 2 q' α' − q α'') / α,
+                // p'' = base'' + q'' dir + 2 q' dir' + q dir''.
+                let [lo, hi] = [t0, t1].map(|t| a + (b - a) * t);
+                let width = hi - lo;
+                let [alpha, beta, ..] = core.terms(self.sheet, self.plane, lo + width / 2.);
+                let least = alpha.abs() - a1 * width / 2.;
+                if least.is_nan() || least <= 0. {
+                    return f64::INFINITY;
+                }
+                let q = (beta.abs() + b1 * width / 2.) / least;
+                let q1 = (b1 + q * a1) / least;
+                let q2 = (b2 + 2. * q1 * a1 + q * a2) / least;
+                let first = e1 + q1 + q * d1;
+                let second = e2 + q2 + 2. * q1 * d1 + q * d2;
+                (width * width * second / 8.).min(width * first / 2.)
+            }
+            Chart::Along { q: [a, b], s } => {
+                // p = base(s) + q dir(s) with s(q) from g = q α' − β':
+                // s' = −α / g,
+                // s'' = −(α' s' g − α (α' + (q α'' − β'') s')) / g²,
+                // p'' = (base'' + q dir'') s'² + 2 dir' s'
+                //       + (base' + q dir') s''.
+                let ends = [t0, t1].map(|t| a + (b - a) * t);
+                let width = (ends[1] - ends[0]).abs();
+                let most = ends[0].abs().max(ends[1].abs());
+                let least = if ends[0] * ends[1] > 0. {
+                    ends[0].abs().min(ends[1].abs())
+                } else {
+                    0.
+                };
+                let across = s[1] - s[0];
+                let extent = width + (most * d1 + e1) * across;
+                let [alpha, beta, dalpha, dbeta] =
+                    core.terms(self.sheet, self.plane, s[0] + across / 2.);
+                let rate = dalpha.abs() + a2 * across / 2.;
+                let (slope, reach) = match self.sheet {
+                    Sheet::Bore => (dbeta.abs() - b2 * across / 2., alpha.abs()),
+                    // On the cut α = β / q with a constant β.
+                    _ => (
+                        least * (dalpha.abs() - a2 * across / 2.),
+                        (alpha.abs() + rate * across / 2.).min(if beta == 0. {
+                            0.
+                        } else {
+                            beta.abs() / least
+                        }),
+                    ),
+                };
+                if slope.is_nan() || slope <= 0. || !reach.is_finite() {
+                    return extent;
+                }
+                let s1 = reach / slope;
+                let most_slope = most * rate + dbeta.abs() + b2 * across / 2.;
+                let s2 = (rate * s1 * most_slope + reach * (rate + (most * a2 + b2) * s1))
+                    / (slope * slope);
+                let second = (e2 + most * d2) * s1 * s1 + 2. * d1 * s1 + (e1 + most * d1) * s2;
+                (width * width * second / 8.).min(extent)
+            }
+        }
+    }
+
+    /// Append the stops of `(a, b]`, halving until each chord is certified.
+    fn refine(&self, [a, b]: [f64; 2], tolerance: f64, depth: u32, stops: &mut Vec<f64>) {
+        let chart = if self.flip { [1. - b, 1. - a] } else { [a, b] };
+        // The stop budget only ends a chart that no bound certifies.
+        if depth >= 40 || stops.len() >= 1 << 16 || self.sag(chart) <= tolerance {
             stops.push(b);
             return;
         }
-        self.refine([a, mid], [p, middle], tolerance, depth + 1, stops);
-        self.refine([mid, b], [middle, q], tolerance, depth + 1, stops);
+        let mid = 0.5 * (a + b);
+        self.refine([a, mid], tolerance, depth + 1, stops);
+        self.refine([mid, b], tolerance, depth + 1, stops);
     }
 }
 
@@ -342,7 +517,7 @@ impl Builder<'_> {
         let mid = sa + width / 2.;
         // |dq/ds| = |q α' − β'| / |α| beyond this loses the point to the
         // rounding of the ruling parameter.
-        let limit = 1e4 * core.scale;
+        let limit = 1e2 * core.scale;
         let steep = |s: f64, q: f64| {
             let [alpha, _, dalpha, dbeta] = core.terms(sheet, self.plane, s);
             !q.is_finite() || (q * dalpha - dbeta).abs() > limit * alpha.abs()
@@ -535,10 +710,24 @@ pub(super) fn section(
     depth: f64,
     _tolerance_mm: f64,
 ) -> Result<Vec<Loop>, GeometryError> {
-    let plane = Plane {
+    let mut plane = Plane {
         normal: core.sight,
         level: depth - core.origin[2],
     };
+    // A plane containing a meridian face has a plane function that vanishes
+    // identically on the face, its rims and the cap generators there. The
+    // section is the region with material immediately behind the plane, so
+    // such a plane is displaced by `band` behind it: the face then lies
+    // strictly in front of the cut and the cut of the material behind the
+    // face converges to the face, which bounds it exactly by its rays and
+    // rims. The displacement is far below every drawing tolerance.
+    let band = 1e-12 * core.scale;
+    if core.meridians().iter().any(|&(_, _, radial, _)| {
+        let normal = [-radial[1], radial[0], 0.];
+        (1. - dot3(normal, plane.normal).abs()) <= 1e-12 && plane.level.abs() <= band
+    }) {
+        plane.level -= band;
+    }
     let [lo, hi] = core.bounds;
     if depth <= lo[2] || depth >= hi[2] {
         return Ok(Vec::new());
