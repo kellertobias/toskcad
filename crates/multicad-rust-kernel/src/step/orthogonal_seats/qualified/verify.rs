@@ -23,6 +23,7 @@ pub struct VerifiedMember {
     item: u32,
     solid: u32,
     matched_entities: usize,
+    binding_work: usize,
     original_volume: [f64; 2],
     healed_volume: [f64; 2],
     original: read::Correspondence,
@@ -40,6 +41,9 @@ impl VerifiedMember {
     }
     pub fn solid_entity(&self) -> u32 {
         self.solid
+    }
+    pub fn literal_binding_work_used(&self) -> usize {
+        self.binding_work
     }
     pub fn matched_entities(&self) -> usize {
         self.matched_entities
@@ -225,6 +229,7 @@ impl QualifiedOrthogonalSeatsStep {
             item,
             solid: boundary.solid_entity(),
             matched_entities: bound.matched_entities(),
+            binding_work: bound.work_used(),
             original_volume: self.original_volume,
             healed_volume: material.healed_volume_bounds_mm3(),
             original: self.original,
