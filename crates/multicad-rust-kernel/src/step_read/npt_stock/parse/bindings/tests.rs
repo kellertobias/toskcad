@@ -128,7 +128,12 @@ fn original_cap_curve_schema_decimal_binding_and_height_are_checked() {
     let read = |input: &str| {
         let records = part21::parse(input).unwrap();
         let mut budget = Budget::new(Default::default(), None).unwrap();
-        let points = super::super::points(&records, &mut budget).unwrap();
+        let (points, _) = super::super::selection::points(
+            &records,
+            document.represented_members()[0].item_entity(),
+            &mut budget,
+        )
+        .unwrap();
         let curve = super::super::curve(&records, &points, curve_id, &mut budget).unwrap();
         let height = point_index(&points, height_id, &mut budget).unwrap();
         cap_curve(&records, &points, geometry, &curve, height, &mut budget)

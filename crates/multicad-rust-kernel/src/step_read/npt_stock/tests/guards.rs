@@ -152,9 +152,20 @@ fn original_numeric_records_must_be_consumed_and_have_the_requested_entity_kind(
 }
 
 #[test]
-fn actual_extra_point_records_cannot_exceed_the_query_source_limit() {
+fn unrelated_point_records_do_not_change_selected_geometry_or_query_resources() {
     use std::fmt::Write;
     let mut text = fixture(false);
+    let original = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+    let solid = original.represented_members()[0].item_entity();
+    let baseline = Parsed::parse(&original, solid, Default::default(), None).unwrap();
+    let expected = (
+        baseline.points().len(),
+        baseline.work_used(),
+        baseline.query_budget_bytes(),
+    );
+    let original_bytes = original.retained_budget_bytes();
+    drop(baseline);
+    drop(original);
     let mut extra = String::new();
     for id in 1_000_000..1_000_000 + 262_144 + 4097 {
         writeln!(&mut extra, "#{id}=CARTESIAN_POINT('',(0.,0.,0.));").unwrap();
@@ -162,11 +173,16 @@ fn actual_extra_point_records_cannot_exceed_the_query_source_limit() {
     let end = text.rfind("ENDSEC;").unwrap();
     text.insert_str(end, &extra);
     let document = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
-    let solid = document.represented_members()[0].item_entity();
-    assert!(matches!(
-        Parsed::parse(&document, solid, Default::default(), None),
-        Err(Error::Limit)
-    ));
+    let selected = Parsed::parse(&document, solid, Default::default(), None).unwrap();
+    assert_eq!(
+        (
+            selected.points().len(),
+            selected.work_used(),
+            selected.query_budget_bytes()
+        ),
+        expected
+    );
+    assert!(document.retained_budget_bytes() > original_bytes);
     assert_eq!(document.literal_input(), text);
 }
 
