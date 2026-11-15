@@ -242,6 +242,32 @@ impl Flank {
         }
     }
 
+    /// Whether a point on the unbounded curve of this edge (its line, circle
+    /// or involute) lies within the edge itself.
+    pub(super) fn covers(&self, point: P2) -> bool {
+        match self.shape {
+            Shape::Line { a, b } => {
+                let d = [b[0] - a[0], b[1] - a[1]];
+                let s = dot2([point[0] - a[0], point[1] - a[1]], d) / dot2(d, d);
+                (-1e-9..=1. + 1e-9).contains(&s)
+            }
+            Shape::Arc {
+                center,
+                start,
+                sweep,
+                ..
+            } => {
+                let angle = (point[1] - center[1]).atan2(point[0] - center[0]);
+                let travel = ((angle - start) * sweep.signum()).rem_euclid(std::f64::consts::TAU);
+                travel <= sweep.abs() + 1e-9 || std::f64::consts::TAU - travel <= 1e-9
+            }
+            Shape::Involute { .. } => {
+                let radius = point[0].hypot(point[1]);
+                radius >= self.radius[0] * (1. - 1e-9) && radius <= self.radius[1] * (1. + 1e-9)
+            }
+        }
+    }
+
     /// Radius of an arc centered on the gear axis.
     pub(super) fn coaxial(&self) -> Option<f64> {
         match self.shape {

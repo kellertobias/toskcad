@@ -22,13 +22,10 @@ pub(in crate::drawing) struct Step {
     pub by_first: bool,
     pub u: [f64; 2],
     pub w: [f64; 2],
-}
-
-fn singular() -> GeometryError {
-    err(
-        GeometryErrorKind::Unsupported,
-        "Rust twisted gear drawing meets a flank tangentially; the exact curve is singular there",
-    )
+    /// Bound of |dw/du| over the chart.
+    pub rate: f64,
+    /// Lower bound of |df/dw| over the chart.
+    pub floor: f64,
 }
 
 impl Step {
@@ -90,11 +87,19 @@ impl Step {
     }
 }
 
-/// A connected curve from one boundary point of the square to another.
+/// A connected curve from one boundary point of the square to another, or
+/// from or to a critical point of the function where branches of the zero
+/// set meet. A bridge has no charts: it is the straight hair between two
+/// points of one branch within `PROBE` of a critical point.
 pub(super) struct Chain {
     pub steps: Vec<Step>,
     pub ends: [[f64; 2]; 2],
+    pub bridge: bool,
 }
+
+/// Radius of the circle on which the branches leaving a critical point are
+/// found.
+const PROBE: f64 = 1e-5;
 
 const MERGE: f64 = 1e-6;
 
@@ -142,6 +147,7 @@ pub(super) fn trace(
         }
     }
     let mut chains = Vec::new();
+    let mut junctions: Vec<Junction> = Vec::new();
     for index in 0..roots.len() {
         if roots[index].1 {
             continue;
@@ -151,8 +157,10 @@ pub(super) fn trace(
         let (_, g) = eval(start[0], start[1]);
         let mut heading = [-g[1], g[0]];
         let size = heading[0].hypot(heading[1]);
-        if size == 0. {
-            return Err(singular());
+        if size <= 1e-9 * magnitude {
+            // The level set touches the boundary at a critical point of the
+            // function: a tangential contact, which bounds nothing.
+            continue;
         }
         // Into the square: away from every side the start lies on.
         let mut inward = 0_f64;
@@ -180,19 +188,122 @@ pub(super) fn trace(
             continue;
         }
         heading = [heading[0] * inward, heading[1] * inward];
-        let chain = walk(eval, bounds, start, heading, budget)?;
-        let end = chain.ends[1];
-        for (p, used) in &mut roots {
-            if (p[0] - end[0]).hypot(p[1] - end[1]) <= MERGE {
-                *used = true;
+        let mut work = vec![(start, heading, None)];
+        while let Some((start, heading, bridge)) = work.pop() {
+            let from_boundary = bridge.is_none();
+            let (chain, stall) = walk(eval, bounds, start, heading, budget)?;
+            let end = chain.ends[1];
+            for (p, used) in &mut roots {
+                if (p[0] - end[0]).hypot(p[1] - end[1]) <= MERGE {
+                    *used = true;
+                }
             }
-        }
-        let length: f64 = chain.steps.iter().map(|s| (s.u[1] - s.u[0]).abs()).sum();
-        if length > 1e-9 {
-            chains.push(chain);
+            let length: f64 = chain.steps.iter().map(|s| (s.u[1] - s.u[0]).abs()).sum();
+            // A walk that returns to its own boundary point followed the
+            // level set where it only touches the boundary.
+            let returned = from_boundary && (start[0] - end[0]).hypot(start[1] - end[1]) <= MERGE;
+            if length <= 1e-9 && !from_boundary {
+                // A branch probed off a critical point that cannot be
+                // followed is a dead end of the probe: no bridge to it.
+                continue;
+            }
+            if let Some(center) = bridge {
+                chains.push(Chain {
+                    steps: Vec::new(),
+                    ends: [center, start],
+                    bridge: true,
+                });
+            }
+            if length > 1e-9 && !returned {
+                chains.push(chain);
+            }
+            if let Some(arrival) = stall {
+                junction(eval, end, arrival, &mut junctions, &mut chains, &mut work)?;
+            }
         }
     }
     Ok(chains)
+}
+
+/// A walk still to be made: its start, heading and the critical point it
+/// is bridged to, if any.
+type Pending = ([f64; 2], [f64; 2], Option<[f64; 2]>);
+
+/// A critical point of the function and the unit directions of the
+/// branches already followed from it.
+struct Junction {
+    center: [f64; 2],
+    used: Vec<[f64; 2]>,
+}
+
+/// Continue through a critical point at which a walk stalled: every branch
+/// of the zero set leaving it across the circle of radius `PROBE` that has
+/// not been followed is bridged to and walked.
+fn junction(
+    eval: Eval<'_>,
+    at: [f64; 2],
+    arrival: [f64; 2],
+    junctions: &mut Vec<Junction>,
+    chains: &mut Vec<Chain>,
+    work: &mut Vec<Pending>,
+) -> Result<(), GeometryError> {
+    if junctions.len() > 4096 {
+        return Err(limit());
+    }
+    let index = match junctions
+        .iter()
+        .position(|j| (j.center[0] - at[0]).hypot(j.center[1] - at[1]) <= 0.5 * PROBE)
+    {
+        Some(index) => index,
+        None => {
+            junctions.push(Junction {
+                center: at,
+                used: Vec::new(),
+            });
+            junctions.len() - 1
+        }
+    };
+    let center = junctions[index].center;
+    if center != at {
+        chains.push(Chain {
+            steps: Vec::new(),
+            ends: [at, center],
+            bridge: true,
+        });
+    }
+    let size = arrival[0].hypot(arrival[1]);
+    junctions[index]
+        .used
+        .push([-arrival[0] / size, -arrival[1] / size]);
+    const COUNT: usize = 256;
+    let value = |angle: f64| {
+        let (sin, cos) = angle.sin_cos();
+        let p = [center[0] + PROBE * cos, center[1] + PROBE * sin];
+        let inside = (0. ..=1.).contains(&p[0]) && (0. ..=1.).contains(&p[1]);
+        (inside.then(|| eval(p[0], p[1]).0), p)
+    };
+    let mut previous = (0., value(0.).0);
+    for k in 1..=COUNT {
+        let angle = std::f64::consts::TAU * k as f64 / COUNT as f64;
+        let current = value(angle).0;
+        if let (Some(a), Some(b)) = (previous.1, current)
+            && (a < 0.) != (b < 0.)
+        {
+            let crossing = bisect(&mut |t| value(t).0.unwrap_or(a), previous.0, a, angle);
+            let (_, q) = value(crossing);
+            let direction = [(q[0] - center[0]) / PROBE, (q[1] - center[1]) / PROBE];
+            let followed = junctions[index]
+                .used
+                .iter()
+                .any(|u| u[0] * direction[0] + u[1] * direction[1] > 0.95);
+            if !followed {
+                junctions[index].used.push(direction);
+                work.push((q, direction, Some(center)));
+            }
+        }
+        previous = (angle, current);
+    }
+    Ok(())
 }
 
 fn walk(
@@ -201,7 +312,7 @@ fn walk(
     start: [f64; 2],
     mut heading: [f64; 2],
     budget: &mut usize,
-) -> Result<Chain, GeometryError> {
+) -> Result<(Chain, Option<[f64; 2]>), GeometryError> {
     let mut steps = Vec::new();
     let mut p = start;
     loop {
@@ -214,15 +325,26 @@ fn walk(
             tangent = [-tangent[0], -tangent[1]];
         }
         if g[iw] == 0. || !g[iw].is_finite() {
-            return Err(singular());
+            return Ok((
+                Chain {
+                    steps,
+                    ends: [start, p],
+                    bridge: false,
+                },
+                Some(heading),
+            ));
         }
         let direction = tangent[iu].signum();
         let available = if direction > 0. { 1. - p[iu] } else { p[iu] };
         if available <= 1e-13 {
-            return Ok(Chain {
-                steps,
-                ends: [start, p],
-            });
+            return Ok((
+                Chain {
+                    steps,
+                    ends: [start, p],
+                    bridge: false,
+                },
+                None,
+            ));
         }
         let [gu, gw] = [g[iu].abs(), g[iw].abs()];
         let [muu, muw, mww] = [
@@ -231,17 +353,24 @@ fn walk(
             bounds.second[if by_first { 2 } else { 0 }],
         ];
         let mut span = available.min(0.25);
-        let reach = loop {
+        let (reach, floor, rate) = loop {
             let reach = 4. * (gu + muu * span) * span / gw + 1e-7;
             let floor = gw - muw * span - mww * reach;
             if muw * span + mww * reach <= 0.5 * gw
                 && (gu + muu * span + muw * reach) * span <= floor * reach
             {
-                break reach;
+                break (reach, floor, (gu + muu * span + muw * reach) / floor);
             }
             span *= 0.5;
             if span < 1e-10 {
-                return Err(singular());
+                return Ok((
+                    Chain {
+                        steps,
+                        ends: [start, p],
+                        bridge: false,
+                    },
+                    Some(heading),
+                ));
             }
         };
         let last = span == available;
@@ -254,6 +383,8 @@ fn walk(
             by_first,
             u: [p[iu], target],
             w: [p[iw] - reach, p[iw] + reach],
+            rate,
+            floor,
         };
         let w = step.solve(eval, target);
         if !(-1e-13..=1. + 1e-13).contains(&w) {
@@ -275,20 +406,28 @@ fn walk(
             if (exit - step.u[0]).abs() > 0. {
                 steps.push(step);
             }
-            return Ok(Chain {
-                steps,
-                ends: [start, end],
-            });
+            return Ok((
+                Chain {
+                    steps,
+                    ends: [start, end],
+                    bridge: false,
+                },
+                None,
+            ));
         }
         steps.push(step);
         p[iu] = target;
         p[iw] = w.clamp(0., 1.);
         heading = tangent;
         if last {
-            return Ok(Chain {
-                steps,
-                ends: [start, p],
-            });
+            return Ok((
+                Chain {
+                    steps,
+                    ends: [start, p],
+                    bridge: false,
+                },
+                None,
+            ));
         }
         if steps.len() > 100_000 {
             return Err(limit());

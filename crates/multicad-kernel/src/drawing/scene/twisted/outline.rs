@@ -3,6 +3,7 @@ use super::super::paths::{ProfilePath, Segment, dot2};
 use super::super::profile::folds;
 use super::super::*;
 use super::flank::rotate;
+use super::solve::{Search, isolate};
 use super::trace::trace;
 use super::{Gear, Helix, Level, Patch, Region, Traced};
 use multicad_rust_kernel::{normal_sweep, spur_gear::Edge};
@@ -81,38 +82,66 @@ fn rulings(
     }
 }
 
-/// Parameters at which the paper image of a traced outline has a cusp: its
-/// tangent passes through the sight direction, where its visibility changes.
-fn cusps(path: &Traced) -> Vec<f64> {
-    let measure = |t: f64| {
-        let h = 1e-6;
-        let [a, b] = [(t - h).max(0.), (t + h).min(1.)];
-        let [p, q] = [path.point(a), path.point(b)];
-        let [s, zeta] = path.parameters(t);
-        let n = path.patch.normal(s, zeta);
-        ((q[0] - p[0]) * n[1] - (q[1] - p[1]) * n[0]) / (b - a)
+/// Parameters of a traced outline at which its paper image has a cusp: its
+/// tangent passes through the sight direction, where its visibility can
+/// change. With the curve's surface tangent `T = f_s S_z - f_z S_s` of the
+/// fold function `f` and the normal `n`, the paper tangent vanishes where
+/// `h = T . (n x d)` does. Every sign change of `h` along each chart is
+/// isolated with a bound of its slope from the chart's slope bound and the
+/// derivative bounds of `f`, the surface and its normal.
+fn cusps(path: &Traced, budget: &mut usize) -> Result<Vec<f64>, GeometryError> {
+    let patch = path.patch;
+    let level = patch.bounds(Level::Fold);
+    let [g1, g2] = [
+        level.first[0].max(level.first[1]),
+        level.second.iter().copied().fold(0., f64::max),
+    ];
+    let [s1, s2] = patch.surface_bounds();
+    let [c0, c1, c2, _] = patch.flank.size;
+    let twist = patch.band.twist.abs();
+    let height = patch.band.z[1] - patch.band.z[0];
+    // Traced flanks are lines and arcs: |c'| is the constant c1.
+    let speed = patch.flank.at(0.5)[1];
+    let speed = speed[0].hypot(speed[1]);
+    let normal = 1. + twist * c0;
+    let turning = (c2 / speed + twist * (c1 + c0 * c2 / speed)).max(height * twist);
+    let tangent = 2. * g1 * s1;
+    let change = 2. * (g2 * s1 + g1 * s2);
+    let gradient = change * normal + tangent * turning;
+    let value = |s: f64, zeta: f64| {
+        let (_, g) = patch.field(Level::Fold, s, zeta);
+        let [ss, sz] = patch.tangents(s, zeta);
+        let t: P3 = std::array::from_fn(|i| g[1] * ss[i] - g[0] * sz[i]);
+        let n = patch.normal(s, zeta);
+        t[0] * n[1] - t[1] * n[0]
     };
-    let count = 8 * path.steps.len();
+    let count = path.steps.len() as f64;
     let mut output = Vec::new();
-    let mut previous = (0., measure(0.));
-    for i in 1..=count {
-        let t = i as f64 / count as f64;
-        let value = measure(t);
-        if (value < 0.) != (previous.1 < 0.) {
-            let [mut a, mut b] = [previous.0, t];
-            for _ in 0..60 {
-                let mid = 0.5 * (a + b);
-                if (measure(mid) < 0.) == (previous.1 < 0.) {
-                    a = mid;
-                } else {
-                    b = mid;
-                }
-            }
-            output.push(0.5 * (a + b));
-        }
-        previous = (t, value);
+    for (index, step) in path.steps.iter().enumerate() {
+        let eval = |s: f64, zeta: f64| patch.field(Level::Fold, s, zeta);
+        let mut roots = Vec::new();
+        isolate(
+            &mut |fraction| {
+                let [s, zeta] = step.point(&eval, fraction);
+                value(s, zeta)
+            },
+            &Search {
+                slope: gradient * (1. + step.rate) * (step.u[1] - step.u[0]).abs(),
+                leaf: 1e-12,
+                noise: 1e-12 * gradient,
+                second: f64::INFINITY,
+                lift: 0.,
+                wrapped: false,
+            },
+            [0., 1.],
+            budget,
+            &mut roots,
+        )?;
+        output.extend(roots.into_iter().map(|f| (index as f64 + f) / count));
     }
-    output
+    output.retain(|t| *t > 1e-12 && *t < 1. - 1e-12);
+    output.sort_by(f64::total_cmp);
+    Ok(output)
 }
 
 /// The arcs of the circle of a radius about the axis, in profile
@@ -198,6 +227,14 @@ pub(super) fn candidates(gear: &Gear) -> Result<Vec<Candidate>, GeometryError> {
                     for end in chain.ends {
                         marks.add(band, flank, end);
                     }
+                    if chain.bridge {
+                        let [a, b] = chain.ends.map(|[s, zeta]| patch.surface(s, zeta));
+                        output.push(Candidate {
+                            kind: Kind::Outline,
+                            path: Arc::new(Segment(a, b)),
+                        });
+                        continue;
+                    }
                     let steps = Arc::new(chain.steps);
                     let whole = Traced {
                         patch,
@@ -206,7 +243,7 @@ pub(super) fn candidates(gear: &Gear) -> Result<Vec<Candidate>, GeometryError> {
                         range: [0., 1.],
                     };
                     let mut cuts = vec![0.];
-                    cuts.extend(cusps(&whole));
+                    cuts.extend(cusps(&whole, &mut budget)?);
                     cuts.push(1.);
                     for pair in cuts.windows(2) {
                         if pair[1] - pair[0] <= 1e-9 {

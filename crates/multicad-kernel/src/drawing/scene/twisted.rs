@@ -159,6 +159,37 @@ impl Patch {
         }
     }
 
+    /// The two partial derivatives of the surface by the edge fraction and
+    /// the band fraction, in view space.
+    pub(super) fn tangents(&self, s: f64, zeta: f64) -> [P3; 2] {
+        let height = self.band.height();
+        let phase = self.band.phase_at(self.z(zeta));
+        let [c, c1, ..] = self.flank.at(s);
+        let along = rotate(c1, phase);
+        let around = rotate(turn(c), phase);
+        [
+            self.frame.vector([along[0], along[1], 0.]),
+            self.frame.vector([
+                height * self.band.twist * around[0],
+                height * self.band.twist * around[1],
+                height,
+            ]),
+        ]
+    }
+
+    /// Bounds of the surface's first and second partial derivatives by the
+    /// edge fraction and the band fraction.
+    pub(super) fn surface_bounds(&self) -> [f64; 2] {
+        let height = self.band.height();
+        let twist = self.band.twist.abs();
+        let [c0, c1, c2, _] = self.flank.size;
+        [
+            c1.max(height * (twist * c0 + 1.)),
+            c2.max(height * twist * c1)
+                .max(height * height * twist * twist * c0),
+        ]
+    }
+
     pub(super) fn bounds(&self, level: Level) -> trace::Bounds {
         let height = self.band.height();
         let twist = self.band.twist.abs();
@@ -215,53 +246,6 @@ impl Traced {
     }
 }
 
-fn distance(a: P3, b: P3) -> f64 {
-    let d: P3 = std::array::from_fn(|i| a[i] - b[i]);
-    dot3(d, d).sqrt()
-}
-
-/// Ascending parameters whose chords stay within the tolerance at the
-/// midpoint and both quarter points of every chord.
-pub(super) fn chords(point: &dyn Fn(f64) -> P3, seeds: Vec<f64>, tolerance: f64) -> Vec<f64> {
-    fn refine(
-        point: &dyn Fn(f64) -> P3,
-        [a, b]: [f64; 2],
-        [pa, pb]: [P3; 2],
-        tolerance: f64,
-        depth: u32,
-        output: &mut Vec<f64>,
-    ) {
-        let mid = 0.5 * (a + b);
-        let pm = point(mid);
-        let deviation = [0.25, 0.5, 0.75]
-            .into_iter()
-            .map(|f| {
-                let on_chord: P3 = std::array::from_fn(|i| pa[i] + (pb[i] - pa[i]) * f);
-                let on_curve = if f == 0.5 { pm } else { point(a + (b - a) * f) };
-                distance(on_chord, on_curve)
-            })
-            .fold(0., f64::max);
-        if deviation <= tolerance || depth >= 20 {
-            output.push(b);
-        } else {
-            refine(point, [a, mid], [pa, pm], tolerance, depth + 1, output);
-            refine(point, [mid, b], [pm, pb], tolerance, depth + 1, output);
-        }
-    }
-    let mut output = vec![seeds[0]];
-    for pair in seeds.windows(2) {
-        refine(
-            point,
-            [pair[0], pair[1]],
-            [point(pair[0]), point(pair[1])],
-            tolerance,
-            0,
-            &mut output,
-        );
-    }
-    output
-}
-
 impl Path for Traced {
     fn point(&self, t: f64) -> P3 {
         let [s, zeta] = self.parameters(t);
@@ -269,18 +253,42 @@ impl Path for Traced {
     }
 
     fn flatten(&self, tolerance_mm: f64) -> Vec<f64> {
-        // Seed with the chart ends inside the range.
+        // On each chart the curve is P(u) = S(u, w(u)) with |w'| <= rate and
+        // w'' = -(f_uu + 2 f_uw w' + f_ww w'^2) / f_w, so
+        // |P''| <= S2 (1 + rate)^2 + S1 |w''|. A chord over a parameter
+        // step h deviates from the curve by at most |P''| h^2 / 8.
+        let [first, second] = self.patch.surface_bounds();
+        let level = self.patch.bounds(self.level).second;
         let count = self.steps.len() as f64;
         let [a, b] = self.range;
-        let mut seeds = vec![0.];
-        let mut inner: Vec<f64> = (1..self.steps.len())
-            .map(|i| (i as f64 / count - a) / (b - a))
-            .filter(|t| *t > 1e-12 && *t < 1. - 1e-12)
-            .collect();
-        inner.sort_by(f64::total_cmp);
-        seeds.extend(inner);
-        seeds.push(1.);
-        chords(&|t| self.point(t), seeds, tolerance_mm)
+        let mut output = vec![0.];
+        for (index, step) in self.steps.iter().enumerate() {
+            // The step's share of the path parameter, ascending.
+            let ends = [index as f64, index as f64 + 1.].map(|k| (k / count - a) / (b - a));
+            let [lo, hi] = [ends[0].min(ends[1]).max(0.), ends[0].max(ends[1]).min(1.)];
+            if hi <= lo {
+                continue;
+            }
+            let rate = step.rate;
+            let [muu, muw, mww] = if step.by_first {
+                [level[0], level[1], level[2]]
+            } else {
+                [level[2], level[1], level[0]]
+            };
+            let curve = (muu + 2. * muw * rate + mww * rate * rate) / step.floor;
+            let bend = second * (1. + rate) * (1. + rate) + first * curve;
+            let span = (step.u[1] - step.u[0]).abs() * (hi - lo) / (ends[1] - ends[0]).abs();
+            let pieces = (span * (bend / (8. * tolerance_mm)).sqrt())
+                .ceil()
+                .clamp(1., (1 << 20) as f64) as usize;
+            for k in 1..=pieces {
+                output.push(lo + (hi - lo) * k as f64 / pieces as f64);
+            }
+        }
+        output.push(1.);
+        output.sort_by(f64::total_cmp);
+        output.dedup();
+        output
     }
 
     fn paper(&self, _: [f64; 2]) -> Option<Curve> {
