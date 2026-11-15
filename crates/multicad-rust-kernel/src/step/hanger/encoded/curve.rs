@@ -6,6 +6,8 @@ pub use affine::AffineCapPiece;
 #[cfg(test)]
 mod affine_probe;
 mod bound_affine;
+mod bound_root;
+pub use bound_root::{BoundRootCap, EndpointArithmetic};
 mod correction;
 mod jets;
 pub use bound_affine::BoundAffineCap;
@@ -169,36 +171,56 @@ impl<'s> EncodedField<'s> {
         options: DomainOptions,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Option<CapCurvePiece<'f, 's>>, Error> {
-        let (mut w, mut memory) = super::super::domain::ledgers(
-            options,
-            self.bytes + size_of::<CapCurvePiece>(),
-            interrupt,
-        )?;
-        // Fixed <=22 degree arithmetic below has <=1024 simultaneously live
-        // <=16384-bit N values. Fixed polynomial arrays avoid unaccounted Vec
-        // capacities. Their <=4MiB payload + descriptors/GCD temporaries and
-        // the temporary CapTrace fit the existing 16MiB exact scratch reserve.
+        let (mut w, mut memory) = super::super::domain::ledgers(options, self.bytes, interrupt)?;
         memory.add(SCRATCH - super::super::SCRATCH)?;
+        let mut output =
+            self.cap_curve_piece_with_ledgers(index, end, angular_piece, &mut memory, &mut w)?;
+        if let Some(curve) = &mut output {
+            curve.work_used = w.used;
+        }
+        Ok(output)
+    }
+    /// Aggregate callers retain the same field and reserve SCRATCH once.
+    /// Failed/empty selections release only their own memory; spent work
+    /// remains debited. Successful receipts report this query's increment.
+    pub(super) fn cap_curve_piece_with_ledgers<'f>(
+        &'f self,
+        index: usize,
+        end: End,
+        angular_piece: usize,
+        memory: &mut Memory,
+        w: &mut Work<'_>,
+    ) -> Result<Option<CapCurvePiece<'f, 's>>, Error> {
+        let base = memory.used;
+        let result = self.compute_cap_piece(index, end, angular_piece, memory, w);
+        if !matches!(&result, Ok(Some(_))) {
+            memory.used = base;
+        }
+        result
+    }
+    fn compute_cap_piece<'f>(
+        &'f self,
+        index: usize,
+        end: End,
+        angular_piece: usize,
+        memory: &mut Memory,
+        w: &mut Work<'_>,
+    ) -> Result<Option<CapCurvePiece<'f, 's>>, Error> {
+        let start_work = w.used;
+        let start_memory = memory.used;
+        memory.add(size_of::<CapCurvePiece>())?;
         if angular_piece >= self.angular.coefficients().len() {
             return Err(Error::Invalid);
         }
         if w.remaining() == 0 {
             return Err(Error::Limit);
         }
-        let trace = self.cap_trace(
-            index,
-            end,
-            DomainOptions {
-                maximum_work: w.remaining(),
-                ..options
-            },
-            interrupt,
-        )?;
-        let Some(trace) = trace else {
+        let Some(trace) = self.cap_trace_with_ledgers(index, end, memory, w)? else {
             w.charge(1)?;
             return Ok(None);
         };
-        w.charge(trace.work_used)?;
+        // CapCurvePiece already contains the moved CapTrace descriptor.
+        memory.used -= size_of::<CapTrace>();
         let cell = &self.cells[index];
         let row = &self.meridians[cell.meridian];
         let s = self.source.source_boundary().source();
@@ -209,8 +231,8 @@ impl<'s> EncodedField<'s> {
             let t = s.wood().spec();
             (t.pitch_mm, t.starts, t.left_hand)
         };
-        let pitch = binary(pitch, &mut w)?;
-        let lead = pitch.mul(&N::integer(i64::from(starts)), &mut w)?;
+        let pitch = binary(pitch, w)?;
+        let lead = pitch.mul(&N::integer(i64::from(starts)), w)?;
         let station = if end == End::Start {
             N::integer(0)
         } else {
@@ -220,69 +242,66 @@ impl<'s> EncodedField<'s> {
                 } else {
                     s.wood().full_length_mm()
                 },
-                &mut w,
+                w,
             )?
         };
         let shifted = station.sub(
-            &pitch.mul(&N::integer(i64::from(cell.source_key.total_period)), &mut w)?,
-            &mut w,
+            &pitch.mul(&N::integer(i64::from(cell.source_key.total_period)), w)?,
+            w,
         )?;
-        let a = binary(self.angular.knots()[angular_piece], &mut w)?;
-        let b = binary(self.angular.knots()[angular_piece + 1], &mut w)?;
-        let lower = shifted.sub(&lead.mul(&b, &mut w)?, &mut w)?;
-        let upper = shifted.sub(&lead.mul(&a, &mut w)?, &mut w)?;
-        let first = trace.endpoints[0].phase.number(&mut w)?;
-        let last = trace.endpoints[1].phase.number(&mut w)?;
-        let lo = if first.cmp(&lower, &mut w)? == Ordering::Greater {
+        let a = binary(self.angular.knots()[angular_piece], w)?;
+        let b = binary(self.angular.knots()[angular_piece + 1], w)?;
+        let lower = shifted.sub(&lead.mul(&b, w)?, w)?;
+        let upper = shifted.sub(&lead.mul(&a, w)?, w)?;
+        let first = trace.endpoints[0].phase.number(w)?;
+        let last = trace.endpoints[1].phase.number(w)?;
+        let lo = if first.cmp(&lower, w)? == Ordering::Greater {
             first
         } else {
             lower
         };
-        let hi = if last.cmp(&upper, &mut w)? == Ordering::Less {
+        let hi = if last.cmp(&upper, w)? == Ordering::Less {
             last
         } else {
             upper
         };
-        if lo.cmp(&hi, &mut w)? != Ordering::Less {
+        if lo.cmp(&hi, w)? != Ordering::Less {
             w.charge(1)?;
             return Ok(None);
         }
-        let u0 = parameter(row, &pitch, &lo, &mut w)?;
-        let u1 = parameter(row, &pitch, &hi, &mut w)?;
+        let u0 = parameter(row, &pitch, &lo, w)?;
+        let u1 = parameter(row, &pitch, &hi, w)?;
         if u0.hi >= u1.lo {
             return Err(Error::Unresolved);
         }
         let q = row
             .phase
             .iter()
-            .map(|x| x.number(&mut w))
+            .map(|x| x.number(w))
             .collect::<Result<Vec<_>, _>>()?;
         let radius = row
             .radius
             .iter()
-            .map(|x| x.number(&mut w))
+            .map(|x| x.number(w))
             .collect::<Result<Vec<_>, _>>()?;
         let weights = row
             .weights
             .iter()
-            .map(|x| x.number(&mut w))
+            .map(|x| x.number(w))
             .collect::<Result<Vec<_>, _>>()?;
-        let scale = lead.mul(&b.sub(&a, &mut w)?, &mut w)?;
-        let shift = shifted.sub(&lead.mul(&a, &mut w)?, &mut w)?;
+        let scale = lead.mul(&b.sub(&a, w)?, w)?;
+        let shift = shifted.sub(&lead.mul(&a, w)?, w)?;
         let mut t = Polynomial::zero(row.degree());
         let mut other = Polynomial::zero(row.degree());
         for i in 0..=row.degree() {
-            t.c[i] = shift
-                .mul(&weights[i], &mut w)?
-                .sub(&q[i], &mut w)?
-                .div(&scale, &mut w)?;
-            other.c[i] = weights[i].sub(&t.c[i], &mut w)?;
+            t.c[i] = shift.mul(&weights[i], w)?.sub(&q[i], w)?.div(&scale, w)?;
+            other.c[i] = weights[i].sub(&t.c[i], w)?;
         }
         let mut tp: [Polynomial; 11] = std::array::from_fn(|_| Polynomial::one());
         let mut op: [Polynomial; 11] = std::array::from_fn(|_| Polynomial::one());
         for i in 1..=10 {
-            tp[i] = tp[i - 1].product(&t, &mut w)?;
-            op[i] = op[i - 1].product(&other, &mut w)?;
+            tp[i] = tp[i - 1].product(&t, w)?;
+            op[i] = op[i - 1].product(&other, w)?;
         }
         let mut xy = [
             Polynomial::zero(10 * row.degree()),
@@ -294,59 +313,38 @@ impl<'s> EncodedField<'s> {
             (angular_piece, false)
         };
         for i in 0..=10 {
-            let term = tp[i].product(&op[10 - i], &mut w)?;
+            let term = tp[i].product(&op[10 - i], w)?;
             let coefficient = &self.angular.coefficients()[piece][if reverse { 10 - i } else { i }];
             for axis in 0..2 {
                 w.charge(512)?;
-                let factor = N(coefficient[axis].clone())
-                    .mul(&N::integer(choose(10, i, &mut w)?), &mut w)?;
+                let factor = N(coefficient[axis].clone()).mul(&N::integer(choose(10, i, w)?), w)?;
                 for j in 0..=term.degree {
-                    xy[axis].c[j] = xy[axis].c[j].add(&term.c[j].mul(&factor, &mut w)?, &mut w)?;
+                    xy[axis].c[j] = xy[axis].c[j].add(&term.c[j].mul(&factor, w)?, w)?;
                 }
             }
         }
-        let r = Polynomial::coefficients(&radius, &mut w)?;
-        let x = r.product(&xy[0], &mut w)?;
-        let y = r.product(&xy[1], &mut w)?;
-        let weight = Polynomial::coefficients(&weights, &mut w)?;
+        let r = Polynomial::coefficients(&radius, w)?;
+        let x = r.product(&xy[0], w)?;
+        let y = r.product(&xy[1], w)?;
+        let weight = Polynomial::coefficients(&weights, w)?;
         let mut den = Polynomial::one();
         for _ in 0..11 {
-            den = den.product(&weight, &mut w)?;
+            den = den.product(&weight, w)?;
         }
-        let plane = trace.plane_z.number(&mut w)?;
-        let mut controls = memory.allocate(den.degree + 1, &mut w)?;
+        let plane = trace.plane_z.number(w)?;
+        let mut controls = memory.allocate(den.degree + 1, w)?;
         for i in 0..=den.degree {
             controls.push([
-                EncodedScalar::retain(&x.c[i], &mut memory, &mut w)?,
-                EncodedScalar::retain(&y.c[i], &mut memory, &mut w)?,
-                EncodedScalar::retain(&plane.mul(&den.c[i], &mut w)?, &mut memory, &mut w)?,
-                EncodedScalar::retain(&den.c[i], &mut memory, &mut w)?,
+                EncodedScalar::retain(&x.c[i], memory, w)?,
+                EncodedScalar::retain(&y.c[i], memory, w)?,
+                EncodedScalar::retain(&plane.mul(&den.c[i], w)?, memory, w)?,
+                EncodedScalar::retain(&den.c[i], memory, w)?,
             ]);
         }
         let phase = [
-            EncodedScalar::retain(&lo, &mut memory, &mut w)?,
-            EncodedScalar::retain(&hi, &mut memory, &mut w)?,
+            EncodedScalar::retain(&lo, memory, w)?,
+            EncodedScalar::retain(&hi, memory, w)?,
         ];
-        let payload = |x: &EncodedScalar| x.n.len() + x.d.len();
-        memory.add(
-            trace.control_storage_bytes()
-                + trace
-                    .controls()
-                    .iter()
-                    .flatten()
-                    .map(payload)
-                    .sum::<usize>()
-                + payload(&trace.plane_z)
-                + trace
-                    .endpoints
-                    .iter()
-                    .map(|e| {
-                        payload(&e.phase)
-                            + payload(&e.physical_turn)
-                            + payload(&e.original_parameter)
-                    })
-                    .sum::<usize>(),
-        )?;
         w.charge(1)?;
         Ok(Some(CapCurvePiece {
             field: self,
@@ -357,8 +355,8 @@ impl<'s> EncodedField<'s> {
             phase,
             parameter_bounds: [[u0.lo, u0.hi], [u1.lo, u1.hi]],
             controls,
-            work_used: w.used,
-            retained_bytes: memory.used - SCRATCH - self.bytes,
+            work_used: w.used - start_work,
+            retained_bytes: memory.used - start_memory,
         }))
     }
 }

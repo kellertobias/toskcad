@@ -309,3 +309,100 @@ fn actual_cap_prefix_cancellation_resource_and_positive_sliver_refusals_are_atom
     ));
     assert!(successful.work_used > 0);
 }
+#[test]
+fn live_root_cap_queries_share_caller_ledgers_and_restore_failed_selection_memory() {
+    for (left, nb) in [(false, false), (true, true)] {
+        let source =
+            Hanger::new(crate::authored_hanger_bolt::tests::fixture(left, nb), None).unwrap();
+        let boundary = source.boundary(BoundaryOptions::default(), None).unwrap();
+        let field = EncodedField::prepare(&boundary, CurveOptions::default(), None).unwrap();
+        let domains = FiniteDomains::prepare(&field, DomainOptions::default(), None).unwrap();
+        let closed = ClosedField::prepare(&domains, DomainOptions::default(), None).unwrap();
+        let graph = closed
+            .literal_vertices(CurveOptions::default(), None)
+            .unwrap();
+        let events = graph.cap_events(DomainOptions::default(), None).unwrap();
+        let mut w = Work::new(16_000_000, None).unwrap();
+        w.charge(events.work_used()).unwrap();
+        let mut m = Memory::new(events.retained_bytes(), 64 * 1024 * 1024).unwrap();
+        m.add(SCRATCH).unwrap();
+        let mut count = 0;
+        for segment in events.segments() {
+            let index = segment.source_cell();
+            if field.meridians[field.cells[index].meridian].degree() != 2 {
+                continue;
+            }
+            let base = m.used;
+            let work = w.used;
+            let curve = field
+                .cap_curve_piece_with_ledgers(
+                    index,
+                    segment.end(),
+                    segment.angular_piece(),
+                    &mut m,
+                    &mut w,
+                )
+                .unwrap()
+                .unwrap();
+            assert_eq!(curve.work_used(), w.used - work);
+            assert_eq!(curve.retained_bytes(), m.used - base);
+            let separate = field
+                .cap_curve_piece(
+                    index,
+                    segment.end(),
+                    segment.angular_piece(),
+                    DomainOptions::default(),
+                    None,
+                )
+                .unwrap()
+                .unwrap();
+            assert_eq!(curve.controls(), separate.controls());
+            assert_eq!(curve.phase(), separate.phase());
+            assert_eq!(curve.parameter_bounds(), separate.parameter_bounds());
+            drop(curve);
+            m.used = base;
+            count += 1;
+        }
+        assert_eq!(count, if nb { 5 } else { 4 });
+        let base = m.used;
+        assert!(matches!(
+            field.cap_curve_piece_with_ledgers(usize::MAX, End::Start, 0, &mut m, &mut w),
+            Err(Error::Invalid)
+        ));
+        assert_eq!(m.used, base);
+        assert!(matches!(
+            field.cap_curve_piece_with_ledgers(0, End::Start, usize::MAX, &mut m, &mut w),
+            Err(Error::Invalid)
+        ));
+        assert_eq!(m.used, base);
+        let mut empty = Work::new(1, None).unwrap();
+        empty.charge(1).unwrap();
+        assert!(matches!(
+            field.cap_curve_piece_with_ledgers(0, End::Start, 0, &mut m, &mut empty),
+            Err(Error::Limit)
+        ));
+        assert_eq!(m.used, base);
+        let mut cancelled = Work::new(16_000_000, Some(&|| true)).unwrap();
+        assert!(matches!(
+            field.cap_curve_piece_with_ledgers(0, End::Start, 0, &mut m, &mut cancelled),
+            Err(Error::Cancelled)
+        ));
+        assert_eq!(m.used, base);
+        let mut absent = 0;
+        for index in 0..field.cells.len() {
+            let before = m.used;
+            if field
+                .cap_curve_piece_with_ledgers(index, End::Start, 0, &mut m, &mut w)
+                .unwrap()
+                .is_none()
+            {
+                assert_eq!(m.used, before);
+                absent += 1;
+                break;
+            } else {
+                m.used = before
+            }
+        }
+        assert_eq!(absent, 1);
+    }
+}

@@ -15,10 +15,11 @@ mod periodic;
 pub use periodic::PeriodicAngular;
 mod encoded;
 pub use encoded::{
-    AffineCapPiece, BoundAffineCap, CapCurvePiece, CapEndpoint, CapEvent, CapEvents, CapSegment,
-    CapTrace, EncodedCell, EncodedControl, EncodedField, EncodedMeridian, EncodedScalar,
-    FiniteDecimal, LiteralCapCurve, LiteralVertex, LiteralVertices, RestrictedCapCurve,
-    RestrictionBounds, SidePole, SideSupport, SideSupportBatch, SideSupportKind,
+    AffineCapPiece, BoundAffineCap, BoundRootCap, CapCurvePiece, CapEndpoint, CapEvent, CapEvents,
+    CapSegment, CapTrace, EncodedCell, EncodedControl, EncodedField, EncodedMeridian,
+    EncodedScalar, EndpointArithmetic, FiniteDecimal, LiteralCapCurve, LiteralVertex,
+    LiteralVertices, RestrictedCapCurve, RestrictionBounds, SidePole, SideSupport,
+    SideSupportBatch, SideSupportKind,
 };
 pub use encoded::{
     ClosedCoedge, ClosedCurve, ClosedEdge, ClosedFace, ClosedFaceKind, ClosedField, ClosedVertex,

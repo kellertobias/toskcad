@@ -520,7 +520,7 @@ fn actual_nonbinary_pitches_earn_inward_trims_and_every_bound_carrier_checkpoint
                 }
                 let mut local = Work::new(16_000_000, None).unwrap();
                 let targets = cap.trim.each_ref().map(|t| {
-                    let h = super::trim_probe::eval(&cap.controls, t, &mut local).unwrap();
+                    let h = super::bound_root::eval(&cap.controls, t, &mut local).unwrap();
                     std::array::from_fn::<_, 3, _>(|a| {
                         EncodedScalar::retain(
                             &h[a].div(&h[3], &mut local).unwrap(),

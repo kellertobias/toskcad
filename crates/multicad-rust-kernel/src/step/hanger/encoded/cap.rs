@@ -26,9 +26,6 @@ pub struct CapTrace {
     pub work_used: usize,
 }
 impl CapTrace {
-    pub(super) fn control_storage_bytes(&self) -> usize {
-        self.controls.capacity() * size_of::<[EncodedScalar; 3]>()
-    }
     pub fn controls(&self) -> &[[EncodedScalar; 3]] {
         &self.controls
     }
