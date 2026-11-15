@@ -367,3 +367,138 @@ fn original_model_member_sections_and_both_occurrences_earn_separate_nut_clearan
         );
     }
 }
+#[test]
+fn actual_profiled_screw_receiver_guard_preserves_errors_and_inward_collision() {
+    use multicad_rust_kernel::{
+        head_profile::Head,
+        helical_thread::{Spec, Thread},
+        profiled_screw::{Screw, Spec as ScrewSpec},
+    };
+    let member = resolved([0., 0., 0.], [100., 0., 0.]);
+    let receiver = actual_member(&member);
+    let surface = member.groove_frame(ProfileGrooveSide::MaxY, 40.).unwrap();
+    let mut frame = PlaneFrame {
+        origin: surface.origin_mm,
+        u: surface.u,
+        v: surface.v.map(|v| -v),
+    };
+    let normal = frame.normal();
+    frame.origin = std::array::from_fn(|i| frame.origin[i] + normal[i] * 0.65);
+    let source = Screw::new_with_shank_radius(
+        Thread::new(Spec {
+            major_radius_mm: 3.92,
+            pitch_mm: 1.25,
+            length_mm: 8.35,
+            depth_mm: 0.65,
+            crest_width_mm: 0.15,
+            lower_flank_deg: 30.,
+            upper_flank_deg: 30.,
+            starts: 1,
+            left_hand: false,
+            root_radius_mm: None,
+        })
+        .unwrap(),
+        4.,
+        ScrewSpec {
+            head: Head::Countersunk {
+                radius_mm: 8.,
+                height_mm: 4.4,
+                included_angle_deg: 90.,
+                edge_chamfer_mm: 0.05,
+                neck_radius_mm: 0.4,
+            },
+            shank_length_mm: 1.25,
+            socket_across_flats_mm: 5.,
+            socket_depth_mm: 3.2,
+            minimum_wall_mm: 0.5,
+        },
+    )
+    .unwrap();
+    let screw = Solid::rust_profiled_screw_from_source(
+        source,
+        EntityId::new(),
+        frame,
+        GeometryPolicy::default(),
+    )
+    .unwrap();
+    let proof = screw
+        .rust_profiled_screw_receiver_clearance(&receiver, RigidTransform::default(), 0.001, None)
+        .unwrap();
+    assert!(proof.overlap_volume_upper_mm3 < 1e-8);
+    assert!(std::ptr::eq(
+        proof.screw().source,
+        screw.rust_profiled_screw_geometry().unwrap().0
+    ));
+    assert_eq!(
+        screw
+            .rust_profiled_screw_receiver_clearance(
+                &receiver,
+                RigidTransform::default(),
+                f64::NAN,
+                None
+            )
+            .err()
+            .unwrap()
+            .kind,
+        GeometryErrorKind::Input
+    );
+    let polls = std::cell::Cell::new(0);
+    assert_eq!(
+        screw
+            .rust_profiled_screw_receiver_clearance(
+                &receiver,
+                RigidTransform::default(),
+                0.001,
+                Some(&|| {
+                    let n = polls.get() + 1;
+                    polls.set(n);
+                    n > 20
+                })
+            )
+            .err()
+            .unwrap()
+            .kind,
+        GeometryErrorKind::Cancelled
+    );
+    assert!(polls.get() > 20);
+    let inward = screw
+        .transformed(RigidTransform {
+            translation_mm: normal.map(|v| v * 0.8),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(
+        inward
+            .rust_profiled_screw_receiver_clearance(
+                &receiver,
+                RigidTransform::default(),
+                0.001,
+                None
+            )
+            .err()
+            .unwrap()
+            .kind,
+        GeometryErrorKind::Unsupported
+    );
+    assert_eq!(
+        receiver
+            .rust_profiled_screw_receiver_clearance(
+                &receiver,
+                RigidTransform::default(),
+                0.001,
+                None
+            )
+            .err()
+            .unwrap()
+            .kind,
+        GeometryErrorKind::Unsupported
+    );
+    assert_eq!(
+        screw
+            .rust_profiled_screw_receiver_clearance(&screw, RigidTransform::default(), 0.001, None)
+            .err()
+            .unwrap()
+            .kind,
+        GeometryErrorKind::Unsupported
+    );
+}

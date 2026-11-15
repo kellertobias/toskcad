@@ -1,5 +1,6 @@
 //! Receiving stock clearance is independent of screw/nut mating.
 use super::*;
+mod screw;
 use multicad_rust_kernel::wood_thread_contact as source;
 impl Solid {
     /// Bound occupied overlap with ONE actual receiving member in its original
