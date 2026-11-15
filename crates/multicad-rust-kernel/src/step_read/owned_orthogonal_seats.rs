@@ -3,6 +3,8 @@
 use super::*;
 use owned_insert::CompoundDocument;
 mod chains;
+mod recover;
+pub use recover::{Correspondence, HealedMaterial, MaterialOptions, SourceMatch, TransferOptions};
 #[cfg(test)]
 mod tests;
 pub use chains::{BoreChain, Chains};

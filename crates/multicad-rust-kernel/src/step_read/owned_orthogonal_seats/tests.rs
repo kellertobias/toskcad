@@ -8,6 +8,23 @@ use crate::{
 };
 use std::{cell::Cell, rc::Rc};
 fn text() -> String {
+    text_placed(
+        StockClipPlacement::new([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]], [0.; 3]).unwrap(),
+    )
+}
+pub(super) fn text_placed(placement: StockClipPlacement) -> String {
+    let source = source();
+    orthogonal_seats::candidate(
+        &source,
+        placement,
+        orthogonal_seats::Options::default(),
+        &|| false,
+    )
+    .unwrap()
+    .as_str()
+    .to_owned()
+}
+pub(super) fn source() -> Seats {
     let stock = Rc::new(
         orthogonal::boolean(
             &[
@@ -44,7 +61,7 @@ fn text() -> String {
         radius_mm: 8.02,
         depth_mm: 3.12,
     });
-    let source = Seats::new(
+    Seats::new(
         stock,
         bores,
         &seats,
@@ -56,18 +73,7 @@ fn text() -> String {
         },
         &|| false,
     )
-    .unwrap();
-    let placement =
-        StockClipPlacement::new([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]], [0.; 3]).unwrap();
-    orthogonal_seats::candidate(
-        &source,
-        placement,
-        orthogonal_seats::Options::default(),
-        &|| false,
-    )
     .unwrap()
-    .as_str()
-    .to_owned()
 }
 fn parse_document(text: &str) -> CompoundDocument<'_> {
     CompoundDocument::parse(text, owned_insert::DocumentOptions::default(), None).unwrap()
