@@ -1,6 +1,10 @@
 //! Immutable actual literal geometry. No parser borrow or authored recipe.
 use super::*;
+mod mesh;
 mod query;
+pub use mesh::{
+    LiteralGeometryOptions, LiteralGeometryPlan, LiteralMeshCandidate, LiteralMeshOptions,
+};
 pub use query::{Location, MaterialQuery, QueryOptions};
 use std::{ops::Range, sync::Arc};
 #[derive(Clone)]

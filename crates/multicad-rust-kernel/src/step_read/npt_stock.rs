@@ -11,7 +11,10 @@ mod numeric;
 mod selected;
 pub use material::{MaterialOptions, Occupied, Projection};
 pub use numeric::Scalar;
-pub use selected::{Location, MaterialQuery, OwnedMaterial, Placement, QueryOptions, Selected};
+pub use selected::{
+    LiteralGeometryOptions, LiteralGeometryPlan, LiteralMeshCandidate, LiteralMeshOptions,
+    Location, MaterialQuery, OwnedMaterial, Placement, QueryOptions, Selected,
+};
 mod parse;
 mod records;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

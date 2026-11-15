@@ -4,7 +4,10 @@ use crate::step_read::owned_insert::{MappingLink, Member, Options as MappingOpti
 use crate::tapered_thread::interval::I;
 mod owned;
 mod placement;
-pub use owned::{Location, MaterialQuery, OwnedMaterial, QueryOptions};
+pub use owned::{
+    LiteralGeometryOptions, LiteralGeometryPlan, LiteralMeshCandidate, LiteralMeshOptions,
+    Location, MaterialQuery, OwnedMaterial, QueryOptions,
+};
 pub use placement::Placement;
 pub struct Selected<'document, 'input> {
     parsed: Parsed<'document, 'input>,
