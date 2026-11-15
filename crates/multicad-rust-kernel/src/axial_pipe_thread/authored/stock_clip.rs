@@ -6,8 +6,8 @@ use std::mem::size_of;
 mod cells;
 mod curve_law;
 pub use cells::{
-    PlacedStockClipMeshCandidate, StockClipCellPlan, StockClipGridLine, StockClipMeshCandidate,
-    StockClipPlacement, StockClipPointOwner,
+    PlacedStockClipMeshCandidate, StockClipCapTraceEdge, StockClipCellPlan, StockClipGridLine,
+    StockClipMeshCandidate, StockClipPlacement, StockClipPointOwner, StockClipTracedMesh,
 };
 pub use curve_law::{StockClipAffineCurveTaylor, StockClipCurveLaw, StockClipCurveTaylor};
 mod jets;

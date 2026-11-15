@@ -8,14 +8,14 @@ pub mod hardware;
 mod stock_clip;
 pub use boundary::RawAuthoredBoundary;
 pub use stock_clip::{
-    PlacedStockClipMeshCandidate, StockClipAffineCurveTaylor, StockClipBand, StockClipCellPlan,
-    StockClipClassification, StockClipCoedge, StockClipCurve, StockClipCurveLaw,
+    PlacedStockClipMeshCandidate, StockClipAffineCurveTaylor, StockClipBand, StockClipCapTraceEdge,
+    StockClipCellPlan, StockClipClassification, StockClipCoedge, StockClipCurve, StockClipCurveLaw,
     StockClipCurveTaylor, StockClipFace, StockClipFaceLoop, StockClipFaceMeasure,
     StockClipGridLine, StockClipJets, StockClipMeasureOptions, StockClipMeshCandidate,
     StockClipOptions, StockClipPatch, StockClipPatchLaw, StockClipPatchTaylor, StockClipPlacement,
     StockClipPlan, StockClipPoint, StockClipPointOwner, StockClipPolyline, StockClipQuery,
-    StockClipRail, StockClipSample, StockClipSlab, StockClipStation, StockClipVertex,
-    StockClipVolume,
+    StockClipRail, StockClipSample, StockClipSlab, StockClipStation, StockClipTracedMesh,
+    StockClipVertex, StockClipVolume,
 };
 #[cfg(test)]
 mod tests;

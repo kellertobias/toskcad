@@ -440,7 +440,7 @@ impl StockClipCellPlan {
 
 // This numerical stage also accepts unqualified literal coordinates. It
 // returns only its local source-transfer bound, not a valid-body receipt.
-fn cap_edge(
+pub(super) fn cap_edge(
     plan: &StockClipCellPlan,
     edge: &CapEdge,
     mesh: &DisplayMesh,
