@@ -278,7 +278,13 @@ impl Builder<'_> {
         let solid = self.solid;
         let surface = &solid.boundary().faces[index].surface;
         let domain = domain::build(solid.boundary(), index, &self.samples, solid.tolerance())?;
-        let triangles: Vec<Triangle> = polygon::triangulate(&domain, surface, index)?;
+        let ends: Vec<[usize; 2]> = solid
+            .boundary()
+            .edges
+            .iter()
+            .map(|edge| edge.vertices)
+            .collect();
+        let triangles: Vec<Triangle> = polygon::triangulate(&domain, surface, index, &ends)?;
         // Local vertices: one per key, and one per parameter along a pole row.
         let mut locals = Vec::new();
         let mut local_of = BTreeMap::new();

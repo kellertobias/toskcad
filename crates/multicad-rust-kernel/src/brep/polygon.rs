@@ -302,6 +302,8 @@ struct Clip<'a> {
     next: Vec<usize>,
     previous: Vec<usize>,
     active: Vec<bool>,
+    /// End vertices of every edge, on a curved face.
+    edges: Option<&'a [[usize; 2]]>,
     /// Parameters of each ring side and laid diagonal, by ordered key pair.
     sides: BTreeMap<(Key, Key), Vec<[[f64; 2]; 2]>>,
     metric: &'a Metric,
@@ -318,6 +320,23 @@ fn side(a: Corner, b: Corner) -> ((Key, Key), [[f64; 2]; 2]) {
 }
 
 impl Clip<'_> {
+    /// Whether all three corners lie on one edge, with the middle one
+    /// inside it. On a curved face such a triangle is a chord fan of the
+    /// edge: it lies off the surface and coincides with the neighbouring
+    /// face's triangle where two faces meet at a thin wedge, so it is taken
+    /// only when no other ear remains. A plane contains its chord fans.
+    fn chord(&self, a: Key, b: Key, c: Key) -> bool {
+        let (Some(ends), Key::Sample(edge, _)) = (self.edges, b) else {
+            return false;
+        };
+        let on = |key: Key| match key {
+            Key::Sample(other, _) => other == edge,
+            Key::Vertex(vertex) => ends[edge].contains(&vertex),
+            Key::Extra(..) => false,
+        };
+        on(a) && on(c)
+    }
+
     /// Whether a side or diagonal joins the same two boundary points
     /// elsewhere in the parameter plane, as across a seam. Another diagonal
     /// there would lay further triangles on the same chord.
@@ -330,7 +349,7 @@ impl Clip<'_> {
 
     /// The length of the diagonal that clipping `b` would add, or `None`
     /// when `b` is not an admissible ear.
-    fn ear(&self, b: usize) -> Option<f64> {
+    fn ear(&self, b: usize) -> Option<(bool, f64)> {
         let (a, c) = (self.previous[b], self.next[b]);
         let [pa, pb, pc] = [a, b, c].map(|i| self.ring[i]);
         let twins = |p: Corner, q: Corner| p.key == q.key && !(p.pole && q.pole);
@@ -362,15 +381,18 @@ impl Clip<'_> {
             }
             i = self.next[i];
         }
-        Some(self.metric.distance(pa.uv, pc.uv))
+        let chord = self.chord(pa.key, pb.key, pc.key);
+        Some((chord, self.metric.distance(pa.uv, pc.uv)))
     }
 }
 
 /// Triangles covering the face's parameter region, counter-clockwise.
+/// `edges` holds the end vertices of every edge of the boundary.
 pub(crate) fn triangulate(
     domain: &Domain,
     surface: &Surface,
     face: usize,
+    edges: &[[usize; 2]],
 ) -> Result<Vec<Triangle>> {
     if let Domain::Complete(range) = domain {
         return Ok(complete(face, *range, surface.periods()[1].is_some()));
@@ -387,6 +409,7 @@ pub(crate) fn triangulate(
         .fold(0., |e: f64, c| e.max(metric.distance(c.uv, ring[0].uv)));
     let mut clip = Clip {
         ring: &ring,
+        edges: (!surface.is_plane()).then_some(edges),
         next: (0..n).map(|i| (i + 1) % n).collect(),
         previous: (0..n).map(|i| (i + n - 1) % n).collect(),
         active: vec![true; n],
@@ -398,7 +421,7 @@ pub(crate) fn triangulate(
         let (keys, uv) = side(ring[i], ring[(i + 1) % n]);
         clip.sides.entry(keys).or_default().push(uv);
     }
-    let mut ears: Vec<Option<f64>> = (0..n).map(|b| clip.ear(b)).collect();
+    let mut ears: Vec<Option<(bool, f64)>> = (0..n).map(|b| clip.ear(b)).collect();
     let mut triangles = Vec::with_capacity(n - 2);
     // Twice the area still to cover. A ring pinched at a shared boundary
     // point leaves slivers without area, whose sides are already covered.
@@ -408,10 +431,12 @@ pub(crate) fn triangulate(
     let enough = clip.epsilon.max(1e-9 * left);
     let mut count = n;
     while count > 3 && left > enough {
-        let mut best: Option<(f64, usize)> = None;
+        let mut best: Option<((bool, f64), usize)> = None;
         for (b, ear) in ears.iter().enumerate() {
             if let (true, Some(cost)) = (clip.active[b], *ear)
-                && best.is_none_or(|(least, _)| cost < least)
+                && best.is_none_or(|(least, _)| {
+                    cost.0 < least.0 || (cost.0 == least.0 && cost.1 < least.1)
+                })
             {
                 best = Some((cost, b));
             }

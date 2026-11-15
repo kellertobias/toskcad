@@ -29,6 +29,11 @@ const STANDOFF: &str =
     fixture!("corpus/kicad-library/Mounting_Wuerth_WA-SMSE-ExternalM3_H5mm_9771050360.step");
 const BUMPS: &str = fixture!("corpus/kicad-library/WLP-4_0.83x0.83mm_P0.4mm.step");
 
+/// KiCad library model, copied byte for byte with its CC-BY-SA 4.0 licence
+/// header (KiCad library exception); its two B-spline wedges meet planes
+/// at a thin angle along curved edges.
+const WEDGES: &str = include_str!("fixtures/D_SOD-923.step");
+
 fn solids(text: &str) -> Result<Vec<Solid>> {
     read_solids(text, TOLERANCE, None)
 }
@@ -488,4 +493,16 @@ fn re_derivation_refuses_supports_that_do_not_meet_near_the_vertex() {
         vertex::rederive(&shifted, 1e-5).unwrap_err(),
         Error::Invalid
     );
+}
+
+#[test]
+fn thin_wedges_along_curved_edges_mesh_without_folds() {
+    // OpenCascade 7.9.3 measures 0.17402361314366 mm3 for this model.
+    let solid = solid(WEDGES);
+    assert!(close(solid.volume_mm3(), 0.174_023_613_143_661_5, 1e-11));
+    assert_eq!(solid.faces().len(), 27);
+    let area: f64 = solid.faces().iter().map(|face| face.area_mm2).sum();
+    assert!(close(area, 2.053_581_607_713_32, 1e-9), "{area}");
+    certified(&solid, 0.05);
+    certified(&solid, 0.005);
 }

@@ -61,9 +61,10 @@ fn interior(
     surface: &Surface,
     domain: &Domain,
     face: usize,
+    ends: &[[usize; 2]],
     bounds: &mut [Point; 2],
 ) -> Result<()> {
-    let triangles = polygon::triangulate(domain, surface, face)?;
+    let triangles = polygon::triangulate(domain, surface, face, ends)?;
     let mut low = [f64::INFINITY; 2];
     let mut high = [f64::NEG_INFINITY; 2];
     for corner in triangles.iter().flatten() {
@@ -93,6 +94,7 @@ fn interior(
 
 pub(crate) fn bounds(boundary: &Boundary, domains: &[Domain]) -> Result<[Point; 2]> {
     let mut bounds = [[f64::INFINITY; 3], [f64::NEG_INFINITY; 3]];
+    let ends: Vec<[usize; 2]> = boundary.edges.iter().map(|edge| edge.vertices).collect();
     for edge in &boundary.edges {
         let mut low = [0.; 3];
         let mut high = [0.; 3];
@@ -117,7 +119,7 @@ pub(crate) fn bounds(boundary: &Boundary, domains: &[Domain]) -> Result<[Point; 
                 | Surface::Extrusion { .. }
         );
         if !ruled {
-            interior(&face.surface, domain, index, &mut bounds)?;
+            interior(&face.surface, domain, index, &ends, &mut bounds)?;
         }
     }
     Ok(bounds)
