@@ -91,9 +91,10 @@ struct Local {
 fn normal(surface: &Surface, uv: [f64; 2]) -> Point {
     let (_, [su, sv]) = surface.evaluate(uv);
     let n = cross(su, sv);
-    let length = norm(n);
-    if length > 1e-12 * norm(su).max(norm(sv)).max(f64::MIN_POSITIVE) {
-        scale(n, 1. / length)
+    let (short, long) = (norm(su).min(norm(sv)), norm(su).max(norm(sv)));
+    // Next to a pole the direction of the normal is rounding noise.
+    if short > 1e-6 * long && norm(n) > 0. {
+        scale(n, 1. / norm(n))
     } else {
         [0.; 3]
     }
@@ -160,7 +161,11 @@ impl Refiner<'_> {
                 deviation =
                     deviation.max(distance(self.surface.evaluate(cell.along(i, s)).0, chord));
             }
-            if deviation > self.deflection || turn(from.normal, to.normal) > self.angle {
+            // A chord far below the deflection cannot stray by it.
+            let resolved = lengths[&(a, b)] <= 1e-3 * self.deflection;
+            if !resolved
+                && (deviation > self.deflection || turn(from.normal, to.normal) > self.angle)
+            {
                 wanted.insert((a, b));
             } else {
                 self.deviation = self.deviation.max(deviation);

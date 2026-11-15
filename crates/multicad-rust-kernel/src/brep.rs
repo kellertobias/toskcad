@@ -77,9 +77,14 @@ pub(crate) fn norm(a: Point) -> f64 {
     dot(a, a).sqrt()
 }
 
-/// Angle between two directions, in `[0, pi]`.
+/// Angle between two directions, in `[0, pi]`; zero when either vanishes.
 pub(crate) fn turn(a: Point, b: Point) -> f64 {
-    norm(cross(a, b)).atan2(dot(a, b))
+    let (sine, cosine) = (norm(cross(a, b)), dot(a, b));
+    if sine == 0. && cosine == 0. {
+        0.
+    } else {
+        sine.atan2(cosine)
+    }
 }
 
 pub(crate) fn distance(a: Point, b: Point) -> f64 {

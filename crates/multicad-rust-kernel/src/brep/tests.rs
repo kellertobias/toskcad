@@ -106,7 +106,6 @@ fn frustum_matches_its_closed_forms_and_meshes_within_deflection() {
 }
 
 #[test]
-#[ignore = "CAD-360 in progress: refinement near poles exceeds the triangle budget"]
 fn complete_sphere_and_torus_use_their_whole_parameter_rectangle() {
     let sphere = solid(SPHERE);
     assert!(close(sphere.volume_mm3(), 4. / 3. * PI * 125., 1e-12));
@@ -148,7 +147,6 @@ fn cylinder_void_and_drilled_solids_match_their_closed_forms() {
 }
 
 #[test]
-#[ignore = "CAD-360 in progress: refinement near poles exceeds the triangle budget"]
 fn revolved_swept_and_blended_solids_mesh_watertight() {
     for (text, faces) in [(VASE, 5), (SPLINE, 4), (STANDOFF, 11), (BUMPS, 12)] {
         let solid = solid(text);

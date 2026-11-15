@@ -21,7 +21,7 @@ pub(crate) struct Corner {
 pub(crate) type Triangle = [Corner; 3];
 
 /// Sides of the synthetic ring around a complete closed surface.
-const SIDE: usize = 4;
+const SIDE: usize = 12;
 
 fn corner(point: &LoopPoint, uv: [f64; 2]) -> Corner {
     Corner {
@@ -272,6 +272,31 @@ fn ring(domain: &Domain, surface: &Surface, metric: &Metric) -> Result<Vec<Corne
     Ok(ring)
 }
 
+/// Cut every pole row into short pieces. All of them are the same point
+/// of the surface, and each then fans out to the ring points near its own
+/// parameter instead of one copy reaching around the pole.
+fn rows(ring: Vec<Corner>, period: Option<f64>) -> Vec<Corner> {
+    let mut cut = Vec::with_capacity(ring.len());
+    for (i, &corner) in ring.iter().enumerate() {
+        cut.push(corner);
+        let next = ring[(i + 1) % ring.len()];
+        if corner.pole && next.pole && corner.key == next.key {
+            let span = next.uv[0] - corner.uv[0];
+            let pieces = (span.abs() / period.map_or(span.abs() / 8., |p| p / 24.))
+                .ceil()
+                .max(1.) as usize;
+            for k in 1..pieces {
+                let u = corner.uv[0] + span * k as f64 / pieces as f64;
+                cut.push(Corner {
+                    uv: [u, corner.uv[1]],
+                    ..corner
+                });
+            }
+        }
+    }
+    cut
+}
+
 struct Clip<'a> {
     ring: &'a [Corner],
     next: Vec<usize>,
@@ -351,7 +376,7 @@ pub(crate) fn triangulate(
         return Ok(complete(face, *range, surface.periods()[1].is_some()));
     }
     let metric = Metric(scale(domain, surface));
-    let mut ring = ring(domain, surface, &metric)?;
+    let mut ring = rows(ring(domain, surface, &metric)?, surface.periods()[0]);
     for (index, corner) in ring.iter_mut().enumerate() {
         corner.copy = if corner.pole { index } else { 0 };
     }
