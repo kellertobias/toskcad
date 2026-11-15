@@ -73,7 +73,7 @@ fn connected_hanger_solid_retains_source_through_share_and_actual_pose() {
 }
 
 #[test]
-fn hanger_step_refuses_without_occt_or_partial_files() {
+fn hanger_step_rejects_invalid_cancelled_and_unqualified_placement_atomically() {
     let source = source(false, false);
     let feature = EntityId::new();
     let policy = GeometryPolicy::default();
@@ -97,7 +97,17 @@ fn hanger_step_refuses_without_occt_or_partial_files() {
         .kind,
         GeometryErrorKind::Cancelled
     );
-    let solid = Solid::rust_hanger(source, feature, PlaneFrame::default(), policy, None).unwrap();
+    let solid = Solid::rust_hanger(
+        source,
+        feature,
+        PlaneFrame {
+            origin: [1., 2., 3.],
+            ..Default::default()
+        },
+        policy,
+        None,
+    )
+    .unwrap();
     assert_eq!(solid.faces().unwrap().len(), 13);
     solid
         .topology_snapshot(feature, 0)

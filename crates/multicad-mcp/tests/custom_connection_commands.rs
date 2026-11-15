@@ -268,7 +268,7 @@ fn pinned_hanger_nut_and_washer_full_mcp_lifecycle() {
 }
 
 #[test]
-fn hanger_step_refusal_is_atomic_for_document_and_destination() {
+fn cancelled_hanger_step_is_atomic_for_document_and_destination() {
     let (original, request) = fixture::fixture(ScrewConnectionMode::HangerBolt);
     let dir = tempfile::tempdir().unwrap();
     let host = Headless::new(
@@ -304,13 +304,13 @@ fn hanger_step_refusal_is_atomic_for_document_and_destination() {
         }
         let result = dispatch(
             &host,
-            &call(false),
+            &call(true),
             "export_step",
             json!({"part":part.body,"file_name":file_name}),
         );
         assert!(
             result.is_err(),
-            "unsupported Hanger exchange must not publish"
+            "cancelled Hanger exchange must not publish"
         );
         assert_eq!(host.document(), before);
         if existing {
