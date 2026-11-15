@@ -1,3 +1,5 @@
+#[path = "profile_connections/line8_angles.rs"]
+mod line8_angles;
 #[path = "profile_connections/line8_cache.rs"]
 mod line8_cache;
 #[path = "profile_connections/line8_nuts.rs"]
@@ -352,7 +354,7 @@ fn angle_and_flat_connections_create_five_parts_and_never_machine_the_profiles()
         assert_eq!(native.snapshot().leaf_occurrences.len(), 7);
         assert_eq!(draft.outputs.len(), 5);
         if kind == AngleBracket {
-            let error = Compiler::default()
+            let scoped = Compiler::default()
                 .compile_sources_with_backend(
                     draft.prepared.document(),
                     session.revision() + 1,
@@ -360,11 +362,13 @@ fn angle_and_flat_connections_create_five_parts_and_never_machine_the_profiles()
                     GeometryBackend::Rust,
                     None,
                 )
-                .err()
                 .unwrap();
             assert!(
-                error.to_string().contains("both angle bracket legs"),
-                "{error}"
+                scoped
+                    .solid(draft.outputs[0].feature)
+                    .unwrap()
+                    .rust_orthogonal_countersink_source()
+                    .is_some()
             );
         }
         for member in &members {
