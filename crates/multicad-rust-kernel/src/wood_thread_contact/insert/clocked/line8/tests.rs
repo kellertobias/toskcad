@@ -292,3 +292,245 @@ fn original_line8_proof_preserves_symbolic_outer_placement_and_rejects_real_inte
         Err(Error::Cancelled)
     ));
 }
+
+#[test]
+fn shared_clocked_insert_preserves_established_public_failure_categories() {
+    for left in [false, true] {
+        let (insert, screw, frame) = super::super::tests::fixture(left);
+        for n in 0..8 {
+            let mut request = options(4.);
+            let mut placed = frame;
+            match n {
+                0 => request.maximum_cells = 0,
+                1 => request.maximum_cells = 1,
+                2 => request.requirements.minimum_engagement_mm = 4_f64.next_up(),
+                3 => placed.origin_mm[2] = 0.01,
+                4 => placed.origin_mm[0] = 0.01,
+                5 => placed.axes[2] = [0., 0., -1.],
+                6 => request.linear_tolerance_mm = f64::NAN,
+                _ => request.requirements.minimum_clearance_mm = 1.,
+            }
+            let previous =
+                established_insert_reference(&insert, identity(), &screw, placed, request, &|| {
+                    false
+                })
+                .err()
+                .unwrap();
+            let shared = certify_clocked_insert_mating(
+                &insert,
+                identity(),
+                &screw,
+                placed,
+                request,
+                &|| false,
+            )
+            .err()
+            .unwrap();
+            assert_eq!(previous, shared, "hand {left}, case {n}");
+        }
+        let wrong = crate::helical_thread::Thread::new(crate::helical_thread::Spec {
+            pitch_mm: 0.6,
+            root_radius_mm: None,
+            ..screw.thread().spec()
+        })
+        .unwrap();
+        let wrong = crate::headed_screw::Screw::new(wrong, screw.spec()).unwrap();
+        assert_eq!(
+            established_insert_reference(&insert, identity(), &wrong, frame, options(4.), &|| {
+                false
+            })
+            .err(),
+            certify_clocked_insert_mating(&insert, identity(), &wrong, frame, options(4.), &|| {
+                false
+            })
+            .err()
+        );
+        let short = crate::helical_thread::Thread::new(crate::helical_thread::Spec {
+            length_mm: 4.,
+            ..screw.thread().spec()
+        })
+        .unwrap();
+        let short = crate::headed_screw::Screw::new(short, screw.spec()).unwrap();
+        assert_eq!(
+            established_insert_reference(&insert, identity(), &short, frame, options(4.), &|| {
+                false
+            })
+            .err(),
+            certify_clocked_insert_mating(&insert, identity(), &short, frame, options(4.), &|| {
+                false
+            })
+            .err()
+        );
+    }
+}
+
+#[test]
+fn shared_clocked_source_boxes_cover_actual_phillips_head_and_keep_line8_admission_typed() {
+    use crate::{
+        head_profile::{Head, Profile},
+        phillips_drive::{self, Cavity, Cutter, PhillipsScrew},
+        profiled_screw::SourceSpec,
+    };
+    let (insert, regular, placed) = super::super::tests::fixture(false);
+    let head = Head::Countersunk {
+        radius_mm: 2.75,
+        height_mm: 1.65,
+        included_angle_deg: 90.,
+        edge_chamfer_mm: 0.05,
+        neck_radius_mm: 0.1,
+    };
+    let (shape, datum) = phillips_drive::test_fixture(2);
+    let cavity = Cavity::new(Cutter::new(shape, datum).unwrap(), 1e-5, 100_000).unwrap();
+    let screw = PhillipsScrew::new(
+        *regular.thread(),
+        Profile::new(head, 1.5, 1.).unwrap(),
+        SourceSpec {
+            head: Some(head),
+            shank_length_mm: 1.,
+            minimum_wall_mm: 1e-5,
+        },
+        cavity,
+        100_000,
+        &|| false,
+    )
+    .unwrap();
+    let receiver = Receiver::insert(&insert, identity()).unwrap();
+    let proof = certify_clocked_receiver(
+        &receiver,
+        MatingExternal {
+            source: MatingScrew::Phillips(&screw),
+            frame: placed,
+        },
+        options(4.),
+        &|| false,
+    )
+    .unwrap();
+    assert!(proof.bounds.minimum_radial_clearance_lower_mm > 0.007);
+    let (nut, _, stock_frame, _) = builder_fixture();
+    let placement = ClockedLine8Placement {
+        source: &nut,
+        stock_frame,
+        outer_frame: identity(),
+        minimum_wall_mm: 0.5,
+    };
+    assert!(matches!(
+        certify_clocked_line8_mating(
+            placement,
+            MatingExternal {
+                source: MatingScrew::Regular(&regular),
+                frame: placed
+            },
+            options(2.5),
+            &|| false
+        ),
+        Err(Error::Unsupported)
+    ));
+    assert!(matches!(
+        certify_clocked_line8_mating(
+            placement,
+            MatingExternal {
+                source: MatingScrew::Phillips(&screw),
+                frame: placed
+            },
+            options(2.5),
+            &|| false
+        ),
+        Err(Error::Unsupported)
+    ));
+}
+
+#[test]
+fn finite_original_prefix_must_earn_two_actual_turns_and_physical_engagement() {
+    use crate::authored_flat_thread::{AuthoredThread, SourceOptions};
+    let (original, screw, stock_frame, screw_frame) = builder_fixture();
+    let source_options = SourceOptions {
+        position_limit_mm: 1e-8,
+        normal_angle_limit_rad: 1e-8,
+    };
+    let pitch = 2.;
+    let male = crate::helical_thread::Thread::new(crate::helical_thread::Spec {
+        pitch_mm: pitch,
+        ..screw.thread().spec()
+    })
+    .unwrap();
+    let external = crate::profiled_screw::Screw::new_with_recess(
+        male,
+        4.,
+        screw.spec().head.unwrap(),
+        screw.spec().shank_length_mm,
+        screw.spec().minimum_wall_mm,
+        screw.recess().clone(),
+    )
+    .unwrap();
+    let internal = AuthoredThread::new(
+        crate::helical_thread::Spec {
+            pitch_mm: pitch,
+            ..original.thread().spec()
+        },
+        source_options,
+    )
+    .unwrap();
+    let station = stock_frame.origin_mm[2] - screw_frame.origin_mm[2];
+    let angle = std::f64::consts::TAU * station.rem_euclid(pitch) / pitch;
+    let (s, c) = angle.sin_cos();
+    let raw = s.atan2(c);
+    let roll = (raw + std::f64::consts::TAU / 2.).rem_euclid(std::f64::consts::TAU)
+        - std::f64::consts::TAU / 2.;
+    let (s, c) = roll.sin_cos();
+    let nut = crate::line8_nut::Nut::new(
+        original.stock().clone(),
+        original.bore_from_start_mm(),
+        internal,
+        [[c, -s], [s, c]],
+        crate::line8_nut::Relief {
+            start_mm: 3.5,
+            tool_length_mm: 7.3 - 3.5 + 0.02,
+            ..original.relief()
+        },
+        None,
+    )
+    .unwrap();
+    let placement = ClockedLine8Placement {
+        source: &nut,
+        stock_frame,
+        outer_frame: identity(),
+        minimum_wall_mm: 0.5,
+    };
+    let receiver = Receiver {
+        source: nut.thread(),
+        length: nut.relief().start_mm,
+        frame: SourceFrame::literal(stock_frame)
+            .unwrap()
+            .translated(0, nut.bore_from_start_mm())
+            .unwrap()
+            .phase(nut.phase_rotation())
+            .unwrap(),
+    };
+    let request = options(1.);
+    let actual = MatingExternal {
+        source: MatingScrew::Profiled(&external),
+        frame: screw_frame,
+    };
+    let core = certify_clocked_receiver(&receiver, actual, request, &|| false).unwrap();
+    assert!(core.external_span.hi / pitch < 2.);
+    assert!(matches!(
+        certify_clocked_line8_mating(placement, actual, request, &|| false),
+        Err(Error::Unsupported)
+    ));
+    let original_placement = ClockedLine8Placement {
+        source: &original,
+        ..placement
+    };
+    assert!(matches!(
+        certify_clocked_line8_mating(
+            original_placement,
+            MatingExternal {
+                source: MatingScrew::Profiled(&screw),
+                frame: screw_frame
+            },
+            options(original.relief().start_mm),
+            &|| false
+        ),
+        Err(Error::Unsupported)
+    ));
+}
