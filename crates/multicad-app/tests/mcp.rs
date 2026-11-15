@@ -5071,3 +5071,99 @@ fn default_stdio_phillips_metric_screws_keep_actual_geometry_history_and_atomic_
         close(reopened.part_volume(), second);
     }
 }
+
+fn literal_npt_stock(
+    quarter: bool,
+) -> multicad_kernel::rust_kernel::axial_pipe_thread::authored::StockClipPlan {
+    use multicad_kernel::rust_kernel::axial_pipe_thread::authored::{
+        AuthoredSection, AuthoredSpec, AuthoredThread,
+    };
+    let (tpi, e1, l1, l2, od, max) = if quarter {
+        (18., 0.49163, 0.2278, 0.4018, 0.540, 0.088)
+    } else {
+        (27., 0.37360, 0.1615, 0.2639, 0.405, 0.096)
+    };
+    let pitch = 25.4 / tpi;
+    let k = 1. / 32.;
+    let m = 3f64.sqrt();
+    let s = 1. / (m - k) + 1. / (m + k);
+    let depth = pitch / s - (0.033 + max) * pitch;
+    let spec = AuthoredSpec {
+        major_radius_mm: (e1 * 25.4 - 2. * k * l1 * 25.4 + depth) / 2.,
+        pitch_mm: pitch,
+        length_mm: l2 * 25.4,
+        radial_taper: k,
+        section: AuthoredSection::NptFlat {
+            depth_mm: depth,
+            flat_width_mm: (pitch - depth * s) / 2.,
+        },
+        crest_radius_limit_mm: Some(od * 25.4 / 2.),
+    };
+    AuthoredThread::new(spec, 1e-7, 1e-6)
+        .unwrap()
+        .stock_clip_plan(Default::default(), None)
+        .unwrap()
+}
+fn literal_npt_text(quarter: bool) -> String {
+    use multicad_kernel::rust_kernel::step::npt_stock as step;
+    let source = literal_npt_stock(quarter);
+    let curves = step::CurvePlan::new(&source, Default::default(), None).unwrap();
+    let surfaces = step::SurfacePlan::new(curves, Default::default(), None).unwrap();
+    step::write_source_candidate(&surfaces, 16_000_000, 64 * 1024 * 1024, None)
+        .unwrap()
+        .into_string()
+}
+
+#[test]
+fn default_stdio_literal_npt_import_survives_source_removal_history_and_reopen() {
+    for quarter in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let project = directory.path().join("literal-pipe.tcd");
+        let input = directory.path().join("pipe.step");
+        std::fs::write(&input, literal_npt_text(quarter)).unwrap();
+        let arguments = [
+            "--project",
+            project.to_str().unwrap(),
+            "--export-dir",
+            directory.path().to_str().unwrap(),
+        ];
+        let mut client = Client::start(&arguments);
+        let imported = client.ok(
+            "import_step",
+            json!({"expected_revision":0,"file_name":"pipe.step"}),
+        );
+        assert_eq!(imported["parts"].as_array().unwrap().len(), 1);
+        let volume = client.part_volume();
+        assert!(volume > 0.);
+        client.ok("save_project", json!({"expected_revision":1}));
+        std::fs::remove_file(&input).unwrap();
+        client.ok("undo", json!({"expected_revision":1}));
+        assert!(
+            client.ok("evaluate_model", json!({}))["parts"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        client.ok("redo", json!({"expected_revision":2}));
+        close(client.part_volume(), volume);
+        drop(client);
+        let mut reopened = Client::start(&arguments);
+        close(reopened.part_volume(), volume);
+        assert_eq!(
+            reopened.ok("evaluate_model", json!({}))["parts"][0]["solid_count"],
+            1
+        );
+        let revision = reopened.revision();
+        std::fs::write(
+            &input,
+            literal_npt_text(quarter).replace("CLOSED_SHELL", "OPEN_SHELL"),
+        )
+        .unwrap();
+        reopened.fail(
+            "import_step",
+            json!({"expected_revision":revision,"file_name":"pipe.step"}),
+        );
+        assert_eq!(reopened.revision(), revision);
+        close(reopened.part_volume(), volume);
+    }
+}
