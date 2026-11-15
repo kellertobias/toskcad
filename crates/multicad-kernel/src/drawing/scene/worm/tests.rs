@@ -1022,3 +1022,57 @@ fn axial_worm_detail_is_cropped_and_its_roles_marched() {
         "too few proved samples"
     );
 }
+
+/// `line` on arbitrary lines agrees with the provider's predicate inside and
+/// between its intervals, and every interval end lies on the boundary.
+#[test]
+fn line_intervals_are_the_membership_predicate_on_arbitrary_lines() {
+    let mut random = Random(23);
+    for (name, solid) in solids() {
+        for (label, frame) in views().into_iter().take(3) {
+            let body = built(&solid, frame);
+            let inner = &body.0;
+            let [lo, hi] = body.bounds();
+            let mut inside = 0;
+            for _ in 0..150 {
+                let start: P3 = std::array::from_fn(|k| lo[k] + (hi[k] - lo[k]) * random.next());
+                let direction: P3 = std::array::from_fn(|_| 4. * random.next() - 2.);
+                let spans = body.line(start, direction).unwrap().unwrap();
+                for pair in spans.windows(2) {
+                    assert!(pair[0][1] < pair[1][0], "{name} {label} {spans:?}");
+                }
+                let at = |s: f64| add(start, scaled(direction, s));
+                for span in &spans {
+                    for s in span {
+                        assert_eq!(
+                            classify(&solid, inner.local(at(*s)), 1e-9),
+                            Containment::Boundary,
+                            "{name} {label} {start:?} {direction:?} {s}"
+                        );
+                    }
+                }
+                let reach = 2. * norm(sub(hi, lo)) / norm(direction);
+                for _ in 0..24 {
+                    let s = -reach + 2. * reach * random.next();
+                    let expected = match classify(&solid, inner.local(at(s)), 1e-6) {
+                        Containment::Inside => true,
+                        Containment::Outside => false,
+                        Containment::Boundary => continue,
+                    };
+                    let found = spans.iter().any(|[a, b]| *a < s && s < *b);
+                    assert_eq!(
+                        found, expected,
+                        "{name} {label} {start:?} {direction:?} {s}"
+                    );
+                    inside += usize::from(found);
+                }
+            }
+            assert!(inside > 20, "{name} {label} {inside}");
+        }
+    }
+    let body = built(&solids()[0].1, views()[0].1);
+    for (start, direction) in [([0.; 3], [0.; 3]), ([f64::NAN, 0., 0.], [1., 0., 0.])] {
+        let error = body.line(start, direction).unwrap().unwrap_err();
+        assert_eq!(error.kind, GeometryErrorKind::Input);
+    }
+}

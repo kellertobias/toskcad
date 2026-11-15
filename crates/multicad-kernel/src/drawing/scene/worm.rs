@@ -848,6 +848,31 @@ impl Member for Body {
         inner.intervals(inner.local([paper[0], paper[1], 0.]), inner.toward, true)
     }
 
+    /// The sight-line machinery on an arbitrary line: the same isolated
+    /// roots of the radial margin, each interval decided by the provider's
+    /// predicate, along the unit direction and rescaled to `direction`.
+    fn line(&self, start: P3, direction: P3) -> Option<Result<Vec<[f64; 2]>, GeometryError>> {
+        let inner = &self.0;
+        let length = norm(direction);
+        if !(length.is_finite() && length > 0.) || start.iter().any(|v| !v.is_finite()) {
+            return Some(Err(err(
+                GeometryErrorKind::Input,
+                "Rust worm line query needs a finite start and a nonzero direction",
+            )));
+        }
+        let unit = inner.axes.map(|axis| dot3(axis, direction) / length);
+        Some(
+            inner
+                .intervals(inner.local(start), unit, true)
+                .map(|spans| {
+                    spans
+                        .into_iter()
+                        .map(|[a, b]| [a / length, b / length])
+                        .collect()
+                }),
+        )
+    }
+
     fn section(&self, depth: f64, tolerance_mm: f64) -> Result<Vec<Loop>, GeometryError> {
         let mut output: Loop = Vec::new();
         for path in self.cut(depth)? {
