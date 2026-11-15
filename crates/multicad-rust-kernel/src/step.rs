@@ -37,6 +37,7 @@ pub mod helical_trim;
 mod helical_tube_cut;
 pub(crate) mod herringbone;
 pub mod insert;
+pub mod literal_npt;
 pub mod npt_stock;
 pub use helical_tube_cut::{supports_helical_tube_cut, write_helical_tube_cut};
 pub use herringbone::{supports_herringbone, write_herringbone};

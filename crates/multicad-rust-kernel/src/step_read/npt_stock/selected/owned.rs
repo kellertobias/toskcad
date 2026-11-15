@@ -436,3 +436,19 @@ impl Selected<'_, '_> {
 }
 #[cfg(test)]
 mod tests;
+
+impl crate::step_read::literal_member_binding::RetainedRecords for OwnedMaterial {
+    fn record_count(&self) -> usize {
+        self.0.records.len()
+    }
+    fn record_index(&self, id: u32) -> Option<usize> {
+        self.0.records.binary_search_by_key(&id, |r| r.id).ok()
+    }
+    fn component(&self, record: usize, index: usize) -> Option<&str> {
+        let record = self.0.records.get(record)?;
+        if index >= record.components.len() {
+            return None;
+        }
+        Some(&self.0.literal[self.0.components[record.components.start + index].clone()])
+    }
+}
