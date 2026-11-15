@@ -161,7 +161,7 @@ fn cases(origin: [f64; 3]) -> Vec<(String, DrawingProjection)> {
             ..view
         };
         cases.extend([
-            (format!("{name}"), view),
+            (name.to_string(), view),
             (
                 format!("{name} hidden"),
                 DrawingProjection {
@@ -475,14 +475,6 @@ fn internal_ring_matches_native_open_cascade() {
 
 #[test]
 fn overlapping_scenes_match_native_open_cascade() {
-    let place = |solid: &Solid| {
-        solid
-            .transformed(RigidTransform {
-                rotation: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-                translation_mm: [2., 0., 20.],
-            })
-            .unwrap()
-    };
     let stock = stock();
     for (label, first, second) in [
         ("box+spur", &stock, turned(spur(None), [2., 0., 20.])),
@@ -538,4 +530,94 @@ fn coincident_planes_and_tangent_scenes_match_native_open_cascade() {
         })
         .unwrap();
     check("tangent cylinder+annulus", &[&solid, &ring], [2., 0., 10.]);
+}
+
+/// A block interpenetrating a spur gear: its edges enter and leave the gear's
+/// material away from any paper crossing.
+#[test]
+fn interpenetrating_bodies_match_native_open_cascade() {
+    let gear = turned(spur(None), [0.; 3]);
+    let block = Solid::rust_box(
+        EntityId::new().uuid_bits(),
+        [8, 12, 8].map(rational),
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+    )
+    .unwrap()
+    .transformed(RigidTransform {
+        rotation: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+        translation_mm: [-4., -6., 1.5],
+    })
+    .unwrap();
+    check_with("gear+block", &[&gear, &block], [0.3, 0.2, 2.], true, &[]);
+    // The comparison above is geometric: every curve lies on a native curve,
+    // with roles relaxed as for every gear. A role-strict comparison of the
+    // planar block is not possible, because OpenCascade 7.9.3 HLR does not
+    // hide an edge lying inside another solid's material. Measured: in the
+    // side view the block's bottom front edge at y = -6, z = 1.5 (radius 6 to
+    // 7.2 mm, between the bore and the root cylinder, so every sight line to
+    // it leaves the gear through its front wall) is published visible over
+    // three stretches, and the vertical edges at x = -4 and 4 visible over
+    // their whole height including the 2.5 mm inside the tooth band; in the
+    // oblique view the vertical edge at (-4, 6) has no hidden part at all.
+    // The visibility of piercing edges is certified analytically in
+    // `rust_scene_prism.rs` instead.
+}
+
+/// A window border 0.1 um inside a cylinder's rim: the rim leaves and
+/// re-enters the window within one chord. Section only and retained views
+/// with and without hidden lines.
+#[test]
+fn a_rim_grazing_the_window_matches_native_open_cascade() {
+    let solid = cylinder();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cylinder.step");
+    solid.write_step(&path).unwrap();
+    let native = Solid::read_step(&path, solid.geometry_policy()).unwrap();
+    for (label, section_only, hidden_lines, origin) in [
+        ("section only", true, false, [0., 0., 4.]),
+        ("retained", false, false, [0., 0., 4.]),
+        ("retained hidden", false, true, [0., 0., 4.]),
+        ("side retained hidden", false, true, [0., 0., 0.]),
+    ] {
+        let frame = if label.starts_with("side") {
+            PlaneFrame {
+                origin,
+                u: [0., 1., 0.],
+                v: [0., 0., 1.],
+            }
+        } else {
+            PlaneFrame {
+                origin,
+                ..Default::default()
+            }
+        };
+        let options = DrawingProjection {
+            frame,
+            section_offset_mm: Some(0.),
+            section_only,
+            hidden_lines,
+            section_u_mm: Some([-10., 5. - 1e-4]),
+            section_v_mm: if label.starts_with("side") {
+                Some([-1., 9.])
+            } else {
+                None
+            },
+            ..Default::default()
+        };
+        let rust = project(&[&solid], options);
+        let reference = project(&[&native], options);
+        let forward = deviation(&rust, &reference, true);
+        let backward = deviation(&reference, &rust, false);
+        println!(
+            "{{\"case\":\"grazing window {label}\",\"rust_to_native_mm\":{},\"native_to_rust_mm\":{},\"rust\":{},\"native\":{}}}",
+            forward.0,
+            backward.0,
+            rust.len(),
+            reference.len()
+        );
+        let bound = 3. * options.chord_tolerance_mm;
+        assert!(forward.0 <= bound, "{label}: Rust {forward:?}");
+        assert!(backward.0 <= bound, "{label}: OpenCascade {backward:?}");
+    }
 }

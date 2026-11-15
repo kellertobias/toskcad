@@ -99,6 +99,17 @@ pub(in crate::drawing) trait Member: Send + Sync {
     /// Boundary loops of the solid's intersection with the plane `z = depth`.
     /// Empty when the plane misses the solid or only touches it.
     fn section(&self, depth: f64, tolerance_mm: f64) -> Result<Vec<Loop>, GeometryError>;
+
+    /// Parameters `s`, as ascending disjoint intervals, at which the line
+    /// `start + s * direction` in view space is strictly inside the solid,
+    /// with the exact roots of the source surfaces. The engine uses it to
+    /// find every point where another member's edge enters or leaves this
+    /// solid. Members that return `None` (the default) are probed through
+    /// `sight` instead, which cannot certify that two close passages are
+    /// both found.
+    fn line(&self, _start: P3, _direction: P3) -> Option<Result<Vec<[f64; 2]>, GeometryError>> {
+        None
+    }
 }
 
 // Shared by the family members' refusals.
@@ -116,6 +127,8 @@ mod paths;
 mod prism;
 mod profile;
 mod publish;
+#[cfg(test)]
+mod tests;
 pub(in crate::drawing) use engine::{SceneMember, project};
 // `member` is the per-family registration point for scene members.
 #[allow(unused_imports)]
