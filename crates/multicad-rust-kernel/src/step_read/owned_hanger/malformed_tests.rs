@@ -464,6 +464,58 @@ fn actual_two_closed_sources_cannot_be_claimed_as_one_spherical_shell() {
 }
 
 #[test]
+fn actual_spatial_and_parametric_curve_bindings_keep_their_dimensions() {
+    let source = Hanger::new(
+        crate::authored_hanger_bolt::tests::fixture(false, false),
+        None,
+    )
+    .unwrap();
+    let file =
+        crate::step::hanger::export_qualified_hanger(&source, Default::default(), None).unwrap();
+    let original = file.as_str();
+    let arena = part21::parse(original).unwrap();
+    let spatial = arena
+        .values()
+        .flatten()
+        .find(|e| e.name == "SURFACE_CURVE")
+        .unwrap();
+    let Value::Reference(curve3) = spatial.args[1] else {
+        unreachable!()
+    };
+    let Value::List(curves) = &spatial.args[2] else {
+        unreachable!()
+    };
+    let Value::Reference(pc) = curves[0] else {
+        unreachable!()
+    };
+    let Value::Reference(rep) = arena[&pc][0].args[2] else {
+        unreachable!()
+    };
+    let representation = &arena[&rep][0];
+    let Value::List(curves) = &representation.args[1] else {
+        unreachable!()
+    };
+    let Value::Reference(curve2) = curves[0] else {
+        unreachable!()
+    };
+    assert_ne!(curve2, curve3);
+    for (entity, replacement) in [
+        (spatial, format!("#{curve2}")),
+        (representation, format!("(#{curve3})")),
+    ] {
+        let component = entity.source.unwrap();
+        let changed = replace_argument(component, &[1], &replacement);
+        let input = original.replacen(component, &changed, 1);
+        assert!(part21::parse(&input).is_ok());
+        assert!(matches!(
+            decode(&input, Default::default(), None),
+            Err(Error::Invalid)
+        ));
+    }
+    assert!(decode(original, Default::default(), None).is_ok());
+}
+
+#[test]
 fn actual_hanger_schema_fields_refuse_invalid_geometry_and_topology() {
     let source = Hanger::new(
         crate::authored_hanger_bolt::tests::fixture(false, false),
