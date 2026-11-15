@@ -514,6 +514,12 @@ fn linear_ring(
 }
 
 impl LinearBody {
+    pub(super) fn straight_source(&self) -> Option<&Sweep> {
+        match &self.geometry {
+            Geometry::Ruled(sweep) if sweep.base() == sweep.top() => Some(sweep),
+            _ => None,
+        }
+    }
     pub(super) fn straight_section(&self) -> Option<(&[Vec<Point2>], f64)> {
         match &self.geometry {
             Geometry::Ruled(sweep) if sweep.base() == sweep.top() => {
