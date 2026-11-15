@@ -13,12 +13,15 @@ fn insert(
     pending: &mut Vec<u32>,
     budget: &mut Budget<'_>,
 ) -> Result<()> {
-    budget.step(96)?;
+    budget.step(32)?;
     if selected.contains(&id) {
         return Ok(());
     }
+    // Only genuinely new dependencies pay the additional lookup/insertion
+    // bound. Repeated pole references keep their actual lookup charge.
+    budget.step(64)?;
     // Budget::new seals maximum_work<=16M. EVERY unique dependency, including
-    // the seed, passed the96-unit charge above on this same ledger. Thus the
+    // the seed, passed the32+64-unit charges above on this same ledger. Thus the
     // count is below floor(16M/96), which is below this storage frontier.
     assert!(
         selected.len() < MAX_SELECTED,
