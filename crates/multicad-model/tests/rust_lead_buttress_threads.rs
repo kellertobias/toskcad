@@ -380,13 +380,42 @@ fn sourced_rounded_and_tapered_families_keep_their_distinct_admitted_laws() {
             None,
         );
         if family == ThreadFamily::Npt {
-            // The moving stock-clipped crest still needs its actual closure;
-            // admitting the untrimmed tapered law would change the material.
-            let error = compiled
-                .err()
-                .expect("Moving NPT stock clipping is not certified");
-            assert_eq!(error.entity, Some(request.feature));
-            assert!(error.message.contains("stock clipping"), "{error}");
+            let compiled = compiled.unwrap();
+            let solid = compiled.solid(request.feature).unwrap();
+            let clipped = solid
+                .rust_clipped_npt_source()
+                .expect("Actual clipped material, not the untrimmed pipe provider");
+            let spec = clipped.source().spec();
+            assert_eq!(spec.major_radius_mm, resolved.major_radius_mm);
+            assert_eq!(spec.pitch_mm, resolved.pitch_mm);
+            assert_eq!(spec.length_mm, resolved.length_mm);
+            let limit = resolved
+                .npt
+                .as_ref()
+                .unwrap()
+                .stock_crest_radius_limit_mm
+                .unwrap();
+            assert_eq!(clipped.stock_radius_limit_mm(), limit);
+            // Four thread bands, the actual stock cylinder and two end caps.
+            // The independent STEP rectangular partition has separate owners.
+            assert_eq!(solid.faces().unwrap().len(), 7);
+            assert!(solid.rust_clipped_npt_face_measures().unwrap().iter().any(|face| face.face() == multicad_kernel::rust_kernel::axial_pipe_thread::authored::StockClipFace::StockCylinder));
+            assert!(
+                solid
+                    .rust_clipped_npt_contains([0., 0., resolved.length_mm / 2.])
+                    .unwrap()
+            );
+            assert!(
+                !solid
+                    .rust_clipped_npt_contains([limit + 0.01, 0., resolved.length_mm / 2.])
+                    .unwrap()
+            );
+            let bounds = solid.bounds().unwrap();
+            assert!((bounds.max[0] - limit).abs() < 1e-10);
+            assert!((bounds.max[2] - resolved.length_mm).abs() < 1e-10);
+            let [lo, hi] = solid.rust_clipped_npt_volume_bounds_mm3().unwrap();
+            let volume = solid.volume_mm3().unwrap();
+            assert!(lo > 0. && lo <= volume && volume <= hi);
         } else {
             let compiled = compiled.unwrap();
             let solid = compiled.solid(request.feature).unwrap();

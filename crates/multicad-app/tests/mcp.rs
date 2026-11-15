@@ -3510,7 +3510,7 @@ fn rust_stdio_tapered_cosmetic_envelopes_reopen_and_refuse_manufacturing_atomica
         close(reopened.part_volume(), expected);
         let inspected = reopened.ok("inspect_thread", json!({"thread":feature}));
         assert_eq!(inspected["resolved"]["representation"], "cosmetic_envelope");
-        if custom {
+        {
             reopened.ok(
                 "set_thread",
                 json!({"expected_revision":0,"thread":feature,"representation":"modeled"}),
@@ -3527,12 +3527,6 @@ fn rust_stdio_tapered_cosmetic_envelopes_reopen_and_refuse_manufacturing_atomica
             close(reopened.part_volume(), modeled);
             let revision = reopened.revision();
             reopened.ok("undo", json!({"expected_revision":revision}));
-        } else {
-            reopened.fail(
-                "set_thread",
-                json!({"expected_revision":0,"thread":feature,"representation":"modeled"}),
-            );
-            assert_eq!(reopened.revision(), 0);
         }
         close(reopened.part_volume(), expected);
         let refused = reopened.fail(
