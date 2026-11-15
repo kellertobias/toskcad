@@ -5,7 +5,7 @@
 //! directed span stays strictly between0 and2pi even after those errors, so raw
 //! normal and EDGE_CURVE sense select the same finite arc, not its complement.
 use super::*;
-fn direction(
+pub(super) fn direction(
     body: &Body<'_>,
     shell: &Shell<'_, '_>,
     id: u32,

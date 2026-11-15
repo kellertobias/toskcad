@@ -2,6 +2,8 @@
 //! common-chart periodic source. No exact raw-file incidence or material flag.
 use super::*;
 mod circle;
+mod shoulder;
+pub use shoulder::{PeriodicShoulderOptions, PeriodicShoulderRepair};
 type FResult<T> = std::result::Result<T, PhillipsReadError>;
 const FINITE_TOTAL: usize = 48_000_000;
 const FINITE_SCRATCH: usize = 8 * 1024 * 1024;

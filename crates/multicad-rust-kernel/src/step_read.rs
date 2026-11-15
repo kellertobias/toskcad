@@ -1105,6 +1105,8 @@ pub use phillips_cutter::{
     PeriodicFiniteCurves as PhillipsPeriodicFiniteCurves,
     PeriodicFiniteKind as PhillipsPeriodicFiniteKind,
     PeriodicFiniteOptions as PhillipsPeriodicFiniteOptions,
+    PeriodicShoulderOptions as PhillipsPeriodicShoulderOptions,
+    PeriodicShoulderRepair as PhillipsPeriodicShoulderRepair,
     PeriodicThreadBounds as PhillipsPeriodicThreadBounds,
     PeriodicThreadRepair as PhillipsPeriodicThreadRepair,
     PeriodicThreadSource as PhillipsPeriodicThreadSource,

@@ -15,7 +15,8 @@ mod reduce;
 pub use analytic::{
     AnalyticThreadOptions, AnalyticThreadRepair, AnalyticThreadTransfer,
     CommonChartPeriodicThreadRepair, PeriodicFiniteCurve, PeriodicFiniteCurves, PeriodicFiniteKind,
-    PeriodicFiniteOptions, PeriodicThreadBounds, PeriodicThreadRepair, PeriodicThreadSource,
+    PeriodicFiniteOptions, PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicThreadBounds,
+    PeriodicThreadRepair, PeriodicThreadSource,
 };
 pub use degree11::{CoherentDegree11ThreadCarrier, Degree11ThreadFace, Degree11ThreadOptions};
 pub use join::{
