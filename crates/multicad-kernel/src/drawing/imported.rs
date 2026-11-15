@@ -35,24 +35,26 @@ pub(super) fn section(
     };
     let mut vectors = Vec::new();
     for (source, (input, bodies)) in solids.iter().zip(bodies).enumerate() {
-        let mut rings = Vec::new();
+        // Each solid of a compound is hatched as its own region: solids may
+        // touch, and their loops must not be read as one even-odd area.
         for body in bodies {
             let deflection = options.chord_tolerance_mm.max(1e-3);
-            match body.section(origin, normal, deflection) {
-                Ok(loops) => rings.extend(
-                    loops
-                        .into_iter()
-                        .map(|ring| ring.into_iter().map(flat).collect()),
-                ),
+            let rings = match body.section(origin, normal, deflection) {
+                Ok(loops) => loops
+                    .into_iter()
+                    .map(|ring| ring.into_iter().map(flat).collect())
+                    .collect(),
+                Err(error) => return Some(Err(error)),
+            };
+            match section::sampled::publish(input, rings, options) {
+                Ok(published) => {
+                    vectors.extend(published.into_iter().map(|vector| ProjectedVector {
+                        source_index: source,
+                        ..vector
+                    }))
+                }
                 Err(error) => return Some(Err(error)),
             }
-        }
-        match section::sampled::publish(input, rings, options) {
-            Ok(published) => vectors.extend(published.into_iter().map(|vector| ProjectedVector {
-                source_index: source,
-                ..vector
-            })),
-            Err(error) => return Some(Err(error)),
         }
     }
     Some(Ok(vectors))

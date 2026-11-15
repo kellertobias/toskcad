@@ -140,6 +140,26 @@ fn cylinder_void_and_drilled_solids_match_their_closed_forms() {
 }
 
 #[test]
+fn spline_extrusion_matches_its_closed_forms() {
+    // The profile is the cubic x = 20 - 60 t^2 + 40 t^3, y = 36 t (1 - t),
+    // swept 6 mm: the prism holds 6 mm times the 144 mm^2 cap. The side is
+    // 6 mm times the profile's arc length, 30.1537396807876 mm by
+    // independent quadrature.
+    let prism = solid(SPLINE);
+    assert!(close(prism.volume_mm3(), 864., 1e-12));
+    let mut areas = sorted_areas(&prism);
+    let side = areas.remove(3);
+    assert!(close(side, 6. * 30.153_739_680_787_6, 1e-10), "{side}");
+    assert!(
+        areas
+            .iter()
+            .zip([120., 144., 144.])
+            .all(|(&a, b)| close(a, b, 1e-12)),
+        "{areas:?}"
+    );
+}
+
+#[test]
 fn revolved_swept_and_blended_solids_mesh_watertight() {
     for (text, faces) in [(VASE, 5), (SPLINE, 4), (STANDOFF, 11), (BUMPS, 12)] {
         let solid = solid(text);
@@ -270,7 +290,11 @@ fn exported_boundaries_read_back_with_the_same_geometry() {
         for text in [text, exported.as_str()] {
             let members = read_analytic_compound(text, TOLERANCE).unwrap();
             let volume: f64 = members.iter().map(|member| member.volume_mm3).sum();
-            assert!(close(volume, source.volume_mm3(), 1e-9), "{volume}");
+            assert!(
+                close(volume, source.volume_mm3(), 1e-9),
+                "{volume} {}",
+                source.volume_mm3()
+            );
         }
     }
 }
@@ -352,5 +376,116 @@ fn sections_lie_on_the_exact_boundary_and_close() {
         loops[0]
             .iter()
             .all(|p| (p[0].hypot(p[1]) - 4.).abs() < 1e-9)
+    );
+}
+
+const STATED: &str = "#23 = CARTESIAN_POINT('',(8.,0.,0.))";
+const DECLARED: &str = "UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-07)";
+
+fn declared(text: &str, uncertainty: &str) -> String {
+    tampered(
+        text,
+        DECLARED,
+        &format!("UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE({uncertainty})"),
+    )
+}
+
+#[test]
+fn a_declared_uncertainty_admits_vertices_and_re_derives_them_on_their_supports() {
+    let exact = PI * 10. / 3. * 112.;
+    let moved = tampered(
+        FRUSTUM,
+        STATED,
+        "#23 = CARTESIAN_POINT('',(8.000005,0.,0.))",
+    );
+    // The file's own 1e-7 mm declaration does not admit a 5 um gap.
+    assert_eq!(solids(&moved).unwrap_err(), Error::Invalid);
+    // 2e-5 mm is capped at 1e-5 mm, which does: the vertex returns to the
+    // point where its circle, seam, plane and cone actually meet.
+    let wider = declared(&moved, "2.E-05");
+    let solid = solids(&wider).unwrap().remove(0);
+    assert_eq!(
+        solid.tolerance(),
+        crate::step_read::brep::MAX_DECLARED_TOLERANCE_MM
+    );
+    let vertex = solid
+        .boundary()
+        .vertices
+        .iter()
+        .copied()
+        .min_by(|a, b| distance(*a, [8., 0., 0.]).total_cmp(&distance(*b, [8., 0., 0.])))
+        .unwrap();
+    assert!(distance(vertex, [8., 0., 0.]) < 1e-12, "{vertex:?}");
+    assert!(close(solid.volume_mm3(), exact, 1e-9));
+    certified(&solid, 0.05);
+    // A gap beyond the capped tolerance stays refused, whatever is declared.
+    let far = tampered(FRUSTUM, STATED, "#23 = CARTESIAN_POINT('',(8.00002,0.,0.))");
+    assert_eq!(
+        solids(&declared(&far, "1.E-03")).unwrap_err(),
+        Error::Invalid
+    );
+    // So do a flipped face and an open shell.
+    let flipped = tampered(
+        &wider,
+        "#54 = ADVANCED_FACE('',(#55),#43,.T.)",
+        "#54 = ADVANCED_FACE('',(#55),#43,.F.)",
+    );
+    assert_eq!(solids(&flipped).unwrap_err(), Error::Invalid);
+}
+
+#[test]
+fn only_positive_length_uncertainties_widen_incidence() {
+    let moved = tampered(
+        FRUSTUM,
+        STATED,
+        "#23 = CARTESIAN_POINT('',(8.000005,0.,0.))",
+    );
+    let source = |text: &str| {
+        crate::step_read::brep::Source::parse(text, TOLERANCE).map(|s| s.declared_uncertainty())
+    };
+    assert_eq!(source(FRUSTUM), Ok(Some(1e-7)));
+    let angle = tampered(
+        &moved,
+        "LENGTH_MEASURE(1.E-07)",
+        "PLANE_ANGLE_MEASURE(1.E-02)",
+    );
+    assert_eq!(source(&angle), Ok(None));
+    assert_eq!(solids(&angle).unwrap_err(), Error::Invalid);
+    assert_eq!(source(&declared(FRUSTUM, "0.")), Err(ReadError::Invalid));
+    assert_eq!(
+        source(&declared(FRUSTUM, "1.E-07,2.")),
+        Err(ReadError::Invalid)
+    );
+    let untyped = tampered(
+        FRUSTUM,
+        "UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-07),",
+        "UNCERTAINTY_MEASURE_WITH_UNIT(1.E-07,",
+    );
+    assert_eq!(source(&untyped), Err(ReadError::Invalid));
+    let dangling = tampered(
+        FRUSTUM,
+        "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#117))",
+        "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#99999))",
+    );
+    assert_eq!(source(&dangling), Err(ReadError::Invalid));
+    let bare = tampered(
+        FRUSTUM,
+        "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#117))",
+        "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#117),#117)",
+    );
+    assert_eq!(source(&bare), Err(ReadError::Invalid));
+}
+
+#[test]
+fn re_derivation_refuses_supports_that_do_not_meet_near_the_vertex() {
+    let boundary = read_boundaries(FRUSTUM, TOLERANCE).unwrap().remove(0);
+    let (same, residual) = vertex::rederive(&boundary, TOLERANCE).unwrap();
+    assert!(residual < 1e-9, "{residual:e}");
+    assert_eq!(same.faces, boundary.faces);
+    let mut shifted = boundary.clone();
+    shifted.vertices[0][2] += 1e-3;
+    assert_eq!(
+        vertex::rederive(&shifted, 1e-5).unwrap_err(),
+        Error::Invalid
     );
 }

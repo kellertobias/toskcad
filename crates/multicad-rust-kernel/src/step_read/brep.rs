@@ -102,6 +102,7 @@ pub struct Source<'i> {
     tolerance: f64,
     angle: f64,
     solids: Vec<u32>,
+    declared: Option<f64>,
 }
 
 impl<'i> Source<'i> {
@@ -111,11 +112,23 @@ impl<'i> Source<'i> {
         let entities = part21::parse(input)?;
         let mut solids = Vec::new();
         let mut angle = None;
+        let mut declared = None;
         for (&id, components) in &entities {
             for entity in components {
                 check(!NOT_SOLID.contains(&entity.name), ReadError::Unsupported)?;
                 if matches!(entity.name, "MANIFOLD_SOLID_BREP" | "BREP_WITH_VOIDS") {
                     solids.push(id);
+                }
+                if entity.name == "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT" {
+                    let [measures] = entity.args.as_slice() else {
+                        return Err(ReadError::Invalid);
+                    };
+                    for measure in refs(measures)? {
+                        if let Some(length) = uncertainty(&entities, measure)? {
+                            declared =
+                                Some(declared.map_or(length, |known: f64| known.min(length)));
+                        }
+                    }
                 }
                 if entity.name == "GLOBAL_UNIT_ASSIGNED_CONTEXT" {
                     let [units] = entity.args.as_slice() else {
@@ -138,7 +151,13 @@ impl<'i> Source<'i> {
             tolerance,
             angle,
             solids,
+            declared,
         })
+    }
+
+    /// The smallest length uncertainty the file declares, in millimetres.
+    pub fn declared_uncertainty(&self) -> Option<f64> {
+        self.declared
     }
 
     /// True when the file carries product structure that places shapes.
@@ -492,6 +511,28 @@ impl<'i> Source<'i> {
     }
 }
 
+/// The length of an `UNCERTAINTY_MEASURE_WITH_UNIT`, or `None` for a
+/// measure of another quantity.
+fn uncertainty(entities: &BTreeMap<u32, Vec<Entity<'_>>>, id: u32) -> Result<Option<f64>> {
+    let [entity] = entities.get(&id).ok_or(ReadError::Invalid)?.as_slice() else {
+        return Err(ReadError::Unsupported);
+    };
+    let (Some(Value::Typed(measure)), "UNCERTAINTY_MEASURE_WITH_UNIT") =
+        (entity.args.first(), entity.name)
+    else {
+        return Err(ReadError::Invalid);
+    };
+    if measure.name != "LENGTH_MEASURE" {
+        return Ok(None);
+    }
+    let [value] = measure.args.as_slice() else {
+        return Err(ReadError::Invalid);
+    };
+    let value = number(value)?;
+    check(value > 0., ReadError::Invalid)?;
+    Ok(Some(value))
+}
+
 /// Check the length unit and return the plane-angle unit in radians.
 fn units_of(entities: &BTreeMap<u32, Vec<Entity<'_>>>, units: &[u32]) -> Result<f64> {
     let mut millimetres = 0;
@@ -659,20 +700,74 @@ pub fn read_boundaries(input: &str, tolerance: f64) -> Result<Vec<Boundary>> {
     Ok(boundaries)
 }
 
+/// The widest incidence tolerance a declared uncertainty may grant.
+pub const MAX_DECLARED_TOLERANCE_MM: f64 = 1e-5;
+
+fn convert(error: ReadError) -> crate::brep::Error {
+    match error {
+        ReadError::Invalid => crate::brep::Error::Invalid,
+        ReadError::Unsupported => crate::brep::Error::Unsupported,
+        ReadError::Limit => crate::brep::Error::Limit,
+    }
+}
+
 /// Read, validate and integrate every solid of a flat file.
+///
+/// Incidence is first checked to `tolerance`. A file that declares a wider
+/// length uncertainty and fails that check is read again to the declared
+/// value, capped at [`MAX_DECLARED_TOLERANCE_MM`]; every vertex is then
+/// re-derived on the supports that meet there, and edges and faces must
+/// agree to the wider value.
 pub fn read_solids(
     input: &str,
     tolerance: f64,
     interrupt: crate::brep::Interrupt<'_>,
 ) -> std::result::Result<Vec<Solid>, crate::brep::Error> {
-    let boundaries = read_boundaries(input, tolerance).map_err(|error| match error {
-        ReadError::Invalid => crate::brep::Error::Invalid,
-        ReadError::Unsupported => crate::brep::Error::Unsupported,
-        ReadError::Limit => crate::brep::Error::Limit,
-    })?;
+    let source = Source::parse(input, tolerance).map_err(convert)?;
+    let strict = solids_of(&source, tolerance, None, interrupt);
+    let wider = source
+        .declared_uncertainty()
+        .map(|declared| declared.min(MAX_DECLARED_TOLERANCE_MM))
+        .filter(|&wider| wider > tolerance);
+    match (strict, wider) {
+        (Err(crate::brep::Error::Invalid), Some(wider)) => {
+            let source = Source {
+                tolerance: wider,
+                ..source
+            };
+            solids_of(&source, tolerance, Some(wider), interrupt)
+        }
+        (result, _) => result,
+    }
+}
+
+fn solids_of(
+    source: &Source<'_>,
+    tolerance: f64,
+    rederive: Option<f64>,
+    interrupt: crate::brep::Interrupt<'_>,
+) -> std::result::Result<Vec<Solid>, crate::brep::Error> {
+    if source.is_assembly() {
+        return Err(crate::brep::Error::Unsupported);
+    }
+    let boundaries = source
+        .solids()
+        .iter()
+        .map(|&solid| source.boundary(solid))
+        .collect::<Result<Vec<_>>>()
+        .map_err(convert)?;
+    if !source.owns_every_face(&boundaries) {
+        return Err(crate::brep::Error::Unsupported);
+    }
     boundaries
         .into_iter()
-        .map(|boundary| Solid::new(boundary, tolerance, interrupt))
+        .map(|boundary| match rederive {
+            None => Solid::new(boundary, tolerance, interrupt),
+            Some(wider) => {
+                let (boundary, _) = crate::brep::vertex::rederive(&boundary, wider)?;
+                Solid::new(boundary, wider, interrupt)
+            }
+        })
         .collect()
 }
 

@@ -216,6 +216,25 @@ impl Surface {
         })
     }
 
+    /// The parameter range of each axis carried by an open spline.
+    fn bounded(&self) -> [Option<[f64; 2]>; 2] {
+        let open = |curve: &Curve| match curve {
+            Curve::Nurbs {
+                curve,
+                closed: false,
+            } => Some(curve.range()),
+            _ => None,
+        };
+        match self {
+            Self::Nurbs { surface, closed } => {
+                [0, 1].map(|axis| (!closed[axis]).then(|| surface.range(axis)))
+            }
+            Self::Extrusion { curve, .. } => [open(curve), None],
+            Self::Revolution { curve, .. } => [None, open(curve)],
+            _ => [None, None],
+        }
+    }
+
     /// True where the u derivative collapses, as at a sphere pole or apex.
     pub fn is_pole(&self, uv: [f64; 2], tolerance: f64) -> bool {
         norm(self.evaluate(uv).1[0]) <= tolerance
@@ -358,20 +377,13 @@ impl Surface {
                     if c > a * 1e-12 { rv / c } else { 0. },
                 ]
             };
-            let next = match self {
-                Self::Nurbs { closed, .. } => {
-                    let moved = [uv[0] + step[0], uv[1] + step[1]];
-                    let inside = self.confine(moved);
-                    [0, 1].map(|axis| {
-                        if closed[axis] {
-                            moved[axis]
-                        } else {
-                            inside[axis]
-                        }
-                    })
-                }
-                _ => [uv[0] + step[0], uv[1] + step[1]],
-            };
+            // A bounded spline parameter stops at its end: beyond it the
+            // spline repeats its end point and would read as a closer match.
+            let bounded = self.bounded();
+            let next = [0, 1].map(|axis| {
+                let moved = uv[axis] + step[axis];
+                bounded[axis].map_or(moved, |[a, b]| moved.clamp(a, b))
+            });
             let moved = (next[0] - uv[0]).abs() + (next[1] - uv[1]).abs();
             uv = next;
             if moved <= 1e-15 * (1. + uv[0].abs() + uv[1].abs()) {

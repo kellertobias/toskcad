@@ -15,6 +15,7 @@ mod polygon;
 pub mod section;
 pub mod solid;
 pub mod surface;
+pub mod vertex;
 
 pub use curve::Curve;
 pub use nurbs::{NurbsCurve, NurbsSurface};
