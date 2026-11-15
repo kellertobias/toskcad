@@ -15,23 +15,24 @@ const ROOTS: usize = 512;
 // Every defining candidate net has height>=37 and width=9U+1. The existing
 // aggregate262144-control guard thus bounds sum(U)<=787; no new source cap.
 const CELLS: usize = MAX_POINTS / (9 * 37);
-// Accounted exact-solver scratch, not a numeric-bitlength/RSS estimate.
-// The pinned num-bigint0.4.8 operators receive <=8192-bit operands/results,
-// enforced BEFORE shifts/products. Even normalized values can retain an old
-// allocation: reserve16KiB per live BigInt including its header. On32/64bit
-// limbs, shift/add/multiply use <=two input extents; division's normalized/
-// power-of-two blocks have <=1024limbs, including growth, below this reserve.
-// Its <=9 recursive levels need <1MiB further temporary storage (division.rs,
-// multiplication.rs/shift.rs). No prior larger BigInt allocation is admitted.
-// A depth60 DFS retains <=61 sibling polynomials of <=19coefficients, plus
-// original/current/split/evaluation grids: <=66*19 such BigInts (<21MiB).
-// The square-free fallback drops that frontier before building its <=19row
-// Sturm chain (<400 simultaneous coefficients including remainder copies).
-// Initial source-to-power conversion is smaller. Vec headers/rounded capacity,
-// root-cell temporaries and the one-operation reserve fit the remaining11MiB.
-// This fixed conservative reserve is subtracted BEFORE source construction;
-// actual compact receipt capacities are charged separately at publication.
-const EXACT_SCRATCH: usize = 32 * 1024 * 1024;
+// Accounted exact-solver scratch, not numeric-bitlength/RSS estimation.
+// Arithmetic preflights every operand/result at <=8192bits. With pinned
+// num-bigint0.4.8, BigDigits::clone copies normalized LEN, not prior capacity;
+// normalize/shrink never grows it. Add/multiply/shift allocate <=two operand
+// extents. Division first normalizes to <=129u64/257u32 limbs; Burnikel's
+// initial block level is <=128/256, and its concat/shift/recursive blocks and
+// Vec growth stay <=four levels (4096bytes on either target). Thus8KiB per
+// retained BigInt covers even a prior larger operation allocation plus header.
+// No uncharged larger integer enters this sealed degree18 solver.
+// Depth60 DFS retains <=61 sibling polynomials, plus original/current/split/
+// evaluation grids: <=66*19 integers (<10MiB at8KiB each). The square-free
+// fallback DROPS that frontier before its <=19-row Sturm chain (<400 live
+// coefficients including remainder copies). <=9 recursive arithmetic levels
+// use <1MiB extra; frontier/Vec headers, outputs, conversion and operation
+// temporaries fit the remaining>5MiB. These are accounted allocation bounds,
+// with unchanged bit/depth/work/cancellation guards, not allocator RSS.
+// Reserve before construction; actual compact receipt capacities are separate.
+const EXACT_SCRATCH: usize = 16 * 1024 * 1024;
 /// Bounded construction and contact query, sharing the original source work
 /// and byte limits. The event quota may only lower the hard512-contact cap.
 #[derive(Clone, Copy)]
@@ -336,7 +337,7 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
     /// domains. U and V quarters are exact restrictions of the original nets;
     /// every C0/D1 transfer remains measured in the ORIGINAL cell parameter.
     /// All construction/contact work shares the existing16M maximum. The64MiB
-    /// accounted live budget reserves32MiB for bounded exact scratch, not RSS.
+    /// accounted live budget reserves16MiB for bounded exact scratch, not RSS.
     pub fn contact_thread_carrier(
         &self,
         options: ThreadContactOptions,

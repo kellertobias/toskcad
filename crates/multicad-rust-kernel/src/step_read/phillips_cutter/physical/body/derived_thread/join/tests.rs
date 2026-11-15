@@ -391,6 +391,24 @@ fn actual_event_quota_work_frontier_and_final_publication_capacity_are_qualified
             .unwrap(),
             PhillipsReadError::Invalid
         );
+        // The tighter allocation proof permits this REAL lower caller limit;
+        // the former32MiB scratch reservation alone exhausted it. Source,
+        // 8192bit/depth/work/quality guards stay identical.
+        let tighter_bytes = 32 * 1024 * 1024;
+        let tighter = head
+            .contact_thread_carrier(
+                ThreadContactOptions {
+                    source: DerivedThreadOptions {
+                        maximum_bytes: tighter_bytes,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        assert_eq!(tighter.contacts().len(), exact.contacts().len());
+        assert!(tighter.retained_budget_bytes() + EXACT_SCRATCH <= tighter_bytes);
         let needed = exact.work_used();
         assert_eq!(
             head.contact_thread_carrier(
