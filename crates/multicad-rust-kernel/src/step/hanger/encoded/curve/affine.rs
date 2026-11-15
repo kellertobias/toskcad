@@ -205,42 +205,7 @@ impl<'s> EncodedField<'s> {
         if cell >= self.cells.len() || piece >= self.angular.coefficients().len() {
             return Err(Error::Invalid);
         }
-        // Conservative live exact-arithmetic scratch for this sealed degree11
-        // construction. It remains charged while retained coefficients are built.
-        // Scalar formula depth in build is bounded: source differences/divisions,
-        // one affine radius interpolation, then one degree10 angular product and
-        // multiplication by integer11. 64*B+2048 bits bounds numerator/denominator
-        // intermediates; <=512 live BigInts covers48 output rationals, locals and
-        // arithmetic scratch. Eightfold limb capacity bounds the pinned bigint
-        // allocation strategy. Binary64 source scalars need at most1076 bits.
-        let mut bits = 1076_u64;
-        for row in &self.meridians {
-            for scalar in row.radius.iter().chain(&row.phase).chain(&row.weights) {
-                w.charge(1 + scalar.n.len() + scalar.d.len())?;
-                bits = bits.max(8 * (scalar.n.len() as u64 + scalar.d.len() as u64));
-            }
-        }
-        for piece in self.angular.coefficients() {
-            for row in piece {
-                for scalar in row {
-                    w.charge(
-                        1 + (scalar.numer().bits() + scalar.denom().bits()).div_ceil(8) as usize,
-                    )?;
-                    bits = bits.max(scalar.numer().bits() + scalar.denom().bits());
-                }
-            }
-        }
-        // Preflight in the already validated <=64MiB caller budget before
-        // multiplying or converting to usize; this also bounds32-bit builds.
-        let allowed_bits = (options.maximum_bytes.saturating_sub(512 * 128) / (512 * 8) * 8)
-            .saturating_sub(2048)
-            / 64;
-        if bits > allowed_bits as u64 {
-            return Err(Error::Limit);
-        }
-        let bits = bits as usize;
-        let scratch = 512 * 128 + 512 * 8 * (64 * bits + 2048).div_ceil(8);
-        m.add(scratch)?;
+        reserve(self, options.maximum_bytes, &mut m, &mut w)?;
         let Some(raw) = build(self, cell, end, piece, &mut w)? else {
             return Ok(None);
         };
@@ -277,4 +242,47 @@ impl<'s> EncodedField<'s> {
             bytes: m.used - before,
         }))
     }
+}
+
+pub(super) fn reserve(
+    field: &EncodedField<'_>,
+    maximum_bytes: usize,
+    m: &mut Memory,
+    w: &mut Work<'_>,
+) -> Result<usize, Error> {
+    // Conservative live exact-arithmetic scratch for this sealed degree11
+    // construction. It remains charged while retained coefficients are built.
+    // Scalar formula depth in build is bounded: source differences/divisions,
+    // one affine radius interpolation, then one degree10 angular product and
+    // multiplication by integer11. 64*B+2048 bits bounds numerator/denominator
+    // intermediates; <=512 live BigInts covers48 output rationals, locals and
+    // arithmetic scratch. Eightfold limb capacity bounds the pinned bigint
+    // allocation strategy. Binary64 source scalars need at most1076 bits.
+    let mut bits = 1076_u64;
+    for row in &field.meridians {
+        for scalar in row.radius.iter().chain(&row.phase).chain(&row.weights) {
+            w.charge(1 + scalar.n.len() + scalar.d.len())?;
+            bits = bits.max(8 * (scalar.n.len() as u64 + scalar.d.len() as u64));
+        }
+    }
+    for piece in field.angular.coefficients() {
+        for row in piece {
+            for scalar in row {
+                w.charge(1 + (scalar.numer().bits() + scalar.denom().bits()).div_ceil(8) as usize)?;
+                bits = bits.max(scalar.numer().bits() + scalar.denom().bits());
+            }
+        }
+    }
+    // Preflight in the already validated <=64MiB caller budget before
+    // multiplying or converting to usize; this also bounds32-bit builds.
+    let allowed_bits =
+        (maximum_bytes.saturating_sub(512 * 128) / (512 * 8) * 8).saturating_sub(2048) / 64;
+    if bits > allowed_bits as u64 {
+        return Err(Error::Limit);
+    }
+    let bits = bits as usize;
+    let scratch = 512 * 128 + 512 * 8 * (64 * bits + 2048).div_ceil(8);
+    m.add(scratch)?;
+
+    Ok(scratch)
 }

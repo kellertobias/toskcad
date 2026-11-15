@@ -85,6 +85,9 @@ pub struct CapEvents<'g, 'c, 'd, 'f, 's> {
     bytes: usize,
 }
 impl CapEvents<'_, '_, '_, '_, '_> {
+    pub fn source(&self) -> &LiteralVertices<'_, '_, '_, '_> {
+        self.graph
+    }
     pub fn events(&self) -> &[Event] {
         &self.events
     }

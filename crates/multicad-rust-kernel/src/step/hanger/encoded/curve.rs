@@ -5,8 +5,10 @@ mod affine;
 pub use affine::AffineCapPiece;
 #[cfg(test)]
 mod affine_probe;
-#[cfg(test)]
+mod bound_affine;
 mod correction;
+mod jets;
+pub use bound_affine::BoundAffineCap;
 mod literal;
 mod side;
 pub use side::{SidePole, SideSupport, SideSupportBatch, SideSupportKind};

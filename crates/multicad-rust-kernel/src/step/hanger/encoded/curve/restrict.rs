@@ -156,7 +156,6 @@ pub(super) fn chosen(
 /// XY derivative bounds of the actual plane-valued rational curve over an
 /// exact restricted domain. Z=constant is structural, so distant axial datums
 /// do not create false derivative amplification through a quotient estimate.
-#[cfg(test)]
 pub(super) fn derivatives(h: &[[N; 4]], span: &N, w: &mut Work<'_>) -> Result<[f64; 2], Error> {
     let n = h.len() - 1;
     let mut a = 0_f64;
