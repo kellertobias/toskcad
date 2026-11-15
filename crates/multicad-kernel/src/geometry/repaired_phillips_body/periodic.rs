@@ -7,6 +7,7 @@ use multicad_rust_kernel::{
 };
 pub(super) mod candidate;
 mod topology;
+mod topology_planes;
 const SOURCE_WORK: usize = 18_008_192;
 const INVERSE_WORK: usize = 1024;
 const MAX: usize = SOURCE_WORK + INVERSE_WORK + 1;

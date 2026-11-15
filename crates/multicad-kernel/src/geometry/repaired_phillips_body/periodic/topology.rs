@@ -3,7 +3,8 @@
 //! meets the final head wall directly: no zero-width shoulder is introduced.
 use super::*;
 use multicad_core::references::{
-    AnalyticGeometry, Origin, TopologyElement, TopologyKey, TopologyKind, TopologySnapshot,
+    AnalyticGeometry, AnchoredFrame, Origin, TopologyElement, TopologyKey, TopologyKind,
+    TopologySnapshot,
 };
 use multicad_rust_kernel::{
     phillips_drive::FaceKey, step_read::PhillipsMaterialFaceSource as FaceSource,
@@ -109,15 +110,23 @@ impl RepairedPhillipsBody {
             let face = source
                 .face_source(index)
                 .expect("immutable complete face inventory");
+            let plane = super::topology_planes::plane(source, face, placement, self.policy)?;
+            let origin = graph.origin(face_name(source, face));
             graph.elements.push(TopologyElement {
                 key: TopologyKey {
                     kind: TopologyKind::Face,
                     ordinal: index as u32,
                 },
-                origins: BTreeSet::from([graph.origin(face_name(source, face))]),
+                origins: BTreeSet::from([origin.clone()]),
                 boundary: BTreeSet::new(),
-                frames: vec![],
-                geometry: None,
+                frames: plane
+                    .into_iter()
+                    .map(|frame| AnchoredFrame {
+                        origin: origin.clone(),
+                        frame,
+                    })
+                    .collect(),
+                geometry: plane.map(|frame| AnalyticGeometry::Plane { frame }),
             });
         }
         let head = source.head().view();

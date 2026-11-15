@@ -111,6 +111,12 @@ impl Placement {
     fn shifted(&self, p: BoxPoint) -> BoxPoint {
         [p[0], p[1], p[2] - I::point(self.top_z)]
     }
+    pub(super) fn point_bounds(&self, p: BoxPoint) -> BoxPoint {
+        self.exact(p)
+    }
+    pub(super) fn linear_bounds(&self, p: BoxPoint) -> BoxPoint {
+        self.linear(p)
+    }
     fn exact(&self, p: BoxPoint) -> BoxPoint {
         self.occurrence
             .point(self.construction.point(self.shifted(p)))

@@ -425,3 +425,52 @@ fn actual_periodic_source_topology_retains_two_sided_finite_incidence() {
         }
     }
 }
+
+#[test]
+fn actual_source_planar_faces_keep_bounded_frames_through_occurrence() {
+    use multicad_core::references::{AnalyticGeometry, TopologyKind};
+    let source = source(true, 0.5);
+    let occurrence = PlaneFrame {
+        origin: [10., -3., 4.],
+        u: [0., 1., 0.],
+        v: [0., 0., 1.],
+    };
+    let part = Solid::rust_periodic_repaired_phillips_material(
+        Rc::clone(&source),
+        feature(),
+        occurrence,
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let topology = part.topology_snapshot(feature(), 1).unwrap();
+    let tip = topology
+        .elements
+        .iter()
+        .find(|e| {
+            e.key.kind == TopologyKind::Face
+                && e.origins.iter().any(|o| o.role == "screw.thread/end")
+        })
+        .unwrap();
+    let Some(AnalyticGeometry::Plane { frame }) = tip.geometry else {
+        panic!("actual tip plane")
+    };
+    frame.validate().unwrap();
+    assert!((frame.origin_mm[0] - 21.5).abs() < 1e-9);
+    assert!((frame.origin_mm[1] + 3.).abs() < 1e-9);
+    assert!((frame.origin_mm[2] - 4.).abs() < 1e-9);
+    assert_eq!(tip.frames.len(), 1);
+    for face in topology
+        .elements
+        .iter()
+        .filter(|e| e.key.kind == TopologyKind::Face)
+    {
+        let curved = face
+            .origins
+            .iter()
+            .any(|o| o.role.starts_with("thread/start/") || o.role == "screw.head/crown");
+        if curved {
+            assert!(face.geometry.is_none());
+        }
+    }
+}
