@@ -67,7 +67,12 @@ impl RepairedHeadMeridian<'_> {
                         ]
                     }
                     (Part::Arc(a), Part::Arc(b)) => a.correspondence(b, shift)?,
-                    _ => return Err(RepairedHeadError::Unresolved),
+                    // Both private source packets copy Profile roles/curves.
+                    // Profile::construct and retained_segment_valid enforce
+                    // Crown/Neck=Arc, every other role=Line. Equal roles above
+                    // therefore seal equal kinds; this is an implementation
+                    // invariant, not an unsupported public geometry family.
+                    _ => unreachable!("validated Profile role determines piece kind"),
                 };
             ensure([position, derivative].into_iter().all(finite))?;
             result.position_mm = result.position_mm.max(position.hi);

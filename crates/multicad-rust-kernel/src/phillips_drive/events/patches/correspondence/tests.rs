@@ -166,3 +166,34 @@ fn real_correspondence_numeric_cell_and_cancellation_frontiers_are_observable() 
         }
     }
 }
+
+#[test]
+fn actual_canonical_cutter_families_retain_distinct_patch_inventories() {
+    let mut inventories = Vec::new();
+    for index in 0..5 {
+        let (spec, domain) = crate::phillips_drive::tests::fixture(index);
+        let cutter = Cutter::new(spec, domain).unwrap();
+        let atlas = cutter.surface_patches().unwrap();
+        atlas
+            .source_correspondence(&atlas, Default::default(), None)
+            .unwrap();
+        inventories.push(cutter);
+    }
+    for a in &inventories {
+        for b in &inventories {
+            let a = a.surface_patches().unwrap();
+            let b = b.surface_patches().unwrap();
+            if a.patches().len() != b.patches().len()
+                || a.patches()
+                    .iter()
+                    .zip(b.patches())
+                    .any(|(a, b)| a.source_identity() != b.source_identity())
+            {
+                assert!(matches!(
+                    a.source_correspondence(&b, Default::default(), None),
+                    Err(Error::Unresolved)
+                ));
+            }
+        }
+    }
+}

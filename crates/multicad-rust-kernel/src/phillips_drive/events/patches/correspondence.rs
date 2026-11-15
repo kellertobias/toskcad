@@ -209,9 +209,10 @@ impl PatchAtlas<'_> {
         {
             return Err(Error::Invalid);
         }
-        if self.patches.len() != other.patches.len() {
-            return Err(Error::Unresolved);
-        }
+        // Sole private builder consumes BoundaryEvents::trims:[FiniteTrim;4]
+        // and emits four quarters of five charts per trim, plus eight
+        // gap/floor charts: 4*4*5+8=88. Neither atlas exposes mutation.
+        assert_eq!(self.patches.len(), other.patches.len());
         let mut result = PatchCorrespondence {
             position_mm: 0.,
             du_mm: 0.,
