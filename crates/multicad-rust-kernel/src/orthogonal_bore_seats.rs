@@ -230,6 +230,14 @@ impl Seats {
             accounted_peak_bytes: bytes,
         })
     }
+    pub fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.stock.retained_bytes()
+            + std::mem::size_of_val(self.bores.as_ref())
+            + boundary_bytes(&self.boundary)
+            + self.seats.capacity() * std::mem::size_of::<Seat>()
+            + 4 * std::mem::size_of::<usize>()
+    }
     pub fn stock(&self) -> &OrthogonalSolid {
         &self.stock
     }

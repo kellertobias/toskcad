@@ -4,11 +4,15 @@ use super::*;
 use crate::normal_sweep::{Edge, Sweep};
 mod cells;
 mod screw;
+mod seated_stock;
 mod stock;
 use cells::Cell;
 pub use screw::{
     ProfiledScrewPlacement, ProfiledScrewReceiverClearance,
     certify_profiled_screw_receiver_clearance,
+};
+pub use seated_stock::{
+    SeatedStockPlacement, SeatedStockReceiverClearance, certify_seated_stock_receiver_clearance,
 };
 use stock::StockEnvelope;
 #[derive(Clone, Copy)]

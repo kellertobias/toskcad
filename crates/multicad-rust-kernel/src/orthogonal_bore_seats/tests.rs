@@ -261,3 +261,104 @@ fn actual_original_stock_and_finite_seat_guards_refuse_atomically() {
     assert_eq!(stock.as_ref(), &original);
     assert_eq!(good.bores(), bores.as_ref());
 }
+#[test]
+fn seated_stock_receiving_proof_retains_every_original_cell_and_both_members() {
+    use crate::{
+        normal_sweep::{Edge, Sweep},
+        wood_thread_contact as contact,
+    };
+    let (stock, bores, seats) = fixture();
+    let source = Seats::new(stock, bores, &seats, options(), &|| false).unwrap();
+    let ring = [[0., 0.], [40., 0.], [40., 40.], [0., 40.]];
+    let receiver = Sweep::new(
+        vec![
+            (0..4)
+                .map(|i| Edge::Line {
+                    a: ring[i],
+                    b: ring[(i + 1) % 4],
+                })
+                .collect(),
+        ],
+        100.,
+        1e-7,
+        1e-5,
+    )
+    .unwrap();
+    let identity = contact::Frame {
+        origin_mm: [0.; 3],
+        axes: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+    };
+    let stock = contact::SeatedStockPlacement {
+        source: &source,
+        frame: contact::Frame {
+            origin_mm: [40., 40., 20.],
+            ..identity
+        },
+    };
+    let receiver = contact::ReceivingSweep {
+        source: &receiver,
+        frame: identity,
+        occurrence: identity,
+        reverse: false,
+    };
+    let options = contact::ReceiverClearanceOptions {
+        maximum_overlap_volume_mm3: 0.001,
+        maximum_work: 16_000_000,
+    };
+    for occurrence in [
+        identity,
+        contact::Frame {
+            origin_mm: [40., 0., 0.],
+            ..identity
+        },
+    ] {
+        let actual = contact::ReceivingSweep {
+            occurrence,
+            ..receiver
+        };
+        let proof =
+            contact::certify_seated_stock_receiver_clearance(stock, actual, options, &|| false)
+                .unwrap();
+        assert!(std::ptr::eq(proof.stock().source, &source));
+        assert!(std::ptr::eq(proof.receiver().source, receiver.source));
+        assert_eq!(proof.overlap_volume_upper_mm3, 0.);
+        assert_eq!(
+            proof.source_cell_upper_mm3.len(),
+            source.stock().cells().len()
+        );
+        assert!(proof.source_cell_upper_mm3.iter().all(|v| *v == 0.));
+        assert!(matches!(
+            contact::certify_seated_stock_receiver_clearance(
+                stock,
+                actual,
+                contact::ReceiverClearanceOptions {
+                    maximum_work: proof.work_used - 1,
+                    ..options
+                },
+                &|| false
+            ),
+            Err(contact::Error::Limit)
+        ));
+    }
+    let penetrating = contact::SeatedStockPlacement {
+        frame: contact::Frame {
+            origin_mm: [39., 39., 20.],
+            ..identity
+        },
+        ..stock
+    };
+    assert!(matches!(
+        contact::certify_seated_stock_receiver_clearance(penetrating, receiver, options, &|| false),
+        Err(contact::Error::Unsupported)
+    ));
+    let polls = std::cell::Cell::new(0);
+    assert!(matches!(
+        contact::certify_seated_stock_receiver_clearance(stock, receiver, options, &|| {
+            let n = polls.get() + 1;
+            polls.set(n);
+            n > 12
+        }),
+        Err(contact::Error::Cancelled)
+    ));
+    assert!(polls.get() > 12);
+}
