@@ -55,7 +55,7 @@ fn profiles_report_supported_presets_and_explicitly_unavailable_families_without
     );
     assert_eq!(
         families.iter().find(|f| f["family"] == "npt").unwrap()["supported"],
-        multicad_kernel::OCCT_LINKED
+        true
     );
     assert_eq!(report["npt_presets"].as_array().unwrap().len(), 2);
     assert_eq!(report["npt_support"]["gauge"], "nbs1959_plain_face");
@@ -87,10 +87,8 @@ fn profiles_report_supported_presets_and_explicitly_unavailable_families_without
     }
     for family in ["bsw", "bsf", "bspp"] {
         let entry = families.iter().find(|f| f["family"] == family).unwrap();
-        assert_eq!(entry["supported"], multicad_kernel::OCCT_LINKED);
-        let expected = if !multicad_kernel::OCCT_LINKED {
-            json!([])
-        } else if family == "bspp" {
+        assert_eq!(entry["supported"], true);
+        let expected = if family == "bspp" {
             json!(["bspp_class_b_external", "bspp_internal"])
         } else {
             json!(["whitworth_medium_external", "whitworth_medium_internal"])
@@ -1160,7 +1158,9 @@ fn rust_external_receiving_threads_commit_edit_export_and_reopen_without_source_
         .iter()
         .find(|f| f["family"] == "npt")
         .unwrap();
-    assert_eq!(npt["supported"], false);
+    assert_eq!(npt["supported"], true);
+    assert_eq!(npt["modeled_new_external_supported"], true);
+    assert_eq!(npt["modeled_cut_internal_supported"], false);
     assert_eq!(npt["cosmetic_new_external_supported"], true);
     assert_eq!(
         npt["cosmetic_fit_classes"],

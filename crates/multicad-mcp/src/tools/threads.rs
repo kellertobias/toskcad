@@ -640,8 +640,12 @@ pub(super) fn thread_profiles(_: &dyn Host, call: &Request, _: NoArgs) -> ToolRe
         } else if family.supported() {
             vec![ThreadFit::NominalBasic]
         } else {vec![]};
-        let fit_classes = if rust && !multicad_model::rust_thread_family_supported(family) { vec![] } else { cosmetic_fit_classes.clone() };
         let modeled_new_external_supported = if rust { multicad_model::rust_thread_mode_supported(family, ThreadMode::NewExternal) } else { family.supported() };
+        // The general straight-profile factory is narrower than the actual
+        // mode dispatch: rounded and pipe families have their own providers.
+        let family_supported = !rust || [ThreadMode::NewExternal, ThreadMode::CutInternal, ThreadMode::CutExternal]
+            .into_iter().any(|mode| multicad_model::rust_thread_mode_supported(family, mode));
+        let fit_classes = if family_supported { cosmetic_fit_classes.clone() } else { vec![] };
         let modeled_new_external_fit_classes: Vec<_> = if modeled_new_external_supported {
             cosmetic_fit_classes.iter().copied().filter(|fit| !matches!(fit,
                 ThreadFit::Metric6HInternal | ThreadFit::Unified2B | ThreadFit::WhitworthMediumInternal | ThreadFit::BsppInternal
