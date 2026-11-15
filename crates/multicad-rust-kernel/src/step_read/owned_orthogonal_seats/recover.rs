@@ -515,7 +515,8 @@ const MATERIAL_RESERVE: usize = 1024 * 1024;
 pub struct TransferOptions {
     pub maximum_position_error_mm: f64,
     /// Circles use theta/(2pi), walls their finite normalized axial span,
-    /// lines their endpoint span, and planes common owner-ID barycentric patches.
+    /// lines their endpoint span, and planes the actual fixed raw-plane UV
+    /// bounding spans, with the certified inverse finite-domain map.
     pub maximum_normalized_derivative_error_mm: f64,
     pub maximum_sewing_error_mm: f64,
     pub maximum_work: usize,

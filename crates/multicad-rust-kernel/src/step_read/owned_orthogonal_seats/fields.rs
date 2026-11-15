@@ -1,5 +1,7 @@
 //! Whole finite normalized-field bounds, retaining original record owners.
 use super::*;
+#[path = "domain.rs"]
+mod domain;
 use crate::tapered_thread::interval::I;
 pub(super) struct View<'a> {
     pub(super) source: &'a crate::orthogonal_bore_seats::Seats,
@@ -352,52 +354,20 @@ fn plane(
     source_face: usize,
     raw_face: usize,
     vertices: &BTreeMap<u32, V>,
+    chains: &Chains<'_, '_, '_>,
     budget: &mut Budget<'_>,
 ) -> std::result::Result<(f64, f64), Error> {
-    budget.charge(4096)?;
-    let source = &geometry.source.boundary().faces[source_face];
-    let id = boundary.face_entities[raw_face];
-    let [_, _, surface, forward] = boundary.shell.args(id, "ADVANCED_FACE")? else {
-        return Err(Error::Invalid);
-    };
-    let [_, placement] = boundary.shell.args(reference(surface)?, "PLANE")? else {
-        return Err(Error::Invalid);
-    };
-    let raw = axis(boundary, reference(placement)?, budget)?;
-    let major = source
-        .normal
-        .iter()
-        .position(|n| n.abs() == 1.)
-        .ok_or(Error::Unsupported)?;
-    let matrix = geometry.placement.matrix();
-    let column = |j| std::array::from_fn(|i| I::point(matrix[i][j]));
-    let cofactor = scale(
-        cross_v(column((major + 1) % 3), column((major + 2) % 3)),
-        I::point(source.normal[major]),
-    );
-    let physical_normal = scale(raw.n, I::point(if sense(forward)? { 1. } else { -1. }));
-    if dot_v(cofactor, physical_normal).lo <= 0. {
-        return Err(Error::Unsupported);
-    }
-    let mut error = 0f64;
-    for p in source.rings.iter().flatten() {
-        let vertex = geometry.raw_vertices[&crate::orthogonal_boundary::point_key(*p)];
-        let actual = raw_point(boundary, vertex, budget)?;
-        let projected = sub_v(
-            actual,
-            scale(raw.n, dot_v(sub_v(actual, raw.origin), raw.n)),
-        );
-        let expected = *vertices.get(&vertex).ok_or(Error::Unsupported)?;
-        error = error.max(norm(sub_v(expected, projected)));
-    }
-    // Use the SAME actual owner-ID triangulation for every source view: the
-    // original outward wire, cyclically anchored at its smallest vertex ID.
-    // Its signed fan covers the entire outer polygon; holes only remove points.
-    // Barycentric interpolation bounds position by max vertex error and each
-    // normalized derivative by twice it. This fixed raw field (rather than a
-    // source-dependent projection) makes original/raw/healed C1 composition valid.
-    Ok((error, (I::point(2.) * I::point(error)).hi))
+    domain::certify(
+        geometry,
+        boundary,
+        source_face,
+        raw_face,
+        vertices,
+        chains,
+        budget,
+    )
 }
+
 fn line(
     boundary: &Boundary<'_, '_>,
     edge: u32,
@@ -451,8 +421,15 @@ pub(super) fn correspondence(
         }
     }
     for (source_face, &raw_face) in geometry.raw_faces.iter().enumerate() {
-        let (position, derivative) =
-            plane(geometry, boundary, source_face, raw_face, &vertices, budget)?;
+        let (position, derivative) = plane(
+            geometry,
+            boundary,
+            source_face,
+            raw_face,
+            &vertices,
+            chains,
+            budget,
+        )?;
         update(&mut report, position, derivative)?;
         if !faces.insert(raw_face) {
             return Err(Error::Unsupported);
