@@ -73,35 +73,74 @@ pub(super) fn candidate(b: &Boundary, work: &mut Work<'_>) -> Result<Candidate> 
     let floor = (mhalf - floor0) / (k - kc);
     let g = 2. * (mhalf - k * floor);
     let tip = floor0 / kc;
-    let (caxis, inner) = b
-        .faces()
-        .iter()
-        .find_map(|f| match f.support {
-            Surface::Cylinder { axis, radius_mm }
-                if local(axis.origin)[0] > 0. && local(axis.origin)[1].abs() < 1e-8 =>
-            {
-                Some((axis, radius_mm))
-            }
-            _ => None,
-        })
-        .ok_or(fail)?;
-    let cn = vector(unit(caxis.normal));
-    let beta = (-cn[0]).atan2(cn[2]);
-    let theta = b
-        .faces()
-        .iter()
-        .find_map(|f| match f.support {
-            Surface::Plane { axis } => {
-                let x = vector(unit(axis.normal));
-                (x[0] > 0. && x[1] < 0. && x[2] > 0.).then(|| x[0].hypot(x[2]).atan2(-x[1]))
-            }
-            _ => None,
-        })
-        .ok_or(fail)?;
-    // Cylinder center x = b/2 + tan(beta)*(tip-b/(2*kc))
-    //                    + inner_radius/cos(beta).
-    let bwidth = 2. * (local(caxis.origin)[0] - tip * beta.tan() - inner / beta.cos())
-        / (1. - beta.tan() / kc);
+    let rounded = b.faces().iter().find_map(|f| match f.support {
+        Surface::Cylinder { axis, radius_mm }
+            if local(axis.origin)[0] > 0. && local(axis.origin)[1].abs() < 1e-8 =>
+        {
+            Some((axis, radius_mm))
+        }
+        _ => None,
+    });
+    let (beta, theta, bwidth, inner) = if let Some((caxis, inner)) = rounded {
+        let cn = vector(unit(caxis.normal));
+        let beta = (-cn[0]).atan2(cn[2]);
+        let theta = b
+            .faces()
+            .iter()
+            .find_map(|f| match f.support {
+                Surface::Plane { axis } => {
+                    let x = vector(unit(axis.normal));
+                    (x[0] > 0. && x[1] < 0. && x[2] > 0.).then(|| x[0].hypot(x[2]).atan2(-x[1]))
+                }
+                _ => None,
+            })
+            .ok_or(fail)?;
+        // Cylinder center x = b/2 + tan(beta)*(tip-b/(2*kc))
+        //                    + inner_radius/cos(beta).
+        let bwidth = 2. * (local(caxis.origin)[0] - tip * beta.tan() - inner / beta.cos())
+            / (1. - beta.tan() / kc);
+
+        (beta, theta, bwidth, Inner::Rounded { radius_mm: inner })
+    } else {
+        // These hints propose a shallow-V from its actual inner/outer plane
+        // supports. No fixture index, head family or standard table is used.
+        // Full graph bijection and whole-support comparisons remain mandatory.
+        work.step(4096)?;
+        let mut planes = b
+            .faces()
+            .iter()
+            .filter_map(|f| match f.support {
+                Surface::Plane { axis } => {
+                    let n = vector(unit(axis.normal));
+                    (n[0] > 0. && n[1] < 0. && n[2] > 0. && n[0] > -n[1])
+                        .then(|| (n[0].hypot(n[2]).atan2(-n[1]), axis, n))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        planes.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let (theta, outer_axis, outer_n) = *planes.first().ok_or(fail)?;
+        let (half, inner_axis, inner_n) = *planes.last().ok_or(fail)?;
+        // The offset of an inner V plane divided by sin(half) is
+        // S=cos(beta)*b/2+sin(beta)*(tip-b/(2kc)). The outer plane's
+        // additional offset is e/2*(cot(half)*sin(theta)-cos(theta)).
+        let beta = inner_n[2].atan2(inner_n[0]);
+        let inner_offset = dot(inner_n, local(inner_axis.origin));
+        let outer_offset = dot(outer_n, local(outer_axis.origin));
+        let center = inner_offset / half.sin();
+        let bwidth = 2. * (center - beta.sin() * tip) / (beta.cos() - beta.sin() / kc);
+        let ewidth = 2. * (outer_offset - theta.sin() * center)
+            / (half.cos() / half.sin() * theta.sin() - theta.cos());
+        (
+            beta,
+            theta,
+            bwidth,
+            Inner::ShallowV {
+                angle_deg: 2. * half.to_degrees(),
+                e_width_mm: ewidth,
+            },
+        )
+    };
     let spec = Spec {
         mouth_diameter_mm: 2. * mhalf,
         mouth_radius_mm: minor,
@@ -111,7 +150,7 @@ pub(super) fn candidate(b: &Boundary, work: &mut Work<'_>) -> Result<Candidate> 
         outer_flank_angle_deg: alpha.to_degrees(),
         floor_angle_deg: (1. / kc).atan().to_degrees(),
         outer_corner_angle_deg: 2. * theta.to_degrees(),
-        inner: Inner::Rounded { radius_mm: inner },
+        inner,
     };
     // The independent actual torus major radius is deliberately NOT inferred
     // into this proposal. The final whole-support proof must bound its actual
