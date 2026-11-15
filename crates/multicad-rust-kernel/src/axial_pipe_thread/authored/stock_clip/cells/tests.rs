@@ -580,3 +580,79 @@ fn exact_product_witness_requires_the_full_dyadic_tail_not_rounded_zero() {
         }
     }
 }
+#[test]
+fn real_npt_allowance_edits_certify_whole_alternate_fans_and_same_owned_arrays() {
+    for quarter in [false, true] {
+        let mut spec = super::super::tests::canonical(quarter, 1.).spec();
+        spec.major_radius_mm -= 0.001;
+        let source = AuthoredThread::new(spec, 1e-7, 1e-5).unwrap();
+        let atlas = source.stock_clip_plan(Default::default(), None).unwrap();
+        let plan = atlas
+            .cell_plan(128, 128, 512_000_000, 64 * 1024 * 1024, None)
+            .unwrap();
+        let q = crate::display::Tessellation {
+            deflection: 0.1,
+            angle: 15f64.to_radians(),
+            triangle_limit: 2_000_000,
+        };
+        let c = plan
+            .mesh_candidate(q, 512_000_000, 64 * 1024 * 1024, None)
+            .unwrap();
+        assert!(c.source_distance_mm() <= q.deflection);
+        assert!(c.normal_chord() <= 2. * (q.angle / 2.).sin());
+        assert!(c.connectivity().edge_pairs > 0 && c.connectivity().vertex_links > 0);
+        assert_eq!(*plan.source().source(), source);
+        // Real public work frontier: prerequisite, literal vertices and the
+        // first aspect proposal fit; the first complete source/facet proof
+        // does not. A failed fan never receives a renewed ledger.
+        let first_count = plan.cell_vertices(0).unwrap().len();
+        let triangles = (0..plan.cell_count())
+            .map(|i| plan.cell_vertices(i).unwrap().len() - 2)
+            .sum::<usize>()
+            + plan.cap_edge_count();
+        let prefix = plan.work_used()
+            + (plan.vertex_count() + 2 + triangles) * 32
+            + plan.vertex_count() * 256
+            + first_count * first_count * 64;
+        assert!(matches!(
+            plan.mesh_candidate(q, prefix + 1023, 64 * 1024 * 1024, None),
+            Err(Error::Limit)
+        ));
+        let exact = c.work_used();
+        assert!(matches!(
+            plan.mesh_candidate(q, exact - 1, 64 * 1024 * 1024, None),
+            Err(Error::Limit)
+        ));
+        let retry = plan
+            .mesh_candidate(q, exact, 64 * 1024 * 1024, None)
+            .unwrap();
+        assert_eq!(c.mesh().vertices, retry.mesh().vertices);
+        assert_eq!(c.mesh().indices, retry.mesh().indices);
+        assert_eq!(c.mesh().face_indices, retry.mesh().face_indices);
+        let pointers = (
+            c.mesh().vertices.as_ptr(),
+            c.mesh().indices.as_ptr(),
+            c.mesh().face_indices.as_ptr(),
+        );
+        let mesh = c.into_mesh();
+        assert_eq!(
+            pointers,
+            (
+                mesh.vertices.as_ptr(),
+                mesh.indices.as_ptr(),
+                mesh.face_indices.as_ptr()
+            )
+        );
+        let proof = crate::manufacturing::certify(&mesh).unwrap();
+        assert_eq!(proof.vertex_links as usize, mesh.vertices.len() / 3);
+        assert!(matches!(
+            plan.mesh_candidate(
+                crate::display::Tessellation { angle: 0.01, ..q },
+                512_000_000,
+                64 * 1024 * 1024,
+                None
+            ),
+            Err(Error::Unresolved)
+        ));
+    }
+}

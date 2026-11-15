@@ -20,6 +20,10 @@ impl StockClipMeshCandidate {
     pub fn mesh(&self) -> &DisplayMesh {
         &self.mesh
     }
+    /// Move these SAME certified literal arrays without duplicating storage.
+    pub fn into_mesh(self) -> DisplayMesh {
+        self.mesh
+    }
     pub fn connectivity(&self) -> MeshProof {
         self.proof
     }
@@ -127,6 +131,85 @@ fn face(p: StockClipPatch) -> u32 {
         (StockClipBand::Root, _) => 4,
     }
 }
+
+#[derive(Clone, Copy)]
+struct CertifiedTriangle {
+    ids: [u32; 3],
+    distance: f64,
+    normal: f64,
+}
+struct TriangleContext<'a> {
+    plan: &'a StockClipCellPlan,
+    mesh: &'a DisplayMesh,
+    errors: &'a [f64],
+    omega: I,
+    k: I,
+    quality: Tessellation,
+    allowed: f64,
+}
+impl TriangleContext<'_> {
+    fn certify(
+        &self,
+        cell: &SourceCell,
+        local: [usize; 3],
+        work: &mut Work<'_>,
+    ) -> Result<CertifiedTriangle, Error> {
+        let [rs, rz] = slopes(cell.patch, self.k);
+        work.charge(1024)?;
+        let ids = local.map(|j| cell.ids[j]);
+        let points = local.map(|j| cell.parameters[j]);
+        positive_area(points)?;
+        let box_: [I; 2] = std::array::from_fn(|j| {
+            I::new(
+                points.iter().map(|p| p[j].lo).fold(f64::INFINITY, f64::min),
+                points
+                    .iter()
+                    .map(|p| p[j].hi)
+                    .fold(f64::NEG_INFINITY, f64::max),
+            )
+        });
+        let radius = I::new(
+            ids.iter()
+                .map(|id| self.plan.vertices[*id as usize].radius.lo)
+                .fold(f64::INFINITY, f64::min),
+            ids.iter()
+                .map(|id| self.plan.vertices[*id as usize].radius.hi)
+                .fold(f64::NEG_INFINITY, f64::max),
+        );
+        let ds = I::point(box_[0].hi) - I::point(box_[0].lo);
+        let dz = I::point(box_[1].hi) - I::point(box_[1].lo);
+        let hss = self.omega.square() * radius + I::point(2.) * self.omega * absolute(rs);
+        let hsz = self.omega * absolute(rz);
+        let error = ids
+            .iter()
+            .map(|id| self.errors[*id as usize])
+            .fold(0., f64::max);
+        let distance = ((hss * ds.square() + I::point(2.) * hsz * ds * dz) / I::point(2.)
+            + I::point(error))
+        .hi;
+        let center = normal(
+            I::point(box_[0].lo + (box_[0].hi - box_[0].lo) * 0.5),
+            I::point(radius.lo + (radius.hi - radius.lo) * 0.5),
+            rs,
+            rz,
+            self.omega,
+        );
+        let whole = normal(box_[0], radius, rs, rz, self.omega);
+        let spread = norm(difference(whole, center));
+        let directed = [ids[0], ids[2], ids[1]];
+        let n = facet(self.mesh, directed)?;
+        let angle = (norm(difference(n, center)) + spread).hi;
+        if distance > self.quality.deflection || angle > self.allowed {
+            return Err(Error::Unresolved);
+        }
+
+        Ok(CertifiedTriangle {
+            ids: directed,
+            distance,
+            normal: angle,
+        })
+    }
+}
 impl StockClipCellPlan {
     /// Checks one fixed source-owned cell plan. Connectivity/source quality are
     /// earned here; whole literal embedding remains a separate unchanged gate.
@@ -228,7 +311,6 @@ impl StockClipCellPlan {
         let mut chord: f64 = 0.;
         let mut normal_error: f64 = 0.;
         for cell in &self.cells {
-            let [rs, rz] = slopes(cell.patch, k);
             let mut root = 0;
             let mut best = -1.;
             for candidate in 0..cell.count {
@@ -265,55 +347,51 @@ impl StockClipCellPlan {
                 }
             }
             work.charge(cell.count * cell.count * 64)?;
-            for i in 1..cell.count - 1 {
-                work.charge(1024)?;
-                let local = [root, (root + i) % cell.count, (root + i + 1) % cell.count];
-                let ids = local.map(|j| cell.ids[j]);
-                let points = local.map(|j| cell.parameters[j]);
-                positive_area(points)?;
-                let box_: [I; 2] = std::array::from_fn(|j| {
-                    I::new(
-                        points.iter().map(|p| p[j].lo).fold(f64::INFINITY, f64::min),
-                        points
-                            .iter()
-                            .map(|p| p[j].hi)
-                            .fold(f64::NEG_INFINITY, f64::max),
-                    )
-                });
-                let radius = I::new(
-                    ids.iter()
-                        .map(|id| self.vertices[*id as usize].radius.lo)
-                        .fold(f64::INFINITY, f64::min),
-                    ids.iter()
-                        .map(|id| self.vertices[*id as usize].radius.hi)
-                        .fold(f64::NEG_INFINITY, f64::max),
-                );
-                let ds = I::point(box_[0].hi) - I::point(box_[0].lo);
-                let dz = I::point(box_[1].hi) - I::point(box_[1].lo);
-                let hss = omega.square() * radius + I::point(2.) * omega * absolute(rs);
-                let hsz = omega * absolute(rz);
-                let error = ids.iter().map(|id| errors[*id as usize]).fold(0., f64::max);
-                let distance = ((hss * ds.square() + I::point(2.) * hsz * ds * dz) / I::point(2.)
-                    + I::point(error))
-                .hi;
-                let center = normal(
-                    I::point(box_[0].lo + (box_[0].hi - box_[0].lo) * 0.5),
-                    I::point(radius.lo + (radius.hi - radius.lo) * 0.5),
-                    rs,
-                    rz,
-                    omega,
-                );
-                let whole = normal(box_[0], radius, rs, rz, omega);
-                let spread = norm(difference(whole, center));
-                let directed = [ids[0], ids[2], ids[1]];
-                let n = facet(&mesh, directed)?;
-                let angle = (norm(difference(n, center)) + spread).hi;
-                if distance > quality.deflection || angle > allowed {
-                    return Err(Error::Unresolved);
+            // The aspect winner remains the first proposal, preserving every
+            // old successful literal mesh. Skinny clipped cylinder cells can
+            // have a good aspect score but a genuinely tilted chord facet.
+            // Certify an ENTIRE fan before publishing any of its triangles.
+            let context = TriangleContext {
+                plan: self,
+                mesh: &mesh,
+                errors: &errors,
+                omega,
+                k,
+                quality,
+                allowed,
+            };
+            let mut chosen = None;
+            for offset in 0..cell.count {
+                let root = (root + offset) % cell.count;
+                let mut fan = [CertifiedTriangle {
+                    ids: [0; 3],
+                    distance: 0.,
+                    normal: 0.,
+                }; 6];
+                let mut valid = true;
+                for i in 1..cell.count - 1 {
+                    let local = [root, (root + i) % cell.count, (root + i + 1) % cell.count];
+                    match context.certify(cell, local, &mut work) {
+                        Ok(triangle) => fan[i - 1] = triangle,
+                        Err(Error::Unresolved) => {
+                            valid = false;
+                            break;
+                        }
+                        Err(cause) => return Err(cause),
+                    }
                 }
-                chord = chord.max(distance);
-                normal_error = normal_error.max(angle);
-                push(&mut mesh, directed, face(cell.patch));
+                if valid {
+                    chosen = Some(fan);
+                    break;
+                }
+            }
+            let Some(fan) = chosen else {
+                return Err(Error::Unresolved);
+            };
+            for triangle in fan.into_iter().take(cell.count - 2) {
+                chord = chord.max(triangle.distance);
+                normal_error = normal_error.max(triangle.normal);
+                push(&mut mesh, triangle.ids, face(cell.patch));
             }
         }
         for edge in &self.caps {
