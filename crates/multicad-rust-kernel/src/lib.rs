@@ -34,6 +34,7 @@ pub mod hexalobular_drive;
 pub mod line8_nut;
 pub mod linear_sweep;
 pub mod linear_sweep_mesh;
+pub mod literal_triangle;
 pub mod manufacturing;
 pub mod normal_relief;
 pub mod normal_sweep;
