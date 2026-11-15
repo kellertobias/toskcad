@@ -5,9 +5,9 @@ use crate::tapered_thread::interval::I;
 mod owned;
 mod placement;
 pub use owned::{
-    FaceMeasure, FaceMeasureOptions,
-    LiteralEmbeddingProof, LiteralGeometryOptions, LiteralGeometryPlan, LiteralMesh,
-    LiteralMeshCandidate, LiteralMeshOptions, Location, MaterialQuery, OwnedMaterial, QueryOptions,
+    FaceMeasure, FaceMeasureOptions, LiteralEmbeddingProof, LiteralGeometryOptions,
+    LiteralGeometryPlan, LiteralMesh, LiteralMeshCandidate, LiteralMeshOptions, Location,
+    MaterialQuery, OwnedMaterial, QueryOptions,
 };
 pub use placement::Placement;
 pub struct Selected<'document, 'input> {

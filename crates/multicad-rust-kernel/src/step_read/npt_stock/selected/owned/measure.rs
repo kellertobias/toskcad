@@ -1,5 +1,6 @@
 //! Integrals of retained literal supports, independent of display facets.
 use super::*;
+mod surface;
 #[derive(Clone, Copy)]
 pub struct FaceMeasureOptions {
     pub area_width_mm2: f64,
@@ -50,7 +51,136 @@ impl FaceMeasure {
         self.work
     }
     pub fn retained_budget_bytes(&self) -> usize {
+        self.source.retained_budget_bytes() + size_of::<Self>()
+    }
+    pub fn accounted_peak_bytes(&self) -> usize {
         self.bytes
+    }
+}
+
+impl LiteralGeometryPlan {
+    /// Integrates the actual mapped literal face. The prepared normal field
+    /// and original position coefficients share this same immutable source.
+    pub fn face_measure(
+        &self,
+        face: usize,
+        options: FaceMeasureOptions,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<FaceMeasure> {
+        if !options.area_width_mm2.is_finite()
+            || options.area_width_mm2 <= 0.
+            || !options.centroid_width_mm.is_finite()
+            || options.centroid_width_mm <= 0.
+            || options.maximum_work == 0
+            || options.maximum_work > 512_000_000
+            || options.maximum_bytes == 0
+            || options.maximum_bytes > 64 * 1024 * 1024
+        {
+            return Err(Error::Invalid);
+        }
+        let source = self.source();
+        let owner = source.faces().get(face).ok_or(Error::Invalid)?;
+        let tensor = match owner.support() {
+            Support::Plane { .. } => {
+                let extra = self
+                    .retained_budget_bytes()
+                    .checked_sub(source.retained_budget_bytes())
+                    .ok_or(Error::Limit)?;
+                let available = options
+                    .maximum_bytes
+                    .checked_sub(extra)
+                    .ok_or(Error::Limit)?;
+                let mut value = source.cap_face_measure(
+                    face,
+                    FaceMeasureOptions {
+                        maximum_bytes: available,
+                        ..options
+                    },
+                    interrupt,
+                )?;
+                value.bytes = value.bytes.checked_add(extra).ok_or(Error::Limit)?;
+                return Ok(value);
+            }
+            Support::Tensor(tensor) => tensor,
+        };
+        let bytes = self
+            .retained_budget_bytes()
+            .checked_add(2 * 1024 * 1024)
+            .ok_or(Error::Limit)?;
+        if bytes > options.maximum_bytes {
+            return Err(Error::Limit);
+        }
+        let mut work = Work {
+            left: options.maximum_work,
+            used: 0,
+            bytes,
+            interrupt,
+        };
+        work.step(1)?;
+        let t = &source.0.tensors[tensor];
+        let roots = t.spans[0] * t.spans[1];
+        let height = 11 * t.spans[1] + 1;
+        let box_mm = source.world_enclosure_mm();
+        let anchor = box_mm.map(|b| b[0].midpoint(b[1]));
+        let extent = box_mm.iter().map(|b| b[1] - b[0]).fold(1., f64::max);
+        let mut values = [p(0.); 4];
+        for u in 0..t.spans[0] {
+            for v in 0..t.spans[1] {
+                work.step(32 * 144 + 64)?;
+                let position = std::array::from_fn(|i| {
+                    let point =
+                        &source.0.points[t.poles[(11 * u + i / 12) * height + 11 * v + i % 12]];
+                    let local = point.coordinates.each_ref().map(|s| interval(s.bounds));
+                    std::array::from_fn(|a| {
+                        source
+                            .0
+                            .linear
+                            .iter()
+                            .zip(local)
+                            .fold(source.0.origin[a] - p(anchor[a]), |sum, (c, x)| {
+                                sum + c[a] * x
+                            })
+                    })
+                });
+                let normal = self.original_normal_coefficients(tensor, [u, v])?;
+                let value = surface::integrate(
+                    position,
+                    normal,
+                    options.area_width_mm2 / (2. * roots as f64),
+                    options.centroid_width_mm,
+                    extent,
+                    &mut work,
+                )?;
+                for (sum, value) in values.iter_mut().zip(value) {
+                    *sum = *sum + value;
+                }
+            }
+        }
+        let area = values[0];
+        let centroid: [I; 3] = std::array::from_fn(|i| {
+            let c = p(anchor[i]) + values[i + 1] / area;
+            I::new(c.lo.max(box_mm[i][0]), c.hi.min(box_mm[i][1]))
+        });
+        if !area.valid()
+            || area.lo <= 0.
+            || area.width() > options.area_width_mm2
+            || centroid
+                .iter()
+                .any(|c| !c.valid() || c.width() > options.centroid_width_mm)
+        {
+            return Err(Error::Unsupported);
+        }
+        work.step(1)?;
+        Ok(FaceMeasure {
+            source: source.clone(),
+            face,
+            area,
+            centroid,
+            centered_moments: [values[1], values[2], values[3]],
+            anchor,
+            work: work.used,
+            bytes: work.bytes,
+        })
     }
 }
 struct Work<'a> {
