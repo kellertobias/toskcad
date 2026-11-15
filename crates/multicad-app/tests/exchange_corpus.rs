@@ -162,8 +162,10 @@ fn supports_of(solid: &Solid) -> Value {
 /// file outside those families, by the retained-boundary reader, which
 /// integrates the boundary as written without the importer's facade.
 fn independent_readback(text: &str) -> Result<Value, step_read::ReadError> {
+    /// Volume, face count and bounds of one member.
+    type Member = (f64, usize, [[f64; 3]; 2]);
     let tolerance = GeometryPolicy::default().linear_tolerance_mm;
-    let (reader, members): (_, Vec<(f64, usize, [[f64; 3]; 2])>) =
+    let (reader, members): (_, Vec<Member>) =
         match step_read::read_analytic_compound(text, tolerance) {
             Ok(members) => (
                 "recognised families",
