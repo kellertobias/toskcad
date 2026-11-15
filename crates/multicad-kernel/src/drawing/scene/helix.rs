@@ -369,6 +369,9 @@ fn isolate(
     output: &mut Vec<f64>,
 ) -> Result<(), GeometryError> {
     let width = 1e-13 * a.abs().max(b.abs()).max(1.);
+    // A function as steep as its bound reaches equality in the exclusion
+    // test at a simple root; rounding must never turn that into exclusion.
+    let lipschitz = lipschitz * (1. + 1e-6) + 1e-12;
     let mut pending = vec![(a, f(a), b, f(b))];
     let mut work = 0usize;
     while let Some((a, fa, b, fb)) = pending.pop() {
@@ -379,13 +382,16 @@ fn isolate(
                 "Thread drawing root isolation exceeded its work budget",
             ));
         }
-        if fa.abs() + fb.abs() > lipschitz * (b - a) {
+        // A sign change proves a root; rounding of the two values must never
+        // exclude it.
+        let change = (fa <= 0.) != (fb <= 0.);
+        if !change && fa.abs() + fb.abs() > lipschitz * (b - a) {
             continue;
         }
         // Where the function cannot leave a band of `RESOLVED` around zero,
         // the line stays that close to the surface: keep only sign changes.
         if b - a <= width || lipschitz * (b - a) <= RESOLVED {
-            if (fa <= 0.) != (fb <= 0.) {
+            if change {
                 output.push(0.5 * (a + b));
             }
             continue;
@@ -718,6 +724,10 @@ pub(in crate::drawing) fn member(
     solid: &Solid,
     view: &View,
 ) -> Option<Result<Box<dyn Member>, GeometryError>> {
+    build(solid, view).map(|built| built.map(|thread| Box::new(thread) as Box<dyn Member>))
+}
+
+fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
     let invalid = || {
         err(
             GeometryErrorKind::InvalidResult,
@@ -753,7 +763,7 @@ pub(in crate::drawing) fn member(
                 }],
                 tolerance,
             )?;
-            Ok(Box::new(Thread {
+            Ok(Thread {
                 law: Arc::new(Law {
                     origin,
                     axes,
@@ -764,7 +774,7 @@ pub(in crate::drawing) fn member(
                 z: [0., span[0]],
                 neck: Some((neck, span, prism)),
                 tolerance,
-            }) as Box<dyn Member>)
+            })
         })());
     }
     let data = solid.rust_rounded_thread_data()?;
@@ -773,7 +783,7 @@ pub(in crate::drawing) fn member(
     };
     let (origin, axes) = place(data.frame);
     let spec = data.thread.spec();
-    Some(Ok(Box::new(Thread {
+    Some(Ok(Thread {
         law: Arc::new(Law {
             origin,
             axes,
@@ -784,7 +794,7 @@ pub(in crate::drawing) fn member(
         z: [0., spec.length_mm],
         neck: None,
         tolerance,
-    })))
+    }))
 }
 
 impl Thread {
@@ -910,11 +920,11 @@ impl Thread {
             )
         };
         let phase_rate = d[2].abs() + rate.abs() * rho / profile.minimum;
-        let lipschitz = profile.slope * phase_rate + rho + 1e-12;
+        let lipschitz = (profile.slope * phase_rate + rho) * (1. + 1e-6) + 1e-12;
         let second = profile.curvature * phase_rate * phase_rate
             + profile.slope * rate.abs() * 2. * rho * rho / (profile.minimum * profile.minimum)
-            + rho * rho / profile.minimum
-            + 1e-12;
+            + rho * rho / profile.minimum;
+        let second = second * (1. + 1e-6) + 1e-12;
         let width = 1e-13 * a.abs().max(b.abs()).max(1.);
         let mut output = Vec::new();
         let mut pending = vec![(a, g(a), b, g(b))];
@@ -928,7 +938,8 @@ impl Thread {
                 ));
             }
             let h = b - a;
-            if fa.abs() + fb.abs() > lipschitz * h {
+            let change = (fa <= 0.) != (fb <= 0.);
+            if !change && fa.abs() + fb.abs() > lipschitz * h {
                 continue;
             }
             // Second order: from either end, within one span of the profile.
@@ -938,11 +949,11 @@ impl Thread {
                 let room = (phi - lo).min(hi - phi);
                 phase_rate * h < room && value.abs() > derivative.abs() * h + 0.5 * second * h * h
             });
-            if excluded {
+            if excluded && !change {
                 continue;
             }
             if h <= width || lipschitz * h <= RESOLVED {
-                if (fa <= 0.) != (fb <= 0.) {
+                if change {
                     output.push(0.5 * (a + b));
                 }
                 continue;

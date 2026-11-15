@@ -224,6 +224,9 @@ fn thread_material_along_lines_agrees_with_source_containment() {
     };
     let mut solids = Vec::new();
     for left_hand in [false, true] {
+        solids.push(two_start(left_hand, frame));
+    }
+    for left_hand in [false, true] {
         let root = 1. / (4. * 3_f64.sqrt());
         solids.push(
             Solid::rust_helical_thread_end_relief(
@@ -467,7 +470,8 @@ fn thread_visibility_agrees_with_source_containment_marching() {
     .unwrap();
     let s = 0.5_f64.sqrt();
     let t = (1_f64 / 6.).sqrt();
-    for (solid, center) in [(&rounded, 2.35), (&relief, 3.3)] {
+    let double = two_start(false, PlaneFrame::default());
+    for (solid, center) in [(&rounded, 2.35), (&relief, 3.3), (&double, 3.3)] {
         for [u, v] in [
             [[1., 0., 0.], [0., 0., 1.]],
             [[s, -s, 0.], [t, t, -2. * t]],
@@ -613,6 +617,10 @@ fn thread_sections_lie_on_the_source_boundary() {
     .unwrap();
     let rounded_thread = rounded.rust_rounded_thread_data().unwrap().thread;
     let (relief_data, _) = relief.rust_thread_end_relief_data().unwrap();
+    let double_data = two_start(true, PlaneFrame::default())
+        .rust_thread_end_relief_data()
+        .unwrap()
+        .0;
     let s = 0.5_f64.sqrt();
     let t = (1_f64 / 6.).sqrt();
     let frames = |center: f64| {
@@ -623,7 +631,12 @@ fn thread_sections_lie_on_the_source_boundary() {
             ([0.3, -0.2, center + 0.37], [[1., 0., 0.], [0., 1., 0.]]),
         ]
     };
-    for (label, solid, center) in [("rounded", &rounded, 2.35), ("relief", &relief, 3.3)] {
+    let double = two_start(true, PlaneFrame::default());
+    for (label, solid, center) in [
+        ("rounded", &rounded, 2.35),
+        ("relief", &relief, 3.3),
+        ("two-start", &double, 3.3),
+    ] {
         for (origin, [u, v]) in frames(center) {
             let frame = PlaneFrame { origin, u, v };
             let view = View::new(frame);
@@ -646,7 +659,7 @@ fn thread_sections_lie_on_the_source_boundary() {
                 options,
             )
             .unwrap()
-            .unwrap();
+            .unwrap_or_else(|error| panic!("{label} {origin:?} {u:?}: {error:?}"));
             let mut checked = 0;
             for vector in vectors.iter().filter(|v| v.role == VectorRole::Section) {
                 for q in &vector.preview_mm {
@@ -663,6 +676,11 @@ fn thread_sections_lie_on_the_source_boundary() {
                         (on(radius - bound) && z > -1e-9 && z < length + 1e-9)
                             || ((on(z) || on(z - length)) && radius <= bound + 1e-6)
                     } else {
+                        let relief_data = if label == "relief" {
+                            relief_data
+                        } else {
+                            double_data
+                        };
                         let thread = relief_data.material_thread();
                         let [junction, top] = [
                             relief_data.material_length_mm(),
@@ -722,7 +740,12 @@ fn thread_sections_lie_on_the_source_boundary() {
                 let exact = if label == "rounded" {
                     rounded_thread.volume_mm3() / (3.7 * p)
                 } else {
-                    let thread = relief_data.material_thread();
+                    let data = if label == "relief" {
+                        relief_data
+                    } else {
+                        double_data
+                    };
+                    let thread = data.material_thread();
                     thread.volume_mm3() / thread.spec().length_mm
                 };
                 assert!(
@@ -732,4 +755,30 @@ fn thread_sections_lie_on_the_source_boundary() {
             }
         }
     }
+}
+
+/// A two-start ISO-like thread with a terminal relief.
+fn two_start(left_hand: bool, frame: PlaneFrame) -> crate::Solid {
+    let root = 0.5 / (4. * 3_f64.sqrt());
+    crate::Solid::rust_helical_thread_end_relief(
+        crate::HelicalThread {
+            major_radius_mm: 3.,
+            pitch_mm: 0.5,
+            length_mm: 6.6,
+            depth_mm: (0.5 - 0.0625) / (2. * 30_f64.to_radians().tan()) - root,
+            crest_width_mm: 0.0625,
+            lower_flank_deg: 30.,
+            upper_flank_deg: 30.,
+            radial_taper: 0.,
+            starts: 2,
+            left_hand,
+        },
+        Some(root),
+        0.6,
+        0.1,
+        multicad_core::document::EntityId::new(),
+        frame,
+        GeometryPolicy::default(),
+    )
+    .unwrap()
 }
