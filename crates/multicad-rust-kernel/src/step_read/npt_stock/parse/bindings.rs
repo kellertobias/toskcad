@@ -240,8 +240,21 @@ pub(super) fn face(
                         2 => [dims[0] - 1, i],
                         _ => [i, 0],
                     };
-                    if point != tensor.poles[u * dims[1] + v] {
-                        return Err(Error::Unsupported);
+                    let surface_point = tensor.poles[u * dims[1] + v];
+                    if point != surface_point {
+                        // Distinct original owners may define the SAME exact
+                        // boundary coefficient. Earn equality from the actual
+                        // decimal leaves, never from overlapping float caches.
+                        // Keep both point records and all topology identities.
+                        for (a, b) in points[point]
+                            .coordinates
+                            .iter()
+                            .zip(points[surface_point].coordinates)
+                        {
+                            if !numeric::equal(a.spelling(), b.spelling(), budget)? {
+                                return Err(Error::Unsupported);
+                            }
+                        }
                     }
                 }
             }

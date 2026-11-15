@@ -202,3 +202,89 @@ fn actual_graph_query_cancellation_prefixes_preserve_the_original_arena() {
     );
     assert_eq!(document.literal_input(), text);
 }
+
+#[test]
+fn distinct_boundary_point_owners_require_exact_decimal_equality() {
+    let text = fixture(false);
+    let document = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+    let solid = document.represented_members()[0].item_entity();
+    let baseline = Parsed::parse(&document, solid, Default::default(), None).unwrap();
+    let face = baseline
+        .faces
+        .iter()
+        .find(|f| matches!(f.support, Support::Tensor(_)))
+        .unwrap();
+    let curve = &baseline.curves[baseline.edges[face.coedges[0].edge].curve];
+    let original = baseline.points[curve.poles[1]].id;
+    let new_id = document.records().last_key_value().unwrap().0 + 1;
+    let Value::List(xyz) = &document.records()[&original][0].args[1] else {
+        panic!()
+    };
+    let axis = xyz
+        .iter()
+        .position(|v| matches!(v, Value::Number(n) if *n!=0.))
+        .unwrap();
+    let point_line = text
+        .lines()
+        .find(|line| line.starts_with(&format!("#{original}=")))
+        .unwrap();
+    let coordinates = fields(point_line)[1]
+        .trim_matches(['(', ')'])
+        .split(',')
+        .collect::<Vec<_>>();
+    let original_token = coordinates[axis];
+    let (mantissa, exponent) = original_token
+        .split_once('E')
+        .unwrap_or((original_token, "0"));
+    assert!(mantissa.contains('.'));
+    for exact in [true, false] {
+        let suffix = if exact {
+            "0"
+        } else {
+            "0000000000000000000000000000000000000001"
+        };
+        let token = format!("{mantissa}{suffix}E{exponent}");
+        assert_eq!(
+            token.parse::<f64>().unwrap(),
+            original_token.parse::<f64>().unwrap()
+        );
+        let mut xyz = coordinates.clone();
+        xyz[axis] = &token;
+        let alias = format!("#{new_id}=CARTESIAN_POINT('',({}));\n", xyz.join(","));
+        let mut changed = change_record(&text, curve.id, |line| {
+            let mut args = fields(line);
+            let mut poles = args[2]
+                .trim_matches(['(', ')'])
+                .split(',')
+                .collect::<Vec<_>>();
+            let replacement = format!("#{new_id}");
+            poles[1] = &replacement;
+            let list = format!("({})", poles.join(","));
+            args[2] = &list;
+            with_fields(line, &args)
+        });
+        let end = changed.rfind("ENDSEC;").unwrap();
+        changed.insert_str(end, &alias);
+        let actual = CompoundDocument::parse(&changed, DocumentOptions::default(), None).unwrap();
+        let result = Parsed::parse(&actual, solid, Default::default(), None);
+        if exact {
+            let parsed = result.unwrap();
+            assert!(
+                parsed
+                    .curves
+                    .iter()
+                    .any(|c| c.poles.iter().any(|p| parsed.points[*p].id == new_id))
+            );
+            assert!(
+                parsed
+                    .tensors
+                    .iter()
+                    .any(|t| t.poles.iter().any(|p| parsed.points[*p].id == original))
+            );
+        } else {
+            assert!(matches!(result, Err(Error::Unsupported)));
+        }
+        assert_eq!(actual.literal_input(), changed);
+    }
+    assert_eq!(document.literal_input(), text);
+}
