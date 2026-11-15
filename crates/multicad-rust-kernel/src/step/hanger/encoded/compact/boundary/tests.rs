@@ -64,6 +64,31 @@ fn actual_compact_boundary_covers_original_owner_arenas_and_one_oriented_shell()
                 }
             }
         }
+        for (i, face) in compact.faces().iter().enumerate() {
+            if let ChartFaceKind::Plane(key @ (FaceKey::MetricShoulder | FaceKey::WoodShoulder)) =
+                face.kind
+            {
+                assert_eq!(face.loops().len(), 2);
+                for (ring, cycle) in face.loops().iter().enumerate() {
+                    for coedge in cycle {
+                        let adjacent = uses[coedge.edge]
+                            .iter()
+                            .find(|(other, _)| *other != i)
+                            .unwrap()
+                            .0;
+                        let plain = matches!(
+                            compact.faces()[adjacent].kind,
+                            ChartFaceKind::PlainWall { .. }
+                        );
+                        assert_eq!(
+                            plain,
+                            (key == FaceKey::MetricShoulder) == (ring == 0),
+                            "outer bound must follow actual shoulder nesting"
+                        );
+                    }
+                }
+            }
+        }
         assert!(uses.iter().all(|u| u.len() == 2 && u[0].1 != u[1].1));
         assert_eq!(
             vertices.len() as isize - compact.edges().len() as isize + chi,

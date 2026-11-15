@@ -294,6 +294,31 @@ fn build(
             }
             loops.push(cycle);
         }
+        // Cycle discovery follows edge IDs, not geometric nesting. Shoulder
+        // annuli have a unique outer owner because source admission proves
+        // metric radius < plain radius < wood radius. Preserve that ownership
+        // when choosing the STEP outer bound; never infer it from ID ordering.
+        if loops.len() == 2 {
+            let outer_plain = match kinds[face_id] {
+                ChartFaceKind::Plane(FaceKey::MetricShoulder) => true,
+                ChartFaceKind::Plane(FaceKey::WoodShoulder) => false,
+                _ => return Err(Error::Unresolved),
+            };
+            let mut outer = None;
+            for (ring, cycle) in loops.iter().enumerate() {
+                let edge = cycle.first().ok_or(Error::Unresolved)?.edge;
+                for (other, uses) in face_uses.iter().enumerate() {
+                    w.charge(cost)?;
+                    if other != face_id && uses.contains_key(&edge) {
+                        let plain = matches!(kinds[other], ChartFaceKind::PlainWall { .. });
+                        if plain == outer_plain && outer.replace(ring).is_some() {
+                            return Err(Error::Unresolved);
+                        }
+                    }
+                }
+            }
+            loops.swap(0, outer.ok_or(Error::Unresolved)?);
+        }
         faces.push(ChartFace {
             kind: kinds[face_id],
             same_sense: face_senses[face_id].ok_or(Error::Unresolved)?,
