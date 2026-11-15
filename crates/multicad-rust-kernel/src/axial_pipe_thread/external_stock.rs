@@ -31,6 +31,7 @@ pub struct ExternalStockCut {
     tail: I,
     radial: I,
     transfer: f64,
+    bounds: [[f64; 2]; 3],
     work: usize,
 }
 struct Work<'a> {
@@ -141,6 +142,14 @@ impl ExternalStockCut {
             return Err(Error::Unresolved);
         }
         let transfer = enclosure(&(&r - &old).abs())?.hi;
+        let original = stock.bounds();
+        let mut bounds = [[0.; 2]; 3];
+        for axis in 0..3 {
+            bounds[axis] = [
+                enclosure(&exact(original[0][axis]))?.lo,
+                enclosure(&exact(original[1][axis]))?.hi,
+            ];
+        }
         work.charge(1)?;
         Ok(Self {
             thread,
@@ -153,6 +162,7 @@ impl ExternalStockCut {
             tail,
             radial,
             transfer,
+            bounds,
             work: work.used,
         })
     }
@@ -212,17 +222,7 @@ impl ExternalStockCut {
         [self.tail.lo, self.tail.hi]
     }
     pub fn bounds_mm(&self) -> [[f64; 2]; 3] {
-        let bounds = self.stock.bounds();
-        std::array::from_fn(|axis| {
-            [
-                enclosure(&exact(bounds[0][axis]))
-                    .expect("admitted exact stock")
-                    .lo,
-                enclosure(&exact(bounds[1][axis]))
-                    .expect("admitted exact stock")
-                    .hi,
-            ]
-        })
+        self.bounds
     }
     pub fn work_used(&self) -> usize {
         self.work
