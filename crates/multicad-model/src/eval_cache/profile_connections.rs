@@ -1,4 +1,4 @@
-//! Only original joining-plate outputs have this occurrence-aware cache audit.
+//! Qualified original plate and angle outputs share this occurrence audit.
 use super::*;
 #[derive(Clone)]
 pub(super) struct PoseInputs {
@@ -18,13 +18,20 @@ pub(super) fn output(document: &Document, id: EntityId) -> bool {
                 && model::read_profile_connection_request(document, output.connection)
                     .ok()
                     .is_some_and(|request| {
-                        request.kind == model::ProfileConnectionKind::JoiningPlate
+                        matches!(
+                            request.kind,
+                            model::ProfileConnectionKind::JoiningPlate
+                                | model::ProfileConnectionKind::AngleBracket
+                        )
                     })
         })
 }
 pub(super) fn project(document: &Document, id: EntityId) -> Option<PoseInputs> {
     let request = model::read_profile_connection_request(document, id).ok()?;
-    if request.kind != model::ProfileConnectionKind::JoiningPlate {
+    if !matches!(
+        request.kind,
+        model::ProfileConnectionKind::JoiningPlate | model::ProfileConnectionKind::AngleBracket
+    ) {
         return None;
     }
     let mut geometry = BTreeSet::new();

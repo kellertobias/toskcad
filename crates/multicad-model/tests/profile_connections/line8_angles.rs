@@ -232,3 +232,121 @@ fn rust_actual_angle_projects_reopen_with_all_five_physical_parts_and_both_recei
         assert_eq!(session.document(), &original);
     }
 }
+#[test]
+fn rust_angle_warm_viewport_reuses_all_hardware_and_invalidates_both_actual_pose_paths() {
+    let (mut session, members, request, outputs) = fixture(2);
+    let mut cache = multicad_model::EvaluationCache::default();
+    let compiler = Compiler::default();
+    let compile = |session: &Session, cache: &mut multicad_model::EvaluationCache| {
+        compiler.compile_cached_with_backend(
+            cache,
+            session.document(),
+            session.revision(),
+            GeometryBackend::Rust,
+            None,
+        )
+    };
+    let cold = compile(&session, &mut cache).unwrap();
+    let now = std::time::Instant::now();
+    let hot = compiler
+        .compile_cached_with_backend(
+            &mut cache,
+            session.document(),
+            session.revision() + 1,
+            GeometryBackend::Rust,
+            None,
+        )
+        .unwrap();
+    eprintln!("Actual Angle warm whole viewport: {:?}", now.elapsed());
+    for o in &outputs {
+        assert!(cache.last_compile().reused.contains(&o.feature));
+        assert!(!cache.last_compile().evaluated.contains(&o.feature));
+        assert!(std::sync::Arc::ptr_eq(
+            &cold.snapshot().shapes[&o.feature].mesh,
+            &hot.snapshot().shapes[&o.feature].mesh
+        ));
+    }
+    let moves = [
+        request.first.occurrence.root,
+        request.second.occurrence.root,
+    ]
+    .map(|id| {
+        model::InstanceMoveRequest::new(
+            id,
+            model::NumericTransform {
+                translation: [length(1.), length(0.), length(0.)],
+                ..Default::default()
+            },
+        )
+    });
+    session
+        .commit(
+            model::prepare_instance_moves(&session, session.revision(), actor(), &moves)
+                .unwrap()
+                .prepared,
+        )
+        .unwrap();
+    let moved = compile(&session, &mut cache).unwrap();
+    for o in &outputs {
+        assert!(cache.last_compile().evaluated.contains(&o.feature));
+        assert!(!cache.last_compile().reused.contains(&o.feature));
+        assert_ne!(
+            cold.solid(o.feature).unwrap().bounds().unwrap(),
+            moved.solid(o.feature).unwrap().bounds().unwrap()
+        );
+    }
+    let mut member = members[0].member.clone();
+    member.path = MemberPath::Points {
+        start: [length(0.), length(0.), length(0.)],
+        end: [length(120.), length(0.), length(0.)],
+    };
+    session
+        .commit(
+            model::prepare_member_edit(
+                &session,
+                session.revision(),
+                actor(),
+                members[0].feature,
+                &member,
+            )
+            .unwrap()
+            .prepared,
+        )
+        .unwrap();
+    let edited = compile(&session, &mut cache).unwrap();
+    for o in &outputs {
+        assert!(cache.last_compile().evaluated.contains(&o.feature));
+        assert!(!cache.last_compile().reused.contains(&o.feature));
+        assert_eq!(
+            edited.solid(o.feature).unwrap().bounds().unwrap(),
+            moved.solid(o.feature).unwrap().bounds().unwrap()
+        );
+    }
+    let valid = session.document().clone();
+    let bad = model::InstanceMoveRequest::new(
+        request.second.occurrence.root,
+        model::NumericTransform {
+            translation: [length(0.5), length(0.), length(0.)],
+            ..Default::default()
+        },
+    );
+    session
+        .commit(
+            model::prepare_instance_moves(&session, session.revision(), actor(), &[bad])
+                .unwrap()
+                .prepared,
+        )
+        .unwrap();
+    let before = session.document().clone();
+    assert!(compile(&session, &mut cache).is_err());
+    assert_eq!(session.document(), &before);
+    session.undo(session.revision(), actor()).unwrap();
+    assert_eq!(session.document(), &valid);
+    let recovered = compile(&session, &mut cache).unwrap();
+    for o in &outputs {
+        assert_eq!(
+            recovered.solid(o.feature).unwrap().bounds().unwrap(),
+            moved.solid(o.feature).unwrap().bounds().unwrap()
+        );
+    }
+}
