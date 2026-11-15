@@ -136,8 +136,13 @@ fn component<'a, 'input>(records: &'a [Entity<'input>], name: &str) -> Result<&'
         .find(|e| e.name == name)
         .ok_or(Error::Unsupported)
 }
-fn triple(p: &Parsed<'_>, id: u32, name: &str, work: &mut Ledger<'_>) -> Result<Direction> {
-    let e = kind(&p.entities, id, name)?;
+fn triple(
+    records: &BTreeMap<u32, Vec<Entity<'_>>>,
+    id: u32,
+    name: &str,
+    work: &mut Ledger<'_>,
+) -> Result<Direction> {
+    let e = kind(records, id, name)?;
     let [Value::String(_), values] = e.args.as_slice() else {
         return Err(Error::Invalid);
     };
@@ -158,7 +163,7 @@ fn triple(p: &Parsed<'_>, id: u32, name: &str, work: &mut Ledger<'_>) -> Result<
     Ok(Direction { values, zero })
 }
 fn direction(
-    p: &Parsed<'_>,
+    records: &BTreeMap<u32, Vec<Entity<'_>>>,
     value: &Value<'_>,
     default: V,
     work: &mut Ledger<'_>,
@@ -169,11 +174,83 @@ fn direction(
             zero: default.map(|i| i.lo == 0. && i.hi == 0.),
         })
     } else {
-        triple(p, reference(value)?, "DIRECTION", work)
+        triple(records, reference(value)?, "DIRECTION", work)
     }
 }
 fn unit(index: usize) -> V {
     std::array::from_fn(|i| I::point(f64::from(i == index)))
+}
+// One schema evaluator shared by typed source wrappers. The caller owns
+// source/member correspondence, inherited work and its own storage scope.
+struct MappingValues {
+    origin: V,
+    axes: [V; 3],
+    scale: I,
+}
+fn evaluate_operator(
+    entities: &BTreeMap<u32, Vec<Entity<'_>>>,
+    operator: u32,
+    work: &mut Ledger<'_>,
+) -> Result<MappingValues> {
+    let records = entities.get(&operator).ok_or(Error::Invalid)?;
+    if records.len() != 5 {
+        return Err(Error::Unsupported);
+    }
+    let base = component(records, "CARTESIAN_TRANSFORMATION_OPERATOR")?;
+    let dimensional = component(records, "CARTESIAN_TRANSFORMATION_OPERATOR_3D")?;
+    let item = component(records, "REPRESENTATION_ITEM")?;
+    let geometry = component(records, "GEOMETRIC_REPRESENTATION_ITEM")?;
+    let transformation = component(records, "FUNCTIONALLY_DEFINED_TRANSFORMATION")?;
+    if !matches!(item.args.as_slice(), [Value::String(_)])
+        || !geometry.args.is_empty()
+        || !matches!(
+            transformation.args.as_slice(),
+            [Value::String(_), Value::String(_)]
+        )
+    {
+        return Err(Error::Unsupported);
+    }
+    let [axis1, axis2, origin, scale] = base.args.as_slice() else {
+        return Err(Error::Unsupported);
+    };
+    let [axis3] = dimensional.args.as_slice() else {
+        return Err(Error::Unsupported);
+    };
+    let origin = triple(entities, reference(origin)?, "CARTESIAN_POINT", work)?.values;
+    let mut numeric = Numeric::new(base, work)?;
+    let scale = if matches!(scale, Value::Omitted) {
+        I::point(1.)
+    } else {
+        let scalar = numeric.scalar(scale)?;
+        work.step(2 * scalar.spelling().len() + 64)?;
+        let [lo, hi] = scalar.bounds();
+        finite(I::new(lo, hi))?
+    };
+    numeric.finish()?;
+    if scale.lo <= 0. {
+        return Err(Error::Unsupported);
+    }
+    let z = direction(entities, axis3, unit(2), work)?;
+    let default_x = if z.zero[1] && z.zero[2] {
+        unit(1)
+    } else {
+        unit(0)
+    };
+    let z = normalize(z.values, work)?;
+    let x = normalize(direction(entities, axis1, default_x, work)?.values, work)?;
+    let x = normalize(remove(x, z), work)?;
+    let y = normalize(direction(entities, axis2, unit(1), work)?.values, work)?;
+    // second_proj_axis uses the ORIGINAL v for both scalar projections.
+    let z_projection = dot(y, z);
+    let x_projection = dot(y, x);
+    let y = std::array::from_fn(|i| y[i] - z_projection * z[i] - x_projection * x[i]);
+    let y = normalize(y, work)?;
+    work.step(1)?;
+    Ok(MappingValues {
+        origin,
+        axes: [x, y, z],
+        scale,
+    })
 }
 impl<'input> Parsed<'input> {
     /// Read the actual complex operator's original numeric leaves. A caller
@@ -202,71 +279,16 @@ impl<'input> Parsed<'input> {
         if bytes > options.retained_budget_bytes {
             return Err(Error::Limit);
         }
-        let records = self.entities.get(&operator).ok_or(Error::Invalid)?;
-        if records.len() != 5 {
-            return Err(Error::Unsupported);
-        }
-        let base = component(records, "CARTESIAN_TRANSFORMATION_OPERATOR")?;
-        let dimensional = component(records, "CARTESIAN_TRANSFORMATION_OPERATOR_3D")?;
-        let item = component(records, "REPRESENTATION_ITEM")?;
-        let geometry = component(records, "GEOMETRIC_REPRESENTATION_ITEM")?;
-        let transformation = component(records, "FUNCTIONALLY_DEFINED_TRANSFORMATION")?;
-        if !matches!(item.args.as_slice(), [Value::String(_)])
-            || !geometry.args.is_empty()
-            || !matches!(
-                transformation.args.as_slice(),
-                [Value::String(_), Value::String(_)]
-            )
-        {
-            return Err(Error::Unsupported);
-        }
-        let [axis1, axis2, origin, scale] = base.args.as_slice() else {
-            return Err(Error::Unsupported);
-        };
-        let [axis3] = dimensional.args.as_slice() else {
-            return Err(Error::Unsupported);
-        };
-        let origin = triple(self, reference(origin)?, "CARTESIAN_POINT", &mut work)?.values;
-        let mut numeric = Numeric::new(base, &mut work)?;
-        let scale = if matches!(scale, Value::Omitted) {
-            I::point(1.)
-        } else {
-            let scalar = numeric.scalar(scale)?;
-            work.step(2 * scalar.spelling().len() + 64)?;
-            let [lo, hi] = scalar.bounds();
-            finite(I::new(lo, hi))?
-        };
-        numeric.finish()?;
-        if scale.lo <= 0. {
-            return Err(Error::Unsupported);
-        }
-        let z = direction(self, axis3, unit(2), &mut work)?;
-        let default_x = if z.zero[1] && z.zero[2] {
-            unit(1)
-        } else {
-            unit(0)
-        };
-        let z = normalize(z.values, &mut work)?;
-        let x = normalize(
-            direction(self, axis1, default_x, &mut work)?.values,
-            &mut work,
-        )?;
-        let x = normalize(remove(x, z), &mut work)?;
-        let y = normalize(
-            direction(self, axis2, unit(1), &mut work)?.values,
-            &mut work,
-        )?;
-        // second_proj_axis uses the ORIGINAL v for both scalar projections.
-        let z_projection = dot(y, z);
-        let x_projection = dot(y, x);
-        let y = std::array::from_fn(|i| y[i] - z_projection * z[i] - x_projection * x[i]);
-        let y = normalize(y, &mut work)?;
-        work.step(1)?;
+        let MappingValues {
+            origin,
+            axes,
+            scale,
+        } = evaluate_operator(&self.entities, operator, &mut work)?;
         Ok(PhysicalMapping {
             parsed: self,
             operator,
             origin,
-            axes: [x, y, z],
+            axes,
             scale,
             work: work.used,
             bytes,
