@@ -262,6 +262,250 @@ fn actual_original_stock_and_finite_seat_guards_refuse_atomically() {
     assert_eq!(good.bores(), bores.as_ref());
 }
 #[test]
+fn actual_seat_source_contracts_and_exact_retained_memory_frontier() {
+    let (stock, bores, seats) = fixture();
+    let qualify =
+        |s: &[Seat], o: Options| Seats::new(Rc::clone(&stock), Rc::clone(&bores), s, o, &|| false);
+    let good = qualify(&seats, options()).unwrap();
+    for o in [
+        Options {
+            clearance_mm: f64::NAN,
+            ..options()
+        },
+        Options {
+            clearance_mm: -1.,
+            ..options()
+        },
+        Options {
+            minimum_feature_mm: f64::INFINITY,
+            ..options()
+        },
+        Options {
+            minimum_feature_mm: 0.,
+            ..options()
+        },
+        Options {
+            maximum_work: 0,
+            ..options()
+        },
+        Options {
+            maximum_work: 16_000_001,
+            ..options()
+        },
+        Options {
+            maximum_bytes: 0,
+            ..options()
+        },
+        Options {
+            maximum_bytes: 64 * 1024 * 1024 + 1,
+            ..options()
+        },
+    ] {
+        assert!(matches!(qualify(&seats, o), Err(Error::Invalid)));
+    }
+    assert!(matches!(qualify(&[], options()), Err(Error::Invalid)));
+    assert!(matches!(
+        Seats::new(Rc::clone(&stock), Rc::from([]), &seats, options(), &|| {
+            false
+        }),
+        Err(Error::Invalid)
+    ));
+    assert!(matches!(
+        qualify(&[seats[0]; 5], options()),
+        Err(Error::Limit)
+    ));
+    let repeated: Rc<[OrthogonalThroughBore]> = Rc::from(vec![bores[0]; 17]);
+    assert!(matches!(
+        Seats::new(Rc::clone(&stock), repeated, &seats, options(), &|| false),
+        Err(Error::Limit)
+    ));
+    let bytes = good.accounted_peak_bytes;
+    assert!(matches!(
+        qualify(
+            &seats,
+            Options {
+                maximum_bytes: bytes - 1,
+                ..options()
+            }
+        ),
+        Err(Error::Limit)
+    ));
+    let exact = qualify(
+        &seats,
+        Options {
+            maximum_bytes: bytes,
+            ..options()
+        },
+    )
+    .unwrap();
+    assert_eq!(exact.volume_bounds_mm3(), good.volume_bounds_mm3());
+    assert!(exact.retained_bytes() < exact.accounted_peak_bytes);
+    for depth in [f64::NAN, -1., 0.] {
+        let mut changed = seats.clone();
+        changed[0].depth_mm = depth;
+        assert!(matches!(qualify(&changed, options()), Err(Error::Invalid)));
+    }
+    let disconnected = Rc::new(
+        orthogonal::boolean(
+            &[
+                Box3 {
+                    min: [0.; 3],
+                    max: [40.; 3],
+                },
+                Box3 {
+                    min: [100.; 3],
+                    max: [101.; 3],
+                },
+            ],
+            &[],
+            Operation::Union,
+            1e-7,
+        )
+        .unwrap()
+        .unwrap(),
+    );
+    assert_eq!(disconnected.solid_count(), 2);
+    assert!(matches!(
+        Seats::new(disconnected, bores, &seats, options(), &|| false),
+        Err(Error::Unsupported)
+    ));
+    assert_eq!(stock.as_ref(), good.stock());
+}
+
+#[test]
+fn actual_opposite_end_cones_and_reversed_bore_requests_keep_closed_material() {
+    let (stock, original_bores, _) = fixture();
+    let boundary = orthogonal_boundary::build(stock.quads()).unwrap();
+    let reversed = [
+        [[20., 20., 5.1], [20., 20., -0.1]],
+        [[20., 5.1, 20.], [20., -0.1, 20.]],
+    ]
+    .map(|[a, b]| {
+        orthogonal_pockets::identify_through_bore(&stock, &boundary, a, b, 4.5, 1e-7, 1e-5).unwrap()
+    });
+    let mut mass = None;
+    for bores in [original_bores, Rc::from(reversed)] {
+        let seats = (0..2)
+            .flat_map(|bore| {
+                [false, true].map(move |end| Seat {
+                    bore,
+                    end,
+                    radius_mm: 6.,
+                    depth_mm: 0.75,
+                })
+            })
+            .collect::<Vec<_>>();
+        let source = Seats::new(Rc::clone(&stock), bores, &seats, options(), &|| false).unwrap();
+        let bounds = source.volume_bounds_mm3();
+        if let Some(previous) = mass {
+            assert_eq!(bounds, previous);
+        } else {
+            mass = Some(bounds);
+        }
+        let mesh = source.mesh(tessellation(0.02), &|| false).unwrap();
+        closed(&mesh);
+        for owner in 0..source.boundary().faces.len() + 2 + 4 {
+            assert!(mesh.face_indices.contains(&(owner as u32)));
+        }
+        assert!((mesh_volume(&mesh) - bounds[0].midpoint(bounds[1])).abs() < 2.);
+        for bad in [
+            Tessellation {
+                deflection: 0.,
+                ..tessellation(0.1)
+            },
+            Tessellation {
+                angle: f64::NAN,
+                ..tessellation(0.1)
+            },
+            Tessellation {
+                triangle_limit: 0,
+                ..tessellation(0.1)
+            },
+        ] {
+            assert!(matches!(source.mesh(bad, &|| false), Err(Error::Invalid)));
+        }
+        assert!(matches!(
+            source.mesh(
+                Tessellation {
+                    triangle_limit: 1,
+                    ..tessellation(0.1)
+                },
+                &|| false
+            ),
+            Err(Error::Limit)
+        ));
+        assert_eq!(source.volume_bounds_mm3(), bounds);
+    }
+}
+
+#[test]
+fn actual_source_and_mesh_cancellation_leave_retained_material_reusable() {
+    use std::cell::Cell;
+    let (stock, bores, seats) = fixture();
+    let polls = Cell::new(0usize);
+    let count = || {
+        polls.set(polls.get() + 1);
+        false
+    };
+    let source = Seats::new(
+        Rc::clone(&stock),
+        Rc::clone(&bores),
+        &seats,
+        options(),
+        &count,
+    )
+    .unwrap();
+    let total = polls.get();
+    assert!(total > 4);
+    let volume = source.volume_bounds_mm3();
+    for stop in 1..=total {
+        polls.set(0);
+        let interrupt = || {
+            polls.set(polls.get() + 1);
+            polls.get() >= stop
+        };
+        assert!(
+            matches!(
+                Seats::new(
+                    Rc::clone(&stock),
+                    Rc::clone(&bores),
+                    &seats,
+                    options(),
+                    &interrupt
+                ),
+                Err(Error::Cancelled)
+            ),
+            "source checkpoint {stop}/{total}"
+        );
+        assert_eq!(source.bores(), bores.as_ref());
+        assert_eq!(source.volume_bounds_mm3(), volume);
+    }
+    polls.set(0);
+    let before = source.mesh(tessellation(0.1), &count).unwrap();
+    let total = polls.get();
+    assert!(total > before.face_indices.len());
+    for stop in [1, 2, 3, total / 2, total - 1, total] {
+        polls.set(0);
+        let interrupt = || {
+            polls.set(polls.get() + 1);
+            polls.get() >= stop
+        };
+        assert!(
+            matches!(
+                source.mesh(tessellation(0.1), &interrupt),
+                Err(Error::Cancelled)
+            ),
+            "mesh checkpoint {stop}/{total}"
+        );
+    }
+    let after = source.mesh(tessellation(0.1), &|| false).unwrap();
+    assert_eq!(before.vertices, after.vertices);
+    assert_eq!(before.indices, after.indices);
+    assert_eq!(before.face_indices, after.face_indices);
+    assert_eq!(source.volume_bounds_mm3(), volume);
+}
+
+#[test]
 fn seated_stock_receiving_proof_retains_every_original_cell_and_both_members() {
     use crate::{
         normal_sweep::{Edge, Sweep},
