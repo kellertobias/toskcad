@@ -261,3 +261,124 @@ fn actual_resolved_m8_nut_allowances_phase_and_minimum_wall_are_retained() {
             .is_err()
     );
 }
+
+#[test]
+fn actual_builder_m8_screw_mates_original_line8_stock_and_relief_without_generic_aliases() {
+    use multicad_rust_kernel::{head_profile::Head, profiled_screw::Spec as ScrewSpec};
+    let policy = GeometryPolicy::default();
+    let pitch = 1.25_f64;
+    let depth = 5. * 3_f64.sqrt() / 16. * pitch;
+    let head_height = 4.4;
+    let underhead = 14. - head_height;
+    let runout = 1.25;
+    let neck = -5. + head_height;
+    let external_start = neck + runout;
+    let seat = 4.5;
+    let station: f64 = seat - external_start;
+    let angle = std::f64::consts::TAU * station.rem_euclid(pitch) / pitch;
+    let (s, c) = angle.sin_cos();
+    let raw = s.atan2(c);
+    let roll = (raw + std::f64::consts::TAU / 2.).rem_euclid(std::f64::consts::TAU)
+        - std::f64::consts::TAU / 2.;
+    let (s, c) = roll.sin_cos();
+    let external = HelicalThread {
+        major_radius_mm: 4. - 0.08,
+        pitch_mm: pitch,
+        length_mm: underhead - runout,
+        depth_mm: depth,
+        crest_width_mm: pitch / 8. - 0.04,
+        lower_flank_deg: 30.,
+        upper_flank_deg: 30.,
+        radial_taper: 0.,
+        starts: 1,
+        left_hand: false,
+    };
+    let screw = Solid::rust_profiled_machine_screw_with_shank(
+        external,
+        None,
+        4.,
+        ScrewSpec {
+            head: Head::Countersunk {
+                radius_mm: 8.,
+                height_mm: head_height,
+                included_angle_deg: 90.,
+                edge_chamfer_mm: 0.05,
+                neck_radius_mm: 0.4,
+            },
+            shank_length_mm: underhead - external.length_mm,
+            socket_across_flats_mm: 5.08,
+            socket_depth_mm: 3.2,
+            minimum_wall_mm: 1e-5,
+        },
+        EntityId::new(),
+        PlaneFrame {
+            origin: [0., 0., neck],
+            ..PlaneFrame::default()
+        },
+        policy,
+    )
+    .unwrap();
+    let stock = stock()
+        .transformed(RigidTransform {
+            translation_mm: [0., 0., seat],
+            ..RigidTransform::default()
+        })
+        .unwrap();
+    let nut = stock
+        .rust_cut_line8_nut(
+            Line8NutCut {
+                profile: HelicalThread {
+                    major_radius_mm: 4. + 0.08,
+                    length_mm: 4.1,
+                    crest_width_mm: pitch / 8. + 0.04,
+                    ..external
+                },
+                frame: PlaneFrame {
+                    origin: [0., 0., seat],
+                    u: [c, s, 0.],
+                    v: [-s, c, 0.],
+                },
+                bore_from_start_mm: 7.5,
+                relief: Relief {
+                    start_mm: 4.1 - 0.001,
+                    radius_mm: 4.10,
+                    tool_length_mm: 7.3 - 4.1 + 0.02,
+                },
+                minimum_wall_mm: 0.5,
+            },
+            EntityId::new(),
+            policy,
+            None,
+        )
+        .unwrap();
+    let proof = screw.rust_line8_nut_mating(&nut, None).unwrap();
+    assert!(std::ptr::eq(
+        proof.nut().source,
+        nut.rust_line8_nut_source().unwrap()
+    ));
+    assert!(proof.complete_turns_lower > 3.);
+    assert!(proof.relief_clearance_lower_mm > 0.1);
+    assert!(nut.axial_cylinder().is_none());
+    assert!(matches!(
+        screw
+            .rust_line8_nut_mating(&nut, Some(&|| true))
+            .err()
+            .unwrap()
+            .kind,
+        GeometryErrorKind::Cancelled
+    ));
+    assert!(matches!(
+        stock.rust_line8_nut_mating(&nut, None).err().unwrap().kind,
+        GeometryErrorKind::Unsupported
+    ));
+    let offset = screw
+        .transformed(RigidTransform {
+            translation_mm: [0.1, 0., 0.],
+            ..RigidTransform::default()
+        })
+        .unwrap();
+    assert!(matches!(
+        offset.rust_line8_nut_mating(&nut, None).err().unwrap().kind,
+        GeometryErrorKind::Unsupported
+    ));
+}

@@ -17,6 +17,7 @@ use multicad_rust_kernel::{
 };
 use std::collections::BTreeSet;
 type Point = [f64; 3];
+mod mating;
 mod mesh;
 #[cfg(test)]
 mod tests;
