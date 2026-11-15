@@ -303,6 +303,26 @@ fn actual_coedge_orientation_and_vertex_point_dimensions_are_checked() {
         decode(&input, Default::default(), None),
         Err(Error::Invalid)
     ));
+    let Value::Reference(vertex_id) = oriented.args[3] else {
+        unreachable!()
+    };
+    let edge = &arena[&vertex_id][0];
+    assert_eq!(edge.name, "EDGE_CURVE");
+    let Value::Reference(vertex_id) = edge.args[1] else {
+        unreachable!()
+    };
+    // Preserve the complete coedge cycle while dangling its shared vertex:
+    // every occurrence of that same vertex reference changes together, and
+    // its original entity remains as unused input rather than being invented.
+    let input = original
+        .replace(&format!("#{vertex_id},"), "#4294967294,")
+        .replace(&format!("#{vertex_id})"), "#4294967294)");
+    assert_ne!(input, original);
+    assert!(part21::parse(&input).is_ok());
+    assert!(matches!(
+        decode(&input, Default::default(), None),
+        Err(Error::Invalid)
+    ));
 
     // Keep every curve's original points and dimensions. Only the vertex's
     // binding is changed to a genuine existing pcurve point in this file.
@@ -328,6 +348,119 @@ fn actual_coedge_orientation_and_vertex_point_dimensions_are_checked() {
         Err(Error::Invalid)
     ));
     assert!(decode(original, Default::default(), None).is_ok());
+}
+
+#[test]
+fn actual_bare_curve_record_cannot_replace_a_qualified_complex_curve() {
+    let source = Hanger::new(
+        crate::authored_hanger_bolt::tests::fixture(false, false),
+        None,
+    )
+    .unwrap();
+    let file =
+        crate::step::hanger::export_qualified_hanger(&source, Default::default(), None).unwrap();
+    let original = file.as_str();
+    let arena = part21::parse(original).unwrap();
+    let (&id, entities) = arena
+        .iter()
+        .find(|(_, entities)| entities.iter().any(|e| e.name == "B_SPLINE_CURVE"))
+        .unwrap();
+    assert!(entities.len() > 1);
+    let base = entities
+        .iter()
+        .find(|e| e.name == "B_SPLINE_CURVE")
+        .unwrap();
+    let prefix = format!("#{id}=");
+    let record = original
+        .lines()
+        .find(|line| line.starts_with(&prefix))
+        .unwrap();
+    let input = original.replacen(record, &format!("{prefix}{};", base.source.unwrap()), 1);
+    let parsed = part21::parse(&input).unwrap();
+    assert_eq!(parsed[&id].len(), 1);
+    assert_eq!(parsed[&id][0].name, "B_SPLINE_CURVE");
+    assert!(matches!(
+        decode(&input, Default::default(), None),
+        Err(Error::Unsupported)
+    ));
+    assert!(decode(original, Default::default(), None).is_ok());
+}
+
+#[test]
+fn actual_two_closed_sources_cannot_be_claimed_as_one_spherical_shell() {
+    let mut spec = crate::authored_hanger_bolt::tests::fixture(false, false);
+    spec.metric = crate::authored_metric_thread::AuthoredMetricThread::new(
+        crate::authored_metric_thread::Spec {
+            length_mm: 1.,
+            ..spec.metric.spec()
+        },
+    )
+    .unwrap();
+    spec.wood = crate::authored_flat_thread::AuthoredThread::new(
+        crate::helical_thread::Spec {
+            length_mm: 4.,
+            ..spec.wood.spec()
+        },
+        crate::authored_flat_thread::SourceOptions {
+            position_limit_mm: 1e-7,
+            normal_angle_limit_rad: 1e-6,
+        },
+    )
+    .unwrap();
+    // Two genuine short authored sources fit the existing reader budget;
+    // the default long pair is correctly refused earlier by its 64MiB cap.
+    let source = Hanger::new(spec, None).unwrap();
+    let file =
+        crate::step::hanger::export_qualified_hanger(&source, Default::default(), None).unwrap();
+    let mut writer = crate::step::Writer::new();
+    for _ in 0..2 {
+        writer
+            .append_qualified_hanger(&file, Default::default(), None)
+            .unwrap();
+    }
+    let original = writer.finish().unwrap();
+    let arena = part21::parse(&original).unwrap();
+    let (&solid, entities) = arena
+        .iter()
+        .find(|(_, es)| es[0].name == "MANIFOLD_SOLID_BREP")
+        .unwrap();
+    let Value::Reference(shell) = entities[0].args[1] else {
+        unreachable!()
+    };
+    let mut faces = Vec::new();
+    let mut shell_count = 0;
+    for entity in arena
+        .values()
+        .flatten()
+        .filter(|e| e.name == "CLOSED_SHELL")
+    {
+        shell_count += 1;
+        let Value::List(ids) = &entity.args[1] else {
+            unreachable!()
+        };
+        faces.extend(ids.iter().map(|v| match v {
+            Value::Reference(id) => format!("#{id}"),
+            _ => unreachable!(),
+        }));
+    }
+    assert_eq!(shell_count, 2);
+    let component = arena[&shell][0].source.unwrap();
+    let changed = replace_argument(component, &[1], &format!("({})", faces.join(",")));
+    let input = original.replacen(component, &changed, 1);
+    let representation = arena
+        .values()
+        .flatten()
+        .find(|e| e.name == "ADVANCED_BREP_SHAPE_REPRESENTATION")
+        .unwrap();
+    let component = representation.source.unwrap();
+    let changed = replace_argument(component, &[1], &format!("(#{solid})"));
+    let input = input.replacen(component, &changed, 1);
+    assert!(part21::parse(&input).is_ok());
+    assert!(matches!(
+        decode(&input, Default::default(), None),
+        Err(Error::Unsupported)
+    ));
+    assert!(decode(file.as_str(), Default::default(), None).is_ok());
 }
 
 #[test]
