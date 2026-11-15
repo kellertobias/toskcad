@@ -234,6 +234,7 @@ pub use physical::{
 };
 
 pub use physical::{
+    AnalyticThreadOptions, AnalyticThreadRepair, AnalyticThreadTransfer,
     CoherentDegree11ThreadCarrier, ContactThreadCarrier, Degree11ContactOptions, Degree11DomainEnd,
     Degree11RimContact, Degree11RimContactId, Degree11RimKnot, Degree11SignDomain,
     Degree11ThreadContacts, Degree11ThreadFace, Degree11ThreadOptions, DerivedThreadCarrier,
