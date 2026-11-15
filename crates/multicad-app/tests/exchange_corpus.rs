@@ -1628,6 +1628,11 @@ fn rust_stdio_corpus_workflow_survives_source_removal() {
         "occt-pocketed-plate",
         "kicad-vendored-L_Wuerth_HCM-7070",
         "kicad-vendored-Mounting_Wuerth_WA-SMST-3.3mm_H1mm_9774010960",
+        // Repaired by CAD-359: a reversed pole loop, a two-edge cubic section
+        // and a box whose planes are divided into pad and marker faces.
+        "occt-sphere",
+        "occt-spline-prism",
+        "kicad-vendored-L_CommonModeChoke_TDK_ACM7060",
     ] {
         let entry = manifest_entry(id);
         let bytes = entry_bytes(&entry).unwrap();
@@ -1637,10 +1642,23 @@ fn rust_stdio_corpus_workflow_survives_source_removal() {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("source.step");
         std::fs::write(&source, &bytes).unwrap();
-        let refused = manifest_entry("occt-sphere");
-        let refused_bytes = entry_bytes(&refused).unwrap();
-        let refused_path = directory.path().join("refused.step");
-        std::fs::write(&refused_path, &refused_bytes).unwrap();
+        // Refusal controls: a valid cone outside the analytic families and
+        // the same file cut off in the middle of its data section.
+        let unsupported = manifest_entry("occt-cone-frustum");
+        assert_eq!(unsupported["expected"], "unsupported");
+        let unsupported = entry_bytes(&unsupported).unwrap();
+        let malformed = unsupported[..unsupported.len() / 2].to_vec();
+        assert_eq!(
+            outcome_of(&import(std::str::from_utf8(&malformed).unwrap())),
+            "invalid"
+        );
+        let refusals = [
+            ("unsupported.step", unsupported),
+            ("malformed.step", malformed),
+        ];
+        for (name, bytes) in &refusals {
+            std::fs::write(directory.path().join(name), bytes).unwrap();
+        }
         let project = directory.path().join("corpus.tcd");
         let arguments = [
             "--rust-model",
@@ -1674,13 +1692,19 @@ fn rust_stdio_corpus_workflow_survives_source_removal() {
         client.ok("save_project", json!({"expected_revision": 1}));
         let saved = std::fs::read(&project).unwrap();
         // A refused import changes nothing.
-        client.fail(
-            "import_step",
-            json!({"expected_revision": 1, "file_name": "refused.step"}),
-        );
-        assert_eq!(client.revision(), 1, "{id}");
-        assert_eq!(std::fs::read(&project).unwrap(), saved, "{id}");
-        assert_eq!(std::fs::read(&refused_path).unwrap(), refused_bytes, "{id}");
+        for (name, bytes) in &refusals {
+            client.fail(
+                "import_step",
+                json!({"expected_revision": 1, "file_name": name}),
+            );
+            assert_eq!(client.revision(), 1, "{id}: {name}");
+            assert_eq!(std::fs::read(&project).unwrap(), saved, "{id}: {name}");
+            assert_eq!(
+                &std::fs::read(directory.path().join(name)).unwrap(),
+                bytes,
+                "{id}: {name}"
+            );
+        }
         drop(client);
 
         std::fs::remove_file(&source).unwrap();
