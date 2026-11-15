@@ -225,18 +225,26 @@ pub(super) fn shell(
                 incident[face] = true;
             }
         }
-        if incident.iter().filter(|v| **v).count() != degree {
-            return Err(Error::Invalid);
-        }
+        // wire() proved four distinct corners in each face. Each incident
+        // face therefore contributes exactly two distinct edge ends here.
+        // The shell's opposite-two-use check gives each incident edge two
+        // such corners. Counting these pairs proves faces == edges in this
+        // local link, even if that link is disconnected (checked below).
+        assert_eq!(
+            incident.iter().filter(|v| **v).count(),
+            degree,
+            "validated face corners and opposite edge uses"
+        );
         for (face, present) in incident.iter().enumerate() {
-            if *present
-                && incident_edges[..degree]
-                    .iter()
-                    .filter(|edge| uses[**edge].iter().any(|(f, _)| *f == face))
-                    .count()
-                    != 2
-            {
-                return Err(Error::Invalid);
+            if *present {
+                assert_eq!(
+                    incident_edges[..degree]
+                        .iter()
+                        .filter(|edge| uses[**edge].iter().any(|(f, _)| *f == face))
+                        .count(),
+                    2,
+                    "one validated corner per incident face"
+                );
             }
         }
         let start = incident
