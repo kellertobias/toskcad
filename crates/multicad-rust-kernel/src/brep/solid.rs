@@ -41,12 +41,9 @@ impl Edge {
             vertices,
             range: [start, end],
         };
-        for side in 0..2 {
+        for (side, &point) in points.iter().enumerate() {
             let on_curve = edge.curve.evaluate(edge.range[side]).0;
-            ensure(
-                distance(on_curve, points[side]) <= tolerance,
-                Error::Invalid,
-            )?;
+            ensure(distance(on_curve, point) <= tolerance, Error::Invalid)?;
         }
         Ok(edge)
     }

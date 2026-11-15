@@ -81,7 +81,7 @@ fn complete(face: usize, [low, high]: [[f64; 2]; 2], torus: bool) -> Vec<Triangl
             low[0] + (high[0] - low[0]) * i as f64 / SIDE as f64,
             low[1] + (high[1] - low[1]) * j as f64 / SIDE as f64,
         ];
-        let pole = !torus && j % SIDE == 0;
+        let pole = !torus && j.is_multiple_of(SIDE);
         let key = if pole {
             1 + j / SIDE
         } else {
@@ -409,11 +409,11 @@ pub(crate) fn triangulate(
     let mut count = n;
     while count > 3 && left > enough {
         let mut best: Option<(f64, usize)> = None;
-        for b in 0..n {
-            if let (true, Some(cost)) = (clip.active[b], ears[b]) {
-                if best.is_none_or(|(least, _)| cost < least) {
-                    best = Some((cost, b));
-                }
+        for (b, ear) in ears.iter().enumerate() {
+            if let (true, Some(cost)) = (clip.active[b], *ear)
+                && best.is_none_or(|(least, _)| cost < least)
+            {
+                best = Some((cost, b));
             }
         }
         let (_, b) = best.ok_or(Error::Unsupported)?;

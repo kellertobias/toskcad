@@ -215,7 +215,7 @@ impl Refiner<'_> {
             }
         }
         // A triangle whose sides all conform can still bulge at its centre.
-        for index in 0..taken.len() {
+        for (index, &taken) in taken.iter().enumerate() {
             let cell = self.cells[index];
             let centre = cell.centre();
             let exact = self.surface.evaluate(centre).0;
@@ -228,8 +228,8 @@ impl Refiner<'_> {
                 .filter(|&&v| self.locals[v as usize].pole)
                 .count()
                 > 1;
-            if taken[index] || on_row || deviation <= self.deflection {
-                if !taken[index] && !on_row {
+            if taken || on_row || deviation <= self.deflection {
+                if !taken && !on_row {
                     self.deviation = self.deviation.max(deviation);
                 }
                 continue;
@@ -421,9 +421,9 @@ pub fn tessellate(solid: &Solid, options: Options, interrupt: Interrupt<'_>) -> 
         mesh: Mesh::default(),
     };
     let signs = boundary.signs();
-    for index in 0..boundary.faces.len() {
+    for (index, sign) in signs.into_iter().enumerate() {
         checkpoint(interrupt)?;
-        builder.face(index, options, signs[index] > 0.)?;
+        builder.face(index, options, sign > 0.)?;
     }
     Ok(builder.mesh)
 }
