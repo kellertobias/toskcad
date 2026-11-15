@@ -1,6 +1,7 @@
 //! Verify membership in a flat STEP advanced BREP representation.
 
 use super::*;
+pub(super) mod ownership;
 
 pub(super) fn read_import_members(
     input: &str,
@@ -279,16 +280,29 @@ pub(super) fn claim_topology(
     solid: u32,
     owners: &mut BTreeMap<u32, u32>,
 ) -> Result<()> {
+    let mut pending = Vec::new();
+    claim_topology_by(shell, solid, owners, &mut pending, &mut || {
+        Ok::<_, ReadError>(())
+    })
+}
+fn claim_topology_by<E: From<ReadError>>(
+    shell: &Shell<'_, '_>,
+    solid: u32,
+    owners: &mut BTreeMap<u32, u32>,
+    pending: &mut Vec<u32>,
+    step: &mut impl FnMut() -> std::result::Result<(), E>,
+) -> std::result::Result<(), E> {
     use std::collections::btree_map::Entry;
-
-    let mut pending = vec![solid];
+    pending.clear();
+    pending.push(solid);
     while let Some(id) = pending.pop() {
-        let parts = shell.components(id)?;
+        step()?;
+        let parts = shell.components(id).map_err(E::from)?;
         let [entity] = parts else {
             // A verified rational support is a complex geometric entity.
             // Topology remains restricted to single, exclusively owned entities.
             if parts.iter().any(|part| topology(part.name)) {
-                return Err(ReadError::Unsupported);
+                return Err(E::from(ReadError::Unsupported));
             }
             continue;
         };
@@ -297,7 +311,7 @@ pub(super) fn claim_topology(
         }
         match owners.entry(id) {
             Entry::Occupied(owner) if *owner.get() == solid => continue,
-            Entry::Occupied(_) => return Err(ReadError::Invalid),
+            Entry::Occupied(_) => return Err(E::from(ReadError::Invalid)),
             Entry::Vacant(owner) => owner.insert(solid),
         };
         // The member shell has already checked every topological reference.
