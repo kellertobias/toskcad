@@ -369,6 +369,22 @@ fn rounded_thread_matches_native_open_cascade() {
 /// A radius-4.5 authored stock less an ISO-like internal thread cavity with
 /// an entry cone.
 fn treated() -> Solid {
+    treated_with(None)
+}
+
+/// As `treated`, with a terminal groove 1.2 mm wide and 0.4 mm deep.
+fn grooved() -> Solid {
+    treated_with(Some(
+        multicad_kernel::rust_kernel::authored_internal_treatment::Terminal {
+            width_mm: 1.2,
+            radial_depth_mm: 0.4,
+        },
+    ))
+}
+
+fn treated_with(
+    terminal: Option<multicad_kernel::rust_kernel::authored_internal_treatment::Terminal>,
+) -> Solid {
     use multicad_kernel::rust_kernel::{Circle, Rational, cylinder::AxialCylinder};
     let policy = GeometryPolicy::default();
     let zero = Rational::new(0, 1).unwrap();
@@ -397,7 +413,7 @@ fn treated() -> Solid {
                 },
                 intent: multicad_kernel::rust_kernel::authored_internal_treatment::Intent {
                     entry_depth_mm: Some(0.8),
-                    terminal: None,
+                    terminal,
                 },
                 minimum_wall_mm: 0.5,
                 frame: PlaneFrame::default(),
@@ -414,19 +430,42 @@ fn treated() -> Solid {
 /// a core inside the minor radius, less the imported external thread of the
 /// same profile, one pitch longer at each end so no cap is coplanar.
 fn treated_reference() -> Solid {
+    reference(false)
+}
+
+/// The grooved bore's reference: the revolved stock also less the tail
+/// cylinder `r < 3.4` past the shoulder at 5.3 mm; the same plug cuts the
+/// thread, which the tail void already contains beyond the shoulder.
+fn grooved_reference() -> Solid {
+    reference(true)
+}
+
+fn reference(groove: bool) -> Solid {
     use multicad_kernel::{BooleanOperation, CurvedEdge2d, CurvedProfile, RevolutionAxis};
     let policy = GeometryPolicy::default();
     let minor = 3. - 5. * 3_f64.sqrt() / 16.;
     let entry = minor + 0.8;
     // The cone r = entry - z, continued inside the minor radius to the core.
     let core = minor - 0.2;
-    let points = [
-        [entry, 0.],
-        [4.5, 0.],
-        [4.5, 6.5],
-        [core, 6.5],
-        [core, entry - core],
-    ];
+    let points: Vec<[f64; 2]> = if groove {
+        vec![
+            [entry, 0.],
+            [4.5, 0.],
+            [4.5, 6.5],
+            [3.4, 6.5],
+            [3.4, 5.3],
+            [core, 5.3],
+            [core, entry - core],
+        ]
+    } else {
+        vec![
+            [entry, 0.],
+            [4.5, 0.],
+            [4.5, 6.5],
+            [core, 6.5],
+            [core, entry - core],
+        ]
+    };
     let stock = Solid::revolve_curved_profile(
         &CurvedProfile {
             frame: PlaneFrame {
@@ -495,6 +534,24 @@ fn internal_thread_treatment_matches_native_open_cascade() {
             && unavailable
                 .iter()
                 .all(|label| label.contains("side") || label.contains("oblique")),
+        "{unavailable:?}"
+    );
+}
+
+#[test]
+fn internal_thread_treatment_groove_matches_native_open_cascade() {
+    // Cuts through the threaded bore and through the groove and shoulder.
+    let (solid, native) = (grooved(), grooved_reference());
+    let mut unavailable = compare("groove", &solid, &native, [0.2, 0.1, 3.25]);
+    unavailable.extend(compare("groove tail", &solid, &native, [0.2, 0.1, 5.6]));
+    println!("{{\"groove_native_unavailable\":{unavailable:?}}}");
+    // Side and oblique cuts cross the entry cone zone, which OpenCascade
+    // 7.9.3 cannot publish for its own Boolean result (as measured for the
+    // treatment without a groove); every axial cut must be compared.
+    assert!(
+        unavailable
+            .iter()
+            .all(|label| label.contains("side") || label.contains("oblique")),
         "{unavailable:?}"
     );
 }

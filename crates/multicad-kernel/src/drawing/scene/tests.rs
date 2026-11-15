@@ -229,6 +229,7 @@ fn thread_material_along_lines_agrees_with_source_containment() {
         solids.push(chamfered(left_hand, left_hand, frame));
         solids.push(screw(left_hand, left_hand, frame));
         solids.push(treated(left_hand, 1 + u32::from(left_hand), frame));
+        solids.push(grooved(!left_hand, 1 + u32::from(left_hand), frame));
     }
     for left_hand in [false, true] {
         let root = 1. / (4. * 3_f64.sqrt());
@@ -312,10 +313,14 @@ fn thread_material_along_lines_agrees_with_source_containment() {
             }
         }
         // Along the axis at several radii, and in the entry cap plane.
-        for r in [0.5, 2.5, 2.8, 3.05] {
+        for r in [0.5, 2.5, 2.8, 3.05, 3.3, 3.6] {
             lines.push((world([r, 0.3, -1.]), axis));
         }
         lines.push((world([-4., 0.37, 1e-3]), frame.u));
+        // In a treated bore's groove shoulder plane, and just beside it.
+        for z in [5.3, 5.3 - 2e-3, 5.3 + 2e-3] {
+            lines.push((world([-4.6, 0.41, z]), frame.u));
+        }
         lines
     };
     let mut covered = 0;
@@ -474,12 +479,14 @@ fn thread_visibility_agrees_with_source_containment_marching() {
     let double = two_start(false, PlaneFrame::default());
     let bore = rounded_bore(true, PlaneFrame::default());
     let treatment = treated(false, 1, PlaneFrame::default());
+    let groove = grooved(true, 2, PlaneFrame::default());
     for (solid, center) in [
         (&rounded, 2.35),
         (&relief, 3.3),
         (&double, 3.3),
         (&bore, 2.35),
         (&treatment, 3.25),
+        (&groove, 4.6),
     ] {
         for [u, v] in [
             [[1., 0., 0.], [0., 0., 1.]],
@@ -647,7 +654,11 @@ fn thread_sections_lie_on_the_source_boundary() {
     let hex_screw = screw(false, true, PlaneFrame::default());
     let treatment = treated(true, 2, PlaneFrame::default());
     let treatment_data = treatment.rust_internal_thread_treatment_data().unwrap();
+    let groove = grooved(false, 1, PlaneFrame::default());
+    let groove_data = groove.rust_internal_thread_treatment_data().unwrap();
     for (label, solid, center) in [
+        ("groove", &groove, 3.25),
+        ("groove tail", &groove, 5.5),
         ("rounded", &rounded, 2.35),
         ("relief", &relief, 3.3),
         ("two-start", &double, 3.3),
@@ -748,6 +759,21 @@ fn thread_sections_lie_on_the_source_boundary() {
                                 && radius >= neck - 1e-6
                                 && radius <= chamfer_data.radius(theta, material) + 1e-6)
                             || (on(z - top) && radius <= neck + 1e-6)
+                    } else if label.starts_with("groove") {
+                        let cavity = groove_data.material.cavity();
+                        let length = cavity.full_length_mm();
+                        let stock = groove_data.material.stock().circle().radius().as_f64();
+                        let station = cavity.terminal_station_mm().unwrap();
+                        let tail = cavity.terminal_radius_mm().unwrap();
+                        let bound = cavity.radius_mm(theta, z.clamp(0., length));
+                        // The thread's void radius just below the shoulder.
+                        let below = cavity.radius_mm(theta, station - 1e-9);
+                        (on(radius - bound) && z > -1e-9 && z < length + 1e-9)
+                            || (on(radius - stock) && z > -1e-9 && z < length + 1e-9)
+                            || ((on(z) || on(z - length))
+                                && radius >= bound - 1e-6
+                                && radius <= stock + 1e-6)
+                            || (on(z - station) && radius >= below - 1e-6 && radius <= tail + 1e-6)
                     } else if label == "treatment" {
                         let cavity = treatment_data.material.cavity();
                         let length = cavity.full_length_mm();
@@ -850,10 +876,21 @@ fn thread_sections_lie_on_the_source_boundary() {
                     thread.volume_mm3() / thread.spec().length_mm
                 } else if label == "bore" {
                     PI * 25. - bore_thread.volume_mm3() / (3.7 * p)
-                } else if label == "treatment" {
+                } else if label == "groove tail" {
+                    // Past the shoulder: the annulus outside the tail.
+                    let cavity = groove_data.material.cavity();
+                    let tail = cavity.terminal_radius_mm().unwrap();
+                    let stock = groove_data.material.stock().circle().radius().as_f64();
+                    PI * (stock * stock - tail * tail)
+                } else if label == "treatment" || label == "groove" {
                     // Past the entry cone: the stock disc less the cavity's
                     // section, pi times the mean of R^2 over one pitch.
-                    let cavity = treatment_data.material.cavity();
+                    let data = if label == "groove" {
+                        &groove_data
+                    } else {
+                        &treatment_data
+                    };
+                    let cavity = data.material.cavity();
                     let thread = cavity.source_thread();
                     let mean: f64 = thread
                         .bands()
@@ -864,7 +901,7 @@ fn thread_sections_lie_on_the_source_boundary() {
                         })
                         .sum::<f64>()
                         / thread.spec().pitch_mm;
-                    let stock = treatment_data.material.stock().circle().radius().as_f64();
+                    let stock = data.material.stock().circle().radius().as_f64();
                     PI * (stock * stock - mean)
                 } else if label == "rounded" {
                     rounded_thread.volume_mm3() / (3.7 * p)
@@ -940,6 +977,31 @@ fn rounded_bore(left_hand: bool, frame: PlaneFrame) -> crate::Solid {
 /// An authored internal thread treatment: a radius-4.5 stock less an ISO-like
 /// internal thread cavity with an entry cone, placed by `frame`.
 fn treated(left_hand: bool, starts: u32, frame: PlaneFrame) -> crate::Solid {
+    treated_with(left_hand, starts, frame, None)
+}
+
+/// As `treated`, with a terminal groove 1.2 mm wide and 0.4 mm deep: past
+/// its station at 5.3 mm the void is the radius-3.4 tail cylinder.
+fn grooved(left_hand: bool, starts: u32, frame: PlaneFrame) -> crate::Solid {
+    treated_with(
+        left_hand,
+        starts,
+        frame,
+        Some(
+            multicad_rust_kernel::authored_internal_treatment::Terminal {
+                width_mm: 1.2,
+                radial_depth_mm: 0.4,
+            },
+        ),
+    )
+}
+
+fn treated_with(
+    left_hand: bool,
+    starts: u32,
+    frame: PlaneFrame,
+    terminal: Option<multicad_rust_kernel::authored_internal_treatment::Terminal>,
+) -> crate::Solid {
     use multicad_rust_kernel::{Circle, Rational, cylinder::AxialCylinder};
     let policy = GeometryPolicy::default();
     let zero = Rational::new(0, 1).unwrap();
@@ -969,7 +1031,7 @@ fn treated(left_hand: bool, starts: u32, frame: PlaneFrame) -> crate::Solid {
                 },
                 intent: multicad_rust_kernel::authored_internal_treatment::Intent {
                     entry_depth_mm: Some(0.8),
-                    terminal: None,
+                    terminal,
                 },
                 minimum_wall_mm: 0.5,
                 frame: PlaneFrame::default(),
@@ -1041,11 +1103,13 @@ fn thread_occluding_contours_agree_with_a_depth_map_oracle() {
     let s = 0.5_f64.sqrt();
     let t = (1_f64 / 6.).sqrt();
     let treatment = treated(false, 2, PlaneFrame::default());
+    let groove = grooved(false, 1, PlaneFrame::default());
     for (label, solid, center) in [
         ("rounded", &rounded, 2.35),
         ("relief", &relief, 3.3),
         ("bore", &bore, 2.35),
         ("treatment", &treatment, 3.25),
+        ("groove", &groove, 4.6),
     ] {
         for [u, v] in [[[1., 0., 0.], [0., 0., 1.]], [[s, -s, 0.], [t, t, -2. * t]]] {
             let frame = PlaneFrame {

@@ -817,7 +817,19 @@ pub(in crate::drawing) struct Thread {
     /// For a screw: the shank and head, a prism ending at the thread's start
     /// level whose cross-section there contains the thread's.
     base: Option<Prism>,
+    /// For a treated bore with a terminal groove: the void past the station
+    /// is the tail cylinder, and the shoulder annulus closes it.
+    groove: Option<Groove>,
     tolerance: f64,
+}
+
+/// A treated bore's terminal groove: the void is `r < radius` for
+/// `station <= z <= top`, beyond every radius of the thread's void.
+#[derive(Clone, Copy, Debug)]
+struct Groove {
+    radius: f64,
+    station: f64,
+    top: f64,
 }
 
 /// The entry cone `r = entry + slope z` on `0 <= z <= length`; beyond it the
@@ -1101,6 +1113,7 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
                 stock: None,
                 cone: None,
                 base: None,
+                groove: None,
                 tolerance,
             })
         })());
@@ -1172,6 +1185,7 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
                 stock: None,
                 cone: None,
                 base: Some(base),
+                groove: None,
                 tolerance,
             })
         })());
@@ -1226,6 +1240,7 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
                 stock: None,
                 cone: Some(cone),
                 base: None,
+                groove: None,
                 tolerance,
             })
         })());
@@ -1268,6 +1283,7 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
                 stock: Some((radius, prism)),
                 cone: None,
                 base: None,
+                groove: None,
                 tolerance,
             })
         })());
@@ -1291,6 +1307,7 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
         stock: None,
         cone: None,
         base: None,
+        groove: None,
         tolerance,
     }))
 }
@@ -1305,9 +1322,6 @@ fn treatment(
 ) -> Option<Result<Thread, GeometryError>> {
     let unsupported = |message: &str| Some(Err(err(GeometryErrorKind::Unsupported, message)));
     let cavity = data.material.cavity();
-    if cavity.terminal_radius_mm().is_some() {
-        return unsupported("Drawing a treated bore's terminal groove is not supported");
-    }
     let thread = cavity.source_thread();
     let spec = thread.spec();
     let pitch = spec.pitch_mm;
@@ -1342,20 +1356,60 @@ fn treatment(
             internal: true,
         });
     let sign = if spec.left_hand { -1. } else { 1. };
+    let circle = |radius_mm: f64, clockwise: bool| {
+        vec![Edge::Planar(normal_sweep::Edge::Circle {
+            center: [0.; 2],
+            radius_mm,
+            clockwise,
+        })]
+    };
+    // A terminal groove: past its station the void is the tail cylinder,
+    // which must clear the whole thread and stay inside the stock.
+    let groove = match cavity
+        .terminal_radius_mm()
+        .zip(cavity.terminal_station_mm())
+    {
+        Some((tail, station)) => {
+            if !(tail > thread.maximum_radius_mm()
+                && tail < radius
+                && station > 0.
+                && station < length)
+            {
+                return unsupported(
+                    "Drawing a treated bore whose terminal groove does not clear the thread inside the stock is not supported",
+                );
+            }
+            if cone.is_some_and(|cone| cone.length >= station) {
+                return unsupported(
+                    "Drawing a treated bore whose entry cone reaches its terminal groove is not supported",
+                );
+            }
+            Some(Groove {
+                radius: tail,
+                station,
+                top: length,
+            })
+        }
+        None => None,
+    };
+    let bands = match groove {
+        Some(groove) => vec![
+            Band {
+                rings: vec![circle(radius, false)],
+                axis: [0., groove.station],
+            },
+            Band {
+                rings: vec![circle(radius, false), circle(groove.radius, true)],
+                axis: [groove.station, length],
+            },
+        ],
+        None => vec![Band {
+            rings: vec![circle(radius, false)],
+            axis: [0., length],
+        }],
+    };
     Some((|| {
-        let prism = Prism::new(
-            origin,
-            axes,
-            vec![Band {
-                rings: vec![vec![Edge::Planar(normal_sweep::Edge::Circle {
-                    center: [0.; 2],
-                    radius_mm: radius,
-                    clockwise: false,
-                })]],
-                axis: [0., length],
-            }],
-            tolerance,
-        )?;
+        let prism = Prism::new(origin, axes, bands, tolerance)?;
         Ok(Thread {
             law: Arc::new(Law {
                 origin,
@@ -1364,11 +1418,12 @@ fn treatment(
                 rate: sign * pitch * f64::from(spec.starts) / TAU,
                 starts: spec.starts,
             }),
-            z: [0., length],
+            z: [0., groove.map_or(length, |groove| groove.station)],
             neck: None,
             stock: Some((radius, prism)),
             cone,
             base: None,
+            groove,
             tolerance,
         })
     })())
@@ -1627,6 +1682,33 @@ impl Thread {
                 Vec::new()
             });
         }
+        if let (Some(groove), Some((stock, _))) = (&self.groove, &self.stock)
+            && d[2].abs() <= 1e-15
+            && (s[2] - groove.station).abs() <= self.tolerance
+        {
+            // In the shoulder plane the material on both sides is the
+            // annulus between the tail cylinder and the stock.
+            let disc = |radius: f64| -> Vec<[f64; 2]> {
+                let rho = d[0].hypot(d[1]);
+                let b = s[0] * d[0] + s[1] * d[1];
+                let c = s[0] * s[0] + s[1] * s[1] - radius * radius;
+                if rho <= 1e-15 {
+                    return if c < 0. {
+                        vec![[-1e9, 1e9]]
+                    } else {
+                        Vec::new()
+                    };
+                }
+                let disc = b * b - rho * rho * c;
+                if disc > 0. {
+                    let root = disc.sqrt();
+                    vec![[(-b - root) / (rho * rho), (-b + root) / (rho * rho)]]
+                } else {
+                    Vec::new()
+                }
+            };
+            return Ok(profile::exclusive(&disc(*stock), &disc(groove.radius), 0.));
+        }
         if self.base.is_some() && d[2].abs() <= 1e-15 && (s[2] - self.z[0]).abs() <= self.tolerance
         {
             // In the plane where the thread starts on a screw's shank or head,
@@ -1667,6 +1749,9 @@ impl Thread {
             let beyond = |t: f64| {
                 let z = s[2] + t * d[2];
                 let mut void = profile.radius(z - self.rate() * theta);
+                if let Some(groove) = self.groove.filter(|groove| z >= groove.station) {
+                    void = groove.radius;
+                }
                 if let Some(cone) = self.cone.filter(|cone| z > 0. && z < cone.length) {
                     void = void.max(cone.radius(z));
                 }
@@ -2193,6 +2278,11 @@ impl Thread {
                                     .into_iter()
                                     .filter(|z| *z > lo && *z < hi),
                             );
+                            // The cone ends there even where rounding puts
+                            // its crossing with the band just past its end.
+                            if cone.length > lo && cone.length < hi {
+                                stops.push(cone.length);
+                            }
                         }
                         stops.sort_by(f64::total_cmp);
                         for pair in stops.windows(2) {
@@ -2288,9 +2378,11 @@ impl Thread {
                 let at = |s: f64| law.view([s * h[0], s * h[1], level]);
                 let [right, left] = [reach(theta), -reach(theta + PI)];
                 match &self.stock {
-                    // A bore's cap is the annulus between thread and stock.
-                    Some((radius, _)) => {
-                        output.push(Arc::new(Segment(at(right), at(*radius))));
+                    // A bore's cap is the annulus between thread and stock;
+                    // at a terminal groove's shoulder, the tail cylinder.
+                    Some(_) => {
+                        let radius = self.cap_reach(level);
+                        output.push(Arc::new(Segment(at(right), at(radius))));
                         output.push(Arc::new(Segment(at(-radius), at(left))));
                     }
                     None => output.push(Arc::new(Segment(at(left), at(right)))),
@@ -2417,8 +2509,9 @@ impl Thread {
                 }
             }
         }
-        if let Some((radius, _)) = &self.stock {
-            // A bore's caps are annuli: the stock chord less the thread's.
+        if self.stock.is_some() {
+            // A bore's caps are annuli: the stock chord less the thread's,
+            // at a terminal groove's shoulder the tail cylinder's.
             let d = [n[1] / nxy, -n[0] / nxy, 0.];
             let mut annular = Vec::new();
             for level in self.z {
@@ -2430,8 +2523,10 @@ impl Thread {
                     .filter(|[a, _]| (a[2] - level).abs() <= 1e-12)
                     .map(|[a, b]| [dot3(*a, d), dot3(*b, d)])
                     .collect();
-                let outer: Vec<[f64; 2]> =
-                    self.disc_chord(n, c, level, *radius).into_iter().collect();
+                let outer: Vec<[f64; 2]> = self
+                    .disc_chord(n, c, level, self.cap_reach(level))
+                    .into_iter()
+                    .collect();
                 for [a, b] in profile::exclusive(&outer, &inner, 1e-12) {
                     annular.push([add(base, scaled(d, a)), add(base, scaled(d, b))]);
                 }
@@ -2738,7 +2833,11 @@ impl Thread {
             .stock
             .as_ref()
             .map_or(self.law.profile.maximum, |(radius, _)| *radius);
-        let top = self.neck.as_ref().map_or(self.z[1], |(_, span, _)| span[1]);
+        let top = match (&self.neck, &self.groove) {
+            (Some((_, span, _)), _) => span[1],
+            (None, Some(groove)) => groove.top,
+            (None, None) => self.z[1],
+        };
         let mut lo = [f64::INFINITY; 3];
         let mut hi = [f64::NEG_INFINITY; 3];
         for z in [self.z[0], top] {
@@ -2875,6 +2974,16 @@ impl Thread {
 }
 
 impl Thread {
+    /// The outer radius of a bore's cap annulus at `level`: the stock's, or
+    /// at a terminal groove's station the tail cylinder's.
+    fn cap_reach(&self, level: f64) -> f64 {
+        match (&self.groove, &self.stock) {
+            (Some(groove), _) if (level - groove.station).abs() <= self.tolerance => groove.radius,
+            (_, Some((radius, _))) => *radius,
+            _ => self.law.profile.maximum,
+        }
+    }
+
     /// The station interval, along the cap chord direction, of a disc of
     /// radius `radius` at `level` cut by the plane.
     fn disc_chord(&self, n: P3, c: f64, level: f64, radius: f64) -> Option<[f64; 2]> {
