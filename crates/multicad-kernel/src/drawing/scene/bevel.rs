@@ -648,8 +648,51 @@ impl Member for Gear {
         if x < lo[0] || x > hi[0] || y < lo[1] || y > hi[1] {
             return Ok(Vec::new());
         }
-        let start = core.to_local([x, y, 0.]);
-        let d = core.sight;
+        Ok(core.along(core.to_local([x, y, 0.]), core.sight))
+    }
+
+    fn line(&self, start: P3, direction: P3) -> Option<Result<Vec<[f64; 2]>, GeometryError>> {
+        let core = &self.core;
+        // The view axes are orthonormal: a view vector maps to the gear
+        // frame with its length, so the line parameter is kept by scaling.
+        let local = core.axes.map(|axis| dot3(axis, direction));
+        let length = norm(local);
+        if !(length.is_finite() && start.iter().all(|v| v.is_finite())) || length == 0. {
+            return Some(Err(err(
+                GeometryErrorKind::Input,
+                "Bevel line query needs a finite start and a nonzero finite direction",
+            )));
+        }
+        let unit = scaled(local, 1. / length);
+        let from = core.to_local(start);
+        Some(Ok(core
+            .along(from, unit)
+            .into_iter()
+            .map(|[a, b]| [a / length, b / length])
+            .collect()))
+    }
+
+    fn section(&self, depth: f64, tolerance_mm: f64) -> Result<Vec<Loop>, GeometryError> {
+        section::section(&self.core, depth, tolerance_mm)
+    }
+}
+
+impl Core {
+    /// Distances `t`, as ascending disjoint intervals, at which the line
+    /// `start + t d` in the gear frame is strictly inside the solid, for a
+    /// unit direction `d`. The line is solved from its foot nearest the
+    /// pitch apex, so a far start point loses no precision.
+    fn along(&self, start: P3, d: P3) -> Vec<[f64; 2]> {
+        let shift = dot3(start, d);
+        let foot = sub(start, scaled(d, shift));
+        self.foot_intervals(foot, d)
+            .into_iter()
+            .map(|[a, b]| [a - shift, b - shift])
+            .collect()
+    }
+
+    fn foot_intervals(&self, start: P3, d: P3) -> Vec<[f64; 2]> {
+        let core = self;
         let mut stops = Vec::new();
         // Root and tip cones: p_z² = cos²γ |p|².
         for gamma in [core.root, core.tip] {
@@ -776,10 +819,6 @@ impl Member for Gear {
                 }
             }
         }
-        Ok(output)
-    }
-
-    fn section(&self, depth: f64, tolerance_mm: f64) -> Result<Vec<Loop>, GeometryError> {
-        section::section(&self.core, depth, tolerance_mm)
+        output
     }
 }

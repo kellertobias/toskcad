@@ -824,3 +824,77 @@ fn section_planes_containing_a_meridian_face_keep_the_material_behind() {
     }
     assert_eq!(behind_sides, 1);
 }
+
+#[test]
+fn line_intervals_are_the_material_along_any_line() {
+    let mut random = Random(11);
+    for (name, solid) in gears()
+        .into_iter()
+        .chain([("meridian", meridian_gear(true))])
+    {
+        for (label, gear) in views(&solid).into_iter().take(4).skip(2) {
+            let core = &gear.core;
+            let [lo, hi] = gear.bounds();
+            let mut spans = 0;
+            for _ in 0..600 {
+                let start: P3 = std::array::from_fn(|k| random.between(lo[k] - 2., hi[k] + 2.));
+                let mut direction: P3 = std::array::from_fn(|_| random.between(-1., 1.));
+                let length = norm(direction);
+                direction = scaled(direction, random.between(0.3, 3.) / length);
+                let intervals = gear.line(start, direction).unwrap().unwrap();
+                spans += intervals.len();
+                for pair in intervals.windows(2) {
+                    assert!(pair[0][1] < pair[1][0], "{name} {label}: order");
+                }
+                let at = |s: f64| add(start, scaled(direction, s));
+                for &[a, b] in &intervals {
+                    assert!(b > a);
+                    for s in [a, b] {
+                        assert!(
+                            on_boundary(core, at(s), 1e-9),
+                            "{name} {label}: end {s} off the boundary"
+                        );
+                    }
+                }
+                // The parameter range crossing the bounds box.
+                let reach = 2. * norm(sub(hi, lo)) / norm(direction) + 10.;
+                for _ in 0..16 {
+                    let s = random.between(-reach, reach);
+                    if intervals.iter().flatten().any(|end| (end - s).abs() < 1e-7) {
+                        continue;
+                    }
+                    let expected = core.inside(core.to_local(at(s)));
+                    let reported = intervals.iter().any(|[a, b]| *a < s && s < *b);
+                    assert_eq!(
+                        expected, reported,
+                        "{name} {label}: {start:?} {direction:?} at {s}"
+                    );
+                }
+                // A start moved far along the line keeps the intervals.
+                let shift = 1e3;
+                let moved = gear.line(at(-shift), direction).unwrap().unwrap();
+                assert_eq!(moved.len(), intervals.len(), "{name} {label}: moved start");
+                for (a, b) in moved.iter().zip(&intervals) {
+                    assert!(
+                        (a[0] - shift - b[0]).abs() + (a[1] - shift - b[1]).abs() <= 1e-9 * shift
+                    );
+                }
+            }
+            assert!(spans > 100, "{name} {label}: {spans} intervals");
+            // Along the view normal the line is the line of sight.
+            for _ in 0..200 {
+                let paper = [random.between(lo[0], hi[0]), random.between(lo[1], hi[1])];
+                let sight = gear.sight(paper).unwrap();
+                let line = gear
+                    .line([paper[0], paper[1], 0.], [0., 0., 1.])
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(sight.len(), line.len());
+                for (a, b) in sight.iter().zip(&line) {
+                    assert!((a[0] - b[0]).abs() + (a[1] - b[1]).abs() <= 1e-9);
+                }
+            }
+            assert!(gear.line([0.; 3], [0.; 3]).unwrap().is_err());
+        }
+    }
+}
