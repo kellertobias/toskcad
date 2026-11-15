@@ -45,7 +45,7 @@ pub use hanger_material::{HangerFaceProperties, HangerMaterial};
 mod hanger_body;
 mod source_face_measure;
 use hanger_body::HangerBody;
-pub use hanger_body::{HangerData, HealedHangerStepVerification};
+pub use hanger_body::{HangerData, HealedHangerStepVerification, HealedSupportStepVerification};
 mod helical_body;
 mod helical_tube_body;
 mod herringbone_body;

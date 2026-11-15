@@ -7,7 +7,7 @@ use multicad_rust_kernel::{
 #[cfg(test)]
 mod tests;
 #[derive(Clone, Debug, PartialEq)]
-pub struct HealedHangerStepVerification {
+pub struct HealedSupportStepVerification {
     pub healed_volume_bounds_mm3: [f64; 2],
     pub source_volume_bounds_mm3: [f64; 2],
     /// Source envelope expanded by measured correspondence, not raw file bounds.
@@ -22,6 +22,9 @@ pub struct HealedHangerStepVerification {
     pub matched_entities: usize,
     pub literal_binding_work: usize,
 }
+/// Compatibility name for the original hanger support-healing provider.
+pub type HealedHangerStepVerification = HealedSupportStepVerification;
+
 fn failure(kind: GeometryErrorKind, message: impl Into<String>) -> GeometryError {
     error("qualified hanger STEP", kind, message)
 }

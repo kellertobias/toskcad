@@ -6,7 +6,7 @@ mod display;
 mod step;
 mod topology;
 use multicad_rust_kernel::authored_hanger_bolt as source;
-pub use step::HealedHangerStepVerification;
+pub use step::{HealedHangerStepVerification, HealedSupportStepVerification};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HangerData {
