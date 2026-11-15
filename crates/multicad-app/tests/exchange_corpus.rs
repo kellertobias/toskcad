@@ -1633,6 +1633,10 @@ fn rust_stdio_corpus_workflow_survives_source_removal() {
         "occt-sphere",
         "occt-spline-prism",
         "kicad-vendored-L_CommonModeChoke_TDK_ACM7060",
+        // Retained imported boundaries (CAD-360): a cone frustum and a pad
+        // array with spherical caps.
+        "occt-cone-frustum",
+        "kicad-vendored-WLP-4_0.83x0.83mm_P0.4mm",
     ] {
         let entry = manifest_entry(id);
         let bytes = entry_bytes(&entry).unwrap();
@@ -1642,9 +1646,10 @@ fn rust_stdio_corpus_workflow_survives_source_removal() {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("source.step");
         std::fs::write(&source, &bytes).unwrap();
-        // Refusal controls: a valid cone outside the analytic families and
-        // the same file cut off in the middle of its data section.
-        let unsupported = manifest_entry("occt-cone-frustum");
+        // Refusal controls: a valid two-part assembly, whose product
+        // structure is outside the importer (CAD-361), and the same file cut
+        // off in the middle of its data section.
+        let unsupported = manifest_entry("occt-two-bodies");
         assert_eq!(unsupported["expected"], "unsupported");
         let unsupported = entry_bytes(&unsupported).unwrap();
         let malformed = unsupported[..unsupported.len() / 2].to_vec();

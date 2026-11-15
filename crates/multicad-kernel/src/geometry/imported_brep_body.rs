@@ -145,6 +145,27 @@ impl Solid {
         })
     }
 
+    /// Verify a STEP text written from this retained boundary, or `None`
+    /// when the solid does not retain imported boundaries.
+    pub fn verify_imported_brep_step(
+        &self,
+        source: &str,
+    ) -> Option<Result<f64, step_read::ReadError>> {
+        let members: Vec<&brep::Solid> = match self.imported_brep_body() {
+            Some(body) => vec![&body.solid],
+            None => self
+                .rust_compound()?
+                .members()
+                .map(|member| member.imported_brep_body().map(|body| &body.solid))
+                .collect::<Option<_>>()?,
+        };
+        Some(step_read::brep::verify_retained(
+            source,
+            &members,
+            self.policy.linear_tolerance_mm,
+        ))
+    }
+
     pub(crate) fn imported_brep_body(&self) -> Option<&ImportedBrepBody> {
         match &self.body {
             SolidBody::ImportedBrep(body) => Some(body),
@@ -439,6 +460,23 @@ mod tests {
                 .split_by_plane(plane, GeometryPolicy::default())
                 .is_err()
         );
+    }
+
+    #[test]
+    fn written_boundaries_verify_and_altered_ones_do_not() {
+        let solid = frustum();
+        let mut writer = multicad_rust_kernel::step::Writer::new();
+        writer
+            .append_brep(&solid.imported_brep_body().unwrap().solid)
+            .unwrap();
+        let text = writer.finish().unwrap();
+        let volume = solid.verify_imported_brep_step(&text).unwrap().unwrap();
+        assert!((volume - solid.volume_mm3().unwrap()).abs() < 1e-9);
+        let other =
+            Solid::import_rust_brep(VOID, EntityId::new(), GeometryPolicy::default()).unwrap();
+        assert!(other.verify_imported_brep_step(&text).unwrap().is_err());
+        let box_solid = Solid::box_solid([4., 4., 4.], GeometryPolicy::default()).unwrap();
+        assert!(box_solid.verify_imported_brep_step(&text).is_none());
     }
 
     #[test]

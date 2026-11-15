@@ -771,6 +771,57 @@ fn solids_of(
         .collect()
 }
 
+/// Verify that `source` holds exactly the `expected` solids, in order: the
+/// same counts of faces, edges and vertices, the same vertex positions and
+/// face areas within `tolerance`, and the same volume within the integration
+/// error bound. Returns the total volume read back.
+pub fn verify_retained(source: &str, expected: &[&Solid], tolerance: f64) -> Result<f64> {
+    let solids = read_solids(source, tolerance, None)?;
+    check(solids.len() == expected.len(), ReadError::Invalid)?;
+    let mut volume = 0.;
+    for (read, expected) in solids.iter().zip(expected) {
+        let (a, b) = (read.boundary(), expected.boundary());
+        check(
+            a.faces.len() == b.faces.len()
+                && a.edges.len() == b.edges.len()
+                && a.vertices.len() == b.vertices.len(),
+            ReadError::Invalid,
+        )?;
+        let sorted = |points: &[Point]| {
+            let mut points = points.to_vec();
+            points.sort_by(|p, q| p.partial_cmp(q).unwrap_or(std::cmp::Ordering::Equal));
+            points
+        };
+        let close = |x: f64, y: f64, scale: f64| (x - y).abs() <= tolerance * scale.max(1.);
+        let (pa, pb) = (sorted(&a.vertices), sorted(&b.vertices));
+        check(
+            pa.iter()
+                .zip(&pb)
+                .all(|(p, q)| (0..3).all(|i| close(p[i], q[i], 1.))),
+            ReadError::Invalid,
+        )?;
+        let areas = |solid: &Solid| {
+            let mut areas: Vec<f64> = solid.faces().iter().map(|face| face.area_mm2).collect();
+            areas.sort_by(f64::total_cmp);
+            areas
+        };
+        check(
+            areas(read)
+                .iter()
+                .zip(areas(expected))
+                .all(|(&x, y)| close(x, y, y)),
+            ReadError::Invalid,
+        )?;
+        let bound = read.volume_error_mm3() + expected.volume_error_mm3();
+        check(
+            (read.volume_mm3() - expected.volume_mm3()).abs() <= bound,
+            ReadError::Invalid,
+        )?;
+        volume += read.volume_mm3();
+    }
+    Ok(volume)
+}
+
 /// Volume, bounds and face count of each solid from its retained boundary.
 pub(super) fn readbacks(input: &str, tolerance: f64) -> Result<Vec<super::Readback>> {
     let solids = read_solids(input, tolerance, None)?;

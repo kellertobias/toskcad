@@ -520,3 +520,33 @@ fn revolved_faces_closing_near_their_axis_refine_to_the_deflection() {
     assert!(close(area, 234.676_869_496_623, 1e-7), "{area}");
     certified(&solid, 0.05);
 }
+
+#[test]
+fn retained_exports_verify_only_against_their_own_boundary() {
+    use crate::step_read::brep::verify_retained;
+    let frustum = solid(FRUSTUM);
+    let mut writer = crate::step::Writer::new();
+    writer.append_brep(&frustum).unwrap();
+    let text = writer.finish().unwrap();
+    let volume = verify_retained(&text, &[&frustum], TOLERANCE).unwrap();
+    assert!(close(volume, frustum.volume_mm3(), 1e-12));
+    let hollow = solid(VOID);
+    assert_eq!(
+        verify_retained(&text, &[&hollow], TOLERANCE),
+        Err(ReadError::Invalid)
+    );
+    assert_eq!(
+        verify_retained(&text, &[&frustum, &frustum], TOLERANCE),
+        Err(ReadError::Invalid)
+    );
+    let shift = |p: Point| add(p, [1e-3, 0., 0.]);
+    let moved = frustum.moved(&shift, &|v| v).unwrap();
+    assert_eq!(
+        verify_retained(&text, &[&moved], TOLERANCE),
+        Err(ReadError::Invalid)
+    );
+    assert_eq!(
+        verify_retained("ISO-10303-21;", &[&frustum], TOLERANCE),
+        Err(ReadError::Invalid)
+    );
+}
