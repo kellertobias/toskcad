@@ -1047,3 +1047,232 @@ fn every_solid_is_one_item_of_one_representation_with_its_own_records() {
     );
     assert_eq!(solids(&part21("#61,#5", ELLIPTIC)).unwrap().len(), 1);
 }
+
+/// A cylinder of radius 2 and height 3 whose rims are closed rational
+/// quadratic B-spline circles and whose side is bounded by the two rims
+/// alone, without a seam.
+fn seamless_cylinder() -> String {
+    let w = std::f64::consts::FRAC_1_SQRT_2;
+    let square = [
+        (2., 0.),
+        (2., 2.),
+        (0., 2.),
+        (-2., 2.),
+        (-2., 0.),
+        (-2., -2.),
+        (0., -2.),
+        (2., -2.),
+        (2., 0.),
+    ];
+    let mut body = String::from(
+        "#1=CARTESIAN_POINT('',(0.,0.,0.));#2=CARTESIAN_POINT('',(0.,0.,3.));\
+         #3=DIRECTION('',(0.,0.,1.));#4=DIRECTION('',(1.,0.,0.));\
+         #5=AXIS2_PLACEMENT_3D('',#1,#3,#4);#6=AXIS2_PLACEMENT_3D('',#2,#3,#4);\n",
+    );
+    for (row, z) in [(100, 0.), (110, 3.)] {
+        for (k, (x, y)) in square.iter().enumerate() {
+            body += &format!("#{}=CARTESIAN_POINT('',({x:?},{y:?},{z:?}));", row + k + 1);
+        }
+        let poles: Vec<String> = (1..=9).map(|k| format!("#{}", row + k)).collect();
+        body += &format!(
+            "#{}=(BOUNDED_CURVE()B_SPLINE_CURVE(2,({}),.CIRCULAR_ARC.,.T.,.F.)\
+             B_SPLINE_CURVE_WITH_KNOTS((3,2,2,2,3),(0.,0.25,0.5,0.75,1.),.UNSPECIFIED.)CURVE()\
+             GEOMETRIC_REPRESENTATION_ITEM()RATIONAL_B_SPLINE_CURVE((1.,{w:?},1.,{w:?},1.,{w:?},1.,{w:?},1.))\
+             REPRESENTATION_ITEM(''));\n",
+            row + 20,
+            poles.join(",")
+        );
+    }
+    body += "#135=VERTEX_POINT('',#101);#136=VERTEX_POINT('',#111);\
+             #140=EDGE_CURVE('',#135,#135,#120,.T.);#141=EDGE_CURVE('',#136,#136,#130,.T.);\
+             #150=PLANE('',#5);#151=PLANE('',#6);#152=CYLINDRICAL_SURFACE('',#5,2.);\
+             #160=ORIENTED_EDGE('',*,*,#140,.F.);#161=EDGE_LOOP('',(#160));#162=FACE_OUTER_BOUND('',#161,.T.);\
+             #163=ADVANCED_FACE('',(#162),#150,.F.);\
+             #170=ORIENTED_EDGE('',*,*,#141,.T.);#171=EDGE_LOOP('',(#170));#172=FACE_OUTER_BOUND('',#171,.T.);\
+             #173=ADVANCED_FACE('',(#172),#151,.T.);\
+             #180=ORIENTED_EDGE('',*,*,#140,.T.);#181=EDGE_LOOP('',(#180));#182=FACE_BOUND('',#181,.T.);\
+             #183=ORIENTED_EDGE('',*,*,#141,.F.);#184=EDGE_LOOP('',(#183));#185=FACE_BOUND('',#184,.T.);\
+             #186=ADVANCED_FACE('',(#182,#185),#152,.T.);\
+             #190=CLOSED_SHELL('',(#163,#173,#186));#191=MANIFOLD_SOLID_BREP('',#190);\n";
+    part21("#191", &body)
+}
+
+/// A quarter torus elbow, major radius 10 and minor radius 2, closed by
+/// two discs on its meridian circles: the toroidal face is a band between
+/// two loops that wind along v.
+const ELBOW: &str = "\
+#1=CARTESIAN_POINT('',(0.,0.,0.));#2=DIRECTION('',(0.,0.,1.));#3=DIRECTION('',(1.,0.,0.));\
+#4=AXIS2_PLACEMENT_3D('',#1,#2,#3);#5=TOROIDAL_SURFACE('',#4,10.,2.);\
+#10=CARTESIAN_POINT('',(10.,0.,0.));#11=DIRECTION('',(0.,-1.,0.));#12=AXIS2_PLACEMENT_3D('',#10,#11,#3);\
+#13=CIRCLE('',#12,2.);#14=PLANE('',#12);#15=CARTESIAN_POINT('',(12.,0.,0.));#16=VERTEX_POINT('',#15);\
+#17=EDGE_CURVE('',#16,#16,#13,.T.);\
+#20=CARTESIAN_POINT('',(0.,10.,0.));#21=DIRECTION('',(1.,0.,0.));#22=DIRECTION('',(0.,1.,0.));\
+#23=AXIS2_PLACEMENT_3D('',#20,#21,#22);#24=CIRCLE('',#23,2.);#25=CARTESIAN_POINT('',(0.,12.,0.));\
+#26=VERTEX_POINT('',#25);#27=EDGE_CURVE('',#26,#26,#24,.T.);\
+#28=DIRECTION('',(-1.,0.,0.));#29=AXIS2_PLACEMENT_3D('',#20,#28,#22);#30=PLANE('',#29);\
+#40=ORIENTED_EDGE('',*,*,#17,.F.);#41=EDGE_LOOP('',(#40));#42=FACE_BOUND('',#41,.T.);\
+#43=ORIENTED_EDGE('',*,*,#27,.T.);#44=EDGE_LOOP('',(#43));#45=FACE_BOUND('',#44,.T.);\
+#46=ADVANCED_FACE('',(#42,#45),#5,.T.);\
+#50=ORIENTED_EDGE('',*,*,#17,.T.);#51=EDGE_LOOP('',(#50));#52=FACE_OUTER_BOUND('',#51,.T.);\
+#53=ADVANCED_FACE('',(#52),#14,.T.);\
+#60=ORIENTED_EDGE('',*,*,#27,.F.);#61=EDGE_LOOP('',(#60));#62=FACE_OUTER_BOUND('',#61,.T.);\
+#63=ADVANCED_FACE('',(#62),#30,.T.);\
+#70=CLOSED_SHELL('',(#46,#53,#63));#71=MANIFOLD_SOLID_BREP('',#70);\n";
+
+/// A sphere of radius 3 bounded by one meridian seam from pole to pole.
+const MERIDIAN: &str = "\
+#1=CARTESIAN_POINT('',(0.,0.,0.));#2=DIRECTION('',(0.,0.,1.));#3=DIRECTION('',(1.,0.,0.));\
+#4=AXIS2_PLACEMENT_3D('',#1,#2,#3);#5=SPHERICAL_SURFACE('',#4,3.);\
+#6=DIRECTION('',(0.,-1.,0.));#7=AXIS2_PLACEMENT_3D('',#1,#6,#3);#8=CIRCLE('',#7,3.);\
+#10=CARTESIAN_POINT('',(0.,0.,-3.));#11=VERTEX_POINT('',#10);\
+#12=CARTESIAN_POINT('',(0.,0.,3.));#13=VERTEX_POINT('',#12);\
+#14=EDGE_CURVE('',#11,#13,#8,.T.);\
+#20=ORIENTED_EDGE('',*,*,#14,.T.);#21=ORIENTED_EDGE('',*,*,#14,.F.);\
+#22=EDGE_LOOP('',(#20,#21));#23=FACE_OUTER_BOUND('',#22,.T.);#24=ADVANCED_FACE('',(#23),#5,.T.);\
+#30=CLOSED_SHELL('',(#24));#31=MANIFOLD_SOLID_BREP('',#30);\n";
+
+#[test]
+fn seamless_bands_and_pole_to_pole_seams_match_their_closed_forms() {
+    let cylinder = solid(&seamless_cylinder());
+    assert!(
+        close(cylinder.volume_mm3(), 12. * PI, 1e-12),
+        "{}",
+        cylinder.volume_mm3()
+    );
+    let areas = sorted_areas(&cylinder);
+    assert!(
+        close(areas[0], 4. * PI, 1e-12) && close(areas[2], 12. * PI, 1e-12),
+        "{areas:?}"
+    );
+    certified(&cylinder, 0.01);
+    let elbow = solid(&part21("#71", ELBOW));
+    assert!(
+        close(elbow.volume_mm3(), 20. * PI * PI, 1e-12),
+        "{}",
+        elbow.volume_mm3()
+    );
+    let areas = sorted_areas(&elbow);
+    assert!(close(areas[2], 20. * PI * PI, 1e-12), "{areas:?}");
+    let [low, high] = elbow.bounds_mm();
+    assert!(
+        distance(low, [0., 0., -2.]) < 1e-9 && distance(high, [12., 12., 2.]) < 1e-9,
+        "{low:?} {high:?}"
+    );
+    certified(&elbow, 0.01);
+    let sphere = solid(&part21("#31", MERIDIAN));
+    assert!(
+        close(sphere.volume_mm3(), 36. * PI, 1e-12),
+        "{}",
+        sphere.volume_mm3()
+    );
+    assert!(close(sphere.faces()[0].area_mm2, 36. * PI, 1e-12));
+    certified(&sphere, 0.01);
+    for text in [
+        seamless_cylinder(),
+        part21("#71", ELBOW),
+        part21("#31", MERIDIAN),
+    ] {
+        let source = solid(&text);
+        let mut writer = crate::step::Writer::new();
+        writer.append_brep(&source).unwrap();
+        assert!(close(
+            solid(&writer.finish().unwrap()).volume_mm3(),
+            source.volume_mm3(),
+            1e-12
+        ));
+    }
+}
+
+#[test]
+fn bezier_and_rational_supports_and_degree_units_read_as_written() {
+    let text = elliptic(
+        "#20=PLANE('',#5)",
+        "#20=(BOUNDED_SURFACE()B_SPLINE_SURFACE(1,1,((#70,#71),(#72,#73)),.UNSPECIFIED.,.F.,.F.,.F.)B_SPLINE_SURFACE_WITH_KNOTS((2,2),(2,2),(0.,1.),(0.,1.),.UNSPECIFIED.)GEOMETRIC_REPRESENTATION_ITEM()RATIONAL_B_SPLINE_SURFACE(((1.,1.),(1.,1.)))REPRESENTATION_ITEM('')SURFACE());#70=CARTESIAN_POINT('',(-4.,-3.,0.));#71=CARTESIAN_POINT('',(-4.,3.,0.));#72=CARTESIAN_POINT('',(4.,-3.,0.));#73=CARTESIAN_POINT('',(4.,3.,0.))",
+    );
+    let text = tampered(
+        &text,
+        "#21=PLANE('',#6)",
+        "#21=BEZIER_SURFACE('',1,1,((#74,#75),(#76,#77)),.UNSPECIFIED.,.F.,.F.,.F.);#74=CARTESIAN_POINT('',(-4.,-3.,5.));#75=CARTESIAN_POINT('',(-4.,3.,5.));#76=CARTESIAN_POINT('',(4.,-3.,5.));#77=CARTESIAN_POINT('',(4.,3.,5.))",
+    );
+    let text = tampered(
+        &text,
+        "#16=LINE('',#10,#15)",
+        "#16=BEZIER_CURVE('',1,(#10,#12),.UNSPECIFIED.,.F.,.F.)",
+    );
+    let read = solid(&text);
+    assert!(
+        close(read.volume_mm3(), 30. * PI, 1e-12),
+        "{}",
+        read.volume_mm3()
+    );
+    certified(&read, 0.01);
+    let mut writer = crate::step::Writer::new();
+    writer.append_brep(&read).unwrap();
+    assert!(close(
+        solid(&writer.finish().unwrap()).volume_mm3(),
+        30. * PI,
+        1e-12
+    ));
+    // The frustum in degrees: 0.380506377112 rad is 21.8014094863518 deg.
+    let degrees = tampered(
+        FRUSTUM,
+        "#115 = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );",
+        "#115 = ( CONVERSION_BASED_UNIT('DEGREE',#119) NAMED_UNIT(*) PLANE_ANGLE_UNIT() );\n#119 = PLANE_ANGLE_MEASURE_WITH_UNIT(PLANE_ANGLE_MEASURE(1.745329251994E-02),#120);\n#120 = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );",
+    );
+    let degrees = tampered(&degrees, "8.,0.380506377112)", "8.,21.8014094863518)");
+    assert!(close(
+        solid(&degrees).volume_mm3(),
+        PI * 10. / 3. * 112.,
+        1e-9
+    ));
+    let gradians = tampered(
+        &degrees,
+        "PLANE_ANGLE_MEASURE(1.745329251994E-02)",
+        "PLANE_ANGLE_MEASURE(1.570796326795E-02)",
+    );
+    let gradians = tampered(&gradians, "8.,21.8014094863518)", "8.,24.2237883181687)");
+    assert!(close(
+        solid(&gradians).volume_mm3(),
+        PI * 10. / 3. * 112.,
+        1e-9
+    ));
+}
+
+/// Half of a sphere of radius 3, the lune 0 <= u <= pi, closed by the
+/// disc in the plane y = 0: its spherical face runs from pole to pole
+/// along two meridians.
+const LUNE: &str = "\
+#1=CARTESIAN_POINT('',(0.,0.,0.));#2=DIRECTION('',(0.,0.,1.));#3=DIRECTION('',(1.,0.,0.));\
+#4=AXIS2_PLACEMENT_3D('',#1,#2,#3);#5=SPHERICAL_SURFACE('',#4,3.);\
+#6=DIRECTION('',(0.,-1.,0.));#7=AXIS2_PLACEMENT_3D('',#1,#6,#3);#8=CIRCLE('',#7,3.);\
+#9=DIRECTION('',(0.,1.,0.));#15=DIRECTION('',(-1.,0.,0.));#16=AXIS2_PLACEMENT_3D('',#1,#9,#15);\
+#17=CIRCLE('',#16,3.);#18=PLANE('',#7);\
+#10=CARTESIAN_POINT('',(0.,0.,-3.));#11=VERTEX_POINT('',#10);\
+#12=CARTESIAN_POINT('',(0.,0.,3.));#13=VERTEX_POINT('',#12);\
+#14=EDGE_CURVE('',#11,#13,#8,.T.);#19=EDGE_CURVE('',#11,#13,#17,.T.);\
+#20=ORIENTED_EDGE('',*,*,#19,.T.);#21=ORIENTED_EDGE('',*,*,#14,.F.);\
+#22=EDGE_LOOP('',(#20,#21));#23=FACE_OUTER_BOUND('',#22,.T.);#24=ADVANCED_FACE('',(#23),#5,.T.);\
+#25=ORIENTED_EDGE('',*,*,#14,.T.);#26=ORIENTED_EDGE('',*,*,#19,.F.);\
+#27=EDGE_LOOP('',(#25,#26));#28=FACE_OUTER_BOUND('',#27,.T.);#29=ADVANCED_FACE('',(#28),#18,.T.);\
+#30=CLOSED_SHELL('',(#24,#29));#31=MANIFOLD_SOLID_BREP('',#30);\n";
+
+#[test]
+fn a_lune_between_two_meridians_closes_at_both_poles() {
+    let lune = solid(&part21("#31", LUNE));
+    assert!(
+        close(lune.volume_mm3(), 18. * PI, 1e-12),
+        "{}",
+        lune.volume_mm3()
+    );
+    let areas = sorted_areas(&lune);
+    assert!(
+        close(areas[0], 9. * PI, 1e-12) && close(areas[1], 18. * PI, 1e-12),
+        "{areas:?}"
+    );
+    let [low, high] = lune.bounds_mm();
+    assert!(
+        distance(low, [-3., 0., -3.]) < 1e-9 && distance(high, [3., 3., 3.]) < 1e-9,
+        "{low:?} {high:?}"
+    );
+    certified(&lune, 0.01);
+}

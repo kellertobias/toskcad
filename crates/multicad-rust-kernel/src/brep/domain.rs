@@ -144,9 +144,10 @@ pub(crate) fn raw(
     points
 }
 
-fn ambiguous(surface: &Surface, uv: [f64; 2]) -> bool {
+/// The axes along which `uv` sits on a seam of the surface.
+fn seams(surface: &Surface, uv: [f64; 2]) -> [bool; 2] {
     let periods = surface.periods();
-    (0..2).any(|axis| {
+    [0, 1].map(|axis| {
         periods[axis].is_some_and(|period| {
             let turn = (uv[axis] / period).rem_euclid(1.);
             turn.min(1. - turn) <= 1e-9
@@ -170,11 +171,26 @@ pub(crate) fn unroll(
             Error::Invalid,
         )?;
         let pole = surface.is_pole(uv, tolerance);
-        free.push((uv, pole, pole || ambiguous(surface, relative(surface, uv))));
+        let seam = seams(surface, relative(surface, uv));
+        free.push((uv, pole, pole || seam[0] || seam[1], seam));
     }
-    let Some(anchor) = free.iter().position(|state| !state.2) else {
+    // A loop that runs along one seam alone, such as a meridian closing a
+    // band of a torus, is anchored at a seam point: the band's partner loop
+    // places it. A loop on both seams or only at poles, or one that winds
+    // nowhere, describes nothing beyond the closed surface itself.
+    let along = |axis: usize| {
+        free.iter().all(|state| state.1 || state.3[axis])
+            && free.iter().any(|state| !state.1 && !state.3[1 - axis])
+    };
+    let anchor = free.iter().position(|state| !state.2).or_else(|| {
+        (along(0) || along(1))
+            .then(|| free.iter().position(|state| !state.1))
+            .flatten()
+    });
+    let Some(anchor) = anchor else {
         return Ok(None);
     };
+    let on_seams = free.iter().all(|state| state.2);
     points.rotate_left(anchor);
     free.rotate_left(anchor);
     let mut unrolled = UvLoop {
@@ -186,7 +202,7 @@ pub(crate) fn unroll(
     let mut chains = vec![];
     let mut previous = free[0].0;
     for (i, point) in points.iter().enumerate() {
-        let (uv, pole, _) = free[i];
+        let (uv, pole, _, _) = free[i];
         let after_pole = unrolled.points.last().is_some_and(|last| last.pole);
         let uv = if i == 0 || after_pole {
             uv
@@ -222,6 +238,11 @@ pub(crate) fn unroll(
     let closing = surface.invert(points[0].position, Some(previous));
     let turns = [0, 1]
         .map(|axis| periods[axis].map_or(0., |p| ((closing[axis] - start[axis]) / p).round()));
+    // A seam loop that returns to its start encloses the whole surface,
+    // like a meridian seam from pole to pole.
+    if on_seams && turns == [0., 0.] {
+        return Ok(None);
+    }
     let Some(&last) = chains.last() else {
         unrolled.winding = turns.map(|t| t as i32);
         return Ok(Some(unrolled));
