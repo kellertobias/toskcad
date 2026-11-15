@@ -181,6 +181,10 @@ fn actual_retained_replay_refuses_changed_exact_decimal_despite_same_float_cache
         .err(),
         Some(binding::Error::Different)
     );
+    assert!(matches!(
+        verify_readback(&source, None, &changed, 0, Default::default(), None),
+        Err(Error::Unsupported)
+    ));
 }
 fn prefix() -> Writer {
     let mut writer = Writer::new();
@@ -340,6 +344,18 @@ fn actual_native_chain_step_replay_binds_local_geometry_and_earns_whole_operator
         )
         .unwrap();
         let decoded = selected.retain(Default::default(), None).unwrap();
+        let fresh =
+            verify_readback(&source, Some(&pose), &text, 1, Default::default(), None).unwrap();
+        assert_eq!(fresh.represented_member_count(), 2);
+        assert_eq!(fresh.member_index(), 1);
+        assert!(fresh.actual_volume_mm3()[0] > 0.);
+        assert!(
+            fresh
+                .actual_bounds_mm()
+                .iter()
+                .all(|v| v[0].is_finite() && v[0] < v[1])
+        );
+        assert!(fresh.receipt().position_error_mm() <= 1e-7);
         let local = [[0., 0.], [0., 0.], [2., 2.]];
         let wanted = pose.map_box_mm(source.map_box_mm(local).unwrap()).unwrap();
         let actual = decoded.map_box_mm(local).unwrap();
@@ -351,6 +367,44 @@ fn actual_native_chain_step_replay_binds_local_geometry_and_earns_whole_operator
         );
         assert_eq!(source.member().mapping_link().is_some(), mapped);
     }
+}
+
+#[test]
+fn actual_fresh_file_verification_has_explicit_member_resource_and_cancel_boundaries() {
+    let source = source(false, false);
+    let verified = verify_exact_replay(&source, Default::default(), None).unwrap();
+    let text = verified.standalone_step();
+    let fresh = verify_readback(&source, None, text, 0, Default::default(), None).unwrap();
+    assert_eq!(fresh.actual_volume_mm3(), source.world_volume_mm3());
+    assert_eq!(fresh.represented_member_count(), 1);
+    for options in [
+        ReadbackOptions {
+            maximum_work: 1,
+            ..Default::default()
+        },
+        ReadbackOptions {
+            maximum_bytes: 1,
+            ..Default::default()
+        },
+        ReadbackOptions {
+            additional_resident_bytes: 128 * 1024 * 1024,
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            verify_readback(&source, None, text, 0, options, None),
+            Err(Error::Limit)
+        ));
+    }
+    assert!(matches!(
+        verify_readback(&source, None, text, 1, Default::default(), None),
+        Err(Error::Invalid)
+    ));
+    assert!(matches!(
+        verify_readback(&source, None, text, 0, Default::default(), Some(&|| true)),
+        Err(Error::Cancelled)
+    ));
+    assert!(verify_readback(&source, None, "not STEP", 0, Default::default(), None).is_err());
 }
 
 #[test]

@@ -10,6 +10,8 @@ use crate::tapered_thread::interval::I;
 pub use read::Error;
 use std::mem::size_of;
 mod placed;
+mod readback;
+pub use readback::{ReadbackOptions, ReadbackReceipt, verify_readback};
 type Result<T> = std::result::Result<T, Error>;
 const WORK: usize = 96_000_000;
 const BYTES: usize = 64 * 1024 * 1024;
@@ -465,107 +467,40 @@ fn verify<'source>(
     work.step(document_work)?;
     let document_peak = reserved + document.retained_budget_bytes();
     work.observe(document_peak)?;
-    let members = document.represented_members();
-    assert_eq!(members.len(), 1, "one typed retained member encoding");
-    let member = members[0];
-    let selected = Selected::parse(
-        &document,
-        member.item_entity(),
-        read::Options {
-            maximum_work: work.available(16_000_000)?,
-            maximum_bytes: room(options.maximum_bytes, document_peak)?,
-        },
-        interrupt,
-    )?;
-    let pose = selected.placement(
-        read::Options {
-            maximum_work: work.available(16_000_000)?,
-            maximum_bytes: room(options.maximum_bytes, document_peak)?,
-        },
-        interrupt,
-    )?;
-    let pose_work = pose.work_used() - selected.parsed().work_used();
-    let remaining = room(work.available(64_000_000)?, pose_work)?;
-    let material_options = MaterialOptions {
-        maximum_work: remaining,
-        maximum_bytes: room(options.maximum_bytes, document_peak + size_of_val(&pose))?,
-        ..Default::default()
-    };
-    let occupied = selected
-        .parsed()
-        .projection(material_options, interrupt)?
-        .occupied(material_options, interrupt)?;
-    let d = pose.determinant_bounds();
-    let literal_volume =
-        I::new(occupied.volume_mm3()[0], occupied.volume_mm3()[1]) * I::new(d[0], d[1]);
-    if d[0] <= 0. || !literal_volume.valid() || literal_volume.lo <= 0. {
-        return Err(Error::Unsupported);
-    }
-    let material_work = occupied.work_used() + pose_work;
-    work.step(material_work)?;
-    let correspondence_start = work.used;
-    let (position, derivative, normal) = if let Some(placement) = occurrence {
-        placed::correspond(source, placement, &pose, options, &mut work)?
-    } else {
-        (0., 0., 0.)
-    };
-    let correspondence_work = work.used - correspondence_start;
-    work.observe(document_peak + occupied.query_budget_bytes() + size_of_val(&pose))?;
-    assert!(
-        occupied.volume_mm3()[0] > 0.,
-        "earned independent occupied receipt"
+    assert_eq!(
+        document.represented_members().len(),
+        1,
+        "one typed retained member encoding"
     );
-    let mut ids = Vec::new();
-    work.observe(
-        document_peak + selected.parsed().query_budget_bytes() + selected.entity_ids().len() * 4,
-    )?;
-    ids.try_reserve_exact(selected.entity_ids().len())
-        .map_err(|_| Error::Limit)?;
-    ids.extend_from_slice(selected.entity_ids());
-    work.step(ids.len())?;
-    work.observe(document_peak + selected.parsed().query_budget_bytes() + ids.capacity() * 4)?;
-    drop(selected);
-    let binding = binding::bind_owned_document(
+    let q = readback::qualify(
         source,
-        if occurrence.is_some() {
-            source.member().local_solid_entity()
-        } else {
-            source.member().item_entity()
-        },
+        occurrence,
         &document,
-        &ids,
-        if occurrence.is_some() {
-            member.local_solid_entity()
-        } else {
-            member.item_entity()
+        readback::SelectionScope {
+            member_index: 0,
+            document_peak,
         },
-        binding::Options {
-            maximum_work: work.available(512_000_000)?,
-            maximum_bytes: room(options.maximum_bytes, document_peak + ids.capacity() * 4)?,
-            maximum_entities: 1_048_576,
-        },
+        options,
+        &mut work,
         interrupt,
-    )
-    .map_err(bind_error)?;
-    work.step(binding.work_used())?;
-    work.observe(document_peak + ids.capacity() * 4 + binding.query_peak_bytes())?;
+    )?;
     let receipt = Receipt {
         inherited_source_work: source.work_used(),
         source_document_work: source.original_document_work_used(),
         graph_preparation_work,
         encoding_work,
         document_work,
-        material_work,
-        binding_work: binding.work_used() + ids.len(),
-        correspondence_work,
+        material_work: q.material_work,
+        binding_work: q.binding_work,
+        correspondence_work: q.correspondence_work,
         append_work: 0,
         work: work.used,
         peak: work.peak,
-        matched_entities: binding.matched_entities(),
-        position,
-        derivative,
-        normal,
-        literal_volume: [literal_volume.lo, literal_volume.hi],
+        matched_entities: q.matched_entities,
+        position: q.position,
+        derivative: q.derivative,
+        normal: q.normal,
+        literal_volume: q.volume,
     };
     drop(document);
     Ok(VerifiedReplay {
