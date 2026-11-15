@@ -64,6 +64,13 @@ fn check_warm_connections(backend: GeometryBackend) {
                     .iter()
                     .all(|c| c.native_component_collision_checked)
             );
+            let unchanged = compile(&mut cache, session.document(), 0).unwrap();
+            assert!(cache.last_compile().reused_full_model);
+            assert!(cache.last_compile().evaluated.is_empty());
+            assert_eq!(
+                unchanged.snapshot().screw_connection_checks,
+                first.snapshot().screw_connection_checks
+            );
         }
         let warm = Instant::now();
         let second = compile(&mut cache, session.document(), 1).unwrap();
@@ -102,7 +109,7 @@ fn check_warm_connections(backend: GeometryBackend) {
             first.snapshot().leaf_occurrences.keys().collect::<Vec<_>>()
         );
         eprintln!(
-            "{:?} exact-native cache cold={cold:?} warm={warm:?}, {warm_stats:?}",
+            "{:?} {backend:?} cache cold={cold:?} warm={warm:?}, {warm_stats:?}",
             request.mode
         );
         let mut invalid =
@@ -110,7 +117,9 @@ fn check_warm_connections(backend: GeometryBackend) {
         invalid.parameters.minimum_engagement = length(4.);
         let invalid =
             prepare_screw_connection(&session, session.revision(), actor(), &invalid).unwrap();
-        let error = compile(&mut cache, invalid.prepared.document(), 2)
+        // Reuse the last successful revision deliberately: the complete source
+        // hash must invalidate readiness even if a caller repeats the stamp.
+        let error = compile(&mut cache, invalid.prepared.document(), 1)
             .err()
             .expect("A cached None must not skip current engagement validation");
         assert!(
@@ -165,7 +174,7 @@ fn check_warm_connections(backend: GeometryBackend) {
             )
             .unwrap();
         let source = session.document().clone();
-        let error = compile(&mut cache, session.document(), 4).err().expect(
+        let error = compile(&mut cache, session.document(), 3).err().expect(
             "A newly intersecting foreign component must invalidate full connection readiness",
         );
         let after = cache.native_intersection_proof_stats();
