@@ -320,3 +320,40 @@ fn actual_original_literal_surface_face_measure_uses_prepared_normal_owner() {
         }
     }
 }
+
+#[test]
+fn actual_far_mapped_surface_refuses_unrepresentable_world_centroid_precision() {
+    let original = crate::step_read::npt_stock::tests::fixture(false);
+    let mapped =
+        crate::step_read::npt_stock::selected::tests::mapped(&original, "(-3.,0.,0.)", "1.");
+    let text = mapped.replacen("(11.,-5.,3.)", "(9999990.,-5.,3.)", 1);
+    assert_ne!(text, mapped);
+    let document = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+    let source = Selected::parse(
+        &document,
+        document.represented_members()[0].item_entity(),
+        Default::default(),
+        None,
+    )
+    .unwrap()
+    .retain(Default::default(), None)
+    .unwrap();
+    let plan = source.geometry_plan(Default::default(), None).unwrap();
+    assert!(matches!(source.faces()[6].support(), Support::Tensor(_)));
+    let ordinary = plan.face_measure(6, Default::default(), None).unwrap();
+    assert!(ordinary.centroid_mm()[0][0] > 9_999_980.);
+    eprintln!(
+        "far centroid ordinary {:?} work {}",
+        ordinary.centroid_mm(),
+        ordinary.work_used()
+    );
+    let strict = FaceMeasureOptions {
+        centroid_width_mm: 1e-9,
+        ..Default::default()
+    };
+    assert!(matches!(
+        plan.face_measure(6, strict, None),
+        Err(Error::Unsupported)
+    ));
+    assert!(plan.face_measure(6, Default::default(), None).is_ok());
+}

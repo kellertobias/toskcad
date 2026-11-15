@@ -326,13 +326,19 @@ impl OwnedMaterial {
         if !owner.forward() {
             local = local.map(|v| -v);
         }
-        if !local[0].valid() || local[0].lo <= 0. {
-            return Err(Error::Unsupported);
-        }
+        // Both independent integrals enclose the same original literal area.
+        // Preserve the Green validity check before intersection: max/min must
+        // never conceal a NaN. Their positive intersection also retains useful
+        // information when one enclosure alone straddles zero.
+        work.step(4)?;
+        let green = local[0].checked().map_err(|_| Error::Unsupported)?;
         let original_area = interval(self.0.local_areas[usize::from(owner.forward())]);
-        if local[0].lo > original_area.hi || local[0].hi < original_area.lo {
-            return Err(Error::Unsupported);
-        }
+        local[0] = I::new(
+            green.lo.max(original_area.lo),
+            green.hi.min(original_area.hi),
+        )
+        .positive()
+        .map_err(|_| Error::Unsupported)?;
         let z = interval(self.0.points[height].coordinates[2].bounds);
         let moments = [local[1], local[2], z * local[0]];
         let [u, v, _] = self.0.linear;

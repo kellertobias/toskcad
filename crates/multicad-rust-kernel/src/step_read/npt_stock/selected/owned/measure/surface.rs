@@ -408,4 +408,38 @@ mod tests {
             Err(Error::Limit)
         ));
     }
+    #[test]
+    fn overflowing_polynomial_moment_cannot_publish_a_finite_gaussian_receipt() {
+        // The area density is exactly ten, while Mx=ten*1e308 cannot be
+        // represented by a finite binary64 enclosure. This tests arithmetic
+        // refusal, without constructing an admitted geometric source.
+        let cell = Cell {
+            position: [[p(1e308), p(0.), p(0.)]; 144],
+            normal: [[p(0.), p(0.), p(10.)]; 484],
+            weight: 1.,
+            scale: [1.; 2],
+            depth: 0,
+        };
+        let mut work = Work {
+            left: 20_000_000,
+            used: 0,
+            bytes: 2 * 1024 * 1024,
+            interrupt: None,
+        };
+        let original = [
+            [
+                jet(&cell.position, 11, 0, &mut work).unwrap(),
+                jet(&cell.normal, 21, 0, &mut work).unwrap(),
+            ],
+            [
+                jet(&cell.position, 11, 1, &mut work).unwrap(),
+                jet(&cell.normal, 21, 1, &mut work).unwrap(),
+            ],
+        ];
+        let gaussian = Gaussian::new(&mut work).unwrap();
+        assert!(matches!(
+            gaussian.enclosure(&cell, &original, &mut work),
+            Err(Error::Unsupported)
+        ));
+    }
 }
