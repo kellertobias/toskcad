@@ -408,8 +408,16 @@ mod tests {
             let source =
                 Hanger::new(crate::authored_hanger_bolt::tests::fixture(left, nb), None).unwrap();
             let started = std::time::Instant::now();
-            let file =
-                export_qualified_hanger(&source, QualifiedExportOptions::default(), None).unwrap();
+            let full_callbacks = std::cell::Cell::new(0);
+            let file = export_qualified_hanger(
+                &source,
+                QualifiedExportOptions::default(),
+                Some(&|| {
+                    full_callbacks.set(full_callbacks.get() + 1);
+                    false
+                }),
+            )
+            .unwrap();
             eprintln!(
                 "atomic healed hanger export left={left} seconds={} bytes={} work={} accounted_bound={} healed_volume={:?} sewing={}",
                 started.elapsed().as_secs_f64(),
@@ -420,6 +428,19 @@ mod tests {
                 file.sewing_correspondence_bound_mm()
             );
             assert!(file.as_str().starts_with("ISO-10303-21;"));
+            for maximum_work in [5000, 50_000_000] {
+                assert!(matches!(
+                    export_qualified_hanger(
+                        &source,
+                        QualifiedExportOptions {
+                            maximum_work,
+                            ..QualifiedExportOptions::default()
+                        },
+                        None
+                    ),
+                    Err(Error::Limit)
+                ));
+            }
             assert!(file.healed_volume_bounds_mm3()[0] > 0.);
             assert!(file.sewing_correspondence_bound_mm() <= 1e-7);
             assert!(file.peak_accounted_bytes() <= QualifiedExportOptions::default().maximum_bytes);
@@ -499,8 +520,57 @@ mod tests {
                     .all(|v| *v <= 1e-6)
             );
             assert!(file.original_coedge_derivative_error_mm() <= 1e-6);
+            assert!(matches!(
+                export_qualified_hanger(
+                    &source,
+                    QualifiedExportOptions {
+                        maximum_healed_volume_width_mm3: 1e-14,
+                        ..QualifiedExportOptions::default()
+                    },
+                    None
+                ),
+                Err(Error::Unresolved)
+            ));
+            for cut in [3, full_callbacks.get() - 1000] {
+                let calls = std::cell::Cell::new(0);
+                assert!(matches!(
+                    export_qualified_hanger(
+                        &source,
+                        QualifiedExportOptions::default(),
+                        Some(&|| {
+                            let n = calls.get() + 1;
+                            calls.set(n);
+                            n >= cut
+                        })
+                    ),
+                    Err(Error::Cancelled)
+                ));
+                assert!(calls.get() >= cut);
+            }
             assert_eq!(file.source(), &source);
             let mut single = crate::step::Writer::new();
+            assert!(matches!(
+                single.append_qualified_hanger(
+                    &file,
+                    QualifiedExportOptions {
+                        maximum_work: 0,
+                        ..QualifiedExportOptions::default()
+                    },
+                    None
+                ),
+                Err(Error::Invalid)
+            ));
+            assert!(matches!(
+                single.append_qualified_hanger(
+                    &file,
+                    QualifiedExportOptions {
+                        maximum_healed_volume_width_mm3: 1e-14,
+                        ..QualifiedExportOptions::default()
+                    },
+                    None
+                ),
+                Err(Error::Unresolved)
+            ));
             let appended = single
                 .append_qualified_hanger(&file, QualifiedExportOptions::default(), None)
                 .unwrap();
