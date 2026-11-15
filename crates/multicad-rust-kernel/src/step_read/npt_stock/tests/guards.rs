@@ -10,6 +10,45 @@ fn replace_field(text: &str, id: u32, index: usize, replacement: &str) -> String
 }
 
 #[test]
+fn actual_tensor_rows_and_curve_subdivision_counts_must_match_the_neutral_schema() {
+    let text = fixture(false);
+    let tensor = record_id(&text, "=B_SPLINE_SURFACE_WITH_KNOTS(", 0);
+    let ragged = change_record(&text, tensor, |record| {
+        let mut args = fields(record);
+        let mut rows = fields(args[3]);
+        let mut first = fields(rows[0]);
+        first.pop().unwrap();
+        let shortened = format!("({})", first.join(","));
+        rows[0] = &shortened;
+        let grid = format!("({})", rows.join(","));
+        args[3] = &grid;
+        with_fields(record, &args)
+    });
+    assert_eq!(rejected(&ragged), Error::Invalid);
+    let curve = record_id(&text, "=B_SPLINE_CURVE_WITH_KNOTS('',11,", 0);
+    let non_dyadic = change_record(&text, curve, |record| {
+        let mut args = fields(record);
+        args[6] = "(12,11,11,12)";
+        args[7] = "(0.,0.3333333333333333,0.6666666666666667,1.)";
+        with_fields(record, &args)
+    });
+    assert_eq!(rejected(&non_dyadic), Error::Unsupported);
+    let mismatched = replace_field(&text, curve, 6, "(12,12)");
+    assert_eq!(rejected(&mismatched), Error::Invalid);
+    let document = CompoundDocument::parse(&text, Default::default(), None).unwrap();
+    assert!(
+        Parsed::parse(
+            &document,
+            document.represented_members()[0].item_entity(),
+            Default::default(),
+            None,
+        )
+        .is_ok()
+    );
+    assert_eq!(document.literal_input(), text);
+}
+
+#[test]
 fn actual_packet_semantic_mutations_refuse_false_bindings() {
     let text = fixture(false);
     let document = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
