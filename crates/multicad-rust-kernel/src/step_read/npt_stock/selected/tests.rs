@@ -28,6 +28,15 @@ fn selected_actual_members_ignore_unrelated_numeric_leaves_without_resetting_bud
     let (text, second, unrelated) = compound(&original);
     let document = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
     assert_eq!(document.represented_members().len(), 2);
+    assert!(matches!(
+        Parsed::parse(
+            &document,
+            document.represented_members()[0].item_entity(),
+            Default::default(),
+            None,
+        ),
+        Err(Error::Unsupported)
+    ));
     let mut counts = Vec::new();
     for member in document.represented_members() {
         let selected =

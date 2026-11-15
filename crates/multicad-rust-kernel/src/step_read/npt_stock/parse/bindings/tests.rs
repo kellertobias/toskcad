@@ -3,6 +3,61 @@ use super::*;
 use crate::step_read::npt_stock::tests::{change_record, fields, fixture, record_id, with_fields};
 
 #[test]
+fn actual_knot_queries_share_exhaustion_and_final_cancellation_with_the_caller() {
+    let text = fixture(false);
+    let records = part21::parse(&text).unwrap();
+    let id = record_id(&text, "=B_SPLINE_CURVE_WITH_KNOTS('',11,", 0);
+    let entity = &records[&id][0];
+    let query = |separate, budget: &mut Budget<'_>| -> Result<()> {
+        let mut numbers = numeric::Numbers::new(entity, budget)?;
+        assert_eq!(numbers.integer(&entity.args[1], budget)?, 11);
+        if separate {
+            let spans = multiplicities(&mut numbers, &entity.args[6], budget)?;
+            knots(&mut numbers, &entity.args[7], spans, budget)?;
+        } else {
+            uniform_knots(&mut numbers, &entity.args[6], &entity.args[7], budget)?;
+        }
+        numbers.finish()
+    };
+    for separate in [false, true] {
+        let polls = std::cell::Cell::new(0usize);
+        let count = || {
+            polls.set(polls.get() + 1);
+            false
+        };
+        let mut baseline = Budget::new(Default::default(), Some(&count)).unwrap();
+        query(separate, &mut baseline).unwrap();
+        let options = Options {
+            maximum_work: baseline.used,
+            ..Default::default()
+        };
+        let mut exact = Budget::new(options, None).unwrap();
+        query(separate, &mut exact).unwrap();
+        assert_eq!(exact.used, baseline.used);
+        let mut tight = Budget::new(
+            Options {
+                maximum_work: baseline.used - 1,
+                ..options
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(query(separate, &mut tight), Err(Error::Limit));
+        let seen = std::cell::Cell::new(0usize);
+        let cancel = || {
+            seen.set(seen.get() + 1);
+            seen.get() == polls.get()
+        };
+        let mut cancelled = Budget::new(options, Some(&cancel)).unwrap();
+        assert_eq!(query(separate, &mut cancelled), Err(Error::Cancelled));
+        assert_eq!(seen.get(), polls.get());
+        let mut recovered = Budget::new(options, None).unwrap();
+        query(separate, &mut recovered).unwrap();
+        assert_eq!(recovered.used, baseline.used);
+    }
+}
+
+#[test]
 fn original_pcurve_context_schema_and_real_read_frontiers_are_validated() {
     let text = fixture(false);
     let records = part21::parse(&text).unwrap();
