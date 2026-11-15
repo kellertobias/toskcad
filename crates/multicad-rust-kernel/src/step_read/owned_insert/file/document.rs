@@ -71,6 +71,11 @@ impl<'input> CompoundDocument<'input> {
     pub fn literal_input(&self) -> &'input str {
         self.source.input
     }
+    /// Immutable neutral records for another bounded decoder in this module.
+    /// This supplies the original arena, never a geometry-admission receipt.
+    pub(in crate::step_read) fn records(&self) -> &BTreeMap<u32, Vec<Entity<'input>>> {
+        &self.source.entities
+    }
     pub fn work_used(&self) -> usize {
         self.source.work
     }

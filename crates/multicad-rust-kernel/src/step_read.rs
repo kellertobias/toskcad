@@ -43,6 +43,7 @@ mod mixed;
 mod nonplanar_loft;
 mod normal_relief;
 pub use normal_relief::{normal_relief_import_matches, verify_normal_relief};
+pub mod npt_stock;
 mod part21;
 mod phillips_cutter;
 pub use phillips_cutter::{
