@@ -827,3 +827,144 @@ fn rounded_bore(left_hand: bool, frame: PlaneFrame) -> crate::Solid {
     )
     .unwrap()
 }
+
+/// An independent depth-map oracle for thread drawings: the first material
+/// along each pixel's sight line is found by marching the source solid's
+/// containment test alone. Wherever that depth jumps between neighbouring
+/// pixels, or a pixel's sight line starts or stops meeting material, an
+/// occluding contour or edge is seen there, and a published visible vector
+/// must pass within two and a half pixels.
+#[test]
+fn thread_occluding_contours_agree_with_a_depth_map_oracle() {
+    use crate::DrawingSolid;
+    let relief = two_start(false, PlaneFrame::default());
+    let bore = rounded_bore(true, PlaneFrame::default());
+    let p = 1.27;
+    let a = 27.5_f64.to_radians();
+    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let rounded = crate::Solid::rust_rounded_thread(
+        multicad_rust_kernel::rounded_thread::Spec {
+            major_radius_mm: 3.175,
+            pitch_mm: p,
+            length_mm: 3.7 * p,
+            depth_mm: p / (3. * a.tan()),
+            crest_radius_mm: r,
+            root_radius_mm: r,
+            flank_angle_deg: 27.5,
+            starts: 1,
+            left_hand: false,
+        },
+        multicad_core::document::EntityId::new(),
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+    )
+    .unwrap();
+    let s = 0.5_f64.sqrt();
+    let t = (1_f64 / 6.).sqrt();
+    for (label, solid, center) in [
+        ("rounded", &rounded, 2.35),
+        ("relief", &relief, 3.3),
+        ("bore", &bore, 2.35),
+    ] {
+        for [u, v] in [[[1., 0., 0.], [0., 0., 1.]], [[s, -s, 0.], [t, t, -2. * t]]] {
+            let frame = PlaneFrame {
+                origin: [0.1, -0.05, center],
+                u,
+                v,
+            };
+            let view = View::new(frame);
+            let options = DrawingProjection {
+                frame,
+                ..Default::default()
+            };
+            let vectors = project_solids(&[DrawingSolid { solid, hatch: None }], options)
+                .unwrap()
+                .unwrap();
+            let world = |q: P3| -> [f64; 3] {
+                std::array::from_fn(|i| {
+                    frame.origin[i] + (0..3).map(|j| view.axes[j][i] * q[j]).sum::<f64>()
+                })
+            };
+            let inside = |q: P3| solid.rust_thread_contains(world(q)).unwrap();
+            // First material from the viewer, refined by bisection.
+            let depth = |x: f64, y: f64| -> Option<f64> {
+                let (top, bottom, step) = (8., -8., 0.01);
+                let mut z = top;
+                while z > bottom {
+                    let next = z - step;
+                    if inside([x, y, next]) {
+                        let [mut hi, mut lo] = [z, next];
+                        for _ in 0..30 {
+                            let mid = 0.5 * (hi + lo);
+                            if inside([x, y, mid]) {
+                                lo = mid
+                            } else {
+                                hi = mid
+                            }
+                        }
+                        return Some(lo);
+                    }
+                    z = next;
+                }
+                None
+            };
+            let pixel = 0.05;
+            let count = 200;
+            let grid: Vec<Vec<Option<f64>>> = (0..count)
+                .map(|i| {
+                    (0..count)
+                        .map(|j| {
+                            depth(
+                                -5. + pixel * (i as f64 + 0.5),
+                                -5. + pixel * (j as f64 + 0.5),
+                            )
+                        })
+                        .collect()
+                })
+                .collect();
+            let near_visible = |x: f64, y: f64| {
+                vectors
+                    .iter()
+                    .filter(|v| v.role == VectorRole::Visible)
+                    .any(|v| {
+                        v.preview_mm.windows(2).any(|w| {
+                            let [[a0, a1], [b0, b1]] = [w[0], w[1]];
+                            let [dx, dy] = [b0 - a0, b1 - a1];
+                            let along = (((x - a0) * dx + (y - a1) * dy)
+                                / (dx * dx + dy * dy).max(1e-300))
+                            .clamp(0., 1.);
+                            (x - a0 - along * dx).hypot(y - a1 - along * dy) < 2.5 * pixel
+                        })
+                    })
+            };
+            let (mut seen, mut missing) = (0, Vec::new());
+            for i in 0..count - 1 {
+                for j in 0..count - 1 {
+                    for (k, l) in [(i + 1, j), (i, j + 1)] {
+                        let jump = match (grid[i][j], grid[k][l]) {
+                            (Some(a), Some(b)) => (a - b).abs() > 0.3,
+                            (None, None) => false,
+                            _ => true,
+                        };
+                        if !jump {
+                            continue;
+                        }
+                        seen += 1;
+                        let x = -5. + pixel * (0.5 * (i + k) as f64 + 0.5);
+                        let y = -5. + pixel * (0.5 * (j + l) as f64 + 0.5);
+                        if !near_visible(x, y) {
+                            missing.push([x, y]);
+                        }
+                    }
+                }
+            }
+            assert!(seen > 100, "{label}: {seen}");
+            assert!(
+                missing.is_empty(),
+                "{label} {u:?}: {} of {seen}: {:?}",
+                missing.len(),
+                &missing[..missing.len().min(6)]
+            );
+        }
+    }
+}
