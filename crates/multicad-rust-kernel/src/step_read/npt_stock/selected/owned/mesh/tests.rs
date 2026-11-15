@@ -349,3 +349,21 @@ fn actual_geometry_plan_reuse_and_mesh_refusals_preserve_the_literal_source() {
     assert!(first.accounted_peak_bytes() >= plan.retained_budget_bytes());
     assert!(std::sync::Arc::ptr_eq(&source.0, &first.source().0));
 }
+#[test]
+fn actual_tilted_literal_mesh() {
+    let text = super::super::super::super::tests::fixture(false);
+    let text = super::super::super::tests::mapped(&text, "(-3.,0.,0.)", "1.")
+        .replace("DIRECTION('',(0.,0.,5.))", "DIRECTION('',(0.,-4.,3.))");
+    let document = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+    let source = Selected::parse(
+        &document,
+        document.represented_members()[0].item_entity(),
+        Default::default(),
+        None,
+    )
+    .unwrap()
+    .retain(Default::default(), None)
+    .unwrap();
+    let receipt = source.mesh_candidate(Default::default(), None).unwrap();
+    receipt.certify_embedding(None).unwrap();
+}

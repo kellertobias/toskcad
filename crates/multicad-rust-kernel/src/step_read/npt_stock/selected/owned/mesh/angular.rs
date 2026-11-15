@@ -210,7 +210,7 @@ fn refine(
     // Only a constrained contour owns an angular level. A free CDT chord
     // may connect two same-level nodes across a curved contour; projecting
     // that chord would repeat an existing contour vertex.
-    let ray = ray.filter(|_| constraint.is_some());
+    let mut ray = ray.filter(|_| constraint.is_some());
     if let Some((_, bits)) = ray {
         let theta = f64::from_bits(bits);
         let direction = [theta.cos(), theta.sin()];
@@ -239,6 +239,25 @@ fn refine(
             uv[axis] = registry::snap(lo.midpoint(hi));
         }
     }
+    if let Some(edge) = constraint {
+        cdt.remove_constraint_edge(edge);
+        // A curved angular contour can bend across a different steering
+        // constraint. This is only a triangulation proposal: if its two
+        // proposed segments conflict, split the original straight chord
+        // instead and drop the unearned angular level. The complete original
+        // field C0/C1 certificate below remains the sole admission authority.
+        if ray.is_some() {
+            let [shear, scale] = patch.normal.steering;
+            let point = Point2::new(uv[0] + shear * uv[1], scale * uv[1]);
+            budget.step(cdt.num_directed_edges() * 128 + 128)?;
+            if [na, nb].into_iter().any(|n| {
+                cdt.intersects_constraint(Point2::new(n.steering[0], n.steering[1]), point)
+            }) {
+                uv = std::array::from_fn(|k| (na.uv[k] + nb.uv[k]) * 0.5);
+                ray = None;
+            }
+        }
+    }
     if uv == na.uv || uv == nb.uv || uv.into_iter().any(|x| x <= 0. || x >= 1.) {
         #[cfg(test)]
         eprintln!(
@@ -251,9 +270,6 @@ fn refine(
     let local = registry::root_point(source, t, root, uv, budget)?;
     let vertex = registry.vertex(source, key, local, budget)?;
     let node = root_node(patch, registry, uv, vertex, ray, generation, budget)?;
-    if let Some(edge) = constraint {
-        cdt.remove_constraint_edge(edge);
-    }
     let old = cdt.num_vertices();
     let added = cdt.insert(node).map_err(|_| Error::Unsupported)?;
     if constraint.is_some() {
