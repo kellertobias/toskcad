@@ -1,6 +1,8 @@
 //! Mixed jets of the original authored atlas, not fitted carrier derivatives.
 use super::*;
 use crate::tapered_thread::interval::J;
+mod taylor;
+pub use taylor::StockClipPatchTaylor;
 
 /// A sealed bilinear source chart. The borrowed plan owns the original law and
 /// symbolic contact; the four enclosed scalar stations are evaluation caches.

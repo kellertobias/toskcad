@@ -21,7 +21,7 @@ mod sample;
 mod tests;
 mod topology;
 mod volume;
-pub use jets::{StockClipJets, StockClipPatchLaw};
+pub use jets::{StockClipJets, StockClipPatchLaw, StockClipPatchTaylor};
 pub use topology::StockClipFaceLoop;
 
 pub use sample::{StockClipPoint, StockClipSample};

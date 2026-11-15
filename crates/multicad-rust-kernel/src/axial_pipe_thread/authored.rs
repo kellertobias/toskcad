@@ -10,9 +10,10 @@ pub use stock_clip::{
     StockClipBand, StockClipCellPlan, StockClipClassification, StockClipCoedge, StockClipCurve,
     StockClipCurveLaw, StockClipCurveTaylor, StockClipFace, StockClipFaceLoop,
     StockClipFaceMeasure, StockClipGridLine, StockClipJets, StockClipMeasureOptions,
-    StockClipMeshCandidate, StockClipOptions, StockClipPatch, StockClipPatchLaw, StockClipPlan,
-    StockClipPoint, StockClipPointOwner, StockClipPolyline, StockClipQuery, StockClipRail,
-    StockClipSample, StockClipSlab, StockClipStation, StockClipVertex, StockClipVolume,
+    StockClipMeshCandidate, StockClipOptions, StockClipPatch, StockClipPatchLaw,
+    StockClipPatchTaylor, StockClipPlan, StockClipPoint, StockClipPointOwner, StockClipPolyline,
+    StockClipQuery, StockClipRail, StockClipSample, StockClipSlab, StockClipStation,
+    StockClipVertex, StockClipVolume,
 };
 #[cfg(test)]
 mod tests;
