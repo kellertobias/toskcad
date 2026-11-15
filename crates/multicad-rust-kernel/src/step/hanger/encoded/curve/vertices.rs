@@ -295,3 +295,6 @@ mod tests;
 
 #[cfg(test)]
 mod events_probe;
+
+mod events;
+pub use events::{CapEvents, Event as CapEvent, Segment as CapSegment};

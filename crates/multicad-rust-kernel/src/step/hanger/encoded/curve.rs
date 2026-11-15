@@ -12,7 +12,7 @@ mod side;
 pub use side::{SidePole, SideSupport, SideSupportBatch, SideSupportKind};
 mod restrict;
 mod vertices;
-pub use vertices::{LiteralVertex, LiteralVertices};
+pub use vertices::{CapEvent, CapEvents, CapSegment, LiteralVertex, LiteralVertices};
 #[cfg(test)]
 mod side_probe;
 #[cfg(test)]

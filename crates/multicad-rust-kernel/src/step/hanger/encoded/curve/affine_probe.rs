@@ -753,6 +753,38 @@ fn source_owned_affine_support_api_retains_exact_controls_and_refusals() {
             Hanger::new(crate::authored_hanger_bolt::tests::fixture(left, nb), None).unwrap();
         let boundary = source.boundary(BoundaryOptions::default(), None).unwrap();
         let field = EncodedField::prepare(&boundary, CurveOptions::default(), None).unwrap();
+        assert!(matches!(
+            field.affine_cap_piece(
+                0,
+                End::Start,
+                0,
+                DomainOptions {
+                    maximum_bytes: field.retained_bytes() + 1024 * 1024,
+                    ..Default::default()
+                },
+                None
+            ),
+            Err(Error::Limit)
+        ));
+        let scan_work: usize = field
+            .meridians
+            .iter()
+            .flat_map(|row| row.radius.iter().chain(&row.phase).chain(&row.weights))
+            .map(|s| 1 + s.n.len() + s.d.len())
+            .sum();
+        assert!(matches!(
+            field.affine_cap_piece(
+                0,
+                End::Start,
+                0,
+                DomainOptions {
+                    maximum_work: scan_work + 2,
+                    ..Default::default()
+                },
+                None
+            ),
+            Err(Error::Limit)
+        ));
         let mut positive = 0;
         let mut absent = 0;
         for cell in 0..field.cells.len() {
