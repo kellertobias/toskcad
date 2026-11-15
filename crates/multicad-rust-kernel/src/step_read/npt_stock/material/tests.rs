@@ -546,3 +546,165 @@ fn decoded_actual_cell_frontiers_and_decimal_range_are_checked() {
             .is_ok()
     );
 }
+fn warp_height(text: &str, parsed: &Parsed<'_, '_>, power: i32) -> String {
+    let height = parsed
+        .points
+        .iter()
+        .map(|p| p.coordinates[2].value())
+        .fold(0_f64, f64::max);
+    let records: std::collections::BTreeMap<_, _> = parsed
+        .points
+        .iter()
+        .map(|point| {
+            let c = point.coordinates();
+            (
+                point.entity(),
+                format!(
+                    "#{}=CARTESIAN_POINT('',({},{},{}));",
+                    point.entity(),
+                    c[0].spelling(),
+                    c[1].spelling(),
+                    height
+                        * (0.01 * (c[2].value() / height)
+                            + 0.99 * (c[2].value() / height).powi(power))
+                ),
+            )
+        })
+        .collect();
+    text.lines()
+        .map(|line| {
+            line.strip_prefix('#')
+                .and_then(|s| s.split_once('='))
+                .and_then(|(id, _)| id.parse::<u32>().ok())
+                .and_then(|id| records.get(&id))
+                .map_or(line, String::as_str)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+#[test]
+fn actual_nonlinear_height_requires_a_positive_resolved_volume_interval() {
+    let text = super::super::tests::fixture(false);
+    let document = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+    let parsed = Parsed::parse(
+        &document,
+        document.represented_members()[0].item_entity(),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    // A monotone height warp preserves cap endpoints and shared owners. Its
+    // positive linear component keeps the actual closed-cell z_v resolved.
+    let warped = warp_height(&text, &parsed, 32);
+    let document = CompoundDocument::parse(&warped, DocumentOptions::default(), None).unwrap();
+    let parsed = Parsed::parse(
+        &document,
+        document.represented_members()[0].item_entity(),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let projection = parsed.projection(Default::default(), None).unwrap();
+    assert!(direct_flux(&parsed, 17) > 0.);
+    assert!(matches!(
+        projection.occupied(Default::default(), None),
+        Err(Error::Unsupported)
+    ));
+}
+
+fn scale_xy(text: &str, document: &CompoundDocument<'_>, factor: i32) -> String {
+    let mut cap_points = std::collections::BTreeSet::new();
+    for entries in document.records().values() {
+        if let [entity] = entries.as_slice()
+            && entity.name == "B_SPLINE_CURVE_WITH_KNOTS"
+            && matches!(entity.args.get(1),Some(Value::Number(n)) if *n==11.)
+            && let Value::List(poles) = &entity.args[2]
+        {
+            for pole in poles {
+                if let Value::Reference(id) = pole {
+                    cap_points.insert(*id);
+                }
+            }
+        }
+    }
+    // Integer decimal multiplication is exact, including original trailing
+    // digits that disappear from the binary64 cache. Scale by factor*10^-162.
+    let scaled = |text: &str| {
+        let (mantissa, exponent) = text.split_once('E').unwrap_or((text, "0"));
+        let fraction = mantissa
+            .split_once('.')
+            .map_or(0, |(_, fraction)| fraction.len());
+        let digits = mantissa
+            .replace('.', "")
+            .parse::<num_bigint::BigInt>()
+            .unwrap()
+            * factor;
+        format!(
+            "{digits}E{}",
+            exponent.parse::<i32>().unwrap() - 162 - fraction as i32
+        )
+    };
+    let mut replacements = std::collections::BTreeMap::new();
+    for (id, entries) in document.records() {
+        if let [entity] = entries.as_slice()
+            && entity.name == "CARTESIAN_POINT"
+            && let Some(Value::List(coords)) = entity.args.get(1)
+            && (coords.len() == 3 || (coords.len() == 2 && cap_points.contains(id)))
+        {
+            let numbers = part21::numeric_spellings(entity).unwrap();
+            let mut values = vec![scaled(numbers[0]), scaled(numbers[1])];
+            if coords.len() == 3 {
+                let (mantissa, exponent) = numbers[2].split_once('E').unwrap_or((numbers[2], "0"));
+                values.push(format!(
+                    "{mantissa}E{}",
+                    exponent.parse::<i32>().unwrap() + 3
+                ));
+            }
+            replacements.insert(
+                *id,
+                format!("#{id}=CARTESIAN_POINT('',({}));", values.join(",")),
+            );
+        }
+    }
+    text.lines()
+        .map(|line| {
+            line.strip_prefix('#')
+                .and_then(|s| s.split_once('='))
+                .and_then(|(id, _)| id.parse::<u32>().ok())
+                .and_then(|id| replacements.get(&id))
+                .map_or(line, String::as_str)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+#[test]
+fn actual_subnormal_cap_areas_require_positive_resolved_integrals() {
+    let text = super::super::tests::fixture(false);
+    let document = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+    for (factor, accepted) in [(7, false), (9, true)] {
+        // Exact decimal XY scaling preserves radial geometry; Z*1000 keeps
+        // the actual local Jacobian above underflow while cap area is tiny.
+        let scaled = scale_xy(&text, &document, factor);
+        let document = CompoundDocument::parse(&scaled, DocumentOptions::default(), None).unwrap();
+        let parsed = Parsed::parse(
+            &document,
+            document.represented_members()[0].item_entity(),
+            Default::default(),
+            None,
+        )
+        .unwrap();
+        let projection = parsed.projection(Default::default(), None).unwrap();
+        let occupied = projection.occupied(Default::default(), None);
+        if accepted {
+            let occupied = occupied.unwrap();
+            assert!(
+                occupied
+                    .cap_areas_mm2()
+                    .iter()
+                    .all(|area| area[0] > 0. && area[1] < 1e-318)
+            );
+        } else {
+            assert!(matches!(occupied, Err(Error::Unsupported)));
+        }
+    }
+}
