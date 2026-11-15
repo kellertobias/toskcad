@@ -1475,3 +1475,177 @@ fn every_family_view_and_scene_is_a_named_regression_or_finding() {
     }
     assert_eq!(seen, EXPECTED.len(), "every inventoried combination ran");
 }
+
+/// Negative control: every inventoried family and two-body scene refuses an
+/// invalid request with a typed input error and an exhausted budget with a
+/// typed limit error, never with partial or empty output.
+#[test]
+fn invalid_requests_and_exhausted_budgets_refuse_atomically_for_every_family_and_scene() {
+    let families = families();
+    let by_name = |n: &str| {
+        families
+            .iter()
+            .find(|(name, _)| *name == n)
+            .unwrap()
+            .1
+            .as_ref()
+            .unwrap()
+    };
+    let place = |solid: &Solid, x: f64| {
+        solid
+            .transformed(RigidTransform {
+                rotation: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+                translation_mm: [x, 0., 20.],
+            })
+            .unwrap()
+    };
+    let side = frame([1., 0., 0.], [0., 0., 1.]);
+    let base = DrawingProjection {
+        frame: side,
+        hidden_lines: true,
+        ..DrawingProjection::default()
+    };
+    let invalid: [(&str, DrawingProjection); 9] = [
+        (
+            "parallel frame axes",
+            DrawingProjection {
+                frame: frame([1., 0., 0.], [2., 0., 0.]),
+                ..base
+            },
+        ),
+        (
+            "zero frame axis",
+            DrawingProjection {
+                frame: frame([0., 0., 0.], [0., 0., 1.]),
+                ..base
+            },
+        ),
+        (
+            "non-finite frame origin",
+            DrawingProjection {
+                frame: PlaneFrame {
+                    origin: [f64::NAN, 0., 0.],
+                    ..side
+                },
+                ..base
+            },
+        ),
+        (
+            "zero chord tolerance",
+            DrawingProjection {
+                chord_tolerance_mm: 0.,
+                ..base
+            },
+        ),
+        (
+            "empty curve budget",
+            DrawingProjection {
+                maximum_curves: 0,
+                ..base
+            },
+        ),
+        (
+            "empty point budget",
+            DrawingProjection {
+                maximum_points: 0,
+                ..base
+            },
+        ),
+        (
+            "section-only without a section plane",
+            DrawingProjection {
+                section_only: true,
+                ..base
+            },
+        ),
+        (
+            "zero detail radius",
+            DrawingProjection {
+                detail: Some(([0., 0.], 0.)),
+                ..base
+            },
+        ),
+        (
+            "inverted lateral window",
+            DrawingProjection {
+                section_offset_mm: Some(0.),
+                section_u_mm: Some([2., -2.]),
+                ..base
+            },
+        ),
+    ];
+    let mut checked = 0;
+    let mut refuse = |name: &str, scene: &[DrawingSolid<'_>]| {
+        for (label, options) in invalid {
+            match project_drawing(scene, options) {
+                Err(error) if error.kind == multicad_kernel::GeometryErrorKind::Input => {}
+                other => panic!(
+                    "{name} | {label}: expected an input error, got {}",
+                    outcome(&other)
+                ),
+            }
+        }
+        // One curve or one point fewer than the full drawing needs refuses
+        // the whole drawing.
+        let full =
+            project_drawing(scene, base).unwrap_or_else(|e| panic!("{name} | full drawing: {e:?}"));
+        let points: usize = full.iter().map(|v| v.preview_mm.len()).sum();
+        let mut budgets = vec![(
+            "one point short",
+            DrawingProjection {
+                maximum_points: u32::try_from(points - 1).unwrap(),
+                ..base
+            },
+        )];
+        if full.len() > 1 {
+            budgets.push((
+                "one curve short",
+                DrawingProjection {
+                    maximum_curves: u32::try_from(full.len() - 1).unwrap(),
+                    ..base
+                },
+            ));
+        }
+        for (label, options) in budgets {
+            match project_drawing(scene, options) {
+                Err(error) if error.kind == multicad_kernel::GeometryErrorKind::Limit => {}
+                other => panic!(
+                    "{name} | {label}: expected a limit error, got {}",
+                    outcome(&other)
+                ),
+            }
+        }
+        checked += 1;
+    };
+    for (name, built) in &families {
+        let solid = built.as_ref().unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        refuse(
+            name,
+            &[DrawingSolid {
+                solid,
+                hatch: hatch(),
+            }],
+        );
+    }
+    for (a, b) in SCENES {
+        let near = place(by_name(b), 2.);
+        refuse(
+            &format!("{a} + {b} overlapping"),
+            &[
+                DrawingSolid {
+                    solid: by_name(a),
+                    hatch: hatch(),
+                },
+                DrawingSolid {
+                    solid: &near,
+                    hatch: hatch(),
+                },
+            ],
+        );
+    }
+    assert_eq!(checked, families.len() + SCENES.len());
+    assert!(
+        project_drawing(&[], base).is_err(),
+        "an empty scene refuses"
+    );
+}
