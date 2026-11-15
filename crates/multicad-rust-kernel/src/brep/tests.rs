@@ -775,7 +775,7 @@ fn malformed_and_foreign_structure_is_refused_with_its_kind() {
     assert_eq!(
         refused(&elliptic(
             "#7=ELLIPSE('',#5,3.,2.)",
-            "#7=HYPERBOLA('',#5,3.,2.)"
+            "#7=OFFSET_CURVE_3D('',#5,3.,2.)"
         )),
         Error::Unsupported
     );
@@ -1487,4 +1487,46 @@ fn caps_off_seam_meridians_and_off_surface_rims() {
         "CYLINDRICAL_SURFACE('',#5,2.000001)",
     );
     assert_eq!(solids(&off).unwrap_err(), Error::Invalid);
+}
+
+#[test]
+fn open_conics_evaluate_invert_and_move_exactly() {
+    let frame = Frame {
+        origin: [1., 2., 3.],
+        x: [0., 1., 0.],
+        y: [-1., 0., 0.],
+        z: [0., 0., 1.],
+    };
+    let hyperbola = Curve::Hyperbola {
+        frame,
+        semiaxes: [2., 3.],
+    };
+    let parabola = Curve::Parabola { frame, focal: 0.5 };
+    for curve in [&hyperbola, &parabola] {
+        assert_eq!(curve.period(), None);
+        for t in [-1.5, -0.2, 0., 0.7, 2.] {
+            let (p, d) = curve.evaluate(t);
+            assert!((curve.invert(p, None) - t).abs() < 1e-12, "{t}");
+            let h = 1e-6;
+            let difference = scale(
+                sub(curve.evaluate(t + h).0, curve.evaluate(t - h).0),
+                0.5 / h,
+            );
+            assert!(distance(difference, d) < 1e-6, "{t}");
+        }
+        let breaks = curve.breaks(-1., 1.);
+        assert_eq!(breaks.len(), 9);
+        let moved = curve.mapped(&|p| add(p, [1., 0., 0.]), &|v| v);
+        assert!(
+            distance(
+                moved.evaluate(0.3).0,
+                add(curve.evaluate(0.3).0, [1., 0., 0.])
+            ) < 1e-12
+        );
+        let samples = curve.sample(-1., 1., 1e-3, 0.3).unwrap();
+        assert!(samples.len() > 9 && samples[0] == -1. && *samples.last().unwrap() == 1.);
+    }
+    // a cosh t along x, b sinh t along y of the frame.
+    assert!(distance(hyperbola.evaluate(0.).0, [1., 4., 3.]) < 1e-12);
+    assert!(distance(parabola.evaluate(1.).0, [0., 2.5, 3.]) < 1e-12);
 }

@@ -500,7 +500,9 @@ impl Surface {
 /// Starting parameters on a generator curve for a closest-point search.
 fn seeds(curve: &Curve, point: Point) -> Vec<f64> {
     match curve {
-        Curve::Line { .. } => vec![curve.invert(point, None)],
+        Curve::Line { .. } | Curve::Hyperbola { .. } | Curve::Parabola { .. } => {
+            vec![curve.invert(point, None)]
+        }
         Curve::Circle { .. } | Curve::Ellipse { .. } => uniform(0., TAU, PANEL),
         Curve::Nurbs { curve: spline, .. } => {
             let [a, b] = spline.range();

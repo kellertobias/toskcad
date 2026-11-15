@@ -325,7 +325,7 @@ impl ImportedBrepBody {
                     start_rad: start,
                     sweep_rad: end - start,
                 }),
-                Curve::Nurbs { .. } => None,
+                Curve::Hyperbola { .. } | Curve::Parabola { .. } | Curve::Nurbs { .. } => None,
             };
             elements.push(TopologyElement {
                 key: TopologyKey {

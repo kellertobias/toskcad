@@ -79,6 +79,20 @@ fn curve(file: &mut StepFile, curve: &Curve) -> Entity {
             let placement = frame(file, placement);
             file.entity(format_args!("ELLIPSE('',{placement},{a:.16E},{b:.16E})"))
         }
+        Curve::Hyperbola {
+            frame: placement,
+            semiaxes: [a, b],
+        } => {
+            let placement = frame(file, placement);
+            file.entity(format_args!("HYPERBOLA('',{placement},{a:.16E},{b:.16E})"))
+        }
+        Curve::Parabola {
+            frame: placement,
+            focal,
+        } => {
+            let placement = frame(file, placement);
+            file.entity(format_args!("PARABOLA('',{placement},{focal:.16E})"))
+        }
         Curve::Nurbs { curve, .. } => spline_curve(file, curve),
     }
 }

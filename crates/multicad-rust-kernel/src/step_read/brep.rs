@@ -430,6 +430,18 @@ impl<'i> Source<'i> {
                     semiaxes,
                 })
             }
+            ("HYPERBOLA", [_, frame, a, b]) => {
+                let semiaxes = [length(a)?, length(b)?];
+                check(semiaxes[0] > 0. && semiaxes[1] > 0., ReadError::Invalid)?;
+                Ok(Curve::Hyperbola {
+                    frame: self.frame(reference(frame)?)?,
+                    semiaxes,
+                })
+            }
+            ("PARABOLA", [_, frame, focal]) => Ok(Curve::Parabola {
+                frame: self.frame(reference(frame)?)?,
+                focal: radius(focal, false)?,
+            }),
             ("SURFACE_CURVE" | "SEAM_CURVE" | "INTERSECTION_CURVE", [_, curve, ..]) => {
                 check(depth < 8, ReadError::Invalid)?;
                 self.curve(reference(curve)?, depth + 1)

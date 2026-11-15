@@ -5,6 +5,9 @@ use super::{
 };
 use std::f64::consts::{PI, TAU};
 
+/// Panel width along the parameter of an open conic.
+const OPEN_PANEL: f64 = 0.25;
+
 /// The widest angular panel used for sampling and quadrature.
 pub(crate) const PANEL: f64 = PI / 8.;
 
@@ -25,6 +28,16 @@ pub enum Curve {
         frame: Frame,
         semiaxes: [f64; 2],
     },
+    /// `origin + a * cosh t * x + b * sinh t * y`.
+    Hyperbola {
+        frame: Frame,
+        semiaxes: [f64; 2],
+    },
+    /// `origin + focal * t^2 * x + 2 * focal * t * y`.
+    Parabola {
+        frame: Frame,
+        focal: f64,
+    },
     Nurbs {
         curve: NurbsCurve,
         closed: bool,
@@ -40,7 +53,7 @@ impl Curve {
 
     pub fn period(&self) -> Option<f64> {
         match self {
-            Self::Line { .. } => None,
+            Self::Line { .. } | Self::Hyperbola { .. } | Self::Parabola { .. } => None,
             Self::Circle { .. } | Self::Ellipse { .. } => Some(TAU),
             Self::Nurbs { curve, closed } => {
                 let [a, b] = curve.range();
@@ -68,6 +81,29 @@ impl Curve {
             Self::Line { origin, direction } => (add(*origin, scale(*direction, t)), *direction),
             Self::Circle { frame, radius } => ellipse(frame, [*radius; 2], t),
             Self::Ellipse { frame, semiaxes } => ellipse(frame, *semiaxes, t),
+            Self::Hyperbola {
+                frame,
+                semiaxes: [a, b],
+            } => {
+                let (sinh, cosh) = (t.sinh(), t.cosh());
+                (
+                    add(
+                        frame.origin,
+                        add(scale(frame.x, a * cosh), scale(frame.y, b * sinh)),
+                    ),
+                    add(scale(frame.x, a * sinh), scale(frame.y, b * cosh)),
+                )
+            }
+            Self::Parabola { frame, focal } => (
+                add(
+                    frame.origin,
+                    add(
+                        scale(frame.x, focal * t * t),
+                        scale(frame.y, 2. * focal * t),
+                    ),
+                ),
+                add(scale(frame.x, 2. * focal * t), scale(frame.y, 2. * focal)),
+            ),
             Self::Nurbs { curve, .. } => curve.evaluate(self.wrap(t)),
         }
     }
@@ -89,6 +125,8 @@ impl Curve {
                     .atan2(local[0] / semiaxes[0])
                     .rem_euclid(TAU)
             }
+            Self::Hyperbola { frame, semiaxes } => (frame.local(point)[1] / semiaxes[1]).asinh(),
+            Self::Parabola { frame, focal } => frame.local(point)[1] / (2. * focal),
             Self::Nurbs { curve, .. } => {
                 let [a, b] = curve.range();
                 let start = seed.map_or_else(
@@ -139,6 +177,7 @@ impl Curve {
         match self {
             Self::Line { .. } => vec![a, b],
             Self::Circle { .. } | Self::Ellipse { .. } => uniform(a, b, PANEL),
+            Self::Hyperbola { .. } | Self::Parabola { .. } => uniform(a, b, OPEN_PANEL),
             Self::Nurbs { curve, .. } => curve.breaks(self.period(), a, b),
         }
     }
@@ -216,6 +255,14 @@ impl Curve {
             Self::Ellipse { frame, semiaxes } => Self::Ellipse {
                 frame: frame.mapped(map, linear),
                 semiaxes: *semiaxes,
+            },
+            Self::Hyperbola { frame, semiaxes } => Self::Hyperbola {
+                frame: frame.mapped(map, linear),
+                semiaxes: *semiaxes,
+            },
+            Self::Parabola { frame, focal } => Self::Parabola {
+                frame: frame.mapped(map, linear),
+                focal: *focal,
             },
             Self::Nurbs { curve, closed } => Self::Nurbs {
                 curve: curve.mapped(map),
