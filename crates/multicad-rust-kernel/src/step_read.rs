@@ -12,6 +12,7 @@ mod helical;
 pub mod literal_member_binding;
 pub mod owned_hanger;
 pub mod owned_insert;
+pub mod owned_orthogonal_seats;
 #[cfg(test)]
 pub(crate) use helical::profiled::read_torx_cavity_fixture;
 #[cfg(test)]
