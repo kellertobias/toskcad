@@ -242,10 +242,10 @@ pub use physical::{
     OccupiedDerivedThread, OwnedPeriodicMaterial, PeriodicClosedMaterial, PeriodicCurveOwner,
     PeriodicFiniteCurve, PeriodicFiniteCurves, PeriodicFiniteKind, PeriodicFiniteOptions,
     PeriodicMaterialFace, PeriodicMaterialOptions, PeriodicMaterialProvenance,
-    PeriodicMaterialVolume, PeriodicOwnedOptions, PeriodicShoulderOptions, PeriodicShoulderRepair,
-    PeriodicThreadBounds, PeriodicThreadRepair, PeriodicThreadSource, PeriodicVolumeOptions,
-    RimContact, RimContactId, RimDomainEnd, RimDomainRole, RimKnot, RimSignDomain,
-    ThreadCarrierTransfer, ThreadContactOptions,
+    PeriodicMaterialVolume, PeriodicOwnedMaterialQuery, PeriodicOwnedOptions,
+    PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicThreadBounds, PeriodicThreadRepair,
+    PeriodicThreadSource, PeriodicVolumeOptions, RimContact, RimContactId, RimDomainEnd,
+    RimDomainRole, RimKnot, RimSignDomain, ThreadCarrierTransfer, ThreadContactOptions,
 };
 
 pub use physical::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSource};

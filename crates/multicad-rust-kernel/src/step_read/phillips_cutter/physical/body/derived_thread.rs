@@ -17,9 +17,9 @@ pub use analytic::{
     CommonChartPeriodicThreadRepair, OwnedPeriodicMaterial, PeriodicClosedMaterial,
     PeriodicCurveOwner, PeriodicFiniteCurve, PeriodicFiniteCurves, PeriodicFiniteKind,
     PeriodicFiniteOptions, PeriodicMaterialFace, PeriodicMaterialOptions,
-    PeriodicMaterialProvenance, PeriodicMaterialVolume, PeriodicOwnedOptions,
-    PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicThreadBounds, PeriodicThreadRepair,
-    PeriodicThreadSource, PeriodicVolumeOptions,
+    PeriodicMaterialProvenance, PeriodicMaterialVolume, PeriodicOwnedMaterialQuery,
+    PeriodicOwnedOptions, PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicThreadBounds,
+    PeriodicThreadRepair, PeriodicThreadSource, PeriodicVolumeOptions,
 };
 pub use degree11::{CoherentDegree11ThreadCarrier, Degree11ThreadFace, Degree11ThreadOptions};
 pub use join::{

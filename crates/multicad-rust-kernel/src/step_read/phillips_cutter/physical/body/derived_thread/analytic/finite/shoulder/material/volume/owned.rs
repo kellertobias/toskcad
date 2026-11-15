@@ -5,6 +5,8 @@ use super::*;
 use crate::head_profile::OwnedRepairedHead;
 use std::sync::Arc;
 mod authored;
+mod query;
+pub use query::PeriodicOwnedMaterialQuery;
 #[cfg(test)]
 mod tests;
 pub use authored::AuthoredPeriodicOptions;

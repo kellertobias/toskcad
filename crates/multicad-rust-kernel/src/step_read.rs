@@ -1114,6 +1114,7 @@ pub use phillips_cutter::{
     PeriodicMaterialOptions as PhillipsPeriodicMaterialOptions,
     PeriodicMaterialProvenance as PhillipsPeriodicMaterialProvenance,
     PeriodicMaterialVolume as PhillipsPeriodicMaterialVolume,
+    PeriodicOwnedMaterialQuery as PhillipsPeriodicOwnedMaterialQuery,
     PeriodicOwnedOptions as PhillipsPeriodicOwnedOptions,
     PeriodicShoulderOptions as PhillipsPeriodicShoulderOptions,
     PeriodicShoulderRepair as PhillipsPeriodicShoulderRepair,

@@ -6,8 +6,8 @@ mod shoulder;
 pub use shoulder::{
     AuthoredPeriodicOptions, OwnedPeriodicMaterial, PeriodicClosedMaterial, PeriodicCurveOwner,
     PeriodicMaterialFace, PeriodicMaterialOptions, PeriodicMaterialProvenance,
-    PeriodicMaterialVolume, PeriodicOwnedOptions, PeriodicShoulderOptions, PeriodicShoulderRepair,
-    PeriodicVolumeOptions,
+    PeriodicMaterialVolume, PeriodicOwnedMaterialQuery, PeriodicOwnedOptions,
+    PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicVolumeOptions,
 };
 type FResult<T> = std::result::Result<T, PhillipsReadError>;
 const FINITE_TOTAL: usize = 48_000_000;
