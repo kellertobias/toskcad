@@ -309,10 +309,55 @@ impl ExternalNptStockBody {
             .map_err(failure)?;
         policy.point(placed.map(|v| v[0]))?;
         policy.point(placed.map(|v| v[1]))?;
-        let norm = (I::point(1.) + I::point(calibration.metric_error())).sqrt();
-        body.transfer.position_error_mm = (I::point(body.transfer.position_error_mm) * norm).hi;
-        body.transfer.derivative_error_mm = (I::point(body.transfer.derivative_error_mm) * norm).hi;
-        body.transfer.axis_alignment_mm = (I::point(body.transfer.axis_alignment_mm) * norm).hi;
+        // The retained matrix is the literal rounded composition. Compare it
+        // with the exact affine composition over the actual finite source;
+        // a common WCS translation is never assumed to add without rounding.
+        let matrix_error: [[I; 3]; 3] = std::array::from_fn(|i| {
+            std::array::from_fn(|j| {
+                (0..3).fold(I::ZERO, |sum, k| {
+                    sum + I::point(outer.rotation[i][k]) * I::point(self.pose.rotation[k][j])
+                }) - I::point(body.pose.rotation[i][j])
+            })
+        });
+        let translation_error: [I; 3] = std::array::from_fn(|i| {
+            (0..3).fold(I::point(outer.translation_mm[i]), |sum, k| {
+                sum + I::point(outer.rotation[i][k]) * I::point(self.pose.translation_mm[k])
+            }) - I::point(body.pose.translation_mm[i])
+        });
+        let error_at = |bounds: [[f64; 2]; 3]| {
+            norm(std::array::from_fn(|i| {
+                (0..3).fold(translation_error[i], |sum, j| {
+                    sum + matrix_error[i][j] * iv(bounds[j])
+                })
+            }))
+            .hi
+        };
+        let position_rounding = error_at(self.source.bounds_mm());
+        let axis_rounding = error_at(self.source.stock_axis_base_bounds_mm());
+        // Sum of absolute entries bounds the matrix operator norm. Original
+        // finite normalized q/z patches and coedges have XY derivative at most
+        // R*(1+TAU*(2+L/p)); cap radial transport adds at most another2R;
+        // source Z and the untouched tail contribute at most original H.
+        let operator = matrix_error
+            .into_iter()
+            .flatten()
+            .fold(I::ZERO, |sum, v| sum + I::point(v.magnitude()));
+        let spec = self.source.thread().source().spec();
+        let tau = I::new(
+            std::f64::consts::TAU.next_down(),
+            std::f64::consts::TAU.next_up(),
+        );
+        let derivative_bound = iv(self.source.stock_radius_bounds_mm())
+            * (I::point(3.)
+                + tau * (I::point(2.) + I::point(spec.length_mm) / I::point(spec.pitch_mm)))
+            + (iv(self.source.stock_top_bounds_mm()) - iv(self.source.stock_bottom_bounds_mm()));
+        let scale = (I::point(1.) + I::point(calibration.metric_error())).sqrt();
+        body.transfer.position_error_mm =
+            (I::point(body.transfer.position_error_mm) * scale + I::point(position_rounding)).hi;
+        body.transfer.derivative_error_mm =
+            (I::point(body.transfer.derivative_error_mm) * scale + operator * derivative_bound).hi;
+        body.transfer.axis_alignment_mm =
+            (I::point(body.transfer.axis_alignment_mm) * scale + I::point(axis_rounding)).hi;
         if body.transfer.position_error_mm > policy.linear_tolerance_mm
             || body.transfer.derivative_error_mm > policy.linear_tolerance_mm
         {

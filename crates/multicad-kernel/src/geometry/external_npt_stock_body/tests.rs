@@ -394,3 +394,55 @@ fn genuine_unsupported_chart_boundary_and_curve_frontiers() {
     };
     assert!(body.sample_edge(17, q).unwrap().is_err());
 }
+#[test]
+fn rounded_affine_composition_accumulates_real_correspondence_and_eventually_refuses() {
+    let s = spec(false);
+    let p = GeometryPolicy::default();
+    let stock = crate::geometry::construction::cylinder(
+        PlaneFrame::default(),
+        5.1435,
+        s.length_mm + 2.,
+        EntityId::new(),
+        p,
+    )
+    .unwrap();
+    let source = stock
+        .rust_cut_external_npt_stock(s, EntityId::new(), PlaneFrame::default(), p, None)
+        .unwrap();
+    let shift = |x| RigidTransform {
+        translation_mm: [x, 0., 0.],
+        ..Default::default()
+    };
+    let first = source.transformed(shift(0.1)).unwrap();
+    let second = first.transformed(shift(0.2)).unwrap();
+    let before = first.rust_external_npt_stock_transfer().unwrap();
+    let after = second.rust_external_npt_stock_transfer().unwrap();
+    // Exact dyadic 0.1+0.2 differs from the retained rounded sum by2^-55.
+    assert!(after.position_error_mm >= before.position_error_mm + 2f64.powi(-55));
+    assert!(after.derivative_error_mm > before.derivative_error_mm);
+    assert!(after.axis_alignment_mm > before.axis_alignment_mm);
+    let mut far = source.transformed(shift(1_000_000.)).unwrap();
+    let mut refused = false;
+    for _ in 0..1024 {
+        match far.transformed(shift(0.1)) {
+            Ok(next) => {
+                assert!(
+                    next.rust_external_npt_stock_transfer()
+                        .unwrap()
+                        .position_error_mm
+                        <= p.linear_tolerance_mm
+                );
+                far = next
+            }
+            Err(e) => {
+                assert_eq!(e.kind, GeometryErrorKind::Unsupported);
+                refused = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        refused,
+        "repeated real far-world rounding must not receive an understated transfer"
+    );
+}
