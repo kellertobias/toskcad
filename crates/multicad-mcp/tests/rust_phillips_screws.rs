@@ -179,16 +179,26 @@ fn fitted_and_nominal_metric_phillips_mcp_are_transactional_and_reopen_actual_so
                 .compile_with_backend(&reopened.document(), 0, GeometryBackend::Rust, None)
                 .unwrap();
                 let solid = compiled.solid(feature).unwrap();
-                let (source, frame) = solid.rust_phillips_screw_geometry().unwrap();
-                assert_eq!(
-                    source.cavity().source().spec().mouth_diameter_mm,
-                    if h0_long { 1.9 } else { 3. }
-                );
-                assert_eq!(source.thread().spec().left_hand, hand == "left");
-                assert_eq!(
-                    source.thread().spec().length_mm,
-                    if h0_long { 0.8 } else { 8. }
-                );
+                let (mouth, left, length, frame) =
+                    if let Some((source, frame)) = solid.rust_periodic_repaired_phillips_source() {
+                        (
+                            source.cavity().spec().mouth_diameter_mm,
+                            source.thread().left_hand(),
+                            source.thread().length_mm(),
+                            frame,
+                        )
+                    } else {
+                        let (source, frame) = solid.rust_phillips_screw_geometry().unwrap();
+                        (
+                            source.cavity().source().spec().mouth_diameter_mm,
+                            source.thread().spec().left_hand,
+                            source.thread().spec().length_mm,
+                            frame,
+                        )
+                    };
+                assert_eq!(mouth, if h0_long { 1.9 } else { 3. });
+                assert_eq!(left, hand == "left");
+                assert_eq!(length, if h0_long { 0.8 } else { 8. });
                 assert!((frame.normal()[0].abs() - 1.).abs() < 1e-12);
                 assert!(
                     !solid

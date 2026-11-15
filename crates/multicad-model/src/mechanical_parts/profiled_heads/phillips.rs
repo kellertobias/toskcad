@@ -6,6 +6,7 @@ use multicad_kernel::rust_kernel::{
     helical_thread::{self, Thread},
     phillips_drive::{Cavity, Cutter, Domain, Inner, PhillipsScrew, Spec as DriveSpec},
     profiled_screw::SourceSpec,
+    step_read::PhillipsOwnedPeriodicMaterial,
 };
 
 pub(super) fn build(
@@ -120,29 +121,50 @@ pub(super) fn build(
         },
     )
     .map_err(fail)?;
+    let source_spec = SourceSpec {
+        head: Some(head),
+        shank_length_mm: plain,
+        minimum_wall_mm: policy.minimum_feature_mm,
+    };
+    let frame = PlaneFrame {
+        origin: std::array::from_fn(|i| underhead.origin[i] + underhead.normal()[i] * plain),
+        ..underhead
+    };
+    if PhillipsOwnedPeriodicMaterial::supports_authored_family(&thread, &profile, source_spec) {
+        // Construct the actual retained source directly, before the older
+        // cavity/screw qualifiers. Genuine eligible-source failures propagate.
+        let source = PhillipsOwnedPeriodicMaterial::from_authored_parts(
+            &thread,
+            &profile,
+            &cutter,
+            source_spec,
+            Default::default(),
+            None,
+        )
+        .map_err(|cause| {
+            error(
+                Some(feature),
+                format!("Unresolved authored periodic Phillips screw: {cause:?}"),
+            )
+        })?;
+        return Solid::rust_periodic_repaired_phillips_material(
+            std::rc::Rc::new(source),
+            feature,
+            frame,
+            policy,
+            None,
+        )
+        .map(Some)
+        .map_err(|cause| error(Some(feature), cause));
+    }
     let cavity = Cavity::new(
         cutter,
         policy.linear_tolerance_mm / 32. * extent * extent,
         100_000,
     )
     .map_err(fail)?;
-    let source = PhillipsScrew::new(
-        thread,
-        profile,
-        SourceSpec {
-            head: Some(head),
-            shank_length_mm: plain,
-            minimum_wall_mm: policy.minimum_feature_mm,
-        },
-        cavity,
-        100_000,
-        &|| false,
-    )
-    .map_err(fail)?;
-    let frame = PlaneFrame {
-        origin: std::array::from_fn(|i| underhead.origin[i] + underhead.normal()[i] * plain),
-        ..underhead
-    };
+    let source = PhillipsScrew::new(thread, profile, source_spec, cavity, 100_000, &|| false)
+        .map_err(fail)?;
     // Manufacturing uses the qualified retained source. Physical STEP remains
     // explicitly unavailable until its independent import contract is earned.
     Solid::rust_phillips_screw_from_source(source, feature, frame, policy)

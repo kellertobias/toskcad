@@ -148,6 +148,26 @@ fn world(frame: PlaneFrame, p: [f64; 3]) -> [f64; 3] {
         frame.origin[i] + frame.u[i] * p[0] + frame.v[i] * p[1] + frame.normal()[i] * p[2]
     })
 }
+fn occupied(solid: &multicad_kernel::Solid, point: [f64; 3]) -> bool {
+    if solid.rust_periodic_repaired_phillips_source().is_some() {
+        use multicad_kernel::rust_kernel::phillips_drive::Classification;
+        match solid
+            .rust_periodic_repaired_phillips_classify_world_box(
+                point.map(|x| [x, x]),
+                Default::default(),
+                None,
+            )
+            .unwrap()
+            .location()
+        {
+            Classification::Inside => true,
+            Classification::Outside => false,
+            Classification::UnresolvedBoundary => panic!("separated physical probe must resolve"),
+        }
+    } else {
+        solid.rust_thread_contains(point).unwrap()
+    }
+}
 #[test]
 fn actual_metric_fits_and_hands_create_manufacture_and_reopen_without_occ_or_dummy_drive() {
     for (kind, fit, left) in [
@@ -178,22 +198,28 @@ fn actual_metric_fits_and_hands_create_manufacture_and_reopen_without_occ_or_dum
         assert!(display.edges.len() >= 76);
         let solid = compiled.solid(request.feature).unwrap();
         assert!(solid.uses_rust_geometry());
-        let (source, frame) = solid.rust_phillips_screw_geometry().unwrap();
-        assert_eq!(source.thread().spec().left_hand, left);
-        assert_eq!(source.thread().spec().length_mm, 8.);
-        if fit == ThreadFit::Metric6gExternal {
-            assert!(source.thread().spec().root_radius_mm.is_some());
-        }
-        assert!(
-            !solid
-                .rust_thread_contains(world(frame, [0., 0., source.head_top_z() + 0.1]))
-                .unwrap()
-        );
-        assert!(
-            solid
-                .rust_thread_contains(world(frame, [0., 0., 4.]))
-                .unwrap()
-        );
+        let (frame, head_top) =
+            if let Some((source, frame)) = solid.rust_periodic_repaired_phillips_source() {
+                assert_eq!(source.thread().left_hand(), left);
+                assert_eq!(source.thread().length_mm(), 8.);
+                assert_ne!(
+                    fit,
+                    ThreadFit::Metric6gExternal,
+                    "a rounded fitted root must retain its actual source law"
+                );
+                let top = source.cavity_mouth_expression_mm();
+                (frame, top[0] + top[1])
+            } else {
+                let (source, frame) = solid.rust_phillips_screw_geometry().unwrap();
+                assert_eq!(source.thread().spec().left_hand, left);
+                assert_eq!(source.thread().spec().length_mm, 8.);
+                if fit == ThreadFit::Metric6gExternal {
+                    assert!(source.thread().spec().root_radius_mm.is_some());
+                }
+                (frame, source.head_top_z())
+            };
+        assert!(!occupied(solid, world(frame, [0., 0., head_top + 0.1])));
+        assert!(occupied(solid, world(frame, [0., 0., 4.])));
         let mesh = solid.manufacturing_mesh(MeshOptions::default()).unwrap();
         assert!(!mesh.indices.is_empty());
         let volume = solid.volume_mm3().unwrap();
@@ -322,11 +348,9 @@ fn invalid_phillips_host_edit_cannot_change_the_accepted_document() {
             None,
         )
         .unwrap();
+    let restored = rebuilt.solid(request.feature).unwrap();
     assert!(
-        rebuilt
-            .solid(request.feature)
-            .unwrap()
-            .rust_phillips_screw_geometry()
-            .is_some()
+        restored.rust_phillips_screw_geometry().is_some()
+            || restored.rust_periodic_repaired_phillips_source().is_some()
     );
 }

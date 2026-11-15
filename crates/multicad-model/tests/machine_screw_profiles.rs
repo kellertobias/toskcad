@@ -889,18 +889,41 @@ fn canonical_phillips_h0_h4_both_hands_compile_display_and_manufacture_without_s
                     .is_empty()
             );
             let solid = compiled.solid(request.feature).unwrap();
-            let (source, _) = solid.rust_phillips_screw_geometry().unwrap();
-            assert_eq!(source.thread().spec().left_hand, left);
-            assert_eq!(
-                source.spec().shank_length_mm,
-                6. - source.thread().spec().length_mm
-            );
+            let periodic = solid.rust_periodic_repaired_phillips_source();
+            if let Some((source, _)) = periodic {
+                assert_eq!(source.thread().left_hand(), left);
+                assert_eq!(source.head_z_shift_mm(), 6. - source.thread().length_mm());
+            } else {
+                let (source, _) = solid.rust_phillips_screw_geometry().unwrap();
+                assert_eq!(source.thread().spec().left_hand, left);
+                assert_eq!(
+                    source.spec().shank_length_mm,
+                    6. - source.thread().spec().length_mm
+                );
+            }
             assert!(solid.faces().unwrap().iter().all(|f| f.area_mm2 > 0.));
             let mesh = solid
                 .manufacturing_mesh_with_receipt(Default::default())
                 .unwrap();
             assert!(mesh.edge_pairs > 0 && mesh.vertex_links > 0, "case{index}");
-            assert!(solid.rust_phillips_mesh_volume_pair().is_some());
+            if let Some((source, _)) = periodic {
+                let (_, pair) = solid
+                    .rust_periodic_repaired_phillips_display_mesh_with_receipt(
+                        Default::default(),
+                        Default::default(),
+                        None,
+                    )
+                    .unwrap();
+                assert!(std::ptr::eq(source, pair.source()));
+                assert!(pair.embedding_pairs() > 0 && pair.literal_signed_volume_mm3() > 0.);
+                let volume = pair.new_source_volume_mm3();
+                assert!(
+                    volume[0] <= solid.volume_mm3().unwrap()
+                        && solid.volume_mm3().unwrap() <= volume[1]
+                );
+            } else {
+                assert!(solid.rust_phillips_mesh_volume_pair().is_some());
+            }
             assert!(!solid.supports_step_export());
         }
     }
