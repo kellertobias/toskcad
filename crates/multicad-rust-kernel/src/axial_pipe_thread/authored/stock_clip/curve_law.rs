@@ -1,6 +1,8 @@
 //! Exact source-edge restrictions and outward Taylor coefficients. These are
 //! source evaluations, not literal STEP curves or finite-incidence receipts.
 use super::*;
+mod affine;
+pub use affine::StockClipAffineCurveTaylor;
 
 /// The original affine radius, unwrapped phase and axial law along ONE owned
 /// chart edge. The borrowed plan retains the symbolic contact expression.

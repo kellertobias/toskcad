@@ -83,11 +83,11 @@ fn span(
     let h = domain[1] - domain[0]; // Exact positive dyadic subdivision width.
     let center = domain[0].midpoint(domain[1]);
     let local = law
-        .taylor([center, center], source_options(work)?, interrupt)
+        .affine_taylor([center, center], source_options(work)?, interrupt)
         .map_err(source_error)?;
     work.charge(local.work_used())?;
     let whole = law
-        .taylor(domain, source_options(work)?, interrupt)
+        .affine_taylor(domain, source_options(work)?, interrupt)
         .map_err(source_error)?;
     work.charge(whole.work_used())?;
     let coefficients = local
@@ -120,7 +120,7 @@ fn span(
     let derivative_error = (0..11)
         .map(|i| norm(std::array::from_fn(|j| errors[i + 1][j] - errors[i][j])))
         .fold(0f64, |a, b| a.max(b.hi));
-    let remainder = norm(whole.coefficients_mm()[12].map(|b| I::new(b[0], b[1])));
+    let remainder = p(whole.coefficient_l1_bounds_mm()[12]);
     let position_error = (p(coefficient_error) + remainder * power(p(h / 2.), 12)).hi;
     let derivative_error =
         (p(11.) * p(derivative_error) / p(h) + p(12.) * remainder * power(p(h / 2.), 11)).hi;

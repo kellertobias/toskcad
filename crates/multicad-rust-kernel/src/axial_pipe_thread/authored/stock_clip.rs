@@ -9,7 +9,7 @@ pub use cells::{
     PlacedStockClipMeshCandidate, StockClipCellPlan, StockClipGridLine, StockClipMeshCandidate,
     StockClipPlacement, StockClipPointOwner,
 };
-pub use curve_law::{StockClipCurveLaw, StockClipCurveTaylor};
+pub use curve_law::{StockClipAffineCurveTaylor, StockClipCurveLaw, StockClipCurveTaylor};
 mod jets;
 mod measures;
 mod polyline;
