@@ -368,4 +368,6 @@ pub fn decode<'i>(
     decode::read(input, options, interrupt)
 }
 #[cfg(test)]
+mod malformed_tests;
+#[cfg(test)]
 mod tests;
