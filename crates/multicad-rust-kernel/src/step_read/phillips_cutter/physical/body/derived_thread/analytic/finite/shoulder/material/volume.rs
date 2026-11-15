@@ -2,12 +2,16 @@
 //! real periodic radial section integral - complete Cutter section integral.
 //! No old Profile volume, original-file mass or mesh enters this result.
 use super::*;
+mod measure;
 mod owned;
 use crate::{
     head_profile::{RepairedHeadVolume, RepairedHeadVolumeOptions},
     phillips_drive::Cutter,
 };
-pub use owned::{OwnedPeriodicMaterial, PeriodicCurveOwner, PeriodicOwnedOptions};
+pub use owned::{
+    AuthoredPeriodicOptions, OwnedPeriodicMaterial, PeriodicCurveOwner, PeriodicMaterialProvenance,
+    PeriodicOwnedOptions,
+};
 #[cfg(test)]
 mod tests;
 const BASE: usize = 16 * 1024;
@@ -85,6 +89,15 @@ impl<'v, 's, 'input> PeriodicMaterialVolume<'v, 's, 'input> {
         self.retained
     }
 }
+fn expression([a, b]: [f64; 2]) -> I {
+    if b == 0. {
+        I::point(a)
+    } else if a == -b {
+        I::point(0.)
+    } else {
+        I::point(a) + I::point(b)
+    }
+}
 fn interval([a, b]: [f64; 2]) -> I {
     I::new(a, b)
 }
@@ -120,7 +133,7 @@ fn fitting_limit(maximum: usize, available: usize, bytes: fn(usize) -> usize) ->
 /// only by the validated same-source finite/shoulder receipt, never a header.
 fn periodic_volume(
     source: &PeriodicThreadSource,
-    stations: [f64; 2],
+    stations: [[f64; 2]; 2],
     work: &mut Work<'_>,
 ) -> FResult<I> {
     work.step(1024)?;
@@ -136,7 +149,8 @@ fn periodic_volume(
         radial =
             radial + (p[band + 1] - p[band]) * (a.square() + a * b + b.square()) / I::point(3.);
     }
-    Ok(pi * radial / I::point(source.pitch_mm()) * (I::point(stations[1]) - I::point(stations[0])))
+    Ok(pi * radial / I::point(source.pitch_mm())
+        * (expression(stations[1]) - expression(stations[0])))
 }
 impl<'s, 'input> PeriodicClosedMaterial<'s, 'input> {
     pub fn volume_bounds<'v>(
@@ -179,101 +193,27 @@ impl<'s, 'input> PeriodicClosedMaterial<'s, 'input> {
                 .checked_sub(prefix)
                 .filter(|n| *n >= STREAM)
                 .ok_or(PhillipsReadError::Limit)?;
-            let before = work.remaining;
-            let thread = periodic_volume(
-                self.join.periodic_source(),
-                self.join.finite_curves().cap_stations_mm(),
+            let measured = measure::measure(
+                measure::MeasureInput {
+                    head: self.join.head_source(),
+                    cavity: self.containment.source(),
+                    thread: self.join.periodic_source(),
+                    stations: self.join.finite_curves().cap_stations_mm().map(|z| [z, 0.]),
+                    determinant: self.determinant_bounds(),
+                },
+                o,
+                available,
                 &mut work,
             )?;
-            let thread_work = before - work.remaining;
-            let determinant = interval(self.determinant_bounds());
-            let preliminary =
-                (I::point(o.maximum_width_mm3) / (I::point(8.) * I::point(determinant.hi))).lo;
-            certified(thread, preliminary)?;
-            let head = self.join.head_source();
-            let mut radius = 0_f64;
-            for i in 0..head.segment_count() {
-                radius = radius.max(head.certified_interval_bounds(i, [0., 1.]).position_mm[0][1]);
-            }
-            let top = head.station(0).unwrap()[1];
-            let end = head.station(head.segment_count()).unwrap()[1];
-            // This finite cylinder contains the entire ACTUAL repaired head, not its
-            // legacy Profile; it is used only to allocate the affine numerical reserve.
-            let pi = I::new(
-                std::f64::consts::PI.next_down(),
-                std::f64::consts::PI.next_up(),
-            );
-            let outer = pi * I::point(radius).square() * (I::point(end) - I::point(top))
-                + I::point(thread.hi);
-            let reserve = ((I::point(determinant.hi) - I::point(determinant.lo)) * outer).hi;
-            let remaining_width = I::point(o.maximum_width_mm3) - I::point(reserve);
-            if !remaining_width.lo.is_finite() || remaining_width.lo <= 0. {
-                return Err(PhillipsReadError::Unsupported);
-            }
-            let component_width =
-                (I::point(remaining_width.lo) / (I::point(8.) * I::point(determinant.hi))).lo;
-            certified(thread, component_width)?;
-            let head_limit = fitting_limit(
-                o.maximum_head_cells,
-                available,
-                RepairedHeadVolume::scratch_budget_bytes,
-            );
-            let h = head
-                .volume_bounds(
-                    RepairedHeadVolumeOptions {
-                        maximum_width_mm3: component_width,
-                        maximum_cells: head_limit,
-                        maximum_work: work.remaining.saturating_add(head.work_used()).min(WORK),
-                        maximum_bytes: o.maximum_bytes,
-                    },
-                    interrupt,
-                )
-                .map_err(
-                    crate::step_read::phillips_cutter::physical::body::closed_head::repaired_error,
-                )?;
-            let head_volume = interval(h.volume_mm3());
-            let head_cells = h.cells();
-            let head_work = h
-                .work_used()
-                .checked_sub(head.work_used())
-                .expect("head integral receipt includes its immutable source prerequisite");
-            work.step(head_work)?;
-            let cavity_max = o.maximum_cavity_evaluations.min(work.remaining);
-            if cavity_max == 0 {
-                return Err(PhillipsReadError::Limit);
-            }
-            let cavity_limit =
-                fitting_limit(cavity_max, available, Cutter::volume_scratch_budget_bytes);
-            let c = self
-                .containment
-                .source()
-                .volume_bounds_with_cancel(component_width, cavity_limit, &|| {
-                    interrupt.is_some_and(|f| f())
-                })
-                .map_err(cavity_error)?;
-            let cavity = interval(c.volume_mm3);
-            let cavity_evaluations = c.section_evaluations;
-            work.step(cavity_evaluations)?;
-            let mut local = head_volume + thread - cavity;
-            // Complete repaired-head containment and its strict floor leave the entire
-            // thread in material, while the source cylinder supplies an upper bound.
-            local.lo = local.lo.max(thread.lo);
-            local.hi = local.hi.min(outer.hi);
-            let world = certified(local * determinant, o.maximum_width_mm3)?;
-            work.step(1)?;
             Ok(PeriodicMaterialVolume {
                 source: self,
-                local: [local.lo, local.hi],
-                world,
-                components: [
-                    [head_volume.lo, head_volume.hi],
-                    [thread.lo, thread.hi],
-                    [cavity.lo, cavity.hi],
-                ],
-                head_cells,
-                cavity_evaluations,
-                head_work,
-                thread_work,
+                local: measured.local,
+                world: measured.world,
+                components: measured.components,
+                head_cells: measured.head_cells,
+                cavity_evaluations: measured.cavity_evaluations,
+                head_work: measured.head_work,
+                thread_work: measured.thread_work,
                 new_work: allowance - work.remaining,
                 retained,
             })

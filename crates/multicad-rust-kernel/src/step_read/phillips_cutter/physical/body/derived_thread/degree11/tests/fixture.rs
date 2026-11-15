@@ -1,4 +1,5 @@
-pub(super) fn actual_text() -> String {
+pub(in crate::step_read::phillips_cutter::physical::body::derived_thread) fn actual_source()
+-> crate::phillips_drive::PhillipsScrew {
     use crate::{
         head_profile::{Head, Profile},
         helical_thread::{Spec as ThreadSpec, Thread},
@@ -38,7 +39,7 @@ pub(super) fn actual_text() -> String {
         100_000,
     )
     .unwrap();
-    let source = PhillipsScrew::new(
+    PhillipsScrew::new(
         Thread::new(ThreadSpec {
             major_radius_mm: 1.,
             pitch_mm: 0.4,
@@ -62,7 +63,10 @@ pub(super) fn actual_text() -> String {
         100_000,
         &|| false,
     )
-    .unwrap();
+    .unwrap()
+}
+pub(super) fn actual_text() -> String {
+    let source = actual_source();
     crate::step::write_phillips_screw(&source, [0., 0., 0.5], [1., 0., 0.], [0., 1., 0.], 1e-7)
         .unwrap()
 }

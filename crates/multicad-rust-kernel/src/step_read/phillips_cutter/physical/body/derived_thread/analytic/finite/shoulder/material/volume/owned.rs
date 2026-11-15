@@ -4,8 +4,10 @@
 use super::*;
 use crate::head_profile::OwnedRepairedHead;
 use std::sync::Arc;
+mod authored;
 #[cfg(test)]
 mod tests;
+pub use authored::AuthoredPeriodicOptions;
 const SCRATCH: usize = 16 * 1024;
 #[derive(Clone, Copy)]
 pub struct PeriodicOwnedOptions {
@@ -45,18 +47,33 @@ impl PeriodicCurveOwner {
         }
     }
 }
+// Fixed inline packets keep ownership/publication preflight exact and avoid
+// a second allocation for either provenance mode.
+#[allow(clippy::large_enum_variant)]
+pub enum PeriodicMaterialProvenance {
+    Decoded {
+        original_input: Arc<str>,
+        original_curve_owners: [PeriodicCurveOwner; 17],
+        thread_transfers: [AnalyticThreadTransfer; 4],
+    },
+    Authored {
+        thread: crate::helical_thread::Thread,
+        profile: crate::head_profile::Profile,
+        source_spec: crate::profiled_screw::SourceSpec,
+    },
+}
 pub struct OwnedPeriodicMaterial {
-    raw: Arc<str>,
+    provenance: PeriodicMaterialProvenance,
     head: OwnedRepairedHead,
     thread: PeriodicThreadSource,
     cavity: Cutter,
     chart: CommonMouthChart,
     determinant: [f64; 2],
-    stations: [f64; 2],
+    caps: [[f64; 2]; 2],
+    head_shift: f64,
+    mouth: [f64; 2],
     bottom: [f64; 2],
     containment: [f64; 2],
-    owners: [PeriodicCurveOwner; 17],
-    thread_transfers: [AnalyticThreadTransfer; 4],
     cavity_faces: [CavityFace; 88],
     cavity_count: usize,
     local_volume: [f64; 2],
@@ -66,8 +83,14 @@ pub struct OwnedPeriodicMaterial {
     new_work: usize,
 }
 impl OwnedPeriodicMaterial {
-    pub fn original_input(&self) -> &str {
-        &self.raw
+    pub fn provenance(&self) -> &PeriodicMaterialProvenance {
+        &self.provenance
+    }
+    pub fn original_input(&self) -> Option<&str> {
+        match &self.provenance {
+            PeriodicMaterialProvenance::Decoded { original_input, .. } => Some(original_input),
+            PeriodicMaterialProvenance::Authored { .. } => None,
+        }
     }
     pub fn head(&self) -> &OwnedRepairedHead {
         &self.head
@@ -84,8 +107,19 @@ impl OwnedPeriodicMaterial {
     pub fn determinant_bounds(&self) -> [f64; 2] {
         self.determinant
     }
-    pub fn cap_stations_mm(&self) -> [f64; 2] {
-        self.stations
+    /// Defining real physical thread cap coordinates as exact two-term sums.
+    pub fn cap_expressions_mm(&self) -> [[f64; 2]; 2] {
+        self.caps
+    }
+    /// Subtracted from the actual stored head evaluator's axial coordinate.
+    pub fn head_z_shift_mm(&self) -> f64 {
+        self.head_shift
+    }
+    pub fn cavity_mouth_expression_mm(&self) -> [f64; 2] {
+        self.mouth
+    }
+    pub fn join_station_expression_mm(&self) -> [f64; 2] {
+        [self.bottom[1], -self.head_shift]
     }
     pub fn head_bottom_station_mm(&self) -> [f64; 2] {
         self.bottom
@@ -93,11 +127,22 @@ impl OwnedPeriodicMaterial {
     pub fn containment_clearances_mm(&self) -> [f64; 2] {
         self.containment
     }
-    pub fn original_curve_owners(&self) -> &[PeriodicCurveOwner; 17] {
-        &self.owners
+    pub fn original_curve_owners(&self) -> Option<&[PeriodicCurveOwner; 17]> {
+        match &self.provenance {
+            PeriodicMaterialProvenance::Decoded {
+                original_curve_owners,
+                ..
+            } => Some(original_curve_owners),
+            PeriodicMaterialProvenance::Authored { .. } => None,
+        }
     }
-    pub fn thread_transfers(&self) -> &[AnalyticThreadTransfer; 4] {
-        &self.thread_transfers
+    pub fn thread_transfers(&self) -> Option<&[AnalyticThreadTransfer; 4]> {
+        match &self.provenance {
+            PeriodicMaterialProvenance::Decoded {
+                thread_transfers, ..
+            } => Some(thread_transfers),
+            PeriodicMaterialProvenance::Authored { .. } => None,
+        }
     }
     pub fn local_volume_mm3(&self) -> [f64; 2] {
         self.local_volume
@@ -122,9 +167,10 @@ impl OwnedPeriodicMaterial {
         self.inherited + self.new_work
     }
     pub fn retained_budget_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-            .saturating_add(self.raw.len())
-            .saturating_add(64)
+        std::mem::size_of::<Self>().saturating_add(match &self.provenance {
+            PeriodicMaterialProvenance::Decoded { original_input, .. } => original_input.len() + 64,
+            PeriodicMaterialProvenance::Authored { .. } => 0,
+        })
     }
     pub fn face_count(&self) -> usize {
         self.head.view().segment_count() + 4 + 3 + self.cavity_count
@@ -223,20 +269,24 @@ impl PeriodicMaterialVolume<'_, '_, '_> {
             let thread_transfers =
                 std::array::from_fn(|i| join.finite_curves().thread().transfers()[i]);
             let mut owned = OwnedPeriodicMaterial {
-                raw: Arc::<str>::from(raw),
+                provenance: PeriodicMaterialProvenance::Decoded {
+                    original_input: Arc::<str>::from(raw),
+                    original_curve_owners: owners,
+                    thread_transfers,
+                },
                 head: join.head_source().owned_snapshot(),
                 thread: *join.periodic_source(),
                 cavity: source.containment.source().clone(),
                 chart: source.chart,
                 determinant: source.determinant,
-                stations,
+                caps: stations.map(|z| [z, 0.]),
+                head_shift: 0.,
+                mouth: [source.chart.outer_top_z, 0.],
                 bottom: join.head_bottom_station_mm(),
                 containment: [
                     source.containment.minimum_radial_clearance_mm(),
                     source.containment.axial_floor_clearance_mm(),
                 ],
-                owners,
-                thread_transfers,
                 cavity_faces: source.cavity_faces,
                 cavity_count: source.count,
                 local_volume: self.local,

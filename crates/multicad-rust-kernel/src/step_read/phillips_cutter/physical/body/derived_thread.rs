@@ -13,12 +13,13 @@ mod graph;
 mod join;
 mod reduce;
 pub use analytic::{
-    AnalyticThreadOptions, AnalyticThreadRepair, AnalyticThreadTransfer,
+    AnalyticThreadOptions, AnalyticThreadRepair, AnalyticThreadTransfer, AuthoredPeriodicOptions,
     CommonChartPeriodicThreadRepair, OwnedPeriodicMaterial, PeriodicClosedMaterial,
     PeriodicCurveOwner, PeriodicFiniteCurve, PeriodicFiniteCurves, PeriodicFiniteKind,
-    PeriodicFiniteOptions, PeriodicMaterialFace, PeriodicMaterialOptions, PeriodicMaterialVolume,
-    PeriodicOwnedOptions, PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicThreadBounds,
-    PeriodicThreadRepair, PeriodicThreadSource, PeriodicVolumeOptions,
+    PeriodicFiniteOptions, PeriodicMaterialFace, PeriodicMaterialOptions,
+    PeriodicMaterialProvenance, PeriodicMaterialVolume, PeriodicOwnedOptions,
+    PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicThreadBounds, PeriodicThreadRepair,
+    PeriodicThreadSource, PeriodicVolumeOptions,
 };
 pub use degree11::{CoherentDegree11ThreadCarrier, Degree11ThreadFace, Degree11ThreadOptions};
 pub use join::{

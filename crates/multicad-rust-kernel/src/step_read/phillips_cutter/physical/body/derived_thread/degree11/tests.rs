@@ -1,5 +1,5 @@
 use super::*;
-mod fixture;
+pub(in super::super) mod fixture;
 pub(in super::super) fn with_head(f: &mut dyn FnMut(&ClosedRepairedHead<'_, '_, '_, '_, '_>)) {
     let text = fixture::actual_text();
     super::super::super::common_mouth::tests::derived_thread_probe::with_head(&text, f);

@@ -4,9 +4,10 @@ use super::*;
 mod circle;
 mod shoulder;
 pub use shoulder::{
-    OwnedPeriodicMaterial, PeriodicClosedMaterial, PeriodicCurveOwner, PeriodicMaterialFace,
-    PeriodicMaterialOptions, PeriodicMaterialVolume, PeriodicOwnedOptions, PeriodicShoulderOptions,
-    PeriodicShoulderRepair, PeriodicVolumeOptions,
+    AuthoredPeriodicOptions, OwnedPeriodicMaterial, PeriodicClosedMaterial, PeriodicCurveOwner,
+    PeriodicMaterialFace, PeriodicMaterialOptions, PeriodicMaterialProvenance,
+    PeriodicMaterialVolume, PeriodicOwnedOptions, PeriodicShoulderOptions, PeriodicShoulderRepair,
+    PeriodicVolumeOptions,
 };
 type FResult<T> = std::result::Result<T, PhillipsReadError>;
 const FINITE_TOTAL: usize = 48_000_000;

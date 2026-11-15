@@ -333,17 +333,18 @@ pub use body::{
 pub use body::{ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHeadSupportKind};
 
 pub use body::{
-    AnalyticThreadOptions, AnalyticThreadRepair, AnalyticThreadTransfer,
+    AnalyticThreadOptions, AnalyticThreadRepair, AnalyticThreadTransfer, AuthoredPeriodicOptions,
     CoherentDegree11ThreadCarrier, CommonChartPeriodicThreadRepair, ContactThreadCarrier,
     Degree11ContactOptions, Degree11DomainEnd, Degree11RimContact, Degree11RimContactId,
     Degree11RimKnot, Degree11SignDomain, Degree11ThreadContacts, Degree11ThreadFace,
     Degree11ThreadOptions, DerivedThreadCarrier, DerivedThreadOptions, DyadicParameter,
     OccupiedDerivedThread, OwnedPeriodicMaterial, PeriodicClosedMaterial, PeriodicCurveOwner,
     PeriodicFiniteCurve, PeriodicFiniteCurves, PeriodicFiniteKind, PeriodicFiniteOptions,
-    PeriodicMaterialFace, PeriodicMaterialOptions, PeriodicMaterialVolume, PeriodicOwnedOptions,
-    PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicThreadBounds, PeriodicThreadRepair,
-    PeriodicThreadSource, PeriodicVolumeOptions, RimContact, RimContactId, RimDomainEnd,
-    RimDomainRole, RimKnot, RimSignDomain, ThreadCarrierTransfer, ThreadContactOptions,
+    PeriodicMaterialFace, PeriodicMaterialOptions, PeriodicMaterialProvenance,
+    PeriodicMaterialVolume, PeriodicOwnedOptions, PeriodicShoulderOptions, PeriodicShoulderRepair,
+    PeriodicThreadBounds, PeriodicThreadRepair, PeriodicThreadSource, PeriodicVolumeOptions,
+    RimContact, RimContactId, RimDomainEnd, RimDomainRole, RimKnot, RimSignDomain,
+    ThreadCarrierTransfer, ThreadContactOptions,
 };
 
 pub use body::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSource};

@@ -13,8 +13,8 @@ use crate::phillips_drive::{
     FaceKey as CavityFace, RepairedHeadContainment, RepairedHeadContainmentOptions,
 };
 pub use volume::{
-    OwnedPeriodicMaterial, PeriodicCurveOwner, PeriodicMaterialVolume, PeriodicOwnedOptions,
-    PeriodicVolumeOptions,
+    AuthoredPeriodicOptions, OwnedPeriodicMaterial, PeriodicCurveOwner, PeriodicMaterialProvenance,
+    PeriodicMaterialVolume, PeriodicOwnedOptions, PeriodicVolumeOptions,
 };
 #[cfg(test)]
 mod tests;

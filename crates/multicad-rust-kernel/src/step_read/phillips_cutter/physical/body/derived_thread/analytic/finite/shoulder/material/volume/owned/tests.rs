@@ -48,7 +48,10 @@ fn actual_periodic_owner_survives_every_borrowed_source_and_retains_actual_evalu
             owned.head_bottom_station_mm(),
             join.head_bottom_station_mm()
         );
-        assert_eq!(owned.cap_stations_mm(), finite.cap_stations_mm());
+        assert_eq!(
+            owned.cap_expressions_mm(),
+            finite.cap_stations_mm().map(|z| [z, 0.])
+        );
         assert!(owned.determinant_bounds()[0] > 0.);
         assert!(
             owned
@@ -57,11 +60,12 @@ fn actual_periodic_owner_survives_every_borrowed_source_and_retains_actual_evalu
                 .all(|v| v > 0.)
         );
         assert!(owned.world_volume_mm3()[0] > 0.);
-        assert_eq!(owned.original_curve_owners().len(), 17);
-        assert_eq!(owned.thread_transfers().len(), 4);
+        assert_eq!(owned.original_curve_owners().unwrap().len(), 17);
+        assert_eq!(owned.thread_transfers().unwrap().len(), 4);
         assert!(
             owned
                 .original_curve_owners()
+                .unwrap()
                 .iter()
                 .all(|o| o.face_entity > 0
                     && o.edge_entity > 0
@@ -79,7 +83,7 @@ fn actual_periodic_owner_survives_every_borrowed_source_and_retains_actual_evalu
         result = Some(owned);
     });
     let owned = result.unwrap();
-    assert!(owned.original_input().contains("ISO-10303-21"));
+    assert!(owned.original_input().unwrap().contains("ISO-10303-21"));
     let e = owned.local_enclosure_bounds();
     assert!(
         e.into_iter()

@@ -102,7 +102,7 @@ fn periodic_section_measure_matches_independent_exact_simpson_and_machin_oracle(
         }
         let stations = [0.125, 0.875];
         let exact_factor = integral / q(source.pitch_mm()) * (q(stations[1]) - q(stations[0]));
-        let actual = periodic_volume(&source, stations, &mut work).unwrap();
+        let actual = periodic_volume(&source, stations.map(|z| [z, 0.]), &mut work).unwrap();
         assert!(q(actual.lo) <= &pi[0] * &exact_factor && q(actual.hi) >= &pi[1] * &exact_factor);
         for limit in [0, 1024, 5120, 9216, 9472, 9728, 9984] {
             let mut w = Work {
@@ -111,7 +111,7 @@ fn periodic_section_measure_matches_independent_exact_simpson_and_machin_oracle(
                 cancelled: Cell::new(false),
             };
             assert!(matches!(
-                periodic_volume(&source, stations, &mut w),
+                periodic_volume(&source, stations.map(|z| [z, 0.]), &mut w),
                 Err(PhillipsReadError::Limit)
             ));
         }
