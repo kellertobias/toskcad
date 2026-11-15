@@ -440,3 +440,41 @@ fn nearly_orthogonal_split_endpoints_keep_real_float_enclosures() {
         assert!(c.angular_advance()[0] > 6. && c.angular_advance()[1] < 7.);
     }
 }
+#[test]
+fn positive_quotients_enclose_exact_binary_rational_division_at_extreme_scales() {
+    use num_rational::BigRational as Q;
+    for (numerator, denominator) in [
+        (I::new(1e-320, 2e-320), I::new(8e-320, 1e-319)),
+        (I::new(1e-308, 2e-308), I::new(8e-308, 1e-307)),
+        (I::new(1e300, 2e300), I::new(8e300, 1e301)),
+    ] {
+        let ratio = positive_ratio(numerator, denominator);
+        assert!(
+            Q::from_float(ratio.lo).unwrap()
+                <= Q::from_float(numerator.lo).unwrap() / Q::from_float(denominator.hi).unwrap()
+        );
+        assert!(
+            Q::from_float(ratio.hi).unwrap()
+                >= Q::from_float(numerator.hi).unwrap() / Q::from_float(denominator.lo).unwrap()
+        );
+        assert!(ratio.valid() && ratio.lo > 0. && ratio.hi < 0.5);
+    }
+    for clockwise in [false, true] {
+        let mut poles = diamond(1, clockwise, 0.);
+        for point in poles.iter_mut().flatten() {
+            point[0] *= 1e-160;
+            point[1] *= 1e-160;
+        }
+        let curves = curves(&poles);
+        let proof = certify(
+            Input {
+                curves: &curves,
+                counter_clockwise: !clockwise,
+            },
+            Default::default(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(proof.winding(), if clockwise { -1 } else { 1 });
+    }
+}

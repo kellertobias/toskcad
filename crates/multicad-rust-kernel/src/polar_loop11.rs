@@ -140,6 +140,12 @@ fn atan_small(r: I) -> I {
     let remainder = (power * square / I::point(23.)).hi;
     I::new((sum - I::point(remainder)).lo, sum.hi)
 }
+fn positive_ratio(numerator: I, denominator: I) -> I {
+    I::new(
+        (numerator.lo / denominator.hi).next_down(),
+        (numerator.hi / denominator.lo).next_up(),
+    )
+}
 fn increment(p: &[B; 12], counter_clockwise: bool) -> Option<I> {
     let position = hull(p.iter().copied());
     let derivative = hull(
@@ -167,7 +173,10 @@ fn increment(p: &[B; 12], counter_clockwise: bool) -> Option<I> {
     if dot.lo <= 0. || cross.lo <= 0. {
         return None;
     }
-    let ratio = cross / dot;
+    // Both intervals are strictly positive here. Divide their endpoints
+    // directly: forming reciprocal(dot) first can overflow for a valid tiny
+    // literal loop even though its angle ratio is finite and small.
+    let ratio = positive_ratio(cross, dot);
     if ratio.hi > 0.5 {
         return None;
     }
