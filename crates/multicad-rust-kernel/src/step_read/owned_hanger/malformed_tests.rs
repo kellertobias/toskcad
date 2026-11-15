@@ -586,3 +586,55 @@ fn malformed_actual_hanger_entities_never_publish_decoded_material() {
         admitted.faces().len()
     );
 }
+
+#[test]
+fn actual_modified_supports_and_extreme_decimals_cannot_acquire_material_proofs() {
+    let source = Hanger::new(
+        crate::authored_hanger_bolt::tests::fixture(false, false),
+        None,
+    )
+    .unwrap();
+    let file =
+        crate::step::hanger::export_qualified_hanger(&source, Default::default(), None).unwrap();
+    let original = file.as_str();
+    let decoded = decode(original, Default::default(), None).unwrap();
+    let arena = part21::parse(original).unwrap();
+    let first_plane = &decoded.planes()[0];
+    let second_plane = &decoded.planes()[1];
+    let origin = arena[&first_plane.origin_entity()][0].source.unwrap();
+    let second_height = decoded.points()[&second_plane.origin_entity()].coordinates()[2].spelling();
+    for (path, value, structural_refusal) in [
+        (&[1, 0][..], "0.001", true),
+        (&[1, 2][..], second_height, false),
+    ] {
+        let changed = replace_argument(origin, path, value);
+        let input = original.replacen(origin, &changed, 1);
+        let parsed = decode(&input, Default::default(), None);
+        if structural_refusal {
+            assert!(matches!(parsed, Err(Error::Unsupported)));
+            continue;
+        }
+        let parsed = parsed.unwrap();
+        let grid = ExactPoleGrid::prepare(&parsed, Default::default(), None).unwrap();
+        assert!(matches!(
+            PolarSupports::prepare(&grid, Default::default(), None),
+            Err(Error::Unsupported)
+        ));
+    }
+    let point_id = decoded.tensors()[0].point_entities()[0];
+    let pole = arena[&point_id][0].source.unwrap();
+    for (value, expected) in [
+        ("1.E-16385", Error::Limit),
+        ("1.E-2147483649", Error::Unsupported),
+    ] {
+        let changed = replace_argument(pole, &[1, 0], value);
+        let input = original.replacen(pole, &changed, 1);
+        let parsed = decode(&input, Default::default(), None).unwrap();
+        assert!(
+            matches!(ExactPoleGrid::prepare(&parsed, Default::default(), None), Err(error) if error == expected)
+        );
+    }
+    let grid = ExactPoleGrid::prepare(&decoded, Default::default(), None).unwrap();
+    let polar = PolarSupports::prepare(&grid, Default::default(), None).unwrap();
+    assert!(std::ptr::eq(polar.grid().source(), &decoded));
+}
