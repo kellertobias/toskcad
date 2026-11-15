@@ -741,3 +741,135 @@ fn actual_modified_supports_and_extreme_decimals_cannot_acquire_material_proofs(
     let polar = PolarSupports::prepare(&grid, Default::default(), None).unwrap();
     assert!(std::ptr::eq(polar.grid().source(), &decoded));
 }
+
+#[test]
+fn actual_scalar_tokens_and_representation_metadata_preserve_decoder_contract() {
+    let source = Hanger::new(
+        crate::authored_hanger_bolt::tests::fixture(false, false),
+        None,
+    )
+    .unwrap();
+    let file =
+        crate::step::hanger::export_qualified_hanger(&source, Default::default(), None).unwrap();
+    let original = file.as_str();
+    let admitted = decode(original, Default::default(), None).unwrap();
+    let arena = part21::parse(original).unwrap();
+    let curve = arena
+        .values()
+        .flatten()
+        .find(|e| e.name == "B_SPLINE_CURVE")
+        .unwrap();
+    let Value::List(points) = &curve.args[1] else {
+        unreachable!()
+    };
+    let Value::Reference(point_id) = &points[0] else {
+        unreachable!()
+    };
+    let point = arena[point_id][0].source.unwrap();
+    for (path, replacement) in [(vec![0], "7."), (vec![1, 0], "1.E400")] {
+        let changed = replace_argument(point, &path, replacement);
+        let input = original.replacen(point, &changed, 1);
+        assert!(matches!(
+            decode(&input, Default::default(), None),
+            Err(Error::Invalid)
+        ));
+    }
+    for (name, path, replacement) in [
+        ("B_SPLINE_CURVE_WITH_KNOTS", vec![1, 0], "'zero'"),
+        ("B_SPLINE_SURFACE_WITH_KNOTS", vec![3, 0], "'zero'"),
+        ("B_SPLINE_SURFACE", vec![6], ".T."),
+    ] {
+        let e = arena.values().flatten().find(|e| e.name == name).unwrap();
+        let text = e.source.unwrap();
+        let changed = replace_argument(text, &path, replacement);
+        let input = original.replacen(text, &changed, 1);
+        assert!(
+            matches!(
+                decode(&input, Default::default(), None),
+                Err(Error::Invalid | Error::Unsupported)
+            ),
+            "{name}"
+        );
+    }
+    let with = arena
+        .values()
+        .flatten()
+        .find(|e| e.name == "B_SPLINE_SURFACE_WITH_KNOTS")
+        .unwrap()
+        .source
+        .unwrap();
+    let truncated = format!("{})", &with[..with.rfind(',').unwrap()]);
+    let input = original.replacen(with, &truncated, 1);
+    assert!(matches!(
+        decode(&input, Default::default(), None),
+        Err(Error::Invalid)
+    ));
+
+    let rep = arena
+        .values()
+        .flatten()
+        .find(|e| e.name == "ADVANCED_BREP_SHAPE_REPRESENTATION")
+        .unwrap();
+    let Value::Reference(context) = &rep.args[2] else {
+        unreachable!()
+    };
+    let dimension = arena[context]
+        .iter()
+        .find(|e| e.name == "GEOMETRIC_REPRESENTATION_CONTEXT")
+        .unwrap()
+        .source
+        .unwrap();
+    assert_eq!(original.matches(dimension).count(), 1);
+    let changed = replace_argument(dimension, &[0], "4");
+    let input = original.replacen(dimension, &changed, 1);
+    assert!(matches!(
+        decode(&input, Default::default(), None),
+        Err(Error::Unsupported)
+    ));
+
+    let first = arena.keys().copied().max().unwrap() + 1;
+    let axis = first + 3;
+    let extra = format!(
+        "#{first}=CARTESIAN_POINT('',(0.,0.,0.));\n#{}=DIRECTION('',(0.,0.,1.));\n#{}=DIRECTION('',(1.,0.,0.));\n#{axis}=AXIS2_PLACEMENT_3D('',#{first},#{},#{});\n",
+        first + 1,
+        first + 2,
+        first + 1,
+        first + 2
+    );
+    let text = rep.source.unwrap();
+    let range = argument(text, 1);
+    let items = format!("{},#{axis})", &text[range.start..range.end - 1]);
+    let changed = replace_argument(text, &[1], &items);
+    let extended = original.replacen(text, &changed, 1).replacen(
+        "ENDSEC;\nEND-ISO-10303-21;",
+        &format!("{extra}ENDSEC;\nEND-ISO-10303-21;"),
+        1,
+    );
+    let retained = decode(&extended, Default::default(), None).unwrap();
+    assert_eq!(retained.faces().len(), admitted.faces().len());
+    assert_eq!(retained.edges().len(), admitted.edges().len());
+    assert_eq!(retained.curves().len(), admitted.curves().len());
+    assert_eq!(retained.solid_entity(), admitted.solid_entity());
+    let axis_text = format!(
+        "AXIS2_PLACEMENT_3D('',#{first},#{},#{})",
+        first + 1,
+        first + 2
+    );
+    assert!(extended.contains(&axis_text));
+    let invalid = extended.replacen(&axis_text, "AXIS2_PLACEMENT_3D('')", 1);
+    assert!(matches!(
+        decode(&invalid, Default::default(), None),
+        Err(Error::Unsupported)
+    ));
+    let target = format!("#{first}=CARTESIAN_POINT('',(0.,0.,0.));");
+    let invalid = extended.replacen(
+        &target,
+        &format!("#{first}=CARTESIAN_POINT('',(1.,0.,0.));"),
+        1,
+    );
+    assert!(matches!(
+        decode(&invalid, Default::default(), None),
+        Err(Error::Unsupported)
+    ));
+    assert_eq!(admitted.literal_input(), original);
+}

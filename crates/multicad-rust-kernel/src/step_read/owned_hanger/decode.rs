@@ -62,10 +62,11 @@ fn numeric<'i>(e: &Entity<'i>, b: &mut Budget<'_>) -> Result<Vec<Scalar<'i>>, Er
     let out = tokens
         .into_iter()
         .map(|text| {
-            let value = text.parse::<f64>().map_err(|_| Error::Invalid)?;
-            if !value.is_finite() {
-                return Err(Error::Invalid);
-            }
+            // The borrowed token comes from the already parsed Part21 arena.
+            // Its parser accepts only finite f64 numbers; extracting the exact
+            // spelling skips strings, references, names and comments.
+            let value = text.parse::<f64>().expect("validated Part21 numeric token");
+            assert!(value.is_finite(), "Part21 scalar finiteness invariant");
             b.charge(text.len() * (1 + usize::from(value == 0. || value == 1.)))?;
             Ok(Scalar::new(text, value))
         })
