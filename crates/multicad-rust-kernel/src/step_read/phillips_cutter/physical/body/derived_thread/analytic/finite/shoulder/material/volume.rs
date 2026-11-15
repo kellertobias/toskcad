@@ -10,7 +10,7 @@ use crate::{
 };
 pub use owned::{
     AuthoredPeriodicOptions, OwnedPeriodicMaterial, PeriodicAuthoredApproximation,
-    PeriodicCurveOwner, PeriodicFaceProperties, PeriodicLiteralCertificate,
+    PeriodicCurveOwner, PeriodicCurveQuery, PeriodicFaceProperties, PeriodicLiteralCertificate,
     PeriodicMaterialProvenance, PeriodicOwnedMaterialQuery, PeriodicOwnedOptions,
 };
 #[cfg(test)]

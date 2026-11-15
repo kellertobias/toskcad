@@ -14,7 +14,7 @@ use crate::phillips_drive::{
 };
 pub use volume::{
     AuthoredPeriodicOptions, OwnedPeriodicMaterial, PeriodicAuthoredApproximation,
-    PeriodicCurveOwner, PeriodicFaceProperties, PeriodicLiteralCertificate,
+    PeriodicCurveOwner, PeriodicCurveQuery, PeriodicFaceProperties, PeriodicLiteralCertificate,
     PeriodicMaterialProvenance, PeriodicMaterialVolume, PeriodicOwnedMaterialQuery,
     PeriodicOwnedOptions, PeriodicVolumeOptions,
 };

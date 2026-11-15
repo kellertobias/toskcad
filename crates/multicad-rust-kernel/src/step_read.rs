@@ -1107,6 +1107,7 @@ pub use phillips_cutter::{
     PeriodicAuthoredApproximation as PhillipsPeriodicAuthoredApproximation,
     PeriodicClosedMaterial as PhillipsPeriodicClosedMaterial,
     PeriodicCurveOwner as PhillipsPeriodicCurveOwner,
+    PeriodicCurveQuery as PhillipsPeriodicCurveQuery,
     PeriodicFaceProperties as PhillipsPeriodicFaceProperties,
     PeriodicFiniteCurve as PhillipsPeriodicFiniteCurve,
     PeriodicFiniteCurves as PhillipsPeriodicFiniteCurves,

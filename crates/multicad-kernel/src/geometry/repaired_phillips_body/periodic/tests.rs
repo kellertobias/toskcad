@@ -531,3 +531,140 @@ fn actual_periodic_face_centroid_transport_encloses_nonconstant_affine_weights()
     assert!((tip.center_mm[2] - (4. + 11.5 * (1. + 1e-12))).abs() < 1e-8);
     assert!(faces.iter().all(|f| f.area_mm2 > 0.));
 }
+
+#[test]
+fn actual_periodic_edge_display_selects_every_finite_owner_and_sews_original_vertices() {
+    use multicad_core::references::{AnalyticGeometry, TopologyKind};
+    for left in [false, true] {
+        let source = source(left, 0.5);
+        let occurrence = PlaneFrame {
+            origin: [10., -3., 4.],
+            u: [0., 1., 0.],
+            v: [0., 0., 1.],
+        };
+        let part = Solid::rust_periodic_repaired_phillips_material(
+            source,
+            feature(),
+            occurrence,
+            Default::default(),
+            None,
+        )
+        .unwrap();
+        let topology = part.topology_snapshot(feature(), 1).unwrap();
+        let now = std::time::Instant::now();
+        let edges = part.display_edges(0.05).unwrap();
+        eprintln!(
+            "PERIODIC source edges LH{left}: {}curves {}points {:?}",
+            edges.len(),
+            edges.iter().map(|e| e.points_mm.len()).sum::<usize>(),
+            now.elapsed()
+        );
+        let source_edges: Vec<_> = topology
+            .elements
+            .iter()
+            .filter(|e| e.key.kind == TopologyKind::Edge)
+            .collect();
+        assert_eq!(edges.len(), source_edges.len());
+        // Independent dense source queries check the observable polyline
+        // accuracy, rather than reusing the producer's chord-bound calculation.
+        let (owner, _) = part.rust_periodic_repaired_phillips_source().unwrap();
+        let mut exact = owner.source_curve_query(16_000_000, None).unwrap();
+        let distance = |p: Point, polyline: &[Point]| {
+            polyline
+                .windows(2)
+                .map(|v| {
+                    let d: Point = std::array::from_fn(|i| v[1][i] - v[0][i]);
+                    let norm = d.into_iter().map(|x| x * x).sum::<f64>();
+                    let t = if norm == 0. {
+                        0.
+                    } else {
+                        (0..3).map(|i| (p[i] - v[0][i]) * d[i]).sum::<f64>() / norm
+                    }
+                    .clamp(0., 1.);
+                    (0..3)
+                        .map(|i| (p[i] - v[0][i] - t * d[i]).powi(2))
+                        .sum::<f64>()
+                        .sqrt()
+                })
+                .fold(f64::INFINITY, f64::min)
+        };
+        for band in 0..4 {
+            for kind in 0..3 {
+                let role = if kind == 0 {
+                    format!("thread/rail/{band}")
+                } else {
+                    format!("thread/cap/{}/rim/{band}", kind - 1)
+                };
+                let edge = source_edges
+                    .iter()
+                    .find(|e| e.origins.iter().any(|o| o.role == role))
+                    .unwrap();
+                let polyline = &edges[edge.key.ordinal as usize].points_mm;
+                for i in 0..=64 {
+                    let t = i as f64 / 64.;
+                    let p = if kind == 0 {
+                        exact.thread_rail_point_mm(band, t)
+                    } else {
+                        exact.thread_rim_point_mm(kind - 1, band, t)
+                    }
+                    .unwrap();
+                    let p = p.map(|v| v[0].midpoint(v[1]));
+                    let world = std::array::from_fn(|i| {
+                        occurrence.origin[i]
+                            + occurrence.u[i] * p[0]
+                            + occurrence.v[i] * p[1]
+                            + occurrence.normal()[i] * p[2]
+                    });
+                    assert!(
+                        distance(world, polyline) <= 0.05 + 1e-10,
+                        "source curve {role} parameter{t}"
+                    );
+                }
+            }
+        }
+
+        for (i, edge) in edges.iter().enumerate() {
+            assert_eq!(edge.index, i as u32);
+            assert!(
+                edge.points_mm.len() >= 2 && edge.points_mm.iter().flatten().all(|p| p.is_finite())
+            );
+        }
+        for vertex in topology
+            .elements
+            .iter()
+            .filter(|e| e.key.kind == TopologyKind::Vertex)
+        {
+            let Some(AnalyticGeometry::Point { position_mm }) = vertex.geometry else {
+                panic!("actual source vertex")
+            };
+            for origin in &vertex.boundary {
+                let edge = source_edges
+                    .iter()
+                    .find(|e| e.origins.contains(origin))
+                    .unwrap();
+                let rendered = &edges[edge.key.ordinal as usize].points_mm;
+                assert!(
+                    rendered.first() == Some(&position_mm) || rendered.last() == Some(&position_mm),
+                    "original endpoint {origin:?}"
+                );
+            }
+        }
+        for edge in source_edges.iter().filter(|e| {
+            e.origins
+                .iter()
+                .any(|o| o.role.starts_with("screw.head/") && o.role.ends_with("/start"))
+        }) {
+            let p = &edges[edge.key.ordinal as usize].points_mm;
+            assert_eq!(p.first(), p.last());
+        }
+        assert_eq!(
+            part.display_vertices().unwrap().len(),
+            topology
+                .elements
+                .iter()
+                .filter(|e| e.key.kind == TopologyKind::Vertex)
+                .count()
+        );
+        assert!(!part.supports_step_export());
+    }
+}

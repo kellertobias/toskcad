@@ -62,6 +62,17 @@ impl Graph {
         self.edges += 1;
     }
 }
+pub(super) fn cavity_curve_name(
+    topology: &multicad_rust_kernel::phillips_drive::BoundaryTopology<'_>,
+    key: multicad_rust_kernel::phillips_drive::CurveKey,
+) -> String {
+    if let multicad_rust_kernel::phillips_drive::CurveKey::Mouth { edge } = key {
+        let (quarter, role) = topology.events().mouth().edges()[edge].source_identity();
+        format!("screw.drive/phillips/curve/mouth/{quarter}/{role:?}")
+    } else {
+        format!("screw.drive/phillips/curve/{key:?}")
+    }
+}
 fn face_name(source: &OwnedPeriodicMaterial, face: FaceSource) -> String {
     match face {
         FaceSource::HeadMeridian { segment } => format!(
@@ -248,7 +259,7 @@ impl RepairedPhillipsBody {
                 .map_err(|_| unsupported("Actual cavity edge is not two-sided"))?;
             let v = edge.vertices().map(|v| vertices[v]);
             graph.edge(
-                format!("screw.drive/phillips/curve/{:?}", edge.source_identity()),
+                cavity_curve_name(&cavity, edge.source_identity()),
                 adjacent,
                 &v,
             );

@@ -5,10 +5,10 @@ mod circle;
 mod shoulder;
 pub use shoulder::{
     AuthoredPeriodicOptions, OwnedPeriodicMaterial, PeriodicAuthoredApproximation,
-    PeriodicClosedMaterial, PeriodicCurveOwner, PeriodicFaceProperties, PeriodicLiteralCertificate,
-    PeriodicMaterialFace, PeriodicMaterialOptions, PeriodicMaterialProvenance,
-    PeriodicMaterialVolume, PeriodicOwnedMaterialQuery, PeriodicOwnedOptions,
-    PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicVolumeOptions,
+    PeriodicClosedMaterial, PeriodicCurveOwner, PeriodicCurveQuery, PeriodicFaceProperties,
+    PeriodicLiteralCertificate, PeriodicMaterialFace, PeriodicMaterialOptions,
+    PeriodicMaterialProvenance, PeriodicMaterialVolume, PeriodicOwnedMaterialQuery,
+    PeriodicOwnedOptions, PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicVolumeOptions,
 };
 type FResult<T> = std::result::Result<T, PhillipsReadError>;
 const FINITE_TOTAL: usize = 48_000_000;

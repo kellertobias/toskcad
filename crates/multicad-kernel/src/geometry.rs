@@ -2732,6 +2732,9 @@ impl Solid {
 
     pub fn display_edges(&self, deflection_mm: f64) -> Result<Vec<DisplayEdge>, GeometryError> {
         self.validate_display_deflection(deflection_mm)?;
+        if let Some((body, frame)) = self.repaired_phillips_body() {
+            return body.periodic_display_edges(frame, deflection_mm);
+        }
         if let Some((body, frame)) = self.hanger_body() {
             return body.display_edges(frame, deflection_mm, self.policy);
         }

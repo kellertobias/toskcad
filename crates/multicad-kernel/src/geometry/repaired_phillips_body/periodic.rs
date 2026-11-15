@@ -6,6 +6,8 @@ use multicad_rust_kernel::{
     phillips_drive::Classification, step_read::PhillipsOwnedMaterialQueryOptions as SourceOptions,
 };
 pub(super) mod candidate;
+mod cavity_edges;
+mod display_edges;
 mod properties;
 mod topology;
 mod topology_planes;

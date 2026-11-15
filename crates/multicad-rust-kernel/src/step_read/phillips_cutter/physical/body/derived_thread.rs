@@ -15,12 +15,12 @@ mod reduce;
 pub use analytic::{
     AnalyticThreadOptions, AnalyticThreadRepair, AnalyticThreadTransfer, AuthoredPeriodicOptions,
     CommonChartPeriodicThreadRepair, OwnedPeriodicMaterial, PeriodicAuthoredApproximation,
-    PeriodicClosedMaterial, PeriodicCurveOwner, PeriodicFaceProperties, PeriodicFiniteCurve,
-    PeriodicFiniteCurves, PeriodicFiniteKind, PeriodicFiniteOptions, PeriodicLiteralCertificate,
-    PeriodicMaterialFace, PeriodicMaterialOptions, PeriodicMaterialProvenance,
-    PeriodicMaterialVolume, PeriodicOwnedMaterialQuery, PeriodicOwnedOptions,
-    PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicThreadBounds, PeriodicThreadRepair,
-    PeriodicThreadSource, PeriodicVolumeOptions,
+    PeriodicClosedMaterial, PeriodicCurveOwner, PeriodicCurveQuery, PeriodicFaceProperties,
+    PeriodicFiniteCurve, PeriodicFiniteCurves, PeriodicFiniteKind, PeriodicFiniteOptions,
+    PeriodicLiteralCertificate, PeriodicMaterialFace, PeriodicMaterialOptions,
+    PeriodicMaterialProvenance, PeriodicMaterialVolume, PeriodicOwnedMaterialQuery,
+    PeriodicOwnedOptions, PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicThreadBounds,
+    PeriodicThreadRepair, PeriodicThreadSource, PeriodicVolumeOptions,
 };
 pub use degree11::{CoherentDegree11ThreadCarrier, Degree11ThreadFace, Degree11ThreadOptions};
 pub use join::{

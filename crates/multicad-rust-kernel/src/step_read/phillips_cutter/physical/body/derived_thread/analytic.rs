@@ -8,11 +8,11 @@ mod finite;
 pub use common_chart::CommonChartPeriodicThreadRepair;
 pub use finite::{
     AuthoredPeriodicOptions, OwnedPeriodicMaterial, PeriodicAuthoredApproximation,
-    PeriodicClosedMaterial, PeriodicCurveOwner, PeriodicFaceProperties, PeriodicFiniteCurve,
-    PeriodicFiniteCurves, PeriodicFiniteKind, PeriodicFiniteOptions, PeriodicLiteralCertificate,
-    PeriodicMaterialFace, PeriodicMaterialOptions, PeriodicMaterialProvenance,
-    PeriodicMaterialVolume, PeriodicOwnedMaterialQuery, PeriodicOwnedOptions,
-    PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicVolumeOptions,
+    PeriodicClosedMaterial, PeriodicCurveOwner, PeriodicCurveQuery, PeriodicFaceProperties,
+    PeriodicFiniteCurve, PeriodicFiniteCurves, PeriodicFiniteKind, PeriodicFiniteOptions,
+    PeriodicLiteralCertificate, PeriodicMaterialFace, PeriodicMaterialOptions,
+    PeriodicMaterialProvenance, PeriodicMaterialVolume, PeriodicOwnedMaterialQuery,
+    PeriodicOwnedOptions, PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicVolumeOptions,
 };
 mod periodic;
 mod rotation;
