@@ -124,7 +124,11 @@ impl Core {
                     // u' = c sin(b t) Δt T with |T| = 1 and c = cos β,
                     // b = sin β; the roll t is largest at the tip, where
                     // cos(b t) = cos(tip) / c.
-                    let tip_end = if piece == Piece::InvoluteRight { 0. } else { 1. };
+                    let tip_end = if piece == Piece::InvoluteRight {
+                        0.
+                    } else {
+                        1.
+                    };
                     let speed = norm(bevel.sample(piece, tip_end).derivative);
                     let rise = (1. - (spec.tip_cone_angle_rad.cos() / base_cos).powi(2)).sqrt();
                     let turn = speed / (base_cos * rise);
@@ -188,12 +192,17 @@ impl Core {
 
     fn to_view(&self, p: P3) -> P3 {
         std::array::from_fn(|i| {
-            self.origin[i] + p[0] * self.axes[0][i] + p[1] * self.axes[1][i] + p[2] * self.axes[2][i]
+            self.origin[i]
+                + p[0] * self.axes[0][i]
+                + p[1] * self.axes[1][i]
+                + p[2] * self.axes[2][i]
         })
     }
 
     fn vector(&self, v: P3) -> P3 {
-        std::array::from_fn(|i| v[0] * self.axes[0][i] + v[1] * self.axes[1][i] + v[2] * self.axes[2][i])
+        std::array::from_fn(|i| {
+            v[0] * self.axes[0][i] + v[1] * self.axes[1][i] + v[2] * self.axes[2][i]
+        })
     }
 
     fn to_local(&self, q: P3) -> P3 {
@@ -469,9 +478,8 @@ impl Member for Gear {
         let count = core.pieces.len();
         let mut output = Vec::new();
         let mut push = |kind: Kind, path: Arc<dyn Path>| output.push(Candidate { kind, path });
-        let line = |a: P3, b: P3| -> Arc<dyn Path> {
-            Arc::new(Segment(core.to_view(a), core.to_view(b)))
-        };
+        let line =
+            |a: P3, b: P3| -> Arc<dyn Path> { Arc::new(Segment(core.to_view(a), core.to_view(b))) };
         // A circle about the axis through the back-cone point at polar γ.
         let ring = |end: End, gamma: f64, range: [f64; 2]| {
             let r = core.reach(end, polar(gamma, 0.));
@@ -485,7 +493,12 @@ impl Member for Gear {
                 range,
             )
         };
-        let ruling = |u: P3| line(scaled(u, core.reach(End::Toe, u)), scaled(u, core.reach(End::Heel, u)));
+        let ruling = |u: P3| {
+            line(
+                scaled(u, core.reach(End::Toe, u)),
+                scaled(u, core.reach(End::Heel, u)),
+            )
+        };
         let d = core.sight;
         let heading = d[1].atan2(d[0]);
         let across = d[0].hypot(d[1]);
@@ -503,7 +516,9 @@ impl Member for Gear {
                             }
                         }
                         Piece::Tip => {
-                            for path in ring(end, core.tip, [center - core.crest, center + core.crest]) {
+                            for path in
+                                ring(end, core.tip, [center - core.crest, center + core.crest])
+                            {
                                 push(Kind::Edge, path);
                             }
                         }
@@ -525,16 +540,17 @@ impl Member for Gear {
             }
             // Apex rays between side faces: sharp only at the tip.
             for joint in 1..count {
-                let sharp = core.pieces[joint - 1] == Piece::Tip || core.pieces[joint] == Piece::Tip;
+                let sharp =
+                    core.pieces[joint - 1] == Piece::Tip || core.pieces[joint] == Piece::Tip;
                 push(
                     if sharp { Kind::Edge } else { Kind::Smooth },
                     ruling(core.joint(sector, joint)),
                 );
             }
             // Outline rulings of the fillet and involute cones.
-            for index in (0..count).filter(|&index| {
-                flank(core.pieces[index]) && !meridian(core.pieces[index])
-            }) {
+            for index in (0..count)
+                .filter(|&index| flank(core.pieces[index]) && !meridian(core.pieces[index]))
+            {
                 let shape = core.shapes[index];
                 let ends = [index, index + 1].map(|joint| core.limb_joint(sector, joint));
                 let mut found = Vec::new();

@@ -48,10 +48,22 @@ fn gears() -> Vec<(&'static str, Solid)> {
         }
     };
     vec![
-        ("20/30 bored", make(specification(2., 20, 30, 8., 3.), false)),
-        ("16/16 solid placed", make(specification(2., 16, 16, 6., 0.), true)),
-        ("12/36 bored placed", make(specification(1.5, 12, 36, 5., 2.), true)),
-        ("40/20 solid", make(specification(1., 40, 20, 6., 0.), false)),
+        (
+            "20/30 bored",
+            make(specification(2., 20, 30, 8., 3.), false),
+        ),
+        (
+            "16/16 solid placed",
+            make(specification(2., 16, 16, 6., 0.), true),
+        ),
+        (
+            "12/36 bored placed",
+            make(specification(1.5, 12, 36, 5., 2.), true),
+        ),
+        (
+            "40/20 solid",
+            make(specification(1., 40, 20, 6., 0.), false),
+        ),
     ]
 }
 
@@ -120,9 +132,17 @@ fn derivative_bounds_certify_the_root_isolation() {
                 let s = f64::from(i) / 40.;
                 let [a, m, b] = [s - h, s, s + h].map(|s| core.direction(2, piece, s));
                 let second = norm(std::array::from_fn(|k| a.0[k] - 2. * m.0[k] + b.0[k])) / (h * h);
-                assert!(norm(m.1) <= shape.speed * (1. + 1e-9), "{name} speed {piece}");
-                assert!(second <= shape.curvature * (1. + 1e-5) + 1e-6, "{name} curvature {piece}");
-                let rate = norm(std::array::from_fn(|k| (b.0[k] - a.0[k]) / (2. * h) - m.1[k]));
+                assert!(
+                    norm(m.1) <= shape.speed * (1. + 1e-9),
+                    "{name} speed {piece}"
+                );
+                assert!(
+                    second <= shape.curvature * (1. + 1e-5) + 1e-6,
+                    "{name} curvature {piece}"
+                );
+                let rate = norm(std::array::from_fn(|k| {
+                    (b.0[k] - a.0[k]) / (2. * h) - m.1[k]
+                }));
                 assert!(rate <= 1e-6, "{name} direction rate {piece}: {rate}");
                 for end in End::BOTH {
                     let [a, m, b] = [s - h, s, s + h].map(|s| core.rim(end, 2, piece, s));
@@ -132,7 +152,9 @@ fn derivative_bounds_certify_the_root_isolation() {
                         second <= core.rim_bound(end, piece) * (1. + 1e-5) + 1e-5,
                         "{name} rim bound {piece}"
                     );
-                    let rate = norm(std::array::from_fn(|k| (b.0[k] - a.0[k]) / (2. * h) - m.1[k]));
+                    let rate = norm(std::array::from_fn(|k| {
+                        (b.0[k] - a.0[k]) / (2. * h) - m.1[k]
+                    }));
                     assert!(rate <= 1e-5, "{name} rim rate {piece}: {rate}");
                 }
                 if flank(core.pieces[piece]) && !meridian(core.pieces[piece]) {
@@ -182,11 +204,7 @@ fn sight_intervals_are_the_material_along_the_line() {
                 }
                 for _ in 0..12 {
                     let z = random.between(lo[2] - 1., hi[2] + 1.);
-                    if intervals
-                        .iter()
-                        .flatten()
-                        .any(|end| (end - z).abs() < 1e-7)
-                    {
+                    if intervals.iter().flatten().any(|end| (end - z).abs() < 1e-7) {
                         continue;
                     }
                     let expected = core.inside(core.to_local([paper[0], paper[1], z]));
@@ -336,9 +354,18 @@ fn every_turn_of_a_face_normal_has_an_outline() {
                     let [(before, phi), (after, _)] = [facing(i), facing(i + 1)];
                     // A cap point just above the bottom of the generator.
                     let bottom = core.bottom(end, phi);
-                    let point = add(bottom, [cos * phi.cos() * 1e-3, cos * phi.sin() * 1e-3, -sin * 1e-3]);
+                    let point = add(
+                        bottom,
+                        [cos * phi.cos() * 1e-3, cos * phi.sin() * 1e-3, -sin * 1e-3],
+                    );
                     let radius = bottom[0].hypot(bottom[1]) + 1e-3;
-                    check(before, after, point, 1.5 * radius * TAU / steps as f64 + 1e-6, "cap");
+                    check(
+                        before,
+                        after,
+                        point,
+                        1.5 * radius * TAU / steps as f64 + 1e-6,
+                        "cap",
+                    );
                 }
             }
             if let Some(bore) = core.bore {
@@ -396,8 +423,12 @@ fn loop_area(name: &str, gear: &Gear, depth: f64, loops: &[Loop]) -> f64 {
                 let tangent = sub(b, a);
                 let size = tangent[0].hypot(tangent[1]);
                 let left = [-tangent[1] / size, tangent[0] / size, 0.];
-                let probe = |sign: f64| core.inside(core.to_local(add(m, scaled(left, sign * 1e-5))));
-                assert!(probe(1.) && !probe(-1.), "{name}: material is not on the left");
+                let probe =
+                    |sign: f64| core.inside(core.to_local(add(m, scaled(left, sign * 1e-5))));
+                assert!(
+                    probe(1.) && !probe(-1.),
+                    "{name}: material is not on the left"
+                );
             }
             previous = path.point(1.);
         }
@@ -410,7 +441,7 @@ fn loop_area(name: &str, gear: &Gear, depth: f64, loops: &[Loop]) -> f64 {
 fn scanned_area(gear: &Gear, depth: f64) -> f64 {
     let core = &gear.core;
     let [lo, hi] = gear.bounds();
-    let (rows, columns) = (400, 500);
+    let (rows, columns) = (700, 900);
     let dy = (hi[1] - lo[1]) / rows as f64;
     let dx = (hi[0] - lo[0] + 2e-3) / columns as f64;
     let inside = |x: f64, y: f64| core.inside(core.to_local([x, y, depth]));
@@ -469,22 +500,5 @@ fn sections_bound_the_material_in_the_plane() {
             assert!(cut >= 3, "{name} {label}: only {cut} planes cut the gear");
             assert!(gear.section(hi[2] + 1., 1e-3).unwrap().is_empty());
         }
-    }
-}
-
-#[test]
-#[ignore]
-fn debug_dump() {
-    for (name, solid) in &gears() {
-    for (label, gear) in views(solid) {
-        let core = &gear.core;
-        let [lo, hi] = gear.bounds();
-        let apex = core.origin[2];
-        for depth in [apex, apex + 1e-13, apex - 3e-7, apex + 0.37, lo[2] + 0.2 * (hi[2] - lo[2]), lo[2] + 0.55 * (hi[2] - lo[2]), lo[2] + 0.93 * (hi[2] - lo[2])] {
-            eprintln!("{name} {label} depth {depth}");
-            let r = gear.section(depth, 1e-3);
-            if r.is_err() { eprintln!("FAILED"); }
-        }
-    }
     }
 }

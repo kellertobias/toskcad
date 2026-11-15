@@ -16,12 +16,7 @@ pub(super) fn positive(value: f64) -> bool {
 const BUDGET: usize = 2048;
 
 /// Bisect a sign change between `a` (with sign `from`) and `b`.
-pub(super) fn bisect(
-    eval: &dyn Fn(f64) -> (f64, f64),
-    mut a: f64,
-    mut b: f64,
-    from: bool,
-) -> f64 {
+pub(super) fn bisect(eval: &dyn Fn(f64) -> (f64, f64), mut a: f64, mut b: f64, from: bool) -> f64 {
     for _ in 0..80 {
         let mid = a + (b - a) / 2.;
         if mid <= a || mid >= b {
@@ -77,10 +72,7 @@ fn split(
     // |f(x) - f(m)| <= |f'(m)| |x - m| + second |x - m|^2 / 2.
     if fm.abs() > dm.abs() * width / 2. + second * width * width / 8. {
         // No interior zero: a differing end sign is a zero at that end.
-        match (
-            positive(fa) != positive(fm),
-            positive(fb) != positive(fm),
-        ) {
+        match (positive(fa) != positive(fm), positive(fb) != positive(fm)) {
             (true, false) => output.push(a),
             (false, true) => output.push(b),
             _ => {}

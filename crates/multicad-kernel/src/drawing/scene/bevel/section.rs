@@ -172,7 +172,10 @@ impl Path for Cut {
     }
 
     fn flatten(&self, tolerance_mm: f64) -> Vec<f64> {
-        let mut cache = self.chords.lock().unwrap_or_else(|poison| poison.into_inner());
+        let mut cache = self
+            .chords
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         if let Some((key, stops)) = cache.as_ref()
             && *key == tolerance_mm.to_bits()
         {
@@ -185,7 +188,13 @@ impl Path for Cut {
         let mut stops = vec![0.];
         for i in 0..first {
             let [a, b] = [i, i + 1].map(|k| k as f64 / first as f64);
-            self.refine([a, b], [self.local(a), self.local(b)], tolerance_mm, 0, &mut stops);
+            self.refine(
+                [a, b],
+                [self.local(a), self.local(b)],
+                tolerance_mm,
+                0,
+                &mut stops,
+            );
         }
         *cache = Some((tolerance_mm.to_bits(), stops.clone()));
         stops
@@ -205,7 +214,14 @@ impl Path for Cut {
 impl Cut {
     /// Append the stops of `(a, b]`, halving until the curve stays within
     /// half the tolerance of each chord at its quarter points.
-    fn refine(&self, [a, b]: [f64; 2], [p, q]: [P3; 2], tolerance: f64, depth: u32, stops: &mut Vec<f64>) {
+    fn refine(
+        &self,
+        [a, b]: [f64; 2],
+        [p, q]: [P3; 2],
+        tolerance: f64,
+        depth: u32,
+        stops: &mut Vec<f64>,
+    ) {
         let chord = sub(q, p);
         let length = dot3(chord, chord);
         let mid = 0.5 * (a + b);
@@ -555,7 +571,10 @@ pub(super) fn section(
         )?;
     }
     if let Some(circles) = &circles {
-        let stops = circles.iter().flat_map(|(stops, _)| stops.clone()).collect();
+        let stops = circles
+            .iter()
+            .flat_map(|(stops, _)| stops.clone())
+            .collect();
         builder.round(
             Sheet::Bore,
             stops,
@@ -579,7 +598,10 @@ pub(super) fn section(
         .collect();
     // Chain the cuts through their shared vertices.
     let reach = 1e-7 * core.scale;
-    let ends: Vec<[P3; 2]> = cuts.iter().map(|cut| [cut.local(0.), cut.local(1.)]).collect();
+    let ends: Vec<[P3; 2]> = cuts
+        .iter()
+        .map(|cut| [cut.local(0.), cut.local(1.)])
+        .collect();
     let mut used = vec![false; cuts.len()];
     let mut chains: Vec<Vec<usize>> = Vec::new();
     for seed in 0..cuts.len() {
@@ -607,15 +629,7 @@ pub(super) fn section(
                     chain.push(other);
                 }
                 _ if closing <= reach => break,
-                _ => {
-                    if std::env::var("BEVEL_DEBUG").is_ok() {
-                        eprintln!("open chain {chain:?} tail {tail:?} origin {origin:?} next {next:?}");
-                        for (i, cut) in cuts.iter().enumerate() {
-                            eprintln!("{i} {:?} {:?} {:?} {:?} used {}", cut.sheet, cut.chart, ends[i][0], ends[i][1], used[i]);
-                        }
-                    }
-                    return Err(open());
-                }
+                _ => return Err(open()),
             }
         }
         chains.push(chain);
@@ -635,9 +649,8 @@ pub(super) fn section(
                 if length == 0. {
                     continue;
                 }
-                let at = |sign: f64| {
-                    core.inside(add(cut.local(t), scaled(left, sign * step / length)))
-                };
+                let at =
+                    |sign: f64| core.inside(add(cut.local(t), scaled(left, sign * step / length)));
                 match (at(1.), at(-1.)) {
                     (true, false) => votes += 1,
                     (false, true) => votes -= 1,
