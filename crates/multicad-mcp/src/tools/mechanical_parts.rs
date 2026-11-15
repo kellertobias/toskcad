@@ -164,6 +164,14 @@ pub struct PhillipsHProfileArgs {
 #[derive(Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MechanicalRecipeArgs {
+    WoodInsert {
+        #[serde(default)]
+        outer_thread: Box<ThreadRecipeArgs>,
+        #[serde(default)]
+        inner_thread: Box<ThreadRecipeArgs>,
+        #[serde(flatten)]
+        frame: MechanicalFrameArgs,
+    },
     /// Engineered wood/metric hanger with one shared placement frame.
     HangerBolt {
         #[serde(default)]
@@ -443,6 +451,33 @@ fn parameters(
     };
     let mismatch = || ToolError::invalid("A mechanical Part edit retains its generator family");
     let p = match args {
+        MechanicalRecipeArgs::WoodInsert {
+            outer_thread,
+            inner_thread,
+            frame,
+        } => {
+            let default = model::default_custom_connection_wood_insert();
+            let MechanicalPartParameters::CustomConnection { parameters: old } =
+                previous.unwrap_or(&default)
+            else {
+                return Err(mismatch());
+            };
+            let model::CustomConnectionHardwareParameters::WoodInsert {
+                outer_thread: outer,
+                inner_thread: inner,
+                frame: old_frame,
+            } = old.as_ref()
+            else {
+                return Err(mismatch());
+            };
+            MechanicalPartParameters::CustomConnection {
+                parameters: Box::new(model::CustomConnectionHardwareParameters::WoodInsert {
+                    outer_thread: connection_thread(outer_thread, outer, doc, eval)?,
+                    inner_thread: connection_thread(inner_thread, inner, doc, eval)?,
+                    frame: frame.apply(old_frame.clone(), doc, eval)?,
+                }),
+            }
+        }
         MechanicalRecipeArgs::HangerBolt {
             wood_thread,
             metric_thread,
@@ -466,28 +501,10 @@ fn parameters(
             else {
                 return Err(mismatch());
             };
-            // The canonical connection derives both thread frames from its
-            // shared datum. Never accept a nested edit it would silently ignore.
-            for thread in [wood_thread, metric_thread] {
-                if thread.origin.is_some()
-                    || thread.plane.is_some()
-                    || thread.axis_u.is_some()
-                    || thread.axis_v.is_some()
-                {
-                    return Err(ToolError::invalid(
-                        "Set the hanger placement once at recipe level; nested thread frames are derived",
-                    ));
-                }
-            }
             MechanicalPartParameters::CustomConnection {
                 parameters: Box::new(model::CustomConnectionHardwareParameters::HangerBolt {
-                    wood_thread: Box::new(thread_parameters(wood_thread, Some(wood), doc, eval)?),
-                    metric_thread: Box::new(thread_parameters(
-                        metric_thread,
-                        Some(metric),
-                        doc,
-                        eval,
-                    )?),
+                    wood_thread: connection_thread(wood_thread, wood, doc, eval)?,
+                    metric_thread: connection_thread(metric_thread, metric, doc, eval)?,
                     plain_length: mm(plain_length, length)?,
                     plain_diameter: mm(plain_diameter, diameter)?,
                     frame: frame.apply(old_frame.clone(), doc, eval)?,
@@ -986,10 +1003,34 @@ fn parameters(
     p.resolve(eval)?;
     Ok(p)
 }
+fn connection_thread(
+    args: &ThreadRecipeArgs,
+    previous: &ThreadParameters,
+    document: &Document,
+    evaluated: &EvaluatedParameters,
+) -> Result<Box<ThreadParameters>, ToolError> {
+    // Canonical connections derive thread frames from their shared datum.
+    // Reject an explicit nested edit that the resolver would otherwise ignore.
+    if args.origin.is_some()
+        || args.plane.is_some()
+        || args.axis_u.is_some()
+        || args.axis_v.is_some()
+    {
+        return Err(ToolError::invalid(
+            "Set connection placement once at recipe level; nested thread frames are derived",
+        ));
+    }
+    Ok(Box::new(thread_parameters(
+        args,
+        Some(previous),
+        document,
+        evaluated,
+    )?))
+}
 pub(super) fn mechanical_part_profiles(_: &dyn Host, call: &Request, _: NoArgs) -> ToolResult {
     if call.backend == GeometryBackend::Rust {
         return Ok(json!({
-            "supported_geometry": ["machine_screw", "hex_nut", "washer", "bearing_envelope", "wood_screw", "hanger_bolt"],
+            "supported_geometry": ["machine_screw", "hex_nut", "washer", "bearing_envelope", "wood_screw", "hanger_bolt", "wood_insert"],
             "head_forms": ["socket_cap", "external_hex", "pan", "button", "countersunk"],
             "drive_forms": ["hex_socket", "external_hex", "hexalobular", "phillips_h"],
             "active_geometry_support": {
@@ -1009,7 +1050,8 @@ pub(super) fn mechanical_part_profiles(_: &dyn Host, call: &Request, _: NoArgs) 
                 "threaded_step_scope": "Except Phillips H, straight modeled threads and the listed head/drive pairs within source and spline limits. Nominal or fitted threads retain their original phase and a qualified plain shank or head/thread union. Qualified conical recesses may continue into the plain shank but must end before the original thread; wall, floor and actual placement must qualify.",
                 "wood_screw": {"representation":"simplified_envelope","head":"external_hex","drive":"external_hex","manufacturing_available":false},
                 "hanger_bolt": {"wood_thread":"explicit custom profile", "metric_thread":"ISO metric 6g", "manufacturing_mesh":true, "local_step":true, "placed_step":false, "step_mass":"decoded supports with bounded healing; raw-file occupied mass is not asserted"},
-                "step_geometry": ["washer", "bearing_envelope", "machine_screw", "hex_nut", "hanger_bolt"]
+                "wood_insert": {"outer_thread":"explicit custom profile", "inner_thread":"ISO metric 6h", "manufacturing_mesh":true, "step":true, "placement":"one shared recipe datum; finite stock wall and bore span must qualify"},
+                "step_geometry": ["washer", "bearing_envelope", "machine_screw", "hex_nut", "hanger_bolt", "wood_insert"]
             },
             "machine_screw": "The underhead length runs from the head seat to the tip. Overall length adds the head height. The thread length is its extent ending at the tip, and its frame locates the underhead datum.",
             "nut_thread": "Rust supports modeled hex nuts and cosmetic cylindrical thread envelopes. The thread length sets the nut height.",

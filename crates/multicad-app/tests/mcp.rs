@@ -11,9 +11,16 @@ use std::{
 const RELATIVE: f64 = 1e-7;
 #[test]
 fn default_stdio_hanger_recipe_preserves_history_export_and_saved_source() {
+    check_connection_recipe("hanger_bolt");
+}
+#[test]
+fn default_stdio_insert_recipe_preserves_history_export_and_saved_source() {
+    check_connection_recipe("wood_insert");
+}
+fn check_connection_recipe(kind: &str) {
     for hand in ["right", "left"] {
         let directory = tempfile::tempdir().unwrap();
-        let project = directory.path().join("created-hanger.tcd");
+        let project = directory.path().join("created-connection.tcd");
         let arguments = [
             "--project",
             project.to_str().unwrap(),
@@ -21,21 +28,47 @@ fn default_stdio_hanger_recipe_preserves_history_export_and_saved_source() {
             directory.path().to_str().unwrap(),
         ];
         let mut client = Client::start(&arguments);
-        let created = client.ok("set_mechanical_part", json!({"expected_revision":0,"name":"Authored hanger","recipe":{"kind":"hanger_bolt","wood_thread":{"hand":hand},"metric_thread":{"hand":hand}}}));
+        let recipe = if kind == "hanger_bolt" {
+            json!({"kind":kind,"wood_thread":{"hand":hand},"metric_thread":{"hand":hand}})
+        } else {
+            json!({"kind":kind,"outer_thread":{"hand":hand,"length":length(4.3)},"inner_thread":{"hand":hand,"length":length(4.3)}})
+        };
+        let created = client.ok(
+            "set_mechanical_part",
+            json!({"expected_revision":0,"name":"Authored connection","recipe":recipe}),
+        );
         let first = client.part_volume();
         assert!(first > 0.);
-        client.ok("set_mechanical_part", json!({"expected_revision":1,"feature":created["feature"],"recipe":{"kind":"hanger_bolt","plain_length":length(3.3)}}));
+        let edit = if kind == "hanger_bolt" {
+            json!({"kind":kind,"plain_length":length(3.3)})
+        } else {
+            json!({"kind":kind,"outer_thread":{"length":length(5.1)},"inner_thread":{"length":length(5.1),"metric_fit_engagement":{"kind":"intended_length","length":length(3.)}}})
+        };
+        client.ok(
+            "set_mechanical_part",
+            json!({"expected_revision":1,"feature":created["feature"],"recipe":edit}),
+        );
         let edited = client.part_volume();
-        close(edited - first, PI * 1.5f64.powi(2) * 1.3);
+        if kind == "hanger_bolt" {
+            close(edited - first, PI * 1.5f64.powi(2) * 1.3);
+        } else {
+            close(edited, first * 5.1 / 4.3);
+        }
         client.ok("undo", json!({"expected_revision":2}));
         close(client.part_volume(), first);
         client.ok("redo", json!({"expected_revision":3}));
         close(client.part_volume(), edited);
         client.ok("save_project", json!({"expected_revision":4}));
         let saved = std::fs::read(&project).unwrap();
+        let mut nested = json!({"kind":kind});
+        nested[if kind == "hanger_bolt" {
+            "wood_thread"
+        } else {
+            "outer_thread"
+        }] = json!({"origin":[length(1.),length(0.),length(0.)]});
         for request in [
-            json!({"expected_revision":3,"feature":created["feature"],"recipe":{"kind":"hanger_bolt","plain_length":length(4.)}}),
-            json!({"expected_revision":4,"feature":created["feature"],"recipe":{"kind":"hanger_bolt","wood_thread":{"origin":[length(1.),length(0.),length(0.)]}}}),
+            json!({"expected_revision":3,"feature":created["feature"],"recipe":{"kind":kind}}),
+            json!({"expected_revision":4,"feature":created["feature"],"recipe":nested}),
         ] {
             client.fail("set_mechanical_part", request);
         }
@@ -47,7 +80,11 @@ fn default_stdio_hanger_recipe_preserves_history_export_and_saved_source() {
         );
         assert_eq!(
             first_receipt["step_verification"]["method"],
-            "decoded_support_healing"
+            if kind == "hanger_bolt" {
+                "decoded_support_healing"
+            } else {
+                "decoded_boundary_enclosure"
+            }
         );
         assert!(first_receipt["readback_volume_mm3"].is_null());
         assert_eq!(std::fs::read(&project).unwrap(), saved);

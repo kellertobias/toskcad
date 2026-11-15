@@ -5,12 +5,149 @@ use multicad_core::{
     model::*,
 };
 use multicad_mcp::{
-    Headless, Workspace,
+    Headless, Storage, Workspace,
     tools::{Call, dispatch},
 };
 use multicad_model::GeometryBackend;
 use serde_json::json;
 use std::sync::{Arc, atomic::AtomicBool};
+struct Store;
+impl Storage for Store {
+    fn open(
+        &mut self,
+        path: &std::path::Path,
+    ) -> Result<multicad_core::project_file::ProjectFile, String> {
+        multicad_core::project_file::read(
+            &mut std::fs::File::open(path).map_err(|e| e.to_string())?,
+            Default::default(),
+            &multicad_core::project_file::supported_capabilities(),
+        )
+        .map(|r| r.project)
+    }
+    fn save(
+        &mut self,
+        path: &std::path::Path,
+        project: &multicad_core::project_file::ProjectFile,
+    ) -> Result<(), String> {
+        multicad_core::project_file::write(
+            project,
+            &mut std::fs::File::create(path).map_err(|e| e.to_string())?,
+            Default::default(),
+        )
+        .map(|_| ())
+    }
+}
+#[test]
+fn canonical_insert_recipe_preserves_real_threads_placement_history_and_saved_source() {
+    use multicad_core::project_file::ProjectFile;
+    for hand in ["right", "left"] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("insert.tcd");
+        Store
+            .save(
+                &path,
+                &ProjectFile::new(Document::new("Authored insert").unwrap()).unwrap(),
+            )
+            .unwrap();
+        let host = Headless::with_geometry_backend(
+            Workspace::project(path.clone(), Box::new(Store)).unwrap(),
+            Some(directory.path().into()),
+            false,
+            GeometryBackend::Rust,
+        );
+        let call = |cancel| Call {
+            actor: Actor::local(Channel::Mcp),
+            cancel: Arc::new(AtomicBool::new(cancel)),
+        };
+        let run = |name: &str, args| dispatch(&host, &call(false), name, args).unwrap();
+        let quantity = |v| json!({"value":v,"unit":"mm"});
+        let mut recipe = json!({"kind":"wood_insert","outer_thread":{"hand":hand,"length":quantity(4.3)},"inner_thread":{"hand":hand,"length":quantity(4.3)}});
+        if hand == "left" {
+            recipe["origin"] = json!([quantity(11.), quantity(-7.), quantity(5.)]);
+            recipe["axis_u"] = json!([0.8, 0.6, 0.]);
+            recipe["axis_v"] = json!([-0.36, 0.48, 0.8]);
+        }
+        let initial = host.document();
+        let args = json!({"expected_revision":0,"name":"Physical insert","recipe":recipe});
+        assert_eq!(
+            dispatch(&host, &call(true), "set_mechanical_part", args.clone())
+                .unwrap_err()
+                .code,
+            "cancelled"
+        );
+        assert_eq!(host.document(), initial);
+        let created = run("set_mechanical_part", args);
+        let feature = serde_json::from_value(created["feature"].clone()).unwrap();
+        let build = |doc: &Document, revision| {
+            multicad_model::Compiler {
+                omit_display: true,
+                ..Default::default()
+            }
+            .compile_with_backend(doc, revision, GeometryBackend::Rust, None)
+            .unwrap()
+        };
+        let original = host.document();
+        let first = build(&original, 1);
+        let first_solid = first.solid(feature).unwrap();
+        let before = first_solid.volume_mm3().unwrap();
+        assert!(first_solid.rust_wood_insert_data().is_some());
+        let inspected = run("inspect_mechanical_part", json!({"feature":feature}));
+        assert_eq!(inspected["resolved"]["connection_kind"], "wood_insert");
+        let needs_context = dispatch(&host, &call(false), "set_mechanical_part", json!({"expected_revision":1,"feature":feature,"recipe":{"kind":"wood_insert","outer_thread":{"length":quantity(5.1)},"inner_thread":{"length":quantity(5.1)}}})).unwrap_err();
+        assert!(needs_context.message.contains("normal engagement"));
+        assert_eq!(host.document(), original);
+        let edited = run(
+            "set_mechanical_part",
+            json!({"expected_revision":1,"feature":feature,"recipe":{"kind":"wood_insert","outer_thread":{"length":quantity(5.1)},"inner_thread":{"length":quantity(5.1),"metric_fit_engagement":{"kind":"intended_length","length":quantity(3.)}}}}),
+        );
+        assert_eq!(edited["part"], created["part"]);
+        let edited_doc = host.document();
+        let after = build(&edited_doc, 2);
+        let after_solid = after.solid(feature).unwrap();
+        assert!((after_solid.volume_mm3().unwrap() - before * 5.1 / 4.3).abs() < 1e-6);
+        let mesh = after_solid
+            .manufacturing_mesh_with_receipt(Default::default())
+            .unwrap();
+        assert!(mesh.edge_pairs > 0 && mesh.vertex_links > 0);
+        run("undo", json!({"expected_revision":2}));
+        assert_eq!(host.document(), original);
+        run("redo", json!({"expected_revision":3}));
+        assert_eq!(host.document(), edited_doc);
+        for args in [
+            json!({"expected_revision":3,"feature":feature,"recipe":{"kind":"wood_insert"}}),
+            json!({"expected_revision":4,"feature":feature,"recipe":{"kind":"hanger_bolt"}}),
+            json!({"expected_revision":4,"feature":feature,"recipe":{"kind":"wood_insert","inner_thread":{"major_diameter":quantity(30.)}}}),
+            json!({"expected_revision":4,"feature":feature,"recipe":{"kind":"wood_insert","inner_thread":{"length":quantity(9.)}}}),
+            json!({"expected_revision":4,"feature":feature,"recipe":{"kind":"wood_insert","outer_thread":{"origin":[quantity(1.),quantity(0.),quantity(0.)]}}}),
+            json!({"expected_revision":4,"feature":feature,"recipe":{"kind":"wood_insert","inner_thread":{"plane":"xz"}}}),
+        ] {
+            assert!(dispatch(&host, &call(false), "set_mechanical_part", args).is_err());
+            assert_eq!(host.document(), edited_doc);
+        }
+        run("save_project", json!({"expected_revision":4}));
+        let bytes = std::fs::read(&path).unwrap();
+        let reopened = Headless::with_geometry_backend(
+            Workspace::project(path.clone(), Box::new(Store)).unwrap(),
+            Some(directory.path().into()),
+            false,
+            GeometryBackend::Rust,
+        );
+        assert_eq!(reopened.document(), edited_doc);
+        let receipt = dispatch(
+            &reopened,
+            &call(false),
+            "export_step",
+            json!({"part":created["part"],"file_name":"authored.step"}),
+        )
+        .unwrap();
+        assert_eq!(
+            receipt["step_verification"]["method"],
+            "decoded_boundary_enclosure"
+        );
+        assert!(receipt["readback_volume_mm3"].is_null());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+}
 #[test]
 fn actual_mcp_export_keeps_mapped_insert_mass_provenance_and_document_unchanged() {
     let directory = tempfile::tempdir().unwrap();
