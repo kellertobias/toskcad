@@ -5,6 +5,7 @@ use crate::tapered_thread::interval::I;
 mod owned;
 mod placement;
 pub use owned::{
+    FaceMeasure, FaceMeasureOptions,
     LiteralEmbeddingProof, LiteralGeometryOptions, LiteralGeometryPlan, LiteralMesh,
     LiteralMeshCandidate, LiteralMeshOptions, Location, MaterialQuery, OwnedMaterial, QueryOptions,
 };

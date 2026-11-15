@@ -1,5 +1,7 @@
 //! Immutable actual literal geometry. No parser borrow or authored recipe.
 use super::*;
+mod measure;
+pub use measure::{FaceMeasure, FaceMeasureOptions};
 mod mesh;
 mod query;
 pub use mesh::{
