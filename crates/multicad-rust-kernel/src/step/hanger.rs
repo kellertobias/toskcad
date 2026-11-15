@@ -287,3 +287,8 @@ pub use encoded::{CapTopology, TrimEdge, TrimEdgeKind, TrimFace, TrimVertex};
 pub use encoded::PlainWall;
 
 pub use encoded::{CapLiteral, FileOptions, StepCandidate, encode_candidate};
+
+mod qualified;
+pub use qualified::{
+    QualifiedAppendReceipt, QualifiedExportOptions, QualifiedHangerStep, export_qualified_hanger,
+};

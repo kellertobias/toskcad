@@ -92,6 +92,7 @@ pub struct Boundary {
     faces: Vec<Face>,
     coedges: Vec<Coedge>,
     bytes: usize,
+    work: usize,
 }
 // Maximum16originalstarts: four simultaneous rim proposals and each <=32
 // coedges, plus fixed validation/iterator scratch, fit well inside64KiB. The
@@ -156,6 +157,7 @@ impl Hanger {
             faces: Vec::with_capacity(nf),
             coedges: Vec::with_capacity(2 * ne),
             bytes,
+            work: 0,
         };
         for component in [Component::Metric, Component::Wood] {
             let (starts, left) = b.settings(component);
@@ -330,6 +332,7 @@ impl Hanger {
         b.validate(nv, ne, nf, &mut w)?;
         b.check_memory(options.maximum_bytes)?;
         checkpoint(interrupt)?;
+        b.work = options.maximum_work - w.left;
         Ok(b)
     }
 }
@@ -360,6 +363,9 @@ impl Boundary {
     }
     pub fn curves(&self) -> &[Curve] {
         &self.curves
+    }
+    pub fn work_used(&self) -> usize {
+        self.work
     }
     pub fn retained_bytes(&self) -> usize {
         self.bytes

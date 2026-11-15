@@ -18,6 +18,7 @@ pub trait CapLiteral: sealed::Sealed {
     fn uv_weights(&self) -> &[EncodedScalar];
     fn range(&self) -> &[EncodedScalar; 2];
     fn reversed(&self) -> bool;
+    fn source_bounds(&self) -> [f64; 3];
     fn work_used(&self) -> usize;
     fn retained_bytes(&self) -> usize;
 }
@@ -48,6 +49,9 @@ macro_rules! cap_impl {
             }
             fn reversed(&self) -> bool {
                 $reverse
+            }
+            fn source_bounds(&self) -> [f64; 3] {
+                self.source_bounds()
             }
             fn work_used(&self) -> usize {
                 self.work_used()
@@ -86,6 +90,9 @@ pub struct StepCandidate {
     peak: usize,
 }
 impl StepCandidate {
+    pub(crate) fn into_string(self) -> String {
+        self.text
+    }
     pub fn as_str(&self) -> &str {
         &self.text
     }
