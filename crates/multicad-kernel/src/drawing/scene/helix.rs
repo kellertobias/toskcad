@@ -29,7 +29,7 @@ use std::f64::consts::{PI, TAU};
 
 /// One piece of the axial meridian profile in `(phase, radius)` coordinates.
 #[derive(Clone, Copy, Debug)]
-enum Span {
+pub(super) enum Span {
     Line {
         a: P2,
         b: P2,
@@ -45,7 +45,7 @@ enum Span {
 }
 
 impl Span {
-    fn range(&self) -> [f64; 2] {
+    pub(super) fn range(&self) -> [f64; 2] {
         match *self {
             Self::Line { a, b } => [a[0], b[0]],
             Self::Arc { range, .. } => range,
@@ -73,7 +73,7 @@ impl Span {
     }
 
     /// Radius and slope at a phase inside the span.
-    fn eval(&self, phi: f64) -> [f64; 2] {
+    pub(super) fn eval(&self, phi: f64) -> [f64; 2] {
         match *self {
             Self::Line { a, b } => {
                 let slope = (b[1] - a[1]) / (b[0] - a[0]);
@@ -92,12 +92,12 @@ impl Span {
         }
     }
 
-    fn point(&self, phi: f64) -> P2 {
+    pub(super) fn point(&self, phi: f64) -> P2 {
         [phi, self.eval(phi)[0]]
     }
 
     /// Phases inside the span where the radius is stationary.
-    fn stationary(&self) -> Option<f64> {
+    pub(super) fn stationary(&self) -> Option<f64> {
         match *self {
             Self::Line { a, b } => (a[1] == b[1]).then_some(0.5 * (a[0] + b[0])),
             Self::Arc { center, range, .. } => {
@@ -107,7 +107,7 @@ impl Span {
     }
 
     /// Phases inside the span where the radius equals `radius`.
-    fn at_radius(&self, radius: f64) -> Vec<f64> {
+    pub(super) fn at_radius(&self, radius: f64) -> Vec<f64> {
         let [lo, hi] = self.range();
         let within = |phi: &f64| *phi > lo && *phi < hi;
         match *self {
@@ -148,7 +148,7 @@ impl Span {
 
     /// Up to two intersections of the meridian line `alpha r + beta phi = gamma`
     /// with the span, as `(phi, r)`, tagged by root index.
-    fn meet(&self, alpha: f64, beta: f64, gamma: f64) -> Vec<(usize, P2)> {
+    pub(super) fn meet(&self, alpha: f64, beta: f64, gamma: f64) -> Vec<(usize, P2)> {
         match *self {
             Self::Line { a, b } => {
                 let [fa, fb] = [a, b].map(|p| alpha * p[1] + beta * p[0] - gamma);
@@ -170,7 +170,14 @@ impl Span {
 
     /// The `index`-th intersection of the meridian line with the full circle
     /// of an arc; with `clamp`, the nearest point when the line misses it.
-    fn arc_root(&self, alpha: f64, beta: f64, gamma: f64, index: usize, clamp: bool) -> Option<P2> {
+    pub(super) fn arc_root(
+        &self,
+        alpha: f64,
+        beta: f64,
+        gamma: f64,
+        index: usize,
+        clamp: bool,
+    ) -> Option<P2> {
         let Self::Arc {
             center,
             radius,
@@ -450,11 +457,11 @@ fn circle(a: P2, b: P2, c: P2) -> Option<P2> {
 /// distance. The engine hides only behind more than 1e-6 of the scene scale,
 /// and the linear tolerance of every source is at least 1e-7 mm, so neither
 /// visibility nor any published boundary depends on such material.
-const RESOLVED: f64 = 1e-10;
+pub(super) const RESOLVED: f64 = 1e-10;
 
 /// Roots of `f` on `[a, b]` with `|f'| <= lipschitz`: a stretch is excluded
 /// when its end values prove it free of zeros; sign changes are bisected.
-fn isolate(
+pub(super) fn isolate(
     f: &dyn Fn(f64) -> f64,
     [a, b]: [f64; 2],
     lipschitz: f64,
@@ -499,7 +506,7 @@ fn isolate(
 }
 
 /// Adaptive certified-in-practice flattening of an exact path.
-fn adaptive(point: &dyn Fn(f64) -> P3, tolerance: f64, start: usize) -> Vec<f64> {
+pub(super) fn adaptive(point: &dyn Fn(f64) -> P3, tolerance: f64, start: usize) -> Vec<f64> {
     let deviation = |a: f64, b: f64| {
         let [p, q] = [point(a), point(b)];
         [0.25, 0.5, 0.75]
@@ -719,9 +726,9 @@ impl Path for Outline {
 }
 
 /// A range of another path.
-struct Range {
-    path: Arc<dyn Path>,
-    range: [f64; 2],
+pub(super) struct Range {
+    pub(super) path: Arc<dyn Path>,
+    pub(super) range: [f64; 2],
 }
 
 impl Path for Range {

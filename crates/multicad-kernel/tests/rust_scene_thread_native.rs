@@ -175,6 +175,12 @@ fn compare(label: &str, solid: &Solid, native: &Solid, origin: [f64; 3]) -> Vec<
                 continue;
             }
         };
+        if reference.is_empty() && !rust.is_empty() {
+            // A native cut that publishes nothing is no reference either.
+            println!("{{\"case\":\"{label}\",\"native_unavailable\":\"no cut face published\"}}");
+            unavailable.push(label.clone());
+            continue;
+        }
         let tangent = project(
             solid,
             DrawingProjection {
@@ -553,5 +559,64 @@ fn internal_thread_treatment_groove_matches_native_open_cascade() {
             .iter()
             .all(|label| label.contains("side") || label.contains("oblique")),
         "{unavailable:?}"
+    );
+}
+
+/// The inventory's BSPT-like rounded pipe thread and an NPT-like flat one,
+/// each imported from its own STEP export.
+fn pipe(rounded: bool) -> Solid {
+    use multicad_kernel::rust_kernel::axial_pipe_thread::authored::{
+        AuthoredSection, AuthoredSpec,
+    };
+    let spec = if rounded {
+        let p = 25.4 / 28.;
+        AuthoredSpec {
+            major_radius_mm: 9.728 / 2. - 4. / 32.,
+            pitch_mm: p,
+            length_mm: 6.5,
+            radial_taper: 1. / 32.,
+            section: AuthoredSection::BsptRounded {
+                depth_mm: p / (3. * 27.5_f64.to_radians().tan()),
+            },
+            crest_radius_limit_mm: None,
+        }
+    } else {
+        let p = 25.4 / 18.;
+        AuthoredSpec {
+            major_radius_mm: 6.8,
+            pitch_mm: p,
+            length_mm: 5.5,
+            radial_taper: 1. / 32.,
+            section: AuthoredSection::NptFlat {
+                depth_mm: 0.8 * p,
+                flat_width_mm: 0.038 * p,
+            },
+            crest_radius_limit_mm: None,
+        }
+    };
+    Solid::rust_authored_axial_pipe_thread_with_interrupt(
+        spec,
+        EntityId::new(),
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+        None,
+    )
+    .unwrap()
+}
+
+#[test]
+fn axial_pipe_threads_match_native_open_cascade() {
+    let mut unavailable = check("bspt pipe", &pipe(true), [0.2, 0.1, 3.]);
+    unavailable.extend(check("npt pipe", &pipe(false), [0.2, 0.1, 2.75]));
+    // Measured: OpenCascade 7.9.3 publishes no cut face at all for the
+    // imported NPT thread in the side plane (both offsets), while it does
+    // for the axial and oblique cuts; those two are certified against the
+    // source's radial bounds in drawing::scene::pipe_tests.
+    assert_eq!(
+        unavailable,
+        [
+            "npt pipe side section-only",
+            "npt pipe side offset section-only"
+        ],
     );
 }
