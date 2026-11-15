@@ -1,4 +1,5 @@
 use super::*;
+use crate::step_read::phillips_cutter::physical::body::common_mouth::tests::derived_thread_probe::with_head as with_text_head;
 #[test]
 fn actual_m2_shared_crest_shoulder_has_original_complement_plane_and_bounded_transfer() {
     degree11::tests::with_head(&mut |head| {
@@ -311,12 +312,22 @@ fn actual_off_nominal_annular_shoulder_is_an_explicit_separate_family() {
     let text =
         crate::step::write_phillips_screw(&source, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
             .unwrap();
-    crate::step_read::phillips_cutter::physical::body::common_mouth::tests::derived_thread_probe::with_head(&text,&mut |head| {
-  let field=head.common_chart_periodic_thread_repair(Default::default(),None).unwrap();
-  let finite=head.periodic_thread_finite_curves(&field,Default::default(),None).unwrap();
-  assert_ne!(head.virtual_bottom_station()[0],field.source().radius_nodes_mm()[0]);
-  assert!(matches!(head.periodic_shared_crest_shoulder(&finite,Default::default(),None),Err(PhillipsReadError::Unsupported)));
- });
+    with_text_head(&text, &mut |head| {
+        let field = head
+            .common_chart_periodic_thread_repair(Default::default(), None)
+            .unwrap();
+        let finite = head
+            .periodic_thread_finite_curves(&field, Default::default(), None)
+            .unwrap();
+        assert_ne!(
+            head.virtual_bottom_station()[0],
+            field.source().radius_nodes_mm()[0]
+        );
+        assert!(matches!(
+            head.periodic_shared_crest_shoulder(&finite, Default::default(), None),
+            Err(PhillipsReadError::Unsupported)
+        ));
+    });
 }
 #[test]
 fn actual_five_nominal_metric_heads_and_posed_left_hand_join_matrix() {
@@ -330,13 +341,32 @@ fn actual_five_nominal_metric_heads_and_posed_left_hand_join_matrix() {
                 ([0.; 3], [1., 0., 0.], [0., 1., 0.])
             };
             let text = crate::step::write_phillips_screw(&source, o, u, v, 1e-7).unwrap();
-            crate::step_read::phillips_cutter::physical::body::common_mouth::tests::derived_thread_probe::with_head(&text,&mut |head| {
-   let field=head.common_chart_periodic_thread_repair(Default::default(),None).unwrap();
-   let finite=head.periodic_thread_finite_curves(&field,Default::default(),None).unwrap();
-   let join=head.periodic_shared_crest_shoulder(&finite,Default::default(),None);
-   eprintln!("NOMINAL SHOULDER index{index} left{left} bottom{:?} threadR{} accepted{}",head.virtual_bottom_station(),field.source().radius_nodes_mm()[0],join.is_ok());
-   let join=join.unwrap();assert!(join.original_complement().distance_mm<1e-7&&join.plane_distance_mm()<1e-7);
-  });
+            with_text_head(&text, &mut |head| {
+                let field = head
+                    .common_chart_periodic_thread_repair(Default::default(), None)
+                    .unwrap();
+                let finite = head
+                    .periodic_thread_finite_curves(&field, Default::default(), None)
+                    .unwrap();
+                let join = head.periodic_shared_crest_shoulder(&finite, Default::default(), None);
+                eprintln!(
+                    "NOMINAL SHOULDER index{index} left{left} bottom{:?} threadR{} accepted{}",
+                    head.virtual_bottom_station(),
+                    field.source().radius_nodes_mm()[0],
+                    join.is_ok()
+                );
+                let join = join.unwrap();
+                let material = head
+                    .periodic_closed_material(&join, Default::default(), None)
+                    .unwrap();
+                assert!(material.containment().axial_floor_clearance_mm() > 1e-7);
+                assert!(material.containment().minimum_radial_clearance_mm() > 1e-7);
+                assert!(material.boundary_faces().count() > 30);
+                assert!(
+                    join.original_complement().distance_mm < 1e-7
+                        && join.plane_distance_mm() < 1e-7
+                );
+            });
         }
     }
 }

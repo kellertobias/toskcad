@@ -7,8 +7,9 @@ mod curve;
 mod finite;
 pub use common_chart::CommonChartPeriodicThreadRepair;
 pub use finite::{
-    PeriodicFiniteCurve, PeriodicFiniteCurves, PeriodicFiniteKind, PeriodicFiniteOptions,
-    PeriodicShoulderOptions, PeriodicShoulderRepair,
+    PeriodicClosedMaterial, PeriodicFiniteCurve, PeriodicFiniteCurves, PeriodicFiniteKind,
+    PeriodicFiniteOptions, PeriodicMaterialFace, PeriodicMaterialOptions, PeriodicShoulderOptions,
+    PeriodicShoulderRepair,
 };
 mod periodic;
 mod rotation;

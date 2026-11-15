@@ -239,10 +239,11 @@ pub use physical::{
     Degree11ContactOptions, Degree11DomainEnd, Degree11RimContact, Degree11RimContactId,
     Degree11RimKnot, Degree11SignDomain, Degree11ThreadContacts, Degree11ThreadFace,
     Degree11ThreadOptions, DerivedThreadCarrier, DerivedThreadOptions, DyadicParameter,
-    OccupiedDerivedThread, PeriodicFiniteCurve, PeriodicFiniteCurves, PeriodicFiniteKind,
-    PeriodicFiniteOptions, PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicThreadBounds,
-    PeriodicThreadRepair, PeriodicThreadSource, RimContact, RimContactId, RimDomainEnd,
-    RimDomainRole, RimKnot, RimSignDomain, ThreadCarrierTransfer, ThreadContactOptions,
+    OccupiedDerivedThread, PeriodicClosedMaterial, PeriodicFiniteCurve, PeriodicFiniteCurves,
+    PeriodicFiniteKind, PeriodicFiniteOptions, PeriodicMaterialFace, PeriodicMaterialOptions,
+    PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicThreadBounds, PeriodicThreadRepair,
+    PeriodicThreadSource, RimContact, RimContactId, RimDomainEnd, RimDomainRole, RimKnot,
+    RimSignDomain, ThreadCarrierTransfer, ThreadContactOptions,
 };
 
 pub use physical::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSource};

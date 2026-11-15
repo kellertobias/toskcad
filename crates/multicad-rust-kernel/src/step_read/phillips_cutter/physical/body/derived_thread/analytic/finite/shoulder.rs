@@ -4,7 +4,9 @@
 use super::*;
 use crate::head_profile::RepairedHeadMeridian;
 mod domain;
+mod material;
 mod plane;
+pub use material::{PeriodicClosedMaterial, PeriodicMaterialFace, PeriodicMaterialOptions};
 #[cfg(test)]
 mod tests;
 const TOTAL: usize = 64_000_000;
