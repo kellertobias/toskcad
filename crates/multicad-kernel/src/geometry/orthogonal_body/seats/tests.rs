@@ -1,16 +1,16 @@
 use super::*;
-fn fixture() -> (EntityId, Solid, Solid, [OrthogonalCountersink; 2]) {
+fn raw_fixture(offset: Point) -> (EntityId, Solid, [OrthogonalCountersink; 2]) {
     let policy = GeometryPolicy::default();
     let owner = EntityId::new();
     let geometry = orthogonal::boolean(
         &[
             Box3 {
-                min: [0.; 3],
-                max: [40., 40., 5.],
+                min: offset,
+                max: std::array::from_fn(|i| offset[i] + [40., 40., 5.][i]),
             },
             Box3 {
-                min: [0.; 3],
-                max: [40., 5., 40.],
+                min: offset,
+                max: std::array::from_fn(|i| offset[i] + [40., 5., 40.][i]),
             },
         ],
         &[],
@@ -28,7 +28,11 @@ fn fixture() -> (EntityId, Solid, Solid, [OrthogonalCountersink; 2]) {
     .enumerate()
     .map(
         |(i, [origin, displacement_mm, u, v])| crate::CircularPocketTool {
-            frame: PlaneFrame { origin, u, v },
+            frame: PlaneFrame {
+                origin: std::array::from_fn(|i| origin[i] + offset[i]),
+                u,
+                v,
+            },
             center_uv: [0.; 2],
             radius_mm: 4.5,
             displacement_mm,
@@ -54,8 +58,12 @@ fn fixture() -> (EntityId, Solid, Solid, [OrthogonalCountersink; 2]) {
             role: format!("angle.countersink.{bore}"),
         },
     });
+    (owner, drilled, seats)
+}
+fn fixture() -> (EntityId, Solid, Solid, [OrthogonalCountersink; 2]) {
+    let (owner, drilled, seats) = raw_fixture([0.; 3]);
     let body = drilled
-        .rust_countersink_orthogonal(&seats, policy, None)
+        .rust_countersink_orthogonal(&seats, GeometryPolicy::default(), None)
         .unwrap();
     (owner, drilled, body, seats)
 }
@@ -187,4 +195,102 @@ fn original_native_stock_and_actual_seats_remain_unchanged_on_refusal_or_cancel(
         GeometryErrorKind::Unsupported
     );
     assert_eq!(before, drilled.topology_snapshot(owner, 0).unwrap());
+}
+#[test]
+fn actual_conical_azimuth_weights_have_policy_bounded_centroid_covariance() {
+    let (_, _, body, _) = fixture();
+    let shear = 2_f64.powi(-42);
+    let actual = body
+        .transformed(RigidTransform {
+            rotation: [[1., 0., 0.], [shear, 1., 0.], [0., 0., 1.]],
+            translation_mm: [11., -7., 5.],
+        })
+        .unwrap();
+    let measured = actual.rust_orthogonal_countersink_measures().unwrap();
+    assert!(
+        measured.maximum_centroid_error_mm <= GeometryPolicy::default().linear_tolerance_mm / 4.
+    );
+    let (source, frame) = actual.rust_orthogonal_countersink_source().unwrap();
+    let seat = source.seats()[1];
+    let bore = source.bores()[seat.bore];
+    let end = usize::from(seat.end);
+    let center = bore.centers_mm[end];
+    let normal = source.boundary().faces[bore.faces[end]].normal;
+    let axis = (0..3).find(|&i| normal[i] != 0.).unwrap();
+    let u = (axis + 1) % 3;
+    let v = (axis + 2) % 3;
+    let axes = [frame.u, frame.v, frame.normal()];
+    let cof = [
+        cross(axes[1], axes[2]),
+        cross(axes[2], axes[0]),
+        cross(axes[0], axes[1]),
+    ];
+    let slope = (seat.radius_mm - bore.radius_mm) / seat.depth_mm;
+    let mut weight = 0.;
+    let mut cosine = 0.;
+    let mut sine = 0.;
+    let mut min = f64::INFINITY;
+    let mut max = 0_f64;
+    // Numerical regression witness only. The production enclosure above uses
+    // whole-support Jacobian bounds, independent of these quadrature samples.
+    for i in 0..4096 {
+        let theta = TAU * (i as f64 + 0.5) / 4096.;
+        let (s, c) = theta.sin_cos();
+        let mut n = normal.map(|x| x * slope);
+        n[u] -= c;
+        n[v] -= s;
+        let world =
+            std::array::from_fn::<_, 3, _>(|j| (0..3).map(|k| cof[k][j] * n[k]).sum::<f64>());
+        let w = world[0].hypot(world[1]).hypot(world[2]);
+        weight += w;
+        cosine += w * c;
+        sine += w * s;
+        min = min.min(w);
+        max = max.max(w);
+    }
+    assert!(max - min > 1e-14);
+    let r = bore.radius_mm;
+    let outer = seat.radius_mm;
+    let radial = 2. * (outer * outer + outer * r + r * r) / (3. * (outer + r));
+    let depth = seat.depth_mm * (outer + 2. * r) / (3. * (outer + r));
+    let mut local = std::array::from_fn(|j| center[j] - normal[j] * depth);
+    local[u] += radial * cosine / weight;
+    local[v] += radial * sine / weight;
+    let numerical = transform_point(frame, local);
+    let index = source.boundary().faces.len() + source.bores().len() + 1;
+    let bound = measured.face_centroid_mm[index];
+    for j in 0..3 {
+        assert!(
+            bound[j][0] <= numerical[j] && numerical[j] <= bound[j][1],
+            "{bound:?} vs {numerical:?}"
+        );
+    }
+    let face = actual.faces().unwrap()[index].clone();
+    for (j, b) in bound.iter().enumerate() {
+        assert!(b[0] <= face.center_mm[j] && face.center_mm[j] <= b[1]);
+    }
+}
+
+#[test]
+fn ill_conditioned_original_moments_refuse_without_widening_policy_or_mutating_stock() {
+    let (owner, drilled, seats) = raw_fixture([1e6; 3]);
+    let before = drilled.topology_snapshot(owner, 0).unwrap();
+    let error = drilled
+        .rust_countersink_orthogonal(&seats, GeometryPolicy::default(), None)
+        .err()
+        .unwrap();
+    assert_eq!(error.kind, GeometryErrorKind::Unsupported);
+    assert!(error.message.contains("centroid"), "{error}");
+    assert_eq!(before, drilled.topology_snapshot(owner, 0).unwrap());
+    // Authoring the same local stock canonically and placing the admitted body
+    // keeps finite moment conditioning; no existing source is recentered.
+    let (_, _, canonical, _) = fixture();
+    let placed = canonical
+        .transformed(RigidTransform {
+            translation_mm: [1e6; 3],
+            ..Default::default()
+        })
+        .unwrap();
+    let bound = placed.rust_orthogonal_countersink_measures().unwrap();
+    assert!(bound.maximum_centroid_error_mm <= GeometryPolicy::default().linear_tolerance_mm / 4.);
 }
