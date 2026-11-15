@@ -9,12 +9,13 @@
 //!
 //! Exactness: rails, cap curves, outline curves and section curves are exact
 //! evaluable paths (closed-form points, or closed-form roots of the meridian
-//! line and the profile). Material along a line is isolated with a proven
-//! Lipschitz bound, so no crossing is lost except where the line stays within
-//! about 1e-12 of the surface. The flattening of helical paths and the
-//! location of a few events on them (outline existence, z-range ends, cap
-//! levels of section branches) use dense sampling and bisection on the exact
-//! functions rather than a proven bound.
+//! line and the profile). Every event is isolated with a proven bound: line
+//! material, section sweep events, outline existence (roots of the
+//! discriminant), contour ends on the caps, and branch ends on the caps (the
+//! exact cap chord ends). Helices and cap curves flatten with proven
+//! curvature bounds. Contour and section branch paths still flatten
+//! adaptively: near a branch end their parametrisation has a square-root
+//! singularity, so no uniform derivative bound exists.
 use super::paths::{Lift, Segment, add, dot3, scaled};
 use super::prism::{Band, Prism};
 use super::profile::merge;
@@ -350,7 +351,13 @@ fn circle(a: P2, b: P2, c: P2) -> Option<P2> {
 }
 
 /// Distance from the surface, in millimetres, below which a line is not
-/// resolved further.
+/// resolved further. Harmless: an unresolved stretch is one where the line
+/// stays within this distance of the surface on both sides, so any material
+/// it misses is thinner than 1e-10 mm across the line and at most as long as
+/// the stretch, where the Lipschitz bound times the length is below the same
+/// distance. The engine hides only behind more than 1e-6 of the scene scale,
+/// and the linear tolerance of every source is at least 1e-7 mm, so neither
+/// visibility nor any published boundary depends on such material.
 const RESOLVED: f64 = 1e-10;
 
 /// Roots of `f` on `[a, b]` with `|f'| <= lipschitz`: a stretch is excluded
@@ -517,8 +524,15 @@ impl Path for Cap {
     }
 
     fn flatten(&self, tolerance_mm: f64) -> Vec<f64> {
-        let start = ((self.range[1] - self.range[0]).abs() * 16.).ceil() as usize;
-        adaptive(&|t| self.point(t), tolerance_mm, start)
+        // |d2P/dtheta2| <= k^2 |R''| + 2 |k R'| + R inside one span, so a
+        // chord over an angle h deviates by at most that bound times h^2 / 8.
+        let profile = &self.law.profile;
+        let k = self.law.rate.abs();
+        let second = k * k * profile.curvature + 2. * k * profile.slope + profile.maximum;
+        let step = (8. * tolerance_mm / second).sqrt().min(0.5);
+        let count = ((self.range[1] - self.range[0]).abs() / step).ceil();
+        let count = (count as usize).clamp(1, 1 << 20);
+        (0..=count).map(|i| i as f64 / count as f64).collect()
     }
 
     fn paper(&self, [from, to]: [f64; 2]) -> Option<Curve> {
@@ -550,6 +564,19 @@ struct Outline {
 impl Outline {
     /// The outline angle at a phase, if the branch exists there.
     fn angle(law: &Law, span: &Span, view: P3, sign: f64, phi: f64) -> Option<f64> {
+        Self::angle_within(law, span, view, sign, phi, 0.)
+    }
+
+    /// As `angle`, admitting the branch up to a relative `slack` beyond its
+    /// end, where the acos term is evaluated at its limit.
+    fn angle_within(
+        law: &Law,
+        span: &Span,
+        view: P3,
+        sign: f64,
+        phi: f64,
+        slack: f64,
+    ) -> Option<f64> {
         let [r, slope] = span.eval(phi);
         let rho = view[0].hypot(view[1]);
         let alpha = view[1].atan2(view[0]);
@@ -557,20 +584,18 @@ impl Outline {
         let b = law.rate * slope * rho;
         let c = -r * slope * view[2];
         let norm = a.hypot(b);
-        if norm <= 1e-300 || c.abs() > norm {
+        if norm <= 1e-300 || c.abs() > norm * (1. + slack) {
             return None;
         }
         // atan2(b, a) is continuous as pi + atan2(-b, -a) since a < 0.
-        Some(alpha + PI + (-b).atan2(-a) + sign * (c / norm).acos())
+        Some(alpha + PI + (-b).atan2(-a) + sign * (c / norm).clamp(-1., 1.).acos())
     }
 
     fn at(&self, phi: f64) -> P3 {
-        let theta =
-            Self::angle(&self.law, &self.span, self.view, self.sign, phi).unwrap_or_else(|| {
-                // At a branch end the root is the limit of the acos term.
-                let inner = Self::angle(&self.law, &self.span, self.view, self.sign, phi);
-                inner.unwrap_or(0.)
-            });
+        // Branch ends are isolated roots of the discriminant, where rounding
+        // can put the acos argument just beyond one: take its limit there.
+        let theta = Self::angle_within(&self.law, &self.span, self.view, self.sign, phi, 1e-9)
+            .unwrap_or(f64::NAN);
         let r = self.span.eval(phi)[0];
         self.law
             .surface(r, theta, phi + self.law.rate * theta + self.copy)
@@ -1077,31 +1102,13 @@ impl Thread {
 
     /// The cap curve at `level` as pieces of at most a quarter turn.
     fn cap(&self, level: f64) -> Vec<Arc<dyn Path>> {
-        let profile = &self.law.profile;
-        let rate = self.rate();
         let mut output: Vec<Arc<dyn Path>> = Vec::new();
-        // theta in [0, 2pi): phi = level - rate * theta.
-        let mut cuts = vec![0., TAU];
-        for m in self.copies() {
-            for span in &profile.spans {
-                let phi = span.range()[0] + m as f64 * self.pitch();
-                let theta = (level - phi) / rate;
-                if theta > 0. && theta < TAU {
-                    cuts.push(theta);
-                }
-            }
-        }
-        cuts.sort_by(f64::total_cmp);
-        cuts.dedup_by(|a, b| (*a - *b).abs() <= 1e-14);
-        for pair in cuts.windows(2) {
-            let mid = 0.5 * (pair[0] + pair[1]);
-            let (index, base) = profile.locate(level - rate * mid);
-            let span = profile.spans[index].shifted(base);
-            let count = ((pair[1] - pair[0]) / (PI / 2.)).ceil().max(1.) as usize;
+        for (span, [a, b]) in self.cap_pieces(level) {
+            let count = ((b - a) / (PI / 2.)).ceil().max(1.) as usize;
             for k in 0..count {
                 let range = [
-                    pair[0] + (pair[1] - pair[0]) * k as f64 / count as f64,
-                    pair[0] + (pair[1] - pair[0]) * (k + 1) as f64 / count as f64,
+                    a + (b - a) * k as f64 / count as f64,
+                    a + (b - a) * (k + 1) as f64 / count as f64,
                 ];
                 output.push(Arc::new(Cap {
                     law: self.law.clone(),
@@ -1114,7 +1121,7 @@ impl Thread {
         output
     }
 
-    fn outlines(&self, output: &mut Vec<Candidate>) {
+    fn outlines(&self, output: &mut Vec<Candidate>) -> Result<(), GeometryError> {
         let view = self.local_vector([0., 0., 1.]);
         let rho = view[0].hypot(view[1]);
         let profile = &self.law.profile;
@@ -1127,8 +1134,9 @@ impl Thread {
                     self.helix(phi, span.eval(phi)[0], Kind::Outline, output);
                 }
             }
-            return;
+            return Ok(());
         }
+        let ends = self.contour_on_caps(view)?;
         for span in &profile.spans {
             if span.flat().is_some() {
                 // A cylindrical crest or root band: its outlines are the
@@ -1136,44 +1144,93 @@ impl Thread {
                 self.flat_outlines(span, view, output);
                 continue;
             }
+            // Phase ranges where the branches exist: D = A^2 + B^2 - C^2 >= 0
+            // with A = -R rho, B = k R' rho, C = -R R' v_z, isolated with a
+            // proven Lipschitz bound of D.
+            let [a, b] = span.range();
+            let k = self.rate();
+            let (rmax, slope, curvature) = (profile.maximum, profile.slope, profile.curvature);
+            let vz2 = view[2] * view[2];
+            let discriminant = |phi: f64| {
+                let [r, d] = span.eval(phi);
+                r * r * rho * rho + k * k * d * d * rho * rho - r * r * d * d * vz2
+            };
+            let lipschitz = 2. * rmax * slope * rho * rho
+                + 2. * k * k * slope * curvature * rho * rho
+                + 2. * rmax * slope * (slope * slope + rmax * curvature) * vz2
+                + 1e-12;
+            let mut roots = Vec::new();
+            isolate(&discriminant, [a, b], lipschitz, &mut roots)?;
+            let mut stops = vec![a];
+            stops.extend(roots.into_iter().filter(|x| *x > a && *x < b));
+            stops.push(b);
+            let ranges: Vec<[f64; 2]> = stops
+                .windows(2)
+                .filter(|pair| pair[1] > pair[0] && discriminant(0.5 * (pair[0] + pair[1])) >= 0.)
+                .map(|pair| [pair[0], pair[1]])
+                .collect();
             for sign in [-1., 1.] {
-                // Phase ranges where the branch exists.
-                let [a, b] = span.range();
-                let samples = 256;
-                let exists = |phi: f64| Outline::angle(&self.law, span, view, sign, phi).is_some();
-                let mut ranges = Vec::new();
-                let mut start = exists(a).then_some(a);
-                let mut previous = (a, exists(a));
-                for i in 1..=samples {
-                    let phi = a + (b - a) * i as f64 / samples as f64;
-                    let state = exists(phi);
-                    if state != previous.1 {
-                        let [mut lo, mut hi] = [previous.0, phi];
-                        for _ in 0..80 {
-                            let mid = 0.5 * (lo + hi);
-                            if exists(mid) == previous.1 {
-                                lo = mid;
-                            } else {
-                                hi = mid;
-                            }
-                        }
-                        let edge = if previous.1 { lo } else { hi };
-                        if state {
-                            start = Some(edge);
-                        } else if let Some(s) = start.take() {
-                            ranges.push([s, edge]);
-                        }
-                    }
-                    previous = (phi, state);
-                }
-                if let Some(s) = start {
-                    ranges.push([s, b]);
-                }
-                for range in ranges {
-                    self.outline_copies(span, sign, range, view, output);
+                for &range in &ranges {
+                    self.outline_copies(span, sign, range, view, &ends, output);
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Spans of the cap curve at `level` over `theta` in `[0, 2pi]`, each
+    /// within one span of the profile.
+    fn cap_pieces(&self, level: f64) -> Vec<(Span, [f64; 2])> {
+        let profile = &self.law.profile;
+        let rate = self.rate();
+        let mut cuts = vec![0., TAU];
+        for m in self.copies() {
+            for span in &profile.spans {
+                let phi = span.range()[0] + m as f64 * self.pitch();
+                let theta = (level - phi) / rate;
+                if theta > 0. && theta < TAU {
+                    cuts.push(theta);
+                }
+            }
+        }
+        cuts.sort_by(f64::total_cmp);
+        cuts.dedup_by(|a, b| (*a - *b).abs() <= 1e-14);
+        cuts.windows(2)
+            .map(|pair| {
+                let mid = 0.5 * (pair[0] + pair[1]);
+                let (index, base) = profile.locate(level - rate * mid);
+                (profile.spans[index].shifted(base), [pair[0], pair[1]])
+            })
+            .collect()
+    }
+
+    /// Angles on each cap curve where the surface normal is perpendicular to
+    /// the sight: there contour curves end on the cap. Isolated with a proven
+    /// Lipschitz bound of `n . v` along the cap curve.
+    fn contour_on_caps(&self, view: P3) -> Result<Vec<(f64, f64)>, GeometryError> {
+        let profile = &self.law.profile;
+        let k = self.rate();
+        let rho = view[0].hypot(view[1]);
+        let alpha = view[1].atan2(view[0]);
+        let (rmax, slope, curvature) = (profile.maximum, profile.slope, profile.curvature);
+        let lipschitz = rho * (k.abs() * slope + rmax)
+            + rho * k.abs() * (k.abs() * curvature + slope)
+            + view[2].abs() * k.abs() * (slope * slope + rmax * curvature)
+            + 1e-12;
+        let mut output = Vec::new();
+        for level in self.z {
+            for (span, range) in self.cap_pieces(level) {
+                let g = |theta: f64| {
+                    let [r, d] = span.eval(level - k * theta);
+                    let psi = theta - alpha;
+                    -r * rho * psi.cos() + k * d * rho * psi.sin() + r * d * view[2]
+                };
+                let mut roots = Vec::new();
+                isolate(&g, range, lipschitz, &mut roots)?;
+                output.extend(roots.into_iter().map(|theta| (level, theta)));
+            }
+        }
+        Ok(output)
     }
 
     fn outline_copies(
@@ -1182,33 +1239,47 @@ impl Thread {
         sign: f64,
         range: [f64; 2],
         view: P3,
+        ends: &[(f64, f64)],
         output: &mut Vec<Candidate>,
     ) {
         let law = &self.law;
-        let base = |phi: f64| -> f64 {
-            let theta = Outline::angle(law, span, view, sign, phi).unwrap_or(0.);
-            phi + law.rate * theta
-        };
-        let samples = 128;
-        let zs: Vec<f64> = (0..=samples)
-            .map(|i| base(range[0] + (range[1] - range[0]) * i as f64 / samples as f64))
-            .collect();
-        let lo = zs.iter().copied().fold(f64::INFINITY, f64::min);
-        let hi = zs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let k = law.rate;
+        let angle = |phi: f64| Outline::angle(law, span, view, sign, phi);
+        // theta lies within 3pi/2 of alpha + pi, which bounds z = phi + k theta.
+        let alpha = view[1].atan2(view[0]);
+        let reach = k.abs() * 1.5 * PI;
+        let lo = range[0] + k * (alpha + PI) - reach;
+        let hi = range[1] + k * (alpha + PI) + reach;
         let first = ((self.z[0] - hi) / self.pitch()).floor() as i64 - 1;
         let last = ((self.z[1] - lo) / self.pitch()).ceil() as i64 + 1;
+        let middle = 0.5 * (range[0] + range[1]);
         for m in first..=last {
             let copy = m as f64 * self.pitch();
-            let outline = Outline {
-                law: law.clone(),
-                span: *span,
-                sign,
-                copy,
-                range,
-                view,
-            };
-            let z = |t: f64| base(outline.phi(t)) + copy;
-            for piece in self.within(&z, samples) {
+            let z = |phi: f64| angle(phi).map(|theta| phi + k * theta + copy);
+            // Ends on a cap: contour points of the cap curves on this branch.
+            let mut stops = vec![range[0], range[1]];
+            for &(level, theta) in ends {
+                let phi = level - k * theta;
+                let phi = phi - self.pitch() * ((phi - middle) / self.pitch()).round();
+                if phi <= range[0] || phi >= range[1] {
+                    continue;
+                }
+                let Some(own) = angle(phi) else { continue };
+                let turn = (own - theta).rem_euclid(TAU);
+                let same = turn.min(TAU - turn) < 1e-7;
+                if same && z(phi).is_some_and(|value| (value - level).abs() < 1e-7) {
+                    stops.push(phi);
+                }
+            }
+            stops.sort_by(f64::total_cmp);
+            stops.dedup_by(|x, y| (*x - *y).abs() <= 1e-13);
+            for pair in stops.windows(2) {
+                let inside = z(0.5 * (pair[0] + pair[1]))
+                    .is_some_and(|value| value > self.z[0] && value < self.z[1]);
+                if !inside || pair[1] - pair[0] <= 1e-13 {
+                    continue;
+                }
+                let width = range[1] - range[0];
                 output.push(Candidate {
                     kind: Kind::Outline,
                     path: Arc::new(Range {
@@ -1220,49 +1291,11 @@ impl Thread {
                             range,
                             view,
                         }),
-                        range: piece,
+                        range: [(pair[0] - range[0]) / width, (pair[1] - range[0]) / width],
                     }),
                 });
             }
         }
-    }
-
-    /// Parameter ranges of `[0, 1]` where `z(t)` lies in the material range.
-    fn within(&self, z: &dyn Fn(f64) -> f64, samples: usize) -> Vec<[f64; 2]> {
-        let inside = |t: f64| {
-            let value = z(t);
-            value > self.z[0] && value < self.z[1]
-        };
-        let mut output = Vec::new();
-        let mut start = inside(0.).then_some(0.);
-        let mut previous = (0., inside(0.));
-        for i in 1..=samples {
-            let t = i as f64 / samples as f64;
-            let state = inside(t);
-            if state != previous.1 {
-                let [mut lo, mut hi] = [previous.0, t];
-                for _ in 0..80 {
-                    let mid = 0.5 * (lo + hi);
-                    if inside(mid) == previous.1 {
-                        lo = mid;
-                    } else {
-                        hi = mid;
-                    }
-                }
-                let edge = 0.5 * (lo + hi);
-                if state {
-                    start = Some(edge);
-                } else if let Some(s) = start.take() {
-                    output.push([s, edge]);
-                }
-            }
-            previous = (t, state);
-        }
-        if let Some(s) = start {
-            output.push([s, 1.]);
-        }
-        output.retain(|[a, b]| b - a > 1e-12);
-        output
     }
 
     /// Generators of a cylindrical band where the radius is perpendicular to
@@ -1404,6 +1437,12 @@ impl Thread {
                 }
             }
         }
+        // Chords of the caps; their ends are where section branches meet a cap.
+        let mut chords = Vec::new();
+        for level in self.z {
+            chords.extend(self.cap_chord(n, c, level)?);
+        }
+        let chord_ends: Vec<P3> = chords.iter().flatten().copied().collect();
         // General plane: sweep the meridian half-plane once around the axis.
         for m in self.copies() {
             for span in &profile.spans {
@@ -1455,22 +1494,40 @@ impl Thread {
                             range: [pair[0], pair[1]],
                             touching: [touch(pair[0]), touch(pair[1])],
                         });
-                        let z = |t: f64| law.local(sweep.point(t))[2];
-                        for piece in self.within(&z, 64) {
-                            output.push(Arc::new(Range {
-                                path: sweep.clone(),
-                                range: piece,
-                            }));
+                        // The branch leaves the material only through a cap,
+                        // at an end of that cap's exact chord.
+                        let mut stops = vec![0., 1.];
+                        for point in &chord_ends {
+                            let theta = point[1].atan2(point[0]).rem_euclid(TAU);
+                            for theta in [theta, theta + TAU, theta - TAU] {
+                                if theta <= pair[0] || theta >= pair[1] {
+                                    continue;
+                                }
+                                let t = (theta - pair[0]) / (pair[1] - pair[0]);
+                                let q = law.local(sweep.point(t));
+                                let d = add(q, scaled(*point, -1.));
+                                if dot3(d, d).sqrt() < 1e-6 {
+                                    stops.push(t);
+                                }
+                            }
+                        }
+                        stops.sort_by(f64::total_cmp);
+                        stops.dedup_by(|x, y| (*x - *y).abs() <= 1e-13);
+                        for piece in stops.windows(2) {
+                            let z = law.local(sweep.point(0.5 * (piece[0] + piece[1])))[2];
+                            if z > self.z[0] && z < self.z[1] && piece[1] - piece[0] > 1e-13 {
+                                output.push(Arc::new(Range {
+                                    path: sweep.clone(),
+                                    range: [piece[0], piece[1]],
+                                }));
+                            }
                         }
                     }
                 }
             }
         }
-        // Chords of the caps.
-        for level in self.z {
-            for [a, b] in self.cap_chord(n, c, level)? {
-                output.push(Arc::new(Segment(law.view(a), law.view(b))));
-            }
+        for [a, b] in chords {
+            output.push(Arc::new(Segment(law.view(a), law.view(b))));
         }
         Ok(output)
     }
@@ -1549,7 +1606,7 @@ impl Member for Thread {
                 path,
             }));
         }
-        self.outlines(&mut output);
+        self.outlines(&mut output)?;
         if let Some((_, _, prism)) = &self.neck {
             output.extend(prism.candidates(tolerance_mm)?);
         }
