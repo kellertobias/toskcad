@@ -291,6 +291,62 @@ fn thread_entry_chamfer_matches_native_open_cascade() {
     );
 }
 
+fn screw(socket: bool) -> Solid {
+    use multicad_kernel::rust_kernel::headed_screw::{ScrewHead, ScrewSpec};
+    let root = 1. / (4. * 3_f64.sqrt());
+    Solid::rust_machine_screw(
+        HelicalThread {
+            major_radius_mm: 3.,
+            pitch_mm: 1.,
+            length_mm: 6.6,
+            depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().tan()) - root,
+            crest_width_mm: 0.125,
+            lower_flank_deg: 30.,
+            upper_flank_deg: 30.,
+            radial_taper: 0.,
+            starts: 1,
+            left_hand: false,
+        },
+        Some(root),
+        if socket {
+            ScrewSpec {
+                head: ScrewHead::SocketCap {
+                    radius_mm: 4.5,
+                    height_mm: 3.,
+                    socket_across_flats_mm: 3.,
+                    socket_depth_mm: 1.5,
+                },
+                shank_length_mm: 2.,
+                shank_radius_mm: 3.,
+            }
+        } else {
+            ScrewSpec {
+                head: ScrewHead::ExternalHex {
+                    across_flats_mm: 10.,
+                    height_mm: 4.,
+                },
+                shank_length_mm: 0.,
+                shank_radius_mm: 3.,
+            }
+        },
+        EntityId::new(),
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn machine_screws_match_native_open_cascade() {
+    for (label, socket, origin) in [
+        ("socket screw", true, [0.2, 0.1, 1.2]),
+        ("hex screw", false, [0.2, 0.1, -0.8]),
+    ] {
+        let unavailable = check(label, &screw(socket), origin);
+        assert!(unavailable.is_empty(), "{label}: {unavailable:?}");
+    }
+}
+
 #[test]
 fn rounded_thread_bore_matches_native_open_cascade() {
     assert!(check("bore", &rounded_bore(), [0.2, 0.1, 2.35]).is_empty());

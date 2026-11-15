@@ -412,6 +412,19 @@ fn cone_crossings(span: &Span, cone: &Cone) -> Vec<f64> {
         .collect()
 }
 
+/// A counterclockwise hexagon ring of the given width across flats.
+fn hexagon(across_flats_mm: f64) -> Vec<Edge> {
+    let corners = multicad_rust_kernel::headed_screw::hex_vertices(across_flats_mm);
+    (0..6)
+        .map(|i| {
+            Edge::Planar(normal_sweep::Edge::Line {
+                a: corners[i],
+                b: corners[(i + 1) % 6],
+            })
+        })
+        .collect()
+}
+
 /// The center of the circle through three points.
 fn circle(a: P2, b: P2, c: P2) -> Option<P2> {
     let d = 2. * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
@@ -797,6 +810,9 @@ pub(in crate::drawing) struct Thread {
     stock: Option<(f64, Prism)>,
     /// For an entry chamfer: the cone trimming the crests near the entry.
     cone: Option<Cone>,
+    /// For a screw: the shank and head, a prism ending at the thread's start
+    /// level whose cross-section there contains the thread's.
+    base: Option<Prism>,
     tolerance: f64,
 }
 
@@ -1025,6 +1041,78 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
                 neck: Some((neck, span, prism)),
                 stock: None,
                 cone: None,
+                base: None,
+                tolerance,
+            })
+        })());
+    }
+    if let Some((screw, frame)) = solid.rust_machine_screw_geometry() {
+        let thread = screw.thread();
+        let Some(profile) = Profile::from_helical(thread) else {
+            return Some(Err(invalid()));
+        };
+        let (origin, axes) = place(frame);
+        let spec = screw.spec();
+        let top = screw.head_top_z();
+        let seat = screw.head_seat_z();
+        let outline = |head: multicad_rust_kernel::headed_screw::ScrewHead| -> Vec<Edge> {
+            use multicad_rust_kernel::headed_screw::ScrewHead;
+            match head {
+                ScrewHead::SocketCap { radius_mm, .. } => {
+                    vec![Edge::Planar(normal_sweep::Edge::Circle {
+                        center: [0.; 2],
+                        radius_mm,
+                        clockwise: false,
+                    })]
+                }
+                ScrewHead::ExternalHex {
+                    across_flats_mm, ..
+                } => hexagon(across_flats_mm),
+            }
+        };
+        let head = outline(spec.head);
+        let mut bands = Vec::new();
+        match spec.head.socket() {
+            Some((width, depth)) => {
+                bands.push(Band {
+                    rings: vec![head.clone(), hexagon(width)],
+                    axis: [top, top + depth],
+                });
+                bands.push(Band {
+                    rings: vec![head],
+                    axis: [top + depth, seat],
+                });
+            }
+            None => bands.push(Band {
+                rings: vec![head],
+                axis: [top, seat],
+            }),
+        }
+        if spec.shank_length_mm > 0. {
+            bands.push(Band {
+                rings: vec![vec![Edge::Planar(normal_sweep::Edge::Circle {
+                    center: [0.; 2],
+                    radius_mm: spec.shank_radius_mm,
+                    clockwise: false,
+                })]],
+                axis: [seat, 0.],
+            });
+        }
+        return Some((|| {
+            let base = Prism::new(origin, axes, bands, tolerance)?;
+            Ok(Thread {
+                law: Arc::new(Law {
+                    origin,
+                    axes,
+                    profile,
+                    rate: thread.helical_rate(),
+                    starts: thread.spec().starts,
+                }),
+                z: [0., thread.spec().length_mm],
+                neck: None,
+                stock: None,
+                cone: None,
+                base: Some(base),
                 tolerance,
             })
         })());
@@ -1077,6 +1165,7 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
                 neck,
                 stock: None,
                 cone: Some(cone),
+                base: None,
                 tolerance,
             })
         })());
@@ -1115,6 +1204,7 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
                 neck: None,
                 stock: Some((radius, prism)),
                 cone: None,
+                base: None,
                 tolerance,
             })
         })());
@@ -1137,6 +1227,7 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
         neck: None,
         stock: None,
         cone: None,
+        base: None,
         tolerance,
     }))
 }
@@ -1385,7 +1476,20 @@ impl Thread {
                 Vec::new()
             });
         }
+        if self.base.is_some() && d[2].abs() <= 1e-15 && (s[2] - self.z[0]).abs() <= self.tolerance
+        {
+            // In the plane where the thread starts on a screw's shank or head,
+            // whose cross-section contains the thread's, the union is open
+            // exactly within the thread's cap region.
+            return self.cap_line(s, d, self.z[0]);
+        }
         let mut spans = self.threaded(s, d)?;
+        if let Some(prism) = &self.base
+            && let Some(more) = prism.line(self.law.view(s), self.view_vector(d))
+        {
+            spans.extend(more?);
+            spans = merge(spans, 0.);
+        }
         if let Some(cone) = &self.cone {
             spans = profile::intersect(&spans, &cone.line(s, d));
         }
@@ -2250,6 +2354,54 @@ impl Thread {
     }
 
     /// The chords of a cap disc cut by the plane, as local end points.
+    /// Parameters of a unit-direction local line lying in the plane of
+    /// `level` inside the thread's cross-section there.
+    fn cap_line(&self, s: P3, d: P3, level: f64) -> Result<Vec<[f64; 2]>, GeometryError> {
+        let profile = &self.law.profile;
+        let rho = d[0].hypot(d[1]);
+        if rho <= 1e-15 {
+            let r = s[0].hypot(s[1]);
+            let inside = r < profile.radius(level - self.rate() * s[1].atan2(s[0]));
+            return Ok(if inside {
+                vec![[-1e9, 1e9]]
+            } else {
+                Vec::new()
+            });
+        }
+        let g = |t: f64| {
+            let p = add(s, scaled(d, t));
+            profile.radius(level - self.rate() * p[1].atan2(p[0])) - p[0].hypot(p[1])
+        };
+        let b = s[0] * d[0] + s[1] * d[1];
+        let foot2 = s[0] * s[0] + s[1] * s[1] - b * b;
+        let reach = profile.maximum;
+        if foot2 >= reach * reach {
+            return Ok(Vec::new());
+        }
+        let half = (reach * reach - foot2).sqrt();
+        let mut stops = vec![-b - half, -b + half];
+        let parts: Vec<[f64; 2]> = if foot2 < profile.minimum * profile.minimum {
+            let inner = (profile.minimum * profile.minimum - foot2).sqrt();
+            vec![[-b - half, -b - inner], [-b + inner, -b + half]]
+        } else {
+            vec![[-b - half, -b + half]]
+        };
+        for part in parts {
+            stops.extend(part);
+            stops.extend(self.crossings(s, d, part)?);
+        }
+        stops.sort_by(f64::total_cmp);
+        stops.dedup_by(|x, y| (*x - *y).abs() <= 1e-13);
+        Ok(merge(
+            stops
+                .windows(2)
+                .filter(|pair| pair[1] - pair[0] > 1e-13 && g(0.5 * (pair[0] + pair[1])) > 0.)
+                .map(|pair| [pair[0], pair[1]])
+                .collect(),
+            0.,
+        ))
+    }
+
     fn cap_chord(&self, n: P3, c: f64, level: f64) -> Result<Vec<[P3; 2]>, GeometryError> {
         let nxy = n[0].hypot(n[1]);
         if nxy <= 1e-12 {
@@ -2298,6 +2450,111 @@ impl Thread {
 
 impl Member for Thread {
     fn bounds(&self) -> [P3; 2] {
+        let own = self.own_bounds();
+        match &self.base {
+            Some(prism) => {
+                let other = prism.bounds();
+                [
+                    std::array::from_fn(|k| own[0][k].min(other[0][k])),
+                    std::array::from_fn(|k| own[1][k].max(other[1][k])),
+                ]
+            }
+            None => own,
+        }
+    }
+
+    fn line(&self, start: P3, direction: P3) -> Option<Result<Vec<[f64; 2]>, GeometryError>> {
+        self.own_line(start, direction)
+    }
+
+    fn candidates(&self, tolerance_mm: f64) -> Result<Vec<Candidate>, GeometryError> {
+        let mut output = self.own_candidates(tolerance_mm)?;
+        if let Some(prism) = &self.base {
+            output.extend(prism.candidates(tolerance_mm)?);
+        }
+        Ok(output)
+    }
+
+    fn sight(&self, [x, y]: P2) -> Result<Vec<[f64; 2]>, GeometryError> {
+        match self.own_line([x, y, 0.], [0., 0., 1.]) {
+            Some(result) => result,
+            None => unreachable!("threads answer lines"),
+        }
+    }
+
+    fn section(&self, depth: f64, tolerance_mm: f64) -> Result<Vec<Loop>, GeometryError> {
+        let mut loops = self.own_section(depth, tolerance_mm)?;
+        let Some(prism) = &self.base else {
+            return Ok(loops);
+        };
+        let n = self.local_vector([0., 0., 1.]);
+        let c = depth - self.law.origin[2];
+        let nxy = n[0].hypot(n[1]);
+        let mut output: Loop = loops.pop().unwrap_or_default();
+        let base: Loop = prism
+            .section(depth, tolerance_mm)?
+            .into_iter()
+            .flatten()
+            .collect();
+        if nxy <= 1e-12 {
+            // Across the axis only one part is cut: the one behind the plane.
+            let level = c / n[2];
+            let probe = level - n[2].signum() * 4. * self.tolerance;
+            if probe < self.z[0] {
+                output = base;
+            }
+        } else {
+            // At the junction both parts publish chords; the boundary there
+            // is the base chord less the thread's.
+            let junction = self.z[0];
+            let at_junction = |path: &Arc<dyn Path>| {
+                let [a, b] = [0., 1.].map(|t| self.law.local(path.point(t))[2]);
+                (a - junction).abs() <= 4. * self.tolerance
+                    && (b - junction).abs() <= 4. * self.tolerance
+                    && matches!(path.paper([0., 1.]), Some(Curve::Line(_)))
+            };
+            let d = [n[1] / nxy, -n[0] / nxy, 0.];
+            let station = |path: &Arc<dyn Path>| -> [f64; 2] {
+                let [a, b] = [0., 1.].map(|t| dot3(self.law.local(path.point(t)), d));
+                [a.min(b), a.max(b)]
+            };
+            let thread: Vec<[f64; 2]> = merge(
+                output
+                    .iter()
+                    .filter(|p| at_junction(p))
+                    .map(station)
+                    .collect(),
+                0.,
+            );
+            let lower: Vec<[f64; 2]> = merge(
+                base.iter()
+                    .filter(|p| at_junction(p))
+                    .map(station)
+                    .collect(),
+                0.,
+            );
+            output.retain(|path| !at_junction(path));
+            output.extend(base.into_iter().filter(|path| !at_junction(path)));
+            let offset = (c - n[2] * junction) / (nxy * nxy);
+            let foot = [n[0] * offset, n[1] * offset, junction];
+            let origin = add(foot, scaled(d, -dot3(foot, d)));
+            for [a, b] in profile::exclusive(&lower, &thread, 1e-12) {
+                output.push(Arc::new(Segment(
+                    self.law.view(add(origin, scaled(d, a))),
+                    self.law.view(add(origin, scaled(d, b))),
+                )));
+            }
+        }
+        Ok(if output.is_empty() {
+            vec![]
+        } else {
+            vec![output]
+        })
+    }
+}
+
+impl Thread {
+    fn own_bounds(&self) -> [P3; 2] {
         let reach = self
             .stock
             .as_ref()
@@ -2317,7 +2574,7 @@ impl Member for Thread {
         [lo, hi]
     }
 
-    fn candidates(&self, tolerance_mm: f64) -> Result<Vec<Candidate>, GeometryError> {
+    fn own_candidates(&self, tolerance_mm: f64) -> Result<Vec<Candidate>, GeometryError> {
         let mut output = Vec::new();
         self.rails(&mut output);
         for level in self.z {
@@ -2343,14 +2600,7 @@ impl Member for Thread {
         Ok(output)
     }
 
-    fn sight(&self, [x, y]: P2) -> Result<Vec<[f64; 2]>, GeometryError> {
-        match self.line([x, y, 0.], [0., 0., 1.]) {
-            Some(result) => result,
-            None => unreachable!("threads answer lines"),
-        }
-    }
-
-    fn section(&self, depth: f64, tolerance_mm: f64) -> Result<Vec<Loop>, GeometryError> {
+    fn own_section(&self, depth: f64, tolerance_mm: f64) -> Result<Vec<Loop>, GeometryError> {
         let n = self.local_vector([0., 0., 1.]);
         let c = depth - self.law.origin[2];
         let mut output = self.thread_section(n, c, 1.)?;
@@ -2428,7 +2678,7 @@ impl Member for Thread {
         })
     }
 
-    fn line(&self, start: P3, direction: P3) -> Option<Result<Vec<[f64; 2]>, GeometryError>> {
+    fn own_line(&self, start: P3, direction: P3) -> Option<Result<Vec<[f64; 2]>, GeometryError>> {
         let s = self.law.local(start);
         let d = self.local_vector(direction);
         let length = dot3(d, d).sqrt();

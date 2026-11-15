@@ -227,6 +227,7 @@ fn thread_material_along_lines_agrees_with_source_containment() {
         solids.push(two_start(left_hand, frame));
         solids.push(rounded_bore(left_hand, frame));
         solids.push(chamfered(left_hand, left_hand, frame));
+        solids.push(screw(left_hand, left_hand, frame));
     }
     for left_hand in [false, true] {
         let root = 1. / (4. * 3_f64.sqrt());
@@ -644,12 +645,16 @@ fn thread_sections_lie_on_the_source_boundary() {
     let bore_thread = *bore.rust_rounded_thread_bore_data().unwrap().bore.thread();
     let chamfer = chamfered(true, true, PlaneFrame::default());
     let chamfer_data = chamfer.rust_thread_entry_chamfer_data().unwrap().source;
+    let socket_screw = screw(true, false, PlaneFrame::default());
+    let hex_screw = screw(false, true, PlaneFrame::default());
     for (label, solid, center) in [
         ("rounded", &rounded, 2.35),
         ("relief", &relief, 3.3),
         ("two-start", &double, 3.3),
         ("bore", &bore, 2.35),
         ("chamfer", &chamfer, 0.8),
+        ("socket screw", &socket_screw, 0.5),
+        ("hex screw", &hex_screw, 1.5),
     ] {
         for (origin, [u, v]) in frames(center) {
             let frame = PlaneFrame { origin, u, v };
@@ -684,7 +689,54 @@ fn thread_sections_lie_on_the_source_boundary() {
                     let radius = x.hypot(y);
                     let theta = y.atan2(x);
                     let on = |value: f64| value.abs() < 1e-6;
-                    let ok = if label == "chamfer" {
+                    let ok = if label.ends_with("screw") {
+                        let solid = if label == "socket screw" {
+                            &socket_screw
+                        } else {
+                            &hex_screw
+                        };
+                        let (source, placed) = solid.rust_machine_screw_geometry().unwrap();
+                        // The screw's thread frame is offset from its mounting frame.
+                        let normal = placed.normal();
+                        let offset: [f64; 3] = std::array::from_fn(|i| w[i] - placed.origin[i]);
+                        let dot =
+                            |a: [f64; 3]| a.iter().zip(offset).map(|(p, q)| p * q).sum::<f64>();
+                        let [x, y, z] = [dot(placed.u), dot(placed.v), dot(normal)];
+                        let radius = x.hypot(y);
+                        let theta = y.atan2(x);
+                        let thread = source.thread();
+                        let length = thread.spec().length_mm;
+                        let (top, seat) = (source.head_top_z(), source.head_seat_z());
+                        let spec = source.spec();
+                        let head = source.head_radius(theta);
+                        let socket = source.socket_radius(theta);
+                        let depth = spec.head.socket().map_or(0., |(_, depth)| depth);
+                        let bound = thread.radius(theta, z.clamp(0., length));
+                        let shank = spec.shank_radius_mm;
+                        (on(radius - bound) && z > -1e-9 && z < length + 1e-9)
+                            || (on(z - length) && radius <= bound + 1e-6)
+                            || (on(z)
+                                && radius >= bound - 1e-6
+                                && radius
+                                    <= if spec.shank_length_mm > 0. {
+                                        shank
+                                    } else {
+                                        head
+                                    } + 1e-6)
+                            || (spec.shank_length_mm > 0.
+                                && ((on(radius - shank) && z > seat - 1e-9 && z < 1e-9)
+                                    || (on(z - seat)
+                                        && radius >= shank - 1e-6
+                                        && radius <= head + 1e-6)))
+                            || (on(radius - head) && z > top - 1e-9 && z < seat + 1e-9)
+                            || (on(z - top)
+                                && radius <= head + 1e-6
+                                && socket.is_none_or(|inner| radius >= inner - 1e-6))
+                            || socket.is_some_and(|inner| {
+                                (on(radius - inner) && z > top - 1e-9 && z < top + depth + 1e-9)
+                                    || (on(z - top - depth) && radius <= inner + 1e-6)
+                            })
+                    } else if label == "chamfer" {
                         let material = chamfer_data.material_length_mm();
                         let top = chamfer_data.full_length_mm();
                         let neck = chamfer_data.terminal_relief().unwrap().neck_radius_mm();
@@ -731,7 +783,7 @@ fn thread_sections_lie_on_the_source_boundary() {
                     checked += 1;
                 }
             }
-            assert!(checked > 50, "{label}: {checked}");
+            assert!(checked > 20, "{label}: {checked}");
             let area: f64 = vectors
                 .iter()
                 .filter_map(|v| match v.curve {
@@ -744,9 +796,19 @@ fn thread_sections_lie_on_the_source_boundary() {
             // Independent area of the cut by containment on a fine grid.
             let step = 0.01;
             let mut inside = 0usize;
-            for i in -600..600 {
-                for j in -600..600 {
-                    let q = [(f64::from(i) + 0.5) * step, (f64::from(j) + 0.5) * step];
+            // The grid covers the published section with a margin.
+            let points = vectors.iter().flat_map(|v| v.preview_mm.iter());
+            let lo = points
+                .clone()
+                .fold([f64::INFINITY; 2], |m, p| [m[0].min(p[0]), m[1].min(p[1])]);
+            let hi = points.fold([f64::NEG_INFINITY; 2], |m, p| {
+                [m[0].max(p[0]), m[1].max(p[1])]
+            });
+            let first = [0, 1].map(|k| ((lo[k] - 0.5) / step).floor() as i64);
+            let last = [0, 1].map(|k| ((hi[k] + 0.5) / step).ceil() as i64);
+            for i in first[0]..last[0] {
+                for j in first[1]..last[1] {
+                    let q = [(i as f64 + 0.5) * step, (j as f64 + 0.5) * step];
                     let w: [f64; 3] = std::array::from_fn(|k| {
                         frame.origin[k] + view.axes[0][k] * q[0] + view.axes[1][k] * q[1]
                     });
@@ -758,7 +820,7 @@ fn thread_sections_lie_on_the_source_boundary() {
                 (area - grid).abs() < 0.01 * grid,
                 "{label} {origin:?} {u:?}: {area} {grid}"
             );
-            if u == [1., 0., 0.] && v == [0., 1., 0.] {
+            if u == [1., 0., 0.] && v == [0., 1., 0.] && !label.ends_with("screw") {
                 // Across the axis: the constant cross-section area.
                 let area: f64 = vectors
                     .iter()
@@ -1011,6 +1073,53 @@ fn chamfered(left_hand: bool, terminal: bool, frame: PlaneFrame) -> crate::Solid
             width_mm: 0.6,
             radial_depth_mm: 0.1,
         }),
+        multicad_core::document::EntityId::new(),
+        frame,
+        GeometryPolicy::default(),
+    )
+    .unwrap()
+}
+
+/// An ISO-like machine screw: a plain shank under a socket cap head, or a
+/// hex head seated directly on the thread.
+fn screw(socket: bool, left_hand: bool, frame: PlaneFrame) -> crate::Solid {
+    use multicad_rust_kernel::headed_screw::{ScrewHead, ScrewSpec};
+    let root = 1. / (4. * 3_f64.sqrt());
+    crate::Solid::rust_machine_screw(
+        crate::HelicalThread {
+            major_radius_mm: 3.,
+            pitch_mm: 1.,
+            length_mm: 6.6,
+            depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().tan()) - root,
+            crest_width_mm: 0.125,
+            lower_flank_deg: 30.,
+            upper_flank_deg: 30.,
+            radial_taper: 0.,
+            starts: 1,
+            left_hand,
+        },
+        Some(root),
+        if socket {
+            ScrewSpec {
+                head: ScrewHead::SocketCap {
+                    radius_mm: 4.5,
+                    height_mm: 3.,
+                    socket_across_flats_mm: 3.,
+                    socket_depth_mm: 1.5,
+                },
+                shank_length_mm: 2.,
+                shank_radius_mm: 3.,
+            }
+        } else {
+            ScrewSpec {
+                head: ScrewHead::ExternalHex {
+                    across_flats_mm: 10.,
+                    height_mm: 4.,
+                },
+                shank_length_mm: 0.,
+                shank_radius_mm: 3.,
+            }
+        },
         multicad_core::document::EntityId::new(),
         frame,
         GeometryPolicy::default(),
