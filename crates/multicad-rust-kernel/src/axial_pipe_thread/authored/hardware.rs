@@ -134,10 +134,7 @@ fn clipped_area(plan: &StockClipPlan, z: f64) -> I {
     let r = I::point(thread.spec.major_radius_mm);
     let d = I::point(thread.depth());
     let k = I::point(thread.spec.radial_taper);
-    let w = match thread.spec.section {
-        AuthoredSection::NptFlat { flat_width_mm, .. } => I::point(flat_width_mm),
-        _ => unreachable!("stock clip earns NPT flat source"),
-    };
+    let w = I::point(plan.flat_width_mm());
     let m = I::point(3.).sqrt();
     let slopes = I::point(1.) / (m - k) + I::point(1.) / (m + k);
     let root = I::point(thread.spec.pitch_mm) - w - d * slopes;
@@ -261,7 +258,7 @@ impl Material {
                 }) {
                     return Err(Error::Unsupported);
                 }
-                let moments = Moments::new(&thread)?;
+                let moments = Moments::new(&thread);
                 (
                     moments.volume(&thread),
                     [
@@ -474,10 +471,18 @@ impl Material {
                 work,
             ));
         }
-        let radial = self.thread.radial_bounds(
-            [0., self.thread.spec.pitch_mm],
-            [z.lo, z.hi.min(self.thread.spec.length_mm)],
-        )?;
+        // Construction already earned this identical immutable full-phase
+        // calculation on[0,L]. The guards above restrict z to a subinterval;
+        // it only narrows k*z in radial_bounds, whose other expressions and
+        // branches depend on the same source/phase constants. There is no
+        // callback or resource operation to lose at this sealed handoff.
+        let radial = self
+            .thread
+            .radial_bounds(
+                [0., self.thread.spec.pitch_mm],
+                [z.lo, z.hi.min(self.thread.spec.length_mm)],
+            )
+            .expect("material earned the full-phase source on the containing z domain");
         let r = x.square() + y.square();
         let inner = I::point(radial[0].max(0.)).square();
         let outer = I::point(radial[1]).square();

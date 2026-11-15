@@ -355,6 +355,10 @@ impl StockClipPlan {
     pub fn source(&self) -> &AuthoredThread {
         &self.source
     }
+    /// The sealed NPT plan retains this exact original point interval.
+    pub(super) fn flat_width_mm(&self) -> f64 {
+        self.width.lo
+    }
     pub fn stock_radius_limit_mm(&self) -> f64 {
         self.source
             .spec

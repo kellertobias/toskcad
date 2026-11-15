@@ -32,7 +32,7 @@ fn arc(center: I, sign: f64, radius: I, rounded: Rounded, k: I) -> Moments {
     }
 }
 impl Moments {
-    pub(super) fn new(thread: &AuthoredThread) -> Result<Self, Error> {
+    pub(super) fn new(thread: &AuthoredThread) -> Self {
         let r = I::point(thread.spec.major_radius_mm);
         let d = I::point(thread.depth());
         let p = I::point(thread.spec.pitch_mm);
@@ -49,36 +49,41 @@ impl Moments {
             AuthoredSection::NptFlat { .. } => {
                 for band in 0..3 {
                     add(line(
-                        thread.endpoint(band, false)?,
-                        thread.endpoint(band, true)?,
+                        thread.endpoint(band, false).expect("sealed NPT band"),
+                        thread.endpoint(band, true).expect("sealed NPT band"),
                     ));
                 }
-                let gap = p - (thread.endpoint(2, true)?.0 - thread.endpoint(0, false)?.0);
+                let gap = p
+                    - (thread.endpoint(2, true).expect("sealed NPT upper band").0
+                        - thread.endpoint(0, false).expect("sealed NPT lower band").0);
                 add(Self {
                     first: gap * (r - d),
                     second: gap * (r - d).square(),
                 });
             }
             AuthoredSection::BsptRounded { .. } => {
-                let b = thread.rounded()?;
+                let b = thread
+                    .rounded()
+                    .expect("authored constructor earned the original round closure");
                 add(arc(r - b.radius * b.normal, 1., b.radius, b, k));
                 add(arc(r - d + b.radius * b.normal, -1., b.radius, b, k));
                 for band in [1, 3] {
                     add(line(
-                        thread.endpoint(band, false)?,
-                        thread.endpoint(band, true)?,
+                        thread
+                            .endpoint(band, false)
+                            .expect("sealed BSPT straight band"),
+                        thread
+                            .endpoint(band, true)
+                            .expect("sealed BSPT straight band"),
                     ));
                 }
             }
         }
-        if !result.first.valid()
-            || !result.second.valid()
-            || result.first.lo <= 0.
-            || result.second.lo <= 0.
-        {
-            return Err(Error::Unresolved);
-        }
-        Ok(result)
+        // These private intermediates grant no admission. Material::new
+        // separately checks positive finite precision of BOTH cap areas,
+        // original volume and final material. Keep those final checks; an
+        // uncertain intermediate must not prematurely reject a tighter total.
+        result
     }
     pub(super) fn area(self, thread: &AuthoredThread, z: f64) -> I {
         let shift = I::point(thread.spec.radial_taper) * I::point(z);
