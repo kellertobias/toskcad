@@ -65,11 +65,21 @@ impl CurveOptions {
     }
 }
 fn source_error(e: SourceError) -> Error {
-    match e {
-        SourceError::Invalid => Error::Invalid,
-        SourceError::Limit => Error::Limit,
-        SourceError::Cancelled => Error::Cancelled,
-        SourceError::Unsupported | SourceError::Unresolved => Error::Unresolved,
+    // These private calls use ONLY the sealed plan's twelve vertices/twenty
+    // curves/eight patches, finite closed dyadic domains and validated positive
+    // remaining work with the fixed64MiB source-query allowance. Admission already
+    // handled unsupported/unresolved geometry. The source enforces p>=.001,
+    // dimensions<=1e7 and L/p<128, so all retained query arithmetic is finite.
+    // A different error here is an internal invariant break, not a new user
+    // geometry refusal. Public source/domain validation remains unchanged.
+    assert!(
+        matches!(e, SourceError::Limit | SourceError::Cancelled),
+        "sealed clipped source query invariant: {e:?}"
+    );
+    if matches!(e, SourceError::Limit) {
+        Error::Limit
+    } else {
+        Error::Cancelled
     }
 }
 fn source_options(work: &Work<'_>) -> Result<StockClipOptions, Error> {
