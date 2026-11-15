@@ -435,7 +435,8 @@ pub(crate) fn triangulate(
         for (b, ear) in ears.iter().enumerate() {
             if let (true, Some(cost)) = (clip.active[b], *ear)
                 && best.is_none_or(|(least, _)| {
-                    cost.0 < least.0 || (cost.0 == least.0 && cost.1 < least.1)
+                    (cost.0, cost.1).partial_cmp(&(least.0, least.1))
+                        == Some(std::cmp::Ordering::Less)
                 })
             {
                 best = Some((cost, b));
