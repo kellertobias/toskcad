@@ -430,7 +430,7 @@ pub(crate) fn triangulate(
         .sum();
     let enough = clip.epsilon.max(1e-9 * left);
     let mut count = n;
-    while count > 3 {
+    while count > 3 && left > enough {
         let mut best: Option<((bool, f64), usize)> = None;
         for (b, ear) in ears.iter().enumerate() {
             if let (true, Some(cost)) = (clip.active[b], *ear)
@@ -442,11 +442,7 @@ pub(crate) fn triangulate(
                 best = Some((cost, b));
             }
         }
-        let Some((_, b)) = best else {
-            // Only slivers of a ring pinched at shared points may remain.
-            ensure(left <= enough, Error::Unsupported)?;
-            return Ok(triangles);
-        };
+        let (_, b) = best.ok_or(Error::Unsupported)?;
         // A diagonal laid since this ear was judged may now forbid it.
         ears[b] = clip.ear(b);
         if ears[b].is_none() {
@@ -464,13 +460,8 @@ pub(crate) fn triangulate(
         ears[a] = clip.ear(a);
         ears[c] = clip.ear(c);
     }
-    let a = clip.active.iter().position(|&active| active).unwrap_or(0);
-    let last = orient(
-        ring[a].uv,
-        ring[clip.next[a]].uv,
-        ring[clip.next[clip.next[a]]].uv,
-    );
-    if last > clip.epsilon || left > enough {
+    if left > enough {
+        let a = clip.active.iter().position(|&active| active).unwrap_or(0);
         let [b, c] = [clip.next[a], clip.next[clip.next[a]]];
         let twins = |p: Corner, q: Corner| p.key == q.key && !(p.pole && q.pole);
         ensure(
