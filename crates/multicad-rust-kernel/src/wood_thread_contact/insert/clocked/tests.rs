@@ -402,3 +402,28 @@ fn actual_multibody_and_large_retained_stock_are_not_accepted_by_a_small_query()
         Err(Error::Limit)
     ));
 }
+
+#[test]
+fn actual_periodic_phillips_material_qualifies_shared_general_clock_receiver() {
+    for left in [false, true] {
+        for plain in [0., 0.01, 1.] {
+            let (insert, owner) = super::super::mating::tests::periodic_fixture(left, 8., plain);
+            let (_, _, frame) = fixture(left);
+            let receiver = Receiver::insert(&insert, identity()).unwrap();
+            let proof = certify_clocked_receiver(
+                &receiver,
+                MatingExternal {
+                    source: MatingScrew::Periodic(&owner),
+                    frame,
+                },
+                options(),
+                &|| false,
+            )
+            .unwrap();
+            assert!(proof.bounds.minimum_radial_clearance_lower_mm > 0.005);
+            assert_eq!(proof.bounds.external_indexed_phase_error_mm, 0.);
+            assert_eq!(proof.bounds.external_evaluator_phase_error_mm, 0.);
+            assert!(proof.cells_used > 0 && proof.cells_used <= 4096);
+        }
+    }
+}

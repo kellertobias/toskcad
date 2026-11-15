@@ -183,3 +183,44 @@ fn whole_screw_stock_proof_refuses_foreign_axes_oversize_radius_bad_prefix_and_r
         );
     }
 }
+
+#[test]
+fn actual_periodic_thread_continuation_keeps_independent_blind_floor_proof() {
+    let (material, mut pilot, _, frame, _) = super::super::super::tests::fixture(false, 1);
+    pilot.radius_mm = 4.;
+    pilot.depth_mm = 6.;
+    for (length, gap) in [(3., 3.), (4.5, 1.5), (5.5, 0.5)] {
+        let (_, owner) = super::super::mating::tests::periodic_fixture(false, length, 1.);
+        let requirements = ScrewClearanceRequirements {
+            minimum_tip_clearance_mm: 0.4,
+            linear_tolerance_mm: 1e-7,
+            minimum_feature_mm: 1e-4,
+        };
+        let query = |required| {
+            certify_insert_screw_clearance(
+                Stock {
+                    material: &material,
+                    pilot,
+                    frame: identity(),
+                },
+                MatingExternal {
+                    source: mating::MatingScrew::Periodic(&owner),
+                    frame,
+                },
+                ScrewClearanceRequirements {
+                    minimum_tip_clearance_mm: required,
+                    ..requirements
+                },
+                &|| false,
+            )
+        };
+        let proof = query(0.4).unwrap();
+        assert!(proof.tip_clearance_mm[0] <= gap && proof.tip_clearance_mm[1] >= gap);
+        assert!(proof.minimum_radial_clearance_mm > 2.5);
+        if length == 5.5 {
+            assert_eq!(query(1.).unwrap_err(), Error::Unsupported)
+        } else {
+            assert!(query(1.).is_ok())
+        }
+    }
+}

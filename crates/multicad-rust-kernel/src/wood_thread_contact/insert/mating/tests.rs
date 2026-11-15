@@ -463,3 +463,154 @@ fn source_owned_inner_envelope_and_genuine_admitted_tiny_root_have_honest_outcom
     assert!(!fallback && bound.valid());
     assert_eq!(*screw.thread(), thread);
 }
+
+pub(in crate::wood_thread_contact::insert) fn periodic_fixture(
+    left: bool,
+    length: f64,
+    plain: f64,
+) -> (Insert, crate::step_read::PhillipsOwnedPeriodicMaterial) {
+    use crate::{
+        head_profile::{Head, Profile},
+        phillips_drive::Cutter,
+        profiled_screw::SourceSpec,
+    };
+    let (insert, thread) = fixture(left, false);
+    let thread = Thread::new(Spec {
+        length_mm: length,
+        ..thread.spec()
+    })
+    .unwrap();
+    let head = Head::Crowned {
+        radius_mm: 2.8,
+        height_mm: 2.4,
+        crown_radius_mm: 3.,
+        top_land_radius_mm: 2.1,
+        neck_radius_mm: 0.1,
+    };
+    let profile =
+        Profile::new_for_thread_union(head, thread.spec().major_radius_mm, plain).unwrap();
+    let (spec, domain) = crate::phillips_drive::test_fixture(1);
+    let cutter = Cutter::new(spec, domain).unwrap();
+    let owner = crate::step_read::PhillipsOwnedPeriodicMaterial::from_authored_parts(
+        &thread,
+        &profile,
+        &cutter,
+        SourceSpec {
+            head: Some(head),
+            shank_length_mm: plain,
+            minimum_wall_mm: 1e-5,
+        },
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    (insert, owner)
+}
+#[test]
+fn actual_periodic_m3_source_mates_without_cached_thread_or_proposal_aliases() {
+    for left in [false, true] {
+        let (insert, source) = periodic_fixture(left, 4., 1.);
+        let source = MatingScrew::Periodic(&source);
+        let Parts {
+            thread,
+            visible,
+            prefix,
+        } = source.parts().unwrap();
+        assert_eq!(visible, [q(0.).unwrap(), q(4.).unwrap()]);
+        assert_eq!(prefix, Q::zero());
+        assert_eq!(thread.spec().left_hand, left);
+        let mut above = identity();
+        above.origin_mm[2] = -0.5;
+        let receipt = query(&insert, source, above, 2.).unwrap();
+        assert!(receipt.minimum_radial_clearance_lower_mm > 0.005);
+        assert!(receipt.engagement_mm[0] <= 3.5 && receipt.engagement_mm[1] >= 3.5);
+        assert_eq!(receipt.external_indexed_phase_error_mm, 0.);
+        assert_eq!(receipt.external_evaluator_phase_error_mm, 0.);
+        let mut bad = above;
+        bad.origin_mm[2] = -0.25;
+        assert_eq!(
+            query(&insert, source, bad, 2.).unwrap_err(),
+            Error::Unsupported
+        );
+        let mut over = above;
+        over.origin_mm[2] = 0.1;
+        assert_eq!(
+            query(&insert, source, over, 2.).unwrap_err(),
+            Error::Unsupported
+        );
+        let requirements = MatingRequirements {
+            minimum_engagement_mm: 2.,
+            minimum_clearance_mm: 4e-7,
+        };
+        assert_eq!(
+            certify_insert_mating(
+                &insert,
+                identity(),
+                MatingExternal {
+                    source,
+                    frame: above
+                },
+                requirements,
+                &|| true
+            )
+            .unwrap_err(),
+            Error::Cancelled
+        );
+        assert_eq!(
+            certify_insert_mating(
+                &insert,
+                identity(),
+                MatingExternal {
+                    source,
+                    frame: above
+                },
+                MatingRequirements {
+                    minimum_engagement_mm: 0.,
+                    ..requirements
+                },
+                &|| false
+            )
+            .unwrap_err(),
+            Error::Invalid
+        );
+        let (bound, envelope) = external_periodic_bound(thread, ip(1e8));
+        assert!(
+            envelope && bound.lo == 0. && bound.hi == thread.source_coordinate_bounds_mm()[0][1]
+        );
+    }
+}
+
+#[test]
+fn actual_positive_neck_and_nonrepresentable_caps_keep_exact_contact_domains() {
+    for left in [false, true] {
+        for plain in [0., 0.01] {
+            let (insert, owner) = periodic_fixture(left, 4., plain);
+            let Parts {
+                thread: _,
+                visible,
+                prefix,
+            } = MatingScrew::Periodic(&owner).parts().unwrap();
+            let caps = owner.cap_expressions_mm();
+            let expected = q(caps[0][0]).unwrap() + q(caps[0][1]).unwrap();
+            assert!(expected > Q::zero());
+            assert_eq!(visible[0], expected);
+            assert_eq!(prefix, expected);
+            if plain == 0.01 {
+                assert_ne!(
+                    q(expected.to_f64().unwrap()).unwrap(),
+                    expected,
+                    "actual neck-minus-plain sum deliberately has no exact f64 representation"
+                );
+            }
+            let mut frame = identity();
+            frame.origin_mm[2] = -0.5;
+            let proof = query(&insert, MatingScrew::Periodic(&owner), frame, 2.).unwrap();
+            assert!(proof.minimum_radial_clearance_lower_mm > 0.005);
+            let actual = q(0.5).unwrap() - expected;
+            assert!(
+                q(proof.prefix_entry_clearance_mm[0]).unwrap() <= actual
+                    && q(proof.prefix_entry_clearance_mm[1]).unwrap() >= actual
+            );
+        }
+    }
+}

@@ -57,13 +57,17 @@ pub fn certify_insert_screw_clearance(
     if columns[2][axis] != sign as i8 {
         return Err(Error::Unsupported);
     }
-    let (thread, _, prefix) = external.source.parts()?;
+    let mating::Parts {
+        thread,
+        visible: [_, end],
+        prefix,
+    } = external.source.parts()?;
     let station = bounded(q(sign)? * (&origin[axis] - q(stock.pilot.center_mm[axis])?))?;
-    let prefix_gap = bounded(-&station - q(prefix)?)?;
+    let prefix_gap = bounded(-&station - prefix)?;
     if prefix_gap < Q::zero() {
         return Err(Error::Unsupported);
     }
-    let tip = bounded(&station + q(thread.spec().length_mm)?)?;
+    let tip = bounded(&station + end)?;
     let gap = bounded(q(stock.pilot.depth_mm)? - tip)?;
     // Exact binary-rational datum/end supports establish the real floor gap;
     // the retained stock-frame metric converts its local separation to world.

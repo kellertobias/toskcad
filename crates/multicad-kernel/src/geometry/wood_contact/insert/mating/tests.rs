@@ -262,3 +262,108 @@ fn actual_profiled_and_phillips_native_sources_preserve_their_complete_prefixes(
     .unwrap();
     assert!(phillips.rust_wood_insert_mating(&insert, 2., None).is_ok());
 }
+
+pub(in crate::geometry::wood_contact) fn periodic_screw(
+    thread: multicad_rust_kernel::helical_thread::Thread,
+    plain: f64,
+    frame: PlaneFrame,
+) -> Solid {
+    use multicad_rust_kernel::{
+        head_profile::{Head, Profile},
+        phillips_drive::{Cutter, Domain, Inner, Spec},
+        profiled_screw::SourceSpec,
+        step_read::PhillipsOwnedPeriodicMaterial,
+    };
+    let head = Head::Crowned {
+        radius_mm: 2.8,
+        height_mm: 2.4,
+        crown_radius_mm: 3.,
+        top_land_radius_mm: 2.1,
+        neck_radius_mm: 0.1,
+    };
+    let profile =
+        Profile::new_for_thread_union(head, thread.spec().major_radius_mm, plain).unwrap();
+    let tip =
+        (3. - 1.27) / (2. * 26.5_f64.to_radians().tan()) + 1.27 / 2. * 28_f64.to_radians().tan();
+    let cutter = Cutter::new(
+        Spec {
+            mouth_diameter_mm: 3.,
+            mouth_radius_mm: 0.5,
+            b_width_mm: 0.955,
+            g_diameter_mm: 1.27,
+            tilt_angle_deg: 7.,
+            outer_flank_angle_deg: 26.5,
+            floor_angle_deg: 28.,
+            outer_corner_angle_deg: 92.,
+            inner: Inner::ShallowV {
+                angle_deg: 138.,
+                e_width_mm: 0.435,
+            },
+        },
+        Domain {
+            corner_start_depth_mm: -6.,
+            corner_end_depth_mm: tip + 3.,
+            corner_reach_mm: 4. * (2.8 + 3. + (tip - 2.4).abs() + 1.),
+        },
+    )
+    .unwrap();
+    let source = PhillipsOwnedPeriodicMaterial::from_authored_parts(
+        &thread,
+        &profile,
+        &cutter,
+        SourceSpec {
+            head: Some(head),
+            shank_length_mm: plain,
+            minimum_wall_mm: 1e-5,
+        },
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    Solid::rust_periodic_repaired_phillips_material(
+        std::rc::Rc::new(source),
+        EntityId::new(),
+        frame,
+        GeometryPolicy::default(),
+        None,
+    )
+    .unwrap()
+}
+#[test]
+fn current_native_periodic_m3_material_mates_without_original_getter_aliases() {
+    for left in [false, true] {
+        for plain in [0., 0.01, 0.03, 1.] {
+            let (regular, insert) = fixture(left, 4., plain, identity());
+            let original = regular
+                .rust_machine_screw_geometry()
+                .unwrap()
+                .0
+                .thread()
+                .spec();
+            let thread = multicad_rust_kernel::helical_thread::Thread::new(Spec {
+                root_radius_mm: None,
+                ..original
+            })
+            .unwrap();
+            let mut frame = identity();
+            frame.origin[2] = -0.5;
+            let screw = periodic_screw(thread, plain, frame);
+            assert!(screw.rust_machine_screw_geometry().is_none());
+            assert!(screw.rust_profiled_screw_geometry().is_none());
+            assert!(screw.rust_phillips_screw_geometry().is_none());
+            assert!(screw.rust_periodic_repaired_phillips_source().is_some());
+            let receipt = screw.rust_wood_insert_mating(&insert, 2., None).unwrap();
+            assert!(receipt.minimum_radial_clearance_lower_mm > 0.005);
+            assert!(receipt.engagement_mm[0] <= 3.5 && receipt.engagement_mm[1] >= 3.5);
+            assert_eq!(receipt.external_indexed_phase_error_mm, 0.);
+            assert_eq!(receipt.external_evaluator_phase_error_mm, 0.);
+            assert_eq!(
+                screw
+                    .rust_wood_insert_mating(&insert, 2., Some(&|| true))
+                    .unwrap_err()
+                    .kind,
+                GeometryErrorKind::Cancelled
+            );
+        }
+    }
+}

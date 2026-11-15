@@ -98,17 +98,17 @@ impl SourceBox {
                 s.spec().shank_length_mm,
                 s.profile().rounding_error_mm(),
             )?)),
+            MatingScrew::Periodic(s) => Ok(Self(mating::thread_view::periodic_prefix_bounds(s)?)),
         }
     }
     fn thread_source(s: MatingScrew<'_>) -> R<Self> {
-        Ok(Self::thread(s.parts()?.0))
+        Ok(Self::thread(s.parts()?.thread))
     }
-    fn thread(s: &crate::helical_thread::Thread) -> Self {
-        Self(s.source_coordinate_bounds_mm())
+    fn thread<'a>(s: impl Into<mating::MatingThread<'a>>) -> Self {
+        Self(s.into().source_coordinate_bounds_mm())
     }
-    fn tip(s: &crate::helical_thread::Thread) -> Self {
-        let b = s.source_coordinate_bounds_mm();
-        Self([b[0], b[1], [s.spec().length_mm, s.spec().length_mm]])
+    fn tip<'a>(s: impl Into<mating::MatingThread<'a>>) -> Self {
+        Self(s.into().tip_bounds_mm())
     }
     fn receiver_plane(s: &Receiver<'_>, end: bool) -> Self {
         let r = s.source.maximum_radius_mm();
@@ -477,7 +477,11 @@ fn certify_clocked_receiver(
         return Err(Error::Invalid);
     }
     let internal = receiver.source;
-    let (external, visible, _) = external_source.source.parts()?;
+    let mating::Parts {
+        thread: external,
+        visible,
+        ..
+    } = external_source.source.parts()?;
     let i = internal.spec();
     let e = external.spec();
     if i.pitch_mm != e.pitch_mm || i.starts != e.starts || i.left_hand != e.left_hand {
@@ -517,7 +521,7 @@ fn certify_clocked_receiver(
     let begin = inverse.enclose(SourceBox::receiver_plane(receiver, false));
     let end = inverse.enclose(SourceBox::receiver_plane(receiver, true));
     let external_span = finite(ip(end[2].lo) - ip(begin[2].hi))?;
-    if cavity[2].lo < visible[0] || cavity[2].hi > visible[1] {
+    if q(cavity[2].lo)? < visible[0] || q(cavity[2].hi)? > visible[1] {
         return Err(Error::Unsupported);
     }
     let norm = receiver.frame.axis_values(2);
@@ -551,7 +555,7 @@ fn certify_clocked_receiver(
     // Projection owns |origin|<4e7; finite atan2 has |angle|<=pi. Together
     // with the source rate/tau and pad bounds every term/sum is <1e9.
     let offset = exact(&map.projection.origin[2])? - rate * ip(map.angle)
-        + (ip(external.helical_rate()) - rate) * I::new(0., tau().hi)
+        + (external.phase_rate() - rate) * I::new(0., tau().hi)
         + I::new(-pad, pad);
     let mut pending = Vec::with_capacity(options.maximum_cells + 1);
     pending.push([0., e.pitch_mm]);

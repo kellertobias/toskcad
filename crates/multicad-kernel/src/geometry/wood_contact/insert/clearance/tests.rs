@@ -140,3 +140,65 @@ fn cancelled_unknown_and_mismatched_policy_queries_publish_no_stock_exclusion() 
             .is_ok()
     );
 }
+
+#[test]
+fn actual_periodic_phillips_continuation_preserves_blind_floor_and_radial_clearance() {
+    for (length, gap) in [(3., 3.), (4.5, 1.5), (5., 1.), (5.5, 0.5)] {
+        let (stock, regular) = fixture(length);
+        let (original, frame) = regular.rust_machine_screw_geometry().unwrap();
+        let screw = super::super::mating::tests::periodic_screw(*original.thread(), 1., frame);
+        let receipt = stock
+            .rust_wood_insert_screw_clearance(&screw, 0.4, None)
+            .unwrap();
+        assert!(receipt.tip_clearance_mm[0] <= gap && receipt.tip_clearance_mm[1] >= gap);
+        assert!(receipt.minimum_radial_clearance_mm > 2.4);
+        if length == 5.5 {
+            assert_eq!(
+                stock
+                    .rust_wood_insert_screw_clearance(&screw, 1., None)
+                    .unwrap_err()
+                    .kind,
+                GeometryErrorKind::Unsupported
+            )
+        } else {
+            assert!(
+                stock
+                    .rust_wood_insert_screw_clearance(&screw, 1., None)
+                    .is_ok()
+            )
+        }
+        assert_eq!(
+            stock
+                .rust_wood_insert_screw_clearance(&screw, 0.4, Some(&|| true))
+                .unwrap_err()
+                .kind,
+            GeometryErrorKind::Cancelled
+        );
+    }
+}
+
+#[test]
+fn periodic_positive_neck_and_exact_two_term_prefix_keep_real_stock_clearance() {
+    for plain in [0., 0.01] {
+        let (stock, regular) = fixture(6.);
+        let (original, mut frame) = regular.rust_machine_screw_geometry().unwrap();
+        frame.origin[2] += 0.5;
+        let screw = super::super::mating::tests::periodic_screw(*original.thread(), plain, frame);
+        let proof = stock
+            .rust_wood_insert_screw_clearance(&screw, 0.4, None)
+            .unwrap();
+        assert!(proof.tip_clearance_mm[0] <= 0.5 && proof.tip_clearance_mm[1] >= 0.5);
+        let expected = 0.4 + plain;
+        assert!(
+            proof.prefix_entry_clearance_mm[0] > expected - 1e-10
+                && proof.prefix_entry_clearance_mm[1] < expected + 1e-10
+        );
+        assert_eq!(
+            stock
+                .rust_wood_insert_screw_clearance(&screw, 1., None)
+                .unwrap_err()
+                .kind,
+            GeometryErrorKind::Unsupported
+        );
+    }
+}

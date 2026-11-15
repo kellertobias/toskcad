@@ -1,13 +1,16 @@
 //! Independent clearance between actual authored cavity bands and original
-//! external literal flank/root supports, over the whole physical phase period.
+//! external literal or exact-periodic bands over the whole physical phase period.
 use super::*;
 pub(in crate::wood_thread_contact) mod phase_error;
 use crate::{authored_flat_thread::AuthoredThread, helical_thread::Thread};
+pub(in crate::wood_thread_contact) mod thread_view;
+pub(in crate::wood_thread_contact) use thread_view::{MatingThread, Parts};
 #[derive(Clone, Copy)]
 pub enum MatingScrew<'a> {
     Regular(&'a crate::headed_screw::Screw),
     Profiled(&'a crate::profiled_screw::Screw),
     Phillips(&'a crate::phillips_drive::PhillipsScrew),
+    Periodic(&'a crate::step_read::PhillipsOwnedPeriodicMaterial),
 }
 #[derive(Clone, Copy)]
 pub struct MatingExternal<'a> {
@@ -15,19 +18,20 @@ pub struct MatingExternal<'a> {
     pub frame: Frame,
 }
 impl<'a> MatingScrew<'a> {
-    pub(super) fn parts(self) -> R<(&'a Thread, [f64; 2], f64)> {
+    pub(super) fn parts(self) -> R<Parts<'a>> {
         match self {
-            Self::Regular(s) => Ok((s.thread(), [0., s.thread().spec().length_mm], 0.)),
-            Self::Profiled(s) => Ok((
+            Self::Regular(s) => Parts::literal(s.thread(), [0., s.thread().spec().length_mm], 0.),
+            Self::Profiled(s) => Parts::literal(
                 s.thread(),
                 s.visible_thread_interval_mm(),
                 profile_prefix(s.profile(), s.spec().shank_length_mm)?,
-            )),
-            Self::Phillips(s) => Ok((
+            ),
+            Self::Phillips(s) => Parts::literal(
                 s.thread(),
                 s.visible_thread_interval_mm(),
                 profile_prefix(s.profile(), s.spec().shank_length_mm)?,
-            )),
+            ),
+            Self::Periodic(s) => thread_view::periodic_parts(s),
         }
     }
 }
@@ -80,19 +84,21 @@ pub fn certify_insert_mating(
     interrupt: &dyn Fn() -> bool,
 ) -> R<InsertMating> {
     checkpoint(interrupt)?;
-    let (outer, [start, end], prefix_end_upper_mm) = external.source.parts()?;
-    if [
-        start,
-        end,
-        prefix_end_upper_mm,
-        req.minimum_engagement_mm,
-        req.minimum_clearance_mm,
-    ]
-    .into_iter()
-    .any(|x| !x.is_finite() || x.abs() > 1e7)
-        || start < 0.
+    let Parts {
+        thread: outer,
+        visible: [start, end],
+        prefix: prefix_end_upper_mm,
+    } = external.source.parts()?;
+    let coordinate_limit = Q::from_integer(10_000_000.into());
+    if [req.minimum_engagement_mm, req.minimum_clearance_mm]
+        .into_iter()
+        .any(|x| !x.is_finite() || x.abs() > 1e7)
+        || [&start, &end, &prefix_end_upper_mm]
+            .into_iter()
+            .any(|v| v.abs() > coordinate_limit)
+        || start < Q::zero()
         || start >= end
-        || end > outer.spec().length_mm
+        || end > q(outer.spec().length_mm)?
         || req.minimum_engagement_mm <= 0.
         || req.minimum_clearance_mm <= 0.
     {
@@ -110,7 +116,7 @@ pub fn certify_insert_mating(
     if columns[2] != [0, 0, 1]
         || !origin[0].is_zero()
         || !origin[1].is_zero()
-        || &origin[2] + q(prefix_end_upper_mm)? > Q::zero()
+        || &origin[2] + &prefix_end_upper_mm > Q::zero()
     {
         return Err(Error::Unsupported);
     }
@@ -120,10 +126,10 @@ pub fn certify_insert_mating(
     } else {
         i32::from(columns[0][1])
     };
-    let prefix_gap = bounded(-&origin[2] - q(prefix_end_upper_mm)?)?;
-    let exit_gap = bounded(q(insert.full_length_mm())? - &origin[2] - q(end)?)?;
-    let begin = (&origin[2] + q(start)?).max(Q::zero());
-    let finish = (&origin[2] + q(end)?).min(q(insert.full_length_mm())?);
+    let prefix_gap = bounded(-&origin[2] - &prefix_end_upper_mm)?;
+    let exit_gap = bounded(q(insert.full_length_mm())? - &origin[2] - &end)?;
+    let begin = (&origin[2] + &start).max(Q::zero());
+    let finish = (&origin[2] + &end).min(q(insert.full_length_mm())?);
     let overlap = bounded(finish - begin)?;
     let norm = vector(insert_frame.axes[2])?;
     if overlap <= Q::zero()
@@ -167,7 +173,7 @@ pub fn certify_insert_mating(
     // Every periodic-radius quotient is still independently checked before
     // iteration and before this interval may be published in a receipt.
     let offset = exact_interval(&base)?
-        + (ip(outer.helical_rate()) - true_rate) * I::new(0., tau.hi)
+        + (outer.phase_rate() - true_rate) * I::new(0., tau.hi)
         + I::new(-correspondence.total_mm, correspondence.total_mm);
     let mut clearance = f64::INFINITY;
     let mut inner_envelope_used = false;
@@ -176,7 +182,7 @@ pub fn certify_insert_mating(
     // original external radius is affine/constant or a convex circular root.
     // Their difference is concave. BOTH one-sided laws and periodic endpoints
     // are evaluated by the interval radius routines at every candidate join.
-    for phase in outer.profile_breaks().map(ip).into_iter().chain(
+    for phase in outer.phase_joins().into_iter().chain(
         internal
             .bands()
             .into_iter()
@@ -223,7 +229,14 @@ pub(super) fn physical_gap(gap: &Q, metric: &Metric) -> R<[f64; 2]> {
     Ok([lower, upper])
 }
 
-pub(super) fn external_periodic_bound(source: &Thread, phase: I) -> (I, bool) {
+pub(super) fn external_periodic_bound<'a>(
+    source: impl Into<MatingThread<'a>>,
+    phase: I,
+) -> (I, bool) {
+    let source = match source.into() {
+        MatingThread::Literal(source) => source,
+        MatingThread::Periodic(source) => return thread_view::periodic_bound(source, phase),
+    };
     match periodic_radius(phase, source.spec().pitch_mm, &mut |p| {
         source.radius_at_phase_interval(p).ok_or(Error::Unsupported)
     }) {
@@ -298,4 +311,4 @@ fn periodic_radius(phase: I, pitch: f64, evaluate: &mut dyn FnMut(I) -> R<I>) ->
     finite(result)
 }
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

@@ -51,6 +51,8 @@ pub(super) fn actual_screw(solid: &Solid) -> Option<(MatingScrew<'_>, PlaneFrame
         Some((MatingScrew::Regular(s), f))
     } else if let Some((s, f)) = solid.rust_profiled_screw_geometry() {
         Some((MatingScrew::Profiled(s), f))
+    } else if let Some((s, f)) = solid.rust_periodic_repaired_phillips_source() {
+        Some((MatingScrew::Periodic(s), f))
     } else {
         solid
             .rust_phillips_screw_geometry()
