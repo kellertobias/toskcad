@@ -3,6 +3,7 @@ use super::*;
 use multicad_rust_kernel::orthogonal_bore_seats::{self as source, Seat, Seats};
 use std::f64::consts::{PI, TAU};
 mod receiving;
+mod step;
 #[cfg(test)]
 mod tests;
 mod topology;
@@ -18,6 +19,13 @@ pub(crate) struct OrthogonalSeatBody {
     original: Rc<OrthogonalBody>,
     pub(in crate::geometry) source: Seats,
     origins: Vec<Origin>,
+    qualified_step: std::cell::RefCell<
+        Option<(
+            GeometryPolicy,
+            PlaneFrame,
+            Rc<multicad_rust_kernel::step::orthogonal_seats::QualifiedOrthogonalSeatsStep>,
+        )>,
+    >,
 }
 fn failure(cause: source::Error) -> GeometryError {
     error(
@@ -148,6 +156,7 @@ impl Solid {
             original: Rc::clone(original),
             source,
             origins,
+            qualified_step: std::cell::RefCell::new(None),
         };
         body.validate_frame(*frame, policy)?;
         let candidate = Self {
