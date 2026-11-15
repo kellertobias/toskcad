@@ -206,3 +206,530 @@ fn one_ellipse_from_two_members_publishes_once() {
     assert_once(&visible, center, major, minor, PI, "visible");
     assert_once(&hidden, center, major, minor, PI, "hidden");
 }
+
+/// Material along lines through a thread member agrees with dense marching of
+/// the source solid's own containment test, for both thread families, both
+/// hands and lines in every direction, including lines along the axis and in
+/// a cap plane.
+#[test]
+fn thread_material_along_lines_agrees_with_source_containment() {
+    use crate::{HelicalThread, Solid};
+    use multicad_core::document::EntityId;
+    use multicad_rust_kernel::rounded_thread::Spec;
+    let policy = GeometryPolicy::default();
+    let frame = PlaneFrame {
+        origin: [1.5, -2., 0.5],
+        u: [0.8, 0.6, 0.],
+        v: [-0.36, 0.48, 0.8],
+    };
+    let mut solids = Vec::new();
+    for left_hand in [false, true] {
+        let root = 1. / (4. * 3_f64.sqrt());
+        solids.push(
+            Solid::rust_helical_thread_end_relief(
+                HelicalThread {
+                    major_radius_mm: 3.,
+                    pitch_mm: 1.,
+                    length_mm: 6.6,
+                    depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().tan()) - root,
+                    crest_width_mm: 0.125,
+                    lower_flank_deg: 30.,
+                    upper_flank_deg: 30.,
+                    radial_taper: 0.,
+                    starts: 1,
+                    left_hand,
+                },
+                Some(root),
+                0.6,
+                0.1,
+                EntityId::new(),
+                frame,
+                policy,
+            )
+            .unwrap(),
+        );
+        let p = 1.27;
+        let a = 27.5_f64.to_radians();
+        let r = p * a.cos() / (12. * (1. - a.sin()));
+        solids.push(
+            Solid::rust_rounded_thread(
+                Spec {
+                    major_radius_mm: 3.175,
+                    pitch_mm: p,
+                    length_mm: 3.7 * p,
+                    depth_mm: p / (3. * a.tan()),
+                    crest_radius_mm: r,
+                    root_radius_mm: r,
+                    flank_angle_deg: 27.5,
+                    starts: 1,
+                    left_hand,
+                },
+                EntityId::new(),
+                frame,
+                policy,
+            )
+            .unwrap(),
+        );
+    }
+    let view = View::new(PlaneFrame::default());
+    let axis = frame.normal();
+    let world = |l: [f64; 3]| -> P3 {
+        std::array::from_fn(|i| {
+            frame.origin[i] + l[0] * frame.u[i] + l[1] * frame.v[i] + l[2] * axis[i]
+        })
+    };
+    let lines: Vec<(P3, P3)> = {
+        let mut lines = Vec::new();
+        // Generic directions through and beside the thread.
+        for (k, d) in [
+            [0.3, -0.5, 0.81],
+            [1., 0.2, -0.1],
+            [0.05, 0.99, 0.1],
+            [-0.7, 0.7, 0.14],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let length: f64 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            let d = d.map(|v: f64| v / length.sqrt());
+            for offset in [0., 1.3, 2.4, 2.9] {
+                let start = world([
+                    offset * (k as f64 * 0.7).cos(),
+                    offset * (k as f64 * 0.7).sin(),
+                    2.,
+                ]);
+                lines.push((
+                    start,
+                    std::array::from_fn(|i| d[0] * frame.u[i] + d[1] * frame.v[i] + d[2] * axis[i]),
+                ));
+            }
+        }
+        // Along the axis at several radii, and in the entry cap plane.
+        for r in [0.5, 2.5, 2.8, 3.05] {
+            lines.push((world([r, 0.3, -1.]), axis));
+        }
+        lines.push((world([-4., 0.37, 0.]), frame.u));
+        lines
+    };
+    let mut covered = 0;
+    for solid in &solids {
+        let member = families::member(solid, &view).unwrap().unwrap();
+        for &(start, direction) in &lines {
+            let spans = member.line(start, direction).unwrap().unwrap();
+            // March from t = -12 to 12 in steps of 2 um.
+            let steps = 12_000;
+            let inside = |t: f64| {
+                solid
+                    .rust_thread_contains(std::array::from_fn(|i| start[i] + t * direction[i]))
+                    .unwrap()
+            };
+            let mut mismatches = 0;
+            for i in 0..=steps {
+                let t = -12. + 24. * i as f64 / steps as f64;
+                let near = spans.iter().flatten().any(|end| (end - t).abs() < 1e-4);
+                if near {
+                    continue;
+                }
+                let claimed = spans.iter().any(|[a, b]| *a < t && t < *b);
+                if claimed != inside(t) {
+                    mismatches += 1;
+                }
+            }
+            assert_eq!(mismatches, 0, "{start:?} {direction:?}: {spans:?}");
+            covered += usize::from(!spans.is_empty());
+        }
+    }
+    // Most lines meet material; the march is not vacuous.
+    assert!(covered >= 3 * solids.len() * lines.len() / 4, "{covered}");
+}
+
+/// Every outline candidate of a rounded thread lies on the source surface
+/// with its normal perpendicular to the sight, in side, oblique and
+/// near-axial views, for both hands.
+#[test]
+fn rounded_thread_outlines_satisfy_the_contour_condition() {
+    use crate::Solid;
+    use multicad_core::document::EntityId;
+    use multicad_rust_kernel::rounded_thread::Spec;
+    let p = 1.27;
+    let a = 27.5_f64.to_radians();
+    let r = p * a.cos() / (12. * (1. - a.sin()));
+    for left_hand in [false, true] {
+        let solid = Solid::rust_rounded_thread(
+            Spec {
+                major_radius_mm: 3.175,
+                pitch_mm: p,
+                length_mm: 3.7 * p,
+                depth_mm: p / (3. * a.tan()),
+                crest_radius_mm: r,
+                root_radius_mm: r,
+                flank_angle_deg: 27.5,
+                starts: 1,
+                left_hand,
+            },
+            EntityId::new(),
+            PlaneFrame::default(),
+            GeometryPolicy::default(),
+        )
+        .unwrap();
+        let thread = solid.rust_rounded_thread_data().unwrap().thread;
+        let s = 0.5_f64.sqrt();
+        let t = (1_f64 / 6.).sqrt();
+        for [u, v] in [
+            [[1., 0., 0.], [0., 0., 1.]],
+            [[s, -s, 0.], [t, t, -2. * t]],
+            [[1., 0., 0.], [0., 0.9995_f64.sqrt(), (0.0005_f64).sqrt()]],
+        ] {
+            let frame = PlaneFrame {
+                origin: [0.2, 0.1, 2.35],
+                u,
+                v,
+            };
+            let view = View::new(frame);
+            let toward = view.axes[2];
+            let member = families::member(&solid, &view).unwrap().unwrap();
+            let mut checked = 0;
+            for candidate in member.candidates(0.0025).unwrap() {
+                if candidate.kind != Kind::Outline {
+                    continue;
+                }
+                for k in 0..=8 {
+                    let q = candidate.path.point(k as f64 / 8.);
+                    // Back to world (the default thread frame is the world).
+                    let w: [f64; 3] = std::array::from_fn(|i| {
+                        frame.origin[i] + (0..3).map(|j| view.axes[j][i] * q[j]).sum::<f64>()
+                    });
+                    let theta = w[1].atan2(w[0]);
+                    let radius = thread.radius(theta, w[2]);
+                    assert!((w[0].hypot(w[1]) - radius).abs() < 1e-9, "{w:?}");
+                    let normal = thread.normal(theta, w[2]);
+                    let dot: f64 = (0..3).map(|i| normal[i] * toward[i]).sum();
+                    assert!(dot.abs() < 1e-7, "{w:?}: {dot}");
+                    checked += 1;
+                }
+            }
+            assert!(checked > 100, "{checked}");
+        }
+    }
+}
+
+/// Visibility of thread drawings against marching the source solid's own
+/// containment test: every sampled point of every candidate curve that is
+/// visible by marching lies on a published visible vector, and every hidden
+/// one on a hidden or a coincident visible vector.
+#[test]
+fn thread_visibility_agrees_with_source_containment_marching() {
+    use crate::{DrawingSolid, HelicalThread, Solid};
+    use multicad_core::document::EntityId;
+    use multicad_rust_kernel::rounded_thread::Spec;
+    let policy = GeometryPolicy::default();
+    let p = 1.27;
+    let a = 27.5_f64.to_radians();
+    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let rounded = Solid::rust_rounded_thread(
+        Spec {
+            major_radius_mm: 3.175,
+            pitch_mm: p,
+            length_mm: 3.7 * p,
+            depth_mm: p / (3. * a.tan()),
+            crest_radius_mm: r,
+            root_radius_mm: r,
+            flank_angle_deg: 27.5,
+            starts: 1,
+            left_hand: false,
+        },
+        EntityId::new(),
+        PlaneFrame::default(),
+        policy,
+    )
+    .unwrap();
+    let root = 1. / (4. * 3_f64.sqrt());
+    let relief = Solid::rust_helical_thread_end_relief(
+        HelicalThread {
+            major_radius_mm: 3.,
+            pitch_mm: 1.,
+            length_mm: 6.6,
+            depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().tan()) - root,
+            crest_width_mm: 0.125,
+            lower_flank_deg: 30.,
+            upper_flank_deg: 30.,
+            radial_taper: 0.,
+            starts: 1,
+            left_hand: true,
+        },
+        Some(root),
+        0.6,
+        0.1,
+        EntityId::new(),
+        PlaneFrame::default(),
+        policy,
+    )
+    .unwrap();
+    let s = 0.5_f64.sqrt();
+    let t = (1_f64 / 6.).sqrt();
+    for (solid, center) in [(&rounded, 2.35), (&relief, 3.3)] {
+        for [u, v] in [
+            [[1., 0., 0.], [0., 0., 1.]],
+            [[s, -s, 0.], [t, t, -2. * t]],
+            [[1., 0., 0.], [0., 1., 0.]],
+        ] {
+            let frame = PlaneFrame {
+                origin: [0.2, 0.1, center],
+                u,
+                v,
+            };
+            let view = View::new(frame);
+            let options = DrawingProjection {
+                frame,
+                hidden_lines: true,
+                ..Default::default()
+            };
+            let vectors = project_solids(&[DrawingSolid { solid, hatch: None }], options)
+                .unwrap()
+                .unwrap();
+            let world = |q: P3| -> [f64; 3] {
+                std::array::from_fn(|i| {
+                    frame.origin[i] + (0..3).map(|j| view.axes[j][i] * q[j]).sum::<f64>()
+                })
+            };
+            // Material strictly in front of a view point, by marching.
+            let covered = |q: P3| {
+                (1..4000).any(|i| {
+                    let ahead = [q[0], q[1], q[2] + 1e-4 + 2e-3 * f64::from(i)];
+                    solid.rust_thread_contains(world(ahead)).unwrap()
+                        && solid
+                            .rust_thread_contains(world([q[0], q[1], ahead[2] - 5e-5]))
+                            .unwrap()
+                })
+            };
+            let near = |role: VectorRole, point: P2| {
+                vectors.iter().filter(|v| v.role == role).any(|v| {
+                    v.preview_mm.windows(2).any(|w| {
+                        let [[a0, a1], [b0, b1]] = [w[0], w[1]];
+                        let [dx, dy] = [b0 - a0, b1 - a1];
+                        let along = (((point[0] - a0) * dx + (point[1] - a1) * dy)
+                            / (dx * dx + dy * dy).max(1e-300))
+                        .clamp(0., 1.);
+                        (point[0] - a0 - along * dx).hypot(point[1] - a1 - along * dy) < 0.02
+                    })
+                })
+            };
+            let member = families::member(solid, &view).unwrap().unwrap();
+            let (mut seen, mut wrong) = (0, Vec::new());
+            for candidate in member.candidates(0.0025).unwrap() {
+                if candidate.kind == Kind::Smooth {
+                    continue;
+                }
+                for k in 1..12 {
+                    let tt = k as f64 / 12.;
+                    let q = candidate.path.point(tt);
+                    let truth = covered(q);
+                    // Skip points near a change of visibility along the curve.
+                    let neighbours = [tt - 0.02, tt + 0.02]
+                        .map(|t| covered(candidate.path.point(t.clamp(0., 1.))));
+                    if neighbours.iter().any(|n| *n != truth) {
+                        continue;
+                    }
+                    seen += 1;
+                    let point = [q[0], q[1]];
+                    let ok = if truth {
+                        near(VectorRole::Hidden, point) || near(VectorRole::Visible, point)
+                    } else {
+                        near(VectorRole::Visible, point)
+                    };
+                    if !ok {
+                        wrong.push((
+                            candidate.kind,
+                            q,
+                            truth,
+                            near(VectorRole::Hidden, point),
+                            u,
+                            v,
+                        ));
+                    }
+                }
+            }
+            assert!(seen > 100, "{seen}");
+            assert!(
+                wrong.is_empty(),
+                "{} of {seen}: {:?}",
+                wrong.len(),
+                &wrong[..wrong.len().min(6)]
+            );
+        }
+    }
+}
+
+/// Every published section boundary point of both thread families lies in
+/// the cut plane and on the source boundary: the helicoid, a cap, the neck,
+/// its far disk or the shoulder. Axial sections enclose the exact area.
+#[test]
+fn thread_sections_lie_on_the_source_boundary() {
+    use crate::{DrawingHatch, DrawingSolid, HelicalThread, Solid};
+    use multicad_core::{document::EntityId, drawings::VectorCurve, materials::HatchPattern};
+    use multicad_rust_kernel::rounded_thread::Spec;
+    let policy = GeometryPolicy::default();
+    let p = 1.27;
+    let a = 27.5_f64.to_radians();
+    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let rounded = Solid::rust_rounded_thread(
+        Spec {
+            major_radius_mm: 3.175,
+            pitch_mm: p,
+            length_mm: 3.7 * p,
+            depth_mm: p / (3. * a.tan()),
+            crest_radius_mm: r,
+            root_radius_mm: r,
+            flank_angle_deg: 27.5,
+            starts: 1,
+            left_hand: true,
+        },
+        EntityId::new(),
+        PlaneFrame::default(),
+        policy,
+    )
+    .unwrap();
+    let root = 1. / (4. * 3_f64.sqrt());
+    let relief = Solid::rust_helical_thread_end_relief(
+        HelicalThread {
+            major_radius_mm: 3.,
+            pitch_mm: 1.,
+            length_mm: 6.6,
+            depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().tan()) - root,
+            crest_width_mm: 0.125,
+            lower_flank_deg: 30.,
+            upper_flank_deg: 30.,
+            radial_taper: 0.,
+            starts: 1,
+            left_hand: false,
+        },
+        Some(root),
+        0.6,
+        0.1,
+        EntityId::new(),
+        PlaneFrame::default(),
+        policy,
+    )
+    .unwrap();
+    let rounded_thread = rounded.rust_rounded_thread_data().unwrap().thread;
+    let (relief_data, _) = relief.rust_thread_end_relief_data().unwrap();
+    let s = 0.5_f64.sqrt();
+    let t = (1_f64 / 6.).sqrt();
+    let frames = |center: f64| {
+        [
+            ([0.2, 0.1, center], [[1., 0., 0.], [0., 0., 1.]]),
+            ([0., 0., center], [[s, s, 0.], [0., 0., 1.]]),
+            ([0.2, 0.1, center], [[s, -s, 0.], [t, t, -2. * t]]),
+            ([0.3, -0.2, center + 0.37], [[1., 0., 0.], [0., 1., 0.]]),
+        ]
+    };
+    for (label, solid, center) in [("rounded", &rounded, 2.35), ("relief", &relief, 3.3)] {
+        for (origin, [u, v]) in frames(center) {
+            let frame = PlaneFrame { origin, u, v };
+            let view = View::new(frame);
+            let options = DrawingProjection {
+                frame,
+                section_offset_mm: Some(0.),
+                section_only: true,
+                ..Default::default()
+            };
+            let vectors = project_solids(
+                &[DrawingSolid {
+                    solid,
+                    hatch: Some(DrawingHatch {
+                        angle_rad: 0.,
+                        spacing_mm: 1.,
+                        line_width_mm: 0.18,
+                        pattern: HatchPattern::Solid,
+                    }),
+                }],
+                options,
+            )
+            .unwrap()
+            .unwrap();
+            let mut checked = 0;
+            for vector in vectors.iter().filter(|v| v.role == VectorRole::Section) {
+                for q in &vector.preview_mm {
+                    let w: [f64; 3] = std::array::from_fn(|i| {
+                        frame.origin[i] + view.axes[0][i] * q[0] + view.axes[1][i] * q[1]
+                    });
+                    let [x, y, z] = w;
+                    let radius = x.hypot(y);
+                    let theta = y.atan2(x);
+                    let on = |value: f64| value.abs() < 1e-6;
+                    let ok = if label == "rounded" {
+                        let bound = rounded_thread.radius(theta, z.clamp(0., 3.7 * p));
+                        let length = 3.7 * p;
+                        (on(radius - bound) && z > -1e-9 && z < length + 1e-9)
+                            || ((on(z) || on(z - length)) && radius <= bound + 1e-6)
+                    } else {
+                        let thread = relief_data.material_thread();
+                        let [junction, top] = [
+                            relief_data.material_length_mm(),
+                            relief_data.full_length_mm(),
+                        ];
+                        let neck = relief_data.neck_radius_mm();
+                        let bound = thread.radius(theta, z.clamp(0., junction));
+                        (on(radius - bound) && z > -1e-9 && z < junction + 1e-9)
+                            || (on(z) && radius <= bound + 1e-6)
+                            || (on(z - junction) && radius >= neck - 1e-6 && radius <= bound + 1e-6)
+                            || (on(radius - neck) && z > junction - 1e-9 && z < top + 1e-9)
+                            || (on(z - top) && radius <= neck + 1e-6)
+                    };
+                    assert!(ok, "{label} {origin:?} {u:?}: {w:?} r {radius}");
+                    checked += 1;
+                }
+            }
+            assert!(checked > 50, "{label}: {checked}");
+            let area: f64 = vectors
+                .iter()
+                .filter_map(|v| match v.curve {
+                    VectorCurve::HatchTriangle { points: [a, b, c] } => Some(
+                        ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs() / 2.,
+                    ),
+                    _ => None,
+                })
+                .sum();
+            // Independent area of the cut by containment on a fine grid.
+            let step = 0.01;
+            let mut inside = 0usize;
+            for i in -400..400 {
+                for j in -400..400 {
+                    let q = [(f64::from(i) + 0.5) * step, (f64::from(j) + 0.5) * step];
+                    let w: [f64; 3] = std::array::from_fn(|k| {
+                        frame.origin[k] + view.axes[0][k] * q[0] + view.axes[1][k] * q[1]
+                    });
+                    inside += usize::from(solid.rust_thread_contains(w).unwrap());
+                }
+            }
+            let grid = inside as f64 * step * step;
+            assert!(
+                (area - grid).abs() < 0.01 * grid,
+                "{label} {origin:?} {u:?}: {area} {grid}"
+            );
+            if u == [1., 0., 0.] && v == [0., 1., 0.] {
+                // Across the axis: the constant cross-section area.
+                let area: f64 = vectors
+                    .iter()
+                    .filter_map(|v| match v.curve {
+                        VectorCurve::HatchTriangle { points: [a, b, c] } => Some(
+                            ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs()
+                                / 2.,
+                        ),
+                        _ => None,
+                    })
+                    .sum();
+                let exact = if label == "rounded" {
+                    rounded_thread.volume_mm3() / (3.7 * p)
+                } else {
+                    let thread = relief_data.material_thread();
+                    thread.volume_mm3() / thread.spec().length_mm
+                };
+                assert!(
+                    (area - exact).abs() < 2e-3 * exact,
+                    "{label}: {area} {exact}"
+                );
+            }
+        }
+    }
+}

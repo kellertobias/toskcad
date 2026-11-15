@@ -10,6 +10,8 @@ Requests that the family providers refuse draw through the exact-curve scene eng
 
 Spherical bevel gears are scene members too (`scene/bevel.rs`): every face is ruled (cones through the pitch apex over the root, fillet, meridian, spherical-involute and tip pieces of the tooth boundary, two back cones and the bore), so outlines are whole rulings, a sight line meets the solid where closed-form quadric roots or certified sign changes of the provider's boundary law occur, and a plane cuts each face strip between the crossings of its two rims. Uncropped axial views keep the dedicated bevel provider; every other bevel view, crop, section and scene draws through the engine. `rust_scene_bevel.rs` holds the analytic regressions and compares 60 view, section and scene cases with the independently constructed OpenCascade 7.9.3 bevel: curves agree both ways within 0.0122 mm (bound 0.03 mm). Measured OpenCascade deviations: it refuses oblique cuts and hidden-line lengthwise cuts of its own bevel ("Projected curve family is unsupported"), bridges transverse flank cuts with straight chords (sagitta up to 0.174 mm), draws tangent-continuous flank seams, and publishes up to 15.4 mm of rear tooth edges per oblique hidden-line view as visible although material lies in front of them (decided by marching the exact membership predicate in the member's unit tests). No Rust visible curve lies on a native hidden one. Edges of one body that pierce another interpenetrating body are not split at the piercing point by the scene engine; the inventoried scenes do not interpenetrate.
 
+The thread end relief (CAD-290 `rust_thread_end_relief_data`: material thread, cylindrical neck, shoulder and far disk) and the rounded thread (`rust_rounded_thread_data`) draw through the scene member in `drawing/scene/helix.rs`: exact rails, cap curves, contour curves and cut-face curves of the helicoidal profile of line segments and circular arcs. `drawing::scene::tests` certifies material along lines, contour conditions, visibility and cut faces against the source solids' own containment, normals and volumes; `rust_scene_thread_native.rs` compares every cut face with OpenCascade 7.9.3. OpenCascade's hidden-line removal of the imported helicoidal faces is not used as a reference: it publishes rear crest helices as visible and omits the flank contours.
+
 | Family or scene | ax | ax rev | ax hid | side | side hid | obl | obl hid | ax sec | ax only | ax depth | side sec | side only | side depth | side win | obl sec | obl only | ax det | side det |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | box | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -24,8 +26,8 @@ Spherical bevel gears are scene members too (`scene/bevel.rs`): every face is ru
 | helical gear | ✓ | ✓ | ✓ | F10 | F10 | F10 | F10 | ✓ | ✓ | ✓ | F10 | F11 | F10 | F10 | F10 | F11 | F10 | F10 |
 | herringbone gear | ✓ | ✓ | ✓ | F10 | F10 | F10 | F10 | ✓ | ✓ | ✓ | F10 | F11 | F10 | F10 | F10 | F11 | F10 | F10 |
 | bevel gear | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| thread end relief | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 |
-| rounded thread | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 |
+| thread end relief | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| rounded thread | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | za worm | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | F13 | F13 | F13 | F13 |
 | worm wheel | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | F13 | F13 | F13 | F13 |
 | box + cylinder overlapping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -58,6 +60,5 @@ Spherical bevel gears are scene members too (`scene/bevel.rs`): every face is ru
 - **F13** (43 cells): Rust worm and worm-wheel drawings require an uncropped view along the gear axis
 - **F16** (11 cells): Rust worm and worm-wheel drawings support one placed gear at a time
 - **F17** (9 cells): Rust exact drawing projection for continuous herringbone gears is unavailable
-- **F18** (36 cells): Rust planar drawing projection requires straight edges and planar faces
 
-541 of 684 combinations draw; 143 are explicit findings. No combination returns an invalid or partial result.
+577 of 684 combinations draw; 107 are explicit findings. No combination returns an invalid or partial result.
