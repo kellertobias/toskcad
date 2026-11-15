@@ -288,3 +288,93 @@ fn distinct_boundary_point_owners_require_exact_decimal_equality() {
     }
     assert_eq!(document.literal_input(), text);
 }
+
+#[test]
+fn actual_cap_and_edge_ownership_mutations_cannot_publish_a_closed_shell() {
+    let text = fixture(false);
+    let document = CompoundDocument::parse(&text, Default::default(), None).unwrap();
+    let parsed = Parsed::parse(
+        &document,
+        document.represented_members()[0].item_entity(),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let records = document.records();
+    let caps = parsed
+        .faces
+        .iter()
+        .filter(|f| matches!(f.support, Support::Plane { .. }))
+        .collect::<Vec<_>>();
+    assert_eq!(caps.len(), 2);
+    let cap_line = text
+        .lines()
+        .find(|line| line.starts_with(&format!("#{}=", caps[0].id)))
+        .unwrap();
+    let cap_fields = fields(cap_line);
+    let duplicate = change_record(&text, caps[1].id, |line| {
+        let mut args = fields(line);
+        args[1] = cap_fields[1];
+        args[2] = cap_fields[2];
+        with_fields(line, &args)
+    });
+    assert_eq!(rejected(&duplicate), Error::Invalid);
+    let Value::List(bounds) = &records[&caps[0].id][0].args[1] else {
+        panic!()
+    };
+    let Value::Reference(bound) = bounds[0] else {
+        panic!()
+    };
+    let Value::Reference(wire) = records[&bound][0].args[1] else {
+        panic!()
+    };
+    let Value::List(coedges) = &records[&wire][0].args[1] else {
+        panic!()
+    };
+    let ids = coedges
+        .iter()
+        .map(|c| match c {
+            Value::Reference(id) => *id,
+            _ => panic!(),
+        })
+        .collect::<Vec<_>>();
+    let repeated = replace_field(
+        &text,
+        wire,
+        1,
+        &format!("(#{0},#{0},#{1},#{2})", ids[0], ids[2], ids[3]),
+    );
+    assert_eq!(rejected(&repeated), Error::Invalid);
+    let mut reversed = text.clone();
+    for id in &ids {
+        reversed = change_record(&reversed, *id, |line| {
+            let mut args = fields(line);
+            args[4] = if args[4] == ".T." { ".F." } else { ".T." };
+            with_fields(line, &args)
+        });
+    }
+    let order = format!(
+        "({})",
+        ids.iter()
+            .rev()
+            .map(|id| format!("#{id}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    reversed = replace_field(&reversed, wire, 1, &order);
+    assert_eq!(rejected(&reversed), Error::Invalid);
+    assert!(matches!(parsed.faces[0].support, Support::Tensor(_)));
+    let [a, b] = [0, 1].map(|i| parsed.edges[parsed.faces[0].coedges[i].edge].id);
+    let Value::Reference(geometry) = records[&a][0].args[3] else {
+        panic!()
+    };
+    let reused = replace_field(&text, b, 3, &format!("#{geometry}"));
+    assert_eq!(rejected(&reused), Error::Unsupported);
+    let swapped = change_record(&text, a, |line| {
+        let mut args = fields(line);
+        args.swap(1, 2);
+        with_fields(line, &args)
+    });
+    assert_eq!(rejected(&swapped), Error::Unsupported);
+    assert_eq!(document.literal_input(), text);
+}
