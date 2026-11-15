@@ -13,10 +13,25 @@ pub(super) struct Candidate {
     domain: [[f64; 2]; 2],
     remainder: [f64; 3],
 }
+pub(super) type ScaledBasis = [[[I; 12]; 12]; 2];
+pub(super) fn scaled_basis(
+    spans: [usize; 2],
+    basis: &curves::Basis,
+    work: &mut Work<'_>,
+) -> Result<ScaledBasis, Error> {
+    // The sealed source-derived uniform grid has positive dyadic spans.
+    //1872 interval operations plus fixed coefficient publication fit2560.
+    work.charge(2560)?;
+    Ok(std::array::from_fn(|axis| {
+        std::array::from_fn(|i| {
+            std::array::from_fn(|k| basis[i][k] * power(p(1. / spans[axis] as f64), k))
+        })
+    }))
+}
 pub(super) fn cell(
     law: &StockClipPatchLaw<'_>,
     domain: [[f64; 2]; 2],
-    basis: &curves::Basis,
+    scaled: &ScaledBasis,
     work: &mut Work<'_>,
     interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<Candidate, Error> {
@@ -34,13 +49,11 @@ pub(super) fn cell(
         .taylor(domain[0], domain[1], source_options(work)?, interrupt)
         .map_err(source_error)?;
     work.charge(whole.work_used())?;
-    // Two separable power-to-Bernstein passes use20736 interval operations;
-    // scaled basis construction uses<2000, including all integer powers.
-    work.charge(23_040)?;
+    // Two separable passes use20736 interval operations; fixed arrays and
+    // coefficient publication fit1792 further units. The uniform scaled
+    // bases are prepared ONCE per patch, not recomputed for every cell.
+    work.charge(22_528)?;
     let h = domain.map(|d| d[1] - d[0]);
-    let scaled: [[[I; 12]; 12]; 2] = std::array::from_fn(|axis| {
-        std::array::from_fn(|i| std::array::from_fn(|k| basis[i][k] * power(p(h[axis]), k)))
-    });
     let mut first = [[[p(0.); 3]; 12]; 12];
     for (i, row) in first.iter_mut().enumerate() {
         for (n, out) in row.iter_mut().enumerate() {

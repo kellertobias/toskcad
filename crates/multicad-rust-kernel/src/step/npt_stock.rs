@@ -15,6 +15,8 @@ use std::mem::size_of;
 mod curves;
 mod surfaces;
 pub use surfaces::{SurfaceCellCertificate, SurfaceOptions, SurfacePatch, SurfacePlan};
+mod writer;
+pub use writer::{CandidateFile, EncodingReceipt, write_source_candidate};
 #[cfg(test)]
 mod tests;
 

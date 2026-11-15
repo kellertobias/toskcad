@@ -143,6 +143,7 @@ impl<'a> SurfacePlan<'a> {
                 .patch_law(source, source_options(&work)?, interrupt)
                 .map_err(source_error)?;
             work.charge(law.work_used())?;
+            let scaled = tensor::scaled_basis(spans, &basis, &mut work)?;
             let mut poles = memory.allocate(count, &mut work)?;
             poles.resize(count, [0.; 3]);
             for (side, edge) in source.coedges().into_iter().enumerate() {
@@ -176,7 +177,7 @@ impl<'a> SurfacePlan<'a> {
                         [i as f64 / spans[0] as f64, (i + 1) as f64 / spans[0] as f64],
                         [j as f64 / spans[1] as f64, (j + 1) as f64 / spans[1] as f64],
                     ];
-                    let candidate = tensor::cell(&law, domain, &basis, &mut work, interrupt)?;
+                    let candidate = tensor::cell(&law, domain, &scaled, &mut work, interrupt)?;
                     let mut actual = [[[0.; 3]; 12]; 12];
                     for (a, row) in actual.iter_mut().enumerate() {
                         for (b, pole) in row.iter_mut().enumerate() {

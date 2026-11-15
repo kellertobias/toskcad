@@ -519,3 +519,160 @@ fn shared_surface_failures_keep_real_source_and_one_aggregate_resource_boundary(
     assert_eq!(SurfaceOptions::default().maximum_control_points, 262_144);
     assert_eq!(*source.source(), original);
 }
+
+#[test]
+fn actual_source_known_closed_step_packet_keeps_one_registry_and_original_total_limits() {
+    use crate::step_read::owned_insert::{CompoundDocument, DocumentOptions};
+    for quarter in [false, true] {
+        let source = source(quarter);
+        let options = CurveOptions::default();
+        let curves = CurvePlan::new(&source, options, None).unwrap();
+        let plan = SurfacePlan::new(curves, options.into(), None).unwrap();
+        let file = write_source_candidate(&plan, options.maximum_work, options.maximum_bytes, None)
+            .unwrap();
+        eprintln!(
+            "NPT FILE quarter={quarter} bytes={} work={} peak={}",
+            file.as_str().len(),
+            file.receipt().work_used(),
+            file.receipt().accounted_peak_bytes()
+        );
+        assert_eq!(file.as_str().matches("=CLOSED_SHELL(").count(), 1);
+        assert_eq!(file.as_str().matches("=MANIFOLD_SOLID_BREP(").count(), 1);
+        assert_eq!(file.as_str().matches("=ADVANCED_FACE(").count(), 10);
+        assert_eq!(file.as_str().matches("=EDGE_CURVE(").count(), 20);
+        assert_eq!(file.as_str().matches("=PCURVE(").count(), 40);
+        let document =
+            CompoundDocument::parse(file.as_str(), DocumentOptions::default(), None).unwrap();
+        assert_eq!(document.represented_members().len(), 1);
+        let again =
+            write_source_candidate(&plan, options.maximum_work, options.maximum_bytes, None)
+                .unwrap()
+                .into_string();
+        assert_eq!(file.as_str(), again);
+    }
+}
+
+#[test]
+fn source_known_step_output_refuses_real_budgets_and_cancellation_atomically() {
+    let source = source(false);
+    let original = *source.source();
+    let options = CurveOptions::default();
+    let curves = CurvePlan::new(&source, options, None).unwrap();
+    let plan = SurfacePlan::new(curves, options.into(), None).unwrap();
+    let file =
+        write_source_candidate(&plan, options.maximum_work, options.maximum_bytes, None).unwrap();
+    let receipt = file.receipt();
+    for (work, bytes) in [
+        (0, options.maximum_bytes),
+        (options.maximum_work + 1, options.maximum_bytes),
+        (options.maximum_work, 0),
+        (options.maximum_work, options.maximum_bytes + 1),
+    ] {
+        assert!(matches!(
+            write_source_candidate(&plan, work, bytes, None),
+            Err(Error::Invalid)
+        ));
+    }
+    for (work, bytes) in [
+        (1, options.maximum_bytes),
+        (receipt.work_used() - 1, options.maximum_bytes),
+        (options.maximum_work, 1),
+    ] {
+        assert!(matches!(
+            write_source_candidate(&plan, work, bytes, None),
+            Err(Error::Limit)
+        ));
+    }
+    assert_eq!(
+        write_source_candidate(&plan, receipt.work_used(), options.maximum_bytes, None)
+            .unwrap()
+            .as_str(),
+        file.as_str()
+    );
+    assert!(matches!(
+        write_source_candidate(
+            &plan,
+            options.maximum_work,
+            options.maximum_bytes,
+            Some(&|| true)
+        ),
+        Err(Error::Cancelled)
+    ));
+    let polls = std::cell::Cell::new(0usize);
+    let count = || {
+        polls.set(polls.get() + 1);
+        false
+    };
+    write_source_candidate(
+        &plan,
+        options.maximum_work,
+        options.maximum_bytes,
+        Some(&count),
+    )
+    .unwrap();
+    let seen = std::cell::Cell::new(0usize);
+    let cancel = || {
+        seen.set(seen.get() + 1);
+        seen.get() == polls.get()
+    };
+    assert!(matches!(
+        write_source_candidate(
+            &plan,
+            options.maximum_work,
+            options.maximum_bytes,
+            Some(&cancel)
+        ),
+        Err(Error::Cancelled)
+    ));
+    // Find an ACTUAL neighboring combined byte/work frontier. Allocation
+    // growth can adapt to a smaller quota, so the default peak-minus-one is
+    // deliberately not assumed to be a failing request.
+    let mut bad = 1;
+    let mut good = receipt.accounted_peak_bytes();
+    while good - bad > 1 {
+        let middle = bad + (good - bad) / 2;
+        match write_source_candidate(&plan, options.maximum_work, middle, None) {
+            Ok(candidate) => {
+                assert_eq!(candidate.as_str(), file.as_str());
+                good = middle
+            }
+            Err(Error::Limit) => bad = middle,
+            Err(other) => panic!("unexpected resource result {other:?}"),
+        }
+    }
+    assert!(matches!(
+        write_source_candidate(&plan, options.maximum_work, bad, None),
+        Err(Error::Limit)
+    ));
+    assert_eq!(
+        write_source_candidate(&plan, options.maximum_work, good, None)
+            .unwrap()
+            .as_str(),
+        file.as_str()
+    );
+    let existing = || {
+        let mut writer = crate::step::Writer::new();
+        writer
+            .append_box(
+                [5, 7, 9].map(|n| crate::Rational::new(n, 1).unwrap()),
+                [30., 0., 0.],
+                [1., 0., 0.],
+                [0., 1., 0.],
+            )
+            .unwrap();
+        writer
+    };
+    let baseline = existing().finish().unwrap();
+    let mut writer = existing();
+    assert!(matches!(
+        writer.append_source_npt_candidate(
+            &plan,
+            plan.work_used() + 8192,
+            options.maximum_bytes,
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    assert_eq!(writer.finish().unwrap(), baseline);
+    assert_eq!(*source.source(), original);
+}
