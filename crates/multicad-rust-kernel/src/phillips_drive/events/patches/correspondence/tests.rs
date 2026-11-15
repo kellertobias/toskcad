@@ -190,7 +190,14 @@ fn actual_canonical_cutter_families_retain_distinct_patch_inventories() {
                     .any(|(a, b)| a.source_identity() != b.source_identity())
             {
                 assert!(matches!(
-                    a.source_correspondence(&b, Default::default(), None),
+                    a.source_correspondence(
+                        &b,
+                        PatchCorrespondenceOptions {
+                            maximum_cells: 0,
+                            ..Default::default()
+                        },
+                        None
+                    ),
                     Err(Error::Unresolved)
                 ));
             }

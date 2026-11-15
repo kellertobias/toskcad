@@ -219,10 +219,18 @@ impl PatchAtlas<'_> {
             dv_mm: 0.,
             cells_used: 0,
         };
+        // Validate the complete semantic inventory before spending numeric
+        // cells on earlier patches whose geometry could otherwise mask a
+        // later incompatible family/key until subdivision exhausted its quota.
+        if self
+            .patches
+            .iter()
+            .zip(&other.patches)
+            .any(|(a, b)| a.key != b.key)
+        {
+            return Err(Error::Unresolved);
+        }
         for index in 0..self.patches.len() {
-            if self.patches[index].key != other.patches[index].key {
-                return Err(Error::Unresolved);
-            }
             let mut stack = [(0., 1., 0usize); 64];
             let mut count = 1;
             while count > 0 {

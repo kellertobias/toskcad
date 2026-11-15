@@ -138,11 +138,18 @@ impl PeriodicThreadSource {
                     + dr * u_angle
                     + radius * (du_angle + other_u_angle * angle);
                 let dv = dr * v_angle + radius * (dv_angle + other_v_angle * angle) + abs(dh);
-                require(
+                // Sole source constructor retains validated Thread:
+                // pitch>=0.001; radii/length<=1e7; ordered phases are
+                // in[0,1.5*pitch]. Exact caps above lie in[0,length].
+                // No inverse radius/phase width occurs here. Rates<6300
+                // and the complete product expansions stay below1e31;
+                // an outward reserve below1e32 is far from overflow.
+                assert!(
                     [position, du, dv]
                         .into_iter()
                         .all(|x| x.valid() && x.hi.is_finite()),
-                )?;
+                    "validated finite thread and cap scales retain finite correspondence"
+                );
                 out.position_mm = out.position_mm.max(position.hi);
                 out.du_mm = out.du_mm.max(du.hi);
                 out.dv_mm = out.dv_mm.max(dv.hi);
