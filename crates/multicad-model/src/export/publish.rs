@@ -22,6 +22,31 @@ pub enum StepVerificationMethod {
     SourceKnownBoundary,
     MixedMemberBoundary,
     DecodedSupportHealing,
+    DecodedPeriodicRepair,
+}
+/// Independently decoded periodic material after the bounded source repair.
+/// Volume belongs to that material, not the exact occupied raw STEP surfaces.
+/// Chart derivatives and staged resource counts retain their separate units.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StepPeriodicMemberReceipt {
+    pub member_index: u32,
+    pub decoded_volume_bounds_mm3: [f64; 2],
+    pub source_volume_bounds_mm3: [f64; 2],
+    pub maximum_world_position_error_mm: f64,
+    pub maximum_world_chart_derivative_error_mm: f64,
+    pub independent_volume_discrepancy_mm3: f64,
+    pub verified_tolerance_mm: f64,
+    pub reader_reserved_work: usize,
+    pub decoded_material_proof_work: usize,
+    pub correspondence_fixed_work: usize,
+    pub correspondence_cavity_cells: usize,
+    pub document_work: usize,
+    pub document_retained_bytes: usize,
+    pub selection_work: usize,
+    pub selection_query_peak_bytes: usize,
+    pub binding_work: usize,
+    pub binding_query_peak_bytes: usize,
+    pub matched_entities: usize,
 }
 /// Mass of independently decoded supports after the reported bounded sewing.
 /// Raw-file occupied mass and healed-cap derivative bounds are not asserted.
@@ -82,6 +107,8 @@ pub struct StepVerificationReceipt {
     pub source_known_members: Vec<StepSourceKnownMemberReceipt>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub healed_members: Vec<StepHealedMemberReceipt>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub periodic_members: Vec<StepPeriodicMemberReceipt>,
     pub source_volume_bounds_mm3: Option<[f64; 2]>,
     /// Actual full-checker parameter, not a measured combined boundary error.
     pub verified_tolerance_mm: Option<f64>,
@@ -100,6 +127,7 @@ impl StepVerificationReceipt {
             source_correspondence: vec![],
             source_known_members: vec![],
             healed_members: vec![],
+            periodic_members: vec![],
             source_volume_bounds_mm3: None,
             verified_tolerance_mm: None,
             maximum_polynomial_trim_error_mm: None,
@@ -192,6 +220,19 @@ fn verify(
             .ok_or_else(|| io("Missing source model"))?;
         let topology = rust_step_topology(model, artifact)?;
         let solid = artifact_solid(model, artifact)?;
+        if let Some(proof) = verify_periodic_step(
+            path,
+            solid,
+            (
+                artifact.solid_count,
+                artifact.volume_mm3,
+                artifact.bounds_mm,
+            ),
+            artifact.producer,
+            tolerance,
+        ) {
+            return proof.map(|_| ());
+        }
         if let Some(proof) = verify_partitioned_step(
             path,
             solid,
@@ -292,6 +333,7 @@ pub fn verify_rust_step_shape(
         || solid.has_retained_radial_source()
         || solid.has_partitioned_step_source()
         || solid.has_literal_npt_source()
+        || solid.rust_periodic_repaired_phillips_source().is_some()
     {
         return Err(failure(
             ErrorKind::Unsupported,
@@ -326,6 +368,19 @@ pub fn verify_rust_step_shape_receipt(
             Some(shape.producer),
             "STEP verification needs a finite positive tolerance",
         ));
+    }
+    if let Some(proof) = verify_periodic_step(
+        path,
+        solid,
+        (
+            shape.solid_count,
+            shape.volume_mm3,
+            [shape.bounds.min, shape.bounds.max],
+        ),
+        shape.producer,
+        tolerance,
+    ) {
+        return proof;
     }
     if let Some(proof) = verify_partitioned_step(
         path,
@@ -465,6 +520,7 @@ fn verify_partitioned_step(
                     analytic_closure_tolerance_mm: p.analytic_closure_tolerance_mm,
                 })
                 .collect(),
+            periodic_members: vec![],
             source_volume_bounds_mm3: None,
             verified_tolerance_mm: Some(tolerance),
             healed_members: proof
@@ -484,6 +540,96 @@ fn verify_partitioned_step(
                     literal_binding_work: p.literal_binding_work,
                 })
                 .collect(),
+            maximum_polynomial_trim_error_mm: None,
+            analytic_closure_tolerance_mm: None,
+        })
+    })())
+}
+fn verify_periodic_step(
+    path: &Path,
+    solid: &Solid,
+    expected: StepMetrics,
+    producer: EntityId,
+    tolerance: f64,
+) -> Option<Result<StepVerificationReceipt, ExportError>> {
+    solid.rust_periodic_repaired_phillips_source()?;
+    Some((|| {
+        if !tolerance.is_finite()
+            || tolerance <= 0.
+            || !expected.1.is_finite()
+            || expected.1 <= 0.
+            || expected.2.into_iter().flatten().any(|v| !v.is_finite())
+        {
+            return Err(failure(
+                ErrorKind::Invalid,
+                Some(producer),
+                "Periodic source snapshot needs finite bounds, positive mass and verification tolerance",
+            ));
+        }
+        let bounds = solid.bounds().map_err(io)?;
+        verify_step_dimensions(
+            producer,
+            expected,
+            (
+                solid.solid_count().map_err(io)?,
+                solid.volume_mm3().map_err(io)?,
+                [bounds.min, bounds.max],
+            ),
+            tolerance,
+        )?;
+        let input = read_step_source(path, producer)?;
+        let proof = solid
+            .verify_periodic_phillips_step_source(&input, tolerance, None)
+            .expect("typed periodic Phillips source")
+            .map_err(|e| {
+                failure(
+                    if e.kind == multicad_kernel::GeometryErrorKind::Limit {
+                        ErrorKind::Budget
+                    } else {
+                        ErrorKind::Invalid
+                    },
+                    Some(producer),
+                    format!("Actual periodic material proof failed:{e}"),
+                )
+            })?;
+        if expected.0 != 1 || proof.represented_member_count != 1 || proof.member_index != 0 {
+            return Err(failure(
+                ErrorKind::Invalid,
+                Some(producer),
+                "Periodic STEP member count differs from the current source",
+            ));
+        }
+        Ok(StepVerificationReceipt {
+            method: StepVerificationMethod::DecodedPeriodicRepair,
+            decoded_volume_mm3: None,
+            retained_members: vec![],
+            decoded_scalar_members: vec![],
+            source_correspondence: vec![],
+            source_known_members: vec![],
+            healed_members: vec![],
+            periodic_members: vec![StepPeriodicMemberReceipt {
+                member_index: 0,
+                decoded_volume_bounds_mm3: proof.decoded_volume_bounds_mm3,
+                source_volume_bounds_mm3: proof.source_volume_bounds_mm3,
+                maximum_world_position_error_mm: proof.maximum_world_position_error_mm,
+                maximum_world_chart_derivative_error_mm: proof
+                    .maximum_world_chart_derivative_error_mm,
+                independent_volume_discrepancy_mm3: proof.independent_volume_discrepancy_mm3,
+                verified_tolerance_mm: proof.verified_tolerance_mm,
+                reader_reserved_work: proof.reader_reserved_work,
+                decoded_material_proof_work: proof.decoded_material_proof_work,
+                correspondence_fixed_work: proof.correspondence_fixed_work,
+                correspondence_cavity_cells: proof.correspondence_cavity_cells,
+                document_work: proof.document_work,
+                document_retained_bytes: proof.document_retained_bytes,
+                selection_work: proof.selection_work,
+                selection_query_peak_bytes: proof.selection_query_peak_bytes,
+                binding_work: proof.binding_work,
+                binding_query_peak_bytes: proof.binding_query_peak_bytes,
+                matched_entities: proof.matched_entities,
+            }],
+            source_volume_bounds_mm3: None,
+            verified_tolerance_mm: Some(proof.verified_tolerance_mm),
             maximum_polynomial_trim_error_mm: None,
             analytic_closure_tolerance_mm: None,
         })
@@ -575,6 +721,7 @@ fn verify_retained_step(
             source_correspondence: vec![],
             source_known_members: vec![],
             healed_members: vec![],
+            periodic_members: vec![],
             source_volume_bounds_mm3: None,
             verified_tolerance_mm: Some(tolerance),
             maximum_polynomial_trim_error_mm: None,
@@ -649,6 +796,7 @@ fn verify_source_known_step(
             source_correspondence: vec![],
             source_known_members: vec![],
             healed_members: vec![],
+            periodic_members: vec![],
             source_volume_bounds_mm3: Some(proof.source_volume_bounds_mm3),
             verified_tolerance_mm: Some(proof.verified_tolerance_mm),
             maximum_polynomial_trim_error_mm: Some(proof.maximum_polynomial_trim_error_mm),

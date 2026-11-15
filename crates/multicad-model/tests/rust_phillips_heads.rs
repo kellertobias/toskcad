@@ -1,4 +1,6 @@
 //! Actual canonical Phillips sources; STEP admission remains an explicit gate.
+#[path = "rust_phillips_heads/export.rs"]
+mod export;
 use multicad_core::{
     commands::{Actor, Channel, Session},
     document::Document,
