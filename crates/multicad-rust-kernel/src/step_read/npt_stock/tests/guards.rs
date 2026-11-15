@@ -10,6 +10,75 @@ fn replace_field(text: &str, id: u32, index: usize, replacement: &str) -> String
 }
 
 #[test]
+fn actual_closed_file_cannot_identify_nonadjacent_interior_vertex_fans() {
+    let text = fixture(false);
+    let document = CompoundDocument::parse(&text, Default::default(), None).unwrap();
+    let parsed = Parsed::parse(
+        &document,
+        document.represented_members()[0].item_entity(),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let cap_vertices = parsed
+        .faces
+        .iter()
+        .filter(|face| matches!(face.support, Support::Plane { .. }))
+        .flat_map(|face| face.coedges.iter())
+        .flat_map(|coedge| parsed.edges[coedge.edge].vertices)
+        .collect::<std::collections::BTreeSet<_>>();
+    let interior = (0..parsed.vertices.len())
+        .filter(|vertex| !cap_vertices.contains(vertex))
+        .collect::<Vec<_>>();
+    assert_eq!(interior.len(), 4);
+    let (a, b) = interior
+        .iter()
+        .flat_map(|&a| interior.iter().copied().map(move |b| (a, b)))
+        .find(|&(a, b)| {
+            a < b
+                && !parsed.faces.iter().any(|face| {
+                    let vertices = face
+                        .coedges
+                        .iter()
+                        .flat_map(|coedge| parsed.edges[coedge.edge].vertices)
+                        .collect::<std::collections::BTreeSet<_>>();
+                    vertices.contains(&a) && vertices.contains(&b)
+                })
+        })
+        .unwrap();
+    let substitutions = [
+        (parsed.vertices[b].id, parsed.vertices[a].id),
+        (
+            parsed.points[parsed.vertices[b].point].id,
+            parsed.points[parsed.vertices[a].point].id,
+        ),
+    ];
+    // Rewrite actual references, retaining all original record definitions.
+    // The same replacement in tensor/curve poles preserves their exact shared
+    // boundaries; the closed graph itself must reject the pinched vertex fan.
+    let mut changed = String::with_capacity(text.len());
+    let mut rest = text.as_str();
+    while let Some(start) = rest.find('#') {
+        changed.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let end = 1 + rest[1..].bytes().take_while(u8::is_ascii_digit).count();
+        let id = rest[1..end].parse::<u32>().unwrap();
+        if rest.as_bytes().get(end) != Some(&b'=')
+            && let Some((_, replacement)) = substitutions.iter().find(|(old, _)| *old == id)
+        {
+            use std::fmt::Write;
+            write!(&mut changed, "#{replacement}").unwrap();
+        } else {
+            changed.push_str(&rest[..end]);
+        }
+        rest = &rest[end..];
+    }
+    changed.push_str(rest);
+    assert_eq!(rejected(&changed), Error::Unsupported);
+    assert_eq!(document.literal_input(), text);
+}
+
+#[test]
 fn actual_tensor_rows_and_curve_subdivision_counts_must_match_the_neutral_schema() {
     let text = fixture(false);
     let tensor = record_id(&text, "=B_SPLINE_SURFACE_WITH_KNOTS(", 0);

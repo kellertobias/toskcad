@@ -180,6 +180,12 @@ fn original_cap_curve_schema_decimal_binding_and_height_are_checked() {
         with_fields(line, &args)
     });
     assert_eq!(read(&changed), Err(Error::Unsupported));
+    let wrong_dimension = change_record(&text, uv_point, |line| {
+        let mut args = fields(line);
+        args[1] = "(0.,0.,0.)";
+        with_fields(line, &args)
+    });
+    assert_eq!(read(&wrong_dimension), Err(Error::Unsupported));
     let point_id = parsed.points[parsed.curves[edge.curve].poles[0]].id;
     let changed = change_record(&text, point_id, |line| {
         let mut args = fields(line);
@@ -196,6 +202,52 @@ fn original_cap_curve_schema_decimal_binding_and_height_are_checked() {
         with_fields(line, &args)
     });
     assert_eq!(read(&changed), Err(Error::Unsupported));
+    let curve = &parsed.curves[edge.curve];
+    let polls = std::cell::Cell::new(0usize);
+    let count = || {
+        polls.set(polls.get() + 1);
+        false
+    };
+    let mut baseline = Budget::new(Default::default(), Some(&count)).unwrap();
+    cap_curve(
+        records,
+        &parsed.points,
+        geometry,
+        curve,
+        height,
+        &mut baseline,
+    )
+    .unwrap();
+    let mut tight = Budget::new(
+        Options {
+            maximum_work: baseline.used - 1,
+            ..Default::default()
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        cap_curve(records, &parsed.points, geometry, curve, height, &mut tight),
+        Err(Error::Limit)
+    );
+    let seen = std::cell::Cell::new(0usize);
+    let cancel = || {
+        seen.set(seen.get() + 1);
+        seen.get() == polls.get()
+    };
+    let mut cancelled = Budget::new(Default::default(), Some(&cancel)).unwrap();
+    assert_eq!(
+        cap_curve(
+            records,
+            &parsed.points,
+            geometry,
+            curve,
+            height,
+            &mut cancelled
+        ),
+        Err(Error::Cancelled)
+    );
+    assert_eq!(seen.get(), polls.get());
     assert_eq!(read(&text), Ok(()));
     assert_eq!(document.literal_input(), text);
 }
