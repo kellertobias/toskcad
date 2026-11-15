@@ -342,3 +342,170 @@ fn actual_resolved_metric_m8_with_axial_and_radial_clearance_keeps_rolled_shell(
     )
     .unwrap();
 }
+
+#[test]
+fn public_source_rejects_real_wrong_stock_phase_and_cut_geometry_atomically() {
+    let original = nut();
+    let build = |stock, offset, thread, phase, relief, interrupt| {
+        Nut::new(stock, offset, thread, phase, relief, interrupt).err()
+    };
+    let identity = [[1., 0.], [0., 1.]];
+    for offset in [f64::NAN, f64::INFINITY] {
+        assert_eq!(
+            build(stock(), offset, thread(), identity, original.relief(), None),
+            Some(Error::Invalid)
+        );
+    }
+    for phase in [
+        [[1., f64::NAN], [0., 1.]],
+        [[1., 0.], [0., -1.]],
+        [[1.0001, 0.], [0., 1.]],
+    ] {
+        let expected = if phase[0][1].is_nan() {
+            Error::Invalid
+        } else {
+            Error::Unsupported
+        };
+        assert_eq!(
+            build(stock(), 7.5, thread(), phase, original.relief(), None),
+            Some(expected)
+        );
+    }
+    let mut spec = thread().spec();
+    spec.starts = 2;
+    let multiple = AuthoredThread::new(
+        spec,
+        crate::authored_flat_thread::SourceOptions {
+            position_limit_mm: 1e-7,
+            normal_angle_limit_rad: 1e-7,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        build(stock(), 7.5, multiple, identity, original.relief(), None),
+        Some(Error::Unsupported)
+    );
+    let square = vec![[-7., 0.], [7., 0.], [7., 8.], [-7., 8.]];
+    let rectangular = Sweep::new(vec![square.clone()], vec![square], 23.).unwrap();
+    assert_eq!(
+        build(
+            rectangular,
+            7.5,
+            thread(),
+            identity,
+            original.relief(),
+            None
+        ),
+        Some(Error::Unsupported)
+    );
+    let mut top = stock().top().to_vec();
+    for point in &mut top[0] {
+        point[0] += 0.1;
+    }
+    let tapered = Sweep::new(stock().base().to_vec(), top, 23.).unwrap();
+    assert_eq!(
+        build(tapered, 7.5, thread(), identity, original.relief(), None),
+        Some(Error::Unsupported)
+    );
+    let mut concave = stock().base().to_vec();
+    concave[0][3][0] = 6.4;
+    concave[0][6][0] = -6.4;
+    let concave = Sweep::new(concave.clone(), concave, 23.).unwrap();
+    assert_eq!(
+        build(concave, 7.5, thread(), identity, original.relief(), None),
+        Some(Error::Unsupported)
+    );
+    for relief in [
+        Relief {
+            start_mm: 0.,
+            ..original.relief()
+        },
+        Relief {
+            radius_mm: f64::INFINITY,
+            ..original.relief()
+        },
+        Relief {
+            tool_length_mm: -1.,
+            ..original.relief()
+        },
+    ] {
+        assert_eq!(
+            build(stock(), 7.5, thread(), identity, relief, None),
+            Some(Error::Invalid)
+        );
+    }
+    let mut too_large = original.relief();
+    too_large.tool_length_mm = 1e8;
+    assert_eq!(
+        build(stock(), 7.5, thread(), identity, too_large, None),
+        Some(Error::Limit)
+    );
+    for offset in [4., 19.] {
+        assert_eq!(
+            build(stock(), offset, thread(), identity, original.relief(), None),
+            Some(Error::Unsupported)
+        );
+    }
+    let polls = std::cell::Cell::new(0);
+    let late = || {
+        polls.set(polls.get() + 1);
+        polls.get() == 2
+    };
+    assert_eq!(
+        build(
+            stock(),
+            7.5,
+            thread(),
+            identity,
+            original.relief(),
+            Some(&late)
+        ),
+        Some(Error::Cancelled)
+    );
+    assert_eq!(polls.get(), 2);
+    assert_eq!(nut().bounds_mm(), original.bounds_mm());
+    assert_eq!(
+        nut().volume_bounds(1e-7, 2048, None).unwrap().bounds_mm3(),
+        original
+            .volume_bounds(1e-7, 2048, None)
+            .unwrap()
+            .bounds_mm3()
+    );
+}
+
+#[test]
+fn public_material_queries_reject_nonfinite_precision_and_overflowing_boxes() {
+    let source = nut();
+    let before = source.volume_bounds(1e-7, 2048, None).unwrap().bounds_mm3();
+    for width in [0., -1., f64::NAN, f64::INFINITY] {
+        assert_eq!(
+            source.volume_bounds(width, 2048, None).err(),
+            Some(Error::Invalid)
+        );
+    }
+    assert_eq!(
+        source.classify_box([[f64::NEG_INFINITY, f64::INFINITY]; 3], None),
+        Err(Error::Invalid)
+    );
+    assert_eq!(
+        source.classify_box([[-f64::MAX, f64::MAX]; 3], None),
+        Err(Error::Limit)
+    );
+    assert_eq!(
+        source.volume_bounds(1e-30, 2048, None).err(),
+        Some(Error::Unresolved)
+    );
+    let polls = std::cell::Cell::new(0);
+    let late = || {
+        polls.set(polls.get() + 1);
+        polls.get() == 2
+    };
+    assert_eq!(
+        source.volume_bounds(1e-7, 2048, Some(&late)).err(),
+        Some(Error::Cancelled)
+    );
+    assert_eq!(polls.get(), 2);
+    let receipt = source.volume_bounds(1e-7, 2048, None).unwrap();
+    assert_eq!(receipt.work_used(), 2048);
+    assert_eq!(receipt.bounds_mm3(), before);
+}
