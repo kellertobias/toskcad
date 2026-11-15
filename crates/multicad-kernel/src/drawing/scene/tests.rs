@@ -225,6 +225,7 @@ fn thread_material_along_lines_agrees_with_source_containment() {
     let mut solids = Vec::new();
     for left_hand in [false, true] {
         solids.push(two_start(left_hand, frame));
+        solids.push(rounded_bore(left_hand, frame));
     }
     for left_hand in [false, true] {
         let root = 1. / (4. * 3_f64.sqrt());
@@ -471,7 +472,13 @@ fn thread_visibility_agrees_with_source_containment_marching() {
     let s = 0.5_f64.sqrt();
     let t = (1_f64 / 6.).sqrt();
     let double = two_start(false, PlaneFrame::default());
-    for (solid, center) in [(&rounded, 2.35), (&relief, 3.3), (&double, 3.3)] {
+    let bore = rounded_bore(true, PlaneFrame::default());
+    for (solid, center) in [
+        (&rounded, 2.35),
+        (&relief, 3.3),
+        (&double, 3.3),
+        (&bore, 2.35),
+    ] {
         for [u, v] in [
             [[1., 0., 0.], [0., 0., 1.]],
             [[s, -s, 0.], [t, t, -2. * t]],
@@ -632,10 +639,13 @@ fn thread_sections_lie_on_the_source_boundary() {
         ]
     };
     let double = two_start(true, PlaneFrame::default());
+    let bore = rounded_bore(false, PlaneFrame::default());
+    let bore_thread = *bore.rust_rounded_thread_bore_data().unwrap().bore.thread();
     for (label, solid, center) in [
         ("rounded", &rounded, 2.35),
         ("relief", &relief, 3.3),
         ("two-start", &double, 3.3),
+        ("bore", &bore, 2.35),
     ] {
         for (origin, [u, v]) in frames(center) {
             let frame = PlaneFrame { origin, u, v };
@@ -670,7 +680,15 @@ fn thread_sections_lie_on_the_source_boundary() {
                     let radius = x.hypot(y);
                     let theta = y.atan2(x);
                     let on = |value: f64| value.abs() < 1e-6;
-                    let ok = if label == "rounded" {
+                    let ok = if label == "bore" {
+                        let bound = bore_thread.radius(theta, z.clamp(0., 3.7 * p));
+                        let length = 3.7 * p;
+                        (on(radius - bound) && z > -1e-9 && z < length + 1e-9)
+                            || (on(radius - 5.) && z > -1e-9 && z < length + 1e-9)
+                            || ((on(z) || on(z - length))
+                                && radius >= bound - 1e-6
+                                && radius <= 5. + 1e-6)
+                    } else if label == "rounded" {
                         let bound = rounded_thread.radius(theta, z.clamp(0., 3.7 * p));
                         let length = 3.7 * p;
                         (on(radius - bound) && z > -1e-9 && z < length + 1e-9)
@@ -711,8 +729,8 @@ fn thread_sections_lie_on_the_source_boundary() {
             // Independent area of the cut by containment on a fine grid.
             let step = 0.01;
             let mut inside = 0usize;
-            for i in -400..400 {
-                for j in -400..400 {
+            for i in -600..600 {
+                for j in -600..600 {
                     let q = [(f64::from(i) + 0.5) * step, (f64::from(j) + 0.5) * step];
                     let w: [f64; 3] = std::array::from_fn(|k| {
                         frame.origin[k] + view.axes[0][k] * q[0] + view.axes[1][k] * q[1]
@@ -737,7 +755,9 @@ fn thread_sections_lie_on_the_source_boundary() {
                         _ => None,
                     })
                     .sum();
-                let exact = if label == "rounded" {
+                let exact = if label == "bore" {
+                    PI * 25. - bore_thread.volume_mm3() / (3.7 * p)
+                } else if label == "rounded" {
                     rounded_thread.volume_mm3() / (3.7 * p)
                 } else {
                     let data = if label == "relief" {
@@ -776,6 +796,31 @@ fn two_start(left_hand: bool, frame: PlaneFrame) -> crate::Solid {
         Some(root),
         0.6,
         0.1,
+        multicad_core::document::EntityId::new(),
+        frame,
+        GeometryPolicy::default(),
+    )
+    .unwrap()
+}
+
+/// A rounded thread bore through a radius-5 stock.
+fn rounded_bore(left_hand: bool, frame: PlaneFrame) -> crate::Solid {
+    let p = 1.27;
+    let a = 27.5_f64.to_radians();
+    let r = p * a.cos() / (12. * (1. - a.sin()));
+    crate::Solid::rust_rounded_thread_bore(
+        multicad_rust_kernel::rounded_thread::Spec {
+            major_radius_mm: 3.175,
+            pitch_mm: p,
+            length_mm: 3.7 * p,
+            depth_mm: p / (3. * a.tan()),
+            crest_radius_mm: r,
+            root_radius_mm: r,
+            flank_angle_deg: 27.5,
+            starts: 1,
+            left_hand,
+        },
+        5.,
         multicad_core::document::EntityId::new(),
         frame,
         GeometryPolicy::default(),

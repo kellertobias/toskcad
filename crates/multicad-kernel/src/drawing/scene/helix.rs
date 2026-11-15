@@ -717,6 +717,9 @@ pub(in crate::drawing) struct Thread {
     /// Material z range of the threaded part.
     z: [f64; 2],
     neck: Option<(f64, [f64; 2], Prism)>,
+    /// For a threaded bore: the outer stock radius and its cylinder. The
+    /// material is then outside the helicoid and inside the stock.
+    stock: Option<(f64, Prism)>,
     tolerance: f64,
 }
 
@@ -773,6 +776,44 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
                 }),
                 z: [0., span[0]],
                 neck: Some((neck, span, prism)),
+                stock: None,
+                tolerance,
+            })
+        })());
+    }
+    if let Some(data) = solid.rust_rounded_thread_bore_data() {
+        let thread = data.bore.thread();
+        let Some(profile) = Profile::from_rounded(thread) else {
+            return Some(Err(invalid()));
+        };
+        let (origin, axes) = place(data.frame);
+        let spec = thread.spec();
+        let radius = data.bore.radius_mm();
+        return Some((|| {
+            let prism = Prism::new(
+                origin,
+                axes,
+                vec![Band {
+                    rings: vec![vec![Edge::Planar(normal_sweep::Edge::Circle {
+                        center: [0.; 2],
+                        radius_mm: radius,
+                        clockwise: false,
+                    })]],
+                    axis: [0., spec.length_mm],
+                }],
+                tolerance,
+            )?;
+            Ok(Thread {
+                law: Arc::new(Law {
+                    origin,
+                    axes,
+                    profile,
+                    rate: thread.helical_rate(),
+                    starts: spec.starts,
+                }),
+                z: [0., spec.length_mm],
+                neck: None,
+                stock: Some((radius, prism)),
                 tolerance,
             })
         })());
@@ -793,6 +834,7 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
         }),
         z: [0., spec.length_mm],
         neck: None,
+        stock: None,
         tolerance,
     }))
 }
@@ -1042,6 +1084,17 @@ impl Thread {
             });
         }
         let mut spans = self.threaded(s, d)?;
+        if let Some((_, prism)) = &self.stock {
+            // Inside the stock cylinder and outside the thread's helicoid.
+            let outer = match prism.line(self.law.view(s), self.view_vector(d)) {
+                Some(outer) => outer?,
+                None => Vec::new(),
+            };
+            return Ok(profile::exclusive(&outer, &spans, 0.)
+                .into_iter()
+                .filter(|[a, b]| b > a)
+                .collect());
+        }
         if let Some((_, _, prism)) = &self.neck
             && let Some(neck) = prism.line(self.law.view(s), self.view_vector(d))
         {
@@ -1415,9 +1468,16 @@ impl Thread {
             }
             for level in self.z {
                 let reach = |angle: f64| profile.radius(level - rate * angle);
-                let a = law.view([reach(theta) * h[0], reach(theta) * h[1], level]);
-                let b = law.view([-reach(theta + PI) * h[0], -reach(theta + PI) * h[1], level]);
-                output.push(Arc::new(Segment(b, a)));
+                let at = |s: f64| law.view([s * h[0], s * h[1], level]);
+                let [right, left] = [reach(theta), -reach(theta + PI)];
+                match &self.stock {
+                    // A bore's cap is the annulus between thread and stock.
+                    Some((radius, _)) => {
+                        output.push(Arc::new(Segment(at(right), at(*radius))));
+                        output.push(Arc::new(Segment(at(-radius), at(left))));
+                    }
+                    None => output.push(Arc::new(Segment(at(left), at(right)))),
+                }
             }
             return Ok(output);
         }
@@ -1454,6 +1514,27 @@ impl Thread {
             chords.extend(self.cap_chord(n, c, level)?);
         }
         let chord_ends: Vec<P3> = chords.iter().flatten().copied().collect();
+        if let Some((radius, _)) = &self.stock {
+            // A bore's caps are annuli: the stock chord less the thread's.
+            let d = [n[1] / nxy, -n[0] / nxy, 0.];
+            let mut annular = Vec::new();
+            for level in self.z {
+                let offset = (c - n[2] * level) / (nxy * nxy);
+                let foot = [n[0] * offset, n[1] * offset, level];
+                let base = add(foot, scaled(d, -dot3(foot, d)));
+                let inner: Vec<[f64; 2]> = chords
+                    .iter()
+                    .filter(|[a, _]| (a[2] - level).abs() <= 1e-12)
+                    .map(|[a, b]| [dot3(*a, d), dot3(*b, d)])
+                    .collect();
+                let outer: Vec<[f64; 2]> =
+                    self.disc_chord(n, c, level, *radius).into_iter().collect();
+                for [a, b] in profile::exclusive(&outer, &inner, 1e-12) {
+                    annular.push([add(base, scaled(d, a)), add(base, scaled(d, b))]);
+                }
+            }
+            chords = annular;
+        }
         // General plane: sweep the meridian half-plane once around the axis.
         for m in self.copies() {
             for span in &profile.spans {
@@ -1592,7 +1673,10 @@ impl Thread {
 
 impl Member for Thread {
     fn bounds(&self) -> [P3; 2] {
-        let reach = self.law.profile.maximum;
+        let reach = self
+            .stock
+            .as_ref()
+            .map_or(self.law.profile.maximum, |(radius, _)| *radius);
         let top = self.neck.as_ref().map_or(self.z[1], |(_, span, _)| span[1]);
         let mut lo = [f64::INFINITY; 3];
         let mut hi = [f64::NEG_INFINITY; 3];
@@ -1621,6 +1705,9 @@ impl Member for Thread {
         if let Some((_, _, prism)) = &self.neck {
             output.extend(prism.candidates(tolerance_mm)?);
         }
+        if let Some((_, prism)) = &self.stock {
+            output.extend(prism.candidates(tolerance_mm)?);
+        }
         Ok(output)
     }
 
@@ -1635,6 +1722,24 @@ impl Member for Thread {
         let n = self.local_vector([0., 0., 1.]);
         let c = depth - self.law.origin[2];
         let mut output = self.thread_section(n, c, 1.)?;
+        if let Some((_, prism)) = &self.stock {
+            // The stock wall; its cap chords are replaced by the annuli.
+            let cap = |path: &Arc<dyn Path>| {
+                let [a, b] = [0., 1.].map(|t| self.law.local(path.point(t))[2]);
+                self.z.iter().any(|level| {
+                    (a - level).abs() <= 4. * self.tolerance
+                        && (b - level).abs() <= 4. * self.tolerance
+                }) && matches!(path.paper([0., 1.]), Some(Curve::Line(_)))
+            };
+            let axial = n[0].hypot(n[1]) <= 1e-12;
+            output.extend(
+                prism
+                    .section(depth, tolerance_mm)?
+                    .into_iter()
+                    .flatten()
+                    .filter(|path| axial || !cap(path)),
+            );
+        }
         if let Some((_, span, prism)) = &self.neck {
             // The shoulder: the thread's chord at the junction less the neck's.
             let junction = span[0];

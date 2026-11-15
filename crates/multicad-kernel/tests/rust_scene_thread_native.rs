@@ -200,6 +200,35 @@ fn thread_end_relief_matches_native_open_cascade() {
     check("relief", &relief(), [0.2, 0.1, 3.3]);
 }
 
+fn rounded_bore() -> Solid {
+    let p = 1.27;
+    let a = 27.5_f64.to_radians();
+    let r = p * a.cos() / (12. * (1. - a.sin()));
+    Solid::rust_rounded_thread_bore(
+        Spec {
+            major_radius_mm: 3.175,
+            pitch_mm: p,
+            length_mm: 3.7 * p,
+            depth_mm: p / (3. * a.tan()),
+            crest_radius_mm: r,
+            root_radius_mm: r,
+            flank_angle_deg: 27.5,
+            starts: 1,
+            left_hand: false,
+        },
+        5.,
+        EntityId::new(),
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn rounded_thread_bore_matches_native_open_cascade() {
+    check("bore", &rounded_bore(), [0.2, 0.1, 2.35]);
+}
+
 #[test]
 fn rounded_thread_matches_native_open_cascade() {
     check("rounded", &rounded(false), [0.2, 0.1, 2.35]);
