@@ -57,9 +57,22 @@ pub(super) struct Search {
 pub(super) fn isolate(
     f: &mut dyn FnMut(f64) -> f64,
     search: &Search,
+    range: [f64; 2],
+    budget: &mut usize,
+    output: &mut Vec<f64>,
+) -> Result<(), GeometryError> {
+    isolate_touching(f, search, range, budget, output, &mut Vec::new())
+}
+
+/// As [`isolate`], also reporting the stretches on which the function stays
+/// within the grazing magnitude: where a line runs along a surface.
+pub(super) fn isolate_touching(
+    f: &mut dyn FnMut(f64) -> f64,
+    search: &Search,
     [lo, hi]: [f64; 2],
     budget: &mut usize,
     output: &mut Vec<f64>,
+    contacts: &mut Vec<[f64; 2]>,
 ) -> Result<(), GeometryError> {
     if hi <= lo || !(hi - lo).is_finite() {
         return Ok(());
@@ -103,6 +116,10 @@ pub(super) fn isolate(
             // crossing is resolved here.
             if (fa < 0.) != (fb < 0.) {
                 output.push(bisect(f, a, fa, b));
+            }
+            match contacts.last_mut() {
+                Some(last) if last[1] == a => last[1] = b,
+                _ => contacts.push([a, b]),
             }
             continue;
         }

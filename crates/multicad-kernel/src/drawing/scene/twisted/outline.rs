@@ -3,27 +3,29 @@ use super::super::paths::{ProfilePath, Segment, dot2};
 use super::super::profile::folds;
 use super::super::*;
 use super::flank::rotate;
+use super::solve::{Search, isolate};
 use super::trace::trace;
-use super::{Gear, Helix, Level, Patch, Traced};
+use super::{Gear, Helix, Level, Patch, Region, Traced};
+use multicad_rust_kernel::{normal_sweep, spur_gear::Edge};
 use std::f64::consts::{FRAC_PI_2, TAU};
 
 /// Where outlines end on the rims and rails of the flanks, so that every
 /// edge is split where the adjacent flank turns away from the viewer.
 struct Marks {
-    /// By axial level and profile edge: edge fractions.
-    rims: Vec<Vec<Vec<f64>>>,
+    /// By band, band end and profile edge: edge fractions.
+    rims: Vec<[Vec<Vec<f64>>; 2]>,
     /// By band and profile vertex: band fractions.
     rails: Vec<Vec<Vec<f64>>>,
 }
 
 impl Marks {
     fn add(&mut self, band: usize, flank: usize, [s, zeta]: [f64; 2]) {
-        let count = self.rims[0].len();
+        let count = self.rims[0][0].len();
         const EDGE: f64 = 1e-7;
         if zeta <= EDGE {
-            self.rims[band][flank].push(s);
+            self.rims[band][0][flank].push(s);
         } else if zeta >= 1. - EDGE {
-            self.rims[band + 1][flank].push(s);
+            self.rims[band][1][flank].push(s);
         }
         if s <= EDGE {
             self.rails[band][flank].push(zeta);
@@ -80,36 +82,109 @@ fn rulings(
     }
 }
 
-/// Parameters at which the paper image of a traced outline has a cusp: its
-/// tangent passes through the sight direction, where its visibility changes.
-fn cusps(path: &Traced) -> Vec<f64> {
-    let measure = |t: f64| {
-        let h = 1e-6;
-        let [a, b] = [(t - h).max(0.), (t + h).min(1.)];
-        let [p, q] = [path.point(a), path.point(b)];
-        let [s, zeta] = path.parameters(t);
-        let n = path.patch.normal(s, zeta);
-        ((q[0] - p[0]) * n[1] - (q[1] - p[1]) * n[0]) / (b - a)
+/// Parameters of a traced outline at which its paper image has a cusp: its
+/// tangent passes through the sight direction, where its visibility can
+/// change. With the curve's surface tangent `T = f_s S_z - f_z S_s` of the
+/// fold function `f` and the normal `n`, the paper tangent vanishes where
+/// `h = T . (n x d)` does. Every sign change of `h` along each chart is
+/// isolated with a bound of its slope from the chart's slope bound and the
+/// derivative bounds of `f`, the surface and its normal.
+fn cusps(path: &Traced, budget: &mut usize) -> Result<Vec<f64>, GeometryError> {
+    let patch = path.patch;
+    let level = patch.bounds(Level::Fold);
+    let [g1, g2] = [
+        level.first[0].max(level.first[1]),
+        level.second.iter().copied().fold(0., f64::max),
+    ];
+    let [s1, s2] = patch.surface_bounds();
+    let [c0, c1, c2, _] = patch.flank.size;
+    let twist = patch.band.twist.abs();
+    let height = patch.band.z[1] - patch.band.z[0];
+    // Traced flanks are lines and arcs: |c'| is the constant c1.
+    let speed = patch.flank.at(0.5)[1];
+    let speed = speed[0].hypot(speed[1]);
+    let normal = 1. + twist * c0;
+    let turning = (c2 / speed + twist * (c1 + c0 * c2 / speed)).max(height * twist);
+    let tangent = 2. * g1 * s1;
+    let change = 2. * (g2 * s1 + g1 * s2);
+    let gradient = change * normal + tangent * turning;
+    let value = |s: f64, zeta: f64| {
+        let (_, g) = patch.field(Level::Fold, s, zeta);
+        let [ss, sz] = patch.tangents(s, zeta);
+        let t: P3 = std::array::from_fn(|i| g[1] * ss[i] - g[0] * sz[i]);
+        let n = patch.normal(s, zeta);
+        t[0] * n[1] - t[1] * n[0]
     };
-    let count = 8 * path.steps.len();
+    let count = path.steps.len() as f64;
     let mut output = Vec::new();
-    let mut previous = (0., measure(0.));
-    for i in 1..=count {
-        let t = i as f64 / count as f64;
-        let value = measure(t);
-        if (value < 0.) != (previous.1 < 0.) {
-            let [mut a, mut b] = [previous.0, t];
-            for _ in 0..60 {
-                let mid = 0.5 * (a + b);
-                if (measure(mid) < 0.) == (previous.1 < 0.) {
-                    a = mid;
-                } else {
-                    b = mid;
-                }
-            }
-            output.push(0.5 * (a + b));
+    for (index, step) in path.steps.iter().enumerate() {
+        let eval = |s: f64, zeta: f64| patch.field(Level::Fold, s, zeta);
+        let mut roots = Vec::new();
+        isolate(
+            &mut |fraction| {
+                let [s, zeta] = step.point(&eval, fraction);
+                value(s, zeta)
+            },
+            &Search {
+                slope: gradient * (1. + step.rate) * (step.u[1] - step.u[0]).abs(),
+                leaf: 1e-12,
+                noise: 1e-12 * gradient,
+                second: f64::INFINITY,
+                lift: 0.,
+                wrapped: false,
+            },
+            [0., 1.],
+            budget,
+            &mut roots,
+        )?;
+        output.extend(roots.into_iter().map(|f| (index as f64 + f) / count));
+    }
+    output.retain(|t| *t > 1e-12 && *t < 1. - 1e-12);
+    output.sort_by(f64::total_cmp);
+    Ok(output)
+}
+
+/// The arcs of the circle of a radius about the axis, in profile
+/// coordinates, that no coaxial profile arc of the same radius covers.
+fn uncovered(gear: &Gear, radius: f64) -> Vec<Edge> {
+    let mut covered: Vec<[f64; 2]> = gear
+        .flanks
+        .iter()
+        .filter(|flank| {
+            flank
+                .coaxial()
+                .is_some_and(|own| (own - radius).abs() <= 1e-9 * radius)
+        })
+        .filter_map(|flank| {
+            let super::flank::Shape::Arc { start, sweep, .. } = flank.shape else {
+                return None;
+            };
+            let [a, b] = [start, start + sweep];
+            let lo = a.min(b).rem_euclid(TAU);
+            Some([lo, lo + sweep.abs()])
+        })
+        .collect();
+    if covered.is_empty() {
+        return vec![Gear::circle(radius, false)];
+    }
+    covered.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    let point = |angle: f64| {
+        let (sin, cos) = angle.sin_cos();
+        [radius * cos, radius * sin]
+    };
+    let mut output = Vec::new();
+    for (index, span) in covered.iter().enumerate() {
+        let next = covered
+            .get(index + 1)
+            .map_or(covered[0][0] + TAU, |next| next[0]);
+        if next - span[1] > 1e-12 {
+            output.push(Edge::Planar(normal_sweep::Edge::Arc {
+                center: [0.; 2],
+                a: point(span[1]),
+                b: point(next),
+                clockwise: false,
+            }));
         }
-        previous = (t, value);
     }
     output
 }
@@ -119,7 +194,7 @@ pub(super) fn candidates(gear: &Gear) -> Result<Vec<Candidate>, GeometryError> {
     let axial = gear.axial();
     let mut output: Vec<Candidate> = Vec::new();
     let mut marks = Marks {
-        rims: vec![vec![Vec::new(); count]; gear.bands.len() + 1],
+        rims: vec![[vec![Vec::new(); count], vec![Vec::new(); count]]; gear.bands.len()],
         rails: vec![vec![Vec::new(); count]; gear.bands.len()],
     };
     let mut budget = 50_000_000_usize;
@@ -152,6 +227,14 @@ pub(super) fn candidates(gear: &Gear) -> Result<Vec<Candidate>, GeometryError> {
                     for end in chain.ends {
                         marks.add(band, flank, end);
                     }
+                    if chain.bridge {
+                        let [a, b] = chain.ends.map(|[s, zeta]| patch.surface(s, zeta));
+                        output.push(Candidate {
+                            kind: Kind::Outline,
+                            path: Arc::new(Segment(a, b)),
+                        });
+                        continue;
+                    }
                     let steps = Arc::new(chain.steps);
                     let whole = Traced {
                         patch,
@@ -160,7 +243,7 @@ pub(super) fn candidates(gear: &Gear) -> Result<Vec<Candidate>, GeometryError> {
                         range: [0., 1.],
                     };
                     let mut cuts = vec![0.];
-                    cuts.extend(cusps(&whole));
+                    cuts.extend(cusps(&whole, &mut budget)?);
                     cuts.push(1.);
                     for pair in cuts.windows(2) {
                         if pair[1] - pair[0] <= 1e-9 {
@@ -184,7 +267,7 @@ pub(super) fn candidates(gear: &Gear) -> Result<Vec<Candidate>, GeometryError> {
 
     // Rims of the two tooth caps, and the apex ring of a herringbone.
     let across = [-gear.toward[1] / gear.slope, gear.toward[0] / gear.slope];
-    let ring = |edge: multicad_rust_kernel::spur_gear::Edge,
+    let ring = |edge: Edge,
                 z: f64,
                 phase: f64,
                 kind: Kind,
@@ -194,8 +277,7 @@ pub(super) fn candidates(gear: &Gear) -> Result<Vec<Candidate>, GeometryError> {
         if !axial {
             marks.extend(folds(edge, rotate(across, -phase)));
         }
-        if matches!(edge, multicad_rust_kernel::spur_gear::Edge::Planar(e) if e.start() == e.end())
-        {
+        if matches!(edge, Edge::Planar(e) if e.start() == e.end()) {
             marks.push(0.5);
         }
         let lift = gear.frame.level(z, phase);
@@ -211,28 +293,40 @@ pub(super) fn candidates(gear: &Gear) -> Result<Vec<Candidate>, GeometryError> {
             });
         }
     };
-    for level in 0..=gear.bands.len() {
-        let band = &gear.bands[level.min(gear.bands.len() - 1)];
-        let z = if level == gear.bands.len() {
-            band.z[1]
-        } else {
-            band.z[0]
-        };
-        let interior = level != 0 && level != gear.bands.len();
-        for (index, flank) in gear.flanks.iter().enumerate() {
-            let kind = if interior && flank.coaxial().is_some() {
-                Kind::Smooth
-            } else {
-                Kind::Edge
-            };
-            ring(
-                flank.edge,
-                z,
-                band.phase_at(z),
-                kind,
-                std::mem::take(&mut marks.rims[level][index]),
-                &mut output,
-            );
+    // Band ends: a ring shared by two bands (the apex) turns sharply except
+    // on the coaxial arcs; at a coaxial cylinder of the same radius (the
+    // root core of a gap) the root arcs continue smoothly into it.
+    let same = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.max(b);
+    for (index, band) in gear.bands.iter().enumerate() {
+        for end in 0..2 {
+            let z = band.z[end];
+            if end == 0 && index > 0 && gear.bands[index - 1].z[1] == z {
+                continue;
+            }
+            let next = (end == 1)
+                .then(|| gear.bands.get(index + 1))
+                .flatten()
+                .filter(|next| next.z[0] == z);
+            let beyond = gear.material(z, if end == 0 { -1. } else { 1. });
+            for (position, flank) in gear.flanks.iter().enumerate() {
+                let smooth = flank.coaxial().is_some_and(|radius| {
+                    next.is_some()
+                        || beyond == Some(Region::Disk(radius))
+                        || matches!(beyond, Some(Region::Disk(other)) if same(other, radius))
+                });
+                let mut extra = std::mem::take(&mut marks.rims[index][end][position]);
+                if next.is_some() {
+                    extra.extend(std::mem::take(&mut marks.rims[index + 1][0][position]));
+                }
+                ring(
+                    flank.edge,
+                    z,
+                    band.phase_at(z),
+                    if smooth { Kind::Smooth } else { Kind::Edge },
+                    extra,
+                    &mut output,
+                );
+            }
         }
     }
 
@@ -282,17 +376,21 @@ pub(super) fn candidates(gear: &Gear) -> Result<Vec<Candidate>, GeometryError> {
             );
         }
     }
-    for extension in &gear.extensions {
-        cylinders.push((extension.radius, extension.z));
-        for z in extension.z {
-            ring(
-                Gear::circle(extension.radius, false),
-                z,
-                0.,
-                Kind::Edge,
-                Vec::new(),
-                &mut output,
-            );
+    for cylinder in &gear.cylinders {
+        cylinders.push((cylinder.radius, cylinder.z));
+        for (end, z) in cylinder.z.into_iter().enumerate() {
+            let beyond = gear.material(z, if end == 0 { -1. } else { 1. });
+            let (arcs, phase) = match beyond {
+                Some(Region::Disk(other)) if same(other, cylinder.radius) => continue,
+                // Where the cylinder meets a tooth band, the band's own
+                // coaxial arcs of the same radius continue it; the rest of
+                // its rim is the edge under each tooth.
+                Some(Region::Profile(phase)) => (uncovered(gear, cylinder.radius), phase),
+                _ => (vec![Gear::circle(cylinder.radius, false)], 0.),
+            };
+            for edge in arcs {
+                ring(edge, z, phase, Kind::Edge, Vec::new(), &mut output);
+            }
         }
     }
     if !axial {

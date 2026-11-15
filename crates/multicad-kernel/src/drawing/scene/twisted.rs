@@ -1,4 +1,5 @@
-//! Helical and continuous herringbone gears as exact scene members.
+//! Helical, continuous herringbone and gapped double-helical gears as exact
+//! scene members.
 //!
 //! The solid is the transverse profile rotated by a phase that is linear in
 //! the axial coordinate within each band. Every answer is evaluated on that
@@ -158,6 +159,37 @@ impl Patch {
         }
     }
 
+    /// The two partial derivatives of the surface by the edge fraction and
+    /// the band fraction, in view space.
+    pub(super) fn tangents(&self, s: f64, zeta: f64) -> [P3; 2] {
+        let height = self.band.height();
+        let phase = self.band.phase_at(self.z(zeta));
+        let [c, c1, ..] = self.flank.at(s);
+        let along = rotate(c1, phase);
+        let around = rotate(turn(c), phase);
+        [
+            self.frame.vector([along[0], along[1], 0.]),
+            self.frame.vector([
+                height * self.band.twist * around[0],
+                height * self.band.twist * around[1],
+                height,
+            ]),
+        ]
+    }
+
+    /// Bounds of the surface's first and second partial derivatives by the
+    /// edge fraction and the band fraction.
+    pub(super) fn surface_bounds(&self) -> [f64; 2] {
+        let height = self.band.height();
+        let twist = self.band.twist.abs();
+        let [c0, c1, c2, _] = self.flank.size;
+        [
+            c1.max(height * (twist * c0 + 1.)),
+            c2.max(height * twist * c1)
+                .max(height * height * twist * twist * c0),
+        ]
+    }
+
     pub(super) fn bounds(&self, level: Level) -> trace::Bounds {
         let height = self.band.height();
         let twist = self.band.twist.abs();
@@ -214,53 +246,6 @@ impl Traced {
     }
 }
 
-fn distance(a: P3, b: P3) -> f64 {
-    let d: P3 = std::array::from_fn(|i| a[i] - b[i]);
-    dot3(d, d).sqrt()
-}
-
-/// Ascending parameters whose chords stay within the tolerance at the
-/// midpoint and both quarter points of every chord.
-pub(super) fn chords(point: &dyn Fn(f64) -> P3, seeds: Vec<f64>, tolerance: f64) -> Vec<f64> {
-    fn refine(
-        point: &dyn Fn(f64) -> P3,
-        [a, b]: [f64; 2],
-        [pa, pb]: [P3; 2],
-        tolerance: f64,
-        depth: u32,
-        output: &mut Vec<f64>,
-    ) {
-        let mid = 0.5 * (a + b);
-        let pm = point(mid);
-        let deviation = [0.25, 0.5, 0.75]
-            .into_iter()
-            .map(|f| {
-                let on_chord: P3 = std::array::from_fn(|i| pa[i] + (pb[i] - pa[i]) * f);
-                let on_curve = if f == 0.5 { pm } else { point(a + (b - a) * f) };
-                distance(on_chord, on_curve)
-            })
-            .fold(0., f64::max);
-        if deviation <= tolerance || depth >= 20 {
-            output.push(b);
-        } else {
-            refine(point, [a, mid], [pa, pm], tolerance, depth + 1, output);
-            refine(point, [mid, b], [pm, pb], tolerance, depth + 1, output);
-        }
-    }
-    let mut output = vec![seeds[0]];
-    for pair in seeds.windows(2) {
-        refine(
-            point,
-            [pair[0], pair[1]],
-            [point(pair[0]), point(pair[1])],
-            tolerance,
-            0,
-            &mut output,
-        );
-    }
-    output
-}
-
 impl Path for Traced {
     fn point(&self, t: f64) -> P3 {
         let [s, zeta] = self.parameters(t);
@@ -268,18 +253,42 @@ impl Path for Traced {
     }
 
     fn flatten(&self, tolerance_mm: f64) -> Vec<f64> {
-        // Seed with the chart ends inside the range.
+        // On each chart the curve is P(u) = S(u, w(u)) with |w'| <= rate and
+        // w'' = -(f_uu + 2 f_uw w' + f_ww w'^2) / f_w, so
+        // |P''| <= S2 (1 + rate)^2 + S1 |w''|. A chord over a parameter
+        // step h deviates from the curve by at most |P''| h^2 / 8.
+        let [first, second] = self.patch.surface_bounds();
+        let level = self.patch.bounds(self.level).second;
         let count = self.steps.len() as f64;
         let [a, b] = self.range;
-        let mut seeds = vec![0.];
-        let mut inner: Vec<f64> = (1..self.steps.len())
-            .map(|i| (i as f64 / count - a) / (b - a))
-            .filter(|t| *t > 1e-12 && *t < 1. - 1e-12)
-            .collect();
-        inner.sort_by(f64::total_cmp);
-        seeds.extend(inner);
-        seeds.push(1.);
-        chords(&|t| self.point(t), seeds, tolerance_mm)
+        let mut output = vec![0.];
+        for (index, step) in self.steps.iter().enumerate() {
+            // The step's share of the path parameter, ascending.
+            let ends = [index as f64, index as f64 + 1.].map(|k| (k / count - a) / (b - a));
+            let [lo, hi] = [ends[0].min(ends[1]).max(0.), ends[0].max(ends[1]).min(1.)];
+            if hi <= lo {
+                continue;
+            }
+            let rate = step.rate;
+            let [muu, muw, mww] = if step.by_first {
+                [level[0], level[1], level[2]]
+            } else {
+                [level[2], level[1], level[0]]
+            };
+            let curve = (muu + 2. * muw * rate + mww * rate * rate) / step.floor;
+            let bend = second * (1. + rate) * (1. + rate) + first * curve;
+            let span = (step.u[1] - step.u[0]).abs() * (hi - lo) / (ends[1] - ends[0]).abs();
+            let pieces = (span * (bend / (8. * tolerance_mm)).sqrt())
+                .ceil()
+                .clamp(1., (1 << 20) as f64) as usize;
+            for k in 1..=pieces {
+                output.push(lo + (hi - lo) * k as f64 / pieces as f64);
+            }
+        }
+        output.push(1.);
+        output.sort_by(f64::total_cmp);
+        output.dedup();
+        output
     }
 
     fn paper(&self, _: [f64; 2]) -> Option<Curve> {
@@ -334,13 +343,35 @@ impl Path for Helix {
     }
 }
 
-/// A coaxial cylinder of the hub: an extension beyond the tooth band.
+/// A coaxial cylinder of material: a hub extension beyond the tooth bands
+/// or the root core spanning the central gap of a double-helical gear.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Extension {
+pub(super) struct Cylinder {
     pub radius: f64,
     pub z: [f64; 2],
-    /// Which end of `z` carries the free end face.
-    pub outer: usize,
+}
+
+/// What fills the transverse plane on one side of an axial level.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Region {
+    /// The tooth profile turned by a phase.
+    Profile(f64),
+    /// The disk of a coaxial cylinder.
+    Disk(f64),
+}
+
+/// A planar end face: the region on one side of a level that the other
+/// side leaves uncovered, minus the bore.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct EndFace {
+    pub z: f64,
+    /// Axial sign of the outward normal.
+    pub outward: f64,
+    /// The profile at this phase, or `None` for an annulus.
+    pub phase: Option<f64>,
+    pub inner: f64,
+    /// Outer radius of an annulus.
+    pub outer: f64,
 }
 
 pub(super) struct Gear {
@@ -350,11 +381,11 @@ pub(super) struct Gear {
     pub slope: f64,
     pub azimuth: f64,
     pub flanks: Vec<Flank>,
+    /// Tooth bands, ascending and possibly separated by a central gap.
     pub bands: Vec<Band>,
-    pub height: f64,
     /// Zero without a bore.
     pub bore: f64,
-    pub extensions: Vec<Extension>,
+    pub cylinders: Vec<Cylinder>,
     /// Full axial range of the material.
     pub axis: [f64; 2],
     /// Least and greatest radius of the tooth outline.
@@ -379,24 +410,36 @@ impl Gear {
         };
         let toward = frame.axes.map(|axis| axis[2]);
         let height = profile.height_mm();
+        let twist = body.twist_rad_per_mm();
+        let mut cylinders = Vec::new();
         let bands = if body.is_helical() {
             vec![Band {
                 z: [0., height],
                 phase: 0.,
-                twist: body.phase_at(1.),
+                twist,
             }]
         } else {
-            let middle = 0.5 * height;
-            let twist = body.phase_at(middle) / middle;
+            // Opposite hands meet at the apex, or end at the gap shoulders
+            // joined by the root core.
+            let [lower, upper] = match body.gap_core() {
+                Some((shoulders, radius)) => {
+                    cylinders.push(Cylinder {
+                        radius,
+                        z: shoulders,
+                    });
+                    shoulders
+                }
+                None => [0.5 * height; 2],
+            };
             vec![
                 Band {
-                    z: [0., middle],
+                    z: [0., lower],
                     phase: 0.,
                     twist,
                 },
                 Band {
-                    z: [middle, height],
-                    phase: twist * middle,
+                    z: [upper, height],
+                    phase: twist * lower,
                     twist: -twist,
                 },
             ]
@@ -409,19 +452,19 @@ impl Gear {
         let radius = flanks.iter().fold([f64::INFINITY, 0_f64], |[lo, hi], f| {
             [lo.min(f.radius[0]), hi.max(f.radius[1])]
         });
-        let extensions = profile
-            .hub_extensions()
-            .into_iter()
-            .flatten()
-            .map(|extension| {
-                let [a, b] = [extension.gear_z_mm, extension.end_z_mm];
-                Extension {
-                    radius: extension.radius_mm,
-                    z: [a.min(b), a.max(b)],
-                    outer: usize::from(b > a),
-                }
-            })
-            .collect();
+        cylinders.extend(
+            profile
+                .hub_extensions()
+                .into_iter()
+                .flatten()
+                .map(|extension| {
+                    let [a, b] = [extension.gear_z_mm, extension.end_z_mm];
+                    Cylinder {
+                        radius: extension.radius_mm,
+                        z: [a.min(b), a.max(b)],
+                    }
+                }),
+        );
         let bounds = [-1., 1.].map(|sign: f64| {
             std::array::from_fn(|k| {
                 let direction = frame.axes.map(|axis| sign * axis[k]);
@@ -435,12 +478,11 @@ impl Gear {
             azimuth: toward[1].atan2(toward[0]),
             flanks,
             bands,
-            height,
             bore: profile
                 .bore()
                 .and_then(multicad_rust_kernel::normal_sweep::Edge::radius_mm)
                 .unwrap_or(0.),
-            extensions,
+            cylinders,
             axis: profile.axial_bounds(),
             radius,
             pitch: TAU / f64::from(profile.outline().last()?.tooth + 1),
@@ -450,10 +492,9 @@ impl Gear {
         Some(
             if gear.flanks.is_empty()
                 || !bounds.iter().flatten().all(|v| v.is_finite())
-                || gear
-                    .bands
-                    .iter()
-                    .any(|band| !(band.twist.is_finite() && band.twist != 0.))
+                || gear.bands.iter().any(|band| {
+                    !(band.twist.is_finite() && band.twist != 0. && band.z[1] > band.z[0])
+                })
             {
                 Err(invalid("Invalid twisted gear for a drawing scene"))
             } else {
@@ -479,14 +520,92 @@ impl Gear {
         }
     }
 
-    /// Phase of the tooth profile at an axial coordinate of the tooth band.
+    /// What fills the transverse plane at `z` approached from below
+    /// (`side` negative) or above. A tooth band wins over a coaxial cylinder,
+    /// which every band contains.
+    pub(super) fn material(&self, z: f64, side: f64) -> Option<Region> {
+        let touches = |[lo, hi]: [f64; 2]| {
+            if side < 0. {
+                lo < z && z <= hi
+            } else {
+                lo <= z && z < hi
+            }
+        };
+        if let Some(band) = self.bands.iter().find(|band| touches(band.z)) {
+            return Some(Region::Profile(band.phase_at(z)));
+        }
+        self.cylinders
+            .iter()
+            .filter(|cylinder| touches(cylinder.z))
+            .map(|cylinder| cylinder.radius)
+            .max_by(f64::total_cmp)
+            .map(Region::Disk)
+    }
+
+    /// Every axial level at which a band or a cylinder starts or ends.
+    pub(super) fn levels(&self) -> Vec<f64> {
+        let mut levels: Vec<f64> = self
+            .bands
+            .iter()
+            .map(|band| band.z)
+            .chain(self.cylinders.iter().map(|cylinder| cylinder.z))
+            .flatten()
+            .collect();
+        levels.sort_by(f64::total_cmp);
+        levels.dedup();
+        levels
+    }
+
+    /// The planar end faces: at every level, the material on one side that
+    /// the other side leaves uncovered.
+    pub(super) fn end_faces(&self) -> Vec<EndFace> {
+        let mut faces = Vec::new();
+        for z in self.levels() {
+            let [below, above] = [-1., 1.].map(|side| self.material(z, side));
+            let disk = |region: Option<Region>| match region {
+                Some(Region::Disk(radius)) => radius.max(self.bore),
+                _ => self.bore,
+            };
+            let mut face =
+                |outward: f64, region: Option<Region>, other: Option<Region>| match region {
+                    Some(Region::Profile(phase)) => faces.push(EndFace {
+                        z,
+                        outward,
+                        phase: Some(phase),
+                        inner: disk(other),
+                        outer: 0.,
+                    }),
+                    Some(Region::Disk(radius)) if radius > disk(other) => faces.push(EndFace {
+                        z,
+                        outward,
+                        phase: None,
+                        inner: disk(other),
+                        outer: radius,
+                    }),
+                    _ => {}
+                };
+            match (below, above) {
+                (Some(Region::Profile(_)), Some(Region::Profile(_))) => {}
+                (Some(Region::Profile(_)), _) => face(1., below, above),
+                (_, Some(Region::Profile(_))) => face(-1., above, below),
+                _ => {
+                    face(1., below, above);
+                    face(-1., above, below);
+                }
+            }
+        }
+        faces
+    }
+
+    /// Phase of the tooth profile at an axial level of a tooth band; the
+    /// phase stays constant through a central gap.
     pub(super) fn phase_at(&self, z: f64) -> f64 {
         let band = self
             .bands
             .iter()
             .find(|band| z <= band.z[1])
             .unwrap_or(&self.bands[self.bands.len() - 1]);
-        band.phase_at(z)
+        band.phase_at(z.max(band.z[0]))
     }
 
     pub(super) fn circle(radius: f64, clockwise: bool) -> Edge {
@@ -515,9 +634,24 @@ impl Member for Gear {
     fn section(&self, depth: f64, _: f64) -> Result<Vec<Loop>, GeometryError> {
         cut::section(self, depth)
     }
+
+    fn line(&self, start: P3, direction: P3) -> Option<Result<Vec<[f64; 2]>, GeometryError>> {
+        if !direction.iter().chain(&start).all(|v| v.is_finite())
+            || dot3(direction, direction) == 0.
+        {
+            return Some(Err(err(
+                GeometryErrorKind::Input,
+                "A drawing line needs a finite start and a nonzero direction",
+            )));
+        }
+        let base = self.frame.local(start);
+        let along = self.frame.axes.map(|axis| dot3(axis, direction));
+        Some(self.spans(base, along, &|p| self.contains(p)))
+    }
 }
 
-/// The scene member of a helical or continuous herringbone gear.
+/// The scene member of a helical, continuous herringbone or gapped
+/// double-helical gear.
 pub(in crate::drawing) fn member(
     solid: &Solid,
     view: &View,

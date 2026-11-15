@@ -37,10 +37,10 @@ fn spec(sweep: GearSweep, twist: f64, hub: Option<GearHub>) -> InvoluteGear {
 }
 
 fn gear(spec: InvoluteGear) -> Solid {
-    let build = if spec.sweep == GearSweep::Helical {
-        Solid::rust_helical_gear_named
-    } else {
-        Solid::rust_herringbone_named
+    let build = match spec.sweep {
+        GearSweep::Helical => Solid::rust_helical_gear_named,
+        GearSweep::GappedChevron { .. } => Solid::rust_double_helical_named,
+        _ => Solid::rust_herringbone_named,
     };
     build(spec, EntityId::new(), GeometryPolicy::default()).unwrap()
 }
@@ -62,7 +62,19 @@ fn gears() -> Vec<(&'static str, InvoluteGear)> {
             "herringbone left hub",
             spec(GearSweep::Chevron, -0.04, hub()),
         ),
+        ("double-helical", spec(GAPPED, 0.05, None)),
+        ("double-helical left hub", spec(GAPPED, -0.04, hub())),
     ]
+}
+
+const GAPPED: GearSweep = GearSweep::GappedChevron { gap_mm: 1. };
+
+/// Axial length of each tooth band of a chevron.
+fn band(spec: &InvoluteGear) -> f64 {
+    match spec.sweep {
+        GearSweep::GappedChevron { gap_mm } => 0.5 * (WIDTH - gap_mm),
+        _ => 0.5 * WIDTH,
+    }
 }
 
 fn frames(origin: [f64; 3]) -> [(&'static str, PlaneFrame); 3] {
@@ -275,6 +287,10 @@ impl Oracle {
         if r < self.spec.root_radius_mm - 1e-3 {
             return true;
         }
+        // The central gap of a double-helical gear keeps the root core.
+        if z > band(&self.spec) && z < WIDTH - band(&self.spec) {
+            return r < self.spec.root_radius_mm;
+        }
         if r > self.spec.tip_radius_mm + 1e-3 {
             return false;
         }
@@ -328,7 +344,7 @@ fn phase(spec: &InvoluteGear, z: f64) -> f64 {
         * if spec.sweep == GearSweep::Helical {
             z
         } else {
-            z.min(WIDTH - z)
+            z.min(WIDTH - z).min(band(spec))
         }
 }
 
@@ -343,6 +359,7 @@ fn a_section_through_the_axis_follows_the_exact_flank_law() {
     for (name, spec) in [
         ("helical", spec(GearSweep::Helical, 0.05, None)),
         ("herringbone", spec(GearSweep::Chevron, -0.05, None)),
+        ("double-helical", spec(GAPPED, 0.05, None)),
     ] {
         let solid = gear(spec);
         let vectors = draw(
@@ -415,9 +432,10 @@ fn a_section_through_the_axis_follows_the_exact_flank_law() {
                         let bands: Vec<(f64, f64, [f64; 2])> = if spec.sweep == GearSweep::Helical {
                             vec![(0., k, [0., WIDTH])]
                         } else {
+                            let length = band(&spec);
                             vec![
-                                (0., k, [0., WIDTH / 2.]),
-                                (k * WIDTH, -k, [WIDTH / 2., WIDTH]),
+                                (0., k, [0., length]),
+                                (k * WIDTH, -k, [WIDTH - length, WIDTH]),
                             ]
                         };
                         for (offset, slope, range) in bands {
@@ -454,6 +472,7 @@ fn a_box_in_front_hides_exactly_the_covered_half_of_a_twisted_gear() {
     for (name, spec) in [
         ("helical", spec(GearSweep::Helical, 0.05, None)),
         ("herringbone hub", spec(GearSweep::Chevron, -0.04, hub())),
+        ("double-helical hub", spec(GAPPED, 0.05, hub())),
     ] {
         let solid = gear(spec);
         // The viewer of the side view is at negative Y.
@@ -524,6 +543,152 @@ fn a_box_in_front_hides_exactly_the_covered_half_of_a_twisted_gear() {
     }
 }
 
+/// The solid hatch of a section is the cut region itself: its triangles lie
+/// in the material of the exact solid and their total area matches a
+/// scan-line quadrature of the oracle on the plane, for oblique and
+/// lengthwise sections of every family, windows included.
+#[test]
+fn section_hatches_cover_exactly_the_cut_material() {
+    use multicad_core::{drawings::VectorCurve, materials::HatchPattern};
+    use multicad_kernel::DrawingHatch;
+    let s = 0.5_f64.sqrt();
+    let t = (1_f64 / 6.).sqrt();
+    let oblique = PlaneFrame {
+        origin: [0.3, -0.2, 2.2],
+        u: [s, -s, 0.],
+        v: [t, t, -2. * t],
+    };
+    let mut worst: f64 = 0.;
+    for (name, spec) in gears() {
+        let solid = gear(spec);
+        let oracle = Oracle::new(spec);
+        for (view, frame, window) in [
+            ("side", side([0.4, 1.1, 2.]), None),
+            ("oblique", oblique, None),
+            ("oblique window", oblique, Some(([-6., 5.], [-4., 7.]))),
+        ] {
+            let vectors = project_drawing(
+                &[DrawingSolid {
+                    solid: &solid,
+                    hatch: Some(DrawingHatch {
+                        angle_rad: 0.,
+                        spacing_mm: 1.,
+                        line_width_mm: 0.18,
+                        pattern: HatchPattern::Solid,
+                    }),
+                }],
+                DrawingProjection {
+                    frame,
+                    section_offset_mm: Some(0.),
+                    section_only: true,
+                    section_u_mm: window.map(|w| w.0),
+                    section_v_mm: window.map(|w| w.1),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let triangles: Vec<[[f64; 2]; 3]> = vectors
+                .iter()
+                .filter_map(|vector| match vector.curve {
+                    VectorCurve::HatchTriangle { points } => Some(points),
+                    _ => None,
+                })
+                .collect();
+            let area: f64 = triangles
+                .iter()
+                .map(|[a, b, c]| {
+                    ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs() / 2.
+                })
+                .sum();
+            let inside = |p: [f64; 2]| {
+                window.is_none_or(|([u0, u1], [v0, v1])| {
+                    p[0] > u0 && p[0] < u1 && p[1] > v0 && p[1] < v1
+                }) && oracle.inside(world(frame, p, 0.))
+            };
+            // Every triangle of real size lies in the material.
+            let mut outside = 0;
+            for [a, b, c] in &triangles {
+                let size = ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs();
+                let centroid = [(a[0] + b[0] + c[0]) / 3., (a[1] + b[1] + c[1]) / 3.];
+                if size > 1e-6 && !inside(centroid) {
+                    outside += 1;
+                }
+            }
+            // Scan lines across the plane, crossings bisected on the oracle;
+            // the lines span the region's exact extent across them, found by
+            // bisection, so that no line straddles its first or last edge.
+            let reach = PITCH + 2.;
+            let width = |y: f64| {
+                let mut previous = (-reach, inside([-reach, y]));
+                let mut entered = -reach;
+                let mut total = 0.;
+                for i in 1..=800 {
+                    let x = -reach + 2. * reach * f64::from(i) / 800.;
+                    let state = inside([x, y]);
+                    if state != previous.1 {
+                        let [mut a, mut b] = [previous.0, x];
+                        for _ in 0..40 {
+                            let mid = 0.5 * (a + b);
+                            if inside([mid, y]) == previous.1 {
+                                a = mid;
+                            } else {
+                                b = mid;
+                            }
+                        }
+                        if state {
+                            entered = 0.5 * (a + b);
+                        } else {
+                            total += 0.5 * (a + b) - entered;
+                        }
+                    }
+                    previous = (x, state);
+                }
+                total
+            };
+            let coarse: Vec<f64> = (0..=200)
+                .map(|k| -reach + 2. * reach * f64::from(k) / 200.)
+                .collect();
+            let filled: Vec<bool> = coarse.iter().map(|&y| width(y) > 0.).collect();
+            let first = filled.iter().position(|f| *f).unwrap();
+            let last = filled.iter().rposition(|f| *f).unwrap();
+            let edge = |[mut outside, mut within]: [f64; 2]| {
+                for _ in 0..40 {
+                    let mid = 0.5 * (outside + within);
+                    if width(mid) > 0. {
+                        within = mid;
+                    } else {
+                        outside = mid;
+                    }
+                }
+                0.5 * (outside + within)
+            };
+            let low = edge([coarse[first - 1], coarse[first]]);
+            let high = edge([coarse[last + 1], coarse[last]]);
+            const LINES: usize = 400;
+            let dy = (high - low) / LINES as f64;
+            let expected: f64 = (0..LINES)
+                .map(|line| width(low + (line as f64 + 0.5) * dy) * dy)
+                .sum();
+            let error = (area - expected).abs() / expected;
+            worst = worst.max(error);
+            println!(
+                "{{\"case\":\"{name} {view} hatch\",\"triangles\":{},\"area\":{area},\"quadrature\":{expected},\"outside\":{outside}}}",
+                triangles.len()
+            );
+            assert!(expected > 1., "{name} {view}");
+            assert!(
+                outside == 0,
+                "{name} {view}: {outside} triangles outside the material"
+            );
+            assert!(
+                error <= 3e-3,
+                "{name} {view}: hatch {area} against {expected}"
+            );
+        }
+    }
+    println!("{{\"worst_relative_hatch_area_error\":{worst:e}}}");
+}
+
 /// Depth of the nearest material along the sight line through a paper
 /// point, from the oracle alone.
 fn front(
@@ -579,6 +744,16 @@ fn every_occluding_contour_of_the_exact_solid_is_a_visible_curve() {
                 v: [t, t, -2. * t],
             },
             0.47,
+        ),
+        (
+            "double-helical oblique",
+            spec(GAPPED, 0.05, None),
+            PlaneFrame {
+                origin: [0., 0., 2.],
+                u: [s, -s, 0.],
+                v: [t, t, -2. * t],
+            },
+            0.43,
         ),
     ] {
         let solid = gear(spec);
@@ -831,28 +1006,282 @@ fn report_native_deviations() {
     }
 }
 
-/// Whether a paper point lies on the rim of the far cut of a finite-depth
-/// section and is seen against empty space, by the oracle alone: the cut
-/// face changes from material to void around it, and beside it nothing of
-/// the retained slab is in front.
+/// Depth of the nearest retained material along the sight line through a
+/// paper point, by an independent membership predicate of world points.
 #[cfg(feature = "occt")]
-fn on_visible_far_cut(oracle: &Oracle, options: DrawingProjection, paper: [f64; 2]) -> bool {
-    let (Some(top), Some(depth)) = (options.section_offset_mm, options.section_depth_mm) else {
-        return false;
+fn front_of(
+    inside: &dyn Fn([f64; 3]) -> bool,
+    frame: PlaneFrame,
+    paper: [f64; 2],
+    [far, near]: [f64; 2],
+) -> Option<f64> {
+    // Fine enough to find a thin wedge of retained material at a cut.
+    let step = (0.02_f64).min((near - far) / 2000.);
+    let at = |depth: f64| inside(world(frame, paper, depth));
+    let count = ((near - far) / step).ceil() as usize;
+    let mut previous = near;
+    for i in 0..=count {
+        let depth = near - (near - far) * i as f64 / count as f64;
+        let depth = if i == count { far + 1e-9 } else { depth };
+        if at(depth) {
+            if i == 0 {
+                return Some(depth);
+            }
+            let [mut a, mut b] = [previous, depth];
+            for _ in 0..40 {
+                let mid = 0.5 * (a + b);
+                if at(mid) {
+                    b = mid;
+                } else {
+                    a = mid;
+                }
+            }
+            return Some(0.5 * (a + b));
+        }
+        previous = depth;
+    }
+    None
+}
+
+/// Whether a visible chord through `mid` along `along` is an edge of the
+/// retained solid as the viewer sees it, by the predicate alone: across the
+/// chord the depth of the nearest retained material jumps, appears or
+/// disappears (an occluding contour or a rim) or changes slope (a crease).
+#[cfg(feature = "occt")]
+fn seen_edge(
+    inside: &dyn Fn([f64; 3]) -> bool,
+    options: DrawingProjection,
+    mid: [f64; 2],
+    along: [f64; 2],
+) -> bool {
+    let reach = 40.;
+    let near = options.section_offset_mm.unwrap_or(reach);
+    let far = options
+        .section_offset_mm
+        .zip(options.section_depth_mm)
+        .map_or(-reach, |(top, depth)| top - depth);
+    let length = along[0].hypot(along[1]);
+    let normal = [-along[1] / length, along[0] / length];
+    let delta = 0.01;
+    let depth = |k: f64| {
+        front_of(
+            inside,
+            options.frame,
+            [
+                mid[0] + k * delta * normal[0],
+                mid[1] + k * delta * normal[1],
+            ],
+            [far, near],
+        )
     };
-    let far = top - depth;
-    let around: Vec<[f64; 2]> = (0..16)
-        .map(|i| {
-            let (sin, cos) = (f64::from(i) * PI / 8.).sin_cos();
-            [paper[0] + 0.02 * cos, paper[1] + 0.02 * sin]
+    match [-2., -1., 1., 2.].map(depth) {
+        [_, None, None, _] => false,
+        [_, Some(_), None, _] | [_, None, Some(_), _] => true,
+        [m2, Some(m1), Some(p1), p2] => {
+            if (m1 - p1).abs() > 0.05 {
+                return true;
+            }
+            match (m2, p2) {
+                (Some(m2), Some(p2)) => ((p2 - p1) - (m1 - m2)).abs() / delta > 0.1,
+                _ => true,
+            }
+        }
+    }
+}
+
+/// Compare one drawing of Rust solids with OpenCascade's drawing of their
+/// STEP imports by the rules of `twisted_gears_match_native_open_cascade`.
+/// A Rust chord without any native curve of its source is accepted only
+/// where `certify` holds; returns how many were.
+#[cfg(feature = "occt")]
+fn compare_native(
+    label: &str,
+    (solids, natives): (&[&Solid], &[&Solid]),
+    options: DrawingProjection,
+    certify: &dyn Fn(VectorRole, [f64; 2], [f64; 2]) -> bool,
+    (failures, worst): (&mut Vec<String>, &mut [f64; 4]),
+) -> usize {
+    let rust = draw(solids, options);
+    let complete = draw(
+        solids,
+        DrawingProjection {
+            tangent_edges: true,
+            hidden_lines: true,
+            ..options
+        },
+    );
+    let reference = draw(natives, options);
+    let bound = 3. * options.chord_tolerance_mm;
+    let of = |vectors: &[ProjectedVector], role: VectorRole| -> Vec<ProjectedVector> {
+        vectors.iter().filter(|v| v.role == role).cloned().collect()
+    };
+    let mut certified = 0;
+    let mut unmatched = Vec::new();
+    let matched: Vec<ProjectedVector> = rust
+        .iter()
+        .filter(|vector| {
+            let found = deviation(std::slice::from_ref(vector), &reference, false).0 <= bound;
+            if !found {
+                unmatched.push((*vector).clone());
+            }
+            found
         })
+        .cloned()
         .collect();
-    let cut = |q: [f64; 2]| oracle.inside(world(options.frame, q, far + 1e-6));
-    let open = |q: [f64; 2]| {
-        (0..=200)
-            .all(|i| !oracle.inside(world(options.frame, q, far + depth * f64::from(i) / 200.)))
-    };
-    around.iter().any(|&q| cut(q)) && around.iter().any(|&q| !cut(q) && open(q))
+    for vector in &unmatched {
+        let all: Vec<&ProjectedVector> = reference
+            .iter()
+            .filter(|other| other.source_index == vector.source_index)
+            .collect();
+        for pair in vector.preview_mm.windows(2) {
+            let mid = [
+                0.5 * (pair[0][0] + pair[1][0]),
+                0.5 * (pair[0][1] + pair[1][1]),
+            ];
+            if distance_to(&all, mid) <= bound {
+                continue;
+            }
+            let along = [pair[1][0] - pair[0][0], pair[1][1] - pair[0][1]];
+            if certify(vector.role, mid, along) {
+                certified += 1;
+            } else {
+                failures.push(format!(
+                    "{label}: Rust {:?} of source {} at {mid:?} has no native curve",
+                    vector.role, vector.source_index
+                ));
+            }
+        }
+    }
+    // Visible Rust chords off every native visible curve: OpenCascade drew
+    // them hidden or not at all; each must be certified.
+    let mut visible = of(&matched, VectorRole::Visible);
+    let native_visible = of(&reference, VectorRole::Visible);
+    visible.retain(|vector| {
+        let near: Vec<&ProjectedVector> = native_visible
+            .iter()
+            .filter(|other| other.source_index == vector.source_index)
+            .collect();
+        vector.preview_mm.windows(2).all(|pair| {
+            let mid = [
+                0.5 * (pair[0][0] + pair[1][0]),
+                0.5 * (pair[0][1] + pair[1][1]),
+            ];
+            let along = [pair[1][0] - pair[0][0], pair[1][1] - pair[0][1]];
+            if [pair[0], mid, pair[1]]
+                .into_iter()
+                .all(|point| distance_to(&near, point) <= bound)
+            {
+                return true;
+            }
+            if certify(VectorRole::Visible, mid, along) {
+                certified += 1;
+            } else {
+                failures.push(format!(
+                    "{label}: Rust visible chord of source {} at {mid:?} is not a seen edge",
+                    vector.source_index
+                ));
+            }
+            false
+        })
+    });
+    let checks = [
+        deviation(&matched, &reference, false),
+        deviation(&visible, &reference, true),
+        deviation(&of(&rust, VectorRole::Section), &reference, true),
+        deviation(&reference, &complete, false),
+        deviation(&of(&reference, VectorRole::Section), &rust, true),
+    ];
+    println!(
+        "{{\"case\":\"{label}\",\"rust_to_native_mm\":{},\"rust_visible_to_native_visible_mm\":{},\"rust_section_to_native_section_mm\":{},\"native_to_rust_mm\":{},\"native_section_to_rust_section_mm\":{},\"uncounted_rust_curves\":{}}}",
+        checks[0].0,
+        checks[1].0,
+        checks[2].0,
+        checks[3].0,
+        checks[4].0,
+        unmatched.len()
+    );
+    for (index, check) in checks.iter().enumerate() {
+        worst[index.min(3)] = worst[index.min(3)].max(check.0);
+        if check.0 > bound {
+            failures.push(format!("{label}: check {index} {check:?}"));
+        }
+    }
+    certified
+}
+
+/// Overlapping scenes of a box and a twisted gear against OpenCascade: the
+/// box passes through the tooth band, so every view mixes occlusion by both
+/// solids and sections cut both.
+#[cfg(feature = "occt")]
+#[test]
+fn overlapping_box_and_twisted_gear_scenes_match_native_open_cascade() {
+    let only = std::env::var("SCENE_CASE").ok();
+    let mut failures = Vec::new();
+    let mut worst = [0_f64; 4];
+    let mut compared = 0;
+    let mut certified = 0;
+    let mut unavailable = 0;
+    for (name, spec) in [
+        ("herringbone", spec(GearSweep::Chevron, 0.05, None)),
+        ("double-helical", spec(GAPPED, -0.04, hub())),
+    ] {
+        let solid = gear(spec);
+        let oracle = Oracle::new(spec);
+        let cover = stock([6, 30, 3], [-2., -15., 1.5]);
+        let directory = tempfile::tempdir().unwrap();
+        let natives: Vec<Solid> = [&cover, &solid]
+            .iter()
+            .enumerate()
+            .map(|(index, solid)| {
+                let path = directory.path().join(format!("solid-{index}.step"));
+                solid.write_step(&path).unwrap();
+                Solid::read_step(&path, solid.geometry_policy()).unwrap()
+            })
+            .collect();
+        for (case, options) in cases([0., 0., 2.]) {
+            let label = format!("box + {name} {case}");
+            if only
+                .as_ref()
+                .is_some_and(|only| !label.contains(only.as_str()))
+            {
+                continue;
+            }
+            let native: Vec<DrawingSolid> = natives
+                .iter()
+                .map(|solid| DrawingSolid { solid, hatch: None })
+                .collect();
+            if let Err(error) = project_drawing(&native, options) {
+                println!(
+                    "{{\"case\":\"{label}\",\"native_error\":\"{}\"}}",
+                    error.message
+                );
+                unavailable += 1;
+                continue;
+            }
+            compared += 1;
+            let inside = |p: [f64; 3]| {
+                (p[0] > -2. && p[0] < 4. && p[1] > -15. && p[1] < 15. && p[2] > 1.5 && p[2] < 4.5)
+                    || oracle.inside(p)
+            };
+            certified += compare_native(
+                &label,
+                (&[&cover, &solid], &[&natives[0], &natives[1]]),
+                options,
+                &|role, point, along| {
+                    role == VectorRole::Visible && seen_edge(&inside, options, point, along)
+                },
+                (&mut failures, &mut worst),
+            );
+        }
+    }
+    println!(
+        "{{\"cases\":{compared},\"native_unavailable\":{unavailable},\"worst_mm\":{worst:?},\"oracle_certified_chords\":{certified}}}"
+    );
+    assert!(failures.is_empty(), "{failures:#?}");
+    assert!(
+        only.is_some() || compared >= 30,
+        "{compared} cases compared"
+    );
 }
 
 /// Every non-axial, cropped and sectioned view of the twisted gears against
@@ -903,87 +1332,27 @@ fn twisted_gears_match_native_open_cascade() {
             if only
                 .as_ref()
                 .is_some_and(|only| !label.contains(only.as_str()))
-                || (case.starts_with("axial") && !cropped)
+                || (case.starts_with("axial")
+                    && !cropped
+                    && !matches!(spec.sweep, GearSweep::GappedChevron { .. }))
             {
                 continue;
             }
-            let rust = draw(&[&solid], options);
-            let complete = draw(
-                &[&solid],
-                DrawingProjection {
-                    tangent_edges: true,
-                    hidden_lines: true,
-                    ..options
-                },
-            );
-            let reference = draw(&[&native], options);
             compared += 1;
-            let bound = 3. * options.chord_tolerance_mm;
-            let of = |vectors: &[ProjectedVector], role: VectorRole| -> Vec<ProjectedVector> {
-                vectors.iter().filter(|v| v.role == role).cloned().collect()
-            };
-            // Rust curves without a native counterpart must be certified.
-            let mut unmatched = Vec::new();
-            let matched: Vec<ProjectedVector> = rust
-                .iter()
-                .filter(|vector| {
-                    let found =
-                        deviation(std::slice::from_ref(vector), &reference, false).0 <= bound;
-                    if !found {
-                        unmatched.push((*vector).clone());
-                    }
-                    found
-                })
-                .cloned()
-                .collect();
-            for vector in &unmatched {
-                for pair in vector.preview_mm.windows(2) {
-                    let mid = [
-                        0.5 * (pair[0][0] + pair[1][0]),
-                        0.5 * (pair[0][1] + pair[1][1]),
-                    ];
-                    let all: Vec<&ProjectedVector> = reference.iter().collect();
-                    if distance_to(&all, mid) <= bound {
-                        continue;
-                    }
-                    if vector.role == VectorRole::Visible
-                        && on_visible_far_cut(&oracle, options, mid)
-                    {
-                        certified += 1;
-                    } else {
-                        failures.push(format!(
-                            "{label}: Rust {:?} at {mid:?} has no native curve",
-                            vector.role
-                        ));
-                    }
-                }
-            }
-            let checks = [
-                deviation(&matched, &reference, false),
-                deviation(&of(&matched, VectorRole::Visible), &reference, true),
-                deviation(&of(&rust, VectorRole::Section), &reference, true),
-                deviation(&reference, &complete, false),
-                deviation(&of(&reference, VectorRole::Section), &rust, true),
-            ];
-            println!(
-                "{{\"case\":\"{label}\",\"rust_to_native_mm\":{},\"rust_visible_to_native_visible_mm\":{},\"rust_section_to_native_section_mm\":{},\"native_to_rust_mm\":{},\"native_section_to_rust_section_mm\":{},\"uncounted_rust_curves\":{}}}",
-                checks[0].0,
-                checks[1].0,
-                checks[2].0,
-                checks[3].0,
-                checks[4].0,
-                unmatched.len()
+            certified += compare_native(
+                &label,
+                (&[&solid], &[&native]),
+                options,
+                &|role, point, along| {
+                    role == VectorRole::Visible
+                        && seen_edge(&|p| oracle.inside(p), options, point, along)
+                },
+                (&mut failures, &mut worst),
             );
-            for (index, check) in checks.iter().enumerate() {
-                worst[index.min(3)] = worst[index.min(3)].max(check.0);
-                if check.0 > bound {
-                    failures.push(format!("{label}: check {index} {check:?}"));
-                }
-            }
         }
     }
     println!(
-        "{{\"cases\":{compared},\"worst_mm\":{worst:?},\"oracle_certified_far_cut_chords\":{certified}}}"
+        "{{\"cases\":{compared},\"worst_mm\":{worst:?},\"oracle_certified_chords\":{certified}}}"
     );
     assert!(failures.is_empty(), "{failures:#?}");
     assert!(

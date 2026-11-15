@@ -553,3 +553,212 @@ fn rotated_bore_keeps_its_authored_seam_vertex() {
         Err(ReadError::Invalid),
     );
 }
+
+fn gapped(teeth: u32, hand: f64, bore: f64, gap: f64) -> Herringbone {
+    let beta = 15_f64.to_radians();
+    let pressure = (20_f64.to_radians().tan() / beta.cos()).atan();
+    let module = 2. / beta.cos();
+    let pitch = f64::from(teeth) * module / 2.;
+    Herringbone::new_gapped(
+        Spec {
+            teeth,
+            pitch_radius_mm: pitch,
+            base_radius_mm: pitch * pressure.cos(),
+            tip_radius_mm: pitch + 2.,
+            root_radius_mm: pitch - 2.5,
+            root_fillet_radius_mm: 0.4,
+            half_base_angle_rad: (PI * module / 2. - 0.05) / (2. * pitch) + pressure.tan()
+                - pressure,
+            face_width_mm: 10.,
+            bore_radius_mm: bore,
+        },
+        hand * beta.tan() / pitch,
+        gap,
+        1e-5,
+        1e7,
+    )
+    .unwrap()
+}
+
+#[test]
+fn gapped_readback_checks_the_root_core_arcs_and_every_shoulder() {
+    for (teeth, hand, bore, gap, [origin, u, v]) in [
+        (24, 1., 4., 3., XY),
+        (36, -1., 0., 1., XY),
+        (
+            24,
+            1.,
+            0.,
+            6.,
+            [[13., -7., 20.], [1., 0., 0.], [0., 0.6, 0.8]],
+        ),
+        (
+            24,
+            -1.,
+            4.,
+            3.,
+            [[-9., 11., 3.], [0., 0., 1.], [0.8, 0.6, 0.]],
+        ),
+    ] {
+        let gear = gapped(teeth, hand, bore, gap);
+        let text = write_herringbone(&gear, origin, u, v, TOL).unwrap();
+        let volume = verify_herringbone(&text, &gear, origin, u, v, TOL).unwrap();
+        assert!(
+            (volume - gear.volume_mm3()).abs() < 1e-5,
+            "{volume} != {}",
+            gear.volume_mm3()
+        );
+        // One root core, one bore and one plane per shoulder and end cap.
+        assert_eq!(
+            text.matches("CYLINDRICAL_SURFACE(").count(),
+            1 + usize::from(bore > 0.)
+        );
+        assert_eq!(text.matches("=PLANE(").count(), 2 + 2 * teeth as usize);
+        // The same text is not a different gap, a continuous chevron or
+        // the opposite hand.
+        for other in [
+            gapped(teeth, hand, bore, gap + 0.5),
+            gapped(teeth, -hand, bore, gap),
+            fixture(teeth, hand, bore),
+        ] {
+            assert!(verify_herringbone(&text, &other, origin, u, v, TOL).is_err());
+        }
+    }
+    let continuous = fixture(24, 1., 4.);
+    let text = write_herringbone(&continuous, XY[0], XY[1], XY[2], TOL).unwrap();
+    assert!(verify_herringbone(&text, &gapped(24, 1., 4., 3.), XY[0], XY[1], XY[2], TOL).is_err());
+}
+
+#[test]
+fn gapped_hubs_keep_their_ordinals_after_the_gap_faces() {
+    for bore in [0., 4.] {
+        for span in [[-2., 2.], [8., 12.], [-2., 12.]] {
+            let gear = gapped(24, 1., bore, 3.)
+                .with_hub(
+                    crate::spur_gear::Hub {
+                        radius_mm: 12.,
+                        axial_start_mm: span[0],
+                        axial_end_mm: span[1],
+                    },
+                    1e-5,
+                    1e7,
+                )
+                .unwrap();
+            let text = write_herringbone(&gear, XY[0], XY[1], XY[2], TOL).unwrap();
+            let volume = verify_herringbone(&text, &gear, XY[0], XY[1], XY[2], TOL).unwrap();
+            assert!((volume - gear.volume_mm3()).abs() < 1e-5);
+        }
+    }
+}
+
+#[test]
+fn gapped_readback_refuses_tampered_core_seam_arcs_and_shoulders() {
+    let [origin, u, v] = XY;
+    let teeth = 24;
+    let gear = gapped(teeth as u32, 1., 4., 3.);
+    let source = write_herringbone(&gear, origin, u, v, TOL).unwrap();
+    let entities = parse_entities(&source, TOL).unwrap();
+    let shell = Shell::new(&entities, TOL, true);
+    let solid = shell.represented_solids(true).unwrap()[0];
+    let faces = shell.member_faces(solid).unwrap();
+    let record = |id: &str| {
+        source
+            .lines()
+            .find(|line| line.split_once('=').is_some_and(|(left, _)| left == id))
+            .unwrap()
+    };
+    let numbered = |id: u32| record(&format!("#{id}"));
+    let first = gear.gap_faces_start() as usize;
+    let core = numbered(faces[first]);
+    let (surface_id, _, bounds) = face(&shell, faces[first]).unwrap();
+    let surface = numbered(surface_id);
+    let radius = format!("{:.16E}", gear.root_radius_mm());
+    assert_eq!(
+        &surface[argument(surface, "CYLINDRICAL_SURFACE(", 2)],
+        radius
+    );
+    let (_, wire_id, _) = shell.bound(bounds[0], false).unwrap();
+    let wire = numbered(wire_id);
+    // Lower ring, seam up, reversed upper ring, seam down.
+    let uses = wire[argument(wire, "EDGE_LOOP(", 1)]
+        .trim_matches(['(', ')'])
+        .split(',')
+        .map(record)
+        .collect::<Vec<_>>();
+    assert_eq!(uses.len(), 4 * teeth + 2);
+    let flipped = |line: &str| {
+        let sense = &line[argument(line, "ORIENTED_EDGE(", 4)];
+        let other = if sense == ".T." { ".F." } else { ".T." };
+        changed_argument(line, "ORIENTED_EDGE(", 4, other)
+    };
+    let edge = |line: &'_ str| record(&line[argument(line, "ORIENTED_EDGE(", 3)]);
+    let [seam_up, seam_down] = [uses[2 * teeth], uses[4 * teeth + 1]];
+    let seam = edge(seam_up);
+    assert_eq!(seam, edge(seam_down));
+    let [first_arc, last_arc] = [uses[1], uses[2 * teeth - 1]];
+    // The lower and upper shoulders of the first two teeth.
+    let shoulders = [1, 2, 1 + teeth].map(|offset| numbered(faces[first + offset]));
+    let upper_plane = numbered(face(&shell, faces[first + 1 + teeth]).unwrap().0);
+    let upper_axis = &upper_plane[argument(upper_plane, "PLANE(", 1)];
+    let other_bound = &shoulders[1][argument(shoulders[1], "ADVANCED_FACE(", 1)];
+    let mut changes = vec![
+        // A wider root core.
+        (
+            surface,
+            changed_argument(
+                surface,
+                "CYLINDRICAL_SURFACE(",
+                2,
+                &format!("{:.16E}", gear.root_radius_mm() + 0.01),
+            ),
+        ),
+        // A core without its seamed boundary.
+        (core, changed_argument(core, "ADVANCED_FACE(", 1, "()")),
+        // A core radius that is not a number.
+        (
+            surface,
+            changed_argument(surface, "CYLINDRICAL_SURFACE(", 2, "''"),
+        ),
+        // A core placed on the reversed axis at the upper shoulder.
+        (
+            surface,
+            changed_argument(surface, "CYLINDRICAL_SURFACE(", 1, upper_axis),
+        ),
+        // The seam must run up once and return down once.
+        (seam_up, flipped(seam_up)),
+        (seam_down, flipped(seam_down)),
+        // Root arcs run against the counterclockwise core ring.
+        (first_arc, flipped(first_arc)),
+        (last_arc, flipped(last_arc)),
+        // A shoulder facing into its tooth band.
+        (shoulders[0], shoulders[0].replace(",.T.);", ",.F.);")),
+        // A shoulder bounded by the neighboring tooth.
+        (
+            shoulders[0],
+            changed_argument(shoulders[0], "ADVANCED_FACE(", 1, other_bound),
+        ),
+    ];
+    // Coincident but distinct vertices leave the root arc under tooth 0 and
+    // the seam geometrically exact while detaching them from the tooth rims.
+    let spare = format!("#{}", entities.keys().max().unwrap() + 1);
+    let detached = [(edge(last_arc), 1), (seam, 2)].map(|(line, end)| {
+        let vertex = record(&line[argument(line, "EDGE_CURVE(", end)]);
+        let copy = vertex.replacen(vertex.split_once('=').unwrap().0, &spare, 1);
+        let changed = changed_argument(line, "EDGE_CURVE(", end, &spare);
+        (line, format!("{copy}\n{changed}"))
+    });
+    changes.extend(
+        detached
+            .iter()
+            .map(|(line, changed)| (*line, changed.clone())),
+    );
+    for (index, (original, changed)) in changes.into_iter().enumerate() {
+        assert_ne!(changed, original, "mutation {index} must change the STEP");
+        let damaged = source.replacen(original, &changed, 1);
+        assert_eq!(
+            verify_herringbone(&damaged, &gear, origin, u, v, TOL),
+            Err(ReadError::Invalid),
+            "accepted mutation {index}"
+        );
+    }
+}

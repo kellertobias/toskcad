@@ -3,11 +3,17 @@ use super::*;
 use multicad_rust_kernel::spur_gear::{ToothEdge, ToothRole};
 use std::f64::consts::PI;
 
+pub(in crate::drawing) const GAPPED_DRAWING: &str =
+    "Rust drawings of gapped double-helical gears are not yet supported";
+
 pub(in crate::drawing) fn project_herringbone(
     input: &DrawingSolid<'_>,
     options: DrawingProjection,
 ) -> Option<Result<Vec<ProjectedVector>, GeometryError>> {
     let (body, placement) = input.solid.herringbone_body()?;
+    if body.is_gapped() {
+        return Some(Err(err(GeometryErrorKind::Unsupported, GAPPED_DRAWING)));
+    }
     let [u, v, toward_viewer] = planar::view_axes(options.frame);
     let axis = placement.normal();
     if dot(axis, u).hypot(dot(axis, v)) > 64. * f64::EPSILON

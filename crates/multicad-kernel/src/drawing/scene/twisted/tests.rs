@@ -42,10 +42,10 @@ pub(super) fn pose() -> RigidTransform {
 }
 
 pub(super) fn solid(spec: InvoluteGear, placed: bool) -> Solid {
-    let build = if spec.sweep == GearSweep::Helical {
-        Solid::rust_helical_gear_named
-    } else {
-        Solid::rust_herringbone_named
+    let build = match spec.sweep {
+        GearSweep::Helical => Solid::rust_helical_gear_named,
+        GearSweep::GappedChevron { .. } => Solid::rust_double_helical_named,
+        _ => Solid::rust_herringbone_named,
     };
     let solid = build(spec, EntityId::new(), Default::default()).unwrap();
     if placed {
@@ -138,13 +138,30 @@ impl Oracle {
         }
     }
 
+    fn gap(&self) -> f64 {
+        match self.spec.sweep {
+            GearSweep::GappedChevron { gap_mm } => gap_mm,
+            _ => 0.,
+        }
+    }
+
+    /// Length of each tooth band of a chevron.
+    fn band(&self) -> f64 {
+        0.5 * (self.spec.face_width_mm - self.gap())
+    }
+
+    /// Inside the central gap of a double-helical gear.
+    fn in_gap(&self, z: f64) -> bool {
+        self.gap() > 0. && z > self.band() && z < self.spec.face_width_mm - self.band()
+    }
+
     pub(super) fn phase(&self, z: f64) -> f64 {
         let h = self.spec.face_width_mm;
         self.spec.twist_rad_per_mm
             * if self.spec.sweep == GearSweep::Helical {
                 z
             } else {
-                z.min(h - z)
+                z.min(h - z).min(self.band())
             }
     }
 
@@ -187,6 +204,10 @@ impl Oracle {
             return false;
         }
         if z > 0. && z < self.spec.face_width_mm {
+            // The central gap of a double-helical gear keeps the root core.
+            if self.in_gap(z) {
+                return r < self.spec.root_radius_mm;
+            }
             let (sin, cos) = (-self.phase(z)).sin_cos();
             return self.in_profile([x * cos - y * sin, x * sin + y * cos]);
         }
@@ -223,6 +244,7 @@ pub(super) fn cases(views: &[&str]) -> Vec<Case> {
     for (sweep, name) in [
         (GearSweep::Helical, "helical"),
         (GearSweep::Chevron, "herringbone"),
+        (GearSweep::GappedChevron { gap_mm: 1. }, "double-helical"),
     ] {
         for (twist, bore, hub, placed) in [
             (0.05, 3., false, false),
@@ -382,7 +404,10 @@ impl Oracle {
     fn normal(&self, [x, y, z]: P3) -> P3 {
         let r = x.hypot(y);
         let radial = [x / r, y / r, 0.];
-        if !(z > 0. && z < self.spec.face_width_mm) || (r - self.spec.bore_radius_mm).abs() < 1e-6 {
+        if !(z > 0. && z < self.spec.face_width_mm)
+            || (r - self.spec.bore_radius_mm).abs() < 1e-6
+            || self.in_gap(z)
+        {
             return radial;
         }
         let (sin, cos) = (-self.phase(z)).sin_cos();
@@ -520,7 +545,8 @@ fn outlines_are_complete_on_every_flank() {
         let bands: Vec<[f64; 2]> = if case.oracle.spec.sweep == GearSweep::Helical {
             vec![[0., h]]
         } else {
-            vec![[0., 0.5 * h], [0.5 * h, h]]
+            let band = case.oracle.band();
+            vec![[0., band], [h - band, h]]
         };
         const N: usize = 20;
         for &edge in &case.oracle.edges {
@@ -673,6 +699,24 @@ fn section_cases() -> Vec<Case> {
             false,
             "oblique",
         ),
+        (
+            GearSweep::GappedChevron { gap_mm: 1. },
+            "double-helical",
+            0.05,
+            3.,
+            true,
+            false,
+            "side",
+        ),
+        (
+            GearSweep::GappedChevron { gap_mm: 1. },
+            "double-helical",
+            -0.05,
+            0.,
+            false,
+            true,
+            "oblique",
+        ),
     ] {
         let spec = specification(sweep, twist, bore, hub);
         let solid = solid(spec, placed);
@@ -694,6 +738,74 @@ fn section_cases() -> Vec<Case> {
     output
 }
 
+/// Closed, oriented section boundary whose enclosed area matches a
+/// scan-line quadrature of the oracle; returns the relative area error and
+/// the largest gap between consecutive pieces.
+fn check_section(case: &Case, depth: f64, loops: Vec<Loop>) -> (f64, f64) {
+    let [lo, hi] = case.gear.bounds();
+    let mut worst_gap: f64 = 0.;
+    let pieces: Vec<Arc<dyn Path>> = loops.into_iter().flatten().collect();
+    let starts: Vec<P3> = pieces.iter().map(|p| p.point(0.)).collect();
+    let ends: Vec<P3> = pieces.iter().map(|p| p.point(1.)).collect();
+    // Closed loops: every end continues in a start at the same point, and
+    // no start continues two ends.
+    let mut taken = vec![false; starts.len()];
+    for p in &ends {
+        assert!((p[2] - depth).abs() <= 1e-9, "{}", case.label);
+        let (index, gap) = starts
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !taken[*index])
+            .map(|(index, q)| (index, (p[0] - q[0]).hypot(p[1] - q[1])))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .unwrap_or_else(|| panic!("{} at {depth}: an end without a start", case.label));
+        worst_gap = worst_gap.max(gap);
+        assert!(
+            gap <= 1e-7,
+            "{} at {depth}: boundary end {p:?} continues {gap} mm away",
+            case.label
+        );
+        taken[index] = true;
+    }
+    let mut area = 0.;
+    for piece in &pieces {
+        for [a, b] in chords_of(piece.as_ref(), 1e-6) {
+            assert!((a[2] - depth).abs() <= 1e-9 && (b[2] - depth).abs() <= 1e-9);
+            area += 0.5 * (a[0] + b[0]) * (b[1] - a[1]);
+        }
+        // Material on the left, void on the right.
+        let [p, q] = [piece.point(0.5 - 1e-4), piece.point(0.5 + 1e-4)];
+        let m = piece.point(0.5);
+        let l = (q[0] - p[0]).hypot(q[1] - p[1]);
+        let left = [-(q[1] - p[1]) / l, (q[0] - p[0]) / l];
+        let at = |side: f64| {
+            case.oracle.inside([
+                m[0] + side * 1e-6 * left[0],
+                m[1] + side * 1e-6 * left[1],
+                depth,
+            ])
+        };
+        assert!(
+            at(1.) && !at(-1.),
+            "{} at {depth}: orientation at {m:?}",
+            case.label
+        );
+    }
+    let expected = oracle_area(&case.oracle, [lo, hi], depth);
+    let error = (area - expected).abs() / expected.max(1.);
+    println!(
+        "{{\"case\":\"{}\",\"depth\":{depth},\"pieces\":{},\"area\":{area},\"quadrature\":{expected}}}",
+        case.label,
+        pieces.len()
+    );
+    assert!(
+        error <= 2e-3,
+        "{} at {depth}: {area} against {expected}",
+        case.label
+    );
+    (error, worst_gap)
+}
+
 #[test]
 fn sections_are_closed_oriented_and_enclose_the_exact_area() {
     let mut worst_area: f64 = 0.;
@@ -702,71 +814,11 @@ fn sections_are_closed_oriented_and_enclose_the_exact_area() {
         let [lo, hi] = case.gear.bounds();
         for fraction in [0.37, 0.5, 0.81] {
             let depth = lo[2] + (hi[2] - lo[2]) * fraction;
-            let pieces: Vec<Arc<dyn Path>> = case
-                .gear
-                .section(depth, 1e-3)
-                .unwrap()
-                .into_iter()
-                .flatten()
-                .collect();
+            let pieces = case.gear.section(depth, 1e-3).unwrap();
             assert!(!pieces.is_empty(), "{} at {depth}", case.label);
-            let starts: Vec<P3> = pieces.iter().map(|p| p.point(0.)).collect();
-            let ends: Vec<P3> = pieces.iter().map(|p| p.point(1.)).collect();
-            // Every end continues in exactly one start: closed loops.
-            for (list, others) in [(&ends, &starts), (&starts, &ends)] {
-                for p in list {
-                    assert!((p[2] - depth).abs() <= 1e-9, "{}", case.label);
-                    let mut gaps: Vec<f64> = others
-                        .iter()
-                        .map(|q| (p[0] - q[0]).hypot(p[1] - q[1]))
-                        .collect();
-                    gaps.sort_by(f64::total_cmp);
-                    worst_gap = worst_gap.max(gaps[0]);
-                    assert!(
-                        gaps[0] <= 1e-7 && gaps.get(1).is_none_or(|next| *next > 1e-5),
-                        "{} at {depth}: boundary end {p:?} continues in {:?}",
-                        case.label,
-                        &gaps[..gaps.len().min(2)]
-                    );
-                }
-            }
-            let mut area = 0.;
-            for piece in &pieces {
-                for [a, b] in chords_of(piece.as_ref(), 1e-6) {
-                    assert!((a[2] - depth).abs() <= 1e-9 && (b[2] - depth).abs() <= 1e-9);
-                    area += 0.5 * (a[0] + b[0]) * (b[1] - a[1]);
-                }
-                // Material on the left, void on the right.
-                let [p, q] = [piece.point(0.5 - 1e-4), piece.point(0.5 + 1e-4)];
-                let m = piece.point(0.5);
-                let l = (q[0] - p[0]).hypot(q[1] - p[1]);
-                let left = [-(q[1] - p[1]) / l, (q[0] - p[0]) / l];
-                let at = |side: f64| {
-                    case.oracle.inside([
-                        m[0] + side * 1e-6 * left[0],
-                        m[1] + side * 1e-6 * left[1],
-                        depth,
-                    ])
-                };
-                assert!(
-                    at(1.) && !at(-1.),
-                    "{} at {depth}: orientation at {m:?}",
-                    case.label
-                );
-            }
-            let expected = oracle_area(&case.oracle, [lo, hi], depth);
-            let error = (area - expected).abs() / expected;
+            let (error, gap) = check_section(&case, depth, pieces);
             worst_area = worst_area.max(error);
-            println!(
-                "{{\"case\":\"{}\",\"depth\":{depth},\"pieces\":{},\"area\":{area},\"quadrature\":{expected}}}",
-                case.label,
-                pieces.len()
-            );
-            assert!(
-                error <= 2e-3,
-                "{} at {depth}: {area} against {expected}",
-                case.label
-            );
+            worst_gap = worst_gap.max(gap);
         }
     }
     println!(
@@ -818,4 +870,287 @@ fn sight_lines_tangent_to_coaxial_cylinders_keep_the_material() {
         }
     }
     assert!(checked > 2000);
+}
+
+fn case_in(label: &str, spec: InvoluteGear, frame: PlaneFrame) -> Case {
+    let solid = solid(spec, false);
+    let (_, placement) = solid.herringbone_body().unwrap();
+    let view = View::new(frame);
+    Case {
+        label: label.to_string(),
+        gear: Gear::new(&solid, &view).unwrap().unwrap(),
+        oracle: Oracle::new(spec, placement, view),
+    }
+}
+
+/// A view frame whose direction toward the viewer is `toward`.
+fn facing(toward: P3, origin: P3) -> PlaneFrame {
+    let length = dot3(toward, toward).sqrt();
+    let n = toward.map(|v| v / length);
+    let seed = if n[0].abs() < 0.9 {
+        [1., 0., 0.]
+    } else {
+        [0., 1., 0.]
+    };
+    let along = dot3(seed, n);
+    let u: P3 = std::array::from_fn(|i| seed[i] - along * n[i]);
+    let ul = dot3(u, u).sqrt();
+    let u = u.map(|v| v / ul);
+    let v: P3 =
+        std::array::from_fn(|i| n[(i + 1) % 3] * u[(i + 2) % 3] - n[(i + 2) % 3] * u[(i + 1) % 3]);
+    PlaneFrame { origin, u, v }
+}
+
+fn dot3(a: P3, b: P3) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+/// A point inside an involute flank's patch, the ruling of the involute
+/// helicoid through it (the helicoid is developable: each ruling is a
+/// straight line on the surface) and the surface normal there, all in gear
+/// coordinates of an unplaced gear.
+fn ruling(gear: &Gear) -> (P3, P3, P3, [f64; 2]) {
+    let (index, flank) = gear
+        .flanks
+        .iter()
+        .enumerate()
+        .find(|(_, flank)| matches!(flank.shape, super::flank::Shape::Involute { .. }))
+        .unwrap();
+    let patch = gear.patch(0, index);
+    let super::flank::Shape::Involute { start, span, .. } = flank.shape else {
+        unreachable!()
+    };
+    let height = patch.band.z[1] - patch.band.z[0];
+    let [s0, zeta0] = [0.5, 0.5];
+    let t0 = start + s0 * span;
+    let twist = patch.band.twist;
+    // Along a ruling the involute parameter changes by -twist per unit
+    // height for one hand and +twist for the other; keep the hand on which
+    // three points are collinear.
+    let at = |hand: f64, lambda: f64| {
+        let s = (t0 - hand * twist * lambda - start) / span;
+        patch.local(s, zeta0 + lambda / height)
+    };
+    let hand = [1., -1.]
+        .into_iter()
+        .min_by(|a, b| {
+            let bend = |hand: f64| {
+                let [p, q, r] = [-0.2, 0., 0.2].map(|l| at(hand, l));
+                (0..3)
+                    .map(|i| (p[i] + r[i] - 2. * q[i]).powi(2))
+                    .sum::<f64>()
+                    .sqrt()
+            };
+            bend(*a).total_cmp(&bend(*b))
+        })
+        .unwrap();
+    let [p, q, r] = [-0.2, 0., 0.2].map(|l| at(hand, l));
+    let bend = (0..3)
+        .map(|i| (p[i] + r[i] - 2. * q[i]).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    assert!(
+        bend < 1e-12,
+        "the involute helicoid is not ruled here: {bend}"
+    );
+    let direction: P3 = std::array::from_fn(|i| r[i] - q[i]);
+    let normal = {
+        let tangent = flank.tangent(s0);
+        let c = flank.point(s0);
+        let [x, y] = super::flank::rotate([tangent[1], -tangent[0]], patch.band.phase_at(q[2]));
+        [x, y, twist * (c[0] * tangent[0] + c[1] * tangent[1])]
+    };
+    // The range of lambda (per unit of `direction`) on the patch.
+    let unit = 0.2;
+    let mut range = [f64::INFINITY, f64::NEG_INFINITY];
+    for k in -10_000..=10_000 {
+        let lambda = f64::from(k) * 0.01;
+        let s = (t0 - hand * twist * lambda * unit - start) / span;
+        let zeta = zeta0 + lambda * unit / height;
+        if (0. ..=1.).contains(&s) && (0. ..=1.).contains(&zeta) {
+            range = [range[0].min(lambda), range[1].max(lambda)];
+        }
+    }
+    (q, direction, normal, range)
+}
+
+/// A sight line along a ruling of an involute flank runs in the surface: it
+/// only touches the boundary there, and the material elsewhere on the line
+/// is exact. The drawing in that view draws.
+#[test]
+fn a_sight_line_along_an_involute_ruling_touches_without_material() {
+    for sweep in [
+        GearSweep::Helical,
+        GearSweep::Chevron,
+        GearSweep::GappedChevron { gap_mm: 1. },
+    ] {
+        let spec = specification(sweep, 0.05, 3., false);
+        let probe = case_in("probe", spec, PlaneFrame::default());
+        let (point, direction, _, [lo, hi]) = ruling(&probe.gear);
+        let frame = facing(direction, [0.; 3]);
+        let case = case_in(&format!("{sweep:?} along a ruling"), spec, frame);
+        let view = View::new(frame);
+        let p = view.point(point);
+        let spans = case.gear.sight([p[0], p[1]]).unwrap();
+        // The stretch on the flank lies in no interval.
+        let step = dot3(direction, direction).sqrt();
+        for k in 1..20 {
+            let lambda = lo + (hi - lo) * f64::from(k) / 20.;
+            let depth = p[2] + lambda * step;
+            assert!(
+                !spans.iter().any(|[a, b]| *a < depth && depth < *b),
+                "{}: the ruling at depth {depth} is inside {spans:?}",
+                case.label
+            );
+        }
+        // Elsewhere the line agrees with the oracle.
+        let [blo, bhi] = case.gear.bounds();
+        let mut checked = 0;
+        for k in 0..400 {
+            let depth = blo[2] - 1. + (bhi[2] - blo[2] + 2.) * f64::from(k) / 400.;
+            let lambda = (depth - p[2]) / step;
+            if (lo - 0.02..=hi + 0.02).contains(&lambda)
+                || spans.iter().flatten().any(|end| (end - depth).abs() < 1e-6)
+            {
+                continue;
+            }
+            checked += 1;
+            assert_eq!(
+                spans.iter().any(|[a, b]| *a < depth && depth < *b),
+                case.oracle.inside([p[0], p[1], depth]),
+                "{} at depth {depth}: {spans:?}",
+                case.label
+            );
+        }
+        assert!(checked > 100);
+        let solid = solid(spec, false);
+        for options in [
+            DrawingProjection {
+                frame: facing(direction, point),
+                hidden_lines: true,
+                ..Default::default()
+            },
+            DrawingProjection {
+                frame: facing(direction, point),
+                section_offset_mm: Some(0.),
+                ..Default::default()
+            },
+        ] {
+            let vectors = crate::project_drawing(
+                &[DrawingSolid {
+                    solid: &solid,
+                    hatch: None,
+                }],
+                options,
+            )
+            .unwrap();
+            assert!(!vectors.is_empty(), "{}", case.label);
+        }
+    }
+}
+
+/// Planes tangent to a flank: along the axis at the tip and root radii
+/// (touching the tip and root cylinders along generators) and an oblique
+/// plane containing a ruling of an involute flank (the tangent plane of a
+/// developable surface is constant along its ruling). The sections are
+/// closed, oriented and enclose the exact area.
+#[test]
+fn sections_by_planes_tangent_to_a_flank_are_exact() {
+    for sweep in [
+        GearSweep::Helical,
+        GearSweep::Chevron,
+        GearSweep::GappedChevron { gap_mm: 1. },
+    ] {
+        let spec = specification(sweep, 0.05, 3., false);
+        let side = frames().into_iter().find(|(n, _)| *n == "side").unwrap().1;
+        let case = case_in(&format!("{sweep:?} side"), spec, side);
+        // The side view looks along +y: depth is -y.
+        for radius in [spec.tip_radius_mm, spec.root_radius_mm] {
+            for depth in [radius, -radius] {
+                let loops = case
+                    .gear
+                    .section(depth, 1e-3)
+                    .unwrap_or_else(|error| panic!("{} at {depth}: {error:?}", case.label));
+                check_section(&case, depth, loops);
+            }
+        }
+        let probe = case_in("probe", spec, PlaneFrame::default());
+        let (point, _, normal, _) = ruling(&probe.gear);
+        for sign in [1., -1.] {
+            let frame = facing(normal.map(|v| sign * v), [0.; 3]);
+            let case = case_in(&format!("{sweep:?} tangent to an involute"), spec, frame);
+            let depth = View::new(frame).point(point)[2];
+            let loops = case.gear.section(depth, 1e-3).unwrap();
+            check_section(&case, depth, loops);
+        }
+    }
+}
+
+/// `line` gives the material along arbitrary lines of view space, not only
+/// sight lines: random lines through the solid against the oracle, with
+/// interval ends on the actual surface, for every family and placement.
+#[test]
+fn material_along_arbitrary_lines_matches_the_oracle() {
+    let mut random = Random(23);
+    let mut ends = 0;
+    let mut worst: f64 = 0.;
+    for case in cases(&["oblique", "side"]) {
+        let [lo, hi] = case.gear.bounds();
+        let scale = lo.iter().chain(&hi).fold(1_f64, |s, v| s.max(v.abs()));
+        for _ in 0..40 {
+            let start: P3 = std::array::from_fn(|k| lo[k] + (hi[k] - lo[k]) * random.unit());
+            let direction: P3 = std::array::from_fn(|_| 2. * random.unit() - 1.);
+            let spans = case.gear.line(start, direction).unwrap().unwrap();
+            assert!(spans.windows(2).all(|pair| pair[0][1] < pair[1][0]));
+            let at = |s: f64| std::array::from_fn(|k| start[k] + s * direction[k]);
+            for k in 0..60 {
+                let s = -3. + 6. * f64::from(k) / 60. + 0.0123;
+                if spans.iter().flatten().any(|end| (end - s).abs() < 1e-6) {
+                    continue;
+                }
+                assert_eq!(
+                    spans.iter().any(|[a, b]| *a < s && s < *b),
+                    case.oracle.inside(at(s)),
+                    "{} along {start:?} + s {direction:?} at {s}: {spans:?}",
+                    case.label
+                );
+            }
+            for (index, &end) in spans.iter().flatten().enumerate() {
+                let h = 1e-5;
+                if spans
+                    .iter()
+                    .flatten()
+                    .enumerate()
+                    .any(|(other, stop)| other != index && (stop - end).abs() < 4. * h)
+                {
+                    continue;
+                }
+                let inside = |s: f64| case.oracle.inside(at(s));
+                let [mut a, mut b] = [end - h, end + h];
+                let first = inside(a);
+                if first == inside(b) {
+                    continue;
+                }
+                for _ in 0..60 {
+                    let mid = 0.5 * (a + b);
+                    if inside(mid) == first {
+                        a = mid;
+                    } else {
+                        b = mid;
+                    }
+                }
+                let length = dot3(direction, direction).sqrt();
+                let residual = (0.5 * (a + b) - end).abs() * length / scale;
+                worst = worst.max(residual);
+                ends += 1;
+                assert!(
+                    residual <= 1e-9,
+                    "{}: end {end} off by {residual}",
+                    case.label
+                );
+            }
+        }
+    }
+    assert!(ends > 500, "only {ends} ends");
+    println!("{{\"line_ends\":{ends},\"worst_relative_residual\":{worst:e}}}");
 }
