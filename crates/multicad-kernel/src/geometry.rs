@@ -17,9 +17,11 @@ mod bevel_body;
 pub(crate) mod bore_treatment;
 pub use bore_treatment::ConicalSeatGeometry;
 pub(crate) mod circular_pocket_body;
+mod clipped_npt_body;
 pub(crate) mod construction;
 mod cosmetic_fastener_body;
 mod cosmetic_profiled_body;
+use clipped_npt_body::ClippedNptBody;
 use cosmetic_profiled_body::CosmeticProfiledBody;
 mod entry_chamfer_body;
 mod wood_insert_body;
@@ -720,6 +722,7 @@ enum SolidBody {
     Annulus(Rc<AnnulusBody>, PlaneFrame),
     CosmeticFastener(Rc<CosmeticFastenerBody>, PlaneFrame),
     CosmeticProfiled(Rc<CosmeticProfiledBody>, PlaneFrame),
+    ClippedNpt(Rc<ClippedNptBody>),
     Helical(Rc<HelicalBody>, PlaneFrame),
     RoundedThread(Rc<RoundedThreadBody>, PlaneFrame),
     EntryChamfer(Rc<EntryChamferBody>, PlaneFrame),
@@ -1173,6 +1176,7 @@ impl Solid {
     /// the share stays on the thread that created it (`!Send`/`!Sync`).
     pub fn share(&self) -> Result<Self, GeometryError> {
         let body = match &self.body {
+            SolidBody::ClippedNpt(body) => SolidBody::ClippedNpt(Rc::clone(body)),
             SolidBody::Prism(prism, frame) => SolidBody::Prism(Rc::clone(prism), *frame),
             SolidBody::PolygonPrism(prism) => SolidBody::PolygonPrism(Rc::clone(prism)),
             SolidBody::AxialCylinder(cylinder, frame, sketch) => {
@@ -1514,6 +1518,13 @@ impl Solid {
                 return self.share();
             }
             let body = match &self.body {
+                SolidBody::ClippedNpt(_) => {
+                    return Err(error(
+                        "clipped NPT placement",
+                        GeometryErrorKind::Unsupported,
+                        "A clipped authored NPT body currently retains its exact identity datum",
+                    ));
+                }
                 SolidBody::Prism(prism, frame) => {
                     let frame = transform.frame(*frame);
                     frame.checked_metric_extent(
@@ -1837,6 +1848,9 @@ impl Solid {
         if let Some((body, _)) = self.spline_sweep_body() {
             return Ok(body.sweep.volume_mm3());
         }
+        if let Some(body) = self.clipped_npt_body() {
+            return Ok(body.volume_mm3());
+        }
         if let Some((body, _)) = self.cosmetic_profiled_body_ref() {
             return Ok(body.volume_mm3());
         }
@@ -1974,6 +1988,9 @@ impl Solid {
         }
         if let Some((body, frame)) = self.spline_sweep_body() {
             return Ok(body.bounds(frame));
+        }
+        if let Some(body) = self.clipped_npt_body() {
+            return Ok(body.bounds());
         }
         if let Some((body, frame)) = self.cosmetic_profiled_body_ref() {
             return Ok(body.bounds(frame));
@@ -2168,6 +2185,9 @@ impl Solid {
         if let Some((body, frame)) = self.spline_sweep_body() {
             return Ok(body.faces(frame));
         }
+        if let Some(body) = self.clipped_npt_body() {
+            return Ok(body.faces());
+        }
         if let Some((body, frame)) = self.cosmetic_profiled_body_ref() {
             return Ok(body.faces(frame));
         }
@@ -2325,6 +2345,7 @@ impl Solid {
             SolidBody::HelicalTubeCut(body, frame) => {
                 crate::rust_display::placed_mesh(body.cut.mesh(rust_options), *frame, false)
             }
+            SolidBody::ClippedNpt(body) => body.mesh(rust_options),
             SolidBody::CosmeticProfiled(body, frame) => match usage {
                 MeshUse::Display => body.mesh(*frame, rust_options),
                 MeshUse::Manufacturing => Err(error(
@@ -2443,6 +2464,7 @@ impl Solid {
             || self.has_retained_radial_source()
             || self.internal_thread_treatment_body().is_some()
             || self.repaired_phillips_body().is_some()
+            || self.clipped_npt_body().is_some()
             || self.wood_insert_body().is_some()
             || self.hanger_body().is_some()
             || self
@@ -2458,6 +2480,9 @@ impl Solid {
             manufacturing,
         };
         const OPERATION: &str = "manufacturing mesh";
+        if let Some(body) = self.clipped_npt_body() {
+            return body.manufacturing(Self::rust_mesh_options(options));
+        }
         if let Some((body, frame)) = self.repaired_phillips_body() {
             // This provider carries its fresh actual-world manifold proof and
             // consumes one source/placement/embedding work ledger. Do not run a
@@ -2719,6 +2744,9 @@ impl Solid {
         ordinal: u32,
         options: multicad_rust_kernel::display::Tessellation,
     ) -> Option<Result<Vec<[f64; 3]>, multicad_rust_kernel::display::MeshError>> {
+        if let Some(body) = self.clipped_npt_body() {
+            return body.sample_edge(ordinal, options);
+        }
         if let Some((body, frame)) = self.cosmetic_profiled_body_ref() {
             return body.sample_edge(frame, ordinal, options);
         }
@@ -2783,6 +2811,7 @@ impl Solid {
             SolidBody::HelicalTubeCut(body, _) => body.feature,
             SolidBody::CosmeticFastener(body, _) => body.feature,
             SolidBody::CosmeticProfiled(body, _) => body.feature,
+            SolidBody::ClippedNpt(body) => body.feature,
             SolidBody::Linear(body, _) => body.feature,
             SolidBody::Revolved(body, _) => body.feature,
             SolidBody::RoundedSlot(body, _) => body.feature,
@@ -2856,6 +2885,7 @@ impl Solid {
             }
             SolidBody::WoodInsert(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::CosmeticFastener(..)
+            | SolidBody::ClippedNpt(..)
             | SolidBody::CosmeticProfiled(..)
             | SolidBody::InternalThreadTreatment(..)
             | SolidBody::RepairedPhillips(..)
@@ -3072,6 +3102,7 @@ impl Solid {
             ),
             SolidBody::WoodInsert(body, frame) => body.append_step(writer, *frame, self.policy),
             SolidBody::CosmeticFastener(..)
+            | SolidBody::ClippedNpt(..)
             | SolidBody::CosmeticProfiled(..)
             | SolidBody::InternalThreadTreatment(..)
             | SolidBody::RepairedPhillips(..)

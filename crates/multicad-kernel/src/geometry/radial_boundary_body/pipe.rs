@@ -55,6 +55,11 @@ impl Solid {
                 "Stock containment for a posed pipe construction is not yet certified",
             ));
         }
+        match transport.stock_clip_plan(Default::default(), interrupt) {
+            Ok(source) => return Self::from_clipped_npt_source(source, feature, policy, interrupt),
+            Err(multicad_rust_kernel::axial_pipe_thread::Error::Unsupported) => {}
+            Err(cause) => return Err(failure(cause)),
+        }
         // The raw builder explicitly refuses active moving OD clips. A stock
         // limit is forwarded unchanged; no positive material is silently lost.
         let raw = transport

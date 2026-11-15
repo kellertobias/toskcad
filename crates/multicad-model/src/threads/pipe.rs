@@ -166,19 +166,18 @@ mod tests {
         let npt_source = npt_parameters
             .resolve(&evaluated, ThreadMode::NewExternal)
             .unwrap();
-        assert!(
-            shaft(
-                feature,
-                ThreadFamily::Npt,
-                &npt_source,
-                GeometryPolicy::default(),
-                None
-            )
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("stock clipping")
-        );
+        let clipped = shaft(
+            feature,
+            ThreadFamily::Npt,
+            &npt_source,
+            GeometryPolicy::default(),
+            None,
+        )
+        .unwrap();
+        assert!(clipped.rust_clipped_npt_source().is_some());
+        // Source-native material is now qualified; independent STEP carrier
+        // and readback qualification remain a separate unfinished gate.
+        assert!(!clipped.supports_step_export());
         resolved.end_treatments = Some(ResolvedThreadEndTreatments {
             intent: ThreadEndTreatments {
                 start: ThreadStartTreatment::FlatCut,
