@@ -16,7 +16,10 @@ use multicad_kernel::{
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
 };
 
+// The oblique bore refuses STEP exchange, so only the reference comparison
+// with an independently built native solid applies.
 #[cfg(feature = "occt")]
+#[path = "native_drawing/reference.rs"]
 mod native_drawing;
 
 type V = [f64; 3];
