@@ -60,6 +60,34 @@ pub(super) trait Shell: Send + Sync {
     /// Maximum of `direction · p` over the solid.
     fn support(&self, direction: V3) -> f64;
 
+    /// The flank band floor: a radius above which, at every height, the
+    /// section boundary in each tooth space is a descending and an ascending
+    /// branch whose section angle is a function of radius. Between that
+    /// radius and the outer radius a point is outside the material exactly
+    /// when its angle lies between the two branch angles of a tooth space
+    /// at its radius and height.
+    fn flank_band(&self) -> Option<f64> {
+        None
+    }
+
+    /// Bounds of `|∂θ/∂r|` at fixed height and `|∂θ/∂z|` at fixed radius of
+    /// the branch angles at radii of at least `radius`.
+    fn flank_slopes(&self, _radius: f64) -> [f64; 2] {
+        [f64::INFINITY; 2]
+    }
+
+    /// Bounds of `|∂R/∂θ|` and `|∂R/∂z|` over the boundary points whose
+    /// radius is at most `radius`: the slopes of `min(R, radius)`.
+    fn slopes_below(&self, _radius: f64) -> [f64; 2] {
+        self.lipschitz()
+    }
+
+    /// Whether a point of the flank band is farther than `gap` in angle from
+    /// every branch angle at its radius and height.
+    fn separated(&self, _theta: f64, _r: f64, _z: f64, _gap: f64) -> bool {
+        false
+    }
+
     /// Heights in `[from, to]` strictly inside the solid along the axial
     /// line at angle `theta` on the core cylinder, when the boundary meets
     /// that line along whole stretches (the worm's root land). `None` when
@@ -238,6 +266,16 @@ pub(super) struct Teeth {
     root: f64,
     bounds: [f64; 2],
     joints: [Joint; 7],
+    /// Flank band floor in module units.
+    floor: f64,
+    /// Radii in millimetres, ascending, with the slope bounds of both
+    /// branch angles at that radius or above, in radians per millimetre.
+    above: Vec<(f64, [f64; 2])>,
+    /// Bounds of the minus and plus flank angles in the band.
+    extents: [[f64; 2]; 2],
+    /// Radii in millimetres, ascending, with the slope bounds of
+    /// `min(R, radius)` for each.
+    below: Vec<(f64, [f64; 2])>,
     last: Mutex<Option<Station>>,
 }
 
@@ -265,6 +303,10 @@ impl Teeth {
             root,
             bounds: [0.; 2],
             joints: [Joint::Edge; CHAIN],
+            floor: 0.,
+            above: Vec::new(),
+            extents: [[0.; 2]; 2],
+            below: Vec::new(),
             last: Mutex::new(None),
         };
         teeth.joints[0] = Joint::Seam;
@@ -285,6 +327,7 @@ impl Teeth {
             }
         }
         teeth.bounds = [2. * bounds[0] * m, 2. * bounds[1]];
+        teeth.tables();
         // A junction is smooth where the unit normals of both pieces agree
         // across the whole width.
         for patch in 2..6 {
@@ -302,16 +345,100 @@ impl Teeth {
         teeth
     }
 
-    /// The exit of a flank: Newton on the squared radius, which decreases
-    /// strictly along the cutter radius, safeguarded by bisection.
-    fn exit(&self, v: f64, piece: Piece) -> Exit {
-        let target = self.blank * self.blank;
+    /// Slope tables of the section graph by radius. Pieces `1..=5` are
+    /// sampled as for the global bounds but finer; each sample stands for
+    /// the radii within the reach of its slopes over half a step, and its
+    /// slopes are doubled as the global bounds are.
+    ///
+    /// - `below`: bounds of `|∂R/∂θ|` and `|∂R/∂z|` over samples whose
+    ///   least radius is at most a key, ascending.
+    /// - The flank band floor: the largest radius of the root land, above
+    ///   which the boundary at every height is the descending minus branch
+    ///   (flank and edge) and the ascending plus branch.
+    /// - `above`: bounds of `|∂θ/∂r|` at fixed height and `|∂θ/∂z|` at fixed
+    ///   radius of both branches over samples whose greatest radius is at
+    ///   least a key, ascending.
+    /// - `extents`: bounds of the angles of either branch.
+    fn tables(&mut self) {
+        let mut below = Vec::new();
+        let mut above = Vec::new();
+        let mut floor = 0_f64;
+        let mut extents = [[f64::INFINITY, f64::NEG_INFINITY]; 2];
+        let [du_step, dv_step] = [1. / 64., self.half / 8.];
+        let finite = |x: f64| if x.is_finite() { x } else { f64::INFINITY };
+        for j in 0..=16 {
+            let v = self.half * (f64::from(j) / 8. - 1.);
+            let station = self.station(v);
+            for patch in 1..6 {
+                for i in 0..=64 {
+                    let u = f64::from(i) / 64.;
+                    let [p, du, dv] = self.piece(&station, patch, u);
+                    let turn = cross2(p, du);
+                    let r = p[0].hypot(p[1]);
+                    let [ru, rv] = [dot2(p, du) / r, dot2(p, dv) / r];
+                    let reach = (ru.abs() * du_step + rv.abs() * dv_step) / 2.;
+                    below.push((
+                        self.m * (r - reach),
+                        [
+                            finite(2. * self.m * (r * r * ru / turn).abs()),
+                            finite(2. * (rv - ru * cross2(p, dv) / turn).abs()),
+                        ],
+                    ));
+                    if patch == 3 {
+                        floor = floor.max(r + reach);
+                        continue;
+                    }
+                    let [tu, tv] = [turn, cross2(p, dv)].map(|x| x / (r * r));
+                    above.push((
+                        self.m * (r + reach),
+                        [
+                            finite(2. * (tu / ru).abs() / self.m),
+                            finite(2. * (tv - tu * rv / ru).abs() / self.m),
+                        ],
+                    ));
+                    let side = usize::from(patch > 3);
+                    let angle = p[1].atan2(p[0]);
+                    let pad = tu.abs() * du_step + tv.abs() * dv_step;
+                    extents[side] = [
+                        extents[side][0].min(angle - pad),
+                        extents[side][1].max(angle + pad),
+                    ];
+                }
+            }
+        }
+        below.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut most = [0_f64; 2];
+        for (_, slopes) in &mut below {
+            most = [most[0].max(slopes[0]), most[1].max(slopes[1])];
+            *slopes = most;
+        }
+        above.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut most = [0_f64; 2];
+        for (_, slopes) in above.iter_mut().rev() {
+            most = [most[0].max(slopes[0]), most[1].max(slopes[1])];
+            *slopes = most;
+        }
+        self.below = below;
+        self.above = above;
+        self.floor = floor;
+        self.extents = extents;
+    }
+
+    /// Cutter radius where a flank meets the squared radius `target`:
+    /// Newton on the squared radius, which decreases strictly along the
+    /// cutter radius, safeguarded by bisection.
+    fn crossing(&self, v: f64, piece: Piece, target: f64) -> f64 {
+        self.crossing_from(v, piece, target, 0.5 * (self.root + self.tip))
+    }
+
+    /// [`Self::crossing`] from a first estimate inside the cutter radii.
+    fn crossing_from(&self, v: f64, piece: Piece, target: f64, start: f64) -> f64 {
         let value = |a: f64| {
             let [p, da, _] = self.wheel.surface_frame(piece, a, v);
             (dot2(p, p) - target, 2. * dot2(p, da))
         };
         let (mut lo, mut hi) = (self.root, self.tip);
-        let mut a = 0.5 * (lo + hi);
+        let mut a = start;
         for _ in 0..80 {
             let (f, slope) = value(a);
             if f > 0. {
@@ -331,6 +458,64 @@ impl Teeth {
             }
             a = next;
         }
+        a
+    }
+
+    /// Section angle of the minus (`side` 0) or plus branch at radius `r`
+    /// above the band floor and height `v`, in module units: on the flank
+    /// where its cutter tip lies at or below `r`, else on the root edge,
+    /// whose radius is monotone from the flank down to the root land.
+    fn branch_angle(&self, side: usize, r: f64, v: f64) -> f64 {
+        let flank = [Piece::FlankMinus, Piece::FlankPlus][side];
+        let [bottom, slope, _] = self.wheel.surface_frame(flank, self.tip, v);
+        let target = r * r;
+        let [p, ..] = if dot2(bottom, bottom) <= target {
+            // The first estimate is the Newton step from the cutter tip.
+            let step = (target - dot2(bottom, bottom)) / (2. * dot2(bottom, slope));
+            let start = self.tip + step;
+            let start = if start > self.root && start < self.tip {
+                start
+            } else {
+                0.5 * (self.root + self.tip)
+            };
+            let a = self.crossing_from(v, flank, target, start);
+            self.wheel.surface_frame(flank, a, v)
+        } else {
+            let edge = [Piece::EdgeMinus, Piece::EdgePlus][side];
+            let value = |u: f64| {
+                let [p, du, _] = self.wheel.surface_frame(edge, u, v);
+                (dot2(p, p) - target, 2. * dot2(p, du))
+            };
+            // The minus edge descends along `u`, the plus edge ascends.
+            let [mut high, mut low] = if side == 0 { [0., 1.] } else { [1., 0.] };
+            let mut u = 0.5;
+            for _ in 0..80 {
+                let (f, slope) = value(u);
+                if f > 0. {
+                    high = u;
+                } else {
+                    low = u;
+                }
+                let next = u - f / slope;
+                let next = if next > high.min(low) && next < high.max(low) {
+                    next
+                } else {
+                    0.5 * (high + low)
+                };
+                let done = (next - u).abs() <= 4. * f64::EPSILON;
+                u = next;
+                if done {
+                    break;
+                }
+            }
+            self.wheel.surface_frame(edge, u, v)
+        };
+        p[1].atan2(p[0])
+    }
+
+    /// The exit of a flank from the blank.
+    fn exit(&self, v: f64, piece: Piece) -> Exit {
+        let a = self.crossing(v, piece, self.blank * self.blank);
         let [p, da, dv] = self.wheel.surface_frame(piece, a, v);
         let slope = -dot2(p, dv) / dot2(p, da);
         let rise = [dv[0] + da[0] * slope, dv[1] + da[1] * slope];
@@ -525,6 +710,43 @@ impl Shell for Teeth {
 
     fn lipschitz(&self) -> [f64; 2] {
         self.bounds
+    }
+
+    fn slopes_below(&self, radius: f64) -> [f64; 2] {
+        match self.below.partition_point(|(r, _)| *r <= radius) {
+            0 => [0.; 2],
+            n => self.below[n - 1].1,
+        }
+    }
+
+    fn flank_band(&self) -> Option<f64> {
+        (self.floor < self.blank).then_some(self.m * self.floor)
+    }
+
+    fn flank_slopes(&self, radius: f64) -> [f64; 2] {
+        let n = self.above.partition_point(|(r, _)| *r < radius);
+        self.above.get(n).map_or([0.; 2], |entry| entry.1)
+    }
+
+    /// The flank angles nearest to the point are the two of its sector's
+    /// space and the facing flanks of the neighbouring spaces; a flank whose
+    /// angle bounds are already farther than `gap` is not evaluated.
+    fn separated(&self, theta: f64, r: f64, z: f64, gap: f64) -> bool {
+        let pitch = 2. * self.span;
+        let local = theta - (theta / pitch).round() * pitch;
+        let [r, v] = [r / self.m, z / self.m];
+        let mut angles = [None; 2];
+        for (side, offset) in [(0, 0.), (1, 0.), (1, -pitch), (0, pitch)] {
+            let [low, high] = self.extents[side].map(|angle| angle + offset);
+            if local - high > gap || low - local > gap {
+                continue;
+            }
+            let angle = *angles[side].get_or_insert_with(|| self.branch_angle(side, r, v));
+            if (local - angle - offset).abs() <= gap {
+                return false;
+            }
+        }
+        true
     }
 
     fn support(&self, direction: V3) -> f64 {

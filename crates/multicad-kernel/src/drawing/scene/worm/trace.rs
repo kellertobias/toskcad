@@ -6,8 +6,17 @@ use super::super::*;
 
 /// The root of a function with a sign change between `a` and `b`, by
 /// Illinois regula falsi safeguarded with bisection, to the last few bits.
-pub(super) fn root(f: impl Fn(f64) -> f64, mut a: f64, mut b: f64) -> f64 {
-    let (mut fa, mut fb) = (f(a), f(b));
+pub(super) fn root(f: impl Fn(f64) -> f64, a: f64, b: f64) -> f64 {
+    let (fa, fb) = (f(a), f(b));
+    root_from(f, [a, b], [fa, fb])
+}
+
+/// [`root`] with the values at both ends already known.
+pub(super) fn root_from(
+    f: impl Fn(f64) -> f64,
+    [mut a, mut b]: [f64; 2],
+    [mut fa, mut fb]: [f64; 2],
+) -> f64 {
     if fa == 0. {
         return a;
     }

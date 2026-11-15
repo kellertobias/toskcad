@@ -10,11 +10,22 @@
 //!   the patch domain (`worm/trace.rs`) and evaluated by bracketed root
 //!   finding on the exact normal.
 //! - A line of sight is intersected with the lateral boundary through the
-//!   radial margin `G(t) = R(θ(t), z(t)) - r(t)`. Cells of the line are
-//!   discarded where `|G| > K w / 2` for the Lipschitz bound `K` of the
-//!   margin, and a sign change in a cell narrower than the resolution is
-//!   bisected on `G`. Every interval between consecutive events is decided
-//!   by the membership predicate at its midpoint.
+//!   radial margin `G(t) = R(θ(t), z(t)) - r(t)`. A cell of the line is
+//!   discarded when `G` provably keeps its sign on it, and a sign change in
+//!   a cell narrower than the resolution is bisected on `G`. Every interval
+//!   between consecutive events is decided by the membership predicate at
+//!   its midpoint. Sign certificates, each from a bound of its function's
+//!   rate along the line over the cell's width:
+//!   - `|G| > K w / 2` for the global Lipschitz bound `K`;
+//!   - in the flank band of a wheel, where flanks are nearly radial and
+//!     `K` is large, the angle to every flank at the point's radius and
+//!     height;
+//!   - below the cell, `min(R, c) - r` for a radius `c` above it, whose rate
+//!     only involves the boundary slopes below `c`.
+//!
+//!   A discarded cell never holds a sign change, so the cells that reach the
+//!   resolution with one, and with them the events, are those of the global
+//!   bound alone.
 //! - A section plane perpendicular to the axis is the exact section chain;
 //!   any other plane is traced on every patch as the zero set of the signed
 //!   distance, joined by the chords of both end planes and the bore.
@@ -22,7 +33,9 @@ use super::paths::{Segment, add, conic, dot3, scaled};
 use super::*;
 use shell::{Joint, Shell};
 use std::f64::consts::{PI, TAU};
-use trace::{Seg, root, trace};
+#[cfg(test)]
+use trace::root;
+use trace::{Seg, root_from, trace};
 
 mod shell;
 mod trace;
@@ -222,29 +235,106 @@ impl Inner {
         let reach = planar.sqrt();
         let bound = (turn * reach / core + rise * d[2].abs() + reach) * (1. + 1e-6);
         let resolution = 2.5e-7 * self.scale;
+        // In the flank band the angle to the nearest flank at the point's
+        // radius and height changes along the line at a rate bounded without
+        // the steep radial slope of nearly radial flanks; a cell whose middle
+        // is farther from every flank than that rate over half the cell
+        // keeps one side of the boundary. `None` when the cell leaves the
+        // band and the radial margin decides.
+        let band = shell.flank_band().filter(|_| !snapped && planar > 1e-24);
+        let squared = |t: f64| {
+            let [x, y, _] = point(t);
+            x * x + y * y
+        };
+        let foot = -(a[0] * d[0] + a[1] * d[1]) / planar;
+        // The radial speed along the line is at most its value at either
+        // end of a cell over the cell's least radius.
+        let speed = |lo: f64, hi: f64, near: f64| {
+            let b = a[0] * d[0] + a[1] * d[1];
+            (planar * lo + b).abs().max((planar * hi + b).abs()) / near
+        };
+        let separated = |lo: f64, hi: f64, mid: f64| -> Option<bool> {
+            let floor = band?;
+            let near = squared(foot.clamp(lo, hi)).sqrt();
+            let far = squared(lo).max(squared(hi)).sqrt();
+            if !(near > floor && far < outer) {
+                return None;
+            }
+            let [slope, lean] = shell.flank_slopes(near);
+            let rate =
+                (moment.abs() / (near * near) + slope * speed(lo, hi, near) + lean * d[2].abs())
+                    * (1. + 1e-6);
+            let [x, y, z] = point(mid);
+            Some(shell.separated(
+                y.atan2(x),
+                x.hypot(y),
+                z.clamp(-half, half),
+                rate * (hi - lo) / 2.,
+            ))
+        };
+        // Below a radius `c` above the cell, `min(R, c) - r` has the sign of
+        // the margin and changes only at the slopes of the boundary below
+        // `c`; along the line the angle changes at `|moment| / r²` and the
+        // radius at most at the radial speed at either end of the cell.
+        let truncated = |lo: f64, hi: f64, mid: f64, at_mid: f64| -> bool {
+            if snapped || planar <= 1e-24 {
+                return false;
+            }
+            let near = squared(foot.clamp(lo, hi)).sqrt();
+            let far = squared(lo).max(squared(hi)).sqrt();
+            let speed = speed(lo, hi, near);
+            let r_mid = squared(mid).sqrt();
+            let boundary = at_mid + r_mid;
+            let lift = far + 1e-9 * self.scale;
+            [lift, boundary]
+                .into_iter()
+                .filter(|c| *c >= lift)
+                .any(|c| {
+                    let [turn, rise] = shell.slopes_below(c);
+                    let rate = (turn * moment.abs() / (near * near) + rise * d[2].abs() + speed)
+                        * (1. + 1e-6);
+                    (boundary.min(c) - r_mid).abs() > rate * (hi - lo) / 2.
+                })
+        };
         let mut budget = 4_000_000_usize;
         for [from, to] in zones {
             if to <= from || to.is_nan() || from.is_nan() {
                 continue;
             }
-            let mut stack = vec![(from, to, margin(from), margin(to))];
+            let mut last: Option<(f64, f64)> = None;
+            let mut stack: Vec<(f64, f64, Option<f64>, Option<f64>)> = vec![(from, to, None, None)];
             while let Some((lo, hi, at_lo, at_hi)) = stack.pop() {
                 let width = hi - lo;
                 if width <= resolution {
+                    // Neighbouring cells of the resolution share an end.
+                    let [at_lo, at_hi] = [(at_lo, lo), (at_hi, hi)].map(|(at, t)| {
+                        at.unwrap_or_else(|| match last {
+                            Some((s, value)) if s == t => value,
+                            _ => margin(t),
+                        })
+                    });
+                    last = Some((hi, at_hi));
                     if (at_lo < 0.) != (at_hi < 0.) {
-                        events.push(root(margin, lo, hi));
+                        events.push(root_from(margin, [lo, hi], [at_lo, at_hi]));
                     }
                     continue;
                 }
                 let mid = 0.5 * (lo + hi);
-                let at_mid = margin(mid);
                 budget = budget.checked_sub(1).ok_or_else(|| {
                     limit("Rust worm drawing exceeded its line-of-sight evaluation budget")
                 })?;
-                // The margin cannot vanish within reach of a larger value.
-                if at_mid.abs() > bound * width / 2. {
-                    continue;
-                }
+                let at_mid = match separated(lo, hi, mid) {
+                    Some(true) => continue,
+                    Some(false) => None,
+                    None => {
+                        let at_mid = margin(mid);
+                        // The margin cannot vanish within reach of a larger value.
+                        if at_mid.abs() > bound * width / 2. || truncated(lo, hi, mid, at_mid) {
+                            continue;
+                        }
+                        Some(at_mid)
+                    }
+                };
                 stack.push((mid, hi, at_mid, at_hi));
                 stack.push((lo, mid, at_lo, at_mid));
             }
