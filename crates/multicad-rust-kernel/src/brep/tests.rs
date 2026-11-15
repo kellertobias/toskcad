@@ -2,7 +2,8 @@
 //! exchange text.
 use super::*;
 use crate::manufacturing::certify;
-use crate::step_read::brep::read_boundaries;
+use crate::step_read::brep::{read_boundaries, read_solids};
+use crate::step_read::{ReadError, read_analytic_compound};
 use std::f64::consts::PI;
 
 const TOLERANCE: f64 = 1e-7;
@@ -29,15 +30,7 @@ const STANDOFF: &str =
 const BUMPS: &str = fixture!("corpus/kicad-library/WLP-4_0.83x0.83mm_P0.4mm.step");
 
 fn solids(text: &str) -> Result<Vec<Solid>> {
-    let boundaries = read_boundaries(text, TOLERANCE).map_err(|error| match error {
-        crate::step_read::ReadError::Unsupported => Error::Unsupported,
-        crate::step_read::ReadError::Limit => Error::Limit,
-        crate::step_read::ReadError::Invalid => Error::Invalid,
-    })?;
-    boundaries
-        .into_iter()
-        .map(|boundary| Solid::new(boundary, TOLERANCE, None))
-        .collect()
+    read_solids(text, TOLERANCE, None)
 }
 
 fn solid(text: &str) -> Solid {
@@ -247,4 +240,50 @@ fn flipped_faces_missing_faces_and_moved_vertices_are_invalid() {
         PI * 10. / 3. * 112.,
         1e-9
     ));
+}
+
+#[test]
+fn exported_boundaries_read_back_with_the_same_geometry() {
+    for text in [
+        FRUSTUM, SPHERE, TORUS, CYLINDER, VOID, VASE, SPLINE, DRILLED, STANDOFF, BUMPS,
+    ] {
+        let source = solid(text);
+        let mut writer = crate::step::Writer::new();
+        writer.append_brep(&source).unwrap();
+        let exported = writer.finish().unwrap();
+        let back = solid(&exported);
+        assert!(close(back.volume_mm3(), source.volume_mm3(), 1e-12));
+        assert_eq!(back.faces().len(), source.faces().len());
+        assert_eq!(back.boundary().edges.len(), source.boundary().edges.len());
+        let sorted = |solid: &Solid| {
+            let mut vertices = solid.boundary().vertices.clone();
+            vertices.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            vertices
+        };
+        assert_eq!(sorted(&back), sorted(&source));
+        let (a, b) = (back.bounds_mm(), source.bounds_mm());
+        assert!(distance(a[0], b[0]) < 1e-9 && distance(a[1], b[1]) < 1e-9);
+        for (one, other) in back.faces().iter().zip(source.faces()) {
+            assert!(close(one.area_mm2, other.area_mm2, 1e-12));
+        }
+        // The independent readback entry point accepts both texts.
+        for text in [text, exported.as_str()] {
+            let members = read_analytic_compound(text, TOLERANCE).unwrap();
+            let volume: f64 = members.iter().map(|member| member.volume_mm3).sum();
+            assert!(close(volume, source.volume_mm3(), 1e-9), "{volume}");
+        }
+    }
+}
+
+#[test]
+fn a_refusal_of_both_readers_keeps_the_first_reason() {
+    let open = tampered(
+        FRUSTUM,
+        "CLOSED_SHELL('',(#17,#54,#109))",
+        "CLOSED_SHELL('',(#17,#54))",
+    );
+    let first = crate::step_read::read_analytic_solid(&open, TOLERANCE).unwrap_err();
+    assert_eq!(read_analytic_compound(&open, TOLERANCE).unwrap_err(), first);
+    assert_eq!(ReadError::from(Error::Cancelled), ReadError::Invalid);
+    assert_eq!(ReadError::from(Error::Limit), ReadError::Limit);
 }

@@ -6,7 +6,8 @@
 use super::part21::{self, Entity, Value};
 use super::{ReadError, Result, numbers, reference, refs, sense};
 use crate::brep::{
-    Boundary, Curve, Edge, Face, Frame, Loop, NurbsCurve, NurbsSurface, Point, Shell, Surface,
+    Boundary, Curve, Edge, Face, Frame, Loop, NurbsCurve, NurbsSurface, Point, Shell, Solid,
+    Surface,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::PI;
@@ -656,6 +657,43 @@ pub fn read_boundaries(input: &str, tolerance: f64) -> Result<Vec<Boundary>> {
         .collect::<Result<Vec<_>>>()?;
     check(source.owns_every_face(&boundaries), ReadError::Unsupported)?;
     Ok(boundaries)
+}
+
+/// Read, validate and integrate every solid of a flat file.
+pub fn read_solids(
+    input: &str,
+    tolerance: f64,
+    interrupt: crate::brep::Interrupt<'_>,
+) -> std::result::Result<Vec<Solid>, crate::brep::Error> {
+    let boundaries = read_boundaries(input, tolerance).map_err(|error| match error {
+        ReadError::Invalid => crate::brep::Error::Invalid,
+        ReadError::Unsupported => crate::brep::Error::Unsupported,
+        ReadError::Limit => crate::brep::Error::Limit,
+    })?;
+    boundaries
+        .into_iter()
+        .map(|boundary| Solid::new(boundary, tolerance, interrupt))
+        .collect()
+}
+
+/// Volume, bounds and face count of each solid from its retained boundary.
+pub(super) fn readbacks(input: &str, tolerance: f64) -> Result<Vec<super::Readback>> {
+    let solids = read_solids(input, tolerance, None)?;
+    Ok(solids
+        .iter()
+        .map(|solid| super::Readback {
+            bounds_mm: solid.bounds_mm(),
+            volume_mm3: solid.volume_mm3(),
+            face_count: solid.faces().len(),
+            edges_mm: vec![],
+            circles: vec![],
+            semicircles: vec![],
+            arcs: vec![],
+            ellipses: vec![],
+            splines: vec![],
+            solid_count: 1,
+        })
+        .collect())
 }
 
 impl From<crate::brep::Error> for ReadError {

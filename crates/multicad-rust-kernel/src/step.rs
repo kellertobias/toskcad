@@ -25,6 +25,7 @@ use std::{
 mod axial_stack;
 mod bevel_gear;
 mod box_void;
+mod brep;
 mod worm_gear;
 pub use bevel_gear::{supports_bevel, write_bevel};
 pub(crate) use worm_gear::thread_frame as worm_thread_frame;

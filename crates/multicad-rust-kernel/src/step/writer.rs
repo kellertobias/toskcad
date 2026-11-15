@@ -129,6 +129,12 @@ impl Writer {
         })
     }
 
+    /// Append a retained imported boundary with its own surfaces, curves,
+    /// loops and voids.
+    pub fn append_brep(&mut self, solid: &crate::brep::Solid) -> Result<(), StepError> {
+        self.append(|file| super::brep::encode(file, solid))
+    }
+
     /// Append one complete regular torus with both periodic seams.
     pub fn append_torus(
         &mut self,

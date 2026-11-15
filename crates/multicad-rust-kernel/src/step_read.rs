@@ -178,7 +178,10 @@ pub fn read_analytic_solid(input: &str, tolerance_mm: f64) -> Result<Readback> {
 /// Verify the independent members of one flat advanced BREP representation.
 /// Each readback describes one member, in the order listed in the STEP file.
 pub fn read_analytic_compound(input: &str, tolerance_mm: f64) -> Result<Vec<Readback>> {
+    // A file outside the recognised families is read back from its retained
+    // boundary; when that fails too, the first refusal stands.
     compound::read_analytic(input, tolerance_mm, false)
+        .or_else(|refusal| brep::readbacks(input, tolerance_mm).map_err(|_| refusal))
 }
 
 /// Verify the members of one flat advanced BREP representation in file order.
