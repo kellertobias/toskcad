@@ -16,10 +16,11 @@ pub use periodic::PeriodicAngular;
 mod encoded;
 pub use encoded::{
     AffineCapPiece, BoundAffineCap, BoundRootCap, CapCurvePiece, CapEndpoint, CapEvent, CapEvents,
-    CapSegment, CapTrace, EncodedCell, EncodedControl, EncodedField, EncodedMeridian,
-    EncodedScalar, EndpointArithmetic, FiniteDecimal, LiteralCapCurve, LiteralSideSupport,
-    LiteralVertex, LiteralVertices, RestrictedCapCurve, RestrictionBounds, SidePole, SideSupport,
-    SideSupportBatch, SideSupportKind,
+    CapSegment, CapTrace, CompactCell, CompactSurface, CompactSurfaces, EncodedCell,
+    EncodedControl, EncodedField, EncodedMeridian, EncodedScalar, EndpointArithmetic,
+    FiniteDecimal, LiteralCapCurve, LiteralSideSupport, LiteralVertex, LiteralVertices,
+    RestrictedCapCurve, RestrictionBounds, SidePole, SideSupport, SideSupportBatch,
+    SideSupportKind,
 };
 pub use encoded::{
     ClosedCoedge, ClosedCurve, ClosedEdge, ClosedFace, ClosedFaceKind, ClosedField, ClosedVertex,
@@ -274,3 +275,7 @@ impl RootSurface {
 }
 #[cfg(test)]
 mod tests;
+
+pub use encoded::{
+    ChartCoedge, ChartEdge, ChartEdgeKind, ChartFace, ChartFaceKind, CompactBoundary,
+};

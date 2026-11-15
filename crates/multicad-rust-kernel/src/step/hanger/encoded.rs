@@ -547,4 +547,12 @@ fn profile(
     })
 }
 #[cfg(test)]
+mod compact_probe;
+#[cfg(test)]
 mod tests;
+
+mod compact;
+pub use compact::{
+    ChartCoedge, ChartEdge, ChartEdgeKind, ChartFace, ChartFaceKind, CompactBoundary, CompactCell,
+    CompactSurface, CompactSurfaces,
+};
