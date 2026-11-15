@@ -558,3 +558,7 @@ pub use compact::{
 };
 
 pub use compact::{CompactHelix, HelixPcurve};
+
+pub use compact::{CapTopology, TrimEdge, TrimEdgeKind, TrimFace, TrimVertex};
+
+pub use compact::PlainWall;

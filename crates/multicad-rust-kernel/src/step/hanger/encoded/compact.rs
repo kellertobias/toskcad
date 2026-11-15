@@ -254,3 +254,9 @@ pub use boundary::{
 
 mod helix;
 pub use helix::{CompactHelix, HelixPcurve};
+
+mod trim;
+pub use trim::{CapTopology, TrimEdge, TrimEdgeKind, TrimFace, TrimVertex};
+
+mod plain;
+pub use plain::PlainWall;

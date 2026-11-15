@@ -107,6 +107,12 @@ impl CapEvents<'_, '_, '_, '_, '_> {
     }
 }
 impl Event {
+    pub fn graph_vertex(&self) -> Option<usize> {
+        match self.point {
+            Point::Graph(v) => Some(v),
+            Point::Owned(_) => None,
+        }
+    }
     pub fn source_incidence_error_mm(&self) -> f64 {
         self.source_error
     }

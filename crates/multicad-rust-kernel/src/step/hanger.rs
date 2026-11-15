@@ -281,3 +281,7 @@ pub use encoded::{
 };
 
 pub use encoded::{CompactHelix, HelixPcurve};
+
+pub use encoded::{CapTopology, TrimEdge, TrimEdgeKind, TrimFace, TrimVertex};
+
+pub use encoded::PlainWall;
