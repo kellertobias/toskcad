@@ -309,9 +309,39 @@ fn actual_mixed_periodic_and_ordinary_export_keeps_explicit_member_mass_provenan
         .unwrap()
         .unwrap();
     assert_eq!(proof.members.solid_count, 3);
+    assert!(proof.document_ownership_work > 0 && proof.topology_entity_count > 0);
     assert_eq!(proof.periodic_members.len(), 2);
     assert_eq!(proof.members.decoded_scalar_members, vec![(1, 24.)]);
     assert!(proof.members.retained_members.is_empty() && proof.healed_members.is_empty());
+    let mut orphan = actual.clone();
+    orphan.insert_str(
+        orphan.rfind("ENDSEC;").unwrap(),
+        "#999999=VERTEX_POINT('',#1);\n",
+    );
+    assert_eq!(
+        compound
+            .verify_partitioned_step_source(&orphan, 1e-7, None)
+            .unwrap()
+            .unwrap_err()
+            .kind,
+        multicad_kernel::GeometryErrorKind::InvalidResult
+    );
+    assert_eq!(
+        multicad_kernel::Solid::import_rust_step(&orphan, EntityId::new(), Default::default())
+            .err()
+            .unwrap()
+            .kind,
+        multicad_kernel::GeometryErrorKind::InvalidResult
+    );
+    assert_eq!(
+        compound
+            .verify_partitioned_step_source(&actual, 1e-7, Some(&|| true))
+            .unwrap()
+            .unwrap_err()
+            .kind,
+        multicad_kernel::GeometryErrorKind::Cancelled
+    );
+
     for ((index, source), (actual_index, member)) in [(0, right), (2, &left)]
         .into_iter()
         .zip(&proof.periodic_members)
@@ -337,4 +367,101 @@ fn actual_mixed_periodic_and_ordinary_export_keeps_explicit_member_mass_provenan
             .unwrap()
             .is_err()
     );
+    // Import the complete actual file as one canonical Part. The project must
+    // own its physical source after the external STEP file disappears.
+    let file =
+        multicad_model::imports::read_step_file_with_backend(&path, GeometryBackend::Rust).unwrap();
+    let mut imported = Session::new(Document::new("Cold mixed Phillips").unwrap()).unwrap();
+    let prepared =
+        multicad_core::model::imports::prepare_step_import(&imported, 0, actor(), &file).unwrap();
+    assert_eq!(prepared.model.outputs.len(), 1);
+    let body = prepared.model.outputs[0].body;
+    imported.commit(prepared.model.prepared).unwrap();
+    let set = EntityId::new();
+    imported
+        .commit(
+            prepare_set(
+                &imported,
+                imported.revision(),
+                actor(),
+                set,
+                "Reexport physical members",
+                &SetDefinition {
+                    scope: Scope {
+                        root: ScopeRoot::Explicit {
+                            entities: vec![body],
+                        },
+                        tags: None,
+                    },
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut saved = Vec::new();
+    project_file::write(
+        &ProjectFile::new(imported.document().clone()).unwrap(),
+        &mut saved,
+        Default::default(),
+    )
+    .unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let reopened = project_file::read(
+        &mut saved.as_slice(),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap()
+    .project;
+    let imported = Session::new(reopened.document).unwrap();
+    let built = Compiler::default()
+        .compile_with_backend(
+            imported.document(),
+            imported.revision(),
+            GeometryBackend::Rust,
+            None,
+        )
+        .unwrap();
+    let snapshot = built.snapshot();
+    let producer = snapshot.bodies[&body];
+    let solid = built.solid(producer).unwrap();
+    assert_eq!(solid.solid_count().unwrap(), 3);
+    assert!(!snapshot.shapes[&producer].mesh.indices.is_empty());
+    assert!((solid.volume_mm3().unwrap() - compound.volume_mm3().unwrap()).abs() < 1e-5);
+    let worker =
+        ExportWorker::with_geometry_backend(Exporter::default(), GeometryBackend::Rust).unwrap();
+    let id = worker
+        .preview(imported.document(), imported.revision(), set, actor())
+        .unwrap();
+    let ExportResult::Preview(preview) = reply(&worker, id).result else {
+        panic!("Expected mixed export preview")
+    };
+    let preview = preview.unwrap();
+    assert!(preview.can_run(), "{preview:?}");
+    let output = tempfile::tempdir().unwrap();
+    let id = worker
+        .run(
+            imported.document(),
+            imported.revision(),
+            &preview.key,
+            output.path(),
+            actor(),
+        )
+        .unwrap();
+    let ExportResult::Run(result) = reply(&worker, id).result else {
+        panic!("Expected mixed export run")
+    };
+    let result = result.unwrap();
+    assert_eq!(result.files.len(), 1);
+    let exported =
+        std::path::Path::new(&result.directory).join(&result.files[0].artifact.output.filename);
+    let verified =
+        verify_rust_step_shape_receipt(&exported, solid, &snapshot.shapes[&producer], 1e-7)
+            .unwrap();
+    assert_eq!(verified.method, StepVerificationMethod::MixedMemberBoundary);
+    assert!(verified.document_ownership.as_ref().unwrap().work_used > 0);
+    assert!(verified.decoded_volume_mm3.is_none());
+    assert_eq!(verified.periodic_members.len(), 2);
+    assert_eq!(verified.decoded_scalar_members.len(), 1);
 }

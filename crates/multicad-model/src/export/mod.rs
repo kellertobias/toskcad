@@ -11,9 +11,10 @@ pub mod print;
 pub use print::PrintWorker;
 mod publish;
 pub use publish::{
-    StepHealedMemberReceipt, StepPeriodicMemberReceipt, StepRetainedMemberReceipt,
-    StepSourceCorrespondenceReceipt, StepSourceKnownMemberReceipt, StepVerificationMethod,
-    StepVerificationReceipt, verify_rust_step_shape, verify_rust_step_shape_receipt,
+    StepDocumentOwnershipReceipt, StepHealedMemberReceipt, StepPeriodicMemberReceipt,
+    StepRetainedMemberReceipt, StepSourceCorrespondenceReceipt, StepSourceKnownMemberReceipt,
+    StepVerificationMethod, StepVerificationReceipt, verify_rust_step_shape,
+    verify_rust_step_shape_receipt,
 };
 mod schedule;
 pub use schedule::ScheduleTarget;

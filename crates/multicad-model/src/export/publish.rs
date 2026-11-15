@@ -114,11 +114,20 @@ pub struct StepSourceKnownMemberReceipt {
     pub maximum_polynomial_trim_error_mm: f64,
     pub analytic_closure_tolerance_mm: f64,
 }
+/// Global topology ownership only; material is verified separately.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StepDocumentOwnershipReceipt {
+    pub topology_entity_count: usize,
+    pub work_used: usize,
+    pub query_peak_bytes: usize,
+}
 /// Distinguishes decoded file mass from certified authored-source mass.
 /// Missing decoded mass is explicit; source support tolerance is not a
 /// substitute for an independently integrated file-volume error bound.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StepVerificationReceipt {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_ownership: Option<StepDocumentOwnershipReceipt>,
     pub method: StepVerificationMethod,
     pub decoded_volume_mm3: Option<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -146,6 +155,7 @@ pub struct StepVerificationReceipt {
 impl StepVerificationReceipt {
     pub fn decoded(volume: f64) -> Self {
         Self {
+            document_ownership: None,
             method: StepVerificationMethod::DecodedBoundary,
             decoded_volume_mm3: Some(volume),
             retained_members: vec![],
@@ -499,6 +509,11 @@ fn verify_partitioned_step(
                 )
             })?;
         Ok(StepVerificationReceipt {
+            document_ownership: Some(StepDocumentOwnershipReceipt {
+                topology_entity_count: proof.topology_entity_count,
+                work_used: proof.document_ownership_work,
+                query_peak_bytes: proof.document_ownership_query_peak_bytes,
+            }),
             method: if !proof.periodic_members.is_empty() {
                 if proof.healed_members.is_empty()
                     && proof.source_known_members.is_empty()
@@ -641,6 +656,7 @@ fn verify_periodic_step(
         }
         let verified_tolerance = proof.verified_tolerance_mm;
         Ok(StepVerificationReceipt {
+            document_ownership: None,
             method: StepVerificationMethod::DecodedPeriodicRepair,
             decoded_volume_mm3: None,
             retained_members: vec![],
@@ -727,6 +743,7 @@ fn verify_retained_step(
             ));
         }
         Ok(StepVerificationReceipt {
+            document_ownership: None,
             method: StepVerificationMethod::DecodedBoundaryEnclosure,
             decoded_volume_mm3: None,
             retained_members: proof
@@ -810,6 +827,7 @@ fn verify_source_known_step(
             ));
         }
         Ok(StepVerificationReceipt {
+            document_ownership: None,
             method: StepVerificationMethod::SourceKnownBoundary,
             decoded_volume_mm3: None,
             retained_members: vec![],

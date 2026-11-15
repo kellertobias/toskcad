@@ -5,6 +5,10 @@ use multicad_rust_kernel::{step_read, step_read::owned_insert as read};
 const BYTES: usize = 64 * 1024 * 1024;
 #[derive(Clone, Debug, PartialEq)]
 pub struct PartitionedStepVerification {
+    /// Nonadmitting global topology-owner validation, separate from material.
+    pub document_ownership_work: usize,
+    pub document_ownership_query_peak_bytes: usize,
+    pub topology_entity_count: usize,
     pub members: RetainedStepVerification,
     pub insert_correspondence: Vec<(u32, WoodInsertStepVerification)>,
     /// Authored boundary binding with SOURCE-integral mass, never decoded mass.
@@ -72,9 +76,34 @@ impl Solid {
             let file =
                 read::CompoundDocument::parse(text, read::DocumentOptions::default(), interrupt)
                     .map_err(read_error)?;
+            let ownership = step_read::validate_document_topology_ownership(
+                &file,
+                tolerance,
+                Default::default(),
+                interrupt,
+            )
+            .map_err(|cause| {
+                use step_read::DocumentOwnershipError as E;
+                fail(
+                    match cause {
+                        E::Invalid => GeometryErrorKind::InvalidResult,
+                        E::Unsupported => GeometryErrorKind::Unsupported,
+                        E::Limit => GeometryErrorKind::Limit,
+                        E::Cancelled => GeometryErrorKind::Cancelled,
+                    },
+                    "Global STEP topology ownership validation failed",
+                )
+            })?;
+            assert!(
+                std::ptr::eq(ownership.document(), &file),
+                "same parsed STEP arena"
+            );
             let mut sources = Vec::new();
             leaves(self, &mut sources);
             let mut result = PartitionedStepVerification {
+                document_ownership_work: ownership.work_used(),
+                document_ownership_query_peak_bytes: ownership.query_peak_bytes(),
+                topology_entity_count: ownership.topology_entity_count(),
                 members: RetainedStepVerification {
                     solid_count: 0,
                     bounds_mm: [[f64::INFINITY; 3], [f64::NEG_INFINITY; 3]],
