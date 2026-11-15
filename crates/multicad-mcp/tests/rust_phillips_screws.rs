@@ -83,7 +83,11 @@ fn fitted_and_nominal_metric_phillips_mcp_are_transactional_and_reopen_actual_so
                 );
                 assert_eq!(
                     profiles["active_geometry_support"]["phillips_h"]["step"],
-                    false
+                    true
+                );
+                assert_eq!(
+                    profiles["active_geometry_support"]["phillips_h"]["step_fits"],
+                    json!(["nominal_basic"])
                 );
                 let mut args = json!({"expected_revision":0,"name":"M3 Phillips","recipe":{
                     "kind":"machine_screw","underhead_length":mm(9.),"shank_diameter":mm(3.),
@@ -146,28 +150,34 @@ fn fitted_and_nominal_metric_phillips_mcp_are_transactional_and_reopen_actual_so
                 assert_eq!(host.document(), document);
                 assert!(dispatch(&host,&call(false),"set_mechanical_part",json!({"expected_revision":4,"feature":feature,"recipe":{"kind":"machine_screw","drive":{"kind":"phillips_h","profile":{"mouth_diameter":mm(100.)}}}})).is_err());
                 assert_eq!(host.document(), document);
-                let export = dir.path().join("unfinished.step");
-                assert!(
-                    dispatch(
-                        &host,
-                        &call(false),
-                        "export_step",
-                        json!({"part":created["part"],"file_name":"unfinished.step"})
-                    )
-                    .is_err()
-                );
-                assert!(!export.exists());
-                std::fs::write(&export, b"accepted output").unwrap();
-                assert!(
-                    dispatch(
-                        &host,
-                        &call(false),
-                        "export_step",
-                        json!({"part":created["part"],"file_name":"unfinished.step"})
-                    )
-                    .is_err()
-                );
-                assert_eq!(std::fs::read(export).unwrap(), b"accepted output");
+                let export = dir.path().join("physical.step");
+                let arguments = json!({"part":created["part"],"file_name":"physical.step"});
+                if fit == "nominal_basic" {
+                    let exported = run(&host, "export_step", arguments);
+                    assert!(exported["readback_volume_mm3"].is_null());
+                    assert_eq!(
+                        exported["step_verification"]["method"],
+                        "decoded_periodic_repair"
+                    );
+                    let members = exported["step_verification"]["periodic_members"]
+                        .as_array()
+                        .unwrap();
+                    assert_eq!(members.len(), 1);
+                    assert_eq!(members[0]["member_index"], 0);
+                    let interval = members[0]["decoded_volume_bounds_mm3"].as_array().unwrap();
+                    assert!(interval[0].as_f64().unwrap() > 0.);
+                    assert!(interval[0].as_f64() <= interval[1].as_f64());
+                    assert!(export.exists());
+                } else {
+                    assert!(
+                        dispatch(&host, &call(false), "export_step", arguments.clone()).is_err()
+                    );
+                    assert!(!export.exists());
+                    std::fs::write(&export, b"accepted output").unwrap();
+                    assert!(dispatch(&host, &call(false), "export_step", arguments).is_err());
+                    assert_eq!(std::fs::read(export).unwrap(), b"accepted output");
+                }
+                assert_eq!(host.document(), document);
                 run(&host, "save_project", json!({"expected_revision":4}));
                 drop(host);
                 let reopened = open();
