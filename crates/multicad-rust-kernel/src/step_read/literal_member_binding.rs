@@ -2,10 +2,7 @@
 //! This proves neither occupied material nor placement: callers earn those
 //! separately. Original numeric spellings, sharing and every reachable owner
 //! survive; only entity numbering may change.
-use super::{
-    owned_insert::CompoundDocument,
-    part21::{self, Entity, Value},
-};
+use super::{owned_insert::CompoundDocument, part21::Entity};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -13,6 +10,9 @@ pub enum Error {
     Invalid,
     Different,
     Limit,
+    WorkLimit,
+    StorageLimit,
+    EntityLimit,
     Cancelled,
 }
 #[derive(Clone, Copy)]
@@ -68,7 +68,7 @@ impl State<'_> {
         }
         self.work = self.work.checked_add(amount).ok_or(Error::Limit)?;
         if self.work > self.options.maximum_work {
-            return Err(Error::Limit);
+            return Err(Error::WorkLimit);
         }
         Ok(())
     }
@@ -79,7 +79,7 @@ impl State<'_> {
             .and_then(|n| n.checked_add(scratch))
             .ok_or(Error::Limit)?;
         if bytes > self.options.maximum_bytes {
-            return Err(Error::Limit);
+            return Err(Error::StorageLimit);
         }
         self.peak = self.peak.max(bytes);
         Ok(())
@@ -98,7 +98,7 @@ impl State<'_> {
         }
         let count = self.forward.len() + 1;
         if count > self.options.maximum_entities {
-            return Err(Error::Limit);
+            return Err(Error::EntityLimit);
         }
         self.reserve(count, 0)?;
         self.forward.insert(a, b);
@@ -106,62 +106,73 @@ impl State<'_> {
         self.pending.push((a, b));
         Ok(())
     }
-    fn entity(&mut self, a: &Entity<'_>, b: &Entity<'_>, numbers: bool) -> Result<()> {
-        self.charge(1 + a.name.len() + b.name.len())?;
-        if a.name != b.name || a.args.len() != b.args.len() {
-            return Err(Error::Different);
-        }
-        if numbers {
-            let sources = a
-                .source
-                .ok_or(Error::Invalid)?
-                .len()
-                .checked_add(b.source.ok_or(Error::Invalid)?.len())
-                .ok_or(Error::Limit)?;
-            // A numeric-token slice occupies two machine words. Reserve twice
-            // that per input byte before either temporary Vec is allocated.
-            let scratch = sources.checked_mul(32).ok_or(Error::Limit)?;
-            self.reserve(self.forward.len(), scratch)?;
-            self.charge(sources.checked_mul(8).ok_or(Error::Limit)?)?;
-            let x = part21::numeric_spellings(a).ok_or(Error::Invalid)?;
-            let y = part21::numeric_spellings(b).ok_or(Error::Invalid)?;
-            if x != y {
-                return Err(Error::Different);
+    fn entity(&mut self, a: &Entity<'_>, b: &Entity<'_>) -> Result<()> {
+        let mut a = a.source.expect("validated original component");
+        let mut b = b.source.expect("validated original component");
+        self.charge(a.len().checked_add(b.len()).ok_or(Error::Limit)?)?;
+        loop {
+            self.charge(1)?;
+            match (token(&mut a), token(&mut b)) {
+                (None, None) => return Ok(()),
+                (Some(Token::Reference(a)), Some(Token::Reference(b))) => self.reference(a, b)?,
+                (Some(Token::Literal(a)), Some(Token::Literal(b))) if a == b => {}
+                _ => return Err(Error::Different),
             }
         }
-        for (a, b) in a.args.iter().zip(&b.args) {
-            self.value(a, b)?;
-        }
-        Ok(())
     }
-    fn value(&mut self, a: &Value<'_>, b: &Value<'_>) -> Result<()> {
-        self.charge(1)?;
-        match (a, b) {
-            (Value::String(a), Value::String(b)) | (Value::Enum(a), Value::Enum(b)) => {
-                self.charge(a.len() + b.len())?;
-                if a != b {
-                    return Err(Error::Different);
-                }
-            }
-            (Value::Reference(a), Value::Reference(b)) => self.reference(*a, *b)?,
-            // The complete original number-token sequence was compared above.
-            // Comparing float caches here would accept distinct decimal leaves.
-            (Value::Number(_), Value::Number(_))
-            | (Value::Omitted, Value::Omitted)
-            | (Value::Derived, Value::Derived) => {}
-            (Value::List(a), Value::List(b)) => {
-                if a.len() != b.len() {
-                    return Err(Error::Different);
-                }
-                for (a, b) in a.iter().zip(b) {
-                    self.value(a, b)?;
-                }
-            }
-            (Value::Typed(a), Value::Typed(b)) => self.entity(a, b, false)?,
-            _ => return Err(Error::Different),
+}
+enum Token<'a> {
+    Literal(&'a str),
+    Reference(u32),
+}
+// This is a zero-allocation comparison cursor over components ALREADY parsed
+// by the bounded Part21 parser, not an alternative untrusted-input parser.
+// Original numeric/quoted tokens are compared literally; only #IDs are mapped.
+fn token<'a>(rest: &mut &'a str) -> Option<Token<'a>> {
+    loop {
+        *rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace());
+        if let Some(comment) = rest.strip_prefix("/*") {
+            *rest = &comment[comment.find("*/").expect("validated comment") + 2..];
+        } else {
+            break;
         }
-        Ok(())
     }
+    let first = *rest.as_bytes().first()?;
+    let bytes = rest.as_bytes();
+    let end = match first {
+        b'\'' => {
+            let mut i = 1;
+            loop {
+                if bytes[i] == b'\'' {
+                    if bytes.get(i + 1) == Some(&b'\'') {
+                        i += 2;
+                    } else {
+                        break i + 1;
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+        }
+        b'#' => 1 + bytes[1..].iter().take_while(|c| c.is_ascii_digit()).count(),
+        b'+' | b'-' | b'0'..=b'9' => bytes
+            .iter()
+            .take_while(|c| matches!(c, b'+' | b'-' | b'.' | b'E' | b'0'..=b'9'))
+            .count(),
+        b'A'..=b'Z' | b'_' => bytes
+            .iter()
+            .take_while(|c| c.is_ascii_alphanumeric() || **c == b'_')
+            .count(),
+        b'.' => 2 + rest[1..].find('.').expect("validated enumeration"),
+        _ => 1,
+    };
+    let value = &rest[..end];
+    *rest = &rest[end..];
+    Some(if first == b'#' {
+        Token::Reference(value[1..].parse().expect("validated reference"))
+    } else {
+        Token::Literal(value)
+    })
 }
 /// Bind only the selected members' LOCAL reachable geometry records. Each item
 /// must belong to its supplied validated representation document. Mapped
@@ -175,7 +186,7 @@ pub fn bind_local_members(
     interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<Binding> {
     if options.maximum_work == 0
-        || options.maximum_work > 64_000_000
+        || options.maximum_work > 512_000_000
         || options.maximum_bytes == 0
         || options.maximum_bytes > 64 * 1024 * 1024
         || options.maximum_entities == 0
@@ -219,7 +230,7 @@ pub fn bind_local_members(
             return Err(Error::Different);
         }
         for (a, b) in a.iter().zip(b) {
-            state.entity(a, b, true)?;
+            state.entity(a, b)?;
         }
     }
     state.charge(1)?;

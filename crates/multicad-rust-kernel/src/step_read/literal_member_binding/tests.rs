@@ -1,4 +1,5 @@
 use super::*;
+use crate::step_read::part21;
 use crate::{Rational, step::Writer};
 use std::cell::Cell;
 
@@ -53,6 +54,22 @@ fn actual_written_members_bind_with_rebased_ids_and_separate_document_arenas() {
     );
     assert_eq!(a.literal_input(), single);
     assert_eq!(b.literal_input(), mixed);
+}
+#[test]
+fn actual_quoted_labels_comments_and_whitespace_do_not_rebase_literal_text() {
+    let name = "MANIFOLD_SOLID_BREP('owner #123 ''quoted'' ä ";
+    let single = boxes(1).replace("MANIFOLD_SOLID_BREP('", name);
+    let mixed = boxes(2)
+        .replace("MANIFOLD_SOLID_BREP('", name)
+        .replace("CARTESIAN_POINT(", "CARTESIAN_POINT /* #777 4.0 */ (\n ");
+    let a = document(&single);
+    let b = document(&mixed);
+    assert!(compare(&a, &b, 1, Default::default(), None).is_ok());
+    let different = mixed.replace("owner #123", "owner #124");
+    assert!(matches!(
+        compare(&a, &document(&different), 1, Default::default(), None),
+        Err(Error::Different)
+    ));
 }
 #[test]
 fn original_decimal_leaves_and_owner_sharing_cannot_be_replaced_by_float_equality() {
@@ -123,7 +140,7 @@ fn actual_query_resource_and_cancellation_frontiers_preserve_original_documents(
     ] {
         assert!(matches!(
             compare(&a, &a, 0, options, None),
-            Err(Error::Limit)
+            Err(Error::WorkLimit | Error::StorageLimit | Error::EntityLimit)
         ));
     }
     assert!(
@@ -174,7 +191,7 @@ fn actual_query_resource_and_cancellation_frontiers_preserve_original_documents(
             ..Default::default()
         },
         Options {
-            maximum_work: 64_000_001,
+            maximum_work: 512_000_001,
             ..Default::default()
         },
         Options {
