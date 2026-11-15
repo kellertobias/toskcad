@@ -506,6 +506,75 @@ fn actual_source_and_mesh_cancellation_leave_retained_material_reusable() {
 }
 
 #[test]
+fn actual_unvalidated_bore_bindings_and_far_coordinate_mesh_precision_refuse() {
+    let (stock, bores, seats) = fixture();
+    for mutate in 0..2 {
+        let mut bad = bores.to_vec();
+        if mutate == 0 {
+            bad[0].faces[0] = usize::MAX;
+        } else {
+            bad[0].radius_mm = -1.;
+        }
+        assert!(matches!(
+            Seats::new(Rc::clone(&stock), Rc::from(bad), &seats, options(), &|| {
+                false
+            }),
+            Err(Error::Invalid)
+        ));
+    }
+    let shift = 1e9;
+    let stock = Rc::new(
+        orthogonal::boolean(
+            &[
+                Box3 {
+                    min: [shift, 0., 0.],
+                    max: [shift + 40., 40., 5.],
+                },
+                Box3 {
+                    min: [shift, 0., 0.],
+                    max: [shift + 40., 5., 40.],
+                },
+            ],
+            &[],
+            Operation::Union,
+            1e-7,
+        )
+        .unwrap()
+        .unwrap(),
+    );
+    let boundary = orthogonal_boundary::build(stock.quads()).unwrap();
+    let bores = [
+        [[shift + 20., 20., -0.1], [shift + 20., 20., 5.1]],
+        [[shift + 20., -0.1, 20.], [shift + 20., 5.1, 20.]],
+    ]
+    .map(|[a, b]| {
+        orthogonal_pockets::identify_through_bore(&stock, &boundary, a, b, 4.5, 1e-7, 1e-5).unwrap()
+    });
+    // This is an actual Pure source; no Native coordinate-policy admission is
+    // inferred. Its larger rounding reserve must constrain mesh publication.
+    let source = Seats::new(stock, Rc::from(bores), &seats, options(), &|| false).unwrap();
+    let volume = source.volume_bounds_mm3();
+    assert!(volume[0] > 0.);
+    assert!(matches!(
+        source.mesh(tessellation(0.001), &|| false),
+        Err(Error::Unsupported)
+    ));
+    let coarse = source.mesh(tessellation(0.1), &|| false).unwrap();
+    closed(&coarse);
+    assert_eq!(source.volume_bounds_mm3(), volume);
+    assert!(matches!(
+        source.mesh(
+            Tessellation {
+                triangle_limit: coarse.face_indices.len() - 1,
+                ..tessellation(0.1)
+            },
+            &|| false
+        ),
+        Err(Error::Limit)
+    ));
+}
+
+#[test]
 fn seated_stock_receiving_proof_retains_every_original_cell_and_both_members() {
     use crate::{
         normal_sweep::{Edge, Sweep},
