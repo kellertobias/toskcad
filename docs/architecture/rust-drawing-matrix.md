@@ -34,7 +34,7 @@ The thread end relief (CAD-290 `rust_thread_end_relief_data`: material thread, c
 | internal thread | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 |
 | rounded thread bore | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | axial pipe thread | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 |
-| internal thread treatment | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 | F19 |
+| internal thread treatment | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 |
 | hex nut | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 |
 | machine screw | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | za worm | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | F13 | F13 | F13 | F13 |
@@ -69,7 +69,6 @@ The thread end relief (CAD-290 `rust_thread_end_relief_data`: material thread, c
 - **F13** (43 cells): Rust worm and worm-wheel drawings require an uncropped view along the gear axis
 - **F16** (11 cells): Rust worm and worm-wheel drawings support one placed gear at a time
 - **F17** (9 cells): Rust exact drawing projection for continuous herringbone gears is unavailable
-- **F18** (72 cells): Rust planar drawing projection requires straight edges and planar faces
-- **F19** (18 cells): Original stock face ancestry is unresolved
+- **F18** (90 cells): Rust planar drawing projection requires straight edges and planar faces
 
 649 of 846 combinations draw; 197 are explicit findings. No combination returns an invalid or partial result.

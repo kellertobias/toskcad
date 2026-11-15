@@ -791,92 +791,92 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     (
         "internal thread treatment",
         "axial",
-        Unsupported("Original stock face ancestry is unresolved"),
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
     (
         "internal thread treatment",
         "axial reversed",
-        Unsupported("Original stock face ancestry is unresolved"),
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
     (
         "internal thread treatment",
         "axial hidden",
-        Unsupported("Original stock face ancestry is unresolved"),
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
     (
         "internal thread treatment",
         "side",
-        Unsupported("Original stock face ancestry is unresolved"),
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
     (
         "internal thread treatment",
         "side hidden",
-        Unsupported("Original stock face ancestry is unresolved"),
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
     (
         "internal thread treatment",
         "oblique",
-        Unsupported("Original stock face ancestry is unresolved"),
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
     (
         "internal thread treatment",
         "oblique hidden",
-        Unsupported("Original stock face ancestry is unresolved"),
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
     (
         "internal thread treatment",
         "axial section",
-        Unsupported("Original stock face ancestry is unresolved"),
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
     (
         "internal thread treatment",
         "axial section-only",
-        Unsupported("Original stock face ancestry is unresolved"),
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
     (
         "internal thread treatment",
         "axial finite depth",
-        Unsupported("Original stock face ancestry is unresolved"),
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
     (
         "internal thread treatment",
         "side section",
-        Unsupported("Original stock face ancestry is unresolved"),
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
     (
         "internal thread treatment",
         "side section-only",
-        Unsupported("Original stock face ancestry is unresolved"),
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
     (
         "internal thread treatment",
         "side finite depth",
-        Unsupported("Original stock face ancestry is unresolved"),
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
     (
         "internal thread treatment",
         "side lateral window",
-        Unsupported("Original stock face ancestry is unresolved"),
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
     (
         "internal thread treatment",
         "oblique section",
-        Unsupported("Original stock face ancestry is unresolved"),
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
     (
         "internal thread treatment",
         "oblique section-only",
-        Unsupported("Original stock face ancestry is unresolved"),
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
     (
         "internal thread treatment",
         "axial detail",
-        Unsupported("Original stock face ancestry is unresolved"),
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
     (
         "internal thread treatment",
         "side detail",
-        Unsupported("Original stock face ancestry is unresolved"),
+        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
     (
         "hex nut",
@@ -2324,7 +2324,24 @@ pub fn families() -> Vec<(&'static str, Result<Solid, GeometryError>)> {
         }),
         (
             "internal thread treatment",
-            Solid::cylinder(PlaneFrame::default(), 2.5, 4., policy).and_then(|stock| {
+            // An authored stock, as the treatment's source contract requires:
+            // its faces carry the roles the treatment's topology inherits.
+            Solid::from_axial_cylinder(
+                multicad_kernel::rust_kernel::cylinder::AxialCylinder::new(
+                    7,
+                    multicad_kernel::rust_kernel::Circle::new(
+                        [multicad_kernel::rust_kernel::Rational::new(0, 1).unwrap(); 2],
+                        multicad_kernel::rust_kernel::Rational::new(5, 2).unwrap(),
+                    )
+                    .unwrap(),
+                    multicad_kernel::rust_kernel::Rational::new(0, 1).unwrap(),
+                    multicad_kernel::rust_kernel::Rational::new(4, 1).unwrap(),
+                )
+                .unwrap(),
+                PlaneFrame::default(),
+                policy,
+            )
+            .and_then(|stock| {
                 stock.rust_cut_authored_internal_thread_treatments_with_interrupt(
                     InternalThreadTreatmentCut {
                         profile: HelicalThread {
