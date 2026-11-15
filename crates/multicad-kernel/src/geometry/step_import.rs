@@ -175,11 +175,20 @@ impl Solid {
         }
         let tolerance = policy.linear_tolerance_mm;
         let recognised = step_read::read_source_compound(input, tolerance);
-        if recognised.is_err() {
+        if let Err(refusal) = recognised {
             // Outside the recognised families the solid keeps its imported
-            // boundary. When that is refused too, the first refusal stands.
-            if let Ok(retained) = Self::import_rust_brep(input, feature, policy) {
-                return Ok(retained);
+            // boundary. When that is refused too, the families' refusal
+            // stands unless they only found the file unfamiliar and the
+            // boundary itself is invalid: then the file is invalid.
+            match Self::import_rust_brep(input, feature, policy) {
+                Ok(retained) => return Ok(retained),
+                Err(error)
+                    if refusal == ReadError::Unsupported
+                        && error.kind == GeometryErrorKind::InvalidResult =>
+                {
+                    return Err(error);
+                }
+                Err(_) => {}
             }
         }
         let mut members = recognised.map_err(|cause| {

@@ -901,11 +901,11 @@
       "tags": [
         "cone"
       ],
-      "expected": "unsupported",
+      "expected": "invalid",
       "verdict": "unsupported",
       "finding": {
         "owner": "CAD-360",
-        "summary": "Non-manifold closed shell: four straight edges (x = +-1.225 mm, z = 1.08 mm) each bound four faces, where two lobes of the switch touch along a line. MANIFOLD_SOLID_BREP requires each edge to bound two faces, so the retained-boundary reader refuses it as invalid and the import keeps the recognised-family refusal. OpenCascade's BRepCheck does not test manifoldness and accepts it."
+        "summary": "Non-manifold closed shell: four straight edges (x = +-1.225 mm, z = 1.08 mm) each bound four faces, where two lobes of the switch touch along a line. MANIFOLD_SOLID_BREP requires each edge to bound two faces, so the retained-boundary reader refuses it as invalid. OpenCascade's BRepCheck does not test manifoldness and accepts it."
       }
     },
     {
@@ -1219,11 +1219,11 @@
         "torus",
         "voids"
       ],
-      "expected": "unsupported",
+      "expected": "invalid",
       "verdict": "unsupported",
       "finding": {
         "owner": "CAD-360",
-        "summary": "An inner-shell edge, a degree-13 rational B-spline, lies up to 1.10e-5 mm off its cylinder. That exceeds the file's declared 2e-6 mm uncertainty and the 1e-5 mm incidence cap, so the retained-boundary reader refuses it as invalid and the import keeps the recognised-family refusal. OpenCascade accepts it with its per-edge tolerances."
+        "summary": "An inner-shell edge, a degree-13 rational B-spline, lies up to 1.10e-5 mm off its cylinder. That exceeds the file's declared 2e-6 mm uncertainty and the 1e-5 mm incidence cap, so the retained-boundary reader refuses it as invalid. OpenCascade accepts it with its per-edge tolerances."
       }
     },
     {
