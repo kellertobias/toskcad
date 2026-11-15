@@ -39,6 +39,7 @@ pub mod manufacturing;
 pub mod normal_relief;
 pub mod normal_sweep;
 pub mod orthogonal;
+pub mod orthogonal_bore_seats;
 pub mod orthogonal_boundary;
 pub mod orthogonal_pockets;
 pub mod orthogonal_section;
