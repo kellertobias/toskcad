@@ -15,7 +15,7 @@ pub use decimal::FiniteDecimal;
 mod curve;
 pub use curve::{
     CapCurvePiece, LiteralCapCurve, LiteralVertex, LiteralVertices, RestrictedCapCurve,
-    RestrictionBounds,
+    RestrictionBounds, SidePole, SideSupport, SideSupportKind,
 };
 mod closed;
 mod finite;
@@ -297,18 +297,17 @@ impl<'a> EncodedField<'a> {
     pub fn retained_bytes(&self) -> usize {
         self.bytes
     }
-    pub fn control(
+    // Caller owns the shared exact-arithmetic scratch/ledger. Numeric controls
+    // are constructed once from the SAME retained scalar owners; the public
+    // detached query below separately accounts its compact result storage.
+    fn homogeneous_control(
         &self,
         cell: usize,
         row: usize,
         piece: usize,
         column: usize,
-        options: DomainOptions,
-        interrupt: Option<&dyn Fn() -> bool>,
-    ) -> Result<EncodedControl, Error> {
-        let mut w = super::domain::work(options, self.bytes, interrupt)?;
-        let mut memory = Memory::new(self.bytes, options.maximum_bytes)?;
-        memory.add(SCRATCH)?;
+        w: &mut Work<'_>,
+    ) -> Result<(MeridianRowKey, [N; 4]), Error> {
         let key = self.cells.get(cell).ok_or(Error::Invalid)?;
         let meridian = &self.meridians[key.meridian];
         if row > meridian.degree() || piece >= self.angular.coefficients().len() || column > 10 {
@@ -322,24 +321,24 @@ impl<'a> EncodedField<'a> {
             let s = source.wood().spec();
             (s.pitch_mm, s.starts, s.left_hand)
         };
-        let r = meridian.radius[row].number(&mut w)?;
-        let q = meridian.phase[row].number(&mut w)?;
-        let weight = meridian.weights[row].number(&mut w)?;
-        let pitch = binary(pitch, &mut w)?;
-        let mut offset = pitch.mul(&N::integer(i64::from(key.source_key.total_period)), &mut w)?;
+        let r = meridian.radius[row].number(w)?;
+        let q = meridian.phase[row].number(w)?;
+        let weight = meridian.weights[row].number(w)?;
+        let pitch = binary(pitch, w)?;
+        let mut offset = pitch.mul(&N::integer(i64::from(key.source_key.total_period)), w)?;
         if meridian.component == Component::Metric {
             offset = offset
-                .sub(&binary(source.metric().full_length_mm(), &mut w)?, &mut w)?
-                .sub(&binary(source.spec().plain_length_mm, &mut w)?, &mut w)?;
+                .sub(&binary(source.metric().full_length_mm(), w)?, w)?
+                .sub(&binary(source.spec().plain_length_mm, w)?, w)?;
         }
-        let lead = pitch.mul(&N::integer(i64::from(starts)), &mut w)?;
-        let a = binary(self.angular.knots()[piece], &mut w)?;
-        let b = binary(self.angular.knots()[piece + 1], &mut w)?;
+        let lead = pitch.mul(&N::integer(i64::from(starts)), w)?;
+        let a = binary(self.angular.knots()[piece], w)?;
+        let b = binary(self.angular.knots()[piece + 1], w)?;
         let v = a.add(
-            &b.sub(&a, &mut w)?
-                .mul(&N::integer(column as i64), &mut w)?
-                .div(&N::integer(10), &mut w)?,
-            &mut w,
+            &b.sub(&a, w)?
+                .mul(&N::integer(column as i64), w)?
+                .div(&N::integer(10), w)?,
+            w,
         )?;
         let (ap, ac) = if left {
             (self.angular.coefficients().len() - 1 - piece, 10 - column)
@@ -347,12 +346,25 @@ impl<'a> EncodedField<'a> {
             (piece, column)
         };
         let xy = &self.angular.coefficients()[ap][ac];
-        let x = r.mul(&N(xy[0].clone()), &mut w)?;
-        let y = r.mul(&N(xy[1].clone()), &mut w)?;
-        let z = q.add(
-            &weight.mul(&offset.add(&lead.mul(&v, &mut w)?, &mut w)?, &mut w)?,
-            &mut w,
-        )?;
+        let x = r.mul(&N(xy[0].clone()), w)?;
+        let y = r.mul(&N(xy[1].clone()), w)?;
+        let z = q.add(&weight.mul(&offset.add(&lead.mul(&v, w)?, w)?, w)?, w)?;
+        Ok((key.source_key, [x, y, z, weight]))
+    }
+    pub fn control(
+        &self,
+        cell: usize,
+        row: usize,
+        piece: usize,
+        column: usize,
+        options: DomainOptions,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<EncodedControl, Error> {
+        let mut w = super::domain::work(options, self.bytes, interrupt)?;
+        let mut memory = Memory::new(self.bytes, options.maximum_bytes)?;
+        memory.add(SCRATCH)?;
+        let (source_key, [x, y, z, weight]) =
+            self.homogeneous_control(cell, row, piece, column, &mut w)?;
         let output = [
             EncodedScalar::retain(&x, &mut memory, &mut w)?,
             EncodedScalar::retain(&y, &mut memory, &mut w)?,
@@ -361,7 +373,7 @@ impl<'a> EncodedField<'a> {
         ];
         w.charge(1)?;
         Ok(EncodedControl {
-            source_key: key.source_key,
+            source_key,
             homogeneous: output,
             work_used: w.used,
         })

@@ -6,6 +6,8 @@ mod affine_probe;
 #[cfg(test)]
 mod correction;
 mod literal;
+mod side;
+pub use side::{SidePole, SideSupport, SideSupportKind};
 mod restrict;
 mod vertices;
 pub use vertices::{LiteralVertex, LiteralVertices};

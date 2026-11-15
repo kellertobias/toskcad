@@ -17,7 +17,7 @@ mod encoded;
 pub use encoded::{
     CapCurvePiece, CapEndpoint, CapTrace, EncodedCell, EncodedControl, EncodedField,
     EncodedMeridian, EncodedScalar, FiniteDecimal, LiteralCapCurve, LiteralVertex, LiteralVertices,
-    RestrictedCapCurve, RestrictionBounds,
+    RestrictedCapCurve, RestrictionBounds, SidePole, SideSupport, SideSupportKind,
 };
 pub use encoded::{
     ClosedCoedge, ClosedCurve, ClosedEdge, ClosedFace, ClosedFaceKind, ClosedField, ClosedVertex,

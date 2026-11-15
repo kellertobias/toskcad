@@ -480,3 +480,50 @@ fn actual_source_precision_floors_and_first_cell_allocation_frontier_refuse() {
         Err(Error::Unresolved)
     ));
 }
+
+#[test]
+fn actual_adjacent_band_rails_share_the_exact_encoded_radius_and_station() {
+    for (left, nonbinary) in [(false, false), (true, true)] {
+        let source = Hanger::new(
+            crate::authored_hanger_bolt::tests::fixture(left, nonbinary),
+            None,
+        )
+        .unwrap();
+        let boundary = source.boundary(BoundaryOptions::default(), None).unwrap();
+        let field = EncodedField::prepare(&boundary, CurveOptions::default(), None).unwrap();
+        for base in [0, 5] {
+            for band in 0..5 {
+                let a = &field.meridians[base + band];
+                let b = &field.meridians[base + (band + 1) % 5];
+                assert_eq!(
+                    a.radius[a.degree()],
+                    b.radius[0],
+                    "left={left} nonbinary={nonbinary} band={band}"
+                );
+                assert_eq!(a.weights[a.degree()], b.weights[0]);
+                let i = field
+                    .cells
+                    .iter()
+                    .position(|c| c.meridian == base + band)
+                    .unwrap();
+                let period = field.cells[i].source_key.total_period + i32::from(band == 4);
+                let j = field
+                    .cells
+                    .iter()
+                    .position(|c| {
+                        c.meridian == base + (band + 1) % 5 && c.source_key.total_period == period
+                    })
+                    .unwrap();
+                for (piece, column) in [(0, 0), (field.angular.coefficients().len() - 1, 10)] {
+                    let x = field
+                        .control(i, a.degree(), piece, column, DomainOptions::default(), None)
+                        .unwrap();
+                    let y = field
+                        .control(j, 0, piece, column, DomainOptions::default(), None)
+                        .unwrap();
+                    assert_eq!(x.homogeneous, y.homogeneous);
+                }
+            }
+        }
+    }
+}
