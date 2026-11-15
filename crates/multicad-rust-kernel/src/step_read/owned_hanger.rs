@@ -11,7 +11,10 @@ mod decode;
 mod grid;
 mod occupied;
 mod polar;
-pub use occupied::{HealedMaterial, HealingOptions, PointLocation, PointQuery, QueryOptions};
+pub use occupied::{
+    HealedMaterial, HealedVolume, HealingOptions, PointLocation, PointQuery, QueryOptions,
+    VolumeOptions,
+};
 pub use polar::{PolarOptions, PolarStrip, PolarSupports};
 mod lifts;
 mod links;

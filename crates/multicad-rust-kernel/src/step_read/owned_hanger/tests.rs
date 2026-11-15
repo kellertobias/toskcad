@@ -326,6 +326,63 @@ fn actual_trimmed_candidate_is_independently_decoded_from_literal_step_entities(
         );
         assert!(occupied.angular_norm_bounds()[0] > 0.);
         assert!(occupied.healed_volume_bounds_mm3()[0] > 0.);
+        let volume = occupied
+            .healed_volume(VolumeOptions::default(), None)
+            .unwrap();
+        let reference = source
+            .volume(
+                crate::authored_hanger_bolt::QueryOptions {
+                    volume_error_mm3: 1e-6,
+                    maximum_cells: 65536,
+                },
+                None,
+            )
+            .unwrap()
+            .material_mm3;
+        assert!(
+            volume.bounds_mm3()[0] <= reference[1] + 1e-6
+                && volume.bounds_mm3()[1] >= reference[0] - 1e-6
+        );
+        eprintln!(
+            "actual decoded healed volume left={left} bounds={:?} work={}",
+            volume.bounds_mm3(),
+            volume.work_used()
+        );
+        assert!(volume.work_used() > 0);
+        assert!(matches!(
+            occupied.healed_volume(
+                VolumeOptions {
+                    maximum_work: volume.work_used() - 1,
+                    ..VolumeOptions::default()
+                },
+                None
+            ),
+            Err(Error::Limit)
+        ));
+        assert!(matches!(
+            occupied.healed_volume(
+                VolumeOptions {
+                    maximum_bytes: 1,
+                    ..VolumeOptions::default()
+                },
+                None
+            ),
+            Err(Error::Limit)
+        ));
+        assert!(matches!(
+            occupied.healed_volume(VolumeOptions::default(), Some(&|| true)),
+            Err(Error::Cancelled)
+        ));
+        assert!(matches!(
+            occupied.healed_volume(
+                VolumeOptions {
+                    maximum_width_mm3: 1e-14,
+                    ..VolumeOptions::default()
+                },
+                None
+            ),
+            Err(Error::Unsupported)
+        ));
         let mut resolved = 0;
         let mut tested = 0;
         let mut most_work = (0, [0.; 3]);
