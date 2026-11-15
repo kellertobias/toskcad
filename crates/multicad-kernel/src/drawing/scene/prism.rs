@@ -322,12 +322,17 @@ impl Member for Prism {
         let mut output: Loop = Vec::new();
         if self.axial() {
             // Material immediately behind the plane decides at a shared level.
-            let w = offset / rise - rise.signum() * 2. * self.tolerance;
+            // On a cap with material only in front, the plane still meets the
+            // solid in that cap.
             let level = offset / rise;
-            for layer in &self.layers {
-                if !(layer.axis[0] < w && w < layer.axis[1]) {
-                    continue;
-                }
+            let step = rise.signum() * 2. * self.tolerance;
+            let within = |w: f64| {
+                self.layers
+                    .iter()
+                    .position(|layer| layer.axis[0] < w && w < layer.axis[1])
+            };
+            let chosen = within(level - step).or_else(|| within(level + step));
+            if let Some(layer) = chosen.map(|index| &self.layers[index]) {
                 let lift = self.level(level);
                 for edges in &layer.rings {
                     let mut ring: Loop = Vec::new();

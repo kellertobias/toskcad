@@ -466,6 +466,18 @@ pub(super) fn publish(
     options: DrawingProjection,
     source_index: usize,
 ) -> Result<Vec<ProjectedVector>, GeometryError> {
+    // An occluder whose outline is tangent to an arc leaves it visible at a
+    // single point, which the square-root conditioning of a tangency widens
+    // to a sliver (5.7e-7 mm measured for a 5 mm rim). A stretch shorter than
+    // the minimum feature is not a curve and must not publish.
+    let shortest = GeometryPolicy::default().minimum_feature_mm;
+    let edges: Vec<_> = edges
+        .into_iter()
+        .filter(|edge| match edge.curve {
+            Curve::Ellipse(arc) => arc.major * (arc.trim[1] - arc.trim[0]) > shortest,
+            Curve::Line(_) => true,
+        })
+        .collect();
     if edges.len() > options.maximum_curves as usize {
         return Err(err(
             GeometryErrorKind::Limit,
