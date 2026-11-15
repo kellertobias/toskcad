@@ -1518,12 +1518,8 @@ impl Solid {
                 return self.share();
             }
             let body = match &self.body {
-                SolidBody::ClippedNpt(_) => {
-                    return Err(error(
-                        "clipped NPT placement",
-                        GeometryErrorKind::Unsupported,
-                        "A clipped authored NPT body currently retains its exact identity datum",
-                    ));
+                SolidBody::ClippedNpt(body) => {
+                    SolidBody::ClippedNpt(Rc::new(body.transformed(transform, self.policy)?))
                 }
                 SolidBody::Prism(prism, frame) => {
                     let frame = transform.frame(*frame);

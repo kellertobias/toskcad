@@ -37,10 +37,19 @@ impl ClippedNptBody {
         let c = plan
             .mesh_candidate(q, available, BYTES, interrupt)
             .map_err(failure)?;
-        let proof = c.connectivity();
-        let remaining = available - c.work_used();
-        let literal = c.into_mesh();
         drop(plan);
+        let (proof, remaining, literal) = if self.pose == RigidTransform::default() {
+            (c.connectivity(), available - c.work_used(), c.into_mesh())
+        } else {
+            let placed = c
+                .placed(self.calibration(), q, available, BYTES, interrupt)
+                .map_err(failure)?;
+            (
+                placed.connectivity(),
+                available - placed.work_used(),
+                placed.into_mesh(),
+            )
+        };
         let mesh = Mesh {
             vertices: literal.vertices,
             indices: literal.indices,

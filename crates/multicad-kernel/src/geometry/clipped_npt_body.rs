@@ -1,4 +1,4 @@
-//! Fixed-datum occupied material of the original clipped NPT source.
+//! Placed occupied material of the unchanged local clipped NPT source.
 //! Retained/imported tensor receipts and STEP admission remain separate.
 use super::*;
 use multicad_core::references::{
@@ -16,8 +16,10 @@ use multicad_rust_kernel::{
 };
 use std::collections::BTreeSet;
 mod mesh;
+mod placement;
 #[cfg(test)]
 mod tests;
+#[derive(Clone)]
 pub(crate) struct ClippedNptBody {
     pub(super) feature: EntityId,
     source: StockClipPlan,
@@ -25,6 +27,7 @@ pub(crate) struct ClippedNptBody {
     faces: Vec<Face>,
     measures: Vec<StockClipFaceMeasure>,
     vertices: [[f64; 3]; 12],
+    pose: RigidTransform,
 }
 fn failure(cause: Cause) -> GeometryError {
     error(
@@ -125,6 +128,7 @@ impl Solid {
                 faces,
                 measures: bounds,
                 vertices,
+                pose: RigidTransform::default(),
             })),
             policy,
             provenance: vec![],
@@ -138,15 +142,19 @@ impl Solid {
             _ => None,
         }
     }
-    /// Original authored material only; no imported recipe or retained net is
-    /// inferred. This provider currently retains its exact identity datum.
+    /// Original authored material in its unchanged local chart. The separate
+    /// placement getter locates it; imported geometry never acquires a recipe.
     pub fn rust_clipped_npt_source(&self) -> Option<&StockClipPlan> {
         self.clipped_npt_body().map(|b| &b.source)
     }
-    /// Source bounds in the retained exact identity datum, never decoded mass.
-    pub fn rust_clipped_npt_volume_bounds_mm3(&self) -> Option<[f64; 2]> {
-        self.clipped_npt_body().map(|b| b.volume)
+    pub fn rust_clipped_npt_placement(&self) -> Option<RigidTransform> {
+        self.clipped_npt_body().map(|b| b.pose)
     }
+    /// Placed source-volume enclosure, never independently decoded file mass.
+    pub fn rust_clipped_npt_volume_bounds_mm3(&self) -> Option<[f64; 2]> {
+        self.clipped_npt_body().map(|b| b.placed_volume())
+    }
+    /// Retained local source descriptors; use the placement getter separately.
     pub fn rust_clipped_npt_face_measures(&self) -> Option<&[StockClipFaceMeasure]> {
         self.clipped_npt_body().map(|b| b.measures.as_slice())
     }
@@ -155,9 +163,20 @@ impl Solid {
         let body = self
             .clipped_npt_body()
             .ok_or_else(|| failure(Cause::Unsupported))?;
+        let world = body.bounds();
+        if (0..3).any(|i| point_mm[i] < world.min[i] || point_mm[i] > world.max[i]) {
+            return Ok(false);
+        }
+        let local = if body.pose == RigidTransform::default() {
+            point_mm.map(|x| [x, x])
+        } else {
+            body.calibration()
+                .inverse_point_bounds(point_mm.map(|x| [x, x]))
+                .map_err(failure)?
+        };
         match body
             .source
-            .classify_box(point_mm.map(|x| [x, x]), Default::default(), None)
+            .classify_box(local, Default::default(), None)
             .map_err(failure)?
             .classification()
         {
@@ -206,17 +225,24 @@ fn face_tag(face: StockClipFace) -> &'static str {
 }
 impl ClippedNptBody {
     pub(super) fn volume_mm3(&self) -> f64 {
-        self.volume[0].midpoint(self.volume[1])
+        let volume = self.placed_volume();
+        volume[0].midpoint(volume[1])
     }
     pub(super) fn bounds(&self) -> Bounds {
-        let b = self.source.bounds_mm();
+        let b = if self.pose == RigidTransform::default() {
+            self.source.bounds_mm()
+        } else {
+            self.calibration()
+                .point_bounds(self.source.bounds_mm())
+                .expect("qualified placed source bounds")
+        };
         Bounds {
             min: b.map(|v| v[0]),
             max: b.map(|v| v[1]),
         }
     }
     pub(super) fn faces(&self) -> Vec<Face> {
-        self.faces.clone()
+        self.placed_faces()
     }
     fn origin(&self, role: String) -> Origin {
         Origin {
@@ -294,11 +320,13 @@ impl ClippedNptBody {
                 }),
             });
         }
-        TopologySnapshot {
+        let mut snapshot = TopologySnapshot {
             owner,
             revision,
             elements,
-        }
+        };
+        self.place_topology(&mut snapshot);
+        snapshot
     }
     pub(crate) fn planar_loops(&self, index: u32) -> Vec<Vec<(u32, bool)>> {
         let faces = self.source.physical_faces();
@@ -334,7 +362,9 @@ impl ClippedNptBody {
         let curve = *self.source.physical_curves().get(index as usize)?;
         Some((|| {
             quality(options)?;
-            self.source
+            let calibration = self.calibration();
+            let result = self
+                .source
                 .curve_polyline(
                     curve,
                     options.deflection / 4.,
@@ -342,12 +372,12 @@ impl ClippedNptBody {
                     Default::default(),
                     None,
                 )
-                .map(|p| p.points_mm().to_vec())
                 .map_err(|e| match e {
                     Cause::Invalid => MeshError::InvalidOptions,
                     Cause::Limit => MeshError::BudgetExceeded,
                     _ => MeshError::UnresolvedBoundary,
-                })
+                })?;
+            self.place_polyline(&result, options, calibration)
         })())
     }
 }

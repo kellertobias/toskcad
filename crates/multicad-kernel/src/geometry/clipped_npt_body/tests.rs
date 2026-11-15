@@ -276,31 +276,33 @@ fn native_source_cancel_pose_input_and_mesh_limits_fail_before_publication() {
     };
     let solid = run(PlaneFrame::default(), policy, None).unwrap();
     let original = solid.topology_snapshot(feature, 0).unwrap();
+    let authored_pose = run(
+        PlaneFrame {
+            origin: [1., 0., 0.],
+            ..Default::default()
+        },
+        policy,
+        None,
+    )
+    .unwrap();
     assert_eq!(
-        run(
-            PlaneFrame {
-                origin: [1., 0., 0.],
-                ..Default::default()
-            },
-            policy,
-            None
-        )
-        .err()
-        .unwrap()
-        .kind,
-        GeometryErrorKind::Unsupported
-    );
-    assert_eq!(
-        solid
-            .transformed(RigidTransform {
-                translation_mm: [1., 2., 3.],
-                ..Default::default()
-            })
-            .err()
+        authored_pose
+            .rust_clipped_npt_placement()
             .unwrap()
-            .kind,
-        GeometryErrorKind::Unsupported
+            .translation_mm,
+        [1., 0., 0.]
     );
+    let moved = solid
+        .transformed(RigidTransform {
+            translation_mm: [1., 2., 3.],
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(
+        moved.rust_clipped_npt_placement().unwrap().translation_mm,
+        [1., 2., 3.]
+    );
+    assert_eq!(solid.topology_snapshot(feature, 0).unwrap(), original);
     assert_eq!(
         solid
             .transformed(RigidTransform::default())
@@ -486,4 +488,88 @@ fn source_edge_sampler_enforces_its_actual_numeric_and_storage_contract() {
             .kind,
         GeometryErrorKind::Limit
     );
+}
+
+#[test]
+fn actual_clipped_source_poses_preserve_material_topology_edges_and_closed_manufacturing() {
+    let policy = GeometryPolicy::default();
+    for quarter in [false, true] {
+        let feature = EntityId::new();
+        let spec = spec(quarter);
+        let original = Solid::rust_authored_axial_pipe_thread_with_interrupt(
+            spec,
+            feature,
+            PlaneFrame::default(),
+            policy,
+            None,
+        )
+        .unwrap();
+        let topology = original.topology_snapshot(feature, 0).unwrap();
+        let volume = original.volume_mm3().unwrap();
+        for rotation in [
+            RigidTransform::default().rotation,
+            [[0., 0., 1.], [0., 1., 0.], [-1., 0., 0.]],
+            [[0.8, -0.36, 0.48], [0.6, 0.48, -0.64], [0., 0.8, 0.6]],
+        ] {
+            let pose = RigidTransform {
+                rotation,
+                translation_mm: [17., -8., 13.],
+            };
+            let moved = original.transformed(pose).unwrap();
+            assert_eq!(
+                moved.rust_clipped_npt_source().unwrap().source().spec(),
+                spec
+            );
+            assert_eq!(moved.rust_clipped_npt_placement(), Some(pose));
+            assert!((moved.volume_mm3().unwrap() - volume).abs() < 1e-6);
+            let snapshot = moved.topology_snapshot(feature, 1).unwrap();
+            assert_eq!(snapshot.elements.len(), topology.elements.len());
+            for (a, b) in snapshot.elements.iter().zip(&topology.elements) {
+                assert_eq!(a.key, b.key);
+                assert_eq!(a.origins, b.origins);
+                assert_eq!(a.boundary, b.boundary);
+            }
+            let point = |p: [f64; 3]| {
+                let q = pose.vector(p);
+                std::array::from_fn(|i| q[i] + pose.translation_mm[i])
+            };
+            assert!(
+                moved
+                    .rust_clipped_npt_contains(point([0., 0., spec.length_mm / 2.]))
+                    .unwrap()
+            );
+            assert!(
+                !moved
+                    .rust_clipped_npt_contains(point([20., 0., spec.length_mm / 2.]))
+                    .unwrap()
+            );
+            let bounds = moved.bounds().unwrap();
+            for face in moved.faces().unwrap() {
+                for i in 0..3 {
+                    assert!(
+                        bounds.min[i] <= face.center_mm[i] && face.center_mm[i] <= bounds.max[i]
+                    );
+                }
+            }
+            let edges = moved.display_edges(0.1).unwrap();
+            assert!(!edges.is_empty());
+            for edge in &edges {
+                for p in &edge.points_mm {
+                    for (i, coordinate) in p.iter().enumerate() {
+                        assert!(bounds.min[i] <= *coordinate && *coordinate <= bounds.max[i]);
+                    }
+                }
+            }
+            let mesh = moved
+                .manufacturing_mesh_with_receipt(MeshOptions {
+                    linear_deflection_mm: 0.1,
+                    angular_deflection_rad: 0.3,
+                    maximum_triangles: 1_000_000,
+                })
+                .unwrap();
+            assert!(mesh.edge_pairs > 0 && mesh.vertex_links > 0);
+            assert!(!moved.supports_step_export());
+            assert_eq!(original.topology_snapshot(feature, 0).unwrap(), topology);
+        }
+    }
 }

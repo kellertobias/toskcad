@@ -117,3 +117,98 @@ fn canonical_clipped_npt_source_native_edit_cancel_history_and_reopen() {
         assert_eq!(info["source"]["parameters"]["npt"], json!(intent));
     }
 }
+
+#[test]
+fn clipped_npt_placed_sources_keep_pose_through_edits_history_and_fresh_reopen() {
+    for (size, plane) in [
+        (model::NptThreadSize::OneEighth, "yz"),
+        (model::NptThreadSize::OneQuarter, "xz"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("posed-npt.tcd");
+        Store
+            .save(
+                &path,
+                &ProjectFile::new(Document::new("Placed clipped source").unwrap()).unwrap(),
+            )
+            .unwrap();
+        let open = || {
+            Headless::new(
+                Workspace::project(path.clone(), Box::new(Store)).unwrap(),
+                Some(dir.path().into()),
+                false,
+            )
+        };
+        let host = open();
+        let intent = model::NptThreadIntent {
+            form: model::NptThreadForm::External,
+            size,
+            gauge: model::NptGaugeConvention::Nbs1959PlainFace,
+            truncation: model::NptTruncationTarget::MidpointConeParallel,
+        };
+        let made = run(
+            &host,
+            "set_thread",
+            json!({"expected_revision":0,"name":"Placed NPT","family":"npt","fit":"npt_historical_midpoint","npt":intent,"major_diameter":mm(intent.base_major_mm()),"pitch":mm(intent.preset().pitch_mm),"length":mm(intent.default_length_mm()),"plane":plane,"origin":[mm(10.),mm(-3.),mm(7.)]}),
+        );
+        let feature: multicad_core::document::EntityId =
+            serde_json::from_value(made["thread"].clone()).unwrap();
+        let compile = |document: &Document| {
+            multicad_model::Compiler {
+                omit_display: true,
+                ..Default::default()
+            }
+            .compile(document, 0)
+            .unwrap()
+        };
+        let original = host.document();
+        let model = compile(&original);
+        let pose = model
+            .solid(feature)
+            .unwrap()
+            .rust_clipped_npt_placement()
+            .unwrap();
+        assert_eq!(pose.translation_mm, [10., -3., 7.]);
+        assert_ne!(
+            pose.rotation,
+            multicad_kernel::RigidTransform::default().rotation
+        );
+        run(
+            &host,
+            "set_thread",
+            json!({"expected_revision":1,"thread":feature,"radial_allowance":mm(0.001)}),
+        );
+        let edited = host.document();
+        let edited_model = compile(&edited);
+        assert_eq!(
+            edited_model
+                .solid(feature)
+                .unwrap()
+                .rust_clipped_npt_placement(),
+            Some(pose)
+        );
+        let volume = edited_model.solid(feature).unwrap().volume_mm3().unwrap();
+        run(&host, "undo", json!({"expected_revision":2}));
+        assert_eq!(host.document(), original);
+        run(&host, "redo", json!({"expected_revision":3}));
+        assert_eq!(host.document(), edited);
+        run(&host, "save_project", json!({"expected_revision":4}));
+        drop(host);
+        let reopened = open();
+        assert_eq!(reopened.document(), edited);
+        let rebuilt = compile(&reopened.document());
+        let solid = rebuilt.solid(feature).unwrap();
+        assert_eq!(solid.rust_clipped_npt_placement(), Some(pose));
+        assert_eq!(solid.volume_mm3().unwrap(), volume);
+        assert_eq!(
+            solid
+                .rust_clipped_npt_source()
+                .unwrap()
+                .source()
+                .spec()
+                .length_mm,
+            intent.default_length_mm()
+        );
+        assert!(!solid.supports_step_export());
+    }
+}
