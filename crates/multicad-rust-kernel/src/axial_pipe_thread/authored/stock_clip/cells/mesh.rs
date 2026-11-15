@@ -4,6 +4,8 @@ use crate::{
     display::{DisplayMesh, Tessellation},
     manufacturing::{self, MeshProof},
 };
+mod placement;
+pub use placement::{PlacedStockClipMeshCandidate, StockClipPlacement};
 #[derive(Debug)]
 pub struct StockClipMeshCandidate {
     mesh: DisplayMesh,

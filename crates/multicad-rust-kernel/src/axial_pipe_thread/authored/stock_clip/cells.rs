@@ -3,7 +3,7 @@
 use super::*;
 use std::mem::size_of;
 mod mesh;
-pub use mesh::StockClipMeshCandidate;
+pub use mesh::{PlacedStockClipMeshCandidate, StockClipMeshCandidate, StockClipPlacement};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Tags {
     rail: Option<(usize, bool)>,
