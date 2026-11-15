@@ -215,3 +215,128 @@ fn original_world_exact_and_local_posed_cylinder_charts_keep_their_actual_datums
             .unwrap();
     }
 }
+#[test]
+fn actual_face_measure_cancellation_keeps_its_public_kind_and_context() {
+    use std::cell::Cell;
+    let s = spec(false);
+    let p = GeometryPolicy::default();
+    let stock = crate::geometry::construction::cylinder(
+        PlaneFrame::default(),
+        5.1435,
+        s.length_mm + 2.,
+        EntityId::new(),
+        p,
+    )
+    .unwrap();
+    let count = Cell::new(0usize);
+    stock
+        .rust_cut_external_npt_stock(
+            s,
+            EntityId::new(),
+            PlaneFrame::default(),
+            p,
+            Some(&|| {
+                count.set(count.get() + 1);
+                false
+            }),
+        )
+        .unwrap();
+    let total = count.get();
+    let mut found = false;
+    // Actual interruption frontiers, across the real production call graph.
+    // The bounded stride finds the comparatively long source measure stage.
+    for cutoff in (1..total).step_by((total / 64).max(1)) {
+        let calls = Cell::new(0usize);
+        let error = stock
+            .rust_cut_external_npt_stock(
+                s,
+                EntityId::new(),
+                PlaneFrame::default(),
+                p,
+                Some(&|| {
+                    calls.set(calls.get() + 1);
+                    calls.get() >= cutoff
+                }),
+            )
+            .err()
+            .unwrap();
+        assert_eq!(error.kind, GeometryErrorKind::Cancelled);
+        if error.message.starts_with("Face ") {
+            found = true;
+            break;
+        }
+    }
+    assert!(
+        found,
+        "no actual face measure interruption among {total} checkpoints"
+    );
+}
+#[test]
+fn actual_public_topology_and_input_budget_frontiers() {
+    let s = spec(false);
+    let p = GeometryPolicy::default();
+    let feature = EntityId::new();
+    let stock = crate::geometry::construction::cylinder(
+        PlaneFrame::default(),
+        5.1435,
+        s.length_mm + 2.,
+        feature,
+        p,
+    )
+    .unwrap();
+    assert!(
+        stock
+            .rust_cut_external_npt_stock(s, feature, PlaneFrame::default(), p, None)
+            .is_err()
+    );
+    let solid = stock
+        .rust_cut_external_npt_stock(s, EntityId::new(), PlaneFrame::default(), p, None)
+        .unwrap();
+    let body = solid.external_npt_stock_body().unwrap();
+    for i in 0..9 {
+        let rings = body.planar_loops(i);
+        assert_eq!(
+            rings.is_empty(),
+            !matches!(
+                body.boundary.faces()[i as usize].face(),
+                SourceFace::Thread(StockClipFace::StartCap)
+                    | SourceFace::Shoulder
+                    | SourceFace::TailCap
+            )
+        );
+    }
+    assert!(body.planar_loops(99).is_empty());
+    let q = multicad_rust_kernel::display::Tessellation {
+        deflection: 0.02,
+        angle: 0.2,
+        triangle_limit: 200000,
+    };
+    assert!(body.sample_edge(99, q).is_none());
+    let mut bad = q;
+    bad.deflection = 0.;
+    assert!(body.sample_edge(0, bad).unwrap().is_err());
+    bad = q;
+    bad.triangle_limit = 1;
+    assert!(body.sample_edge(0, bad).unwrap().is_err());
+    assert!(body.mesh(bad).is_err());
+    assert!(stock.rust_external_npt_stock_contains([0.; 3]).is_err());
+    let wide = crate::geometry::construction::cylinder(
+        PlaneFrame::default(),
+        5.15,
+        s.length_mm + 2.,
+        EntityId::new(),
+        p,
+    )
+    .unwrap();
+    assert!(
+        wide.rust_cut_external_npt_stock(s, EntityId::new(), PlaneFrame::default(), p, None)
+            .is_err()
+    );
+    assert!(
+        solid
+            .share()
+            .unwrap()
+            .rust_external_npt_stock_source()
+            .is_some()
+    );
+}

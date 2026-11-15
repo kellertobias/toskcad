@@ -190,11 +190,9 @@ impl Solid {
             let measure = source
                 .face_measure(entry.face(), measures_options, interrupt)
                 .map_err(|cause| {
-                    error(
-                        OPERATION,
-                        GeometryErrorKind::Unsupported,
-                        format!("Face {:?}: {cause:?}", entry.face()),
-                    )
+                    let mut error = failure(cause);
+                    error.message = format!("Face {:?}: {}", entry.face(), error.message);
+                    error
                 })?;
             area = (area + measure.area_mm2()[1]).next_up();
             faces.push(Face {
