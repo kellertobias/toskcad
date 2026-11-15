@@ -10,6 +10,8 @@ mod restrict;
 mod vertices;
 pub use vertices::{LiteralVertex, LiteralVertices};
 #[cfg(test)]
+mod side_probe;
+#[cfg(test)]
 mod trim_probe;
 pub use literal::LiteralCapCurve;
 pub use restrict::{RestrictedCapCurve, RestrictionBounds};
