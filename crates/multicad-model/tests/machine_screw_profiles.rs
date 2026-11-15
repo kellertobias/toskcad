@@ -137,6 +137,53 @@ fn add(s: &mut Session, p: MechanicalPartParameters) -> MechanicalPartRequest {
 }
 fn probe(s: &Solid, p: [f64; 3], inside: bool) {
     let d = 0.002;
+    if s.rust_periodic_repaired_phillips_source().is_some() {
+        use multicad_kernel::rust_kernel::phillips_drive::Classification;
+        let location = s
+            .rust_periodic_repaired_phillips_classify_world_box(
+                p.map(|v| [v - d / 2., v + d / 2.]),
+                Default::default(),
+                None,
+            )
+            .unwrap()
+            .location();
+        assert_eq!(
+            location,
+            if inside {
+                Classification::Inside
+            } else {
+                Classification::Outside
+            },
+            "Actual material box at {p:?}"
+        );
+        return;
+    }
+    if s.rust_profiled_screw_geometry().is_some()
+        || s.rust_phillips_screw_geometry().is_some()
+        || s.rust_repaired_phillips_source().is_some()
+    {
+        // Query the actual retained head/recess/thread material at the center
+        // and every former Boolean probe corner, in original world coordinates.
+        for mask in 0..9 {
+            let sample = if mask == 8 {
+                p
+            } else {
+                std::array::from_fn(|i| {
+                    p[i] + if mask & (1 << i) == 0 {
+                        -d / 2.
+                    } else {
+                        d / 2.
+                    }
+                })
+            };
+            assert_eq!(
+                s.rust_thread_contains(sample).unwrap(),
+                inside,
+                "Actual material at {sample:?}"
+            );
+        }
+        return;
+    }
     let q = Solid::box_solid([d; 3], GeometryPolicy::default())
         .unwrap()
         .transformed(RigidTransform {
@@ -487,8 +534,14 @@ fn real_head_lands_necks_and_hexalobular_or_hex_recesses_match_independent_volum
         if matches!(drive, ResolvedScrewDrive::Hexalobular { .. }) {
             let snapshot = solid.topology_snapshot(r.feature, s.revision()).unwrap();
             for sector in 0..6 {
-                for curve in ["lobe", "valley"] {
-                    let role = format!("screw.hexalobular/{curve}/{sector}");
+                for (index, curve) in ["lobe", "valley"].into_iter().enumerate() {
+                    let role = if solid.rust_profiled_screw_geometry().is_some() {
+                        // Native source owners identify the twelve actual cavity
+                        // arcs by their immutable source index.
+                        format!("screw.drive/edge/{}", 2 * sector + index)
+                    } else {
+                        format!("screw.hexalobular/{curve}/{sector}")
+                    };
                     assert!(
                         snapshot
                             .elements

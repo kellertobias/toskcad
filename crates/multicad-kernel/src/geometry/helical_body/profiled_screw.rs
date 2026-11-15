@@ -47,7 +47,10 @@ impl Solid {
                 recess,
             )
             .map_err(|cause| match cause {
-                ThreadError::Invalid => input("Invalid physical screw head, shank or recess"),
+                ThreadError::Invalid => input(format!(
+                    "Invalid physical screw head, shank or recess at minimum feature {} mm",
+                    policy.minimum_feature_mm
+                )),
                 ThreadError::Limit => error(
                     OPERATION,
                     GeometryErrorKind::Limit,
