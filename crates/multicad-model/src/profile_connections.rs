@@ -17,7 +17,7 @@ use multicad_core::{
 };
 use multicad_kernel::{
     BooleanOperation, CircularPocketTool, CurvedEdge2d, CurvedProfile, EdgeTreatment,
-    GeometryPolicy, PlaneFrame, RevolutionAxis, RigidTransform, Solid, TreatmentEdge,
+    GeometryPolicy, Line8NutCut, PlaneFrame, RevolutionAxis, RigidTransform, Solid, TreatmentEdge,
 };
 use std::{collections::BTreeMap, f64::consts::TAU};
 
@@ -498,6 +498,7 @@ impl Builder<'_> {
         kind: ProfileConnectionKind,
         variant: ProfileConnectionNut,
         frame: ReferenceFrame,
+        backend: GeometryBackend,
     ) -> Result<Solid, ModelError> {
         let size = variant.dimensions();
         let half_width = size.width_mm / 2.;
@@ -512,21 +513,49 @@ impl Builder<'_> {
             [-5.4, 5.0],
             [-6.5, 3.0],
         ];
-        let blank = self.checked(Solid::extrude_curved_profile(
-            &CurvedProfile {
-                frame: PlaneFrame {
-                    origin: sub(seat.origin_mm, scale(seat.u, size.bore_from_end_mm)),
-                    u: seat.v,
-                    v: seat.normal(),
+        let blank = if backend == GeometryBackend::Rust {
+            // Author the original straight local section directly. Projecting
+            // a rounded world displacement back into an arbitrary profile
+            // frame would create a different, slightly sheared receiving stock.
+            let owner = EntityId::new();
+            let origins = (0..section.len())
+                .map(|i| Origin {
+                    source: owner,
+                    role: format!("line8.stock.side.{i}"),
+                })
+                .collect::<Vec<_>>();
+            self.checked(Solid::rust_extrude_linear_named(
+                &CurvedProfile {
+                    frame: PlaneFrame {
+                        origin: [-size.bore_from_end_mm, 0., 0.],
+                        u: [0., 1., 0.],
+                        v: [0., 0., 1.],
+                    },
+                    outer: polygon(&section),
+                    holes: vec![],
                 },
-                outer: polygon(&section),
-                holes: vec![],
-            },
-            size.length_mm,
-            self.inputs.policy,
-        ))?;
-        let (screw, external, external_start) =
-            self.screw(kind, frame, GeometryBackend::OpenCascade)?;
+                [size.length_mm, 0., 0.],
+                0.,
+                owner,
+                &origins,
+                self.inputs.policy,
+            ))?
+        } else {
+            self.checked(Solid::extrude_curved_profile(
+                &CurvedProfile {
+                    frame: PlaneFrame {
+                        origin: sub(seat.origin_mm, scale(seat.u, size.bore_from_end_mm)),
+                        u: seat.v,
+                        v: seat.normal(),
+                    },
+                    outer: polygon(&section),
+                    holes: vec![],
+                },
+                size.length_mm,
+                self.inputs.policy,
+            ))?
+        };
+        let (screw, external, external_start) = self.screw(kind, frame, backend)?;
         let params = ThreadParameters {
             length: length(NUT_THREAD_MM),
             radial_allowance: length(THREAD_RADIAL_CLEARANCE_MM),
@@ -557,6 +586,41 @@ impl Builder<'_> {
             v: inner.v,
             n: inner.normal(),
         };
+        if backend == GeometryBackend::Rust {
+            let (sin, cos) = phase.roll_rad.sin_cos();
+            internal.frame = multicad_core::sketch::Frame {
+                origin: [0.; 3],
+                u: [cos, sin, 0.],
+                v: [-sin, cos, 0.],
+                n: [0., 0., 1.],
+            };
+            let (profile, root, local_frame) =
+                crate::threads::rust_profile(self.feature, &internal)?;
+            if root.is_some() {
+                return Err(
+                    self.fail("Rust Line8 nuts require the original flat internal thread profile")
+                );
+            }
+            let local = self.checked(blank.rust_cut_line8_nut(
+                Line8NutCut {
+                    profile,
+                    frame: local_frame,
+                    bore_from_start_mm: size.bore_from_end_mm,
+                    relief: multicad_kernel::rust_kernel::line8_nut::Relief {
+                        start_mm: NUT_THREAD_MM - 0.001,
+                        radius_mm: 4.10,
+                        tool_length_mm: size.depth_mm - NUT_THREAD_MM + 0.02,
+                    },
+                    minimum_wall_mm: internal.minimum_wall_mm,
+                },
+                self.feature,
+                self.inputs.policy,
+                None,
+            ))?;
+            let nut = self.checked(local.transformed(placement(seat)))?;
+            self.checked(screw.rust_line8_nut_mating(&nut, None))?;
+            return Ok(nut);
+        }
         let tapped = crate::threads::build_resolved(
             self.feature,
             internal,
@@ -576,6 +640,42 @@ impl Builder<'_> {
             "The supported M8 screw and T-slot nut threads interfere",
         )?;
         Ok(nut)
+    }
+    fn rust_nut_receivers(
+        &self,
+        nut: &Solid,
+        request: &model::ProfileConnectionRequest,
+        access_bores: Option<EntityId>,
+    ) -> Result<(), ModelError> {
+        for (site, producer) in [
+            (
+                &request.first,
+                access_bores.unwrap_or(request.first.member.producer),
+            ),
+            (&request.second, request.second.member.producer),
+        ] {
+            let pose = self.checked(model::resolve_occurrence_pose(
+                self.inputs.document,
+                &site.occurrence,
+                site.member.body,
+                self.inputs.parameters,
+                self.inputs.revision,
+                self.inputs.snapshots,
+            ))?;
+            self.checked(nut.rust_line8_receiver_clearance(
+                self.solid(producer)?,
+                RigidTransform {
+                    rotation: pose.rotation,
+                    translation_mm: pose.translation_mm,
+                },
+                HARDWARE_CLEARANCE_VOLUME_MM3,
+                None,
+            ))?;
+        }
+        if self.checked(nut.solid_count())? != 1 {
+            return Err(self.fail("Each retained connector component must be one physical solid"));
+        }
+        Ok(())
     }
 }
 
@@ -627,9 +727,11 @@ pub(crate) fn build(
                 ProfilePartRole::Screw(index) => builder
                     .screw(request.kind, frames.fasteners[index], backend)
                     .map(|result| result.0),
-                ProfilePartRole::Nut(_) => Err(builder.fail(
-                    "Rust profile connections do not yet support the modeled tap and crown relief of the Line 8 nut",
-                )),
+                ProfilePartRole::Nut(index) => {
+                    let nut=builder.nut(request.kind,request.nut,frames.fasteners[index],backend)?;
+                    builder.rust_nut_receivers(&nut,&request,output.access_bores)?;
+                    Ok(nut)
+                },
             },
         };
     }
@@ -656,7 +758,7 @@ pub(crate) fn build(
                 .0
         }
         ProfilePartRole::Nut(index) => {
-            builder.nut(request.kind, request.nut, frames.fasteners[index])?
+            builder.nut(request.kind, request.nut, frames.fasteners[index], backend)?
         }
     };
     for (site, producer) in [

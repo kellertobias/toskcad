@@ -1,3 +1,5 @@
+#[path = "profile_connections/line8_nuts.rs"]
+mod line8_nuts;
 use multicad_core::{
     commands::{Actor, Channel, Request, Session},
     document::{Document, Entity, EntityData, EntityId, Mutation},
@@ -296,8 +298,14 @@ fn joining_plate_uses_exact_rust_bores_and_countersinks_on_rotated_profile_stock
             .rust_profiled_screw_geometry()
             .is_some()
     );
-    let error = scoped(nut, GeometryBackend::Rust).err().unwrap();
-    assert!(error.to_string().contains("modeled tap"), "{error}");
+    let nut_model = scoped(nut, GeometryBackend::Rust).unwrap();
+    assert!(
+        nut_model
+            .solid(nut)
+            .unwrap()
+            .rust_line8_nut_source()
+            .is_some()
+    );
 }
 
 #[test]
