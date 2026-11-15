@@ -8,7 +8,10 @@ use std::f64::consts::TAU;
 mod contour_tests;
 mod phillips;
 mod torx;
-pub use phillips::{PhillipsMeshError, PhillipsScrewMesh, tessellate_phillips_screw};
+pub use phillips::{
+    PhillipsMeshError, PhillipsScrewMesh, tessellate_phillips_screw,
+    tessellate_phillips_screw_with_work,
+};
 
 fn profiled_options(
     screw: &crate::profiled_screw::Screw,
@@ -389,6 +392,7 @@ impl HeadMesh<'_, '_> {
         options: Tessellation,
     ) -> Result<Vec<u32>, MeshError> {
         use crate::head_profile::Curve;
+        self.builder.charge(256 * self.angles.len() + 128)?;
         let shank_radius = profile.end()[0];
         let join = if shank_radius == self.builder.thread.spec().major_radius_mm {
             self.shank_join(shaft_rim, shank_radius)
@@ -416,6 +420,7 @@ impl HeadMesh<'_, '_> {
                 return Err(MeshError::BudgetExceeded);
             }
             for step in 1..=subdivisions as usize {
+                self.builder.charge(128 * self.angles.len() + 128)?;
                 let point = segment.point(step as f64 / subdivisions);
                 let next = if index + 1 == segments.len() && step == subdivisions as usize {
                     join.clone()
@@ -531,6 +536,7 @@ impl HeadMesh<'_, '_> {
         reverse: bool,
     ) -> Result<(), MeshError> {
         for i in 0..low.len() {
+            self.builder.charge(128)?;
             let next = (i + 1) % low.len();
             let lo = self.angles[i];
             let hi = if next == 0 { TAU } else { self.angles[next] };

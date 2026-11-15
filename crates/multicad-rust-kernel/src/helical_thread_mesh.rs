@@ -8,9 +8,33 @@ use crate::{
     hex_nut::Nut,
 };
 use std::{
+    cell::Cell,
     collections::HashMap,
     f64::consts::{PI, TAU},
 };
+/// Counted logical geometry operations; allocator/CDT workspaces keep their
+/// separately bounded contracts. Every proposal/refinement loop pays before
+/// constructing its cell, including cells discarded by finite clipping.
+struct Counted<'a> {
+    remaining: Cell<usize>,
+    cancelled: Cell<bool>,
+    interrupt: &'a dyn Fn() -> bool,
+}
+impl Counted<'_> {
+    fn step(&self, n: usize) -> Result<(), MeshError> {
+        if (self.interrupt)() {
+            self.cancelled.set(true);
+            return Err(MeshError::BudgetExceeded);
+        }
+        self.remaining.set(
+            self.remaining
+                .get()
+                .checked_sub(n)
+                .ok_or(MeshError::BudgetExceeded)?,
+        );
+        Ok(())
+    }
+}
 
 mod blind_counterbore;
 pub use blind_counterbore::counterbore_volume_error_bound;
@@ -23,7 +47,10 @@ mod thread_end_relief;
 pub use thread_end_relief::{end_relief_volume_error_bound, tessellate_end_relief};
 mod screw;
 pub use screw::tessellate_profiled_cosmetic_screw;
-pub use screw::{PhillipsMeshError, PhillipsScrewMesh, tessellate_phillips_screw};
+pub use screw::{
+    PhillipsMeshError, PhillipsScrewMesh, tessellate_phillips_screw,
+    tessellate_phillips_screw_with_work,
+};
 pub use screw::{profiled_screw_volume_error_bound, tessellate_profiled_screw};
 pub use screw::{screw_volume_error_bound, tessellate_screw};
 
@@ -189,6 +216,14 @@ fn phase_strips(
     theta: f64,
     options: Tessellation,
 ) -> Result<Vec<Strip>, MeshError> {
+    phase_strips_counted(thread, theta, options, None)
+}
+fn phase_strips_counted(
+    thread: &Thread,
+    theta: f64,
+    options: Tessellation,
+    work: Option<&Counted<'_>>,
+) -> Result<Vec<Strip>, MeshError> {
     let spec = thread.spec();
     let root = thread.root_radius_mm();
     let rate = thread.helical_rate().abs();
@@ -197,6 +232,9 @@ fn phase_strips(
     for (band, bounds) in thread.profile_breaks().windows(2).enumerate() {
         let mut pending = vec![[bounds[0], bounds[1]]];
         while let Some([lo, hi]) = pending.pop() {
+            if let Some(w) = work {
+                w.step(256)?;
+            }
             let [a, b] = [lo, hi].map(|s| thread.slope_at_phase(s, band));
             let width = hi - lo;
             let slope = a.abs().max(b.abs());
@@ -268,9 +306,16 @@ struct Builder<'a> {
     vertex_ids: HashMap<VertexKey, u32>,
     caps: [Vec<(f64, u32)>; 2],
     mesh: DisplayMesh,
+    work: Option<&'a Counted<'a>>,
 }
 
 impl<'a> Builder<'a> {
+    fn charge(&self, n: usize) -> Result<(), MeshError> {
+        if let Some(w) = self.work {
+            w.step(n)?;
+        }
+        Ok(())
+    }
     fn new(thread: &'a Thread, steps: usize, strips: Vec<Strip>, options: Tessellation) -> Self {
         let spec = thread.spec();
         let lead = if spec.left_hand { -1. } else { 1. } * thread.lead_mm();
@@ -306,6 +351,7 @@ impl<'a> Builder<'a> {
                 indices: Vec::new(),
                 face_indices: Vec::new(),
             },
+            work: None,
         }
     }
 
@@ -353,6 +399,29 @@ impl<'a> Builder<'a> {
         self.angular = Some(columns);
         Ok(())
     }
+    fn insert_cap_stations(&mut self) -> Result<(), MeshError> {
+        let stations = self.strips.len().saturating_mul(2);
+        self.charge(
+            stations
+                .saturating_mul(self.steps.saturating_add(stations))
+                .saturating_add(128),
+        )?;
+        let mut angles = Vec::with_capacity(stations);
+        for cap in [self.lower, self.length] {
+            let cap_phase = cap.rem_euclid(self.pitch);
+            for strip in &self.strips {
+                // Every intersection of a finite axial cap and a phase rail
+                // becomes a shared angular COLUMN. Adjacent bands therefore
+                // split the same original rail with identical vertex keys.
+                let fraction = ((cap_phase - strip.phase) / self.lead).rem_euclid(1.);
+                angles.push(TAU * fraction);
+            }
+        }
+        // The existing finite clipping snap covers this phase/angle conversion
+        // and the inverse rail evaluation. Merge only within that same bound;
+        // no geometric feature is proximity-welded or assigned a new owner.
+        self.insert_angular_stations(&angles, TAU * self.snap / self.lead.abs())
+    }
 
     fn build_wall(&mut self) -> Result<(), MeshError> {
         let per_period = self.strips.len() as i64;
@@ -365,6 +434,7 @@ impl<'a> Builder<'a> {
             let last = ((self.length - a.min(b)) / self.pitch).floor() as i64;
             for period in first..=last {
                 for strip in 0..self.strips.len() {
+                    self.charge(256)?;
                     let rail = period * per_period + strip as i64;
                     let lo = self.rail_position(rail);
                     let hi = self.rail_position(rail + 1);
@@ -622,6 +692,7 @@ impl<'a> Builder<'a> {
     }
 
     fn triangle(&mut self, triangle: [u32; 3], face: u32) -> Result<(), MeshError> {
+        self.charge(128)?;
         if self.mesh.face_indices.len() == self.limit {
             return Err(MeshError::BudgetExceeded);
         }

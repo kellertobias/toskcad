@@ -40,8 +40,20 @@ pub struct PhillipsScrewMesh {
     source_volume: crate::phillips_drive::SourceVolumeBounds,
     literal_volume_mm3: [f64; 2],
     volume_difference_bound_mm3: f64,
+    work: usize,
+    handoffs: [usize; 3],
 }
 impl PhillipsScrewMesh {
+    /// New bounded-path logical cell, trace, copy and proof units. This is
+    /// neither a CPU instruction count nor an allocator/RSS measurement.
+    pub fn work_used(&self) -> usize {
+        self.work
+    }
+    /// Cumulative logical debits after Cutter refinement, before planar sewing,
+    /// and before connectivity/integration. They share the same total ledger.
+    pub fn work_handoffs(&self) -> [usize; 3] {
+        self.handoffs
+    }
     pub fn mesh(&self) -> &DisplayMesh {
         &self.mesh
     }
@@ -85,6 +97,33 @@ fn literal_volume(mesh: &DisplayMesh) -> I {
 }
 fn point(mesh: &DisplayMesh, id: u32) -> [f64; 3] {
     mesh.vertices.as_chunks::<3>().0[id as usize]
+}
+fn translated_normal(
+    old: [[f64; 3]; 3],
+    new: [[f64; 3]; 3],
+    reserve: f64,
+) -> Result<(), MeshError> {
+    let normal = |p: [[f64; 3]; 3]| {
+        let edges = [1, 2]
+            .map(|j| std::array::from_fn::<_, 3, _>(|i| I::point(p[j][i]) - I::point(p[0][i])));
+        std::array::from_fn::<_, 3, _>(|i| {
+            edges[0][(i + 1) % 3] * edges[1][(i + 2) % 3]
+                - edges[0][(i + 2) % 3] * edges[1][(i + 1) % 3]
+        })
+    };
+    let a = normal(old);
+    let b = normal(new);
+    let dot = (0..3).fold(I::point(0.), |s, i| s + a[i] * b[i]);
+    let cross = (0..3).fold(I::point(0.), |s, i| {
+        s + I::point(
+            (a[(i + 1) % 3] * b[(i + 2) % 3] - a[(i + 2) % 3] * b[(i + 1) % 3]).magnitude(),
+        )
+    });
+    let ratio = cross / dot;
+    if dot.lo <= 0. || !ratio.valid() || ratio.hi > reserve {
+        return Err(MeshError::UnresolvedBoundary);
+    }
+    Ok(())
 }
 // Preserve the source cap's exact edge uses, reversing only its boundary
 // orientation to obtain the cavity's CCW inner ring. Never sort/weld points.
@@ -205,6 +244,15 @@ fn top_annulus(
     }
     // This existing checked region API preserves input vertex indices and
     // literal coordinates; duplicates/intersecting constraints are refused.
+    // Prospective planar point pairs bound constrained insertion/flood units;
+    // reserve before delegating to the existing literal-index CDT contract.
+    shell.builder.charge(
+        vertices
+            .len()
+            .checked_mul(vertices.len())
+            .and_then(|n| n.checked_mul(16))
+            .ok_or(MeshError::BudgetExceeded)?,
+    )?;
     let region = crate::display::triangulate_region(points, &edges, 1)?;
     for tri in region.triangles {
         cancel(cancelled)?;
@@ -217,7 +265,42 @@ pub fn tessellate_phillips_screw(
     options: Tessellation,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<PhillipsScrewMesh, PhillipsMeshError> {
+    tessellate_phillips_screw_with_work(screw, options, 512_000_000, cancelled)
+}
+/// Same actual indexed producer with one caller-lowerable logical work ledger.
+/// Counts proposed phase cells (also skipped finite cells), traced Cutter
+/// refinement, emitted facets, prospective planar pairs and connectivity input.
+/// Existing triangle and delegated allocator contracts remain unchanged.
+pub fn tessellate_phillips_screw_with_work(
+    screw: &PhillipsScrew,
+    options: Tessellation,
+    maximum_work: usize,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<PhillipsScrewMesh, PhillipsMeshError> {
+    let work = super::super::Counted {
+        remaining: std::cell::Cell::new(maximum_work),
+        cancelled: std::cell::Cell::new(false),
+        interrupt: cancelled,
+    };
+    if maximum_work > 512_000_000 {
+        return Err(MeshError::InvalidOptions.into());
+    }
+    let result = phillips_counted(screw, options, cancelled, &work, maximum_work);
+    if work.cancelled.get() {
+        Err(PhillipsMeshError::Cancelled)
+    } else {
+        result
+    }
+}
+fn phillips_counted(
+    screw: &PhillipsScrew,
+    options: Tessellation,
+    cancelled: &dyn Fn() -> bool,
+    work: &super::super::Counted<'_>,
+    maximum_work: usize,
+) -> Result<PhillipsScrewMesh, PhillipsMeshError> {
     check_options(options)?;
+    work.step(32768)?;
     cancel(cancelled)?;
     let source_volume = screw.source_volume_bounds().map_err(source_error)?;
     let source = screw.cavity().source();
@@ -239,6 +322,7 @@ pub fn tessellate_phillips_screw(
     }
     let working = Tessellation {
         deflection: (options.deflection - reserve) / 2.,
+        angle: options.angle * 0.99,
         ..options
     };
     let radius = screw.profile().support([1., 0., 0.]);
@@ -247,11 +331,31 @@ pub fn tessellate_phillips_screw(
     if count * 2. > working.triangle_limit as f64 {
         return Err(MeshError::BudgetExceeded.into());
     }
-    let cavity = source
+    work.step(32768)?;
+    let atlas = source
         .surface_patches_with_cancel(cancelled)
-        .map_err(source_error)?
-        .boundary_mesh_with_cancel(working, cancelled)
         .map_err(source_error)?;
+    let traced = atlas
+        .boundary_mesh_with_mouth_trace(
+            working,
+            crate::phillips_drive::MouthTraceOptions {
+                maximum_work: work.remaining.get(),
+                maximum_bytes: 32 * 1024 * 1024,
+            },
+            cancelled,
+        )
+        .map_err(source_error)?;
+    work.step(traced.work_used())?;
+    let after_cavity = maximum_work - work.remaining.get();
+    let cavity = traced.boundary_mesh();
+    work.step(
+        cavity
+            .mesh()
+            .indices
+            .len()
+            .checked_mul(32)
+            .ok_or(MeshError::BudgetExceeded)?,
+    )?;
     let topology = source.boundary_topology().map_err(source_error)?;
     let cap = topology
         .faces()
@@ -259,14 +363,18 @@ pub fn tessellate_phillips_screw(
         .position(|f| f.source_identity() == FaceKey::Mouth)
         .expect("qualified source mouth") as u32;
     let ring = mouth_ring(cavity.mesh(), cap, witness)?;
-    let strips = phase_strips(screw.thread(), TAU / count, working)?;
+    let strips =
+        super::super::phase_strips_counted(screw.thread(), TAU / count, working, Some(work))?;
     let mut builder = Builder::new(screw.thread(), count as usize, strips, working);
+    builder.work = Some(work);
     builder.lower = screw.visible_thread_interval_mm()[0];
+    builder.insert_cap_stations()?;
     builder.build_wall()?;
     cancel(cancelled)?;
     let [mut shoulder, tip] = std::mem::take(&mut builder.caps);
     builder.add_cap(1, tip)?;
     Builder::sort_ring(&mut shoulder)?;
+    work.step(shoulder.len().saturating_mul(32))?;
     let faces = screw.faces();
     let face = |key| {
         faces
@@ -321,13 +429,25 @@ pub fn tessellate_phillips_screw(
         }
         cancel(cancelled)?;
         let key = topology.faces()[f as usize].source_identity();
+        work.step(256)?;
+        let original = tri.map(|id| point(cavity.mesh(), id));
         let tri = [tri[0], tri[2], tri[1]].map(|id| ids[id as usize].expect("used source vertex"));
+        let translated = tri.map(|id| point(&shell.builder.mesh, id));
+        // Reverse both copies when comparing: the material uses cavity sides
+        // with the opposite original winding. Translation gets a fresh literal
+        // facet-normal proof, including large-coordinate cancellation.
+        translated_normal(
+            [original[0], original[2], original[1]],
+            translated,
+            options.angle / 200.,
+        )?;
         shell.builder.triangle(tri, face(ScrewFace::Cavity(key)))?;
     }
     let inner: Vec<_> = ring
         .into_iter()
         .map(|id| ids[id as usize].expect("mouth vertex belongs to cavity side"))
         .collect();
+    let before_planar = maximum_work - work.remaining.get();
     top_annulus(
         &mut shell,
         &inner,
@@ -337,6 +457,13 @@ pub fn tessellate_phillips_screw(
     )?;
     cancel(cancelled)?;
     let mesh = builder.mesh;
+    let before_proof = maximum_work - work.remaining.get();
+    work.step(
+        mesh.indices
+            .len()
+            .saturating_mul(64)
+            .saturating_add(mesh.vertices.len()),
+    )?;
     let connectivity = manufacturing::certify(&mesh)?;
     let literal = literal_volume(&mesh);
     let source = source_volume.volume_mm3();
@@ -348,6 +475,8 @@ pub fn tessellate_phillips_screw(
         source_volume,
         literal_volume_mm3: [literal.lo, literal.hi],
         volume_difference_bound_mm3: difference.magnitude(),
+        work: maximum_work - work.remaining.get(),
+        handoffs: [after_cavity, before_planar, before_proof],
     })
 }
 

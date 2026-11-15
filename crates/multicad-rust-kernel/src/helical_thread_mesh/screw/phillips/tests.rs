@@ -68,6 +68,70 @@ fn options() -> Tessellation {
     }
 }
 #[test]
+fn counted_producer_charges_real_skipped_cells_and_all_source_handoffs() {
+    let source = fixture(0);
+    let q = Tessellation {
+        deflection: 0.1,
+        angle: 0.4,
+        triangle_limit: 100_000,
+    };
+    let total = std::cell::Cell::new(0);
+    let counted = || {
+        total.set(total.get() + 1);
+        false
+    };
+    let good = tessellate_phillips_screw_with_work(&source, q, 512_000_000, &counted).unwrap();
+    let used = good.work_used();
+    for work in good.work_handoffs() {
+        assert!(matches!(
+            tessellate_phillips_screw_with_work(&source, q, work, &|| false),
+            Err(PhillipsMeshError::Geometry(MeshError::BudgetExceeded))
+        ));
+    }
+    assert!(used > 100_000 && used < 512_000_000);
+    let exact = tessellate_phillips_screw_with_work(&source, q, used, &|| false).unwrap();
+    assert_eq!(exact.mesh(), good.mesh());
+    assert_eq!(exact.work_used(), used);
+    assert!(matches!(
+        tessellate_phillips_screw_with_work(&source, q, used - 1, &|| false),
+        Err(PhillipsMeshError::Geometry(MeshError::BudgetExceeded))
+    ));
+    assert!(matches!(
+        tessellate_phillips_screw_with_work(&source, q, 512_000_001, &|| false),
+        Err(PhillipsMeshError::Geometry(MeshError::InvalidOptions))
+    ));
+    for work in [0, 32767, 32768, 65536, used / 2] {
+        assert!(matches!(
+            tessellate_phillips_screw_with_work(&source, q, work, &|| false),
+            Err(PhillipsMeshError::Geometry(MeshError::BudgetExceeded))
+        ));
+    }
+    for at in [0, 1, 20, total.get() / 2, total.get() - 1] {
+        let calls = std::cell::Cell::new(0);
+        let cancel = || {
+            let n = calls.get();
+            calls.set(n + 1);
+            n == at
+        };
+        assert!(matches!(
+            tessellate_phillips_screw_with_work(&source, q, 512_000_000, &cancel),
+            Err(PhillipsMeshError::Cancelled)
+        ));
+    }
+}
+#[test]
+fn literal_cavity_translation_must_preserve_actual_facet_normals() {
+    let old = [[0., 0., 0.], [1., 0., 1.], [0., 1., 0.]];
+    let translated = old.map(|p| [p[0], p[1], p[2] + 1e30]);
+    assert!(matches!(
+        translated_normal(old, translated, 0.01),
+        Err(MeshError::UnresolvedBoundary)
+    ));
+    let reversed = [old[0], old[2], old[1]];
+    assert!(translated_normal(old, reversed, 0.01).is_err());
+    assert!(translated_normal(old, old, 0.01).is_ok());
+}
+#[test]
 fn actual_metric_cavity_sews_to_original_thread_head_with_shared_closed_indices() {
     for index in 0..6 {
         let source = fixture(index);
