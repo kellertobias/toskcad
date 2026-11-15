@@ -364,7 +364,31 @@ pub(in crate::drawing) fn project(
     }
 
     if !options.section_only {
-        let stops = arrange(&strands, eps);
+        let mut stops = arrange(&strands, eps);
+        // A path that pierces another member changes visibility where it
+        // enters or leaves that member's material, with no paper crossing.
+        for (strand, stops) in strands.iter().zip(&mut stops) {
+            let mut extra = Vec::new();
+            for pair in stops.windows(2) {
+                for (other, limits) in bounds.iter().enumerate() {
+                    if other != strand.member
+                        && (0..3).all(|k| {
+                            pair[0].1[k].min(pair[1].1[k]) <= limits[1][k] + eps
+                                && pair[0].1[k].max(pair[1].1[k]) >= limits[0][k] - eps
+                        })
+                    {
+                        pierce(&scene, strand, other, [pair[0].0, pair[1].0], &mut extra)?;
+                    }
+                }
+            }
+            if !extra.is_empty() {
+                stops.extend(extra.into_iter().map(|t| (t, strand.path.point(t))));
+                stops.sort_by(|a, b| a.0.total_cmp(&b.0));
+                stops.dedup_by(|b, a| {
+                    distance(paper(a.1), paper(b.1)).max((a.1[2] - b.1[2]).abs()) <= eps
+                });
+            }
+        }
         let mut pieces: Vec<Piece> = Vec::new();
         for (index, (strand, stops)) in strands.iter().zip(&stops).enumerate() {
             for pair in stops.windows(2) {
@@ -539,6 +563,68 @@ fn border_strands(path: &Arc<dyn Path>, limits: &[&Limit], flat: f64, eps: f64) 
             plane: None,
         })
         .collect()
+}
+
+/// Parameters within one arranged piece of a strand where the exact path
+/// enters or leaves another member's material. Between two paper events the
+/// member's sight intervals vary continuously along the piece, so the number
+/// of interval ends behind the path changes exactly at such a passage.
+fn pierce(
+    scene: &Scene<'_>,
+    strand: &Strand,
+    member: usize,
+    [from, to]: [f64; 2],
+    output: &mut Vec<f64>,
+) -> Result<(), GeometryError> {
+    // The number of interval ends behind the path, and the distance to the
+    // nearest one.
+    let rank = |t: f64| -> Result<(usize, f64), GeometryError> {
+        let p = strand.path.point(t);
+        let mut count = 0;
+        let mut gap = f64::INFINITY;
+        for end in scene.members[member]
+            .member
+            .sight([p[0], p[1]])?
+            .into_iter()
+            .flatten()
+        {
+            count += usize::from(end < p[2]);
+            gap = gap.min((end - p[2]).abs());
+        }
+        Ok((count, gap))
+    };
+    // Sample just inside the ends, where the interval structure may change.
+    const SAMPLES: usize = 16;
+    let span = to - from;
+    let at = |i: usize| match i {
+        0 => from + 1e-6 * span,
+        SAMPLES => to - 1e-6 * span,
+        _ => from + span * i as f64 / SAMPLES as f64,
+    };
+    let mut previous = (at(0), rank(at(0))?);
+    for i in 1..=SAMPLES {
+        let next = (at(i), rank(at(i))?);
+        // A path lying in the member's surface stays within the tolerance of
+        // one end and does not pass through it.
+        let resting = previous.1.1 <= scene.eps && next.1.1 <= scene.eps;
+        // Separate the passages until each bracket holds exactly one.
+        let mut pending = vec![(previous, next)];
+        while let Some(((a, ra), (b, rb))) = pending.pop() {
+            if ra.0 == rb.0 || resting {
+                continue;
+            }
+            let mid = 0.5 * (a + b);
+            if mid <= a || mid >= b || (b - a) <= 1e-13 * span.abs() {
+                output.push(mid);
+                continue;
+            }
+            let rm = rank(mid)?;
+            pending.push(((a, ra), (mid, rm)));
+            pending.push(((mid, rm), (b, rb)));
+        }
+        previous = next;
+    }
+    Ok(())
 }
 
 /// A path lying in a limiting plane is an edge of the retained solid only

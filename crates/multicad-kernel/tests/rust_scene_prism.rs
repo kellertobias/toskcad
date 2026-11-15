@@ -420,3 +420,93 @@ fn a_rim_tangent_to_an_occluding_bore_publishes_no_degenerate_arc() {
         assert!((visible[0].1 - exact).abs() < 1e-9, "{visible:?}");
     }
 }
+
+/// A box edge piercing a spur gear's body: the edge turns hidden exactly
+/// where it enters the root cylinder and visible again where it leaves it,
+/// although nothing crosses it in the paper at those points.
+#[test]
+fn an_edge_piercing_another_body_changes_visibility_at_the_exact_entry() {
+    use multicad_kernel::{GearSweep, InvoluteGear, RigidTransform};
+    let a = 20_f64.to_radians();
+    let pitch = 12.;
+    let gear = Solid::rust_spur_gear_named(
+        InvoluteGear {
+            hub: None,
+            teeth: 24,
+            pitch_radius_mm: pitch,
+            base_radius_mm: pitch * a.cos(),
+            tip_radius_mm: pitch + 1.,
+            root_radius_mm: pitch - 1.25,
+            root_fillet_radius_mm: 0.2,
+            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.tan() - a,
+            face_width_mm: 4.,
+            bore_radius_mm: 3.,
+            twist_rad_per_mm: 0.,
+            sweep: GearSweep::Spur,
+        },
+        EntityId::new(),
+        GeometryPolicy::default(),
+    )
+    .unwrap();
+    // x in [-4, 4], y in [-6, 6], z in [1.5, 9.5]: the lower front edge runs
+    // along x at y = -6, z = 1.5, inside the root cylinder (radius 10.75) and
+    // outside the bore.
+    let rational = |value: i64| Rational::new(value, 1).unwrap();
+    let block = Solid::rust_box(
+        EntityId::new().uuid_bits(),
+        [8, 12, 8].map(rational),
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+    )
+    .unwrap()
+    .transformed(RigidTransform {
+        rotation: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+        translation_mm: [-4., -6., 1.5],
+    })
+    .unwrap();
+    // Seen from (1, 1, 1): the vertical block edges at (4, -6) and (-4, 6)
+    // are silhouettes of the block. Each runs from z = 1.5 inside the gear
+    // body (radius 7.2 between bore and root) through the top cap at z = 4,
+    // far from any rim in the paper, and is visible above it.
+    let s = 0.5_f64.sqrt();
+    let t = (1_f64 / 6.).sqrt();
+    let [u, v] = [[s, -s, 0.], [t, t, -2. * t]];
+    let vectors = project_drawing(
+        &[&gear, &block].map(|solid| DrawingSolid { solid, hatch: None }),
+        DrawingProjection {
+            frame: PlaneFrame {
+                origin: [0.; 3],
+                u,
+                v,
+            },
+            hidden_lines: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let paper = |p: [f64; 3]| -> [f64; 2] {
+        [u, v].map(|axis| axis[0] * p[0] + axis[1] * p[1] + axis[2] * p[2])
+    };
+    for [x, y] in [[4., -6.], [-4., 6.]] {
+        for (role, [low, high]) in [
+            (VectorRole::Hidden, [1.5, 4.]),
+            (VectorRole::Visible, [4., 9.5]),
+        ] {
+            let [from, to] = [paper([x, y, low]), paper([x, y, high])];
+            let near = |p: [f64; 2], q: [f64; 2]| (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-9;
+            let found = vectors
+                .iter()
+                .filter(|vector| vector.source_index == 1 && vector.role == role)
+                .any(|vector| match vector.curve {
+                    VectorCurve::Line { a, b } => {
+                        (near(a, from) && near(b, to)) || (near(a, to) && near(b, from))
+                    }
+                    _ => false,
+                });
+            assert!(
+                found,
+                "{role:?} edge at ({x}, {y}) from z = {low} to {high}"
+            );
+        }
+    }
+}
