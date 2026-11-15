@@ -5,7 +5,10 @@ use super::{
     part21::{self, Entity, Value},
 };
 use std::{collections::BTreeMap, mem::size_of};
+mod material;
+mod moments;
 mod numeric;
+pub use material::{MaterialOptions, Occupied, Projection};
 pub use numeric::Scalar;
 mod parse;
 mod records;
