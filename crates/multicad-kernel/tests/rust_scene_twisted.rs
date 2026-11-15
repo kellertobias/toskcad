@@ -37,10 +37,10 @@ fn spec(sweep: GearSweep, twist: f64, hub: Option<GearHub>) -> InvoluteGear {
 }
 
 fn gear(spec: InvoluteGear) -> Solid {
-    let build = if spec.sweep == GearSweep::Helical {
-        Solid::rust_helical_gear_named
-    } else {
-        Solid::rust_herringbone_named
+    let build = match spec.sweep {
+        GearSweep::Helical => Solid::rust_helical_gear_named,
+        GearSweep::GappedChevron { .. } => Solid::rust_double_helical_named,
+        _ => Solid::rust_herringbone_named,
     };
     build(spec, EntityId::new(), GeometryPolicy::default()).unwrap()
 }
@@ -62,7 +62,19 @@ fn gears() -> Vec<(&'static str, InvoluteGear)> {
             "herringbone left hub",
             spec(GearSweep::Chevron, -0.04, hub()),
         ),
+        ("double-helical", spec(GAPPED, 0.05, None)),
+        ("double-helical left hub", spec(GAPPED, -0.04, hub())),
     ]
+}
+
+const GAPPED: GearSweep = GearSweep::GappedChevron { gap_mm: 1. };
+
+/// Axial length of each tooth band of a chevron.
+fn band(spec: &InvoluteGear) -> f64 {
+    match spec.sweep {
+        GearSweep::GappedChevron { gap_mm } => 0.5 * (WIDTH - gap_mm),
+        _ => 0.5 * WIDTH,
+    }
 }
 
 fn frames(origin: [f64; 3]) -> [(&'static str, PlaneFrame); 3] {
@@ -275,6 +287,10 @@ impl Oracle {
         if r < self.spec.root_radius_mm - 1e-3 {
             return true;
         }
+        // The central gap of a double-helical gear keeps the root core.
+        if z > band(&self.spec) && z < WIDTH - band(&self.spec) {
+            return r < self.spec.root_radius_mm;
+        }
         if r > self.spec.tip_radius_mm + 1e-3 {
             return false;
         }
@@ -328,7 +344,7 @@ fn phase(spec: &InvoluteGear, z: f64) -> f64 {
         * if spec.sweep == GearSweep::Helical {
             z
         } else {
-            z.min(WIDTH - z)
+            z.min(WIDTH - z).min(band(spec))
         }
 }
 
@@ -343,6 +359,7 @@ fn a_section_through_the_axis_follows_the_exact_flank_law() {
     for (name, spec) in [
         ("helical", spec(GearSweep::Helical, 0.05, None)),
         ("herringbone", spec(GearSweep::Chevron, -0.05, None)),
+        ("double-helical", spec(GAPPED, 0.05, None)),
     ] {
         let solid = gear(spec);
         let vectors = draw(
@@ -415,9 +432,10 @@ fn a_section_through_the_axis_follows_the_exact_flank_law() {
                         let bands: Vec<(f64, f64, [f64; 2])> = if spec.sweep == GearSweep::Helical {
                             vec![(0., k, [0., WIDTH])]
                         } else {
+                            let length = band(&spec);
                             vec![
-                                (0., k, [0., WIDTH / 2.]),
-                                (k * WIDTH, -k, [WIDTH / 2., WIDTH]),
+                                (0., k, [0., length]),
+                                (k * WIDTH, -k, [WIDTH - length, WIDTH]),
                             ]
                         };
                         for (offset, slope, range) in bands {
@@ -454,6 +472,7 @@ fn a_box_in_front_hides_exactly_the_covered_half_of_a_twisted_gear() {
     for (name, spec) in [
         ("helical", spec(GearSweep::Helical, 0.05, None)),
         ("herringbone hub", spec(GearSweep::Chevron, -0.04, hub())),
+        ("double-helical hub", spec(GAPPED, 0.05, hub())),
     ] {
         let solid = gear(spec);
         // The viewer of the side view is at negative Y.
@@ -579,6 +598,16 @@ fn every_occluding_contour_of_the_exact_solid_is_a_visible_curve() {
                 v: [t, t, -2. * t],
             },
             0.47,
+        ),
+        (
+            "double-helical oblique",
+            spec(GAPPED, 0.05, None),
+            PlaneFrame {
+                origin: [0., 0., 2.],
+                u: [s, -s, 0.],
+                v: [t, t, -2. * t],
+            },
+            0.43,
         ),
     ] {
         let solid = gear(spec);

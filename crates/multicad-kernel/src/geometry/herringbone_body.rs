@@ -263,6 +263,20 @@ impl HerringboneBody {
         self.geometry.is_gapped()
     }
 
+    /// Transverse twist of the lower tooth band in rad/mm.
+    pub(crate) fn twist_rad_per_mm(&self) -> f64 {
+        self.geometry.twist_rad_per_mm()
+    }
+
+    /// Lower and upper gap shoulder heights and the root-core radius of a
+    /// gapped double-helical gear.
+    pub(crate) fn gap_core(&self) -> Option<([f64; 2], f64)> {
+        Some((
+            self.geometry.shoulder_heights_mm()?,
+            self.geometry.root_radius_mm(),
+        ))
+    }
+
     pub(crate) fn section(&self, frame: PlaneFrame, z: f64, outward: f64) -> ReferenceFrame {
         let (sin, cos) = self.geometry.phase_at(z).sin_cos();
         ReferenceFrame {

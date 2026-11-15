@@ -4,7 +4,7 @@ use super::super::profile::merge;
 use super::super::*;
 use super::flank::{Flank, Shape, rotate};
 use super::solve::{Search, isolate};
-use super::{Band, Gear};
+use super::{Band, Gear, Region};
 use std::f64::consts::{PI, TAU};
 
 /// A line that stays within this fraction of the gear's size of a surface
@@ -122,20 +122,18 @@ impl Gear {
         false
     }
 
-    /// Whether a point in gear coordinates is strictly inside the solid.
+    /// Whether a point in gear coordinates is strictly inside the solid:
+    /// material on both sides of its axial level.
     pub(super) fn contains(&self, [x, y, z]: P3) -> bool {
         let radius = x.hypot(y);
-        if radius <= self.bore {
-            return false;
-        }
-        if z > 0. && z < self.height {
-            return self.contains_profile(rotate([x, y], -self.phase_at(z)));
-        }
-        self.extensions.iter().any(|extension| {
-            radius < extension.radius
-                && ((z > extension.z[0] && z < extension.z[1])
-                    || (z == extension.z[1 - extension.outer]))
-        })
+        radius > self.bore
+            && [-1., 1.]
+                .into_iter()
+                .all(|side| match self.material(z, side) {
+                    Some(Region::Profile(phase)) => self.contains_profile(rotate([x, y], -phase)),
+                    Some(Region::Disk(outer)) => radius < outer,
+                    None => false,
+                })
     }
 
     /// Parameters at which the line `base + t direction` can cross the
@@ -160,9 +158,7 @@ impl Gear {
         };
         let mut stops = Vec::new();
         if rise != 0. {
-            let mut levels = vec![self.axis[0], self.axis[1]];
-            levels.extend(self.bands.iter().flat_map(|band| band.z));
-            stops.extend(levels.into_iter().map(|z| (z - base[2]) / rise));
+            stops.extend(self.levels().into_iter().map(|z| (z - base[2]) / rise));
         }
         if transverse {
             // Where the line passes closest to the axis it can touch a
@@ -170,7 +166,7 @@ impl Gear {
             stops.push(nearest);
         }
         let mut radii = vec![self.bore];
-        radii.extend(self.extensions.iter().map(|extension| extension.radius));
+        radii.extend(self.cylinders.iter().map(|cylinder| cylinder.radius));
         radii.extend(self.flanks.iter().filter_map(Flank::coaxial));
         radii.sort_by(f64::total_cmp);
         radii.dedup();

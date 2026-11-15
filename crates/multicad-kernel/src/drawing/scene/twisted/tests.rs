@@ -42,10 +42,10 @@ pub(super) fn pose() -> RigidTransform {
 }
 
 pub(super) fn solid(spec: InvoluteGear, placed: bool) -> Solid {
-    let build = if spec.sweep == GearSweep::Helical {
-        Solid::rust_helical_gear_named
-    } else {
-        Solid::rust_herringbone_named
+    let build = match spec.sweep {
+        GearSweep::Helical => Solid::rust_helical_gear_named,
+        GearSweep::GappedChevron { .. } => Solid::rust_double_helical_named,
+        _ => Solid::rust_herringbone_named,
     };
     let solid = build(spec, EntityId::new(), Default::default()).unwrap();
     if placed {
@@ -138,13 +138,30 @@ impl Oracle {
         }
     }
 
+    fn gap(&self) -> f64 {
+        match self.spec.sweep {
+            GearSweep::GappedChevron { gap_mm } => gap_mm,
+            _ => 0.,
+        }
+    }
+
+    /// Length of each tooth band of a chevron.
+    fn band(&self) -> f64 {
+        0.5 * (self.spec.face_width_mm - self.gap())
+    }
+
+    /// Inside the central gap of a double-helical gear.
+    fn in_gap(&self, z: f64) -> bool {
+        self.gap() > 0. && z > self.band() && z < self.spec.face_width_mm - self.band()
+    }
+
     pub(super) fn phase(&self, z: f64) -> f64 {
         let h = self.spec.face_width_mm;
         self.spec.twist_rad_per_mm
             * if self.spec.sweep == GearSweep::Helical {
                 z
             } else {
-                z.min(h - z)
+                z.min(h - z).min(self.band())
             }
     }
 
@@ -187,6 +204,10 @@ impl Oracle {
             return false;
         }
         if z > 0. && z < self.spec.face_width_mm {
+            // The central gap of a double-helical gear keeps the root core.
+            if self.in_gap(z) {
+                return r < self.spec.root_radius_mm;
+            }
             let (sin, cos) = (-self.phase(z)).sin_cos();
             return self.in_profile([x * cos - y * sin, x * sin + y * cos]);
         }
@@ -223,6 +244,7 @@ pub(super) fn cases(views: &[&str]) -> Vec<Case> {
     for (sweep, name) in [
         (GearSweep::Helical, "helical"),
         (GearSweep::Chevron, "herringbone"),
+        (GearSweep::GappedChevron { gap_mm: 1. }, "double-helical"),
     ] {
         for (twist, bore, hub, placed) in [
             (0.05, 3., false, false),
@@ -382,7 +404,10 @@ impl Oracle {
     fn normal(&self, [x, y, z]: P3) -> P3 {
         let r = x.hypot(y);
         let radial = [x / r, y / r, 0.];
-        if !(z > 0. && z < self.spec.face_width_mm) || (r - self.spec.bore_radius_mm).abs() < 1e-6 {
+        if !(z > 0. && z < self.spec.face_width_mm)
+            || (r - self.spec.bore_radius_mm).abs() < 1e-6
+            || self.in_gap(z)
+        {
             return radial;
         }
         let (sin, cos) = (-self.phase(z)).sin_cos();
@@ -520,7 +545,8 @@ fn outlines_are_complete_on_every_flank() {
         let bands: Vec<[f64; 2]> = if case.oracle.spec.sweep == GearSweep::Helical {
             vec![[0., h]]
         } else {
-            vec![[0., 0.5 * h], [0.5 * h, h]]
+            let band = case.oracle.band();
+            vec![[0., band], [h - band, h]]
         };
         const N: usize = 20;
         for &edge in &case.oracle.edges {
@@ -671,6 +697,24 @@ fn section_cases() -> Vec<Case> {
             3.,
             false,
             false,
+            "oblique",
+        ),
+        (
+            GearSweep::GappedChevron { gap_mm: 1. },
+            "double-helical",
+            0.05,
+            3.,
+            true,
+            false,
+            "side",
+        ),
+        (
+            GearSweep::GappedChevron { gap_mm: 1. },
+            "double-helical",
+            -0.05,
+            0.,
+            false,
+            true,
             "oblique",
         ),
     ] {

@@ -3,7 +3,7 @@ use super::super::paths::{Lift, ProfilePath, Segment, add, scaled};
 use super::super::*;
 use super::flank::rotate;
 use super::trace::trace;
-use super::{Gear, Level, Traced};
+use super::{EndFace, Gear, Level, Region, Traced};
 use multicad_rust_kernel::spur_gear::Edge;
 use std::f64::consts::TAU;
 
@@ -26,17 +26,14 @@ fn transverse(gear: &Gear, offset: f64) -> Vec<Loop> {
     let behind = level - rise.signum() * 2. * gear.tolerance;
     let mut rings: Vec<Vec<Edge>> = Vec::new();
     let mut phase = 0.;
-    if behind > 0. && behind < gear.height {
-        phase = gear.phase_at(level.clamp(0., gear.height));
-        rings.push(gear.flanks.iter().map(|flank| flank.edge).collect());
-    } else if let Some(extension) = gear
-        .extensions
-        .iter()
-        .find(|extension| behind > extension.z[0] && behind < extension.z[1])
-    {
-        rings.push(vec![Gear::circle(extension.radius, false)]);
-    } else {
-        return Vec::new();
+    match gear.material(behind, -rise.signum()) {
+        Some(Region::Profile(_)) => {
+            let ends = [gear.bands[0].z[0], gear.bands[gear.bands.len() - 1].z[1]];
+            phase = gear.phase_at(level.clamp(ends[0], ends[1]));
+            rings.push(gear.flanks.iter().map(|flank| flank.edge).collect());
+        }
+        Some(Region::Disk(radius)) => rings.push(vec![Gear::circle(radius, false)]),
+        None => return Vec::new(),
     }
     if gear.bore > 0. {
         rings.push(vec![Gear::circle(gear.bore, true)]);
@@ -123,8 +120,8 @@ pub(super) fn section(gear: &Gear, depth: f64) -> Result<Vec<Loop>, GeometryErro
     if gear.bore > 0. {
         cylinders.push((gear.bore, gear.axis, -1.));
     }
-    for extension in &gear.extensions {
-        cylinders.push((extension.radius, extension.z, 1.));
+    for cylinder in &gear.cylinders {
+        cylinders.push((cylinder.radius, cylinder.z, 1.));
     }
     for (radius, z, outward) in cylinders {
         let normal_at = |angle: f64| {
@@ -181,42 +178,23 @@ pub(super) fn section(gear: &Gear, depth: f64) -> Result<Vec<Loop>, GeometryErro
     }
 
     // End faces: chords of the plane's line in each transverse face.
-    let inner = |z: f64| {
-        gear.extensions
-            .iter()
-            .find(|extension| extension.z[1 - extension.outer] == z)
-            .map_or(gear.bore, |extension| extension.radius)
-    };
-    // Axial level, outward axial sign, phase, inner radius, outer radius.
-    let mut faces: Vec<(f64, f64, f64, f64, Option<f64>)> = vec![
-        (0., -1., gear.phase_at(0.), inner(0.), None),
-        (
-            gear.height,
-            1.,
-            gear.phase_at(gear.height),
-            inner(gear.height),
-            None,
-        ),
-    ];
-    for extension in &gear.extensions {
-        faces.push((
-            extension.z[extension.outer],
-            if extension.outer == 1 { 1. } else { -1. },
-            0.,
-            gear.bore,
-            Some(extension.radius),
-        ));
-    }
-    for (z, outward, phase, inner, outer) in faces {
+    for EndFace {
+        z,
+        outward,
+        phase,
+        inner,
+        outer,
+    } in gear.end_faces()
+    {
         let line = (offset - rise * z) / slope;
         let base = [line * along[0], line * along[1], z];
         let direction = [across[0], across[1], 0.];
         let inside = |p: P3| {
             let radius = p[0].hypot(p[1]);
             radius > inner
-                && match outer {
-                    Some(outer) => radius < outer,
-                    None => gear.contains_profile(rotate([p[0], p[1]], -phase)),
+                && match phase {
+                    Some(phase) => gear.contains_profile(rotate([p[0], p[1]], -phase)),
+                    None => radius < outer,
                 }
         };
         let normal = gear.frame.vector([0., 0., outward]);
