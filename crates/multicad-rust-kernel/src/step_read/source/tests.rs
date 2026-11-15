@@ -46,6 +46,9 @@ fn mixed_reader_preserves_analytic_receipts_and_actual_finite_source_ownership()
     let mut analytic = 0;
     for member in members {
         match member {
+            SourceImport::LiteralNpt(_) => {
+                panic!("this actual fixture contains only radial and analytic members")
+            }
             SourceImport::Radial(owned) => {
                 retained += 1;
                 let restored = material(*owned);

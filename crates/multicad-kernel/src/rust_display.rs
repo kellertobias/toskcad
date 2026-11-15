@@ -302,6 +302,9 @@ pub(crate) fn planar_loops(solid: &Solid, face: u32) -> Vec<Vec<(u32, bool)>> {
     if let Some(body) = solid.external_npt_stock_body() {
         return body.planar_loops(face);
     }
+    if let Some(body) = solid.literal_npt_body() {
+        return body.planar_loops(face);
+    }
     if let Some(body) = solid.clipped_npt_body() {
         return body.planar_loops(face);
     }

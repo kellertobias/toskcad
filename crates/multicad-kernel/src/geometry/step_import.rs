@@ -194,6 +194,9 @@ impl Solid {
                     let (readback, imported) = *value;
                     Self::verified_step_member(&readback, imported, feature, policy)
                 }
+                step_read::SourceImport::LiteralNpt(source) => {
+                    Self::from_literal_npt_source(*source, feature, policy, None)
+                }
                 step_read::SourceImport::Radial(owned) => {
                     let boundary = Self::qualify_imported_radial(*owned, policy)?;
                     Self::from_rust_radial_boundary(boundary, feature, policy)

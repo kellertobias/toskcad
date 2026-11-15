@@ -498,9 +498,29 @@ pub(super) fn rebuild(
 ) -> Result<Solid, GeometryError> {
     let mut occurrences = BTreeMap::<ContentHash, u32>::new();
     let mut solids = Vec::with_capacity(members.len());
+    // Retained-source construction has a separate bounded packet scope.
+    // Remaining sources coexist with each newly prepared immutable plan;
+    // reserve one complete per-body workspace before entering its phase.
+    const LITERAL_PACKET_BYTES: usize = 512 * 1024 * 1024;
+    let mut literal_resident = members.iter().try_fold(0usize, |sum, member| {
+        let size = match member {
+            step_read::SourceImport::LiteralNpt(source) => source.retained_budget_bytes(),
+            _ => 0,
+        };
+        sum.checked_add(size)
+            .filter(|n| *n <= LITERAL_PACKET_BYTES)
+            .ok_or_else(|| {
+                error(
+                    IMPORT,
+                    GeometryErrorKind::Limit,
+                    "Retained STEP packet exceeds its resident budget",
+                )
+            })
+    })?;
     enum Qualified {
         Analytic(Box<(Readback, ImportSolid)>),
         Radial(Box<multicad_rust_kernel::radial_tensor::RadialBoundary>),
+        LiteralNpt(Box<multicad_rust_kernel::step_read::npt_stock::OwnedMaterial>),
     }
     for member in members {
         let (signature, member) = match member {
@@ -508,6 +528,19 @@ pub(super) fn rebuild(
                 member_signature(&value.0, &value.1),
                 Qualified::Analytic(value),
             ),
+            step_read::SourceImport::LiteralNpt(source) => {
+                if literal_resident > LITERAL_PACKET_BYTES - 64 * 1024 * 1024 {
+                    return Err(error(
+                        IMPORT,
+                        GeometryErrorKind::Limit,
+                        "Retained STEP packet has no construction workspace",
+                    ));
+                }
+                (
+                    super::super::literal_npt_body::source_signature(&source)?,
+                    Qualified::LiteralNpt(source),
+                )
+            }
             step_read::SourceImport::Radial(owned) => {
                 let boundary = Solid::qualify_imported_radial(*owned, policy)?;
                 (
@@ -528,6 +561,16 @@ pub(super) fn rebuild(
             Qualified::Analytic(value) => {
                 let (readback, imported) = *value;
                 Solid::verified_step_member(&readback, imported, child, policy)?
+            }
+            Qualified::LiteralNpt(source) => {
+                let original_bytes = source.retained_budget_bytes();
+                let solid = Solid::from_literal_npt_source(*source, child, policy, None)?;
+                let actual = solid
+                    .rust_literal_npt_runtime_evidence()
+                    .expect("literal constructor");
+                literal_resident += actual.resident_budget_bytes - original_bytes;
+                debug_assert!(literal_resident <= LITERAL_PACKET_BYTES);
+                solid
             }
             Qualified::Radial(boundary) => {
                 Solid::from_rust_radial_boundary(*boundary, child, policy)?

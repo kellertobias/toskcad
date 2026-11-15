@@ -69,6 +69,9 @@ pub struct LiteralMesh {
     embedding: LiteralEmbeddingProof,
 }
 impl LiteralMesh {
+    pub fn into_mesh(self) -> DisplayMesh {
+        self.candidate.mesh
+    }
     pub fn candidate(&self) -> &LiteralMeshCandidate {
         &self.candidate
     }

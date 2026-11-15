@@ -367,3 +367,29 @@ fn actual_tilted_literal_mesh() {
     let receipt = source.mesh_candidate(Default::default(), None).unwrap();
     receipt.certify_embedding(None).unwrap();
 }
+#[test]
+fn actual_mesh_wrapper_cannot_bypass_preparation_resources_or_cancellation() {
+    let source = source(false, false);
+    for options in [
+        LiteralMeshOptions {
+            maximum_work: 1,
+            ..Default::default()
+        },
+        LiteralMeshOptions {
+            maximum_bytes: 1,
+            ..Default::default()
+        },
+    ] {
+        assert_eq!(
+            source.mesh_candidate(options, None).err(),
+            Some(Error::Limit)
+        );
+    }
+    assert_eq!(
+        source
+            .mesh_candidate(Default::default(), Some(&|| true))
+            .err(),
+        Some(Error::Cancelled)
+    );
+    assert!(source.sample_vertex(0, Default::default(), None).is_ok());
+}

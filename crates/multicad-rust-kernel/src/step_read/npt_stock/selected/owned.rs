@@ -1,5 +1,6 @@
 //! Immutable actual literal geometry. No parser borrow or authored recipe.
 use super::*;
+mod identity;
 mod measure;
 pub use measure::{FaceMeasure, FaceMeasureOptions};
 mod curves;
@@ -29,6 +30,7 @@ struct StoredRecord {
 }
 struct Source {
     literal: String,
+    mapping_identity: Vec<u8>,
     records: Vec<StoredRecord>,
     components: Vec<Range<usize>>,
     points: Vec<StoredPoint>,
@@ -54,6 +56,7 @@ struct Source {
     retained: usize,
     peak: usize,
     document_bytes: usize,
+    document_work: usize,
 }
 fn bounds(i: I) -> [f64; 2] {
     [i.lo, i.hi]
@@ -76,6 +79,11 @@ fn copy<T: Copy>(values: &[T], budget: &mut Budget<'_>) -> Result<Vec<T>> {
     Ok(out)
 }
 impl OwnedMaterial {
+    /// Canonical original operator/source-frame graph, with exact numeric
+    /// spellings and canonical reference indices; no rounded-matrix identity.
+    pub fn original_mapping_identity(&self) -> &[u8] {
+        &self.0.mapping_identity
+    }
     pub fn member(&self) -> Member {
         self.0.member
     }
@@ -172,6 +180,9 @@ impl OwnedMaterial {
     pub fn construction_query_peak_bytes(&self) -> usize {
         self.0.peak
     }
+    pub fn original_document_work_used(&self) -> usize {
+        self.0.document_work
+    }
     pub fn original_document_budget_bytes(&self) -> usize {
         self.0.document_bytes
     }
@@ -253,6 +264,7 @@ impl Selected<'_, '_> {
             + 2 * size_of::<usize>()
             + 2 * std::mem::align_of::<usize>();
         hold(&mut budget, fixed)?;
+        let mapping_identity = identity::capture(self, &mut budget)?;
         let arena = self.parsed.document.records();
         let mut total = 0usize;
         let mut count = 0usize;
@@ -371,6 +383,7 @@ impl Selected<'_, '_> {
         budget.step(1)?;
         let retained = fixed
             + literal.capacity()
+            + mapping_identity.capacity()
             + records.capacity() * size_of::<StoredRecord>()
             + components.capacity() * size_of::<Range<usize>>()
             + points.capacity() * size_of::<StoredPoint>()
@@ -389,6 +402,7 @@ impl Selected<'_, '_> {
                 .sum::<usize>();
         Ok(OwnedMaterial(Arc::new(Source {
             literal,
+            mapping_identity,
             records,
             components,
             points,
@@ -414,6 +428,7 @@ impl Selected<'_, '_> {
             retained,
             peak: budget.peak,
             document_bytes: self.parsed.document.retained_budget_bytes(),
+            document_work: self.parsed.document.work_used(),
         })))
     }
 }

@@ -210,7 +210,7 @@ pub(super) fn read_members_retaining_arena<'input, T>(
     Ok((entities, members))
 }
 
-fn inspect_flat_entities<'a>(
+pub(super) fn inspect_flat_entities<'a>(
     entities: impl Iterator<Item = &'a Entity<'a>>,
 ) -> Result<(usize, bool)> {
     let mut count = 0;
@@ -233,6 +233,25 @@ fn inspect_flat_entities<'a>(
     Ok((count, ellipse || cylinder))
 }
 
+pub(super) fn inspect_literal_entities<'a>(
+    entities: impl Iterator<Item = &'a Entity<'a>>,
+) -> Result<(usize, bool)> {
+    let mut count = 0;
+    let mut candidate = false;
+    for entity in entities {
+        if matches!(
+            entity.name,
+            "REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION"
+                | "CONTEXT_DEPENDENT_SHAPE_REPRESENTATION"
+                | "NEXT_ASSEMBLY_USAGE_OCCURRENCE"
+        ) {
+            return Err(ReadError::Unsupported);
+        }
+        count += usize::from(topology(entity.name));
+        candidate |= matches!(entity.name, "ELLIPSE" | "CYLINDRICAL_SURFACE");
+    }
+    Ok((count, candidate))
+}
 fn topology(name: &str) -> bool {
     matches!(
         name,
@@ -255,7 +274,7 @@ fn topology(name: &str) -> bool {
     )
 }
 
-fn claim_topology(
+pub(super) fn claim_topology(
     shell: &Shell<'_, '_>,
     solid: u32,
     owners: &mut BTreeMap<u32, u32>,

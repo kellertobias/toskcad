@@ -18,6 +18,9 @@ pub(crate) mod bore_treatment;
 pub use bore_treatment::ConicalSeatGeometry;
 pub(crate) mod circular_pocket_body;
 mod clipped_npt_body;
+mod literal_npt_body;
+use literal_npt_body::LiteralNptBody;
+pub use literal_npt_body::LiteralNptRuntimeEvidence;
 mod external_npt_stock_body;
 mod line8_nut_body;
 use external_npt_stock_body::ExternalNptStockBody;
@@ -729,6 +732,7 @@ enum SolidBody {
     CosmeticFastener(Rc<CosmeticFastenerBody>, PlaneFrame),
     CosmeticProfiled(Rc<CosmeticProfiledBody>, PlaneFrame),
     ClippedNpt(Rc<ClippedNptBody>),
+    LiteralNpt(Rc<LiteralNptBody>),
     ExternalNptStock(Rc<ExternalNptStockBody>),
     Line8Nut(Rc<Line8NutBody>),
     Helical(Rc<HelicalBody>, PlaneFrame),
@@ -1185,6 +1189,7 @@ impl Solid {
     pub fn share(&self) -> Result<Self, GeometryError> {
         let body = match &self.body {
             SolidBody::ClippedNpt(body) => SolidBody::ClippedNpt(Rc::clone(body)),
+            SolidBody::LiteralNpt(body) => SolidBody::LiteralNpt(Rc::clone(body)),
             SolidBody::ExternalNptStock(body) => SolidBody::ExternalNptStock(Rc::clone(body)),
             SolidBody::Line8Nut(body) => SolidBody::Line8Nut(Rc::clone(body)),
             SolidBody::Prism(prism, frame) => SolidBody::Prism(Rc::clone(prism), *frame),
@@ -1540,6 +1545,13 @@ impl Solid {
                 SolidBody::ExternalNptStock(body) => {
                     SolidBody::ExternalNptStock(Rc::new(body.transformed(transform, self.policy)?))
                 }
+                SolidBody::LiteralNpt(..) => {
+                    return Err(error(
+                        "literal NPT placement",
+                        GeometryErrorKind::Unsupported,
+                        "Actual placed-source correspondence is not yet qualified",
+                    ));
+                }
                 SolidBody::ClippedNpt(body) => {
                     SolidBody::ClippedNpt(Rc::new(body.transformed(transform, self.policy)?))
                 }
@@ -1872,6 +1884,9 @@ impl Solid {
         if let Some(body) = self.external_npt_stock_body() {
             return Ok(body.volume_mm3());
         }
+        if let Some(body) = self.literal_npt_body() {
+            return Ok(body.volume_mm3());
+        }
         if let Some(body) = self.clipped_npt_body() {
             return Ok(body.volume_mm3());
         }
@@ -2017,6 +2032,9 @@ impl Solid {
             return Ok(body.bounds());
         }
         if let Some(body) = self.external_npt_stock_body() {
+            return Ok(body.bounds());
+        }
+        if let Some(body) = self.literal_npt_body() {
             return Ok(body.bounds());
         }
         if let Some(body) = self.clipped_npt_body() {
@@ -2217,6 +2235,9 @@ impl Solid {
         if let Some(body) = self.external_npt_stock_body() {
             return Ok(body.faces());
         }
+        if let Some(body) = self.literal_npt_body() {
+            return body.faces();
+        }
         if let Some(body) = self.clipped_npt_body() {
             return Ok(body.faces());
         }
@@ -2378,6 +2399,7 @@ impl Solid {
                 crate::rust_display::placed_mesh(body.cut.mesh(rust_options), *frame, false)
             }
             SolidBody::ClippedNpt(body) => body.mesh(rust_options),
+            SolidBody::LiteralNpt(body) => body.mesh(rust_options),
             SolidBody::ExternalNptStock(body) => body.mesh(rust_options),
             SolidBody::Line8Nut(body) => body.mesh(rust_options),
             SolidBody::CosmeticProfiled(body, frame) => match usage {
@@ -2499,6 +2521,7 @@ impl Solid {
             || self.internal_thread_treatment_body().is_some()
             || self.repaired_phillips_body().is_some()
             || self.clipped_npt_body().is_some()
+            || self.literal_npt_body().is_some()
             || self.external_npt_stock_body().is_some()
             || self.line8_nut_body().is_some()
             || self.wood_insert_body().is_some()
@@ -2520,6 +2543,9 @@ impl Solid {
             return body.manufacturing(Self::rust_mesh_options(options));
         }
         if let Some(body) = self.external_npt_stock_body() {
+            return body.manufacturing(Self::rust_mesh_options(options));
+        }
+        if let Some(body) = self.literal_npt_body() {
             return body.manufacturing(Self::rust_mesh_options(options));
         }
         if let Some(body) = self.clipped_npt_body() {
@@ -2797,6 +2823,9 @@ impl Solid {
         if let Some(body) = self.external_npt_stock_body() {
             return body.sample_edge(ordinal, options);
         }
+        if let Some(body) = self.literal_npt_body() {
+            return body.sample_edge(ordinal, options);
+        }
         if let Some(body) = self.clipped_npt_body() {
             return body.sample_edge(ordinal, options);
         }
@@ -2865,6 +2894,7 @@ impl Solid {
             SolidBody::CosmeticFastener(body, _) => body.feature,
             SolidBody::CosmeticProfiled(body, _) => body.feature,
             SolidBody::ClippedNpt(body) => body.feature,
+            SolidBody::LiteralNpt(body) => body.feature,
             SolidBody::ExternalNptStock(body) => body.feature,
             SolidBody::Line8Nut(body) => body.feature,
             SolidBody::Linear(body, _) => body.feature,
@@ -2941,7 +2971,8 @@ impl Solid {
             SolidBody::WoodInsert(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::ClippedNpt(body) => body.supports_step(self.policy),
             SolidBody::Hanger(body, frame) => body.supports_step(*frame, self.policy),
-            SolidBody::Line8Nut(..)
+            SolidBody::LiteralNpt(..)
+            | SolidBody::Line8Nut(..)
             | SolidBody::ExternalNptStock(..)
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
@@ -3160,7 +3191,8 @@ impl Solid {
             SolidBody::WoodInsert(body, frame) => body.append_step(writer, *frame, self.policy),
             SolidBody::ClippedNpt(body) => body.append_step(writer, self.policy),
             SolidBody::Hanger(body, frame) => body.append_step(writer, *frame, self.policy),
-            SolidBody::Line8Nut(..)
+            SolidBody::LiteralNpt(..)
+            | SolidBody::Line8Nut(..)
             | SolidBody::ExternalNptStock(..)
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
