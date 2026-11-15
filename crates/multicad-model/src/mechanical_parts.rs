@@ -411,11 +411,19 @@ pub(crate) fn build_rust(
     {
         crate::threads::validate_rust_family(feature, thread.family)?;
     }
-    match source
+    let resolved = source
         .parameters
         .resolve(evaluated)
-        .map_err(|cause| error(Some(feature), cause))?
-    {
+        .map_err(|cause| error(Some(feature), cause))?;
+    build_rust_resolved(feature, resolved, policy)
+}
+
+pub(crate) fn build_rust_resolved(
+    feature: EntityId,
+    resolved: ResolvedMechanicalPart,
+    policy: GeometryPolicy,
+) -> Result<Solid, ModelError> {
+    match resolved {
         ResolvedMechanicalPart::CustomConnection { parameters } => {
             custom_connection::build_rust(feature, *parameters, policy)
         }

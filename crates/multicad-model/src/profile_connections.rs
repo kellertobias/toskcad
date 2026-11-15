@@ -412,6 +412,7 @@ impl Builder<'_> {
         &self,
         kind: ProfileConnectionKind,
         frame: ReferenceFrame,
+        backend: GeometryBackend,
     ) -> Result<(Solid, ResolvedThread, ReferenceFrame), ModelError> {
         let universal = kind == ProfileConnectionKind::UniversalEnd;
         let height = 4.4;
@@ -478,8 +479,16 @@ impl Builder<'_> {
             unreachable!()
         };
         let thread = thread.as_ref().clone();
-        let solid =
-            crate::mechanical_parts::build_resolved(self.feature, resolved, self.inputs.policy)?;
+        let solid = match backend {
+            GeometryBackend::Rust => crate::mechanical_parts::build_rust_resolved(
+                self.feature,
+                resolved,
+                self.inputs.policy,
+            ),
+            GeometryBackend::OpenCascade => {
+                crate::mechanical_parts::build_resolved(self.feature, resolved, self.inputs.policy)
+            }
+        }?;
         let placed = self.checked(solid.transformed(placement(shift(frame, neck))))?;
         Ok((placed, thread, shift(frame, neck + runout)))
     }
@@ -516,7 +525,8 @@ impl Builder<'_> {
             size.length_mm,
             self.inputs.policy,
         ))?;
-        let (screw, external, external_start) = self.screw(kind, frame)?;
+        let (screw, external, external_start) =
+            self.screw(kind, frame, GeometryBackend::OpenCascade)?;
         let params = ThreadParameters {
             length: length(NUT_THREAD_MM),
             radial_allowance: length(THREAD_RADIAL_CLEARANCE_MM),
@@ -614,9 +624,9 @@ pub(crate) fn build(
                         "Rust profile connections do not yet support the intersecting barrel screw passage and head seat",
                     )),
                 },
-                ProfilePartRole::Screw(_) => Err(builder.fail(
-                    "Rust profile connections do not yet support the required modeled screw head and socket",
-                )),
+                ProfilePartRole::Screw(index) => builder
+                    .screw(request.kind, frames.fasteners[index], backend)
+                    .map(|result| result.0),
                 ProfilePartRole::Nut(_) => Err(builder.fail(
                     "Rust profile connections do not yet support the modeled tap and crown relief of the Line 8 nut",
                 )),
@@ -640,7 +650,11 @@ pub(crate) fn build(
                 builder.plate(request.kind, frames)?
             }
         }
-        ProfilePartRole::Screw(index) => builder.screw(request.kind, frames.fasteners[index])?.0,
+        ProfilePartRole::Screw(index) => {
+            builder
+                .screw(request.kind, frames.fasteners[index], backend)?
+                .0
+        }
         ProfilePartRole::Nut(index) => {
             builder.nut(request.kind, request.nut, frames.fasteners[index])?
         }
