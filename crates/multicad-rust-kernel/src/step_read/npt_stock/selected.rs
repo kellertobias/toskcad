@@ -7,7 +7,8 @@ mod placement;
 pub use owned::{
     FaceMeasure, FaceMeasureOptions, LiteralEdgePolyline, LiteralEmbeddingProof,
     LiteralGeometryOptions, LiteralGeometryPlan, LiteralMesh, LiteralMeshCandidate,
-    LiteralMeshOptions, LiteralVertexSample, Location, MaterialQuery, OwnedMaterial, QueryOptions,
+    LiteralMeshOptions, LiteralOccurrencePlacement, LiteralTransform, LiteralVertexSample,
+    Location, MaterialQuery, OwnedMaterial, PlacedLiteralMesh, QueryOptions,
 };
 pub use placement::Placement;
 pub struct Selected<'document, 'input> {

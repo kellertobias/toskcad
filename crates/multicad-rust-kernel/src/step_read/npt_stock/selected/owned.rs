@@ -1,6 +1,8 @@
 //! Immutable actual literal geometry. No parser borrow or authored recipe.
 use super::*;
 mod identity;
+mod occurrence;
+pub use occurrence::{LiteralOccurrencePlacement, LiteralTransform};
 mod measure;
 pub use measure::{FaceMeasure, FaceMeasureOptions};
 mod curves;
@@ -9,7 +11,7 @@ mod mesh;
 mod query;
 pub use mesh::{
     LiteralEmbeddingProof, LiteralGeometryOptions, LiteralGeometryPlan, LiteralMesh,
-    LiteralMeshCandidate, LiteralMeshOptions,
+    LiteralMeshCandidate, LiteralMeshOptions, PlacedLiteralMesh,
 };
 pub use query::{Location, MaterialQuery, QueryOptions};
 use std::{ops::Range, sync::Arc};

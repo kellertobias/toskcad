@@ -8,6 +8,8 @@ mod embedding;
 pub use embedding::LiteralEmbeddingProof;
 mod hessian;
 mod normal;
+mod occurrence;
+pub use occurrence::PlacedLiteralMesh;
 mod plan;
 pub use plan::{LiteralGeometryOptions, LiteralGeometryPlan};
 mod sheared;

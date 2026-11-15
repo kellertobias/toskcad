@@ -11,6 +11,12 @@ use std::{
     cell::{Cell, RefCell},
     collections::BTreeSet,
 };
+mod placement;
+#[derive(Clone, Copy)]
+struct OriginalFace {
+    area: [f64; 2],
+    center: [[f64; 2]; 3],
+}
 const BYTES: usize = 64 * 1024 * 1024;
 const OVERHEAD: usize = 1024 * 1024;
 #[derive(Clone, Copy)]
@@ -50,10 +56,11 @@ pub struct LiteralNptRuntimeEvidence {
 pub(crate) struct LiteralNptBody {
     pub(super) feature: EntityId,
     source: read::OwnedMaterial,
-    plan: read::LiteralGeometryPlan,
+    plan: Rc<read::LiteralGeometryPlan>,
+    occurrence: Option<read::LiteralOccurrencePlacement>,
     vertices: Vec<[f64; 3]>,
     policy: GeometryPolicy,
-    faces: RefCell<Option<Vec<Face>>>,
+    faces: Rc<RefCell<Option<Vec<OriginalFace>>>>,
     display: RefCell<Option<CachedDisplay>>,
     last_mesh: Cell<Option<(usize, usize)>>,
     last_actual: Cell<Option<usize>>,
@@ -235,10 +242,11 @@ impl Solid {
             body: SolidBody::LiteralNpt(Rc::new(LiteralNptBody {
                 feature,
                 source,
-                plan,
+                plan: Rc::new(plan),
+                occurrence: None,
                 vertices,
                 policy,
-                faces: RefCell::new(None),
+                faces: Rc::new(RefCell::new(None)),
                 display: RefCell::new(None),
                 last_mesh: Cell::new(None),
                 last_actual: Cell::new(None),
@@ -256,6 +264,12 @@ impl Solid {
             _ => None,
         }
     }
+    /// Additional Native transform provenance; the source getter below keeps
+    /// its original literal STEP geometry and original STEP operator unchanged.
+    pub fn rust_literal_npt_occurrence(&self) -> Option<&read::LiteralOccurrencePlacement> {
+        self.literal_npt_body()
+            .and_then(|body| body.occurrence.as_ref())
+    }
     pub fn rust_literal_npt_source(&self) -> Option<&read::OwnedMaterial> {
         self.literal_npt_body().map(|b| &b.source)
     }
@@ -263,7 +277,8 @@ impl Solid {
         self.literal_npt_body()
             .map(|body| LiteralNptRuntimeEvidence {
                 source_query_work: body.source.work_used(),
-                preparation_work: body.plan.preparation_work_used(),
+                preparation_work: body.plan.preparation_work_used()
+                    + body.occurrence.as_ref().map_or(0, |p| p.work_used()),
                 neutral_document_budget_bytes: body.source.original_document_budget_bytes(),
                 neutral_document_work: body.source.original_document_work_used(),
                 resident_budget_bytes: body.resident_bytes(),
@@ -278,10 +293,14 @@ impl Solid {
         let body = self
             .literal_npt_body()
             .ok_or_else(|| failure(read::Error::Unsupported))?;
+        let query = match &body.occurrence {
+            Some(p) => p.inverse_box_mm(point.map(|v| [v, v])).map_err(failure)?,
+            None => point.map(|v| [v, v]),
+        };
         let result = body
             .source
             .classify_box(
-                point.map(|v| [v, v]),
+                query,
                 read::QueryOptions {
                     maximum_bytes: body.available_query_bytes()?,
                     ..Default::default()
@@ -307,17 +326,24 @@ impl LiteralNptBody {
             )
             .and_then(|v| {
                 v.checked_sub(
+                    self.occurrence
+                        .as_ref()
+                        .map_or(0, |p| p.retained_budget_bytes()),
+                )
+            })
+            .and_then(|v| {
+                v.checked_sub(
                     self.plan.retained_budget_bytes() - self.source.retained_budget_bytes(),
                 )
             })
             .ok_or_else(|| failure(read::Error::Limit))
     }
     pub(super) fn volume_mm3(&self) -> f64 {
-        let v = self.source.world_volume_mm3();
+        let v = self.world_volume();
         v[0].midpoint(v[1])
     }
     pub(super) fn bounds(&self) -> Bounds {
-        let b = self.source.world_enclosure_mm();
+        let b = self.world_bounds();
         Bounds {
             min: b.map(|v| v[0]),
             max: b.map(|v| v[1]),
@@ -329,8 +355,14 @@ impl LiteralNptBody {
             return None;
         };
         let local = self.source.point(height)?.coordinates().map(|v| v.bounds());
-        let origin = self.source.map_box_mm(local).ok()?;
-        let columns = self.source.linear_columns_bounds();
+        let mut origin = self.source.map_box_mm(local).ok()?;
+        let mut columns = self.source.linear_columns_bounds();
+        if let Some(pose) = &self.occurrence {
+            origin = pose.map_box_mm(origin).ok()?;
+            for column in &mut columns {
+                *column = pose.vector_bounds(*column).ok()?;
+            }
+        }
         let midpoint = |b: [f64; 2]| b[0].midpoint(b[1]);
         let o = origin.map(midpoint);
         let raw = [columns[0].map(midpoint), columns[1].map(midpoint)];
@@ -388,6 +420,10 @@ impl LiteralNptBody {
     }
     fn base_resident_bytes(&self) -> usize {
         self.plan.retained_budget_bytes()
+            + self
+                .occurrence
+                .as_ref()
+                .map_or(0, |p| p.retained_budget_bytes())
             + std::mem::size_of::<Self>()
             + 2 * std::mem::size_of::<usize>()
             + self.vertices.capacity() * 24
@@ -395,7 +431,7 @@ impl LiteralNptBody {
                 .faces
                 .borrow()
                 .as_ref()
-                .map_or(0, |v| v.capacity() * std::mem::size_of::<Face>())
+                .map_or(0, |v| v.capacity() * std::mem::size_of::<OriginalFace>())
     }
     fn resident_bytes(&self) -> usize {
         self.base_resident_bytes()
@@ -441,36 +477,57 @@ impl LiteralNptBody {
         ))
     }
     pub(super) fn faces(&self) -> Result<Vec<Face>, GeometryError> {
-        if let Some(faces) = self.faces.borrow().as_ref() {
-            return Ok(faces.clone());
+        if self.faces.borrow().is_none() {
+            let mut faces = Vec::with_capacity(self.source.faces().len());
+            let available = (BYTES - OVERHEAD)
+                .checked_sub(self.cached_bytes())
+                .and_then(|v| {
+                    v.checked_sub(
+                        self.occurrence
+                            .as_ref()
+                            .map_or(0, |p| p.retained_budget_bytes()),
+                    )
+                })
+                .ok_or_else(|| failure(read::Error::Limit))?;
+            for index in 0..self.source.faces().len() {
+                let measure = self
+                    .plan
+                    .face_measure(
+                        index,
+                        read::FaceMeasureOptions {
+                            centroid_width_mm: self.policy.linear_tolerance_mm,
+                            maximum_bytes: available,
+                            ..Default::default()
+                        },
+                        None,
+                    )
+                    .map_err(failure)?;
+                faces.push(OriginalFace {
+                    area: measure.area_mm2(),
+                    center: measure.centroid_mm(),
+                });
+            }
+            *self.faces.borrow_mut() = Some(faces);
         }
-        let mut faces = Vec::with_capacity(self.source.faces().len());
-        for index in 0..self.source.faces().len() {
-            let measure = self
-                .plan
-                .face_measure(
-                    index,
-                    read::FaceMeasureOptions {
-                        centroid_width_mm: self.policy.linear_tolerance_mm,
-                        maximum_bytes: BYTES - OVERHEAD,
-                        ..Default::default()
-                    },
-                    None,
-                )
-                .map_err(failure)?;
-            let a = measure.area_mm2();
-            let center = measure.centroid_mm();
-            let center_mm = center.map(|v| v[0].midpoint(v[1]));
-            self.policy.point(center_mm)?;
-            faces.push(Face {
-                index: index as u32,
-                plane: self.plane(index).map(|p| (p.origin_mm, p.normal())),
-                center_mm,
-                area_mm2: a[0].midpoint(a[1]),
-            });
-        }
-        *self.faces.borrow_mut() = Some(faces.clone());
-        Ok(faces)
+        self.faces
+            .borrow()
+            .as_ref()
+            .expect("qualified original face measures")
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, original)| {
+                let measure = self.face_properties(original)?;
+                let center_mm = measure.center.map(|b| b[0].midpoint(b[1]));
+                self.policy.point(center_mm)?;
+                Ok(Face {
+                    index: index as u32,
+                    plane: self.plane(index).map(|p| (p.origin_mm, p.normal())),
+                    center_mm,
+                    area_mm2: measure.area[0].midpoint(measure.area[1]),
+                })
+            })
+            .collect()
     }
     fn origin(&self, kind: &str, entity: u32) -> Origin {
         Origin {
@@ -577,7 +634,9 @@ impl LiteralNptBody {
                 .source
                 .sample_edge(
                     index as usize,
-                    q.deflection,
+                    self.occurrence
+                        .as_ref()
+                        .map_or(q.deflection, |p| q.deflection / p.linear_l1_norm() * 0.5),
                     q.triangle_limit.min(131072),
                     read::Options {
                         maximum_bytes: available,
@@ -590,10 +649,11 @@ impl LiteralNptBody {
                     read::Error::Limit => MeshError::BudgetExceeded,
                     _ => MeshError::UnresolvedBoundary,
                 })?;
-            if sampled.points_mm().len() * 3 > sampled.remaining_work() {
+            let per_point = if self.occurrence.is_some() { 259 } else { 3 };
+            if sampled.points_mm().len() * per_point > sampled.remaining_work() {
                 return Err(MeshError::BudgetExceeded);
             }
-            Ok(sampled.points_mm().to_vec())
+            self.place_polyline(&sampled, q)
         })())
     }
     fn record_mesh(&self, accounting: MeshAccounting, fresh: bool) {
@@ -617,42 +677,41 @@ impl LiteralNptBody {
         let available = (BYTES - OVERHEAD)
             .checked_sub(cached)
             .ok_or_else(|| failure(read::Error::Limit))?;
-        let source = self
-            .plan
-            .mesh_candidate(
-                read::LiteralMeshOptions {
-                    tessellation: q,
-                    maximum_bytes: available,
-                    ..Default::default()
-                },
-                None,
-            )
-            .map_err(|e| {
-                error(
-                    "literal NPT mesh candidate",
-                    failure(e).kind,
-                    format!("Original source mesh proof failed: {e:?}"),
-                )
-            })?
-            .certify_embedding(None)
-            .map_err(|e| {
-                error(
-                    "literal NPT embedding",
-                    failure(e).kind,
-                    format!("Literal manufacturing embedding failed: {e:?}"),
-                )
-            })?;
-        let proof = source.embedding().connectivity();
-        let peak = source.candidate().accounted_peak_bytes() + OVERHEAD + cached;
-        if peak > BYTES {
+        let options = read::LiteralMeshOptions {
+            tessellation: q,
+            maximum_bytes: available,
+            ..Default::default()
+        };
+        let (source, proof, accounting) = if let Some(placement) = &self.occurrence {
+            let qualified = self
+                .plan
+                .placed_mesh(placement.clone(), options, None)
+                .map_err(failure)?;
+            let proof = qualified.embedding().connectivity();
+            let accounting = MeshAccounting {
+                work: qualified.work_used(),
+                actual: qualified.query_work_used(),
+                peak: qualified.accounted_peak_bytes() + OVERHEAD + cached,
+            };
+            (qualified.into_mesh(), proof, accounting)
+        } else {
+            let qualified = self
+                .plan
+                .mesh_candidate(options, None)
+                .map_err(failure)?
+                .certify_embedding(None)
+                .map_err(failure)?;
+            let proof = qualified.embedding().connectivity();
+            let accounting = MeshAccounting {
+                work: qualified.candidate().work_used(),
+                actual: qualified.candidate().query_work_used(),
+                peak: qualified.candidate().accounted_peak_bytes() + OVERHEAD + cached,
+            };
+            (qualified.into_mesh(), proof, accounting)
+        };
+        if accounting.peak > BYTES {
             return Err(failure(read::Error::Limit));
         }
-        let accounting = MeshAccounting {
-            work: source.candidate().work_used(),
-            actual: source.candidate().query_work_used(),
-            peak,
-        };
-        let source = source.into_mesh();
         Ok(BuiltMesh {
             mesh: Mesh {
                 vertices: source.vertices,

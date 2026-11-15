@@ -1545,12 +1545,8 @@ impl Solid {
                 SolidBody::ExternalNptStock(body) => {
                     SolidBody::ExternalNptStock(Rc::new(body.transformed(transform, self.policy)?))
                 }
-                SolidBody::LiteralNpt(..) => {
-                    return Err(error(
-                        "literal NPT placement",
-                        GeometryErrorKind::Unsupported,
-                        "Actual placed-source correspondence is not yet qualified",
-                    ));
+                SolidBody::LiteralNpt(body) => {
+                    SolidBody::LiteralNpt(Rc::new(body.transformed(transform, self.policy)?))
                 }
                 SolidBody::ClippedNpt(body) => {
                     SolidBody::ClippedNpt(Rc::new(body.transformed(transform, self.policy)?))
