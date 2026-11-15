@@ -182,6 +182,67 @@ fn resolve_facet(
         }
     }
 }
+#[derive(Clone, Copy)]
+struct Facet {
+    corners: [usize; 3],
+    chord: Option<Result<f64, Error>>,
+}
+// One policy owns both the candidate search and its query work accounting.
+fn diagonal_candidates(law: Law) -> usize {
+    if matches!(law, Law::Envelope(..)) {
+        2
+    } else {
+        1
+    }
+}
+fn choose_facets(
+    ids: [usize; 4],
+    literal: [[f64; 3]; 4],
+    center: [I; 3],
+    spread: f64,
+    law: Law,
+    winding: i8,
+) -> [Facet; 2] {
+    let candidate = |triangles: [[usize; 3]; 2]| {
+        triangles.map(|mut corners| {
+            if winding < 0 {
+                corners.swap(1, 2);
+            }
+            let keys = corners.map(|i| ids[i]);
+            let chord = if keys[0] == keys[1] || keys[1] == keys[2] || keys[2] == keys[0] {
+                None
+            } else {
+                Some(facet_chord(
+                    corners.map(|i| literal[i]),
+                    center,
+                    spread,
+                    law,
+                ))
+            };
+            Facet { corners, chord }
+        })
+    };
+    let original = candidate([[0, 1, 2], [0, 2, 3]]);
+    if diagonal_candidates(law) == 1 {
+        return original;
+    }
+    // The bilinear mixed-difference/4 positional bound covers either diagonal.
+    // Both actual oriented normals must pass the same whole-cell source proof.
+    let other = candidate([[0, 1, 3], [1, 2, 3]]);
+    let score = |facets: [Facet; 2]| {
+        facets
+            .into_iter()
+            .filter_map(|f| f.chord)
+            .map(|chord| chord.unwrap_or(f64::INFINITY))
+            .reduce(f64::max)
+            .unwrap_or(f64::INFINITY)
+    };
+    if score(other) < score(original) {
+        other
+    } else {
+        original
+    }
+}
 fn quad_normal_score(
     builder: &mut Builder<'_, '_>,
     index: usize,
@@ -201,25 +262,23 @@ fn quad_normal_score(
         .atlas
         .state(index, uv.map(|[a, b]| I::point(a + (b - a) / 2.)))?
         .1;
+    let facets = choose_facets(
+        ids,
+        literal,
+        center,
+        bound.normal_radius_chord,
+        builder.atlas.patches[index].law,
+        builder.atlas.patch_winding(index)?,
+    );
     let mut score = 0_f64;
-    for mut tri in [[0, 1, 2], [0, 2, 3]] {
-        if builder.atlas.patch_winding(index)? < 0 {
-            tri.swap(1, 2);
+    for facet in facets {
+        if let Some(chord) = facet.chord {
+            score = score.max(chord?);
         }
-        let keys = tri.map(|i| ids[i]);
-        if keys[0] == keys[1] || keys[1] == keys[2] || keys[2] == keys[0] {
-            continue;
-        }
-        score = score.max(facet_chord(
-            tri.map(|i| literal[i]),
-            center,
-            bound.normal_radius_chord,
-            builder.atlas.patches[index].law,
-        )?);
     }
     Ok(score)
 }
-fn normal_direction(builder: &Builder<'_, '_>, index: usize, uv: [[f64; 2]; 2]) -> usize {
+fn normal_scores(builder: &Builder<'_, '_>, index: usize, uv: [[f64; 2]; 2]) -> [f64; 2] {
     // These disposable prospective cells use the identical semantic corner
     // registry and proof. Their vertices never enter the published mesh.
     let mut preview = Builder {
@@ -243,6 +302,10 @@ fn normal_direction(builder: &Builder<'_, '_>, index: usize, uv: [[f64; 2]; 2]) 
                 score.max(quad_normal_score(&mut preview, index, child).unwrap_or(f64::INFINITY));
         }
     }
+    scores
+}
+fn normal_direction(builder: &Builder<'_, '_>, index: usize, uv: [[f64; 2]; 2]) -> usize {
+    let scores = normal_scores(builder, index, uv);
     usize::from(scores[1] < scores[0])
 }
 fn budget(counts: [usize; 8], patches: &[SurfacePatch], limit: usize) -> Result<(), Error> {
@@ -322,10 +385,11 @@ impl<'s> PatchAtlas<'s> {
                 checkpoint(cancel)?;
                 let [gu, gv] = groups(patch.law);
                 let [nu, nv] = [counts[gu], counts[gv]];
+                let candidates = diagonal_candidates(patch.law);
                 for u in 0..nu {
                     for v in 0..nv {
                         checkpoint(cancel)?;
-                        progress.charge(1)?;
+                        progress.charge(candidates)?;
                         if refine[gu] || refine[gv] {
                             continue;
                         }
@@ -348,23 +412,19 @@ impl<'s> PatchAtlas<'s> {
                             .state(index, uv.map(|[a, b]| I::point(a + (b - a) / 2.)))?
                             .1;
                         let mut valid = bound.positional_error_mm() <= options.deflection;
-                        for mut tri in [[0, 1, 2], [0, 2, 3]] {
-                            if self.patch_winding(index)? < 0 {
-                                tri.swap(1, 2);
-                            }
-                            let indices = tri.map(|i| ids[i]);
-                            if indices[0] == indices[1]
-                                || indices[1] == indices[2]
-                                || indices[2] == indices[0]
-                            {
+                        let facets = choose_facets(
+                            ids,
+                            literal,
+                            center,
+                            bound.normal_radius_chord,
+                            patch.law,
+                            self.patch_winding(index)?,
+                        );
+                        for facet in facets {
+                            let Some(chord) = facet.chord else {
                                 continue;
-                            }
-                            let chord = facet_chord(
-                                tri.map(|i| literal[i]),
-                                center,
-                                bound.normal_radius_chord,
-                                patch.law,
-                            );
+                            };
+                            let indices = facet.corners.map(|i| ids[i]);
                             let Some(chord) =
                                 resolve_facet(chord, patch.law, &mut refine, [gu, gv])
                             else {
@@ -379,7 +439,7 @@ impl<'s> PatchAtlas<'s> {
                             // Shared source grids refine globally; no hanging edge vertices.
                             // Prefer the coarser parameter direction, retaining full mixed error.
                             if bound.positional_error_mm() <= options.deflection {
-                                progress.charge(4)?;
+                                progress.charge(4 * candidates)?;
                                 let axis = normal_direction(&builder, index, uv);
                                 refine[[gu, gv][axis]] = true;
                             } else if nu <= nv {
