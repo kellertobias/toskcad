@@ -1,6 +1,7 @@
 //! Retained connected Hanger geometry. Finite reference admission is separate.
 use super::*;
 use multicad_rust_kernel::authored_hanger_bolt::{Hanger, QueryOptions};
+mod contained_boolean;
 mod display;
 mod topology;
 use multicad_rust_kernel::authored_hanger_bolt as source;

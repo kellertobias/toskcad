@@ -227,3 +227,125 @@ fn true_affine_precision_floor_and_last_native_checkpoint_refuse_cleanly() {
     assert_eq!(calls.get(), last);
     assert_eq!(*body.source(), source);
 }
+
+#[test]
+fn hanger_whole_probe_booleans_keep_connected_source_material_and_refuse_new_boundaries() {
+    let policy = GeometryPolicy::default();
+    for left in [false, true] {
+        for frame in [
+            PlaneFrame::default(),
+            PlaneFrame {
+                origin: [11., -7., 5.],
+                u: [0.8, 0.6, 0.],
+                v: [-0.36, 0.48, 0.8],
+            },
+            PlaneFrame {
+                origin: [1e4, -2e4, 3e4],
+                u: [0., 1., 0.],
+                v: [0., 0., 1.],
+            },
+        ] {
+            let source = source(left, true);
+            let hanger = Solid::rust_hanger(source, EntityId::new(), frame, policy, None).unwrap();
+            let before = hanger.rust_hanger_data();
+            let probe = |center: [f64; 3]| {
+                let normal = frame.normal();
+                let world = std::array::from_fn(|i| {
+                    frame.origin[i]
+                        + frame.u[i] * center[0]
+                        + frame.v[i] * center[1]
+                        + normal[i] * center[2]
+                });
+                Solid::box_solid([0.02; 3], policy)
+                    .unwrap()
+                    .transformed(RigidTransform {
+                        translation_mm: world.map(|x| x - 0.01),
+                        ..Default::default()
+                    })
+                    .unwrap()
+            };
+            // Each real section and both internal joins share this core.
+            for z in [1., 0., -1., -2.3, -3.] {
+                let inside = probe([0.5, 0., z]);
+                for (a, b) in [(&hanger, &inside), (&inside, &hanger)] {
+                    let result = a
+                        .boolean(b, BooleanOperation::Intersect, policy)
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(result.bounds().unwrap(), inside.bounds().unwrap());
+                    assert_eq!(result.volume_mm3().unwrap(), inside.volume_mm3().unwrap());
+                    let union = a
+                        .boolean(b, BooleanOperation::Union, policy)
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(union.rust_hanger_data(), before);
+                }
+                assert!(
+                    inside
+                        .boolean(&hanger, BooleanOperation::Subtract, policy)
+                        .unwrap()
+                        .is_none()
+                );
+                assert!(
+                    hanger
+                        .contained_hanger_boolean(&inside, BooleanOperation::Subtract, policy)
+                        .is_none()
+                );
+            }
+            let exterior = probe([4., 0., 1.]);
+            for (a, b) in [(&hanger, &exterior), (&exterior, &hanger)] {
+                assert!(
+                    a.boolean(b, BooleanOperation::Intersect, policy)
+                        .unwrap()
+                        .is_none()
+                );
+                let difference = a
+                    .boolean(b, BooleanOperation::Subtract, policy)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(difference.bounds().unwrap(), a.bounds().unwrap());
+            }
+            assert!(
+                hanger
+                    .contained_hanger_boolean(&exterior, BooleanOperation::Union, policy)
+                    .is_none()
+            );
+            let crossing = probe([1.5, 0., -1.]);
+            assert!(
+                hanger
+                    .contained_hanger_boolean(&crossing, BooleanOperation::Intersect, policy)
+                    .is_none()
+            );
+            assert!(
+                hanger
+                    .boolean(&crossing, BooleanOperation::Intersect, policy)
+                    .is_err()
+            );
+            assert!(
+                hanger
+                    .contained_hanger_boolean(&hanger, BooleanOperation::Intersect, policy)
+                    .is_none()
+            );
+            assert!(
+                exterior
+                    .contained_hanger_boolean(&exterior, BooleanOperation::Intersect, policy)
+                    .is_none()
+            );
+            let mut changed = policy;
+            changed.boolean_fuzzy_mm = 0.001;
+            assert!(
+                hanger
+                    .contained_hanger_boolean(&exterior, BooleanOperation::Intersect, changed)
+                    .is_none()
+            );
+            changed = policy;
+            changed.linear_tolerance_mm *= 2.;
+            assert!(
+                hanger
+                    .contained_hanger_boolean(&exterior, BooleanOperation::Intersect, changed)
+                    .is_none()
+            );
+            assert_eq!(hanger.rust_hanger_data(), before);
+        }
+    }
+}
