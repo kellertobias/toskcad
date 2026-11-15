@@ -46,6 +46,7 @@ pub mod planar_boolean;
 pub mod planar_distance;
 pub mod planar_projection;
 pub mod planar_section;
+pub mod polar_loop11;
 pub mod polygon;
 pub mod prism;
 pub mod profiled_screw;
