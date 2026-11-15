@@ -61,6 +61,71 @@ impl LiteralNptBody {
     }
 }
 impl Solid {
+    /// Fresh actual-file verification of exactly one represented member.
+    pub fn verify_literal_npt_step(
+        &self,
+        actual_text: &str,
+        tolerance: f64,
+    ) -> Result<replay::ReadbackReceipt, GeometryError> {
+        let result = self.verify_literal_npt_step_member(actual_text, 0, tolerance)?;
+        if result.represented_member_count() != 1 {
+            return Err(super::failure(read::Error::Unsupported));
+        }
+        Ok(result)
+    }
+    /// Fresh proof for one explicitly ordered actual member. This does not
+    /// validate the other compound members or their expected cardinality.
+    pub fn verify_literal_npt_step_member(
+        &self,
+        actual_text: &str,
+        member_index: usize,
+        tolerance: f64,
+    ) -> Result<replay::ReadbackReceipt, GeometryError> {
+        self.verify_literal_npt_step_member_with_resident_bytes(
+            actual_text,
+            member_index,
+            tolerance,
+            0,
+        )
+    }
+    /// As above, with other operation-owned retained state explicitly charged.
+    /// Ordinary per-member receipts cover this subject and the actual whole
+    /// input document, rather than all scene or application allocations.
+    pub fn verify_literal_npt_step_member_with_resident_bytes(
+        &self,
+        actual_text: &str,
+        member_index: usize,
+        tolerance: f64,
+        other_resident_bytes: usize,
+    ) -> Result<replay::ReadbackReceipt, GeometryError> {
+        let body = self
+            .literal_npt_body()
+            .ok_or_else(|| super::failure(read::Error::Unsupported))?;
+        let already_charged = body.source.retained_budget_bytes()
+            + body
+                .occurrence
+                .as_ref()
+                .map_or(0, |p| p.retained_budget_bytes());
+        let additional_resident_bytes = body
+            .resident_bytes()
+            .checked_sub(already_charged)
+            .and_then(|n| n.checked_add(OVERHEAD))
+            .and_then(|n| n.checked_add(other_resident_bytes))
+            .ok_or_else(|| super::failure(read::Error::Limit))?;
+        replay::verify_readback(
+            &body.source,
+            body.occurrence.as_ref(),
+            actual_text,
+            member_index,
+            replay::ReadbackOptions {
+                additional_resident_bytes,
+                position_error_mm: tolerance,
+                ..Default::default()
+            },
+            None,
+        )
+        .map_err(super::failure)
+    }
     /// Last successful verified in-memory append. Filesystem publication is a
     /// separate final IO action and is not asserted by this geometry receipt.
     pub fn rust_literal_npt_step_evidence(&self) -> Option<replay::Receipt> {

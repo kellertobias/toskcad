@@ -685,12 +685,13 @@ fn actual_normal_literal_step_reexport_keeps_geometry_pose_and_mixed_members() {
                 && evidence.original_derivative_error_mm() <= 1e-6
                 && evidence.normal_chord_error() <= 1e-6
         );
-        let decoded = Solid::import_rust_step(
-            &std::fs::read_to_string(path).unwrap(),
-            EntityId::new(),
-            Default::default(),
-        )
-        .unwrap();
+        let actual_text = std::fs::read_to_string(path).unwrap();
+        let fresh = solid.verify_literal_npt_step(&actual_text, 1e-7).unwrap();
+        assert_eq!(fresh.represented_member_count(), 1);
+        assert!(fresh.actual_volume_mm3()[0] > 0.);
+        assert!(fresh.receipt().accounted_peak_bytes() <= 128 * 1024 * 1024);
+        let decoded =
+            Solid::import_rust_step(&actual_text, EntityId::new(), Default::default()).unwrap();
         assert!(decoded.rust_literal_npt_source().is_some());
         assert!((decoded.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < 1e-6);
         let before = solid.bounds().unwrap();
@@ -748,12 +749,24 @@ fn actual_normal_literal_step_reexport_keeps_geometry_pose_and_mixed_members() {
             .unwrap();
             let path = directory.path().join("mixed.step");
             compound.write_step(&path).unwrap();
-            let reopened = Solid::import_rust_step(
-                &std::fs::read_to_string(path).unwrap(),
-                EntityId::new(),
-                Default::default(),
-            )
-            .unwrap();
+            let actual_text = std::fs::read_to_string(path).unwrap();
+            let fresh = solid
+                .verify_literal_npt_step_member(&actual_text, 0, 1e-7)
+                .unwrap();
+            assert_eq!(fresh.represented_member_count(), 3);
+            assert_eq!(fresh.member_index(), 0);
+            assert!(solid.verify_literal_npt_step(&actual_text, 1e-7).is_err());
+            assert!(
+                solid
+                    .verify_literal_npt_step_member(&actual_text, 1, 1e-7)
+                    .is_err()
+            );
+            let last = original
+                .verify_literal_npt_step_member(&actual_text, 2, 1e-7)
+                .unwrap();
+            assert_eq!(last.member_index(), 2);
+            let reopened =
+                Solid::import_rust_step(&actual_text, EntityId::new(), Default::default()).unwrap();
             assert_eq!(reopened.rust_compound().unwrap().members().count(), 3);
         }
     }
