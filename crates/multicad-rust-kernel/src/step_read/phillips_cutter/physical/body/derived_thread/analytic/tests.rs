@@ -178,8 +178,16 @@ fn actual_left_handed_posed_packet_qualifies_and_distinct_unsupported_laws_refus
                     let receipt = result.unwrap();
                     assert!(receipt.thread().spec().left_hand);
                     assert_eq!(receipt.frame(), head.body().inferred_thread_frame());
+                    let periodic = head
+                        .periodic_thread_repair(Default::default(), None)
+                        .unwrap();
+                    assert!(periodic.source().left_hand());
                 } else {
                     assert!(matches!(result, Err(PhillipsReadError::Unsupported)));
+                    assert!(matches!(
+                        head.periodic_thread_repair(Default::default(), None),
+                        Err(PhillipsReadError::Unsupported)
+                    ));
                 }
             },
         );

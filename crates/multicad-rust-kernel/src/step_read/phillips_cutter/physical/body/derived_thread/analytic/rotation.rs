@@ -53,6 +53,13 @@ impl Rotation {
             ],
         })
     }
+    pub(super) fn pi(&self, work: &mut Work<'_>) -> Result<I> {
+        work.step(4096)?;
+        Ok(I::new(
+            rational_bound(&self.bounds[0].0, &self.bounds[0].1).lo,
+            rational_bound(&self.bounds[1].0, &self.bounds[1].1).hi,
+        ))
+    }
     pub(super) fn sin_cos(&self, angle: I, work: &mut Work<'_>) -> Result<[I; 2]> {
         //735-bit constants +binary64 denominator<=2^1074 keep all live
         // numerators/denominators below2048bits. Two bounded integer divisions

@@ -12,7 +12,10 @@ mod degree11;
 mod graph;
 mod join;
 mod reduce;
-pub use analytic::{AnalyticThreadOptions, AnalyticThreadRepair, AnalyticThreadTransfer};
+pub use analytic::{
+    AnalyticThreadOptions, AnalyticThreadRepair, AnalyticThreadTransfer, PeriodicThreadBounds,
+    PeriodicThreadRepair, PeriodicThreadSource,
+};
 pub use degree11::{CoherentDegree11ThreadCarrier, Degree11ThreadFace, Degree11ThreadOptions};
 pub use join::{
     ContactThreadCarrier, Degree11ContactOptions, Degree11DomainEnd, Degree11RimContact,

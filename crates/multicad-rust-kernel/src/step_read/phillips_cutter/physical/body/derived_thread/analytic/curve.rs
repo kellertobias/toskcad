@@ -124,12 +124,20 @@ pub(super) fn factors(
     thread: &crate::helical_thread::Thread,
     reference: &crate::step::helical::ThreadSplines,
     rotation: &rotation::Rotation,
+    periodic: Option<&PeriodicThreadSource>,
     work: &mut Work<'_>,
 ) -> Result<Factors> {
-    let rate = I::point(thread.helical_rate().abs());
+    let rate = if periodic.is_some() {
+        I::point(thread.spec().pitch_mm) / (I::point(2.) * rotation.pi(work)?)
+    } else {
+        I::point(thread.helical_rate().abs())
+    };
     let hand = I::point(thread.helical_rate().signum());
     let [_, start, upper, lower, crest, _] = thread.profile_breaks();
-    let phase = [start, upper, lower, crest, start + thread.spec().pitch_mm];
+    let phase = periodic.map_or_else(
+        || [start, upper, lower, crest, start + thread.spec().pitch_mm].map(I::point),
+        |p| p.phases(),
+    );
     let major = I::point(thread.spec().major_radius_mm);
     let root = I::point(thread.root_radius_mm());
     let mut radius_bound = thread.spec().major_radius_mm;
@@ -147,14 +155,22 @@ pub(super) fn factors(
             let endpoints = [cell, cell + 1].map(|i| {
                 let ratio = (I::point(spline.knots[i]) - I::point(spline.knots[0]))
                     / (I::point(spline.knots[last]) - I::point(spline.knots[0]));
-                I::point(phase[band]) + ratio * (I::point(phase[band + 1]) - I::point(phase[band]))
+                phase[band] + ratio * (phase[band + 1] - phase[band])
             });
-            let radii = endpoints.map(|p| match band {
-                0 => major + I::point(thread.slope_at_phase(0., 1)) * (p - I::point(start)),
-                1 => root,
-                2 => major + I::point(thread.slope_at_phase(0., 3)) * (p - I::point(crest)),
-                _ => major,
-            });
+            let radii = if let Some(source) = periodic {
+                [cell, cell + 1].map(|i| {
+                    let ratio = (I::point(spline.knots[i]) - I::point(spline.knots[0]))
+                        / (I::point(spline.knots[last]) - I::point(spline.knots[0]));
+                    source.radii(band, ratio)
+                })
+            } else {
+                endpoints.map(|p| match band {
+                    0 => major + I::point(thread.slope_at_phase(0., 1)) * (p - I::point(start)),
+                    1 => root,
+                    2 => major + I::point(thread.slope_at_phase(0., 3)) * (p - I::point(crest)),
+                    _ => major,
+                })
+            };
             let cell_radius = radii[0].magnitude().max(radii[1].magnitude());
             radius_bound = radius_bound.max(cell_radius);
             let angle = endpoints.map(|p| -hand * p / rate);

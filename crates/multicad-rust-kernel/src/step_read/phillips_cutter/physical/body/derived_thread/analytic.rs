@@ -3,7 +3,9 @@
 //! does not admit a complete head/cavity material, raw-file mass or STEP export.
 use super::*;
 mod curve;
+mod periodic;
 mod rotation;
+pub use periodic::{PeriodicThreadBounds, PeriodicThreadRepair, PeriodicThreadSource};
 const TOTAL: usize = 32_000_000;
 const SCRATCH_ANALYTIC: usize = 2 * 1024 * 1024;
 #[derive(Clone, Copy)]
@@ -40,6 +42,7 @@ pub struct AnalyticThreadTransfer {
 pub struct AnalyticThreadRepair<'a, 'input> {
     body: &'a Body<'input>,
     thread: crate::helical_thread::Thread,
+    periodic: Option<PeriodicThreadSource>,
     frame: [Point; 3],
     transfers: Vec<AnalyticThreadTransfer>,
     new_work: usize,
@@ -88,6 +91,14 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
         &self,
         options: AnalyticThreadOptions,
         interrupt: Option<&dyn Fn() -> bool>,
+    ) -> std::result::Result<AnalyticThreadRepair<'a, 'input>, PhillipsReadError> {
+        self.build_thread_repair(options, interrupt, false)
+    }
+    fn build_thread_repair(
+        &self,
+        options: AnalyticThreadOptions,
+        interrupt: Option<&dyn Fn() -> bool>,
+        periodic: bool,
     ) -> std::result::Result<AnalyticThreadRepair<'a, 'input>, PhillipsReadError> {
         let mut work = Work {
             remaining: options.maximum_work,
@@ -155,7 +166,13 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
             assert_eq!(raw.len(), reference.bands.len());
             assert_eq!(reference.bands.len(), 4);
             let rotation = rotation::Rotation::new(&mut work)?;
-            let geometry = curve::factors(&thread, &reference, &rotation, &mut work)?;
+            let source = if periodic {
+                Some(PeriodicThreadSource::new(thread, &mut work)?)
+            } else {
+                None
+            };
+            let geometry =
+                curve::factors(&thread, &reference, &rotation, source.as_ref(), &mut work)?;
             let frame = body.frame;
             let mut transfers = Vec::with_capacity(raw.len());
             for (index, r) in raw.iter().enumerate() {
@@ -184,6 +201,7 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
             Ok(AnalyticThreadRepair {
                 body,
                 thread,
+                periodic: source,
                 frame,
                 transfers,
                 new_work: allowance - work.remaining,

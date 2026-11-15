@@ -1099,6 +1099,9 @@ pub use phillips_cutter::{
     DerivedThreadCarrier as PhillipsDerivedThreadCarrier,
     DerivedThreadOptions as PhillipsDerivedThreadOptions,
     OccupiedDerivedThread as PhillipsOccupiedDerivedThread,
+    PeriodicThreadBounds as PhillipsPeriodicThreadBounds,
+    PeriodicThreadRepair as PhillipsPeriodicThreadRepair,
+    PeriodicThreadSource as PhillipsPeriodicThreadSource,
     ThreadCarrierTransfer as PhillipsThreadCarrierTransfer,
 };
 
