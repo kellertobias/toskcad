@@ -6,7 +6,9 @@ use crate::head_profile::OwnedRepairedHead;
 use std::sync::Arc;
 mod approximation;
 mod authored;
-pub use approximation::{PeriodicAuthoredApproximation, PeriodicLiteralCertificate};
+pub use approximation::{
+    PeriodicAuthoredApproximation, PeriodicFaceProperties, PeriodicLiteralCertificate,
+};
 mod query;
 pub use query::PeriodicOwnedMaterialQuery;
 #[cfg(test)]

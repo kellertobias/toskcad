@@ -474,3 +474,60 @@ fn actual_source_planar_faces_keep_bounded_frames_through_occurrence() {
         }
     }
 }
+
+#[test]
+fn actual_periodic_faces_are_source_measured_lazy_and_cached() {
+    for left in [false, true] {
+        let source = source(left, 0.5);
+        let part = Solid::rust_periodic_repaired_phillips_material(
+            Rc::clone(&source),
+            feature(),
+            PlaneFrame::default(),
+            Default::default(),
+            None,
+        )
+        .unwrap();
+        let (body, _) = part.repaired_phillips_body().unwrap();
+        assert!(body.periodic_properties.borrow().is_none());
+        let before = body.resident_bytes();
+        let now = std::time::Instant::now();
+        let faces = part.faces().unwrap();
+        let cold = now.elapsed();
+        assert_eq!(faces.len(), source.face_count());
+        assert!(
+            faces
+                .iter()
+                .all(|f| f.area_mm2 > 0. && f.center_mm.into_iter().all(f64::is_finite))
+        );
+        assert!(body.resident_bytes() > before);
+        let now = std::time::Instant::now();
+        assert_eq!(faces, part.faces().unwrap());
+        eprintln!(
+            "Native actual periodic faces LH{left}: cold{cold:?} warm{:?}",
+            now.elapsed()
+        );
+    }
+}
+
+#[test]
+fn actual_periodic_face_centroid_transport_encloses_nonconstant_affine_weights() {
+    let source = source(false, 0.5);
+    let occurrence = PlaneFrame {
+        origin: [10., -3., 4.],
+        u: [1. + 1e-12, 0., 0.],
+        v: [0., 1., 0.],
+    };
+    let part = Solid::rust_periodic_repaired_phillips_material(
+        Rc::clone(&source),
+        feature(),
+        occurrence,
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let faces = part.faces().unwrap();
+    let tip = &faces[source.head().view().segment_count() + 4];
+    assert!(tip.plane.is_some());
+    assert!((tip.center_mm[2] - (4. + 11.5 * (1. + 1e-12))).abs() < 1e-8);
+    assert!(faces.iter().all(|f| f.area_mm2 > 0.));
+}

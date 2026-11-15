@@ -323,6 +323,12 @@ impl RepairedPhillipsBody {
             .retained_budget_bytes()
             .saturating_add(std::mem::size_of::<Self>() + 8 * std::mem::size_of::<usize>())
             .saturating_add(self.display.borrow().as_ref().map_or(0, |c| bytes(&c.mesh)))
+            .saturating_add(self.periodic_properties.borrow().as_ref().map_or(0, |p| {
+                p.capacity()
+                    * std::mem::size_of::<
+                        multicad_rust_kernel::step_read::PhillipsPeriodicFaceProperties,
+                    >()
+            }))
     }
     pub(in crate::geometry) fn mesh(
         &self,

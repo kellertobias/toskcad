@@ -213,3 +213,125 @@ fn actual_decoded_owner_does_not_fabricate_authored_provenance_for_a_mesh_propos
         ));
     });
 }
+
+#[test]
+fn actual_periodic_m2_face_measures_transfer_whole_parameter_domains() {
+    for left in [false, true] {
+        let owner = super::super::query::tests::owned(left, 0.03);
+        let approximation = owner.authored_mesh_approximation(WORK, None).unwrap();
+        let now = std::time::Instant::now();
+        let properties = approximation
+            .source_face_properties(
+                crate::phillips_drive::FacePropertyOptions {
+                    area_tolerance_mm2: 1e-5,
+                    first_moment_tolerance_mm3: 1e-5,
+                    centroid_tolerance_mm: 1e-5,
+                    maximum_cells: 65536,
+                },
+                WORK,
+                None,
+            )
+            .unwrap();
+        eprintln!(
+            "actual periodic measures hand{left} elapsed {:?}",
+            now.elapsed()
+        );
+        assert_eq!(properties.len(), owner.face_count());
+        let mut work = Work {
+            remaining: WORK,
+            interrupt: None,
+            cancelled: Cell::new(false),
+        };
+        let rotation = rotation::Rotation::new(&mut work).unwrap();
+        let pi = rotation.pi(&mut work).unwrap();
+        let phases = owner.thread().phases();
+        let radii = owner.thread().radius_nodes_mm();
+        let pitch = I::point(owner.thread().pitch_mm());
+        let caps = owner.cap_expressions_mm().map(expression);
+        let height = caps[1] - caps[0];
+        let mut disk = I::point(0.);
+        for band in 0..4 {
+            let a = I::point(radii[band]);
+            let b = I::point(radii[band + 1]);
+            disk = disk
+                + pi * (phases[band + 1] - phases[band]) * (a.square() + a * b + b.square())
+                    / (I::point(3.) * pitch);
+        }
+        let crest =
+            I::point(2.) * pi * I::point(radii[3]) * (phases[4] - phases[3]) * height / pitch;
+        let h = owner.head().view().segment_count();
+        for (index, oracle) in [
+            (h + 3, crest),
+            (h + 4, disk),
+            (h + 5, pi * I::point(radii[0]).square() - disk),
+        ] {
+            let enclosure = properties[index].area_mm2;
+            assert!(
+                enclosure[0] <= oracle.lo && enclosure[1] >= oracle.hi,
+                "source area{index} {:?} vs {:?}",
+                enclosure,
+                bounds_for_test(oracle)
+            );
+        }
+        assert!(
+            properties[h + 4].centroid_mm[2][0] <= caps[1].lo
+                && properties[h + 4].centroid_mm[2][1] >= caps[1].hi
+        );
+
+        for (i, p) in properties.iter().enumerate() {
+            assert_eq!(p.source_face, i);
+            assert!(p.area_mm2[0] > 0. && p.area_mm2[1] >= p.area_mm2[0]);
+            assert!(p.area_transfer_error_mm2.is_finite());
+            assert!(
+                p.centroid_mm
+                    .iter()
+                    .all(|b| b[0].is_finite() && b[1] >= b[0] && b[1] - b[0] <= 1e-5)
+            );
+        }
+    }
+}
+
+fn bounds_for_test(v: I) -> [f64; 2] {
+    [v.lo, v.hi]
+}
+#[test]
+fn actual_source_face_measure_frontiers_refuse_without_partial_publication() {
+    let owner = super::super::query::tests::owned(false, 0.03);
+    let approximation = owner.authored_mesh_approximation(WORK, None).unwrap();
+    let options = crate::phillips_drive::FacePropertyOptions::default();
+    for (maximum, expected) in [
+        (0, PhillipsReadError::Limit),
+        (1, PhillipsReadError::Limit),
+        (WORK + 1, PhillipsReadError::Invalid),
+    ] {
+        assert!(
+            matches!(approximation.source_face_properties(options,maximum,None),Err(e) if e==expected)
+        );
+    }
+    assert!(matches!(
+        approximation.source_face_properties(
+            crate::phillips_drive::FacePropertyOptions {
+                area_tolerance_mm2: 0.,
+                ..options
+            },
+            WORK,
+            None
+        ),
+        Err(PhillipsReadError::Invalid)
+    ));
+    assert!(matches!(
+        approximation.source_face_properties(options, WORK, Some(&|| true)),
+        Err(PhillipsReadError::Cancelled)
+    ));
+    let calls = Cell::new(0);
+    let cancel = || {
+        let n = calls.get() + 1;
+        calls.set(n);
+        n > 10
+    };
+    assert!(matches!(
+        approximation.source_face_properties(options, WORK, Some(&cancel)),
+        Err(PhillipsReadError::Cancelled)
+    ));
+    assert!(calls.get() > 10);
+}

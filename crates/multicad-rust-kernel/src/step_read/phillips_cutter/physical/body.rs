@@ -249,13 +249,13 @@ pub use derived_thread::{
     Degree11RimKnot, Degree11SignDomain, Degree11ThreadContacts, Degree11ThreadFace,
     Degree11ThreadOptions, DerivedThreadCarrier, DerivedThreadOptions, DyadicParameter,
     OccupiedDerivedThread, OwnedPeriodicMaterial, PeriodicAuthoredApproximation,
-    PeriodicClosedMaterial, PeriodicCurveOwner, PeriodicFiniteCurve, PeriodicFiniteCurves,
-    PeriodicFiniteKind, PeriodicFiniteOptions, PeriodicLiteralCertificate, PeriodicMaterialFace,
-    PeriodicMaterialOptions, PeriodicMaterialProvenance, PeriodicMaterialVolume,
-    PeriodicOwnedMaterialQuery, PeriodicOwnedOptions, PeriodicShoulderOptions,
-    PeriodicShoulderRepair, PeriodicThreadBounds, PeriodicThreadRepair, PeriodicThreadSource,
-    PeriodicVolumeOptions, RimContact, RimContactId, RimDomainEnd, RimDomainRole, RimKnot,
-    RimSignDomain, ThreadCarrierTransfer, ThreadContactOptions,
+    PeriodicClosedMaterial, PeriodicCurveOwner, PeriodicFaceProperties, PeriodicFiniteCurve,
+    PeriodicFiniteCurves, PeriodicFiniteKind, PeriodicFiniteOptions, PeriodicLiteralCertificate,
+    PeriodicMaterialFace, PeriodicMaterialOptions, PeriodicMaterialProvenance,
+    PeriodicMaterialVolume, PeriodicOwnedMaterialQuery, PeriodicOwnedOptions,
+    PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicThreadBounds, PeriodicThreadRepair,
+    PeriodicThreadSource, PeriodicVolumeOptions, RimContact, RimContactId, RimDomainEnd,
+    RimDomainRole, RimKnot, RimSignDomain, ThreadCarrierTransfer, ThreadContactOptions,
 };
 
 mod material;

@@ -95,6 +95,8 @@ pub(crate) struct RepairedPhillipsBody {
     policy: GeometryPolicy,
     local_bounds: Bounds,
     display: RefCell<Option<mesh::Cached>>,
+    periodic_properties:
+        RefCell<Option<Vec<multicad_rust_kernel::step_read::PhillipsPeriodicFaceProperties>>>,
     query_depth: std::cell::Cell<usize>,
     #[cfg(test)]
     builds: std::cell::Cell<usize>,
@@ -192,6 +194,7 @@ impl RepairedPhillipsBody {
             policy,
             local_bounds: bounds,
             display: RefCell::new(None),
+            periodic_properties: RefCell::new(None),
             query_depth: std::cell::Cell::new(0),
             #[cfg(test)]
             builds: std::cell::Cell::new(0),

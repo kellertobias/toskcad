@@ -8,9 +8,10 @@ mod material;
 mod plane;
 pub use material::{
     AuthoredPeriodicOptions, OwnedPeriodicMaterial, PeriodicAuthoredApproximation,
-    PeriodicClosedMaterial, PeriodicCurveOwner, PeriodicLiteralCertificate, PeriodicMaterialFace,
-    PeriodicMaterialOptions, PeriodicMaterialProvenance, PeriodicMaterialVolume,
-    PeriodicOwnedMaterialQuery, PeriodicOwnedOptions, PeriodicVolumeOptions,
+    PeriodicClosedMaterial, PeriodicCurveOwner, PeriodicFaceProperties, PeriodicLiteralCertificate,
+    PeriodicMaterialFace, PeriodicMaterialOptions, PeriodicMaterialProvenance,
+    PeriodicMaterialVolume, PeriodicOwnedMaterialQuery, PeriodicOwnedOptions,
+    PeriodicVolumeOptions,
 };
 #[cfg(test)]
 mod tests;

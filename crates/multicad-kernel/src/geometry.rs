@@ -2140,12 +2140,8 @@ impl Solid {
         crate::planar_contours::extract(self, face, frame, self.policy)
     }
     pub fn faces(&self) -> Result<Vec<Face>, GeometryError> {
-        if self.repaired_phillips_body().is_some() {
-            return Err(error(
-                "repaired Phillips faces",
-                GeometryErrorKind::Unsupported,
-                "Actual repaired face properties have not been admitted",
-            ));
+        if let Some((body, frame)) = self.repaired_phillips_body() {
+            return body.periodic_faces(frame);
         }
         if let Some((body, frame)) = self.hanger_body() {
             return body.material(frame, self.policy)?.faces(self.policy, None);

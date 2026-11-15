@@ -4,7 +4,9 @@
 use super::*;
 use crate::phillips_drive::{Cavity, PhillipsScrew};
 mod literal;
+mod properties;
 pub use literal::PeriodicLiteralCertificate;
+pub use properties::PeriodicFaceProperties;
 #[cfg(test)]
 mod tests;
 pub struct PeriodicAuthoredApproximation<'s> {

@@ -75,6 +75,7 @@ pub(super) struct Placement {
     top_z: f64,
     pub(super) determinant: I,
     pub(super) sigma_max: f64,
+    sigma_min: f64,
     pub(super) condition: f64,
 }
 impl Placement {
@@ -105,6 +106,7 @@ impl Placement {
             top_z: chart.outer_top_z,
             determinant,
             sigma_max: high.hi,
+            sigma_min: low.lo,
             condition: condition.hi,
         })
     }
@@ -177,6 +179,12 @@ impl Placement {
             ));
         }
         Ok(mapped)
+    }
+    pub(super) fn area_scale_bounds(&self) -> I {
+        I::new(
+            (I::point(self.sigma_min).square()).lo,
+            (I::point(self.sigma_max).square()).hi,
+        )
     }
     pub(super) fn volume_interval(&self, local: [f64; 2]) -> Result<[f64; 2], GeometryError> {
         let volume = I::new(local[0], local[1]) * self.determinant;

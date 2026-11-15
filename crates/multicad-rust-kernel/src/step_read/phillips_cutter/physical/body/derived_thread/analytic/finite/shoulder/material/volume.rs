@@ -10,8 +10,8 @@ use crate::{
 };
 pub use owned::{
     AuthoredPeriodicOptions, OwnedPeriodicMaterial, PeriodicAuthoredApproximation,
-    PeriodicCurveOwner, PeriodicLiteralCertificate, PeriodicMaterialProvenance,
-    PeriodicOwnedMaterialQuery, PeriodicOwnedOptions,
+    PeriodicCurveOwner, PeriodicFaceProperties, PeriodicLiteralCertificate,
+    PeriodicMaterialProvenance, PeriodicOwnedMaterialQuery, PeriodicOwnedOptions,
 };
 #[cfg(test)]
 mod tests;
