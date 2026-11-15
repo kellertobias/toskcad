@@ -63,6 +63,7 @@ pub struct Receipt {
     encoding_work: usize,
     document_work: usize,
     material_work: usize,
+    correspondence_work: usize,
     binding_work: usize,
     append_work: usize,
     work: usize,
@@ -98,6 +99,9 @@ impl Receipt {
     }
     pub fn material_work_used(self) -> usize {
         self.material_work
+    }
+    pub fn correspondence_work_used(self) -> usize {
+        self.correspondence_work
     }
     pub fn binding_work_used(self) -> usize {
         self.binding_work
@@ -414,9 +418,9 @@ fn verify<'source>(
         bytes: options.maximum_bytes,
         interrupt,
     };
+    let encoding_start = work.used;
     work.step(1)?;
     let mut writer = Writer::new();
-    let encoding_start = work.used;
     let mut trace = None;
     let mut graph_preparation_work = 0;
     writer.append_typed(|file| {
@@ -499,11 +503,13 @@ fn verify<'source>(
     }
     let material_work = occupied.work_used() + pose_work;
     work.step(material_work)?;
+    let correspondence_start = work.used;
     let (position, derivative, normal) = if let Some(placement) = occurrence {
         placed::correspond(source, placement, &pose, options, &mut work)?
     } else {
         (0., 0., 0.)
     };
+    let correspondence_work = work.used - correspondence_start;
     work.observe(document_peak + occupied.query_budget_bytes() + size_of_val(&pose))?;
     assert!(
         occupied.volume_mm3()[0] > 0.,
@@ -550,7 +556,8 @@ fn verify<'source>(
         encoding_work,
         document_work,
         material_work,
-        binding_work: binding.work_used(),
+        binding_work: binding.work_used() + ids.len(),
+        correspondence_work,
         append_work: 0,
         work: work.used,
         peak: work.peak,

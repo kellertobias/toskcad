@@ -226,6 +226,16 @@ fn actual_retained_replay_uses_one_new_query_ledger_and_atomic_append_frontiers(
             + receipt.source_qualification_work_used()
             + receipt.aggregate_work_used()
     );
+    assert_eq!(
+        receipt.aggregate_work_used(),
+        receipt.graph_preparation_work_used()
+            + receipt.encoding_work_used()
+            + receipt.document_work_used()
+            + receipt.material_work_used()
+            + receipt.correspondence_work_used()
+            + receipt.binding_work_used()
+            + receipt.append_work_used()
+    );
     assert!(
         receipt.append_work_used() > 0
             && receipt.binding_work_used() > 0
@@ -298,6 +308,17 @@ fn actual_native_chain_step_replay_binds_local_geometry_and_earns_whole_operator
         let candidate = candidate.unwrap();
         assert_eq!(candidate.occurrence().unwrap().transforms().len(), 2);
         let receipt = candidate.receipt();
+        assert!(receipt.correspondence_work_used() > 0);
+        assert_eq!(
+            receipt.aggregate_work_used(),
+            receipt.graph_preparation_work_used()
+                + receipt.encoding_work_used()
+                + receipt.document_work_used()
+                + receipt.material_work_used()
+                + receipt.correspondence_work_used()
+                + receipt.binding_work_used()
+                + receipt.append_work_used()
+        );
         assert!(
             receipt.position_error_mm() <= 1e-7
                 && receipt.original_derivative_error_mm() <= 1e-6
