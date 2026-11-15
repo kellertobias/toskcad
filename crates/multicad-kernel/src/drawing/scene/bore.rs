@@ -244,6 +244,19 @@ impl Member for Bore {
             .collect())
     }
 
+    fn line(&self, start: P3, direction: P3) -> Option<Result<Vec<[f64; 2]>, GeometryError>> {
+        let Some([a, b]) = self.in_box(start, direction) else {
+            return Some(Ok(Vec::new()));
+        };
+        let Some([c, d]) = self.in_tool(start, direction) else {
+            return Some(Ok(vec![[a, b]]));
+        };
+        Some(Ok([[a, b.min(c)], [a.max(d), b]]
+            .into_iter()
+            .filter(|[lo, hi]| hi > lo)
+            .collect()))
+    }
+
     fn section(&self, depth: f64, _: f64) -> Result<Vec<Loop>, GeometryError> {
         let mut output: Loop = Vec::new();
         let mut segment = |a: P3, b: P3| {
