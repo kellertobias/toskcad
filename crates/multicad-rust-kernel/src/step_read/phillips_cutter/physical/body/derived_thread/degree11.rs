@@ -179,10 +179,21 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
             }
             for i in 0..candidates.len() {
                 let next = (i + 1) % candidates.len();
-                require(
-                    raw[i].rails[1] == raw[next].rails[0]
-                        && candidates[i].dimensions[1] == candidates[next].dimensions[1],
-                )?;
+                // verify_prefix checks the entire original rail-ID ring. Its
+                // tensor_surface/Proof::poles checks every row's exact count
+                // against ONE axial basis, not just geometric proximity or
+                // compatible knots. Outer->Common preserves ordered receipts;
+                // raw additionally verifies each retained entry column equals
+                // that common basis.visible_start. These are inherited source
+                // invariants; neither mismatch is a new user-facing refusal.
+                assert_eq!(
+                    raw[i].rails[1], raw[next].rails[0],
+                    "qualified rail owner ring"
+                );
+                assert_eq!(
+                    candidates[i].dimensions[1], candidates[next].dimensions[1],
+                    "qualified common axial grid"
+                );
                 let height = candidates[i].dimensions[1];
                 work.step(height)?;
                 for j in 0..height {
