@@ -609,3 +609,70 @@ fn absent_source_supports_and_subnormal_accuracy_never_create_geometry() {
         );
     }
 }
+#[test]
+fn finite_prefix_properties_use_original_phase_and_original_role_owners() {
+    for (left, starts) in [(false, 1), (true, 2)] {
+        let source = thread(left, starts);
+        let end = source.full_length_mm() - 0.001;
+        let before = source;
+        for role in [
+            ThreadBandRole::Lower,
+            ThreadBandRole::Crest,
+            ThreadBandRole::Upper,
+            ThreadBandRole::Root,
+        ] {
+            let key = FaceKey::Thread {
+                start: 0,
+                band: role,
+            };
+            let p = source
+                .local_prefix_face_properties(end, key, Default::default(), None)
+                .unwrap();
+            let full = source
+                .local_face_properties(key, Default::default(), None)
+                .unwrap();
+            let ratio = end / source.full_length_mm();
+            let expected = (full.area_mm2.lower + full.area_mm2.upper) * 0.5 * ratio;
+            assert!(p.area_mm2.lower <= expected + 1e-7 && p.area_mm2.upper >= expected - 1e-7);
+        }
+        let cap = source
+            .local_prefix_face_properties(end, FaceKey::EndCap, Default::default(), None)
+            .unwrap();
+        assert!(cap.centroid_mm[2].lower <= end && cap.centroid_mm[2].upper >= end);
+        assert_eq!(source, before);
+        assert_eq!(
+            source.local_prefix_face_properties(
+                f64::NAN,
+                FaceKey::StartCap,
+                Default::default(),
+                None
+            ),
+            Err(Error::Invalid)
+        );
+        assert_eq!(
+            source.local_prefix_face_properties(end, FaceKey::EntryCone, Default::default(), None),
+            Err(Error::Invalid)
+        );
+        assert_eq!(
+            source.local_prefix_face_properties(
+                end,
+                FaceKey::Thread {
+                    start: starts,
+                    band: ThreadBandRole::Crest
+                },
+                Default::default(),
+                None
+            ),
+            Err(Error::Invalid)
+        );
+        assert_eq!(
+            source.local_prefix_face_properties(
+                end,
+                FaceKey::StartCap,
+                Default::default(),
+                Some(&|| true)
+            ),
+            Err(Error::Cancelled)
+        );
+    }
+}

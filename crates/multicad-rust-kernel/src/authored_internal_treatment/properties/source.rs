@@ -55,6 +55,7 @@ pub(super) struct Domain<'a> {
     thread: &'a AuthoredThread,
     entry: Option<Entry>,
     tail: Option<Tail>,
+    end_station_mm: f64,
 }
 impl<'a> Domain<'a> {
     pub fn treated(body: &'a Cavity) -> Self {
@@ -62,6 +63,13 @@ impl<'a> Domain<'a> {
             thread: &body.thread,
             entry: body.entry,
             tail: body.tail,
+            end_station_mm: body.full_length_mm(),
+        }
+    }
+    pub fn prefix(thread: &'a AuthoredThread, end_station_mm: f64) -> Self {
+        Self {
+            end_station_mm,
+            ..Self::bare(thread)
         }
     }
     pub fn bare(thread: &'a AuthoredThread) -> Self {
@@ -69,6 +77,7 @@ impl<'a> Domain<'a> {
             thread,
             entry: None,
             tail: None,
+            end_station_mm: thread.full_length_mm(),
         }
     }
 }
@@ -79,7 +88,7 @@ pub(super) fn evaluate(
     options: FacePropertyOptions,
     work: &mut integrate::Work<'_>,
 ) -> Result<[I; 4], Error> {
-    let length = body.thread.full_length_mm();
+    let length = body.end_station_mm;
     let kind = match face {
         FaceKey::MaterialOuterWall => {
             return Ok(cylinder(stock.ok_or(Error::Invalid)?, 0., length));

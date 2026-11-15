@@ -273,6 +273,50 @@ impl AuthoredThread {
         bare_properties(self, None, face, options, interrupt)
     }
 }
+impl AuthoredThread {
+    /// Integrates a finite prefix while retaining the original source's phase
+    /// and profile coefficients. EndCap denotes the actual prefix end plane.
+    pub fn local_prefix_face_properties(
+        &self,
+        end_station_mm: f64,
+        face: FaceKey,
+        options: FacePropertyOptions,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<FaceProperties, Error> {
+        let mut work = integrate::Work::new(options, interrupt)?;
+        prefix_properties(self, end_station_mm, face, options, &mut work)
+    }
+}
+fn prefix_properties(
+    source: &AuthoredThread,
+    end: f64,
+    face: FaceKey,
+    options: FacePropertyOptions,
+    work: &mut integrate::Work<'_>,
+) -> Result<FaceProperties, Error> {
+    let face_valid = match face {
+        FaceKey::StartCap | FaceKey::EndCap => true,
+        FaceKey::Thread { start, .. } => start < source.spec().starts,
+        _ => false,
+    };
+    if !end.is_finite()
+        || end < source.spec().pitch_mm
+        || end > source.full_length_mm()
+        || !face_valid
+    {
+        return Err(Error::Invalid);
+    }
+    let values = source::evaluate(
+        source::Domain::prefix(source, end),
+        None,
+        face,
+        options,
+        work,
+    )?;
+    let result = finish(face, values, options)?;
+    work.checkpoint()?;
+    Ok(result)
+}
 /// Optional subtraction is only the paired source's actual planar cap domain.
 /// Both integrals share one work ledger and retain their own phase/start law.
 pub(crate) fn bare_properties(
