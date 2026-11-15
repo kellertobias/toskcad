@@ -347,6 +347,17 @@ fn actual_far_mapped_surface_refuses_unrepresentable_world_centroid_precision() 
         ordinary.centroid_mm(),
         ordinary.work_used()
     );
+    let achievable = plan
+        .face_measure(
+            6,
+            FaceMeasureOptions {
+                centroid_width_mm: 1e-8,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+    assert!(achievable.centroid_mm().iter().all(|v| v[1] - v[0] <= 1e-8));
     let strict = FaceMeasureOptions {
         centroid_width_mm: 1e-9,
         ..Default::default()
