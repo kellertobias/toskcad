@@ -16,6 +16,127 @@ fn replace_component(input: &str, name: &str, replacement: &str) -> String {
     input.replacen(original, replacement, 1)
 }
 
+// Select literal argument ranges without reserializing untouched coordinates.
+// Input here is the already-parsed writer fixture; nested lists and quoted
+// labels retain their original spellings.
+fn argument(text: &str, index: usize) -> std::ops::Range<usize> {
+    let open = text.find('(').unwrap();
+    let bytes = text.as_bytes();
+    let mut depth = 0;
+    let mut quoted = false;
+    let mut start = open + 1;
+    (start..bytes.len())
+        .filter_map(|i| {
+            let b = bytes[i];
+            if b == b'\'' {
+                quoted = !quoted;
+            } else if !quoted {
+                if b == b'(' {
+                    depth += 1;
+                } else if b == b')' && depth > 0 {
+                    depth -= 1;
+                } else if (b == b',' || b == b')') && depth == 0 {
+                    let range = start..i;
+                    start = i + 1;
+                    return Some(range);
+                }
+            }
+            None
+        })
+        .nth(index)
+        .unwrap()
+}
+fn replace_argument(text: &str, path: &[usize], replacement: &str) -> String {
+    let selected = argument(text, path[0]);
+    let changed = if path.len() == 1 {
+        replacement.to_owned()
+    } else {
+        replace_argument(&text[selected.clone()], &path[1..], replacement)
+    };
+    let mut result = text.to_owned();
+    result.replace_range(selected, &changed);
+    result
+}
+
+#[test]
+fn actual_hanger_schema_fields_refuse_invalid_geometry_and_topology() {
+    let source = Hanger::new(
+        crate::authored_hanger_bolt::tests::fixture(false, false),
+        None,
+    )
+    .unwrap();
+    let file =
+        crate::step::hanger::export_qualified_hanger(&source, Default::default(), None).unwrap();
+    let original = file.as_str();
+    let arena = part21::parse(original).unwrap();
+    let cases: &[(&str, &[usize], &str)] = &[
+        ("B_SPLINE_CURVE", &[0], "1.5"),
+        ("B_SPLINE_CURVE", &[0], "33"),
+        ("B_SPLINE_CURVE", &[1], "0."),
+        ("B_SPLINE_CURVE", &[1, 0], "0."),
+        ("B_SPLINE_CURVE", &[1], "()"),
+        ("B_SPLINE_CURVE", &[2], ".POLYLINE_FORM."),
+        ("B_SPLINE_CURVE_WITH_KNOTS", &[0], "()"),
+        ("B_SPLINE_CURVE_WITH_KNOTS", &[0, 0], "0"),
+        ("B_SPLINE_CURVE_WITH_KNOTS", &[1, 1], "-1."),
+        ("RATIONAL_B_SPLINE_CURVE", &[0, 0], "0."),
+        ("B_SPLINE_SURFACE", &[0], "1.5"),
+        ("B_SPLINE_SURFACE", &[0], "3"),
+        ("B_SPLINE_SURFACE", &[2], "()"),
+        ("B_SPLINE_SURFACE", &[2, 1], "()"),
+        ("B_SPLINE_SURFACE", &[2, 0, 0], "0."),
+        ("B_SPLINE_SURFACE_WITH_KNOTS", &[0], "()"),
+        ("B_SPLINE_SURFACE_WITH_KNOTS", &[0, 0], "0"),
+        ("B_SPLINE_SURFACE_WITH_KNOTS", &[1, 0], "0"),
+        ("B_SPLINE_SURFACE_WITH_KNOTS", &[2, 0], "0.0000000000001"),
+        ("B_SPLINE_SURFACE_WITH_KNOTS", &[3, 1], "-1."),
+        ("RATIONAL_B_SPLINE_SURFACE", &[0, 0, 0], "0."),
+        ("RATIONAL_B_SPLINE_SURFACE", &[0, 0], "()"),
+        ("PLANE", &[1], "$"),
+        ("PLANE", &[1], "#4294967294"),
+        ("GEOMETRIC_REPRESENTATION_CONTEXT", &[0], "2.5"),
+        ("GLOBAL_UNIT_ASSIGNED_CONTEXT", &[0], "()"),
+        ("ADVANCED_BREP_SHAPE_REPRESENTATION", &[1], "()"),
+        ("ADVANCED_BREP_SHAPE_REPRESENTATION", &[1], "0."),
+        ("PRODUCT_DEFINITION_SHAPE", &[2], "0."),
+        ("CLOSED_SHELL", &[1], "()"),
+        ("ADVANCED_FACE", &[1], "()"),
+        ("ADVANCED_FACE", &[3], ".U."),
+        ("FACE_OUTER_BOUND", &[2], ".F."),
+        ("EDGE_LOOP", &[1], "()"),
+        ("ORIENTED_EDGE", &[1], "$"),
+        ("ORIENTED_EDGE", &[4], ".U."),
+        ("EDGE_CURVE", &[4], ".U."),
+        ("SURFACE_CURVE", &[2], "()"),
+        ("SURFACE_CURVE", &[3], ".PCURVE_S1."),
+        ("DEFINITIONAL_REPRESENTATION", &[1], "()"),
+        ("PCURVE", &[1], "#4294967294"),
+        ("VERTEX_POINT", &[1], "$"),
+    ];
+    for &(name, path, replacement) in cases {
+        let component = arena
+            .values()
+            .flatten()
+            .find(|entity| entity.name == name)
+            .unwrap()
+            .source
+            .unwrap();
+        let changed = replace_argument(component, path, replacement);
+        let input = original.replacen(component, &changed, 1);
+        let error = decode(&input, ReadOptions::default(), None).err();
+        assert!(
+            matches!(error, Some(Error::Invalid | Error::Unsupported)),
+            "{name}{path:?}={replacement}: {error:?}"
+        );
+    }
+    assert!(
+        !decode(original, ReadOptions::default(), None)
+            .unwrap()
+            .faces()
+            .is_empty()
+    );
+}
+
 #[test]
 fn malformed_actual_hanger_entities_never_publish_decoded_material() {
     let source = Hanger::new(
