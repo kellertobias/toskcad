@@ -1,5 +1,6 @@
 //! Placed occupied material of the unchanged local clipped NPT source.
-//! Retained/imported tensor receipts and STEP admission remain separate.
+//! Local STEP export earns independent literal material and source
+//! correspondence. Imported geometry and placed STEP admission remain separate.
 use super::*;
 use multicad_core::references::{
     AnalyticGeometry, AnchoredFrame, TopologyElement, TopologyKey, TopologyKind,
@@ -17,6 +18,7 @@ use multicad_rust_kernel::{
 use std::collections::BTreeSet;
 mod mesh;
 mod placement;
+mod step;
 #[cfg(test)]
 mod tests;
 #[derive(Clone)]
@@ -28,6 +30,7 @@ pub(crate) struct ClippedNptBody {
     measures: Vec<StockClipFaceMeasure>,
     vertices: [[f64; 3]; 12],
     pose: RigidTransform,
+    step_capability: std::cell::Cell<Option<(u64, bool)>>,
 }
 fn failure(cause: Cause) -> GeometryError {
     error(
@@ -129,6 +132,7 @@ impl Solid {
                 measures: bounds,
                 vertices,
                 pose: RigidTransform::default(),
+                step_capability: std::cell::Cell::new(None),
             })),
             policy,
             provenance: vec![],

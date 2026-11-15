@@ -175,9 +175,9 @@ mod tests {
         )
         .unwrap();
         assert!(clipped.rust_clipped_npt_source().is_some());
-        // Source-native material is now qualified; independent STEP carrier
-        // and readback qualification remain a separate unfinished gate.
-        assert!(!clipped.supports_step_export());
+        // Local STEP admission independently proves literal material and its
+        // whole-domain correspondence to this unchanged source.
+        assert!(clipped.supports_step_export());
         resolved.end_treatments = Some(ResolvedThreadEndTreatments {
             intent: ThreadEndTreatments {
                 start: ThreadStartTreatment::FlatCut,

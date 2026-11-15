@@ -2886,8 +2886,8 @@ impl Solid {
                 )
             }
             SolidBody::WoodInsert(body, frame) => body.supports_step(*frame, self.policy),
+            SolidBody::ClippedNpt(body) => body.supports_step(self.policy),
             SolidBody::CosmeticFastener(..)
-            | SolidBody::ClippedNpt(..)
             | SolidBody::CosmeticProfiled(..)
             | SolidBody::InternalThreadTreatment(..)
             | SolidBody::RepairedPhillips(..)
@@ -3103,8 +3103,8 @@ impl Solid {
                 self.policy.linear_tolerance_mm,
             ),
             SolidBody::WoodInsert(body, frame) => body.append_step(writer, *frame, self.policy),
+            SolidBody::ClippedNpt(body) => body.append_step(writer, self.policy),
             SolidBody::CosmeticFastener(..)
-            | SolidBody::ClippedNpt(..)
             | SolidBody::CosmeticProfiled(..)
             | SolidBody::InternalThreadTreatment(..)
             | SolidBody::RepairedPhillips(..)

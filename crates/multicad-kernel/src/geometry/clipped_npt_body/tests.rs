@@ -56,9 +56,39 @@ fn actual_canonical_clipped_npt_native_source_has_finite_topology_properties_and
             );
         }
         assert!(solid.volume_mm3().unwrap() > 0.);
-        assert!(!solid.supports_step_export());
+        assert!(solid.supports_step_export());
         let file = tempfile::NamedTempFile::new().unwrap();
-        assert!(solid.write_step(file.path()).is_err());
+        solid.write_step(file.path()).unwrap();
+        let text = std::fs::read_to_string(file.path()).unwrap();
+        {
+            use multicad_rust_kernel::step_read::{
+                npt_stock::Selected, owned_insert::CompoundDocument,
+            };
+            let document = CompoundDocument::parse(&text, Default::default(), None).unwrap();
+            assert_eq!(document.represented_members().len(), 1);
+            let selected = Selected::parse(
+                &document,
+                document.represented_members()[0].item_entity(),
+                Default::default(),
+                None,
+            )
+            .unwrap();
+            let material = selected.retain(Default::default(), None).unwrap();
+            let volume = material.local_volume_mm3();
+            let source = solid.rust_clipped_npt_volume_bounds_mm3().unwrap();
+            assert!((volume[0].midpoint(volume[1]) - source[0].midpoint(source[1])).abs() < 1e-5);
+            assert_eq!(material.faces().len(), 10);
+            assert_eq!(material.edges().len(), 20);
+        }
+        // Repeated capability queries and exports retain the same immutable
+        // authored source and deterministic independently qualified geometry.
+        assert!(solid.supports_step_export());
+        solid.write_step(file.path()).unwrap();
+        assert_eq!(std::fs::read_to_string(file.path()).unwrap(), text);
+        assert_eq!(
+            solid.rust_clipped_npt_source().unwrap().source().spec(),
+            spec
+        );
         let mesh = solid
             .manufacturing_mesh_with_receipt(MeshOptions {
                 linear_deflection_mm: 0.1,
