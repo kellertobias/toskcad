@@ -59,6 +59,109 @@ fn replace_argument(text: &str, path: &[usize], replacement: &str) -> String {
 }
 
 #[test]
+fn actual_tensor_weight_shapes_refuse_even_when_all_numeric_weights_survive() {
+    let source = Hanger::new(
+        crate::authored_hanger_bolt::tests::fixture(false, false),
+        None,
+    )
+    .unwrap();
+    let file =
+        crate::step::hanger::export_qualified_hanger(&source, Default::default(), None).unwrap();
+    let original = file.as_str();
+    let arena = part21::parse(original).unwrap();
+    let rational = arena
+        .values()
+        .flatten()
+        .find(|e| e.name == "RATIONAL_B_SPLINE_SURFACE")
+        .unwrap();
+    let component = rational.source.unwrap();
+    let matrix = &component[argument(component, 0)];
+    let Value::List(weight_rows) = &rational.args[0] else {
+        unreachable!()
+    };
+    let rows = weight_rows
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let Value::List(weights) = row else {
+                unreachable!()
+            };
+            let row = &matrix[argument(matrix, i)];
+            (0..weights.len())
+                .map(|j| row[argument(row, j)].to_owned())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    assert!(rows.len() > 1 && rows[0].len() > 1);
+    let count = rows.iter().map(Vec::len).sum::<usize>();
+    for kind in 0..3 {
+        let mut changed = rows.clone();
+        let matrix = if kind == 0 {
+            let moved = changed[0].pop().unwrap();
+            changed[1].push(moved);
+            format!(
+                "({})",
+                changed
+                    .iter()
+                    .map(|r| format!("({})", r.join(",")))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        } else if kind == 1 {
+            let remainder = changed[0].split_off(1);
+            changed[1].extend(remainder);
+            let scalar = changed[0][0].clone();
+            format!(
+                "({scalar},{})",
+                changed[1..]
+                    .iter()
+                    .map(|r| format!("({})", r.join(",")))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        } else {
+            changed[0][0] = format!("({})", changed[0][0]);
+            format!(
+                "({})",
+                changed
+                    .iter()
+                    .map(|r| format!("({})", r.join(",")))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        };
+        let changed = replace_argument(component, &[0], &matrix);
+        let input = original.replacen(component, &changed, 1);
+        let changed_arena = part21::parse(&input).unwrap();
+        let entity = changed_arena
+            .values()
+            .flatten()
+            .find(|e| e.name == "RATIONAL_B_SPLINE_SURFACE")
+            .unwrap();
+        fn numbers(v: &Value<'_>) -> usize {
+            match v {
+                Value::Number(_) => 1,
+                Value::List(v) => v.iter().map(numbers).sum(),
+                _ => 0,
+            }
+        }
+        assert_eq!(
+            numbers(&entity.args[0]),
+            count,
+            "numeric count must not be the refusal reason"
+        );
+        assert!(
+            matches!(
+                decode(&input, Default::default(), None),
+                Err(Error::Invalid)
+            ),
+            "shape variant{kind}"
+        );
+    }
+    assert!(decode(original, Default::default(), None).is_ok());
+}
+
+#[test]
 fn actual_hanger_schema_fields_refuse_invalid_geometry_and_topology() {
     let source = Hanger::new(
         crate::authored_hanger_bolt::tests::fixture(false, false),
