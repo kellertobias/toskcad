@@ -183,18 +183,23 @@ pub(in crate::drawing) fn project(
         sections.push(own);
     }
 
+    let mut seams: Vec<Vec<Stretch>> = vec![Vec::new(); members.len()];
     if !options.section_only {
         for (index, entry) in members.iter().enumerate() {
-            let mut paths: Vec<(Kind, Arc<dyn Path>)> = entry
+            // Nothing of a member wholly in front of the cut is retained.
+            if top.is_some_and(|top| bounds[index][0][2] >= top - eps) {
+                continue;
+            }
+            let mut paths: Vec<(Option<Kind>, Arc<dyn Path>)> = entry
                 .member
                 .candidates(flat)?
                 .into_iter()
                 .filter(|c| c.kind != Kind::Smooth || options.tangent_edges)
-                .map(|c| (c.kind, c.path))
+                .map(|c| (Some(c.kind), c.path))
                 .collect();
             for level in [top, far].into_iter().flatten() {
                 for path in entry.member.section(level, flat)?.into_iter().flatten() {
-                    paths.push((Kind::Edge, path));
+                    paths.push((None, path));
                 }
             }
             for (kind, path) in paths {
@@ -211,7 +216,17 @@ pub(in crate::drawing) fn project(
                         .windows(2)
                         .map(|pair| distance(paper(pair[0]), paper(pair[1])))
                         .sum();
-                    if length > eps && on_boundary(&scene, &strand, kind, &limits)? {
+                    if length <= eps {
+                        continue;
+                    }
+                    let (edge, interior) = on_boundary(&scene, &strand, kind, &limits)?;
+                    if interior && plane == Some(0) && top.is_some() {
+                        // A source edge inside the cut face also bounds the
+                        // two coplanar faces of the section.
+                        let range = [strand.ts[0], *strand.ts.last().unwrap()];
+                        seams[index].push((strand.path.clone(), range));
+                    }
+                    if edge {
                         strands.push(strand);
                     }
                 }
@@ -377,22 +392,41 @@ pub(in crate::drawing) fn project(
         let mut kept = vec![false; pieces.len()];
         let mut index: HashMap<[i64; 2], Vec<usize>> = HashMap::new();
         let key = |p: P2| p.map(|v| (v / (16. * eps)).floor() as i64);
+        // Pieces are found by their lexicographically first end.
+        let first = |piece: &Piece| {
+            let [a, b] = piece.ends;
+            if (a[0], a[1]) <= (b[0], b[1]) { a } else { b }
+        };
+        let conic = |piece: &Piece| match strands[piece.strand].path.paper(piece.range) {
+            Some(Curve::Ellipse(ellipse)) => Some(ellipse),
+            _ => None,
+        };
         for i in order {
             let piece = &pieces[i];
             let source = members[strands[piece.strand].member].source;
-            let [x, y] = key(piece.mid);
+            let [x, y] = key(first(piece));
+            let chord = distance(piece.ends[0], piece.ends[1]);
             let duplicate = (-1..=1)
                 .flat_map(|dx| (-1..=1).map(move |dy| [x + dx, y + dy]))
                 .any(|cell| {
                     index.get(&cell).is_some_and(|others| {
                         others.iter().any(|&j| {
                             let other: &Piece = &pieces[j];
+                            let ends = (distance(other.ends[0], piece.ends[0]) <= 2. * eps
+                                && distance(other.ends[1], piece.ends[1]) <= 2. * eps)
+                                || (distance(other.ends[0], piece.ends[1]) <= 2. * eps
+                                    && distance(other.ends[1], piece.ends[0]) <= 2. * eps);
                             members[strands[other.strand].member].source == source
-                                && distance(other.mid, piece.mid) <= 2. * eps
-                                && ((distance(other.ends[0], piece.ends[0]) <= 2. * eps
-                                    && distance(other.ends[1], piece.ends[1]) <= 2. * eps)
-                                    || (distance(other.ends[0], piece.ends[1]) <= 2. * eps
-                                        && distance(other.ends[1], piece.ends[0]) <= 2. * eps))
+                                && ends
+                                && (distance(other.mid, piece.mid) <= 2. * eps
+                                    // The same arc of one conic under another
+                                    // parametrisation: its middle lies on the
+                                    // same side of the common chord.
+                                    || (chord > 2. * eps
+                                        && distance(other.mid, piece.mid) < 0.5 * chord
+                                        && conic(piece).zip(conic(other)).is_some_and(
+                                            |(a, b)| arrange::same_conic(a, b, eps),
+                                        )))
                         })
                     })
                 });
@@ -452,7 +486,10 @@ pub(in crate::drawing) fn project(
     // Cut faces: the exact boundary, then the hatch of each source's region.
     let mut regions: Vec<(usize, DrawingHatch, Vec<[P2; 2]>)> = Vec::new();
     for (index, entry) in members.iter().enumerate() {
-        if top.is_none() || !(cut(index) || options.section_only) {
+        if top.is_none()
+            || !(cut(index) || options.section_only)
+            || (!options.section_only && top.is_some_and(|top| bounds[index][0][2] >= top - eps))
+        {
             continue;
         }
         let mut boundary = Vec::new();
@@ -465,6 +502,9 @@ pub(in crate::drawing) fn project(
                 range,
             )?;
             boundary.extend(output.chords(strand.path.as_ref(), range, sampled));
+        }
+        for (path, range) in &seams[index] {
+            output.curve(entry.source, VectorRole::Section, path.as_ref(), *range)?;
         }
         for (path, range) in &section_extra[index] {
             output.curve(entry.source, VectorRole::Section, path.as_ref(), *range)?;
@@ -485,7 +525,7 @@ pub(in crate::drawing) fn project(
     for (source, hatch, boundary) in regions {
         output.hatch(source, hatch, &boundary, tolerance, 2. * eps)?;
     }
-    Ok(output.finish())
+    Ok(output.finish(eps))
 }
 
 fn border_strands(path: &Arc<dyn Path>, limits: &[&Limit], flat: f64, eps: f64) -> Vec<Strand> {
@@ -506,11 +546,11 @@ fn border_strands(path: &Arc<dyn Path>, limits: &[&Limit], flat: f64, eps: f64) 
 fn on_boundary(
     scene: &Scene<'_>,
     strand: &Strand,
-    kind: Kind,
+    kind: Option<Kind>,
     limits: &[Limit],
-) -> Result<bool, GeometryError> {
+) -> Result<(bool, bool), GeometryError> {
     let Some(inward) = strand.plane.and_then(|index| limits[index].inward) else {
-        return Ok(true);
+        return Ok((true, false));
     };
     let [a, b] = [strand.ts[0], *strand.ts.last().unwrap()];
     let mid = 0.5 * (a + b);
@@ -520,7 +560,7 @@ fn on_boundary(
     let side = cross3(inward, tangent);
     let length = dot3(side, side).sqrt();
     if length == 0. {
-        return Ok(true);
+        return Ok((true, false));
     }
     // Step far less into the solid than sideways, so that a wall leaving
     // the plane obliquely still separates the two probes.
@@ -531,10 +571,14 @@ fn on_boundary(
             add(center, scaled(side, sign * 256. * scene.eps / length)),
         )
     };
-    // A surface tangent to the plane keeps its outline along the contact.
-    Ok(if kind == Kind::Outline {
-        at(1.)? || at(-1.)?
-    } else {
-        at(1.)? != at(-1.)?
+    // A surface tangent to the plane keeps its outline along the contact,
+    // and a source edge keeps separating the two coplanar faces it bounds
+    // (as the native common of a solid and a half-space does). A section
+    // loop is an edge only where the retained face ends at it.
+    let [left, right] = [at(1.)?, at(-1.)?];
+    Ok(match kind {
+        Some(Kind::Outline) => (left || right, false),
+        Some(Kind::Edge) => (left || right, left && right),
+        _ => (left != right, false),
     })
 }

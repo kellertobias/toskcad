@@ -535,6 +535,239 @@ fn a_box_in_front_hides_generators_up_to_its_top_and_crops_bound_the_drawing() {
     );
 }
 
+/// A plane exactly on the junction of the tooth band and the upper hub: the
+/// cut face is the hub ring, and the junction circle keeps separating it from
+/// the coplanar cap of the band, as in the native common with a half-space.
+/// The whole cap is the section face; the bore stays one continuous hole.
+#[test]
+fn a_plane_on_the_hub_junction_keeps_the_junction_circle() {
+    let solid = gear(Some(GearHub {
+        radius_mm: 6.,
+        axial_start_mm: -1.5,
+        axial_end_mm: 6.,
+    }));
+    let vectors = project_drawing(
+        &[DrawingSolid {
+            solid: &solid,
+            hatch: Some(DrawingHatch {
+                angle_rad: 0.,
+                spacing_mm: 1.,
+                line_width_mm: 0.18,
+                pattern: HatchPattern::Solid,
+            }),
+        }],
+        DrawingProjection {
+            frame: PlaneFrame {
+                origin: [0., 0., WIDTH],
+                ..Default::default()
+            },
+            section_offset_mm: Some(0.),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    for role in [VectorRole::Section, VectorRole::Visible] {
+        let mut sweeps = [0.; 2];
+        for vector in vectors.iter().filter(|vector| vector.role == role) {
+            if let VectorCurve::Ellipse {
+                major_mm,
+                start_rad,
+                end_rad,
+                ..
+            } = vector.curve
+            {
+                for (sweep, radius) in sweeps.iter_mut().zip([BORE, 6.]) {
+                    if (major_mm - radius).abs() < 1e-9 {
+                        *sweep += end_rad - start_rad;
+                    }
+                }
+            }
+        }
+        // Each circle once: the bore rim and the junction circle.
+        for sweep in sweeps {
+            assert!((sweep - 2. * PI).abs() < 1e-9, "{role:?}: {sweeps:?}");
+        }
+    }
+    let area: f64 = vectors
+        .iter()
+        .filter_map(|vector| match vector.curve {
+            VectorCurve::HatchTriangle { points: [a, b, c] } => {
+                Some(((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs() / 2.)
+            }
+            _ => None,
+        })
+        .sum();
+    let exact = profile().area_mm2();
+    assert!((area - exact).abs() < 2e-4 * exact, "{area} {exact}");
+}
+
+/// A section-only plane lying in either cap of the tooth band meets the gear
+/// in that cap, as the native common of the solid and the plane does.
+#[test]
+fn a_section_only_plane_in_a_cap_cuts_the_cap_profile() {
+    let solid = gear(None);
+    for level in [0., WIDTH] {
+        let vectors = project_drawing(
+            &[DrawingSolid {
+                solid: &solid,
+                hatch: Some(DrawingHatch {
+                    angle_rad: 0.,
+                    spacing_mm: 1.,
+                    line_width_mm: 0.18,
+                    pattern: HatchPattern::Solid,
+                }),
+            }],
+            DrawingProjection {
+                frame: PlaneFrame {
+                    origin: [0., 0., level],
+                    ..Default::default()
+                },
+                section_offset_mm: Some(0.),
+                section_only: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            vectors
+                .iter()
+                .all(|vector| matches!(vector.role, VectorRole::Section | VectorRole::Hatch))
+        );
+        let area: f64 = vectors
+            .iter()
+            .filter_map(|vector| match vector.curve {
+                VectorCurve::HatchTriangle { points: [a, b, c] } => {
+                    Some(((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs() / 2.)
+                }
+                _ => None,
+            })
+            .sum();
+        let exact = profile().area_mm2();
+        assert!(
+            (area - exact).abs() < 2e-4 * exact,
+            "{level}: {area} {exact}"
+        );
+    }
+}
+
+/// The rim pieces of each edge-on cap publish as one straight line, and a
+/// rigidly placed gear seen through the equally placed frame gives the same
+/// drawing as the gear at the origin.
+#[test]
+fn edge_on_caps_are_single_lines_and_tilted_placements_draw_identically() {
+    let reach = rings(&profile())[0].iter().map(|p| p[0]).fold(0., f64::max);
+    let solid = gear(None);
+    let options = DrawingProjection {
+        frame: side(),
+        hidden_lines: true,
+        ..Default::default()
+    };
+    let plain = draw(&[&solid], options);
+    for level in [0., WIDTH] {
+        let caps: Vec<_> = plain
+            .iter()
+            .filter(|vector| vector.role == VectorRole::Visible)
+            .filter_map(line)
+            .filter(|[a, b]| (a[1] - level).abs() < 1e-9 && (b[1] - level).abs() < 1e-9)
+            .collect();
+        assert_eq!(caps.len(), 1, "{caps:?}");
+        let [a, b] = caps[0];
+        assert!((a[0].min(b[0]) + reach).abs() < 1e-5 && (a[0].max(b[0]) - reach).abs() < 1e-5);
+    }
+    // Hidden cap stretches are covered by the visible line.
+    assert!(
+        !plain
+            .iter()
+            .filter(|vector| vector.role == VectorRole::Hidden)
+            .filter_map(line)
+            .any(|[a, b]| (a[1] - b[1]).abs() < 1e-9)
+    );
+
+    // A proper rotation (about (1, 2, 3) by 0.7 rad) and a translation.
+    let n = 14_f64.sqrt();
+    let k = [1. / n, 2. / n, 3. / n];
+    let (sin, cos) = 0.7_f64.sin_cos();
+    let rotation: [[f64; 3]; 3] = std::array::from_fn(|i| {
+        std::array::from_fn(|j| {
+            let cross = [[0., -k[2], k[1]], [k[2], 0., -k[0]], [-k[1], k[0], 0.]][i][j];
+            f64::from(u8::from(i == j)) * cos + sin * cross + (1. - cos) * k[i] * k[j]
+        })
+    });
+    let translation_mm = [7., -3., 5.];
+    let turn = |v: [f64; 3]| -> [f64; 3] {
+        std::array::from_fn(|i| (0..3).map(|j| rotation[i][j] * v[j]).sum())
+    };
+    let placed = solid
+        .transformed(RigidTransform {
+            rotation,
+            translation_mm,
+        })
+        .unwrap();
+    let s = 0.5_f64.sqrt();
+    let t = (1_f64 / 6.).sqrt();
+    for (label, frame) in [
+        ("side", side()),
+        (
+            "oblique",
+            PlaneFrame {
+                origin: [0., 0., 2.],
+                u: [s, -s, 0.],
+                v: [t, t, -2. * t],
+            },
+        ),
+    ] {
+        for section in [None, Some(0.4)] {
+            let options = DrawingProjection {
+                frame,
+                hidden_lines: true,
+                section_offset_mm: section,
+                ..Default::default()
+            };
+            let moved = PlaneFrame {
+                origin: std::array::from_fn(|i| turn(frame.origin)[i] + translation_mm[i]),
+                u: turn(frame.u),
+                v: turn(frame.v),
+            };
+            let expected = draw(&[&solid], options);
+            let found = draw(
+                &[&placed],
+                DrawingProjection {
+                    frame: moved,
+                    ..options
+                },
+            );
+            // Every preview point of one drawing lies on a curve of the
+            // other with the same role, far inside the chord tolerance.
+            for (from, to) in [(&found, &expected), (&expected, &found)] {
+                for vector in from.iter() {
+                    let spans: Vec<[[f64; 2]; 2]> = to
+                        .iter()
+                        .filter(|other| other.role == vector.role)
+                        .flat_map(|other| other.preview_mm.windows(2).map(|w| [w[0], w[1]]))
+                        .collect();
+                    for p in &vector.preview_mm {
+                        let distance = spans
+                            .iter()
+                            .map(|[a, b]| {
+                                let d = [b[0] - a[0], b[1] - a[1]];
+                                let along = (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1])
+                                    / (d[0] * d[0] + d[1] * d[1]).max(1e-300))
+                                .clamp(0., 1.);
+                                (p[0] - a[0] - along * d[0]).hypot(p[1] - a[1] - along * d[1])
+                            })
+                            .fold(f64::INFINITY, f64::min);
+                        assert!(
+                            distance < 1e-6,
+                            "{label} {section:?} {:?}: {distance}",
+                            vector.role
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn invalid_requests_and_exhausted_budgets_fail_without_partial_output() {
     let solid = gear(None);

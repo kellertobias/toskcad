@@ -503,3 +503,39 @@ fn overlapping_scenes_match_native_open_cascade() {
         check_with(label, &[first, &second], [2., 0., 10.], true, &[]);
     }
 }
+
+/// Planes lying exactly in a cap or in the junction of a hub and its tooth
+/// band, and a scene whose rim is tangent to an occluding bore.
+#[test]
+fn coincident_planes_and_tangent_scenes_match_native_open_cascade() {
+    let solid = cylinder();
+    for level in [0., 8.] {
+        check(&format!("cylinder cap {level}"), &[&solid], [0., 0., level]);
+    }
+    let gear = turned(spur(None), [0.; 3]);
+    for level in [0., 4.] {
+        check_with(
+            &format!("spur cap {level}"),
+            &[&gear],
+            [0., 0., level],
+            true,
+            &[],
+        );
+    }
+    let hubbed = turned(
+        spur(Some(GearHub {
+            radius_mm: 6.,
+            axial_start_mm: -1.5,
+            axial_end_mm: 6.,
+        })),
+        [0.; 3],
+    );
+    check_with("hub junction", &[&hubbed], [0., 0., 4.], true, &[]);
+    let ring = annulus()
+        .transformed(RigidTransform {
+            rotation: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+            translation_mm: [2., 0., 20.],
+        })
+        .unwrap();
+    check("tangent cylinder+annulus", &[&solid, &ring], [2., 0., 10.]);
+}

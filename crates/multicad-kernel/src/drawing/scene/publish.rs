@@ -178,8 +178,112 @@ impl Output {
         Ok(())
     }
 
+    /// Join collinear straight vectors of one source that touch or overlap:
+    /// the many rim pieces of an edge-on cap publish as its covered
+    /// stretches. Hidden stretches lose whatever a visible one covers.
+    fn merge_lines(&mut self, eps: f64) {
+        struct Group {
+            source: usize,
+            origin: P2,
+            direction: P2,
+            spans: [Vec<[f64; 2]>; 3],
+        }
+        let rank = |role: VectorRole| match role {
+            VectorRole::Visible => Some(0),
+            VectorRole::Hidden => Some(1),
+            VectorRole::Section => Some(2),
+            VectorRole::Hatch => None,
+        };
+        let mut lines: Vec<(usize, usize, [P2; 2])> = Vec::new();
+        let mut rest = Vec::new();
+        for vector in std::mem::take(&mut self.vectors) {
+            match (vector.curve.clone(), rank(vector.role)) {
+                (VectorCurve::Line { a, b }, Some(role)) => {
+                    lines.push((vector.source_index, role, [a, b]));
+                }
+                _ => rest.push(vector),
+            }
+        }
+        // Longest first, so that each group is anchored on a well-conditioned line.
+        let length = |[a, b]: &[P2; 2]| (b[0] - a[0]).hypot(b[1] - a[1]);
+        lines.sort_by(|x, y| length(&y.2).total_cmp(&length(&x.2)));
+        let mut groups: Vec<Group> = Vec::new();
+        for (source, role, [a, b]) in lines {
+            let station = |group: &Group, p: P2| {
+                let offset = [p[0] - group.origin[0], p[1] - group.origin[1]];
+                [
+                    offset[0] * group.direction[0] + offset[1] * group.direction[1],
+                    offset[0] * group.direction[1] - offset[1] * group.direction[0],
+                ]
+            };
+            let found = groups.iter().position(|group| {
+                group.source == source && [a, b].iter().all(|p| station(group, *p)[1].abs() <= eps)
+            });
+            let index = found.unwrap_or_else(|| {
+                let d = length(&[a, b]);
+                groups.push(Group {
+                    source,
+                    origin: a,
+                    direction: [(b[0] - a[0]) / d, (b[1] - a[1]) / d],
+                    spans: Default::default(),
+                });
+                groups.len() - 1
+            });
+            let [s, t] = [station(&groups[index], a)[0], station(&groups[index], b)[0]];
+            groups[index].spans[role].push([s.min(t), s.max(t)]);
+        }
+        let join = |mut spans: Vec<[f64; 2]>| {
+            spans.sort_by(|a, b| a[0].total_cmp(&b[0]));
+            let mut merged: Vec<[f64; 2]> = Vec::new();
+            for [a, b] in spans {
+                match merged.last_mut() {
+                    Some(last) if a <= last[1] + eps => last[1] = last[1].max(b),
+                    _ => merged.push([a, b]),
+                }
+            }
+            merged
+        };
+        for group in groups {
+            let [visible, hidden, section] = group.spans.map(join);
+            let mut uncovered = Vec::new();
+            for [mut a, b] in hidden {
+                for [c, d] in &visible {
+                    if *d <= a + eps || *c >= b - eps {
+                        continue;
+                    }
+                    if *c > a + eps {
+                        uncovered.push([a, *c]);
+                    }
+                    a = a.max(*d);
+                }
+                if b > a + eps {
+                    uncovered.push([a, b]);
+                }
+            }
+            let roles = [VectorRole::Visible, VectorRole::Hidden, VectorRole::Section];
+            for (role, spans) in roles.into_iter().zip([visible, uncovered, section]) {
+                for span in spans {
+                    let [a, b] = span.map(|s| {
+                        [
+                            group.origin[0] + s * group.direction[0],
+                            group.origin[1] + s * group.direction[1],
+                        ]
+                    });
+                    rest.push(ProjectedVector {
+                        source_index: group.source,
+                        role,
+                        curve: VectorCurve::Line { a, b },
+                        preview_mm: vec![a, b],
+                    });
+                }
+            }
+        }
+        self.vectors = rest;
+    }
+
     /// Stable order: by source, then visible, hidden, section and hatch.
-    pub(in crate::drawing) fn finish(mut self) -> Vec<ProjectedVector> {
+    pub(in crate::drawing) fn finish(mut self, eps: f64) -> Vec<ProjectedVector> {
+        self.merge_lines(eps);
         self.vectors.sort_by_key(|vector| {
             (
                 vector.source_index,
