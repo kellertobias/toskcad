@@ -634,3 +634,294 @@ fn elliptic_cylinder_matches_its_closed_forms_and_round_trips() {
         .unwrap();
     assert!(distance(turned.bounds_mm()[0], [-2., -3., 0.]) < 1e-9);
 }
+
+/// The authored elliptic cylinder with `from` replaced by `to`.
+fn elliptic(from: &str, to: &str) -> String {
+    tampered(&part21("#61", ELLIPTIC), from, to)
+}
+
+#[test]
+fn malformed_and_foreign_structure_is_refused_with_its_kind() {
+    let refused = |text: &str| solids(text).map(|solids| solids.len()).unwrap_err();
+    let extra = |entity: &str| elliptic("#60=", &format!("{entity}#60="));
+    // Shapes that are not solids keep their meaning.
+    assert_eq!(
+        refused(&extra("#990=OPEN_SHELL('',(#33));")),
+        Error::Unsupported
+    );
+    // Product structure belongs to the assembly layer.
+    assert_eq!(
+        refused(&extra("#990=MAPPED_ITEM('',#5,#5);")),
+        Error::Unsupported
+    );
+    // A face outside every solid would be dropped.
+    assert_eq!(
+        refused(&extra("#990=ADVANCED_FACE('',(#32),#20,.F.);")),
+        Error::Unsupported
+    );
+    // No solid, or no units.
+    assert_eq!(
+        refused(&elliptic("#61=MANIFOLD_SOLID_BREP('',#60);", "")),
+        Error::Unsupported
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "GLOBAL_UNIT_ASSIGNED_CONTEXT((#902,#903,#904))",
+            ""
+        )),
+        Error::Unsupported
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "GLOBAL_UNIT_ASSIGNED_CONTEXT((#902,#903,#904))",
+            "GLOBAL_UNIT_ASSIGNED_CONTEXT((#902),#903)"
+        )),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#905))",
+            "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#905),#905)"
+        )),
+        Error::Invalid
+    );
+    // Inches are not millimetres; a second length unit is ambiguous.
+    assert_eq!(
+        refused(&elliptic("SI_UNIT(.MILLI.,.METRE.)", "SI_UNIT($,.METRE.)")),
+        Error::Unsupported
+    );
+    assert_eq!(
+        refused(&elliptic("((#902,#903,#904))", "((#902,#902,#903,#904))")),
+        Error::Unsupported
+    );
+    assert_eq!(
+        refused(&elliptic("((#902,#903,#904))", "((#902,#903,#903,#904))")),
+        Error::Unsupported
+    );
+    assert_eq!(
+        refused(&elliptic("((#902,#903,#904))", "((#902,#904))")),
+        Error::Unsupported
+    );
+    assert_eq!(
+        refused(&elliptic("((#902,#903,#904))", "((#902,#903,#999))")),
+        Error::Invalid
+    );
+    // Wrong arities and kinds.
+    assert_eq!(
+        refused(&elliptic(
+            "MANIFOLD_SOLID_BREP('',#60)",
+            "MANIFOLD_SOLID_BREP('',#60,#60)"
+        )),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "MANIFOLD_SOLID_BREP('',#60)",
+            "MANIFOLD_SOLID_BREP('',#33)"
+        )),
+        Error::Unsupported
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "CLOSED_SHELL('',(#33,#43,#56))",
+            "CLOSED_SHELL('',(#33,#43,#56),#1)"
+        )),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "CLOSED_SHELL('',(#33,#43,#56))",
+            "CLOSED_SHELL('',(#33,#33,#43,#56))"
+        )),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(&elliptic("#15=VECTOR('',#3,1.)", "#15=VECTOR('',#3,0.)")),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(&elliptic("#15=VECTOR('',#3,1.)", "#15=VECTOR('',#3)")),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(&elliptic("#15=VECTOR('',#3,1.)", "#15=VECTOR('',#3,1.E13)")),
+        Error::Limit
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "#3=DIRECTION('',(0.,0.,1.))",
+            "#3=DIRECTION('',(0.,0.,1.),1)"
+        )),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "#3=DIRECTION('',(0.,0.,1.))",
+            "#3=DIRECTION('',(0.,0.,0.))"
+        )),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "#1=CARTESIAN_POINT('',(0.,0.,0.))",
+            "#1=CARTESIAN_POINT('',(0.,0.,0.),1)"
+        )),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "#5=AXIS2_PLACEMENT_3D('',#1,#3,#4)",
+            "#5=AXIS2_PLACEMENT_3D('',#1,#3)"
+        )),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "#5=AXIS2_PLACEMENT_3D('',#1,#3,#4)",
+            "#5=AXIS2_PLACEMENT_3D('',#1,#3,#3)"
+        )),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "#7=ELLIPSE('',#5,3.,2.)",
+            "#7=ELLIPSE('',#5,3.,0.)"
+        )),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "#7=ELLIPSE('',#5,3.,2.)",
+            "#7=HYPERBOLA('',#5,3.,2.)"
+        )),
+        Error::Unsupported
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "#16=LINE('',#10,#15)",
+            "#16=(LINE('',#10,#15)CURVE())"
+        )),
+        Error::Unsupported
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "#20=PLANE('',#5)",
+            "#20=CYLINDRICAL_SURFACE('',#5,0.)"
+        )),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "#20=PLANE('',#5)",
+            "#20=OFFSET_SURFACE('',#21,1.,.F.)"
+        )),
+        Error::Unsupported
+    );
+    assert_eq!(
+        refused(&elliptic("#20=PLANE('',#5)", "#20=(PLANE('',#5)SURFACE())")),
+        Error::Unsupported
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "#9=VERTEX_POINT('',#10)",
+            "#9=VERTEX_POINT('',#10,#10)"
+        )),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "#13=EDGE_CURVE('',#9,#9,#7,.T.)",
+            "#13=EDGE_CURVE('',#9,#9,#7)"
+        )),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "#13=EDGE_CURVE('',#9,#9,#7,.T.)",
+            "#13=EDGE_CURVE('',#9,#9,#7,.U.)"
+        )),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "#32=FACE_OUTER_BOUND('',#31,.T.)",
+            "#32=FACE_OUTER_BOUND('',#31)"
+        )),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "#32=FACE_OUTER_BOUND('',#31,.T.)",
+            "#32=POLY_LOOP('',#31,.T.)"
+        )),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(&elliptic("#31=EDGE_LOOP('',(#30))", "#31=EDGE_LOOP('',())")),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "#31=EDGE_LOOP('',(#30))",
+            "#31=POLY_LOOP('',(#10))"
+        )),
+        Error::Unsupported
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "#30=ORIENTED_EDGE('',*,*,#13,.F.)",
+            "#30=ORIENTED_EDGE('',*,*,#13)"
+        )),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(&elliptic(
+            "#33=ADVANCED_FACE('',(#32),#20,.F.)",
+            "#33=ADVANCED_FACE('',(#32),#20)"
+        )),
+        Error::Invalid
+    );
+    // Outside the model's coordinate range.
+    assert_eq!(
+        refused(&elliptic(
+            "#7=ELLIPSE('',#5,3.,2.)",
+            "#7=ELLIPSE('',#5,3.,'2')"
+        )),
+        Error::Invalid
+    );
+    // A loop that passes a vertex of another edge is discontinuous.
+    assert_eq!(
+        refused(&elliptic(
+            "#51=ORIENTED_EDGE('',*,*,#17,.T.)",
+            "#51=ORIENTED_EDGE('',*,*,#17,.F.)"
+        )),
+        Error::Invalid
+    );
+}
+
+#[test]
+fn optional_placement_axes_take_their_standard_defaults() {
+    // Omitted axes default to z and x: the same cylinder.
+    let text = elliptic(
+        "#5=AXIS2_PLACEMENT_3D('',#1,#3,#4)",
+        "#5=AXIS2_PLACEMENT_3D('',#1,$,$)",
+    );
+    assert!(close(solid(&text).volume_mm3(), 30. * PI, 1e-12));
+    // A void must face into its cavity: a plain closed shell, or an oriented
+    // one kept in its stated sense, encloses material instead.
+    for (from, to) in [
+        (
+            "BREP_WITH_VOIDS('',#16,(#345))",
+            "BREP_WITH_VOIDS('',#16,(#346))",
+        ),
+        (
+            "ORIENTED_CLOSED_SHELL('',*,#346,.F.)",
+            "ORIENTED_CLOSED_SHELL('',*,#346,.T.)",
+        ),
+    ] {
+        assert_eq!(
+            solids(&tampered(VOID, from, to)).unwrap_err(),
+            Error::Invalid
+        );
+    }
+}
