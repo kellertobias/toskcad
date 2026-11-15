@@ -912,7 +912,7 @@ fn native_profile_minimum_feature_rejects_thin_annulus_and_floor_but_allows_coun
 }
 
 #[test]
-fn canonical_phillips_h0_h4_both_hands_compile_display_and_manufacture_without_step_claim() {
+fn canonical_phillips_h0_h4_both_hands_keep_qualified_geometry_and_step_contracts() {
     use multicad_model::GeometryBackend;
     for (index, parameters) in canonical_phillips_cases().into_iter().enumerate() {
         for left in [false, true] {
@@ -977,7 +977,42 @@ fn canonical_phillips_h0_h4_both_hands_compile_display_and_manufacture_without_s
             } else {
                 assert!(solid.rust_phillips_mesh_volume_pair().is_some());
             }
-            assert!(!solid.supports_step_export());
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("physical.step");
+            if periodic.is_some() {
+                assert!(solid.supports_step_export());
+                solid.write_step(&path).unwrap();
+                let receipt = multicad_model::export::verify_rust_step_shape_receipt(
+                    &path,
+                    solid,
+                    &compiled.snapshot().shapes[&request.feature],
+                    1e-7,
+                )
+                .unwrap();
+                assert_eq!(
+                    receipt.method,
+                    multicad_model::export::StepVerificationMethod::DecodedPeriodicRepair
+                );
+                assert!(receipt.decoded_volume_mm3.is_none());
+                assert_eq!(receipt.periodic_members.len(), 1);
+                let interval = receipt.periodic_members[0].decoded_volume_bounds_mm3;
+                assert!(interval[0] > 0. && interval[0] <= interval[1]);
+                let imported = multicad_kernel::Solid::import_rust_step(
+                    &std::fs::read_to_string(&path).unwrap(),
+                    multicad_core::document::EntityId::new(),
+                    Default::default(),
+                )
+                .unwrap();
+                assert!(imported.rust_periodic_repaired_phillips_source().is_some());
+                assert!(
+                    (imported.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < 1e-5
+                );
+            } else {
+                assert!(!solid.supports_step_export());
+                std::fs::write(&path, b"accepted geometry").unwrap();
+                assert!(solid.write_step(&path).is_err());
+                assert_eq!(std::fs::read(&path).unwrap(), b"accepted geometry");
+            }
         }
     }
 }
