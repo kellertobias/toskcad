@@ -4,7 +4,7 @@ This is the pinned pass/fail/unsupported ledger for the independent cross-CAD ST
 
 The machine-readable [ledger JSON](exchange-corpus-ledger.json) is the emitted output of the OpenCascade reference run. It records the measured source commit, tolerances, and every per-fixture measurement and timing. `corpus_manifest_pins_provenance_strata_and_owners` fails when the committed JSON and the manifest disagree on any fixture or outcome.
 
-**Measured commit.** These results were measured at `ca26e97f` on the CAD-360 branch, which adds the retained-boundary provider on top of CAD-359 (`72d288ee`); the only tracked change during the run was the ledger JSON being rewritten. CAD-345 recorded 14 pass, 18 unsupported and 10 fail of 42 at `dff6a0f8`, and CAD-359 22 pass and 24 unsupported of 46 at `1f1c4fe7`. Rerun the commands below after every change to the reader, importer, drawing or Boolean code, and update the manifest outcomes, verdicts and this ledger together.
+**Measured commit.** These results were measured at `6caa3e3e` on the CAD-360 branch with a clean tree; it adds the retained-boundary provider on top of CAD-359 (`72d288ee`). CAD-345 recorded 14 pass, 18 unsupported and 10 fail of 42 at `dff6a0f8`, and CAD-359 22 pass and 24 unsupported of 46 at `1f1c4fe7`. Rerun the commands below after every change to the reader, importer, drawing or Boolean code, and update the manifest outcomes, verdicts and this ledger together.
 
 ## Result
 
@@ -226,49 +226,38 @@ Recovery copies were tested with FreeCAD, OpenCascade and KiCad library imports 
 
 ## KiCad library sweep
 
-The sweep covered 7236 STEP models in KiCad 10.0.0. Every file was classified; there were no panics or unclassified errors.
+The sweep covered 7236 STEP models in KiCad 10.0.0 at `5fc4f5df` (20.8 min wall, 16.4 min CPU, debug build, shared host). Every file was classified; there were no panics or unclassified errors. A pass here means the import succeeded: volume, bounds and topology from the retained or recognised boundary. The full corpus workflow (mesh, section, persistence, export, OpenCascade) runs only for the pinned fixtures.
 
 | Producer (`FILE_NAME`) | Files | Pass | Unsupported | Invalid | Limit |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| KiCad | 5181 | 174 | 5007 | 0 | 0 |
-| FreeCAD | 1031 | 45 | 976 | 10 | 0 |
-| unstated | 796 | 0 | 796 | 0 | 0 |
-| OpenCascade | 211 | 0 | 211 | 0 | 0 |
+| KiCad | 5181 | 4395 | 786 | 0 | 0 |
+| FreeCAD | 1031 | 815 | 210 | 6 | 0 |
+| unstated | 796 | 796 | 0 | 0 | 0 |
+| OpenCascade | 211 | 108 | 103 | 0 | 0 |
 | Solid Edge / ST-DEVELOPER v16.7 | 14 | 0 | 14 | 0 | 0 |
-| Autodesk Translation Framework v7.6.0.251 / ST-DEVELOPER v17.2 | 2 | 0 | 2 | 0 | 0 |
+| Autodesk Translation Framework v7.6.0.251 / ST-DEVELOPER v17.2 | 2 | 1 | 1 | 0 | 0 |
 | Autodesk Translation Framework v13.14.0.145 / ST-DEVELOPER v20 | 1 | 0 | 1 | 0 | 0 |
-| Total | 7236 | 219 | 7007 | 10 | 0 |
+| Total | 7236 | 6115 | 1115 | 6 | 0 |
 
 | Category (any surface or structure present) | Files | Pass | Unsupported | Invalid | Limit |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| cylinder | 2902 | 150 | 2748 | 4 | 0 |
-| torus | 1317 | 0 | 1317 | 0 | 0 |
-| spline | 1006 | 0 | 1006 | 0 | 0 |
-| sphere | 956 | 0 | 955 | 1 | 0 |
-| planar | 866 | 69 | 796 | 1 | 0 |
-| cone | 555 | 0 | 551 | 4 | 0 |
-| multi-body | 537 | 0 | 537 | 0 | 0 |
-| revolution | 532 | 0 | 532 | 0 | 0 |
+| cylinder | 2902 | 2888 | 13 | 1 | 0 |
+| torus | 1317 | 720 | 597 | 0 | 0 |
+| spline | 1006 | 688 | 318 | 0 | 0 |
+| sphere | 956 | 715 | 240 | 1 | 0 |
+| planar | 866 | 853 | 13 | 0 | 0 |
+| cone | 555 | 300 | 251 | 4 | 0 |
+| multi-body | 537 | 112 | 425 | 0 | 0 |
+| revolution | 532 | 171 | 361 | 0 | 0 |
 | assembly | 382 | 0 | 382 | 0 | 0 |
-| voids | 211 | 0 | 210 | 1 | 0 |
+| voids | 211 | 29 | 181 | 1 | 0 |
 | surface-model | 2 | 0 | 2 | 0 | 0 |
 
-The categories overlap: a file is counted once for each tag it carries. `planar` and `cylinder` are assigned only when no other tag applies. The slowest single import took 1.5 s in a debug build at commit `1f1c4fe7`.
+At `dff6a0f8` the sweep gave 173 pass, 5,799 unsupported, 299 invalid and 965 limit; at `1f1c4fe7` (CAD-359) 219 pass, 7,007 unsupported, 10 invalid and 0 limit; at `5fc4f5df` (CAD-360) 6,115 pass, 1,115 unsupported, 6 invalid and 0 limit. Every unsupported result now carries the recognised-family refusal message, because the retained-boundary reader refused the file too: 382 files are assemblies (CAD-361), the others mostly carry a non-solid item, a solid outside a representation or an unsupported curve or surface kind.
 
-At `dff6a0f8` the same sweep gave 173 pass, 5,799 unsupported, 299 invalid and 965 limit. At `1f1c4fe7` it gives 219 pass, 7007 unsupported, 10 invalid and 0 limit. The 46 newly passing files are 23 boxes with partitioned faces, 22 chip resistors and fuses with partitioned ends, and the buzzer. All 965 former limits and 289 former invalid results are now either imports or unsupported refusals.
+Of the ten CAD-359 invalid results, `Heatsink_AAVID_Extruded_531002B02100G`, `…531102B02100G`, `…531202B02100G` and `R_Shunt_Ohmite_LVK12` import with their declared 2e-5 mm uncertainty (capped at 1e-5 mm, vertices re-derived on their supports). `ESP32-WROOM-32E` (vertices 2.15e-7 mm off, declared 2e-7 mm), `Relay_DPDT_FRT5_SMD` (1.95e-3 mm off, declared 5e-4 mm) and `Diode_Bridge_GeneSiC_KBPC_T` (loops not head to tail) stay invalid. The three `HDMI_Micro-D_Molex_46765` files were invalid at `5fc4f5df` because their cone-plane edges are `HYPERBOLA` curves; `9fbf5da1` reads them, and OpenCascade 7.9.3 agrees with their imports on volume within 1.3e-9 relative.
 
-The 10 remaining invalid results are refusals that the tolerance and topology contract requires:
-
-| Files | Measured cause |
-| --- | --- |
-| `Heatsink_AAVID_Extruded_531002B02100G`, `…531102B02100G`, `…531202B02100G` | Eight vertices lie 1.88e-7 mm off their lines. The file declares 2e-5 mm; the import tolerance is 1e-7 mm. |
-| `ESP32-WROOM-32E` | 140 vertices lie up to 2.15e-7 mm off their lines (declared 2e-7 mm). |
-| `R_Shunt_Ohmite_LVK12` | 22 vertices lie up to 2.94e-7 mm off their lines (declared 2e-5 mm). |
-| `Relay_DPDT_FRT5_SMD` | One vertex lies 1.95e-3 mm off its line (declared 5e-4 mm). |
-| `HDMI_Micro-D_Molex_46765-0xxx`, `-1xxx`, `-2xxx` | 308 vertices lie up to 2e-6 mm off their planes (declared 1e-5 or 2e-5 mm). |
-| `Diode_Bridge_GeneSiC_KBPC_T` | Nine edge loops are not head to tail: one oriented edge in each has the wrong orientation flag. |
-
-Healing is bounded to the 1e-7 mm linear tolerance, so the first nine are refused by design; honouring a file's declared uncertainty would be a product decision. The last file violates the ISO 10303-42 path rule and OpenCascade repairs it silently.
+Sampled cross-check at `5fc4f5df`/`9a3fdda5`: 82 randomly drawn (seed 360) sweep passes, all retained-boundary imports, were compared with OpenCascade 7.9.3. Volume agreed within 1.2e-8 relative (median below 1e-14), bounds within 1e-7 mm, and every certified Rust mesh lay within 0.04 mm of OpenCascade's 0.01 mm tessellation. Three of the 82 manufacturing meshes are refused rather than produced: `USB_A_TE_292303-7_Horizontal` and `FanPinHeader_1x04_P2.54mm_Vertical` (a planar face whose ear clipping leaves a run of collinear boundary vertices uncovered) and `UQFN-20-1EP_4x4mm_P0.5mm_EP2.8x2.8mm` (certification: unresolved boundary). The first one panicked before `9a3fdda5`.
 
 ## Runtime contract
 
