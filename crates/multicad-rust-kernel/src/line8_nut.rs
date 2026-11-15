@@ -223,6 +223,28 @@ impl Nut {
     pub fn bore_from_start_mm(&self) -> f64 {
         self.bore_from_start_mm
     }
+    /// Euclidean lower separation of the entire finite mapped tap envelope
+    /// from the original six sloping side planes and both extrusion caps.
+    /// Axial entry/relief openings are intentionally not wall constraints.
+    pub fn minimum_thread_wall_lower_bound_mm(&self) -> f64 {
+        let r = self.maximum_thread;
+        let mut lower = (point(self.bore_from_start_mm) - r)
+            .lo
+            .min((point(self.stock.height_mm()) - point(self.bore_from_start_mm) - r).lo);
+        let y = I::new(-r.hi, r.hi);
+        let z = I::new(0., self.relief.start_mm);
+        let ring = &self.stock.base()[0];
+        for side in [1usize, 2, 3, 5, 6, 7] {
+            let a = ring[side];
+            let b = ring[(side + 1) % 8];
+            let dy = point(b[0]) - point(a[0]);
+            let dz = point(b[1]) - point(a[1]);
+            let signed = dy * (z - point(a[1])) - dz * (y - point(a[0]));
+            let normal = (dy * dy + dz * dz).sqrt();
+            lower = lower.min((signed / normal).lo);
+        }
+        lower.max(0.)
+    }
     pub fn bounds_mm(&self) -> [[f64; 2]; 3] {
         let x = point(self.stock.height_mm()) - point(self.bore_from_start_mm);
         [

@@ -287,3 +287,58 @@ fn original_finite_topology_and_every_coedge_keep_exact_owners_for_both_hands() 
         );
     }
 }
+#[test]
+fn actual_full_prefix_stock_plane_wall_bound_is_positive_and_conservative() {
+    let n = nut();
+    let wall = n.minimum_thread_wall_lower_bound_mm();
+    assert!(wall > 1.5 && wall < 1.7);
+    let r = thread().maximum_radius_mm();
+    for z in [0., 1., 3., 4.099] {
+        for y in [-r, r] {
+            for side in [1usize, 2, 3, 5, 6, 7] {
+                let a = n.stock().base()[0][side];
+                let b = n.stock().base()[0][(side + 1) % 8];
+                let dy = b[0] - a[0];
+                let dz = b[1] - a[1];
+                let distance = (dy * (z - a[1]) - dz * (y - a[0])) / dy.hypot(dz);
+                assert!(distance >= wall);
+            }
+        }
+    }
+}
+#[test]
+fn actual_resolved_metric_m8_with_axial_and_radial_clearance_keeps_rolled_shell() {
+    let mut spec = thread().spec();
+    spec.depth_mm = 0.6765823467065926;
+    spec.crest_width_mm = 0.19625;
+    let source = AuthoredThread::new(
+        spec,
+        crate::authored_flat_thread::SourceOptions {
+            position_limit_mm: 1e-7,
+            normal_angle_limit_rad: 1e-7,
+        },
+    )
+    .unwrap();
+    let n = Nut::new(
+        stock(),
+        7.5,
+        source,
+        [
+            [0.9501748447925625, -0.31171744308496674],
+            [0.31171744308496674, 0.9501748447925625],
+        ],
+        nut().relief(),
+        None,
+    )
+    .unwrap();
+    n.mesh_candidate(
+        crate::display::Tessellation {
+            deflection: 0.02,
+            angle: 0.2,
+            triangle_limit: 200000,
+        },
+        64_000_000,
+        None,
+    )
+    .unwrap();
+}

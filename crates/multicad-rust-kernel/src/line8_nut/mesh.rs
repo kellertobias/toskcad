@@ -55,13 +55,6 @@ struct Build<'a> {
     q: Tessellation,
     interrupt: Option<&'a dyn Fn() -> bool>,
 }
-fn cross(a: [I; 3], b: [I; 3]) -> [I; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
 fn norm(a: [I; 3]) -> I {
     a.into_iter()
         .fold(point(0.), |s, v| {
@@ -85,12 +78,12 @@ fn at(v: &[f64], i: usize) -> [I; 3] {
     std::array::from_fn(|k| point(v[3 * i + k]))
 }
 fn facet(v: &[f64], ids: [usize; 3]) -> Result<[I; 3], Error> {
-    let [a, b, c] = ids.map(|i| at(v, i));
-    unit(cross(
-        std::array::from_fn(|i| b[i] - a[i]),
-        std::array::from_fn(|i| c[i] - a[i]),
-    ))
+    let points = ids.map(|id| std::array::from_fn(|i| v[id * 3 + i]));
+    crate::literal_triangle::normal_bounds(points)
+        .map(|n| n.map(|v| I::new(v[0], v[1])))
+        .map_err(|_| Error::Unresolved)
 }
+
 fn allowed(q: Tessellation) -> f64 {
     let a = point(q.angle) / point(2.);
     (point(2.) * (a - a * a * a / point(6.))).lo
@@ -135,7 +128,7 @@ impl Build<'_> {
         Ok(id)
     }
     fn triangle(&mut self, mut ids: [usize; 3], face: u32, normal: [I; 3]) -> Result<(), Error> {
-        self.charge(640)?;
+        self.charge(crate::literal_triangle::NORMAL_WORK + 256)?;
         if self.mesh.face_indices.len() >= self.q.triangle_limit {
             return Err(Error::Limit);
         }
@@ -279,12 +272,12 @@ impl Nut {
         }
         let inner_q = Tessellation {
             deflection: q.deflection * 0.9,
-            angle: q.angle * 0.9,
+            angle: (q.angle * 0.9).max(0.01),
             ..q
         };
         let shell = self
             .thread
-            .tessellate_prefix_shell(
+            .tessellate_prefix_shell_shifted(
                 self.relief.start_mm,
                 inner_q,
                 maximum_work.min(16_000_000),
@@ -350,7 +343,7 @@ impl Nut {
             .iter()
             .zip(&literal.face_indices)
         {
-            build.charge(640)?;
+            build.charge(2 * crate::literal_triangle::NORMAL_WORK + 256)?;
             let ids = t.map(|v| v as usize);
             let old = facet(&literal.vertices, ids)?;
             let exact = unit(cofactor.map(|r| {
