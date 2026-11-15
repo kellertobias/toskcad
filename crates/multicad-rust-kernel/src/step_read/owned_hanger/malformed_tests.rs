@@ -123,6 +123,10 @@ fn actual_hanger_schema_fields_refuse_invalid_geometry_and_topology() {
             .unwrap();
         let changed = replace_argument(component, path, replacement);
         let input = original.replacen(component, &changed, 1);
+        assert!(
+            part21::parse(&input).is_ok(),
+            "field mutation must remain valid Part21: {name}{path:?}"
+        );
         let error = decode(&input, ReadOptions::default(), None).err();
         assert!(
             matches!(error, Some(Error::Invalid | Error::Unsupported)),
@@ -149,6 +153,64 @@ fn malformed_actual_hanger_entities_never_publish_decoded_material() {
     let original = file.as_str();
     let admitted = decode(original, ReadOptions::default(), None).unwrap();
     assert!(!admitted.faces().is_empty());
+    for options in [
+        ReadOptions {
+            maximum_work: 0,
+            ..Default::default()
+        },
+        ReadOptions {
+            retained_budget_bytes: 0,
+            ..Default::default()
+        },
+        ReadOptions {
+            maximum_work: 256_000_001,
+            ..Default::default()
+        },
+        ReadOptions {
+            retained_budget_bytes: 64 * 1024 * 1024 + 1,
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            decode(original, options, None),
+            Err(Error::Invalid)
+        ));
+    }
+    for options in [
+        ReadOptions {
+            maximum_work: 1,
+            ..Default::default()
+        },
+        ReadOptions {
+            retained_budget_bytes: 1,
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(decode(original, options, None), Err(Error::Limit)));
+    }
+    assert!(matches!(
+        decode(original, Default::default(), Some(&|| true)),
+        Err(Error::Cancelled)
+    ));
+    assert!(matches!(
+        decode(&original[..original.len() - 5], Default::default(), None),
+        Err(Error::Invalid)
+    ));
+    let binary = replace_component(
+        original,
+        "CARTESIAN_POINT",
+        "CARTESIAN_POINT('',(\"00\",0.,0.))",
+    );
+    assert!(matches!(
+        decode(&binary, Default::default(), None),
+        Err(Error::Unsupported)
+    ));
+    let nested = format!("CARTESIAN_POINT('',{}0{})", "(".repeat(80), ")".repeat(80));
+    let nested = replace_component(original, "CARTESIAN_POINT", &nested);
+    assert!(matches!(
+        decode(&nested, Default::default(), None),
+        Err(Error::Limit)
+    ));
     // Structural admission retains arbitrary pole coordinates. A nonzero
     // decimal that caches as binary64 zero must retain its exact spelling and
     // must not acquire the exact-zero identity used by geometric validators.
@@ -189,6 +251,9 @@ fn malformed_actual_hanger_entities_never_publish_decoded_material() {
     ));
     for (name, replacement) in [
         ("CARTESIAN_POINT", "CARTESIAN_POINT('',(0.))"),
+        ("CARTESIAN_POINT", "CARTESIAN_POINT()"),
+        ("CARTESIAN_POINT", "CARTESIAN_POINT('',(.T.,0.,0.))"),
+        ("B_SPLINE_CURVE", "B_SPLINE_CURVE()"),
         (
             "B_SPLINE_CURVE",
             "B_SPLINE_CURVE(0,(),.UNSPECIFIED.,.F.,.F.)",
@@ -204,7 +269,29 @@ fn malformed_actual_hanger_entities_never_publish_decoded_material() {
             "RATIONAL_B_SPLINE_SURFACE((()))",
         ),
         ("PCURVE", "PCURVE('',$,$)"),
+        ("PCURVE", "PCURVE()"),
+        (
+            "DEFINITIONAL_REPRESENTATION",
+            "DEFINITIONAL_REPRESENTATION()",
+        ),
         ("EDGE_CURVE", "EDGE_CURVE('',$,$,$,.F.)"),
+        ("EDGE_CURVE", "EDGE_CURVE()"),
+        ("SURFACE_CURVE", "SURFACE_CURVE()"),
+        ("PLANE", "PLANE()"),
+        ("PRODUCT_DEFINITION_SHAPE", "PRODUCT_DEFINITION_SHAPE()"),
+        (
+            "SHAPE_DEFINITION_REPRESENTATION",
+            "SHAPE_DEFINITION_REPRESENTATION()",
+        ),
+        (
+            "ADVANCED_BREP_SHAPE_REPRESENTATION",
+            "ADVANCED_BREP_SHAPE_REPRESENTATION()",
+        ),
+        ("ADVANCED_FACE", "ADVANCED_FACE()"),
+        (
+            "GEOMETRIC_REPRESENTATION_CONTEXT",
+            "GEOMETRIC_REPRESENTATION_CONTEXT()",
+        ),
         ("AXIS2_PLACEMENT_3D", "AXIS2_PLACEMENT_3D('')"),
         (
             "GEOMETRIC_REPRESENTATION_CONTEXT",
