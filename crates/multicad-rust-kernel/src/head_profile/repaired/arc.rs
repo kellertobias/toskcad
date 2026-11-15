@@ -8,6 +8,9 @@ pub(super) struct ArcSource {
     delta: [[I; 2]; 2],
     dot: I,
     det: I,
+    // Original proposal constants for a later explicit correspondence. They
+    // do not define or replace the repaired source expression.
+    proposal_angles: [f64; 2],
 }
 fn ray(p: [f64; 2], center: [f64; 2]) -> Result<[I; 2], RepairedHeadError> {
     ensure(p != center)?;
@@ -30,6 +33,45 @@ fn norm(v: [I; 2]) -> Result<f64, RepairedHeadError> {
     Ok(n.hi)
 }
 impl ArcSource {
+    pub(super) fn proposal_transfer(self) -> Result<[f64; 3], RepairedHeadError> {
+        // The proposal's cached atan2 is a defining binary64 constant, not an
+        // estimate of the repaired source angle. Enclose its actual circle rays.
+        let [start, sweep] = self.proposal_angles;
+        let angles = [I::point(start), I::point(start) + I::point(sweep)];
+        let old = [
+            super::proposal::rotation(angles[0])?,
+            super::proposal::rotation(angles[1])?,
+        ];
+        let errors =
+            [(self.a, old[0]), (self.b, old[1])].map(|(a, b)| norm([a[0] - b[0], a[1] - b[1]]));
+        let [e0, e1] = [errors[0]?, errors[1]?];
+        // For chord e<1/16, minor angular error 2 asin(e/2)<2e. Both
+        // source sectors have the same strict orientation and sweep<3<pi;
+        // endpoint rays this close therefore select the same unwrapped sector.
+        ensure(e0 < 1. / 16. && e1 < 1. / 16. && sweep.abs() < 3.)?;
+        let angular = I::point(2.) * I::point(e0.max(e1));
+        let det_min = self.det.lo.abs().min(self.det.hi.abs());
+        let delta_angle = I::point(2.) * (I::point(e0) + I::point(e1));
+        let ratio = delta_angle / I::point(det_min);
+        ensure(finite(ratio) && ratio.hi < 0.25)?;
+        // Actual minor span>=|sin(span)|=|det|. The angular correspondence
+        // derivative differs from identity by <=sum(endpoint errors)/|det|.
+        let n2_min = ((I::point(1.) + I::point(self.dot.lo)) / I::point(2.)).lo;
+        let speed = I::point(self.det.magnitude()) / I::point(n2_min);
+        let correction = norm(self.delta[0])?.max(norm(self.delta[1])?);
+        let change = norm(std::array::from_fn(|i| self.delta[1][i] - self.delta[0][i]))?;
+        let position = I::point(self.radius) * angular + I::point(correction);
+        let derivative =
+            I::point(self.radius) * speed * (angular + ratio) + I::point(1.5) * I::point(change);
+        let old_min = I::point(self.radius) * I::point(det_min) * (I::point(1.) - ratio);
+        let normal_ratio = derivative / old_min;
+        ensure(finite(normal_ratio) && normal_ratio.hi < 0.25)?;
+        // |a-b|/|b| bounds sin(angle) after perturbation; the conservative
+        // 2q/(1-q) bound also includes normalization and is valid for q<1/4.
+        let normal = I::point(2.) * normal_ratio / (I::point(1.) - normal_ratio);
+        ensure([position, derivative, normal].into_iter().all(finite))?;
+        Ok([position.hi, derivative.hi, normal.hi])
+    }
     pub(super) fn new(
         s: Segment,
         center: [f64; 2],
@@ -104,6 +146,10 @@ impl ArcSource {
                 delta,
                 dot,
                 det,
+                proposal_angles: [
+                    (s.start[1] - center[1]).atan2(s.start[0] - center[0]),
+                    sweep,
+                ],
             },
             RepairedSegmentCertificate {
                 role: s.role,

@@ -16,6 +16,8 @@
 use super::{Curve, Profile, Role, Segment};
 use crate::tapered_thread::interval::I;
 mod arc;
+mod proposal;
+pub use proposal::RepairedProposalTransfer;
 mod query;
 use arc::ArcSource;
 pub use query::{RepairedHeadLocation, RepairedHeadQuery, RepairedHeadQueryOptions};

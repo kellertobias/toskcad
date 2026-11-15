@@ -12,7 +12,7 @@ pub use repaired::{
     AxialProgress, OwnedRepairedHead, RepairedHeadError, RepairedHeadLocation,
     RepairedHeadMeridian, RepairedHeadOptions, RepairedHeadQuery, RepairedHeadQueryOptions,
     RepairedHeadVolume, RepairedHeadVolumeOptions, RepairedMeridianBounds,
-    RepairedSegmentCertificate,
+    RepairedProposalTransfer, RepairedSegmentCertificate,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
