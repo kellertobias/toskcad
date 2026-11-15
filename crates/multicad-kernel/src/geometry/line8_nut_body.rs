@@ -19,6 +19,7 @@ use std::collections::BTreeSet;
 type Point = [f64; 3];
 mod mating;
 mod mesh;
+mod receiving;
 #[cfg(test)]
 mod tests;
 #[derive(Clone, Copy, Debug, PartialEq)]
