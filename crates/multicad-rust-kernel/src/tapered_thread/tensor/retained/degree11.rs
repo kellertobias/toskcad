@@ -10,6 +10,14 @@ pub struct RetainedTensor11 {
 /// Degree11 only. Its private wrapper cannot enter degree9 normal helpers.
 #[derive(Clone, Debug)]
 pub struct TensorCell11(TensorCell);
+/// Whole-leaf position and first derivatives in THIS leaf's unit square.
+/// No second-derivative grids or arbitrary-domain restrictions are computed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TensorFirstDerivatives11 {
+    pub position: [[f64; 2]; 3],
+    pub du: [[f64; 2]; 3],
+    pub dv: [[f64; 2]; 3],
+}
 fn grid(spans: [usize; 2], actual: usize) -> Result<[usize; 2], Error> {
     if spans.contains(&0) {
         return Err(Error::Invalid);
@@ -77,6 +85,13 @@ impl TensorCell11 {
     /// Derivatives use THIS leaf's unit square, with subdivision chain factors.
     pub fn derivative_bounds(&self) -> Result<TensorDerivatives, Error> {
         self.0.derivative_bounds()
+    }
+    pub fn first_derivative_bounds(&self) -> Result<TensorFirstDerivatives11, Error> {
+        Ok(TensorFirstDerivatives11 {
+            position: hull(self.0.controls.iter().flatten().copied())?,
+            du: hull(derivative(&self.0.controls, 0).into_iter().flatten())?,
+            dv: hull(derivative(&self.0.controls, 1).into_iter().flatten())?,
+        })
     }
     pub fn derivative_bounds_at(&self, uv: [[f64; 2]; 2]) -> Result<TensorDerivatives, Error> {
         self.0.derivative_bounds_at(uv)

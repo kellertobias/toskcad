@@ -160,3 +160,23 @@ fn dimensions_numeric_inputs_and_interval_calculation_have_real_refusals() {
         assert_eq!(calculation_cell11(invalid).unwrap_err(), Error::Invalid);
     }
 }
+
+#[test]
+fn first_order_only_whole_leaf_bounds_match_independent_bilinear_and_chain_scaling() {
+    let source = bilinear([1, 1]);
+    let root = source.cell([0, 0]).unwrap();
+    for cell in [
+        root.clone(),
+        root.subdivide(0).unwrap()[1].subdivide(1).unwrap()[0].clone(),
+    ] {
+        let first = cell.first_derivative_bounds().unwrap();
+        let full = cell.derivative_bounds().unwrap();
+        assert_eq!(first.position, full.position);
+        assert_eq!(first.du, full.du);
+        assert_eq!(first.dv, full.dv);
+    }
+    let first = root.first_derivative_bounds().unwrap();
+    contains(first.position[2], 121.);
+    contains(first.du[2], 121.);
+    contains(first.dv[2], 121.);
+}

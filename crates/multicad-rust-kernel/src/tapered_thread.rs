@@ -19,6 +19,7 @@ pub(crate) use series::Series;
 pub use tensor::{
     MANUFACTURING_DEGREE, ManufacturingTensor, ManufacturingTensors, RetainedTensor,
     RetainedTensor11, TaylorEnclosure, TensorCell, TensorCell11, TensorDerivatives,
+    TensorFirstDerivatives11,
 };
 pub(crate) use tensor::{
     NormalPolynomial, RadialChart, calculation_cell, calculation_cell11, certify_radial_charts,

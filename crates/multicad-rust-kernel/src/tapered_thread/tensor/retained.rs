@@ -3,7 +3,7 @@ use super::*;
 use std::{cmp::Ordering, collections::BinaryHeap, sync::Arc};
 mod degree11;
 pub(crate) use degree11::calculation_cell11;
-pub use degree11::{RetainedTensor11, TensorCell11};
+pub use degree11::{RetainedTensor11, TensorCell11, TensorFirstDerivatives11};
 const D: usize = MANUFACTURING_DEGREE;
 use super::hermite::{MAX_POLES, certify_radial_control_chart};
 type Point = [f64; 3];

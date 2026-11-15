@@ -13,7 +13,10 @@ pub(crate) use retained::{
     tensor_first_bounds, tensor_taylor8,
 };
 pub(crate) use retained::{RadialChart, certify_radial_charts};
-pub use retained::{RetainedTensor, RetainedTensor11, TensorCell, TensorCell11, TensorDerivatives};
+pub use retained::{
+    RetainedTensor, RetainedTensor11, TensorCell, TensorCell11, TensorDerivatives,
+    TensorFirstDerivatives11,
+};
 type S = Series<13>;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TaylorEnclosure {
