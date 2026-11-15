@@ -18,11 +18,11 @@ pub use mesh::{tessellate, tessellate_with_interrupt};
 pub(crate) use series::Series;
 pub use tensor::{
     MANUFACTURING_DEGREE, ManufacturingTensor, ManufacturingTensors, RetainedTensor,
-    TaylorEnclosure, TensorCell, TensorDerivatives,
+    RetainedTensor11, TaylorEnclosure, TensorCell, TensorCell11, TensorDerivatives,
 };
 pub(crate) use tensor::{
-    NormalPolynomial, RadialChart, calculation_cell, certify_radial_charts, curve_first_bounds,
-    curve_taylor9, normal_polynomial, tensor_first_bounds, tensor_taylor8,
+    NormalPolynomial, RadialChart, calculation_cell, calculation_cell11, certify_radial_charts,
+    curve_first_bounds, curve_taylor9, normal_polynomial, tensor_first_bounds, tensor_taylor8,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
