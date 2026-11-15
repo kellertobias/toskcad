@@ -327,7 +327,29 @@ pub(in crate::drawing) fn project(
             for (member, entry) in members.iter().enumerate() {
                 let mut found: Vec<u8> = Vec::new();
                 let spans = scene.retained(member, paper(mid))?;
+                // Where the member's own cut-face boundary runs along the
+                // border, that boundary already closes the face there.
+                let along = *straight
+                    && sections[member].iter().any(|strand| {
+                        let [a, b] = [strand.pts[0], *strand.pts.last().unwrap()].map(paper);
+                        let [p, q] = [pair[0], pair[1]].map(|t| paper(border.path.point(t)));
+                        let line = |x: P2| {
+                            let d = [q[0] - p[0], q[1] - p[1]];
+                            let length = d[0].hypot(d[1]);
+                            ((x[0] - p[0]) * d[1] - (x[1] - p[1]) * d[0]).abs() / length
+                        };
+                        let m = paper(mid);
+                        let ab = [b[0] - a[0], b[1] - a[1]];
+                        let t = ((m[0] - a[0]) * ab[0] + (m[1] - a[1]) * ab[1])
+                            / (ab[0] * ab[0] + ab[1] * ab[1]);
+                        strand.pts.len() == 2
+                            && line(a) <= eps
+                            && line(b) <= eps
+                            && t > 0.
+                            && t < 1.
+                    });
                 if let Some(top) = top
+                    && !along
                     && (cut(member) || options.section_only)
                     && entry
                         .member

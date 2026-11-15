@@ -1,6 +1,10 @@
 //! Straight single- or multi-start screw threads: material inside the
 //! helicoid `r <= R(z - k * theta)` between two flat caps, with an optional
-//! coaxial cylindrical neck beyond the far cap (a terminal thread relief).
+//! coaxial cylindrical neck beyond the far cap (a terminal thread relief),
+//! an entry cone, or a screw's shank and head. Threaded bores (a rounded
+//! thread bore, an internal thread treatment) are the stock cylinder less
+//! the helicoid's void, which a treatment's entry cone widens to
+//! `r < max(R, C(z))`.
 //!
 //! The axial meridian profile `R` is a periodic chain of exact line segments
 //! and circular arcs read from the thread source. Every answer below is
@@ -25,7 +29,7 @@ use std::f64::consts::{PI, TAU};
 
 /// One piece of the axial meridian profile in `(phase, radius)` coordinates.
 #[derive(Clone, Copy, Debug)]
-enum Span {
+pub(super) enum Span {
     Line {
         a: P2,
         b: P2,
@@ -41,7 +45,7 @@ enum Span {
 }
 
 impl Span {
-    fn range(&self) -> [f64; 2] {
+    pub(super) fn range(&self) -> [f64; 2] {
         match *self {
             Self::Line { a, b } => [a[0], b[0]],
             Self::Arc { range, .. } => range,
@@ -69,7 +73,7 @@ impl Span {
     }
 
     /// Radius and slope at a phase inside the span.
-    fn eval(&self, phi: f64) -> [f64; 2] {
+    pub(super) fn eval(&self, phi: f64) -> [f64; 2] {
         match *self {
             Self::Line { a, b } => {
                 let slope = (b[1] - a[1]) / (b[0] - a[0]);
@@ -88,12 +92,12 @@ impl Span {
         }
     }
 
-    fn point(&self, phi: f64) -> P2 {
+    pub(super) fn point(&self, phi: f64) -> P2 {
         [phi, self.eval(phi)[0]]
     }
 
     /// Phases inside the span where the radius is stationary.
-    fn stationary(&self) -> Option<f64> {
+    pub(super) fn stationary(&self) -> Option<f64> {
         match *self {
             Self::Line { a, b } => (a[1] == b[1]).then_some(0.5 * (a[0] + b[0])),
             Self::Arc { center, range, .. } => {
@@ -103,7 +107,7 @@ impl Span {
     }
 
     /// Phases inside the span where the radius equals `radius`.
-    fn at_radius(&self, radius: f64) -> Vec<f64> {
+    pub(super) fn at_radius(&self, radius: f64) -> Vec<f64> {
         let [lo, hi] = self.range();
         let within = |phi: &f64| *phi > lo && *phi < hi;
         match *self {
@@ -144,7 +148,7 @@ impl Span {
 
     /// Up to two intersections of the meridian line `alpha r + beta phi = gamma`
     /// with the span, as `(phi, r)`, tagged by root index.
-    fn meet(&self, alpha: f64, beta: f64, gamma: f64) -> Vec<(usize, P2)> {
+    pub(super) fn meet(&self, alpha: f64, beta: f64, gamma: f64) -> Vec<(usize, P2)> {
         match *self {
             Self::Line { a, b } => {
                 let [fa, fb] = [a, b].map(|p| alpha * p[1] + beta * p[0] - gamma);
@@ -166,7 +170,14 @@ impl Span {
 
     /// The `index`-th intersection of the meridian line with the full circle
     /// of an arc; with `clamp`, the nearest point when the line misses it.
-    fn arc_root(&self, alpha: f64, beta: f64, gamma: f64, index: usize, clamp: bool) -> Option<P2> {
+    pub(super) fn arc_root(
+        &self,
+        alpha: f64,
+        beta: f64,
+        gamma: f64,
+        index: usize,
+        clamp: bool,
+    ) -> Option<P2> {
         let Self::Arc {
             center,
             radius,
@@ -412,6 +423,19 @@ fn cone_crossings(span: &Span, cone: &Cone) -> Vec<f64> {
         .collect()
 }
 
+/// A counterclockwise hexagon ring of the given width across flats.
+fn hexagon(across_flats_mm: f64) -> Vec<Edge> {
+    let corners = multicad_rust_kernel::headed_screw::hex_vertices(across_flats_mm);
+    (0..6)
+        .map(|i| {
+            Edge::Planar(normal_sweep::Edge::Line {
+                a: corners[i],
+                b: corners[(i + 1) % 6],
+            })
+        })
+        .collect()
+}
+
 /// The center of the circle through three points.
 fn circle(a: P2, b: P2, c: P2) -> Option<P2> {
     let d = 2. * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
@@ -433,11 +457,11 @@ fn circle(a: P2, b: P2, c: P2) -> Option<P2> {
 /// distance. The engine hides only behind more than 1e-6 of the scene scale,
 /// and the linear tolerance of every source is at least 1e-7 mm, so neither
 /// visibility nor any published boundary depends on such material.
-const RESOLVED: f64 = 1e-10;
+pub(super) const RESOLVED: f64 = 1e-10;
 
 /// Roots of `f` on `[a, b]` with `|f'| <= lipschitz`: a stretch is excluded
 /// when its end values prove it free of zeros; sign changes are bisected.
-fn isolate(
+pub(super) fn isolate(
     f: &dyn Fn(f64) -> f64,
     [a, b]: [f64; 2],
     lipschitz: f64,
@@ -467,7 +491,7 @@ fn isolate(
         // the line stays that close to the surface: keep only sign changes.
         if b - a <= width || lipschitz * (b - a) <= RESOLVED {
             if change {
-                output.push(0.5 * (a + b));
+                output.push(bisect(f, [a, b], fa));
             }
             continue;
         }
@@ -481,8 +505,52 @@ fn isolate(
     Ok(())
 }
 
+/// A sign change of `f` on `[a, b]`, with `fa = f(a)`, bisected to the
+/// last representable bracket. Near an axis a plane's meridian lines meet
+/// the profile at a grazing angle, so the profile point moves by the root's
+/// error times a large factor: the root is resolved fully, not just to the
+/// isolation width.
+fn bisect(f: &dyn Fn(f64) -> f64, [mut a, mut b]: [f64; 2], mut fa: f64) -> f64 {
+    for _ in 0..80 {
+        let m = 0.5 * (a + b);
+        if m <= a || m >= b {
+            break;
+        }
+        let fm = f(m);
+        if (fm <= 0.) == (fa <= 0.) {
+            a = m;
+            fa = fm;
+        } else {
+            b = m;
+        }
+    }
+    0.5 * (a + b)
+}
+
+/// The parameter near `t` at which the path's height `z` crosses `level`,
+/// bisected to the last representable bracket; `t` itself when no crossing
+/// is bracketed within a hundredth of the parameter range.
+pub(super) fn level_stop(z: &dyn Fn(f64) -> f64, t: f64, level: f64) -> f64 {
+    let f = |t: f64| z(t) - level;
+    let ft = f(t);
+    if ft == 0. {
+        return t;
+    }
+    let mut step = 1e-12;
+    while step < 1e-2 {
+        for other in [t - step, t + step] {
+            if (0. ..=1.).contains(&other) && (f(other) <= 0.) != (ft <= 0.) {
+                let [a, b] = if other < t { [other, t] } else { [t, other] };
+                return bisect(&f, [a, b], f(a));
+            }
+        }
+        step *= 4.;
+    }
+    t
+}
+
 /// Adaptive certified-in-practice flattening of an exact path.
-fn adaptive(point: &dyn Fn(f64) -> P3, tolerance: f64, start: usize) -> Vec<f64> {
+pub(super) fn adaptive(point: &dyn Fn(f64) -> P3, tolerance: f64, start: usize) -> Vec<f64> {
     let deviation = |a: f64, b: f64| {
         let [p, q] = [point(a), point(b)];
         [0.25, 0.5, 0.75]
@@ -702,9 +770,9 @@ impl Path for Outline {
 }
 
 /// A range of another path.
-struct Range {
-    path: Arc<dyn Path>,
-    range: [f64; 2],
+pub(super) struct Range {
+    pub(super) path: Arc<dyn Path>,
+    pub(super) range: [f64; 2],
 }
 
 impl Path for Range {
@@ -724,29 +792,227 @@ impl Path for Range {
     }
 }
 
-/// A branch of an oblique section on a shifted span: for each `theta` the
-/// `index`-th meet of the plane's meridian line with the span.
-struct Sweep {
-    law: Arc<Law>,
+/// The meridian lines of a plane `n . p = c` cut through a law that
+/// advances `k` per radian axially and `tau k` per radian radially: at
+/// `theta` the plane meets the meridian half-plane in `alpha W + beta u =
+/// gamma`, with `W` the profile radius and `u` the profile phase.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Meridian {
+    pub n: P3,
+    pub c: f64,
+    pub k: f64,
+    pub tau: f64,
+}
+
+impl Meridian {
+    pub(super) fn line(&self, theta: f64) -> [f64; 3] {
+        let (sin, cos) = theta.sin_cos();
+        let n = self.n;
+        let alpha = n[0] * cos + n[1] * sin;
+        [
+            alpha,
+            n[2],
+            self.c - (alpha * self.tau + n[2]) * self.k * theta,
+        ]
+    }
+
+    /// The plane's signed value `n . P - c` at the surface point over the
+    /// profile point `q = (u, W)` at `theta`.
+    fn value(&self, theta: f64, q: P2) -> f64 {
+        let [alpha, beta, gamma] = self.line(theta);
+        alpha * q[1] + beta * q[0] - gamma
+    }
+
+    /// `d value / d theta` at a fixed profile point.
+    fn slope(&self, theta: f64, q: P2) -> f64 {
+        let (sin, cos) = theta.sin_cos();
+        let n = self.n;
+        let alpha = n[0] * cos + n[1] * sin;
+        let turn = n[1] * cos - n[0] * sin;
+        turn * (q[1] + self.tau * self.k * theta) + (alpha * self.tau + n[2]) * self.k
+    }
+}
+
+/// A touching end of a section branch on an arc: there the meridian line is
+/// tangent to the circle and the branch's root in `theta` has a square-root
+/// singularity, so near it the branch is parametrised by the circle angle
+/// `beta` instead. `theta(beta)` is the simple root of the plane's value at
+/// the circle point, which behaves as `theta_t + (beta - beta_t)^2 / Q`: both
+/// branches leaving a touch meet exactly at the touch point.
+#[derive(Clone, Copy, Debug)]
+struct Touch {
+    /// Circle angles of the touch point and of the switch to `theta`.
+    beta: [f64; 2],
+    /// The bracket `[no-root side of the touch, switch]` in `theta`, on which
+    /// the value is certified strictly monotone for every `beta` between the
+    /// two angles, with opposite signs at its ends.
+    bracket: [f64; 2],
+}
+
+fn wrap(angle: f64) -> f64 {
+    angle - TAU * (angle / TAU).round()
+}
+
+impl Touch {
+    /// The touch end at `touch` of the `index`-th root branch on an arc,
+    /// whose other end is at `other`. `None` when the touch cannot be
+    /// certified simple; the branch then keeps the foot point as its end.
+    fn new(meridian: &Meridian, span: &Span, index: usize, touch: f64, other: f64) -> Option<Self> {
+        let Span::Arc { center, radius, .. } = *span else {
+            return None;
+        };
+        let at = |beta: f64| {
+            let (sin, cos) = beta.sin_cos();
+            [center[0] + radius * cos, center[1] + radius * sin]
+        };
+        let angle = |p: P2| (p[1] - center[1]).atan2(p[0] - center[0]);
+        let reach = |theta: f64| {
+            let [alpha, beta, gamma] = meridian.line(theta);
+            let norm = alpha.hypot(beta);
+            let delta = (beta * center[0] + alpha * center[1] - gamma) / norm;
+            (radius - delta.abs()) * (radius + delta.abs())
+        };
+        let [alpha, beta, gamma] = meridian.line(touch);
+        let foot = span.arc_root(alpha, beta, gamma, 2, true)?;
+        let beta_t = angle(foot);
+        let s0 = meridian.slope(touch, at(beta_t));
+        let direction = (other - touch).signum();
+        // The no-root side: the line misses the circle just before the touch.
+        let mut mu = 1e-12 * touch.abs().max(1.);
+        while reach(touch - direction * mu) >= 0. {
+            mu *= 2.;
+            if mu > 1e-3 * (other - touch).abs() {
+                return None;
+            }
+        }
+        let outside = touch - direction * mu;
+        let nxy = meridian.n[0].hypot(meridian.n[1]);
+        let lead = meridian.tau.abs() * meridian.k;
+        let mut fraction = 0.45;
+        for _ in 0..48 {
+            let switch = touch + fraction * (other - touch);
+            fraction *= 0.5;
+            let [alpha, beta, gamma] = meridian.line(switch);
+            let Some(p) = span.arc_root(alpha, beta, gamma, index, false) else {
+                continue;
+            };
+            let beta_w = beta_t + wrap(angle(p) - beta_t);
+            if (beta_w - beta_t).abs() <= 1e-9 {
+                break;
+            }
+            // `|d slope / d theta| <= nxy (|W| + tau k |theta|) + 2 nxy tau k`
+            // and `|d slope / d beta| <= nxy R` over the box.
+            let theta_max = outside.abs().max(switch.abs());
+            let w_max = center[1].abs() + radius + lead * theta_max;
+            let reach_theta = (switch - touch).abs().max(mu);
+            let drift = (nxy * w_max + 2. * nxy * lead) * reach_theta
+                + nxy * radius * (beta_w - beta_t).abs();
+            if drift > 0.5 * s0.abs() - 1e-12 * (1. + s0.abs()) {
+                continue;
+            }
+            // Opposite signs across the bracket for the touch and the switch
+            // angles (the latter at its own root, so check just inside).
+            let inner = beta_t + 0.5 * (beta_w - beta_t);
+            let [lo, hi] = [outside, switch].map(|theta| meridian.value(theta, at(inner)));
+            if (lo > 0.) == (hi > 0.) {
+                continue;
+            }
+            return Some(Self {
+                beta: [beta_t, beta_w],
+                bracket: [outside, switch],
+            });
+        }
+        None
+    }
+
+    /// The root `theta` and the circle point at `beta`.
+    fn locate(&self, meridian: &Meridian, span: &Span, beta: f64) -> (f64, P2) {
+        let Span::Arc { center, radius, .. } = *span else {
+            unreachable!("touches are on arcs")
+        };
+        let (sin, cos) = beta.sin_cos();
+        let q = [center[0] + radius * cos, center[1] + radius * sin];
+        let f = |theta: f64| meridian.value(theta, q);
+        let [mut lo, mut hi] = self.bracket;
+        let [mut flo, fhi] = [f(lo), f(hi)];
+        if (flo > 0.) == (fhi > 0.) {
+            // Only at the switch angle itself, whose root is the bracket end.
+            return (if flo.abs() < fhi.abs() { lo } else { hi }, q);
+        }
+        for _ in 0..200 {
+            let mid = 0.5 * (lo + hi);
+            if mid == lo || mid == hi {
+                break;
+            }
+            let fm = f(mid);
+            if (fm > 0.) == (flo > 0.) {
+                lo = mid;
+                flo = fm;
+            } else {
+                hi = mid;
+            }
+        }
+        (0.5 * (lo + hi), q)
+    }
+}
+
+/// The parametrisation of a section branch: for each `theta` of `range` the
+/// `index`-th meet of the plane's meridian line with the span, switching to
+/// the circle angle near touching ends (see [`Touch`]).
+pub(super) struct Branch {
     span: Span,
     index: usize,
-    plane: (P3, f64),
+    meridian: Meridian,
     range: [f64; 2],
     /// Ends at which the plane's meridian line touches the arc: both roots
     /// meet there, so the end is the touching point itself.
     touching: [bool; 2],
+    touches: [Option<Touch>; 2],
 }
 
-impl Sweep {
-    fn line(law: &Law, (n, c): (P3, f64), theta: f64) -> [f64; 3] {
-        let (sin, cos) = theta.sin_cos();
-        let alpha = n[0] * cos + n[1] * sin;
-        [alpha, n[2], c - n[2] * law.rate * theta]
+/// The share of the branch parameter given to a touching end's angle range.
+const TOUCH_SHARE: f64 = 0.25;
+
+impl Branch {
+    pub(super) fn new(
+        span: Span,
+        index: usize,
+        meridian: Meridian,
+        range: [f64; 2],
+        touching: [bool; 2],
+    ) -> Self {
+        let touches = [0, 1].map(|end| {
+            touching[end]
+                .then(|| Touch::new(&meridian, &span, index, range[end], range[1 - end]))
+                .flatten()
+        });
+        Self {
+            span,
+            index,
+            meridian,
+            range,
+            touching,
+            touches,
+        }
     }
 
-    fn at(&self, theta: f64, touch: bool) -> P3 {
-        let [alpha, beta, gamma] = Self::line(&self.law, self.plane, theta);
-        let p = match self.span {
+    pub(super) fn width(&self) -> f64 {
+        (self.range[1] - self.range[0]).abs()
+    }
+
+    fn shares(&self) -> [f64; 2] {
+        self.touches
+            .map(|touch| if touch.is_some() { TOUCH_SHARE } else { 0. })
+    }
+
+    /// The `theta` range swept by plain roots.
+    fn plain(&self) -> [f64; 2] {
+        [0, 1].map(|end| self.touches[end].map_or(self.range[end], |touch| touch.bracket[1]))
+    }
+
+    fn root(&self, theta: f64, touch: bool) -> P2 {
+        let [alpha, beta, gamma] = self.meridian.line(theta);
+        match self.span {
             Span::Line { a, b } => {
                 let [fa, fb] = [a, b].map(|p| alpha * p[1] + beta * p[0] - gamma);
                 let t = if fa == fb {
@@ -760,24 +1026,102 @@ impl Sweep {
                 .span
                 .arc_root(alpha, beta, gamma, if touch { 2 } else { self.index }, true)
                 .unwrap_or([0.; 2]),
+        }
+    }
+
+    /// The angle and profile point `(u, W)` at the branch parameter `t`.
+    pub(super) fn locate(&self, t: f64) -> (f64, P2) {
+        let [a, b] = self.shares();
+        let [from, to] = self.plain();
+        if let Some(touch) = self.touches[0].filter(|_| t < a) {
+            let s = (t / a).max(0.);
+            let beta = touch.beta[0] + s * (touch.beta[1] - touch.beta[0]);
+            return touch.locate(&self.meridian, &self.span, beta);
+        }
+        if let Some(touch) = self.touches[1].filter(|_| t > 1. - b) {
+            let s = ((1. - t) / b).max(0.);
+            let beta = touch.beta[0] + s * (touch.beta[1] - touch.beta[0]);
+            return touch.locate(&self.meridian, &self.span, beta);
+        }
+        if t <= 0. {
+            return (self.range[0], self.root(self.range[0], self.touching[0]));
+        }
+        if t >= 1. {
+            return (self.range[1], self.root(self.range[1], self.touching[1]));
+        }
+        let s = ((t - a) / (1. - a - b)).clamp(0., 1.);
+        let theta = from + s * (to - from);
+        (theta, self.root(theta, false))
+    }
+
+    /// The branch parameter of a point at `theta` (any turn) whose profile
+    /// point there is `profile(theta)`, when it lies on the branch's range.
+    pub(super) fn parameter(&self, theta: f64, profile: &dyn Fn(f64) -> P2) -> Option<f64> {
+        let [a, b] = self.shares();
+        let [from, to] = self.plain();
+        let [lo, hi] = [from.min(to), from.max(to)];
+        for turn in [-1., 0., 1.] {
+            let theta = theta + TAU * (turn + ((lo - theta) / TAU).floor());
+            if theta > lo && theta < hi {
+                return Some(a + (theta - from) / (to - from) * (1. - a - b));
+            }
+        }
+        let Span::Arc { center, .. } = self.span else {
+            return None;
         };
-        self.law.surface(p[1], theta, p[0] + self.law.rate * theta)
+        for end in [0, 1] {
+            let Some(touch) = self.touches[end] else {
+                continue;
+            };
+            let near = touch.bracket[0];
+            let q = profile(theta + TAU * ((near - theta) / TAU).round());
+            let beta = (q[1] - center[1]).atan2(q[0] - center[0]);
+            let s = wrap(beta - touch.beta[0]) / (touch.beta[1] - touch.beta[0]);
+            if s > 0. && s <= 1. {
+                return Some(if end == 0 { s * a } else { 1. - s * b });
+            }
+        }
+        None
+    }
+}
+
+/// A branch of an oblique section on a shifted span.
+struct Sweep {
+    law: Arc<Law>,
+    /// The chart's angle origin: the branch's angles are measured from it.
+    base: f64,
+    branch: Branch,
+}
+
+impl Sweep {
+    fn line(law: &Law, (n, c): (P3, f64), theta: f64) -> [f64; 3] {
+        Self::meridian(law, (n, c)).line(theta)
+    }
+
+    fn meridian(law: &Law, (n, c): (P3, f64)) -> Meridian {
+        Meridian {
+            n,
+            c,
+            k: law.rate,
+            tau: 0.,
+        }
+    }
+
+    /// The profile point of a local point at the chart angle `theta`.
+    fn profile(&self, p: P3) -> impl Fn(f64) -> P2 + '_ {
+        move |theta| [p[2] - self.law.rate * theta, p[0].hypot(p[1])]
     }
 }
 
 impl Path for Sweep {
     fn point(&self, t: f64) -> P3 {
-        if t <= 0. {
-            return self.at(self.range[0], self.touching[0]);
-        }
-        if t >= 1. {
-            return self.at(self.range[1], self.touching[1]);
-        }
-        self.at(self.range[0] + (self.range[1] - self.range[0]) * t, false)
+        let (theta, p) = self.branch.locate(t);
+        let z = p[0] + self.law.rate * theta;
+        self.law.surface(p[1], self.base + theta, z)
     }
 
     fn flatten(&self, tolerance_mm: f64) -> Vec<f64> {
-        let start = ((self.range[1] - self.range[0]).abs() * 32.).ceil() as usize;
+        let start = (self.branch.width() * 32.).ceil() as usize;
         adaptive(&|t| self.point(t), tolerance_mm, start)
     }
 
@@ -797,16 +1141,34 @@ pub(in crate::drawing) struct Thread {
     stock: Option<(f64, Prism)>,
     /// For an entry chamfer: the cone trimming the crests near the entry.
     cone: Option<Cone>,
+    /// For a screw: the shank and head, a prism ending at the thread's start
+    /// level whose cross-section there contains the thread's.
+    base: Option<Prism>,
+    /// For a treated bore with a terminal groove: the void past the station
+    /// is the tail cylinder, and the shoulder annulus closes it.
+    groove: Option<Groove>,
     tolerance: f64,
 }
 
+/// A treated bore's terminal groove: the void is `r < radius` for
+/// `station <= z <= top`, beyond every radius of the thread's void.
+#[derive(Clone, Copy, Debug)]
+struct Groove {
+    radius: f64,
+    station: f64,
+    top: f64,
+}
+
 /// The entry cone `r = entry + slope z` on `0 <= z <= length`; beyond it the
-/// thread is untrimmed.
+/// thread is untrimmed. On an external thread the material is within the
+/// cone; on an internal one (a treated bore) the void is the union of the
+/// helicoid's and the cone's, so the material is outside the cone.
 #[derive(Clone, Copy, Debug)]
 struct Cone {
     entry: f64,
     length: f64,
     slope: f64,
+    internal: bool,
 }
 
 impl Cone {
@@ -819,8 +1181,35 @@ impl Cone {
         ((r - self.entry) / self.slope).clamp(0., self.length)
     }
 
+    /// Whether the helicoid point at radius `r` and level `z` bounds the
+    /// material, i.e. is not trimmed away by the cone.
     fn keeps(&self, r: f64, z: f64, tolerance: f64) -> bool {
-        z >= self.length - tolerance || r <= self.radius(z) + tolerance
+        z >= self.length - tolerance
+            || if self.internal {
+                r >= self.radius(z) - tolerance
+            } else {
+                r <= self.radius(z) + tolerance
+            }
+    }
+
+    /// Whether a helix of radius `r` is trimmed near the entry: it then
+    /// starts at its seam station.
+    fn trims(&self, r: f64) -> bool {
+        if self.internal {
+            r < self.entry
+        } else {
+            r > self.entry
+        }
+    }
+
+    /// Whether the cone's own surface at radius `cone` bounds the material
+    /// where the helicoid's radius is `thread`.
+    fn face(&self, cone: f64, thread: f64) -> bool {
+        if self.internal {
+            cone > thread
+        } else {
+            cone < thread
+        }
     }
 
     /// Parameters of the unit-direction local line `s + t d` inside the
@@ -837,6 +1226,31 @@ impl Cone {
             let t = (self.length - s[2]) / d[2];
             output.push(if d[2] > 0. { [t, far] } else { [-far, t] });
         }
+        output.extend(self.inside(s, d));
+        merge(output, 0.)
+    }
+
+    /// Parameters of the local line within the cone frustum `0 < z < length`,
+    /// `r < C(z)`: the cone's part of a treated bore's void.
+    fn frustum(&self, s: P3, d: P3) -> Vec<[f64; 2]> {
+        let far = 1e9;
+        let slab = if d[2].abs() <= 1e-15 {
+            if s[2] > 0. && s[2] < self.length {
+                [-far, far]
+            } else {
+                return Vec::new();
+            }
+        } else {
+            let [a, b] = [-s[2] / d[2], (self.length - s[2]) / d[2]];
+            [a.min(b), a.max(b)]
+        };
+        profile::intersect(&self.inside(s, d), &[slab])
+    }
+
+    /// Parameters of the local line where `r < C(z)` on the cone's nappe of
+    /// positive radius.
+    fn inside(&self, s: P3, d: P3) -> Vec<[f64; 2]> {
+        let far = 1e9;
         // r^2 < C(z)^2 with C(z) > 0.
         let k = self.slope;
         let c0 = self.entry + k * s[2];
@@ -876,8 +1290,7 @@ impl Cone {
             let t = -c0 / (k * d[2]);
             if k * d[2] > 0. { [t, far] } else { [-far, t] }
         };
-        output.extend(profile::intersect(&merge(inside, 0.), &[positive]));
-        merge(output, 0.)
+        profile::intersect(&merge(inside, 0.), &[positive])
     }
 }
 
@@ -915,11 +1328,12 @@ impl Path for Seam {
         // On a cylindrical band the seam is a circle at the cone's end.
         let r = self.span.flat()?;
         let law = &self.law;
-        let c = law.view([0., 0., self.cone.length]);
+        let station = self.cone.station(r);
+        let c = law.view([0., 0., station]);
         let [x, y] = [law.axes[0], law.axes[1]];
         let theta = |t: f64| {
             let phi = self.range[0] + (self.range[1] - self.range[0]) * t;
-            (self.cone.length - phi - self.copy) / law.rate
+            (station - phi - self.copy) / law.rate
         };
         let [a, b] = [theta(from), theta(to)];
         paths::conic(
@@ -1025,6 +1439,80 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
                 neck: Some((neck, span, prism)),
                 stock: None,
                 cone: None,
+                base: None,
+                groove: None,
+                tolerance,
+            })
+        })());
+    }
+    if let Some((screw, frame)) = solid.rust_machine_screw_geometry() {
+        let thread = screw.thread();
+        let Some(profile) = Profile::from_helical(thread) else {
+            return Some(Err(invalid()));
+        };
+        let (origin, axes) = place(frame);
+        let spec = screw.spec();
+        let top = screw.head_top_z();
+        let seat = screw.head_seat_z();
+        let outline = |head: multicad_rust_kernel::headed_screw::ScrewHead| -> Vec<Edge> {
+            use multicad_rust_kernel::headed_screw::ScrewHead;
+            match head {
+                ScrewHead::SocketCap { radius_mm, .. } => {
+                    vec![Edge::Planar(normal_sweep::Edge::Circle {
+                        center: [0.; 2],
+                        radius_mm,
+                        clockwise: false,
+                    })]
+                }
+                ScrewHead::ExternalHex {
+                    across_flats_mm, ..
+                } => hexagon(across_flats_mm),
+            }
+        };
+        let head = outline(spec.head);
+        let mut bands = Vec::new();
+        match spec.head.socket() {
+            Some((width, depth)) => {
+                bands.push(Band {
+                    rings: vec![head.clone(), hexagon(width)],
+                    axis: [top, top + depth],
+                });
+                bands.push(Band {
+                    rings: vec![head],
+                    axis: [top + depth, seat],
+                });
+            }
+            None => bands.push(Band {
+                rings: vec![head],
+                axis: [top, seat],
+            }),
+        }
+        if spec.shank_length_mm > 0. {
+            bands.push(Band {
+                rings: vec![vec![Edge::Planar(normal_sweep::Edge::Circle {
+                    center: [0.; 2],
+                    radius_mm: spec.shank_radius_mm,
+                    clockwise: false,
+                })]],
+                axis: [seat, 0.],
+            });
+        }
+        return Some((|| {
+            let base = Prism::new(origin, axes, bands, tolerance)?;
+            Ok(Thread {
+                law: Arc::new(Law {
+                    origin,
+                    axes,
+                    profile,
+                    rate: thread.helical_rate(),
+                    starts: thread.spec().starts,
+                }),
+                z: [0., thread.spec().length_mm],
+                neck: None,
+                stock: None,
+                cone: None,
+                base: Some(base),
+                groove: None,
                 tolerance,
             })
         })());
@@ -1042,6 +1530,7 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
             entry: chamfer.entry_radius_mm(),
             length: chamfer.entry_length_mm(),
             slope: (spec.major_radius_mm - chamfer.entry_radius_mm()) / chamfer.entry_length_mm(),
+            internal: false,
         };
         return Some((|| {
             let neck = match chamfer.terminal_relief() {
@@ -1077,9 +1566,14 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
                 neck,
                 stock: None,
                 cone: Some(cone),
+                base: None,
+                groove: None,
                 tolerance,
             })
         })());
+    }
+    if let Some(data) = solid.rust_internal_thread_treatment_data() {
+        return treatment(&data, view, tolerance);
     }
     if let Some(data) = solid.rust_rounded_thread_bore_data() {
         let thread = data.bore.thread();
@@ -1115,6 +1609,8 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
                 neck: None,
                 stock: Some((radius, prism)),
                 cone: None,
+                base: None,
+                groove: None,
                 tolerance,
             })
         })());
@@ -1137,13 +1633,141 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
         neck: None,
         stock: None,
         cone: None,
+        base: None,
+        groove: None,
         tolerance,
     }))
+}
+
+/// Actual cylindrical stock minus an authored internal thread cavity: the
+/// void is `r < max(R(z - k theta), C(z))` with the flat-band profile `R` and
+/// the entry cone `C`, between the stock's caps.
+fn treatment(
+    data: &crate::InternalThreadTreatmentData,
+    view: &View,
+    tolerance: f64,
+) -> Option<Result<Thread, GeometryError>> {
+    let unsupported = |message: &str| Some(Err(err(GeometryErrorKind::Unsupported, message)));
+    let cavity = data.material.cavity();
+    let thread = cavity.source_thread();
+    let spec = thread.spec();
+    let pitch = spec.pitch_mm;
+    let bands = thread.bands();
+    if bands[0].phase_mm[0] != 0. || bands[4].phase_mm[1] != pitch {
+        return Some(Err(err(
+            GeometryErrorKind::InvalidResult,
+            "Rust internal thread bands do not close over one pitch",
+        )));
+    }
+    let profile = Profile::new(
+        pitch,
+        bands
+            .iter()
+            .map(|band| Span::Line {
+                a: [band.phase_mm[0], band.radius_mm[0]],
+                b: [band.phase_mm[1], band.radius_mm[1]],
+            })
+            .collect(),
+    );
+    let origin = view.point(data.frame.origin);
+    let axes = [data.frame.u, data.frame.v, data.frame.normal()].map(|axis| view.vector(axis));
+    let length = cavity.full_length_mm();
+    let radius = data.material.stock().circle().radius().as_f64();
+    let cone = cavity
+        .entry_radius_mm()
+        .zip(cavity.intent().entry_depth_mm)
+        .map(|(entry, depth)| Cone {
+            entry,
+            length: depth,
+            slope: (thread.minimum_radius_mm() - entry) / depth,
+            internal: true,
+        });
+    let sign = if spec.left_hand { -1. } else { 1. };
+    let circle = |radius_mm: f64, clockwise: bool| {
+        vec![Edge::Planar(normal_sweep::Edge::Circle {
+            center: [0.; 2],
+            radius_mm,
+            clockwise,
+        })]
+    };
+    // A terminal groove: past its station the void is the tail cylinder,
+    // which must clear the whole thread and stay inside the stock.
+    let groove = match cavity
+        .terminal_radius_mm()
+        .zip(cavity.terminal_station_mm())
+    {
+        Some((tail, station)) => {
+            if !(tail > thread.maximum_radius_mm()
+                && tail < radius
+                && station > 0.
+                && station < length)
+            {
+                return unsupported(
+                    "Drawing a treated bore whose terminal groove does not clear the thread inside the stock is not supported",
+                );
+            }
+            if cone.is_some_and(|cone| cone.length >= station) {
+                return unsupported(
+                    "Drawing a treated bore whose entry cone reaches its terminal groove is not supported",
+                );
+            }
+            Some(Groove {
+                radius: tail,
+                station,
+                top: length,
+            })
+        }
+        None => None,
+    };
+    let bands = match groove {
+        Some(groove) => vec![
+            Band {
+                rings: vec![circle(radius, false)],
+                axis: [0., groove.station],
+            },
+            Band {
+                rings: vec![circle(radius, false), circle(groove.radius, true)],
+                axis: [groove.station, length],
+            },
+        ],
+        None => vec![Band {
+            rings: vec![circle(radius, false)],
+            axis: [0., length],
+        }],
+    };
+    Some((|| {
+        let prism = Prism::new(origin, axes, bands, tolerance)?;
+        Ok(Thread {
+            law: Arc::new(Law {
+                origin,
+                axes,
+                profile,
+                rate: sign * pitch * f64::from(spec.starts) / TAU,
+                starts: spec.starts,
+            }),
+            z: [0., groove.map_or(length, |groove| groove.station)],
+            neck: None,
+            stock: Some((radius, prism)),
+            cone,
+            base: None,
+            groove,
+            tolerance,
+        })
+    })())
 }
 
 impl Thread {
     fn rate(&self) -> f64 {
         self.law.rate
+    }
+
+    /// The level where a helix or band of radius `r` starts: its seam
+    /// station on an entry cone that trims it, else the first cap.
+    fn start(&self, r: f64) -> f64 {
+        match self.cone {
+            Some(cone) if cone.trims(r) => self.z[0].max(cone.station(r)),
+            _ => self.z[0],
+        }
     }
 
     fn pitch(&self) -> f64 {
@@ -1385,9 +2009,55 @@ impl Thread {
                 Vec::new()
             });
         }
+        if let (Some(groove), Some((stock, _))) = (&self.groove, &self.stock)
+            && d[2].abs() <= 1e-15
+            && (s[2] - groove.station).abs() <= self.tolerance
+        {
+            // In the shoulder plane the material on both sides is the
+            // annulus between the tail cylinder and the stock.
+            let disc = |radius: f64| -> Vec<[f64; 2]> {
+                let rho = d[0].hypot(d[1]);
+                let b = s[0] * d[0] + s[1] * d[1];
+                let c = s[0] * s[0] + s[1] * s[1] - radius * radius;
+                if rho <= 1e-15 {
+                    return if c < 0. {
+                        vec![[-1e9, 1e9]]
+                    } else {
+                        Vec::new()
+                    };
+                }
+                let disc = b * b - rho * rho * c;
+                if disc > 0. {
+                    let root = disc.sqrt();
+                    vec![[(-b - root) / (rho * rho), (-b + root) / (rho * rho)]]
+                } else {
+                    Vec::new()
+                }
+            };
+            return Ok(profile::exclusive(&disc(*stock), &disc(groove.radius), 0.));
+        }
+        if self.base.is_some() && d[2].abs() <= 1e-15 && (s[2] - self.z[0]).abs() <= self.tolerance
+        {
+            // In the plane where the thread starts on a screw's shank or head,
+            // whose cross-section contains the thread's, the union is open
+            // exactly within the thread's cap region.
+            return self.cap_line(s, d, self.z[0]);
+        }
         let mut spans = self.threaded(s, d)?;
-        if let Some(cone) = &self.cone {
-            spans = profile::intersect(&spans, &cone.line(s, d));
+        if let Some(prism) = &self.base
+            && let Some(more) = prism.line(self.law.view(s), self.view_vector(d))
+        {
+            spans.extend(more?);
+            spans = merge(spans, 0.);
+        }
+        match &self.cone {
+            // A treated bore's void: the helicoid's or the cone frustum's.
+            Some(cone) if cone.internal => {
+                spans.extend(cone.frustum(s, d));
+                spans = merge(spans, 0.);
+            }
+            Some(cone) => spans = profile::intersect(&spans, &cone.line(s, d)),
+            None => {}
         }
         if let Some((_, prism)) = &self.stock {
             // Inside the stock cylinder and outside the thread's helicoid.
@@ -1395,9 +2065,28 @@ impl Thread {
                 Some(outer) => outer?,
                 None => Vec::new(),
             };
+            // An axis-parallel line on a cylindrical band of the void lies in
+            // its surface over the band: that stretch is boundary, not
+            // material, so a stretch whose middle is not beyond the void's
+            // radius there is dropped.
+            let axial = d[0].hypot(d[1]) <= 1e-15;
+            let r = s[0].hypot(s[1]);
+            let theta = s[1].atan2(s[0]);
+            let profile = &self.law.profile;
+            let beyond = |t: f64| {
+                let z = s[2] + t * d[2];
+                let mut void = profile.radius(z - self.rate() * theta);
+                if let Some(groove) = self.groove.filter(|groove| z >= groove.station) {
+                    void = groove.radius;
+                }
+                if let Some(cone) = self.cone.filter(|cone| z > 0. && z < cone.length) {
+                    void = void.max(cone.radius(z));
+                }
+                r > void + 1e-12 * void.max(1.)
+            };
             return Ok(profile::exclusive(&outer, &spans, 0.)
                 .into_iter()
-                .filter(|[a, b]| b > a)
+                .filter(|[a, b]| b > a && (!axial || beyond(0.5 * (a + b))))
                 .collect());
         }
         if let Some((_, _, prism)) = &self.neck
@@ -1436,13 +2125,7 @@ impl Thread {
         for m in 0..self.law.starts {
             let base = phi + f64::from(m) * self.pitch();
             // On an entry chamfer the helix starts at its cone station.
-            let low = self.cone.map_or(self.z[0], |cone| {
-                if radius > cone.entry {
-                    self.z[0].max(cone.station(radius))
-                } else {
-                    self.z[0]
-                }
-            });
+            let low = self.start(radius);
             if self.z[1] - low <= 1e-12 {
                 continue;
             }
@@ -1596,7 +2279,11 @@ impl Thread {
                 match trim {
                     // Where the thread reaches beyond the cone, the cap ends
                     // on the cone's circle.
-                    Some(radius) if span.eval(level - rate * mid)[0] > radius => {
+                    Some(radius)
+                        if self.cone.is_some_and(|cone| {
+                            cone.face(radius, span.eval(level - rate * mid)[0])
+                        }) =>
+                    {
                         let [a, b] = span.range();
                         (
                             Span::Line {
@@ -1659,7 +2346,7 @@ impl Thread {
             stops.push(b);
             stops.sort_by(f64::total_cmp);
             for pair in stops.windows(2) {
-                if pair[1] - pair[0] > 1e-13 && span.eval(0.5 * (pair[0] + pair[1]))[0] > cone.entry
+                if pair[1] - pair[0] > 1e-13 && cone.trims(span.eval(0.5 * (pair[0] + pair[1]))[0])
                 {
                     output.push((*span, [pair[0], pair[1]]));
                 }
@@ -1692,9 +2379,9 @@ impl Thread {
     /// angle with respect to the phase.
     fn seam_rates(&self, cone: &Cone) -> (f64, f64) {
         let profile = &self.law.profile;
-        let turn = (profile.slope / cone.slope + 1.) / self.rate().abs();
+        let turn = (profile.slope / cone.slope.abs() + 1.) / self.rate().abs();
         (
-            profile.slope + profile.maximum * turn + profile.slope / cone.slope,
+            profile.slope + profile.maximum * turn + profile.slope / cone.slope.abs(),
             turn,
         )
     }
@@ -1752,16 +2439,19 @@ impl Thread {
         for sign in [-1., 1.] {
             let theta = alpha + sign * ratio.acos();
             let (sin, cos) = theta.sin_cos();
-            // The cone bounds the material where its radius is below the
-            // thread's: roots of R(z - k theta) - C(z) along the generator.
+            // The cone bounds the material where it trims the thread: roots
+            // of R(z - k theta) - C(z) along the generator.
             let f = |z: f64| profile.radius(z - k * theta) - cone.radius(z);
             let span = [self.z[0], cone.length.min(self.z[1])];
             let mut stops = vec![span[0], span[1]];
-            isolate(&f, span, profile.slope + cone.slope, &mut stops)?;
+            isolate(&f, span, profile.slope + cone.slope.abs(), &mut stops)?;
             stops.sort_by(f64::total_cmp);
             stops.dedup_by(|x, y| (*x - *y).abs() <= 1e-13);
             for pair in stops.windows(2) {
-                if pair[1] - pair[0] > 1e-13 && f(0.5 * (pair[0] + pair[1])) > 0. {
+                let mid = 0.5 * (pair[0] + pair[1]);
+                if pair[1] - pair[0] > 1e-13
+                    && cone.face(cone.radius(mid), profile.radius(mid - k * theta))
+                {
                     let at = |z: f64| {
                         let r = cone.radius(z);
                         self.law.view([r * cos, r * sin, z])
@@ -1860,13 +2550,7 @@ impl Thread {
             for m in self.copies() {
                 let shift = rate * theta + m as f64 * self.pitch();
                 let [z0, z1] = [a + shift, b + shift];
-                let low = self.cone.map_or(self.z[0], |cone| {
-                    if r > cone.entry {
-                        self.z[0].max(cone.station(r))
-                    } else {
-                        self.z[0]
-                    }
-                });
+                let low = self.start(r);
                 let [lo, hi] = [z0.max(low), z1.min(self.z[1])];
                 if hi - lo > 1e-12 {
                     let (sin, cos) = theta.sin_cos();
@@ -1921,6 +2605,11 @@ impl Thread {
                                     .into_iter()
                                     .filter(|z| *z > lo && *z < hi),
                             );
+                            // The cone ends there even where rounding puts
+                            // its crossing with the band just past its end.
+                            if cone.length > lo && cone.length < hi {
+                                stops.push(cone.length);
+                            }
                         }
                         stops.sort_by(f64::total_cmp);
                         for pair in stops.windows(2) {
@@ -1987,10 +2676,13 @@ impl Thread {
                     let top = cone.length.min(self.z[1]);
                     let f = |z: f64| profile.radius(z - rate * angle) - cone.radius(z);
                     let mut stops = vec![self.z[0], top];
-                    isolate(&f, [self.z[0], top], profile.slope + cone.slope, &mut stops)?;
+                    let lipschitz = profile.slope + cone.slope.abs();
+                    isolate(&f, [self.z[0], top], lipschitz, &mut stops)?;
                     stops.sort_by(f64::total_cmp);
                     for pair in stops.windows(2) {
-                        if pair[1] - pair[0] > 1e-13 && f(0.5 * (pair[0] + pair[1])) > 0. {
+                        let mid = 0.5 * (pair[0] + pair[1]);
+                        let face = cone.face(cone.radius(mid), profile.radius(mid - rate * angle));
+                        if pair[1] - pair[0] > 1e-13 && face {
                             let at = |z: f64| {
                                 let r = side * cone.radius(z);
                                 law.view([r * h[0], r * h[1], z])
@@ -2001,17 +2693,23 @@ impl Thread {
                 }
             }
             for level in self.z {
-                let trim = self
-                    .cone
-                    .filter(|cone| level < cone.length)
-                    .map_or(f64::INFINITY, |cone| cone.radius(level));
-                let reach = |angle: f64| profile.radius(level - rate * angle).min(trim);
+                let trim = self.cone.filter(|cone| level < cone.length);
+                let reach = |angle: f64| {
+                    let r = profile.radius(level - rate * angle);
+                    match trim {
+                        Some(cone) if cone.internal => r.max(cone.radius(level)),
+                        Some(cone) => r.min(cone.radius(level)),
+                        None => r,
+                    }
+                };
                 let at = |s: f64| law.view([s * h[0], s * h[1], level]);
                 let [right, left] = [reach(theta), -reach(theta + PI)];
                 match &self.stock {
-                    // A bore's cap is the annulus between thread and stock.
-                    Some((radius, _)) => {
-                        output.push(Arc::new(Segment(at(right), at(*radius))));
+                    // A bore's cap is the annulus between thread and stock;
+                    // at a terminal groove's shoulder, the tail cylinder.
+                    Some(_) => {
+                        let radius = self.cap_reach(level);
+                        output.push(Arc::new(Segment(at(right), at(radius))));
                         output.push(Arc::new(Segment(at(-radius), at(left))));
                     }
                     None => output.push(Arc::new(Segment(at(left), at(right)))),
@@ -2036,13 +2734,7 @@ impl Thread {
                     for m in self.copies() {
                         let shift = rate * theta + m as f64 * self.pitch();
                         // On an entry chamfer the band starts at its station.
-                        let low = self.cone.map_or(self.z[0], |cone| {
-                            if radius > cone.entry {
-                                self.z[0].max(cone.station(radius))
-                            } else {
-                                self.z[0]
-                            }
-                        });
+                        let low = self.start(radius);
                         let [lo, hi] = [(a + shift).max(low), (b + shift).min(self.z[1])];
                         if hi - lo > 1e-12 {
                             output.push(Arc::new(Segment(
@@ -2061,20 +2753,30 @@ impl Thread {
             if let Some(cone) = self.cone.filter(|cone| level < cone.length)
                 && let Some(disc) = self.disc_chord(n, c, level, cone.radius(level))
             {
-                // On an entry chamfer the cap is also within the cone.
+                // On an entry chamfer the cap is also within the cone; on a
+                // treated bore the void's cap also includes the cone's disc.
                 let d = [n[1] / nxy, -n[0] / nxy, 0.];
                 let offset = (c - n[2] * level) / (nxy * nxy);
                 let foot = [n[0] * offset, n[1] * offset, level];
                 let base = add(foot, scaled(d, -dot3(foot, d)));
-                let stations: Vec<[f64; 2]> = level_chords
+                let mut stations: Vec<[f64; 2]> = level_chords
                     .iter()
                     .map(|[a, b]| [dot3(*a, d), dot3(*b, d)])
                     .collect();
-                level_chords = profile::intersect(&stations, &[disc])
+                stations = if cone.internal {
+                    stations.push(disc);
+                    merge(stations, 0.)
+                } else {
+                    profile::intersect(&stations, &[disc])
+                };
+                level_chords = stations
                     .into_iter()
                     .map(|[a, b]| [add(base, scaled(d, a)), add(base, scaled(d, b))])
                     .collect();
-            } else if self.cone.is_some_and(|cone| level < cone.length) {
+            } else if self
+                .cone
+                .is_some_and(|cone| !cone.internal && level < cone.length)
+            {
                 level_chords.clear();
             }
             chords.extend(level_chords);
@@ -2123,7 +2825,7 @@ impl Thread {
                 };
                 let inside = p[2] > self.z[0]
                     && p[2] < cone.length.min(self.z[1])
-                    && cone.radius(p[2]) < profile.radius(p[2] - rate * mid);
+                    && cone.face(cone.radius(p[2]), profile.radius(p[2] - rate * mid));
                 if inside && pair[1] - pair[0] > 1e-13 {
                     output.push(Arc::new(ConeCut {
                         law: law.clone(),
@@ -2134,8 +2836,9 @@ impl Thread {
                 }
             }
         }
-        if let Some((radius, _)) = &self.stock {
-            // A bore's caps are annuli: the stock chord less the thread's.
+        if self.stock.is_some() {
+            // A bore's caps are annuli: the stock chord less the thread's,
+            // at a terminal groove's shoulder the tail cylinder's.
             let d = [n[1] / nxy, -n[0] / nxy, 0.];
             let mut annular = Vec::new();
             for level in self.z {
@@ -2147,96 +2850,134 @@ impl Thread {
                     .filter(|[a, _]| (a[2] - level).abs() <= 1e-12)
                     .map(|[a, b]| [dot3(*a, d), dot3(*b, d)])
                     .collect();
-                let outer: Vec<[f64; 2]> =
-                    self.disc_chord(n, c, level, *radius).into_iter().collect();
+                let outer: Vec<[f64; 2]> = self
+                    .disc_chord(n, c, level, self.cap_reach(level))
+                    .into_iter()
+                    .collect();
                 for [a, b] in profile::exclusive(&outer, &inner, 1e-12) {
                     annular.push([add(base, scaled(d, a)), add(base, scaled(d, b))]);
                 }
             }
             chords = annular;
         }
-        // General plane: sweep the meridian half-plane once around the axis.
-        for m in self.copies() {
-            for span in &profile.spans {
-                if n[2].abs() <= 1e-12 && span.flat().is_some() {
-                    continue;
-                }
-                let span = span.shifted(m as f64 * self.pitch());
-                let mut events = vec![0., TAU];
-                let mut touches = Vec::new();
-                let [a, b] = span.range();
-                for e in [span.point(a), span.point(b)] {
-                    let f = |theta: f64| {
-                        let [alpha, beta, gamma] = Sweep::line(law, (n, c), theta);
-                        alpha * e[1] + beta * e[0] - gamma
-                    };
-                    let lip = nxy * e[1].abs() + (n[2] * rate).abs() + 1e-12;
-                    isolate(&f, [0., TAU], lip, &mut events)?;
-                }
-                if let Span::Arc { center, radius, .. } = span {
-                    let f = |theta: f64| {
-                        let [alpha, beta, gamma] = Sweep::line(law, (n, c), theta);
-                        let u = alpha * center[1] + beta * center[0] - gamma;
-                        u * u - radius * radius * (alpha * alpha + beta * beta)
-                    };
-                    let lu = nxy * center[1].abs() + (n[2] * rate).abs();
-                    let umax = nxy * center[1].abs()
-                        + n[2].abs() * center[0].abs()
-                        + c.abs()
-                        + (n[2] * rate).abs() * TAU;
-                    let lip = 2. * umax * lu + 2. * radius * radius * nxy * nxy + 1e-12;
-                    isolate(&f, [0., TAU], lip, &mut touches)?;
-                }
-                events.extend(touches.iter().copied());
-                events.sort_by(f64::total_cmp);
-                events.dedup_by(|x, y| (*x - *y).abs() <= 1e-13);
-                let touch = |theta: f64| touches.iter().any(|t| (t - theta).abs() <= 1e-13);
-                for pair in events.windows(2) {
-                    if pair[1] - pair[0] <= 1e-13 {
+        // General plane: sweep the meridian half-plane once around the axis,
+        // in two charts of half a turn each centred where the meridian
+        // half-plane lies in the plane's direction. There the plane meets the
+        // meridian lines at the most grazing angle (near the axis a profile
+        // point moves by the angle's error times the radius squared over the
+        // offset), so the angle is measured from the chart centre at full
+        // precision.
+        let base = n[0].atan2(-n[1]);
+        let [low, high] = [*self.copies().start() - 1, *self.copies().end() + 1];
+        for base in [base, base + PI] {
+            let (sin, cos) = base.sin_cos();
+            let n = [n[0] * cos + n[1] * sin, n[1] * cos - n[0] * sin, n[2]];
+            let chart = [-PI / 2., PI / 2.];
+            for m in low..=high {
+                for span in &profile.spans {
+                    if n[2].abs() <= 1e-12 && span.flat().is_some() {
                         continue;
                     }
-                    let mid = 0.5 * (pair[0] + pair[1]);
-                    let [alpha, beta, gamma] = Sweep::line(law, (n, c), mid);
-                    for (index, _) in span.meet(alpha, beta, gamma) {
-                        let sweep: Arc<dyn Path> = Arc::new(Sweep {
-                            law: law.clone(),
-                            span,
-                            index,
-                            plane: (n, c),
-                            range: [pair[0], pair[1]],
-                            touching: [touch(pair[0]), touch(pair[1])],
-                        });
-                        // The branch leaves the material only through a cap,
-                        // at an end of that cap's exact chord.
-                        let mut stops = vec![0., 1.];
-                        for point in &chord_ends {
-                            let theta = point[1].atan2(point[0]).rem_euclid(TAU);
-                            for theta in [theta, theta + TAU, theta - TAU] {
-                                if theta <= pair[0] || theta >= pair[1] {
+                    let span = span.shifted(m as f64 * self.pitch() + rate * base);
+                    let mut events = chart.to_vec();
+                    let mut touches = Vec::new();
+                    let [a, b] = span.range();
+                    for e in [span.point(a), span.point(b)] {
+                        let f = |theta: f64| {
+                            let [alpha, beta, gamma] = Sweep::line(law, (n, c), theta);
+                            alpha * e[1] + beta * e[0] - gamma
+                        };
+                        let lip = nxy * e[1].abs() + (n[2] * rate).abs() + 1e-12;
+                        isolate(&f, chart, lip, &mut events)?;
+                    }
+                    if let Span::Arc { center, radius, .. } = span {
+                        // The meridian line touches the circle where its signed
+                        // distance from the center, `u / |(alpha, beta)|`, is
+                        // `+-R`: the roots of `u -+ R |(alpha, beta)|`, isolated
+                        // one sign at a time so that a pair of close touches (near
+                        // the axis, where `|(alpha, beta)|` is small) never needs
+                        // resolving as one near-double root.
+                        let lu = nxy * center[1].abs() + (n[2] * rate).abs();
+                        for side in [-1., 1.] {
+                            let f = |theta: f64| {
+                                let [alpha, beta, gamma] = Sweep::line(law, (n, c), theta);
+                                alpha * center[1] + beta * center[0] - gamma
+                                    + side * radius * alpha.hypot(beta)
+                            };
+                            let lip = lu + radius * nxy + 1e-12;
+                            isolate(&f, chart, lip, &mut touches)?;
+                        }
+                    }
+                    events.extend(touches.iter().copied());
+                    events.sort_by(f64::total_cmp);
+                    events.dedup_by(|x, y| (*x - *y).abs() <= 1e-13);
+                    let touch = |theta: f64| touches.iter().any(|t| (t - theta).abs() <= 1e-13);
+                    for pair in events.windows(2) {
+                        if pair[1] - pair[0] <= 1e-13 {
+                            continue;
+                        }
+                        let mid = 0.5 * (pair[0] + pair[1]);
+                        let [alpha, beta, gamma] = Sweep::line(law, (n, c), mid);
+                        for (index, _) in span.meet(alpha, beta, gamma) {
+                            let branch = Sweep {
+                                law: law.clone(),
+                                base,
+                                branch: Branch::new(
+                                    span,
+                                    index,
+                                    Sweep::meridian(law, (n, c)),
+                                    [pair[0], pair[1]],
+                                    [touch(pair[0]), touch(pair[1])],
+                                ),
+                            };
+                            // The branch leaves the material only through a cap,
+                            // at an end of that cap's exact chord.
+                            let mut stops = vec![0., 1.];
+                            for point in &chord_ends {
+                                let theta = point[1].atan2(point[0]) - base;
+                                let theta = theta - TAU * (theta / TAU).round();
+                                let profile = branch.profile(*point);
+                                let Some(t) = branch.branch.parameter(theta, &profile) else {
+                                    continue;
+                                };
+                                if t <= 0. || t >= 1. {
                                     continue;
                                 }
-                                let t = (theta - pair[0]) / (pair[1] - pair[0]);
-                                let q = law.local(sweep.point(t));
+                                // Where a cap is crossed, exactly: near the
+                                // axis the chord end's angle alone places the
+                                // branch point poorly along a span that the
+                                // meridian lines meet at a grazing angle.
+                                let t = if self.z.contains(&point[2]) {
+                                    let z = |t: f64| law.local(branch.point(t))[2];
+                                    level_stop(&z, t, point[2])
+                                } else {
+                                    t
+                                };
+                                let q = law.local(branch.point(t));
                                 let d = add(q, scaled(*point, -1.));
                                 if dot3(d, d).sqrt() < 1e-6 {
                                     stops.push(t);
                                 }
                             }
-                        }
-                        stops.sort_by(f64::total_cmp);
-                        stops.dedup_by(|x, y| (*x - *y).abs() <= 1e-13);
-                        for piece in stops.windows(2) {
-                            let q = law.local(sweep.point(0.5 * (piece[0] + piece[1])));
-                            let z = q[2];
-                            let kept = self
-                                .cone
-                                .is_none_or(|cone| cone.keeps(q[0].hypot(q[1]), z, 1e-12));
-                            if kept && z > self.z[0] && z < self.z[1] && piece[1] - piece[0] > 1e-13
-                            {
-                                output.push(Arc::new(Range {
-                                    path: sweep.clone(),
-                                    range: [piece[0], piece[1]],
-                                }));
+                            let sweep: Arc<dyn Path> = Arc::new(branch);
+                            stops.sort_by(f64::total_cmp);
+                            stops.dedup_by(|x, y| (*x - *y).abs() <= 1e-13);
+                            for piece in stops.windows(2) {
+                                let q = law.local(sweep.point(0.5 * (piece[0] + piece[1])));
+                                let z = q[2];
+                                let kept = self
+                                    .cone
+                                    .is_none_or(|cone| cone.keeps(q[0].hypot(q[1]), z, 1e-12));
+                                if kept
+                                    && z > self.z[0]
+                                    && z < self.z[1]
+                                    && piece[1] - piece[0] > 1e-13
+                                {
+                                    output.push(Arc::new(Range {
+                                        path: sweep.clone(),
+                                        range: [piece[0], piece[1]],
+                                    }));
+                                }
                             }
                         }
                     }
@@ -2250,6 +2991,54 @@ impl Thread {
     }
 
     /// The chords of a cap disc cut by the plane, as local end points.
+    /// Parameters of a unit-direction local line lying in the plane of
+    /// `level` inside the thread's cross-section there.
+    fn cap_line(&self, s: P3, d: P3, level: f64) -> Result<Vec<[f64; 2]>, GeometryError> {
+        let profile = &self.law.profile;
+        let rho = d[0].hypot(d[1]);
+        if rho <= 1e-15 {
+            let r = s[0].hypot(s[1]);
+            let inside = r < profile.radius(level - self.rate() * s[1].atan2(s[0]));
+            return Ok(if inside {
+                vec![[-1e9, 1e9]]
+            } else {
+                Vec::new()
+            });
+        }
+        let g = |t: f64| {
+            let p = add(s, scaled(d, t));
+            profile.radius(level - self.rate() * p[1].atan2(p[0])) - p[0].hypot(p[1])
+        };
+        let b = s[0] * d[0] + s[1] * d[1];
+        let foot2 = s[0] * s[0] + s[1] * s[1] - b * b;
+        let reach = profile.maximum;
+        if foot2 >= reach * reach {
+            return Ok(Vec::new());
+        }
+        let half = (reach * reach - foot2).sqrt();
+        let mut stops = vec![-b - half, -b + half];
+        let parts: Vec<[f64; 2]> = if foot2 < profile.minimum * profile.minimum {
+            let inner = (profile.minimum * profile.minimum - foot2).sqrt();
+            vec![[-b - half, -b - inner], [-b + inner, -b + half]]
+        } else {
+            vec![[-b - half, -b + half]]
+        };
+        for part in parts {
+            stops.extend(part);
+            stops.extend(self.crossings(s, d, part)?);
+        }
+        stops.sort_by(f64::total_cmp);
+        stops.dedup_by(|x, y| (*x - *y).abs() <= 1e-13);
+        Ok(merge(
+            stops
+                .windows(2)
+                .filter(|pair| pair[1] - pair[0] > 1e-13 && g(0.5 * (pair[0] + pair[1])) > 0.)
+                .map(|pair| [pair[0], pair[1]])
+                .collect(),
+            0.,
+        ))
+    }
+
     fn cap_chord(&self, n: P3, c: f64, level: f64) -> Result<Vec<[P3; 2]>, GeometryError> {
         let nxy = n[0].hypot(n[1]);
         if nxy <= 1e-12 {
@@ -2298,11 +3087,120 @@ impl Thread {
 
 impl Member for Thread {
     fn bounds(&self) -> [P3; 2] {
+        let own = self.own_bounds();
+        match &self.base {
+            Some(prism) => {
+                let other = prism.bounds();
+                [
+                    std::array::from_fn(|k| own[0][k].min(other[0][k])),
+                    std::array::from_fn(|k| own[1][k].max(other[1][k])),
+                ]
+            }
+            None => own,
+        }
+    }
+
+    fn line(&self, start: P3, direction: P3) -> Option<Result<Vec<[f64; 2]>, GeometryError>> {
+        self.own_line(start, direction)
+    }
+
+    fn candidates(&self, tolerance_mm: f64) -> Result<Vec<Candidate>, GeometryError> {
+        let mut output = self.own_candidates(tolerance_mm)?;
+        if let Some(prism) = &self.base {
+            output.extend(prism.candidates(tolerance_mm)?);
+        }
+        Ok(output)
+    }
+
+    fn sight(&self, [x, y]: P2) -> Result<Vec<[f64; 2]>, GeometryError> {
+        match self.own_line([x, y, 0.], [0., 0., 1.]) {
+            Some(result) => result,
+            None => unreachable!("threads answer lines"),
+        }
+    }
+
+    fn section(&self, depth: f64, tolerance_mm: f64) -> Result<Vec<Loop>, GeometryError> {
+        let mut loops = self.own_section(depth, tolerance_mm)?;
+        let Some(prism) = &self.base else {
+            return Ok(loops);
+        };
+        let n = self.local_vector([0., 0., 1.]);
+        let c = depth - self.law.origin[2];
+        let nxy = n[0].hypot(n[1]);
+        let mut output: Loop = loops.pop().unwrap_or_default();
+        let base: Loop = prism
+            .section(depth, tolerance_mm)?
+            .into_iter()
+            .flatten()
+            .collect();
+        if nxy <= 1e-12 {
+            // Across the axis only one part is cut: the one behind the plane.
+            let level = c / n[2];
+            let probe = level - n[2].signum() * 4. * self.tolerance;
+            if probe < self.z[0] {
+                output = base;
+            }
+        } else {
+            // At the junction both parts publish chords; the boundary there
+            // is the base chord less the thread's.
+            let junction = self.z[0];
+            let at_junction = |path: &Arc<dyn Path>| {
+                let [a, b] = [0., 1.].map(|t| self.law.local(path.point(t))[2]);
+                (a - junction).abs() <= 4. * self.tolerance
+                    && (b - junction).abs() <= 4. * self.tolerance
+                    && matches!(path.paper([0., 1.]), Some(Curve::Line(_)))
+            };
+            let d = [n[1] / nxy, -n[0] / nxy, 0.];
+            let station = |path: &Arc<dyn Path>| -> [f64; 2] {
+                let [a, b] = [0., 1.].map(|t| dot3(self.law.local(path.point(t)), d));
+                [a.min(b), a.max(b)]
+            };
+            let thread: Vec<[f64; 2]> = merge(
+                output
+                    .iter()
+                    .filter(|p| at_junction(p))
+                    .map(station)
+                    .collect(),
+                0.,
+            );
+            let lower: Vec<[f64; 2]> = merge(
+                base.iter()
+                    .filter(|p| at_junction(p))
+                    .map(station)
+                    .collect(),
+                0.,
+            );
+            output.retain(|path| !at_junction(path));
+            output.extend(base.into_iter().filter(|path| !at_junction(path)));
+            let offset = (c - n[2] * junction) / (nxy * nxy);
+            let foot = [n[0] * offset, n[1] * offset, junction];
+            let origin = add(foot, scaled(d, -dot3(foot, d)));
+            for [a, b] in profile::exclusive(&lower, &thread, 1e-12) {
+                output.push(Arc::new(Segment(
+                    self.law.view(add(origin, scaled(d, a))),
+                    self.law.view(add(origin, scaled(d, b))),
+                )));
+            }
+        }
+        Ok(if output.is_empty() {
+            vec![]
+        } else {
+            vec![output]
+        })
+    }
+}
+
+impl Thread {
+    fn own_bounds(&self) -> [P3; 2] {
         let reach = self
             .stock
             .as_ref()
             .map_or(self.law.profile.maximum, |(radius, _)| *radius);
-        let top = self.neck.as_ref().map_or(self.z[1], |(_, span, _)| span[1]);
+        let top = match (&self.neck, &self.groove) {
+            (Some((_, span, _)), _) => span[1],
+            (None, Some(groove)) => groove.top,
+            (None, None) => self.z[1],
+        };
         let mut lo = [f64::INFINITY; 3];
         let mut hi = [f64::NEG_INFINITY; 3];
         for z in [self.z[0], top] {
@@ -2317,7 +3215,7 @@ impl Member for Thread {
         [lo, hi]
     }
 
-    fn candidates(&self, tolerance_mm: f64) -> Result<Vec<Candidate>, GeometryError> {
+    fn own_candidates(&self, tolerance_mm: f64) -> Result<Vec<Candidate>, GeometryError> {
         let mut output = Vec::new();
         self.rails(&mut output);
         for level in self.z {
@@ -2343,14 +3241,7 @@ impl Member for Thread {
         Ok(output)
     }
 
-    fn sight(&self, [x, y]: P2) -> Result<Vec<[f64; 2]>, GeometryError> {
-        match self.line([x, y, 0.], [0., 0., 1.]) {
-            Some(result) => result,
-            None => unreachable!("threads answer lines"),
-        }
-    }
-
-    fn section(&self, depth: f64, tolerance_mm: f64) -> Result<Vec<Loop>, GeometryError> {
+    fn own_section(&self, depth: f64, tolerance_mm: f64) -> Result<Vec<Loop>, GeometryError> {
         let n = self.local_vector([0., 0., 1.]);
         let c = depth - self.law.origin[2];
         let mut output = self.thread_section(n, c, 1.)?;
@@ -2428,7 +3319,7 @@ impl Member for Thread {
         })
     }
 
-    fn line(&self, start: P3, direction: P3) -> Option<Result<Vec<[f64; 2]>, GeometryError>> {
+    fn own_line(&self, start: P3, direction: P3) -> Option<Result<Vec<[f64; 2]>, GeometryError>> {
         let s = self.law.local(start);
         let d = self.local_vector(direction);
         let length = dot3(d, d).sqrt();
@@ -2446,6 +3337,16 @@ impl Member for Thread {
 }
 
 impl Thread {
+    /// The outer radius of a bore's cap annulus at `level`: the stock's, or
+    /// at a terminal groove's station the tail cylinder's.
+    fn cap_reach(&self, level: f64) -> f64 {
+        match (&self.groove, &self.stock) {
+            (Some(groove), _) if (level - groove.station).abs() <= self.tolerance => groove.radius,
+            (_, Some((radius, _))) => *radius,
+            _ => self.law.profile.maximum,
+        }
+    }
+
     /// The station interval, along the cap chord direction, of a disc of
     /// radius `radius` at `level` cut by the plane.
     fn disc_chord(&self, n: P3, c: f64, level: f64, radius: f64) -> Option<[f64; 2]> {

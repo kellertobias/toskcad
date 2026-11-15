@@ -125,6 +125,9 @@ mod engine;
 mod families;
 mod helix;
 mod paths;
+mod pipe;
+#[cfg(test)]
+mod pipe_tests;
 mod prism;
 mod profile;
 mod publish;

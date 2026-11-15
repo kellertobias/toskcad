@@ -621,186 +621,42 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ("rounded thread bore", "oblique section-only", Drawn),
     ("rounded thread bore", "axial detail", Drawn),
     ("rounded thread bore", "side detail", Drawn),
-    (
-        "axial pipe thread",
-        "axial",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "axial pipe thread",
-        "axial reversed",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "axial pipe thread",
-        "axial hidden",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "axial pipe thread",
-        "side",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "axial pipe thread",
-        "side hidden",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "axial pipe thread",
-        "oblique",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "axial pipe thread",
-        "oblique hidden",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "axial pipe thread",
-        "axial section",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "axial pipe thread",
-        "axial section-only",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "axial pipe thread",
-        "axial finite depth",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "axial pipe thread",
-        "side section",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "axial pipe thread",
-        "side section-only",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "axial pipe thread",
-        "side finite depth",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "axial pipe thread",
-        "side lateral window",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "axial pipe thread",
-        "oblique section",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "axial pipe thread",
-        "oblique section-only",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "axial pipe thread",
-        "axial detail",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "axial pipe thread",
-        "side detail",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "internal thread treatment",
-        "axial",
-        Unsupported("Original stock face ancestry is unresolved"),
-    ),
-    (
-        "internal thread treatment",
-        "axial reversed",
-        Unsupported("Original stock face ancestry is unresolved"),
-    ),
-    (
-        "internal thread treatment",
-        "axial hidden",
-        Unsupported("Original stock face ancestry is unresolved"),
-    ),
-    (
-        "internal thread treatment",
-        "side",
-        Unsupported("Original stock face ancestry is unresolved"),
-    ),
-    (
-        "internal thread treatment",
-        "side hidden",
-        Unsupported("Original stock face ancestry is unresolved"),
-    ),
-    (
-        "internal thread treatment",
-        "oblique",
-        Unsupported("Original stock face ancestry is unresolved"),
-    ),
-    (
-        "internal thread treatment",
-        "oblique hidden",
-        Unsupported("Original stock face ancestry is unresolved"),
-    ),
-    (
-        "internal thread treatment",
-        "axial section",
-        Unsupported("Original stock face ancestry is unresolved"),
-    ),
-    (
-        "internal thread treatment",
-        "axial section-only",
-        Unsupported("Original stock face ancestry is unresolved"),
-    ),
-    (
-        "internal thread treatment",
-        "axial finite depth",
-        Unsupported("Original stock face ancestry is unresolved"),
-    ),
-    (
-        "internal thread treatment",
-        "side section",
-        Unsupported("Original stock face ancestry is unresolved"),
-    ),
-    (
-        "internal thread treatment",
-        "side section-only",
-        Unsupported("Original stock face ancestry is unresolved"),
-    ),
-    (
-        "internal thread treatment",
-        "side finite depth",
-        Unsupported("Original stock face ancestry is unresolved"),
-    ),
-    (
-        "internal thread treatment",
-        "side lateral window",
-        Unsupported("Original stock face ancestry is unresolved"),
-    ),
-    (
-        "internal thread treatment",
-        "oblique section",
-        Unsupported("Original stock face ancestry is unresolved"),
-    ),
-    (
-        "internal thread treatment",
-        "oblique section-only",
-        Unsupported("Original stock face ancestry is unresolved"),
-    ),
-    (
-        "internal thread treatment",
-        "axial detail",
-        Unsupported("Original stock face ancestry is unresolved"),
-    ),
-    (
-        "internal thread treatment",
-        "side detail",
-        Unsupported("Original stock face ancestry is unresolved"),
-    ),
+    ("axial pipe thread", "axial", Drawn),
+    ("axial pipe thread", "axial reversed", Drawn),
+    ("axial pipe thread", "axial hidden", Drawn),
+    ("axial pipe thread", "side", Drawn),
+    ("axial pipe thread", "side hidden", Drawn),
+    ("axial pipe thread", "oblique", Drawn),
+    ("axial pipe thread", "oblique hidden", Drawn),
+    ("axial pipe thread", "axial section", Drawn),
+    ("axial pipe thread", "axial section-only", Drawn),
+    ("axial pipe thread", "axial finite depth", Drawn),
+    ("axial pipe thread", "side section", Drawn),
+    ("axial pipe thread", "side section-only", Drawn),
+    ("axial pipe thread", "side finite depth", Drawn),
+    ("axial pipe thread", "side lateral window", Drawn),
+    ("axial pipe thread", "oblique section", Drawn),
+    ("axial pipe thread", "oblique section-only", Drawn),
+    ("axial pipe thread", "axial detail", Drawn),
+    ("axial pipe thread", "side detail", Drawn),
+    ("internal thread treatment", "axial", Drawn),
+    ("internal thread treatment", "axial reversed", Drawn),
+    ("internal thread treatment", "axial hidden", Drawn),
+    ("internal thread treatment", "side", Drawn),
+    ("internal thread treatment", "side hidden", Drawn),
+    ("internal thread treatment", "oblique", Drawn),
+    ("internal thread treatment", "oblique hidden", Drawn),
+    ("internal thread treatment", "axial section", Drawn),
+    ("internal thread treatment", "axial section-only", Drawn),
+    ("internal thread treatment", "axial finite depth", Drawn),
+    ("internal thread treatment", "side section", Drawn),
+    ("internal thread treatment", "side section-only", Drawn),
+    ("internal thread treatment", "side finite depth", Drawn),
+    ("internal thread treatment", "side lateral window", Drawn),
+    ("internal thread treatment", "oblique section", Drawn),
+    ("internal thread treatment", "oblique section-only", Drawn),
+    ("internal thread treatment", "axial detail", Drawn),
+    ("internal thread treatment", "side detail", Drawn),
     (
         "hex nut",
         "axial",
@@ -891,96 +747,24 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
         "side detail",
         Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
     ),
-    (
-        "machine screw",
-        "axial",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "machine screw",
-        "axial reversed",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "machine screw",
-        "axial hidden",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "machine screw",
-        "side",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "machine screw",
-        "side hidden",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "machine screw",
-        "oblique",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "machine screw",
-        "oblique hidden",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "machine screw",
-        "axial section",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "machine screw",
-        "axial section-only",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "machine screw",
-        "axial finite depth",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "machine screw",
-        "side section",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "machine screw",
-        "side section-only",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "machine screw",
-        "side finite depth",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "machine screw",
-        "side lateral window",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "machine screw",
-        "oblique section",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "machine screw",
-        "oblique section-only",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "machine screw",
-        "axial detail",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
-    (
-        "machine screw",
-        "side detail",
-        Unsupported("Rust planar drawing projection requires straight edges and planar faces"),
-    ),
+    ("machine screw", "axial", Drawn),
+    ("machine screw", "axial reversed", Drawn),
+    ("machine screw", "axial hidden", Drawn),
+    ("machine screw", "side", Drawn),
+    ("machine screw", "side hidden", Drawn),
+    ("machine screw", "oblique", Drawn),
+    ("machine screw", "oblique hidden", Drawn),
+    ("machine screw", "axial section", Drawn),
+    ("machine screw", "axial section-only", Drawn),
+    ("machine screw", "axial finite depth", Drawn),
+    ("machine screw", "side section", Drawn),
+    ("machine screw", "side section-only", Drawn),
+    ("machine screw", "side finite depth", Drawn),
+    ("machine screw", "side lateral window", Drawn),
+    ("machine screw", "oblique section", Drawn),
+    ("machine screw", "oblique section-only", Drawn),
+    ("machine screw", "axial detail", Drawn),
+    ("machine screw", "side detail", Drawn),
     ("za worm", "axial", Drawn),
     ("za worm", "axial reversed", Drawn),
     ("za worm", "axial hidden", Drawn),
@@ -1942,7 +1726,24 @@ pub fn families() -> Vec<(&'static str, Result<Solid, GeometryError>)> {
         }),
         (
             "internal thread treatment",
-            Solid::cylinder(PlaneFrame::default(), 2.5, 4., policy).and_then(|stock| {
+            // An authored stock, as the treatment's source contract requires:
+            // its faces carry the roles the treatment's topology inherits.
+            Solid::from_axial_cylinder(
+                multicad_kernel::rust_kernel::cylinder::AxialCylinder::new(
+                    7,
+                    multicad_kernel::rust_kernel::Circle::new(
+                        [multicad_kernel::rust_kernel::Rational::new(0, 1).unwrap(); 2],
+                        multicad_kernel::rust_kernel::Rational::new(5, 2).unwrap(),
+                    )
+                    .unwrap(),
+                    multicad_kernel::rust_kernel::Rational::new(0, 1).unwrap(),
+                    multicad_kernel::rust_kernel::Rational::new(4, 1).unwrap(),
+                )
+                .unwrap(),
+                PlaneFrame::default(),
+                policy,
+            )
+            .and_then(|stock| {
                 stock.rust_cut_authored_internal_thread_treatments_with_interrupt(
                     InternalThreadTreatmentCut {
                         profile: HelicalThread {
