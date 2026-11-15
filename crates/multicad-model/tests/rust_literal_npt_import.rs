@@ -156,5 +156,95 @@ fn actual_literal_npt_import_compiles_displays_and_reopens_without_external_sour
         assert!(read_step_file_with_backend(&path, GeometryBackend::Rust).is_err());
         assert_eq!(session.document(), &stable);
         assert_eq!(session.revision(), revision);
+
+        use multicad_core::model::{
+            self, BodyInput, NumericTransform, TransformRequest, angle, length,
+        };
+        let request = TransformRequest::new(
+            BodyInput {
+                body: part,
+                producer,
+            },
+            NumericTransform {
+                translation: [length(11.), length(-5.), length(3.)],
+                axis: [0., 1., 0.],
+                angle: angle(37.),
+                ..Default::default()
+            },
+        );
+        let prepared =
+            model::prepare_transform(&session, revision, Actor::local(Channel::Ui), &request)
+                .unwrap();
+        let posed = compiler
+            .compile_with_backend(
+                prepared.prepared.document(),
+                revision + 1,
+                GeometryBackend::Rust,
+                None,
+            )
+            .unwrap();
+        assert_eq!(session.document(), &stable);
+        let moved = posed.solid(request.feature).unwrap();
+        assert!(moved.rust_literal_npt_occurrence().is_some());
+        assert_eq!(
+            moved
+                .rust_literal_npt_source()
+                .unwrap()
+                .world_enclosure_mm(),
+            solid
+                .rust_literal_npt_source()
+                .unwrap()
+                .world_enclosure_mm()
+        );
+        assert!((moved.volume_mm3().unwrap() - expected).abs() < 1e-8);
+        let a = 37f64.to_radians();
+        assert!(
+            moved
+                .rust_literal_npt_contains([11. + 2. * a.sin(), -5., 3. + 2. * a.cos()])
+                .unwrap()
+        );
+        assert!(!moved.rust_literal_npt_contains([111., -5., 3.]).unwrap());
+        let proof = moved
+            .manufacturing_mesh_with_receipt(MeshOptions {
+                linear_deflection_mm: 0.1,
+                angular_deflection_rad: 0.3,
+                maximum_triangles: 100_000,
+            })
+            .unwrap();
+        assert!(proof.edge_pairs > 0 && proof.vertex_links > 0);
+        session.commit(prepared.prepared).unwrap();
+        let mut moved_saved = Vec::new();
+        project_file::write(
+            &ProjectFile::new(session.document().clone()).unwrap(),
+            &mut moved_saved,
+            Default::default(),
+        )
+        .unwrap();
+        let moved_reopened = project_file::read(
+            &mut moved_saved.as_slice(),
+            Default::default(),
+            &project_file::supported_capabilities(),
+        )
+        .unwrap()
+        .project;
+        assert_eq!(&moved_reopened.document, session.document());
+        let rebuilt = compiler
+            .compile_with_backend(
+                &moved_reopened.document,
+                session.revision(),
+                GeometryBackend::Rust,
+                None,
+            )
+            .unwrap();
+        assert!(
+            (rebuilt
+                .solid(request.feature)
+                .unwrap()
+                .volume_mm3()
+                .unwrap()
+                - expected)
+                .abs()
+                < 1e-8
+        );
     }
 }
