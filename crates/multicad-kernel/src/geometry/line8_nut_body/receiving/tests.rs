@@ -63,7 +63,10 @@ fn edges(wire: &SectionLoop) -> Vec<crate::CurvedEdge2d> {
     }
 }
 fn actual_member(member: &ResolvedMember) -> Solid {
-    let profile = crate::CurvedProfile {
+    actual_member_mouth(member, 0.)
+}
+fn actual_member_mouth(member: &ResolvedMember, inward_lip_mm: f64) -> Solid {
+    let mut profile = crate::CurvedProfile {
         frame: PlaneFrame {
             origin: member.section_origin(0.),
             u: member.frame.x,
@@ -72,6 +75,22 @@ fn actual_member(member: &ResolvedMember) -> Solid {
         outer: edges(&member.section.outer(0.)),
         holes: member.section.holes().iter().map(edges).collect(),
     };
+    if inward_lip_mm != 0. {
+        for edge in &mut profile.outer {
+            if let crate::CurvedEdge2d::Line { a, b } = edge {
+                for p in [a, b] {
+                    if [0., 4.5, 35.5, 40.].contains(&p[1]) {
+                        if p[0] == 16. {
+                            p[0] += inward_lip_mm;
+                        }
+                        if p[0] == 24. {
+                            p[0] -= inward_lip_mm;
+                        }
+                    }
+                }
+            }
+        }
+    }
     let owner = EntityId::new();
     let origins = (0..profile.outer.len() + profile.holes.iter().map(Vec::len).sum::<usize>())
         .map(|i| Origin {
@@ -441,6 +460,53 @@ fn actual_profiled_screw_receiver_guard_preserves_errors_and_inward_collision() 
             .unwrap()
             .kind,
         GeometryErrorKind::Input
+    );
+    let narrowed = actual_member_mouth(&member, 0.1);
+    assert!(narrowed.volume_mm3().unwrap() > receiver.volume_mm3().unwrap());
+    assert_eq!(
+        screw
+            .rust_profiled_screw_receiver_clearance(
+                &narrowed,
+                RigidTransform::default(),
+                0.001,
+                None
+            )
+            .err()
+            .unwrap()
+            .kind,
+        GeometryErrorKind::Unsupported
+    );
+    let actual = screw.rust_profiled_screw_geometry().unwrap().0;
+    let mut thread = actual.thread().spec();
+    thread.length_mm = 14.;
+    let long_source = Screw::from_source(
+        Thread::new(thread).unwrap(),
+        *actual.profile(),
+        multicad_rust_kernel::profiled_screw::SourceSpec {
+            head: None,
+            ..actual.spec()
+        },
+        actual.recess().clone(),
+    )
+    .unwrap();
+    let long = Solid::rust_profiled_screw_from_source(
+        long_source,
+        EntityId::new(),
+        frame,
+        GeometryPolicy::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        long.rust_profiled_screw_receiver_clearance(
+            &receiver,
+            RigidTransform::default(),
+            0.001,
+            None
+        )
+        .err()
+        .unwrap()
+        .kind,
+        GeometryErrorKind::Unsupported
     );
     let polls = std::cell::Cell::new(0);
     assert_eq!(
