@@ -78,6 +78,26 @@ pub(super) fn extend_face_properties(
     faces: &mut Vec<(Point, f64)>,
     policy: GeometryPolicy,
 ) -> Result<(), GeometryError> {
+    let (removed_center, removed_area) = faces[0];
+    let radius = screw.profile().end()[0];
+    let shoulder = PI * radius * radius - removed_area;
+    faces[0] = (
+        [
+            -removed_center[0] * removed_area / shoulder,
+            -removed_center[1] * removed_area / shoulder,
+            removed_center[2],
+        ],
+        shoulder,
+    );
+    faces.extend(head_face_properties(screw, policy)?);
+    Ok(())
+}
+
+/// Physical head/recess measures independent of its downstream shaft surface.
+pub(in crate::geometry) fn head_face_properties(
+    screw: &Screw,
+    policy: GeometryPolicy,
+) -> Result<Vec<(Point, f64)>, GeometryError> {
     let source = screw
         .recess()
         .hexalobular_geometry()
@@ -102,19 +122,13 @@ pub(super) fn extend_face_properties(
         .into_iter()
         .map(|wall| evaluated(wall, top, policy, scale))
         .collect::<Result<Vec<_>, _>>()?;
-    let (removed_center, removed_area) = faces[0];
-    let radius = screw.profile().end()[0];
-    let shoulder = PI * radius * radius - removed_area;
-    faces[0] = (
-        [
-            -removed_center[0] * removed_area / shoulder,
-            -removed_center[1] * removed_area / shoulder,
-            removed_center[2],
-        ],
-        shoulder,
-    );
+    let mut faces = Vec::new();
     let segments: Vec<_> = screw.profile().segments().collect();
-    for role in screw.faces().into_iter().skip(faces.len()) {
+    for role in screw
+        .faces()
+        .into_iter()
+        .skip(2 + 4 * screw.thread().spec().starts as usize)
+    {
         let property = match role {
             ScrewFace::HeadTop => {
                 let area = PI * screw.profile().top()[0].powi(2) - mouth_area;
@@ -145,7 +159,7 @@ pub(super) fn extend_face_properties(
         }
         faces.push(property);
     }
-    Ok(())
+    Ok(faces)
 }
 
 /// The owning screw retains the actual circle/cone intersection source. Its

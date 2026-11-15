@@ -30,7 +30,7 @@ mod boundary;
 mod nut;
 mod phillips;
 pub use phillips::PhillipsMeshVolumePair;
-mod profiled_screw;
+pub(super) mod profiled_screw;
 mod screw;
 pub(super) mod stock_frame;
 use blind::BlindStock;

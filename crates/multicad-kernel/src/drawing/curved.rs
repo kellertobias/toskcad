@@ -75,6 +75,7 @@ pub(super) fn needs_curved_scene(solid: &Solid) -> bool {
         || solid.normal_sweep_body().is_some()
         || solid.drawing_warped_shell().is_some()
         || solid.cosmetic_fastener_body().is_some()
+        || solid.cosmetic_profiled_body_ref().is_some()
         || solid
             .rust_compound()
             .is_some_and(|compound| compound.members().any(needs_curved_scene))

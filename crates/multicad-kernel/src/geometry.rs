@@ -19,6 +19,8 @@ pub use bore_treatment::ConicalSeatGeometry;
 pub(crate) mod circular_pocket_body;
 pub(crate) mod construction;
 mod cosmetic_fastener_body;
+mod cosmetic_profiled_body;
+use cosmetic_profiled_body::CosmeticProfiledBody;
 mod entry_chamfer_body;
 mod wood_insert_body;
 use wood_insert_body::WoodInsertBody;
@@ -717,6 +719,7 @@ enum SolidBody {
     AxialCylinder(Rc<AxialCylinder>, PlaneFrame, Option<Rc<CylinderSketch>>),
     Annulus(Rc<AnnulusBody>, PlaneFrame),
     CosmeticFastener(Rc<CosmeticFastenerBody>, PlaneFrame),
+    CosmeticProfiled(Rc<CosmeticProfiledBody>, PlaneFrame),
     Helical(Rc<HelicalBody>, PlaneFrame),
     RoundedThread(Rc<RoundedThreadBody>, PlaneFrame),
     EntryChamfer(Rc<EntryChamferBody>, PlaneFrame),
@@ -1179,6 +1182,9 @@ impl Solid {
             SolidBody::CosmeticFastener(body, frame) => {
                 SolidBody::CosmeticFastener(Rc::clone(body), *frame)
             }
+            SolidBody::CosmeticProfiled(body, frame) => {
+                SolidBody::CosmeticProfiled(Rc::clone(body), *frame)
+            }
             SolidBody::EntryChamfer(body, frame) => {
                 SolidBody::EntryChamfer(Rc::clone(body), *frame)
             }
@@ -1609,6 +1615,11 @@ impl Solid {
                 SolidBody::CosmeticFastener(body, frame) => {
                     SolidBody::CosmeticFastener(Rc::clone(body), transform.frame(*frame))
                 }
+                SolidBody::CosmeticProfiled(body, frame) => {
+                    let frame = transform.frame(*frame);
+                    frame.checked_metric_bounds(body.bounds(PlaneFrame::default()), self.policy)?;
+                    SolidBody::CosmeticProfiled(Rc::clone(body), frame)
+                }
                 SolidBody::Linear(body, frame) => {
                     let frame = transform.frame(*frame);
                     frame.checked_metric_bounds(body.bounds(PlaneFrame::default()), self.policy)?;
@@ -1826,6 +1837,9 @@ impl Solid {
         if let Some((body, _)) = self.spline_sweep_body() {
             return Ok(body.sweep.volume_mm3());
         }
+        if let Some((body, _)) = self.cosmetic_profiled_body_ref() {
+            return Ok(body.volume_mm3());
+        }
         if let Some((body, _)) = self.cosmetic_fastener_body() {
             return Ok(body.geometry.volume_mm3());
         }
@@ -1959,6 +1973,9 @@ impl Solid {
             return Ok(body.bounds(frame));
         }
         if let Some((body, frame)) = self.spline_sweep_body() {
+            return Ok(body.bounds(frame));
+        }
+        if let Some((body, frame)) = self.cosmetic_profiled_body_ref() {
             return Ok(body.bounds(frame));
         }
         if let Some((body, frame)) = self.cosmetic_fastener_body() {
@@ -2151,6 +2168,9 @@ impl Solid {
         if let Some((body, frame)) = self.spline_sweep_body() {
             return Ok(body.faces(frame));
         }
+        if let Some((body, frame)) = self.cosmetic_profiled_body_ref() {
+            return Ok(body.faces(frame));
+        }
         if let Some((body, frame)) = self.cosmetic_fastener_body() {
             return Ok(body.faces(frame));
         }
@@ -2305,6 +2325,14 @@ impl Solid {
             SolidBody::HelicalTubeCut(body, frame) => {
                 crate::rust_display::placed_mesh(body.cut.mesh(rust_options), *frame, false)
             }
+            SolidBody::CosmeticProfiled(body, frame) => match usage {
+                MeshUse::Display => body.mesh(*frame, rust_options),
+                MeshUse::Manufacturing => Err(error(
+                    "manufacturing mesh",
+                    GeometryErrorKind::Unsupported,
+                    "Cosmetic thread envelopes require modeled thread geometry for manufacturing",
+                )),
+            },
             SolidBody::CosmeticFastener(body, frame) => match usage {
                 MeshUse::Display => body.mesh(*frame, rust_options),
                 MeshUse::Manufacturing => Err(error(
@@ -2691,6 +2719,9 @@ impl Solid {
         ordinal: u32,
         options: multicad_rust_kernel::display::Tessellation,
     ) -> Option<Result<Vec<[f64; 3]>, multicad_rust_kernel::display::MeshError>> {
+        if let Some((body, frame)) = self.cosmetic_profiled_body_ref() {
+            return body.sample_edge(frame, ordinal, options);
+        }
         if let Some((body, frame)) = self.spline_cap_relief_body() {
             return body.sample_rim(frame, ordinal, options);
         }
@@ -2751,6 +2782,7 @@ impl Solid {
             SolidBody::RoundedThread(body, _) => body.feature,
             SolidBody::HelicalTubeCut(body, _) => body.feature,
             SolidBody::CosmeticFastener(body, _) => body.feature,
+            SolidBody::CosmeticProfiled(body, _) => body.feature,
             SolidBody::Linear(body, _) => body.feature,
             SolidBody::Revolved(body, _) => body.feature,
             SolidBody::RoundedSlot(body, _) => body.feature,
@@ -2824,6 +2856,7 @@ impl Solid {
             }
             SolidBody::WoodInsert(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::CosmeticFastener(..)
+            | SolidBody::CosmeticProfiled(..)
             | SolidBody::InternalThreadTreatment(..)
             | SolidBody::RepairedPhillips(..)
             | SolidBody::Hanger(..) => false,
@@ -3039,6 +3072,7 @@ impl Solid {
             ),
             SolidBody::WoodInsert(body, frame) => body.append_step(writer, *frame, self.policy),
             SolidBody::CosmeticFastener(..)
+            | SolidBody::CosmeticProfiled(..)
             | SolidBody::InternalThreadTreatment(..)
             | SolidBody::RepairedPhillips(..)
             | SolidBody::Hanger(..) => Err(step::StepError::Unsupported),

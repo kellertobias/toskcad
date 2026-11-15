@@ -539,6 +539,23 @@ fn rust_machine_screw(
             )
             .map_err(|cause| error(Some(feature), cause));
         }
+        if matches!(drive, ResolvedScrewDrive::Hexalobular { .. }) {
+            let mut physical = thread.clone();
+            physical.representation = ThreadRepresentation::Modeled;
+            let source = profiled_heads::build(
+                feature,
+                underhead_length_mm,
+                shank_radius_mm,
+                &head,
+                &drive,
+                &physical,
+                policy,
+            )?
+            .ok_or_else(|| error(Some(feature), "Unsupported cosmetic physical head"))?;
+            return source
+                .cosmetic_profiled_screw_envelope()
+                .map_err(|cause| error(Some(feature), cause));
+        }
         let (
             ResolvedScrewHead::Countersunk {
                 radius_mm,

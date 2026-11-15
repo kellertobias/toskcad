@@ -1,5 +1,5 @@
 //! Policy admission and finite face identities for actual profiled heads.
-pub(super) mod torx;
+pub(in crate::geometry) mod torx;
 
 use super::{
     boundary::{Boundary, placed_frame},
@@ -366,7 +366,11 @@ pub(super) fn extend_face_properties(
     Ok(())
 }
 
-pub(super) fn plane(screw: &Screw, role: ScrewFace, frame: PlaneFrame) -> Option<ReferenceFrame> {
+pub(in crate::geometry) fn plane(
+    screw: &Screw,
+    role: ScrewFace,
+    frame: PlaneFrame,
+) -> Option<ReferenceFrame> {
     let axial = |z, sign| placed_frame(frame, [0., 0., z], [1., 0., 0.], [0., sign, 0.]);
     let top = screw.head_top_z();
     match role {
