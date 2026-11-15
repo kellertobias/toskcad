@@ -6,6 +6,7 @@
 mod authored_compound;
 mod bevel;
 mod box_void;
+pub mod brep;
 mod compound;
 mod curve;
 mod helical;

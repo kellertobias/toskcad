@@ -10,6 +10,7 @@ pub mod authored_metric_thread;
 pub mod axial_pipe_thread;
 pub mod axial_profile_stack;
 pub mod bevel_gear;
+pub mod brep;
 pub mod chamfered_bores;
 pub mod circular_distance;
 pub mod circular_pockets;
