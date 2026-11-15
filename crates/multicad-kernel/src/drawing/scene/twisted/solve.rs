@@ -40,6 +40,14 @@ pub(super) struct Search {
     /// Magnitude below which the function only grazes zero: a stretch on
     /// which it stays this small contributes no root.
     pub noise: f64,
+    /// Bound of the second derivative of the companion function
+    /// `f (f + 2 lift)`, which has the same roots; infinite when unknown.
+    /// Two ends of one sign further from zero than the companion can sag
+    /// between them prove an interval free of roots.
+    pub second: f64,
+    pub lift: f64,
+    /// The function is an angle wrapped to half a turn either way.
+    pub wrapped: bool,
 }
 
 /// Every sign change of `f` in `[lo, hi]`. An interval is discarded when the
@@ -59,9 +67,28 @@ pub(super) fn isolate(
     let mut stack = vec![(lo, f(lo), hi, f(hi))];
     while let Some((a, fa, b, fb)) = stack.pop() {
         *budget = budget.checked_sub(1).ok_or_else(limit)?;
+        let half = 0.5 * (b - a);
+        if search.second.is_finite()
+            && (fa < 0.) == (fb < 0.)
+            && (!search.wrapped || (fa.abs().max(fb.abs()) < 1. && search.slope * (b - a) < 1.))
+        {
+            let companion = |v: f64| v * (v + 2. * search.lift);
+            let gain = if search.lift > 0. {
+                2. * search.lift
+            } else {
+                1.
+            };
+            let near = if search.lift > 0. {
+                companion(fa).abs().min(companion(fb).abs())
+            } else {
+                fa.abs().min(fb.abs())
+            };
+            if near > 0.5 * search.second * half * half + gain * search.noise {
+                continue;
+            }
+        }
         let mid = 0.5 * (a + b);
         let fm = f(mid);
-        let half = 0.5 * (b - a);
         if fm.abs() > search.slope * half * (1. + 1e-9) + search.noise {
             continue;
         }

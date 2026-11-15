@@ -773,3 +773,49 @@ fn sections_are_closed_oriented_and_enclose_the_exact_area() {
         "{{\"worst_relative_area_error\":{worst_area:e},\"worst_loop_gap_mm\":{worst_gap:e}}}"
     );
 }
+
+/// Sight lines tangent to the bore, the hub, the root and the tip cylinders
+/// and through the axis keep the exact material on both sides of the
+/// contact, which contributes no interval end of its own.
+#[test]
+fn sight_lines_tangent_to_coaxial_cylinders_keep_the_material() {
+    let mut random = Random(11);
+    let mut checked = 0;
+    for case in cases(&["side"]) {
+        if case.label.contains("placed true") {
+            continue;
+        }
+        let spec = case.oracle.spec;
+        let mut stations = vec![0., spec.root_radius_mm, spec.tip_radius_mm];
+        stations.push(spec.bore_radius_mm);
+        stations.extend(spec.hub.map(|hub| hub.radius_mm));
+        let [lo, hi] = case.gear.bounds();
+        for station in stations {
+            for sign in [-1., 1.] {
+                for _ in 0..6 {
+                    let paper = [sign * station, lo[1] + (hi[1] - lo[1]) * random.unit()];
+                    let spans = case.gear.sight(paper).unwrap();
+                    for _ in 0..40 {
+                        let depth = lo[2] + (hi[2] - lo[2]) * random.unit();
+                        let p = [paper[0], paper[1], depth];
+                        // Skip depths at the contact itself or at an end.
+                        let local = case.oracle.local(p);
+                        if (local[0].hypot(local[1]) - station).abs() < 1e-6
+                            || spans.iter().flatten().any(|end| (end - depth).abs() < 1e-6)
+                        {
+                            continue;
+                        }
+                        checked += 1;
+                        assert_eq!(
+                            spans.iter().any(|[a, b]| *a < depth && depth < *b),
+                            case.oracle.inside(p),
+                            "{} at {paper:?} depth {depth}: {spans:?}",
+                            case.label
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert!(checked > 2000);
+}

@@ -164,6 +164,11 @@ impl Gear {
             levels.extend(self.bands.iter().flat_map(|band| band.z));
             stops.extend(levels.into_iter().map(|z| (z - base[2]) / rise));
         }
+        if transverse {
+            // Where the line passes closest to the axis it can touch a
+            // coaxial cylinder without crossing it.
+            stops.push(nearest);
+        }
         let mut radii = vec![self.bore];
         radii.extend(self.extensions.iter().map(|extension| extension.radius));
         radii.extend(self.flanks.iter().filter_map(Flank::coaxial));
@@ -189,22 +194,32 @@ impl Gear {
                     continue;
                 }
                 let pad = 1e-9 * flank.radius[1];
-                let [inner, outer] = [flank.radius[0] - pad, flank.radius[1] + pad];
-                let windows: Vec<[f64; 2]> = if transverse {
-                    let Some(far) = reach(outer) else { continue };
-                    match reach(inner) {
-                        Some(near) => vec![
-                            [nearest - far, nearest - near],
-                            [nearest + near, nearest + far],
-                        ],
-                        None => vec![[nearest - far, nearest + far]],
+                // An involute's angle has unbounded curvature at its base
+                // circle only: search a thin ring there apart from the rest.
+                let mut rings = vec![[flank.radius[0] - pad, flank.radius[1] + pad]];
+                if let Shape::Involute { base: circle, .. } = flank.shape {
+                    let split = circle * 0.06_f64.hypot(1.);
+                    if split > rings[0][0] && split < rings[0][1] {
+                        rings = vec![[rings[0][0], split], [split, rings[0][1]]];
                     }
-                } else if closest2.sqrt() >= inner && closest2.sqrt() <= outer {
-                    vec![range]
-                } else {
-                    continue;
-                };
-                for window in windows {
+                }
+                let mut windows: Vec<([f64; 2], [f64; 2])> = Vec::new();
+                for ring in rings {
+                    let [inner, outer] = ring;
+                    if transverse {
+                        let Some(far) = reach(outer) else { continue };
+                        match reach(inner) {
+                            Some(near) => windows.extend([
+                                ([nearest - far, nearest - near], ring),
+                                ([nearest + near, nearest + far], ring),
+                            ]),
+                            None => windows.push(([nearest - far, nearest + far], ring)),
+                        }
+                    } else if closest2.sqrt() >= inner && closest2.sqrt() <= outer {
+                        windows.push((range, ring));
+                    }
+                }
+                for (window, ring) in windows {
                     let window = [window[0].max(range[0]), window[1].min(range[1])];
                     if window[1] <= window[0] || !(window[1] - window[0]).is_finite() {
                         continue;
@@ -225,7 +240,7 @@ impl Gear {
                         band,
                         (base, direction),
                         window,
-                        outer,
+                        ring,
                         &mut budget,
                         &mut stops,
                     )?;
@@ -256,7 +271,7 @@ impl Gear {
         band: &Band,
         (base, direction): (P3, P3),
         window: [f64; 2],
-        outer: f64,
+        [inner, outer]: [f64; 2],
         budget: &mut usize,
         stops: &mut Vec<f64>,
     ) -> Result<(), GeometryError> {
@@ -271,6 +286,9 @@ impl Gear {
             )
         };
         let leaf = 1e-9 * (1. + window[0].abs().max(window[1].abs()));
+        // Bound of the image's acceleration: it turns at a uniform rate.
+        let rate = (band.twist * direction[2]).abs();
+        let bend = 2. * rate * slope + rate * rate * outer;
         match flank.shape {
             Shape::Line { a, b } => {
                 let d = [b[0] - a[0], b[1] - a[1]];
@@ -285,6 +303,9 @@ impl Gear {
                         slope: speed,
                         leaf,
                         noise: GRAZING * outer,
+                        second: bend,
+                        lift: 0.,
+                        wrapped: false,
                     },
                     window,
                     budget,
@@ -300,6 +321,10 @@ impl Gear {
                     slope: speed,
                     leaf,
                     noise: GRAZING * outer,
+                    // Of the squared distance from the center.
+                    second: 2. * speed * speed + 2. * (outer + center[0].hypot(center[1])) * bend,
+                    lift: radius,
+                    wrapped: false,
                 },
                 window,
                 budget,
@@ -309,8 +334,9 @@ impl Gear {
                 base: circle, x, y, ..
             } => {
                 let (zero, hand) = involute_frame(x, y);
-                let inner = flank.radius[0].max(circle);
+                let inner = inner.max(circle);
                 let roll = ((outer / circle).powi(2) - 1.).max(0.).sqrt();
+                let first = ((inner / circle).powi(2) - 1.).max(0.).sqrt();
                 isolate(
                     &mut |t| {
                         let p = image(t);
@@ -321,6 +347,20 @@ impl Gear {
                         slope: (speed + roll * slope) / inner,
                         leaf,
                         noise: GRAZING,
+                        // The involute angle's curvature is unbounded at
+                        // the base circle; away from it both terms are.
+                        second: if first > 0.05 {
+                            bend / inner
+                                + 2. * (speed / inner).powi(2)
+                                + (1. / (circle * circle * first) + roll / (inner * inner))
+                                    * slope
+                                    * slope
+                                + roll * slope * slope / (inner * inner)
+                        } else {
+                            f64::INFINITY
+                        },
+                        lift: 0.,
+                        wrapped: true,
                     },
                     window,
                     budget,
@@ -332,7 +372,7 @@ impl Gear {
 
     /// Ascending disjoint parameter intervals of the line on which the
     /// membership predicate holds. Candidate ends are exact boundary roots;
-    /// membership is decided at the middle of every candidate interval.
+    /// membership is decided inside every candidate interval.
     pub(super) fn spans(
         &self,
         base: P3,
@@ -353,8 +393,16 @@ impl Gear {
             if pair[1] - pair[0] <= grazing {
                 continue;
             }
-            let t = 0.5 * (pair[0] + pair[1]);
-            if inside(std::array::from_fn(|i| base[i] + t * direction[i])) {
+            // A surface can touch the line at one point between two stops;
+            // two of three interior points decide.
+            let votes = [0.3, 0.5, 0.7]
+                .into_iter()
+                .filter(|f| {
+                    let t = pair[0] + (pair[1] - pair[0]) * f;
+                    inside(std::array::from_fn(|i| base[i] + t * direction[i]))
+                })
+                .count();
+            if votes >= 2 {
                 output.push([pair[0], pair[1]]);
             }
         }
