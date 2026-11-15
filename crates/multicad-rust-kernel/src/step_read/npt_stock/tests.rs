@@ -3,7 +3,7 @@ mod guards;
 use crate::axial_pipe_thread::authored::{AuthoredSection, AuthoredSpec, AuthoredThread};
 use crate::step::npt_stock::{CurveOptions, CurvePlan, SurfacePlan, write_source_candidate};
 use crate::step_read::owned_insert::DocumentOptions;
-fn fixture(quarter: bool) -> String {
+pub(super) fn fixture(quarter: bool) -> String {
     let (tpi, e1, l1, l2, od, max) = if quarter {
         (18., 0.49163, 0.2278, 0.4018, 0.540, 0.088)
     } else {
@@ -112,7 +112,7 @@ fn actual_packet_parses_numeric_leaves_coupled_boundary_controls_and_closed_owni
         assert_eq!(caps, 2);
     }
 }
-fn record_id(text: &str, fragment: &str, occurrence: usize) -> u32 {
+pub(super) fn record_id(text: &str, fragment: &str, occurrence: usize) -> u32 {
     let record = text
         .lines()
         .filter(|line| line.starts_with('#') && line.contains(fragment))
@@ -120,7 +120,7 @@ fn record_id(text: &str, fragment: &str, occurrence: usize) -> u32 {
         .unwrap();
     record[1..record.find('=').unwrap()].parse().unwrap()
 }
-fn change_record(text: &str, id: u32, change: impl FnOnce(&str) -> String) -> String {
+pub(super) fn change_record(text: &str, id: u32, change: impl FnOnce(&str) -> String) -> String {
     let prefix = format!("#{id}=");
     let line = text.lines().find(|line| line.starts_with(&prefix)).unwrap();
     let changed = change(line);
@@ -349,7 +349,7 @@ fn independent_graph_queries_preserve_source_and_real_resource_and_cancel_bounda
     ));
     assert_eq!(document.literal_input(), text);
 }
-fn fields(record: &str) -> Vec<&str> {
+pub(super) fn fields(record: &str) -> Vec<&str> {
     let start = record.find('(').unwrap();
     let end = record.rfind(')').unwrap();
     let body = &record[start + 1..end];
@@ -381,7 +381,7 @@ fn fields(record: &str) -> Vec<&str> {
     result.push(&body[begin..]);
     result
 }
-fn with_fields(record: &str, fields: &[&str]) -> String {
+pub(super) fn with_fields(record: &str, fields: &[&str]) -> String {
     let start = record.find('(').unwrap();
     let end = record.rfind(')').unwrap();
     format!(

@@ -181,6 +181,9 @@ fn cap_curve<'input>(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
 pub(super) struct BindingInput<'a, 'input> {
     pub records: &'a BTreeMap<u32, Vec<Entity<'input>>>,
     pub points: &'a [Point<'input>],
