@@ -612,7 +612,11 @@ fn actual_nonlinear_height_requires_a_positive_resolved_volume_interval() {
     ));
 }
 
-fn scale_xy(text: &str, document: &CompoundDocument<'_>, factor: i32) -> String {
+pub(in crate::step_read::npt_stock) fn scale_xy(
+    text: &str,
+    document: &CompoundDocument<'_>,
+    factor: i32,
+) -> String {
     let mut cap_points = std::collections::BTreeSet::new();
     for entries in document.records().values() {
         if let [entity] = entries.as_slice()

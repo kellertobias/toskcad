@@ -1,5 +1,7 @@
 //! Immutable actual literal geometry. No parser borrow or authored recipe.
 use super::*;
+mod query;
+pub use query::{Location, MaterialQuery, QueryOptions};
 use std::{ops::Range, sync::Arc};
 #[derive(Clone)]
 pub struct OwnedMaterial(Arc<Source>);
@@ -37,6 +39,8 @@ struct Source {
     local_volume: [f64; 2],
     world_volume: [f64; 2],
     local_areas: [[f64; 2]; 2],
+    cap_heights: [[f64; 2]; 2],
+    radial_squared: [f64; 2],
     work: usize,
     retained: usize,
     peak: usize,
@@ -394,6 +398,8 @@ impl Selected<'_, '_> {
             local_volume: occupied.volume_mm3(),
             world_volume: bounds(world_volume),
             local_areas: occupied.cap_areas_mm2(),
+            cap_heights: occupied.projection().cap_height_bounds_mm(),
+            radial_squared: occupied.projection().lateral_radius_squared_bounds(),
             work: budget.used,
             retained,
             peak: budget.peak,

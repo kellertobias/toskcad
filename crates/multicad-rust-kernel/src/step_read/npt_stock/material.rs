@@ -32,6 +32,8 @@ struct State<'a> {
 pub struct Projection<'parsed, 'document, 'input> {
     parsed: &'parsed Parsed<'document, 'input>,
     caps: [usize; 2],
+    cap_heights: [[f64; 2]; 2],
+    radial_squared: [f64; 2],
     work: usize,
     bytes: usize,
     nodes: usize,
@@ -43,6 +45,12 @@ impl<'parsed, 'document, 'input> Projection<'parsed, 'document, 'input> {
     }
     pub fn cap_face_indices(&self) -> [usize; 2] {
         self.caps
+    }
+    pub fn cap_height_bounds_mm(&self) -> [[f64; 2]; 2] {
+        self.cap_heights
+    }
+    pub fn lateral_radius_squared_bounds(&self) -> [f64; 2] {
+        self.radial_squared
     }
     pub fn work_used(&self) -> usize {
         self.work
@@ -84,7 +92,8 @@ fn controls(parsed: &Parsed<'_, '_>, tensor: &Tensor, u: usize, v: usize) -> [[[
     })
 }
 impl State<'_> {
-    fn cell(&mut self, root: TensorCell11) -> Result<()> {
+    fn cell(&mut self, root: TensorCell11) -> Result<f64> {
+        let mut radial_lower = f64::INFINITY;
         let mut pending = Vec::new();
         pending.try_reserve_exact(33).map_err(|_| Error::Limit)?;
         pending.push((root, 0u8));
@@ -107,6 +116,9 @@ impl State<'_> {
             // neither a source profile nor an approximately affine z is used
             // for the geometric projection proof.
             if jacobian.hi < 0. && dv[2].lo > 0. {
+                self.budget.step(32)?;
+                let rho = p[0].square() + p[1].square();
+                radial_lower = radial_lower.min(rho.lo.max(0.));
                 self.leaves += 1;
                 continue;
             }
@@ -120,7 +132,7 @@ impl State<'_> {
             pending.push((b, depth + 1));
             pending.push((a, depth + 1));
         }
-        Ok(())
+        Ok(radial_lower)
     }
 }
 impl<'document, 'input> Parsed<'document, 'input> {
@@ -254,15 +266,24 @@ impl<'document, 'input> Parsed<'document, 'input> {
         }
         state.budget.release(&points);
         drop(points);
+        let mut radial_squared = [f64::INFINITY, f64::NEG_INFINITY];
         for tensor in &self.tensors {
             for u in 0..tensor.spans[0] {
                 for v in 0..tensor.spans[1] {
                     state.budget.step(1024)?;
                     let coefficients = controls(self, tensor, u, v);
+                    // Squared XY norm is convex: every Bernstein image lies
+                    // below the largest actual interval control-point norm.
+                    // This avoids the loose corner of a componentwise hull.
+                    state.budget.step(2048)?;
+                    for point in coefficients.iter().flatten() {
+                        let rho = point[0].square() + point[1].square();
+                        radial_squared[1] = radial_squared[1].max(rho.hi);
+                    }
                     let cell =
                         calculation_cell11(std::array::from_fn(|i| coefficients[i / 12][i % 12]))
                             .expect("sealed finite literal cell");
-                    state.cell(cell)?;
+                    radial_squared[0] = radial_squared[0].min(state.cell(cell)?);
                 }
             }
         }
@@ -270,6 +291,8 @@ impl<'document, 'input> Parsed<'document, 'input> {
         Ok(Projection {
             parsed: self,
             caps,
+            cap_heights: [lower.bounds(), upper.bounds()],
+            radial_squared,
             work: state.budget.used,
             bytes: state.budget.peak,
             nodes: state.nodes,
@@ -278,7 +301,7 @@ impl<'document, 'input> Parsed<'document, 'input> {
     }
 }
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
 
 pub struct Occupied<'parsed, 'document, 'input> {
     projection: Projection<'parsed, 'document, 'input>,
