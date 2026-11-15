@@ -90,7 +90,9 @@ fn split(
     split(eval, second, [mid, b], [fm, fb], budget, output);
 }
 
-/// Real roots of `a x^2 + 2 b x + c`, ascending; a double root is omitted.
+/// Real roots of `a x^2 + 2 b x + c`, ascending. A tangent or nearly
+/// tangent line contributes its point of closest approach instead, which
+/// only subdivides an interval of the caller.
 pub(super) fn quadratic(a: f64, b: f64, c: f64, output: &mut Vec<f64>) {
     let scale = a.abs().max(b.abs()).max(c.abs());
     if scale == 0. {
@@ -103,8 +105,11 @@ pub(super) fn quadratic(a: f64, b: f64, c: f64, output: &mut Vec<f64>) {
         return;
     }
     let discriminant = b * b - a * c;
-    if discriminant <= 0. {
-        return;
+    if discriminant <= 1e-12 * (b * b).max((a * c).abs()) {
+        output.push(-b / a);
+        if discriminant <= 0. {
+            return;
+        }
     }
     let q = -(b + discriminant.sqrt().copysign(b));
     let mut roots = [q / a, if q == 0. { 0. } else { c / q }];

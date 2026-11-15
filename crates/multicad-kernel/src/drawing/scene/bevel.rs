@@ -694,7 +694,13 @@ impl Member for Gear {
         stops.dedup_by(|b, a| *b - *a <= 1e-11 * core.scale);
         let mut output: Vec<[f64; 2]> = Vec::new();
         for pair in stops.windows(2) {
-            if core.inside(add(start, scaled(d, 0.5 * (pair[0] + pair[1])))) {
+            // A probe can land exactly on a point where the line only
+            // grazes a surface inside the interval; two of three decide.
+            let inside = [0.25, 0.5, 0.75]
+                .into_iter()
+                .filter(|f| core.inside(add(start, scaled(d, pair[0] + (pair[1] - pair[0]) * f))))
+                .count();
+            if inside >= 2 {
                 match output.last_mut() {
                     Some(last) if last[1] == pair[0] => last[1] = pair[1],
                     _ => output.push([pair[0], pair[1]]),

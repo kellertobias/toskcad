@@ -502,3 +502,55 @@ fn sections_bound_the_material_in_the_plane() {
         }
     }
 }
+
+/// The engine hides a point when a sight interval extends in front of it.
+/// OpenCascade draws some rear tooth edges of the oblique view as visible
+/// (see `rust_scene_bevel.rs`); marching the membership predicate along the
+/// sight from the midpoint of every edge decides each such case here.
+#[test]
+fn material_in_front_of_an_edge_is_found_by_marching_the_membership() {
+    for (name, solid) in gears() {
+        // Along the axis the sight through a meridian edge lies in its
+        // flank plane, where membership is decided by rounding.
+        for (label, gear) in views(&solid).into_iter().skip(2) {
+            let core = &gear.core;
+            let top = gear.bounds()[1][2] + 0.1;
+            let (mut covered, mut open) = (0, 0);
+            for candidate in gear.candidates(0.01).unwrap() {
+                let p = candidate.path.point(0.5);
+                let ahead = gear
+                    .sight([p[0], p[1]])
+                    .unwrap()
+                    .into_iter()
+                    .map(|[a, b]| b - a.max(p[2]))
+                    .fold(0., f64::max);
+                let mut marched = 0.;
+                let mut z = p[2] + 5e-3;
+                while z < top {
+                    if core.inside(core.to_local([p[0], p[1], z])) {
+                        marched += 2e-3;
+                    }
+                    z += 2e-3;
+                }
+                // Compare only clear cases: grazing lines sit on the surface.
+                if ahead > 0.05 {
+                    assert!(
+                        marched > 0.02,
+                        "{name} {label}: {ahead} mm reported, {marched} marched"
+                    );
+                    covered += 1;
+                } else if ahead < 1e-6 {
+                    assert!(
+                        marched < 0.02,
+                        "{name} {label}: {marched} mm marched, none reported"
+                    );
+                    open += 1;
+                }
+            }
+            assert!(
+                covered > 0 && open > 0,
+                "{name} {label}: {covered} covered, {open} open"
+            );
+        }
+    }
+}
