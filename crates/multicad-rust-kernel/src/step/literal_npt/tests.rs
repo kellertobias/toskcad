@@ -351,3 +351,112 @@ fn actual_native_chain_step_replay_binds_local_geometry_and_earns_whole_operator
         assert_eq!(source.member().mapping_link().is_some(), mapped);
     }
 }
+
+#[test]
+fn actual_downscaled_local_geometry_still_bounds_unit_cap_parameter_derivatives() {
+    let original = text(false);
+    // Exact decimal scaling of actual 3D points and cap-XY curve poles.
+    // Tensor parameter rectangles stay in their original unit-UV chart.
+    let mut cap_poles = std::collections::BTreeSet::new();
+    for line in original
+        .lines()
+        .filter(|s| s.contains("=B_SPLINE_CURVE_WITH_KNOTS('',11,"))
+    {
+        for reference in line.split('#').skip(2) {
+            cap_poles.insert(
+                reference
+                    .split(|c: char| !c.is_ascii_digit())
+                    .next()
+                    .unwrap()
+                    .parse::<u32>()
+                    .unwrap(),
+            );
+        }
+    }
+    let packet = original
+        .lines()
+        .map(|line| {
+            let Some((id, rest)) = line
+                .strip_prefix('#')
+                .and_then(|s| s.split_once("=CARTESIAN_POINT('',("))
+            else {
+                return line.to_owned();
+            };
+            let values = rest
+                .strip_suffix("));")
+                .unwrap()
+                .split(',')
+                .collect::<Vec<_>>();
+            if values.len() != 3 && !cap_poles.contains(&id.parse::<u32>().unwrap()) {
+                return line.to_owned();
+            }
+            let values = values
+                .into_iter()
+                .map(|s| {
+                    let (m, e) = s.split_once('E').unwrap_or((s, "0"));
+                    format!("{m}E{}", e.parse::<i32>().unwrap() - 3)
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("#{id}=CARTESIAN_POINT('',({values}));")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let document = CompoundDocument::parse(&packet, Default::default(), None).unwrap();
+    let source = Selected::parse(
+        &document,
+        document.represented_members()[0].item_entity(),
+        Default::default(),
+        None,
+    )
+    .unwrap()
+    .retain(Default::default(), None)
+    .unwrap();
+    let pose = read::LiteralOccurrencePlacement::new(
+        [[0.8, -0.36, 0.48], [0.6, 0.48, -0.64], [0., 0.8, 0.6]],
+        [17., -8., 13.],
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let candidate = verify_placed_replay(&source, &pose, Default::default(), None).unwrap();
+    let output =
+        CompoundDocument::parse(candidate.standalone_step(), Default::default(), None).unwrap();
+    let selected = Selected::parse(
+        &output,
+        output.represented_members()[0].item_entity(),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let actual = selected.placement(Default::default(), None).unwrap();
+    let wanted = pose.linear_rows_bounds();
+    let columns = actual.linear_columns_bounds();
+    let unit_cap_bound = (0..2)
+        .map(|j| {
+            (0..3)
+                .fold(I::point(0.), |sum, i| {
+                    sum + I::point(
+                        (I::new(wanted[i][j][0], wanted[i][j][1])
+                            - I::new(columns[j][i][0], columns[j][i][1]))
+                        .magnitude(),
+                    )
+                })
+                .hi
+        })
+        .fold(0f64, f64::max);
+    assert!(unit_cap_bound > 0.);
+    assert!(candidate.receipt().original_derivative_error_mm() >= unit_cap_bound);
+    assert!(matches!(
+        verify_placed_replay(
+            &source,
+            &pose,
+            Options {
+                original_derivative_error_mm: unit_cap_bound / 2.,
+                ..Default::default()
+            },
+            None
+        ),
+        Err(Error::Unsupported)
+    ));
+}

@@ -282,7 +282,10 @@ pub(super) fn correspond(
         })
     });
     let position = l1(error).hi;
-    let mut derivative = 0f64;
+    // parse::plane earns each original cap's exact X/Y parameter basis
+    // (normal Z, tangent X). These unit derivatives must be bounded even
+    // when every local tensor derivative is smaller after physical scaling.
+    let mut derivative = l1(difference[0]).hi.max(l1(difference[1]).hi);
     for (t, tensor) in source.tensors().iter().enumerate() {
         for u in 0..tensor.spans()[0] {
             for v in 0..tensor.spans()[1] {
@@ -308,9 +311,14 @@ pub(super) fn correspond(
     if !scale.valid() || scale.lo <= 0. {
         return Err(Error::Unsupported);
     }
-    // Normalize both maps by the SAME exact original STEP scale, whose
-    // enclosure is shared here. Positive scalar factors do not change unit
-    // normals, and avoid overflowing cofactor squared norms at extreme scales.
+    // Selected::placement earns A=lambda*R, lambda>0, det(R)=1 by the
+    // EXPRESS basis construction: normalize Z, project/normalize X onto
+    // Z-perp, then project/normalize Y onto X/Z-perp and check handedness.
+    // Therefore ||A.column(0)|| is EXACTLY lambda, not an approximate
+    // Native column-length identity. Divide both maps by this same exact
+    // positive scale, enclosed below: desired/lambda=M*R, and its cofactor
+    // has sigma_min>=1-placement.metric_error(). Positive common scaling
+    // preserves unit normals and avoids lambda^4 overflow in squared norms.
     let wanted = wanted.map(|c| c.map(|v| v / scale));
     let actual = actual.map(|c| c.map(|v| v / scale));
     let cw = [
