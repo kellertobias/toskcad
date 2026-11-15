@@ -32,9 +32,9 @@ pub(super) fn read_member(
     let [Value::String(_), loop_id, orientation] = shell.args(*bound, "FACE_BOUND")? else {
         return Err(ReadError::Invalid);
     };
-    if !sense(orientation)? {
-        return Err(ReadError::Invalid);
-    }
+    // A vertex loop has no direction, so either well-formed flag bounds the
+    // same complete face. OpenCascade writes `.F.` for its collapsed pole.
+    sense(orientation)?;
     let [Value::String(_), pole] = shell.args(reference(loop_id)?, "VERTEX_LOOP")? else {
         return Err(ReadError::Invalid);
     };
@@ -134,6 +134,13 @@ mod tests {
             .replace("-1.5600000000000000E1", "-8.4000000000000004E0");
         assert_ne!(north, text);
         assert_eq!(read_analytic_solid(&north, TOLERANCE).unwrap(), proof);
+        // OpenCascade bounds its complete sphere with a reversed vertex loop.
+        let reversed = edit(&text, "FACE_BOUND", |line| line.replace(".T.", ".F."));
+        assert_ne!(reversed, text);
+        assert_eq!(
+            read_import_solid(&reversed, TOLERANCE).unwrap(),
+            (proof.clone(), body.clone())
+        );
 
         let mut writer = Writer::new();
         writer
@@ -169,7 +176,7 @@ mod tests {
         let mutate_sense = |line: &str| line.replace(".T.", ".F.");
         let invalid = [
             edit(&text, "ADVANCED_FACE", mutate_sense),
-            edit(&text, "FACE_BOUND", mutate_sense),
+            edit(&text, "FACE_BOUND", |line| line.replace(".T.", "#1")),
             edit(&text, "SPHERICAL_SURFACE", |line| {
                 line.replace("4.5000000000000000E0", "-1.")
             }),

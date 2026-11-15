@@ -134,6 +134,21 @@ fn bounds_of(solid: &Solid) -> [[f64; 3]; 2] {
 
 /// Independent Part 21 readback of every member, without the importer's
 /// reconstruction.
+/// Face supports independent of how one surface is divided into faces: the
+/// total boundary area and the part of it carried by planes.
+fn supports_of(solid: &Solid) -> Value {
+    let faces = solid.faces().unwrap();
+    let area = |planar: bool| -> f64 {
+        let chosen = faces.iter().filter(|f| planar <= f.plane.is_some());
+        chosen.map(|f| f.area_mm2).sum()
+    };
+    json!({
+        "area_mm2": area(false),
+        "planar_area_mm2": area(true),
+        "planar_faces": faces.iter().filter(|f| f.plane.is_some()).count(),
+    })
+}
+
 fn independent_readback(text: &str) -> Result<Value, step_read::ReadError> {
     let tolerance = GeometryPolicy::default().linear_tolerance_mm;
     let members = step_read::read_analytic_compound(text, tolerance)?;
@@ -635,12 +650,28 @@ fn run_entry(entry: &Value, row: &mut Value) {
     }
     let faces = solid.faces().unwrap().len();
     let solids = solid.solid_count().unwrap();
+    let supports = supports_of(&solid);
     row["source"] = json!({
         "volume_mm3": volume,
         "bounds_mm": bounds,
         "faces": faces,
         "solids": solids,
+        "supports": supports,
     });
+    if let Some(native) = row["source_native"]["supports"].as_object() {
+        // OpenCascade keeps every transmitted face, so only quantities that
+        // do not depend on the division of a surface are compared.
+        for field in ["area_mm2", "planar_area_mm2"] {
+            let (native, rust) = (
+                native[field].as_f64().unwrap(),
+                supports[field].as_f64().unwrap(),
+            );
+            assert!(
+                (native - rust).abs() <= OCCT_VOLUME_RELATIVE * native.max(1.),
+                "{id}: OpenCascade source {field} {native} != {rust}"
+            );
+        }
+    }
     if let Some(oracle) = entry.get("oracle") {
         let expected = oracle["volume_mm3"].as_f64().unwrap();
         assert!(
@@ -663,6 +694,16 @@ fn run_entry(entry: &Value, row: &mut Value) {
             oracle["solids"].as_u64().unwrap(),
             "{id}: solids"
         );
+        if let Some(expected) = oracle["area_mm2"].as_f64() {
+            let area = supports["area_mm2"].as_f64().unwrap();
+            assert!(
+                close(area, expected, ORACLE_VOLUME_RELATIVE),
+                "{id}: boundary area {area} differs from the analytic {expected}"
+            );
+        }
+        if let Some(expected) = oracle["planar_faces"].as_u64() {
+            assert_eq!(supports["planar_faces"], expected, "{id}: planar faces");
+        }
     }
     // An independent parse of the source boundary agrees with the
     // reconstructed solid.
@@ -684,6 +725,7 @@ fn run_entry(entry: &Value, row: &mut Value) {
     row["source_reader"] = reader;
     let (source_mesh, mesh) = checked_mesh(&solid, id);
     row["mesh"] = mesh;
+    row["source_native_mesh_deviation_mm"] = native_source_deviation(&path, &source_mesh);
     let source_section = section(&solid, None);
     check_section(entry, &source_section);
     row["section"] = source_section.clone();
@@ -785,6 +827,7 @@ fn native_source(path: &Path) -> Value {
                 "bounds_mm": bounds_of(&native),
                 "solids": solids,
                 "faces": native.faces().map(|f| f.len()).ok(),
+                "supports": supports_of(&native),
             }),
             (volume, solids) => json!({
                 "reader": "OpenCascade 7.9.3",
@@ -793,6 +836,25 @@ fn native_source(path: &Path) -> Value {
         },
         Err(error) => json!({ "reader": "OpenCascade 7.9.3", "error": error.to_string() }),
     }
+}
+
+#[cfg(not(feature = "occt"))]
+fn native_source_deviation(_: &Path, _: &multicad_kernel::Mesh) -> Value {
+    json!("not built; run with --features occt")
+}
+
+/// The Rust mesh of the imported source against OpenCascade's own
+/// tessellation of the transmitted source boundary.
+#[cfg(feature = "occt")]
+fn native_source_deviation(path: &Path, rust_mesh: &multicad_kernel::Mesh) -> Value {
+    let native = Solid::read_step(path, GeometryPolicy::default()).unwrap();
+    let native_mesh = native.mesh(mesh_options()).unwrap();
+    let deviation = mesh_deviation(rust_mesh, &native_mesh, 4. * MESH_DEFLECTION_MM);
+    assert!(
+        deviation <= 2. * MESH_DEFLECTION_MM,
+        "OpenCascade source tessellation deviates {deviation} mm from the Rust import"
+    );
+    json!(deviation)
 }
 
 #[cfg(not(feature = "occt"))]
@@ -1566,6 +1628,11 @@ fn rust_stdio_corpus_workflow_survives_source_removal() {
         "occt-pocketed-plate",
         "kicad-vendored-L_Wuerth_HCM-7070",
         "kicad-vendored-Mounting_Wuerth_WA-SMST-3.3mm_H1mm_9774010960",
+        // Repaired by CAD-359: a reversed pole loop, a two-edge cubic section
+        // and a box whose planes are divided into pad and marker faces.
+        "occt-sphere",
+        "occt-spline-prism",
+        "kicad-vendored-L_CommonModeChoke_TDK_ACM7060",
     ] {
         let entry = manifest_entry(id);
         let bytes = entry_bytes(&entry).unwrap();
@@ -1575,10 +1642,23 @@ fn rust_stdio_corpus_workflow_survives_source_removal() {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("source.step");
         std::fs::write(&source, &bytes).unwrap();
-        let refused = manifest_entry("occt-sphere");
-        let refused_bytes = entry_bytes(&refused).unwrap();
-        let refused_path = directory.path().join("refused.step");
-        std::fs::write(&refused_path, &refused_bytes).unwrap();
+        // Refusal controls: a valid cone outside the analytic families and
+        // the same file cut off in the middle of its data section.
+        let unsupported = manifest_entry("occt-cone-frustum");
+        assert_eq!(unsupported["expected"], "unsupported");
+        let unsupported = entry_bytes(&unsupported).unwrap();
+        let malformed = unsupported[..unsupported.len() / 2].to_vec();
+        assert_eq!(
+            outcome_of(&import(std::str::from_utf8(&malformed).unwrap())),
+            "invalid"
+        );
+        let refusals = [
+            ("unsupported.step", unsupported),
+            ("malformed.step", malformed),
+        ];
+        for (name, bytes) in &refusals {
+            std::fs::write(directory.path().join(name), bytes).unwrap();
+        }
         let project = directory.path().join("corpus.tcd");
         let arguments = [
             "--rust-model",
@@ -1612,13 +1692,19 @@ fn rust_stdio_corpus_workflow_survives_source_removal() {
         client.ok("save_project", json!({"expected_revision": 1}));
         let saved = std::fs::read(&project).unwrap();
         // A refused import changes nothing.
-        client.fail(
-            "import_step",
-            json!({"expected_revision": 1, "file_name": "refused.step"}),
-        );
-        assert_eq!(client.revision(), 1, "{id}");
-        assert_eq!(std::fs::read(&project).unwrap(), saved, "{id}");
-        assert_eq!(std::fs::read(&refused_path).unwrap(), refused_bytes, "{id}");
+        for (name, bytes) in &refusals {
+            client.fail(
+                "import_step",
+                json!({"expected_revision": 1, "file_name": name}),
+            );
+            assert_eq!(client.revision(), 1, "{id}: {name}");
+            assert_eq!(std::fs::read(&project).unwrap(), saved, "{id}: {name}");
+            assert_eq!(
+                &std::fs::read(directory.path().join(name)).unwrap(),
+                bytes,
+                "{id}: {name}"
+            );
+        }
         drop(client);
 
         std::fs::remove_file(&source).unwrap();

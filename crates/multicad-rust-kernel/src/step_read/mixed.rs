@@ -315,9 +315,21 @@ pub(super) fn face_area(outer: &Trim, holes: &[Trim], tolerance: f64) -> Result<
         .map(profile_ring)
         .collect();
     let minimum = tolerance.next_up();
-    let sweep = Sweep::new(rings, 1_f64.max(minimum), tolerance, minimum)
-        .map_err(|_| ReadError::Invalid)?;
-    Ok(sweep.area_mm2())
+    Sweep::new(rings, 1_f64.max(minimum), tolerance, minimum)
+        .map(|sweep| sweep.area_mm2())
+        .map_err(|_| {
+            // Correctly wound rings that this certificate cannot resolve,
+            // such as a tangent cusp, are not proved malformed.
+            let wound = outer.signed_area() > minimum.powi(2)
+                && holes
+                    .iter()
+                    .all(|hole| hole.signed_area() < -minimum.powi(2));
+            if wound {
+                ReadError::Unsupported
+            } else {
+                ReadError::Invalid
+            }
+        })
 }
 
 pub(super) fn duplicate_curve(a: Curve, b: Curve, tolerance: f64) -> bool {

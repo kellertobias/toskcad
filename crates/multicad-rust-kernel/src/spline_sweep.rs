@@ -233,7 +233,8 @@ impl Sweep {
         height_mm: f64,
         tolerance: f64,
     ) -> Result<Self, Error> {
-        if !(3..=crate::polygon::MAX_VERTICES).contains(&outline.len())
+        // The decoder certifies a two-edge outline by its convex control polygon.
+        if !(2..=crate::polygon::MAX_VERTICES).contains(&outline.len())
             || !height_mm.is_finite() || height_mm <= tolerance
             || holes.iter().any(|ring| ring.is_empty() || (ring.len() < 3 && !matches!(ring.as_slice(), [Edge::Analytic(normal_sweep::Edge::Circle { clockwise:true, radius_mm, .. })] if *radius_mm > tolerance)))
         {

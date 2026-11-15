@@ -310,18 +310,34 @@
         ]
       },
       "units": "mm",
-      "source": "regenerate_opencascade_fixtures: revolved half disk, radius 5 mm (complete sphere with seam and pole vertices)",
+      "source": "regenerate_opencascade_fixtures: revolved half disk, radius 5 mm (one complete spherical face bounded by a reversed vertex loop at its pole)",
       "license": "GPL-3.0-or-later (authored for this repository)",
       "tags": [
         "sphere",
         "revolution",
         "trims-seams"
       ],
-      "expected": "invalid",
-      "verdict": "fail",
-      "finding": {
-        "owner": "CAD-290",
-        "summary": "A valid complete OpenCascade sphere (one SPHERICAL_SURFACE face bounded by its seam and degenerate pole edges) is rejected as invalid STEP geometry, although the matrix lists complete spheres; the reader only admits its own sphere encoding."
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 523.5987755982989,
+        "bounds_mm": [
+          [
+            -5,
+            -5,
+            -5
+          ],
+          [
+            5,
+            5,
+            5
+          ]
+        ],
+        "faces": 1,
+        "solids": 1,
+        "area_mm2": 314.1592653589793,
+        "planar_faces": 0,
+        "section_length_mm": 31.41592653589793
       }
     },
     {
@@ -374,11 +390,32 @@
         "spline",
         "trims-seams"
       ],
-      "expected": "limit",
-      "verdict": "fail",
-      "finding": {
-        "owner": "CAD-290",
-        "summary": "A 9.6 kB single-spline prism from OpenCascade reports the Rust import budget as exceeded instead of importing or refusing it as unsupported; a resource Limit is the wrong classification for this small input."
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 864,
+        "bounds_mm": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            20,
+            9,
+            6
+          ]
+        ],
+        "faces": 4,
+        "solids": 1,
+        "area_mm2": 588.9224380856431,
+        "planar_faces": 3,
+        "note": "The cubic Bezier (20,0) (20,12) (0,12) (0,0) closed by its chord encloses exactly 144 mm2 and is extruded 6 mm; its arc length 30.153739680940525 mm is integrated numerically."
+      },
+      "section_finding": {
+        "owner": "CAD-346",
+        "error": "drawing projection: Rust spline sweep drawing requires an uncropped axial projection",
+        "summary": "A horizontal section through the imported cubic prism is refused by the Rust drawing projection, which draws spline sweeps only in an uncropped axial view."
       }
     },
     {
@@ -763,11 +800,11 @@
         "revolution",
         "torus"
       ],
-      "expected": "limit",
-      "verdict": "fail",
+      "expected": "unsupported",
+      "verdict": "unsupported",
       "finding": {
-        "owner": "CAD-290",
-        "summary": "OpenCascade 7.9.3 validates this library model as one closed solid (180.852 mm3), but the Rust reader reports its import budget as exceeded. All 965 Limit results in the full library sweep contain TOROIDAL_SURFACE faces; a resource Limit is the wrong classification for these small inputs."
+        "owner": "CAD-360",
+        "summary": "A revolved standoff of 11 faces: four planes, four cylinders, two cones and one toroidal fillet. Tori are only recognized on the complete torus and the filleted cylinder of four or five faces, so this is a general revolution outside the analytic families, not a resource limit."
       }
     },
     {
@@ -791,11 +828,11 @@
         "revolution",
         "torus"
       ],
-      "expected": "limit",
-      "verdict": "fail",
+      "expected": "unsupported",
+      "verdict": "unsupported",
       "finding": {
-        "owner": "CAD-290",
-        "summary": "OpenCascade 7.9.3 validates this library model as one closed solid (298.9 mm3), but the Rust reader reports its import budget as exceeded. All 965 Limit results in the full library sweep contain TOROIDAL_SURFACE faces; a resource Limit is the wrong classification for these small inputs."
+        "owner": "CAD-360",
+        "summary": "A varistor disc of 11 faces with two SURFACE_OF_REVOLUTION faces over B-spline meridians and two toroidal faces: a general revolution outside the analytic families, not a resource limit."
       }
     },
     {
@@ -818,11 +855,11 @@
         "sphere",
         "torus"
       ],
-      "expected": "limit",
-      "verdict": "fail",
+      "expected": "unsupported",
+      "verdict": "unsupported",
       "finding": {
-        "owner": "CAD-290",
-        "summary": "OpenCascade 7.9.3 validates this library model as one closed solid (45859.9 mm3), but the Rust reader reports its import budget as exceeded. All 965 Limit results in the full library sweep contain TOROIDAL_SURFACE faces; a resource Limit is the wrong classification for these small inputs."
+        "owner": "CAD-360",
+        "summary": "A module of 30 faces whose pins end in four spherical and four toroidal blend faces: general blends outside the analytic families, not a resource limit."
       }
     },
     {
@@ -844,11 +881,28 @@
       "tags": [
         "planar"
       ],
-      "expected": "invalid",
-      "verdict": "fail",
-      "finding": {
-        "owner": "CAD-290",
-        "summary": "OpenCascade 7.9.3 validates this model as 1 closed solid(s) (147 mm3, BRepCheck valid), but the Rust reader rejects it as invalid STEP geometry; 298 library files share this false rejection in the full sweep."
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 147,
+        "bounds_mm": [
+          [
+            -3.5,
+            -3,
+            0
+          ],
+          [
+            3.5,
+            3,
+            3.5
+          ]
+        ],
+        "faces": 6,
+        "solids": 1,
+        "area_mm2": 175,
+        "planar_faces": 6,
+        "section_length_mm": 26,
+        "note": "A 7 x 6 x 3.5 mm box whose 15 transmitted planar faces partition its six sides into pad regions and a marker disc; the import merges each plane into one face."
       }
     },
     {
@@ -870,11 +924,11 @@
       "tags": [
         "cylinder"
       ],
-      "expected": "invalid",
-      "verdict": "fail",
+      "expected": "unsupported",
+      "verdict": "unsupported",
       "finding": {
-        "owner": "CAD-290",
-        "summary": "OpenCascade 7.9.3 validates this model as 1 closed solid(s) (3.37691 mm3, BRepCheck valid), but the Rust reader rejects it as invalid STEP geometry; 298 library files share this false rejection in the full sweep."
+        "owner": "CAD-360",
+        "summary": "After its planar partitions are merged this is a box with four corner pads that protrude 0.05 mm and are notched by 0.25 mm partial cylinders over 0.24 mm of the height: a stepped plane and partial-cylinder solid outside the analytic families. It is valid and no longer reported as invalid."
       }
     },
     {
@@ -896,11 +950,11 @@
       "tags": [
         "cone"
       ],
-      "expected": "invalid",
-      "verdict": "fail",
+      "expected": "unsupported",
+      "verdict": "unsupported",
       "finding": {
-        "owner": "CAD-290",
-        "summary": "OpenCascade 7.9.3 validates this model as 1 closed solid(s) (8.13669 mm3, BRepCheck valid), but the Rust reader rejects it as invalid STEP geometry; 298 library files share this false rejection in the full sweep."
+        "owner": "CAD-360",
+        "summary": "Four straight edges (#379, #400, #977, #1191) are each used by four faces in balanced directions, so the actuator touches the housing along pinched non-manifold edges. ISO 10303-42 requires every edge of a closed shell to be referenced exactly twice; OpenCascade tolerates the contact. The Rust kernel needs a two-manifold shell and now refuses it as unsupported rather than invalid."
       }
     },
     {
@@ -923,11 +977,11 @@
       "tags": [
         "sphere"
       ],
-      "expected": "invalid",
-      "verdict": "fail",
+      "expected": "unsupported",
+      "verdict": "unsupported",
       "finding": {
-        "owner": "CAD-290",
-        "summary": "OpenCascade 7.9.3 validates this model as 1 closed solid(s) (44.2398 mm3, BRepCheck valid), but the Rust reader rejects it as invalid STEP geometry; 298 library files share this false rejection in the full sweep."
+        "owner": "CAD-360",
+        "summary": "The lens ends in a hemispherical SPHERICAL_SURFACE face (#553) trimmed by a circle and a meridian seam, joined to cylinders and planes: a spherical cap outside the analytic families. It is now refused as unsupported independently of the face order instead of as invalid."
       }
     },
     {
@@ -947,13 +1001,33 @@
       "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Buzzer_Beeper.3dshapes/Buzzer_Mallory_AST1109MLTRQ.step",
       "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
       "tags": [
-        "cylinder"
+        "box",
+        "cylinder",
+        "hole",
+        "pocket"
       ],
-      "expected": "invalid",
-      "verdict": "fail",
-      "finding": {
-        "owner": "CAD-290",
-        "summary": "The Rust importer reads the boundary but its rebuilt extrusion differs from the imported analytic topology, while OpenCascade 7.9.3 validates the model as one closed solid (168.929 mm3); an internal reconstruction mismatch rather than an input defect."
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 168.92924787004074,
+        "bounds_mm": [
+          [
+            -7.5,
+            -4.5,
+            0
+          ],
+          [
+            7.5,
+            4.5,
+            1.7
+          ]
+        ],
+        "faces": 24,
+        "solids": 1,
+        "area_mm2": 286.992920065877,
+        "planar_faces": 18,
+        "section_length_mm": 40,
+        "note": "An 11 x 9 x 1.7 mm body with four blind pockets (radius 0.35, depth 0.5) and two 2 x 2 x 0.2 mm tabs with through bores (radius 0.4). The 26 transmitted faces include two tab undersides coplanar with the body underside; the rebuilt shell has 24."
       }
     },
     {
@@ -1256,6 +1330,104 @@
         "owner": "CAD-290",
         "summary": "Flat multi-solid representations whose members are outside the supported families are refused."
       }
+    },
+    {
+      "id": "kicad-lib-R_0603_1608Metric",
+      "location": "kicad-library",
+      "path": "Resistor_SMD.3dshapes/R_0603_1608Metric.step",
+      "sha256": "1875571c326d0d9e96f36b4efeb8094068ef7619f0a449c781caf0b49c2e5861",
+      "bytes": 40618,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'kicad StepUp', preprocessor 'OCC'",
+        "file_name": [
+          "OCC",
+          "kicad StepUp"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Resistor_SMD.3dshapes/R_0603_1608Metric.step. A chip resistor whose rounded body ends are divided by coplanar terminal faces; imported as one normal sweep after the planes and their split edges are merged. Pinned by CAD-359 as a regression for the merged planar partitions.",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "cylinder",
+        "planar"
+      ],
+      "expected": "pass",
+      "verdict": "pass",
+      "section_finding": {
+        "owner": "CAD-346",
+        "error": "drawing projection: Rust planar drawing projection requires straight edges and planar faces",
+        "summary": "A horizontal section through the imported chip resistor, whose rounded ends are cylindrical faces, is refused by the Rust drawing projection."
+      }
+    },
+    {
+      "id": "kicad-lib-QFN-32-1EP_4x4mm_P0.4mm_EP2.9x2.9mm",
+      "location": "kicad-library",
+      "path": "Package_DFN_QFN.3dshapes/QFN-32-1EP_4x4mm_P0.4mm_EP2.9x2.9mm.step",
+      "sha256": "7b482a511cdf2cf875c31931f9fea7f745b8dac2ea6203531cd6604f40a290cb",
+      "bytes": 78287,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''",
+        "file_name": [
+          "KiCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Package_DFN_QFN.3dshapes/QFN-32-1EP_4x4mm_P0.4mm_EP2.9x2.9mm.step. A moulded package whose 72 transmitted planar faces partition a box into flush pads and a marker disc; imported as the box. Pinned by CAD-359 as a regression for the merged planar partitions.",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "box",
+        "planar"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-DFN-8-1EP_3x2mm_P0.5mm_EP1.3x1.5mm",
+      "location": "kicad-library",
+      "path": "Package_DFN_QFN.3dshapes/DFN-8-1EP_3x2mm_P0.5mm_EP1.3x1.5mm.step",
+      "sha256": "9c8bfd3e0369ff6b1c43ac179e27cbd279dfc62d951e38954ac67dcefb6dfd8d",
+      "bytes": 26705,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''",
+        "file_name": [
+          "KiCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Package_DFN_QFN.3dshapes/DFN-8-1EP_3x2mm_P0.5mm_EP1.3x1.5mm.step. A moulded package whose 24 transmitted planar faces partition a box into flush pads and a marker disc; imported as the box. Pinned by CAD-359 as a regression for the merged planar partitions.",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "box",
+        "planar"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-L_CommonModeChoke_Bourns_SRF1260",
+      "location": "kicad-library",
+      "path": "Inductor_SMD.3dshapes/L_CommonModeChoke_Bourns_SRF1260.step",
+      "sha256": "f0df0e0435710569a09af04663cb4dced266ab19572124c427135f50e615b20e",
+      "bytes": 17196,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''",
+        "file_name": [
+          "KiCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Inductor_SMD.3dshapes/L_CommonModeChoke_Bourns_SRF1260.step. A choke whose 15 transmitted planar faces partition a box into pad regions and a marker disc; imported as the box. Pinned by CAD-359 as a regression for the merged planar partitions.",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "box",
+        "planar"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
     }
   ]
 }

@@ -63,6 +63,7 @@ mod round;
 mod rounded_cylinder;
 mod rounded_thread;
 mod rounded_thread_bore;
+mod same_domain;
 pub use rounded_thread::{
     ImportedRoundedThread, read_rounded_thread, read_rounded_thread_compound,
     rounded_thread_import_matches, verify_rounded_thread,
@@ -415,6 +416,7 @@ impl<'a, 'input> Shell<'a, 'input> {
         if face_ids.len() < minimum_faces || distinct.len() != face_ids.len() {
             return Err(ReadError::Invalid);
         }
+        self.outside_regular_families(&face_ids)?;
         let faces = face_ids
             .into_iter()
             .enumerate()
@@ -492,10 +494,20 @@ impl<'a, 'input> Shell<'a, 'input> {
         let [Value::String(_), items, context] = representation.args.as_slice() else {
             return Err(ReadError::Invalid);
         };
+        // A product shape either owns the solid representation or owns a
+        // shape representation related to it without a transformation.
+        let related = |rep: u32| {
+            rep == representation_id
+                || self.entities.values().any(|components| {
+                    matches!(components.as_slice(), [Entity { name: "SHAPE_REPRESENTATION_RELATIONSHIP", args, .. }]
+                        if matches!(args.as_slice(), [_, _, Value::Reference(a), Value::Reference(b)]
+                            if [*a, *b] == [rep, representation_id] || [*b, *a] == [rep, representation_id]))
+                })
+        };
         let linked = self.entities.values().any(|components| {
             matches!(components.as_slice(), [Entity { name: "SHAPE_DEFINITION_REPRESENTATION", args, .. }]
                 if matches!(args.as_slice(), [Value::Reference(definition), Value::Reference(rep)]
-                    if *rep == representation_id && self.args(*definition, "PRODUCT_DEFINITION_SHAPE").is_ok()))
+                    if related(*rep) && self.args(*definition, "PRODUCT_DEFINITION_SHAPE").is_ok()))
         });
         if !linked {
             return Err(ReadError::Invalid);
@@ -895,7 +907,10 @@ impl<'a, 'input> Shell<'a, 'input> {
                         | (Face::PartialCylinder(_), Face::Planar { .. })
                 ),
             } {
-                return Err(ReadError::Invalid);
+                // Both faces verified this edge. A round edge between other
+                // supports, such as two faces of one cylinder, is valid
+                // geometry outside the recognized families.
+                return Err(ReadError::Unsupported);
             }
             adjacency[first.face].push(second.face);
             adjacency[second.face].push(first.face);

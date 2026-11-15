@@ -221,6 +221,7 @@ impl Solid {
             &imported.profile,
             ImportProfile::Orthogonal { .. }
                 | ImportProfile::PocketedOrthogonal { .. }
+                | ImportProfile::DrilledOrthogonal { .. }
                 | ImportProfile::SlottedOrthogonal { .. }
         );
         if matches!(&imported.profile, ImportProfile::SplineCapRelief { .. }) {

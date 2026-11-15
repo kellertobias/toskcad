@@ -70,9 +70,8 @@ fn read_member(
     solid: u32,
 ) -> Result<(Readback, ImportedRoundedCylinder)> {
     let ids = shell.member_faces(solid)?;
-    if ids.len() > 5 {
-        return Err(ReadError::Limit);
-    }
+    // A toroidal face on any other face count is a blend outside this family,
+    // not a resource refusal.
     if !(4..=5).contains(&ids.len()) {
         return Err(ReadError::Unsupported);
     }
