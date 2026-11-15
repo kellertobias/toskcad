@@ -1,4 +1,5 @@
 //! STEP AP214 output for extruded solids with analytic lines and circles.
+pub mod orthogonal_seats;
 
 use crate::{
     Circle, Rational,
