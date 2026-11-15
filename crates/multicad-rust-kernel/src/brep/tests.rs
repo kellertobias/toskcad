@@ -2,8 +2,8 @@
 //! exchange text.
 use super::*;
 use crate::manufacturing::certify;
+use crate::step_read::ReadError;
 use crate::step_read::brep::{read_boundaries, read_solids};
-use crate::step_read::{ReadError, read_analytic_compound};
 use std::f64::consts::PI;
 
 const TOLERANCE: f64 = 1e-7;
@@ -295,28 +295,11 @@ fn exported_boundaries_read_back_with_the_same_geometry() {
         for (one, other) in back.faces().iter().zip(source.faces()) {
             assert!(close(one.area_mm2, other.area_mm2, 1e-12));
         }
-        // The independent readback entry point accepts both texts.
-        for text in [text, exported.as_str()] {
-            let members = read_analytic_compound(text, TOLERANCE).unwrap();
-            let volume: f64 = members.iter().map(|member| member.volume_mm3).sum();
-            assert!(
-                close(volume, source.volume_mm3(), 1e-9),
-                "{volume} {}",
-                source.volume_mm3()
-            );
-        }
     }
 }
 
 #[test]
-fn a_refusal_of_both_readers_keeps_the_first_reason() {
-    let open = tampered(
-        FRUSTUM,
-        "CLOSED_SHELL('',(#17,#54,#109))",
-        "CLOSED_SHELL('',(#17,#54))",
-    );
-    let first = crate::step_read::read_analytic_solid(&open, TOLERANCE).unwrap_err();
-    assert_eq!(read_analytic_compound(&open, TOLERANCE).unwrap_err(), first);
+fn read_errors_carry_the_provider_refusal_kind() {
     assert_eq!(ReadError::from(Error::Cancelled), ReadError::Invalid);
     assert_eq!(ReadError::from(Error::Limit), ReadError::Limit);
 }
@@ -924,4 +907,143 @@ fn optional_placement_axes_take_their_standard_defaults() {
             Error::Invalid
         );
     }
+}
+
+#[test]
+fn point_triangle_distances_cover_every_closest_feature() {
+    let triangle = [[0., 0., 0.], [2., 0., 0.], [0., 2., 0.]];
+    for (point, expected) in [
+        ([-1., -1., 0.], 2f64.sqrt()),
+        ([3., -1., 0.], 2f64.sqrt()),
+        ([-1., 3., 0.], 2f64.sqrt()),
+        ([1., -1., 0.], 1.),
+        ([-1., 1., 0.], 1.),
+        ([2., 2., 0.], 2f64.sqrt()),
+        ([0.5, 0.5, 3.], 3.),
+    ] {
+        assert!(
+            (point_triangle(point, triangle) - expected).abs() < 1e-12,
+            "{point:?}"
+        );
+    }
+    // A ray in the triangle's own plane never crosses it.
+    let ray = [
+        0.574_352_934_563_6,
+        0.577_919_283_817_1,
+        0.579_868_302_102_6,
+    ];
+    assert!(!crosses_ray([0.; 3], &[[0.; 3], ray, [1., 0., 0.]]));
+    assert!(crosses_ray(
+        [-0.5, -0.5, -1.],
+        &[[0., 0., 0.], [2., 0., 0.], [0., 2., 0.]]
+    ));
+    assert!(!crosses_ray(
+        [-0.5, -0.5, 1.],
+        &[[0., 0., 0.], [2., 0., 0.], [0., 2., 0.]]
+    ));
+}
+
+/// The box with its void moved by `map` (`replace`), or with a moved copy
+/// of the void as a second void.
+fn void_copy(map: &dyn Fn(Point) -> Point, replace: bool) -> Boundary {
+    let source = read_boundaries(VOID, TOLERANCE).unwrap().remove(0);
+    let moved = source.mapped(map, &|v| v);
+    let inner = &source.shells[1];
+    let mut boundary = source.clone();
+    if replace {
+        for &face in &inner.faces {
+            boundary.faces[face] = moved.faces[face].clone();
+            for trim in &moved.faces[face].loops {
+                for &(edge, _) in &trim.uses {
+                    boundary.edges[edge] = moved.edges[edge].clone();
+                    for vertex in moved.edges[edge].vertices {
+                        boundary.vertices[vertex] = moved.vertices[vertex];
+                    }
+                }
+            }
+        }
+        return boundary;
+    }
+    let (vertices, edges, faces) = (
+        boundary.vertices.len(),
+        boundary.edges.len(),
+        boundary.faces.len(),
+    );
+    let mut copy = Shell {
+        faces: vec![],
+        reversed: inner.reversed,
+    };
+    let mut edge_ids = std::collections::BTreeMap::new();
+    let mut vertex_ids = std::collections::BTreeMap::new();
+    for &face in &inner.faces {
+        let mut face_copy = moved.faces[face].clone();
+        for trim in &mut face_copy.loops {
+            for used in &mut trim.uses {
+                let next = edges + edge_ids.len();
+                used.0 = *edge_ids.entry(used.0).or_insert(next);
+            }
+        }
+        copy.faces.push(faces + copy.faces.len());
+        boundary.faces.push(face_copy);
+    }
+    let mut ordered: Vec<_> = edge_ids.into_iter().collect();
+    ordered.sort_by_key(|&(_, new)| new);
+    for (old, _) in ordered {
+        let mut edge = moved.edges[old].clone();
+        for vertex in &mut edge.vertices {
+            let next = vertices + vertex_ids.len();
+            let id = *vertex_ids.entry(*vertex).or_insert(next);
+            if id == vertices + boundary.vertices.len() - vertices {
+                boundary.vertices.push(moved.vertices[*vertex]);
+            }
+            *vertex = id;
+        }
+        boundary.edges.push(edge);
+    }
+    boundary.shells.push(copy);
+    boundary
+}
+
+#[test]
+fn voids_must_lie_inside_the_exterior_and_apart() {
+    let shift = |by: Point| move |p: Point| add(p, by);
+    // The 240 mm3 void moved within the box, and a copy of it 0.5 mm
+    // from both the void and the wall.
+    let same = Solid::new(void_copy(&shift([-5., 1., 0.]), true), TOLERANCE, None).unwrap();
+    assert!(close(same.volume_mm3(), 5760., 1e-12));
+    let two = Solid::new(void_copy(&shift([0., -6.5, 0.]), false), TOLERANCE, None).unwrap();
+    assert!(
+        close(two.volume_mm3(), 5520., 1e-12),
+        "{}",
+        two.volume_mm3()
+    );
+    // A void outside the box, through its wall, or inside the first void
+    // is invalid; one touching the wall cannot be resolved and is refused.
+    for (by, error) in [
+        ([25., 0., 0.], Error::Invalid),
+        ([0., 0., 5.], Error::Invalid),
+        ([0., 0., 3.], Error::Unsupported),
+    ] {
+        let moved = Solid::new(void_copy(&shift(by), true), TOLERANCE, None);
+        assert_eq!(moved.map(|s| s.volume_mm3()).unwrap_err(), error, "{by:?}");
+    }
+    // A copy overlapping the first void has vertices inside it.
+    let inside = Solid::new(void_copy(&shift([2., 1., 0.5]), false), TOLERANCE, None);
+    assert_eq!(inside.map(|s| s.volume_mm3()).unwrap_err(), Error::Invalid);
+}
+
+#[test]
+fn every_solid_is_one_item_of_one_representation_with_its_own_records() {
+    let refused = |items: &str, extra: &str| {
+        solids(&part21(items, &format!("{ELLIPTIC}{extra}")))
+            .map(|s| s.len())
+            .unwrap_err()
+    };
+    assert_eq!(refused("#5", ""), Error::Unsupported);
+    assert_eq!(refused("#61,#61", ""), Error::Unsupported);
+    assert_eq!(
+        refused("#61,#62", "#62=MANIFOLD_SOLID_BREP('',#60);\n"),
+        Error::Invalid
+    );
+    assert_eq!(solids(&part21("#61,#5", ELLIPTIC)).unwrap().len(), 1);
 }

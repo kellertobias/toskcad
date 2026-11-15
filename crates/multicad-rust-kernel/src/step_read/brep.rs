@@ -113,11 +113,28 @@ impl<'i> Source<'i> {
         let mut solids = Vec::new();
         let mut angle = None;
         let mut declared = None;
+        let mut stated = BTreeSet::new();
         for (&id, components) in &entities {
             for entity in components {
                 check(!NOT_SOLID.contains(&entity.name), ReadError::Unsupported)?;
                 if matches!(entity.name, "MANIFOLD_SOLID_BREP" | "BREP_WITH_VOIDS") {
-                    solids.push(id);
+                    stated.insert(id);
+                }
+                if let (true, [_, Value::List(items), _]) = (
+                    entity.name.ends_with("SHAPE_REPRESENTATION"),
+                    entity.args.as_slice(),
+                ) {
+                    for item in items {
+                        let item = reference(item)?;
+                        let solid = entities.get(&item).is_some_and(|components| {
+                            components.iter().any(|component| {
+                                matches!(component.name, "MANIFOLD_SOLID_BREP" | "BREP_WITH_VOIDS")
+                            })
+                        });
+                        if solid {
+                            solids.push(item);
+                        }
+                    }
                 }
                 if entity.name == "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT" {
                     let [measures] = entity.args.as_slice() else {
@@ -143,6 +160,13 @@ impl<'i> Source<'i> {
                 }
             }
         }
+        // Every solid is an item of exactly one shape representation: an
+        // unplaced solid or one shown twice has no single meaning here.
+        let listed: BTreeSet<u32> = solids.iter().copied().collect();
+        check(
+            listed.len() == solids.len() && listed == stated,
+            ReadError::Unsupported,
+        )?;
         check(!solids.is_empty(), ReadError::Unsupported)?;
         check(solids.len() <= MAX_SOLIDS, ReadError::Limit)?;
         let angle = angle.ok_or(ReadError::Unsupported)?;
@@ -168,7 +192,7 @@ impl<'i> Source<'i> {
             .any(|entity| ASSEMBLY.contains(&entity.name))
     }
 
-    /// Entity ids of the solids, in file order.
+    /// Entity ids of the solids, in representation order.
     pub fn solids(&self) -> &[u32] {
         &self.solids
     }
@@ -188,8 +212,8 @@ impl<'i> Source<'i> {
                 .sum::<usize>()
     }
 
-    /// The retained boundary of one solid.
-    pub fn boundary(&self, solid: u32) -> Result<Boundary> {
+    /// The boundary of one solid and the topology records it uses.
+    fn read(&self, solid: u32) -> Result<(Boundary, BTreeSet<u32>)> {
         let mut reader = Reader {
             source: self,
             boundary: Boundary::default(),
@@ -228,7 +252,30 @@ impl<'i> Source<'i> {
                 reversed,
             });
         }
-        Ok(reader.boundary)
+        let records = reader
+            .vertices
+            .keys()
+            .chain(reader.edges.keys())
+            .chain(&reader.faces)
+            .copied()
+            .collect();
+        Ok((reader.boundary, records))
+    }
+
+    /// The boundaries of every solid. Solids may touch, but no vertex, edge
+    /// or face record belongs to two of them.
+    pub fn boundaries(&self) -> Result<Vec<Boundary>> {
+        let mut claimed = BTreeSet::new();
+        let mut boundaries = Vec::with_capacity(self.solids.len());
+        for &solid in &self.solids {
+            let (boundary, records) = self.read(solid)?;
+            for record in records {
+                check(claimed.insert(record), ReadError::Invalid)?;
+            }
+            boundaries.push(boundary);
+        }
+        check(self.owns_every_face(&boundaries), ReadError::Unsupported)?;
+        Ok(boundaries)
     }
 
     fn components(&self, id: u32) -> Result<&[Entity<'i>]> {
@@ -691,13 +738,7 @@ impl Reader<'_, '_> {
 pub fn read_boundaries(input: &str, tolerance: f64) -> Result<Vec<Boundary>> {
     let source = Source::parse(input, tolerance)?;
     check(!source.is_assembly(), ReadError::Unsupported)?;
-    let boundaries = source
-        .solids()
-        .iter()
-        .map(|&solid| source.boundary(solid))
-        .collect::<Result<Vec<_>>>()?;
-    check(source.owns_every_face(&boundaries), ReadError::Unsupported)?;
-    Ok(boundaries)
+    source.boundaries()
 }
 
 /// The widest incidence tolerance a declared uncertainty may grant.
@@ -750,15 +791,7 @@ fn solids_of(
     if source.is_assembly() {
         return Err(crate::brep::Error::Unsupported);
     }
-    let boundaries = source
-        .solids()
-        .iter()
-        .map(|&solid| source.boundary(solid))
-        .collect::<Result<Vec<_>>>()
-        .map_err(convert)?;
-    if !source.owns_every_face(&boundaries) {
-        return Err(crate::brep::Error::Unsupported);
-    }
+    let boundaries = source.boundaries().map_err(convert)?;
     boundaries
         .into_iter()
         .map(|boundary| match rederive {
@@ -820,26 +853,6 @@ pub fn verify_retained(source: &str, expected: &[&Solid], tolerance: f64) -> Res
         volume += read.volume_mm3();
     }
     Ok(volume)
-}
-
-/// Volume, bounds and face count of each solid from its retained boundary.
-pub(super) fn readbacks(input: &str, tolerance: f64) -> Result<Vec<super::Readback>> {
-    let solids = read_solids(input, tolerance, None)?;
-    Ok(solids
-        .iter()
-        .map(|solid| super::Readback {
-            bounds_mm: solid.bounds_mm(),
-            volume_mm3: solid.volume_mm3(),
-            face_count: solid.faces().len(),
-            edges_mm: vec![],
-            circles: vec![],
-            semicircles: vec![],
-            arcs: vec![],
-            ellipses: vec![],
-            splines: vec![],
-            solid_count: 1,
-        })
-        .collect())
 }
 
 impl From<crate::brep::Error> for ReadError {

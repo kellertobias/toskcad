@@ -3,6 +3,7 @@ use super::domain::{self, Domain};
 use super::{
     Curve, Error, Interrupt, Point, Result, Surface, checkpoint, distance, ensure, extent, mass,
 };
+use super::{crosses_ray, mesh, point_triangle};
 use std::collections::BTreeMap;
 
 /// The largest admitted number of faces, edges or vertices in one solid.
@@ -205,6 +206,18 @@ impl Boundary {
     }
 }
 
+/// Vertices on the loops of one face.
+fn face_vertices(boundary: &Boundary, face: usize) -> Vec<usize> {
+    let mut vertices = Vec::new();
+    for trim in &boundary.faces[face].loops {
+        vertices.extend(trim.vertex);
+        for &(edge, _) in &trim.uses {
+            vertices.extend(boundary.edges[edge].vertices);
+        }
+    }
+    vertices
+}
+
 fn find(group: &mut [usize], mut i: usize) -> usize {
     while group[i] != i {
         group[i] = group[group[i]];
@@ -294,7 +307,7 @@ impl Solid {
         ensure(volume_mm3 > 0., Error::Invalid)?;
         let area: f64 = faces.iter().map(|face| face.area_mm2).sum();
         let bounds_mm = extent::bounds(&boundary, &domains)?;
-        Ok(Self {
+        let solid = Self {
             boundary,
             tolerance,
             domains,
@@ -302,7 +315,75 @@ impl Solid {
             volume_mm3,
             volume_error_mm3: error + tolerance * area,
             bounds_mm,
-        })
+        };
+        solid.nest(interrupt)?;
+        Ok(solid)
+    }
+
+    /// Voids lie strictly inside the exterior shell and outside each other.
+    /// Shells share no vertex, and every vertex of a void is classified
+    /// against the other shells on a tessellation fine against the part:
+    /// a vertex outside where it belongs is invalid, and one closer to
+    /// another shell than that tessellation resolves is refused as
+    /// unsupported rather than guessed.
+    fn nest(&self, interrupt: Interrupt<'_>) -> Result<()> {
+        let boundary = &self.boundary;
+        if boundary.shells.len() < 2 {
+            return Ok(());
+        }
+        let mut owner = vec![usize::MAX; boundary.vertices.len()];
+        let mut face_shell = vec![0; boundary.faces.len()];
+        for (shell_index, shell) in boundary.shells.iter().enumerate() {
+            for &face in &shell.faces {
+                face_shell[face] = shell_index;
+                for vertex in face_vertices(boundary, face) {
+                    let slot = &mut owner[vertex];
+                    ensure(*slot == usize::MAX || *slot == shell_index, Error::Invalid)?;
+                    *slot = shell_index;
+                }
+            }
+        }
+        let diagonal = distance(self.bounds_mm[0], self.bounds_mm[1]);
+        let deflection = (1e-4 * diagonal).max(10. * self.tolerance);
+        let options = mesh::Options {
+            deflection_mm: deflection,
+            angle_rad: 0.5,
+            triangle_limit: 2_000_000,
+        };
+        let tessellation = mesh::tessellate(self, options, interrupt)?;
+        let triangles: Vec<(usize, [Point; 3])> = tessellation
+            .triangles
+            .iter()
+            .zip(&tessellation.faces)
+            .map(|(triangle, &face)| {
+                (
+                    face_shell[face as usize],
+                    triangle.map(|i| tessellation.positions[i as usize]),
+                )
+            })
+            .collect();
+        for (vertex, &shell) in owner.iter().enumerate() {
+            if shell == 0 || shell == usize::MAX {
+                continue;
+            }
+            checkpoint(interrupt)?;
+            let point = boundary.vertices[vertex];
+            for other in (0..boundary.shells.len()).filter(|&other| other != shell) {
+                let near = triangles
+                    .iter()
+                    .filter(|(owner, _)| *owner == other)
+                    .map(|(_, triangle)| point_triangle(point, *triangle))
+                    .fold(f64::INFINITY, f64::min);
+                ensure(near > deflection, Error::Unsupported)?;
+                let crossings = triangles
+                    .iter()
+                    .filter(|(owner, triangle)| *owner == other && crosses_ray(point, triangle))
+                    .count();
+                // Inside the exterior, outside every other void.
+                ensure((crossings % 2 == 1) == (other == 0), Error::Invalid)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn boundary(&self) -> &Boundary {

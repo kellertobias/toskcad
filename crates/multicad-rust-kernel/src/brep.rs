@@ -93,6 +93,56 @@ pub(crate) fn distance(a: Point, b: Point) -> f64 {
     norm(sub(a, b))
 }
 
+/// Distance from `p` to the closest point of a triangle.
+pub(crate) fn point_triangle(p: Point, [a, b, c]: [Point; 3]) -> f64 {
+    let (ab, ac, ap) = (sub(b, a), sub(c, a), sub(p, a));
+    let (d1, d2) = (dot(ab, ap), dot(ac, ap));
+    let bp = sub(p, b);
+    let (d3, d4) = (dot(ab, bp), dot(ac, bp));
+    let cp = sub(p, c);
+    let (d5, d6) = (dot(ab, cp), dot(ac, cp));
+    let (va, vb, vc) = (d3 * d6 - d5 * d4, d5 * d2 - d1 * d6, d1 * d4 - d3 * d2);
+    let closest = if d1 <= 0. && d2 <= 0. {
+        a
+    } else if d3 >= 0. && d4 <= d3 {
+        b
+    } else if d6 >= 0. && d5 <= d6 {
+        c
+    } else if vc <= 0. && d1 >= 0. && d3 <= 0. {
+        add(a, scale(ab, d1 / (d1 - d3)))
+    } else if vb <= 0. && d2 >= 0. && d6 <= 0. {
+        add(a, scale(ac, d2 / (d2 - d6)))
+    } else if va <= 0. && d4 >= d3 && d5 >= d6 {
+        add(b, scale(sub(c, b), (d4 - d3) / ((d4 - d3) + (d5 - d6))))
+    } else {
+        let total = va + vb + vc;
+        add(a, add(scale(ab, vb / total), scale(ac, vc / total)))
+    };
+    distance(p, closest)
+}
+
+/// Whether a ray from `origin` along a fixed skew direction passes through
+/// the triangle.
+pub(crate) fn crosses_ray(origin: Point, triangle: &[Point; 3]) -> bool {
+    const RAY: Point = [
+        0.574_352_934_563_6,
+        0.577_919_283_817_1,
+        0.579_868_302_102_6,
+    ];
+    let [a, b, c] = *triangle;
+    let (ab, ac) = (sub(b, a), sub(c, a));
+    let p = cross(RAY, ac);
+    let determinant = dot(ab, p);
+    if determinant == 0. {
+        return false;
+    }
+    let t = sub(origin, a);
+    let u = dot(t, p) / determinant;
+    let q = cross(t, ab);
+    let v = dot(RAY, q) / determinant;
+    u >= 0. && v >= 0. && u + v <= 1. && dot(ac, q) / determinant > 0.
+}
+
 /// Eight-point Gauss-Legendre rule on `[-1, 1]`.
 pub(crate) const GAUSS: [(f64, f64); 8] = [
     (-0.960_289_856_497_536_3, 0.101_228_536_290_376_3),
