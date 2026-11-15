@@ -65,7 +65,10 @@ fn canonical_clipped_source_keeps_actual_law_event_and_positive_volume() {
     );
 }
 
-pub(super) fn canonical(quarter: bool, scale: f64) -> AuthoredThread {
+pub(in crate::axial_pipe_thread::authored) fn canonical(
+    quarter: bool,
+    scale: f64,
+) -> AuthoredThread {
     let (tpi, e1, l1, l2, od, max) = if quarter {
         (18., 0.49163, 0.2278, 0.4018, 0.540, 0.088)
     } else {

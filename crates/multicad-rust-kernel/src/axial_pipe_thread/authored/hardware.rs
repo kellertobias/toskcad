@@ -3,6 +3,7 @@
 //! Source material receipts here do not admit a mesh or a STEP file.
 use super::*;
 use std::mem::size_of;
+pub mod mesh;
 mod moments;
 use moments::Moments;
 #[cfg(test)]

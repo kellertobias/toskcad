@@ -19,7 +19,7 @@ pub use polyline::StockClipPolyline;
 pub use query::{StockClipClassification, StockClipQuery};
 mod sample;
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
 mod topology;
 mod volume;
 pub use jets::{StockClipJets, StockClipPatchLaw, StockClipPatchTaylor};
