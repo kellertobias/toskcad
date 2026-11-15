@@ -1,5 +1,6 @@
 //! Keep STEP representation members independent and their topology identities distinct.
 use super::*;
+mod periodic;
 use std::collections::BTreeMap;
 
 fn record(tag: u64, coordinates: impl IntoIterator<Item = f64>) -> [u64; 11] {
@@ -505,6 +506,7 @@ pub(super) fn rebuild(
     let mut literal_resident = members.iter().try_fold(0usize, |sum, member| {
         let size = match member {
             step_read::SourceImport::LiteralNpt(source) => source.retained_budget_bytes(),
+            step_read::SourceImport::PeriodicPhillips(source) => source.retained_budget_bytes(),
             _ => 0,
         };
         sum.checked_add(size)
@@ -518,12 +520,26 @@ pub(super) fn rebuild(
             })
     })?;
     enum Qualified {
+        PeriodicPhillips(Box<step_read::PhillipsOwnedPeriodicMaterial>),
         Analytic(Box<(Readback, ImportSolid)>),
         Radial(Box<multicad_rust_kernel::radial_tensor::RadialBoundary>),
         LiteralNpt(Box<multicad_rust_kernel::step_read::npt_stock::OwnedMaterial>),
     }
     for member in members {
         let (signature, member) = match member {
+            step_read::SourceImport::PeriodicPhillips(source) => {
+                if literal_resident > LITERAL_PACKET_BYTES - 64 * 1024 * 1024 {
+                    return Err(error(
+                        IMPORT,
+                        GeometryErrorKind::Limit,
+                        "Retained periodic packet has no construction workspace",
+                    ));
+                }
+                (
+                    periodic::signature(&source),
+                    Qualified::PeriodicPhillips(source),
+                )
+            }
             step_read::SourceImport::Analytic(value) => (
                 member_signature(&value.0, &value.1),
                 Qualified::Analytic(value),
@@ -558,6 +574,13 @@ pub(super) fn rebuild(
         let hash = ContentHash::of(&bytes);
         let child = EntityId::from_uuid_bits(u128::from_le_bytes(hash.0[..16].try_into().unwrap()));
         solids.push(match member {
+            Qualified::PeriodicPhillips(source) => Solid::rust_periodic_repaired_phillips_material(
+                std::rc::Rc::new(*source),
+                child,
+                PlaneFrame::default(),
+                policy,
+                None,
+            )?,
             Qualified::Analytic(value) => {
                 let (readback, imported) = *value;
                 Solid::verified_step_member(&readback, imported, child, policy)?

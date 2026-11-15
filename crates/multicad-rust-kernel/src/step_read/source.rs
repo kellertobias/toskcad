@@ -1,12 +1,14 @@
 //! Flat exchange members retain their actual kind of qualification evidence.
 use super::*;
 mod literal_npt;
+mod periodic;
 #[cfg(test)]
 mod tests;
 
 /// Finite radial ownership still needs cold surface, ordering and occupied
 /// material qualification. It deliberately carries no analytic volume receipt.
 pub enum SourceImport {
+    PeriodicPhillips(Box<super::PhillipsOwnedPeriodicMaterial>),
     Analytic(Box<(Readback, ImportSolid)>),
     Radial(Box<crate::radial_tensor::BoundaryOwnership>),
     LiteralNpt(Box<super::npt_stock::OwnedMaterial>),
@@ -16,6 +18,9 @@ pub enum SourceImport {
 /// recipe from retained tensor controls. Global topology ownership is shared
 /// across every member, including analytic and retained members together.
 pub fn read_source_compound(input: &str, tolerance: f64) -> Result<Vec<SourceImport>> {
+    if let Some(periodic) = periodic::read(input, tolerance)? {
+        return Ok(periodic);
+    }
     match ordinary(input, tolerance) {
         Err(ReadError::Unsupported) => literal_npt::read(input, tolerance),
         other => other,

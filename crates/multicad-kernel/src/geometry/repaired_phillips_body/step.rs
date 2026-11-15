@@ -270,4 +270,4 @@ impl Solid {
 }
 mod members;
 #[cfg(test)]
-mod tests;
+pub(in crate::geometry) mod tests;

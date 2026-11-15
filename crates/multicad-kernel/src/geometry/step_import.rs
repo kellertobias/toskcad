@@ -228,6 +228,15 @@ impl Solid {
         })?;
         if members.len() == 1 {
             return match members.pop().expect("one member") {
+                step_read::SourceImport::PeriodicPhillips(source) => {
+                    Self::rust_periodic_repaired_phillips_material(
+                        std::rc::Rc::new(*source),
+                        feature,
+                        PlaneFrame::default(),
+                        policy,
+                        None,
+                    )
+                }
                 step_read::SourceImport::Analytic(value) => {
                     let (readback, imported) = *value;
                     Self::verified_step_member(&readback, imported, feature, policy)

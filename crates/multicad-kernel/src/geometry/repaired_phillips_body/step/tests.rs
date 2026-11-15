@@ -1,5 +1,5 @@
 use super::*;
-fn part(left: bool, frame: PlaneFrame) -> Solid {
+pub(in crate::geometry) fn part(left: bool, frame: PlaneFrame) -> Solid {
     Solid::rust_periodic_repaired_phillips_material(
         super::super::periodic::tests::source(left, 0.5),
         EntityId::from_uuid_bits(0xcad352),

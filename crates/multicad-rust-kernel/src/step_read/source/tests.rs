@@ -46,6 +46,9 @@ fn mixed_reader_preserves_analytic_receipts_and_actual_finite_source_ownership()
     let mut analytic = 0;
     for member in members {
         match member {
+            SourceImport::PeriodicPhillips(_) => {
+                panic!("fixture contains no periodic Phillips body")
+            }
             SourceImport::LiteralNpt(_) => {
                 panic!("this actual fixture contains only radial and analytic members")
             }

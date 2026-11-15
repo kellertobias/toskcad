@@ -8,7 +8,7 @@ use multicad_rust_kernel::step_read::{
 };
 use std::cell::RefCell;
 mod affine;
-mod step;
+pub(in crate::geometry) mod step;
 pub use step::{DecodedPeriodicPhillipsStepVerification, PeriodicPhillipsStepCandidateResources};
 mod periodic;
 pub use periodic::PeriodicRepairedPhillipsQuery;
