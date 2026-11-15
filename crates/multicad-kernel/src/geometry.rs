@@ -90,6 +90,7 @@ use rounded_slot_body::RoundedSlotBody;
 use rounded_thread_body::RoundedThreadBody;
 pub use rounded_thread_body::{RoundedThreadData, RoundedThreadMassProperties};
 mod internal_thread_treatment_body;
+pub use imported_brep_body::AssemblyOccurrence;
 use imported_brep_body::ImportedBrepBody;
 use internal_thread_treatment_body::InternalThreadTreatmentBody;
 pub use internal_thread_treatment_body::{
@@ -2812,10 +2813,12 @@ impl Solid {
                 "Rust STEP export requires supported geometry with one closed exterior shell per solid",
             ));
         }
-        let mut writer = step::Writer::new();
         let encoded = self
-            .append_step(&mut writer)
-            .and_then(|()| writer.finish())
+            .imported_assembly_step()
+            .unwrap_or_else(|| {
+                let mut writer = step::Writer::new();
+                self.append_step(&mut writer).and_then(|()| writer.finish())
+            })
             .map_err(|e| {
                 let kind = match e {
                     step::StepError::Unsupported => GeometryErrorKind::Unsupported,
@@ -2996,6 +2999,17 @@ impl Solid {
             .map_err(|e| native("read STEP", e))?
             .into_iter()
             .map(|s| (s.name, s.brep))
+            .collect())
+    }
+    /// Every next-assembly-usage occurrence of a STEP file as OpenCascade
+    /// places it: (identifier, name, located BRep text of the component in
+    /// its parent's coordinates). Reference tooling for assembly import.
+    pub fn step_occurrences(path: &Path) -> Result<Vec<(String, String, String)>, GeometryError> {
+        let path = crate::step_path(path).map_err(|e| input(e.to_string()))?;
+        Ok(ffi::step_occurrences(path)
+            .map_err(|e| native("read STEP", e))?
+            .into_iter()
+            .map(|s| (s.id, s.name, s.brep))
             .collect())
     }
     /// The exact shape as OCCT BRep text.

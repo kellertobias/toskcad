@@ -1,5 +1,6 @@
 //! Exact topology for independently placed Rust assembly members.
 
+use super::imported_brep_body::ImportedAssembly;
 use super::*;
 use multicad_core::references::{TopologyElement, TopologyKind, TopologySnapshot};
 use std::{cell::Cell, collections::BTreeSet};
@@ -22,6 +23,9 @@ pub(crate) struct RustCompound {
     /// Transfer the descriptors collected during construction to the first
     /// publisher without holding a second topology for the life of the solid.
     pending_topology: Cell<Option<Vec<TopologyElement>>>,
+    /// The product structure of an imported STEP assembly whose placed
+    /// occurrences are the members, in order.
+    assembly: Option<Rc<ImportedAssembly>>,
 }
 
 fn kind_index(kind: TopologyKind) -> usize {
@@ -58,6 +62,27 @@ fn include_bounds(
 }
 
 impl Solid {
+    /// Attach the product structure an imported compound was placed from.
+    pub(super) fn with_imported_assembly(
+        mut self,
+        assembly: ImportedAssembly,
+    ) -> Result<Self, GeometryError> {
+        let SolidBody::RustCompound(compound) = &mut self.body else {
+            return Err(compound_error(
+                GeometryErrorKind::InvalidResult,
+                "Imported assembly requires a compound",
+            ));
+        };
+        let compound = Rc::get_mut(compound).ok_or_else(|| {
+            compound_error(
+                GeometryErrorKind::InvalidResult,
+                "Imported assembly compound is shared",
+            )
+        })?;
+        compound.assembly = Some(Rc::new(assembly));
+        Ok(self)
+    }
+
     /// Subtract an independent compound of disjoint through-cut cylinders
     /// from exact polygonal or orthogonal stock. Certifying the tools as a
     /// batch preserves their separate, ordered identities on the cut walls.
@@ -195,6 +220,7 @@ impl RustCompound {
             volume_mm3,
             solid_count,
             pending_topology: Cell::new(Some(elements)),
+            assembly: None,
         })
     }
 
@@ -208,6 +234,10 @@ impl RustCompound {
 
     pub(super) fn solid_count(&self) -> u32 {
         self.solid_count
+    }
+
+    pub(crate) fn imported_assembly(&self) -> Option<&ImportedAssembly> {
+        self.assembly.as_deref()
     }
 
     pub(crate) fn members(&self) -> impl Iterator<Item = &Solid> {
@@ -400,6 +430,10 @@ impl RustCompound {
             volume_mm3: self.volume_mm3,
             solid_count: self.solid_count,
             pending_topology: Cell::new(None),
+            assembly: self
+                .assembly
+                .as_ref()
+                .map(|assembly| Rc::new(assembly.transformed(transform))),
         }))
     }
 }

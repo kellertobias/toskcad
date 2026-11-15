@@ -87,16 +87,104 @@ fn roles(solid: &brep::Solid) -> [Vec<String>; 3] {
     [faces, edges, vertices]
 }
 
+/// The product structure of an imported STEP assembly: every definition
+/// once, in its own coordinates, and the placement of its roots.
+pub(crate) struct ImportedAssembly {
+    pub(super) structure: Rc<step_read::brep::Assembly<brep::Solid>>,
+    pub(super) placement: step_read::brep::Placement,
+}
+
+impl ImportedAssembly {
+    pub(super) fn transformed(&self, transform: RigidTransform) -> Self {
+        let motion = step_read::brep::Placement {
+            origin: transform.translation_mm,
+            axes: std::array::from_fn(|j| std::array::from_fn(|i| transform.rotation[i][j])),
+        };
+        Self {
+            structure: Rc::clone(&self.structure),
+            placement: motion.then(&self.placement),
+        }
+    }
+}
+
+/// One placed solid of an imported STEP assembly.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AssemblyOccurrence {
+    /// The root product's name, then the name of every instance down to
+    /// this occurrence.
+    pub path: Vec<String>,
+    /// The shared definition this occurrence places, and its name.
+    pub definition: usize,
+    pub definition_name: String,
+    /// The solid's index within its definition.
+    pub solid: usize,
+    /// Where the definition's coordinates lie in the world.
+    pub origin_mm: [f64; 3],
+    pub axes: [[f64; 3]; 3],
+    pub volume_mm3: f64,
+    pub bounds: Bounds,
+}
+
+/// A stable identity for one occurrence: the import, the path of instance
+/// indices from its root and the solid's index in its definition.
+fn occurrence_feature(feature: EntityId, occurrence: &step_read::brep::Occurrence) -> EntityId {
+    let mut bytes = b"multicad.step-occurrence/1".to_vec();
+    bytes.extend(feature.uuid_bits().to_le_bytes());
+    bytes.extend((occurrence.path.len() as u64).to_le_bytes());
+    for &index in occurrence.path.iter().chain([&occurrence.solid]) {
+        bytes.extend((index as u64).to_le_bytes());
+    }
+    let hash = multicad_core::project_file::ContentHash::of(&bytes);
+    EntityId::from_uuid_bits(u128::from_le_bytes(hash.0[..16].try_into().unwrap()))
+}
+
 impl Solid {
-    /// Import every solid of a flat STEP file by retaining its boundary.
-    /// Several solids form one compound in file order.
+    /// Import every solid of a STEP file by retaining its boundary. Several
+    /// solids of a flat file form one compound in file order; an assembly
+    /// becomes one compound of its placed occurrences, depth first, that
+    /// keeps its product structure.
     pub(super) fn import_rust_brep(
         input: &str,
         feature: EntityId,
         policy: GeometryPolicy,
     ) -> Result<Self, GeometryError> {
-        let solids = step_read::brep::read_solids(input, policy.linear_tolerance_mm, None)
+        let mut assembly = step_read::brep::read_assembly(input, policy.linear_tolerance_mm, None)
             .map_err(failure)?;
+        if assembly.nodes.len() == 1 && assembly.nodes[0].children.is_empty() {
+            return Self::import_flat_brep(assembly.nodes.remove(0).solids, feature, policy);
+        }
+        let roles: Vec<Vec<_>> = assembly
+            .nodes
+            .iter()
+            .map(|node| {
+                node.solids
+                    .iter()
+                    .map(|solid| Rc::new(roles(solid)))
+                    .collect()
+            })
+            .collect();
+        let mut members = Vec::new();
+        for occurrence in assembly.occurrences() {
+            members.push(Self::from_imported_brep(
+                assembly.place(&occurrence).map_err(failure)?,
+                occurrence_feature(feature, &occurrence),
+                Rc::clone(&roles[occurrence.node][occurrence.solid]),
+                policy,
+            )?);
+        }
+        let members: Vec<_> = members.iter().collect();
+        let compound = Self::make_rust_compound(&members, feature, policy, None)?;
+        compound.with_imported_assembly(ImportedAssembly {
+            structure: Rc::new(assembly),
+            placement: step_read::brep::Placement::IDENTITY,
+        })
+    }
+
+    fn import_flat_brep(
+        solids: Vec<brep::Solid>,
+        feature: EntityId,
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
         let single = solids.len() == 1;
         let mut members = Vec::with_capacity(solids.len());
         for (index, solid) in solids.into_iter().enumerate() {
@@ -109,7 +197,8 @@ impl Solid {
                 let hash = multicad_core::project_file::ContentHash::of(&bytes);
                 EntityId::from_uuid_bits(u128::from_le_bytes(hash.0[..16].try_into().unwrap()))
             };
-            members.push(Self::from_imported_brep(solid, child, policy)?);
+            let roles = Rc::new(roles(&solid));
+            members.push(Self::from_imported_brep(solid, child, roles, policy)?);
         }
         if single {
             return Ok(members.remove(0));
@@ -121,6 +210,7 @@ impl Solid {
     fn from_imported_brep(
         solid: brep::Solid,
         feature: EntityId,
+        roles: Rc<[Vec<String>; 3]>,
         policy: GeometryPolicy,
     ) -> Result<Self, GeometryError> {
         let boundary = solid.boundary();
@@ -131,7 +221,6 @@ impl Solid {
         let [low, high] = solid.bounds_mm();
         policy.point(low)?;
         policy.point(high)?;
-        let roles = Rc::new(roles(&solid));
         Ok(Self {
             body: SolidBody::ImportedBrep(Rc::new(ImportedBrepBody {
                 solid,
@@ -143,6 +232,59 @@ impl Solid {
             rust_origins: vec![],
             retained_placement: None,
         })
+    }
+
+    /// The placed solids of an imported STEP assembly in member order, or
+    /// `None` for any other solid.
+    pub fn assembly_occurrences(&self) -> Option<Vec<AssemblyOccurrence>> {
+        let compound = self.rust_compound()?;
+        let assembly = compound.imported_assembly()?;
+        let structure = &assembly.structure;
+        let occurrences = structure.occurrences();
+        Some(
+            occurrences
+                .iter()
+                .zip(compound.members())
+                .map(|(occurrence, member)| {
+                    let mut path = vec![
+                        structure.nodes[structure.roots[occurrence.path[0]]]
+                            .name
+                            .clone(),
+                    ];
+                    let mut node = structure.roots[occurrence.path[0]];
+                    for &index in &occurrence.path[1..] {
+                        let child = &structure.nodes[node].children[index];
+                        path.push(child.name.clone());
+                        node = child.node;
+                    }
+                    let placement = assembly.placement.then(&occurrence.placement);
+                    let body = &member.imported_brep_body().expect("imported member").solid;
+                    let [min, max] = body.bounds_mm();
+                    AssemblyOccurrence {
+                        path,
+                        definition: occurrence.node,
+                        definition_name: structure.nodes[occurrence.node].name.clone(),
+                        solid: occurrence.solid,
+                        origin_mm: placement.origin,
+                        axes: placement.axes,
+                        volume_mm3: body.volume_mm3(),
+                        bounds: Bounds { min, max },
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    /// The STEP text of an imported assembly with its product structure, or
+    /// `None` for any other solid.
+    pub(super) fn imported_assembly_step(
+        &self,
+    ) -> Option<Result<String, multicad_rust_kernel::step::StepError>> {
+        let assembly = self.rust_compound()?.imported_assembly()?;
+        Some(multicad_rust_kernel::step::write_assembly(
+            &assembly.structure,
+            assembly.placement,
+        ))
     }
 
     /// Verify a STEP text written from this retained boundary, or `None`
@@ -477,6 +619,53 @@ mod tests {
         assert!(other.verify_imported_brep_step(&text).unwrap().is_err());
         let box_solid = Solid::box_solid([4., 4., 4.], GeometryPolicy::default()).unwrap();
         assert!(box_solid.verify_imported_brep_step(&text).is_none());
+    }
+
+    #[test]
+    fn an_imported_assembly_moves_and_exports_with_its_structure() {
+        const TWO: &str = include_str!(
+            "../../../multicad-app/tests/fixtures/exchange/corpus/occt-two-bodies.step"
+        );
+        let policy = GeometryPolicy::default();
+        let solid = Solid::import_rust_brep(TWO, EntityId::new(), policy).unwrap();
+        let transform = RigidTransform {
+            rotation: [[0., -1., 0.], [1., 0., 0.], [0., 0., 1.]],
+            translation_mm: [5., 0., 2.],
+        };
+        let moved = solid.transformed(transform).unwrap();
+        let occurrences = moved.assembly_occurrences().unwrap();
+        assert_eq!(occurrences.len(), 2);
+        assert_eq!(occurrences[0].origin_mm, [5., 0., 2.]);
+        assert_eq!(occurrences[0].axes[0], [0., 1., 0.]);
+        // The moved structure is written under one product that places it.
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("moved.step");
+        moved.write_step(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let back = Solid::import_rust_step(&text, EntityId::new(), policy).unwrap();
+        let read = back.assembly_occurrences().unwrap();
+        assert_eq!(read.len(), 2);
+        assert_eq!(read[1].path.len(), 3);
+        for (a, b) in read.iter().zip(&occurrences) {
+            for (x, y) in [a.bounds.min, a.bounds.max]
+                .iter()
+                .flatten()
+                .zip([b.bounds.min, b.bounds.max].iter().flatten())
+            {
+                assert!((x - y).abs() < 1e-9);
+            }
+        }
+        // Only an unshared compound takes a structure.
+        let structure = || ImportedAssembly {
+            structure: Rc::new(step_read::brep::read_assembly(TWO, 1e-7, None).unwrap()),
+            placement: step_read::brep::Placement::IDENTITY,
+        };
+        assert!(frustum().assembly_occurrences().is_none());
+        assert!(frustum().imported_assembly_step().is_none());
+        assert!(frustum().with_imported_assembly(structure()).is_err());
+        let shared = solid.share().unwrap();
+        assert!(solid.with_imported_assembly(structure()).is_err());
+        drop(shared);
     }
 
     #[test]
