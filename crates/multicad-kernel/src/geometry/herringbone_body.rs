@@ -231,6 +231,11 @@ impl HerringboneBody {
         self.geometry.phase_at(z)
     }
 
+    /// Exact support of the gear in a direction of its own frame.
+    pub(crate) fn support(&self, direction: [f64; 3]) -> f64 {
+        self.geometry.support(direction)
+    }
+
     pub(crate) fn is_helical(&self) -> bool {
         self.geometry.is_helical()
     }

@@ -108,6 +108,7 @@ pub(in crate::drawing) fn unsupported(message: &'static str) -> GeometryError {
 }
 
 mod arrange;
+mod bevel;
 mod bore;
 mod engine;
 mod families;
@@ -115,6 +116,7 @@ mod paths;
 mod prism;
 mod profile;
 mod publish;
+mod twisted;
 mod worm;
 pub(in crate::drawing) use engine::{SceneMember, project};
 // `member` is the per-family registration point for scene members.

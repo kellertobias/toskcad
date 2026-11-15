@@ -320,17 +320,21 @@ fn herringbone_world_topology_manufacturing_and_verified_standalone_step() {
         assert!(decoded.valid().unwrap());
         assert!((decoded.volume().unwrap() - volume).abs() < 4e-4);
     }
-    assert_eq!(
-        project_drawing(
-            &[DrawingSolid {
-                solid: &world,
-                hatch: None
-            }],
-            DrawingProjection::default()
-        )
-        .unwrap_err()
-        .kind,
-        GeometryErrorKind::Unsupported
+    // The tilted gear draws through the exact-curve scene engine
+    // (`rust_scene_twisted.rs` certifies such views).
+    let vectors = project_drawing(
+        &[DrawingSolid {
+            solid: &world,
+            hatch: None,
+        }],
+        DrawingProjection::default(),
+    )
+    .unwrap();
+    assert!(vectors.len() > 100);
+    assert!(
+        vectors
+            .iter()
+            .all(|vector| vector.role == multicad_core::drawings::VectorRole::Visible)
     );
 }
 

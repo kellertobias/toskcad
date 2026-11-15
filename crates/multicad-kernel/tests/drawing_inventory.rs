@@ -80,16 +80,17 @@ fn bevel() -> SphericalBevelGear {
     }
 }
 
+/// The measured outcome of an inventoried combination. Every combination
+/// currently draws; an explicit refusal returns here as a variant carrying
+/// its exact message only together with a reviewed finding.
 #[derive(Clone, Copy, Debug)]
 enum Expect {
     Drawn,
-    Unsupported(&'static str),
 }
-use Expect::{Drawn, Unsupported};
+use Expect::Drawn;
 
-/// Expected outcome of every inventoried combination. `Drawn` combinations
-/// must publish well-formed vectors; each `Unsupported` entry is an explicit
-/// unresolved finding with its exact refusal. Regenerate the table from
+/// Expected outcome of every inventoried combination: each must publish
+/// well-formed vectors. Regenerate the table from
 /// `print_rust_drawing_inventory` only together with a reviewed change.
 const EXPECTED: &[(&str, &str, Expect)] = &[
     ("box", "axial", Drawn),
@@ -257,201 +258,57 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ("helical gear", "axial", Drawn),
     ("helical gear", "axial reversed", Drawn),
     ("helical gear", "axial hidden", Drawn),
-    (
-        "helical gear",
-        "side",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "helical gear",
-        "side hidden",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "helical gear",
-        "oblique",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "helical gear",
-        "oblique hidden",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
+    ("helical gear", "side", Drawn),
+    ("helical gear", "side hidden", Drawn),
+    ("helical gear", "oblique", Drawn),
+    ("helical gear", "oblique hidden", Drawn),
     ("helical gear", "axial section", Drawn),
     ("helical gear", "axial section-only", Drawn),
     ("helical gear", "axial finite depth", Drawn),
-    (
-        "helical gear",
-        "side section",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "helical gear",
-        "side section-only",
-        Unsupported("Rust herringbone sections require a plane perpendicular to the gear axis"),
-    ),
-    (
-        "helical gear",
-        "side finite depth",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "helical gear",
-        "side lateral window",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "helical gear",
-        "oblique section",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "helical gear",
-        "oblique section-only",
-        Unsupported("Rust herringbone sections require a plane perpendicular to the gear axis"),
-    ),
-    (
-        "helical gear",
-        "axial detail",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "helical gear",
-        "side detail",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
+    ("helical gear", "side section", Drawn),
+    ("helical gear", "side section-only", Drawn),
+    ("helical gear", "side finite depth", Drawn),
+    ("helical gear", "side lateral window", Drawn),
+    ("helical gear", "oblique section", Drawn),
+    ("helical gear", "oblique section-only", Drawn),
+    ("helical gear", "axial detail", Drawn),
+    ("helical gear", "side detail", Drawn),
     ("herringbone gear", "axial", Drawn),
     ("herringbone gear", "axial reversed", Drawn),
     ("herringbone gear", "axial hidden", Drawn),
-    (
-        "herringbone gear",
-        "side",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "herringbone gear",
-        "side hidden",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "herringbone gear",
-        "oblique",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "herringbone gear",
-        "oblique hidden",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
+    ("herringbone gear", "side", Drawn),
+    ("herringbone gear", "side hidden", Drawn),
+    ("herringbone gear", "oblique", Drawn),
+    ("herringbone gear", "oblique hidden", Drawn),
     ("herringbone gear", "axial section", Drawn),
     ("herringbone gear", "axial section-only", Drawn),
     ("herringbone gear", "axial finite depth", Drawn),
-    (
-        "herringbone gear",
-        "side section",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "herringbone gear",
-        "side section-only",
-        Unsupported("Rust herringbone sections require a plane perpendicular to the gear axis"),
-    ),
-    (
-        "herringbone gear",
-        "side finite depth",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "herringbone gear",
-        "side lateral window",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "herringbone gear",
-        "oblique section",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "herringbone gear",
-        "oblique section-only",
-        Unsupported("Rust herringbone sections require a plane perpendicular to the gear axis"),
-    ),
-    (
-        "herringbone gear",
-        "axial detail",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "herringbone gear",
-        "side detail",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
+    ("herringbone gear", "side section", Drawn),
+    ("herringbone gear", "side section-only", Drawn),
+    ("herringbone gear", "side finite depth", Drawn),
+    ("herringbone gear", "side lateral window", Drawn),
+    ("herringbone gear", "oblique section", Drawn),
+    ("herringbone gear", "oblique section-only", Drawn),
+    ("herringbone gear", "axial detail", Drawn),
+    ("herringbone gear", "side detail", Drawn),
     ("bevel gear", "axial", Drawn),
     ("bevel gear", "axial reversed", Drawn),
     ("bevel gear", "axial hidden", Drawn),
-    (
-        "bevel gear",
-        "side",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "bevel gear",
-        "side hidden",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "bevel gear",
-        "oblique",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "bevel gear",
-        "oblique hidden",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
+    ("bevel gear", "side", Drawn),
+    ("bevel gear", "side hidden", Drawn),
+    ("bevel gear", "oblique", Drawn),
+    ("bevel gear", "oblique hidden", Drawn),
     ("bevel gear", "axial section", Drawn),
     ("bevel gear", "axial section-only", Drawn),
     ("bevel gear", "axial finite depth", Drawn),
-    (
-        "bevel gear",
-        "side section",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "bevel gear",
-        "side section-only",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "bevel gear",
-        "side finite depth",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "bevel gear",
-        "side lateral window",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "bevel gear",
-        "oblique section",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "bevel gear",
-        "oblique section-only",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "bevel gear",
-        "axial detail",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "bevel gear",
-        "side detail",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
+    ("bevel gear", "side section", Drawn),
+    ("bevel gear", "side section-only", Drawn),
+    ("bevel gear", "side finite depth", Drawn),
+    ("bevel gear", "side lateral window", Drawn),
+    ("bevel gear", "oblique section", Drawn),
+    ("bevel gear", "oblique section-only", Drawn),
+    ("bevel gear", "axial detail", Drawn),
+    ("bevel gear", "side detail", Drawn),
     ("za worm", "axial", Drawn),
     ("za worm", "axial reversed", Drawn),
     ("za worm", "axial hidden", Drawn),
@@ -852,176 +709,46 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ),
     ("spur gear + spur gear separated", "axial detail", Drawn),
     ("spur gear + spur gear separated", "side detail", Drawn),
-    (
-        "box + bevel gear overlapping",
-        "axial",
-        Unsupported(
-            "Rust bevel drawing supports one gear at a time; scene occlusion is unavailable",
-        ),
-    ),
-    (
-        "box + bevel gear overlapping",
-        "axial reversed",
-        Unsupported(
-            "Rust bevel drawing supports one gear at a time; scene occlusion is unavailable",
-        ),
-    ),
-    (
-        "box + bevel gear overlapping",
-        "axial hidden",
-        Unsupported(
-            "Rust bevel drawing supports one gear at a time; scene occlusion is unavailable",
-        ),
-    ),
-    (
-        "box + bevel gear overlapping",
-        "side",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "box + bevel gear overlapping",
-        "side hidden",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "box + bevel gear overlapping",
-        "oblique",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "box + bevel gear overlapping",
-        "oblique hidden",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "box + bevel gear overlapping",
-        "axial section",
-        Unsupported(
-            "Rust bevel drawing supports one gear at a time; scene occlusion is unavailable",
-        ),
-    ),
-    (
-        "box + bevel gear overlapping",
-        "axial section-only",
-        Unsupported(
-            "Rust bevel drawing supports one gear at a time; scene occlusion is unavailable",
-        ),
-    ),
-    (
-        "box + bevel gear overlapping",
-        "axial finite depth",
-        Unsupported(
-            "Rust bevel drawing supports one gear at a time; scene occlusion is unavailable",
-        ),
-    ),
-    (
-        "box + bevel gear overlapping",
-        "side section",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "box + bevel gear overlapping",
-        "side section-only",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "box + bevel gear overlapping",
-        "side finite depth",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "box + bevel gear overlapping",
-        "side lateral window",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "box + bevel gear overlapping",
-        "oblique section",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
+    ("box + bevel gear overlapping", "axial", Drawn),
+    ("box + bevel gear overlapping", "axial reversed", Drawn),
+    ("box + bevel gear overlapping", "axial hidden", Drawn),
+    ("box + bevel gear overlapping", "side", Drawn),
+    ("box + bevel gear overlapping", "side hidden", Drawn),
+    ("box + bevel gear overlapping", "oblique", Drawn),
+    ("box + bevel gear overlapping", "oblique hidden", Drawn),
+    ("box + bevel gear overlapping", "axial section", Drawn),
+    ("box + bevel gear overlapping", "axial section-only", Drawn),
+    ("box + bevel gear overlapping", "axial finite depth", Drawn),
+    ("box + bevel gear overlapping", "side section", Drawn),
+    ("box + bevel gear overlapping", "side section-only", Drawn),
+    ("box + bevel gear overlapping", "side finite depth", Drawn),
+    ("box + bevel gear overlapping", "side lateral window", Drawn),
+    ("box + bevel gear overlapping", "oblique section", Drawn),
     (
         "box + bevel gear overlapping",
         "oblique section-only",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
+        Drawn,
     ),
-    (
-        "box + bevel gear overlapping",
-        "axial detail",
-        Unsupported(
-            "Rust bevel drawing supports one gear at a time; scene occlusion is unavailable",
-        ),
-    ),
-    (
-        "box + bevel gear overlapping",
-        "side detail",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
+    ("box + bevel gear overlapping", "axial detail", Drawn),
+    ("box + bevel gear overlapping", "side detail", Drawn),
     ("box + bevel gear separated", "axial", Drawn),
     ("box + bevel gear separated", "axial reversed", Drawn),
     ("box + bevel gear separated", "axial hidden", Drawn),
-    (
-        "box + bevel gear separated",
-        "side",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "box + bevel gear separated",
-        "side hidden",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "box + bevel gear separated",
-        "oblique",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "box + bevel gear separated",
-        "oblique hidden",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
+    ("box + bevel gear separated", "side", Drawn),
+    ("box + bevel gear separated", "side hidden", Drawn),
+    ("box + bevel gear separated", "oblique", Drawn),
+    ("box + bevel gear separated", "oblique hidden", Drawn),
     ("box + bevel gear separated", "axial section", Drawn),
     ("box + bevel gear separated", "axial section-only", Drawn),
     ("box + bevel gear separated", "axial finite depth", Drawn),
-    (
-        "box + bevel gear separated",
-        "side section",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "box + bevel gear separated",
-        "side section-only",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "box + bevel gear separated",
-        "side finite depth",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "box + bevel gear separated",
-        "side lateral window",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "box + bevel gear separated",
-        "oblique section",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "box + bevel gear separated",
-        "oblique section-only",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "box + bevel gear separated",
-        "axial detail",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
-    (
-        "box + bevel gear separated",
-        "side detail",
-        Unsupported("Rust bevel drawing requires an uncropped view along the gear axis"),
-    ),
+    ("box + bevel gear separated", "side section", Drawn),
+    ("box + bevel gear separated", "side section-only", Drawn),
+    ("box + bevel gear separated", "side finite depth", Drawn),
+    ("box + bevel gear separated", "side lateral window", Drawn),
+    ("box + bevel gear separated", "oblique section", Drawn),
+    ("box + bevel gear separated", "oblique section-only", Drawn),
+    ("box + bevel gear separated", "axial detail", Drawn),
+    ("box + bevel gear separated", "side detail", Drawn),
     ("box + za worm overlapping", "axial", Drawn),
     ("box + za worm overlapping", "axial reversed", Drawn),
     ("box + za worm overlapping", "axial hidden", Drawn),
@@ -1058,58 +785,22 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     ("box + za worm separated", "oblique section-only", Drawn),
     ("box + za worm separated", "axial detail", Drawn),
     ("box + za worm separated", "side detail", Drawn),
-    (
-        "box + herringbone gear overlapping",
-        "axial",
-        Unsupported(
-            "Rust exact drawing projection for continuous herringbone gears is unavailable",
-        ),
-    ),
+    ("box + herringbone gear overlapping", "axial", Drawn),
     (
         "box + herringbone gear overlapping",
         "axial reversed",
-        Unsupported(
-            "Rust exact drawing projection for continuous herringbone gears is unavailable",
-        ),
+        Drawn,
     ),
-    (
-        "box + herringbone gear overlapping",
-        "axial hidden",
-        Unsupported(
-            "Rust exact drawing projection for continuous herringbone gears is unavailable",
-        ),
-    ),
-    (
-        "box + herringbone gear overlapping",
-        "side",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "box + herringbone gear overlapping",
-        "side hidden",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "box + herringbone gear overlapping",
-        "oblique",
-        Unsupported(
-            "Rust exact drawing projection for continuous herringbone gears is unavailable",
-        ),
-    ),
+    ("box + herringbone gear overlapping", "axial hidden", Drawn),
+    ("box + herringbone gear overlapping", "side", Drawn),
+    ("box + herringbone gear overlapping", "side hidden", Drawn),
+    ("box + herringbone gear overlapping", "oblique", Drawn),
     (
         "box + herringbone gear overlapping",
         "oblique hidden",
-        Unsupported(
-            "Rust exact drawing projection for continuous herringbone gears is unavailable",
-        ),
+        Drawn,
     ),
-    (
-        "box + herringbone gear overlapping",
-        "axial section",
-        Unsupported(
-            "Rust exact drawing projection for continuous herringbone gears is unavailable",
-        ),
-    ),
+    ("box + herringbone gear overlapping", "axial section", Drawn),
     (
         "box + herringbone gear overlapping",
         "axial section-only",
@@ -1118,77 +809,43 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
     (
         "box + herringbone gear overlapping",
         "axial finite depth",
-        Unsupported(
-            "Rust exact drawing projection for continuous herringbone gears is unavailable",
-        ),
+        Drawn,
     ),
-    (
-        "box + herringbone gear overlapping",
-        "side section",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
+    ("box + herringbone gear overlapping", "side section", Drawn),
     (
         "box + herringbone gear overlapping",
         "side section-only",
-        Unsupported("Rust herringbone sections require a plane perpendicular to the gear axis"),
+        Drawn,
     ),
     (
         "box + herringbone gear overlapping",
         "side finite depth",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+        Drawn,
     ),
     (
         "box + herringbone gear overlapping",
         "side lateral window",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+        Drawn,
     ),
     (
         "box + herringbone gear overlapping",
         "oblique section",
-        Unsupported(
-            "Rust exact drawing projection for continuous herringbone gears is unavailable",
-        ),
+        Drawn,
     ),
     (
         "box + herringbone gear overlapping",
         "oblique section-only",
-        Unsupported("Rust herringbone sections require a plane perpendicular to the gear axis"),
+        Drawn,
     ),
-    (
-        "box + herringbone gear overlapping",
-        "axial detail",
-        Unsupported(
-            "Rust exact drawing projection for continuous herringbone gears is unavailable",
-        ),
-    ),
-    (
-        "box + herringbone gear overlapping",
-        "side detail",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
+    ("box + herringbone gear overlapping", "axial detail", Drawn),
+    ("box + herringbone gear overlapping", "side detail", Drawn),
     ("box + herringbone gear separated", "axial", Drawn),
     ("box + herringbone gear separated", "axial reversed", Drawn),
     ("box + herringbone gear separated", "axial hidden", Drawn),
-    (
-        "box + herringbone gear separated",
-        "side",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "box + herringbone gear separated",
-        "side hidden",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "box + herringbone gear separated",
-        "oblique",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "box + herringbone gear separated",
-        "oblique hidden",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
+    ("box + herringbone gear separated", "side", Drawn),
+    ("box + herringbone gear separated", "side hidden", Drawn),
+    ("box + herringbone gear separated", "oblique", Drawn),
+    ("box + herringbone gear separated", "oblique hidden", Drawn),
     ("box + herringbone gear separated", "axial section", Drawn),
     (
         "box + herringbone gear separated",
@@ -1200,46 +857,30 @@ const EXPECTED: &[(&str, &str, Expect)] = &[
         "axial finite depth",
         Drawn,
     ),
-    (
-        "box + herringbone gear separated",
-        "side section",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
+    ("box + herringbone gear separated", "side section", Drawn),
     (
         "box + herringbone gear separated",
         "side section-only",
-        Unsupported("Rust herringbone sections require a plane perpendicular to the gear axis"),
+        Drawn,
     ),
     (
         "box + herringbone gear separated",
         "side finite depth",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+        Drawn,
     ),
     (
         "box + herringbone gear separated",
         "side lateral window",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
+        Drawn,
     ),
-    (
-        "box + herringbone gear separated",
-        "oblique section",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
+    ("box + herringbone gear separated", "oblique section", Drawn),
     (
         "box + herringbone gear separated",
         "oblique section-only",
-        Unsupported("Rust herringbone sections require a plane perpendicular to the gear axis"),
+        Drawn,
     ),
-    (
-        "box + herringbone gear separated",
-        "axial detail",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
-    (
-        "box + herringbone gear separated",
-        "side detail",
-        Unsupported("Rust herringbone projection requires an uncropped axial view"),
-    ),
+    ("box + herringbone gear separated", "axial detail", Drawn),
+    ("box + herringbone gear separated", "side detail", Drawn),
     ("bored box + rounded slot overlapping", "axial", Drawn),
     (
         "bored box + rounded slot overlapping",
@@ -1760,8 +1401,8 @@ fn print_rust_drawing_inventory() {
     }
 }
 
-/// Every inventoried family, view and two-body scene either draws
-/// well-formed vectors or refuses with its recorded explicit finding.
+/// Every inventoried family, view and two-body scene draws well-formed
+/// vectors.
 #[test]
 fn every_family_view_and_scene_is_a_named_regression_or_finding() {
     let mut seen = 0;
@@ -1776,9 +1417,6 @@ fn every_family_view_and_scene_is_a_named_regression_or_finding() {
         seen += 1;
         match (expect, &result) {
             (Drawn, Ok(vectors)) => well_formed(vectors, sources),
-            (Unsupported(message), Err(error))
-                if error.kind == multicad_kernel::GeometryErrorKind::Unsupported
-                    && error.message == *message => {}
             _ => panic!(
                 "{name} | {view}: expected {expect:?}, got {}",
                 outcome(&result)

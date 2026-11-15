@@ -13,14 +13,15 @@ pub(in crate::drawing) fn member(
     solid: &Solid,
     view: &View,
 ) -> Option<Result<Box<dyn Member>, GeometryError>> {
-    // HOOK twisted: helical and herringbone gears (`scene/twisted.rs`), e.g.
-    //     .or_else(|| twisted::member(solid, view))
+    // HOOK twisted: helical and herringbone gears (`scene/twisted.rs`).
     // HOOK bevel: spherical bevel gears (`scene/bevel.rs`).
     // HOOK worm: ZA worms and worm wheels (`scene/worm.rs`).
     gear(solid, view)
+        .or_else(|| twisted::member(solid, view))
         .or_else(|| super::worm::member(solid, view))
         .or_else(|| extrusion(solid, view))
         .or_else(|| bore::Bore::new(solid, view).map(|bore| Ok(Box::new(bore) as Box<dyn Member>)))
+        .or_else(|| super::bevel::member(solid, view))
 }
 
 /// Draw whole solids through the scene engine when every leaf has a member.
