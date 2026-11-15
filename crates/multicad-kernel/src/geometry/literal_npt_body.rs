@@ -425,7 +425,10 @@ impl LiteralNptBody {
                 .as_ref()
                 .map_or(0, |p| p.retained_budget_bytes())
             + std::mem::size_of::<Self>()
-            + 2 * std::mem::size_of::<usize>()
+            // Self Rc, shared-plan Rc (whose payload is already in the plan
+            // receipt), and the face-cache Rc each retain two counters.
+            + 6 * std::mem::size_of::<usize>()
+            + std::mem::size_of::<RefCell<Option<Vec<OriginalFace>>>>()
             + self.vertices.capacity() * 24
             + self
                 .faces
