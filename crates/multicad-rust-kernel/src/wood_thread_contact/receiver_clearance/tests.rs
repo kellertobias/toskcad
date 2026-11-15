@@ -418,3 +418,56 @@ fn actual_circular_cover_and_complex_retained_section_do_not_use_family_labels()
         Err(Error::Limit)
     ));
 }
+
+#[test]
+fn actual_reversed_extent_and_filled_collinear_section_keep_material_semantics() {
+    let source = nut();
+    let member = profile(1.);
+    let placed = ClockedLine8Placement {
+        source: &source,
+        stock_frame: stock_frame(),
+        outer_frame: identity(),
+        minimum_wall_mm: 0.5,
+    };
+    let receiver = ReceivingSweep {
+        source: &member,
+        frame: identity(),
+        occurrence: identity(),
+        reverse: true,
+    };
+    assert_eq!(
+        certify_line8_receiver_clearance(placed, receiver, options(), &|| false)
+            .unwrap()
+            .overlap_volume_upper_mm3,
+        0.
+    );
+    let corners = [[0., 0.], [40., 0.], [40., 40.], [0., 40.]];
+    let mut points = Vec::new();
+    for i in 0..4 {
+        for n in 0..3 {
+            points.push(std::array::from_fn(|j| {
+                corners[i][j] + (corners[(i + 1) % 4][j] - corners[i][j]) * n as f64 / 3.
+            }));
+        }
+    }
+    let edges = (0..points.len())
+        .map(|i| Edge::Line {
+            a: points[i],
+            b: points[(i + 1) % points.len()],
+        })
+        .collect();
+    let filled = Sweep::new(vec![edges], 100., 1e-7, 1e-5).unwrap();
+    assert!(matches!(
+        certify_line8_receiver_clearance(
+            placed,
+            ReceivingSweep {
+                source: &filled,
+                reverse: false,
+                ..receiver
+            },
+            options(),
+            &|| false
+        ),
+        Err(Error::Unsupported)
+    ));
+}

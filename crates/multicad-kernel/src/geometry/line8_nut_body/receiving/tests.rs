@@ -282,6 +282,46 @@ fn original_model_member_sections_and_both_occurrences_earn_separate_nut_clearan
                 .kind,
             GeometryErrorKind::Input
         );
+        if !rotated {
+            let points = (0..300)
+                .map(|i| {
+                    let (s, c) = (std::f64::consts::TAU * i as f64 / 300.).sin_cos();
+                    [20. * c, 20. * s]
+                })
+                .collect::<Vec<_>>();
+            let outer = (0..points.len())
+                .map(|i| crate::CurvedEdge2d::Line {
+                    a: points[i],
+                    b: points[(i + 1) % points.len()],
+                })
+                .collect();
+            let owner = EntityId::new();
+            let origins = (0..300)
+                .map(|i| Origin {
+                    source: owner,
+                    role: format!("actual-complex.{i}"),
+                })
+                .collect::<Vec<_>>();
+            let complex = Solid::rust_extrude_normal_profile_named(
+                &crate::CurvedProfile {
+                    frame: PlaneFrame::default(),
+                    outer,
+                    holes: vec![],
+                },
+                100.,
+                owner,
+                &origins,
+                GeometryPolicy::default(),
+            )
+            .unwrap();
+            assert_eq!(
+                nut.rust_line8_receiver_clearance(&complex, RigidTransform::default(), 0.001, None)
+                    .err()
+                    .unwrap()
+                    .kind,
+                GeometryErrorKind::Limit
+            );
+        }
         let pose = RigidTransform {
             rotation: [[0.8, -0.6, 0.], [0.6, 0.8, 0.], [0., 0., 1.]],
             translation_mm: [37.1, -11.3, 103.7],
