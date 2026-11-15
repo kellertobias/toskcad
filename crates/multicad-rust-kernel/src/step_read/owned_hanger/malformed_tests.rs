@@ -162,6 +162,119 @@ fn actual_tensor_weight_shapes_refuse_even_when_all_numeric_weights_survive() {
 }
 
 #[test]
+fn actual_rectangular_tensor_grid_must_match_its_knot_dimensions() {
+    let source = Hanger::new(
+        crate::authored_hanger_bolt::tests::fixture(false, false),
+        None,
+    )
+    .unwrap();
+    let file =
+        crate::step::hanger::export_qualified_hanger(&source, Default::default(), None).unwrap();
+    let original = file.as_str();
+    let arena = part21::parse(original).unwrap();
+    let surface = arena
+        .values()
+        .flatten()
+        .find(|e| e.name == "B_SPLINE_SURFACE")
+        .unwrap();
+    let Value::List(rows) = &surface.args[2] else {
+        unreachable!()
+    };
+    let matrix = format!(
+        "({})",
+        rows.iter()
+            .map(|row| {
+                let Value::List(columns) = row else {
+                    unreachable!()
+                };
+                assert!(columns.len() > 2);
+                format!(
+                    "({})",
+                    columns[..columns.len() - 1]
+                        .iter()
+                        .map(|v| match v {
+                            Value::Reference(id) => format!("#{id}"),
+                            _ => unreachable!(),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let component = surface.source.unwrap();
+    let changed = replace_argument(component, &[2], &matrix);
+    let input = original.replacen(component, &changed, 1);
+    assert!(part21::parse(&input).is_ok());
+    assert!(matches!(
+        decode(&input, Default::default(), None),
+        Err(Error::Invalid)
+    ));
+    assert!(decode(original, Default::default(), None).is_ok());
+}
+
+#[test]
+fn actual_hanger_retained_memory_frontiers_refuse_and_recover() {
+    let source = Hanger::new(
+        crate::authored_hanger_bolt::tests::fixture(false, false),
+        None,
+    )
+    .unwrap();
+    let file =
+        crate::step::hanger::export_qualified_hanger(&source, Default::default(), None).unwrap();
+    let input = file.as_str();
+    let full = decode(input, Default::default(), None).unwrap();
+    let check = |bytes| {
+        decode(
+            input,
+            ReadOptions {
+                retained_budget_bytes: bytes,
+                ..Default::default()
+            },
+            None,
+        )
+    };
+    // Public requests traverse the actual parser, curves, tensors and final
+    // retained graph. This budget is the documented retained-data accounting,
+    // not a claim about the allocator's complete peak memory.
+    let mut refused = 0;
+    for step in 1..=32 {
+        let bytes = ReadOptions::default().retained_budget_bytes * step / 32;
+        match check(bytes) {
+            Ok(decoded) => {
+                assert_eq!(decoded.work_used(), full.work_used());
+                assert_eq!(
+                    decoded.retained_budget_bytes(),
+                    full.retained_budget_bytes()
+                );
+            }
+            Err(Error::Limit) => refused += 1,
+            Err(error) => panic!("Unexpected byte-budget failure: {error:?}"),
+        }
+    }
+    assert!(refused > 0);
+    let mut lower = 1;
+    let mut upper = ReadOptions::default().retained_budget_bytes;
+    while upper - lower > 1 {
+        let middle = lower + (upper - lower) / 2;
+        match check(middle) {
+            Ok(_) => upper = middle,
+            Err(Error::Limit) => lower = middle,
+            Err(error) => panic!("Unexpected frontier failure: {error:?}"),
+        }
+    }
+    assert!(matches!(check(lower), Err(Error::Limit)));
+    assert!(check(upper).is_ok());
+    assert_eq!(
+        decode(input, Default::default(), None)
+            .unwrap()
+            .retained_budget_bytes(),
+        full.retained_budget_bytes()
+    );
+}
+
+#[test]
 fn actual_hanger_schema_fields_refuse_invalid_geometry_and_topology() {
     let source = Hanger::new(
         crate::authored_hanger_bolt::tests::fixture(false, false),
@@ -197,13 +310,16 @@ fn actual_hanger_schema_fields_refuse_invalid_geometry_and_topology() {
         ("RATIONAL_B_SPLINE_SURFACE", &[0, 0], "()"),
         ("PLANE", &[1], "$"),
         ("PLANE", &[1], "#4294967294"),
+        ("DIRECTION", &[1], "(0.,1.)"),
         ("GEOMETRIC_REPRESENTATION_CONTEXT", &[0], "2.5"),
         ("GLOBAL_UNIT_ASSIGNED_CONTEXT", &[0], "()"),
         ("ADVANCED_BREP_SHAPE_REPRESENTATION", &[1], "()"),
         ("ADVANCED_BREP_SHAPE_REPRESENTATION", &[1], "0."),
         ("PRODUCT_DEFINITION_SHAPE", &[2], "0."),
+        ("SHAPE_DEFINITION_REPRESENTATION", &[1], "#4294967294"),
         ("CLOSED_SHELL", &[1], "()"),
         ("ADVANCED_FACE", &[1], "()"),
+        ("ADVANCED_FACE", &[1], "(#4294967294)"),
         ("ADVANCED_FACE", &[3], ".U."),
         ("FACE_OUTER_BOUND", &[2], ".F."),
         ("EDGE_LOOP", &[1], "()"),
