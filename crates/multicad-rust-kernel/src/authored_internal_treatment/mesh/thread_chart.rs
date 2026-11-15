@@ -65,6 +65,7 @@ impl AuthoredThread {
         shell(
             self,
             self.full_length_mm(),
+            false,
             options,
             maximum_work,
             interrupt,
@@ -89,7 +90,34 @@ impl AuthoredThread {
         {
             return Err(SourceError::Invalid);
         }
-        shell(self, end_station_mm, options, maximum_work, interrupt).map_err(failure)
+        shell(
+            self,
+            end_station_mm,
+            false,
+            options,
+            maximum_work,
+            interrupt,
+        )
+        .map_err(failure)
+    }
+}
+impl AuthoredThread {
+    /// Alternate computational angular seam. Original phase, coefficients and
+    /// source endpoints remain unchanged; every finite field proof runs again.
+    pub fn tessellate_prefix_shell_shifted(
+        &self,
+        end_station_mm: f64,
+        options: Tessellation,
+        maximum_work: usize,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<ThreadShell, SourceError> {
+        if !end_station_mm.is_finite()
+            || end_station_mm < self.spec().pitch_mm
+            || end_station_mm > self.full_length_mm()
+        {
+            return Err(SourceError::Invalid);
+        }
+        shell(self, end_station_mm, true, options, maximum_work, interrupt).map_err(failure)
     }
 }
 fn failure(e: Error) -> SourceError {
@@ -103,6 +131,7 @@ fn failure(e: Error) -> SourceError {
 fn shell(
     thread: &AuthoredThread,
     end_station_mm: f64,
+    shifted: bool,
     options: Tessellation,
     maximum_work: usize,
     interrupt: Option<&dyn Fn() -> bool>,
@@ -119,6 +148,7 @@ fn shell(
         ..ThreadChart::bare(thread)
     };
     let mut grid = Grid::new();
+    grid.shifted = shifted;
     loop {
         let repartition = match chart::traced_chart(
             chart,
