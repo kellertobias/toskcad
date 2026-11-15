@@ -213,6 +213,20 @@ fn actual_original_literal_surface_face_measure_uses_prepared_normal_owner() {
                 }
             }
             assert_eq!(result.face_index(), face);
+            let area = interval(result.area_mm2());
+            for ((anchor, moment), centroid) in result
+                .moment_anchor_mm()
+                .into_iter()
+                .zip(result.first_moments_about_anchor_mm3())
+                .zip(result.centroid_mm())
+            {
+                let recovered = p(anchor) + interval(moment) / area;
+                assert!(
+                    recovered.lo <= centroid[1] && centroid[0] <= recovered.hi,
+                    "public centered moments must reconstruct the reported centroid"
+                );
+            }
+
             assert!(Arc::ptr_eq(&result.source().0, &source.0));
             assert!(result.area_mm2()[0] > 0.);
             assert!(
