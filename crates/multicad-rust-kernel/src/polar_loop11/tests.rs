@@ -478,3 +478,15 @@ fn positive_quotients_enclose_exact_binary_rational_division_at_extreme_scales()
         assert_eq!(proof.winding(), if clockwise { -1 } else { 1 });
     }
 }
+
+#[test]
+fn literal_chord_angle_refuses_overflowing_endpoint_arithmetic() {
+    assert!(
+        positive_chord_angle(
+            [I::point(1e308), I::point(0.)],
+            [I::point(1e308), I::point(1e307)],
+            true
+        )
+        .is_none()
+    );
+}

@@ -42,7 +42,11 @@ pub(super) struct Registry {
     pub triangle_limit: usize,
     deflection: f64,
 }
-fn reserve<T>(values: &mut Vec<T>, additional: usize, budget: &mut Budget<'_>) -> Result<()> {
+pub(super) fn reserve<T>(
+    values: &mut Vec<T>,
+    additional: usize,
+    budget: &mut Budget<'_>,
+) -> Result<()> {
     let count = values.len().checked_add(additional).ok_or(Error::Limit)?;
     if count <= values.capacity() {
         return Ok(());

@@ -166,7 +166,12 @@ fn increment(p: &[B; 12], counter_clockwise: bool) -> Option<I> {
     {
         return None;
     }
-    let (a, b) = (p[0], p[11]);
+    positive_chord_angle([p[0][0], p[0][1]], [p[11][0], p[11][1]], counter_clockwise)
+}
+/// Rigorous positive angle of one literal straight chord. Positive cross/dot
+/// and ratio<=1/2 earn an origin-free sector narrower thanpi; callers charge
+/// their own bounded endpoint arithmetic on their continuing ledger.
+pub(crate) fn positive_chord_angle(a: [I; 2], b: [I; 2], counter_clockwise: bool) -> Option<I> {
     let dot = a[0] * b[0] + a[1] * b[1];
     let cross = a[0] * b[1] - a[1] * b[0];
     let cross = if counter_clockwise { cross } else { -cross };
@@ -177,7 +182,7 @@ fn increment(p: &[B; 12], counter_clockwise: bool) -> Option<I> {
     // directly: forming reciprocal(dot) first can overflow for a valid tiny
     // literal loop even though its angle ratio is finite and small.
     let ratio = positive_ratio(cross, dot);
-    if ratio.hi > 0.5 {
+    if !ratio.valid() || ratio.hi > 0.5 {
         return None;
     }
     Some(atan_small(ratio))

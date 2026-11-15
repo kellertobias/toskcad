@@ -4,6 +4,8 @@ use super::*;
 use crate::display::{DisplayMesh, Tessellation};
 mod angular;
 mod cells;
+mod embedding;
+pub use embedding::LiteralEmbeddingProof;
 mod hessian;
 mod normal;
 mod plan;
@@ -58,8 +60,53 @@ pub struct LiteralMeshCandidate {
     remaining: usize,
     peak: usize,
     root_triangles: Vec<Vec<usize>>,
+    caps: [embedding::Cap; 2],
+    retained_phase_bytes: usize,
+    byte_limit: usize,
+}
+pub struct LiteralMesh {
+    candidate: LiteralMeshCandidate,
+    embedding: LiteralEmbeddingProof,
+}
+impl LiteralMesh {
+    pub fn candidate(&self) -> &LiteralMeshCandidate {
+        &self.candidate
+    }
+    pub fn mesh(&self) -> &DisplayMesh {
+        self.candidate.mesh()
+    }
+    pub fn source(&self) -> &OwnedMaterial {
+        self.candidate.source()
+    }
+    pub fn embedding(&self) -> LiteralEmbeddingProof {
+        self.embedding
+    }
 }
 impl LiteralMeshCandidate {
+    /// Independently earns embedding of these exact rounded vertices. It
+    /// continues the original aggregate work/storage ledger, without repair.
+    pub fn certify_embedding(
+        mut self,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<LiteralMesh> {
+        let mut budget = Budget {
+            used: self.work,
+            remaining: self.remaining,
+            bytes: self.retained_phase_bytes,
+            peak: self.peak,
+            limit: self.byte_limit,
+            interrupt,
+        };
+        budget.step(1)?;
+        let embedding = embedding::certify(&self.mesh, &self.caps, &mut budget)?;
+        self.work = budget.used;
+        self.remaining = budget.remaining;
+        self.peak = budget.peak;
+        Ok(LiteralMesh {
+            candidate: self,
+            embedding,
+        })
+    }
     pub fn source(&self) -> &OwnedMaterial {
         &self.source
     }
@@ -184,6 +231,9 @@ impl LiteralGeometryPlan {
             remaining: budget.remaining,
             peak: budget.peak,
             root_triangles: result.root_triangles,
+            caps: result.caps,
+            retained_phase_bytes: budget.bytes,
+            byte_limit: options.maximum_bytes,
         })
     }
 }

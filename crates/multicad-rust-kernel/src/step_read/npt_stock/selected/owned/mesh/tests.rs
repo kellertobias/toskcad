@@ -51,6 +51,23 @@ fn actual_literal_mesh_probe() {
                 .iter()
                 .all(|f| (*f as usize) < source.faces().len())
         );
+        let proof_started = std::time::Instant::now();
+        let qualified = receipt.certify_embedding(None).unwrap();
+        eprintln!(
+            "NPT LITERAL EMBEDDING quarter={quarter} mapped={mapped} time={:?} work={} peak={} radial={} height={}",
+            proof_started.elapsed(),
+            qualified.candidate().work_used(),
+            qualified.candidate().accounted_peak_bytes(),
+            qualified.embedding().minimum_radial_determinant(),
+            qualified.embedding().minimum_axis_height_clearance_mm()
+        );
+        assert!(qualified.embedding().minimum_radial_determinant() > 0.);
+        assert!(qualified.embedding().minimum_axis_height_clearance_mm() > 0.);
+        assert_eq!(
+            qualified.embedding().connectivity(),
+            qualified.candidate().connectivity()
+        );
+        assert!(std::sync::Arc::ptr_eq(&source.0, &qualified.source().0));
     }
 }
 #[test]

@@ -3,7 +3,8 @@ use super::*;
 mod mesh;
 mod query;
 pub use mesh::{
-    LiteralGeometryOptions, LiteralGeometryPlan, LiteralMeshCandidate, LiteralMeshOptions,
+    LiteralEmbeddingProof, LiteralGeometryOptions, LiteralGeometryPlan, LiteralMesh,
+    LiteralMeshCandidate, LiteralMeshOptions,
 };
 pub use query::{Location, MaterialQuery, QueryOptions};
 use std::{ops::Range, sync::Arc};

@@ -31,6 +31,7 @@ pub(super) struct Output {
     pub position: f64,
     pub angle: f64,
     pub root_triangles: Vec<Vec<usize>>,
+    pub caps: [embedding::Cap; 2],
 }
 fn side_uv(side: usize, t: f64) -> [f64; 2] {
     match side {
@@ -452,17 +453,26 @@ pub(super) fn build(
             }
         }
     }
+    let mut caps = [None, None];
     for (face_index, face) in source.faces().iter().enumerate() {
         let Support::Plane { height } = face.support else {
             continue;
         };
-        let axis = [
+        let original_axis = [
             I::point(0.),
             I::point(0.),
             interval_point(source, height)[2],
         ];
+        // The small, explicitly charged outward apex gives a literal fan
+        // strictly outside the rounded rim. Source cap correspondence uses
+        // the ORIGINAL axis anchor, retaining the complete radial-disk bound.
+        let column = cells::l1(source.0.linear[2]);
+        let offset = options.tessellation.deflection * 0.001 / column;
+        let mut axis = original_axis;
+        axis[2] = axis[2] + I::point(if face.forward { offset } else { -offset });
         let anchor = registry.vertex(source, VertexKey::Cap(face_index), axis, budget)?;
-        let actual = source.map_box_mm(axis.map(bounds))?.map(interval);
+        let actual = source.map_box_mm(original_axis.map(bounds))?.map(interval);
+        let mut rim = Vec::new();
         let a = registry.vertices[anchor as usize].point;
         position = position.max(cells::l1(std::array::from_fn(|k| {
             actual[k] - I::point(a[k])
@@ -487,6 +497,8 @@ pub(super) fn build(
                             samples[samples.len() - index - 2].vertex,
                         ]
                     };
+                    registry::reserve(&mut rim, 1, budget)?;
+                    rim.push(a);
                     let triangle = [anchor, a, b];
                     let error = cells::cap_angle(
                         source,
@@ -504,6 +516,11 @@ pub(super) fn build(
                 }
             }
         }
+        caps[usize::from(face.forward)] = Some(embedding::Cap {
+            face: face_index,
+            apex: anchor,
+            rim,
+        });
     }
     if position
         .partial_cmp(&options.tessellation.deflection)
@@ -526,6 +543,7 @@ pub(super) fn build(
         position,
         angle,
         root_triangles,
+        caps: caps.map(|cap| cap.expect("sealed material has one cap per orientation")),
     })
 }
 
