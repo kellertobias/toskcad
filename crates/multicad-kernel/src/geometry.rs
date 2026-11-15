@@ -18,6 +18,9 @@ pub(crate) mod bore_treatment;
 pub use bore_treatment::ConicalSeatGeometry;
 pub(crate) mod circular_pocket_body;
 mod clipped_npt_body;
+mod external_npt_stock_body;
+use external_npt_stock_body::ExternalNptStockBody;
+pub use external_npt_stock_body::ExternalNptStockTransfer;
 pub(crate) mod construction;
 mod cosmetic_fastener_body;
 mod cosmetic_profiled_body;
@@ -723,6 +726,7 @@ enum SolidBody {
     CosmeticFastener(Rc<CosmeticFastenerBody>, PlaneFrame),
     CosmeticProfiled(Rc<CosmeticProfiledBody>, PlaneFrame),
     ClippedNpt(Rc<ClippedNptBody>),
+    ExternalNptStock(Rc<ExternalNptStockBody>),
     Helical(Rc<HelicalBody>, PlaneFrame),
     RoundedThread(Rc<RoundedThreadBody>, PlaneFrame),
     EntryChamfer(Rc<EntryChamferBody>, PlaneFrame),
@@ -1177,6 +1181,7 @@ impl Solid {
     pub fn share(&self) -> Result<Self, GeometryError> {
         let body = match &self.body {
             SolidBody::ClippedNpt(body) => SolidBody::ClippedNpt(Rc::clone(body)),
+            SolidBody::ExternalNptStock(body) => SolidBody::ExternalNptStock(Rc::clone(body)),
             SolidBody::Prism(prism, frame) => SolidBody::Prism(Rc::clone(prism), *frame),
             SolidBody::PolygonPrism(prism) => SolidBody::PolygonPrism(Rc::clone(prism)),
             SolidBody::AxialCylinder(cylinder, frame, sketch) => {
@@ -1524,6 +1529,9 @@ impl Solid {
                 return self.share();
             }
             let body = match &self.body {
+                SolidBody::ExternalNptStock(body) => {
+                    SolidBody::ExternalNptStock(Rc::new(body.transformed(transform, self.policy)?))
+                }
                 SolidBody::ClippedNpt(body) => {
                     SolidBody::ClippedNpt(Rc::new(body.transformed(transform, self.policy)?))
                 }
@@ -1850,6 +1858,9 @@ impl Solid {
         if let Some((body, _)) = self.spline_sweep_body() {
             return Ok(body.sweep.volume_mm3());
         }
+        if let Some(body) = self.external_npt_stock_body() {
+            return Ok(body.volume_mm3());
+        }
         if let Some(body) = self.clipped_npt_body() {
             return Ok(body.volume_mm3());
         }
@@ -1990,6 +2001,9 @@ impl Solid {
         }
         if let Some((body, frame)) = self.spline_sweep_body() {
             return Ok(body.bounds(frame));
+        }
+        if let Some(body) = self.external_npt_stock_body() {
+            return Ok(body.bounds());
         }
         if let Some(body) = self.clipped_npt_body() {
             return Ok(body.bounds());
@@ -2187,6 +2201,9 @@ impl Solid {
         if let Some((body, frame)) = self.spline_sweep_body() {
             return Ok(body.faces(frame));
         }
+        if let Some(body) = self.external_npt_stock_body() {
+            return Ok(body.faces());
+        }
         if let Some(body) = self.clipped_npt_body() {
             return Ok(body.faces());
         }
@@ -2348,6 +2365,7 @@ impl Solid {
                 crate::rust_display::placed_mesh(body.cut.mesh(rust_options), *frame, false)
             }
             SolidBody::ClippedNpt(body) => body.mesh(rust_options),
+            SolidBody::ExternalNptStock(body) => body.mesh(rust_options),
             SolidBody::CosmeticProfiled(body, frame) => match usage {
                 MeshUse::Display => body.mesh(*frame, rust_options),
                 MeshUse::Manufacturing => Err(error(
@@ -2467,6 +2485,7 @@ impl Solid {
             || self.internal_thread_treatment_body().is_some()
             || self.repaired_phillips_body().is_some()
             || self.clipped_npt_body().is_some()
+            || self.external_npt_stock_body().is_some()
             || self.wood_insert_body().is_some()
             || self.hanger_body().is_some()
             || self
@@ -2482,6 +2501,9 @@ impl Solid {
             manufacturing,
         };
         const OPERATION: &str = "manufacturing mesh";
+        if let Some(body) = self.external_npt_stock_body() {
+            return body.manufacturing(Self::rust_mesh_options(options));
+        }
         if let Some(body) = self.clipped_npt_body() {
             return body.manufacturing(Self::rust_mesh_options(options));
         }
@@ -2746,6 +2768,9 @@ impl Solid {
         ordinal: u32,
         options: multicad_rust_kernel::display::Tessellation,
     ) -> Option<Result<Vec<[f64; 3]>, multicad_rust_kernel::display::MeshError>> {
+        if let Some(body) = self.external_npt_stock_body() {
+            return body.sample_edge(ordinal, options);
+        }
         if let Some(body) = self.clipped_npt_body() {
             return body.sample_edge(ordinal, options);
         }
@@ -2814,6 +2839,7 @@ impl Solid {
             SolidBody::CosmeticFastener(body, _) => body.feature,
             SolidBody::CosmeticProfiled(body, _) => body.feature,
             SolidBody::ClippedNpt(body) => body.feature,
+            SolidBody::ExternalNptStock(body) => body.feature,
             SolidBody::Linear(body, _) => body.feature,
             SolidBody::Revolved(body, _) => body.feature,
             SolidBody::RoundedSlot(body, _) => body.feature,
@@ -2888,7 +2914,8 @@ impl Solid {
             SolidBody::WoodInsert(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::ClippedNpt(body) => body.supports_step(self.policy),
             SolidBody::Hanger(body, frame) => body.supports_step(*frame, self.policy),
-            SolidBody::CosmeticFastener(..)
+            SolidBody::ExternalNptStock(..)
+            | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
             | SolidBody::InternalThreadTreatment(..)
             | SolidBody::RepairedPhillips(..) => false,
@@ -3105,7 +3132,8 @@ impl Solid {
             SolidBody::WoodInsert(body, frame) => body.append_step(writer, *frame, self.policy),
             SolidBody::ClippedNpt(body) => body.append_step(writer, self.policy),
             SolidBody::Hanger(body, frame) => body.append_step(writer, *frame, self.policy),
-            SolidBody::CosmeticFastener(..)
+            SolidBody::ExternalNptStock(..)
+            | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
             | SolidBody::InternalThreadTreatment(..)
             | SolidBody::RepairedPhillips(..) => Err(step::StepError::Unsupported),
