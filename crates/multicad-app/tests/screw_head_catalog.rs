@@ -177,7 +177,8 @@ fn eight_real_family_builds_keep_physical_top_length_choices_literal_references_
             .position(|e| e.family == family && e.nominal_mm == nominal)
             .unwrap();
         let entry = &c.entries[index];
-        let p = catalog::build(&c, index).unwrap();
+        let p = catalog::build(&c, index)
+            .unwrap_or_else(|cause| panic!("{family} M{nominal}: {cause:?}"));
         assert!(documents.insert(p.document.id()));
         assert!(p.document.id().to_string().starts_with("cad23600-"));
         let saved = bytes(&p);

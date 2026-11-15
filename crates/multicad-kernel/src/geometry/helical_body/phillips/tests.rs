@@ -4,6 +4,57 @@ use multicad_rust_kernel::{
     helical_thread,
     profiled_screw::SourceSpec,
 };
+
+#[test]
+fn named_phillips_face_frames_follow_rigid_occurrences_without_axis_flips() {
+    for index in 0..6 {
+        for left in [false, true] {
+            let source = fixture(index, 2., left);
+            for frame in [
+                PlaneFrame {
+                    origin: [3., -7., 11.],
+                    u: [1., 0., 0.],
+                    v: [0., -1., 0.],
+                },
+                PlaneFrame {
+                    origin: [-9., 5., 2.],
+                    u: [0.8, 0.6, 0.],
+                    v: [-0.36, 0.48, 0.8],
+                },
+            ] {
+                for role in source.faces() {
+                    let local = properties::plane(
+                        &source,
+                        role,
+                        PlaneFrame::default(),
+                        GeometryPolicy::default(),
+                    )
+                    .unwrap();
+                    let actual =
+                        properties::plane(&source, role, frame, GeometryPolicy::default()).unwrap();
+                    assert_eq!(local.is_some(), actual.is_some());
+                    if let (Some(local), Some(actual)) = (local, actual) {
+                        let expected = super::super::boundary::placed_frame(
+                            frame,
+                            local.origin_mm,
+                            local.u,
+                            local.v,
+                        );
+                        for (a, b) in [expected.origin_mm, expected.u, expected.v]
+                            .into_iter()
+                            .zip([actual.origin_mm, actual.u, actual.v])
+                        {
+                            assert!(
+                                a.into_iter().zip(b).all(|(a, b)| (a - b).abs() < 1e-10),
+                                "{index} {left} {role:?}: expected {expected:?}, actual {actual:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 pub(super) fn fixture(index: usize, plain: f64, left: bool) -> PhillipsScrew {
     let (m, r, b, g, inner, beta, rs, pitch, head) = match index {
         0 => (
