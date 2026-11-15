@@ -221,6 +221,50 @@ fn the_side_view_silhouette_reaches_the_exact_extents() {
     }
 }
 
+#[test]
+fn an_oblique_cut_publishes_the_bore_as_exact_ellipse_arcs() {
+    let spec = specification(2., 20, 30, 8., 3.);
+    let gear = rust(spec);
+    let s = 0.5_f64.sqrt();
+    let t = (1_f64 / 6.).sqrt();
+    // The cut plane has the normal (1, 1, 1) / √3 and passes through the
+    // bore above the toe.
+    let vectors = project(
+        &[&gear],
+        DrawingProjection {
+            frame: PlaneFrame {
+                origin: [0., 0., 36.],
+                u: [s, -s, 0.],
+                v: [t, t, -2. * t],
+            },
+            section_offset_mm: Some(0.),
+            section_only: true,
+            ..Default::default()
+        },
+    );
+    let mut bore = 0;
+    let mut conics = 0;
+    for vector in vectors.iter().filter(|v| v.role == VectorRole::Section) {
+        if let VectorCurve::Ellipse {
+            center,
+            major_mm,
+            minor_mm,
+            ..
+        } = vector.curve
+        {
+            conics += 1;
+            // A cylinder of radius r cut at 1/√3 to its axis.
+            if (minor_mm - 3.).abs() <= 1e-9 && (major_mm - 3. * 3_f64.sqrt()).abs() <= 1e-9 {
+                assert!(center[0].hypot(center[1]) <= 1e-9, "{center:?}");
+                bore += 1;
+            }
+        }
+    }
+    assert!(bore >= 2, "{bore} bore arcs among {conics} conics");
+    // The back cones are cut in conics as well.
+    assert!(conics > bore);
+}
+
 fn rational(value: i64) -> Rational {
     Rational::new(value, 1).unwrap()
 }

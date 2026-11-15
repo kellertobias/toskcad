@@ -392,6 +392,9 @@ fn every_turn_of_a_face_normal_has_an_outline() {
     }
 }
 
+/// Section paths published as exact ellipse arcs.
+static CONICS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// Signed area of chained section loops from fine chords, checking closure,
 /// the plane, the boundary and the material side on the way.
 fn loop_area(name: &str, gear: &Gear, depth: f64, loops: &[Loop]) -> f64 {
@@ -415,6 +418,76 @@ fn loop_area(name: &str, gear: &Gear, depth: f64, loops: &[Loop]) -> f64 {
             }
             for pair in points.windows(2) {
                 area += 0.5 * (pair[0][0] * pair[1][1] - pair[1][0] * pair[0][1]);
+            }
+            // Certified chords: the curve stays within the tolerance of
+            // every chord, for a coarse and a fine request.
+            for tolerance in [2e-2, 1e-4] {
+                let stops = path.flatten(tolerance);
+                assert!(stops.len() < 20_000, "{name}: {} stops", stops.len());
+                assert_eq!((stops[0], *stops.last().unwrap()), (0., 1.));
+                for pair in stops.windows(2) {
+                    assert!(pair[1] > pair[0]);
+                    let [a, b] = [pair[0], pair[1]].map(|t| path.point(t));
+                    let chord = sub(b, a);
+                    for k in 1..8 {
+                        let offset = sub(
+                            path.point(pair[0] + (pair[1] - pair[0]) * f64::from(k) / 8.),
+                            a,
+                        );
+                        let along = if dot3(chord, chord) > 0. {
+                            (dot3(offset, chord) / dot3(chord, chord)).clamp(0., 1.)
+                        } else {
+                            0.
+                        };
+                        let off = norm(sub(offset, scaled(chord, along)));
+                        assert!(
+                            off <= tolerance * (1. + 1e-9) + 1e-12,
+                            "{name}: chord sag {off} beyond {tolerance}"
+                        );
+                    }
+                }
+            }
+            // An exact paper curve carries the whole path.
+            match path.paper([0., 1.]) {
+                Some(Curve::Ellipse(ellipse)) => {
+                    let [first, last] = ellipse.trim.map(|angle| ellipse.point(angle));
+                    let [p, q] = [0., 1.].map(|t| path.point(t));
+                    let gap = |a: P2, b: P3| (a[0] - b[0]).hypot(a[1] - b[1]);
+                    assert!(
+                        (gap(first, p) + gap(last, q)).min(gap(first, q) + gap(last, p)) <= 1e-9,
+                        "{name}: ellipse ends"
+                    );
+                    for k in 0..=32 {
+                        let point = path.point(f64::from(k) / 32.);
+                        let offset = [point[0] - ellipse.center[0], point[1] - ellipse.center[1]];
+                        let x =
+                            (offset[0] * ellipse.u[0] + offset[1] * ellipse.u[1]) / ellipse.major;
+                        let y =
+                            (offset[0] * ellipse.v[0] + offset[1] * ellipse.v[1]) / ellipse.minor;
+                        assert!(
+                            (x.hypot(y) - 1.).abs() * ellipse.minor <= 1e-8,
+                            "{name}: point off its ellipse"
+                        );
+                        let angle = (y.atan2(x) - ellipse.trim[0]).rem_euclid(TAU);
+                        let span = ellipse.trim[1] - ellipse.trim[0];
+                        assert!(
+                            angle <= span + 1e-7 || angle >= TAU - 1e-7,
+                            "{name}: point outside the ellipse trim"
+                        );
+                    }
+                    CONICS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                Some(Curve::Line([a, b])) => {
+                    for k in 0..=8 {
+                        let point = path.point(f64::from(k) / 8.);
+                        let chord = [b[0] - a[0], b[1] - a[1]];
+                        let off = ((point[0] - a[0]) * chord[1] - (point[1] - a[1]) * chord[0])
+                            .abs()
+                            / chord[0].hypot(chord[1]).max(1e-300);
+                        assert!(off <= 1e-9, "{name}: point off its line");
+                    }
+                }
+                None => {}
             }
             let length: f64 = points.windows(2).map(|w| norm(sub(w[1], w[0]))).sum();
             if length > 0.05 {
@@ -501,6 +574,9 @@ fn sections_bound_the_material_in_the_plane() {
             assert!(gear.section(hi[2] + 1., 1e-3).unwrap().is_empty());
         }
     }
+    // Bore cuts and closed cuts of the cones are ellipse arcs.
+    let conics = CONICS.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(conics >= 40, "{conics} elliptic section paths");
 }
 
 /// The engine hides a point when a sight interval extends in front of it.
