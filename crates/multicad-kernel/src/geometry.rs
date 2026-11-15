@@ -1423,6 +1423,9 @@ impl Solid {
             if let Some(result) = self.contained_annulus_boolean(other, operation, policy) {
                 return result;
             }
+            if let Some(result) = self.contained_insert_boolean(other, operation, policy) {
+                return result;
+            }
             if let Some(result) = self.default_certified_boolean(other, operation, policy) {
                 return result;
             }

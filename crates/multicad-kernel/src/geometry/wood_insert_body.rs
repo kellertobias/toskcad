@@ -10,6 +10,7 @@ use multicad_rust_kernel::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
+mod contained_boolean;
 mod step;
 pub use step::WoodInsertStepVerification;
 #[derive(Clone, Copy, Debug, PartialEq)]
