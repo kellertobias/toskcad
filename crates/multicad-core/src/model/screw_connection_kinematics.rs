@@ -441,6 +441,54 @@ pub fn resolve_connection_hardware_pose(
         )
         .map(|(_, pose)| pose);
     }
+    if request.mode == Mode::WoodInsert
+        && grip > 0.
+        && request.hardware.len() == 2
+        && request.hardware.iter().all(|row| {
+            matches!(row.source, HardwareSource::Generated { .. })
+                && matches!(row.role, Role::Screw | Role::Insert)
+        })
+        && request
+            .hardware
+            .iter()
+            .filter(|row| row.role == Role::Screw)
+            .count()
+            == 1
+        && request.receivers.len() == 2
+        && matches!(
+            request.receivers[0].source.extent,
+            model::ConnectionReceiverExtent::Through {}
+        )
+        && matches!(
+            request.receivers[0].source.seat,
+            Some(model::ConnectionReceiverSeat::Counterbore { .. })
+        )
+        && matches!(
+            request.receivers[1].source.extent,
+            model::ConnectionReceiverExtent::Blind { .. }
+        )
+        && request.receivers[1].source.seat.is_none()
+        && request
+            .receivers
+            .iter()
+            .all(|row| matches!(row.source.cut, model::ConnectionReceiverCut::Round { .. }))
+    {
+        let axis =
+            request
+                .axis
+                .source
+                .resolve(document, p, &request.axis.face, revision, snapshots)?;
+        return seating::insert_pose(
+            &request,
+            &parts,
+            binding.role,
+            grip,
+            axis,
+            p,
+            seating::Options::canonical(),
+        )
+        .map(|(_, pose)| pose);
+    }
     let mut head = 0.;
     let mut nut = 0.;
     for (row, part) in request.hardware.iter().zip(&parts) {

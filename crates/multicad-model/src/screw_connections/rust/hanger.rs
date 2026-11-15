@@ -245,6 +245,8 @@ pub(super) fn check(
         minimum_engagement_mm:minimum,blind_tip_clearance_mm:tip,
         actual_engagement_mm:Some(proof.nut.engagement_mm[0].midpoint(proof.nut.engagement_mm[1])),
         actual_wood_engagement_mm:Some(proof.wood.engagement_mm[0].midpoint(proof.wood.engagement_mm[1])),
+        actual_head_bearing_gap_mm: None,
+        actual_insert_inset_mm: None,
         native_component_collision_checked:true,
         scope:"Actual authored hanger and finite nut: pilot wall/floor and wood contact, complete clamp/washer passage, nonnegative bearing gaps, retained metric phase and strict source-owned separation from unrelated components. No strength or installation certification".into(),
     })

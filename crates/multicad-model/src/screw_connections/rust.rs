@@ -347,6 +347,8 @@ fn through_nut(
         blind_tip_clearance_mm: blind_clearance,
         actual_engagement_mm: Some(mating.overlap_length_mm),
         actual_wood_engagement_mm: None,
+        actual_head_bearing_gap_mm: None,
+        actual_insert_inset_mm: None,
         native_component_collision_checked: true,
         scope: conical_bearing.as_ref().map_or_else(
             || "Exact placed metric profiles, through-bore clearance and flat seating with separation from other components".into(),

@@ -67,6 +67,12 @@ pub struct ScrewConnectionCheck {
     pub actual_engagement_mm: Option<f64>,
     #[serde(default)]
     pub actual_wood_engagement_mm: Option<f64>,
+    /// Actual nonnegative corresponding bearing-face gap, in millimeters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual_head_bearing_gap_mm: Option<[f64; 2]>,
+    /// Actual managed insert inset, in millimeters; not a source-length change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual_insert_inset_mm: Option<[f64; 2]>,
     pub native_component_collision_checked: bool,
     pub scope: String,
 }

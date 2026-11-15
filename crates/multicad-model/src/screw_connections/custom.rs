@@ -605,6 +605,8 @@ pub(super) fn validate(mut input: Inputs<'_>) -> Result<ScrewConnectionCheck, Mo
         blind_tip_clearance_mm: clearance,
         actual_engagement_mm: metric.or(Some(wood_engagement)),
         actual_wood_engagement_mm: Some(wood_engagement),
+        actual_head_bearing_gap_mm: None,
+        actual_insert_inset_mm: None,
         native_component_collision_checked: true,
         scope: "Current actual engineered wood flank/material overlap and bounded stock wall; metric insert/hanger mating and phase independently checked; all other native component interference refused. Flat ends and independently authored pilot geometry; no purchased profile, installation, load or strength certification".into(),
     })

@@ -426,6 +426,7 @@ fn public_bound_driver_uses_authored_spacing_and_keeps_exact_wood_datum() {
             blind_tip_clearance: length(1.),
         },
     };
+    actual_insert_proposals_and_limits(&session, &request);
     let q =
         model::prepare_screw_connection(&session, session.revision(), actor(), &request).unwrap();
     session.commit(q.prepared).unwrap();
@@ -446,5 +447,190 @@ fn public_bound_driver_uses_authored_spacing_and_keeps_exact_wood_datum() {
         } else {
             assert!(actual.translation_mm[2] > 6.7);
         }
+    }
+}
+
+fn actual_insert_proposals_and_limits(session: &Session, template: &model::ScrewConnectionRequest) {
+    for left in [false, true] {
+        let mut request = template.clone();
+        request.mode = Mode::WoodInsert;
+        request.receivers[0].source.seat = Some(model::ConnectionReceiverSeat::Counterbore {
+            diameter: length(7.),
+            depth: length(1.),
+        });
+        let mut screw = model::default_machine_screw();
+        let model::MechanicalPartParameters::MachineScrew {
+            thread,
+            underhead_length,
+            length_input,
+            ..
+        } = &mut screw
+        else {
+            unreachable!()
+        };
+        thread.length = length(8.);
+        thread.hand = if left {
+            model::ThreadHand::Left
+        } else {
+            model::ThreadHand::Right
+        };
+        *underhead_length = Some(length(8.));
+        *length_input = None;
+        let mut insert = model::default_custom_connection_wood_insert();
+        let model::MechanicalPartParameters::CustomConnection { parameters } = &mut insert else {
+            unreachable!()
+        };
+        let model::CustomConnectionHardwareParameters::WoodInsert {
+            outer_thread,
+            inner_thread,
+            ..
+        } = parameters.as_mut()
+        else {
+            unreachable!()
+        };
+        for thread in [outer_thread, inner_thread] {
+            thread.hand = if left {
+                model::ThreadHand::Left
+            } else {
+                model::ThreadHand::Right
+            };
+        }
+        let mut parts = vec![];
+        request.hardware.clear();
+        for (role, parameters) in [(Role::Screw, screw), (Role::Insert, insert)] {
+            parts.push(parameters.resolve(session.parameters()).unwrap());
+            request
+                .hardware
+                .push(model::ScrewConnectionHardwareRequest {
+                    role_id: EntityId::new(),
+                    role,
+                    name: "Actual managed proposal".into(),
+                    source: HardwareSource::Generated {
+                        part: Box::new(model::MechanicalPartRequest::new(
+                            "Original source",
+                            parameters,
+                        )),
+                    },
+                    instance: EntityId::new(),
+                    driver: EntityId::new(),
+                });
+        }
+        let axis = RigidPose {
+            rotation: [[1., 0., 0.], [0., -1., 0.], [0., 0., -1.]],
+            translation_mm: [10., 10., 4.1],
+        };
+        let query = |r: &model::ScrewConnectionRequest,
+                     parts: &[ResolvedMechanicalPart],
+                     role,
+                     grip,
+                     axis,
+                     options| {
+            insert_pose(r, parts, role, grip, axis, session.parameters(), options)
+        };
+        for row in &request.hardware {
+            let (station, pose) = query(
+                &request,
+                &parts,
+                row.role_id,
+                4.1,
+                axis,
+                Options::canonical(),
+            )
+            .unwrap();
+            assert!(pose.validate().is_ok());
+            match row.role {
+                Role::Screw => assert!(station < 1. && station > 1. - 1e-7),
+                Role::Insert => assert!(station > 4.1 && station < 4.1 + 1e-7),
+                _ => unreachable!(),
+            }
+        }
+        let role = request.hardware[0].role_id;
+        for options in [
+            Options {
+                maximum_attempts: 0,
+                ..Options::canonical()
+            },
+            Options {
+                maximum_attempts: 1,
+                ..Options::canonical()
+            },
+            Options {
+                maximum_attempts: 5,
+                ..Options::canonical()
+            },
+            Options {
+                maximum_gap_mm: 0.,
+                ..Options::canonical()
+            },
+            Options {
+                maximum_gap_mm: 1e-20,
+                ..Options::canonical()
+            },
+        ] {
+            assert!(query(&request, &parts, role, 4.1, axis, options).is_err());
+        }
+        assert!(query(&request, &parts[..1], role, 4.1, axis, Options::canonical()).is_err());
+        assert!(query(&request, &parts, role, 0., axis, Options::canonical()).is_err());
+        assert!(
+            query(
+                &request,
+                &parts,
+                EntityId::new(),
+                4.1,
+                axis,
+                Options::canonical()
+            )
+            .is_err()
+        );
+        let mut wrong = request.clone();
+        wrong.hardware[0].role = Role::Nut;
+        assert!(query(&wrong, &parts, role, 4.1, axis, Options::canonical()).is_err());
+        let mut wrong = request.clone();
+        wrong.hardware[1].role = Role::Nut;
+        assert!(query(&wrong, &parts, role, 4.1, axis, Options::canonical()).is_err());
+        // Real alternate public definitions are not accepted as an insert
+        // merely because the caller labels their row with the insert role.
+        for parameters in [
+            model::default_custom_connection_wood_screw(),
+            model::MechanicalPartParameters::Washer {
+                outside_diameter: length(7.),
+                bore_diameter: length(3.4),
+                thickness: length(0.5),
+                frame: Default::default(),
+            },
+        ] {
+            let mut actual = parts.clone();
+            actual[1] = parameters.resolve(session.parameters()).unwrap();
+            assert!(query(&request, &actual, role, 4.1, axis, Options::canonical()).is_err());
+        }
+        let mut duplicate = request.clone();
+        duplicate.hardware[1].role = Role::Screw;
+        assert!(query(&duplicate, &parts, role, 4.1, axis, Options::canonical()).is_err());
+        let mut invalid_seat = request.clone();
+        invalid_seat.receivers[0].source.seat = Some(model::ConnectionReceiverSeat::Counterbore {
+            diameter: length(7.),
+            depth: length(-1.),
+        });
+        assert!(query(&invalid_seat, &parts, role, 4.1, axis, Options::canonical()).is_err());
+        let mut far = axis;
+        far.translation_mm = [1e7; 3];
+        let (station, actual) =
+            query(&request, &parts, role, 4.1, far, Options::canonical()).unwrap();
+        assert!(station < 1. && station > 1. - 1e-7);
+        assert!(actual.validate().is_ok());
+        assert!(
+            query(
+                &request,
+                &parts,
+                role,
+                4.1,
+                far,
+                Options {
+                    maximum_gap_mm: 1e-10,
+                    ..Options::canonical()
+                }
+            )
+            .is_err()
+        );
     }
 }

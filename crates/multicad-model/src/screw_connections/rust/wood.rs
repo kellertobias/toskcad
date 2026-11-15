@@ -183,6 +183,6 @@ pub(super) fn check(
     Ok(ScrewConnectionCheck{connection:id,mode:source.mode,hardware_instances:vec![row.instance],
         receiver_features:vec![receiver.feature],grip_mm:grip,minimum_engagement_mm:minimum,
         blind_tip_clearance_mm:clearance,actual_engagement_mm:Some(engagement),actual_wood_engagement_mm:Some(engagement),
-        native_component_collision_checked:true,
+        actual_head_bearing_gap_mm:None,actual_insert_inset_mm:None,native_component_collision_checked:true,
         scope:"Actual retained flat-root wood screw and blind pilot/counterbore: complete stock wall/floor, exact actual flat bearing plane, positive open material bite and all other component collision checks; no clamp/washer, installation or strength certification".into()})
 }

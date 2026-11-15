@@ -2,6 +2,8 @@
 //! Final Native material/phase/floor proofs remain mandatory. Directed finite
 //! projections measure the computed poses, including their actual trig outputs.
 use super::*;
+mod insert;
+pub(super) use insert::pose as insert_pose;
 #[cfg(test)]
 mod tests;
 #[derive(Clone, Copy)]

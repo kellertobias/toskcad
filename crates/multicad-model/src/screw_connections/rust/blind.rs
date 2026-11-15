@@ -208,6 +208,8 @@ pub(super) fn check(
         blind_tip_clearance_mm:blind_clearance,
         actual_engagement_mm:Some(mating.overlap_length_mm),
         actual_wood_engagement_mm:None,
+        actual_head_bearing_gap_mm: None,
+        actual_insert_inset_mm: None,
         native_component_collision_checked:true,
         scope:"Exact placed metric profiles, blind-floor and tip clearance, flat seating and separation from other components".into(),
     })
