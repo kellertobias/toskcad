@@ -411,9 +411,10 @@ fn actual_circle_numeric_qualification_cancellation_uses_its_real_public_callbac
                 .iter()
                 .map(polynomial_calls)
                 .sum::<usize>();
-        let raw_constructor = before + 1 + leaf_calls + 1;
+        let target_constructor = before + 1 + 1;
+        let raw_constructor = target_constructor + leaf_calls + 1;
         let numeric_constructor = raw_constructor + 2 * p + 1;
-        let circle_calls = 1 + leaf_calls + 1 + 2 * p + 1 + 2 * (1 + query_calls) + 2;
+        let circle_calls = 1 + 1 + leaf_calls + 1 + 2 * p + 1 + 2 * query_calls + 2;
         let expected = prefix
             + packet
                 .curves()
@@ -431,7 +432,7 @@ fn actual_circle_numeric_qualification_cancellation_uses_its_real_public_callbac
         head.periodic_thread_finite_curves(&field, options, Some(&observe))
             .unwrap();
         assert_eq!(count.get(), expected);
-        for frontier in [raw_constructor, numeric_constructor] {
+        for frontier in [target_constructor, raw_constructor, numeric_constructor] {
             let count = Cell::new(0);
             let cancel = || {
                 count.set(count.get() + 1);

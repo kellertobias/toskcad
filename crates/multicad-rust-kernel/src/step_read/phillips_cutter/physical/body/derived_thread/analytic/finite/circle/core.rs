@@ -38,11 +38,9 @@ impl RawCircle {
     }
 }
 #[derive(Clone, Copy)]
-pub(super) struct Input<'s> {
-    pub source: &'s PeriodicThreadSource,
+pub(super) struct Input {
+    pub target: ArcTarget,
     pub chart: CommonMouthChart,
-    pub band: usize,
-    pub z: f64,
     pub vertices: [[I; 3]; 2],
     pub same_sense: bool,
 }
@@ -51,39 +49,19 @@ pub(super) struct Correspondence {
     pub derivative: f64,
     pub incidence: f64,
 }
-fn endpoint(
-    source: &PeriodicThreadSource,
-    band: usize,
-    u: f64,
-    z: f64,
-    work: &mut Work<'_>,
-) -> FResult<[I; 3]> {
-    // Prepay the complete fixed query: initial256 +rotation4096 +pi4096
-    // +narrow sin/cos4096. The child cannot reset this producer's aggregate quota.
-    work.step(12544)?;
-    let p = source.bounds(band, [u; 2], [z; 2], 12544, work.interrupt)?;
-    Ok(p.position_mm.map(|x| I::new(x[0], x[1])))
-}
-
 pub(super) fn certify(
     raw: &RawCircle,
-    input: Input<'_>,
+    input: Input,
     work: &mut Work<'_>,
 ) -> FResult<Correspondence> {
     let Input {
-        source,
+        target,
         chart,
-        band,
-        z,
         vertices,
         same_sense,
     } = input;
     work.step(2048)?;
-    let radii = source.radius_nodes_mm();
-    if band >= 4
-        || radii[band] != radii[band + 1]
-        || !z.is_finite()
-        || vertices.into_iter().flatten().any(|x| !x.valid())
+    if vertices.into_iter().flatten().any(|x| !x.valid())
         || chart.columns.into_iter().flatten().any(|x| !x.is_finite())
         || !chart.outer_top_z.is_finite()
     {
@@ -99,12 +77,13 @@ pub(super) fn certify(
     } else {
         return Err(PhillipsReadError::Unsupported);
     };
-    let source_sign = if source.left_hand() { 1. } else { -1. };
+    let source_sign = if target.left_hand() { 1. } else { -1. };
     if (sign * source_sign > 0.) != same_sense {
         return Err(PhillipsReadError::Unsupported);
     }
-    let center = std::array::from_fn(|k| o[k] + n[k] * (I::point(z) - I::point(chart.outer_top_z)));
-    let radius = I::point(radii[band]);
+    let center =
+        std::array::from_fn(|k| o[k] + n[k] * (I::point(target.z()) - I::point(chart.outer_top_z)));
+    let radius = I::point(target.radius());
     let project = |actual: [I; 3]| -> FResult<([I; 3], [I; 3], f64)> {
         let d = delta(actual, raw.frame.origin);
         let xy = [dot(raw.frame.axes[0], d), dot(raw.frame.axes[1], d)];
@@ -120,7 +99,7 @@ pub(super) fn certify(
     };
     let actual_start = vertices[0];
     let (projected_start, start_direction, start_incidence) = project(actual_start)?;
-    let source_start = endpoint(source, band, 0., z, work)?;
+    let source_start = target.endpoint(false, work)?;
     let [c0, s0] = [source_start[0] / radius, source_start[1] / radius];
     let side = support::cross(raw.frame.axes[2], start_direction).map(|x| I::point(sign) * x);
     // Exact parameter-origin rotation of the unchanged actual circle. Its
@@ -142,7 +121,7 @@ pub(super) fn certify(
         } else {
             let (projected, _, reserve) = project(actual)?;
             incidence = incidence.max(reserve);
-            (projected, endpoint(source, band, 1., z, work)?)
+            (projected, target.endpoint(true, work)?)
         };
         let matched = std::array::from_fn(|k| {
             raw.frame.origin[k]
@@ -159,8 +138,7 @@ pub(super) fn certify(
     let angular = I::point(2.) * I::point(chord) / r;
     let rotation = rotation::Rotation::new(work)?;
     let pi = rotation.pi(work)?;
-    let phases = source.phases();
-    let span = I::point(2.) * pi * (phases[band + 1] - phases[band]) / I::point(source.pitch_mm());
+    let span = target.angular_span(pi);
     if span.lo <= (I::point(4.) * angular).hi
         || (I::point(2.) * pi - span).lo <= (I::point(4.) * angular).hi
     {

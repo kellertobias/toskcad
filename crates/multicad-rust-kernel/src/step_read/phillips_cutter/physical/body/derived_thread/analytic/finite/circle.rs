@@ -19,6 +19,8 @@ fn direction(
 }
 
 mod core;
+pub(super) mod target;
+use target::ArcTarget;
 pub(super) fn qualify(
     body: &Body<'_>,
     shell: &Shell<'_, '_>,
@@ -33,6 +35,25 @@ pub(super) fn qualify(
     // one-start, non-rounded sources only; exit_crests=false, hence role0/band3.
     assert_eq!(record.role, 0);
     assert_eq!(band, 3);
+    let radii = thread.source().radius_nodes_mm();
+    assert_eq!(radii[band], radii[band + 1]);
+    let target = ArcTarget::new(
+        *thread.source(),
+        [band, band + 1],
+        radii[band],
+        stations[0],
+        work,
+    )?;
+    qualify_target(body, shell, thread.chart(), target, record, work)
+}
+pub(super) fn qualify_target(
+    body: &Body<'_>,
+    shell: &Shell<'_, '_>,
+    chart: CommonMouthChart,
+    target: ArcTarget,
+    record: &mut PeriodicFiniteCurve,
+    work: &mut Work<'_>,
+) -> FResult<()> {
     let args = shell.args(record.curve_entity, "CIRCLE")?;
     let axis = shell.args(reference(&args[1])?, "AXIS2_PLACEMENT_3D")?;
     let origin = point(body, reference(&axis[1])?, work)?;
@@ -47,10 +68,8 @@ pub(super) fn qualify(
     let result = core::certify(
         &raw,
         core::Input {
-            source: thread.source(),
-            chart: thread.chart(),
-            band,
-            z: stations[usize::from(record.role == 2)],
+            target,
+            chart,
             vertices,
             same_sense: record.curve_same_sense,
         },
