@@ -8,11 +8,19 @@ pub use cells::{
     StockClipCellPlan, StockClipGridLine, StockClipMeshCandidate, StockClipPointOwner,
 };
 mod jets;
+mod measures;
+mod polyline;
+mod query;
+pub use measures::{StockClipFaceMeasure, StockClipMeasureOptions};
+pub use polyline::StockClipPolyline;
+pub use query::{StockClipClassification, StockClipQuery};
 mod sample;
 #[cfg(test)]
 mod tests;
+mod topology;
 mod volume;
 pub use jets::{StockClipJets, StockClipPatchLaw};
+pub use topology::StockClipFaceLoop;
 
 pub use sample::{StockClipPoint, StockClipSample};
 pub use volume::StockClipVolume;
@@ -55,6 +63,15 @@ impl<'a> Meter<'a> {
             used: 0,
             remaining: options.maximum_work,
             interrupt,
+        })
+    }
+    fn child_options(&self, options: StockClipOptions) -> Result<StockClipOptions, Error> {
+        if self.remaining == 0 {
+            return Err(Error::Limit);
+        }
+        Ok(StockClipOptions {
+            maximum_work: self.remaining,
+            ..options
         })
     }
     fn charge(&mut self, n: usize) -> Result<(), Error> {
