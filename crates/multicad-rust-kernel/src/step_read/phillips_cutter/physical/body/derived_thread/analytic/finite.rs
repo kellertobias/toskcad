@@ -7,9 +7,10 @@ pub use shoulder::{
     AuthoredPeriodicOptions, OwnedPeriodicMaterial, PeriodicAuthoredApproximation,
     PeriodicClosedMaterial, PeriodicCurveOwner, PeriodicCurveQuery, PeriodicFaceProperties,
     PeriodicGeometryApproximation, PeriodicLiteralCertificate, PeriodicMaterialFace,
-    PeriodicMaterialOptions, PeriodicMaterialProvenance, PeriodicMaterialVolume,
-    PeriodicOwnedMaterialQuery, PeriodicOwnedOptions, PeriodicProposalOrigin,
-    PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicVolumeOptions,
+    PeriodicMaterialMatch, PeriodicMaterialMatchOptions, PeriodicMaterialOptions,
+    PeriodicMaterialProvenance, PeriodicMaterialVolume, PeriodicOwnedMaterialQuery,
+    PeriodicOwnedOptions, PeriodicProposalOrigin, PeriodicShoulderOptions, PeriodicShoulderRepair,
+    PeriodicVolumeOptions,
 };
 type FResult<T> = std::result::Result<T, PhillipsReadError>;
 const FINITE_TOTAL: usize = 48_000_000;

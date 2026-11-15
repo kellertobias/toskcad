@@ -29,6 +29,11 @@ pub struct PatchCorrespondence {
     pub dv_mm: f64,
     /// Actual paired leaf attempts, including rejected parent cells.
     pub cells_used: usize,
+    /// Whole-source derivative norms in each original normalized chart.
+    pub maximum_source_du_mm: f64,
+    pub maximum_source_dv_mm: f64,
+    pub maximum_target_du_mm: f64,
+    pub maximum_target_dv_mm: f64,
 }
 #[derive(Clone, Copy)]
 pub struct PatchCorrespondenceOptions {
@@ -184,6 +189,24 @@ fn lift(
         }
     }
 }
+// Direct first-derivative bounds for the SAME reduced expressions on a
+// successful leaf. Exact frame sign/permutations preserve these norms.
+fn derivative_bounds(atlas: &PatchAtlas<'_>, index: usize, p: [S; 3]) -> [I; 2] {
+    let a = p.map(|x| abs(x.c[0]));
+    let d = p.map(|x| abs(x.c[1]));
+    match atlas.patches[index].law {
+        Law::Wall(..) => {
+            let beta = abs(atlas.topology.events().beta_tangent);
+            [sum(d) + beta * d[2], (I::point(1.) + beta) * a[2]]
+        }
+        Law::Trace(..) => [sum(d), sum(a)],
+        Law::Gap(_) => [d[0] + a[0] * d[1], a[0]],
+        Law::Envelope(..) | Law::Floor(_) => [
+            d[0] + a[0] * d[1] + d[2],
+            a[0] * abs(pi() / I::point(2.) - I::point(2.) * p[1].c[0]),
+        ],
+    }
+}
 impl PatchAtlas<'_> {
     /// Complete paired active charts at identical normalized coordinates.
     /// No retained allocation: depth-first traversal owns a fixed 64-cell
@@ -218,6 +241,10 @@ impl PatchAtlas<'_> {
             du_mm: 0.,
             dv_mm: 0.,
             cells_used: 0,
+            maximum_source_du_mm: 0.,
+            maximum_source_dv_mm: 0.,
+            maximum_target_du_mm: 0.,
+            maximum_target_dv_mm: 0.,
         };
         // Validate the complete semantic inventory before spending numeric
         // cells on earlier patches whose geometry could otherwise mask a
@@ -248,23 +275,40 @@ impl PatchAtlas<'_> {
                 let aw = reduced(self, index, I::new(lo, hi));
                 let bw = reduced(other, index, I::new(lo, hi));
                 let bound = match (left, right, aw, bw) {
-                    (Ok(a), Ok(b), Ok(ar), Ok(br)) => Some(lift(
-                        self,
-                        other,
-                        index,
-                        [ar, br],
-                        std::array::from_fn(|i| difference(a[i], b[i], ar[i], br[i], h)),
+                    (Ok(a), Ok(b), Ok(ar), Ok(br)) => Some((
+                        lift(
+                            self,
+                            other,
+                            index,
+                            [ar, br],
+                            std::array::from_fn(|i| difference(a[i], b[i], ar[i], br[i], h)),
+                        ),
+                        derivative_bounds(self, index, ar),
+                        derivative_bounds(other, index, br),
                     )),
                     _ => None,
                 };
-                if let Some(bound) = bound.filter(|b| {
-                    b.iter().all(|v| v.valid() && v.hi.is_finite())
-                        && b[0].hi <= options.maximum_position_mm
-                        && maximum([b[1], b[2], I::point(0.)]) <= options.maximum_derivative_mm
-                }) {
+                if let Some((bound, source_derivative, target_derivative)) =
+                    bound.filter(|(b, source, target)| {
+                        b.iter()
+                            .chain(source)
+                            .chain(target)
+                            .all(|v| v.valid() && v.hi.is_finite())
+                            && b[0].hi <= options.maximum_position_mm
+                            && maximum([b[1], b[2], I::point(0.)]) <= options.maximum_derivative_mm
+                    })
+                {
                     result.position_mm = result.position_mm.max(bound[0].hi);
                     result.du_mm = result.du_mm.max(bound[1].hi);
                     result.dv_mm = result.dv_mm.max(bound[2].hi);
+                    result.maximum_source_du_mm =
+                        result.maximum_source_du_mm.max(source_derivative[0].hi);
+                    result.maximum_source_dv_mm =
+                        result.maximum_source_dv_mm.max(source_derivative[1].hi);
+                    result.maximum_target_du_mm =
+                        result.maximum_target_du_mm.max(target_derivative[0].hi);
+                    result.maximum_target_dv_mm =
+                        result.maximum_target_dv_mm.max(target_derivative[1].hi);
                 } else {
                     if depth == 60 || mid == lo || mid == hi {
                         return Err(Error::Unresolved);

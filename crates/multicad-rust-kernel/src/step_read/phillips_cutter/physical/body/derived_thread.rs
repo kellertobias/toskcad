@@ -18,10 +18,10 @@ pub use analytic::{
     PeriodicClosedMaterial, PeriodicCurveOwner, PeriodicCurveQuery, PeriodicFaceProperties,
     PeriodicFiniteCurve, PeriodicFiniteCurves, PeriodicFiniteKind, PeriodicFiniteOptions,
     PeriodicGeometryApproximation, PeriodicLiteralCertificate, PeriodicMaterialFace,
-    PeriodicMaterialOptions, PeriodicMaterialProvenance, PeriodicMaterialVolume,
-    PeriodicOwnedMaterialQuery, PeriodicOwnedOptions, PeriodicProposalOrigin,
-    PeriodicShoulderOptions, PeriodicShoulderRepair, PeriodicThreadBounds,
-    PeriodicThreadCorrespondence, PeriodicThreadRepair, PeriodicThreadSource,
+    PeriodicMaterialMatch, PeriodicMaterialMatchOptions, PeriodicMaterialOptions,
+    PeriodicMaterialProvenance, PeriodicMaterialVolume, PeriodicOwnedMaterialQuery,
+    PeriodicOwnedOptions, PeriodicProposalOrigin, PeriodicShoulderOptions, PeriodicShoulderRepair,
+    PeriodicThreadBounds, PeriodicThreadCorrespondence, PeriodicThreadRepair, PeriodicThreadSource,
     PeriodicVolumeOptions,
 };
 pub use degree11::{CoherentDegree11ThreadCarrier, Degree11ThreadFace, Degree11ThreadOptions};

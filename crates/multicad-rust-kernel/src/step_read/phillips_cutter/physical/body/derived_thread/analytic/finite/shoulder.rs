@@ -10,9 +10,9 @@ pub use material::{
     AuthoredPeriodicOptions, OwnedPeriodicMaterial, PeriodicAuthoredApproximation,
     PeriodicClosedMaterial, PeriodicCurveOwner, PeriodicCurveQuery, PeriodicFaceProperties,
     PeriodicGeometryApproximation, PeriodicLiteralCertificate, PeriodicMaterialFace,
-    PeriodicMaterialOptions, PeriodicMaterialProvenance, PeriodicMaterialVolume,
-    PeriodicOwnedMaterialQuery, PeriodicOwnedOptions, PeriodicProposalOrigin,
-    PeriodicVolumeOptions,
+    PeriodicMaterialMatch, PeriodicMaterialMatchOptions, PeriodicMaterialOptions,
+    PeriodicMaterialProvenance, PeriodicMaterialVolume, PeriodicOwnedMaterialQuery,
+    PeriodicOwnedOptions, PeriodicProposalOrigin, PeriodicVolumeOptions,
 };
 #[cfg(test)]
 mod tests;

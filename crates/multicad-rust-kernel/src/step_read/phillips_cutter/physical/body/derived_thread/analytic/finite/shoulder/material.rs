@@ -15,9 +15,9 @@ use crate::phillips_drive::{
 pub use volume::{
     AuthoredPeriodicOptions, OwnedPeriodicMaterial, PeriodicAuthoredApproximation,
     PeriodicCurveOwner, PeriodicCurveQuery, PeriodicFaceProperties, PeriodicGeometryApproximation,
-    PeriodicLiteralCertificate, PeriodicMaterialProvenance, PeriodicMaterialVolume,
-    PeriodicOwnedMaterialQuery, PeriodicOwnedOptions, PeriodicProposalOrigin,
-    PeriodicVolumeOptions,
+    PeriodicLiteralCertificate, PeriodicMaterialMatch, PeriodicMaterialMatchOptions,
+    PeriodicMaterialProvenance, PeriodicMaterialVolume, PeriodicOwnedMaterialQuery,
+    PeriodicOwnedOptions, PeriodicProposalOrigin, PeriodicVolumeOptions,
 };
 #[cfg(test)]
 mod tests;

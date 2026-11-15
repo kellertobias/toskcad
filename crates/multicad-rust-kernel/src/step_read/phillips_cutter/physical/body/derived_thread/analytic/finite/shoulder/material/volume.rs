@@ -11,8 +11,9 @@ use crate::{
 pub use owned::{
     AuthoredPeriodicOptions, OwnedPeriodicMaterial, PeriodicAuthoredApproximation,
     PeriodicCurveOwner, PeriodicCurveQuery, PeriodicFaceProperties, PeriodicGeometryApproximation,
-    PeriodicLiteralCertificate, PeriodicMaterialProvenance, PeriodicOwnedMaterialQuery,
-    PeriodicOwnedOptions, PeriodicProposalOrigin,
+    PeriodicLiteralCertificate, PeriodicMaterialMatch, PeriodicMaterialMatchOptions,
+    PeriodicMaterialProvenance, PeriodicOwnedMaterialQuery, PeriodicOwnedOptions,
+    PeriodicProposalOrigin,
 };
 #[cfg(test)]
 mod tests;

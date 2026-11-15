@@ -2,12 +2,24 @@
 //! normalized u and v coordinates retain the real phase/axial expressions;
 //! no sampled mesh, cached-rate Thread or endpoint fit defines either side.
 use super::*;
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct PeriodicThreadCorrespondence {
     pub position_mm: f64,
     pub du_mm: f64,
     pub dv_mm: f64,
     pub work_used: usize,
+    pub maximum_radius_error_mm: f64,
+    pub maximum_du_radius_error_mm: f64,
+    pub maximum_source_du_radius_mm: f64,
+    pub maximum_target_du_radius_mm: f64,
+    /// Angle/angle-derivative bounds for the same finite normalized u/v map.
+    /// These are not surface normal-angle claims.
+    pub maximum_angle_error_radians: f64,
+    pub maximum_du_angle_error_radians: f64,
+    pub maximum_source_du_angle_radians: f64,
+    pub maximum_target_du_angle_radians: f64,
+    pub maximum_source_du_mm: f64,
+    pub maximum_source_dv_mm: f64,
 }
 fn term(p: [f64; 2]) -> I {
     if p[1] == 0. {
@@ -95,12 +107,7 @@ impl PeriodicThreadSource {
             let other_phase = other.phase_node_expressions_mm();
             let r = self.radius_nodes_mm();
             let other_r = other.radius_nodes_mm();
-            let mut out = PeriodicThreadCorrespondence {
-                position_mm: 0.,
-                du_mm: 0.,
-                dv_mm: 0.,
-                work_used: 0,
-            };
+            let mut out = PeriodicThreadCorrespondence::default();
             for band in 0..4 {
                 work.step(1)?;
                 let dp = I::point(
@@ -150,6 +157,28 @@ impl PeriodicThreadSource {
                         .all(|x| x.valid() && x.hi.is_finite()),
                     "validated finite thread and cap scales retain finite correspondence"
                 );
+                out.maximum_radius_error_mm = out.maximum_radius_error_mm.max(dr.hi);
+                out.maximum_du_radius_error_mm = out
+                    .maximum_du_radius_error_mm
+                    .max(abs(slope - other_slope).hi);
+                out.maximum_source_du_radius_mm =
+                    out.maximum_source_du_radius_mm.max(abs(slope).hi);
+                out.maximum_target_du_radius_mm =
+                    out.maximum_target_du_radius_mm.max(abs(other_slope).hi);
+                out.maximum_angle_error_radians = out.maximum_angle_error_radians.max(angle.hi);
+                out.maximum_du_angle_error_radians =
+                    out.maximum_du_angle_error_radians.max(du_angle.hi);
+                out.maximum_source_du_angle_radians =
+                    out.maximum_source_du_angle_radians.max(u_angle.hi);
+                out.maximum_target_du_angle_radians =
+                    out.maximum_target_du_angle_radians.max(other_u_angle.hi);
+                let source_radius = I::point(r[band].max(r[band + 1]));
+                out.maximum_source_du_mm = out
+                    .maximum_source_du_mm
+                    .max((abs(slope) + source_radius * u_angle).hi);
+                out.maximum_source_dv_mm = out
+                    .maximum_source_dv_mm
+                    .max((source_radius * v_angle + abs(height)).hi);
                 out.position_mm = out.position_mm.max(position.hi);
                 out.du_mm = out.du_mm.max(du.hi);
                 out.dv_mm = out.dv_mm.max(dv.hi);

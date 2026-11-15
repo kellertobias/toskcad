@@ -1116,6 +1116,8 @@ pub use phillips_cutter::{
     PeriodicGeometryApproximation as PhillipsPeriodicGeometryApproximation,
     PeriodicLiteralCertificate as PhillipsPeriodicLiteralCertificate,
     PeriodicMaterialFace as PhillipsPeriodicMaterialFace,
+    PeriodicMaterialMatch as PhillipsPeriodicMaterialMatch,
+    PeriodicMaterialMatchOptions as PhillipsPeriodicMaterialMatchOptions,
     PeriodicMaterialOptions as PhillipsPeriodicMaterialOptions,
     PeriodicMaterialProvenance as PhillipsPeriodicMaterialProvenance,
     PeriodicMaterialVolume as PhillipsPeriodicMaterialVolume,

@@ -5,6 +5,8 @@ use super::*;
 use crate::head_profile::OwnedRepairedHead;
 use std::sync::Arc;
 mod approximation;
+mod match_source;
+pub use match_source::{PeriodicMaterialMatch, PeriodicMaterialMatchOptions};
 mod curves;
 pub use curves::PeriodicCurveQuery;
 mod authored;
