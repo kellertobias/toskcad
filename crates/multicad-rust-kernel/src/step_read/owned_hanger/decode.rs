@@ -225,7 +225,10 @@ fn tensor<'i>(id: u32, entities: &[Entity<'i>], b: &mut Budget<'_>) -> Result<Te
             "SURFACE",
         ],
     )?;
-    let base = component(entities, "B_SPLINE_SURFACE")?;
+    // The complete inventory immediately above already requires this name;
+    // the parsed immutable record cannot lose a component between the checks.
+    let base = component(entities, "B_SPLINE_SURFACE")
+        .expect("validated complete tensor component inventory");
     if base.args.len() != 7
         || !matches!(
             &base.args[3..],

@@ -516,6 +516,90 @@ fn actual_spatial_and_parametric_curve_bindings_keep_their_dimensions() {
 }
 
 #[test]
+fn actual_tensor_inventory_and_paired_surface_ownership_are_mandatory() {
+    let source = Hanger::new(
+        crate::authored_hanger_bolt::tests::fixture(false, false),
+        None,
+    )
+    .unwrap();
+    let file =
+        crate::step::hanger::export_qualified_hanger(&source, Default::default(), None).unwrap();
+    let original = file.as_str();
+    let arena = part21::parse(original).unwrap();
+    let rational = arena
+        .values()
+        .flatten()
+        .find(|e| e.name == "RATIONAL_B_SPLINE_SURFACE")
+        .unwrap()
+        .source
+        .unwrap();
+    let changed = rational.replacen("RATIONAL_B_SPLINE_SURFACE", "UNKNOWN_SPLINE_SURFACE", 1);
+    let input = original.replacen(rational, &changed, 1);
+    assert!(part21::parse(&input).is_ok());
+    assert!(matches!(
+        decode(&input, Default::default(), None),
+        Err(Error::Unsupported)
+    ));
+
+    let edge = arena
+        .values()
+        .flatten()
+        .find(|e| e.name == "SURFACE_CURVE")
+        .unwrap();
+    let Value::List(pcurves) = &edge.args[2] else {
+        unreachable!()
+    };
+    let pc = pcurves
+        .iter()
+        .map(|v| match v {
+            Value::Reference(id) => *id,
+            _ => unreachable!(),
+        })
+        .collect::<Vec<_>>();
+    let surfaces = pc
+        .iter()
+        .map(|id| match arena[id][0].args[1] {
+            Value::Reference(id) => id,
+            _ => unreachable!(),
+        })
+        .collect::<Vec<_>>();
+    assert_ne!(surfaces[0], surfaces[1]);
+    let face = arena
+        .values()
+        .flatten()
+        .find(|e| {
+            e.name == "ADVANCED_FACE"
+                && matches!(e.args[2], Value::Reference(id) if id == surfaces[1])
+        })
+        .unwrap();
+    let mut input = original.replacen(
+        face.source.unwrap(),
+        &replace_argument(face.source.unwrap(), &[2], &format!("#{}", surfaces[0])),
+        1,
+    );
+    for (&id, entities) in &arena {
+        let entity = &entities[0];
+        if id != pc[1]
+            && entity.name == "PCURVE"
+            && matches!(entity.args[1], Value::Reference(id) if id == surfaces[1])
+        {
+            let component = entity.source.unwrap();
+            let changed = replace_argument(component, &[1], &format!("#{}", surfaces[0]));
+            input = input.replacen(component, &changed, 1);
+        }
+    }
+    // Both adjacent faces now name the same surface, while this actual edge
+    // still retains two different pcurve support owners. Merely finding one
+    // matching support for each coedge must not admit the inconsistent pair.
+    assert!(part21::parse(&input).is_ok());
+    assert!(matches!(
+        decode(&input, Default::default(), None),
+        Err(Error::Invalid)
+    ));
+    assert!(decode(original, Default::default(), None).is_ok());
+}
+
+#[test]
 fn actual_hanger_schema_fields_refuse_invalid_geometry_and_topology() {
     let source = Hanger::new(
         crate::authored_hanger_bolt::tests::fixture(false, false),
