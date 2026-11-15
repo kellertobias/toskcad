@@ -194,18 +194,15 @@ impl Surface {
                 let (position, around) = turn(sub(p, *origin));
                 (add(*origin, position), [around, turn(d).0])
             }
-            Self::Nurbs { surface, .. } => {
-                let [u, v] = self.confine([u, v]);
+            Self::Nurbs { surface, closed } => {
+                let [u, v] = Self::confine(surface, *closed, [u, v]);
                 surface.evaluate(u, v)
             }
         }
     }
 
     /// Keep spline parameters inside their knot range, wrapping closed ones.
-    fn confine(&self, uv: [f64; 2]) -> [f64; 2] {
-        let Self::Nurbs { surface, closed } = self else {
-            return uv;
-        };
+    fn confine(surface: &NurbsSurface, closed: [bool; 2], uv: [f64; 2]) -> [f64; 2] {
         [0, 1].map(|axis| {
             let [a, b] = surface.range(axis);
             if closed[axis] {
@@ -217,7 +214,7 @@ impl Surface {
     }
 
     /// The parameter range of each axis carried by an open spline.
-    fn bounded(&self) -> [Option<[f64; 2]>; 2] {
+    pub(crate) fn bounded(&self) -> [Option<[f64; 2]>; 2] {
         let open = |curve: &Curve| match curve {
             Curve::Nurbs {
                 curve,
@@ -287,7 +284,7 @@ impl Surface {
         })
     }
 
-    fn candidates(&self, point: Point) -> Vec<[f64; 2]> {
+    pub(crate) fn candidates(&self, point: Point) -> Vec<[f64; 2]> {
         match self {
             Self::Extrusion { curve, direction } => seeds(curve, point)
                 .into_iter()

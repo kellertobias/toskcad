@@ -91,7 +91,10 @@ impl Curve {
             }
             Self::Nurbs { curve, .. } => {
                 let [a, b] = curve.range();
-                let start = seed.map_or_else(|| self.nearest_sample(point), |seed| self.wrap(seed));
+                let start = seed.map_or_else(
+                    || Self::nearest_sample(curve, point),
+                    |seed| self.wrap(seed),
+                );
                 let mut t = start;
                 for _ in 0..40 {
                     let (p, d) = curve.evaluate(t);
@@ -101,7 +104,7 @@ impl Curve {
                     } else {
                         (t + step).clamp(a, b)
                     };
-                    let done = (next - t).abs() <= 1e-15 * (b - a);
+                    let done = (next - t).abs() <= 1e-13 * (b - a);
                     t = next;
                     if done {
                         break;
@@ -113,10 +116,8 @@ impl Curve {
         seed.map_or(t, |seed| nearest(t, seed, self.period()))
     }
 
-    fn nearest_sample(&self, point: Point) -> f64 {
-        let Self::Nurbs { curve, .. } = self else {
-            return 0.;
-        };
+    /// The knot-panel sample of `curve` nearest to `point`.
+    fn nearest_sample(curve: &NurbsCurve, point: Point) -> f64 {
         let [a, b] = curve.range();
         let cuts = curve.breaks(None, a, b);
         let mut best = (f64::INFINITY, a);

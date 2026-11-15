@@ -1356,3 +1356,135 @@ fn spline_constructors_refuse_inconsistent_nets_with_their_kind() {
         Err(Error::Invalid)
     );
 }
+
+#[test]
+fn every_support_family_moves_rigidly() {
+    // A quarter turn about z and a shift: volume and areas are kept, and
+    // the moved boundary validates and integrates to the same volume.
+    let linear = |p: Point| [-p[1], p[0], p[2]];
+    let map = move |p: Point| add(linear(p), [7., -3., 2.]);
+    let texts = [
+        FRUSTUM.to_owned(),
+        SPHERE.to_owned(),
+        TORUS.to_owned(),
+        VASE.to_owned(),
+        SPLINE.to_owned(),
+        WEDGES.to_owned(),
+        DISC.to_owned(),
+        seamless_cylinder(),
+        part21("#71", ELBOW),
+        part21("#61", ELLIPTIC),
+    ];
+    for text in texts {
+        for source in solids(&text).unwrap() {
+            let moved = source.moved(&map, &linear).unwrap();
+            let again = Solid::new(moved.boundary().clone(), source.tolerance(), None).unwrap();
+            assert!(
+                close(again.volume_mm3(), source.volume_mm3(), 1e-10),
+                "{}",
+                source.volume_mm3()
+            );
+            let [low, high] = source.bounds_mm();
+            let [a, b] = [map(low), map(high)];
+            let expected = [
+                [a[0].min(b[0]), a[1].min(b[1]), a[2]],
+                [a[0].max(b[0]), a[1].max(b[1]), b[2]],
+            ];
+            let [ml, mh] = again.bounds_mm();
+            assert!(
+                distance(ml, expected[0]) < 1e-7 && distance(mh, expected[1]) < 1e-7,
+                "{ml:?} {expected:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn surface_inversion_handles_poles_apexes_and_both_nappes() {
+    let frame = Frame {
+        origin: [0.; 3],
+        x: [1., 0., 0.],
+        y: [0., 1., 0.],
+        z: [0., 0., 1.],
+    };
+    let sphere = Surface::Sphere { frame, radius: 2. };
+    // At a pole u is free: the seed decides it.
+    assert_eq!(
+        sphere.invert([0., 0., 2.], Some([1.25, 1.5])),
+        [1.25, std::f64::consts::FRAC_PI_2]
+    );
+    let cone = Surface::Cone {
+        frame,
+        radius: 1.,
+        half_angle: std::f64::consts::FRAC_PI_4,
+    };
+    // Below the apex the cone's radius is negative and u turns by pi.
+    let below = cone.evaluate([0.5, -3.]).0;
+    let uv = cone.invert(below, None);
+    assert!(
+        distance(cone.evaluate(uv).0, below) < 1e-12 && (uv[0] - 0.5).abs() < 1e-12,
+        "{uv:?}"
+    );
+    assert_eq!(cone.pole(true), None);
+    assert!(cone.pole(false).is_some_and(|v| (v + 1.).abs() < 1e-12));
+    let plane = Surface::Plane(frame);
+    assert_eq!(plane.bounded(), [None, None]);
+    assert!(plane.candidates([1., 2., 3.]).is_empty());
+    assert_eq!(plane.complete(), None);
+}
+
+/// The upper half of a sphere of radius 3 closed by the disc z = 0: its
+/// spherical face is bounded by the equator alone and closes at the pole.
+const DOME: &str = "\
+#1=CARTESIAN_POINT('',(0.,0.,0.));#2=DIRECTION('',(0.,0.,1.));#3=DIRECTION('',(1.,0.,0.));\
+#4=AXIS2_PLACEMENT_3D('',#1,#2,#3);#5=SPHERICAL_SURFACE('',#4,3.);#6=CIRCLE('',#4,3.);\
+#7=PLANE('',#4);#8=CARTESIAN_POINT('',(3.,0.,0.));#9=VERTEX_POINT('',#8);\
+#10=EDGE_CURVE('',#9,#9,#6,.T.);\
+#11=ORIENTED_EDGE('',*,*,#10,.T.);#12=EDGE_LOOP('',(#11));#13=FACE_BOUND('',#12,.T.);\
+#14=ADVANCED_FACE('',(#13),#5,.T.);\
+#15=ORIENTED_EDGE('',*,*,#10,.F.);#16=EDGE_LOOP('',(#15));#17=FACE_OUTER_BOUND('',#16,.T.);\
+#18=ADVANCED_FACE('',(#17),#7,.F.);\
+#19=CLOSED_SHELL('',(#14,#18));#20=MANIFOLD_SOLID_BREP('',#19);\n";
+
+#[test]
+fn caps_off_seam_meridians_and_off_surface_rims() {
+    let dome = solid(&part21("#20", DOME));
+    assert!(
+        close(dome.volume_mm3(), 18. * PI, 1e-12),
+        "{}",
+        dome.volume_mm3()
+    );
+    let areas = sorted_areas(&dome);
+    assert!(
+        close(areas[0], 9. * PI, 1e-12) && close(areas[1], 18. * PI, 1e-12),
+        "{areas:?}"
+    );
+    assert!(distance(dome.bounds_mm()[1], [3., 3., 3.]) < 1e-9);
+    // Unfinished: a cap closed at its pole by a loop without a seam edge
+    // integrates exactly but its tessellation is refused, not guessed.
+    let refused = mesh::tessellate(&dome, options(0.01), None);
+    assert_eq!(
+        refused.map(|m| m.triangles.len()).unwrap_err(),
+        Error::Unsupported
+    );
+    // The meridian away from the sphere's seam: up one side and back.
+    let turned = tampered(
+        &part21("#31", MERIDIAN),
+        "#4=AXIS2_PLACEMENT_3D('',#1,#2,#3)",
+        "#4=AXIS2_PLACEMENT_3D('',#1,#2,#40);#40=DIRECTION('',(0.,1.,0.))",
+    );
+    let sphere = solid(&turned);
+    assert!(
+        close(sphere.volume_mm3(), 36. * PI, 1e-12),
+        "{}",
+        sphere.volume_mm3()
+    );
+    certified(&sphere, 0.01);
+    // Rims 1 um off their cylinder do not bound it.
+    let off = tampered(
+        &seamless_cylinder(),
+        "CYLINDRICAL_SURFACE('',#5,2.)",
+        "CYLINDRICAL_SURFACE('',#5,2.000001)",
+    );
+    assert_eq!(solids(&off).unwrap_err(), Error::Invalid);
+}

@@ -268,12 +268,10 @@ pub(crate) fn unroll(
         let climbs = unrolled.points[end].uv[1] > unrolled.points[first].uv[1];
         let lead = unrolled.points[first + 1].uv[0];
         let offset = (lead - reference).rem_euclid(period);
-        let offset = match (climbs, offset <= 1e-9 * period) {
-            (true, true) => period,
-            (true, false) => offset,
-            (false, true) => -period,
-            (false, false) => offset - period,
-        };
+        // Both meridians at one u would bound a lune without width; a face
+        // bounded by one meridian alone is its seam and covers the surface.
+        ensure(offset > 1e-9 * period, Error::Invalid)?;
+        let offset = if climbs { offset } else { offset - period };
         let by = reference + offset - lead;
         for point in &mut unrolled.points[first + 1..=end] {
             point.uv[0] += by;
@@ -299,6 +297,19 @@ fn relative(surface: &Surface, uv: [f64; 2]) -> [f64; 2] {
     }
 }
 
+/// The parameter rectangle of a closed surface whose face is bounded only
+/// by its own seams: edges the face uses in both directions.
+fn whole(face: &super::Face) -> Option<[[f64; 2]; 2]> {
+    let seams = face.loops.iter().all(|trim| {
+        trim.uses
+            .iter()
+            .all(|&(edge, forward)| trim.uses.contains(&(edge, !forward)))
+    });
+    face.surface
+        .complete()
+        .filter(|_| seams && !face.loops.is_empty())
+}
+
 /// Unroll every loop of a face and arrange them as one region.
 pub(crate) fn build(
     boundary: &Boundary,
@@ -309,6 +320,9 @@ pub(crate) fn build(
     let face = &boundary.faces[face_index];
     let surface = &face.surface;
     let periods = surface.periods();
+    if let Some(range) = whole(face) {
+        return Ok(Domain::Complete(range));
+    }
     let mut loops = Vec::new();
     let mut unanchored = 0;
     for trim in face.loops.iter().filter(|trim| !trim.uses.is_empty()) {
@@ -398,6 +412,9 @@ pub(crate) fn orientation(
     tolerance: f64,
 ) -> Result<Option<bool>> {
     let face = &boundary.faces[face_index];
+    if whole(face).is_some() {
+        return Ok(None);
+    }
     let mut outer = 0.;
     let mut winding = Vec::new();
     for trim in face.loops.iter().filter(|trim| !trim.uses.is_empty()) {
