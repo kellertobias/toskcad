@@ -556,3 +556,5 @@ pub use compact::{
     ChartCoedge, ChartEdge, ChartEdgeKind, ChartFace, ChartFaceKind, CompactBoundary, CompactCell,
     CompactSurface, CompactSurfaces,
 };
+
+pub use compact::{CompactHelix, HelixPcurve};

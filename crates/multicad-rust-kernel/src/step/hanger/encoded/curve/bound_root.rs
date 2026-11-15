@@ -15,7 +15,7 @@ fn encode64(
 fn quantize64(value: &N, w: &mut Work<'_>) -> Result<N, Error> {
     quantize_at(value, Precision::Bits64, w)
 }
-pub(super) fn eval<const D: usize>(
+pub(in crate::step::hanger::encoded) fn eval<const D: usize>(
     input: &[[N; D]],
     t: &N,
     w: &mut Work<'_>,

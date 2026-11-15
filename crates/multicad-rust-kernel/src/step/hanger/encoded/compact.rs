@@ -251,3 +251,6 @@ mod tests;
 pub use boundary::{
     ChartCoedge, ChartEdge, ChartEdgeKind, ChartFace, ChartFaceKind, CompactBoundary,
 };
+
+mod helix;
+pub use helix::{CompactHelix, HelixPcurve};

@@ -362,3 +362,5 @@ impl<'s> EncodedField<'s> {
 }
 #[cfg(test)]
 mod tests;
+
+pub(super) use bound_root::eval as eval_rational_curve;

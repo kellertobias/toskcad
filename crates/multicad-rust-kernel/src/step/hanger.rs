@@ -279,3 +279,5 @@ mod tests;
 pub use encoded::{
     ChartCoedge, ChartEdge, ChartEdgeKind, ChartFace, ChartFaceKind, CompactBoundary,
 };
+
+pub use encoded::{CompactHelix, HelixPcurve};
