@@ -24,6 +24,8 @@ Spherical bevel gears are scene members too (`scene/bevel.rs`): every face is ru
 | helical gear | ✓ | ✓ | ✓ | F10 | F10 | F10 | F10 | ✓ | ✓ | ✓ | F10 | F11 | F10 | F10 | F10 | F11 | F10 | F10 |
 | herringbone gear | ✓ | ✓ | ✓ | F10 | F10 | F10 | F10 | ✓ | ✓ | ✓ | F10 | F11 | F10 | F10 | F10 | F11 | F10 | F10 |
 | bevel gear | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| thread end relief | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 |
+| rounded thread | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 | F18 |
 | za worm | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | F13 | F13 | F13 | F13 |
 | worm wheel | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | F13 | F13 | F13 | F13 |
 | box + cylinder overlapping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -56,5 +58,6 @@ Spherical bevel gears are scene members too (`scene/bevel.rs`): every face is ru
 - **F13** (43 cells): Rust worm and worm-wheel drawings require an uncropped view along the gear axis
 - **F16** (11 cells): Rust worm and worm-wheel drawings support one placed gear at a time
 - **F17** (9 cells): Rust exact drawing projection for continuous herringbone gears is unavailable
+- **F18** (36 cells): Rust planar drawing projection requires straight edges and planar faces
 
-541 of 648 combinations draw; 107 are explicit findings. No combination returns an invalid or partial result.
+541 of 684 combinations draw; 143 are explicit findings. No combination returns an invalid or partial result.
