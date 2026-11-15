@@ -4,7 +4,7 @@ This is the pinned pass/fail/unsupported ledger for the independent cross-CAD ST
 
 The machine-readable [ledger JSON](exchange-corpus-ledger.json) is the emitted output of the OpenCascade reference run. It records the measured source commit, tolerances, and every per-fixture measurement and timing. `corpus_manifest_pins_provenance_strata_and_owners` fails when the committed JSON and the manifest disagree on any fixture or outcome.
 
-**Measured commit.** These results were measured at `c0fddf10` on the CAD-360 branch with a clean tree; it adds the retained-boundary provider on top of CAD-359 (`72d288ee`). CAD-345 recorded 14 pass, 18 unsupported and 10 fail of 42 at `dff6a0f8`, and CAD-359 22 pass and 24 unsupported of 46 at `1f1c4fe7`. Rerun the commands below after every change to the reader, importer, drawing or Boolean code, and update the manifest outcomes, verdicts and this ledger together.
+**Measured commit.** These results were measured at `3cc58b11` on the CAD-361 branch `claude/step-assemblies`, which adds STEP product structure on top of the CAD-360 retained-boundary provider (merged at `1869dd5b`). The tracked changes during the run were this manifest's CAD-361 verdicts, the per-solid OpenCascade section reference and the multi-body MCP controls, all committed with this ledger. CAD-360 recorded 36 pass at `c0fddf10`. CAD-345 recorded 14 pass, 18 unsupported and 10 fail of 42 at `dff6a0f8`, and CAD-359 22 pass and 24 unsupported of 46 at `1f1c4fe7`. Rerun the commands below after every change to the reader, importer, drawing or Boolean code, and update the manifest outcomes, verdicts and this ledger together.
 
 ## Result
 
@@ -14,8 +14,8 @@ The machine-readable [ledger JSON](exchange-corpus-ledger.json) is the emitted o
 | Vendored, always run | 20 (15 authored, 5 KiCad library copies) |
 | Repository fixtures, always run | 2 |
 | Referenced from the installed KiCad 10.0.0 library by path and SHA-256 | 24 |
-| **Pass** (full workflow) | **36** (14 through the retained-boundary provider, CAD-360) |
-| **Unsupported** or **invalid**: an honest refusal outside the contract | **8 unsupported, 2 invalid** |
+| **Pass** (full workflow) | **42** (14 through the retained-boundary provider, CAD-360; 6 assemblies through it, CAD-361) |
+| **Unsupported** or **invalid**: an honest refusal outside the contract | **2 unsupported, 2 invalid** |
 | **Fail**: an incorrect refusal of a file that OpenCascade validates | **0** |
 | Unavailable on this host | 0 |
 | Pass fixtures whose section is refused by drawing | 0 (sections through the exact export, CAD-360) |
@@ -69,11 +69,11 @@ Each admitted fixture runs every check below. The tolerances are constants in th
 | `occt-sphere` | OpenCascade | vendored | sphere, revolution, trims-seams | pass | pass | — |
 | `occt-revolved-vase` | OpenCascade | vendored | revolution, torus, cylinder | pass (retained boundary) | pass | — |
 | `occt-spline-prism` | OpenCascade | vendored | spline, trims-seams | pass | pass | — |
-| `occt-two-bodies` | OpenCascade | vendored | multi-body, placement, assembly, box, cylinder | unsupported | unsupported | CAD-361 |
-| `kicad-plate-holes` | KiCad | vendored | board, box, cylinder, hole, assembly | unsupported | unsupported | CAD-361 |
-| `kicad-round-board` | KiCad | vendored | board, cylinder, hole, assembly | unsupported | unsupported | CAD-361 |
-| `kicad-slotted-rounded-board` | KiCad | vendored | board, cylinder, trims-seams, pocket, assembly | unsupported | unsupported | CAD-361 |
-| `kicad-board-with-part` | KiCad | vendored | board, multi-body, placement, assembly, cylinder | unsupported | unsupported | CAD-361 |
+| `occt-two-bodies` | OpenCascade | vendored | multi-body, placement, assembly, box, cylinder | pass (assembly) | pass | CAD-361 (pass) |
+| `kicad-plate-holes` | KiCad | vendored | board, box, cylinder, hole, assembly | pass (assembly) | pass | CAD-361 (pass) |
+| `kicad-round-board` | KiCad | vendored | board, cylinder, hole, assembly | pass (assembly) | pass | CAD-361 (pass) |
+| `kicad-slotted-rounded-board` | KiCad | vendored | board, cylinder, trims-seams, pocket, assembly | pass (assembly) | pass | CAD-361 (pass) |
+| `kicad-board-with-part` | KiCad | vendored | board, multi-body, placement, assembly, cylinder | pass (assembly) | pass | CAD-361 (pass) |
 | `occt-annulus` | OpenCascade | repository | cylinder, hole, placement, trims-seams | pass | pass | — |
 | `occt-regular-torus` | OpenCascade | repository | torus, revolution, placement | pass | pass | — |
 | `kicad-vendored-Mounting_Wuerth_WA-SMST-3.3mm_H1mm_9774010960` | KiCad | vendored | cylinder, hole | pass | pass | — |
@@ -90,7 +90,7 @@ Each admitted fixture runs every check below. The tolerances are constants in th
 | `kicad-lib-SW_SPST_B3U-3000P-B` | KiCad | kicad-library | cone | invalid | unsupported | CAD-360 |
 | `kicad-lib-LED_D3.0mm_Horizontal_O1.27mm_Z6.0mm` | FreeCAD | kicad-library | sphere | pass (retained boundary) | pass | — |
 | `kicad-lib-Buzzer_Mallory_AST1109MLTRQ` | KiCad | kicad-library | box, cylinder, hole, pocket | pass | pass | — |
-| `kicad-lib-Samtec_HPM-01-05-x-S_Straight_1x01_Pitch5.08mm` | KiCad | kicad-library | assembly, multi-body | unsupported | unsupported | CAD-361 |
+| `kicad-lib-Samtec_HPM-01-05-x-S_Straight_1x01_Pitch5.08mm` | KiCad | kicad-library | assembly, multi-body | pass (assembly) | pass | CAD-361 (pass) |
 | `kicad-lib-Mounting_Wuerth_WA-SMSI-M3_H1mm_9774010360` | KiCad | kicad-library | cone | pass (retained boundary) | pass | — |
 | `kicad-lib-R_Box_L13.0mm_W4.0mm_P9.00mm` | KiCad | kicad-library | cylinder | pass (retained boundary) | pass | — |
 | `kicad-lib-PinSocket_1x01_P2.54mm_Vertical` | KiCad | kicad-library | planar | pass (retained boundary) | pass | — |
@@ -98,7 +98,7 @@ Each admitted fixture runs every check below. The tolerances are constants in th
 | `kicad-vendored-WLP-4_0.83x0.83mm_P0.4mm` | KiCad | vendored | sphere | pass (retained boundary) | pass | — |
 | `kicad-lib-D_SOD-923` | KiCad | kicad-library | spline | pass (retained boundary) | pass | — |
 | `kicad-lib-R_LDR_5.2x5.2mm_P3.5mm_Horizontal` | FreeCAD | kicad-library | multi-body, surface-model, torus | unsupported | unsupported | CAD-360 |
-| `kicad-lib-Converter_ACDC_MeanWell_IRM-60-xx_THT` | KiCad | kicad-library | assembly, multi-body, sphere, torus | unsupported | unsupported | CAD-361 |
+| `kicad-lib-Converter_ACDC_MeanWell_IRM-60-xx_THT` | KiCad | kicad-library | assembly, multi-body, sphere, torus | unsupported | unsupported | CAD-360 |
 | `kicad-lib-C_Radial_D6.3mm_H7.0mm_P2.50mm` | KiCad | kicad-library | revolution, spline, torus, voids | invalid | unsupported | CAD-360 |
 | `kicad-lib-L_Radial_D28.0mm_P29.20mm` | FreeCAD | kicad-library | multi-body, torus | pass (retained boundary) | pass | — |
 | `kicad-lib-R_0603_1608Metric` | KiCad | kicad-library | cylinder, planar | pass | pass | — |
@@ -170,7 +170,8 @@ The open findings are:
 
 | Finding | Fixtures | Owner |
 | --- | --- | --- |
-| **Unsupported: STEP assembly product structure** (`NEXT_ASSEMBLY_USAGE_OCCURRENCE`, `CONTEXT_DEPENDENT_SHAPE_REPRESENTATION`, `ITEM_DEFINED_TRANSFORMATION`, `MAPPED_ITEM`). Every KiCad board export, even a bare board, and OpenCascade's multi-body compound export are assemblies. The retained-boundary reader reads one solid at a time so that an assembly layer can place them. | `occt-two-bodies`, all four `kicad-*board*` exports, `kicad-lib-Samtec_HPM-01-05-x-S_Straight_1x01_Pitch5.08mm`, `kicad-lib-Converter_ACDC_MeanWell_IRM-60-xx_THT` | CAD-361 |
+| **Resolved by CAD-361: STEP assembly product structure.** Next-assembly-usage occurrences with their context-dependent shape representations, item-defined transformations and rigid Cartesian operators, mapped items and identity shape-representation relationships are read into shared definitions, each validated once, and placed depth first. Mirroring or scaling operators, cycles, dangling or unplaced structure, unit-less or non-millimetre contexts and item placements on which ISO 10303-43 and OpenCascade disagree refuse with their kind. Re-export keeps one product per definition and one occurrence per instance. | `occt-two-bodies`, all four `kicad-*board*` exports, `kicad-lib-Samtec_HPM-01-05-x-S_Straight_1x01_Pitch5.08mm` | CAD-361 (pass) |
+| **Unsupported: horn-torus blend in an assembly component.** The structure reads, but component `e50ef681-4cb7-11ee-8265-85d007bab819_part` (solid `#110`) has four `TOROIDAL_SURFACE` corner blends with major = minor = 0.125 mm, which the retained reader refuses; the whole import refuses rather than drop the component. OpenCascade reads 6 solids, 133479.60 mm³. | `kicad-lib-Converter_ACDC_MeanWell_IRM-60-xx_THT` | CAD-360 |
 | **Resolved by CAD-360: general imported B-rep.** Cones, general revolutions, partial cylinders, polyhedra, spherical caps, B-spline surfaces and curves, surfaces of revolution and extrusion, toroidal blends and flat multi-solid files are imported with their own supports and trims retained. Volume, areas and centroids are integrated over the trimmed faces with the exact evaluators; the error bound is the measured quadrature convergence plus the linear tolerance swept over the boundary area. | `occt-cone-frustum`, `occt-revolved-vase`, both Wuerth standoffs, `RV_Disc`, `Hi-Link`, `Coilank`, `LED_D3.0mm`, `R_Box`, `PinSocket`, `C_Axial`, `WLP-4`, `D_SOD-923`, `L_Radial` | CAD-360 (pass) |
 | **Invalid: non-manifold contact.** Four straight edges are each used by four faces. ISO 10303-42 requires every edge of a closed shell to be referenced exactly twice; OpenCascade tolerates the contact. The import reports it as invalid. | `kicad-lib-SW_SPST_B3U-3000P-B` | CAD-360 |
 | **Invalid: inner-shell edge off its surface.** A degree-13 rational B-spline edge of the `BREP_WITH_VOIDS` inner shell lies up to 1.10e-5 mm from its cylinder, beyond the declared 2e-6 mm uncertainty and the 1e-5 mm incidence cap. | `kicad-lib-C_Radial_D6.3mm_H7.0mm_P2.50mm` | CAD-360 |
@@ -280,4 +281,9 @@ OpenCascade appears only in test code (`#[cfg(feature = "occt")]`) and in the op
 - The section check is one horizontal plane at mid-height. Analytic perimeters are pinned for five fixtures. KiCad section lengths are compared only between source and readback.
 - Material persistence covers material, hatch, mass and pinned-definition diagnostics. Appearance and stock are covered elsewhere in the material tests.
 - No FreeCAD, cadquery or OCP installation was available. FreeCAD-produced coverage comes from the existing fixture and from FreeCAD-authored KiCad library models.
-- KiCad boards are always exported as assemblies, so they can pass only after the assembly finding is resolved.
+- KiCad boards are always exported as assemblies; they pass through the CAD-361 assembly reader. Analytic oracles are pinned for four of the five vendored assemblies. `kicad-slotted-rounded-board` has none: its transmitted corner arcs give 3333.1659232157 mm³, which OpenCascade confirms (3333.1659232183), 1.3e-9 relative from the 2100 + 25π mm² design outline times 1.53 mm, beyond the 1e-9 oracle tolerance.
+- For a multi-body source the OpenCascade section reference cuts each transmitted solid on its own at the Rust plane. OpenCascade's section of the whole compound of `Samtec_HPM`, whose pin passes through its solid housing, measured 4.56 mm against the 27.42 mm sum of both bodies' cuts (22.86 mm housing, 4.56 mm pin); per solid it agrees exactly.
+
+## Assembly reference (CAD-361)
+
+`CARGO_TARGET_DIR=target/occt cargo test --locked -p multicad-app --features occt --test step_assembly -- --nocapture` compares every occurrence with OpenCascade 7.9.3. Each Rust world occurrence must match one OpenCascade solid (`STEPControl_Reader`) by volume within 1e-6 relative and bounds within 1e-3 mm, and each next-assembly-usage occurrence, found by its name or identifier, must place the same number of solids with the same volume and bounds in its parent's coordinates as the shape OpenCascade binds to it. The six passing corpus assemblies, a repeated component (one box definition placed twice), a nested placement (5, 6, 7) turned 90°, and a Cartesian-operator placement were checked, each also after its structured re-export: the largest volume gap was 7.7e-13 relative, the largest bounds gap 2.2e-16 mm, and every instance name and solid count agreed.

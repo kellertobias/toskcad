@@ -424,11 +424,27 @@
         "box",
         "cylinder"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-361",
-        "summary": "STEP assembly product structure (NEXT_ASSEMBLY_USAGE_OCCURRENCE, CONTEXT_DEPENDENT_SHAPE_REPRESENTATION, ITEM_DEFINED_TRANSFORMATION) is refused; only one flat ADVANCED_BREP_SHAPE_REPRESENTATION is read."
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 902.1238596594935,
+        "bounds_mm": [
+          [
+            0,
+            -4,
+            0
+          ],
+          [
+            34,
+            10,
+            8
+          ]
+        ],
+        "faces": 9,
+        "solids": 2,
+        "area_mm2": 701.5928947446201,
+        "planar_faces": 8,
+        "note": "Two occurrences under one root product: the 10 x 10 x 5 mm box (500 mm3, area 400 mm2) and the radius 4 mm, 8 mm cylinder at (30, 0) (128 pi mm3, area 96 pi mm2), both placed at the identity."
       }
     },
     {
@@ -455,11 +471,27 @@
         "hole",
         "assembly"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-361",
-        "summary": "KiCad wraps even a bare board in an assembly occurrence with an ITEM_DEFINED_TRANSFORMATION, which the Rust reader refuses; every KiCad board export is currently unsupported."
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 6095.390019788839,
+        "bounds_mm": [
+          [
+            100,
+            -150,
+            0
+          ],
+          [
+            180,
+            -100,
+            1.53
+          ]
+        ],
+        "faces": 8,
+        "solids": 1,
+        "area_mm2": 8396.392566491191,
+        "planar_faces": 6,
+        "note": "The 80 x 50 mm board with two radius 1.6 mm holes is 1.53 mm thick in the export (KiCad's 1.6 mm board less two 0.035 mm copper layers), in board coordinates; its one occurrence places it at the identity."
       }
     },
     {
@@ -485,11 +517,27 @@
         "hole",
         "assembly"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-361",
-        "summary": "KiCad assembly occurrence placement is refused (same cause as kicad-plate-holes)."
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 2927.2417868353614,
+        "bounds_mm": [
+          [
+            125,
+            -145,
+            0
+          ],
+          [
+            175,
+            -95,
+            1.53
+          ]
+        ],
+        "faces": 4,
+        "solids": 1,
+        "area_mm2": 4105.244784151926,
+        "planar_faces": 2,
+        "note": "A radius 25 mm disc centred at (150, -120) with a radius 4 mm hole, 1.53 mm thick; its one occurrence places it at the identity."
       }
     },
     {
@@ -516,12 +564,8 @@
         "pocket",
         "assembly"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-361",
-        "summary": "KiCad assembly occurrence placement is refused (same cause as kicad-plate-holes)."
-      }
+      "expected": "pass",
+      "verdict": "pass"
     },
     {
       "id": "kicad-board-with-part",
@@ -547,11 +591,27 @@
         "assembly",
         "cylinder"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-361",
-        "summary": "Placed component assemblies (board plus component occurrence) are refused by the Rust reader; KiCad component placement is only available through the native import_kicad board reader."
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 5368.460032938488,
+        "bounds_mm": [
+          [
+            100,
+            -140,
+            0
+          ],
+          [
+            160,
+            -100,
+            21.615
+          ]
+        ],
+        "faces": 9,
+        "solids": 2,
+        "area_mm2": 5897.681348704627,
+        "planar_faces": 8,
+        "note": "The 60 x 40 x 1.53 mm board and component U1, the radius 6 mm, 15 mm occt-cylinder at (3, 4, 5), placed by its occurrence at (130, -120, 1.615) turned 90 degrees about z: its axis lands at (126, -117)."
       }
     },
     {
@@ -997,12 +1057,8 @@
         "assembly",
         "multi-body"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-361",
-        "summary": "STEP assembly product structure with placed occurrences is refused (same cause as occt-two-bodies)."
-      }
+      "expected": "pass",
+      "verdict": "pass"
     },
     {
       "id": "kicad-lib-Mounting_Wuerth_WA-SMSI-M3_H1mm_9774010360",
@@ -1192,8 +1248,8 @@
       "expected": "unsupported",
       "verdict": "unsupported",
       "finding": {
-        "owner": "CAD-361",
-        "summary": "Toroidal blends combined with multiple solids are refused."
+        "owner": "CAD-360",
+        "summary": "The assembly structure reads (CAD-361), but component e50ef681-4cb7-11ee-8265-85d007bab819_part (solid #110) carries four horn-torus corner blends (TOROIDAL_SURFACE with major = minor = 0.125 mm), which the retained boundary reader refuses; the import refuses atomically rather than drop the component."
       }
     },
     {

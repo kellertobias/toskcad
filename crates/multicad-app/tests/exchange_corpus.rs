@@ -381,7 +381,10 @@ fn mesh_deviation(a: &multicad_kernel::Mesh, b: &multicad_kernel::Mesh, radius: 
 /// plane through the middle of the bounds.
 fn section(solid: &Solid, hatch: Option<HatchStyle>) -> Value {
     let [min, max] = bounds_of(solid);
-    let height = 0.5 * (min[2] + max[2]);
+    section_at(solid, 0.5 * (min[2] + max[2]), hatch)
+}
+
+fn section_at(solid: &Solid, height: f64, hatch: Option<HatchStyle>) -> Value {
     let hatch = hatch.map(|h| multicad_kernel::DrawingHatch {
         angle_rad: h.angle_deg.to_radians(),
         spacing_mm: h.spacing_mm,
@@ -915,10 +918,33 @@ fn native_section(path: &Path, rust: &Value) -> Value {
     let Some(length) = rust["length_mm"].as_f64() else {
         return json!("no Rust section");
     };
-    let native = Solid::read_step(path, GeometryPolicy::default()).unwrap();
-    let measured = section(&native, None);
-    let Some(native_length) = measured["length_mm"].as_f64() else {
-        return json!({ "reader": "OpenCascade 7.9.3", "error": measured["error"] });
+    let solids = Solid::step_solids(path).unwrap();
+    let native_length = if solids.len() > 1 {
+        // Each solid of a multi-body source is cut on its own at the Rust
+        // plane: solids may overlap, as a pin through a connector housing
+        // does, and a section of the compound would not cut each body.
+        let height = rust["plane_z_mm"].as_f64().unwrap();
+        let mut total = 0.;
+        for (_, brep) in &solids {
+            let solid = Solid::from_brep(brep, GeometryPolicy::default()).unwrap();
+            let [min, max] = bounds_of(&solid);
+            if height <= min[2] || height >= max[2] {
+                continue;
+            }
+            let measured = section_at(&solid, height, None);
+            let Some(length) = measured["length_mm"].as_f64() else {
+                return json!({ "reader": "OpenCascade 7.9.3", "error": measured["error"] });
+            };
+            total += length;
+        }
+        total
+    } else {
+        let native = Solid::read_step(path, GeometryPolicy::default()).unwrap();
+        let measured = section(&native, None);
+        let Some(length) = measured["length_mm"].as_f64() else {
+            return json!({ "reader": "OpenCascade 7.9.3", "error": measured["error"] });
+        };
+        length
     };
     let relative = (length - native_length).abs() / native_length.max(1e-9);
     assert!(
@@ -1708,6 +1734,10 @@ fn rust_stdio_corpus_workflow_survives_source_removal() {
         // array with spherical caps.
         "occt-cone-frustum",
         "kicad-vendored-WLP-4_0.83x0.83mm_P0.4mm",
+        // Assemblies (CAD-361): two products under a root, and a board with
+        // a placed component.
+        "occt-two-bodies",
+        "kicad-board-with-part",
     ] {
         let entry = manifest_entry(id);
         let bytes = entry_bytes(&entry).unwrap();
@@ -1717,13 +1747,28 @@ fn rust_stdio_corpus_workflow_survives_source_removal() {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("source.step");
         std::fs::write(&source, &bytes).unwrap();
-        // Refusal controls: a valid two-part assembly, whose product
-        // structure is outside the importer (CAD-361), and the same file cut
-        // off in the middle of its data section.
-        let unsupported = manifest_entry("occt-two-bodies");
-        assert_eq!(unsupported["expected"], "unsupported");
-        let unsupported = entry_bytes(&unsupported).unwrap();
-        let malformed = unsupported[..unsupported.len() / 2].to_vec();
+        // Refusal controls: a valid two-part assembly whose cylinder is
+        // placed by a mirroring operator, which the importer refuses rather
+        // than flip (CAD-361), and the assembly cut off in the middle of its
+        // data section.
+        let assembly = entry_bytes(&manifest_entry("occt-two-bodies")).unwrap();
+        let text = std::str::from_utf8(&assembly).unwrap();
+        let end = text.rfind("ENDSEC;").unwrap();
+        let unsupported = format!(
+            "{}#20031=DIRECTION('',(0.,1.,0.));#20032=DIRECTION('',(1.,0.,0.));\
+             #20033=DIRECTION('',(0.,0.,1.));#20034=CARTESIAN_POINT('',(100.,0.,0.));\
+             #20030=CARTESIAN_TRANSFORMATION_OPERATOR_3D('','','',#20031,#20032,#20034,1.,#20033);\n{}",
+            &text[..end],
+            &text[end..]
+        )
+        .replacen(
+            "REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#491)",
+            "REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#20030)",
+            1,
+        );
+        assert_eq!(outcome_of(&import(&unsupported)), "unsupported");
+        let unsupported = unsupported.into_bytes();
+        let malformed = assembly[..assembly.len() / 2].to_vec();
         assert_eq!(
             outcome_of(&import(std::str::from_utf8(&malformed).unwrap())),
             "invalid"

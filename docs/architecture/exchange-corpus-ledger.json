@@ -3,10 +3,10 @@
   "entries": [
     {
       "expected": "pass",
-      "export_ms": 0.241125,
+      "export_ms": 0.16525,
       "finding": null,
       "id": "freecad-drilled-box",
-      "import_ms": 3.890333,
+      "import_ms": 3.446958,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 150,
@@ -39,7 +39,7 @@
         "mass_kg": 0.012688566394729843,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 12049,
+        "project_bytes": 12046,
         "section": {
           "curves": 68,
           "hatch_vectors": 393,
@@ -189,10 +189,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.177125,
+      "export_ms": 0.2405,
       "finding": null,
       "id": "occt-placed-box",
-      "import_ms": 0.551292,
+      "import_ms": 0.574416,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 18,
@@ -225,7 +225,7 @@
         "mass_kg": 0.0093312,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 19954,
+        "project_bytes": 19956,
         "section": {
           "curves": 4,
           "hatch_vectors": 217,
@@ -372,10 +372,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.150583,
+      "export_ms": 0.1855,
       "finding": null,
       "id": "occt-cylinder",
-      "import_ms": 0.5894579999999999,
+      "import_ms": 0.8858339999999999,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 144,
@@ -408,7 +408,7 @@
         "mass_kg": 0.004580442088933918,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 9182,
+        "project_bytes": 9183,
         "section": {
           "curves": 1,
           "hatch_vectors": 120,
@@ -556,10 +556,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.221208,
+      "export_ms": 0.202834,
       "finding": null,
       "id": "occt-torus",
-      "import_ms": 0.383916,
+      "import_ms": 0.38837499999999997,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 33696,
@@ -592,7 +592,7 @@
         "mass_kg": 0.005755953286715314,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 7562,
+        "project_bytes": 7564,
         "section": {
           "curves": 2,
           "hatch_vectors": 480,
@@ -740,10 +740,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.5927079999999999,
+      "export_ms": 0.597458,
       "finding": null,
       "id": "occt-box-void",
-      "import_ms": 1.7679589999999998,
+      "import_ms": 1.973542,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 180,
@@ -776,7 +776,7 @@
         "mass_kg": 0.015552,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 33615,
+        "project_bytes": 33604,
         "section": {
           "curves": 8,
           "hatch_vectors": 466,
@@ -923,10 +923,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.308666,
+      "export_ms": 0.34075,
       "finding": null,
       "id": "occt-pocketed-plate",
-      "import_ms": 1.715959,
+      "import_ms": 1.94975,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 171,
@@ -959,7 +959,7 @@
         "mass_kg": 0.02476069649258884,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 37855,
+        "project_bytes": 37857,
         "section": {
           "curves": 5,
           "hatch_vectors": 555,
@@ -1109,10 +1109,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.18100000000000002,
+      "export_ms": 0.171792,
       "finding": null,
       "id": "occt-cone-frustum",
-      "import_ms": 8.484167000000001,
+      "import_ms": 3.2534170000000002,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 282,
@@ -1145,7 +1145,7 @@
         "mass_kg": 0.0031667253948198665,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 9256,
+        "project_bytes": 9259,
         "section": {
           "curves": 132,
           "hatch_vectors": 119,
@@ -1292,10 +1292,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.141667,
+      "export_ms": 0.16729200000000002,
       "finding": null,
       "id": "occt-sphere",
-      "import_ms": 0.319916,
+      "import_ms": 0.08712500000000001,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 1440,
@@ -1328,7 +1328,7 @@
         "mass_kg": 0.0014137166941154068,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 5572,
+        "project_bytes": 5566,
         "section": {
           "curves": 1,
           "hatch_vectors": 99,
@@ -1476,10 +1476,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.190833,
+      "export_ms": 0.195625,
       "finding": null,
       "id": "occt-revolved-vase",
-      "import_ms": 12.905125,
+      "import_ms": 12.102625,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 3765,
@@ -1512,7 +1512,7 @@
         "mass_kg": 0.008630427539781296,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 14128,
+        "project_bytes": 14126,
         "section": {
           "curves": 1164,
           "hatch_vectors": 189,
@@ -1660,10 +1660,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.235875,
+      "export_ms": 0.181417,
       "finding": null,
       "id": "occt-spline-prism",
-      "import_ms": 1.25475,
+      "import_ms": 1.183708,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 168,
@@ -1696,7 +1696,7 @@
         "mass_kg": 0.0023328,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 13294,
+        "project_bytes": 13291,
         "section": {
           "curves": 97,
           "hatch_vectors": 168,
@@ -1842,17 +1842,52 @@
       "verdict": "pass"
     },
     {
-      "expected": "unsupported",
-      "finding": {
-        "owner": "CAD-361",
-        "summary": "STEP assembly product structure (NEXT_ASSEMBLY_USAGE_OCCURRENCE, CONTEXT_DEPENDENT_SHAPE_REPRESENTATION, ITEM_DEFINED_TRANSFORMATION) is refused; only one flat ADVANCED_BREP_SHAPE_REPRESENTATION is read."
-      },
+      "expected": "pass",
+      "export_ms": 0.23458299999999999,
+      "finding": null,
       "id": "occt-two-bodies",
-      "import_ms": 2.06575,
+      "import_ms": 14.129416,
       "location": "vendored",
-      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
-      "outcome": "unsupported",
+      "mesh": {
+        "edge_pairs": 204,
+        "maximum_displacement_mm": 0.0,
+        "triangles": 136,
+        "volume_mm3": 899.5449794890294
+      },
+      "native_readback": {
+        "bounds_mm": [
+          [
+            0.0,
+            -4.0,
+            0.0
+          ],
+          [
+            34.0,
+            10.0,
+            8.0
+          ]
+        ],
+        "faces": 9,
+        "mesh_deviation_mm": 0.019256236529357283,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 2,
+        "volume_mm3": 902.1238596594926
+      },
+      "outcome": "pass",
       "path": "corpus/occt-two-bodies.step",
+      "persistence": {
+        "mass_kg": 0.002435734421080633,
+        "material": "Corpus aluminium 2700 kg/m3",
+        "parts": 1,
+        "project_bytes": 26834,
+        "section": {
+          "curves": 132,
+          "hatch_vectors": 220,
+          "length_exact": true,
+          "length_mm": 65.13021800746209,
+          "plane_z_mm": 4.0
+        }
+      },
       "producer": {
         "file_name": [
           "Open CASCADE STEP processor 7.9",
@@ -1861,7 +1896,86 @@
         "name": "OpenCascade",
         "version": "7.9.3 (Open CASCADE STEP processor 7.9)"
       },
+      "readback": {
+        "bounds_deviation_mm": 0.0,
+        "bounds_mm": [
+          [
+            0.0,
+            -4.0,
+            0.0
+          ],
+          [
+            34.0,
+            10.0,
+            8.0
+          ]
+        ],
+        "export_bytes": 12362,
+        "faces": 9,
+        "mesh_deviation_mm": 0.0,
+        "reader": {
+          "bounds_mm": [
+            [
+              0.0,
+              -4.0,
+              0.0
+            ],
+            [
+              34.0,
+              10.0,
+              8.0
+            ]
+          ],
+          "faces": 9,
+          "members": 2,
+          "reader": "retained boundary",
+          "volume_mm3": 902.1238596594937
+        },
+        "section": {
+          "curves": 132,
+          "hatch_vectors": 0,
+          "length_exact": true,
+          "length_mm": 65.13021800746209,
+          "plane_z_mm": 4.0
+        },
+        "volume_deviation_mm3": 0.0,
+        "volume_mm3": 902.1238596594937
+      },
+      "section": {
+        "curves": 132,
+        "hatch_vectors": 0,
+        "length_exact": true,
+        "length_mm": 65.13021800746209,
+        "plane_z_mm": 4.0
+      },
+      "section_native": {
+        "length_mm": 65.13274122871834,
+        "reader": "OpenCascade 7.9.3",
+        "relative": 0.000038739675448232484
+      },
       "sha256": "66c1ea814b4a8a0ab77443911d7a8352a4cc655f702f94016cc96fb172e7ad70",
+      "source": {
+        "bounds_mm": [
+          [
+            0.0,
+            -4.0,
+            0.0
+          ],
+          [
+            34.0,
+            10.0,
+            8.0
+          ]
+        ],
+        "faces": 9,
+        "solids": 2,
+        "supports": {
+          "area_mm2": 701.5928947446204,
+          "planar_area_mm2": 500.53096491487355,
+          "planar_faces": 8
+        },
+        "volume_mm3": 902.1238596594937
+      },
       "source_native": {
         "bounds_mm": [
           [
@@ -1885,6 +1999,25 @@
         },
         "volume_mm3": 902.1238596594925
       },
+      "source_native_mesh_deviation_mm": 0.019256236529357283,
+      "source_reader": {
+        "bounds_mm": [
+          [
+            0.0,
+            -4.0,
+            0.0
+          ],
+          [
+            34.0,
+            10.0,
+            8.0
+          ]
+        ],
+        "faces": 9,
+        "members": 2,
+        "reader": "retained boundary",
+        "volume_mm3": 902.1238596594937
+      },
       "tags": [
         "multi-body",
         "placement",
@@ -1892,20 +2025,55 @@
         "box",
         "cylinder"
       ],
-      "verdict": "unsupported"
+      "verdict": "pass"
     },
     {
-      "expected": "unsupported",
-      "finding": {
-        "owner": "CAD-361",
-        "summary": "KiCad wraps even a bare board in an assembly occurrence with an ITEM_DEFINED_TRANSFORMATION, which the Rust reader refuses; every KiCad board export is currently unsupported."
-      },
+      "expected": "pass",
+      "export_ms": 0.218167,
+      "finding": null,
       "id": "kicad-plate-holes",
-      "import_ms": 0.245833,
+      "import_ms": 15.490333,
       "location": "vendored",
-      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
-      "outcome": "unsupported",
+      "mesh": {
+        "edge_pairs": 414,
+        "maximum_displacement_mm": 0.0,
+        "triangles": 276,
+        "volume_mm3": 6095.547847255275
+      },
+      "native_readback": {
+        "bounds_mm": [
+          [
+            100.0,
+            -150.0,
+            0.0
+          ],
+          [
+            180.0,
+            -100.0,
+            1.53
+          ]
+        ],
+        "faces": 8,
+        "mesh_deviation_mm": 2.842170943040401e-14,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 6095.390019788838
+      },
+      "outcome": "pass",
       "path": "corpus/kicad-plate-holes.step",
+      "persistence": {
+        "mass_kg": 0.016457553053429868,
+        "material": "Corpus aluminium 2700 kg/m3",
+        "parts": 1,
+        "project_bytes": 15669,
+        "section": {
+          "curves": 132,
+          "hatch_vectors": 983,
+          "length_exact": true,
+          "length_mm": 280.0981194045089,
+          "plane_z_mm": 0.765
+        }
+      },
       "producer": {
         "file_name": [
           "Open CASCADE STEP processor 7.8",
@@ -1914,7 +2082,86 @@
         "name": "KiCad",
         "version": "10.0.0 (kicad-cli pcb export step, Open CASCADE STEP processor 7.8)"
       },
+      "readback": {
+        "bounds_deviation_mm": 0.0,
+        "bounds_mm": [
+          [
+            100.0,
+            -150.0,
+            0.0
+          ],
+          [
+            180.0,
+            -100.0,
+            1.53
+          ]
+        ],
+        "export_bytes": 12644,
+        "faces": 8,
+        "mesh_deviation_mm": 0.0,
+        "reader": {
+          "bounds_mm": [
+            [
+              100.0,
+              -150.0,
+              0.0
+            ],
+            [
+              180.0,
+              -100.0,
+              1.53
+            ]
+          ],
+          "faces": 8,
+          "members": 1,
+          "reader": "retained boundary",
+          "volume_mm3": 6095.390019788841
+        },
+        "section": {
+          "curves": 132,
+          "hatch_vectors": 0,
+          "length_exact": true,
+          "length_mm": 280.0981194045089,
+          "plane_z_mm": 0.765
+        },
+        "volume_deviation_mm3": 0.0,
+        "volume_mm3": 6095.390019788841
+      },
+      "section": {
+        "curves": 132,
+        "hatch_vectors": 0,
+        "length_exact": true,
+        "length_mm": 280.0981194045089,
+        "plane_z_mm": 0.765
+      },
+      "section_native": {
+        "length_mm": 280.1061929829747,
+        "reader": "OpenCascade 7.9.3",
+        "relative": 0.000028823277271344676
+      },
       "sha256": "544b1f5fd9719976c20f6c104c41331b43a2245caa06b2f6d458cd9bb4de1c8c",
+      "source": {
+        "bounds_mm": [
+          [
+            100.0,
+            -150.0,
+            0.0
+          ],
+          [
+            180.0,
+            -100.0,
+            1.53
+          ]
+        ],
+        "faces": 8,
+        "solids": 1,
+        "supports": {
+          "area_mm2": 8396.392566491193,
+          "planar_area_mm2": 8365.630091227242,
+          "planar_faces": 6
+        },
+        "volume_mm3": 6095.390019788841
+      },
       "source_native": {
         "bounds_mm": [
           [
@@ -1938,6 +2185,25 @@
         },
         "volume_mm3": 6095.390019788838
       },
+      "source_native_mesh_deviation_mm": 2.842170943040401e-14,
+      "source_reader": {
+        "bounds_mm": [
+          [
+            100.0,
+            -150.0,
+            0.0
+          ],
+          [
+            180.0,
+            -100.0,
+            1.53
+          ]
+        ],
+        "faces": 8,
+        "members": 1,
+        "reader": "retained boundary",
+        "volume_mm3": 6095.390019788841
+      },
       "tags": [
         "board",
         "box",
@@ -1945,20 +2211,55 @@
         "hole",
         "assembly"
       ],
-      "verdict": "unsupported"
+      "verdict": "pass"
     },
     {
-      "expected": "unsupported",
-      "finding": {
-        "owner": "CAD-361",
-        "summary": "KiCad assembly occurrence placement is refused (same cause as kicad-plate-holes)."
-      },
+      "expected": "pass",
+      "export_ms": 0.17416600000000002,
+      "finding": null,
       "id": "kicad-round-board",
-      "import_ms": 0.13191599999999998,
+      "import_ms": 6.753084,
       "location": "vendored",
-      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
-      "outcome": "unsupported",
+      "mesh": {
+        "edge_pairs": 576,
+        "maximum_displacement_mm": 0.0,
+        "triangles": 384,
+        "volume_mm3": 2922.911516757272
+      },
+      "native_readback": {
+        "bounds_mm": [
+          [
+            125.0,
+            -145.0,
+            0.0
+          ],
+          [
+            175.0,
+            -95.0,
+            1.53
+          ]
+        ],
+        "faces": 4,
+        "mesh_deviation_mm": 0.030108768778520867,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 2927.241786835355
+      },
+      "outcome": "pass",
       "path": "corpus/kicad-round-board.step",
+      "persistence": {
+        "mass_kg": 0.007903552824455477,
+        "material": "Corpus aluminium 2700 kg/m3",
+        "parts": 1,
+        "project_bytes": 10527,
+        "section": {
+          "curves": 384,
+          "hatch_vectors": 578,
+          "length_exact": true,
+          "length_mm": 182.205908064678,
+          "plane_z_mm": 0.765
+        }
+      },
       "producer": {
         "file_name": [
           "Open CASCADE STEP processor 7.8",
@@ -1967,7 +2268,86 @@
         "name": "KiCad",
         "version": "10.0.0 (kicad-cli pcb export step, Open CASCADE STEP processor 7.8)"
       },
+      "readback": {
+        "bounds_deviation_mm": 0.0,
+        "bounds_mm": [
+          [
+            125.0,
+            -145.0,
+            0.0
+          ],
+          [
+            175.0,
+            -95.0,
+            1.53
+          ]
+        ],
+        "export_bytes": 6760,
+        "faces": 4,
+        "mesh_deviation_mm": 0.0,
+        "reader": {
+          "bounds_mm": [
+            [
+              125.0,
+              -145.0,
+              0.0
+            ],
+            [
+              175.0,
+              -95.0,
+              1.53
+            ]
+          ],
+          "faces": 4,
+          "members": 1,
+          "reader": "retained boundary",
+          "volume_mm3": 2927.2417868353623
+        },
+        "section": {
+          "curves": 384,
+          "hatch_vectors": 0,
+          "length_exact": true,
+          "length_mm": 182.205908064678,
+          "plane_z_mm": 0.765
+        },
+        "volume_deviation_mm3": 0.0,
+        "volume_mm3": 2927.2417868353623
+      },
+      "section": {
+        "curves": 384,
+        "hatch_vectors": 0,
+        "length_exact": true,
+        "length_mm": 182.205908064678,
+        "plane_z_mm": 0.765
+      },
+      "section_native": {
+        "length_mm": 182.212373908208,
+        "reader": "OpenCascade 7.9.3",
+        "relative": 0.000035485205484816056
+      },
       "sha256": "b6733b4f0109ef30fc79558eaa8b0676f15aa4b5d64e9c0ae4442f8bc4602897",
+      "source": {
+        "bounds_mm": [
+          [
+            125.0,
+            -145.0,
+            0.0
+          ],
+          [
+            175.0,
+            -95.0,
+            1.53
+          ]
+        ],
+        "faces": 4,
+        "solids": 1,
+        "supports": {
+          "area_mm2": 4105.244784151928,
+          "planar_area_mm2": 3826.459852072369,
+          "planar_faces": 2
+        },
+        "volume_mm3": 2927.2417868353623
+      },
       "source_native": {
         "bounds_mm": [
           [
@@ -1991,26 +2371,80 @@
         },
         "volume_mm3": 2927.241786835355
       },
+      "source_native_mesh_deviation_mm": 0.030108768778520867,
+      "source_reader": {
+        "bounds_mm": [
+          [
+            125.0,
+            -145.0,
+            0.0
+          ],
+          [
+            175.0,
+            -95.0,
+            1.53
+          ]
+        ],
+        "faces": 4,
+        "members": 1,
+        "reader": "retained boundary",
+        "volume_mm3": 2927.2417868353623
+      },
       "tags": [
         "board",
         "cylinder",
         "hole",
         "assembly"
       ],
-      "verdict": "unsupported"
+      "verdict": "pass"
     },
     {
-      "expected": "unsupported",
-      "finding": {
-        "owner": "CAD-361",
-        "summary": "KiCad assembly occurrence placement is refused (same cause as kicad-plate-holes)."
-      },
+      "expected": "pass",
+      "export_ms": 0.25425,
+      "finding": null,
       "id": "kicad-slotted-rounded-board",
-      "import_ms": 0.374958,
+      "import_ms": 3.7781659999999997,
       "location": "vendored",
-      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
-      "outcome": "unsupported",
+      "mesh": {
+        "edge_pairs": 288,
+        "maximum_displacement_mm": 0.0,
+        "triangles": 192,
+        "volume_mm3": 3332.6723699157837
+      },
+      "native_readback": {
+        "bounds_mm": [
+          [
+            99.99999999999599,
+            -140.0,
+            0.0
+          ],
+          [
+            160.0,
+            -99.999999999966,
+            1.53
+          ]
+        ],
+        "faces": 14,
+        "mesh_deviation_mm": 0.015222948181326697,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 1,
+        "volume_mm3": 3333.1659232182683
+      },
+      "outcome": "pass",
       "path": "corpus/kicad-slotted-rounded-board.step",
+      "persistence": {
+        "mass_kg": 0.0089995479926824,
+        "material": "Corpus aluminium 2700 kg/m3",
+        "parts": 1,
+        "project_bytes": 24033,
+        "section": {
+          "curves": 168,
+          "hatch_vectors": 878,
+          "length_exact": true,
+          "length_mm": 251.4139084879556,
+          "plane_z_mm": 0.765
+        }
+      },
       "producer": {
         "file_name": [
           "Open CASCADE STEP processor 7.8",
@@ -2019,7 +2453,86 @@
         "name": "KiCad",
         "version": "10.0.0 (kicad-cli pcb export step, Open CASCADE STEP processor 7.8)"
       },
+      "readback": {
+        "bounds_deviation_mm": 0.0,
+        "bounds_mm": [
+          [
+            99.99999999999599,
+            -140.0,
+            0.0
+          ],
+          [
+            160.0,
+            -99.999999999966,
+            1.53
+          ]
+        ],
+        "export_bytes": 21855,
+        "faces": 14,
+        "mesh_deviation_mm": 0.0,
+        "reader": {
+          "bounds_mm": [
+            [
+              99.99999999999599,
+              -140.0,
+              0.0
+            ],
+            [
+              160.0,
+              -99.999999999966,
+              1.53
+            ]
+          ],
+          "faces": 14,
+          "members": 1,
+          "reader": "retained boundary",
+          "volume_mm3": 3333.1659232157035
+        },
+        "section": {
+          "curves": 168,
+          "hatch_vectors": 0,
+          "length_exact": true,
+          "length_mm": 251.4139084879556,
+          "plane_z_mm": 0.765
+        },
+        "volume_deviation_mm3": 0.0,
+        "volume_mm3": 3333.1659232157035
+      },
+      "section": {
+        "curves": 168,
+        "hatch_vectors": 0,
+        "length_exact": true,
+        "length_mm": 251.4139084879556,
+        "plane_z_mm": 0.765
+      },
+      "section_native": {
+        "length_mm": 251.4159270872453,
+        "reader": "OpenCascade 7.9.3",
+        "relative": 8.028923676732303e-6
+      },
       "sha256": "89bca4c4d1a183c1574d7fbe4ee07f88a104a1605ea802a24a629b25be59d9fc",
+      "source": {
+        "bounds_mm": [
+          [
+            99.99999999999599,
+            -140.0,
+            0.0
+          ],
+          [
+            160.0,
+            -99.999999999966,
+            1.53
+          ]
+        ],
+        "faces": 14,
+        "solids": 1,
+        "supports": {
+          "area_mm2": 4741.746006632871,
+          "planar_area_mm2": 4693.679638189436,
+          "planar_faces": 10
+        },
+        "volume_mm3": 3333.1659232157035
+      },
       "source_native": {
         "bounds_mm": [
           [
@@ -2043,6 +2556,25 @@
         },
         "volume_mm3": 3333.1659232182683
       },
+      "source_native_mesh_deviation_mm": 0.015222948181326697,
+      "source_reader": {
+        "bounds_mm": [
+          [
+            99.99999999999599,
+            -140.0,
+            0.0
+          ],
+          [
+            160.0,
+            -99.999999999966,
+            1.53
+          ]
+        ],
+        "faces": 14,
+        "members": 1,
+        "reader": "retained boundary",
+        "volume_mm3": 3333.1659232157035
+      },
       "tags": [
         "board",
         "cylinder",
@@ -2050,20 +2582,55 @@
         "pocket",
         "assembly"
       ],
-      "verdict": "unsupported"
+      "verdict": "pass"
     },
     {
-      "expected": "unsupported",
-      "finding": {
-        "owner": "CAD-361",
-        "summary": "Placed component assemblies (board plus component occurrence) are refused by the Rust reader; KiCad component placement is only available through the native import_kicad board reader."
-      },
+      "expected": "pass",
+      "export_ms": 0.23274999999999998,
+      "finding": null,
       "id": "kicad-board-with-part",
-      "import_ms": 0.192083,
+      "import_ms": 3.8899999999999997,
       "location": "vendored",
-      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
-      "outcome": "unsupported",
+      "mesh": {
+        "edge_pairs": 204,
+        "maximum_displacement_mm": 0.0,
+        "triangles": 136,
+        "volume_mm3": 5357.5803822193
+      },
+      "native_readback": {
+        "bounds_mm": [
+          [
+            100.0,
+            -140.0,
+            0.0
+          ],
+          [
+            160.0,
+            -100.0,
+            21.615000000000002
+          ]
+        ],
+        "faces": 9,
+        "mesh_deviation_mm": 0.02888676311529209,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 2,
+        "volume_mm3": 5368.460032938484
+      },
+      "outcome": "pass",
       "path": "corpus/kicad-board-with-part.step",
+      "persistence": {
+        "mass_kg": 0.014494842088933924,
+        "material": "Corpus aluminium 2700 kg/m3",
+        "parts": 1,
+        "project_bytes": 16323,
+        "section": {
+          "curves": 128,
+          "hatch_vectors": 119,
+          "length_exact": true,
+          "length_mm": 37.69311895427301,
+          "plane_z_mm": 10.807500000000001
+        }
+      },
       "producer": {
         "file_name": [
           "Open CASCADE STEP processor 7.8",
@@ -2072,7 +2639,86 @@
         "name": "KiCad",
         "version": "10.0.0 (kicad-cli pcb export step, Open CASCADE STEP processor 7.8)"
       },
+      "readback": {
+        "bounds_deviation_mm": 0.0,
+        "bounds_mm": [
+          [
+            100.0,
+            -140.0,
+            0.0
+          ],
+          [
+            160.0,
+            -100.0,
+            21.615000000000002
+          ]
+        ],
+        "export_bytes": 12353,
+        "faces": 9,
+        "mesh_deviation_mm": 0.0,
+        "reader": {
+          "bounds_mm": [
+            [
+              100.0,
+              -140.0,
+              0.0
+            ],
+            [
+              160.0,
+              -100.0,
+              21.615000000000002
+            ]
+          ],
+          "faces": 9,
+          "members": 2,
+          "reader": "retained boundary",
+          "volume_mm3": 5368.46003293849
+        },
+        "section": {
+          "curves": 128,
+          "hatch_vectors": 0,
+          "length_exact": true,
+          "length_mm": 37.69311895427301,
+          "plane_z_mm": 10.807500000000001
+        },
+        "volume_deviation_mm3": 0.0,
+        "volume_mm3": 5368.46003293849
+      },
+      "section": {
+        "curves": 128,
+        "hatch_vectors": 0,
+        "length_exact": true,
+        "length_mm": 37.69311895427301,
+        "plane_z_mm": 10.807500000000001
+      },
+      "section_native": {
+        "length_mm": 37.69911184307752,
+        "reader": "OpenCascade 7.9.3",
+        "relative": 0.00015896631277287975
+      },
       "sha256": "c9646efeb5dd01e3335b356e375669ff4a284f17600feacfe43814d68384395d",
+      "source": {
+        "bounds_mm": [
+          [
+            100.0,
+            -140.0,
+            0.0
+          ],
+          [
+            160.0,
+            -100.0,
+            21.615000000000002
+          ]
+        ],
+        "faces": 9,
+        "solids": 2,
+        "supports": {
+          "area_mm2": 5897.681348704632,
+          "planar_area_mm2": 5332.194671058469,
+          "planar_faces": 8
+        },
+        "volume_mm3": 5368.46003293849
+      },
       "source_native": {
         "bounds_mm": [
           [
@@ -2096,6 +2742,25 @@
         },
         "volume_mm3": 5368.460032938484
       },
+      "source_native_mesh_deviation_mm": 0.02888676311529209,
+      "source_reader": {
+        "bounds_mm": [
+          [
+            100.0,
+            -140.0,
+            0.0
+          ],
+          [
+            160.0,
+            -100.0,
+            21.615000000000002
+          ]
+        ],
+        "faces": 9,
+        "members": 2,
+        "reader": "retained boundary",
+        "volume_mm3": 5368.46003293849
+      },
       "tags": [
         "board",
         "multi-body",
@@ -2103,14 +2768,14 @@
         "assembly",
         "cylinder"
       ],
-      "verdict": "unsupported"
+      "verdict": "pass"
     },
     {
       "expected": "pass",
-      "export_ms": 0.208875,
+      "export_ms": 0.240416,
       "finding": null,
       "id": "occt-annulus",
-      "import_ms": 0.26766700000000004,
+      "import_ms": 0.32895800000000003,
       "location": "repository",
       "mesh": {
         "edge_pairs": 300,
@@ -2143,7 +2808,7 @@
         "mass_kg": 0.00031758924639888606,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 13637,
+        "project_bytes": 13638,
         "section": {
           "curves": 8,
           "hatch_vectors": 50,
@@ -2292,10 +2957,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.112958,
+      "export_ms": 0.16449999999999998,
       "finding": null,
       "id": "occt-regular-torus",
-      "import_ms": 0.145458,
+      "import_ms": 0.10575,
       "location": "repository",
       "mesh": {
         "edge_pairs": 16224,
@@ -2328,7 +2993,7 @@
         "mass_kg": 0.0005995784673661784,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 7693,
+        "project_bytes": 7699,
         "section": {
           "curves": 256,
           "hatch_vectors": 84,
@@ -2476,10 +3141,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.833625,
+      "export_ms": 0.17658300000000002,
       "finding": null,
       "id": "kicad-vendored-Mounting_Wuerth_WA-SMST-3.3mm_H1mm_9774010960",
-      "import_ms": 0.38204200000000005,
+      "import_ms": 0.252375,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 378,
@@ -2512,7 +3177,7 @@
         "mass_kg": 0.0000732870734229427,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 11482,
+        "project_bytes": 11472,
         "section": {
           "curves": 192,
           "hatch_vectors": 74,
@@ -2658,10 +3323,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.254208,
+      "export_ms": 1.136042,
       "finding": null,
       "id": "kicad-vendored-L_Wuerth_HCM-7070",
-      "import_ms": 1.553125,
+      "import_ms": 5.9185419999999995,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 150,
@@ -2694,7 +3359,7 @@
         "mass_kg": 0.0009263268,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 18659,
+        "project_bytes": 18661,
         "section": {
           "curves": 4,
           "hatch_vectors": 99,
@@ -2840,10 +3505,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.9015409999999999,
+      "export_ms": 0.241708,
       "finding": null,
       "id": "kicad-lib-Pin_D0.7mm_L6.5mm_W1.8mm_FlatFork",
-      "import_ms": 0.7788750000000001,
+      "import_ms": 0.838584,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 318,
@@ -2876,7 +3541,7 @@
         "mass_kg": 8.9971138763215e-6,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 25469,
+        "project_bytes": 25470,
         "section": {
           "curves": 8,
           "hatch_vectors": 12,
@@ -3023,10 +3688,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.549084,
+      "export_ms": 0.741916,
       "finding": null,
       "id": "kicad-lib-Heatsink_125x35x50mm_3xFixationM3",
-      "import_ms": 3.4194590000000002,
+      "import_ms": 3.319042,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 2118,
@@ -3059,7 +3724,7 @@
         "mass_kg": 0.14902708684918775,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 118818,
+        "project_bytes": 118810,
         "section": {
           "curves": 931,
           "hatch_vectors": 3210,
@@ -3207,10 +3872,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.523833,
+      "export_ms": 0.412208,
       "finding": null,
       "id": "kicad-lib-D_SOD-882",
-      "import_ms": 10.312958,
+      "import_ms": 12.697208999999999,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 354,
@@ -3243,7 +3908,7 @@
         "mass_kg": 7.524899999999997e-7,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 41410,
+        "project_bytes": 41405,
         "section": {
           "curves": 4,
           "hatch_vectors": 11,
@@ -3389,10 +4054,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.33399999999999996,
+      "export_ms": 0.346292,
       "finding": null,
       "id": "kicad-lib-LED_Rectangular_W3.0mm_H2.0mm",
-      "import_ms": 1.880125,
+      "import_ms": 1.6150419999999999,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 258,
@@ -3425,7 +4090,7 @@
         "mass_kg": 0.000091152,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 35237,
+        "project_bytes": 35236,
         "section": {
           "curves": 8,
           "hatch_vectors": 10,
@@ -3571,10 +4236,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.227417,
+      "export_ms": 0.28575,
       "finding": null,
       "id": "kicad-vendored-Mounting_Wuerth_WA-SMSE-ExternalM3_H5mm_9771050360",
-      "import_ms": 46.576917,
+      "import_ms": 58.692875,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 4242,
@@ -3754,10 +4419,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.264291,
+      "export_ms": 0.328125,
       "finding": null,
       "id": "kicad-lib-RV_Disc_D9mm_W6.1mm_P5mm",
-      "import_ms": 780.500166,
+      "import_ms": 1194.4135,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 24645,
@@ -3790,7 +4455,7 @@
         "mass_kg": 0.0008070303151790006,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 34021,
+        "project_bytes": 34020,
         "section": {
           "curves": 579,
           "hatch_vectors": 77,
@@ -3937,10 +4602,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.27375,
+      "export_ms": 0.300125,
       "finding": null,
       "id": "kicad-lib-Converter_ACDC_Hi-Link_HLK-20Mxx",
-      "import_ms": 106.970375,
+      "import_ms": 115.010458,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 12495,
@@ -3973,7 +4638,7 @@
         "mass_kg": 0.1238217796091653,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 50307,
+        "project_bytes": 50315,
         "section": {
           "curves": 68,
           "hatch_vectors": 641,
@@ -4119,10 +4784,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.23308399999999999,
+      "export_ms": 0.201833,
       "finding": null,
       "id": "kicad-vendored-L_CommonModeChoke_TDK_ACM7060",
-      "import_ms": 0.8818330000000001,
+      "import_ms": 2.246541,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 18,
@@ -4155,7 +4820,7 @@
         "mass_kg": 0.0003969,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 21174,
+        "project_bytes": 21173,
         "section": {
           "curves": 4,
           "hatch_vectors": 91,
@@ -4300,10 +4965,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.315375,
+      "export_ms": 0.32491699999999996,
       "finding": null,
       "id": "kicad-lib-L_CommonModeChoke_Coilank_ACM2012",
-      "import_ms": 4.246958,
+      "import_ms": 4.277583,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 450,
@@ -4336,7 +5001,7 @@
         "mass_kg": 9.117643589812258e-6,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 28689,
+        "project_bytes": 28682,
         "section": {
           "curves": 4,
           "hatch_vectors": 23,
@@ -4486,7 +5151,7 @@
         "summary": "Non-manifold closed shell: four straight edges (x = +-1.225 mm, z = 1.08 mm) each bound four faces, where two lobes of the switch touch along a line. MANIFOLD_SOLID_BREP requires each edge to bound two faces, so the retained-boundary reader refuses it as invalid. OpenCascade's BRepCheck does not test manifoldness and accepts it."
       },
       "id": "kicad-lib-SW_SPST_B3U-3000P-B",
-      "import_ms": 7.811083,
+      "import_ms": 8.666583000000001,
       "location": "kicad-library",
       "message": "imported boundary: Imported boundary is not a valid closed solid",
       "outcome": "invalid",
@@ -4529,10 +5194,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.279459,
+      "export_ms": 0.307542,
       "finding": null,
       "id": "kicad-lib-LED_D3.0mm_Horizontal_O1.27mm_Z6.0mm",
-      "import_ms": 51.291292000000006,
+      "import_ms": 8.166417000000001,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 2436,
@@ -4711,10 +5376,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.362208,
+      "export_ms": 0.457041,
       "finding": null,
       "id": "kicad-lib-Buzzer_Mallory_AST1109MLTRQ",
-      "import_ms": 1.756166,
+      "import_ms": 1.719916,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 846,
@@ -4747,7 +5412,7 @@
         "mass_kg": 0.00045610896924911005,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 44201,
+        "project_bytes": 44207,
         "section": {
           "curves": 4,
           "hatch_vectors": 141,
@@ -4894,17 +5559,52 @@
       "verdict": "pass"
     },
     {
-      "expected": "unsupported",
-      "finding": {
-        "owner": "CAD-361",
-        "summary": "STEP assembly product structure with placed occurrences is refused (same cause as occt-two-bodies)."
-      },
+      "expected": "pass",
+      "export_ms": 0.328417,
+      "finding": null,
       "id": "kicad-lib-Samtec_HPM-01-05-x-S_Straight_1x01_Pitch5.08mm",
-      "import_ms": 9.357833,
+      "import_ms": 37.000625,
       "location": "kicad-library",
-      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
-      "outcome": "unsupported",
+      "mesh": {
+        "edge_pairs": 60,
+        "maximum_displacement_mm": 0.0,
+        "triangles": 40,
+        "volume_mm3": 95.81829699999996
+      },
+      "native_readback": {
+        "bounds_mm": [
+          [
+            -3.175,
+            -2.54,
+            -4.57
+          ],
+          [
+            3.175,
+            2.54,
+            6.35
+          ]
+        ],
+        "faces": 20,
+        "mesh_deviation_mm": 0.0,
+        "reader": "OpenCascade 7.9.3",
+        "solids": 2,
+        "volume_mm3": 95.81829699999999
+      },
+      "outcome": "pass",
       "path": "Connector_Samtec_HPM_THT.3dshapes/Samtec_HPM-01-05-x-S_Straight_1x01_Pitch5.08mm.step",
+      "persistence": {
+        "mass_kg": 0.0002587094019,
+        "material": "Corpus aluminium 2700 kg/m3",
+        "parts": 1,
+        "project_bytes": 36794,
+        "section": {
+          "curves": 8,
+          "hatch_vectors": 98,
+          "length_exact": true,
+          "length_mm": 27.42,
+          "plane_z_mm": 0.8899999999999997
+        }
+      },
       "producer": {
         "file_name": [
           "KiCAD"
@@ -4912,7 +5612,86 @@
         "name": "KiCad",
         "version": "originating system 'KiCAD', preprocessor ''"
       },
+      "readback": {
+        "bounds_deviation_mm": 0.0,
+        "bounds_mm": [
+          [
+            -3.175,
+            -2.54,
+            -4.57
+          ],
+          [
+            3.175,
+            2.54,
+            6.35
+          ]
+        ],
+        "export_bytes": 30507,
+        "faces": 20,
+        "mesh_deviation_mm": 0.0,
+        "reader": {
+          "bounds_mm": [
+            [
+              -3.175,
+              -2.54,
+              -4.57
+            ],
+            [
+              3.175,
+              2.54,
+              6.35
+            ]
+          ],
+          "faces": 20,
+          "members": 2,
+          "reader": "retained boundary",
+          "volume_mm3": 95.81829700000003
+        },
+        "section": {
+          "curves": 8,
+          "hatch_vectors": 0,
+          "length_exact": true,
+          "length_mm": 27.42,
+          "plane_z_mm": 0.8899999999999997
+        },
+        "volume_deviation_mm3": 1.4210854715202004e-14,
+        "volume_mm3": 95.81829700000003
+      },
+      "section": {
+        "curves": 8,
+        "hatch_vectors": 0,
+        "length_exact": true,
+        "length_mm": 27.42,
+        "plane_z_mm": 0.8899999999999997
+      },
+      "section_native": {
+        "length_mm": 27.42,
+        "reader": "OpenCascade 7.9.3",
+        "relative": 0.0
+      },
       "sha256": "41d3ccf88f97caf5aefb72e7ede7b6056830098bf2450959b5ad77da37d9bbe7",
+      "source": {
+        "bounds_mm": [
+          [
+            -3.175,
+            -2.54,
+            -4.57
+          ],
+          [
+            3.175,
+            2.54,
+            6.35
+          ]
+        ],
+        "faces": 20,
+        "solids": 2,
+        "supports": {
+          "area_mm2": 173.1830679184902,
+          "planar_area_mm2": 173.1830679184902,
+          "planar_faces": 20
+        },
+        "volume_mm3": 95.81829700000002
+      },
       "source_native": {
         "bounds_mm": [
           [
@@ -4936,18 +5715,37 @@
         },
         "volume_mm3": 95.81829699999999
       },
+      "source_native_mesh_deviation_mm": 0.0,
+      "source_reader": {
+        "bounds_mm": [
+          [
+            -3.175,
+            -2.54,
+            -4.57
+          ],
+          [
+            3.175,
+            2.54,
+            6.35
+          ]
+        ],
+        "faces": 20,
+        "members": 2,
+        "reader": "retained boundary",
+        "volume_mm3": 95.81829700000002
+      },
       "tags": [
         "assembly",
         "multi-body"
       ],
-      "verdict": "unsupported"
+      "verdict": "pass"
     },
     {
       "expected": "pass",
-      "export_ms": 0.262375,
+      "export_ms": 0.20875000000000002,
       "finding": null,
       "id": "kicad-lib-Mounting_Wuerth_WA-SMSI-M3_H1mm_9774010360",
-      "import_ms": 10.30725,
+      "import_ms": 49.528667,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 672,
@@ -4980,7 +5778,7 @@
         "mass_kg": 0.00009709529531280278,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 12296,
+        "project_bytes": 12293,
         "section": {
           "curves": 192,
           "hatch_vectors": 66,
@@ -5125,10 +5923,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.401792,
+      "export_ms": 0.198416,
       "finding": null,
       "id": "kicad-lib-R_Box_L13.0mm_W4.0mm_P9.00mm",
-      "import_ms": 37.301916,
+      "import_ms": 37.414875,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 402,
@@ -5161,7 +5959,7 @@
         "mass_kg": 0.0011313430081581045,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 20131,
+        "project_bytes": 20132,
         "section": {
           "curves": 4,
           "hatch_vectors": 121,
@@ -5307,10 +6105,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.345042,
+      "export_ms": 0.343291,
       "finding": null,
       "id": "kicad-lib-PinSocket_1x01_P2.54mm_Vertical",
-      "import_ms": 5.918791,
+      "import_ms": 4.539333,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 174,
@@ -5343,7 +6141,7 @@
         "mass_kg": 0.00013943039399999895,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 35132,
+        "project_bytes": 35135,
         "section": {
           "curves": 16,
           "hatch_vectors": 44,
@@ -5488,10 +6286,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.2125,
+      "export_ms": 1.306917,
       "finding": null,
       "id": "kicad-lib-C_Axial_L5.1mm_D3.1mm_P10.00mm_Horizontal",
-      "import_ms": 348.61483300000003,
+      "import_ms": 100.66291700000001,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 6318,
@@ -5524,7 +6322,7 @@
         "mass_kg": 0.00010511293524772237,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 25544,
+        "project_bytes": 25542,
         "section": {
           "curves": 140,
           "hatch_vectors": 65,
@@ -5669,10 +6467,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.186167,
+      "export_ms": 6.237666,
       "finding": null,
       "id": "kicad-vendored-WLP-4_0.83x0.83mm_P0.4mm",
-      "import_ms": 118.518209,
+      "import_ms": 11.90225,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 8868,
@@ -5705,7 +6503,7 @@
         "mass_kg": 6.739015893635502e-7,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 16882,
+        "project_bytes": 16878,
         "section": {
           "curves": 4,
           "hatch_vectors": 11,
@@ -5850,10 +6648,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.26304099999999997,
+      "export_ms": 0.512917,
       "finding": null,
       "id": "kicad-lib-D_SOD-923",
-      "import_ms": 135.444625,
+      "import_ms": 27.219584,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 150,
@@ -5886,7 +6684,7 @@
         "mass_kg": 4.6986375548892374e-7,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 49401,
+        "project_bytes": 49397,
         "section": {
           "curves": 4,
           "hatch_vectors": 9,
@@ -6037,7 +6835,7 @@
         "summary": "Contains a SHELL_BASED_SURFACE_MODEL with open shells beside its solids. The product has no surface-body concept, and importing only the solids would drop part of the model, so the file is refused as unsupported."
       },
       "id": "kicad-lib-R_LDR_5.2x5.2mm_P3.5mm_Horizontal",
-      "import_ms": 4.3496250000000005,
+      "import_ms": 2.070667,
       "location": "kicad-library",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -6084,13 +6882,13 @@
     {
       "expected": "unsupported",
       "finding": {
-        "owner": "CAD-361",
-        "summary": "Toroidal blends combined with multiple solids are refused."
+        "owner": "CAD-360",
+        "summary": "The assembly structure reads (CAD-361), but component e50ef681-4cb7-11ee-8265-85d007bab819_part (solid #110) carries four horn-torus corner blends (TOROIDAL_SURFACE with major = minor = 0.125 mm), which the retained boundary reader refuses; the import refuses atomically rather than drop the component."
       },
       "id": "kicad-lib-Converter_ACDC_MeanWell_IRM-60-xx_THT",
-      "import_ms": 0.908875,
+      "import_ms": 1.368625,
       "location": "kicad-library",
-      "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
+      "message": "imported boundary: Imported boundary is outside the retained Rust families",
       "outcome": "unsupported",
       "path": "Converter_ACDC.3dshapes/Converter_ACDC_MeanWell_IRM-60-xx_THT.step",
       "producer": {
@@ -6139,7 +6937,7 @@
         "summary": "An inner-shell edge, a degree-13 rational B-spline, lies up to 1.10e-5 mm off its cylinder. That exceeds the file's declared 2e-6 mm uncertainty and the 1e-5 mm incidence cap, so the retained-boundary reader refuses it as invalid. OpenCascade accepts it with its per-edge tolerances."
       },
       "id": "kicad-lib-C_Radial_D6.3mm_H7.0mm_P2.50mm",
-      "import_ms": 48.186125000000004,
+      "import_ms": 17.772792,
       "location": "kicad-library",
       "message": "imported boundary: Imported boundary is not a valid closed solid",
       "outcome": "invalid",
@@ -6186,10 +6984,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 1.2752919999999999,
+      "export_ms": 0.288041,
       "finding": null,
       "id": "kicad-lib-L_Radial_D28.0mm_P29.20mm",
-      "import_ms": 12.456416999999998,
+      "import_ms": 62.948333999999996,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 35799,
@@ -6222,7 +7020,7 @@
         "mass_kg": 0.04663245914544175,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 19663,
+        "project_bytes": 19657,
         "section": {
           "curves": 741,
           "hatch_vectors": 301,
@@ -6369,10 +7167,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.233125,
+      "export_ms": 0.28591700000000003,
       "finding": null,
       "id": "kicad-lib-R_0603_1608Metric",
-      "import_ms": 2.774333,
+      "import_ms": 3.091834,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 342,
@@ -6405,7 +7203,7 @@
         "mass_kg": 1.4504906525336038e-6,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 45231,
+        "project_bytes": 45229,
         "section": {
           "curves": 4,
           "hatch_vectors": 17,
@@ -6552,10 +7350,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.209667,
+      "export_ms": 0.20825,
       "finding": null,
       "id": "kicad-lib-QFN-32-1EP_4x4mm_P0.4mm_EP2.9x2.9mm",
-      "import_ms": 3.9369579999999997,
+      "import_ms": 3.7727500000000003,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 18,
@@ -6588,7 +7386,7 @@
         "mass_kg": 0.00002592,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 83990,
+        "project_bytes": 83987,
         "section": {
           "curves": 4,
           "hatch_vectors": 57,
@@ -6734,10 +7532,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.192292,
+      "export_ms": 0.205833,
       "finding": null,
       "id": "kicad-lib-DFN-8-1EP_3x2mm_P0.5mm_EP1.3x1.5mm",
-      "import_ms": 1.2728329999999999,
+      "import_ms": 1.284958,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 18,
@@ -6770,7 +7568,7 @@
         "mass_kg": 9.72e-6,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 31053,
+        "project_bytes": 31055,
         "section": {
           "curves": 4,
           "hatch_vectors": 35,
@@ -6916,10 +7714,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.191208,
+      "export_ms": 0.18100000000000002,
       "finding": null,
       "id": "kicad-lib-L_CommonModeChoke_Bourns_SRF1260",
-      "import_ms": 0.9490419999999999,
+      "import_ms": 0.9745,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 18,
@@ -6952,7 +7750,7 @@
         "mass_kg": 0.002615625,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 21267,
+        "project_bytes": 21266,
         "section": {
           "curves": 4,
           "hatch_vectors": 177,
@@ -7102,13 +7900,13 @@
   "native_reference": true,
   "outcomes": {
     "invalid": 2,
-    "pass": 36,
-    "unsupported": 8
+    "pass": 42,
+    "unsupported": 2
   },
   "schema": 1,
   "source": {
-    "commit": "c0fddf102e09efa580679ba124439c88d80ab0d7",
-    "tracked_changes": false
+    "commit": "3cc58b1106aac9119189f3e5a8595552086c3e19",
+    "tracked_changes": true
   },
   "tolerances": {
     "bounds_mm": 1e-6,
@@ -7124,7 +7922,7 @@
     "volume_relative": 1e-9
   },
   "verdicts": {
-    "pass": 36,
-    "unsupported": 10
+    "pass": 42,
+    "unsupported": 4
   }
 }
