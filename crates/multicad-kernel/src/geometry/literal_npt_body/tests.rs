@@ -78,115 +78,128 @@ fn source(text: &str) -> read::OwnedMaterial {
     .retain(Default::default(), None)
     .unwrap()
 }
-#[test]
-fn actual_literal_native_owns_source_topology_mass_queries_and_manufacturing() {
-    for (quarter, placed) in [(false, false), (true, false), (false, true)] {
-        let text = text(quarter);
-        let text = if placed { mapped(&text) } else { text };
-        let material = source(&text);
-        let expected = material.world_volume_mm3();
-        let inside = material
-            .map_box_mm([[0., 0.], [0., 0.], [2., 2.]])
-            .unwrap()
-            .map(|v| v[0].midpoint(v[1]));
-        let owner = EntityId::new();
-        let solid = Solid::import_rust_step(&text, owner, Default::default()).unwrap();
-        assert!(solid.rust_clipped_npt_source().is_none());
-        assert!(solid.rust_authored_axial_pipe_thread_source().is_none());
-        let actual = solid.volume_mm3().unwrap();
-        assert!(actual >= expected[0] && actual <= expected[1]);
-        let top = solid.topology_snapshot(owner, 0).unwrap();
-        let combined = solid.topology_with_display(owner, 0, Some(0.05)).unwrap();
-        assert_eq!(combined.topology, top);
-        assert_eq!(combined.edges.len(), 20);
-        assert_eq!(combined.vertices.len(), 12);
-        assert_eq!(solid.display_edges(0.05).unwrap().len(), 20);
+fn actual_literal_native_owns_source_topology_mass_queries_and_manufacturing_case(
+    quarter: bool,
+    placed: bool,
+) {
+    let text = text(quarter);
+    let text = if placed { mapped(&text) } else { text };
+    let material = source(&text);
+    let expected = material.world_volume_mm3();
+    let inside = material
+        .map_box_mm([[0., 0.], [0., 0.], [2., 2.]])
+        .unwrap()
+        .map(|v| v[0].midpoint(v[1]));
+    let owner = EntityId::new();
+    let solid = Solid::import_rust_step(&text, owner, Default::default()).unwrap();
+    assert!(solid.rust_clipped_npt_source().is_none());
+    assert!(solid.rust_authored_axial_pipe_thread_source().is_none());
+    let actual = solid.volume_mm3().unwrap();
+    assert!(actual >= expected[0] && actual <= expected[1]);
+    let top = solid.topology_snapshot(owner, 0).unwrap();
+    let combined = solid.topology_with_display(owner, 0, Some(0.05)).unwrap();
+    assert_eq!(combined.topology, top);
+    assert_eq!(combined.edges.len(), 20);
+    assert_eq!(combined.vertices.len(), 12);
+    assert_eq!(solid.display_edges(0.05).unwrap().len(), 20);
 
-        for (kind, count) in [
-            (TopologyKind::Face, 10),
-            (TopologyKind::Edge, 20),
-            (TopologyKind::Vertex, 12),
-        ] {
-            assert_eq!(
-                top.elements.iter().filter(|e| e.key.kind == kind).count(),
-                count
-            );
-        }
-        let faces = solid.faces().unwrap();
-        assert_eq!(faces.len(), 10);
-        assert!(
-            faces
-                .iter()
-                .all(|f| f.area_mm2 > 0. && f.area_mm2.is_finite())
-        );
-        let cold = solid
-            .mesh(Default::default())
-            .unwrap_or_else(|e| panic!("quarter={quarter} placed={placed}: {e:?}"));
-        let evidence = solid.rust_literal_npt_runtime_evidence().unwrap();
-        let hot = solid.mesh(Default::default()).unwrap();
-        let repeated = solid.rust_literal_npt_runtime_evidence().unwrap();
-        assert_eq!(cold.vertices, hot.vertices);
-        assert_eq!(evidence.mesh_builds, repeated.mesh_builds);
-        assert_eq!(evidence.last_mesh_work, repeated.last_mesh_work);
-        assert!(repeated.last_mesh_actual_work.unwrap() < evidence.last_mesh_actual_work.unwrap());
-        assert!(
-            repeated.resident_budget_bytes < BYTES
-                && repeated.last_mesh_peak_bytes.unwrap() <= BYTES
-        );
-        let mesh = solid
-            .manufacturing_mesh_with_receipt(MeshOptions {
-                linear_deflection_mm: 0.1,
-                angular_deflection_rad: 0.3,
-                maximum_triangles: 100_000,
-            })
-            .unwrap();
-        assert!(mesh.edge_pairs > 0 && mesh.vertex_links > 0);
-        assert!(mesh.mesh.face_indices.iter().all(|f| *f < 10));
-        assert!(solid.rust_literal_npt_contains(inside).unwrap());
-        assert!(!solid.rust_literal_npt_contains([100., 0., 2.]).unwrap());
+    for (kind, count) in [
+        (TopologyKind::Face, 10),
+        (TopologyKind::Edge, 20),
+        (TopologyKind::Vertex, 12),
+    ] {
         assert_eq!(
-            solid.share().unwrap().topology_snapshot(owner, 0).unwrap(),
-            top
-        );
-        let moved = solid
-            .transformed(RigidTransform {
-                translation_mm: [1., 0., 0.],
-                ..Default::default()
-            })
-            .unwrap();
-        assert_eq!(
-            moved
-                .rust_literal_npt_occurrence()
-                .unwrap()
-                .transforms()
-                .len(),
-            1
-        );
-        assert_eq!(
-            moved
-                .rust_literal_npt_source()
-                .unwrap()
-                .original_mapping_identity(),
-            solid
-                .rust_literal_npt_source()
-                .unwrap()
-                .original_mapping_identity()
-        );
-        assert!(
-            moved
-                .rust_literal_npt_contains([inside[0] + 1., inside[1], inside[2]])
-                .unwrap()
-        );
-        assert!(
-            moved
-                .topology_with_display(owner, 0, Some(0.05))
-                .unwrap()
-                .edges
-                .len()
-                == 20
+            top.elements.iter().filter(|e| e.key.kind == kind).count(),
+            count
         );
     }
+    let faces = solid.faces().unwrap();
+    assert_eq!(faces.len(), 10);
+    assert!(
+        faces
+            .iter()
+            .all(|f| f.area_mm2 > 0. && f.area_mm2.is_finite())
+    );
+    let cold = solid
+        .mesh(Default::default())
+        .unwrap_or_else(|e| panic!("quarter={quarter} placed={placed}: {e:?}"));
+    let evidence = solid.rust_literal_npt_runtime_evidence().unwrap();
+    let hot = solid.mesh(Default::default()).unwrap();
+    let repeated = solid.rust_literal_npt_runtime_evidence().unwrap();
+    assert_eq!(cold.vertices, hot.vertices);
+    assert_eq!(evidence.mesh_builds, repeated.mesh_builds);
+    assert_eq!(evidence.last_mesh_work, repeated.last_mesh_work);
+    assert!(repeated.last_mesh_actual_work.unwrap() < evidence.last_mesh_actual_work.unwrap());
+    assert!(
+        repeated.resident_budget_bytes < BYTES && repeated.last_mesh_peak_bytes.unwrap() <= BYTES
+    );
+    let mesh = solid
+        .manufacturing_mesh_with_receipt(MeshOptions {
+            linear_deflection_mm: 0.1,
+            angular_deflection_rad: 0.3,
+            maximum_triangles: 100_000,
+        })
+        .unwrap();
+    assert!(mesh.edge_pairs > 0 && mesh.vertex_links > 0);
+    assert!(mesh.mesh.face_indices.iter().all(|f| *f < 10));
+    assert!(solid.rust_literal_npt_contains(inside).unwrap());
+    assert!(!solid.rust_literal_npt_contains([100., 0., 2.]).unwrap());
+    assert_eq!(
+        solid.share().unwrap().topology_snapshot(owner, 0).unwrap(),
+        top
+    );
+    let moved = solid
+        .transformed(RigidTransform {
+            translation_mm: [1., 0., 0.],
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(
+        moved
+            .rust_literal_npt_occurrence()
+            .unwrap()
+            .transforms()
+            .len(),
+        1
+    );
+    assert_eq!(
+        moved
+            .rust_literal_npt_source()
+            .unwrap()
+            .original_mapping_identity(),
+        solid
+            .rust_literal_npt_source()
+            .unwrap()
+            .original_mapping_identity()
+    );
+    assert!(
+        moved
+            .rust_literal_npt_contains([inside[0] + 1., inside[1], inside[2]])
+            .unwrap()
+    );
+    assert!(
+        moved
+            .topology_with_display(owner, 0, Some(0.05))
+            .unwrap()
+            .edges
+            .len()
+            == 20
+    );
 }
+#[test]
+fn actual_literal_native_owns_source_topology_mass_queries_and_manufacturing_eighth() {
+    actual_literal_native_owns_source_topology_mass_queries_and_manufacturing_case(false, false);
+}
+#[test]
+fn actual_literal_native_owns_source_topology_mass_queries_and_manufacturing_quarter() {
+    actual_literal_native_owns_source_topology_mass_queries_and_manufacturing_case(true, false);
+}
+#[test]
+fn actual_literal_native_owns_source_topology_mass_queries_and_manufacturing_original_step_mapped()
+{
+    actual_literal_native_owns_source_topology_mass_queries_and_manufacturing_case(false, true);
+}
+
 #[test]
 fn actual_normal_step_import_keeps_mixed_literal_members_separate() {
     use multicad_rust_kernel::step::{Writer, npt_stock as step};
@@ -555,219 +568,249 @@ fn actual_warm_display_survives_failed_quality_and_fresh_manufacturing_queries()
     );
 }
 
-#[test]
-fn actual_native_occurrences_keep_source_and_fresh_mesh_face_query_quality() {
-    for placed in [false, true] {
-        let original = text(false);
-        let original = if placed { mapped(&original) } else { original };
-        let solid =
-            Solid::import_rust_step(&original, EntityId::new(), Default::default()).unwrap();
-        let old_faces = solid.faces().unwrap();
-        let rotate = RigidTransform {
-            rotation: [[0.8, -0.36, 0.48], [0.6, 0.48, -0.64], [0., 0.8, 0.6]],
-            translation_mm: [17., -8., 13.],
-        };
-        let first = solid.transformed(rotate).unwrap();
-        let moved = first
-            .transformed(RigidTransform {
-                rotation: [[0., 0., 1.], [0., 1., 0.], [-1., 0., 0.]],
-                translation_mm: [2., 3., 4.],
-            })
-            .unwrap();
-        assert!(Rc::ptr_eq(
-            &solid.literal_npt_body().unwrap().plan,
-            &moved.literal_npt_body().unwrap().plan
-        ));
-        assert_eq!(
-            moved
-                .rust_literal_npt_occurrence()
-                .unwrap()
-                .transforms()
-                .len(),
-            2
-        );
-        assert_eq!(
-            solid.rust_literal_npt_source().unwrap().point_count(),
-            moved.rust_literal_npt_source().unwrap().point_count()
-        );
-        let faces = moved.faces().unwrap();
-        assert_eq!(faces.len(), old_faces.len());
-        let pose = moved.rust_literal_npt_occurrence().unwrap();
-        for (old, new) in old_faces.iter().zip(&faces) {
-            let center = pose.map_box_mm(old.center_mm.map(|v| [v, v])).unwrap();
-            assert!(
-                new.center_mm
-                    .into_iter()
-                    .zip(center)
-                    .all(|(x, b)| x >= b[0] - 1e-7 && x <= b[1] + 1e-7)
-            );
-            assert!((new.area_mm2 - old.area_mm2).abs() < 1e-6);
-        }
-        let local = solid
-            .rust_literal_npt_source()
+fn actual_native_occurrences_keep_source_and_fresh_mesh_face_query_quality_case(placed: bool) {
+    let original = text(false);
+    let original = if placed { mapped(&original) } else { original };
+    let solid = Solid::import_rust_step(&original, EntityId::new(), Default::default()).unwrap();
+    let old_faces = solid.faces().unwrap();
+    let rotate = RigidTransform {
+        rotation: [[0.8, -0.36, 0.48], [0.6, 0.48, -0.64], [0., 0.8, 0.6]],
+        translation_mm: [17., -8., 13.],
+    };
+    let first = solid.transformed(rotate).unwrap();
+    let moved = first
+        .transformed(RigidTransform {
+            rotation: [[0., 0., 1.], [0., 1., 0.], [-1., 0., 0.]],
+            translation_mm: [2., 3., 4.],
+        })
+        .unwrap();
+    assert!(Rc::ptr_eq(
+        &solid.literal_npt_body().unwrap().plan,
+        &moved.literal_npt_body().unwrap().plan
+    ));
+    assert_eq!(
+        moved
+            .rust_literal_npt_occurrence()
             .unwrap()
-            .map_box_mm([[0., 0.], [0., 0.], [2., 2.]])
-            .unwrap();
-        let world = pose.map_box_mm(local).unwrap().map(|b| b[0].midpoint(b[1]));
-        assert!(moved.rust_literal_npt_contains(world).unwrap());
-        assert!(!moved.rust_literal_npt_contains([100., 100., 100.]).unwrap());
-        let top = moved
-            .topology_with_display(EntityId::new(), 0, Some(0.05))
-            .unwrap();
-        assert_eq!(top.edges.len(), 20);
-        assert_eq!(top.vertices.len(), 12);
-        let mesh = moved.mesh(Default::default()).unwrap();
-        assert!(!mesh.indices.is_empty());
-        let before = moved.rust_literal_npt_runtime_evidence().unwrap();
-        let mfg = moved
-            .manufacturing_mesh_with_receipt(Default::default())
-            .unwrap();
-        assert!(mfg.edge_pairs > 0 && mfg.vertex_links > 0);
+            .transforms()
+            .len(),
+        2
+    );
+    assert_eq!(
+        solid.rust_literal_npt_source().unwrap().point_count(),
+        moved.rust_literal_npt_source().unwrap().point_count()
+    );
+    let faces = moved.faces().unwrap();
+    assert_eq!(faces.len(), old_faces.len());
+    let pose = moved.rust_literal_npt_occurrence().unwrap();
+    for (old, new) in old_faces.iter().zip(&faces) {
+        let center = pose.map_box_mm(old.center_mm.map(|v| [v, v])).unwrap();
         assert!(
-            moved
-                .rust_literal_npt_runtime_evidence()
-                .unwrap()
-                .mesh_builds
-                > before.mesh_builds
+            new.center_mm
+                .into_iter()
+                .zip(center)
+                .all(|(x, b)| x >= b[0] - 1e-7 && x <= b[1] + 1e-7)
         );
-        assert!((moved.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < 1e-6);
-        assert_eq!(
-            solid
-                .rust_literal_npt_occurrence()
-                .map(|p| p.transforms().len()),
-            None
-        );
+        assert!((new.area_mm2 - old.area_mm2).abs() < 1e-6);
     }
+    let local = solid
+        .rust_literal_npt_source()
+        .unwrap()
+        .map_box_mm([[0., 0.], [0., 0.], [2., 2.]])
+        .unwrap();
+    let world = pose.map_box_mm(local).unwrap().map(|b| b[0].midpoint(b[1]));
+    assert!(moved.rust_literal_npt_contains(world).unwrap());
+    assert!(!moved.rust_literal_npt_contains([100., 100., 100.]).unwrap());
+    let top = moved
+        .topology_with_display(EntityId::new(), 0, Some(0.05))
+        .unwrap();
+    assert_eq!(top.edges.len(), 20);
+    assert_eq!(top.vertices.len(), 12);
+    let mesh = moved.mesh(Default::default()).unwrap();
+    assert!(!mesh.indices.is_empty());
+    let before = moved.rust_literal_npt_runtime_evidence().unwrap();
+    let mfg = moved
+        .manufacturing_mesh_with_receipt(Default::default())
+        .unwrap();
+    assert!(mfg.edge_pairs > 0 && mfg.vertex_links > 0);
+    assert!(
+        moved
+            .rust_literal_npt_runtime_evidence()
+            .unwrap()
+            .mesh_builds
+            > before.mesh_builds
+    );
+    assert!((moved.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < 1e-6);
+    assert_eq!(
+        solid
+            .rust_literal_npt_occurrence()
+            .map(|p| p.transforms().len()),
+        None
+    );
+}
+#[test]
+fn actual_native_occurrences_keep_source_and_fresh_mesh_face_query_quality_unmapped() {
+    actual_native_occurrences_keep_source_and_fresh_mesh_face_query_quality_case(false);
+}
+#[test]
+fn actual_native_occurrences_keep_source_and_fresh_mesh_face_query_quality_original_step_mapped() {
+    actual_native_occurrences_keep_source_and_fresh_mesh_face_query_quality_case(true);
 }
 
-#[test]
-fn actual_normal_literal_step_reexport_keeps_geometry_pose_and_mixed_members() {
-    for (quarter, originally_mapped, moved) in [
-        (false, false, false),
-        (true, false, false),
-        (false, true, false),
-        (false, false, true),
-        (false, true, true),
-    ] {
-        let text = text(quarter);
-        let text = if originally_mapped {
-            mapped(&text)
-        } else {
-            text
-        };
-        let original = Solid::import_rust_step(&text, EntityId::new(), Default::default()).unwrap();
-        let solid = if moved {
-            original
-                .transformed(RigidTransform {
-                    rotation: [[0.8, -0.36, 0.48], [0.6, 0.48, -0.64], [0., 0.8, 0.6]],
-                    translation_mm: [17., -8., 13.],
-                })
-                .unwrap()
-        } else {
-            original.share().unwrap()
-        };
-        // A live warm display remains resident during independently verified
-        // re-export; its bytes and immutable prepared source are charged.
-        solid.mesh(Default::default()).unwrap();
-        let warm = solid.rust_literal_npt_runtime_evidence().unwrap();
-        assert!(solid.supports_step_export());
-        assert!(solid.supports_step_export());
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("literal.step");
-        solid.write_step(&path).unwrap();
-        let evidence = solid.rust_literal_npt_step_evidence().unwrap();
-        assert!(
-            evidence.aggregate_work_used() <= 96_000_000
-                && evidence.accounted_peak_bytes() <= BYTES
-        );
-        assert!(
-            evidence.position_error_mm() <= 1e-7
-                && evidence.original_derivative_error_mm() <= 1e-6
-                && evidence.normal_chord_error() <= 1e-6
-        );
-        let actual_text = std::fs::read_to_string(path).unwrap();
-        let fresh = solid.verify_literal_npt_step(&actual_text, 1e-7).unwrap();
-        assert_eq!(fresh.represented_member_count(), 1);
-        assert!(fresh.actual_volume_mm3()[0] > 0.);
-        assert!(fresh.receipt().accounted_peak_bytes() <= 128 * 1024 * 1024);
-        let decoded =
-            Solid::import_rust_step(&actual_text, EntityId::new(), Default::default()).unwrap();
-        assert!(decoded.rust_literal_npt_source().is_some());
-        assert!((decoded.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < 1e-6);
-        let before = solid.bounds().unwrap();
-        let after = decoded.bounds().unwrap();
-        // AABB-after-AABB for two retained maps can be wider than the
-        // flattened file map. Compare actual source-owned vertices instead.
-        let source = solid.rust_literal_npt_source().unwrap();
-        let target = decoded.rust_literal_npt_source().unwrap();
-        for vertex in source.vertices() {
-            let local = source
-                .point(vertex.point_index())
-                .unwrap()
-                .coordinates()
-                .map(|s| s.bounds());
-            let base = source.map_box_mm(local).unwrap();
-            let wanted = solid
-                .rust_literal_npt_occurrence()
-                .map_or(base, |p| p.map_box_mm(base).unwrap());
-            let actual = target.map_box_mm(local).unwrap();
-            for axis in 0..3 {
-                assert!(
-                    (wanted[axis][0].midpoint(wanted[axis][1])
-                        - actual[axis][0].midpoint(actual[axis][1]))
-                    .abs()
-                        < 1e-7,
-                    "quarter={quarter} mapped={originally_mapped} moved={moved}"
-                );
-                let x = actual[axis][0].midpoint(actual[axis][1]);
-                assert!(x >= before.min[axis] - 1e-7 && x <= before.max[axis] + 1e-7);
-                assert!(x >= after.min[axis] - 1e-7 && x <= after.max[axis] + 1e-7);
-            }
-        }
-        solid.mesh(Default::default()).unwrap();
-        assert_eq!(
-            solid
-                .rust_literal_npt_runtime_evidence()
-                .unwrap()
-                .mesh_builds,
-            warm.mesh_builds
-        );
-        if moved {
-            let box_part = Solid::box_solid([2., 3., 4.], Default::default())
-                .unwrap()
-                .transformed(RigidTransform {
-                    translation_mm: [-20., 0., 0.],
-                    ..Default::default()
-                })
-                .unwrap();
-            let compound = Solid::make_rust_compound(
-                &[&solid, &box_part, &original],
-                EntityId::new(),
-                Default::default(),
-                None,
-            )
-            .unwrap();
-            let path = directory.path().join("mixed.step");
-            compound.write_step(&path).unwrap();
-            let actual_text = std::fs::read_to_string(path).unwrap();
-            let fresh = solid
-                .verify_literal_npt_step_member(&actual_text, 0, 1e-7)
-                .unwrap();
-            assert_eq!(fresh.represented_member_count(), 3);
-            assert_eq!(fresh.member_index(), 0);
-            assert!(solid.verify_literal_npt_step(&actual_text, 1e-7).is_err());
+fn actual_normal_literal_step_reexport_keeps_geometry_pose_and_mixed_members_case(
+    quarter: bool,
+    originally_mapped: bool,
+    moved: bool,
+) {
+    let text = text(quarter);
+    let text = if originally_mapped {
+        mapped(&text)
+    } else {
+        text
+    };
+    let original = Solid::import_rust_step(&text, EntityId::new(), Default::default()).unwrap();
+    let solid = if moved {
+        original
+            .transformed(RigidTransform {
+                rotation: [[0.8, -0.36, 0.48], [0.6, 0.48, -0.64], [0., 0.8, 0.6]],
+                translation_mm: [17., -8., 13.],
+            })
+            .unwrap()
+    } else {
+        original.share().unwrap()
+    };
+    // A live warm display remains resident during independently verified
+    // re-export; its bytes and immutable prepared source are charged.
+    solid.mesh(Default::default()).unwrap();
+    let warm = solid.rust_literal_npt_runtime_evidence().unwrap();
+    assert!(solid.supports_step_export());
+    assert!(solid.supports_step_export());
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("literal.step");
+    solid.write_step(&path).unwrap();
+    let evidence = solid.rust_literal_npt_step_evidence().unwrap();
+    assert!(
+        evidence.aggregate_work_used() <= 96_000_000 && evidence.accounted_peak_bytes() <= BYTES
+    );
+    assert!(
+        evidence.position_error_mm() <= 1e-7
+            && evidence.original_derivative_error_mm() <= 1e-6
+            && evidence.normal_chord_error() <= 1e-6
+    );
+    let actual_text = std::fs::read_to_string(path).unwrap();
+    let fresh = solid.verify_literal_npt_step(&actual_text, 1e-7).unwrap();
+    assert_eq!(fresh.represented_member_count(), 1);
+    assert!(fresh.actual_volume_mm3()[0] > 0.);
+    assert!(fresh.receipt().accounted_peak_bytes() <= 128 * 1024 * 1024);
+    let decoded =
+        Solid::import_rust_step(&actual_text, EntityId::new(), Default::default()).unwrap();
+    assert!(decoded.rust_literal_npt_source().is_some());
+    assert!((decoded.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < 1e-6);
+    let before = solid.bounds().unwrap();
+    let after = decoded.bounds().unwrap();
+    // AABB-after-AABB for two retained maps can be wider than the
+    // flattened file map. Compare actual source-owned vertices instead.
+    let source = solid.rust_literal_npt_source().unwrap();
+    let target = decoded.rust_literal_npt_source().unwrap();
+    for vertex in source.vertices() {
+        let local = source
+            .point(vertex.point_index())
+            .unwrap()
+            .coordinates()
+            .map(|s| s.bounds());
+        let base = source.map_box_mm(local).unwrap();
+        let wanted = solid
+            .rust_literal_npt_occurrence()
+            .map_or(base, |p| p.map_box_mm(base).unwrap());
+        let actual = target.map_box_mm(local).unwrap();
+        for axis in 0..3 {
             assert!(
-                solid
-                    .verify_literal_npt_step_member(&actual_text, 1, 1e-7)
-                    .is_err()
+                (wanted[axis][0].midpoint(wanted[axis][1])
+                    - actual[axis][0].midpoint(actual[axis][1]))
+                .abs()
+                    < 1e-7,
+                "quarter={quarter} mapped={originally_mapped} moved={moved}"
             );
-            let last = original
-                .verify_literal_npt_step_member(&actual_text, 2, 1e-7)
-                .unwrap();
-            assert_eq!(last.member_index(), 2);
-            let reopened =
-                Solid::import_rust_step(&actual_text, EntityId::new(), Default::default()).unwrap();
-            assert_eq!(reopened.rust_compound().unwrap().members().count(), 3);
+            let x = actual[axis][0].midpoint(actual[axis][1]);
+            assert!(x >= before.min[axis] - 1e-7 && x <= before.max[axis] + 1e-7);
+            assert!(x >= after.min[axis] - 1e-7 && x <= after.max[axis] + 1e-7);
         }
     }
+    solid.mesh(Default::default()).unwrap();
+    assert_eq!(
+        solid
+            .rust_literal_npt_runtime_evidence()
+            .unwrap()
+            .mesh_builds,
+        warm.mesh_builds
+    );
+    if moved {
+        let box_part = Solid::box_solid([2., 3., 4.], Default::default())
+            .unwrap()
+            .transformed(RigidTransform {
+                translation_mm: [-20., 0., 0.],
+                ..Default::default()
+            })
+            .unwrap();
+        let compound = Solid::make_rust_compound(
+            &[&solid, &box_part, &original],
+            EntityId::new(),
+            Default::default(),
+            None,
+        )
+        .unwrap();
+        let path = directory.path().join("mixed.step");
+        compound.write_step(&path).unwrap();
+        let actual_text = std::fs::read_to_string(path).unwrap();
+        let fresh = solid
+            .verify_literal_npt_step_member(&actual_text, 0, 1e-7)
+            .unwrap();
+        assert_eq!(fresh.represented_member_count(), 3);
+        assert_eq!(fresh.member_index(), 0);
+        assert!(solid.verify_literal_npt_step(&actual_text, 1e-7).is_err());
+        assert!(
+            solid
+                .verify_literal_npt_step_member(&actual_text, 1, 1e-7)
+                .is_err()
+        );
+        let last = original
+            .verify_literal_npt_step_member(&actual_text, 2, 1e-7)
+            .unwrap();
+        assert_eq!(last.member_index(), 2);
+        let reopened =
+            Solid::import_rust_step(&actual_text, EntityId::new(), Default::default()).unwrap();
+        assert_eq!(reopened.rust_compound().unwrap().members().count(), 3);
+    }
+}
+#[test]
+fn actual_normal_literal_step_reexport_keeps_geometry_pose_and_mixed_members_eighth() {
+    actual_normal_literal_step_reexport_keeps_geometry_pose_and_mixed_members_case(
+        false, false, false,
+    );
+}
+#[test]
+fn actual_normal_literal_step_reexport_keeps_geometry_pose_and_mixed_members_quarter() {
+    actual_normal_literal_step_reexport_keeps_geometry_pose_and_mixed_members_case(
+        true, false, false,
+    );
+}
+#[test]
+fn actual_normal_literal_step_reexport_keeps_geometry_pose_and_mixed_members_original_step_mapped()
+{
+    actual_normal_literal_step_reexport_keeps_geometry_pose_and_mixed_members_case(
+        false, true, false,
+    );
+}
+#[test]
+fn actual_normal_literal_step_reexport_keeps_geometry_pose_and_mixed_members_native_placed() {
+    actual_normal_literal_step_reexport_keeps_geometry_pose_and_mixed_members_case(
+        false, false, true,
+    );
+}
+#[test]
+fn actual_normal_literal_step_reexport_keeps_geometry_pose_and_mixed_members_mapped_and_native_placed()
+ {
+    actual_normal_literal_step_reexport_keeps_geometry_pose_and_mixed_members_case(
+        false, true, true,
+    );
 }
