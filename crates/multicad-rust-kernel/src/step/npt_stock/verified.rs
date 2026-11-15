@@ -314,19 +314,19 @@ impl super::super::Writer {
         {
             return Err(Error::Unresolved);
         }
-        let inherited = candidate.plan.work_used();
-        let maximum_work = (inherited + pipeline.available(16_000_000)?).min(16_000_000);
+        let maximum_work = pipeline.available(16_000_000)?;
         let maximum_bytes = room(
             options.maximum_bytes,
             candidate.material.retained_budget_bytes() + PIPELINE_SCRATCH,
         )?;
-        let encoded = self.append_source_npt_candidate(
-            candidate.plan,
+        let encoded = writer::append_verified_replay(
+            self,
+            candidate,
             maximum_work,
             maximum_bytes,
             interrupt,
         )?;
-        let additional = encoded.work_used() - inherited;
+        let additional = encoded.work_used();
         // Encoder was bounded by the remaining aggregate BEFORE its atomic
         // commit. Accounting after commit cannot introduce a new cancellation
         // or error that would leave a failed operation appended to the writer.

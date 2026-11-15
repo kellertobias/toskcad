@@ -84,3 +84,244 @@ fn actual_verified_candidates_append_and_reopen_without_an_authored_import_recip
         );
     }
 }
+fn prefix() -> super::super::super::Writer {
+    let mut writer = super::super::super::Writer::new();
+    writer
+        .append_box(
+            [crate::Rational::new(5, 1).unwrap(); 3],
+            [40., 0., 0.],
+            [1., 0., 0.],
+            [0., 1., 0.],
+        )
+        .unwrap();
+    writer
+}
+#[test]
+fn actual_verified_replay_obeys_explicit_64m_and_cancel_limits_atomically() {
+    let source = super::super::tests::source(false);
+    let plan = SurfacePlan::new(
+        CurvePlan::new(&source, Default::default(), None).unwrap(),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let candidate = plan.verify_candidate(Default::default(), None).unwrap();
+    let expected = prefix().finish().unwrap();
+    for options in [
+        VerifiedOptions {
+            maximum_work: 64_000_000,
+            ..Default::default()
+        },
+        VerifiedOptions {
+            maximum_work: candidate.receipt().aggregate_work_used() - 1,
+            ..Default::default()
+        },
+        VerifiedOptions {
+            maximum_bytes: candidate.receipt().accounted_peak_bytes() - 1,
+            ..Default::default()
+        },
+    ] {
+        let mut writer = prefix();
+        assert!(matches!(
+            writer.append_verified_source_npt_candidate(&candidate, options, None),
+            Err(Error::Limit)
+        ));
+        assert_eq!(writer.finish().unwrap(), expected);
+    }
+    let mut writer = prefix();
+    assert!(matches!(
+        writer.append_verified_source_npt_candidate(
+            &candidate,
+            VerifiedOptions {
+                position_error_mm: 1e-12,
+                ..Default::default()
+            },
+            None
+        ),
+        Err(Error::Unresolved)
+    ));
+    assert_eq!(writer.finish().unwrap(), expected);
+    let calls = std::cell::Cell::new(0usize);
+    let mut writer = prefix();
+    writer
+        .append_verified_source_npt_candidate(
+            &candidate,
+            Default::default(),
+            Some(&|| {
+                calls.set(calls.get() + 1);
+                false
+            }),
+        )
+        .unwrap();
+    for checkpoint in [1, 2, calls.get() / 2, calls.get()] {
+        let count = std::cell::Cell::new(0usize);
+        let stop = || {
+            count.set(count.get() + 1);
+            count.get() >= checkpoint
+        };
+        let mut writer = prefix();
+        assert!(matches!(
+            writer.append_verified_source_npt_candidate(
+                &candidate,
+                Default::default(),
+                Some(&stop)
+            ),
+            Err(Error::Cancelled)
+        ));
+        assert_eq!(writer.finish().unwrap(), expected);
+    }
+    // Reuse the same immutable proof after failed/cancelled transactions.
+    let mut writer = prefix();
+    writer
+        .append_verified_source_npt_candidate(&candidate, Default::default(), None)
+        .unwrap();
+    let text = writer.finish().unwrap();
+    let document = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+    assert_eq!(document.represented_members().len(), 2);
+    let member = document.represented_members()[1];
+    let selected =
+        Selected::parse(&document, member.item_entity(), Default::default(), None).unwrap();
+    let owned = selected.retain(Default::default(), None).unwrap();
+    assert!(
+        plan.correspond_literal(&owned, Default::default(), None)
+            .is_ok()
+    );
+}
+#[test]
+fn verified_pipeline_keeps_actual_phase_and_tolerance_frontiers_explicit() {
+    let source = super::super::tests::source(false);
+    let plan = SurfacePlan::new(
+        CurvePlan::new(&source, Default::default(), None).unwrap(),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    for options in [
+        VerifiedOptions {
+            maximum_work: 0,
+            ..Default::default()
+        },
+        VerifiedOptions {
+            maximum_work: 96_000_001,
+            ..Default::default()
+        },
+        VerifiedOptions {
+            maximum_bytes: 0,
+            ..Default::default()
+        },
+        VerifiedOptions {
+            maximum_bytes: 64 * 1024 * 1024 + 1,
+            ..Default::default()
+        },
+        VerifiedOptions {
+            position_error_mm: f64::NAN,
+            ..Default::default()
+        },
+        VerifiedOptions {
+            original_derivative_error_mm: 0.,
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            plan.verify_candidate(options, None),
+            Err(Error::Invalid)
+        ));
+    }
+    for options in [
+        VerifiedOptions {
+            maximum_work: 2048,
+            ..Default::default()
+        },
+        VerifiedOptions {
+            maximum_work: 1024,
+            ..Default::default()
+        },
+        VerifiedOptions {
+            maximum_work: 2048 + plan.work_used() - 1,
+            ..Default::default()
+        },
+        VerifiedOptions {
+            maximum_bytes: PIPELINE_SCRATCH,
+            ..Default::default()
+        },
+        VerifiedOptions {
+            maximum_bytes: 8 * 1024 * 1024,
+            ..Default::default()
+        },
+        VerifiedOptions {
+            maximum_bytes: 30 * 1024 * 1024,
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            plan.verify_candidate(options, None),
+            Err(Error::Limit)
+        ));
+    }
+    assert!(matches!(
+        plan.verify_candidate(
+            VerifiedOptions {
+                position_error_mm: 1e-12,
+                ..Default::default()
+            },
+            None
+        ),
+        Err(Error::Unresolved)
+    ));
+    assert!(matches!(
+        plan.verify_candidate(Default::default(), Some(&|| true)),
+        Err(Error::Cancelled)
+    ));
+}
+#[test]
+fn two_verified_npt_members_with_an_ordinary_box_share_actual_encoder_budget() {
+    let source = super::super::tests::source(false);
+    let plan = SurfacePlan::new(
+        CurvePlan::new(&source, Default::default(), None).unwrap(),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let candidate = plan.verify_candidate(Default::default(), None).unwrap();
+    let mut writer = super::super::super::Writer::new();
+    let first = writer
+        .append_verified_source_npt_candidate(&candidate, Default::default(), None)
+        .unwrap();
+    writer
+        .append_box(
+            [crate::Rational::new(5, 1).unwrap(); 3],
+            [40., 0., 0.],
+            [1., 0., 0.],
+            [0., 1., 0.],
+        )
+        .unwrap();
+    let second = writer
+        .append_verified_source_npt_candidate(&candidate, Default::default(), None)
+        .unwrap();
+    assert!(first.append_work_used() <= 16_000_000 && second.append_work_used() <= 16_000_000);
+    assert!(second.aggregate_work_used() <= 96_000_000);
+    let text = writer.finish().unwrap();
+    let document = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+    assert_eq!(document.represented_members().len(), 3);
+    for index in [0, 2] {
+        let selected = Selected::parse(
+            &document,
+            document.represented_members()[index].item_entity(),
+            Default::default(),
+            None,
+        )
+        .unwrap();
+        let owned = selected.retain(Default::default(), None).unwrap();
+        let receipt = plan
+            .correspond_literal(&owned, Default::default(), None)
+            .unwrap();
+        assert!(receipt.position_error_mm() <= 1e-7);
+    }
+    eprintln!(
+        "NPT COMPOUND VERIFIED first_append={} second_append={} second_total={} bytes={}",
+        first.append_work_used(),
+        second.append_work_used(),
+        second.aggregate_work_used(),
+        second.accounted_peak_bytes()
+    );
+}

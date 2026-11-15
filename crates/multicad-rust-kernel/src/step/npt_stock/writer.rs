@@ -70,6 +70,33 @@ impl Writer {
         Ok(receipt.expect("successful sealed NPT append"))
     }
 }
+// Only a sealed verified candidate may replay with a distinct actual-encoding
+// phase. Its preparation was already charged by verified construction. The
+// legacy public source-candidate API above retains its inherited-work contract.
+pub(super) fn append_verified_replay(
+    writer: &mut Writer,
+    candidate: &super::verified::VerifiedCandidate<'_, '_>,
+    maximum_work: usize,
+    maximum_bytes: usize,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<EncodingReceipt, Error> {
+    let plan = candidate.source_plan();
+    let mut receipt = None;
+    writer.append_typed(|file| {
+        let mut work = Work::new(maximum_work, interrupt)?;
+        work.charge(0)?;
+        let mut encoder = Encoder::with_prepared_work(file, plan, work, maximum_bytes)?;
+        let solid = emit::body(&mut encoder, plan)?;
+        encoder.reserve(4096)?;
+        encoder.work.charge(4096)?;
+        receipt = Some(EncodingReceipt {
+            work: encoder.work.used,
+            bytes: encoder.peak,
+        });
+        Ok::<_, Error>(solid)
+    })?;
+    Ok(receipt.expect("successful sealed verified replay"))
+}
 struct Counter(usize);
 impl fmt::Write for Counter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
@@ -93,6 +120,14 @@ impl<'file, 'cancel> Encoder<'file, 'cancel> {
     ) -> Result<Self, Error> {
         let mut work = Work::new(maximum_work, interrupt)?;
         work.charge(plan.work_used())?;
+        Self::with_prepared_work(file, plan, work, maximum_bytes)
+    }
+    fn with_prepared_work(
+        file: &'file mut StepFile,
+        plan: &SurfacePlan<'_>,
+        work: Work<'cancel>,
+        maximum_bytes: usize,
+    ) -> Result<Self, Error> {
         if maximum_bytes == 0 || maximum_bytes > 64 * 1024 * 1024 {
             return Err(Error::Invalid);
         }
