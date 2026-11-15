@@ -37,6 +37,7 @@ impl EdgeLift {
     pub fn field_bounds(&self) -> [f64; 2] {
         self.bounds
     }
+    /// End residuals in increasing curve-parameter order.
     pub fn vertex_errors_mm(&self) -> [f64; 2] {
         self.vertices
     }

@@ -9,7 +9,9 @@ use std::{
 mod bernstein;
 mod decode;
 mod grid;
+mod occupied;
 mod polar;
+pub use occupied::{HealedMaterial, HealingOptions};
 pub use polar::{PolarOptions, PolarStrip, PolarSupports};
 mod lifts;
 mod links;

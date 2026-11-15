@@ -274,6 +274,67 @@ fn actual_trimmed_candidate_is_independently_decoded_from_literal_step_entities(
             polar.plane_heights_mm().unwrap()
         );
         let lifts = decoded.surface_lifts(LiftOptions::default(), None).unwrap();
+        let occupied =
+            HealedMaterial::prepare(&polar, &lifts, HealingOptions::default(), None).unwrap();
+        assert!(matches!(
+            HealedMaterial::prepare(
+                &polar,
+                &lifts,
+                HealingOptions {
+                    maximum_work: occupied.admission_work_used() - 1,
+                    ..HealingOptions::default()
+                },
+                None
+            ),
+            Err(Error::Limit)
+        ));
+        assert!(matches!(
+            HealedMaterial::prepare(
+                &polar,
+                &lifts,
+                HealingOptions {
+                    maximum_bytes: 1,
+                    ..HealingOptions::default()
+                },
+                None
+            ),
+            Err(Error::Limit)
+        ));
+        assert!(matches!(
+            HealedMaterial::prepare(&polar, &lifts, HealingOptions::default(), Some(&|| true)),
+            Err(Error::Cancelled)
+        ));
+        assert!(matches!(
+            HealedMaterial::prepare(
+                &polar,
+                &lifts,
+                HealingOptions {
+                    maximum_sewing_error_mm: occupied.sewing_error_bound_mm() * 0.5,
+                    ..HealingOptions::default()
+                },
+                None
+            ),
+            Err(Error::Unsupported)
+        ));
+        assert!(std::ptr::eq(occupied.polar_supports(), &polar));
+        assert!(std::ptr::eq(occupied.finite_lifts(), &lifts));
+        assert!(
+            occupied
+                .component_radius_bounds_mm()
+                .iter()
+                .all(|r| r[0] > 0.)
+        );
+        assert!(occupied.angular_norm_bounds()[0] > 0.);
+        assert!(occupied.healed_volume_bounds_mm3()[0] > 0.);
+        eprintln!(
+            "healed actual field left={left} work={} aggregate={} bytes={} volume={:?} sewing={} jacobian={}",
+            occupied.admission_work_used(),
+            occupied.aggregate_known_work_used(),
+            occupied.retained_budget_bytes(),
+            occupied.healed_volume_bounds_mm3(),
+            occupied.sewing_error_bound_mm(),
+            occupied.minimum_angular_jacobian()
+        );
         assert!(std::ptr::eq(lifts.source(), &decoded));
         assert_eq!(lifts.edges().len(), decoded.edges().len());
         for lift in lifts.edges() {
