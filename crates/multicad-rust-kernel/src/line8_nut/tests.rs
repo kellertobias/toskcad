@@ -235,16 +235,60 @@ fn original_finite_topology_and_every_coedge_keep_exact_owners_for_both_hands() 
             None,
         )
         .unwrap();
+        assert_eq!(n.phase_rotation(), [[1., 0.], [0., 1.]]);
+        assert_eq!(n.bore_from_start_mm(), 7.5);
         let boundary = n.boundary(131072, None).unwrap();
         assert_eq!(boundary.faces().len(), 17);
         assert_eq!(boundary.edges().len(), 46);
         assert_eq!(boundary.vertices().len(), 32);
         assert!(boundary.retained_bytes() < 65536);
+        assert_eq!(boundary.work_used(), 131072);
+        let mut uses = std::collections::BTreeMap::<Edge, Vec<bool>>::new();
+        let mut face_euler = 0isize;
+        for (index, face) in boundary.faces().iter().enumerate() {
+            assert_eq!(face.index(), index as u32);
+            face_euler += 2 - face.loops().len() as isize;
+            let measure = n
+                .face_measure(face.index(), Default::default(), None)
+                .unwrap();
+            assert_eq!(measure.face(), face.index());
+            for ring in face.loops() {
+                assert!(!ring.is_empty());
+                for (i, coedge) in ring.iter().enumerate() {
+                    let mut end = coedge.edge.endpoints().unwrap();
+                    if !coedge.forward {
+                        end.reverse();
+                    }
+                    let next = ring[(i + 1) % ring.len()];
+                    let mut start = next.edge.endpoints().unwrap();
+                    if !next.forward {
+                        start.reverse();
+                    }
+                    assert_eq!(
+                        end[1], start[0],
+                        "face {index} has a disconnected finite wire"
+                    );
+                    uses.entry(coedge.edge).or_default().push(coedge.forward);
+                }
+            }
+        }
+        assert_eq!(uses.len(), boundary.edges().len());
+        for orientations in uses.values_mut() {
+            orientations.sort_unstable();
+            assert_eq!(
+                orientations,
+                &[false, true],
+                "closed shell needs two opposite coedges"
+            );
+        }
+        assert_eq!(
+            boundary.vertices().len() as isize - boundary.edges().len() as isize + face_euler,
+            0
+        );
         for &edge in boundary.edges() {
-            let whole = n
-                .curve_bounds(edge, [0., 1.], 2048, None)
-                .unwrap()
-                .position_mm();
+            let curve = n.curve_bounds(edge, [0., 1.], 2048, None).unwrap();
+            assert_eq!(curve.work_used(), 2048);
+            let whole = curve.position_mm();
             assert!(
                 n.curve_second_derivative_bound_mm(edge)
                     .unwrap()
