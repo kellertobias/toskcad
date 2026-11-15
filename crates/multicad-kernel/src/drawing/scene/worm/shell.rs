@@ -59,6 +59,14 @@ pub(super) trait Shell: Send + Sync {
     fn lipschitz(&self) -> [f64; 2];
     /// Maximum of `direction · p` over the solid.
     fn support(&self, direction: V3) -> f64;
+
+    /// Heights in `[from, to]` strictly inside the solid along the axial
+    /// line at angle `theta` on the core cylinder, when the boundary meets
+    /// that line along whole stretches (the worm's root land). `None` when
+    /// it only touches the line at isolated heights.
+    fn core_line(&self, _theta: f64, _range: [f64; 2]) -> Option<Vec<[f64; 2]>> {
+        None
+    }
 }
 
 /// ZA worm: four helicoidal bands per turn of the single-start thread.
@@ -167,6 +175,35 @@ impl Shell for Screw {
 
     fn support(&self, direction: V3) -> f64 {
         self.worm.support(direction)
+    }
+
+    /// Along the line the profile phase is `s = z + half - rate (θ - turn)`;
+    /// the boundary radius equals the core radius exactly on the root band
+    /// `[upper_end, lower_end]` of each pitch and exceeds it elsewhere.
+    fn core_line(&self, theta: f64, [from, to]: [f64; 2]) -> Option<Vec<[f64; 2]>> {
+        let thread = self.worm.thread();
+        let [_, _, upper_end, lower_end, _, pitch] = thread.profile_breaks();
+        let shift = self.half - self.rate * (theta - self.turn);
+        // Root bands in height: `[upper_end - shift, lower_end - shift] + k pitch`.
+        let first = ((from + shift - lower_end) / pitch).floor() as i64;
+        let mut output = Vec::new();
+        let mut start = from;
+        let mut k = first;
+        loop {
+            let [low, high] = [upper_end, lower_end].map(|b| b - shift + k as f64 * pitch);
+            if low >= to {
+                break;
+            }
+            if low > start {
+                output.push([start, low]);
+            }
+            start = start.max(high);
+            k += 1;
+        }
+        if to > start {
+            output.push([start, to]);
+        }
+        Some(output)
     }
 }
 

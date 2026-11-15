@@ -181,10 +181,14 @@ impl Inner {
             return Ok(Vec::new());
         }
         let mut events = vec![range[0], range[1]];
-        // An axial line on the core cylinder counts as inside the core.
+        // An axial line within the resolution of the core cylinder lies on
+        // it: its radius is taken as the core radius exactly, so the root
+        // land, whose boundary radius is that same value, is a grazing
+        // contact and the thread around it is material.
         let axial = planar <= 1e-24;
+        let snapped = axial && (a[0].hypot(a[1]) - core).abs() <= tau;
         let mut zones = vec![range];
-        if let Some([p, q]) = within(core + if axial { tau } else { 0. }) {
+        if !snapped && let Some([p, q]) = within(core) {
             zones = vec![[range[0], p.min(range[1])], [q.max(range[0]), range[1]]];
             events.extend([p, q]);
         }
@@ -194,9 +198,25 @@ impl Inner {
             events.extend(pair);
         }
         let point = |t: f64| add(a, scaled(d, t));
+        if snapped && let Some(heights) = shell.core_line(a[1].atan2(a[0]), [-half, half]) {
+            // `d` is axial and unit here: the parameter is the height
+            // offset along it.
+            let output = heights
+                .into_iter()
+                .map(|[z0, z1]| {
+                    let [t0, t1] = [z0, z1].map(|z| (z - a[2]) / d[2]);
+                    [t0.min(t1).max(range[0]), t0.max(t1).min(range[1])]
+                })
+                .filter(|[t0, t1]| t1 - t0 > 1e-12 * self.scale)
+                .collect::<Vec<_>>();
+            let mut output = output;
+            output.sort_by(|x, y| x[0].total_cmp(&y[0]));
+            return Ok(output);
+        }
+        let radius = |x: f64, y: f64| if snapped { core } else { x.hypot(y) };
         let margin = |t: f64| {
             let [x, y, z] = point(t);
-            shell.radius(y.atan2(x), z.clamp(-half, half)) - x.hypot(y)
+            shell.radius(y.atan2(x), z.clamp(-half, half)) - radius(x, y)
         };
         let [turn, rise] = shell.lipschitz();
         let reach = planar.sqrt();
@@ -233,8 +253,10 @@ impl Inner {
         events.sort_by(f64::total_cmp);
         let mut output: Vec<[f64; 2]> = Vec::new();
         for pair in events.windows(2) {
+            let mid = point(0.5 * (pair[0] + pair[1]));
             if pair[1] - pair[0] <= 1e-12 * self.scale
-                || !self.inside(point(0.5 * (pair[0] + pair[1])), slab)
+                || !self.inside(mid, slab)
+                || (snapped && margin(0.5 * (pair[0] + pair[1])) <= 0.)
             {
                 continue;
             }
@@ -546,21 +568,27 @@ impl Body {
     /// The section chain of one patch at a height, counterclockwise about
     /// the local axis.
     fn rim(&self, patch: usize, z: f64) -> Arc<dyn Path> {
+        self.rim_range(patch, z, [0., 1.])
+    }
+
+    /// A range of patch parameters of the section chain of one patch.
+    fn rim_range(&self, patch: usize, z: f64, [from, to]: [f64; 2]) -> Arc<dyn Path> {
         let inner = &self.0;
         match inner.shell.arc(patch, z) {
+            // Arcs are traversed uniformly in the patch parameter.
             Some([radius, start, sweep]) => Arc::new(Round {
                 center: inner.view([0., 0., z]),
                 cosine: scaled(inner.axes[0], radius),
                 sine: scaled(inner.axes[1], radius),
-                start,
-                sweep,
+                start: start + sweep * from,
+                sweep: sweep * (to - from),
             }),
             None => Arc::new(Iso {
                 inner: inner.clone(),
                 patch,
                 level: true,
                 fixed: z,
-                range: [0., 1.],
+                range: [from, to],
                 cells: 2,
             }),
         }
@@ -726,30 +754,70 @@ impl Member for Body {
         let shell = &inner.shell;
         let half = shell.half();
         let mut found: Vec<(Kind, Arc<dyn Path>)> = Vec::new();
-        for patch in 0..shell.patches() {
+        let patches = shell.patches();
+        // An outline that ends on an edge is where the visibility of that
+        // edge may change, so the edge is split exactly there: junctions at
+        // the height of the end, end-plane rims at its patch parameter.
+        let mut junction_stops: Vec<Vec<f64>> = vec![Vec::new(); patches];
+        let mut rim_stops: Vec<[Vec<f64>; 2]> = vec![[Vec::new(), Vec::new()]; patches];
+        let near = 1e-9;
+        for patch in 0..patches {
+            for path in self.traced(patch, Level::Outline)? {
+                for [u, z] in [path.parameters(0.), path.parameters(1.)] {
+                    if u <= near {
+                        junction_stops[patch].push(z);
+                    } else if u >= 1. - near {
+                        junction_stops[(patch + 1) % patches].push(z);
+                    }
+                    if (z + half).abs() <= near * half {
+                        rim_stops[patch][0].push(u);
+                    } else if (z - half).abs() <= near * half {
+                        rim_stops[patch][1].push(u);
+                    }
+                }
+                found.push((Kind::Outline, Arc::new(path)));
+            }
+        }
+        // Ascending interior stops between the two ends of a range.
+        let ranges = |mut stops: Vec<f64>, [from, to]: [f64; 2]| {
+            let margin = near * (to - from);
+            stops.retain(|s| *s > from + margin && *s < to - margin);
+            stops.sort_by(f64::total_cmp);
+            stops.dedup_by(|a, b| (*a - *b).abs() <= margin);
+            let mut edges = vec![from];
+            edges.extend(stops);
+            edges.push(to);
+            edges
+                .windows(2)
+                .map(|pair| [pair[0], pair[1]])
+                .collect::<Vec<_>>()
+        };
+        for patch in 0..patches {
             let kind = match shell.joint(patch) {
                 Joint::Edge => Some(Kind::Edge),
                 Joint::Smooth => Some(Kind::Smooth),
                 Joint::Seam => None,
             };
             if let Some(kind) = kind {
-                found.push((
-                    kind,
-                    Arc::new(Iso {
-                        inner: inner.clone(),
-                        patch,
-                        level: false,
-                        fixed: 0.,
-                        range: [-half, half],
-                        cells: (shell.grid(patch)[1] / 32).max(2),
-                    }),
-                ));
+                for range in ranges(std::mem::take(&mut junction_stops[patch]), [-half, half]) {
+                    found.push((
+                        kind,
+                        Arc::new(Iso {
+                            inner: inner.clone(),
+                            patch,
+                            level: false,
+                            fixed: 0.,
+                            range,
+                            cells: (shell.grid(patch)[1] / 32).max(2),
+                        }),
+                    ));
+                }
             }
-            for z in [-half, half] {
-                found.push((Kind::Edge, self.rim(patch, z)));
-            }
-            for path in self.traced(patch, Level::Outline)? {
-                found.push((Kind::Outline, Arc::new(path)));
+            for (end, z) in [-half, half].into_iter().enumerate() {
+                let stops = std::mem::take(&mut rim_stops[patch][end]);
+                for range in ranges(stops, [0., 1.]) {
+                    found.push((Kind::Edge, self.rim_range(patch, z, range)));
+                }
             }
         }
         if let Some(bore) = shell.bore() {
