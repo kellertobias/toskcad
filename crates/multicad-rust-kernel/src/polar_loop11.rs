@@ -113,7 +113,7 @@ fn hull(points: impl Iterator<Item = B>) -> B {
     }
     h
 }
-fn split(mut p: [B; 12]) -> [[B; 12]; 2] {
+pub(crate) fn split_half_controls(mut p: [B; 12]) -> [[B; 12]; 2] {
     let mut left = [[I::point(0.); 3]; 12];
     let mut right = left;
     for level in 0..12 {
@@ -304,7 +304,7 @@ fn geometry(
                     return Err(Error::Unresolved);
                 }
                 budget.charge(1024)?;
-                let [a, b] = split(p);
+                let [a, b] = split_half_controls(p);
                 pending.push((b, depth + 1));
                 pending.push((a, depth + 1));
             }

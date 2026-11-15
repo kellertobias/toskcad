@@ -12,8 +12,9 @@ mod selected;
 pub use material::{MaterialOptions, Occupied, Projection};
 pub use numeric::Scalar;
 pub use selected::{
-    FaceMeasure, FaceMeasureOptions, LiteralEmbeddingProof, LiteralGeometryOptions,
-    LiteralGeometryPlan, LiteralMesh, LiteralMeshCandidate, LiteralMeshOptions, Location,
+    FaceMeasure, FaceMeasureOptions,
+    LiteralEdgePolyline, LiteralEmbeddingProof, LiteralGeometryOptions, LiteralGeometryPlan,
+    LiteralMesh, LiteralMeshCandidate, LiteralMeshOptions, LiteralVertexSample, Location,
     MaterialQuery, OwnedMaterial, Placement, QueryOptions, Selected,
 };
 mod parse;

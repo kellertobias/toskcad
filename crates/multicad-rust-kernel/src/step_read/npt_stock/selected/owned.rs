@@ -2,6 +2,8 @@
 use super::*;
 mod measure;
 pub use measure::{FaceMeasure, FaceMeasureOptions};
+mod curves;
+pub use curves::{LiteralEdgePolyline, LiteralVertexSample};
 mod mesh;
 mod query;
 pub use mesh::{
