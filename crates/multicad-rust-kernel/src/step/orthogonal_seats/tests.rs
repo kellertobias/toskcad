@@ -1,6 +1,6 @@
 use super::*;
 use std::rc::Rc;
-fn source(both_ends: bool) -> Seats {
+pub(super) fn source(both_ends: bool) -> Seats {
     use crate::{
         orthogonal::{self, Box3, Operation},
         orthogonal_bore_seats::{Options as SourceOptions, Seat, Seats},

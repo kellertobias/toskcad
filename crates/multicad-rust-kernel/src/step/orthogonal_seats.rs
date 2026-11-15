@@ -1,6 +1,12 @@
-//! Candidate exchange only. Independent literal material admission is separate.
+//! Retained perpendicular-seat exchange. Candidate encoding and independently
+//! qualified publication are separate APIs.
 use super::*;
 use crate::{axial_pipe_thread::authored::StockClipPlacement, orthogonal_bore_seats::Seats};
+mod qualified;
+pub use qualified::{
+    AppendOptions, QualificationError, QualificationOptions, QualifiedAppendReceipt,
+    QualifiedOrthogonalSeatsStep, VerificationOptions, VerifiedMember, qualify,
+};
 #[cfg(test)]
 mod tests;
 #[derive(Clone, Copy)]
