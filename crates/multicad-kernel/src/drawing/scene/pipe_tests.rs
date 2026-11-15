@@ -585,3 +585,85 @@ fn pipe_occluding_contours_agree_with_a_depth_map_oracle() {
         }
     }
 }
+
+/// The hatch area of the side cut through the plane at `offset` from the
+/// axis whose horizontal direction is at `angle`, and the area of the same
+/// cut by containment on a grid of `step`.
+fn side_cut(solid: &Solid, offset: f64, angle: f64, step: f64) -> (f64, f64) {
+    let (sin, cos) = angle.sin_cos();
+    let frame = PlaneFrame {
+        origin: [-offset * sin, offset * cos, 3.],
+        u: [cos, sin, 0.],
+        v: [0., 0., 1.],
+    };
+    let view = View::new(frame);
+    let options = DrawingProjection {
+        frame,
+        section_offset_mm: Some(0.),
+        section_only: true,
+        ..Default::default()
+    };
+    let vectors = project_solids(
+        &[DrawingSolid {
+            solid,
+            hatch: Some(DrawingHatch {
+                angle_rad: 0.,
+                spacing_mm: 1.,
+                line_width_mm: 0.18,
+                pattern: HatchPattern::Solid,
+            }),
+        }],
+        options,
+    )
+    .unwrap()
+    .unwrap_or_else(|error| panic!("{offset} {angle}: {error:?}"));
+    let area: f64 = vectors
+        .iter()
+        .filter_map(|v| match v.curve {
+            VectorCurve::HatchTriangle { points: [a, b, c] } => {
+                Some(((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs() / 2.)
+            }
+            _ => None,
+        })
+        .sum();
+    let points = vectors.iter().flat_map(|v| v.preview_mm.iter());
+    let lo = points
+        .clone()
+        .fold([f64::INFINITY; 2], |m, p| [m[0].min(p[0]), m[1].min(p[1])]);
+    let hi = points.fold([f64::NEG_INFINITY; 2], |m, p| {
+        [m[0].max(p[0]), m[1].max(p[1])]
+    });
+    let first = [0, 1].map(|i| ((lo[i] - 0.5) / step).floor() as i64);
+    let last = [0, 1].map(|i| ((hi[i] + 0.5) / step).ceil() as i64);
+    let mut count = 0usize;
+    for i in first[0]..last[0] {
+        for j in first[1]..last[1] {
+            let q = [(i as f64 + 0.5) * step, (j as f64 + 0.5) * step, 0.];
+            count += usize::from(inside(solid, world(&view, frame, q)));
+        }
+    }
+    (area, count as f64 * step * step)
+}
+
+/// Side cuts just off the axis close with a valid hatch of the grid's area.
+/// There the plane meets the meridian lines at a grazing angle, so a profile
+/// point moves by an angle's error times the radius squared over the offset.
+/// The first cut was refused: its crest arc touches the meridian line
+/// 3e-5 mm above the cap, where the branch's two roots meet; turning the cut
+/// moves that touch up and down the crest relative to the cap.
+#[test]
+fn pipe_near_axis_side_cuts_close_with_the_grid_area() {
+    let (area, grid) = side_cut(&bspt(PlaneFrame::default()), 1e-3, 0., 0.01);
+    assert!((area - grid).abs() < 0.01 * grid, "reported: {area} {grid}");
+    for (label, solid) in solids().into_iter().take(3) {
+        for offset in [1e-6, 1e-5, 1e-4, 1e-3, 1e-2] {
+            for angle in [0., 0.07, 1., 2.513, 2.583, 4.4] {
+                let (area, grid) = side_cut(&solid, offset, angle, 0.02);
+                assert!(
+                    (area - grid).abs() < 0.01 * grid,
+                    "{label} {offset} {angle}: {area} {grid}"
+                );
+            }
+        }
+    }
+}

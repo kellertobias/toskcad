@@ -491,7 +491,7 @@ pub(super) fn isolate(
         // the line stays that close to the surface: keep only sign changes.
         if b - a <= width || lipschitz * (b - a) <= RESOLVED {
             if change {
-                output.push(0.5 * (a + b));
+                output.push(bisect(f, [a, b], fa));
             }
             continue;
         }
@@ -503,6 +503,50 @@ pub(super) fn isolate(
     output.sort_by(f64::total_cmp);
     output.dedup_by(|x, y| (*x - *y).abs() <= 4. * width);
     Ok(())
+}
+
+/// A sign change of `f` on `[a, b]`, with `fa = f(a)`, bisected to the
+/// last representable bracket. Near an axis a plane's meridian lines meet
+/// the profile at a grazing angle, so the profile point moves by the root's
+/// error times a large factor: the root is resolved fully, not just to the
+/// isolation width.
+fn bisect(f: &dyn Fn(f64) -> f64, [mut a, mut b]: [f64; 2], mut fa: f64) -> f64 {
+    for _ in 0..80 {
+        let m = 0.5 * (a + b);
+        if m <= a || m >= b {
+            break;
+        }
+        let fm = f(m);
+        if (fm <= 0.) == (fa <= 0.) {
+            a = m;
+            fa = fm;
+        } else {
+            b = m;
+        }
+    }
+    0.5 * (a + b)
+}
+
+/// The parameter near `t` at which the path's height `z` crosses `level`,
+/// bisected to the last representable bracket; `t` itself when no crossing
+/// is bracketed within a hundredth of the parameter range.
+pub(super) fn level_stop(z: &dyn Fn(f64) -> f64, t: f64, level: f64) -> f64 {
+    let f = |t: f64| z(t) - level;
+    let ft = f(t);
+    if ft == 0. {
+        return t;
+    }
+    let mut step = 1e-12;
+    while step < 1e-2 {
+        for other in [t - step, t + step] {
+            if (0. ..=1.).contains(&other) && (f(other) <= 0.) != (ft <= 0.) {
+                let [a, b] = if other < t { [other, t] } else { [t, other] };
+                return bisect(&f, [a, b], f(a));
+            }
+        }
+        step *= 4.;
+    }
+    t
 }
 
 /// Adaptive certified-in-practice flattening of an exact path.
@@ -748,29 +792,227 @@ impl Path for Range {
     }
 }
 
-/// A branch of an oblique section on a shifted span: for each `theta` the
-/// `index`-th meet of the plane's meridian line with the span.
-struct Sweep {
-    law: Arc<Law>,
+/// The meridian lines of a plane `n . p = c` cut through a law that
+/// advances `k` per radian axially and `tau k` per radian radially: at
+/// `theta` the plane meets the meridian half-plane in `alpha W + beta u =
+/// gamma`, with `W` the profile radius and `u` the profile phase.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Meridian {
+    pub n: P3,
+    pub c: f64,
+    pub k: f64,
+    pub tau: f64,
+}
+
+impl Meridian {
+    pub(super) fn line(&self, theta: f64) -> [f64; 3] {
+        let (sin, cos) = theta.sin_cos();
+        let n = self.n;
+        let alpha = n[0] * cos + n[1] * sin;
+        [
+            alpha,
+            n[2],
+            self.c - (alpha * self.tau + n[2]) * self.k * theta,
+        ]
+    }
+
+    /// The plane's signed value `n . P - c` at the surface point over the
+    /// profile point `q = (u, W)` at `theta`.
+    fn value(&self, theta: f64, q: P2) -> f64 {
+        let [alpha, beta, gamma] = self.line(theta);
+        alpha * q[1] + beta * q[0] - gamma
+    }
+
+    /// `d value / d theta` at a fixed profile point.
+    fn slope(&self, theta: f64, q: P2) -> f64 {
+        let (sin, cos) = theta.sin_cos();
+        let n = self.n;
+        let alpha = n[0] * cos + n[1] * sin;
+        let turn = n[1] * cos - n[0] * sin;
+        turn * (q[1] + self.tau * self.k * theta) + (alpha * self.tau + n[2]) * self.k
+    }
+}
+
+/// A touching end of a section branch on an arc: there the meridian line is
+/// tangent to the circle and the branch's root in `theta` has a square-root
+/// singularity, so near it the branch is parametrised by the circle angle
+/// `beta` instead. `theta(beta)` is the simple root of the plane's value at
+/// the circle point, which behaves as `theta_t + (beta - beta_t)^2 / Q`: both
+/// branches leaving a touch meet exactly at the touch point.
+#[derive(Clone, Copy, Debug)]
+struct Touch {
+    /// Circle angles of the touch point and of the switch to `theta`.
+    beta: [f64; 2],
+    /// The bracket `[no-root side of the touch, switch]` in `theta`, on which
+    /// the value is certified strictly monotone for every `beta` between the
+    /// two angles, with opposite signs at its ends.
+    bracket: [f64; 2],
+}
+
+fn wrap(angle: f64) -> f64 {
+    angle - TAU * (angle / TAU).round()
+}
+
+impl Touch {
+    /// The touch end at `touch` of the `index`-th root branch on an arc,
+    /// whose other end is at `other`. `None` when the touch cannot be
+    /// certified simple; the branch then keeps the foot point as its end.
+    fn new(meridian: &Meridian, span: &Span, index: usize, touch: f64, other: f64) -> Option<Self> {
+        let Span::Arc { center, radius, .. } = *span else {
+            return None;
+        };
+        let at = |beta: f64| {
+            let (sin, cos) = beta.sin_cos();
+            [center[0] + radius * cos, center[1] + radius * sin]
+        };
+        let angle = |p: P2| (p[1] - center[1]).atan2(p[0] - center[0]);
+        let reach = |theta: f64| {
+            let [alpha, beta, gamma] = meridian.line(theta);
+            let norm = alpha.hypot(beta);
+            let delta = (beta * center[0] + alpha * center[1] - gamma) / norm;
+            (radius - delta.abs()) * (radius + delta.abs())
+        };
+        let [alpha, beta, gamma] = meridian.line(touch);
+        let foot = span.arc_root(alpha, beta, gamma, 2, true)?;
+        let beta_t = angle(foot);
+        let s0 = meridian.slope(touch, at(beta_t));
+        let direction = (other - touch).signum();
+        // The no-root side: the line misses the circle just before the touch.
+        let mut mu = 1e-12 * touch.abs().max(1.);
+        while reach(touch - direction * mu) >= 0. {
+            mu *= 2.;
+            if mu > 1e-3 * (other - touch).abs() {
+                return None;
+            }
+        }
+        let outside = touch - direction * mu;
+        let nxy = meridian.n[0].hypot(meridian.n[1]);
+        let lead = meridian.tau.abs() * meridian.k;
+        let mut fraction = 0.45;
+        for _ in 0..48 {
+            let switch = touch + fraction * (other - touch);
+            fraction *= 0.5;
+            let [alpha, beta, gamma] = meridian.line(switch);
+            let Some(p) = span.arc_root(alpha, beta, gamma, index, false) else {
+                continue;
+            };
+            let beta_w = beta_t + wrap(angle(p) - beta_t);
+            if (beta_w - beta_t).abs() <= 1e-9 {
+                break;
+            }
+            // `|d slope / d theta| <= nxy (|W| + tau k |theta|) + 2 nxy tau k`
+            // and `|d slope / d beta| <= nxy R` over the box.
+            let theta_max = outside.abs().max(switch.abs());
+            let w_max = center[1].abs() + radius + lead * theta_max;
+            let reach_theta = (switch - touch).abs().max(mu);
+            let drift = (nxy * w_max + 2. * nxy * lead) * reach_theta
+                + nxy * radius * (beta_w - beta_t).abs();
+            if drift > 0.5 * s0.abs() - 1e-12 * (1. + s0.abs()) {
+                continue;
+            }
+            // Opposite signs across the bracket for the touch and the switch
+            // angles (the latter at its own root, so check just inside).
+            let inner = beta_t + 0.5 * (beta_w - beta_t);
+            let [lo, hi] = [outside, switch].map(|theta| meridian.value(theta, at(inner)));
+            if (lo > 0.) == (hi > 0.) {
+                continue;
+            }
+            return Some(Self {
+                beta: [beta_t, beta_w],
+                bracket: [outside, switch],
+            });
+        }
+        None
+    }
+
+    /// The root `theta` and the circle point at `beta`.
+    fn locate(&self, meridian: &Meridian, span: &Span, beta: f64) -> (f64, P2) {
+        let Span::Arc { center, radius, .. } = *span else {
+            unreachable!("touches are on arcs")
+        };
+        let (sin, cos) = beta.sin_cos();
+        let q = [center[0] + radius * cos, center[1] + radius * sin];
+        let f = |theta: f64| meridian.value(theta, q);
+        let [mut lo, mut hi] = self.bracket;
+        let [mut flo, fhi] = [f(lo), f(hi)];
+        if (flo > 0.) == (fhi > 0.) {
+            // Only at the switch angle itself, whose root is the bracket end.
+            return (if flo.abs() < fhi.abs() { lo } else { hi }, q);
+        }
+        for _ in 0..200 {
+            let mid = 0.5 * (lo + hi);
+            if mid == lo || mid == hi {
+                break;
+            }
+            let fm = f(mid);
+            if (fm > 0.) == (flo > 0.) {
+                lo = mid;
+                flo = fm;
+            } else {
+                hi = mid;
+            }
+        }
+        (0.5 * (lo + hi), q)
+    }
+}
+
+/// The parametrisation of a section branch: for each `theta` of `range` the
+/// `index`-th meet of the plane's meridian line with the span, switching to
+/// the circle angle near touching ends (see [`Touch`]).
+pub(super) struct Branch {
     span: Span,
     index: usize,
-    plane: (P3, f64),
+    meridian: Meridian,
     range: [f64; 2],
     /// Ends at which the plane's meridian line touches the arc: both roots
     /// meet there, so the end is the touching point itself.
     touching: [bool; 2],
+    touches: [Option<Touch>; 2],
 }
 
-impl Sweep {
-    fn line(law: &Law, (n, c): (P3, f64), theta: f64) -> [f64; 3] {
-        let (sin, cos) = theta.sin_cos();
-        let alpha = n[0] * cos + n[1] * sin;
-        [alpha, n[2], c - n[2] * law.rate * theta]
+/// The share of the branch parameter given to a touching end's angle range.
+const TOUCH_SHARE: f64 = 0.25;
+
+impl Branch {
+    pub(super) fn new(
+        span: Span,
+        index: usize,
+        meridian: Meridian,
+        range: [f64; 2],
+        touching: [bool; 2],
+    ) -> Self {
+        let touches = [0, 1].map(|end| {
+            touching[end]
+                .then(|| Touch::new(&meridian, &span, index, range[end], range[1 - end]))
+                .flatten()
+        });
+        Self {
+            span,
+            index,
+            meridian,
+            range,
+            touching,
+            touches,
+        }
     }
 
-    fn at(&self, theta: f64, touch: bool) -> P3 {
-        let [alpha, beta, gamma] = Self::line(&self.law, self.plane, theta);
-        let p = match self.span {
+    pub(super) fn width(&self) -> f64 {
+        (self.range[1] - self.range[0]).abs()
+    }
+
+    fn shares(&self) -> [f64; 2] {
+        self.touches
+            .map(|touch| if touch.is_some() { TOUCH_SHARE } else { 0. })
+    }
+
+    /// The `theta` range swept by plain roots.
+    fn plain(&self) -> [f64; 2] {
+        [0, 1].map(|end| self.touches[end].map_or(self.range[end], |touch| touch.bracket[1]))
+    }
+
+    fn root(&self, theta: f64, touch: bool) -> P2 {
+        let [alpha, beta, gamma] = self.meridian.line(theta);
+        match self.span {
             Span::Line { a, b } => {
                 let [fa, fb] = [a, b].map(|p| alpha * p[1] + beta * p[0] - gamma);
                 let t = if fa == fb {
@@ -784,24 +1026,102 @@ impl Sweep {
                 .span
                 .arc_root(alpha, beta, gamma, if touch { 2 } else { self.index }, true)
                 .unwrap_or([0.; 2]),
+        }
+    }
+
+    /// The angle and profile point `(u, W)` at the branch parameter `t`.
+    pub(super) fn locate(&self, t: f64) -> (f64, P2) {
+        let [a, b] = self.shares();
+        let [from, to] = self.plain();
+        if let Some(touch) = self.touches[0].filter(|_| t < a) {
+            let s = (t / a).max(0.);
+            let beta = touch.beta[0] + s * (touch.beta[1] - touch.beta[0]);
+            return touch.locate(&self.meridian, &self.span, beta);
+        }
+        if let Some(touch) = self.touches[1].filter(|_| t > 1. - b) {
+            let s = ((1. - t) / b).max(0.);
+            let beta = touch.beta[0] + s * (touch.beta[1] - touch.beta[0]);
+            return touch.locate(&self.meridian, &self.span, beta);
+        }
+        if t <= 0. {
+            return (self.range[0], self.root(self.range[0], self.touching[0]));
+        }
+        if t >= 1. {
+            return (self.range[1], self.root(self.range[1], self.touching[1]));
+        }
+        let s = ((t - a) / (1. - a - b)).clamp(0., 1.);
+        let theta = from + s * (to - from);
+        (theta, self.root(theta, false))
+    }
+
+    /// The branch parameter of a point at `theta` (any turn) whose profile
+    /// point there is `profile(theta)`, when it lies on the branch's range.
+    pub(super) fn parameter(&self, theta: f64, profile: &dyn Fn(f64) -> P2) -> Option<f64> {
+        let [a, b] = self.shares();
+        let [from, to] = self.plain();
+        let [lo, hi] = [from.min(to), from.max(to)];
+        for turn in [-1., 0., 1.] {
+            let theta = theta + TAU * (turn + ((lo - theta) / TAU).floor());
+            if theta > lo && theta < hi {
+                return Some(a + (theta - from) / (to - from) * (1. - a - b));
+            }
+        }
+        let Span::Arc { center, .. } = self.span else {
+            return None;
         };
-        self.law.surface(p[1], theta, p[0] + self.law.rate * theta)
+        for end in [0, 1] {
+            let Some(touch) = self.touches[end] else {
+                continue;
+            };
+            let near = touch.bracket[0];
+            let q = profile(theta + TAU * ((near - theta) / TAU).round());
+            let beta = (q[1] - center[1]).atan2(q[0] - center[0]);
+            let s = wrap(beta - touch.beta[0]) / (touch.beta[1] - touch.beta[0]);
+            if s > 0. && s <= 1. {
+                return Some(if end == 0 { s * a } else { 1. - s * b });
+            }
+        }
+        None
+    }
+}
+
+/// A branch of an oblique section on a shifted span.
+struct Sweep {
+    law: Arc<Law>,
+    /// The chart's angle origin: the branch's angles are measured from it.
+    base: f64,
+    branch: Branch,
+}
+
+impl Sweep {
+    fn line(law: &Law, (n, c): (P3, f64), theta: f64) -> [f64; 3] {
+        Self::meridian(law, (n, c)).line(theta)
+    }
+
+    fn meridian(law: &Law, (n, c): (P3, f64)) -> Meridian {
+        Meridian {
+            n,
+            c,
+            k: law.rate,
+            tau: 0.,
+        }
+    }
+
+    /// The profile point of a local point at the chart angle `theta`.
+    fn profile(&self, p: P3) -> impl Fn(f64) -> P2 + '_ {
+        move |theta| [p[2] - self.law.rate * theta, p[0].hypot(p[1])]
     }
 }
 
 impl Path for Sweep {
     fn point(&self, t: f64) -> P3 {
-        if t <= 0. {
-            return self.at(self.range[0], self.touching[0]);
-        }
-        if t >= 1. {
-            return self.at(self.range[1], self.touching[1]);
-        }
-        self.at(self.range[0] + (self.range[1] - self.range[0]) * t, false)
+        let (theta, p) = self.branch.locate(t);
+        let z = p[0] + self.law.rate * theta;
+        self.law.surface(p[1], self.base + theta, z)
     }
 
     fn flatten(&self, tolerance_mm: f64) -> Vec<f64> {
-        let start = ((self.range[1] - self.range[0]).abs() * 32.).ceil() as usize;
+        let start = (self.branch.width() * 32.).ceil() as usize;
         adaptive(&|t| self.point(t), tolerance_mm, start)
     }
 
@@ -2540,88 +2860,124 @@ impl Thread {
             }
             chords = annular;
         }
-        // General plane: sweep the meridian half-plane once around the axis.
-        for m in self.copies() {
-            for span in &profile.spans {
-                if n[2].abs() <= 1e-12 && span.flat().is_some() {
-                    continue;
-                }
-                let span = span.shifted(m as f64 * self.pitch());
-                let mut events = vec![0., TAU];
-                let mut touches = Vec::new();
-                let [a, b] = span.range();
-                for e in [span.point(a), span.point(b)] {
-                    let f = |theta: f64| {
-                        let [alpha, beta, gamma] = Sweep::line(law, (n, c), theta);
-                        alpha * e[1] + beta * e[0] - gamma
-                    };
-                    let lip = nxy * e[1].abs() + (n[2] * rate).abs() + 1e-12;
-                    isolate(&f, [0., TAU], lip, &mut events)?;
-                }
-                if let Span::Arc { center, radius, .. } = span {
-                    let f = |theta: f64| {
-                        let [alpha, beta, gamma] = Sweep::line(law, (n, c), theta);
-                        let u = alpha * center[1] + beta * center[0] - gamma;
-                        u * u - radius * radius * (alpha * alpha + beta * beta)
-                    };
-                    let lu = nxy * center[1].abs() + (n[2] * rate).abs();
-                    let umax = nxy * center[1].abs()
-                        + n[2].abs() * center[0].abs()
-                        + c.abs()
-                        + (n[2] * rate).abs() * TAU;
-                    let lip = 2. * umax * lu + 2. * radius * radius * nxy * nxy + 1e-12;
-                    isolate(&f, [0., TAU], lip, &mut touches)?;
-                }
-                events.extend(touches.iter().copied());
-                events.sort_by(f64::total_cmp);
-                events.dedup_by(|x, y| (*x - *y).abs() <= 1e-13);
-                let touch = |theta: f64| touches.iter().any(|t| (t - theta).abs() <= 1e-13);
-                for pair in events.windows(2) {
-                    if pair[1] - pair[0] <= 1e-13 {
+        // General plane: sweep the meridian half-plane once around the axis,
+        // in two charts of half a turn each centred where the meridian
+        // half-plane lies in the plane's direction. There the plane meets the
+        // meridian lines at the most grazing angle (near the axis a profile
+        // point moves by the angle's error times the radius squared over the
+        // offset), so the angle is measured from the chart centre at full
+        // precision.
+        let base = n[0].atan2(-n[1]);
+        let [low, high] = [*self.copies().start() - 1, *self.copies().end() + 1];
+        for base in [base, base + PI] {
+            let (sin, cos) = base.sin_cos();
+            let n = [n[0] * cos + n[1] * sin, n[1] * cos - n[0] * sin, n[2]];
+            let chart = [-PI / 2., PI / 2.];
+            for m in low..=high {
+                for span in &profile.spans {
+                    if n[2].abs() <= 1e-12 && span.flat().is_some() {
                         continue;
                     }
-                    let mid = 0.5 * (pair[0] + pair[1]);
-                    let [alpha, beta, gamma] = Sweep::line(law, (n, c), mid);
-                    for (index, _) in span.meet(alpha, beta, gamma) {
-                        let sweep: Arc<dyn Path> = Arc::new(Sweep {
-                            law: law.clone(),
-                            span,
-                            index,
-                            plane: (n, c),
-                            range: [pair[0], pair[1]],
-                            touching: [touch(pair[0]), touch(pair[1])],
-                        });
-                        // The branch leaves the material only through a cap,
-                        // at an end of that cap's exact chord.
-                        let mut stops = vec![0., 1.];
-                        for point in &chord_ends {
-                            let theta = point[1].atan2(point[0]).rem_euclid(TAU);
-                            for theta in [theta, theta + TAU, theta - TAU] {
-                                if theta <= pair[0] || theta >= pair[1] {
+                    let span = span.shifted(m as f64 * self.pitch() + rate * base);
+                    let mut events = chart.to_vec();
+                    let mut touches = Vec::new();
+                    let [a, b] = span.range();
+                    for e in [span.point(a), span.point(b)] {
+                        let f = |theta: f64| {
+                            let [alpha, beta, gamma] = Sweep::line(law, (n, c), theta);
+                            alpha * e[1] + beta * e[0] - gamma
+                        };
+                        let lip = nxy * e[1].abs() + (n[2] * rate).abs() + 1e-12;
+                        isolate(&f, chart, lip, &mut events)?;
+                    }
+                    if let Span::Arc { center, radius, .. } = span {
+                        // The meridian line touches the circle where its signed
+                        // distance from the center, `u / |(alpha, beta)|`, is
+                        // `+-R`: the roots of `u -+ R |(alpha, beta)|`, isolated
+                        // one sign at a time so that a pair of close touches (near
+                        // the axis, where `|(alpha, beta)|` is small) never needs
+                        // resolving as one near-double root.
+                        let lu = nxy * center[1].abs() + (n[2] * rate).abs();
+                        for side in [-1., 1.] {
+                            let f = |theta: f64| {
+                                let [alpha, beta, gamma] = Sweep::line(law, (n, c), theta);
+                                alpha * center[1] + beta * center[0] - gamma
+                                    + side * radius * alpha.hypot(beta)
+                            };
+                            let lip = lu + radius * nxy + 1e-12;
+                            isolate(&f, chart, lip, &mut touches)?;
+                        }
+                    }
+                    events.extend(touches.iter().copied());
+                    events.sort_by(f64::total_cmp);
+                    events.dedup_by(|x, y| (*x - *y).abs() <= 1e-13);
+                    let touch = |theta: f64| touches.iter().any(|t| (t - theta).abs() <= 1e-13);
+                    for pair in events.windows(2) {
+                        if pair[1] - pair[0] <= 1e-13 {
+                            continue;
+                        }
+                        let mid = 0.5 * (pair[0] + pair[1]);
+                        let [alpha, beta, gamma] = Sweep::line(law, (n, c), mid);
+                        for (index, _) in span.meet(alpha, beta, gamma) {
+                            let branch = Sweep {
+                                law: law.clone(),
+                                base,
+                                branch: Branch::new(
+                                    span,
+                                    index,
+                                    Sweep::meridian(law, (n, c)),
+                                    [pair[0], pair[1]],
+                                    [touch(pair[0]), touch(pair[1])],
+                                ),
+                            };
+                            // The branch leaves the material only through a cap,
+                            // at an end of that cap's exact chord.
+                            let mut stops = vec![0., 1.];
+                            for point in &chord_ends {
+                                let theta = point[1].atan2(point[0]) - base;
+                                let theta = theta - TAU * (theta / TAU).round();
+                                let profile = branch.profile(*point);
+                                let Some(t) = branch.branch.parameter(theta, &profile) else {
+                                    continue;
+                                };
+                                if t <= 0. || t >= 1. {
                                     continue;
                                 }
-                                let t = (theta - pair[0]) / (pair[1] - pair[0]);
-                                let q = law.local(sweep.point(t));
+                                // Where a cap is crossed, exactly: near the
+                                // axis the chord end's angle alone places the
+                                // branch point poorly along a span that the
+                                // meridian lines meet at a grazing angle.
+                                let t = if self.z.contains(&point[2]) {
+                                    let z = |t: f64| law.local(branch.point(t))[2];
+                                    level_stop(&z, t, point[2])
+                                } else {
+                                    t
+                                };
+                                let q = law.local(branch.point(t));
                                 let d = add(q, scaled(*point, -1.));
                                 if dot3(d, d).sqrt() < 1e-6 {
                                     stops.push(t);
                                 }
                             }
-                        }
-                        stops.sort_by(f64::total_cmp);
-                        stops.dedup_by(|x, y| (*x - *y).abs() <= 1e-13);
-                        for piece in stops.windows(2) {
-                            let q = law.local(sweep.point(0.5 * (piece[0] + piece[1])));
-                            let z = q[2];
-                            let kept = self
-                                .cone
-                                .is_none_or(|cone| cone.keeps(q[0].hypot(q[1]), z, 1e-12));
-                            if kept && z > self.z[0] && z < self.z[1] && piece[1] - piece[0] > 1e-13
-                            {
-                                output.push(Arc::new(Range {
-                                    path: sweep.clone(),
-                                    range: [piece[0], piece[1]],
-                                }));
+                            let sweep: Arc<dyn Path> = Arc::new(branch);
+                            stops.sort_by(f64::total_cmp);
+                            stops.dedup_by(|x, y| (*x - *y).abs() <= 1e-13);
+                            for piece in stops.windows(2) {
+                                let q = law.local(sweep.point(0.5 * (piece[0] + piece[1])));
+                                let z = q[2];
+                                let kept = self
+                                    .cone
+                                    .is_none_or(|cone| cone.keeps(q[0].hypot(q[1]), z, 1e-12));
+                                if kept
+                                    && z > self.z[0]
+                                    && z < self.z[1]
+                                    && piece[1] - piece[0] > 1e-13
+                                {
+                                    output.push(Arc::new(Range {
+                                        path: sweep.clone(),
+                                        range: [piece[0], piece[1]],
+                                    }));
+                                }
                             }
                         }
                     }

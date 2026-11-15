@@ -1289,3 +1289,93 @@ fn screw(socket: bool, left_hand: bool, frame: PlaneFrame) -> crate::Solid {
     )
     .unwrap()
 }
+
+/// Side cuts just off the axis of each section-capable thread family close
+/// with a valid hatch of the area found by containment on a grid. There the
+/// plane meets the meridian lines at a grazing angle, so a profile point
+/// moves by an angle's error times the radius squared over the offset, and
+/// a pair of arc touches nearly coincide.
+#[test]
+fn thread_near_axis_side_cuts_close_with_the_grid_area() {
+    use crate::{DrawingHatch, DrawingSolid};
+    use multicad_core::{drawings::VectorCurve, materials::HatchPattern};
+    for (label, solid, center) in [
+        ("two-start", two_start(true, PlaneFrame::default()), 3.3),
+        ("bore", rounded_bore(false, PlaneFrame::default()), 2.35),
+        ("chamfer", chamfered(true, true, PlaneFrame::default()), 0.8),
+        (
+            "socket screw",
+            screw(true, false, PlaneFrame::default()),
+            0.5,
+        ),
+        ("treatment", treated(true, 2, PlaneFrame::default()), 3.25),
+        ("groove", grooved(false, 1, PlaneFrame::default()), 3.25),
+    ] {
+        for offset in [1e-6_f64, 1e-4, 1e-3, 1e-2] {
+            for angle in [0., 1., 2.6] {
+                let (sin, cos) = f64::sin_cos(angle);
+                let frame = PlaneFrame {
+                    origin: [-offset * sin, offset * cos, center],
+                    u: [cos, sin, 0.],
+                    v: [0., 0., 1.],
+                };
+                let view = View::new(frame);
+                let options = DrawingProjection {
+                    frame,
+                    section_offset_mm: Some(0.),
+                    section_only: true,
+                    ..Default::default()
+                };
+                let vectors = project_solids(
+                    &[DrawingSolid {
+                        solid: &solid,
+                        hatch: Some(DrawingHatch {
+                            angle_rad: 0.,
+                            spacing_mm: 1.,
+                            line_width_mm: 0.18,
+                            pattern: HatchPattern::Solid,
+                        }),
+                    }],
+                    options,
+                )
+                .unwrap()
+                .unwrap_or_else(|error| panic!("{label} {offset} {angle}: {error:?}"));
+                let area: f64 = vectors
+                    .iter()
+                    .filter_map(|v| match v.curve {
+                        VectorCurve::HatchTriangle { points: [a, b, c] } => Some(
+                            ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs()
+                                / 2.,
+                        ),
+                        _ => None,
+                    })
+                    .sum();
+                let step = 0.02;
+                let points = vectors.iter().flat_map(|v| v.preview_mm.iter());
+                let lo = points
+                    .clone()
+                    .fold([f64::INFINITY; 2], |m, p| [m[0].min(p[0]), m[1].min(p[1])]);
+                let hi = points.fold([f64::NEG_INFINITY; 2], |m, p| {
+                    [m[0].max(p[0]), m[1].max(p[1])]
+                });
+                let first = [0, 1].map(|k| ((lo[k] - 0.5) / step).floor() as i64);
+                let last = [0, 1].map(|k| ((hi[k] + 0.5) / step).ceil() as i64);
+                let mut inside = 0usize;
+                for i in first[0]..last[0] {
+                    for j in first[1]..last[1] {
+                        let q = [(i as f64 + 0.5) * step, (j as f64 + 0.5) * step];
+                        let w: [f64; 3] = std::array::from_fn(|k| {
+                            frame.origin[k] + view.axes[0][k] * q[0] + view.axes[1][k] * q[1]
+                        });
+                        inside += usize::from(contains(&solid, w));
+                    }
+                }
+                let grid = inside as f64 * step * step;
+                assert!(
+                    (area - grid).abs() < 0.01 * grid,
+                    "{label} {offset} {angle}: {area} {grid}"
+                );
+            }
+        }
+    }
+}
