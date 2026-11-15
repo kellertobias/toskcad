@@ -34,10 +34,10 @@ fn build(
     w.charge(1)?;
     let cell = field.cells[index];
     let row = &field.meridians[cell.meridian];
-    if row.degree() != 1 {
-        return Ok(None);
-    }
-    let input = (0..=1)
+    // ONE actual coefficient gate: a real rounded-root row reaches the
+    // same fallback as any non-affine/projective row. Do not preclassify by
+    // a degree label and leave its retained-coefficient check unreachable.
+    let input = (0..=row.degree())
         .map(|i| {
             Ok([
                 row.radius[i].number(w)?,
@@ -496,4 +496,393 @@ fn root_overlap(
         upper
     };
     Ok(lo.cmp(&hi, w)? == Ordering::Less)
+}
+
+pub(super) fn bind_vertices(
+    f: &EncodedField<'_>,
+    index: usize,
+    end: End,
+    piece: usize,
+    targets: [&[EncodedScalar; 3]; 2],
+    m: &mut Memory,
+    w: &mut Work<'_>,
+) -> Result<[f64; 3], Error> {
+    use super::literal::{Precision, encode_cap_at, quantize_at};
+    let cap = build(f, index, end, piece, w)?.ok_or(Error::Invalid)?;
+    // Caller endpoints retain ORIGINAL increasing-phase coedge ownership.
+    // This actual affine-v basis has decreasing phase: reverse only its
+    // target correspondence, never the original graph edge/coedge IDs.
+    assert!(cap.reversed);
+    let targets = [targets[1], targets[0]];
+    let trace_before = m.used;
+    let trace = f
+        .cap_trace_with_ledgers(index, end, m, w)?
+        .ok_or(Error::Invalid)?;
+    let trace_bytes = m.used - trace_before;
+    let mut chosen = [
+        quantize_at(&cap.trim[0], Precision::Bits64, w)?,
+        quantize_at(&cap.trim[1], Precision::Bits64, w)?,
+    ];
+    // Inward finite proposals keep the complete original UV line in the
+    // actual source patch. The omitted true-end strips remain in the error.
+    let quantum = N(BigRational::new(
+        1.into(),
+        num_bigint::BigInt::from(1) << 64,
+    ));
+    if chosen[0].cmp(&cap.trim[0], w)? == Ordering::Less {
+        chosen[0] = chosen[0].add(&quantum, w)?;
+    }
+    if chosen[1].cmp(&cap.trim[1], w)? == Ordering::Greater {
+        chosen[1] = chosen[1].sub(&quantum, w)?;
+    }
+    let span = chosen[1].sub(&chosen[0], w)?;
+    let span_i = span.enclosure(w)?;
+    assert!(span_i.lo > 0.);
+    let mut delta =
+        std::array::from_fn::<_, 2, _>(|_| std::array::from_fn::<_, 3, _>(|_| N::integer(0)));
+    let intervals = cap
+        .controls
+        .iter()
+        .map(|c| Ok([c[0].enclosure(w)?, c[1].enclosure(w)?, c[3].enclosure(w)?]))
+        .collect::<Result<Vec<_>, Error>>()?;
+    let mut vertex_error = 0_f64;
+    let plane = cap.controls[0][2].div(&cap.controls[0][3], w)?;
+    for e in 0..2 {
+        let actual = super::trim_probe::eval_interval(&intervals, chosen[e].enclosure(w)?, w)?;
+        assert_eq!(targets[e][2].number(w)?.0, plane.0);
+        let mut residual = p(0.);
+        for axis in 0..2 {
+            let required = targets[e][axis].number(w)?.enclosure(w)? - actual[axis] / actual[2];
+            delta[e][axis] = quantize_at(&binary(required.midpoint(), w)?, Precision::Bits64, w)?;
+            residual = residual + p((required - delta[e][axis].enclosure(w)?).magnitude());
+        }
+        vertex_error = vertex_error.max(residual.hi);
+    }
+    let corrected =
+        super::correction::correct(&cap.controls, &delta, &chosen[0], &chosen[1], m, w)?;
+    let xyz = encode_cap_at(
+        &corrected.controls,
+        None,
+        CurveOptions::default(),
+        m,
+        w,
+        Precision::Bits64,
+    )?;
+    let mut original =
+        std::array::from_fn::<_, 2, _>(|_| std::array::from_fn::<_, 2, _>(|_| N::integer(0)));
+    let mut desired = original.clone();
+    for e in 0..2 {
+        for axis in 0..2 {
+            original[e][axis] =
+                cap.uv[0][axis].add(&cap.derivative[axis].mul(&chosen[e], w)?, w)?;
+            let truth = cap.uv[0][axis].add(&cap.derivative[axis].mul(&cap.trim[e], w)?, w)?;
+            desired[e][axis] = quantize_at(&truth, Precision::Bits64, w)?;
+        }
+    }
+    let uvh = desired
+        .each_ref()
+        .map(|c| [c[0].clone(), c[1].clone(), N::integer(0), N::integer(1)]);
+    let uv = encode_cap_at(&uvh, None, CurveOptions::default(), m, w, Precision::Bits64)?;
+    let mut vrange = I::new(f64::INFINITY, f64::NEG_INFINITY);
+    for point in &uv.poles {
+        let u = point[0].number(w)?;
+        let v = point[1].number(w)?;
+        assert!(u.0 >= Q::zero() && u.0 <= Q::one());
+        assert!(
+            v.cmp(&cap.uv[0][1], w)? != Ordering::Less
+                && v.cmp(&cap.uv[1][1], w)? != Ordering::Greater
+        );
+        let i = v.enclosure(w)?;
+        vrange = I::new(vrange.lo.min(i.lo), vrange.hi.max(i.hi));
+    }
+    let mut offset =
+        std::array::from_fn::<_, 2, _>(|_| std::array::from_fn::<_, 2, _>(|_| N::integer(0)));
+    let mut duv = 0_f64;
+    for e in 0..2 {
+        let mut norm = p(0.);
+        for axis in 0..2 {
+            offset[e][axis] = desired[e][axis].sub(&original[e][axis], w)?;
+            norm = norm + p(offset[e][axis].enclosure(w)?.magnitude());
+        }
+        duv = duv.max(norm.hi);
+        let v = original[e][1].enclosure(w)?;
+        vrange = I::new(vrange.lo.min(v.lo), vrange.hi.max(v.hi));
+    }
+    let mut duvp = p(0.);
+    for (upper, lower) in offset[1].iter().zip(&offset[0]) {
+        duvp = duvp + p(upper.sub(lower, w)?.enclosure(w)?.magnitude());
+    }
+    let [j, h] = super::trim_probe::field_bounds(f, index, end, piece, vrange, w)?;
+    let gp = (p(cap.derivative[0].enclosure(w)?.magnitude())
+        + p(cap.derivative[1].enclosure(w)?.magnitude()))
+        * span_i;
+    let d0 = p(duv) + p(uv.error[0]);
+    let d1 = duvp + p(uv.error[1]);
+    let field_position = corrected.position_error + p(xyz.error[0]) + p(j) * d0;
+    let field_derivative =
+        (corrected.derivative_error + p(xyz.error[1])) * span_i + p(j) * d1 + p(h) * d0 * gp;
+    if field_position.hi > 1e-7 || field_derivative.hi > 1e-6 || vertex_error + xyz.error[0] > 1e-7
+    {
+        return Err(Error::Unresolved);
+    }
+    let eps = chosen
+        .each_ref()
+        .into_iter()
+        .zip(cap.trim.each_ref())
+        .map(|(a, b)| Ok(a.sub(b, w)?.enclosure(w)?.magnitude()))
+        .collect::<Result<Vec<_>, Error>>()?;
+    let jets = super::restrict::derivatives(&cap.controls, &N::integer(1), w)?;
+    let event_position = p(jets[0]) * p(eps[0].max(eps[1]));
+    let event_derivative =
+        p(jets[1]) * p(eps[0].max(eps[1])) + p(jets[0]) * (p(eps[0]) + p(eps[1]));
+    let row = &f.meridians[f.cells[index].meridian];
+    let true_span = cap.trim[1].sub(&cap.trim[0], w)?.enclosure(w)?;
+    let source_position = field_position + event_position + p(row.bounds.position_error_mm);
+    let source_derivative = field_derivative
+        + event_derivative
+        + (p(row.bounds.derivative_error_mm[0]) * p(cap.derivative[0].enclosure(w)?.magnitude())
+            + p(row.bounds.derivative_error_mm[1])
+                * p(cap.derivative[1].enclosure(w)?.magnitude()))
+            * true_span;
+    let ratio = trace.endpoints[1]
+        .original_parameter
+        .number(w)?
+        .sub(&trace.endpoints[0].original_parameter.number(w)?, w)?
+        .div(
+            &trace.endpoints[1]
+                .phase
+                .number(w)?
+                .sub(&trace.endpoints[0].phase.number(w)?, w)?,
+            w,
+        )?;
+    let q0 = row.phase[0].number(w)?.div(&row.weights[0].number(w)?, w)?;
+    let q1 = row.phase[1].number(w)?.div(&row.weights[1].number(w)?, w)?;
+    let gamma = q1.sub(&q0, w)?.mul(&cap.derivative[0], w)?.mul(&ratio, w)?;
+    assert!(gamma.0 < Q::zero() && cap.reversed);
+    let scale = -(gamma.enclosure(w)? * true_span);
+    assert!(scale.lo > 0.);
+    let original_derivative = source_derivative / scale;
+    assert!(
+        source_position.hi <= 1e-7
+            && source_derivative.hi <= 1e-6
+            && original_derivative.hi <= 1e-6
+    );
+    m.release(&corrected.controls);
+    drop(corrected);
+    drop(trace);
+    m.used -= trace_bytes;
+    // The caller consumes/serializes these actual numeric curves before their
+    // allocation credit is released; this streaming probe drops them here.
+    m.release(&xyz.poles);
+    m.release(&xyz.weights);
+    m.release(&uv.poles);
+    m.release(&uv.weights);
+    // Compact scalar payloads are bounded and retained by this probe's ledger
+    // until query completion (no optimistic refund of their boxed storage).
+    drop((xyz, uv));
+    Ok([
+        source_position.hi,
+        source_derivative.hi,
+        original_derivative.hi,
+    ])
+}
+
+#[test]
+fn actual_affine_and_root_overlap_arithmetic_cancel_at_every_attempted_checkpoint() {
+    use std::cell::Cell;
+    let s = Hanger::new(
+        crate::authored_hanger_bolt::tests::fixture(false, false),
+        None,
+    )
+    .unwrap();
+    let b = s.boundary(BoundaryOptions::default(), None).unwrap();
+    let f = EncodedField::prepare(&b, CurveOptions::default(), None).unwrap();
+    let index = f
+        .cells()
+        .iter()
+        .enumerate()
+        .find_map(|(i, c)| {
+            (f.meridians[c.meridian].degree() == 1 && c.source_key.total_period == -1).then_some(i)
+        })
+        .unwrap();
+    let calls = Cell::new(0);
+    let count = || {
+        calls.set(calls.get() + 1);
+        false
+    };
+    let mut w = Work::new(16_000_000, Some(&count)).unwrap();
+    // Some angular pieces are empty; pick the first actual finite candidate.
+    let piece = (0..f.angular.coefficients().len())
+        .find(|&p| {
+            build(
+                &f,
+                index,
+                End::Start,
+                p,
+                &mut Work::new(16_000_000, None).unwrap(),
+            )
+            .unwrap()
+            .is_some()
+        })
+        .unwrap();
+    build(&f, index, End::Start, piece, &mut w)
+        .unwrap()
+        .unwrap();
+    for stop in 1..=calls.get() {
+        let n = Cell::new(0);
+        let cancel = || {
+            n.set(n.get() + 1);
+            n.get() >= stop
+        };
+        let mut w = Work::new(16_000_000, Some(&cancel)).unwrap();
+        assert_eq!(
+            build(&f, index, End::Start, piece, &mut w).err(),
+            Some(Error::Cancelled),
+            "affine stop={stop}"
+        );
+    }
+    let root = f
+        .cells()
+        .iter()
+        .enumerate()
+        .find_map(|(i, c)| {
+            (f.meridians[c.meridian].degree() == 2 && c.source_key.total_period == -1).then_some(i)
+        })
+        .unwrap();
+    let trace = f
+        .cap_trace(root, End::Start, DomainOptions::default(), None)
+        .unwrap()
+        .unwrap();
+    calls.set(0);
+    let mut w = Work::new(16_000_000, Some(&count)).unwrap();
+    root_overlap(&f, root, End::Start, 3, &trace, &mut w).unwrap();
+    for stop in 1..=calls.get() {
+        let n = Cell::new(0);
+        let cancel = || {
+            n.set(n.get() + 1);
+            n.get() >= stop
+        };
+        let mut w = Work::new(16_000_000, Some(&cancel)).unwrap();
+        assert_eq!(
+            root_overlap(&f, root, End::Start, 3, &trace, &mut w).err(),
+            Some(Error::Cancelled),
+            "root overlap stop={stop}"
+        );
+    }
+    let mut w = Work::new(16_000_000, None).unwrap();
+    assert!(
+        build(&f, root, End::Start, 3, &mut w).unwrap().is_none(),
+        "actual retained rounded root must use its rational path"
+    );
+}
+
+#[test]
+fn actual_nonbinary_pitches_earn_inward_trims_and_every_bound_carrier_checkpoint() {
+    use std::cell::Cell;
+    let mut spec = crate::authored_hanger_bolt::tests::fixture(true, true);
+    let metric = spec.metric.spec();
+    spec.metric = AuthoredMetricThread::new(crate::authored_metric_thread::Spec {
+        pitch_mm: 0.3,
+        crest_width_mm: 0.03,
+        ..metric
+    })
+    .unwrap();
+    let wood = spec.wood.spec();
+    spec.wood = crate::authored_flat_thread::AuthoredThread::new(
+        crate::helical_thread::Spec {
+            pitch_mm: 2.3,
+            ..wood
+        },
+        crate::authored_flat_thread::SourceOptions {
+            position_limit_mm: 1e-7,
+            normal_angle_limit_rad: 1e-6,
+        },
+    )
+    .unwrap();
+    let source = Hanger::new(spec, None).unwrap();
+    let boundary = source.boundary(BoundaryOptions::default(), None).unwrap();
+    let f = EncodedField::prepare(&boundary, CurveOptions::default(), None).unwrap();
+    let mut selected = None;
+    let mut w = Work::new(16_000_000, None).unwrap();
+    w.charge(f.work_used()).unwrap();
+    let mut memory = Memory::new(f.retained_bytes(), 64 * 1024 * 1024).unwrap();
+    memory.add(SCRATCH).unwrap();
+    let mut inward = [false; 2];
+    for index in 0..f.cells().len() {
+        for end in [End::Start, End::End] {
+            for piece in 0..f.angular.coefficients().len() {
+                let Some(cap) = build(&f, index, end, piece, &mut w).unwrap() else {
+                    continue;
+                };
+                for (e, changed) in inward.iter_mut().enumerate() {
+                    let rounded = super::literal::quantize_at(
+                        &cap.trim[e],
+                        super::literal::Precision::Bits64,
+                        &mut w,
+                    )
+                    .unwrap();
+                    *changed |= rounded.cmp(&cap.trim[e], &mut w).unwrap()
+                        == if e == 0 {
+                            Ordering::Less
+                        } else {
+                            Ordering::Greater
+                        };
+                }
+                let mut local = Work::new(16_000_000, None).unwrap();
+                let targets = cap.trim.each_ref().map(|t| {
+                    let h = super::trim_probe::eval(&cap.controls, t, &mut local).unwrap();
+                    std::array::from_fn::<_, 3, _>(|a| {
+                        EncodedScalar::retain(
+                            &h[a].div(&h[3], &mut local).unwrap(),
+                            &mut memory,
+                            &mut local,
+                        )
+                        .unwrap()
+                    })
+                });
+                // The public owner order remains increasing source phase.
+                let refs = [&targets[1], &targets[0]];
+                bind_vertices(&f, index, end, piece, refs, &mut memory, &mut w).unwrap();
+                if selected.is_none() {
+                    selected = Some((index, end, piece, targets));
+                }
+                if inward.into_iter().all(|x| x) {
+                    break;
+                }
+            }
+            if inward.into_iter().all(|x| x) {
+                break;
+            }
+        }
+        if inward.into_iter().all(|x| x) {
+            break;
+        }
+    }
+    assert!(inward.into_iter().all(|x| x));
+    let (index, end, piece, targets) = selected.unwrap();
+    let refs = [&targets[1], &targets[0]];
+    let calls = Cell::new(0);
+    let count = || {
+        calls.set(calls.get() + 1);
+        false
+    };
+    let mut w = Work::new(16_000_000, Some(&count)).unwrap();
+    let mut m = Memory::new(f.retained_bytes(), 64 * 1024 * 1024).unwrap();
+    m.add(SCRATCH).unwrap();
+    bind_vertices(&f, index, end, piece, refs, &mut m, &mut w).unwrap();
+    for stop in 1..=calls.get() {
+        let n = Cell::new(0);
+        let cancel = || {
+            n.set(n.get() + 1);
+            n.get() >= stop
+        };
+        let mut w = Work::new(16_000_000, Some(&cancel)).unwrap();
+        let mut m = Memory::new(f.retained_bytes(), 64 * 1024 * 1024).unwrap();
+        m.add(SCRATCH).unwrap();
+        assert_eq!(
+            bind_vertices(&f, index, end, piece, refs, &mut m, &mut w).err(),
+            Some(Error::Cancelled),
+            "bound carrier stop={stop}"
+        );
+    }
 }

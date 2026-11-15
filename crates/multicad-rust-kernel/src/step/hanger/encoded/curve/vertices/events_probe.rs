@@ -105,13 +105,10 @@ fn exact_cap_event_tokens_share_graph_and_internal_composite_junctions() {
             .allocate(cap_edges * field.angular.coefficients().len(), &mut w)
             .unwrap();
         for face in closed.faces() {
-            let ClosedFaceKind::Plane(role) = face.kind else {
-                continue;
-            };
-            let end = match role {
-                FaceKey::MetricTip | FaceKey::WoodShoulder => End::Start,
-                FaceKey::MetricShoulder | FaceKey::WoodTip => End::End,
-                _ => unreachable!(),
+            let end = match face.kind {
+                ClosedFaceKind::Plane(FaceKey::MetricTip | FaceKey::WoodShoulder) => End::Start,
+                ClosedFaceKind::Plane(FaceKey::MetricShoulder | FaceKey::WoodTip) => End::End,
+                _ => continue,
             };
             for coedge in face.loops().iter().flatten() {
                 let ClosedCurve::Thread(edge) = closed.edges()[coedge.edge].curve else {
@@ -381,6 +378,82 @@ fn exact_cap_event_tokens_share_graph_and_internal_composite_junctions() {
             events.len(),
             segments.len(),
             "four complete one-winding rings"
+        );
+        // Actual rounded-root carriers now use the SAME chosen graph/event
+        // points. Their complete true-event/source C0/C1 is independently
+        // earned; IDs alone never grant endpoint or tensor incidence.
+        let mut root_carriers = 0;
+        let mut wrong_order_refused = false;
+        let mut worst_source = [0_f64; 3];
+        for segment in &segments {
+            let row = &field.meridians[field.cells[segment.source_cell].meridian];
+            if row.degree() != 2 {
+                let targets = segment.events.map(|e| coordinates(&events[e], &graph));
+                if !wrong_order_refused {
+                    let mut negative_work = Work::new(16_000_000, None).unwrap();
+                    let mut negative_memory =
+                        Memory::new(graph.retained_bytes(), 64 * 1024 * 1024).unwrap();
+                    negative_memory.add(SCRATCH).unwrap();
+                    assert!(matches!(
+                        super::super::affine_probe::bind_vertices(
+                            &field,
+                            segment.source_cell,
+                            segment.end,
+                            segment.piece,
+                            [targets[1], targets[0]],
+                            &mut negative_memory,
+                            &mut negative_work
+                        ),
+                        Err(Error::Unresolved)
+                    ));
+                    wrong_order_refused = true;
+                }
+                let proof = super::super::affine_probe::bind_vertices(
+                    &field,
+                    segment.source_cell,
+                    segment.end,
+                    segment.piece,
+                    targets,
+                    &mut m,
+                    &mut w,
+                )
+                .unwrap();
+                for (out, value) in worst_source.iter_mut().zip(proof) {
+                    *out = out.max(value);
+                }
+                continue;
+            }
+            let curve = field
+                .cap_curve_piece(
+                    segment.source_cell,
+                    segment.end,
+                    segment.piece,
+                    DomainOptions {
+                        maximum_work: w.remaining(),
+                        ..DomainOptions::default()
+                    },
+                    None,
+                )
+                .unwrap()
+                .unwrap();
+            let targets = segment.events.map(|e| coordinates(&events[e], &graph));
+            let proof = super::super::trim_probe::run_to_vertices(
+                &curve,
+                targets,
+                field.work_used() + w.remaining(),
+            )
+            .unwrap();
+            w.charge(proof.work - field.work_used()).unwrap();
+            root_carriers += 1;
+            worst_source[0] = worst_source[0].max(proof.source_position);
+            worst_source[1] = worst_source[1].max(proof.source_derivative);
+            worst_source[2] = worst_source[2].max(proof.original_source_derivative);
+        }
+        assert!(wrong_order_refused);
+        assert_eq!(root_carriers, if nb { 5 } else { 4 });
+        eprintln!(
+            "shared true-event root carriers={root_carriers} source_C0_D1finite_D1original={worst_source:?} inherited_event_plus_root_work={}",
+            w.used
         );
         let graph_count = events
             .iter()

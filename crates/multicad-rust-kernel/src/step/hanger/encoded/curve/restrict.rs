@@ -314,7 +314,7 @@ pub(super) fn amplification(t: I, degree: usize, w: &mut Work<'_>) -> Result<I, 
     }
     Ok(out)
 }
-fn factor_derivatives(
+pub(super) fn factor_derivatives(
     curve: &CapCurvePiece<'_, '_>,
     low: &N,
     high: &N,

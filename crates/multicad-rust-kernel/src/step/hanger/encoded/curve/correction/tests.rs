@@ -97,3 +97,61 @@ fn actual_full_root_basis_endpoint_correction_is_exact_on_finite_interval() {
         );
     }
 }
+
+#[test]
+fn genuine_numeric_interval_and_every_copy_or_constant_weight_checkpoint_refuses() {
+    use std::cell::Cell;
+    let zero =
+        std::array::from_fn::<_, 2, _>(|_| std::array::from_fn::<_, 3, _>(|_| N::integer(0)));
+    let h = [
+        [N::integer(1), N::integer(0), N::integer(0), N::integer(1)],
+        [N::integer(2), N::integer(1), N::integer(0), N::integer(1)],
+    ];
+    let mut w = Work::new(16_000_000, None).unwrap();
+    let mut m = Memory::new(0, 64 * 1024 * 1024).unwrap();
+    assert!(matches!(
+        correct(&h, &zero, &N::integer(0), &N::integer(0), &mut m, &mut w),
+        Err(Error::Invalid)
+    ));
+    let tiny = N(Q::new(1.into(), num_bigint::BigInt::one() << 1075));
+    assert!(matches!(
+        correct(&h, &zero, &N::integer(0), &tiny, &mut m, &mut w),
+        Err(Error::Unresolved)
+    ));
+    for delta in [
+        zero,
+        [
+            [N::integer(0), N::integer(0), N::integer(0)],
+            [
+                N(Q::new(1.into(), 1_000_000.into())),
+                N::integer(0),
+                N::integer(0),
+            ],
+        ],
+    ] {
+        let calls = Cell::new(0);
+        let count = || {
+            calls.set(calls.get() + 1);
+            false
+        };
+        let mut w = Work::new(16_000_000, Some(&count)).unwrap();
+        let mut m = Memory::new(0, 64 * 1024 * 1024).unwrap();
+        correct(&h, &delta, &N::integer(0), &N::integer(1), &mut m, &mut w).unwrap();
+        for stop in 1..=calls.get() {
+            let n = Cell::new(0);
+            let cancel = || {
+                n.set(n.get() + 1);
+                n.get() >= stop
+            };
+            let mut w = Work::new(16_000_000, Some(&cancel)).unwrap();
+            let mut m = Memory::new(0, 64 * 1024 * 1024).unwrap();
+            assert!(
+                matches!(
+                    correct(&h, &delta, &N::integer(0), &N::integer(1), &mut m, &mut w),
+                    Err(Error::Cancelled)
+                ),
+                "stop={stop}"
+            );
+        }
+    }
+}
