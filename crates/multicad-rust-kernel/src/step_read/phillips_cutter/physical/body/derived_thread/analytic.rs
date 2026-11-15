@@ -4,7 +4,11 @@
 use super::*;
 mod common_chart;
 mod curve;
+mod finite;
 pub use common_chart::CommonChartPeriodicThreadRepair;
+pub use finite::{
+    PeriodicFiniteCurve, PeriodicFiniteCurves, PeriodicFiniteKind, PeriodicFiniteOptions,
+};
 mod periodic;
 mod rotation;
 pub use periodic::{PeriodicThreadBounds, PeriodicThreadRepair, PeriodicThreadSource};

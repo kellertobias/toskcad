@@ -187,6 +187,10 @@ fn actual_left_handed_posed_packet_qualifies_and_distinct_unsupported_laws_refus
                         .unwrap();
                     assert_eq!(common.chart(), head.chart());
                     assert!(common.source().left_hand());
+                    let finite = head
+                        .periodic_thread_finite_curves(&common, Default::default(), None)
+                        .unwrap();
+                    assert_eq!(finite.curves().len(), 16);
                 } else {
                     assert!(matches!(result, Err(PhillipsReadError::Unsupported)));
                     assert!(matches!(

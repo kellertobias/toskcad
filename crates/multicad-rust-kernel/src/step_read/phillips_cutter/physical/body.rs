@@ -248,7 +248,8 @@ pub use derived_thread::{
     Degree11ContactOptions, Degree11DomainEnd, Degree11RimContact, Degree11RimContactId,
     Degree11RimKnot, Degree11SignDomain, Degree11ThreadContacts, Degree11ThreadFace,
     Degree11ThreadOptions, DerivedThreadCarrier, DerivedThreadOptions, DyadicParameter,
-    OccupiedDerivedThread, PeriodicThreadBounds, PeriodicThreadRepair, PeriodicThreadSource,
+    OccupiedDerivedThread, PeriodicFiniteCurve, PeriodicFiniteCurves, PeriodicFiniteKind,
+    PeriodicFiniteOptions, PeriodicThreadBounds, PeriodicThreadRepair, PeriodicThreadSource,
     RimContact, RimContactId, RimDomainEnd, RimDomainRole, RimKnot, RimSignDomain,
     ThreadCarrierTransfer, ThreadContactOptions,
 };
