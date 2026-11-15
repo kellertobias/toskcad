@@ -91,6 +91,21 @@ fn actual_long_m2_periodic_display_and_fresh_manufacturing_have_literal_embeddin
         assert!(std::ptr::eq(receipt.source(), source.as_ref()));
         assert_eq!(receipt.occurrence(), PlaneFrame::default());
         assert_eq!(receipt.quality(), q);
+        let (generous, generous_receipt) = part
+            .rust_periodic_repaired_phillips_display_mesh_with_receipt(
+                MeshOptions {
+                    maximum_triangles: 2_000_000,
+                    ..q
+                },
+                Default::default(),
+                None,
+            )
+            .unwrap();
+        assert_eq!(generous_receipt.quality(), q);
+        assert!(generous_receipt.reused_display_receipt());
+        assert_eq!(generous.vertices, first.vertices);
+        assert_eq!(generous.indices, first.indices);
+        assert!(generous.indices.len() / 3 <= 1_000_000);
         assert!(receipt.embedding_pairs() > 0 && !receipt.reused_display_receipt());
         assert!(
             receipt.local_source_surface_error_mm() > 0.
@@ -127,7 +142,12 @@ fn actual_long_m2_periodic_display_and_fresh_manufacturing_have_literal_embeddin
         assert!(warm_receipt.reused_display_receipt());
         let warm = start.elapsed();
         let start = std::time::Instant::now();
-        let manufacturing = part.manufacturing_mesh_with_receipt(q).unwrap();
+        let manufacturing = part
+            .manufacturing_mesh_with_receipt(MeshOptions {
+                maximum_triangles: 2_000_000,
+                ..q
+            })
+            .unwrap();
         assert_eq!(manufacturing.mesh, first);
         assert!(manufacturing.edge_pairs > 0 && manufacturing.vertex_links > 0);
         assert!(first.indices.len() > 1000);

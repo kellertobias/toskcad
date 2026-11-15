@@ -357,10 +357,20 @@ impl RepairedPhillipsBody {
         if !(self.policy.linear_tolerance_mm.max(0.001)..=self.policy.maximum_coordinate_mm)
             .contains(&options.deflection)
             || !(0.01..=1.).contains(&options.angle)
-            || !(1..=1_000_000).contains(&options.triangle_limit)
+            || !(1..=5_000_000).contains(&options.triangle_limit)
         {
-            return Err(input("Invalid repaired mesh quality"));
+            return Err(input(format!(
+                "Invalid repaired mesh quality: deflection {} mm, angle {} rad, triangle limit {}",
+                options.deflection, options.angle, options.triangle_limit
+            )));
         }
+        // The caller supplies an upper bound, not a required facet count.
+        // Keep this provider's hard ceiling while accepting normal application
+        // budgets; chord and angular accuracy are unchanged.
+        let options = Tessellation {
+            triangle_limit: options.triangle_limit.min(1_000_000),
+            ..options
+        };
         if budget.maximum_work > WORK
             || budget.maximum_bytes > BYTES
             || options.triangle_limit > 1_000_000

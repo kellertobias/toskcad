@@ -773,7 +773,7 @@ fn actual_source_factory_failures_and_unearned_apis_preserve_ownership() {
     assert_eq!(
         solid
             .manufacturing_mesh_with_receipt(MeshOptions {
-                maximum_triangles: 1_000_001, // Valid generic budget; exceeds this provider's hard cap.
+                maximum_triangles: 5_000_001, // Exceeds the shared public mesh budget.
                 ..Default::default()
             })
             .unwrap_err()
