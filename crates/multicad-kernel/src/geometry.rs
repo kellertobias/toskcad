@@ -2690,7 +2690,9 @@ impl Solid {
             None => (Vec::new(), Vec::new()),
             Some(deflection) if self.uses_rust_geometry() => {
                 self.validate_display_deflection(deflection)?;
-                let edges = if let Some((body, frame)) = self.hanger_body() {
+                let edges = if let Some((body, frame)) = self.repaired_phillips_body() {
+                    body.periodic_display_edges(frame, deflection)?
+                } else if let Some((body, frame)) = self.hanger_body() {
                     body.display_edges(frame, deflection, self.policy)?
                 } else if let Some((body, frame)) = self.wood_insert_body() {
                     body.display_edges(frame, deflection, self.policy)?

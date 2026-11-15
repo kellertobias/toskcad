@@ -553,6 +553,14 @@ fn actual_periodic_edge_display_selects_every_finite_owner_and_sews_original_ver
         let topology = part.topology_snapshot(feature(), 1).unwrap();
         let now = std::time::Instant::now();
         let edges = part.display_edges(0.05).unwrap();
+        // The Model compiler uses this combined path; direct edge display
+        // alone must not mask a missing body dispatch here.
+        let combined = part
+            .topology_with_display(EntityId::new(), 13, Some(0.05))
+            .unwrap();
+        assert_eq!(combined.edges, edges);
+        assert_eq!(combined.vertices, part.display_vertices().unwrap());
+
         eprintln!(
             "PERIODIC source edges LH{left}: {}curves {}points {:?}",
             edges.len(),
