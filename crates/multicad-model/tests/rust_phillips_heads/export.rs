@@ -1,6 +1,25 @@
 use super::*;
 use multicad_core::model::{BodyInput, NumericTransform, TransformRequest};
+use multicad_core::{
+    document::EntityId,
+    exchange::{ExportReply, ExportResult, Scope, ScopeRoot, SetDefinition, prepare_set},
+};
+use multicad_model::export::{ExportWorker, Exporter};
 use multicad_model::export::{StepVerificationMethod, verify_rust_step_shape_receipt};
+fn reply(worker: &ExportWorker, id: EntityId) -> ExportReply {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        if let Some(result) = worker.poll() {
+            assert_eq!(result.id, id);
+            return result;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Periodic export worker timed out"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
 
 #[test]
 fn actual_nominal_phillips_file_receipts_survive_transform_and_project_reopen() {
@@ -34,6 +53,28 @@ fn actual_nominal_phillips_file_receipts_survive_transform_and_project_reopen() 
             .unwrap();
             session.commit(transformed.prepared).unwrap();
         }
+        let set = EntityId::new();
+        session
+            .commit(
+                prepare_set(
+                    &session,
+                    session.revision(),
+                    actor(),
+                    set,
+                    "Physical Phillips",
+                    &SetDefinition {
+                        scope: Scope {
+                            root: ScopeRoot::Explicit {
+                                entities: vec![request.body],
+                            },
+                            tags: None,
+                        },
+                        ..Default::default()
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
         let mut saved = Vec::new();
         project_file::write(
             &ProjectFile::new(session.document().clone()).unwrap(),
@@ -64,10 +105,8 @@ fn actual_nominal_phillips_file_receipts_survive_transform_and_project_reopen() 
         assert!(source.rust_periodic_repaired_phillips_source().is_some());
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("actual.step");
-        source
-            .write_periodic_phillips_step_with_verification(&path, 1e-7, None)
-            .unwrap()
-            .unwrap();
+        assert!(source.supports_step_export());
+        source.write_step(&path).unwrap();
         let original = std::fs::read_to_string(&path).unwrap();
         let imported = multicad_kernel::Solid::import_rust_step(
             &original,
@@ -148,6 +187,40 @@ fn actual_nominal_phillips_file_receipts_survive_transform_and_project_reopen() 
         assert!(member.maximum_world_position_error_mm <= member.verified_tolerance_mm);
         assert!(member.maximum_world_chart_derivative_error_mm <= member.verified_tolerance_mm);
         assert!(member.reader_reserved_work > 0 && member.correspondence_cavity_cells > 0);
+        let worker =
+            ExportWorker::with_geometry_backend(Exporter::default(), GeometryBackend::Rust)
+                .unwrap();
+        let id = worker
+            .preview(session.document(), session.revision(), set, actor())
+            .unwrap();
+        let ExportResult::Preview(preview) = reply(&worker, id).result else {
+            panic!("Expected export preview")
+        };
+        let preview = preview.unwrap();
+        assert!(preview.can_run(), "{preview:?}");
+        let output = tempfile::tempdir().unwrap();
+        let id = worker
+            .run(
+                session.document(),
+                session.revision(),
+                &preview.key,
+                output.path(),
+                actor(),
+            )
+            .unwrap();
+        let ExportResult::Run(result) = reply(&worker, id).result else {
+            panic!("Expected export run")
+        };
+        let result = result.unwrap();
+        let exported =
+            std::path::Path::new(&result.directory).join(&result.files[0].artifact.output.filename);
+        let verified =
+            verify_rust_step_shape_receipt(&exported, source, &snapshot.shapes[&producer], 1e-7)
+                .unwrap();
+        assert_eq!(
+            verified.method,
+            StepVerificationMethod::DecodedPeriodicRepair
+        );
         let mut stale = snapshot.shapes[&producer].as_ref().clone();
         stale.bounds.min[0] += 1.;
         assert!(verify_rust_step_shape_receipt(&path, source, &stale, 1e-7).is_err());
@@ -171,4 +244,97 @@ fn actual_nominal_phillips_file_receipts_survive_transform_and_project_reopen() 
                 .is_ok()
         );
     }
+}
+
+#[test]
+fn actual_mixed_periodic_and_ordinary_export_keeps_explicit_member_mass_provenance() {
+    let mut session = Session::new(Document::new("Mixed periodic sources").unwrap()).unwrap();
+    let mut requests = Vec::new();
+    for left in [false, true] {
+        let request = MechanicalPartRequest::new(
+            "Physical M2",
+            recipe(0, ThreadFit::NominalBasic, left, 3.5),
+        );
+        let candidate =
+            model::prepare_mechanical_part(&session, session.revision(), actor(), &request)
+                .unwrap();
+        session.commit(candidate.prepared).unwrap();
+        requests.push(request);
+    }
+    let model = compiler()
+        .compile_with_backend(
+            session.document(),
+            session.revision(),
+            GeometryBackend::Rust,
+            None,
+        )
+        .unwrap();
+    let right = model.solid(requests[0].feature).unwrap();
+    let left = model
+        .solid(requests[1].feature)
+        .unwrap()
+        .transformed(multicad_kernel::RigidTransform {
+            translation_mm: [20., -5., 8.],
+            ..Default::default()
+        })
+        .unwrap();
+    let mut ordinary = multicad_kernel::rust_kernel::step::Writer::new();
+    ordinary
+        .append_box(
+            [2, 3, 4].map(|n| multicad_kernel::rust_kernel::Rational::new(n, 1).unwrap()),
+            [-20., 0., 0.],
+            [1., 0., 0.],
+            [0., 1., 0.],
+        )
+        .unwrap();
+    let ordinary = multicad_kernel::Solid::import_rust_step(
+        &ordinary.finish().unwrap(),
+        EntityId::new(),
+        Default::default(),
+    )
+    .unwrap();
+    let compound = multicad_kernel::Solid::compound_named(
+        &[right, &ordinary, &left],
+        EntityId::new(),
+        Default::default(),
+    )
+    .unwrap();
+    assert!(compound.supports_step_export());
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("physical-mixed.step");
+    compound.write_step(&path).unwrap();
+    let actual = std::fs::read_to_string(&path).unwrap();
+    let proof = compound
+        .verify_partitioned_step_source(&actual, 1e-7, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(proof.members.solid_count, 3);
+    assert_eq!(proof.periodic_members.len(), 2);
+    assert_eq!(proof.members.decoded_scalar_members, vec![(1, 24.)]);
+    assert!(proof.members.retained_members.is_empty() && proof.healed_members.is_empty());
+    for ((index, source), (actual_index, member)) in [(0, right), (2, &left)]
+        .into_iter()
+        .zip(&proof.periodic_members)
+    {
+        assert_eq!(index, *actual_index);
+        assert_eq!(member.represented_member_count, 3);
+        assert_eq!(member.member_index, index as usize);
+        assert!(member.selection_work > 0 && member.decoded_volume_bounds_mm3[0] > 0.);
+        source
+            .verify_periodic_phillips_step_member(&actual, index as usize, 1e-7, None)
+            .unwrap()
+            .unwrap();
+        assert!(
+            source
+                .verify_periodic_phillips_step_member(&actual, 1, 1e-7, None)
+                .unwrap()
+                .is_err()
+        );
+    }
+    assert!(
+        right
+            .verify_periodic_phillips_step_source(&actual, 1e-7, None)
+            .unwrap()
+            .is_err()
+    );
 }

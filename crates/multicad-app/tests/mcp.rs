@@ -5052,20 +5052,55 @@ fn default_stdio_phillips_metric_screws_keep_actual_geometry_history_and_atomic_
         client.fail("set_mechanical_part",json!({"expected_revision":4,"feature":created["feature"],"recipe":{"kind":"machine_screw","drive":{"kind":"phillips_h","profile":{"mouth_diameter":length(100.)}}}}));
         assert_eq!(client.revision(), 4);
         close(client.part_volume(), second);
-        client.fail(
-            "export_step",
-            json!({"part":created["part"],"file_name":"unfinished.step"}),
-        );
-        assert!(!directory.path().join("unfinished.step").exists());
-        std::fs::write(directory.path().join("unfinished.step"), b"accepted file").unwrap();
-        client.fail(
-            "export_step",
-            json!({"part":created["part"],"file_name":"unfinished.step"}),
-        );
-        assert_eq!(
-            std::fs::read(directory.path().join("unfinished.step")).unwrap(),
-            b"accepted file"
-        );
+        let output = directory.path().join("phillips.step");
+        if fit == "nominal_basic" {
+            let exported = client.ok(
+                "export_step",
+                json!({"part":created["part"],"file_name":"phillips.step"}),
+            );
+            assert!(exported["readback_volume_mm3"].is_null());
+            let receipt = &exported["step_verification"];
+            assert_eq!(receipt["method"], "decoded_periodic_repair");
+            let members = receipt["periodic_members"].as_array().unwrap();
+            assert_eq!(members.len(), 1);
+            assert_eq!(members[0]["member_index"], 0);
+            let interval = members[0]["decoded_volume_bounds_mm3"].as_array().unwrap();
+            assert!(interval[0].as_f64().unwrap() > 0.);
+            assert!(interval[0].as_f64() <= interval[1].as_f64());
+            assert_eq!(client.revision(), 4);
+            let cold_project = directory.path().join("independent-phillips.tcd");
+            let cold_arguments = [
+                "--project",
+                cold_project.to_str().unwrap(),
+                "--export-dir",
+                directory.path().to_str().unwrap(),
+            ];
+            let mut independent = Client::start(&cold_arguments);
+            independent.ok(
+                "import_step",
+                json!({"expected_revision":0,"file_name":"phillips.step"}),
+            );
+            let imported_volume = independent.part_volume();
+            assert!(imported_volume >= interval[0].as_f64().unwrap());
+            assert!(imported_volume <= interval[1].as_f64().unwrap());
+            independent.ok("save_project", json!({"expected_revision":1}));
+            drop(independent);
+            std::fs::remove_file(&output).unwrap();
+            let mut independent_reopened = Client::start(&cold_arguments);
+            close(independent_reopened.part_volume(), imported_volume);
+        } else {
+            client.fail(
+                "export_step",
+                json!({"part":created["part"],"file_name":"phillips.step"}),
+            );
+            assert!(!output.exists());
+            std::fs::write(&output, b"accepted file").unwrap();
+            client.fail(
+                "export_step",
+                json!({"part":created["part"],"file_name":"phillips.step"}),
+            );
+            assert_eq!(std::fs::read(&output).unwrap(), b"accepted file");
+        }
         client.ok("save_project", json!({"expected_revision":4}));
         drop(client);
         let mut reopened = Client::start(&arguments);

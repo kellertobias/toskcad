@@ -226,14 +226,34 @@ fn actual_metric_fits_and_hands_create_manufacture_and_reopen_without_occ_or_dum
         assert!(!mesh.indices.is_empty());
         let volume = solid.volume_mm3().unwrap();
         assert!(volume > 0.);
-        assert!(!solid.supports_step_export());
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("not-qualified.step");
-        assert!(solid.write_step(&path).is_err());
-        assert!(!path.exists());
-        std::fs::write(&path, b"existing accepted file").unwrap();
-        assert!(solid.write_step(&path).is_err());
-        assert_eq!(std::fs::read(&path).unwrap(), b"existing accepted file");
+        let path = dir.path().join("physical-profile.step");
+        if solid.rust_periodic_repaired_phillips_source().is_some() {
+            assert!(solid.supports_step_export());
+            solid.write_step(&path).unwrap();
+            let actual = std::fs::read_to_string(&path).unwrap();
+            solid
+                .verify_periodic_phillips_step_source(&actual, 1e-7, None)
+                .unwrap()
+                .unwrap();
+            assert!(
+                multicad_kernel::Solid::import_rust_step(
+                    &actual,
+                    multicad_core::document::EntityId::new(),
+                    Default::default()
+                )
+                .unwrap()
+                .rust_periodic_repaired_phillips_source()
+                .is_some()
+            );
+        } else {
+            assert!(!solid.supports_step_export());
+            assert!(solid.write_step(&path).is_err());
+            assert!(!path.exists());
+            std::fs::write(&path, b"existing accepted file").unwrap();
+            assert!(solid.write_step(&path).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), b"existing accepted file");
+        }
         session.commit(candidate.prepared).unwrap();
         let mut bytes = Vec::new();
         project_file::write(

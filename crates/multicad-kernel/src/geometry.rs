@@ -2998,13 +2998,15 @@ impl Solid {
             SolidBody::ClippedNpt(body) => body.supports_step(self.policy),
             SolidBody::Hanger(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::LiteralNpt(body) => body.supports_step(),
+            SolidBody::RepairedPhillips(..) => {
+                self.rust_periodic_repaired_phillips_source().is_some()
+            }
             SolidBody::OrthogonalSeats(..)
             | SolidBody::Line8Nut(..)
             | SolidBody::ExternalNptStock(..)
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
-            | SolidBody::InternalThreadTreatment(..)
-            | SolidBody::RepairedPhillips(..) => false,
+            | SolidBody::InternalThreadTreatment(..) => false,
             SolidBody::WarpedUnion(body, _) => {
                 multicad_rust_kernel::step::supports_warped_union(&body.geometry)
             }
@@ -3038,6 +3040,13 @@ impl Solid {
         let path_text = crate::step_path(path).map_err(|e| input(e.to_string()))?;
         if let SolidBody::Occt(shape) = &self.body {
             return ffi::write_step(&shape.0, path_text).map_err(|e| native("write STEP", e));
+        }
+        if let Some(result) = self.write_periodic_phillips_step_with_verification(
+            path,
+            self.policy.linear_tolerance_mm,
+            None,
+        ) {
+            return result.map(|_| ());
         }
         let operation = "write STEP";
         if !self.supports_step_export() {
@@ -3219,13 +3228,21 @@ impl Solid {
             SolidBody::ClippedNpt(body) => body.append_step(writer, self.policy),
             SolidBody::Hanger(body, frame) => body.append_step(writer, *frame, self.policy),
             SolidBody::LiteralNpt(body) => body.append_step(writer),
+            SolidBody::RepairedPhillips(..) => self
+                .append_periodic_phillips_step(writer, None)
+                .ok_or(step::StepError::Unsupported)?
+                .map(|_| ())
+                .map_err(|e| match e.kind {
+                    GeometryErrorKind::Limit => step::StepError::Limit,
+                    GeometryErrorKind::Unsupported => step::StepError::Unsupported,
+                    _ => step::StepError::InvalidGeometry,
+                }),
             SolidBody::OrthogonalSeats(..)
             | SolidBody::Line8Nut(..)
             | SolidBody::ExternalNptStock(..)
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
-            | SolidBody::InternalThreadTreatment(..)
-            | SolidBody::RepairedPhillips(..) => Err(step::StepError::Unsupported),
+            | SolidBody::InternalThreadTreatment(..) => Err(step::StepError::Unsupported),
             SolidBody::Orthogonal(body, frame) => body.append_step(writer, *frame),
             SolidBody::Occt(_) => unreachable!("native STEP dispatched above"),
         }

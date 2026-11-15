@@ -696,7 +696,7 @@ fn actual_periodic_edge_display_selects_every_finite_owner_and_sews_original_ver
                 .filter(|e| e.key.kind == TopologyKind::Vertex)
                 .count()
         );
-        assert!(!part.supports_step_export());
+        assert!(part.supports_step_export());
     }
 }
 
@@ -806,7 +806,7 @@ fn actual_independently_decoded_periodic_material_keeps_owners_and_qualifies_nat
         let manufacturing = part.manufacturing_mesh_with_receipt(q).unwrap();
         assert_eq!(manufacturing.mesh, display);
         assert!(manufacturing.edge_pairs > 0 && manufacturing.vertex_links > 0);
-        assert!(!part.supports_step_export());
+        assert!(part.supports_step_export());
         eprintln!(
             "actual decoded native periodic left{left} pose{posed}: faces{} facets{}",
             faces.len(),

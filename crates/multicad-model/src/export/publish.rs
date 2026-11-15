@@ -48,6 +48,32 @@ pub struct StepPeriodicMemberReceipt {
     pub binding_query_peak_bytes: usize,
     pub matched_entities: usize,
 }
+fn periodic_member_receipt(
+    member_index: u32,
+    proof: multicad_kernel::DecodedPeriodicPhillipsStepVerification,
+) -> StepPeriodicMemberReceipt {
+    StepPeriodicMemberReceipt {
+        member_index,
+        decoded_volume_bounds_mm3: proof.decoded_volume_bounds_mm3,
+        source_volume_bounds_mm3: proof.source_volume_bounds_mm3,
+        maximum_world_position_error_mm: proof.maximum_world_position_error_mm,
+        maximum_world_chart_derivative_error_mm: proof.maximum_world_chart_derivative_error_mm,
+        independent_volume_discrepancy_mm3: proof.independent_volume_discrepancy_mm3,
+        verified_tolerance_mm: proof.verified_tolerance_mm,
+        reader_reserved_work: proof.reader_reserved_work,
+        decoded_material_proof_work: proof.decoded_material_proof_work,
+        correspondence_fixed_work: proof.correspondence_fixed_work,
+        correspondence_cavity_cells: proof.correspondence_cavity_cells,
+        document_work: proof.document_work,
+        document_retained_bytes: proof.document_retained_bytes,
+        selection_work: proof.selection_work,
+        selection_query_peak_bytes: proof.selection_query_peak_bytes,
+        binding_work: proof.binding_work,
+        binding_query_peak_bytes: proof.binding_query_peak_bytes,
+        matched_entities: proof.matched_entities,
+    }
+}
+
 /// Mass of independently decoded supports after the reported bounded sewing.
 /// Raw-file occupied mass and healed-cap derivative bounds are not asserted.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -473,7 +499,17 @@ fn verify_partitioned_step(
                 )
             })?;
         Ok(StepVerificationReceipt {
-            method: if !proof.healed_members.is_empty() {
+            method: if !proof.periodic_members.is_empty() {
+                if proof.healed_members.is_empty()
+                    && proof.source_known_members.is_empty()
+                    && proof.members.retained_members.is_empty()
+                    && proof.members.decoded_scalar_members.is_empty()
+                {
+                    StepVerificationMethod::DecodedPeriodicRepair
+                } else {
+                    StepVerificationMethod::MixedMemberBoundary
+                }
+            } else if !proof.healed_members.is_empty() {
                 if proof.source_known_members.is_empty()
                     && proof.members.retained_members.is_empty()
                     && proof.members.decoded_scalar_members.is_empty()
@@ -520,7 +556,11 @@ fn verify_partitioned_step(
                     analytic_closure_tolerance_mm: p.analytic_closure_tolerance_mm,
                 })
                 .collect(),
-            periodic_members: vec![],
+            periodic_members: proof
+                .periodic_members
+                .into_iter()
+                .map(|(index, proof)| periodic_member_receipt(index, proof))
+                .collect(),
             source_volume_bounds_mm3: None,
             verified_tolerance_mm: Some(tolerance),
             healed_members: proof
@@ -599,6 +639,7 @@ fn verify_periodic_step(
                 "Periodic STEP member count differs from the current source",
             ));
         }
+        let verified_tolerance = proof.verified_tolerance_mm;
         Ok(StepVerificationReceipt {
             method: StepVerificationMethod::DecodedPeriodicRepair,
             decoded_volume_mm3: None,
@@ -607,29 +648,9 @@ fn verify_periodic_step(
             source_correspondence: vec![],
             source_known_members: vec![],
             healed_members: vec![],
-            periodic_members: vec![StepPeriodicMemberReceipt {
-                member_index: 0,
-                decoded_volume_bounds_mm3: proof.decoded_volume_bounds_mm3,
-                source_volume_bounds_mm3: proof.source_volume_bounds_mm3,
-                maximum_world_position_error_mm: proof.maximum_world_position_error_mm,
-                maximum_world_chart_derivative_error_mm: proof
-                    .maximum_world_chart_derivative_error_mm,
-                independent_volume_discrepancy_mm3: proof.independent_volume_discrepancy_mm3,
-                verified_tolerance_mm: proof.verified_tolerance_mm,
-                reader_reserved_work: proof.reader_reserved_work,
-                decoded_material_proof_work: proof.decoded_material_proof_work,
-                correspondence_fixed_work: proof.correspondence_fixed_work,
-                correspondence_cavity_cells: proof.correspondence_cavity_cells,
-                document_work: proof.document_work,
-                document_retained_bytes: proof.document_retained_bytes,
-                selection_work: proof.selection_work,
-                selection_query_peak_bytes: proof.selection_query_peak_bytes,
-                binding_work: proof.binding_work,
-                binding_query_peak_bytes: proof.binding_query_peak_bytes,
-                matched_entities: proof.matched_entities,
-            }],
+            periodic_members: vec![periodic_member_receipt(0, proof)],
             source_volume_bounds_mm3: None,
-            verified_tolerance_mm: Some(proof.verified_tolerance_mm),
+            verified_tolerance_mm: Some(verified_tolerance),
             maximum_polynomial_trim_error_mm: None,
             analytic_closure_tolerance_mm: None,
         })
