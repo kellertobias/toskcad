@@ -1,5 +1,6 @@
 //! Exact retained-geometry STEP replay, independently decoded before append.
 //! No authored thread recipe or display mesh participates in this path.
+use super::retained_replay::{self, Node, OUTPUT, Trace, View, digits};
 use super::*;
 use crate::step_read::{
     literal_member_binding::{self as binding, RetainedRecords, Token, token},
@@ -16,7 +17,6 @@ type Result<T> = std::result::Result<T, Error>;
 const WORK: usize = 96_000_000;
 const BYTES: usize = 64 * 1024 * 1024;
 const FIXED: usize = 128 * 1024;
-const OUTPUT: usize = 16 * 1024;
 #[derive(Clone, Copy)]
 pub struct Options {
     /// One NEW export query: encode, independent readback, binding and append.
@@ -139,33 +139,6 @@ impl Receipt {
         self.literal_volume
     }
 }
-#[derive(Clone)]
-struct Node {
-    id: u32,
-    body: Range<usize>,
-}
-struct Trace {
-    nodes: Vec<Node>,
-    member: u32,
-}
-struct View<'a> {
-    data: &'a str,
-    trace: &'a Trace,
-}
-impl RetainedRecords for View<'_> {
-    fn record_count(&self) -> usize {
-        self.trace.nodes.len()
-    }
-    fn record_index(&self, id: u32) -> Option<usize> {
-        self.trace.nodes.binary_search_by_key(&id, |n| n.id).ok()
-    }
-    fn component(&self, record: usize, index: usize) -> Option<&str> {
-        if index != 0 {
-            return None;
-        }
-        Some(&self.data[self.trace.nodes.get(record)?.body.clone()])
-    }
-}
 struct SourceView<'a>(&'a OwnedMaterial);
 impl RetainedRecords for SourceView<'_> {
     fn record_count(&self) -> usize {
@@ -241,6 +214,33 @@ impl Ledger<'_> {
             .ok_or(Error::Limit)
     }
 }
+impl retained_replay::Budget for Ledger<'_> {
+    type Error = Error;
+    fn step(&mut self, n: usize) -> Result<()> {
+        self.step(n)
+    }
+    fn observe(&mut self, n: usize) -> Result<()> {
+        self.observe(n)
+    }
+    fn used(&self) -> usize {
+        self.used
+    }
+    fn invalid() -> Error {
+        Error::Invalid
+    }
+    fn limit() -> Error {
+        Error::Limit
+    }
+}
+fn encode(
+    view: &impl RetainedRecords,
+    root: u32,
+    file: &mut StepFile,
+    base: usize,
+    work: &mut Ledger<'_>,
+) -> Result<Trace> {
+    retained_replay::encode(view, root, file, base, work, 16_000_000)
+}
 fn room(total: usize, used: usize) -> Result<usize> {
     total
         .checked_sub(used)
@@ -270,123 +270,6 @@ impl From<StepError> for Error {
             _ => Self::Unsupported,
         }
     }
-}
-fn digits(mut n: usize) -> usize {
-    let mut digits = 1;
-    while n >= 10 {
-        n /= 10;
-        digits += 1;
-    }
-    digits
-}
-fn rebased(view: &impl RetainedRecords, start: usize, id: u32) -> Result<usize> {
-    start
-        .checked_add(view.record_index(id).ok_or(Error::Invalid)?)
-        .ok_or(Error::Limit)
-}
-fn encode(
-    view: &impl RetainedRecords,
-    root: u32,
-    file: &mut StepFile,
-    base: usize,
-    work: &mut Ledger<'_>,
-) -> Result<Trace> {
-    let before = work.used;
-    let start = file.next;
-    let end = start.checked_add(view.record_count()).ok_or(Error::Limit)?;
-    if end - 1 > crate::step_read::MAX_STEP_ENTITIES {
-        return Err(Error::Limit);
-    }
-    let mut output = 0usize;
-    for index in 0..view.record_count() {
-        work.step(32)?;
-        let mut component = 0;
-        while let Some(mut value) = view.component(index, component) {
-            work.step(value.len())?;
-            while let Some(token) = token(&mut value) {
-                let length = match token {
-                    Token::Literal(s) => s.len(),
-                    Token::Reference(id) => {
-                        work.step(32)?;
-                        1 + digits(rebased(view, start, id)?)
-                    }
-                };
-                output = output.checked_add(length).ok_or(Error::Limit)?;
-            }
-            component += 1;
-        }
-        if component == 0 {
-            return Err(Error::Invalid);
-        }
-        output = output
-            .checked_add(digits(start + index) + 8)
-            .ok_or(Error::Limit)?;
-    }
-    let reserve = output.checked_add(OUTPUT).ok_or(Error::Limit)?;
-    let requested = file.data.len().checked_add(reserve).ok_or(Error::Limit)?;
-    let trace_bytes = view
-        .record_count()
-        .checked_mul(size_of::<Node>())
-        .ok_or(Error::Limit)?;
-    work.observe(base + requested + trace_bytes + FIXED)?;
-    file.data
-        .try_reserve_exact(reserve)
-        .map_err(|_| Error::Limit)?;
-    let mut nodes = Vec::new();
-    nodes
-        .try_reserve_exact(view.record_count())
-        .map_err(|_| Error::Limit)?;
-    work.observe(base + file.data.capacity() + nodes.capacity() * size_of::<Node>() + FIXED)?;
-    for index in 0..view.record_count() {
-        work.step(32)?;
-        let id = file.next;
-        file.next += 1;
-        let prefix = file.data.len();
-        write!(file.data, "#{id}=").expect("bounded String write");
-        let body_start = file.data.len();
-        let complex = view.component(index, 1).is_some();
-        if complex {
-            file.data.push('(');
-        }
-        let mut component = 0;
-        while let Some(mut value) = view.component(index, component) {
-            work.step(value.len())?;
-            while let Some(value) = token(&mut value) {
-                match value {
-                    Token::Literal(value) => {
-                        work.step(value.len() + 1)?;
-                        file.data.push_str(value);
-                    }
-                    Token::Reference(old) => {
-                        work.step(48)?;
-                        write!(file.data, "#{}", rebased(view, start, old)?)
-                            .expect("bounded reference write");
-                    }
-                }
-            }
-            component += 1;
-        }
-        if complex {
-            file.data.push(')');
-        }
-        let body_end = file.data.len();
-        file.data.push_str(";\n");
-        // Token writes above already charge the body once; only the
-        // record framing is additional (there is no temporary body copy).
-        work.step(body_start - prefix + 2 + usize::from(complex) * 2)?;
-        nodes.push(Node {
-            id: u32::try_from(id).expect("bounded STEP entity range"),
-            body: body_start..body_end,
-        });
-        if work.used - before > 16_000_000 {
-            return Err(Error::Limit);
-        }
-    }
-    work.observe(base + file.data.capacity() + nodes.capacity() * size_of::<Node>() + FIXED)?;
-    Ok(Trace {
-        nodes,
-        member: u32::try_from(rebased(view, start, root)?).expect("bounded STEP root"),
-    })
 }
 /// Verify the ACTUAL standalone output, including occupied local geometry and
 /// its proper original mapping. Every numeric leaf and reference binding is
