@@ -3830,6 +3830,104 @@ fn rust_stdio_external_receiving_threads_preserve_stock_edit_export_and_reopen()
 }
 
 #[test]
+fn default_stdio_npt_stock_cut_edits_history_and_reopens_without_dropping_tail() {
+    use multicad_core::{
+        commands::{Actor, Channel, Session},
+        document::Document,
+        model::{
+            self, NptGaugeConvention, NptThreadForm, NptThreadIntent, NptThreadSize,
+            NptTruncationTarget, PrimitiveParameters, PrimitiveRequest, length as mm,
+        },
+        project_file::{self, ProjectFile},
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("external-npt-stock.tcd");
+    let intent = NptThreadIntent {
+        form: NptThreadForm::External,
+        size: NptThreadSize::OneEighth,
+        gauge: NptGaugeConvention::Nbs1959PlainFace,
+        truncation: NptTruncationTarget::MidpointConeParallel,
+    };
+    let cut_length = intent.default_length_mm();
+    let radius = intent.preset().published.pipe_od_inch * 25.4 / 2.;
+    let mut session = Session::new(Document::new("Exact pipe stock").unwrap()).unwrap();
+    let stock = PrimitiveRequest::new(
+        "Pipe stock",
+        PrimitiveParameters::Cylinder {
+            radius: mm(radius),
+            height: mm(cut_length + 2.),
+            frame: Default::default(),
+        },
+    );
+    let prepared =
+        model::prepare_primitive(&session, 0, Actor::local(Channel::Ui), &stock).unwrap();
+    session.commit(prepared.prepared).unwrap();
+    let mut bytes = Vec::new();
+    project_file::write(
+        &ProjectFile::new(session.document().clone()).unwrap(),
+        &mut bytes,
+        Default::default(),
+    )
+    .unwrap();
+    std::fs::write(&project, &bytes).unwrap();
+    let args = [
+        "--project",
+        project.to_str().unwrap(),
+        "--export-dir",
+        directory.path().to_str().unwrap(),
+    ];
+    let mut client = Client::start(&args);
+    let initial = client.part_volume();
+    close(
+        initial,
+        std::f64::consts::PI * radius * radius * (cut_length + 2.),
+    );
+    let revision = client.revision();
+    let mut request = json!({"expected_revision":revision,"name":"External NPT stock cut","mode":"cut_external","target_part":stock.body,"family":"npt","fit":"npt_historical_midpoint","npt":intent,"major_diameter":length(intent.base_major_mm()),"pitch":length(intent.preset().pitch_mm),"length":length(cut_length)});
+    request["origin"] = json!([length(0.1), length(0.), length(0.)]);
+    client.fail("set_thread", request.clone());
+    assert_eq!(client.revision(), revision);
+    close(client.part_volume(), initial);
+    request.as_object_mut().unwrap().remove("origin");
+    let created = client.ok("set_thread", request);
+    let first = client.part_volume();
+    assert!(first < initial && first > std::f64::consts::PI * radius * radius * 2.);
+    let revision = client.revision();
+    client.fail("set_thread", json!({"expected_revision":revision,"thread":created["thread"],"length":length(cut_length - 0.25)}));
+    assert_eq!(client.revision(), revision);
+    close(client.part_volume(), first);
+    client.ok("set_thread", json!({"expected_revision":revision,"thread":created["thread"],"radial_allowance":length(0.005)}));
+    let edited = client.part_volume();
+    assert!(edited < first && edited > std::f64::consts::PI * radius * radius * 2.);
+    let revision = client.revision();
+    client.ok("undo", json!({"expected_revision":revision}));
+    close(client.part_volume(), first);
+    let revision = client.revision();
+    client.ok("redo", json!({"expected_revision":revision}));
+    close(client.part_volume(), edited);
+    let destination = directory.path().join("pending.step");
+    std::fs::write(&destination, b"Retained exchange file").unwrap();
+    let revision = client.revision();
+    client.fail(
+        "export_step",
+        json!({"part":stock.body,"file_name":"pending.step"}),
+    );
+    assert_eq!(client.revision(), revision);
+    assert_eq!(
+        std::fs::read(&destination).unwrap(),
+        b"Retained exchange file"
+    );
+    client.ok("save_project", json!({"expected_revision":revision}));
+    drop(client);
+    let saved = std::fs::read(&project).unwrap();
+    let mut reopened = Client::start(&args);
+    close(reopened.part_volume(), edited);
+    let inspected = reopened.ok("inspect_thread", json!({"thread":created["thread"]}));
+    assert_eq!(inspected["source"]["parameters"]["npt"], json!(intent));
+    assert_eq!(std::fs::read(&project).unwrap(), saved);
+}
+
+#[test]
 fn rust_stdio_metric_terminal_relief_edit_history_export_and_reopen() {
     let directory = tempfile::tempdir().unwrap();
     let project = directory.path().join("metric-relief.tcd");

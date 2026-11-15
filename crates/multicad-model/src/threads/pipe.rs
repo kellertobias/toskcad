@@ -8,6 +8,55 @@ pub(super) fn shaft(
     policy: GeometryPolicy,
     interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<Solid, ModelError> {
+    Solid::rust_authored_axial_pipe_thread_with_interrupt(
+        authored_spec(feature, family, thread)?,
+        feature,
+        PlaneFrame {
+            origin: thread.frame.origin,
+            u: thread.frame.u,
+            v: thread.frame.v,
+        },
+        policy,
+        interrupt,
+    )
+    .map_err(|e| pipe_error(feature, e))
+}
+
+pub(super) fn cut_external_stock(
+    feature: EntityId,
+    thread: &ResolvedThread,
+    stock: &Solid,
+    policy: GeometryPolicy,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<Solid, ModelError> {
+    stock
+        .rust_cut_external_npt_stock(
+            authored_spec(feature, ThreadFamily::Npt, thread)?,
+            feature,
+            PlaneFrame {
+                origin: thread.frame.origin,
+                u: thread.frame.u,
+                v: thread.frame.v,
+            },
+            policy,
+            interrupt,
+        )
+        .map_err(|e| pipe_error(feature, e))
+}
+
+fn pipe_error(feature: EntityId, cause: multicad_kernel::GeometryError) -> ModelError {
+    if cause.kind == multicad_kernel::GeometryErrorKind::Cancelled {
+        error(Some(feature), "Model evaluation superseded")
+    } else {
+        error(Some(feature), cause)
+    }
+}
+
+fn authored_spec(
+    feature: EntityId,
+    family: ThreadFamily,
+    thread: &ResolvedThread,
+) -> Result<AuthoredSpec, ModelError> {
     let fail = |message| error(Some(feature), message);
     if thread.hand != ThreadHand::Right
         || thread.starts != 1
@@ -42,30 +91,13 @@ pub(super) fn shaft(
         ),
         _ => return Err(fail("Canonical BSPT source is missing")),
     };
-    Solid::rust_authored_axial_pipe_thread_with_interrupt(
-        AuthoredSpec {
-            major_radius_mm: thread.major_radius_mm,
-            pitch_mm: thread.pitch_mm,
-            length_mm: thread.length_mm,
-            radial_taper: thread.profile.radial_taper,
-            section,
-            crest_radius_limit_mm: limit,
-        },
-        feature,
-        PlaneFrame {
-            origin: thread.frame.origin,
-            u: thread.frame.u,
-            v: thread.frame.v,
-        },
-        policy,
-        interrupt,
-    )
-    .map_err(|e| {
-        if e.kind == multicad_kernel::GeometryErrorKind::Cancelled {
-            error(Some(feature), "Model evaluation superseded")
-        } else {
-            error(Some(feature), e)
-        }
+    Ok(AuthoredSpec {
+        major_radius_mm: thread.major_radius_mm,
+        pitch_mm: thread.pitch_mm,
+        length_mm: thread.length_mm,
+        radial_taper: thread.profile.radial_taper,
+        section,
+        crest_radius_limit_mm: limit,
     })
 }
 
