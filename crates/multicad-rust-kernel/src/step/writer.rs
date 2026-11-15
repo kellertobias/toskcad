@@ -29,7 +29,7 @@ impl Default for Writer {
     }
 }
 
-fn exceeds_readback_budget(file: &StepFile) -> bool {
+pub(super) fn exceeds_readback_budget(file: &StepFile) -> bool {
     file.next - 1 > MAX_STEP_ENTITIES || file.data.len() > MAX_PLANAR_STEP_BYTES
 }
 

@@ -12,11 +12,13 @@ use crate::brep::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::PI;
 
+mod assembly;
+pub use assembly::{Assembly, Instance, MAX_DEPTH, Node, Occurrence, Placement};
+
 /// The largest number of solids read from one file.
 pub const MAX_SOLIDS: usize = 1024;
 
-/// Product structure that places or repeats shapes. It belongs to the
-/// assembly layer, which calls [`Source::boundary`] per solid.
+/// Product structure that places or repeats shapes, read by [`assembly`].
 const ASSEMBLY: [&str; 5] = [
     "NEXT_ASSEMBLY_USAGE_OCCURRENCE",
     "CONTEXT_DEPENDENT_SHAPE_REPRESENTATION",
@@ -24,6 +26,17 @@ const ASSEMBLY: [&str; 5] = [
     "ITEM_DEFINED_TRANSFORMATION",
     "MAPPED_ITEM",
 ];
+
+/// True when `input` parses and carries product structure. Such a file is
+/// read only with its structure, so the structure's refusal is the file's.
+pub fn has_product_structure(input: &str) -> bool {
+    part21::parse(input).is_ok_and(|entities| {
+        entities
+            .values()
+            .flatten()
+            .any(|entity| ASSEMBLY.contains(&entity.name))
+    })
+}
 
 /// Geometry that is not a solid. A file holding any keeps its meaning and
 /// is refused rather than imported without it.
@@ -764,20 +777,33 @@ fn convert(error: ReadError) -> crate::brep::Error {
     }
 }
 
-/// Read, validate and integrate every solid of a flat file.
+/// Read, validate and integrate every placed solid of a file, in the
+/// depth-first order of [`Assembly::occurrences`]. A flat file yields its
+/// solids in representation order.
+pub fn read_solids(
+    input: &str,
+    tolerance: f64,
+    interrupt: crate::brep::Interrupt<'_>,
+) -> std::result::Result<Vec<Solid>, crate::brep::Error> {
+    read_assembly(input, tolerance, interrupt)?.placed()
+}
+
+/// Read, validate and integrate every solid definition of a file once,
+/// with the product structure that places them. A flat file is one root
+/// definition holding all its solids.
 ///
 /// Incidence is first checked to `tolerance`. A file that declares a wider
 /// length uncertainty and fails that check is read again to the declared
 /// value, capped at [`MAX_DECLARED_TOLERANCE_MM`]; every vertex is then
 /// re-derived on the supports that meet there, and edges and faces must
 /// agree to the wider value.
-pub fn read_solids(
+pub fn read_assembly(
     input: &str,
     tolerance: f64,
     interrupt: crate::brep::Interrupt<'_>,
-) -> std::result::Result<Vec<Solid>, crate::brep::Error> {
+) -> std::result::Result<Assembly<Solid>, crate::brep::Error> {
     let source = Source::parse(input, tolerance).map_err(convert)?;
-    let strict = solids_of(&source, tolerance, None, interrupt);
+    let strict = assembly_of(&source, tolerance, None, interrupt);
     let wider = source
         .declared_uncertainty()
         .map(|declared| declared.min(MAX_DECLARED_TOLERANCE_MM))
@@ -788,32 +814,64 @@ pub fn read_solids(
                 tolerance: wider,
                 ..source
             };
-            solids_of(&source, tolerance, Some(wider), interrupt)
+            assembly_of(&source, tolerance, Some(wider), interrupt)
         }
         (result, _) => result,
     }
 }
 
-fn solids_of(
+fn assembly_of(
     source: &Source<'_>,
     tolerance: f64,
     rederive: Option<f64>,
     interrupt: crate::brep::Interrupt<'_>,
-) -> std::result::Result<Vec<Solid>, crate::brep::Error> {
-    if source.is_assembly() {
-        return Err(crate::brep::Error::Unsupported);
-    }
+) -> std::result::Result<Assembly<Solid>, crate::brep::Error> {
+    let structure = if source.is_assembly() {
+        assembly::read(source).map_err(convert)?
+    } else {
+        Assembly {
+            nodes: vec![Node {
+                name: String::new(),
+                solids: source.solids.clone(),
+                children: Vec::new(),
+            }],
+            roots: vec![0],
+        }
+    };
     let boundaries = source.boundaries().map_err(convert)?;
-    boundaries
-        .into_iter()
-        .map(|boundary| match rederive {
+    let mut boundaries: BTreeMap<u32, Boundary> =
+        source.solids.iter().copied().zip(boundaries).collect();
+    structure.try_map(|id| {
+        // Every solid belongs to exactly one definition.
+        let boundary = boundaries.remove(&id).ok_or(crate::brep::Error::Invalid)?;
+        match rederive {
             None => Solid::new(boundary, tolerance, interrupt),
             Some(wider) => {
                 let (boundary, _) = crate::brep::vertex::rederive(&boundary, wider)?;
                 Solid::new(boundary, wider, interrupt)
             }
-        })
-        .collect()
+        }
+    })
+}
+
+impl Assembly<Solid> {
+    /// One occurrence's solid in world coordinates.
+    pub fn place(&self, occurrence: &Occurrence) -> std::result::Result<Solid, crate::brep::Error> {
+        let solid = &self.nodes[occurrence.node].solids[occurrence.solid];
+        let placement = occurrence.placement;
+        if placement == Placement::IDENTITY {
+            return Ok(solid.clone());
+        }
+        solid.moved(&|p| placement.point(p), &|v| placement.vector(v))
+    }
+
+    /// Every occurrence's solid in world coordinates.
+    pub fn placed(&self) -> std::result::Result<Vec<Solid>, crate::brep::Error> {
+        self.occurrences()
+            .iter()
+            .map(|occurrence| self.place(occurrence))
+            .collect()
+    }
 }
 
 /// Verify that `source` holds exactly the `expected` solids, in order: the

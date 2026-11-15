@@ -22,6 +22,7 @@ use std::{
     ops::Range,
 };
 
+mod assembly;
 mod axial_stack;
 mod bevel_gear;
 mod box_void;
@@ -70,6 +71,7 @@ pub use rounded_cylinder::write_rounded_cylinder;
 pub use tapered_thread::write_tapered_thread;
 mod warped_union;
 mod writer;
+pub use assembly::write_assembly;
 pub use axial_stack::write_axial_profile_stack;
 pub use cylindrical_revolution::{
     supports_conical_frustum, supports_conical_revolution, supports_cylindrical_revolution,
