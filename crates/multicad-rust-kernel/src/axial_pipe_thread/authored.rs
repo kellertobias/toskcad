@@ -4,6 +4,7 @@ use super::{Error, I, bounds, ceiling, interval};
 use crate::tapered_thread::Series;
 use std::f64::consts::PI;
 mod boundary;
+pub mod hardware;
 mod stock_clip;
 pub use boundary::RawAuthoredBoundary;
 pub use stock_clip::{
