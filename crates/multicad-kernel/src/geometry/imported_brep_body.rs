@@ -308,6 +308,21 @@ impl Solid {
         ))
     }
 
+    /// The solid's exact STEP export read back as a retained boundary, or
+    /// `None` when it has no exact export or the export does not read back.
+    pub(crate) fn retained_boundary(&self) -> Option<Solid> {
+        if self.imported_brep_body().is_some() {
+            return self.share().ok();
+        }
+        if !self.supports_step_export() {
+            return None;
+        }
+        let mut writer = multicad_rust_kernel::step::Writer::new();
+        self.append_step(&mut writer).ok()?;
+        let text = writer.finish().ok()?;
+        Self::import_rust_brep(&text, EntityId::new(), self.policy).ok()
+    }
+
     pub(crate) fn imported_brep_body(&self) -> Option<&ImportedBrepBody> {
         match &self.body {
             SolidBody::ImportedBrep(body) => Some(body),

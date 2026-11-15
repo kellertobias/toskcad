@@ -4,7 +4,7 @@ This is the pinned pass/fail/unsupported ledger for the independent cross-CAD ST
 
 The machine-readable [ledger JSON](exchange-corpus-ledger.json) is the emitted output of the OpenCascade reference run. It records the measured source commit, tolerances, and every per-fixture measurement and timing. `corpus_manifest_pins_provenance_strata_and_owners` fails when the committed JSON and the manifest disagree on any fixture or outcome.
 
-**Measured commit.** These results were measured at `ca26e97f` on the CAD-360 branch, which adds the retained-boundary provider on top of CAD-359 (`72d288ee`); the only tracked change during the run was the ledger JSON being rewritten. CAD-345 recorded 14 pass, 18 unsupported and 10 fail of 42 at `dff6a0f8`, and CAD-359 22 pass and 24 unsupported of 46 at `1f1c4fe7`. Rerun the commands below after every change to the reader, importer, drawing or Boolean code, and update the manifest outcomes, verdicts and this ledger together.
+**Measured commit.** These results were measured at `c0fddf10` on the CAD-360 branch with a clean tree; it adds the retained-boundary provider on top of CAD-359 (`72d288ee`). CAD-345 recorded 14 pass, 18 unsupported and 10 fail of 42 at `dff6a0f8`, and CAD-359 22 pass and 24 unsupported of 46 at `1f1c4fe7`. Rerun the commands below after every change to the reader, importer, drawing or Boolean code, and update the manifest outcomes, verdicts and this ledger together.
 
 ## Result
 
@@ -15,10 +15,10 @@ The machine-readable [ledger JSON](exchange-corpus-ledger.json) is the emitted o
 | Repository fixtures, always run | 2 |
 | Referenced from the installed KiCad 10.0.0 library by path and SHA-256 | 24 |
 | **Pass** (full workflow) | **36** (14 through the retained-boundary provider, CAD-360) |
-| **Unsupported**: an honest refusal outside the contract | **10** |
+| **Unsupported** or **invalid**: an honest refusal outside the contract | **8 unsupported, 2 invalid** |
 | **Fail**: an incorrect refusal of a file that OpenCascade validates | **0** |
 | Unavailable on this host | 0 |
-| Pass fixtures whose section is refused by drawing (CAD-346) | 6 |
+| Pass fixtures whose section is refused by drawing | 0 (sections through the exact export, CAD-360) |
 
 A **pass** means that every check below succeeded. **Unsupported** means that the Rust importer refused a geometry family the [qualification matrix](rust-kernel-qualification.md) does not claim. **Fail** means that OpenCascade 7.9.3 reads the same source as a valid solid, so the Rust classification is wrong. No fixture is in that state at the measured commit.
 
@@ -59,7 +59,7 @@ Each admitted fixture runs every check below. The tolerances are constants in th
 
 | Fixture | Producer | Location | Tags | Rust import | Verdict | Owner |
 | --- | --- | --- | --- | --- | --- | --- |
-| `freecad-drilled-box` | FreeCAD | vendored | box, cylinder, trims-seams, placement, hole | pass | pass | section: CAD-346 |
+| `freecad-drilled-box` | FreeCAD | vendored | box, cylinder, trims-seams, placement, hole | pass | pass | — |
 | `occt-placed-box` | OpenCascade | vendored | box, placement | pass | pass | — |
 | `occt-cylinder` | OpenCascade | vendored | cylinder, trims-seams, placement | pass | pass | — |
 | `occt-torus` | OpenCascade | vendored | torus, revolution, trims-seams | pass | pass | — |
@@ -68,7 +68,7 @@ Each admitted fixture runs every check below. The tolerances are constants in th
 | `occt-cone-frustum` | OpenCascade | vendored | cone, revolution | pass (retained boundary) | pass | — |
 | `occt-sphere` | OpenCascade | vendored | sphere, revolution, trims-seams | pass | pass | — |
 | `occt-revolved-vase` | OpenCascade | vendored | revolution, torus, cylinder | pass (retained boundary) | pass | — |
-| `occt-spline-prism` | OpenCascade | vendored | spline, trims-seams | pass | pass | section: CAD-346 |
+| `occt-spline-prism` | OpenCascade | vendored | spline, trims-seams | pass | pass | — |
 | `occt-two-bodies` | OpenCascade | vendored | multi-body, placement, assembly, box, cylinder | unsupported | unsupported | CAD-361 |
 | `kicad-plate-holes` | KiCad | vendored | board, box, cylinder, hole, assembly | unsupported | unsupported | CAD-361 |
 | `kicad-round-board` | KiCad | vendored | board, cylinder, hole, assembly | unsupported | unsupported | CAD-361 |
@@ -76,10 +76,10 @@ Each admitted fixture runs every check below. The tolerances are constants in th
 | `kicad-board-with-part` | KiCad | vendored | board, multi-body, placement, assembly, cylinder | unsupported | unsupported | CAD-361 |
 | `occt-annulus` | OpenCascade | repository | cylinder, hole, placement, trims-seams | pass | pass | — |
 | `occt-regular-torus` | OpenCascade | repository | torus, revolution, placement | pass | pass | — |
-| `kicad-vendored-Mounting_Wuerth_WA-SMST-3.3mm_H1mm_9774010960` | KiCad | vendored | cylinder, hole | pass | pass | section: CAD-346 |
+| `kicad-vendored-Mounting_Wuerth_WA-SMST-3.3mm_H1mm_9774010960` | KiCad | vendored | cylinder, hole | pass | pass | — |
 | `kicad-vendored-L_Wuerth_HCM-7070` | KiCad | vendored | box, planar | pass | pass | — |
-| `kicad-lib-Pin_D0.7mm_L6.5mm_W1.8mm_FlatFork` | FreeCAD | kicad-library | cylinder, trims-seams | pass | pass | section: CAD-346 |
-| `kicad-lib-Heatsink_125x35x50mm_3xFixationM3` | FreeCAD | kicad-library | cylinder, hole, planar | pass | pass | section: CAD-346 |
+| `kicad-lib-Pin_D0.7mm_L6.5mm_W1.8mm_FlatFork` | FreeCAD | kicad-library | cylinder, trims-seams | pass | pass | — |
+| `kicad-lib-Heatsink_125x35x50mm_3xFixationM3` | FreeCAD | kicad-library | cylinder, hole, planar | pass | pass | — |
 | `kicad-lib-D_SOD-882` | KiCad | kicad-library | box, planar | pass | pass | — |
 | `kicad-lib-LED_Rectangular_W3.0mm_H2.0mm` | FreeCAD | kicad-library | planar | pass | pass | — |
 | `kicad-vendored-Mounting_Wuerth_WA-SMSE-ExternalM3_H5mm_9771050360` | KiCad | vendored | cone, revolution, torus | pass (retained boundary) | pass | — |
@@ -87,7 +87,7 @@ Each admitted fixture runs every check below. The tolerances are constants in th
 | `kicad-lib-Converter_ACDC_Hi-Link_HLK-20Mxx` | KiCad | kicad-library | sphere, torus | pass (retained boundary) | pass | — |
 | `kicad-vendored-L_CommonModeChoke_TDK_ACM7060` | KiCad | vendored | planar | pass | pass | — |
 | `kicad-lib-L_CommonModeChoke_Coilank_ACM2012` | KiCad | kicad-library | cylinder | pass (retained boundary) | pass | — |
-| `kicad-lib-SW_SPST_B3U-3000P-B` | KiCad | kicad-library | cone | unsupported | unsupported | CAD-360 |
+| `kicad-lib-SW_SPST_B3U-3000P-B` | KiCad | kicad-library | cone | invalid | unsupported | CAD-360 |
 | `kicad-lib-LED_D3.0mm_Horizontal_O1.27mm_Z6.0mm` | FreeCAD | kicad-library | sphere | pass (retained boundary) | pass | — |
 | `kicad-lib-Buzzer_Mallory_AST1109MLTRQ` | KiCad | kicad-library | box, cylinder, hole, pocket | pass | pass | — |
 | `kicad-lib-Samtec_HPM-01-05-x-S_Straight_1x01_Pitch5.08mm` | KiCad | kicad-library | assembly, multi-body | unsupported | unsupported | CAD-361 |
@@ -99,9 +99,9 @@ Each admitted fixture runs every check below. The tolerances are constants in th
 | `kicad-lib-D_SOD-923` | KiCad | kicad-library | spline | pass (retained boundary) | pass | — |
 | `kicad-lib-R_LDR_5.2x5.2mm_P3.5mm_Horizontal` | FreeCAD | kicad-library | multi-body, surface-model, torus | unsupported | unsupported | CAD-360 |
 | `kicad-lib-Converter_ACDC_MeanWell_IRM-60-xx_THT` | KiCad | kicad-library | assembly, multi-body, sphere, torus | unsupported | unsupported | CAD-361 |
-| `kicad-lib-C_Radial_D6.3mm_H7.0mm_P2.50mm` | KiCad | kicad-library | revolution, spline, torus, voids | unsupported | unsupported | CAD-360 |
+| `kicad-lib-C_Radial_D6.3mm_H7.0mm_P2.50mm` | KiCad | kicad-library | revolution, spline, torus, voids | invalid | unsupported | CAD-360 |
 | `kicad-lib-L_Radial_D28.0mm_P29.20mm` | FreeCAD | kicad-library | multi-body, torus | pass (retained boundary) | pass | — |
-| `kicad-lib-R_0603_1608Metric` | KiCad | kicad-library | cylinder, planar | pass | pass | section: CAD-346 |
+| `kicad-lib-R_0603_1608Metric` | KiCad | kicad-library | cylinder, planar | pass | pass | — |
 | `kicad-lib-QFN-32-1EP_4x4mm_P0.4mm_EP2.9x2.9mm` | KiCad | kicad-library | box, planar | pass | pass | — |
 | `kicad-lib-DFN-8-1EP_3x2mm_P0.5mm_EP1.3x1.5mm` | KiCad | kicad-library | box, planar | pass | pass | — |
 | `kicad-lib-L_CommonModeChoke_Bourns_SRF1260` | KiCad | kicad-library | box, planar | pass | pass | — |
@@ -116,44 +116,44 @@ The deltas below come from the OpenCascade reference run.
 - "OpenCascade mesh deviation" compares OpenCascade's own tessellation of the re-export with the Rust readback mesh.
 - "Faces" lists the Rust faces and, where OpenCascade keeps a finer division of the same surfaces, its count. The boundary area and the planar part of it agree with OpenCascade within relative 1e-6 for every row.
 
-| Admitted fixture | Volume mm³ | Faces (OpenCascade) | Mesh triangles | Section length mm | Re-export volume Δ mm³ | Bounds Δ mm | Mesh deviation mm | OpenCascade source Δ vol | OpenCascade area Δ mm² | OpenCascade source mesh mm | OpenCascade re-export Δ vol | OpenCascade mesh deviation mm |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `freecad-drilled-box` | 4699.47 | 7 | 100 | refused (CAD-346) | 0 | 0 | 0 | 9.09495e-13 | 0 | 4.44089e-15 | 9.09495e-13 | 5.0243e-15 |
-| `occt-placed-box` | 3456 | 6 | 12 | 80 | 0 | 1.77636e-15 | 1.77636e-15 | 5.09317e-10 | 9.28e-11 | 5.75523e-13 | 2.72848e-12 | 1.77636e-15 |
-| `occt-cylinder` | 1696.46 | 3 | 96 | 37.6991 | 0 | 0 | 0 | 3.41061e-12 | 2.27e-13 | 0.0473038 | 3.63798e-12 | 0.0473038 |
-| `occt-torus` | 2131.83 | 1 | 22464 | 150.796 | 0 | 0 | 0 | 5.00222e-12 | 2.27e-13 | 0.00976132 | 5.00222e-12 | 0.0233943 |
-| `occt-box-void` | 5760 | 12 | 120 | 132 | 0 | 0 | 0 | 9.09495e-13 | 0 | 3.66205e-15 | 9.09495e-13 | 3.7943e-15 |
-| `occt-pocketed-plate` | 9170.63 | 13 | 114 | 158.85 | 0 | 0 | 0 | 1.81899e-11 | 0 | 0.0334964 | 0 | 0.0334964 |
-| `occt-cone-frustum` | 1172.86 | 3 | 188 | 37.6954 | 5.01814e-10 | 0 | 0.0468963 | 1.00499e-10 | 4.71e-11 | 0.0385173 | 1.00727e-10 | 0.0468904 |
-| `occt-sphere` | 523.599 | 1 | 960 | 31.4159 | 0 | 0 | 0 | 9.09495e-13 | 5.68e-14 | 0.0475311 | 9.09495e-13 | 0.0475311 |
-| `occt-revolved-vase` | 3196.45 | 5 | 2510 | 59.464 | 0 | 0 | 0 | 6.82121e-12 | 1.14e-12 | 0.0480756 | 6.82121e-12 | 0.0480756 |
-| `occt-spline-prism` | 864 | 4 | 112 | refused (CAD-346) | 0 | 0 | 0 | 1.59162e-12 | 3.31e-05 | 0.0366404 | 1.81899e-12 | 0.0366404 |
-| `occt-annulus` | 117.626 | 4 | 200 | 18.5 | 4.26326e-14 | 8.88178e-16 | 1.98603e-15 | 3.97023e-10 | 3.8e-10 | 0.0482895 | 3.12639e-13 | 0.0482975 |
-| `occt-regular-torus` | 222.066 | 1 | 10816 | 25.9698 | 0 | 0 | 0 | 4.54747e-13 | 2.84e-13 | 0.00870197 | 4.54747e-13 | 0.0151882 |
-| `kicad-vendored-Mounting_Wuerth_WA-SMST-3.3mm_H1mm_9774010960` | 27.1434 | 6 | 252 | refused (CAD-346) | 0 | 0 | 0 | 6.39488e-14 | 1.42e-14 | 0.0334964 | 6.39488e-14 | 0.0334964 |
-| `kicad-vendored-L_Wuerth_HCM-7070` | 343.084 | 14 (16) | 100 | 28 | 0 | 0 | 8.88178e-16 | 1.7053e-13 | 1.14e-13 | 8.88178e-16 | 1.13687e-13 | 4.44089e-16 |
-| `kicad-lib-Pin_D0.7mm_L6.5mm_W1.8mm_FlatFork` | 3.33226 | 15 | 212 | refused (CAD-346) | 0 | 0 | 0 | 1.33227e-15 | 7.11e-15 | 0.00380829 | 4.44089e-16 | 0.00380829 |
-| `kicad-lib-Heatsink_125x35x50mm_3xFixationM3` | 55195.2 | 73 | 1412 | refused (CAD-346) | 0 | 0 | 0 | 5.3551e-09 | 4.22e-10 | 0.0100539 | 2.91038e-11 | 0.0100539 |
-| `kicad-lib-D_SOD-882` | 0.2787 | 21 | 236 | 3.2 | 0 | 0 | 0 | 5.55112e-17 | 8.88e-16 | 1.38778e-16 | 5.55112e-17 | 1.38778e-16 |
-| `kicad-lib-LED_Rectangular_W3.0mm_H2.0mm` | 33.76 | 20 | 172 | 3.2 | 0 | 0 | 0 | 7.10543e-15 | 2.84e-14 | 5.23691e-16 | 7.10543e-15 | 6.32925e-16 |
-| `kicad-vendored-Mounting_Wuerth_WA-SMSE-ExternalM3_H5mm_9771050360` | 180.852 | 11 | 2828 | 6.90503 | 0 | 0 | 0 | 5.96856e-13 | 5.68e-14 | 0.014441 | 5.96856e-13 | 0.014441 |
-| `kicad-lib-RV_Disc_D9mm_W6.1mm_P5mm` | 298.9 | 11 | 16428 | 23.8005 | 0 | 0 | 0 | 2.36899e-07 | 1.71e-07 | 0.0495973 | 2.36899e-07 | 0.0495973 |
-| `kicad-lib-Converter_ACDC_Hi-Link_HLK-20Mxx` | 45859.9 | 30 | 8330 | 181.57 | 0 | 0 | 0 | 3.63798e-11 | 1.82e-12 | 0.0032956 | 3.63798e-11 | 0.0032956 |
-| `kicad-vendored-L_CommonModeChoke_TDK_ACM7060` | 147 | 6 (15) | 12 | 26 | 0 | 0 | 0 | 5.68434e-14 | 5.68e-14 | 9.93014e-16 | 2.84217e-14 | 0 |
-| `kicad-lib-L_CommonModeChoke_Coilank_ACM2012` | 3.37691 | 27 | 300 | 6.4 | 8.88178e-16 | 0 | 0 | 2.22045e-15 | 1.78e-15 | 0.00077599 | 2.22045e-15 | 0.00077599 |
-| `kicad-lib-LED_D3.0mm_Horizontal_O1.27mm_Z6.0mm` | 44.2398 | 33 | 1634 | 4.8 | 4.26326e-14 | 0 | 0 | 9.9476e-14 | 1.42e-14 | 0.0277456 | 9.9476e-14 | 0.0277456 |
-| `kicad-lib-Buzzer_Mallory_AST1109MLTRQ` | 168.929 | 24 (26) | 564 | 40 | 0 | 0 | 0 | 2.84217e-14 | 1.14e-13 | 0.00390921 | 0 | 0.00390921 |
-| `kicad-lib-Mounting_Wuerth_WA-SMSI-M3_H1mm_9774010360` | 35.9612 | 7 | 448 | 20.9164 | 0 | 0 | 0 | 4.90274e-13 | 9.95e-14 | 0.014441 | 4.90274e-13 | 0.014441 |
-| `kicad-lib-R_Box_L13.0mm_W4.0mm_P9.00mm` | 419.016 | 10 | 268 | 34 | 0 | 0 | 0 | 0 | 5.68e-14 | 0.00192174 | 0 | 0.00192174 |
-| `kicad-lib-PinSocket_1x01_P2.54mm_Vertical` | 51.6409 | 36 | 116 | 12.76 | 0 | 0 | 0 | 4.9738e-14 | 1.42e-14 | 0 | 6.39488e-14 | 0 |
-| `kicad-lib-C_Axial_L5.1mm_D3.1mm_P10.00mm_Horizontal` | 38.9307 | 15 | 4208 | 18.6957 | 0 | 0 | 0 | 1.27898e-13 | 7.11e-14 | 0.0105891 | 1.27898e-13 | 0.0105891 |
-| `kicad-vendored-WLP-4_0.83x0.83mm_P0.4mm` | 0.249593 | 12 | 5912 | 3.312 | 5.61495e-14 | 0 | 0 | 1.47937e-14 | 4.44e-16 | 0.00412532 | 1.47937e-14 | 0.00412532 |
-| `kicad-lib-D_SOD-923` | 0.174024 | 27 | 100 | 2.76364 | 0 | 0 | 0 | 3.84304e-13 | 2.87e-12 | 2.66604e-13 | 3.84304e-13 | 2.66604e-13 |
-| `kicad-lib-L_Radial_D28.0mm_P29.20mm` | 17271.3 | 11 | 23866 | 95.4961 | 0 | 0 | 0 | 3.63798e-11 | 5e-12 | 0.0236861 | 3.63798e-11 | 0.0236861 |
-| `kicad-lib-R_0603_1608Metric` | 0.537219 | 20 (26) | 228 | refused (CAD-346) | 0 | 0 | 0 | 2.22045e-16 | 0 | 0.000381795 | 2.22045e-16 | 0.000381795 |
-| `kicad-lib-QFN-32-1EP_4x4mm_P0.4mm_EP2.9x2.9mm` | 9.6 | 6 (72) | 12 | 16 | 0 | 0 | 0 | 1.77636e-15 | 2.84e-14 | 3.25321e-15 | 0 | 0 |
-| `kicad-lib-DFN-8-1EP_3x2mm_P0.5mm_EP1.3x1.5mm` | 3.6 | 6 (24) | 12 | 10 | 0 | 0 | 0 | 4.44089e-16 | 3.55e-15 | 8.67112e-16 | 4.44089e-16 | 0 |
-| `kicad-lib-L_CommonModeChoke_Bourns_SRF1260` | 968.75 | 6 (15) | 12 | 50 | 0 | 0 | 0 | 0 | 2.27e-13 | 2.40178e-15 | 0 | 0 |
+| Admitted fixture | Volume mm³ | Faces (OpenCascade) | Mesh triangles | Section length mm | Re-export volume Δ mm³ | Bounds Δ mm | Mesh deviation mm | OpenCascade source Δ vol | OpenCascade area Δ mm² | OpenCascade source mesh mm | OpenCascade re-export Δ vol | OpenCascade mesh deviation mm | OpenCascade section Δ rel |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `freecad-drilled-box` | 4699.47 | 7 | 100 | 112.561 | 0 | 0 | 0 | 9.09495e-13 | 0 | 4.44089e-15 | 9.09495e-13 | 5.0243e-15 | 4.48268e-05 |
+| `occt-placed-box` | 3456 | 6 | 12 | 80 | 0 | 1.77636e-15 | 1.77636e-15 | 5.09317e-10 | 9.28e-11 | 5.75523e-13 | 2.72848e-12 | 1.77636e-15 | 1.03029e-14 |
+| `occt-cylinder` | 1696.46 | 3 | 96 | 37.6991 | 0 | 0 | 0 | 3.41061e-12 | 2.27e-13 | 0.0473038 | 3.63798e-12 | 0.0473038 | 0 |
+| `occt-torus` | 2131.83 | 1 | 22464 | 150.796 | 0 | 0 | 0 | 5.00222e-12 | 2.27e-13 | 0.00976132 | 5.00222e-12 | 0.0233943 | 0 |
+| `occt-box-void` | 5760 | 12 | 120 | 132 | 0 | 0 | 0 | 9.09495e-13 | 0 | 3.66205e-15 | 9.09495e-13 | 3.7943e-15 | 0 |
+| `occt-pocketed-plate` | 9170.63 | 13 | 114 | 158.85 | 0 | 0 | 0 | 1.81899e-11 | 0 | 0.0334964 | 0 | 0.0334964 | 0 |
+| `occt-cone-frustum` | 1172.86 | 3 | 188 | 37.6954 | 5.01814e-10 | 0 | 0.0468963 | 1.00499e-10 | 4.68e-11 | 0.0385173 | 1.00727e-10 | 0.0468904 | 9.93082e-05 |
+| `occt-sphere` | 523.599 | 1 | 960 | 31.4159 | 0 | 0 | 0 | 9.09495e-13 | 5.68e-14 | 0.0475311 | 9.09495e-13 | 0.0475311 | 0 |
+| `occt-revolved-vase` | 3196.45 | 5 | 2510 | 59.464 | 0 | 0 | 0 | 6.82121e-12 | 1.14e-12 | 0.0480756 | 6.82121e-12 | 0.0480756 | 1.12199e-05 |
+| `occt-spline-prism` | 864 | 4 | 112 | 50.1524 | 0 | 0 | 0 | 1.59162e-12 | 3.31e-05 | 0.0366404 | 1.81899e-12 | 0.0366404 | 6.29293e-05 |
+| `occt-annulus` | 117.626 | 4 | 200 | 18.5 | 4.26326e-14 | 8.88178e-16 | 1.98603e-15 | 3.97023e-10 | 3.8e-10 | 0.0482895 | 3.12639e-13 | 0.0482975 | 8.57452e-13 |
+| `occt-regular-torus` | 222.066 | 1 | 10816 | 25.9698 | 0 | 0 | 0 | 4.54747e-13 | 2.84e-13 | 0.00870197 | 4.54747e-13 | 0.0151882 | 0.000785494 |
+| `kicad-vendored-Mounting_Wuerth_WA-SMST-3.3mm_H1mm_9774010960` | 27.1434 | 6 | 252 | 23.5544 | 0 | 0 | 0 | 6.39488e-14 | 1.42e-14 | 0.0334964 | 6.39488e-14 | 0.0334964 | 0.000318948 |
+| `kicad-vendored-L_Wuerth_HCM-7070` | 343.084 | 14 (16) | 100 | 28 | 0 | 0 | 8.88178e-16 | 1.7053e-13 | 1.14e-13 | 8.88178e-16 | 1.13687e-13 | 4.44089e-16 | 0 |
+| `kicad-lib-Pin_D0.7mm_L6.5mm_W1.8mm_FlatFork` | 3.33226 | 15 | 212 | 3.63525 | 0 | 0 | 0 | 1.33227e-15 | 7.11e-15 | 0.00380829 | 4.44089e-16 | 0.00380829 | 2.07675e-15 |
+| `kicad-lib-Heatsink_125x35x50mm_3xFixationM3` | 55195.2 | 73 | 1412 | 915.689 | 0 | 0 | 0 | 5.3551e-09 | 4.22e-10 | 0.0100539 | 2.91038e-11 | 0.0100539 | 3.20155e-05 |
+| `kicad-lib-D_SOD-882` | 0.2787 | 21 | 236 | 3.2 | 0 | 0 | 0 | 5.55112e-17 | 8.88e-16 | 1.38778e-16 | 5.55112e-17 | 1.38778e-16 | 2.77556e-16 |
+| `kicad-lib-LED_Rectangular_W3.0mm_H2.0mm` | 33.76 | 20 | 172 | 3.2 | 0 | 0 | 0 | 7.10543e-15 | 2.84e-14 | 5.23691e-16 | 7.10543e-15 | 6.32925e-16 | 0 |
+| `kicad-vendored-Mounting_Wuerth_WA-SMSE-ExternalM3_H5mm_9771050360` | 180.852 | 11 | 2828 | 6.90503 | 0 | 0 | 0 | 5.96856e-13 | 5.68e-14 | 0.014441 | 5.96856e-13 | 0.014441 | 0.000936744 |
+| `kicad-lib-RV_Disc_D9mm_W6.1mm_P5mm` | 298.9 | 11 | 16430 | 23.8005 | 0 | 0 | 0 | 2.36518e-07 | 1.71e-07 | 0.0495973 | 2.36518e-07 | 0.0495973 | 0.000379127 |
+| `kicad-lib-Converter_ACDC_Hi-Link_HLK-20Mxx` | 45859.9 | 30 | 8330 | 181.57 | 0 | 0 | 0 | 3.63798e-11 | 1.82e-12 | 0.0032956 | 3.63798e-11 | 0.0032956 | 3.89769e-06 |
+| `kicad-vendored-L_CommonModeChoke_TDK_ACM7060` | 147 | 6 (15) | 12 | 26 | 0 | 0 | 0 | 5.68434e-14 | 5.68e-14 | 9.93014e-16 | 2.84217e-14 | 0 | 0 |
+| `kicad-lib-L_CommonModeChoke_Coilank_ACM2012` | 3.37691 | 27 | 300 | 6.4 | 8.88178e-16 | 0 | 0 | 2.22045e-15 | 1.78e-15 | 0.00077599 | 2.22045e-15 | 0.00077599 | 2.77556e-16 |
+| `kicad-lib-LED_D3.0mm_Horizontal_O1.27mm_Z6.0mm` | 44.2398 | 33 | 1624 | 4.8 | 4.26326e-14 | 0 | 0 | 9.9476e-14 | 1.42e-14 | 0.0277456 | 9.9476e-14 | 0.0277456 | 1.85037e-16 |
+| `kicad-lib-Buzzer_Mallory_AST1109MLTRQ` | 168.929 | 24 (26) | 564 | 40 | 0 | 0 | 0 | 2.84217e-14 | 1.14e-13 | 0.00390921 | 0 | 0.00390921 | 0 |
+| `kicad-lib-Mounting_Wuerth_WA-SMSI-M3_H1mm_9774010360` | 35.9612 | 7 | 448 | 20.9164 | 0 | 0 | 0 | 4.90274e-13 | 9.95e-14 | 0.014441 | 4.90274e-13 | 0.014441 | 0.000315677 |
+| `kicad-lib-R_Box_L13.0mm_W4.0mm_P9.00mm` | 419.016 | 10 | 268 | 34 | 0 | 0 | 0 | 0 | 5.68e-14 | 0.00192174 | 0 | 0.00192174 | 0 |
+| `kicad-lib-PinSocket_1x01_P2.54mm_Vertical` | 51.6409 | 36 | 116 | 12.76 | 0 | 0 | 0 | 4.9738e-14 | 1.42e-14 | 0 | 6.39488e-14 | 0 | 0 |
+| `kicad-lib-C_Axial_L5.1mm_D3.1mm_P10.00mm_Horizontal` | 38.9307 | 15 | 4212 | 18.6957 | 0 | 0 | 0 | 1.27898e-13 | 7.11e-14 | 0.0105891 | 1.27898e-13 | 0.0105891 | 0.000158864 |
+| `kicad-vendored-WLP-4_0.83x0.83mm_P0.4mm` | 0.249593 | 12 | 5912 | 3.312 | 5.61495e-14 | 0 | 0 | 1.47937e-14 | 4.44e-16 | 0.00412532 | 1.47937e-14 | 0.00412532 | 1.34085e-16 |
+| `kicad-lib-D_SOD-923` | 0.174024 | 27 | 100 | 2.76364 | 0 | 0 | 0 | 3.84304e-13 | 2.87e-12 | 2.66604e-13 | 3.84304e-13 | 2.66604e-13 | 1.6069e-16 |
+| `kicad-lib-L_Radial_D28.0mm_P29.20mm` | 17271.3 | 11 | 23866 | 95.4961 | 0 | 0 | 0 | 3.63798e-11 | 5e-12 | 0.0236861 | 3.63798e-11 | 0.0236861 | 8.75682e-05 |
+| `kicad-lib-R_0603_1608Metric` | 0.537219 | 20 (26) | 228 | 4.8 | 0 | 0 | 0 | 2.22045e-16 | 0 | 0.000381795 | 2.22045e-16 | 0.000381795 | 0 |
+| `kicad-lib-QFN-32-1EP_4x4mm_P0.4mm_EP2.9x2.9mm` | 9.6 | 6 (72) | 12 | 16 | 0 | 0 | 0 | 1.77636e-15 | 2.84e-14 | 3.25321e-15 | 0 | 0 | 0 |
+| `kicad-lib-DFN-8-1EP_3x2mm_P0.5mm_EP1.3x1.5mm` | 3.6 | 6 (24) | 12 | 10 | 0 | 0 | 0 | 4.44089e-16 | 3.55e-15 | 8.67112e-16 | 4.44089e-16 | 0 | 0 |
+| `kicad-lib-L_CommonModeChoke_Bourns_SRF1260` | 968.75 | 6 (15) | 12 | 50 | 0 | 0 | 0 | 0 | 2.27e-13 | 2.40178e-15 | 0 | 0 | 0 |
 
 ## Findings and owners
 
@@ -172,10 +172,10 @@ The open findings are:
 | --- | --- | --- |
 | **Unsupported: STEP assembly product structure** (`NEXT_ASSEMBLY_USAGE_OCCURRENCE`, `CONTEXT_DEPENDENT_SHAPE_REPRESENTATION`, `ITEM_DEFINED_TRANSFORMATION`, `MAPPED_ITEM`). Every KiCad board export, even a bare board, and OpenCascade's multi-body compound export are assemblies. The retained-boundary reader reads one solid at a time so that an assembly layer can place them. | `occt-two-bodies`, all four `kicad-*board*` exports, `kicad-lib-Samtec_HPM-01-05-x-S_Straight_1x01_Pitch5.08mm`, `kicad-lib-Converter_ACDC_MeanWell_IRM-60-xx_THT` | CAD-361 |
 | **Resolved by CAD-360: general imported B-rep.** Cones, general revolutions, partial cylinders, polyhedra, spherical caps, B-spline surfaces and curves, surfaces of revolution and extrusion, toroidal blends and flat multi-solid files are imported with their own supports and trims retained. Volume, areas and centroids are integrated over the trimmed faces with the exact evaluators; the error bound is the measured quadrature convergence plus the linear tolerance swept over the boundary area. | `occt-cone-frustum`, `occt-revolved-vase`, both Wuerth standoffs, `RV_Disc`, `Hi-Link`, `Coilank`, `LED_D3.0mm`, `R_Box`, `PinSocket`, `C_Axial`, `WLP-4`, `D_SOD-923`, `L_Radial` | CAD-360 (pass) |
-| **Unsupported: non-manifold contact.** Four straight edges are each used by four faces. ISO 10303-42 requires every edge of a closed shell to be referenced exactly twice; OpenCascade tolerates the contact. The retained-boundary reader refuses it as invalid and the import keeps the recognised-family refusal. | `kicad-lib-SW_SPST_B3U-3000P-B` | CAD-360 |
-| **Unsupported: inner-shell edge off its surface.** A degree-13 rational B-spline edge of the `BREP_WITH_VOIDS` inner shell lies up to 1.10e-5 mm from its cylinder, beyond the declared 2e-6 mm uncertainty and the 1e-5 mm incidence cap. | `kicad-lib-C_Radial_D6.3mm_H7.0mm_P2.50mm` | CAD-360 |
+| **Invalid: non-manifold contact.** Four straight edges are each used by four faces. ISO 10303-42 requires every edge of a closed shell to be referenced exactly twice; OpenCascade tolerates the contact. The import reports it as invalid. | `kicad-lib-SW_SPST_B3U-3000P-B` | CAD-360 |
+| **Invalid: inner-shell edge off its surface.** A degree-13 rational B-spline edge of the `BREP_WITH_VOIDS` inner shell lies up to 1.10e-5 mm from its cylinder, beyond the declared 2e-6 mm uncertainty and the 1e-5 mm incidence cap. | `kicad-lib-C_Radial_D6.3mm_H7.0mm_P2.50mm` | CAD-360 |
 | **Unsupported: surface model.** A `SHELL_BASED_SURFACE_MODEL` with open shells sits beside the solids. There is no surface-body concept, and importing only the solids would drop part of the model. | `kicad-lib-R_LDR_5.2x5.2mm_P3.5mm_Horizontal` | CAD-360 |
-| **Section refused.** The Rust drawing projection refuses a horizontal section through imported solids with cylindrical faces ("requires straight edges and planar faces") and through spline sweeps ("requires an uncropped axial projection"). | `freecad-drilled-box`, `kicad-vendored-Mounting_Wuerth_WA-SMST-3.3mm_H1mm_9774010960`, `kicad-lib-Pin_D0.7mm_L6.5mm_W1.8mm_FlatFork`, `kicad-lib-Heatsink_125x35x50mm_3xFixationM3`, `kicad-lib-R_0603_1608Metric`, `occt-spline-prism` | CAD-346 |
+| **Resolved by CAD-360: sections through curved imports.** A plane section that a family projector refuses is cut through the solid's exact STEP export read back as a retained boundary, with its hatch. Every Rust section agrees with OpenCascade's section of the same source within 9.4e-4 relative; retained sections are chords within the 0.01 mm drawing chord tolerance, not exact conics. | the six former CAD-346 fixtures | CAD-360 (pass) |
 | **Observation: `FILE_SCHEMA` is not checked.** A valid AP214 body under `CONFIG_CONTROL_DESIGN` or a nonsense schema name imports. Geometry, not header text, decides. This is pinned so that any change is deliberate. | robustness `file_schema_text_is_not_geometry_evidence` | CAD-290 (decision) |
 | **Observation: STEP parsing has no interrupt.** Cancellation is checked before the read and again before commit, so a cancelled request never commits. A long parse cannot be interrupted midway. | robustness `cancelled_import_commits_nothing` | CAD-290 |
 
@@ -226,49 +226,38 @@ Recovery copies were tested with FreeCAD, OpenCascade and KiCad library imports 
 
 ## KiCad library sweep
 
-The sweep covered 7236 STEP models in KiCad 10.0.0. Every file was classified; there were no panics or unclassified errors.
+The sweep covered 7236 STEP models in KiCad 10.0.0 at `5fc4f5df` (20.8 min wall, 16.4 min CPU, debug build, shared host). Every file was classified; there were no panics or unclassified errors. A pass here means the import succeeded: volume, bounds and topology from the retained or recognised boundary. The full corpus workflow (mesh, section, persistence, export, OpenCascade) runs only for the pinned fixtures.
 
 | Producer (`FILE_NAME`) | Files | Pass | Unsupported | Invalid | Limit |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| KiCad | 5181 | 174 | 5007 | 0 | 0 |
-| FreeCAD | 1031 | 45 | 976 | 10 | 0 |
-| unstated | 796 | 0 | 796 | 0 | 0 |
-| OpenCascade | 211 | 0 | 211 | 0 | 0 |
+| KiCad | 5181 | 4395 | 786 | 0 | 0 |
+| FreeCAD | 1031 | 815 | 210 | 6 | 0 |
+| unstated | 796 | 796 | 0 | 0 | 0 |
+| OpenCascade | 211 | 108 | 103 | 0 | 0 |
 | Solid Edge / ST-DEVELOPER v16.7 | 14 | 0 | 14 | 0 | 0 |
-| Autodesk Translation Framework v7.6.0.251 / ST-DEVELOPER v17.2 | 2 | 0 | 2 | 0 | 0 |
+| Autodesk Translation Framework v7.6.0.251 / ST-DEVELOPER v17.2 | 2 | 1 | 1 | 0 | 0 |
 | Autodesk Translation Framework v13.14.0.145 / ST-DEVELOPER v20 | 1 | 0 | 1 | 0 | 0 |
-| Total | 7236 | 219 | 7007 | 10 | 0 |
+| Total | 7236 | 6115 | 1115 | 6 | 0 |
 
 | Category (any surface or structure present) | Files | Pass | Unsupported | Invalid | Limit |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| cylinder | 2902 | 150 | 2748 | 4 | 0 |
-| torus | 1317 | 0 | 1317 | 0 | 0 |
-| spline | 1006 | 0 | 1006 | 0 | 0 |
-| sphere | 956 | 0 | 955 | 1 | 0 |
-| planar | 866 | 69 | 796 | 1 | 0 |
-| cone | 555 | 0 | 551 | 4 | 0 |
-| multi-body | 537 | 0 | 537 | 0 | 0 |
-| revolution | 532 | 0 | 532 | 0 | 0 |
+| cylinder | 2902 | 2888 | 13 | 1 | 0 |
+| torus | 1317 | 720 | 597 | 0 | 0 |
+| spline | 1006 | 688 | 318 | 0 | 0 |
+| sphere | 956 | 715 | 240 | 1 | 0 |
+| planar | 866 | 853 | 13 | 0 | 0 |
+| cone | 555 | 300 | 251 | 4 | 0 |
+| multi-body | 537 | 112 | 425 | 0 | 0 |
+| revolution | 532 | 171 | 361 | 0 | 0 |
 | assembly | 382 | 0 | 382 | 0 | 0 |
-| voids | 211 | 0 | 210 | 1 | 0 |
+| voids | 211 | 29 | 181 | 1 | 0 |
 | surface-model | 2 | 0 | 2 | 0 | 0 |
 
-The categories overlap: a file is counted once for each tag it carries. `planar` and `cylinder` are assigned only when no other tag applies. The slowest single import took 1.5 s in a debug build at commit `1f1c4fe7`.
+At `dff6a0f8` the sweep gave 173 pass, 5,799 unsupported, 299 invalid and 965 limit; at `1f1c4fe7` (CAD-359) 219 pass, 7,007 unsupported, 10 invalid and 0 limit; at `5fc4f5df` (CAD-360) 6,115 pass, 1,115 unsupported, 6 invalid and 0 limit. Every unsupported result now carries the recognised-family refusal message, because the retained-boundary reader refused the file too: 382 files are assemblies (CAD-361), the others mostly carry a non-solid item, a solid outside a representation or an unsupported curve or surface kind.
 
-At `dff6a0f8` the same sweep gave 173 pass, 5,799 unsupported, 299 invalid and 965 limit. At `1f1c4fe7` it gives 219 pass, 7007 unsupported, 10 invalid and 0 limit. The 46 newly passing files are 23 boxes with partitioned faces, 22 chip resistors and fuses with partitioned ends, and the buzzer. All 965 former limits and 289 former invalid results are now either imports or unsupported refusals.
+Of the ten CAD-359 invalid results, `Heatsink_AAVID_Extruded_531002B02100G`, `…531102B02100G`, `…531202B02100G` and `R_Shunt_Ohmite_LVK12` import with their declared 2e-5 mm uncertainty (capped at 1e-5 mm, vertices re-derived on their supports). `ESP32-WROOM-32E` (vertices 2.15e-7 mm off, declared 2e-7 mm), `Relay_DPDT_FRT5_SMD` (1.95e-3 mm off, declared 5e-4 mm) and `Diode_Bridge_GeneSiC_KBPC_T` (loops not head to tail) stay invalid. The three `HDMI_Micro-D_Molex_46765` files were invalid at `5fc4f5df` because their cone-plane edges are `HYPERBOLA` curves; `9fbf5da1` reads them, and OpenCascade 7.9.3 agrees with their imports on volume within 1.3e-9 relative.
 
-The 10 remaining invalid results are refusals that the tolerance and topology contract requires:
-
-| Files | Measured cause |
-| --- | --- |
-| `Heatsink_AAVID_Extruded_531002B02100G`, `…531102B02100G`, `…531202B02100G` | Eight vertices lie 1.88e-7 mm off their lines. The file declares 2e-5 mm; the import tolerance is 1e-7 mm. |
-| `ESP32-WROOM-32E` | 140 vertices lie up to 2.15e-7 mm off their lines (declared 2e-7 mm). |
-| `R_Shunt_Ohmite_LVK12` | 22 vertices lie up to 2.94e-7 mm off their lines (declared 2e-5 mm). |
-| `Relay_DPDT_FRT5_SMD` | One vertex lies 1.95e-3 mm off its line (declared 5e-4 mm). |
-| `HDMI_Micro-D_Molex_46765-0xxx`, `-1xxx`, `-2xxx` | 308 vertices lie up to 2e-6 mm off their planes (declared 1e-5 or 2e-5 mm). |
-| `Diode_Bridge_GeneSiC_KBPC_T` | Nine edge loops are not head to tail: one oriented edge in each has the wrong orientation flag. |
-
-Healing is bounded to the 1e-7 mm linear tolerance, so the first nine are refused by design; honouring a file's declared uncertainty would be a product decision. The last file violates the ISO 10303-42 path rule and OpenCascade repairs it silently.
+Sampled cross-check at `5fc4f5df`/`9a3fdda5`: 80 randomly drawn (seed 360) sweep passes, all retained-boundary imports, were compared with OpenCascade 7.9.3. Volume agreed within 1.2e-8 relative (median below 1e-14), bounds within 1e-7 mm, and every certified Rust mesh lay within 0.04 mm of OpenCascade's 0.01 mm tessellation. Three of the 80 manufacturing meshes are refused rather than produced: `USB_A_TE_292303-7_Horizontal` and `FanPinHeader_1x04_P2.54mm_Vertical` (a planar face whose ear clipping leaves a run of collinear boundary vertices uncovered) and `UQFN-20-1EP_4x4mm_P0.5mm_EP2.8x2.8mm` (certification: unresolved boundary). The first one panicked before `9a3fdda5`.
 
 ## Runtime contract
 

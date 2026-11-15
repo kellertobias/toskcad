@@ -43,6 +43,12 @@ const MESH_DEFLECTION_MM: f64 = 0.05;
 /// A tessellation removes at most this fraction of the exact volume.
 const MESH_VOLUME_RELATIVE: f64 = 2e-2;
 const OCCT_VOLUME_RELATIVE: f64 = 1e-6;
+/// Relative agreement of a Rust plane section with OpenCascade's section of
+/// the same source. Sections through retained boundaries are chords whose
+/// sag stays within the 0.01 mm drawing chord tolerance; on an arc of
+/// radius R that shortens the length by at most sag / (3 R), under 1e-2
+/// for the smallest section radius in the corpus, 0.35 mm.
+const SECTION_NATIVE_RELATIVE: f64 = 1e-2;
 /// OpenCascade 7.9.3 tessellates the reference at this finer deflection.
 /// At the Rust deflection its BRepMesh does not hold the requested bound
 /// inside every face: on L_Radial_D28.0mm's toroidal face a point of the
@@ -63,6 +69,7 @@ fn tolerances() -> Value {
         "mesh_volume_relative": MESH_VOLUME_RELATIVE,
         "occt_volume_relative": OCCT_VOLUME_RELATIVE,
         "occt_bounds_mm": OCCT_BOUNDS_MM,
+        "section_native_relative": SECTION_NATIVE_RELATIVE,
         "occt_reference_deflection_mm": OCCT_REFERENCE_DEFLECTION_MM,
         "reader_tolerance_mm": GeometryPolicy::default().linear_tolerance_mm,
     })
@@ -764,6 +771,7 @@ fn run_entry(entry: &Value, row: &mut Value) {
     row["source_native_mesh_deviation_mm"] = native_source_deviation(&path, &source_mesh);
     let source_section = section(&solid, None);
     check_section(entry, &source_section);
+    row["section_native"] = native_section(&path, &source_section);
     row["section"] = source_section.clone();
 
     let (reopened, persistence) = persist_and_reopen(entry, &bytes);
@@ -891,6 +899,33 @@ fn native_source_deviation(path: &Path, rust_mesh: &multicad_kernel::Mesh) -> Va
         "OpenCascade source tessellation deviates {deviation} mm from the Rust import"
     );
     json!(deviation)
+}
+
+#[cfg(not(feature = "occt"))]
+fn native_section(_: &Path, _: &Value) -> Value {
+    json!("not built; run with --features occt")
+}
+
+/// The same plane section of OpenCascade's own reading of the source. A
+/// Rust section published as chords within the drawing chord tolerance may
+/// fall short of the exact length by the chords' sag; it must agree within
+/// relative `SECTION_NATIVE_RELATIVE`.
+#[cfg(feature = "occt")]
+fn native_section(path: &Path, rust: &Value) -> Value {
+    let Some(length) = rust["length_mm"].as_f64() else {
+        return json!("no Rust section");
+    };
+    let native = Solid::read_step(path, GeometryPolicy::default()).unwrap();
+    let measured = section(&native, None);
+    let Some(native_length) = measured["length_mm"].as_f64() else {
+        return json!({ "reader": "OpenCascade 7.9.3", "error": measured["error"] });
+    };
+    let relative = (length - native_length).abs() / native_length.max(1e-9);
+    assert!(
+        relative <= SECTION_NATIVE_RELATIVE,
+        "OpenCascade section length {native_length} differs from {length} by {relative}"
+    );
+    json!({ "reader": "OpenCascade 7.9.3", "length_mm": native_length, "relative": relative })
 }
 
 #[cfg(not(feature = "occt"))]

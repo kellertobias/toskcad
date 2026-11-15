@@ -175,14 +175,21 @@ impl Solid {
         }
         let tolerance = policy.linear_tolerance_mm;
         let recognised = step_read::read_source_compound(input, tolerance);
-        if recognised.is_err() {
+        if let Err(refusal) = recognised {
             // Outside the recognised families the solid keeps its imported
-            // boundary. When that is refused too, the first refusal stands,
-            // except for an assembly, which only the retained provider reads.
+            // boundary. When that is refused too, the families' refusal
+            // stands unless they only found the file unfamiliar and the
+            // boundary itself is invalid: then the file is invalid. An
+            // assembly is read only by the retained provider, so its
+            // refusal is the file's.
             match Self::import_rust_brep(input, feature, policy) {
                 Ok(retained) => return Ok(retained),
-                Err(refusal) if step_read::brep::has_product_structure(input) => {
-                    return Err(refusal);
+                Err(error)
+                    if step_read::brep::has_product_structure(input)
+                        || (refusal == ReadError::Unsupported
+                            && error.kind == GeometryErrorKind::InvalidResult) =>
+                {
+                    return Err(error);
                 }
                 Err(_) => {}
             }
