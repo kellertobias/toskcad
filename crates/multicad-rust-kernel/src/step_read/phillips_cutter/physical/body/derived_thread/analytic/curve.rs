@@ -237,16 +237,11 @@ pub(super) fn literal_transfer(
     r: &Raw,
     reference: &crate::step::helical::ThreadSplines,
     index: usize,
-    frame: &[Point; 3],
+    frame: &Target,
     shell: &Shell<'_, '_>,
     work: &mut Work<'_>,
 ) -> Result<[f64; 3]> {
-    let [origin, u, v] = *frame;
-    let n = [
-        u[1] * v[2] - u[2] * v[1],
-        u[2] * v[0] - u[0] * v[2],
-        u[0] * v[1] - u[1] * v[0],
-    ];
+    let [origin, u, v, n] = frame.columns;
     let mut distance = 0_f64;
     let mut derivative = [0_f64; 2];
     // Caller enumerates the same count of raw/reference bands, asserted after
@@ -274,7 +269,8 @@ pub(super) fn literal_transfer(
                     I::point(origin[k])
                         + I::point(u[k]) * xy[0]
                         + I::point(v[k]) * xy[1]
-                        + I::point(n[k]) * I::point(reference.heights[j])
+                        + I::point(n[k])
+                            * (I::point(reference.heights[j]) - I::point(frame.z_shift))
                 });
                 let actual = shell.point(id)?.map(|x| I::new(x.next_down(), x.next_up()));
                 let d = std::array::from_fn(|k| actual[k] - point[k]);
@@ -304,7 +300,7 @@ pub(super) fn literal_transfer(
 
 pub(super) fn world_transfer(
     index: usize,
-    frame: &[Point; 3],
+    frame: &Target,
     literal: [f64; 3],
     g: &Factors,
     work: &mut Work<'_>,
@@ -314,12 +310,7 @@ pub(super) fn world_transfer(
     let au = g.au[index];
     let b = g.b;
     let bv = g.bv;
-    let [_, u, v] = *frame;
-    let n = [
-        u[1] * v[2] - u[2] * v[1],
-        u[2] * v[0] - u[0] * v[2],
-        u[0] * v[1] - u[1] * v[0],
-    ];
+    let [_, u, v, n] = frame.columns;
     let dot =
         |a: Point, b: Point| (0..3).fold(I::point(0.), |s, k| s + I::point(a[k]) * I::point(b[k]));
     // Gershgorin bounds the actual XY frame's largest Gram eigenvalue;

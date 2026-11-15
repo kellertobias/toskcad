@@ -182,6 +182,11 @@ fn actual_left_handed_posed_packet_qualifies_and_distinct_unsupported_laws_refus
                         .periodic_thread_repair(Default::default(), None)
                         .unwrap();
                     assert!(periodic.source().left_hand());
+                    let common = head
+                        .common_chart_periodic_thread_repair(Default::default(), None)
+                        .unwrap();
+                    assert_eq!(common.chart(), head.chart());
+                    assert!(common.source().left_hand());
                 } else {
                     assert!(matches!(result, Err(PhillipsReadError::Unsupported)));
                     assert!(matches!(

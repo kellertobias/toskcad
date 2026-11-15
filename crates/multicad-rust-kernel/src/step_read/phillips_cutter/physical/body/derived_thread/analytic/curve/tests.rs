@@ -17,7 +17,7 @@ fn numeric_world_transfer_guard_refuses_overflow_before_publishing_a_bound() {
         cancelled: Cell::new(false),
     };
     let frame = [[0.; 3], [f64::MAX, 0., 0.], [0., 1., 0.]];
-    assert!(world_transfer(0, &frame, [0.; 3], &g, &mut work).is_err());
+    assert!(world_transfer(0, &Target::raw(frame), [0.; 3], &g, &mut work).is_err());
     work.remaining = 0;
-    assert!(world_transfer(0, &[[0.; 3]; 3], [0.; 3], &g, &mut work).is_err());
+    assert!(world_transfer(0, &Target::raw([[0.; 3]; 3]), [0.; 3], &g, &mut work).is_err());
 }

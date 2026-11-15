@@ -2,7 +2,9 @@
 //! coefficient cell. Header data is an untrusted proposal only. This receipt
 //! does not admit a complete head/cavity material, raw-file mass or STEP export.
 use super::*;
+mod common_chart;
 mod curve;
+pub use common_chart::CommonChartPeriodicThreadRepair;
 mod periodic;
 mod rotation;
 pub use periodic::{PeriodicThreadBounds, PeriodicThreadRepair, PeriodicThreadSource};
@@ -43,6 +45,7 @@ pub struct AnalyticThreadRepair<'a, 'input> {
     body: &'a Body<'input>,
     thread: crate::helical_thread::Thread,
     periodic: Option<PeriodicThreadSource>,
+    chart: Option<CommonMouthChart>,
     frame: [Point; 3],
     transfers: Vec<AnalyticThreadTransfer>,
     new_work: usize,
@@ -92,13 +95,14 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
         options: AnalyticThreadOptions,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> std::result::Result<AnalyticThreadRepair<'a, 'input>, PhillipsReadError> {
-        self.build_thread_repair(options, interrupt, false)
+        self.build_thread_repair(options, interrupt, false, None)
     }
     fn build_thread_repair(
         &self,
         options: AnalyticThreadOptions,
         interrupt: Option<&dyn Fn() -> bool>,
         periodic: bool,
+        chart: Option<CommonMouthChart>,
     ) -> std::result::Result<AnalyticThreadRepair<'a, 'input>, PhillipsReadError> {
         let mut work = Work {
             remaining: options.maximum_work,
@@ -174,11 +178,19 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
             let geometry =
                 curve::factors(&thread, &reference, &rotation, source.as_ref(), &mut work)?;
             let frame = body.frame;
+            let target = if let Some(chart) = chart {
+                Target {
+                    columns: chart.columns,
+                    z_shift: chart.outer_top_z,
+                }
+            } else {
+                Target::raw(frame)
+            };
             let mut transfers = Vec::with_capacity(raw.len());
             for (index, r) in raw.iter().enumerate() {
                 let distance =
-                    curve::literal_transfer(r, &reference, index, &frame, &shell, &mut work)?;
-                let bounds = curve::world_transfer(index, &frame, distance, &geometry, &mut work)?;
+                    curve::literal_transfer(r, &reference, index, &target, &shell, &mut work)?;
+                let bounds = curve::world_transfer(index, &target, distance, &geometry, &mut work)?;
                 if bounds[0] > options.maximum_distance_mm
                     || bounds[1] > options.maximum_cell_derivative_mm
                     || bounds[2] > options.maximum_cell_derivative_mm
@@ -202,6 +214,7 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
                 body,
                 thread,
                 periodic: source,
+                chart,
                 frame,
                 transfers,
                 new_work: allowance - work.remaining,
@@ -214,3 +227,22 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
 }
 #[cfg(test)]
 mod tests;
+
+#[derive(Clone, Copy)]
+struct Target {
+    columns: [Point; 4],
+    z_shift: f64,
+}
+impl Target {
+    fn raw([o, u, v]: [Point; 3]) -> Self {
+        let n = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        Self {
+            columns: [o, u, v, n],
+            z_shift: 0.,
+        }
+    }
+}

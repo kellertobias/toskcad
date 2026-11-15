@@ -1088,6 +1088,7 @@ pub use phillips_cutter::{
     AnalyticThreadRepair as PhillipsAnalyticThreadRepair,
     AnalyticThreadTransfer as PhillipsAnalyticThreadTransfer,
     CoherentDegree11ThreadCarrier as PhillipsCoherentDegree11ThreadCarrier,
+    CommonChartPeriodicThreadRepair as PhillipsCommonChartPeriodicThreadRepair,
     Degree11ContactOptions as PhillipsDegree11ContactOptions,
     Degree11DomainEnd as PhillipsDegree11DomainEnd,
     Degree11RimContact as PhillipsDegree11RimContact,

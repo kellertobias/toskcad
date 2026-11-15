@@ -13,8 +13,9 @@ mod graph;
 mod join;
 mod reduce;
 pub use analytic::{
-    AnalyticThreadOptions, AnalyticThreadRepair, AnalyticThreadTransfer, PeriodicThreadBounds,
-    PeriodicThreadRepair, PeriodicThreadSource,
+    AnalyticThreadOptions, AnalyticThreadRepair, AnalyticThreadTransfer,
+    CommonChartPeriodicThreadRepair, PeriodicThreadBounds, PeriodicThreadRepair,
+    PeriodicThreadSource,
 };
 pub use degree11::{CoherentDegree11ThreadCarrier, Degree11ThreadFace, Degree11ThreadOptions};
 pub use join::{
