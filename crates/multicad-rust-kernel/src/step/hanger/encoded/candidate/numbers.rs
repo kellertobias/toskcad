@@ -222,8 +222,8 @@ mod tests {
             );
             assert_eq!(decimal, value.0);
         }
-        for (a, _) in &literals.map {
-            for (b, _) in &literals.map {
+        for a in literals.map.keys() {
+            for b in literals.map.keys() {
                 assert_eq!(a.partial_cmp(b), Some(a.cmp(b)));
                 assert_eq!(a == b, a.cmp(b) == Ordering::Equal);
             }
