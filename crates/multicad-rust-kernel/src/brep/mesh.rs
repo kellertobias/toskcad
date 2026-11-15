@@ -342,7 +342,13 @@ impl Builder<'_> {
                 for (i, segment) in trim.segments.iter().enumerate() {
                     let Some(segment) = segment else { continue };
                     let next = (i + 1) % trim.points.len();
-                    let ends = [i, next].map(|k| self.vertices[&trim.points[k].key]);
+                    // A boundary point no triangle reached leaves the
+                    // face's region uncovered: refuse rather than guess.
+                    let end = |k: usize| self.vertices.get(&trim.points[k].key).copied();
+                    let ends = [
+                        end(i).ok_or(Error::Unsupported)?,
+                        end(next).ok_or(Error::Unsupported)?,
+                    ];
                     let uv = [trim.points[i].uv, trim.at(i + 1, periods)];
                     let back = Segment {
                         edge: segment.edge,
