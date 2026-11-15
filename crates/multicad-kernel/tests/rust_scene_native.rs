@@ -563,3 +563,61 @@ fn interpenetrating_bodies_match_native_open_cascade() {
     // The visibility of piercing edges is certified analytically in
     // `rust_scene_prism.rs` instead.
 }
+
+/// A window border 0.1 um inside a cylinder's rim: the rim leaves and
+/// re-enters the window within one chord. Section only and retained views
+/// with and without hidden lines.
+#[test]
+fn a_rim_grazing_the_window_matches_native_open_cascade() {
+    let solid = cylinder();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cylinder.step");
+    solid.write_step(&path).unwrap();
+    let native = Solid::read_step(&path, solid.geometry_policy()).unwrap();
+    for (label, section_only, hidden_lines, origin) in [
+        ("section only", true, false, [0., 0., 4.]),
+        ("retained", false, false, [0., 0., 4.]),
+        ("retained hidden", false, true, [0., 0., 4.]),
+        ("side retained hidden", false, true, [0., 0., 0.]),
+    ] {
+        let frame = if label.starts_with("side") {
+            PlaneFrame {
+                origin,
+                u: [0., 1., 0.],
+                v: [0., 0., 1.],
+            }
+        } else {
+            PlaneFrame {
+                origin,
+                ..Default::default()
+            }
+        };
+        let options = DrawingProjection {
+            frame,
+            section_offset_mm: Some(0.),
+            section_only,
+            hidden_lines,
+            section_u_mm: Some([-10., 5. - 1e-4]),
+            section_v_mm: if label.starts_with("side") {
+                Some([-1., 9.])
+            } else {
+                None
+            },
+            ..Default::default()
+        };
+        let rust = project(&[&solid], options);
+        let reference = project(&[&native], options);
+        let forward = deviation(&rust, &reference, true);
+        let backward = deviation(&reference, &rust, false);
+        println!(
+            "{{\"case\":\"grazing window {label}\",\"rust_to_native_mm\":{},\"native_to_rust_mm\":{},\"rust\":{},\"native\":{}}}",
+            forward.0,
+            backward.0,
+            rust.len(),
+            reference.len()
+        );
+        let bound = 3. * options.chord_tolerance_mm;
+        assert!(forward.0 <= bound, "{label}: Rust {forward:?}");
+        assert!(backward.0 <= bound, "{label}: OpenCascade {backward:?}");
+    }
+}
