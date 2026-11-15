@@ -937,7 +937,7 @@ pub(super) fn mechanical_part_profiles(_: &dyn Host, call: &Request, _: NoArgs) 
                 "metric_fits": ["nominal_basic", "metric_6g_external"],
                 "hex_nut_metric_fits": ["nominal_basic", "metric_6h_internal"],
                 "representations": ["modeled", "cosmetic_envelope"],
-                "cosmetic_head_drive_pairs": [["socket_cap", "hex_socket"], ["external_hex", "external_hex"], ["countersunk", "hex_socket"]],
+                "cosmetic_head_drive_pairs": [["socket_cap", "hex_socket"], ["external_hex", "external_hex"], ["countersunk", "hex_socket"], ["socket_cap", "hexalobular"], ["pan", "hexalobular"], ["button", "hexalobular"], ["countersunk", "hexalobular"]],
                 "cosmetic_shank": "The shank and resolved thread envelope diameters must match. The envelope is for display and placement.",
                 "plain_shank": "If present, its diameter must be at least the modeled thread crest diameter.",
                 "end_treatments": false,

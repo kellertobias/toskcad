@@ -193,3 +193,81 @@ fn reported_metric_nut_step_support_has_actual_independent_rust_geometry() {
             .contains(&json!("hex_nut"))
     );
 }
+
+#[test]
+fn advertised_cosmetic_curved_drive_heads_create_and_reopen_without_manufacturing_claims() {
+    for head in [
+        json!({"kind":"socket_cap","diameter":mm(5.6),"height":mm(2.4)}),
+        json!({"kind":"pan","diameter":mm(5.6),"height":mm(2.4),"crown_radius":mm(5.),"top_land_diameter":mm(4.1),"neck_radius":mm(0.125)}),
+        json!({"kind":"button","diameter":mm(5.6),"height":mm(2.4),"crown_radius":mm(5.),"top_land_diameter":mm(4.1),"neck_radius":mm(0.125)}),
+        json!({"kind":"countersunk","diameter":mm(5.6),"height":mm(1.8),"included_angle":deg(90.),"edge_chamfer":mm(0.1),"neck_radius":mm(0.)}),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cosmetic-head.tcd");
+        Store
+            .save(
+                &path,
+                &ProjectFile::new(Document::new("Cosmetic curved drive").unwrap()).unwrap(),
+            )
+            .unwrap();
+        let open = || {
+            Headless::with_geometry_backend(
+                Workspace::project(path.clone(), Box::new(Store)).unwrap(),
+                Some(dir.path().into()),
+                false,
+                GeometryBackend::Rust,
+            )
+        };
+        let host = open();
+        let profiles = run(&host, "mechanical_part_profiles", json!({}));
+        assert!(
+            profiles["active_geometry_support"]["cosmetic_head_drive_pairs"]
+                .as_array()
+                .unwrap()
+                .contains(&json!([head["kind"], "hexalobular"]))
+        );
+        let created = run(
+            &host,
+            "set_mechanical_part",
+            json!({"expected_revision":0,"name":"Cosmetic curved drive","recipe":{
+                "kind":"machine_screw","underhead_length":mm(8.),"shank_diameter":mm(3.),"head":head,
+                "drive":{"kind":"hexalobular","major_diameter":mm(2.8),"minor_diameter":mm(2.05),"outer_lobe_radius":mm(0.28),"depth":mm(0.5),"bottom_angle":deg(120.)},
+                "thread":{"plane":"yz","origin":[mm(10.),mm(20.),mm(30.)],"major_diameter":mm(3.),"pitch":mm(0.5),"length":mm(5.),"representation":"cosmetic_envelope","fit":"nominal_basic"}
+            }}),
+        );
+        let initial = host.document();
+        let evaluated = run(&host, "evaluate_model", json!({}));
+        assert_eq!(evaluated["parts"].as_array().unwrap().len(), 1);
+        let source_hash: [u8; 32] =
+            serde_json::from_value(evaluated["source_hash"].clone()).unwrap();
+        let error = dispatch(
+            &host,
+            &call(false),
+            "export_step",
+            json!({"part":created["part"],"file_name":"before.step"}),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "unsupported");
+        assert!(!dir.path().join("before.step").exists());
+        assert_eq!(host.document(), initial);
+        run(&host, "save_project", json!({"expected_revision":1}));
+        drop(host);
+        let reopened = open();
+        assert_eq!(reopened.document(), initial);
+        assert_eq!(
+            run(&reopened, "evaluate_model", json!({}))["source_hash"],
+            json!(source_hash)
+        );
+        assert!(
+            dispatch(
+                &reopened,
+                &call(false),
+                "export_step",
+                json!({"part":created["part"],"file_name":"reopened.step"})
+            )
+            .is_err()
+        );
+        assert!(!dir.path().join("reopened.step").exists());
+        assert_eq!(reopened.document(), initial);
+    }
+}
