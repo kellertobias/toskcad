@@ -1071,6 +1071,8 @@ impl Solid {
                 body.topology(frame, owner, revision)?
             } else if let Some((body, frame)) = self.helical_tube_cut_body() {
                 body.topology(frame, owner, revision)?
+            } else if let Some((body, frame)) = self.orthogonal_seat_body() {
+                body.topology(frame, owner, revision)?
             } else if let Some(body) = self.line8_nut_body() {
                 body.topology(owner, revision)
             } else if let Some(body) = self.external_npt_stock_body() {

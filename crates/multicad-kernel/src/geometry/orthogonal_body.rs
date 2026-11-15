@@ -19,6 +19,7 @@ mod intersection;
 mod mirror;
 mod plane_split;
 mod pockets;
+pub(in crate::geometry) mod seats;
 mod shell;
 pub(in crate::geometry) mod slots;
 

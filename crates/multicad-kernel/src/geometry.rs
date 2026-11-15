@@ -103,6 +103,8 @@ pub use normal_relief_body::NormalReliefMotif;
 use normal_sweep_body::NormalSweepBody;
 pub use normal_sweep_body::SweepOpening;
 use orthogonal_body::OrthogonalBody;
+use orthogonal_body::seats::OrthogonalSeatBody;
+pub use orthogonal_body::seats::{OrthogonalCountersink, OrthogonalCountersinkMeasures};
 pub use orthogonal_body::slots::RoundedSlotTool;
 use planar_boolean_body::PlanarBooleanBody;
 use radial_boundary_body::RadialBoundaryBody;
@@ -699,6 +701,7 @@ impl Solid {
             SolidBody::PolygonPrism(body) => key(body, body.frame),
             SolidBody::Linear(body, frame) => key(body, *frame),
             SolidBody::Orthogonal(body, frame) => key(body, *frame),
+            SolidBody::OrthogonalSeats(body, frame) => key(body, *frame),
             SolidBody::PlanarBoolean(body, frame) => key(body, *frame),
             _ => return None,
         })
@@ -764,6 +767,7 @@ enum SolidBody {
     AxialStack(Rc<AxialStackBody>, PlaneFrame),
     RustCompound(Rc<RustCompound>),
     Orthogonal(Rc<OrthogonalBody>, PlaneFrame),
+    OrthogonalSeats(Rc<OrthogonalSeatBody>, PlaneFrame),
     PlanarBoolean(Rc<PlanarBooleanBody>, PlaneFrame),
     WarpedUnion(Rc<WarpedUnionBody>, PlaneFrame),
 }
@@ -1168,6 +1172,12 @@ impl Solid {
             _ => None,
         }
     }
+    pub(crate) fn orthogonal_seat_body(&self) -> Option<(&OrthogonalSeatBody, PlaneFrame)> {
+        match &self.body {
+            SolidBody::OrthogonalSeats(b, f) => Some((b, *f)),
+            _ => None,
+        }
+    }
     pub(crate) fn orthogonal_body(&self) -> Option<(&OrthogonalBody, PlaneFrame)> {
         match &self.body {
             SolidBody::Orthogonal(body, frame) => Some((body, *frame)),
@@ -1261,6 +1271,9 @@ impl Solid {
             SolidBody::WarpedUnion(body, frame) => SolidBody::WarpedUnion(Rc::clone(body), *frame),
             SolidBody::RustCompound(compound) => SolidBody::RustCompound(Rc::clone(compound)),
             SolidBody::Orthogonal(body, frame) => SolidBody::Orthogonal(Rc::clone(body), *frame),
+            SolidBody::OrthogonalSeats(body, frame) => {
+                SolidBody::OrthogonalSeats(Rc::clone(body), *frame)
+            }
             SolidBody::Occt(shape) => {
                 let handle = ffi::share_shape(&shape.0).map_err(|e| native("share", e))?;
                 if handle.is_null() {
@@ -1751,6 +1764,11 @@ impl Solid {
                 SolidBody::Orthogonal(body, frame) => {
                     SolidBody::Orthogonal(Rc::clone(body), transform.frame(*frame))
                 }
+                SolidBody::OrthogonalSeats(body, frame) => {
+                    let frame = transform.frame(*frame);
+                    body.validate_frame(frame, self.policy)?;
+                    SolidBody::OrthogonalSeats(Rc::clone(body), frame)
+                }
                 SolidBody::Occt(_) => unreachable!("checked Rust body"),
             };
             let mut result = Self {
@@ -1876,6 +1894,9 @@ impl Solid {
         }
         if let Some(body) = self.line8_nut_body() {
             return Ok(body.volume_mm3());
+        }
+        if let Some((body, frame)) = self.orthogonal_seat_body() {
+            return body.volume_mm3(frame);
         }
         if let Some(body) = self.external_npt_stock_body() {
             return Ok(body.volume_mm3());
@@ -2026,6 +2047,9 @@ impl Solid {
         }
         if let Some(body) = self.line8_nut_body() {
             return Ok(body.bounds());
+        }
+        if let Some((body, frame)) = self.orthogonal_seat_body() {
+            return body.bounds(frame);
         }
         if let Some(body) = self.external_npt_stock_body() {
             return Ok(body.bounds());
@@ -2228,6 +2252,9 @@ impl Solid {
         if let Some(body) = self.line8_nut_body() {
             return Ok(body.faces());
         }
+        if let Some((body, frame)) = self.orthogonal_seat_body() {
+            return body.faces(frame);
+        }
         if let Some(body) = self.external_npt_stock_body() {
             return Ok(body.faces());
         }
@@ -2398,6 +2425,7 @@ impl Solid {
             SolidBody::LiteralNpt(body) => body.mesh(rust_options),
             SolidBody::ExternalNptStock(body) => body.mesh(rust_options),
             SolidBody::Line8Nut(body) => body.mesh(rust_options),
+            SolidBody::OrthogonalSeats(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::CosmeticProfiled(body, frame) => match usage {
                 MeshUse::Display => body.mesh(*frame, rust_options),
                 MeshUse::Manufacturing => Err(error(
@@ -2915,6 +2943,7 @@ impl Solid {
             SolidBody::WarpedUnion(body, _) => body.feature,
             SolidBody::RustCompound(compound) => compound.feature,
             SolidBody::Orthogonal(body, _) => body.feature,
+            SolidBody::OrthogonalSeats(body, _) => body.feature,
             SolidBody::Occt(_) => return None,
         };
         Some(self.topology_snapshot(feature, 0))
@@ -2968,7 +2997,8 @@ impl Solid {
             SolidBody::ClippedNpt(body) => body.supports_step(self.policy),
             SolidBody::Hanger(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::LiteralNpt(body) => body.supports_step(),
-            SolidBody::Line8Nut(..)
+            SolidBody::OrthogonalSeats(..)
+            | SolidBody::Line8Nut(..)
             | SolidBody::ExternalNptStock(..)
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
@@ -3188,7 +3218,8 @@ impl Solid {
             SolidBody::ClippedNpt(body) => body.append_step(writer, self.policy),
             SolidBody::Hanger(body, frame) => body.append_step(writer, *frame, self.policy),
             SolidBody::LiteralNpt(body) => body.append_step(writer),
-            SolidBody::Line8Nut(..)
+            SolidBody::OrthogonalSeats(..)
+            | SolidBody::Line8Nut(..)
             | SolidBody::ExternalNptStock(..)
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
