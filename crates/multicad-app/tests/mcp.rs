@@ -10,6 +10,66 @@ use std::{
 
 const RELATIVE: f64 = 1e-7;
 #[test]
+fn default_stdio_hanger_recipe_preserves_history_export_and_saved_source() {
+    for hand in ["right", "left"] {
+        let directory = tempfile::tempdir().unwrap();
+        let project = directory.path().join("created-hanger.tcd");
+        let arguments = [
+            "--project",
+            project.to_str().unwrap(),
+            "--export-dir",
+            directory.path().to_str().unwrap(),
+        ];
+        let mut client = Client::start(&arguments);
+        let created = client.ok("set_mechanical_part", json!({"expected_revision":0,"name":"Authored hanger","recipe":{"kind":"hanger_bolt","wood_thread":{"hand":hand},"metric_thread":{"hand":hand}}}));
+        let first = client.part_volume();
+        assert!(first > 0.);
+        client.ok("set_mechanical_part", json!({"expected_revision":1,"feature":created["feature"],"recipe":{"kind":"hanger_bolt","plain_length":length(3.3)}}));
+        let edited = client.part_volume();
+        close(edited - first, PI * 1.5f64.powi(2) * 1.3);
+        client.ok("undo", json!({"expected_revision":2}));
+        close(client.part_volume(), first);
+        client.ok("redo", json!({"expected_revision":3}));
+        close(client.part_volume(), edited);
+        client.ok("save_project", json!({"expected_revision":4}));
+        let saved = std::fs::read(&project).unwrap();
+        for request in [
+            json!({"expected_revision":3,"feature":created["feature"],"recipe":{"kind":"hanger_bolt","plain_length":length(4.)}}),
+            json!({"expected_revision":4,"feature":created["feature"],"recipe":{"kind":"hanger_bolt","wood_thread":{"origin":[length(1.),length(0.),length(0.)]}}}),
+        ] {
+            client.fail("set_mechanical_part", request);
+        }
+        assert_eq!(client.revision(), 4);
+        close(client.part_volume(), edited);
+        let first_receipt = client.ok(
+            "export_step",
+            json!({"part":created["part"],"file_name":"created.step"}),
+        );
+        assert_eq!(
+            first_receipt["step_verification"]["method"],
+            "decoded_support_healing"
+        );
+        assert!(first_receipt["readback_volume_mm3"].is_null());
+        assert_eq!(std::fs::read(&project).unwrap(), saved);
+        drop(client);
+        let mut reopened = Client::start(&arguments);
+        close(reopened.part_volume(), edited);
+        let second_receipt = reopened.ok(
+            "export_step",
+            json!({"part":created["part"],"file_name":"reopened.step"}),
+        );
+        assert_eq!(
+            first_receipt["step_verification"],
+            second_receipt["step_verification"]
+        );
+        assert_eq!(
+            std::fs::read(directory.path().join("created.step")).unwrap(),
+            std::fs::read(directory.path().join("reopened.step")).unwrap()
+        );
+        assert_eq!(std::fs::read(&project).unwrap(), saved);
+    }
+}
+#[test]
 fn default_stdio_hanger_projects_export_with_healing_receipts_and_reopen_unchanged() {
     use multicad_core::{
         commands::{Actor, Channel, Session},
