@@ -2967,8 +2967,8 @@ impl Solid {
             SolidBody::WoodInsert(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::ClippedNpt(body) => body.supports_step(self.policy),
             SolidBody::Hanger(body, frame) => body.supports_step(*frame, self.policy),
-            SolidBody::LiteralNpt(..)
-            | SolidBody::Line8Nut(..)
+            SolidBody::LiteralNpt(body) => body.supports_step(),
+            SolidBody::Line8Nut(..)
             | SolidBody::ExternalNptStock(..)
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
@@ -3187,8 +3187,8 @@ impl Solid {
             SolidBody::WoodInsert(body, frame) => body.append_step(writer, *frame, self.policy),
             SolidBody::ClippedNpt(body) => body.append_step(writer, self.policy),
             SolidBody::Hanger(body, frame) => body.append_step(writer, *frame, self.policy),
-            SolidBody::LiteralNpt(..)
-            | SolidBody::Line8Nut(..)
+            SolidBody::LiteralNpt(body) => body.append_step(writer),
+            SolidBody::Line8Nut(..)
             | SolidBody::ExternalNptStock(..)
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)

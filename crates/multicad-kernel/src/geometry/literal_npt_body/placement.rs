@@ -86,6 +86,8 @@ impl LiteralNptBody {
             last_mesh: Cell::new(None),
             last_actual: Cell::new(None),
             mesh_builds: Cell::new(0),
+            step_ready: Cell::new(None),
+            last_step: Cell::new(None),
         })
     }
     pub(super) fn world_bounds(&self) -> [[f64; 2]; 3] {

@@ -12,6 +12,7 @@ use std::{
     collections::BTreeSet,
 };
 mod placement;
+mod step;
 #[derive(Clone, Copy)]
 struct OriginalFace {
     area: [f64; 2],
@@ -65,6 +66,8 @@ pub(crate) struct LiteralNptBody {
     last_mesh: Cell<Option<(usize, usize)>>,
     last_actual: Cell<Option<usize>>,
     mesh_builds: Cell<usize>,
+    step_ready: Cell<Option<(usize, bool)>>,
+    last_step: Cell<Option<multicad_rust_kernel::step::literal_npt::Receipt>>,
 }
 pub(in crate::geometry) fn source_signature(
     source: &read::OwnedMaterial,
@@ -251,6 +254,8 @@ impl Solid {
                 last_mesh: Cell::new(None),
                 last_actual: Cell::new(None),
                 mesh_builds: Cell::new(0),
+                step_ready: Cell::new(None),
+                last_step: Cell::new(None),
             })),
             policy,
             provenance: vec![],

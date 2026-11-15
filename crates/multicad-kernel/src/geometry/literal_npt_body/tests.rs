@@ -283,7 +283,7 @@ fn actual_literal_native_preserves_validation_cancellation_and_atomic_refusal() 
             .is_err()
     );
     assert!(solid.rust_literal_npt_contains([f64::NAN, 0., 0.]).is_err());
-    assert!(!solid.supports_step_export());
+    assert!(solid.supports_step_export());
 }
 #[test]
 fn actual_normal_mixed_torx_and_literal_npt_preserves_both_orders() {
@@ -637,5 +637,124 @@ fn actual_native_occurrences_keep_source_and_fresh_mesh_face_query_quality() {
                 .map(|p| p.transforms().len()),
             None
         );
+    }
+}
+
+#[test]
+fn actual_normal_literal_step_reexport_keeps_geometry_pose_and_mixed_members() {
+    for (quarter, originally_mapped, moved) in [
+        (false, false, false),
+        (true, false, false),
+        (false, true, false),
+        (false, false, true),
+        (false, true, true),
+    ] {
+        let text = text(quarter);
+        let text = if originally_mapped {
+            mapped(&text)
+        } else {
+            text
+        };
+        let original = Solid::import_rust_step(&text, EntityId::new(), Default::default()).unwrap();
+        let solid = if moved {
+            original
+                .transformed(RigidTransform {
+                    rotation: [[0.8, -0.36, 0.48], [0.6, 0.48, -0.64], [0., 0.8, 0.6]],
+                    translation_mm: [17., -8., 13.],
+                })
+                .unwrap()
+        } else {
+            original.share().unwrap()
+        };
+        // A live warm display remains resident during independently verified
+        // re-export; its bytes and immutable prepared source are charged.
+        solid.mesh(Default::default()).unwrap();
+        let warm = solid.rust_literal_npt_runtime_evidence().unwrap();
+        assert!(solid.supports_step_export());
+        assert!(solid.supports_step_export());
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("literal.step");
+        solid.write_step(&path).unwrap();
+        let evidence = solid.rust_literal_npt_step_evidence().unwrap();
+        assert!(
+            evidence.aggregate_work_used() <= 96_000_000
+                && evidence.accounted_peak_bytes() <= BYTES
+        );
+        assert!(
+            evidence.position_error_mm() <= 1e-7
+                && evidence.original_derivative_error_mm() <= 1e-6
+                && evidence.normal_chord_error() <= 1e-6
+        );
+        let decoded = Solid::import_rust_step(
+            &std::fs::read_to_string(path).unwrap(),
+            EntityId::new(),
+            Default::default(),
+        )
+        .unwrap();
+        assert!(decoded.rust_literal_npt_source().is_some());
+        assert!((decoded.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < 1e-6);
+        let before = solid.bounds().unwrap();
+        let after = decoded.bounds().unwrap();
+        // AABB-after-AABB for two retained maps can be wider than the
+        // flattened file map. Compare actual source-owned vertices instead.
+        let source = solid.rust_literal_npt_source().unwrap();
+        let target = decoded.rust_literal_npt_source().unwrap();
+        for vertex in source.vertices() {
+            let local = source
+                .point(vertex.point_index())
+                .unwrap()
+                .coordinates()
+                .map(|s| s.bounds());
+            let base = source.map_box_mm(local).unwrap();
+            let wanted = solid
+                .rust_literal_npt_occurrence()
+                .map_or(base, |p| p.map_box_mm(base).unwrap());
+            let actual = target.map_box_mm(local).unwrap();
+            for axis in 0..3 {
+                assert!(
+                    (wanted[axis][0].midpoint(wanted[axis][1])
+                        - actual[axis][0].midpoint(actual[axis][1]))
+                    .abs()
+                        < 1e-7,
+                    "quarter={quarter} mapped={originally_mapped} moved={moved}"
+                );
+                let x = actual[axis][0].midpoint(actual[axis][1]);
+                assert!(x >= before.min[axis] - 1e-7 && x <= before.max[axis] + 1e-7);
+                assert!(x >= after.min[axis] - 1e-7 && x <= after.max[axis] + 1e-7);
+            }
+        }
+        solid.mesh(Default::default()).unwrap();
+        assert_eq!(
+            solid
+                .rust_literal_npt_runtime_evidence()
+                .unwrap()
+                .mesh_builds,
+            warm.mesh_builds
+        );
+        if moved {
+            let box_part = Solid::box_solid([2., 3., 4.], Default::default())
+                .unwrap()
+                .transformed(RigidTransform {
+                    translation_mm: [-20., 0., 0.],
+                    ..Default::default()
+                })
+                .unwrap();
+            let compound = Solid::make_rust_compound(
+                &[&solid, &box_part, &original],
+                EntityId::new(),
+                Default::default(),
+                None,
+            )
+            .unwrap();
+            let path = directory.path().join("mixed.step");
+            compound.write_step(&path).unwrap();
+            let reopened = Solid::import_rust_step(
+                &std::fs::read_to_string(path).unwrap(),
+                EntityId::new(),
+                Default::default(),
+            )
+            .unwrap();
+            assert_eq!(reopened.rust_compound().unwrap().members().count(), 3);
+        }
     }
 }
