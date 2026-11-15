@@ -43,6 +43,14 @@ const MESH_DEFLECTION_MM: f64 = 0.05;
 /// A tessellation removes at most this fraction of the exact volume.
 const MESH_VOLUME_RELATIVE: f64 = 2e-2;
 const OCCT_VOLUME_RELATIVE: f64 = 1e-6;
+/// OpenCascade 7.9.3 tessellates the reference at this finer deflection.
+/// At the Rust deflection its BRepMesh does not hold the requested bound
+/// inside every face: on L_Radial_D28.0mm's toroidal face a point of the
+/// exact surface lies 0.134 mm from its 0.05 mm mesh, while the Rust mesh
+/// stays within 0.047 mm of the exact surface by dense sampling. The
+/// comparison bound becomes the sum of the two deflections, 0.06 mm,
+/// tighter than twice the Rust deflection.
+const OCCT_REFERENCE_DEFLECTION_MM: f64 = 0.01;
 const OCCT_BOUNDS_MM: f64 = 1e-3;
 
 fn tolerances() -> Value {
@@ -55,6 +63,7 @@ fn tolerances() -> Value {
         "mesh_volume_relative": MESH_VOLUME_RELATIVE,
         "occt_volume_relative": OCCT_VOLUME_RELATIVE,
         "occt_bounds_mm": OCCT_BOUNDS_MM,
+        "occt_reference_deflection_mm": OCCT_REFERENCE_DEFLECTION_MM,
         "reader_tolerance_mm": GeometryPolicy::default().linear_tolerance_mm,
     })
 }
@@ -149,26 +158,51 @@ fn supports_of(solid: &Solid) -> Value {
     })
 }
 
+/// Readback of every member by the recognised-family reader, or, for a
+/// file outside those families, by the retained-boundary reader, which
+/// integrates the boundary as written without the importer's facade.
 fn independent_readback(text: &str) -> Result<Value, step_read::ReadError> {
     let tolerance = GeometryPolicy::default().linear_tolerance_mm;
-    let members = step_read::read_analytic_compound(text, tolerance)?;
+    let (reader, members): (_, Vec<(f64, usize, [[f64; 3]; 2])>) =
+        match step_read::read_analytic_compound(text, tolerance) {
+            Ok(members) => (
+                "recognised families",
+                members
+                    .iter()
+                    .map(|m| (m.volume_mm3, m.face_count, m.bounds_mm))
+                    .collect(),
+            ),
+            Err(refusal) => (
+                "retained boundary",
+                step_read::brep::read_solids(text, tolerance, None)
+                    .map_err(|_| refusal)?
+                    .iter()
+                    .map(|m| (m.volume_mm3(), m.faces().len(), m.bounds_mm()))
+                    .collect(),
+            ),
+        };
     let mut bounds = [[f64::INFINITY; 3], [f64::NEG_INFINITY; 3]];
-    for member in &members {
-        for (axis, (low, high)) in member.bounds_mm[0]
-            .iter()
-            .zip(member.bounds_mm[1])
-            .enumerate()
-        {
-            bounds[0][axis] = bounds[0][axis].min(*low);
-            bounds[1][axis] = bounds[1][axis].max(high);
+    for (_, _, member) in &members {
+        for axis in 0..3 {
+            bounds[0][axis] = bounds[0][axis].min(member[0][axis]);
+            bounds[1][axis] = bounds[1][axis].max(member[1][axis]);
         }
     }
     Ok(json!({
+        "reader": reader,
         "members": members.len(),
-        "volume_mm3": members.iter().map(|m| m.volume_mm3).sum::<f64>(),
-        "faces": members.iter().map(|m| m.face_count).sum::<usize>(),
+        "volume_mm3": members.iter().map(|m| m.0).sum::<f64>(),
+        "faces": members.iter().map(|m| m.1).sum::<usize>(),
         "bounds_mm": bounds,
     }))
+}
+
+#[cfg(feature = "occt")]
+fn reference_mesh_options() -> MeshOptions {
+    MeshOptions {
+        linear_deflection_mm: OCCT_REFERENCE_DEFLECTION_MM,
+        ..Default::default()
+    }
 }
 
 fn mesh_options() -> MeshOptions {
@@ -848,10 +882,10 @@ fn native_source_deviation(_: &Path, _: &multicad_kernel::Mesh) -> Value {
 #[cfg(feature = "occt")]
 fn native_source_deviation(path: &Path, rust_mesh: &multicad_kernel::Mesh) -> Value {
     let native = Solid::read_step(path, GeometryPolicy::default()).unwrap();
-    let native_mesh = native.mesh(mesh_options()).unwrap();
+    let native_mesh = native.mesh(reference_mesh_options()).unwrap();
     let deviation = mesh_deviation(rust_mesh, &native_mesh, 4. * MESH_DEFLECTION_MM);
     assert!(
-        deviation <= 2. * MESH_DEFLECTION_MM,
+        deviation <= MESH_DEFLECTION_MM + OCCT_REFERENCE_DEFLECTION_MM,
         "OpenCascade source tessellation deviates {deviation} mm from the Rust import"
     );
     json!(deviation)
@@ -873,12 +907,12 @@ fn native_readback(
 ) -> Value {
     let native = Solid::read_step(path, GeometryPolicy::default()).unwrap();
     // Independent tessellations of the same exact boundary: each lies
-    // within the requested deflection of the surface, so their mutual
-    // deviation is bounded by twice that deflection.
-    let native_mesh = native.mesh(mesh_options()).unwrap();
+    // within its own deflection of the surface, so their mutual deviation
+    // is bounded by the sum of the two deflections.
+    let native_mesh = native.mesh(reference_mesh_options()).unwrap();
     let deviation = mesh_deviation(rust_mesh, &native_mesh, 4. * MESH_DEFLECTION_MM);
     assert!(
-        deviation <= 2. * MESH_DEFLECTION_MM,
+        deviation <= MESH_DEFLECTION_MM + OCCT_REFERENCE_DEFLECTION_MM,
         "OpenCascade tessellation deviates {deviation} mm from the Rust readback"
     );
     assert!(!native.uses_rust_geometry());

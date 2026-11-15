@@ -288,12 +288,8 @@
         "cone",
         "revolution"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-290",
-        "summary": "A standalone conical frustum (CONICAL_SURFACE between two planar caps) is outside the Rust import families; only certified conical stock mouths and thread treatments are admitted."
-      }
+      "expected": "pass",
+      "verdict": "pass"
     },
     {
       "id": "occt-sphere",
@@ -362,12 +358,8 @@
         "torus",
         "cylinder"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-290",
-        "summary": "General solids of revolution mixing planar, cylindrical and toroidal bands are outside the Rust import families."
-      }
+      "expected": "pass",
+      "verdict": "pass"
     },
     {
       "id": "occt-spline-prism",
@@ -445,7 +437,7 @@
       "expected": "unsupported",
       "verdict": "unsupported",
       "finding": {
-        "owner": "CAD-290",
+        "owner": "CAD-361",
         "summary": "STEP assembly product structure (NEXT_ASSEMBLY_USAGE_OCCURRENCE, CONTEXT_DEPENDENT_SHAPE_REPRESENTATION, ITEM_DEFINED_TRANSFORMATION) is refused; only one flat ADVANCED_BREP_SHAPE_REPRESENTATION is read."
       }
     },
@@ -476,7 +468,7 @@
       "expected": "unsupported",
       "verdict": "unsupported",
       "finding": {
-        "owner": "CAD-290",
+        "owner": "CAD-361",
         "summary": "KiCad wraps even a bare board in an assembly occurrence with an ITEM_DEFINED_TRANSFORMATION, which the Rust reader refuses; every KiCad board export is currently unsupported."
       }
     },
@@ -506,7 +498,7 @@
       "expected": "unsupported",
       "verdict": "unsupported",
       "finding": {
-        "owner": "CAD-290",
+        "owner": "CAD-361",
         "summary": "KiCad assembly occurrence placement is refused (same cause as kicad-plate-holes)."
       }
     },
@@ -537,7 +529,7 @@
       "expected": "unsupported",
       "verdict": "unsupported",
       "finding": {
-        "owner": "CAD-290",
+        "owner": "CAD-361",
         "summary": "KiCad assembly occurrence placement is refused (same cause as kicad-plate-holes)."
       }
     },
@@ -568,7 +560,7 @@
       "expected": "unsupported",
       "verdict": "unsupported",
       "finding": {
-        "owner": "CAD-290",
+        "owner": "CAD-361",
         "summary": "Placed component assemblies (board plus component occurrence) are refused by the Rust reader; KiCad component placement is only available through the native import_kicad board reader."
       }
     },
@@ -800,12 +792,8 @@
         "revolution",
         "torus"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-360",
-        "summary": "A revolved standoff of 11 faces: four planes, four cylinders, two cones and one toroidal fillet. Tori are only recognized on the complete torus and the filleted cylinder of four or five faces, so this is a general revolution outside the analytic families, not a resource limit."
-      }
+      "expected": "pass",
+      "verdict": "pass"
     },
     {
       "id": "kicad-lib-RV_Disc_D9mm_W6.1mm_P5mm",
@@ -828,12 +816,8 @@
         "revolution",
         "torus"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-360",
-        "summary": "A varistor disc of 11 faces with two SURFACE_OF_REVOLUTION faces over B-spline meridians and two toroidal faces: a general revolution outside the analytic families, not a resource limit."
-      }
+      "expected": "pass",
+      "verdict": "pass"
     },
     {
       "id": "kicad-lib-Converter_ACDC_Hi-Link_HLK-20Mxx",
@@ -855,12 +839,8 @@
         "sphere",
         "torus"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-360",
-        "summary": "A module of 30 faces whose pins end in four spherical and four toroidal blend faces: general blends outside the analytic families, not a resource limit."
-      }
+      "expected": "pass",
+      "verdict": "pass"
     },
     {
       "id": "kicad-vendored-L_CommonModeChoke_TDK_ACM7060",
@@ -924,12 +904,8 @@
       "tags": [
         "cylinder"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-360",
-        "summary": "After its planar partitions are merged this is a box with four corner pads that protrude 0.05 mm and are notched by 0.25 mm partial cylinders over 0.24 mm of the height: a stepped plane and partial-cylinder solid outside the analytic families. It is valid and no longer reported as invalid."
-      }
+      "expected": "pass",
+      "verdict": "pass"
     },
     {
       "id": "kicad-lib-SW_SPST_B3U-3000P-B",
@@ -954,7 +930,7 @@
       "verdict": "unsupported",
       "finding": {
         "owner": "CAD-360",
-        "summary": "Four straight edges (#379, #400, #977, #1191) are each used by four faces in balanced directions, so the actuator touches the housing along pinched non-manifold edges. ISO 10303-42 requires every edge of a closed shell to be referenced exactly twice; OpenCascade tolerates the contact. The Rust kernel needs a two-manifold shell and now refuses it as unsupported rather than invalid."
+        "summary": "Non-manifold closed shell: four straight edges (x = +-1.225 mm, z = 1.08 mm) each bound four faces, where two lobes of the switch touch along a line. MANIFOLD_SOLID_BREP requires each edge to bound two faces, so the retained-boundary reader refuses it as invalid and the import keeps the recognised-family refusal. OpenCascade's BRepCheck does not test manifoldness and accepts it."
       }
     },
     {
@@ -977,12 +953,8 @@
       "tags": [
         "sphere"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-360",
-        "summary": "The lens ends in a hemispherical SPHERICAL_SURFACE face (#553) trimmed by a circle and a meridian seam, joined to cylinders and planes: a spherical cap outside the analytic families. It is now refused as unsupported independently of the face order instead of as invalid."
-      }
+      "expected": "pass",
+      "verdict": "pass"
     },
     {
       "id": "kicad-lib-Buzzer_Mallory_AST1109MLTRQ",
@@ -1053,7 +1025,7 @@
       "expected": "unsupported",
       "verdict": "unsupported",
       "finding": {
-        "owner": "CAD-290",
+        "owner": "CAD-361",
         "summary": "STEP assembly product structure with placed occurrences is refused (same cause as occt-two-bodies)."
       }
     },
@@ -1076,12 +1048,8 @@
       "tags": [
         "cone"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-290",
-        "summary": "Standalone conical faces outside the certified conical stock-mouth family are refused."
-      }
+      "expected": "pass",
+      "verdict": "pass"
     },
     {
       "id": "kicad-lib-R_Box_L13.0mm_W4.0mm_P9.00mm",
@@ -1103,12 +1071,8 @@
       "tags": [
         "cylinder"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-290",
-        "summary": "Cylindrical faces outside the certified prism, bore and rounded-edge families (here partial cylinders on a box body) are refused."
-      }
+      "expected": "pass",
+      "verdict": "pass"
     },
     {
       "id": "kicad-lib-PinSocket_1x01_P2.54mm_Vertical",
@@ -1129,12 +1093,8 @@
       "tags": [
         "planar"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-290",
-        "summary": "Planar polyhedral solids whose faces are not orthogonal prisms or certified planar Boolean results are refused."
-      }
+      "expected": "pass",
+      "verdict": "pass"
     },
     {
       "id": "kicad-lib-C_Axial_L5.1mm_D3.1mm_P10.00mm_Horizontal",
@@ -1155,12 +1115,8 @@
       "tags": [
         "revolution"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-290",
-        "summary": "General solids of revolution are outside the Rust import families."
-      }
+      "expected": "pass",
+      "verdict": "pass"
     },
     {
       "id": "kicad-vendored-WLP-4_0.83x0.83mm_P0.4mm",
@@ -1181,12 +1137,8 @@
       "tags": [
         "sphere"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-290",
-        "summary": "Spherical faces other than a complete Rust-encoded sphere (here solder-ball caps) are refused."
-      }
+      "expected": "pass",
+      "verdict": "pass"
     },
     {
       "id": "kicad-lib-D_SOD-923",
@@ -1208,12 +1160,8 @@
       "tags": [
         "spline"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-290",
-        "summary": "B-spline surface faces outside the certified spline sweep and relief families are refused."
-      }
+      "expected": "pass",
+      "verdict": "pass"
     },
     {
       "id": "kicad-lib-R_LDR_5.2x5.2mm_P3.5mm_Horizontal",
@@ -1240,8 +1188,8 @@
       "expected": "unsupported",
       "verdict": "unsupported",
       "finding": {
-        "owner": "CAD-290",
-        "summary": "SHELL_BASED_SURFACE_MODEL content and multiple solids in one representation are refused."
+        "owner": "CAD-360",
+        "summary": "Contains a SHELL_BASED_SURFACE_MODEL with open shells beside its solids. The product has no surface-body concept, and importing only the solids would drop part of the model, so the file is refused as unsupported."
       }
     },
     {
@@ -1269,7 +1217,7 @@
       "expected": "unsupported",
       "verdict": "unsupported",
       "finding": {
-        "owner": "CAD-290",
+        "owner": "CAD-361",
         "summary": "Toroidal blends combined with multiple solids are refused."
       }
     },
@@ -1299,8 +1247,8 @@
       "expected": "unsupported",
       "verdict": "unsupported",
       "finding": {
-        "owner": "CAD-290",
-        "summary": "BREP_WITH_VOIDS other than an orthogonal box with rectangular voids is refused."
+        "owner": "CAD-360",
+        "summary": "An inner-shell edge, a degree-13 rational B-spline, lies up to 1.10e-5 mm off its cylinder. That exceeds the file's declared 2e-6 mm uncertainty and the 1e-5 mm incidence cap, so the retained-boundary reader refuses it as invalid and the import keeps the recognised-family refusal. OpenCascade accepts it with its per-edge tolerances."
       }
     },
     {
@@ -1324,12 +1272,8 @@
         "multi-body",
         "torus"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-290",
-        "summary": "Flat multi-solid representations whose members are outside the supported families are refused."
-      }
+      "expected": "pass",
+      "verdict": "pass"
     },
     {
       "id": "kicad-lib-R_0603_1608Metric",
