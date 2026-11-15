@@ -108,6 +108,7 @@ pub(in crate::drawing) fn unsupported(message: &'static str) -> GeometryError {
 }
 
 mod arrange;
+mod bevel;
 mod bore;
 mod engine;
 mod families;

@@ -10,6 +10,8 @@ Requests that the family providers refuse draw through the exact-curve scene eng
 
 Helical and continuous herringbone gears are scene members of their own (`scene/twisted.rs`): the uncropped axial views stay with the axial provider, and every other view, crop, section and overlapping scene is evaluated on the phase law of the transverse profile. Rims, vertex helices and the herringbone apex ring are exact edges; involute helicoids and coaxial cylinders have straight outlines and the radial flanks and fillets traced ones; sight intervals end on isolated roots of the flank surfaces and plane sections are traced on every flank. The member is certified against an independent exact membership predicate in its unit tests (interval ends within 1e-13 of the surface relative to the gear, outline normals within 2e-12 of perpendicular to the sight, section areas within 6e-4 of a scan-line quadrature), and `rust_scene_twisted.rs` certifies drawings analytically (the flank law of a section through the axis to 2e-14 mm, every occluding contour of the exact depth map within 0.025 mm of a visible curve, exact hiding behind a box) and against OpenCascade 7.9.3 for 84 view classes (Rust and native curves within 0.03 mm, section curves within 0.01 mm). Measured OpenCascade deviations: imported flank seams drawn as sharp edges, rear edges and a detail view's bore outline published as visible behind material, a stretch of a finite-depth far cut omitted on one tooth of the hubbed gears (accepted only where the exact predicate certifies the Rust curve), and the native error "Drawing curve has no finite trim domain" on some axial herringbone sections. A sight line or section plane that touches a flank along a whole curve (a view exactly along an involute ruling, a plane tangent to a flank) is refused with a typed error instead of a guessed result.
 
+Spherical bevel gears are scene members too (`scene/bevel.rs`): every face is ruled (cones through the pitch apex over the root, fillet, meridian, spherical-involute and tip pieces of the tooth boundary, two back cones and the bore), so outlines are whole rulings, a sight line meets the solid where closed-form quadric roots or certified sign changes of the provider's boundary law occur, and a plane cuts each face strip between the crossings of its two rims. Uncropped axial views keep the dedicated bevel provider; every other bevel view, crop, section and scene draws through the engine. `rust_scene_bevel.rs` holds the analytic regressions and compares 60 view, section and scene cases with the independently constructed OpenCascade 7.9.3 bevel: curves agree both ways within 0.0122 mm (bound 0.03 mm). Measured OpenCascade deviations: it refuses oblique cuts and hidden-line lengthwise cuts of its own bevel ("Projected curve family is unsupported"), bridges transverse flank cuts with straight chords (sagitta up to 0.174 mm), draws tangent-continuous flank seams, and publishes up to 15.4 mm of rear tooth edges per oblique hidden-line view as visible although material lies in front of them (decided by marching the exact membership predicate in the member's unit tests). No Rust visible curve lies on a native hidden one. Edges of one body that pierce another interpenetrating body are not split at the piercing point by the scene engine; the inventoried scenes do not interpenetrate.
+
 | Family or scene | ax | ax rev | ax hid | side | side hid | obl | obl hid | ax sec | ax only | ax depth | side sec | side only | side depth | side win | obl sec | obl only | ax det | side det |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | box | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -23,7 +25,7 @@ Helical and continuous herringbone gears are scene members of their own (`scene/
 | internal ring | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | helical gear | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | herringbone gear | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| bevel gear | ✓ | ✓ | ✓ | F12 | F12 | F12 | F12 | ✓ | ✓ | ✓ | F12 | F12 | F12 | F12 | F12 | F12 | F12 | F12 |
+| bevel gear | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | za worm | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | F13 | F13 | F13 | F13 |
 | worm wheel | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | F13 | F13 | F13 | F13 |
 | box + cylinder overlapping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -40,8 +42,8 @@ Helical and continuous herringbone gears are scene members of their own (`scene/
 | box + internal ring separated | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | spur gear + spur gear overlapping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | spur gear + spur gear separated | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| box + bevel gear overlapping | F15 | F15 | F15 | F12 | F12 | F12 | F12 | F15 | F15 | F15 | F12 | F12 | F12 | F12 | F12 | F12 | F15 | F12 |
-| box + bevel gear separated | ✓ | ✓ | ✓ | F12 | F12 | F12 | F12 | ✓ | ✓ | ✓ | F12 | F12 | F12 | F12 | F12 | F12 | F12 | F12 |
+| box + bevel gear overlapping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| box + bevel gear separated | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | box + za worm overlapping | F16 | F16 | F16 | F13 | F13 | F16 | F16 | F16 | F16 | F16 | F13 | F13 | F13 | F13 | F16 | F16 | F16 | F13 |
 | box + za worm separated | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | ✓ | ✓ | ✓ | F13 | F13 | F13 | F13 | F13 | F13 | F13 | F13 |
 | box + herringbone gear overlapping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -51,9 +53,7 @@ Helical and continuous herringbone gears are scene members of their own (`scene/
 
 ## Findings
 
-- **F12** (35 cells): Rust bevel drawing requires an uncropped view along the gear axis
 - **F13** (43 cells): Rust worm and worm-wheel drawings require an uncropped view along the gear axis
-- **F15** (7 cells): Rust bevel drawing supports one gear at a time; scene occlusion is unavailable
 - **F16** (11 cells): Rust worm and worm-wheel drawings support one placed gear at a time
 
-552 of 648 combinations draw; 96 are explicit findings. No combination returns an invalid or partial result.
+594 of 648 combinations draw; 54 are explicit findings. No combination returns an invalid or partial result.

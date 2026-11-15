@@ -292,19 +292,21 @@ fn bevel_sections_and_retained_views_match_native_cuts() {
 }
 
 #[test]
-fn oblique_cropped_and_mixed_bevel_drawings_are_refused() {
+fn oblique_cropped_and_mixed_bevel_drawings_use_the_scene_engine() {
     let spec = specification(2., 32, 24, 6., 4.);
     let (rust, _) = pair(spec);
-    let refused =
-        |solids: &[DrawingSolid<'_>], options| project_drawing(solids, options).unwrap_err().kind;
+    // The axial provider keeps uncropped views along the axis; every other
+    // request draws through the exact-curve scene engine
+    // (`rust_scene_bevel.rs` certifies those drawings).
+    let drawn = |solids: &[DrawingSolid<'_>], options| {
+        let vectors = project_drawing(solids, options).unwrap();
+        totals(&vectors)[0]
+    };
     let one = [DrawingSolid {
         solid: &rust,
         hatch: None,
     }];
-    assert_eq!(
-        refused(&one, DrawingProjection::default()),
-        GeometryErrorKind::Unsupported
-    );
+    assert!(drawn(&one, DrawingProjection::default()) > 0.);
     for options in [
         DrawingProjection {
             frame: axial_frame(true),
@@ -318,7 +320,8 @@ fn oblique_cropped_and_mixed_bevel_drawings_are_refused() {
             ..Default::default()
         },
     ] {
-        assert_eq!(refused(&one, options), GeometryErrorKind::Unsupported);
+        // These crops lie off the placed gear; the request itself is valid.
+        project_drawing(&one, options).unwrap();
     }
     let two = [
         DrawingSolid {
@@ -330,17 +333,18 @@ fn oblique_cropped_and_mixed_bevel_drawings_are_refused() {
             hatch: None,
         },
     ];
-    assert_eq!(
-        refused(
+    assert!(
+        drawn(
             &two,
             DrawingProjection {
                 frame: axial_frame(true),
                 ..Default::default()
             }
-        ),
-        GeometryErrorKind::Unsupported
+        ) > 0.
     );
     // Budgets are enforced on the exact curves.
+    let refused =
+        |solids: &[DrawingSolid<'_>], options| project_drawing(solids, options).unwrap_err().kind;
     let options = DrawingProjection {
         frame: axial_frame(true),
         maximum_points: 50,
