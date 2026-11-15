@@ -811,3 +811,37 @@ fn actual_independently_decoded_periodic_material_keeps_owners_and_qualifies_nat
         );
     }
 }
+
+#[test]
+fn actual_authored_clearance_bounds_enforce_a_stricter_native_policy() {
+    let source = source(false, 0.5);
+    let before = source.world_volume_mm3();
+    let strict = GeometryPolicy {
+        minimum_feature_mm: 0.2,
+        ..Default::default()
+    };
+    assert_eq!(
+        Solid::rust_periodic_repaired_phillips_material(
+            Rc::clone(&source),
+            feature(),
+            PlaneFrame::default(),
+            strict,
+            None
+        )
+        .err()
+        .unwrap()
+        .kind,
+        GeometryErrorKind::Unsupported
+    );
+    assert!(
+        Solid::rust_periodic_repaired_phillips_material(
+            Rc::clone(&source),
+            feature(),
+            PlaneFrame::default(),
+            Default::default(),
+            None
+        )
+        .is_ok()
+    );
+    assert_eq!(source.world_volume_mm3(), before);
+}
