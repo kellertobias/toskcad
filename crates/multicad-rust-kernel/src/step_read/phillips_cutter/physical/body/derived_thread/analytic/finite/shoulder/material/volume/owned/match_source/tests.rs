@@ -274,3 +274,12 @@ fn actual_authored_sources_exercise_identity_caps_changed_radii_and_inventory() 
         ));
     }
 }
+
+#[test]
+fn exact_sum_coefficients_are_distinct_from_interval_endpoints() {
+    let nonrepresentable = [1., 1e-17];
+    let zero = exact_sum_delta(nonrepresentable, nonrepresentable);
+    assert_eq!([zero.lo, zero.hi], [0., 0.]);
+    let changed = exact_sum_delta(nonrepresentable, [1., 2e-17]);
+    assert!(changed.hi >= 1e-17 && changed.valid());
+}

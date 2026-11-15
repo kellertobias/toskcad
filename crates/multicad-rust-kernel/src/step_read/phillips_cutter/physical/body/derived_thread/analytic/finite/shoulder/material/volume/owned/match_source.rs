@@ -84,7 +84,11 @@ fn scalar_delta(a: f64, b: f64) -> I {
         abs(I::point(a) - I::point(b))
     }
 }
-fn expression_delta(a: [f64; 2], b: [f64; 2]) -> I {
+// Arrays here are defining scalar COEFFICIENTS of the real sum a0+a1,
+// never [lo,hi] enclosures. Authored caps/mouth retain station and -shank;
+// decoded caps/mouth retain [literal station,0]. Equal coefficient pairs
+// therefore denote one identical exact real scalar even across owners.
+fn exact_sum_delta(a: [f64; 2], b: [f64; 2]) -> I {
     if a == b {
         I::point(0.)
     } else {
@@ -172,7 +176,7 @@ impl OwnedPeriodicMaterial {
                 )
                 .map_err(cavity_error)?;
             work.step(8192)?;
-            let mouth_shift = expression_delta(self.mouth, target.mouth);
+            let mouth_shift = exact_sum_delta(self.mouth, target.mouth);
             let source_top = head.station(0).expect("qualified top station");
             let target_top = other_head.station(0).expect("qualified top station");
             let source_bottom = self.bottom;
@@ -204,7 +208,7 @@ impl OwnedPeriodicMaterial {
             let target_outer = I::point(target_bottom[0].max(target.thread.radius_nodes_mm()[0]));
             let source_outer = I::point(source_bottom[0].max(self.thread.radius_nodes_mm()[0]));
             let angle = I::point(t.maximum_angle_error_radians);
-            let join_z = expression_delta(self.caps[0], target.caps[0]);
+            let join_z = exact_sum_delta(self.caps[0], target.caps[0]);
             let join_distance = radial + target_outer * angle + join_z;
             let join_du = I::point(t.maximum_du_radius_error_mm)
                 + I::point(t.maximum_target_du_radius_mm) * angle
