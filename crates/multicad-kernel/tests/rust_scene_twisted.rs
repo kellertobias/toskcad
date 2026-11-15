@@ -1006,28 +1006,87 @@ fn report_native_deviations() {
     }
 }
 
-/// Whether a paper point lies on the rim of the far cut of a finite-depth
-/// section and is seen against empty space, by the oracle alone: the cut
-/// face changes from material to void around it, and beside it nothing of
-/// the retained slab is in front.
+/// Depth of the nearest retained material along the sight line through a
+/// paper point, by an independent membership predicate of world points.
 #[cfg(feature = "occt")]
-fn on_visible_far_cut(oracle: &Oracle, options: DrawingProjection, paper: [f64; 2]) -> bool {
-    let (Some(top), Some(depth)) = (options.section_offset_mm, options.section_depth_mm) else {
-        return false;
+fn front_of(
+    inside: &dyn Fn([f64; 3]) -> bool,
+    frame: PlaneFrame,
+    paper: [f64; 2],
+    [far, near]: [f64; 2],
+) -> Option<f64> {
+    // Fine enough to find a thin wedge of retained material at a cut.
+    let step = (0.02_f64).min((near - far) / 2000.);
+    let at = |depth: f64| inside(world(frame, paper, depth));
+    let count = ((near - far) / step).ceil() as usize;
+    let mut previous = near;
+    for i in 0..=count {
+        let depth = near - (near - far) * i as f64 / count as f64;
+        let depth = if i == count { far + 1e-9 } else { depth };
+        if at(depth) {
+            if i == 0 {
+                return Some(depth);
+            }
+            let [mut a, mut b] = [previous, depth];
+            for _ in 0..40 {
+                let mid = 0.5 * (a + b);
+                if at(mid) {
+                    b = mid;
+                } else {
+                    a = mid;
+                }
+            }
+            return Some(0.5 * (a + b));
+        }
+        previous = depth;
+    }
+    None
+}
+
+/// Whether a visible chord through `mid` along `along` is an edge of the
+/// retained solid as the viewer sees it, by the predicate alone: across the
+/// chord the depth of the nearest retained material jumps, appears or
+/// disappears (an occluding contour or a rim) or changes slope (a crease).
+#[cfg(feature = "occt")]
+fn seen_edge(
+    inside: &dyn Fn([f64; 3]) -> bool,
+    options: DrawingProjection,
+    mid: [f64; 2],
+    along: [f64; 2],
+) -> bool {
+    let reach = 40.;
+    let near = options.section_offset_mm.unwrap_or(reach);
+    let far = options
+        .section_offset_mm
+        .zip(options.section_depth_mm)
+        .map_or(-reach, |(top, depth)| top - depth);
+    let length = along[0].hypot(along[1]);
+    let normal = [-along[1] / length, along[0] / length];
+    let delta = 0.01;
+    let depth = |k: f64| {
+        front_of(
+            inside,
+            options.frame,
+            [
+                mid[0] + k * delta * normal[0],
+                mid[1] + k * delta * normal[1],
+            ],
+            [far, near],
+        )
     };
-    let far = top - depth;
-    let around: Vec<[f64; 2]> = (0..16)
-        .map(|i| {
-            let (sin, cos) = (f64::from(i) * PI / 8.).sin_cos();
-            [paper[0] + 0.02 * cos, paper[1] + 0.02 * sin]
-        })
-        .collect();
-    let cut = |q: [f64; 2]| oracle.inside(world(options.frame, q, far + 1e-6));
-    let open = |q: [f64; 2]| {
-        (0..=200)
-            .all(|i| !oracle.inside(world(options.frame, q, far + depth * f64::from(i) / 200.)))
-    };
-    around.iter().any(|&q| cut(q)) && around.iter().any(|&q| !cut(q) && open(q))
+    match [-2., -1., 1., 2.].map(depth) {
+        [_, None, None, _] => false,
+        [_, Some(_), None, _] | [_, None, Some(_), _] => true,
+        [m2, Some(m1), Some(p1), p2] => {
+            if (m1 - p1).abs() > 0.05 {
+                return true;
+            }
+            match (m2, p2) {
+                (Some(m2), Some(p2)) => ((p2 - p1) - (m1 - m2)).abs() / delta > 0.1,
+                _ => true,
+            }
+        }
+    }
 }
 
 /// Compare one drawing of Rust solids with OpenCascade's drawing of their
@@ -1039,7 +1098,7 @@ fn compare_native(
     label: &str,
     (solids, natives): (&[&Solid], &[&Solid]),
     options: DrawingProjection,
-    certify: &dyn Fn(VectorRole, [f64; 2]) -> bool,
+    certify: &dyn Fn(VectorRole, [f64; 2], [f64; 2]) -> bool,
     (failures, worst): (&mut Vec<String>, &mut [f64; 4]),
 ) -> usize {
     let rust = draw(solids, options);
@@ -1082,7 +1141,8 @@ fn compare_native(
             if distance_to(&all, mid) <= bound {
                 continue;
             }
-            if certify(vector.role, mid) {
+            let along = [pair[1][0] - pair[0][0], pair[1][1] - pair[0][1]];
+            if certify(vector.role, mid, along) {
                 certified += 1;
             } else {
                 failures.push(format!(
@@ -1092,9 +1152,41 @@ fn compare_native(
             }
         }
     }
+    // Visible Rust chords off every native visible curve: OpenCascade drew
+    // them hidden or not at all; each must be certified.
+    let mut visible = of(&matched, VectorRole::Visible);
+    let native_visible = of(&reference, VectorRole::Visible);
+    visible.retain(|vector| {
+        let near: Vec<&ProjectedVector> = native_visible
+            .iter()
+            .filter(|other| other.source_index == vector.source_index)
+            .collect();
+        vector.preview_mm.windows(2).all(|pair| {
+            let mid = [
+                0.5 * (pair[0][0] + pair[1][0]),
+                0.5 * (pair[0][1] + pair[1][1]),
+            ];
+            let along = [pair[1][0] - pair[0][0], pair[1][1] - pair[0][1]];
+            if [pair[0], mid, pair[1]]
+                .into_iter()
+                .all(|point| distance_to(&near, point) <= bound)
+            {
+                return true;
+            }
+            if certify(VectorRole::Visible, mid, along) {
+                certified += 1;
+            } else {
+                failures.push(format!(
+                    "{label}: Rust visible chord of source {} at {mid:?} is not a seen edge",
+                    vector.source_index
+                ));
+            }
+            false
+        })
+    });
     let checks = [
         deviation(&matched, &reference, false),
-        deviation(&of(&matched, VectorRole::Visible), &reference, true),
+        deviation(&visible, &reference, true),
         deviation(&of(&rust, VectorRole::Section), &reference, true),
         deviation(&reference, &complete, false),
         deviation(&of(&reference, VectorRole::Section), &rust, true),
@@ -1127,11 +1219,14 @@ fn overlapping_box_and_twisted_gear_scenes_match_native_open_cascade() {
     let mut failures = Vec::new();
     let mut worst = [0_f64; 4];
     let mut compared = 0;
+    let mut certified = 0;
+    let mut unavailable = 0;
     for (name, spec) in [
         ("herringbone", spec(GearSweep::Chevron, 0.05, None)),
         ("double-helical", spec(GAPPED, -0.04, hub())),
     ] {
         let solid = gear(spec);
+        let oracle = Oracle::new(spec);
         let cover = stock([6, 30, 3], [-2., -15., 1.5]);
         let directory = tempfile::tempdir().unwrap();
         let natives: Vec<Solid> = [&cover, &solid]
@@ -1151,18 +1246,42 @@ fn overlapping_box_and_twisted_gear_scenes_match_native_open_cascade() {
             {
                 continue;
             }
+            let native: Vec<DrawingSolid> = natives
+                .iter()
+                .map(|solid| DrawingSolid { solid, hatch: None })
+                .collect();
+            if let Err(error) = project_drawing(&native, options) {
+                println!(
+                    "{{\"case\":\"{label}\",\"native_error\":\"{}\"}}",
+                    error.message
+                );
+                unavailable += 1;
+                continue;
+            }
             compared += 1;
-            compare_native(
+            let inside = |p: [f64; 3]| {
+                (p[0] > -2. && p[0] < 4. && p[1] > -15. && p[1] < 15. && p[2] > 1.5 && p[2] < 4.5)
+                    || oracle.inside(p)
+            };
+            certified += compare_native(
                 &label,
                 (&[&cover, &solid], &[&natives[0], &natives[1]]),
                 options,
-                &|_, _| false,
+                &|role, point, along| {
+                    role == VectorRole::Visible && seen_edge(&inside, options, point, along)
+                },
                 (&mut failures, &mut worst),
             );
         }
     }
-    println!("{{\"cases\":{compared},\"worst_mm\":{worst:?}}}");
+    println!(
+        "{{\"cases\":{compared},\"native_unavailable\":{unavailable},\"worst_mm\":{worst:?},\"oracle_certified_chords\":{certified}}}"
+    );
     assert!(failures.is_empty(), "{failures:#?}");
+    assert!(
+        only.is_some() || compared >= 30,
+        "{compared} cases compared"
+    );
 }
 
 /// Every non-axial, cropped and sectioned view of the twisted gears against
@@ -1224,15 +1343,16 @@ fn twisted_gears_match_native_open_cascade() {
                 &label,
                 (&[&solid], &[&native]),
                 options,
-                &|role, point| {
-                    role == VectorRole::Visible && on_visible_far_cut(&oracle, options, point)
+                &|role, point, along| {
+                    role == VectorRole::Visible
+                        && seen_edge(&|p| oracle.inside(p), options, point, along)
                 },
                 (&mut failures, &mut worst),
             );
         }
     }
     println!(
-        "{{\"cases\":{compared},\"worst_mm\":{worst:?},\"oracle_certified_far_cut_chords\":{certified}}}"
+        "{{\"cases\":{compared},\"worst_mm\":{worst:?},\"oracle_certified_chords\":{certified}}}"
     );
     assert!(failures.is_empty(), "{failures:#?}");
     assert!(

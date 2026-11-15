@@ -7,6 +7,9 @@ use super::solve::{Search, isolate_touching};
 use super::{Band, Gear, Region};
 use std::f64::consts::{PI, TAU};
 
+/// Relative distance from a coaxial circle within which a point is on it.
+const ON_CIRCLE: f64 = 1e-12;
+
 /// A line that stays within this fraction of the gear's size of a surface
 /// along a stretch only grazes it there.
 const GRAZING: f64 = 1e-9;
@@ -92,13 +95,18 @@ impl Gear {
     /// outline: at its radius, the next flank counterclockwise is left.
     pub(super) fn contains_profile(&self, point: P2) -> bool {
         let radius = point[0].hypot(point[1]);
+        let angle = point[1].atan2(point[0]);
+        // On the root circle, within rounding, a point lies on a root arc
+        // (the boundary) or under a tooth (inside).
+        if (radius - self.radius[0]).abs() <= ON_CIRCLE * self.radius[0] {
+            return !self.on_coaxial_arc(self.radius[0], angle);
+        }
         if radius <= self.radius[0] {
             return true;
         }
-        if radius >= self.radius[1] {
+        if radius >= self.radius[1] * (1. - ON_CIRCLE) {
             return false;
         }
-        let angle = point[1].atan2(point[0]);
         // The next flank is at most one tooth gap ahead; look two pitches
         // ahead first and around the whole outline only if none is there.
         let ahead = 2. * self.pitch;
@@ -122,16 +130,33 @@ impl Gear {
         false
     }
 
+    /// Whether a profile angle lies on a coaxial arc of the given radius.
+    pub(super) fn on_coaxial_arc(&self, radius: f64, angle: f64) -> bool {
+        self.flanks.iter().any(|flank| {
+            flank
+                .coaxial()
+                .is_some_and(|own| (own - radius).abs() <= ON_CIRCLE * radius)
+                && match flank.shape {
+                    Shape::Arc { start, sweep, .. } => {
+                        let low = start.min(start + sweep);
+                        (angle - low).rem_euclid(TAU) <= sweep.abs()
+                    }
+                    _ => false,
+                }
+        })
+    }
+
     /// Whether a point in gear coordinates is strictly inside the solid:
     /// material on both sides of its axial level.
     pub(super) fn contains(&self, [x, y, z]: P3) -> bool {
         let radius = x.hypot(y);
-        radius > self.bore
+        // Points within rounding of a coaxial cylinder lie on its surface.
+        radius > self.bore * (1. + ON_CIRCLE)
             && [-1., 1.]
                 .into_iter()
                 .all(|side| match self.material(z, side) {
                     Some(Region::Profile(phase)) => self.contains_profile(rotate([x, y], -phase)),
-                    Some(Region::Disk(outer)) => radius < outer,
+                    Some(Region::Disk(outer)) => radius < outer * (1. - ON_CIRCLE),
                     None => false,
                 })
     }
@@ -181,6 +206,37 @@ impl Gear {
             }
             if let Some(half) = reach(radius) {
                 stops.extend([nearest - half, nearest + half]);
+            }
+        }
+        // A line along the axis on a coaxial arc's cylinder leaves the arc
+        // where its profile angle passes one of the arc's ends.
+        if !transverse && rise != 0. {
+            let radius = closest2.sqrt();
+            let angle = a[1].atan2(a[0]);
+            for band in &self.bands {
+                for flank in &self.flanks {
+                    let (Some(own), Shape::Arc { start, sweep, .. }) =
+                        (flank.coaxial(), flank.shape)
+                    else {
+                        continue;
+                    };
+                    if (own - radius).abs() > ON_CIRCLE * own {
+                        continue;
+                    }
+                    for end in [start, start + sweep] {
+                        // phase(z) = angle - end (mod a turn), z in the band.
+                        let ends = band.z.map(|z| band.phase_at(z));
+                        let [lo, hi] = [ends[0].min(ends[1]), ends[0].max(ends[1])];
+                        let target = angle - end;
+                        let mut k = ((lo - target) / TAU).ceil();
+                        while target + k * TAU <= hi {
+                            let phase = target + k * TAU;
+                            let z = band.z[0] + (phase - band.phase) / band.twist;
+                            stops.push((z - base[2]) / rise);
+                            k += 1.;
+                        }
+                    }
+                }
             }
         }
         let mut budget = 4_000_000_usize;
