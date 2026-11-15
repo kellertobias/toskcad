@@ -170,3 +170,101 @@ fn actual_native_compound_members_keep_explicit_order_and_fresh_independent_rece
         );
     }
 }
+#[test]
+fn actual_written_stale_or_corrupted_geometry_cannot_replace_existing_destination() {
+    let expected = part(false, PlaneFrame::default());
+    let stale = part(true, PlaneFrame::default());
+    let raw = stale.rust_periodic_repaired_phillips_source().unwrap().0;
+    let stale_text = exchange::export(
+        raw,
+        occurrence(PlaneFrame::default()),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let root = expected.rust_periodic_repaired_phillips_source().unwrap().0;
+    let prefix = std::cell::Cell::new(0usize);
+    let observe = || {
+        prefix.set(prefix.get() + 1);
+        false
+    };
+    exchange::export(
+        root,
+        occurrence(PlaneFrame::default()),
+        Default::default(),
+        Some(&observe),
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("existing.step");
+    for (bytes, kind) in [
+        (
+            stale_text.as_str().as_bytes(),
+            GeometryErrorKind::Unsupported,
+        ),
+        (&b"not STEP"[..], GeometryErrorKind::InvalidResult),
+        (&b"\xff"[..], GeometryErrorKind::InvalidResult),
+    ] {
+        fs::write(&target, b"keep previous output").unwrap();
+        let polls = std::cell::Cell::new(0);
+        let changed = std::cell::Cell::new(false);
+        let external_change = || {
+            polls.set(polls.get() + 1);
+            // First measure the genuine delegated candidate phase above. Only
+            // near its end do we observe the filesystem; no production hooks
+            // or fabricated source receipts are needed to reach actual I/O.
+            if !changed.get() && polls.get() >= prefix.get().saturating_sub(2) {
+                for entry in fs::read_dir(dir.path()).unwrap() {
+                    let path = entry.unwrap().path();
+                    if path
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .ends_with(".step-tmp")
+                    {
+                        fs::write(path, bytes).unwrap();
+                        changed.set(true);
+                        break;
+                    }
+                }
+            }
+            false
+        };
+        assert_eq!(
+            expected
+                .write_periodic_phillips_step_with_verification(
+                    &target,
+                    1e-7,
+                    Some(&external_change)
+                )
+                .unwrap()
+                .unwrap_err()
+                .kind,
+            kind
+        );
+        assert!(changed.get());
+        assert_eq!(fs::read(&target).unwrap(), b"keep previous output");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+    let directory = dir.path().join("directory.step");
+    fs::create_dir(&directory).unwrap();
+    fs::write(directory.join("keep"), b"directory content").unwrap();
+    assert_eq!(
+        expected
+            .write_periodic_phillips_step_with_verification(&directory, 1e-7, None)
+            .unwrap()
+            .unwrap_err()
+            .kind,
+        GeometryErrorKind::InvalidResult
+    );
+    assert_eq!(
+        fs::read(directory.join("keep")).unwrap(),
+        b"directory content"
+    );
+    assert!(fs::read_dir(dir.path()).unwrap().all(|e| {
+        !e.unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".step-tmp")
+    }));
+}
