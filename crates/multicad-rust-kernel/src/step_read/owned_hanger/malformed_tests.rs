@@ -28,6 +28,44 @@ fn malformed_actual_hanger_entities_never_publish_decoded_material() {
     let original = file.as_str();
     let admitted = decode(original, ReadOptions::default(), None).unwrap();
     assert!(!admitted.faces().is_empty());
+    // Structural admission retains arbitrary pole coordinates. A nonzero
+    // decimal that caches as binary64 zero must retain its exact spelling and
+    // must not acquire the exact-zero identity used by geometric validators.
+    let underflow = replace_component(
+        original,
+        "CARTESIAN_POINT",
+        "CARTESIAN_POINT('',(1.E-400,0.,0.))",
+    );
+    let changed = decode(&underflow, ReadOptions::default(), None).unwrap();
+    let tiny = changed
+        .points()
+        .values()
+        .flat_map(|point| point.coordinates())
+        .find(|value| value.spelling() == "1.E-400")
+        .unwrap();
+    assert_eq!(tiny.value, 0.);
+    assert!(!tiny.is_zero());
+
+    // Keep the actual direction and change only its unit coordinate to a
+    // distinct decimal with the same binary64 cache.
+    let arena = part21::parse(original).unwrap();
+    let direction = arena
+        .values()
+        .flatten()
+        .find(|entity| entity.name == "DIRECTION")
+        .unwrap();
+    let unit = part21::numeric_spellings(direction)
+        .unwrap()
+        .into_iter()
+        .find(|number| number.parse::<f64>().unwrap() == 1.)
+        .unwrap();
+    let direction_text = direction.source.unwrap();
+    let alias = direction_text.replacen(unit, "1.0000000000000000000000001", 1);
+    let alias = original.replacen(direction_text, &alias, 1);
+    assert!(matches!(
+        decode(&alias, ReadOptions::default(), None),
+        Err(Error::Unsupported)
+    ));
     for (name, replacement) in [
         ("CARTESIAN_POINT", "CARTESIAN_POINT('',(0.))"),
         (
