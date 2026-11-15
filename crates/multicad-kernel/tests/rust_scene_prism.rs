@@ -256,3 +256,167 @@ fn a_windowed_annulus_section_draws_cut_walls_and_window_faces() {
         && a[0].min(b[0]) <= -3. + 1e-9
         && a[0].max(b[0]) >= 3. - 1e-9));
 }
+
+fn arcs(vectors: &[ProjectedVector], role: VectorRole, source: usize) -> Vec<(f64, f64)> {
+    vectors
+        .iter()
+        .filter(|vector| vector.role == role && vector.source_index == source)
+        .filter_map(|vector| match vector.curve {
+            VectorCurve::Ellipse {
+                major_mm,
+                start_rad,
+                end_rad,
+                ..
+            } => Some((major_mm, end_rad - start_rad)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A section-only plane lying in a cap meets the solid in that cap from
+/// either side, as the native common of the solid and the plane does. A
+/// retained section whose plane lies in the cap toward the viewer keeps the
+/// whole solid uncut, and one in the far cap retains nothing.
+#[test]
+fn planes_coincident_with_a_cap_cut_the_cap_or_nothing() {
+    let solid = cylinder();
+    for level in [0., HEIGHT] {
+        let frame = PlaneFrame {
+            origin: [0., 0., level],
+            ..Default::default()
+        };
+        let only = draw(
+            &solid,
+            DrawingProjection {
+                frame,
+                section_offset_mm: Some(0.),
+                section_only: true,
+                ..Default::default()
+            },
+            HatchPattern::Solid,
+        );
+        let rim = arcs(&only, VectorRole::Section, 0);
+        assert!(
+            rim.iter()
+                .all(|(radius, _)| (radius - RADIUS).abs() < 1e-12)
+        );
+        let sweep: f64 = rim.iter().map(|(_, sweep)| sweep).sum();
+        assert!((sweep - 2. * PI).abs() < 1e-9, "{level}: {sweep}");
+        // The hatch region is an inscribed polygon at the chord tolerance.
+        let area = triangles(&only);
+        let exact = PI * RADIUS * RADIUS;
+        assert!(area <= exact + 1e-9 && area > exact * (1. - 2e-3), "{area}");
+        let retained = draw(
+            &solid,
+            DrawingProjection {
+                frame,
+                section_offset_mm: Some(0.),
+                ..Default::default()
+            },
+            HatchPattern::Solid,
+        );
+        if level == 0. {
+            assert!(retained.is_empty());
+        } else {
+            // Nothing is cut off: the cap is an ordinary visible face.
+            assert!(
+                retained
+                    .iter()
+                    .all(|vector| vector.role == VectorRole::Visible)
+            );
+            let sweep: f64 = arcs(&retained, VectorRole::Visible, 0)
+                .iter()
+                .map(|(_, sweep)| sweep)
+                .sum();
+            assert!((sweep - 2. * PI).abs() < 1e-9);
+        }
+    }
+}
+
+/// A window border 0.1 um inside the rim: the rim leaves and re-enters the
+/// window within one certified chord. Both crossings are found on the exact
+/// circle, so the cut face keeps the exact arc and gains the exact border
+/// chord.
+#[test]
+fn a_rim_grazing_the_window_is_clipped_at_both_exact_crossings() {
+    let border = RADIUS - 1e-4;
+    let vectors = draw(
+        &cylinder(),
+        DrawingProjection {
+            frame: PlaneFrame {
+                origin: [0., 0., HEIGHT / 2.],
+                ..Default::default()
+            },
+            section_offset_mm: Some(0.),
+            section_only: true,
+            section_u_mm: Some([-10., border]),
+            ..Default::default()
+        },
+        HatchPattern::None,
+    );
+    let half = (border / RADIUS).acos();
+    assert!(half < 0.01);
+    let sweep: f64 = arcs(&vectors, VectorRole::Section, 0)
+        .iter()
+        .map(|(_, sweep)| sweep)
+        .sum();
+    assert!((sweep - (2. * PI - 2. * half)).abs() < 1e-9, "{sweep}");
+    let chords: Vec<[[f64; 2]; 2]> = vectors
+        .iter()
+        .filter_map(|vector| match vector.curve {
+            VectorCurve::Line { a, b } => Some([a, b]),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(chords.len(), 1);
+    let [a, b] = chords[0];
+    let reach = (RADIUS * RADIUS - border * border).sqrt();
+    assert!((a[0] - border).abs() < 1e-12 && (b[0] - border).abs() < 1e-12);
+    assert!((a[1].abs() - reach).abs() < 1e-9 && (a[1] + b[1]).abs() < 1e-9);
+}
+
+/// An annulus above a cylinder whose rim is internally tangent to its bore:
+/// the rim shows only outside the annulus, over the exact arc, and the single
+/// point seen through the bore publishes no degenerate vector.
+#[test]
+fn a_rim_tangent_to_an_occluding_bore_publishes_no_degenerate_arc() {
+    let ring = Solid::rust_annulus(
+        3.,
+        6.,
+        2.5,
+        EntityId::new(),
+        PlaneFrame {
+            origin: [2., 0., 20.],
+            ..Default::default()
+        },
+        GeometryPolicy::default(),
+    )
+    .unwrap();
+    let solid = cylinder();
+    for hidden_lines in [false, true] {
+        let vectors = project_drawing(
+            &[&solid, &ring].map(|solid| DrawingSolid { solid, hatch: None }),
+            DrawingProjection {
+                hidden_lines,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        for vector in &vectors {
+            if let VectorCurve::Ellipse {
+                major_mm,
+                start_rad,
+                end_rad,
+                ..
+            } = vector.curve
+            {
+                assert!(major_mm * (end_rad - start_rad) > 1e-5, "{vector:?}");
+            }
+        }
+        // |p - (2, 0)| > 6 on the rim: cos(angle) < -7 / 20.
+        let visible = arcs(&vectors, VectorRole::Visible, 0);
+        assert_eq!(visible.len(), 1);
+        let exact = 2. * PI - 2. * (-0.35_f64).acos();
+        assert!((visible[0].1 - exact).abs() < 1e-9, "{visible:?}");
+    }
+}

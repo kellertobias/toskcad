@@ -570,6 +570,13 @@ pub(super) fn section_straight_gear(
             && options
                 .section_depth_mm
                 .is_none_or(|range| nearest + range >= -tolerance);
+        if options.section_only && (z.abs() <= tolerance || (z - height).abs() <= tolerance) {
+            // The plane lies in a cap and meets the solid in that cap.
+            return Some(Err(err(
+                GeometryErrorKind::Unsupported,
+                "Rust gear sections in a cap plane draw through the scene engine",
+            )));
+        }
         if options.section_only || !retained {
             return Some(Ok(Vec::new()));
         }

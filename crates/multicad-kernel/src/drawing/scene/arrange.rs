@@ -2,7 +2,8 @@
 //! the paper plane. Chords only locate events; every event parameter is then
 //! refined on the exact path.
 use super::*;
-use std::collections::HashMap;
+use multicad_rust_kernel::curved_projection::Ellipse;
+use std::collections::{HashMap, HashSet};
 
 /// A clipped range of a candidate path with its certified chords.
 pub(in crate::drawing) struct Strand {
@@ -42,6 +43,20 @@ fn dot(a: P2, b: P2) -> f64 {
 
 pub(in crate::drawing) fn distance(a: P2, b: P2) -> f64 {
     (a[0] - b[0]).hypot(a[1] - b[1])
+}
+
+/// Whether two published ellipses are the same paper conic.
+pub(in crate::drawing) fn same_conic(a: Ellipse, b: Ellipse, eps: f64) -> bool {
+    distance(a.center, b.center) <= eps
+        && (a.major - b.major).abs() <= eps
+        && (a.minor - b.minor).abs() <= eps
+        && ((a.major - a.minor).abs() <= eps || cross(a.u, b.u).abs() * a.major <= eps)
+}
+
+fn segment_distance(p: P2, a: P2, b: P2) -> f64 {
+    let d = sub(b, a);
+    let along = (dot(sub(p, a), d) / dot(d, d).max(1e-300)).clamp(0., 1.);
+    distance(p, [a[0] + along * d[0], a[1] + along * d[1]])
 }
 
 /// Bisect the exact path for the zero of a limit between two parameters.
@@ -94,6 +109,49 @@ pub(in crate::drawing) fn clip(
                     }
                     i += 1;
                 }
+            }
+            // A curve can leave and re-enter a limit between two certified
+            // stops. The exact path strays from its chord by at most the
+            // flattening tolerance, so only chords ending that close to the
+            // limit can hide such an excursion; its turning point, located on
+            // the exact path, then separates the two crossings.
+            let mut i = 0;
+            while i + 1 < ts.len() {
+                let [g0, g1] = [(limit.value)(pts[i]), (limit.value)(pts[i + 1])];
+                if (g0 <= eps) == (g1 <= eps) && g0.abs().min(g1.abs()) <= tolerance + eps {
+                    let value = |t: f64| (limit.value)(path.point(t));
+                    let [a, b] = [ts[i], ts[i + 1]];
+                    // Golden-section search for the extremum away from the ends' side.
+                    let sign = if g0 <= eps { -1. } else { 1. };
+                    let ratio = 0.618_033_988_749_894_9;
+                    let [mut lo, mut hi] = [a, b];
+                    let mut x1 = hi - ratio * (hi - lo);
+                    let mut x2 = lo + ratio * (hi - lo);
+                    let [mut f1, mut f2] = [sign * value(x1), sign * value(x2)];
+                    for _ in 0..48 {
+                        if f1 < f2 {
+                            hi = x2;
+                            x2 = x1;
+                            f2 = f1;
+                            x1 = hi - ratio * (hi - lo);
+                            f1 = sign * value(x1);
+                        } else {
+                            lo = x1;
+                            x1 = x2;
+                            f1 = f2;
+                            x2 = lo + ratio * (hi - lo);
+                            f2 = sign * value(x2);
+                        }
+                    }
+                    let t = 0.5 * (lo + hi);
+                    let point = path.point(t);
+                    if ((limit.value)(point) <= eps) != (g0 <= eps) && t > a && t < b {
+                        ts.insert(i + 1, t);
+                        pts.insert(i + 1, point);
+                        i += 1;
+                    }
+                }
+                i += 1;
             }
             let values: Vec<f64> = pts.iter().map(|&p| (limit.value)(p)).collect();
             let mut run: (Vec<f64>, Vec<P3>) = Default::default();
@@ -250,6 +308,47 @@ pub(in crate::drawing) fn arrange(strands: &[Strand], eps: f64) -> Vec<Vec<(f64,
         .iter()
         .map(|s| vec![s.ts[0], *s.ts.last().unwrap()])
         .collect();
+    // Strands on one paper conic coincide along whole arcs, whatever their
+    // parametrisations. Their chords would cross at spurious points, so they
+    // are split at each other's ends instead and compared as arcs.
+    let conics: Vec<Option<Ellipse>> = strands
+        .iter()
+        .map(|s| match s.path.paper([s.ts[0], *s.ts.last().unwrap()]) {
+            Some(Curve::Ellipse(ellipse)) => Some(ellipse),
+            _ => None,
+        })
+        .collect();
+    let mut twins: HashSet<[usize; 2]> = HashSet::new();
+    for i in 0..strands.len() {
+        for j in i + 1..strands.len() {
+            if let (Some(a), Some(b)) = (conics[i], conics[j])
+                && same_conic(a, b, eps)
+            {
+                twins.insert([i, j]);
+                for [on, other] in [[i, j], [j, i]] {
+                    for end in [strands[other].pts[0], *strands[other].pts.last().unwrap()] {
+                        let target = paper(end);
+                        let nearest = (0..strands[on].pts.len() - 1).min_by(|&x, &y| {
+                            let reach = |k: usize| {
+                                segment_distance(
+                                    target,
+                                    paper(strands[on].pts[k]),
+                                    paper(strands[on].pts[k + 1]),
+                                )
+                            };
+                            reach(x).total_cmp(&reach(y))
+                        });
+                        if let Some(chord) = nearest {
+                            let t = locate(&strands[on], chord, target, eps);
+                            if distance(paper(strands[on].path.point(t)), target) <= eps {
+                                splits[on].push(t);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     if !chords.is_empty() {
         let side = ((chords.len() as f64).sqrt().ceil() as usize).clamp(1, 512);
         let size = [0, 1].map(|k| ((hi[k] - lo[k]) / side as f64).max(eps));
@@ -280,7 +379,7 @@ pub(in crate::drawing) fn arrange(strands: &[Strand], eps: f64) -> Vec<Vec<(f64,
             for (n, &first) in members.iter().enumerate() {
                 for &second in &members[n + 1..] {
                     let (ca, cb) = (chords[first], chords[second]);
-                    if ca.0 == cb.0 {
+                    if ca.0 == cb.0 || twins.contains(&[ca.0.min(cb.0), ca.0.max(cb.0)]) {
                         continue;
                     }
                     // Test each pair once, in the first cell both cover.
