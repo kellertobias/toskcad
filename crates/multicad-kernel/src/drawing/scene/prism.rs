@@ -316,6 +316,46 @@ impl Member for Prism {
         Ok(merge(output, self.tolerance))
     }
 
+    fn line(&self, start: P3, direction: P3) -> Option<Result<Vec<[f64; 2]>, GeometryError>> {
+        let base = self
+            .axes
+            .map(|axis| paths::dot3(axis, paths::add(start, paths::scaled(self.origin, -1.))));
+        let rate = self.axes.map(|axis| paths::dot3(axis, direction));
+        let planar = rate[0].hypot(rate[1]);
+        let length = paths::dot3(direction, direction).sqrt();
+        Some((|| {
+            let mut output = Vec::new();
+            for layer in &self.layers {
+                // The axial slab of the layer along the line.
+                let slab = if rate[2].abs() <= AXIAL * length {
+                    if base[2] <= layer.axis[0] || base[2] >= layer.axis[1] {
+                        continue;
+                    }
+                    [f64::NEG_INFINITY, f64::INFINITY]
+                } else {
+                    let ends = layer.axis.map(|w| (w - base[2]) / rate[2]);
+                    [ends[0].min(ends[1]), ends[0].max(ends[1])]
+                };
+                let profile = if planar <= AXIAL * length {
+                    if contains(&layer.inside, &layer.rings, [base[0], base[1]]) {
+                        vec![[f64::NEG_INFINITY, f64::INFINITY]]
+                    } else {
+                        continue;
+                    }
+                } else {
+                    let along = [rate[0] / planar, rate[1] / planar];
+                    let family = Family::new(&layer.rings, [-along[1], along[0]]);
+                    let start = [base[0], base[1]];
+                    family.spans(&layer.rings, dot2(start, [-along[1], along[0]]), |point| {
+                        (dot2(point, along) - dot2(start, along)) / planar
+                    })?
+                };
+                output.extend(intersect(&profile, &[slab]));
+            }
+            Ok(merge(output, 0.))
+        })())
+    }
+
     fn section(&self, depth: f64, _: f64) -> Result<Vec<Loop>, GeometryError> {
         let offset = depth - self.origin[2];
         let rise = self.toward[2];

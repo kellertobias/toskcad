@@ -420,3 +420,200 @@ fn a_rim_tangent_to_an_occluding_bore_publishes_no_degenerate_arc() {
         assert!((visible[0].1 - exact).abs() < 1e-9, "{visible:?}");
     }
 }
+
+/// A box edge piercing a spur gear's body: the edge turns hidden exactly
+/// where it enters the root cylinder and visible again where it leaves it,
+/// although nothing crosses it in the paper at those points.
+#[test]
+fn an_edge_piercing_another_body_changes_visibility_at_the_exact_entry() {
+    use multicad_kernel::{GearSweep, InvoluteGear, RigidTransform};
+    let a = 20_f64.to_radians();
+    let pitch = 12.;
+    let gear = Solid::rust_spur_gear_named(
+        InvoluteGear {
+            hub: None,
+            teeth: 24,
+            pitch_radius_mm: pitch,
+            base_radius_mm: pitch * a.cos(),
+            tip_radius_mm: pitch + 1.,
+            root_radius_mm: pitch - 1.25,
+            root_fillet_radius_mm: 0.2,
+            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.tan() - a,
+            face_width_mm: 4.,
+            bore_radius_mm: 3.,
+            twist_rad_per_mm: 0.,
+            sweep: GearSweep::Spur,
+        },
+        EntityId::new(),
+        GeometryPolicy::default(),
+    )
+    .unwrap();
+    // x in [-4, 4], y in [-6, 6], z in [1.5, 9.5]: the lower front edge runs
+    // along x at y = -6, z = 1.5, inside the root cylinder (radius 10.75) and
+    // outside the bore.
+    let rational = |value: i64| Rational::new(value, 1).unwrap();
+    let block = Solid::rust_box(
+        EntityId::new().uuid_bits(),
+        [8, 12, 8].map(rational),
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+    )
+    .unwrap()
+    .transformed(RigidTransform {
+        rotation: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+        translation_mm: [-4., -6., 1.5],
+    })
+    .unwrap();
+    // Seen from (1, 1, 1): the vertical block edges at (4, -6) and (-4, 6)
+    // are silhouettes of the block. Each runs from z = 1.5 inside the gear
+    // body (radius 7.2 between bore and root) through the top cap at z = 4,
+    // far from any rim in the paper, and is visible above it.
+    let s = 0.5_f64.sqrt();
+    let t = (1_f64 / 6.).sqrt();
+    let [u, v] = [[s, -s, 0.], [t, t, -2. * t]];
+    let vectors = project_drawing(
+        &[&gear, &block].map(|solid| DrawingSolid { solid, hatch: None }),
+        DrawingProjection {
+            frame: PlaneFrame {
+                origin: [0.; 3],
+                u,
+                v,
+            },
+            hidden_lines: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let paper = |p: [f64; 3]| -> [f64; 2] {
+        [u, v].map(|axis| axis[0] * p[0] + axis[1] * p[1] + axis[2] * p[2])
+    };
+    for [x, y] in [[4., -6.], [-4., 6.]] {
+        for (role, [low, high]) in [
+            (VectorRole::Hidden, [1.5, 4.]),
+            (VectorRole::Visible, [4., 9.5]),
+        ] {
+            let [from, to] = [paper([x, y, low]), paper([x, y, high])];
+            let near = |p: [f64; 2], q: [f64; 2]| (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-9;
+            let found = vectors
+                .iter()
+                .filter(|vector| vector.source_index == 1 && vector.role == role)
+                .any(|vector| match vector.curve {
+                    VectorCurve::Line { a, b } => {
+                        (near(a, from) && near(b, to)) || (near(a, to) && near(b, from))
+                    }
+                    _ => false,
+                });
+            assert!(
+                found,
+                "{role:?} edge at ({x}, {y}) from z = {low} to {high}"
+            );
+        }
+    }
+}
+
+fn spur(offset: f64) -> Solid {
+    use multicad_kernel::{GearSweep, InvoluteGear, RigidTransform};
+    let a = 20_f64.to_radians();
+    let pitch = 12.;
+    Solid::rust_spur_gear_named(
+        InvoluteGear {
+            hub: None,
+            teeth: 24,
+            pitch_radius_mm: pitch,
+            base_radius_mm: pitch * a.cos(),
+            tip_radius_mm: pitch + 1.,
+            root_radius_mm: pitch - 1.25,
+            root_fillet_radius_mm: 0.2,
+            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.tan() - a,
+            face_width_mm: 4.,
+            bore_radius_mm: 3.,
+            twist_rad_per_mm: 0.,
+            sweep: GearSweep::Spur,
+        },
+        EntityId::new(),
+        GeometryPolicy::default(),
+    )
+    .unwrap()
+    .transformed(RigidTransform {
+        rotation: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+        translation_mm: [offset, 0., 0.],
+    })
+    .unwrap()
+}
+
+/// A box edge passes through a sliver of a cylinder's front wall: inside the
+/// cylinder's outline in the paper, it enters and leaves the material within
+/// 0.45 mm on a 9.3 mm edge, less than a sixteenth of the edge, between two
+/// points where it is visible. Both passages are found exactly. A gear far
+/// to the side puts the scene on the scene engine.
+#[test]
+fn two_close_passages_through_another_body_are_both_found() {
+    use multicad_kernel::RigidTransform;
+    let depth = 4.995;
+    let block = Solid::rust_box(
+        EntityId::new().uuid_bits(),
+        [
+            Rational::new(93, 10).unwrap(),
+            Rational::new(599, 200).unwrap(),
+            Rational::new(2, 1).unwrap(),
+        ],
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+    )
+    .unwrap()
+    .transformed(RigidTransform {
+        rotation: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+        translation_mm: [-4.4, -depth, 2.],
+    })
+    .unwrap();
+    // Seen along +Y, the block's front top edge runs along x at y = -4.995,
+    // z = 4. The cylinder's front wall lies in front of it where
+    // sqrt(25 - x^2) > 4.995. The block's rear top edge at y = -2 is hidden
+    // behind the block over its whole length and coincides in the paper.
+    let vectors = project_drawing(
+        &[&cylinder(), &block, &spur(60.)].map(|solid| DrawingSolid { solid, hatch: None }),
+        DrawingProjection {
+            frame: PlaneFrame {
+                origin: [0.; 3],
+                u: [1., 0., 0.],
+                v: [0., 0., 1.],
+            },
+            hidden_lines: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let reach = (RADIUS * RADIUS - depth * depth).sqrt();
+    assert!(2. * reach < 9.3 / 16.);
+    let spans = |role: VectorRole| -> Vec<[f64; 2]> {
+        let mut spans: Vec<[f64; 2]> = vectors
+            .iter()
+            .filter(|vector| vector.source_index == 1 && vector.role == role)
+            .filter_map(|vector| match vector.curve {
+                VectorCurve::Line { a, b }
+                    if (a[1] - 4.).abs() < 1e-9 && (b[1] - 4.).abs() < 1e-9 =>
+                {
+                    Some([a[0].min(b[0]), a[0].max(b[0])])
+                }
+                _ => None,
+            })
+            .collect();
+        spans.sort_by(|a, b| a[0].total_cmp(&b[0]));
+        spans
+    };
+    let close = |found: &[[f64; 2]], expected: &[[f64; 2]]| {
+        found.len() == expected.len()
+            && found
+                .iter()
+                .zip(expected)
+                .all(|(a, b)| (a[0] - b[0]).abs() < 1e-9 && (a[1] - b[1]).abs() < 1e-9)
+    };
+    let visible = spans(VectorRole::Visible);
+    let hidden = spans(VectorRole::Hidden);
+    assert!(
+        close(&visible, &[[-4.4, -reach], [reach, 4.9]]),
+        "visible {visible:?}"
+    );
+    // Hidden stretches under a visible one publish once, as visible.
+    assert!(close(&hidden, &[[-reach, reach]]), "hidden {hidden:?}");
+}

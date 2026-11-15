@@ -634,6 +634,20 @@ impl Member for Gear {
     fn section(&self, depth: f64, _: f64) -> Result<Vec<Loop>, GeometryError> {
         cut::section(self, depth)
     }
+
+    fn line(&self, start: P3, direction: P3) -> Option<Result<Vec<[f64; 2]>, GeometryError>> {
+        if !direction.iter().chain(&start).all(|v| v.is_finite())
+            || dot3(direction, direction) == 0.
+        {
+            return Some(Err(err(
+                GeometryErrorKind::Input,
+                "A drawing line needs a finite start and a nonzero direction",
+            )));
+        }
+        let base = self.frame.local(start);
+        let along = self.frame.axes.map(|axis| dot3(axis, direction));
+        Some(self.spans(base, along, &|p| self.contains(p)))
+    }
 }
 
 /// The scene member of a helical, continuous herringbone or gapped

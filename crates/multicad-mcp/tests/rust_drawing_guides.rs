@@ -148,7 +148,9 @@ fn mcp_guides_draw_and_regenerate_rust_gear_sections() {
     );
     assert_eq!(bore_radii(&views(&host)[&axial]), [3.]);
 
-    // A section containing the gear axis is reported as an explicit finding.
+    // A section containing the gear axis draws through the exact-curve scene
+    // engine (CAD-346): the cut walls of the bore are two Section lines 6 mm
+    // apart along the 8 mm tooth band.
     let along = run(
         "set_drawing_guide",
         json!({ "expected_revision": 3, "name": "Through the axis",
@@ -156,20 +158,35 @@ fn mcp_guides_draw_and_regenerate_rust_gear_sections() {
         "sources": [part], "scale_denominator": 1, "generate_pages": true }),
     )
     .unwrap();
-    let [finding] = along["generation"]["unresolved"]
-        .as_array()
-        .unwrap()
-        .as_slice()
-    else {
+    assert!(
+        along["generation"]["unresolved"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "{along}"
+    );
+    let through = id(&along["generation"]["created"][0]);
+    let ViewEvaluation::Ready { vectors, .. } = &views(&host)[&through] else {
         panic!("{along}");
     };
-    assert!(
-        finding["message"]
-            .as_str()
-            .unwrap()
-            .contains("perpendicular to the gear axis"),
-        "{finding}"
-    );
+    let walls: Vec<[[f64; 2]; 2]> = vectors
+        .iter()
+        .filter(|v| v.role == VectorRole::Section)
+        .filter_map(|v| match v.curve {
+            VectorCurve::Line { a, b } if ((b[0] - a[0]).hypot(b[1] - a[1]) - 8.).abs() < 1e-9 => {
+                Some([a, b])
+            }
+            _ => None,
+        })
+        .collect();
+    let bore = walls.iter().enumerate().any(|(i, p)| {
+        walls[i + 1..].iter().any(|q| {
+            let d = [p[1][0] - p[0][0], p[1][1] - p[0][1]];
+            let offset = [q[0][0] - p[0][0], q[0][1] - p[0][1]];
+            ((offset[0] * d[1] - offset[1] * d[0]).abs() / 8. - 6.).abs() < 1e-9
+        })
+    });
+    assert!(bore, "{walls:?}");
 
     // Editing the gear changes the regenerated section.
     run(

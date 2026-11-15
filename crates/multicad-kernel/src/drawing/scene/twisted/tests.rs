@@ -1085,3 +1085,72 @@ fn sections_by_planes_tangent_to_a_flank_are_exact() {
         }
     }
 }
+
+/// `line` gives the material along arbitrary lines of view space, not only
+/// sight lines: random lines through the solid against the oracle, with
+/// interval ends on the actual surface, for every family and placement.
+#[test]
+fn material_along_arbitrary_lines_matches_the_oracle() {
+    let mut random = Random(23);
+    let mut ends = 0;
+    let mut worst: f64 = 0.;
+    for case in cases(&["oblique", "side"]) {
+        let [lo, hi] = case.gear.bounds();
+        let scale = lo.iter().chain(&hi).fold(1_f64, |s, v| s.max(v.abs()));
+        for _ in 0..40 {
+            let start: P3 = std::array::from_fn(|k| lo[k] + (hi[k] - lo[k]) * random.unit());
+            let direction: P3 = std::array::from_fn(|_| 2. * random.unit() - 1.);
+            let spans = case.gear.line(start, direction).unwrap().unwrap();
+            assert!(spans.windows(2).all(|pair| pair[0][1] < pair[1][0]));
+            let at = |s: f64| std::array::from_fn(|k| start[k] + s * direction[k]);
+            for k in 0..60 {
+                let s = -3. + 6. * f64::from(k) / 60. + 0.0123;
+                if spans.iter().flatten().any(|end| (end - s).abs() < 1e-6) {
+                    continue;
+                }
+                assert_eq!(
+                    spans.iter().any(|[a, b]| *a < s && s < *b),
+                    case.oracle.inside(at(s)),
+                    "{} along {start:?} + s {direction:?} at {s}: {spans:?}",
+                    case.label
+                );
+            }
+            for (index, &end) in spans.iter().flatten().enumerate() {
+                let h = 1e-5;
+                if spans
+                    .iter()
+                    .flatten()
+                    .enumerate()
+                    .any(|(other, stop)| other != index && (stop - end).abs() < 4. * h)
+                {
+                    continue;
+                }
+                let inside = |s: f64| case.oracle.inside(at(s));
+                let [mut a, mut b] = [end - h, end + h];
+                let first = inside(a);
+                if first == inside(b) {
+                    continue;
+                }
+                for _ in 0..60 {
+                    let mid = 0.5 * (a + b);
+                    if inside(mid) == first {
+                        a = mid;
+                    } else {
+                        b = mid;
+                    }
+                }
+                let length = dot3(direction, direction).sqrt();
+                let residual = (0.5 * (a + b) - end).abs() * length / scale;
+                worst = worst.max(residual);
+                ends += 1;
+                assert!(
+                    residual <= 1e-9,
+                    "{}: end {end} off by {residual}",
+                    case.label
+                );
+            }
+        }
+    }
+    assert!(ends > 500, "only {ends} ends");
+    println!("{{\"line_ends\":{ends},\"worst_relative_residual\":{worst:e}}}");
+}
