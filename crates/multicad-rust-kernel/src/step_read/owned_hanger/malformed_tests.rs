@@ -142,6 +142,128 @@ fn actual_hanger_schema_fields_refuse_invalid_geometry_and_topology() {
 }
 
 #[test]
+fn actual_hanger_material_binds_real_decoder_owners_and_rejects_invalid_options() {
+    let source = Hanger::new(
+        crate::authored_hanger_bolt::tests::fixture(false, false),
+        None,
+    )
+    .unwrap();
+    let file =
+        crate::step::hanger::export_qualified_hanger(&source, Default::default(), None).unwrap();
+    let decoded = decode(file.as_str(), Default::default(), None).unwrap();
+    let other = decode(file.as_str(), Default::default(), None).unwrap();
+    for options in [
+        GridOptions {
+            maximum_preparation_work: 0,
+            ..Default::default()
+        },
+        GridOptions {
+            maximum_preparation_work: 256_000_001,
+            ..Default::default()
+        },
+        GridOptions {
+            maximum_bytes: 0,
+            ..Default::default()
+        },
+        GridOptions {
+            maximum_bytes: 64 * 1024 * 1024 + 1,
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            ExactPoleGrid::prepare(&decoded, options, None),
+            Err(Error::Invalid)
+        ));
+    }
+    let grid = ExactPoleGrid::prepare(&decoded, Default::default(), None).unwrap();
+    for options in [
+        PolarOptions {
+            maximum_work: 0,
+            ..Default::default()
+        },
+        PolarOptions {
+            maximum_bytes: 0,
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            PolarSupports::prepare(&grid, options, None),
+            Err(Error::Invalid)
+        ));
+    }
+    let polar = PolarSupports::prepare(&grid, Default::default(), None).unwrap();
+    for options in [
+        LiftOptions {
+            position_limit_mm: f64::NAN,
+            ..Default::default()
+        },
+        LiftOptions {
+            derivative_limit_mm: 0.,
+            ..Default::default()
+        },
+        LiftOptions {
+            maximum_work: 0,
+            ..Default::default()
+        },
+        LiftOptions {
+            maximum_edge_work: 16_000_001,
+            ..Default::default()
+        },
+        LiftOptions {
+            maximum_bytes: 0,
+            ..Default::default()
+        },
+        LiftOptions {
+            maximum_subdivisions: 8193,
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            decoded.surface_lifts(options, None),
+            Err(Error::Invalid)
+        ));
+    }
+    let lifts = decoded.surface_lifts(Default::default(), None).unwrap();
+    let other_lifts = other.surface_lifts(Default::default(), None).unwrap();
+    assert!(!std::ptr::eq(lifts.source(), other_lifts.source()));
+    assert!(matches!(
+        HealedMaterial::prepare(&polar, &other_lifts, Default::default(), None),
+        Err(Error::Invalid)
+    ));
+    for options in [
+        HealingOptions {
+            maximum_work: 0,
+            ..Default::default()
+        },
+        HealingOptions {
+            maximum_bytes: 0,
+            ..Default::default()
+        },
+        HealingOptions {
+            maximum_sewing_error_mm: f64::INFINITY,
+            ..Default::default()
+        },
+        HealingOptions {
+            maximum_sewing_error_mm: 0.,
+            ..Default::default()
+        },
+        HealingOptions {
+            maximum_sewing_error_mm: 1e-6,
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            HealedMaterial::prepare(&polar, &lifts, options, None),
+            Err(Error::Invalid)
+        ));
+    }
+    let valid = HealedMaterial::prepare(&polar, &lifts, Default::default(), None).unwrap();
+    assert!(std::ptr::eq(valid.finite_lifts().source(), &decoded));
+    assert!(valid.healed_volume_bounds_mm3()[0] > 0.);
+    assert_eq!(decoded.literal_input(), file.as_str());
+}
+
+#[test]
 fn malformed_actual_hanger_entities_never_publish_decoded_material() {
     let source = Hanger::new(
         crate::authored_hanger_bolt::tests::fixture(false, false),
