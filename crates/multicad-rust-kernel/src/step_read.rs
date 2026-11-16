@@ -98,7 +98,7 @@ pub use compound::ownership::{
     DocumentOwnership, DocumentOwnershipError, DocumentOwnershipOptions,
     validate_document_topology_ownership,
 };
-pub use source::{SourceImport, read_source_compound};
+pub use source::{SourceImport, read_actual_mapped_head_source, read_source_compound};
 mod stadium;
 mod warped;
 

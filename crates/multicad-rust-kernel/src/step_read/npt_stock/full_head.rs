@@ -15,7 +15,7 @@ pub mod query;
 pub use owned::{AxialSewingTransfer, OwnedActualHead, OwnedHeadOptions, OwnedHeadReceipt};
 mod source;
 #[cfg(test)]
-mod source_tests;
+pub(in crate::step_read) mod source_tests;
 pub mod transport;
 pub use source::{HexHeadIntent, QualifiedFile, SourceOptions, SourceReceipt, qualify_actual_file};
 #[cfg(test)]

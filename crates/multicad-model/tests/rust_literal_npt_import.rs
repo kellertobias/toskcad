@@ -415,6 +415,9 @@ fn actual_literal_export_worker_keeps_decoded_mass_intervals_and_atomic_publicat
             .unwrap()
             .iter()
             .map(|m| match m {
+                multicad_kernel::rust_kernel::step_read::SourceImport::ActualMappedHead(_) => {
+                    "actual_mapped_head"
+                }
                 multicad_kernel::rust_kernel::step_read::SourceImport::LiteralNpt(_) => "literal",
                 multicad_kernel::rust_kernel::step_read::SourceImport::Analytic(_) => "analytic",
                 multicad_kernel::rust_kernel::step_read::SourceImport::Radial(_) => "radial",

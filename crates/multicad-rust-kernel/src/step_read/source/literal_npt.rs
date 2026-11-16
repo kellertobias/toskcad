@@ -42,6 +42,68 @@ pub(super) fn read(input: &str, tolerance: f64) -> Result<Vec<SourceImport>> {
     // literal source; packet construction never resets an inherited ledger.
     let document = CompoundDocument::parse(input, DocumentOptions::default(), None)
         .map_err(document_failure)?;
+    let remaining = 512_000_000usize
+        .checked_sub(document.work_used())
+        .ok_or(ReadError::Limit)?;
+    let (actual_head, cue_work) =
+        super::actual_head::recognized(&document, remaining.min(16_000_000))?;
+    if actual_head {
+        if document.represented_members().len() != 1
+            || document.represented_members()[0].mapping_link().is_none()
+        {
+            return Err(ReadError::Unsupported);
+        }
+        let discovery = document
+            .work_used()
+            .checked_add(cue_work)
+            // Honest byte-copy work for the independently retained original.
+            .and_then(|n| n.checked_add(input.len()))
+            .ok_or(ReadError::Limit)?;
+        let maximum_work = 512_000_000usize
+            .checked_sub(discovery)
+            .ok_or(ReadError::Limit)?
+            .min(272_000_000);
+        // No selected-member text substitution. Drop the discovery AST and
+        // independently qualify the original WHOLE input with its true B.
+        drop(document);
+        // Preflight BOTH the still-borrowed original and new Arc payload before
+        // allocation. The child independently preflights its later phases.
+        input
+            .len()
+            .checked_mul(2)
+            .and_then(|n| {
+                n.checked_add(
+                    super::actual_head::DESCRIPTOR_BYTES + 2 * std::mem::size_of::<usize>(),
+                )
+            })
+            .filter(|n| *n <= 64 * 1024 * 1024)
+            .ok_or(ReadError::Limit)?;
+        let descriptor = super::actual_head::read_actual_mapped_head_source(
+            std::sync::Arc::from(input),
+            npt::full_head::OwnedHeadOptions {
+                resources: npt::full_head::Options {
+                    maximum_work,
+                    additional_resident_bytes: input.len(),
+                    ..Default::default()
+                },
+                material_tolerance_mm: tolerance,
+                ..Default::default()
+            },
+            None,
+        )
+        .map_err(failure)?;
+        let SourceImport::ActualMappedHead(actual) = &descriptor else {
+            return Err(ReadError::Invalid);
+        };
+        if discovery
+            .checked_add(actual.receipt().aggregate_work)
+            .and_then(|n| n.checked_add(super::actual_head::DESCRIPTOR_WORK))
+            .is_none_or(|n| n > 512_000_000)
+        {
+            return Err(ReadError::Limit);
+        }
+        return Ok(vec![descriptor]);
+    }
     let (topology_count, may_be_warped) =
         compound::inspect_literal_entities(document.records().values().flatten())?;
     let mut owners = BTreeMap::new();
@@ -51,7 +113,10 @@ pub(super) fn read(input: &str, tolerance: f64) -> Result<Vec<SourceImport>> {
     //512M source-work envelope. Ordinary member recognizers retain their
     // existing contracts, independently of this new source-owned phase.
     let mut retained = 0usize;
-    let mut work = document.work_used();
+    let mut work = document
+        .work_used()
+        .checked_add(cue_work)
+        .ok_or(ReadError::Limit)?;
     for member in document.represented_members() {
         let id = member.local_solid_entity();
         let mut shell = Shell::new(document.records(), tolerance, true);

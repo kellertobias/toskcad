@@ -34,7 +34,7 @@ pub(super) fn with_source<R>(quarter: bool, f: impl FnOnce(&SurfacePlan<'_>) -> 
     let source = SurfacePlan::new(curves, CurveOptions::default().into(), None).unwrap();
     f(&source)
 }
-pub(super) fn candidate(quarter: bool, across: f64) -> String {
+pub(in crate::step_read) fn candidate(quarter: bool, across: f64) -> String {
     let input = super::super::tests::fixture(quarter);
     let doc = CompoundDocument::parse(&input, DocumentOptions::default(), None).unwrap();
     let parsed = Parsed::parse(

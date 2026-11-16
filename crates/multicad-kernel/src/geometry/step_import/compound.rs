@@ -506,6 +506,7 @@ pub(super) fn rebuild(
     let mut literal_resident = members.iter().try_fold(0usize, |sum, member| {
         let size = match member {
             step_read::SourceImport::LiteralNpt(source) => source.retained_budget_bytes(),
+            step_read::SourceImport::ActualMappedHead(source) => source.receipt().retained_bytes,
             step_read::SourceImport::PeriodicPhillips(source) => source.retained_budget_bytes(),
             _ => 0,
         };
@@ -527,6 +528,13 @@ pub(super) fn rebuild(
     }
     for member in members {
         let (signature, member) = match member {
+            step_read::SourceImport::ActualMappedHead(_) => {
+                return Err(error(
+                    IMPORT,
+                    GeometryErrorKind::Unsupported,
+                    "Mixed actual mapped head STEP files require independent selected-member/global ownership qualification",
+                ));
+            }
             step_read::SourceImport::PeriodicPhillips(source) => {
                 if literal_resident > LITERAL_PACKET_BYTES - 64 * 1024 * 1024 {
                     return Err(error(

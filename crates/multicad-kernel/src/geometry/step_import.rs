@@ -241,6 +241,9 @@ impl Solid {
                     let (readback, imported) = *value;
                     Self::verified_step_member(&readback, imported, feature, policy)
                 }
+                step_read::SourceImport::ActualMappedHead(source) => {
+                    Self::from_actual_clipped_head_source(source, feature, policy, None)
+                }
                 step_read::SourceImport::LiteralNpt(source) => {
                     Self::from_literal_npt_source(*source, feature, policy, None)
                 }
