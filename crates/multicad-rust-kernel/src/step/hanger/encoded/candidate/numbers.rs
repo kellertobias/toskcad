@@ -185,6 +185,79 @@ pub(super) struct PointLookup {
 mod tests {
     use super::*;
     #[test]
+    fn real_numeric_size_and_late_work_limits_preserve_reusable_exact_definitions() {
+        fn setup(
+            limit: usize,
+        ) -> (
+            Memory,
+            Work<'static>,
+            super::super::super::decimal::DecimalCache,
+            Literals,
+        ) {
+            let mut m = Memory::new(0, 64 * 1024 * 1024).unwrap();
+            let mut w = Work::new(limit, None).unwrap();
+            let cache = super::super::super::decimal::DecimalCache::new(&mut m, &mut w).unwrap();
+            let literals = Literals::new(&mut m).unwrap();
+            (m, w, cache, literals)
+        }
+        let (mut m, mut w, mut cache, mut literals) = setup(16_000_000);
+        let points = Points::new(&mut m).unwrap();
+        let mut peak = m.used;
+        let huge = num_bigint::BigInt::from(1_u8) << 16384_usize;
+        for value in [
+            N(BigRational::from_integer(huge.clone())),
+            N(BigRational::new(1.into(), huge)),
+        ] {
+            assert!(matches!(
+                literals.format(&value, &mut cache, &mut m, &mut w, &mut peak),
+                Err(Error::Limit)
+            ));
+            assert!(matches!(points.lookup(&[value], &mut w), Err(Error::Limit)));
+        }
+        let value = N::integer(7);
+        let (mut m, mut w, mut cache, mut literals) = setup(16_000_000);
+        let mut peak = m.used;
+        let expected = literals
+            .format(&value, &mut cache, &mut m, &mut w, &mut peak)
+            .unwrap();
+        let frontier = w.used;
+        let (mut m, mut w, mut cache, mut literals) = setup(frontier - 1);
+        let mut peak = m.used;
+        assert!(matches!(
+            literals.format(&value, &mut cache, &mut m, &mut w, &mut peak),
+            Err(Error::Limit)
+        ));
+        let mut retry_work = Work::new(16_000_000, None).unwrap();
+        let retried = literals
+            .format(&value, &mut cache, &mut m, &mut retry_work, &mut peak)
+            .unwrap();
+        assert_eq!(retried.as_str(), expected.as_str());
+        let coordinates = [N::integer(1), N::integer(2)];
+        let mut m = Memory::new(0, 64 * 1024 * 1024).unwrap();
+        let mut w = Work::new(16_000_000, None).unwrap();
+        let mut points = Points::new(&mut m).unwrap();
+        let lookup = points.lookup(&coordinates, &mut w).unwrap();
+        points.insert(lookup, Entity(19), &mut m, &mut w).unwrap();
+        let frontier = w.used;
+        let mut m = Memory::new(0, 64 * 1024 * 1024).unwrap();
+        let mut w = Work::new(frontier - 1, None).unwrap();
+        let mut points = Points::new(&mut m).unwrap();
+        let lookup = points.lookup(&coordinates, &mut w).unwrap();
+        assert!(matches!(
+            points.insert(lookup, Entity(19), &mut m, &mut w),
+            Err(Error::Limit)
+        ));
+        let mut retry_work = Work::new(16_000_000, None).unwrap();
+        assert_eq!(
+            points
+                .lookup(&coordinates, &mut retry_work)
+                .unwrap()
+                .entity
+                .map(|e| e.0),
+            Some(19)
+        );
+    }
+    #[test]
     fn numeric_cache_preserves_exact_values_dimensions_and_key_order_without_topology_ownership() {
         let mut m = Memory::new(0, 64 * 1024 * 1024).unwrap();
         let mut w = Work::new(16_000_000, None).unwrap();
