@@ -41,6 +41,7 @@ pub mod insert;
 pub mod literal_npt;
 pub mod npt_stock;
 pub mod periodic_phillips;
+pub mod pipe_hardware;
 mod retained_replay;
 pub use helical_tube_cut::{supports_helical_tube_cut, write_helical_tube_cut};
 pub use herringbone::{supports_herringbone, write_herringbone};

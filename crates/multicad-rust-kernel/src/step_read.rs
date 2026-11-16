@@ -91,6 +91,7 @@ pub use rounded_cylinder::{
 pub use spline::SplineEdge;
 pub use tapered_thread::verify_tapered_thread;
 mod radial_boundary;
+pub use radial_boundary::pipe_hardware;
 pub use radial_boundary::read_radial_boundary;
 mod source;
 pub use compound::ownership::{
