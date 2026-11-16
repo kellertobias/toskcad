@@ -1,5 +1,48 @@
 use super::*;
 use crate::step_read::owned_insert::DocumentOptions;
+use num_rational::BigRational as Q;
+
+pub(super) fn detached_geometry(
+    mesh: &DisplayMesh,
+    bounds: [[Q; 2]; 3],
+    volume: [f64; 2],
+    distance: f64,
+) -> crate::manufacturing::MeshProof {
+    let q = |v| Q::from_float(v).unwrap();
+    let proof = crate::manufacturing::certify(mesh).unwrap();
+    assert!(proof.edge_pairs > 0 && proof.vertex_links > 0);
+    assert!(proof.signed_volume_mm3 > 0.);
+    for point in mesh.vertices.as_chunks::<3>().0 {
+        for axis in 0..3 {
+            assert!(point[axis].is_finite());
+            assert!(q(point[axis]) >= bounds[axis][0].clone() - q(distance));
+            assert!(q(point[axis]) <= bounds[axis][1].clone() + q(distance));
+        }
+    }
+    // An independent centered signed-triangle flux checks literal orientation
+    // after all source/proof owners have gone. The 1% source-volume comparison
+    // is a regression witness at this coarse chord scale, not a mass receipt.
+    let origin: [f64; 3] = mesh.vertices[..3].try_into().unwrap();
+    let mut flux = 0.;
+    for face in mesh.indices.as_chunks::<3>().0 {
+        let [a, b, c] = face.map(|id| {
+            std::array::from_fn::<_, 3, _>(|axis| {
+                mesh.vertices[id as usize * 3 + axis] - origin[axis]
+            })
+        });
+        let cross = [
+            b[1] * c[2] - b[2] * c[1],
+            b[2] * c[0] - b[0] * c[2],
+            b[0] * c[1] - b[1] * c[0],
+        ];
+        flux += a.into_iter().zip(cross).map(|(x, y)| x * y).sum::<f64>() / 6.;
+    }
+    assert!(flux > 0.);
+    assert!((flux - proof.signed_volume_mm3).abs() < 1e-8 * flux);
+    let slack = volume[1] * 0.01;
+    assert!(flux >= volume[0] - slack && flux <= volume[1] + slack);
+    proof
+}
 pub(super) fn source(quarter: bool, mapped: bool) -> OwnedMaterial {
     let text = super::super::super::super::tests::fixture(quarter);
     let text = if mapped {
@@ -68,6 +111,36 @@ fn actual_literal_mesh_probe() {
             qualified.candidate().connectivity()
         );
         assert!(std::sync::Arc::ptr_eq(&source.0, &qualified.source().0));
+        let volume = source.world_volume_mm3();
+        let bounds = source
+            .world_enclosure_mm()
+            .map(|b| b.map(|v| Q::from_float(v).unwrap()));
+        let point = source.point(0).unwrap();
+        let entity = point.entity();
+        let original_record = source.original_component(entity, 0).unwrap().to_owned();
+        let face_count = source.faces().len();
+        let connectivity = qualified.embedding().connectivity();
+        let distance = qualified.candidate().position_error_mm();
+        assert_eq!(
+            qualified.mesh().indices.len() / 3,
+            qualified.mesh().face_indices.len()
+        );
+        drop(source);
+        assert_eq!(
+            qualified.source().original_component(entity, 0),
+            Some(original_record.as_str())
+        );
+        let literal = qualified.into_mesh();
+        assert!(
+            literal
+                .face_indices
+                .iter()
+                .all(|&face| (face as usize) < face_count)
+        );
+        assert_eq!(
+            detached_geometry(&literal, bounds, volume, distance),
+            connectivity
+        );
     }
 }
 #[test]

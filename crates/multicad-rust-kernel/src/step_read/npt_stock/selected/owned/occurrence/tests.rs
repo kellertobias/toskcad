@@ -37,6 +37,19 @@ fn exact_native_chain_preserves_literal_leaves_and_encloses_independent_rational
             assert!(q(b[0]) <= *value && *value <= q(b[1]));
         }
     }
+    let absolute = |value: Q| if value < q(0.) { -value } else { value };
+    let norm = q(p.linear_l1_norm());
+    let exact_norm = (0..3)
+        .map(|j| (0..3).map(|i| absolute(exact[i][j].clone())).sum::<Q>())
+        .max()
+        .unwrap();
+    assert!(norm >= exact_norm && norm <= exact_norm + q(1e-12));
+    for vector in [[1., -2., 4.], [-0.3, 0.7, -0.9], [0., 0., 1.]] {
+        let image: [Q; 3] =
+            std::array::from_fn(|i| (0..3).map(|j| exact[i][j].clone() * q(vector[j])).sum());
+        let length = vector.into_iter().map(|v| absolute(q(v))).sum::<Q>();
+        assert!(image.into_iter().map(absolute).sum::<Q>() <= norm.clone() * length);
+    }
     let at = [2., 3., 4.];
     let world = p.map_box_mm(at.map(|v| [v, v])).unwrap();
     for i in 0..3 {
