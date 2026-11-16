@@ -9,4 +9,4 @@ pub use qualify::{QualificationOptions, QualificationReceipt, QualifiedStep, qua
 mod tests;
 
 #[cfg(test)]
-mod test_fixture;
+pub(crate) mod test_fixture;

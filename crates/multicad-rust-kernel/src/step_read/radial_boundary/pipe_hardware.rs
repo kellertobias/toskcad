@@ -784,3 +784,6 @@ fn validate_numbers(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

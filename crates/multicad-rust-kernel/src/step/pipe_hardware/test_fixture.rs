@@ -3,13 +3,13 @@ use crate::axial_pipe_thread::authored::{
     AuthoredSection, AuthoredSpec, AuthoredThread,
     hardware::shell::{self, occupied},
 };
-pub(super) fn engineering() -> occupied::OccupiedHead {
+pub(crate) fn engineering() -> occupied::OccupiedHead {
     engineering_height(3.)
 }
-pub(super) fn engineering_height(height: f64) -> occupied::OccupiedHead {
+pub(crate) fn engineering_height(height: f64) -> occupied::OccupiedHead {
     engineering_dimensions(6., height)
 }
-pub(super) fn engineering_dimensions(length: f64, height: f64) -> occupied::OccupiedHead {
+pub(crate) fn engineering_dimensions(length: f64, height: f64) -> occupied::OccupiedHead {
     // Engineering NPT-flat law, NOT a standard/Core preset acceptance tuple.
     // Canonical Core external NPT forwards an active crest limit and remains
     // outside this deliberately unclipped, fixed-frame first source family.
