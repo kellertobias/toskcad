@@ -41,14 +41,46 @@ impl Default for AuthoredPeriodicOptions {
     }
 }
 impl OwnedPeriodicMaterial {
-    /// Route eligibility only, never a geometry/material certificate. Other
-    /// families keep their existing producer. Once eligible, an actual factory
-    /// failure must be reported rather than silently falling back to that path.
+    /// Shape-family eligibility only, never a geometry/material certificate.
+    /// Routing must also call supports_authored_parts with the actual cutter.
     pub fn supports_authored_family(thread: &Thread, profile: &Profile, spec: SourceSpec) -> bool {
         thread.spec().starts == 1
             && thread.spec().root_radius_mm.is_none()
-            && matches!(spec.head, Some(crate::head_profile::Head::Crowned { .. }))
+            && matches!(
+                spec.head,
+                Some(
+                    crate::head_profile::Head::Crowned { .. }
+                        | crate::head_profile::Head::Countersunk { .. }
+                )
+            )
             && profile.end()[0] == thread.spec().major_radius_mm
+    }
+    /// Nonadmitting routing check for the actual supported source envelope.
+    /// Countersunk cavities entering active thread material keep their existing
+    /// producer. Once selected, real construction errors must propagate rather
+    /// than being caught and used to choose another producer.
+    pub fn supports_authored_parts(
+        thread: &Thread,
+        profile: &Profile,
+        cutter: &Cutter,
+        spec: SourceSpec,
+    ) -> bool {
+        if !Self::supports_authored_family(thread, profile, spec) {
+            return false;
+        }
+        if matches!(
+            spec.head,
+            Some(crate::head_profile::Head::Countersunk { .. })
+        ) {
+            let tip = cutter.envelope().tip_depth_mm_bounds();
+            let floor =
+                I::point(profile.end()[1]) - I::point(profile.top()[1]) - I::new(tip[0], tip[1]);
+            return spec.minimum_wall_mm.is_finite()
+                && spec.minimum_wall_mm > 0.
+                && floor.valid()
+                && floor.lo > spec.minimum_wall_mm;
+        }
+        true
     }
     pub fn from_authored(
         source: &PhillipsScrew,
@@ -99,7 +131,7 @@ impl OwnedPeriodicMaterial {
                 return Err(PhillipsReadError::Invalid);
             }
             work.step(32768)?;
-            if !Self::supports_authored_family(thread, profile, spec) {
+            if !Self::supports_authored_parts(thread, profile, cutter, spec) {
                 return Err(PhillipsReadError::Unsupported);
             }
             crate::profiled_screw::qualify_outer_source(

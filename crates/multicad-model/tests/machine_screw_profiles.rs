@@ -1016,3 +1016,56 @@ fn canonical_phillips_h0_h4_both_hands_keep_qualified_geometry_and_step_contract
         }
     }
 }
+
+#[test]
+fn core_entering_countersunk_cavity_keeps_existing_physical_source() {
+    let mut parameters = canonical_phillips_cases()[2].clone();
+    let MechanicalPartParameters::MachineScrew {
+        underhead_length,
+        thread,
+        ..
+    } = &mut parameters
+    else {
+        unreachable!()
+    };
+    *underhead_length = Some(thread.length.clone());
+    let mut session = session();
+    let request = add(&mut session, parameters.clone());
+    let compiled = compiler()
+        .compile(session.document(), session.revision())
+        .unwrap();
+    let solid = compiled.solid(request.feature).unwrap();
+    assert!(solid.rust_periodic_repaired_phillips_source().is_none());
+    let (retained, _) = solid.rust_phillips_screw_geometry().unwrap();
+    assert_eq!(retained.spec().shank_length_mm, 0.);
+    assert!(solid.volume_mm3().unwrap() > 0.);
+    assert!(!solid.supports_step_export());
+    let ResolvedMechanicalPart::MachineScrew { head, drive, .. } =
+        parameters.resolve(session.parameters()).unwrap()
+    else {
+        unreachable!()
+    };
+    let tip = -head.height_mm() + drive.removed_depth_mm();
+    probe(solid, [0., 0., tip - 0.03], false);
+    probe(solid, [0., 0., tip + 0.03], true);
+    let mut bytes = Vec::new();
+    project_file::write(
+        &ProjectFile::new(session.document().clone()).unwrap(),
+        &mut bytes,
+        Default::default(),
+    )
+    .unwrap();
+    let reopened = project_file::read(
+        &mut bytes.as_slice(),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap()
+    .project;
+    let cold = compiler()
+        .compile(&reopened.document, session.revision())
+        .unwrap();
+    let restored = cold.solid(request.feature).unwrap();
+    assert!(restored.rust_periodic_repaired_phillips_source().is_none());
+    assert!((restored.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < 1e-7);
+}

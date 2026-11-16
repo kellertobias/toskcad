@@ -23,12 +23,12 @@ fn reply(worker: &ExportWorker, id: EntityId) -> ExportReply {
 
 #[test]
 fn actual_nominal_phillips_file_receipts_survive_transform_and_project_reopen() {
-    for left in [false, true] {
+    for (kind, left) in [(0, false), (0, true), (5, false), (5, true)] {
         let mut session =
             Session::new(Document::new("Phillips export lifecycle").unwrap()).unwrap();
         let request = MechanicalPartRequest::new(
-            "M2 Phillips",
-            recipe(0, ThreadFit::NominalBasic, left, 3.5),
+            "Nominal physical Phillips",
+            recipe(kind, ThreadFit::NominalBasic, left, 3.5),
         );
         let prepared = model::prepare_mechanical_part(&session, 0, actor(), &request).unwrap();
         session.commit(prepared.prepared).unwrap();

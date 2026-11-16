@@ -130,7 +130,12 @@ pub(super) fn build(
         origin: std::array::from_fn(|i| underhead.origin[i] + underhead.normal()[i] * plain),
         ..underhead
     };
-    if PhillipsOwnedPeriodicMaterial::supports_authored_family(&thread, &profile, source_spec) {
+    if PhillipsOwnedPeriodicMaterial::supports_authored_parts(
+        &thread,
+        &profile,
+        &cutter,
+        source_spec,
+    ) {
         // Construct the actual retained source directly, before the older
         // cavity/screw qualifiers. Genuine eligible-source failures propagate.
         let source = PhillipsOwnedPeriodicMaterial::from_authored_parts(

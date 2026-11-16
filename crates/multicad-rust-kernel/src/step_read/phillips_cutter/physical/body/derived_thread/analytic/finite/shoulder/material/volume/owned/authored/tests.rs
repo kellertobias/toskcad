@@ -322,13 +322,6 @@ fn direct_authored_parts_validate_requested_geometry_and_operation_frontiers() {
         OwnedPeriodicMaterial::from_authored(&annular, o, None),
         Err(PhillipsReadError::Unsupported)
     ));
-    let countersunk =
-        crate::step_read::phillips_cutter::physical::tests::fixture(2, false, true, 1);
-    assert!(!OwnedPeriodicMaterial::supports_authored_family(
-        countersunk.thread(),
-        countersunk.profile(),
-        countersunk.spec()
-    ));
     assert!(!OwnedPeriodicMaterial::supports_authored_family(
         annular.thread(),
         annular.profile(),
@@ -338,10 +331,6 @@ fn direct_authored_parts_validate_requested_geometry_and_operation_frontiers() {
         &multi,
         source.profile(),
         source.spec()
-    ));
-    assert!(matches!(
-        OwnedPeriodicMaterial::from_authored(&countersunk, o, None),
-        Err(PhillipsReadError::Unsupported)
     ));
     // Count real public component callback paths, then stop at each handoff. The
     // constructors remain unchanged and each numerical child retains its cap.
@@ -422,4 +411,91 @@ fn direct_authored_parts_validate_requested_geometry_and_operation_frontiers() {
         );
     }
     assert!(run(o, None).is_ok());
+}
+
+#[test]
+fn actual_nominal_countersunk_head_retains_cone_neck_and_decoded_exchange() {
+    for left in [false, true] {
+        let base = crate::step_read::phillips_cutter::physical::tests::fixture(2, left, true, 1);
+        assert!(!OwnedPeriodicMaterial::supports_authored_parts(
+            base.thread(),
+            base.profile(),
+            base.cavity().source(),
+            base.spec()
+        ));
+        assert!(matches!(
+            OwnedPeriodicMaterial::from_authored(&base, Default::default(), None),
+            Err(PhillipsReadError::Unsupported)
+        ));
+        let mut spec = base.spec();
+        spec.shank_length_mm = 1.0;
+        let profile = Profile::new_for_thread_union(
+            spec.head.unwrap(),
+            base.thread().spec().major_radius_mm,
+            spec.shank_length_mm,
+        )
+        .unwrap();
+        let source = PhillipsScrew::new(
+            *base.thread(),
+            profile,
+            spec,
+            base.cavity().clone(),
+            100_000,
+            &|| false,
+        )
+        .unwrap();
+        assert!(OwnedPeriodicMaterial::supports_authored_parts(
+            source.thread(),
+            source.profile(),
+            source.cavity().source(),
+            source.spec()
+        ));
+        compare_original_source(&source, "actual countersunk H1");
+        let owned =
+            OwnedPeriodicMaterial::from_authored(&source, Default::default(), None).unwrap();
+        for posed in [false, true] {
+            let occurrence = if posed {
+                [
+                    [105., -20., 60.],
+                    [0.8, 0.6, 0.],
+                    [0.36, -0.48, -0.8],
+                    [-0.48, 0.64, -0.6],
+                ]
+            } else {
+                [[0.; 3], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.]]
+            };
+            let encoded = crate::step::periodic_phillips::export(
+                &owned,
+                occurrence,
+                Default::default(),
+                None,
+            )
+            .unwrap();
+            let proof = encoded.qualification().verification();
+            assert!(proof.maximum_world_distance_mm <= 1e-7);
+            assert!(proof.maximum_world_chart_derivative_mm <= 1e-7);
+            assert!(proof.independent_volume_discrepancy_mm3 <= 1e-5);
+            let decoded = encoded.qualification().material();
+            assert!(matches!(
+                decoded.provenance(),
+                PeriodicMaterialProvenance::Decoded { .. }
+            ));
+            assert_eq!(decoded.original_input(), Some(encoded.as_str()));
+            assert!(
+                decoded
+                    .original_curve_owners()
+                    .unwrap()
+                    .iter()
+                    .all(|owner| owner.edge_entity > 0)
+            );
+            crate::step::periodic_phillips::qualify_actual_file(
+                &owned,
+                encoded.as_str(),
+                occurrence,
+                Default::default(),
+                None,
+            )
+            .unwrap();
+        }
+    }
 }
