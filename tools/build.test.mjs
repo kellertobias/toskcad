@@ -30,10 +30,10 @@ test('unsupported Node versions fail before probing or fetching',()=>{
   for(const nodeVersion of ['20.19.0','22.13.1'])assert.throws(()=>bootstrap({nodeVersion,captureCommand:()=>assert.fail('unexpected probe'),runCommand:()=>assert.fail('unexpected command')}),/22.14 or newer/);
 });
 
-test('development bundles select Rust-only runtime assembly',()=>{
+test('development bundles use the same runtime assembly as releases',()=>{
   const calls=[];
   assembleDevelopmentRuntime('/stage','/binary','0.1.0-test',(...call)=>calls.push(call));
-  assert.deepEqual(calls,[['/stage','/binary','0.1.0-test',{rustOnly:true}]]);
+  assert.deepEqual(calls,[['/stage','/binary','0.1.0-test']]);
 });
 
 test('development packaging follows the actual Cargo target override',()=>{

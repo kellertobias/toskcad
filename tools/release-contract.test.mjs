@@ -91,13 +91,25 @@ test('version and repository inputs cannot escape their intended scope',()=>{
 test('native regression suites are read-only and gate publication on every platform',()=>{
   const regression=readFileSync(new URL('../.github/workflows/native-regression.yml',import.meta.url),'utf8');
   const release=readFileSync(new URL('../.github/workflows/release.yml',import.meta.url),'utf8');
-  const foundation=readFileSync(new URL('../.github/workflows/native-foundation.yml',import.meta.url),'utf8');
+  const owned=readFileSync(new URL('../.github/workflows/owned-kernel.yml',import.meta.url),'utf8');
   assert.match(regression,/^permissions:\n {2}contents: read$/m);
   assert.doesNotMatch(regression,/secrets\.|: *write|npm publish|semantic-release|git push|git tag/);
   for(const os of ['ubuntu-24\\.04','macos-15','windows-2025'])assert.match(regression,new RegExp(`- os: ${os}\\n`));
   for(const suite of ['--bin multicad files::','--test release_hardening','--test project_file','--test drawing_exports','--test control_desk','cargo test --workspace --locked --no-fail-fast'])assert(regression.includes(suite),suite);
   assert.match(release,/regression:\n {4}name: Native regression suites\n {4}uses: \.\/\.github\/workflows\/native-regression\.yml/);
-  assert.match(release,/needs: \[metadata, quality, build, foundation, regression\]/);
-  assert.match(foundation,/CARGO_TARGET_DIR: \$\{\{ github\.workspace \}\}\/spikes\/native-foundation\/target/);
-  assert.match(foundation,/run: spikes\/native-foundation\/target\/debug\/multicad-foundation-lab(?:\.exe)? --verify/);
+  assert.match(release,/needs: \[metadata, quality, build, owned-kernel, regression\]/);
+  assert.match(owned,/^permissions:\n {2}contents: read$/m);
+  for(const os of ['ubuntu-24.04','macos-15','windows-2025'])assert(owned.includes(os));
+  assert(owned.includes('cargo test -p multicad-precision -p multicad-rust-kernel --profile coverage --locked'));
+  assert(owned.includes('cargo clippy -p multicad-precision -p multicad-rust-kernel --all-targets --profile coverage --locked -- -D warnings'));
+  for(const workflow of [owned,regression,release])assert.doesNotMatch(workflow,/foundation-deps|spikes\/native-foundation|native-deps|features.*occt|MULTICAD_OCCT/);
+  assert.match(release,/uses: \.\/\.github\/workflows\/owned-kernel\.yml/);
+});
+
+test('active build instructions do not direct developers to the retired provider',()=>{
+  for(const file of ['README.md','docs/BUILDING.md','docs/RELEASING.md']){
+    const text=readFileSync(new URL('../'+file,import.meta.url),'utf8');
+    assert.doesNotMatch(text,/foundation-deps|native-dependencies\.json|target\/native|spikes\/native-foundation|OCCT is statically linked|with exact Open CASCADE/);
+    assert.match(text,/Rust/);
+  }
 });

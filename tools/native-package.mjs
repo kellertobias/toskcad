@@ -1,6 +1,6 @@
 // Native runtime layout, source/notice closure and packaged smoke checks.
 import {execFileSync} from 'node:child_process';
-import {cpSync,copyFileSync,existsSync,lstatSync,mkdirSync,readFileSync,readdirSync,realpathSync,writeFileSync} from 'node:fs';
+import {copyFileSync,existsSync,lstatSync,mkdirSync,readFileSync,readdirSync,realpathSync,writeFileSync} from 'node:fs';
 import {dirname,join,resolve,relative,sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
@@ -8,16 +8,7 @@ import {createHash} from 'node:crypto';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const run=(command,args,options={})=>execFileSync(command,args,{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe'],...options})?.trim()??'';
 const escapeXML=value=>value.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
-export const rustCandidateBuildArgs=Object.freeze(['-p','multicad-app','--release','--locked','--no-default-features']);
-export function nativeSourceHash(source){
-  const paths=[];walk(source,path=>paths.push(path));
-  // Rust Path ordering compares components (a/child precedes a.cpp), not the
-  // flattened path string. Keep source identity identical to the build helper.
-  paths.sort((a,b)=>{const aa=a.split(sep),bb=b.split(sep);for(let i=0;i<Math.min(aa.length,bb.length);i++){const order=Buffer.compare(Buffer.from(aa[i]),Buffer.from(bb[i]));if(order)return order;}return aa.length-bb.length;});
-  const hash=createHash('sha256');
-  for(const path of paths){hash.update(relative(source,path).split(sep).join('/'));hash.update(Buffer.from([0]));hash.update(createHash('sha256').update(readFileSync(path)).digest());}
-  return hash.digest('hex');
-}
+export const rustBuildArgs=Object.freeze(['--workspace','--release','--locked']);
 
 // Native project files: .tcd for new projects; .multicad stays openable. Both
 // name the same container, so both document types open in ToskCAD as Editor.
@@ -219,7 +210,7 @@ function sealMacOSBundle(resources){
   run('codesign',['--force','--sign','-',bundle]);
   run('codesign',['--verify','--deep','--strict',bundle]);
 }
-export function assembleRuntime(stage,binary,version,{rustOnly=false}={}){
+export function assembleRuntime(stage,binary,version){
   mkdirSync(stage,{recursive:true});
   const executable=runtimeExecutable(stage);mkdirSync(dirname(executable),{recursive:true});copyFileSync(binary,executable);
   if(process.platform==='darwin'){
@@ -236,50 +227,34 @@ export function assembleRuntime(stage,binary,version,{rustOnly=false}={}){
   const iconName=process.platform==='darwin'?'AppIcon.icns':process.platform==='win32'?'AppIcon.ico':'AppIcon.png';
   copyFileSync(join(root,'assets/branding/app',iconName),join(resources,iconName));
   copyFileSync(join(root,'LICENSE'),join(resources,'LICENSE'));
-  if(!rustOnly){
-    copyFileSync(join(root,'native-dependencies.json'),join(resources,'native-dependencies.json'));
-    for(const name of ['OCCT-LICENSE-LGPL-2.1.txt','OCCT-LGPL-EXCEPTION.txt'])copyFileSync(join(root,'docs/architecture/foundation',name),join(resources,name));
-  }
   // Fonts vendored in the source tree for sketch text ship their licence texts.
   const fonts=join(root,'crates/multicad-core/fonts'),fontNotices=join(resources,'third-party/bundled-fonts');mkdirSync(fontNotices,{recursive:true});
   for(const name of readdirSync(fonts))if(isNoticeFile(join(fonts,name)))copyFileSync(join(fonts,name),join(fontNotices,name));
   bundleLibrary(resources);
   const examples=bundleExamples(resources);
-  const build=rustOnly?'Rust-only development candidate. Some modeling and export features still require the OpenCascade build.':'native development build.';
+  const build='native development build with the MultiCAD Rust kernel.';
   writeFileSync(join(stage,'README.txt'),`ToskCAD ${version} ${build}\nIncludes parameter editing, constrained sketches and initial native solid extrusion.\nNative .tcd projects support save/open, embedded resources and explicit recovery; existing .multicad projects still open and save in place.\nSpecialized workspaces and drawing and 3D export workflows remain under development.\nBundled examples (Examples, or the welcome screen with no recent projects): ${examples.projects.filter(p=>examples.examples.includes(p.file)).map(p=>p.name).join(', ')}. Opening one saves an editable copy in Documents/ToskCAD Examples; the bundled originals are never changed.\nRun with no arguments to open the native window, or pass one PROJECT.tcd to open it; --diagnostics is headless.\nmulticad --mcp serves a local MCP client over stdin/stdout; it opens no network port.\nmacOS: open MultiCAD.app. Windows: run multicad.exe. Linux: run ./multicad on an Ubuntu 24.04+ desktop with graphics drivers.\nNo Python, Node.js, FreeCAD or source checkout is required at runtime.\n${process.platform==='darwin'?'This macOS bundle is ad-hoc signed, without publisher signing or notarization.':'This development build is not publisher-signed.'}\nSource and third-party notices accompany release archives.\n`);
   sealMacOSBundle(resources);
   return {executable,resources};
 }
 
-export function stageSourceSupport(destination,commit,version,{rustOnly=false}={}){
-  const instructions=join(destination,'SOURCE-REPRODUCTION.md');
+export function stageSourceSupport(destination,commit,version){
   const native=join(destination,'artifacts/native-deps');
-  if(rustOnly){
-    if(existsSync(native))throw new Error('Rust candidate source contains native dependency assets');
-    writeFileSync(instructions,`# ToskCAD ${version} Rust-only development candidate\n\nSource commit: ${commit}\n\nThis tree contains the exact project source and vendored Cargo dependencies for the Rust-only executable. Install the pinned Rust toolchain and your platform SDK, then run:\n\n    MULTICAD_RELEASE_VERSION=${version} MULTICAD_BUILD_COMMIT=${commit} cargo build ${rustCandidateBuildArgs.join(' ')} --offline\n\nOn PowerShell set both environment variables before running Cargo.\n`);
-    return;
-  }
-  // Everything needed to rebuild/relink the static native library is supplied.
-  mkdirSync(native,{recursive:true});
-  copyFileSync(join(root,'artifacts/native-deps/occt-7.9.3.tar.gz'),join(native,'occt-7.9.3.tar.gz'));
-  // Include actual extracted source too, so any local native patches remain
-  // part of the corresponding source rather than only shipping the base tar.
-  cpSync(join(root,'artifacts/native-deps/OCCT-7_9_3'),join(native,'OCCT-7_9_3'),{recursive:true});
-  writeFileSync(instructions,`# MultiCAD ${version}\n\nSource commit: ${commit}\n\nThis tree includes product source, Cargo.lock, vendored Cargo dependencies and the checksum-pinned OCCT source archive. It permits rebuilding the complete application against a changed OCCT library.\n\nInstall the pinned Rust toolchain, CMake, a C++17 toolchain and Node.js (build tooling only). From this folder run:\n\n    node tools/foundation-deps.mjs\n    MULTICAD_RELEASE_VERSION=${version} MULTICAD_BUILD_COMMIT=${commit} cargo build --workspace --release --locked --offline\n\nOn PowerShell set the two environment variables separately before cargo. Native caches and target output can be deleted and regenerated; no preinstalled OCCT/FreeCAD/Python is used. The upstream OCCT archive and exception/license are included. To change OCCT, replace the source/archive pin and rebuild; do not use the old native cache as evidence of a changed library. Build tools and OS SDKs are prerequisites.\n`);
+  if(existsSync(native))throw new Error('Source tree contains obsolete native dependency assets');
+  writeFileSync(join(destination,'SOURCE-REPRODUCTION.md'),`# ToskCAD ${version}\n\nSource commit: ${commit}\n\nThis tree contains the exact application source, Cargo.lock and vendored Cargo dependencies. The application uses the MultiCAD Rust geometry kernel. Install the pinned Rust toolchain and the platform SDK, then run:\n\n    MULTICAD_RELEASE_VERSION=${version} MULTICAD_BUILD_COMMIT=${commit} cargo build ${rustBuildArgs.join(' ')} --offline\n\nOn PowerShell set both environment variables before running Cargo. On macOS, Apple Command Line Tools compile the AppKit/Foundation window adapter; this adapter is unrelated to geometry. Linux builds require the Wayland and XKB development libraries listed in docs/RELEASING.md. Node.js is developer release tooling and is not needed to rebuild or run the application.\n`);
 }
-export function createSourceTree(destination,commit,version,options={}){
+export function createSourceTree(destination,commit,version){
   mkdirSync(destination,{recursive:true});
   const archive=execFileSync('git',['archive','--format=tar',commit],{cwd:root,maxBuffer:128*1024*1024});
   execFileSync('tar',['-xf','-','-C',destination],{input:archive});
-  stageSourceSupport(destination,commit,version,options);
+  stageSourceSupport(destination,commit,version);
   const vendorConfig=run('cargo',['vendor','--offline','--locked','--versioned-dirs',join(destination,'vendor')],{cwd:destination,maxBuffer:16*1024*1024});
   const cargoDirectory=join(destination,'.cargo');mkdirSync(cargoDirectory,{recursive:true});
   const config=join(cargoDirectory,'config.toml');
   const previous=existsSync(config)?readFileSync(config,'utf8'):'';
   const local=vendorConfig.replace(/^directory = .*$/m,'directory = "vendor"');
   writeFileSync(config,previous+'\n'+local+'\n');
-  const selection=options.rustOnly?['--manifest-path','crates/multicad-app/Cargo.toml','--no-default-features']:[];
-  const metadata=JSON.parse(run('cargo',['metadata','--offline','--locked','--format-version','1',...selection],{cwd:destination,maxBuffer:32*1024*1024}));
+  const metadata=JSON.parse(run('cargo',['metadata','--offline','--locked','--format-version','1'],{cwd:destination,maxBuffer:32*1024*1024}));
   return metadata;
 }
 function walk(path,visit){for(const e of readdirSync(path,{withFileTypes:true})){const p=join(path,e.name);if(e.isDirectory())walk(p,visit);else if(e.isFile())visit(p);}}
