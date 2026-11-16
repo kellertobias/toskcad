@@ -157,8 +157,19 @@ pub(super) fn qualify_cached(
     if quick.position <= limits[0] && quick.angle <= limits[1] {
         return Ok(quick);
     }
-    let position =
-        (I::point(root.position_hessian.position_error(weights, budget)?) + I::point(rounding)).hi;
-    let angle = normal_error(root, weights, normals, facet, budget)?;
+    // These are independent whole-field certificates for the SAME immutable
+    // root, UV triangle and literal facet. A failed position bound does not
+    // invalidate an already successful normal cone (or vice versa). Compute
+    // only the component still needing a certificate; no caller limit changes.
+    let position = if quick.position <= limits[0] {
+        quick.position
+    } else {
+        (I::point(root.position_hessian.position_error(weights, budget)?) + I::point(rounding)).hi
+    };
+    let angle = if quick.angle <= limits[1] {
+        quick.angle
+    } else {
+        normal_error(root, weights, normals, facet, budget)?
+    };
     Ok(Quality { position, angle })
 }

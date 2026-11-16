@@ -8,6 +8,7 @@ use crate::step_read::radial_boundary::pipe_hardware::budget as cold;
 use std::ops::Range;
 mod auxiliary;
 mod graph;
+pub mod mesh;
 mod owned;
 pub use owned::{AxialSewingTransfer, OwnedActualHead, OwnedHeadOptions, OwnedHeadReceipt};
 mod source;
