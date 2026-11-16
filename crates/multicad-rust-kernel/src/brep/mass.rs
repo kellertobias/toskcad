@@ -112,11 +112,9 @@ impl Integral<'_> {
                 let (a, b, c) = (dot(su, su), dot(su, sv), dot(sv, sv));
                 let (ru, rv) = (dot(tangent, su), dot(tangent, sv));
                 let determinant = a * c - b * b;
-                let rate = if determinant > 1e-12 * a * c {
-                    (a * rv - b * ru) / determinant
-                } else {
-                    rv / c.max(f64::MIN_POSITIVE)
-                };
+                // Along parallel derivatives the parameter rate is undefined.
+                ensure(determinant > 1e-12 * a * c, Error::Unsupported)?;
+                let rate = (a * rv - b * ru) / determinant;
                 Ok(self.strip(uv).map(|g| g * rate))
             })?;
             accumulate(&mut total, piece, 1.);

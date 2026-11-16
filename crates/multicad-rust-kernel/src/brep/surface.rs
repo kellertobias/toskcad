@@ -1,7 +1,7 @@
 //! Face support surfaces in their exchange parameterisation.
 use super::curve::{PANEL, uniform};
 use super::{Curve, NurbsSurface, Point, add, cross, distance, dot, nearest, norm, scale, sub};
-use std::f64::consts::{FRAC_PI_2, TAU};
+use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 /// A right-handed orthonormal placement.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -351,16 +351,18 @@ impl Surface {
             Some(seed) => {
                 let local = self.newton(point, seed);
                 let d = residual(local);
-                // A seeded search that settles on a foot point, where the
-                // offset meets both tangents squarely, keeps it; one that
-                // lands elsewhere fell into another basin and the global
-                // search decides.
+                // A seeded search that settles on a foot point near the
+                // surface, where the offset meets both tangents squarely,
+                // keeps it. One that lands elsewhere fell into another
+                // basin, and a distant foot can be a saddle or the far side
+                // of the surface: the global search decides.
                 let (s, tangents) = self.evaluate(local);
                 let offset = sub(point, s);
                 let square = tangents
                     .iter()
                     .all(|t| dot(offset, *t).abs() <= 1e-6 * norm(offset) * norm(*t));
-                if d <= 1e-9 * (1. + norm(point)) || square {
+                let near = 1e-6 * (1. + norm(point));
+                if d <= 1e-9 * (1. + norm(point)) || (square && d <= near) {
                     return local;
                 }
                 let (other, uv) = global();
@@ -405,8 +407,9 @@ impl Surface {
         uv
     }
 
-    /// The v parameter where the surface closes to a point above or below.
-    pub(crate) fn pole(&self, upper: bool) -> Option<f64> {
+    /// The v parameter where the surface closes to a point above or below
+    /// `from`. A horn torus touches its axis at v = pi, once per period.
+    pub(crate) fn pole(&self, upper: bool, from: f64) -> Option<f64> {
         match self {
             Self::Sphere { .. } => Some(if upper { FRAC_PI_2 } else { -FRAC_PI_2 }),
             Self::Cone {
@@ -414,6 +417,10 @@ impl Surface {
             } => {
                 let slope = half_angle.tan();
                 ((slope < 0.) == upper).then_some(-radius / slope)
+            }
+            Self::Torus { major, minor, .. } if major == minor => {
+                let turns = ((from - PI) / TAU).floor();
+                Some(PI + TAU * (turns + f64::from(u8::from(upper))))
             }
             _ => None,
         }

@@ -1219,8 +1219,8 @@
       "expected": "unsupported",
       "verdict": "unsupported",
       "finding": {
-        "owner": "CAD-360",
-        "summary": "Contains a SHELL_BASED_SURFACE_MODEL with open shells beside its solids. The product has no surface-body concept, and importing only the solids would drop part of the model, so the file is refused as unsupported."
+        "owner": "CAD-363",
+        "summary": "Contains a SHELL_BASED_SURFACE_MODEL with open shells beside its solids. The product has no surface-body concept, and importing only the solids would drop part of the model, so the file is refused as unsupported. Surface bodies are deferred to CAD-363 by product decision."
       }
     },
     {

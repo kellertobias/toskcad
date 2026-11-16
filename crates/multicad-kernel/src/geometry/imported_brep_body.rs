@@ -384,19 +384,20 @@ impl ImportedBrepBody {
         crate::rust_display::mesh(Ok(mesh.display()))
     }
 
-    /// Loops where the plane cuts the solid, on the exact boundary.
-    pub(crate) fn section(
+    /// Plane section loops with exact lines and ellipses where the plane
+    /// meets a face in one, chords elsewhere.
+    pub(crate) fn section_edges(
         &self,
         origin: [f64; 3],
         normal: [f64; 3],
         deflection_mm: f64,
-    ) -> Result<Vec<Vec<[f64; 3]>>, GeometryError> {
+    ) -> Result<Vec<Vec<multicad_rust_kernel::warped_union::SectionEdge>>, GeometryError> {
         let options = brep::mesh::Options {
             deflection_mm,
             angle_rad: 0.3,
             triangle_limit: 5_000_000,
         };
-        brep::section::section(&self.solid, origin, normal, options, None).map_err(failure)
+        brep::section::section_edges(&self.solid, origin, normal, options, None).map_err(failure)
     }
 
     /// Sample an edge whose curve has no analytic display form.

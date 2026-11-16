@@ -53,6 +53,25 @@ fn crosses(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool {
     o1 * o2 <= 0. && o3 * o4 <= 0. && overlap(0) && overlap(1)
 }
 
+/// True when `p` lies on the segment from `a` to `b`, strictly between its
+/// ends, within `tolerance` of the line in parameter units.
+fn between(a: [f64; 2], b: [f64; 2], p: [f64; 2], tolerance: f64) -> bool {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let along = (p[0] - a[0]) * dx + (p[1] - a[1]) * dy;
+    p != a
+        && p != b
+        && orient(a, b, p).abs() <= tolerance * dx.hypot(dy)
+        && along > 0.
+        && along < dx * dx + dy * dy
+}
+
+/// The widest parameter distance of the ring from its first point.
+fn spread(ring: &[Corner]) -> f64 {
+    ring.iter().fold(0., |e: f64, c| {
+        e.max((c.uv[0] - ring[0].uv[0]).hypot(c.uv[1] - ring[0].uv[1]))
+    })
+}
+
 fn inside_ring(ring: &[Corner], p: [f64; 2]) -> bool {
     let mut inside = false;
     for (i, a) in ring.iter().enumerate() {
@@ -197,6 +216,7 @@ fn bridge(
 ) -> Result<()> {
     let points = &holes[index];
     let first = rightmost(points);
+    let line = 1e-9 * spread(ring);
     for offset in 0..points.len() {
         let h = (first + offset) % points.len();
         let from = points[h].uv;
@@ -206,9 +226,12 @@ fn bridge(
                 .distance(ring[a].uv, from)
                 .total_cmp(&metric.distance(ring[b].uv, from))
         });
+        // A bridge through a boundary point would pass that point by.
         let blocked = |target: [f64; 2], path: &[Corner]| {
-            (0..path.len())
-                .any(|k| crosses(from, target, path[k].uv, path[(k + 1) % path.len()].uv))
+            (0..path.len()).any(|k| {
+                crosses(from, target, path[k].uv, path[(k + 1) % path.len()].uv)
+                    || between(from, target, path[k].uv, line)
+            })
         };
         let found = order.into_iter().find(|&r| {
             let target = ring[r].uv;
@@ -239,11 +262,13 @@ fn bridge(
     Err(Error::Unsupported)
 }
 
-fn ring(domain: &Domain, surface: &Surface, metric: &Metric) -> Result<Vec<Corner>> {
+fn ring(
+    loops: &[UvLoop],
+    pole: &Option<(f64, Key)>,
+    surface: &Surface,
+    metric: &Metric,
+) -> Result<Vec<Corner>> {
     let periods = surface.periods();
-    let Domain::Trimmed { loops, pole } = domain else {
-        return Ok(vec![]);
-    };
     let (mut ring, holes) = if let Some((v, key)) = pole {
         let mut ring = unrolled(&loops[0], 0, periods, [0.; 2]);
         let (start, end) = (ring[0].uv[0], ring[ring.len() - 1].uv[0]);
@@ -308,6 +333,8 @@ struct Clip<'a> {
     sides: BTreeMap<(Key, Key), Vec<[[f64; 2]; 2]>>,
     metric: &'a Metric,
     epsilon: f64,
+    /// How far from a diagonal a ring point still lies on it.
+    line: f64,
 }
 
 /// The ordered key pair of a side with its parameters in the same order.
@@ -370,6 +397,12 @@ impl Clip<'_> {
                 return None;
             }
             let p = self.ring[i].uv;
+            // A ring point on the diagonal would be a corner of the
+            // neighbouring face but not of this triangle's side.
+            let row = pa.pole && pc.pole;
+            if !row && !self.ring[i].pole && between(pa.uv, pc.uv, p, self.line) {
+                return None;
+            }
             let outside = p == pa.uv
                 || p == pb.uv
                 || p == pc.uv
@@ -394,13 +427,40 @@ pub(crate) fn triangulate(
     face: usize,
     edges: &[[usize; 2]],
 ) -> Result<Vec<Triangle>> {
-    if let Domain::Complete(range) = domain {
-        return Ok(complete(face, *range, surface.periods()[1].is_some()));
-    }
-    let metric = Metric(scale(domain, surface));
-    let mut ring = rows(ring(domain, surface, &metric)?, surface.periods()[0]);
-    for (index, corner) in ring.iter_mut().enumerate() {
-        corner.copy = if corner.pole { index } else { 0 };
+    let (loops, pole) = match domain {
+        Domain::Complete(range) => {
+            return Ok(complete(face, *range, surface.periods()[1].is_some()));
+        }
+        Domain::Trimmed { loops, pole } => (loops, pole),
+    };
+    let metric = Metric(scale(loops, surface));
+    let mut ring = rows(ring(loops, pole, surface, &metric)?, surface.periods()[0]);
+    // Copies of a pole whole periods apart along u are one point of its
+    // row: where a lone loop closes along its pole without a seam edge, the
+    // seam sides at both ends of the row then share their corners, as the
+    // seam sides of a complete surface do.
+    let period = surface.periods()[0];
+    let copies: Vec<usize> = ring
+        .iter()
+        .enumerate()
+        .map(|(index, corner)| {
+            let same = |other: &Corner| {
+                other.key == corner.key
+                    && other.pole
+                    && period.is_some_and(|period| {
+                        let turns = (other.uv[0] - corner.uv[0]) / period;
+                        (turns - turns.round()).abs() <= 1e-9
+                    })
+            };
+            if corner.pole {
+                ring.iter().position(same).unwrap_or(index)
+            } else {
+                0
+            }
+        })
+        .collect();
+    for (corner, copy) in ring.iter_mut().zip(copies) {
+        corner.copy = copy;
     }
     let n = ring.len();
     ensure(n >= 3, Error::Invalid)?;
@@ -416,6 +476,7 @@ pub(crate) fn triangulate(
         sides: BTreeMap::new(),
         metric: &metric,
         epsilon: 1e-13 * extent * extent / (metric.0[0] * metric.0[1]),
+        line: 1e-9 * spread(&ring),
     };
     for i in 0..n {
         let (keys, uv) = side(ring[i], ring[(i + 1) % n]);
@@ -475,10 +536,7 @@ pub(crate) fn triangulate(
 
 /// Lengths of the parameter directions near the region, for comparing
 /// distances across u and v.
-fn scale(domain: &Domain, surface: &Surface) -> [f64; 2] {
-    let Domain::Trimmed { loops, .. } = domain else {
-        return [1.; 2];
-    };
+fn scale(loops: &[UvLoop], surface: &Surface) -> [f64; 2] {
     let uv = loops[0]
         .points
         .iter()

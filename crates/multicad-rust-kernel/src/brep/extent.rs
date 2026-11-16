@@ -39,19 +39,38 @@ fn stationary(surface: &Surface, axis: usize, seed: [f64; 2], span: [f64; 2]) ->
         let (cu, cv) = (column(0), column(1));
         let determinant = cu[0] * cv[1] - cv[0] * cu[1];
         let size = (cu[0].abs() + cv[0].abs()) * (cu[1].abs() + cv[1].abs());
-        if determinant.abs() <= 1e-9 * size || !determinant.is_finite() {
-            return None;
-        }
-        let step = [
-            (g[0] * cv[1] - cv[0] * g[1]) / determinant,
-            (cu[0] * g[1] - g[0] * cu[1]) / determinant,
-        ];
+        let step = if determinant.is_finite() && determinant.abs() > 1e-9 * size {
+            [
+                (g[0] * cv[1] - cv[0] * g[1]) / determinant,
+                (cu[0] * g[1] - g[0] * cu[1]) / determinant,
+            ]
+        } else {
+            // On a surface of revolution a coordinate along the axis is
+            // stationary along a whole parallel, such as a torus's top
+            // circle: step along the parameter whose rate still changes.
+            let (du, dv) = (cu[0].abs(), cv[1].abs());
+            if !determinant.is_finite()
+                || du.max(dv) == 0.
+                || cu[1].abs() + cv[0].abs() > 1e-9 * du.max(dv)
+            {
+                return None;
+            }
+            if du >= dv {
+                [g[0] / cu[0], 0.]
+            } else {
+                [0., g[1] / cv[1]]
+            }
+        };
         uv = [uv[0] - step[0], uv[1] - step[1]];
         if (uv[0] - seed[0]).abs() > 2. * span[0] || (uv[1] - seed[1]).abs() > 2. * span[1] {
             return None;
         }
         if step[0].abs() <= 1e-13 * span[0] && step[1].abs() <= 1e-13 * span[1] {
-            return Some(uv);
+            // Both rates vanish at a stationary point.
+            let (_, [su, sv]) = surface.evaluate(uv);
+            let g = gradient(uv);
+            let scale = super::norm(su) + super::norm(sv);
+            return (g[0].abs() + g[1].abs() <= 1e-9 * scale).then_some(uv);
         }
     }
     None

@@ -9,7 +9,7 @@ mod loft;
 mod machined;
 mod retained;
 pub(super) mod sampled;
-mod warped;
+pub(super) mod warped;
 pub(super) use annulus::{project_circular, project_concentric};
 pub(super) use loft::{project_scene as project_loft_scene, project_view as project_loft_view};
 
