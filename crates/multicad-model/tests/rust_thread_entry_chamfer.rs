@@ -89,10 +89,62 @@ fn canonical_entry_and_terminal_edits_keep_literal_source_and_honest_export_mass
     stale.bounds.min[0] += 1.;
     assert!(verify_rust_step_shape_receipt(&file, solid, &stale, 1e-7).is_err());
     let text = std::fs::read_to_string(&file).unwrap();
-    assert!(
+    // The retained imported boundary reads the export back as the literal
+    // boundary it states: no thread semantics are recovered, and its exact
+    // volume, bounds and certified mesh agree with the thread body's
+    // certified mass enclosure and exact bounds.
+    let imported =
         multicad_kernel::Solid::import_rust_step(&text, request.feature, Default::default())
-            .is_err()
+            .unwrap();
+    assert!(imported.rust_thread_entry_chamfer_data().is_none());
+    assert!(imported.rust_rounded_thread_data().is_none());
+    assert!(matches!(
+        imported.verify_imported_brep_step(&text),
+        Some(Ok(_))
+    ));
+    // The retained volume is integrated with its own certified error: its
+    // interval meets the thread body's mass enclosure.
+    let retained =
+        multicad_kernel::rust_kernel::step_read::brep::read_solids(&text, 1e-7, None).unwrap();
+    let error: f64 = retained.iter().map(|s| s.volume_error_mm3()).sum();
+    let volume = imported.volume_mm3().unwrap();
+    assert!(error <= 1e-6 * volume, "{error}");
+    assert!(
+        volume + error >= range[0] && volume - error <= range[1],
+        "{volume} {error} {range:?}"
     );
+    let bounds = imported.bounds().unwrap();
+    for axis in 0..3 {
+        assert!((bounds.min[axis] - shape.bounds.min[axis]).abs() <= 1e-6);
+        assert!((bounds.max[axis] - shape.bounds.max[axis]).abs() <= 1e-6);
+    }
+    let options = multicad_kernel::MeshOptions::default();
+    let mesh = imported.manufacturing_mesh(options).unwrap();
+    let corner = |index: u32| -> [f64; 3] {
+        std::array::from_fn(|axis| mesh.vertices[3 * index as usize + axis])
+    };
+    let signed: f64 = mesh
+        .indices
+        .chunks(3)
+        .map(|t| {
+            let [a, b, c] = [t[0], t[1], t[2]].map(corner);
+            (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                + a[2] * (b[0] * c[1] - b[1] * c[0]))
+                / 6.
+        })
+        .sum();
+    let area: f64 = imported.faces().unwrap().iter().map(|f| f.area_mm2).sum();
+    let slack = options.linear_deflection_mm * area;
+    assert!(
+        range[0] - slack <= signed && signed <= range[1] + slack,
+        "{signed} {range:?}"
+    );
+    for point in mesh.vertices.chunks(3) {
+        for (axis, &x) in point.iter().enumerate() {
+            assert!(x >= shape.bounds.min[axis] - 1e-6);
+            assert!(x <= shape.bounds.max[axis] + 1e-6);
+        }
+    }
     std::fs::write(
         &file,
         text.replace("CONICAL_SURFACE", "CYLINDRICAL_SURFACE"),
