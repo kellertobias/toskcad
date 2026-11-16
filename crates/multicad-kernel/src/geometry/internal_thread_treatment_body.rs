@@ -4,6 +4,7 @@ mod display;
 mod faces;
 pub(super) mod interval;
 mod properties;
+mod separation;
 mod topology;
 use super::arithmetic::{dot_error, sum_error};
 use super::*;

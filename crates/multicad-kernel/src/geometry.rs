@@ -1454,6 +1454,9 @@ impl Solid {
             }
         }
         if self.uses_rust_geometry() && other.uses_rust_geometry() {
+            if let Some(result) = self.separated_treatment_intersection(other, operation, policy) {
+                return result;
+            }
             if let Some(result) = self.contained_thread_boolean(other, operation, policy) {
                 return result;
             }

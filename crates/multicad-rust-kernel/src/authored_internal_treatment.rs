@@ -9,6 +9,7 @@ pub(crate) mod properties;
 pub use properties::{FaceKey, FaceProperties, FacePropertyOptions, ThreadBandRole};
 #[cfg(test)]
 mod exact_extent_tests;
+mod separation;
 #[cfg(test)]
 mod tests;
 mod volume;
@@ -18,6 +19,7 @@ pub(crate) use mesh::hanger_candidate;
 pub(crate) use mesh::metric_shell;
 pub use mesh::{Candidate, ShellEnd, ThreadRimEdge, ThreadShell, tessellate_candidate};
 pub use mesh::{MetricRimEdge, MetricShell};
+pub use separation::ChamferSeparation;
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Entry {
     radius: f64,

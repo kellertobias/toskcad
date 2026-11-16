@@ -1,5 +1,5 @@
-//! Exact receiving end and actual treatment source lifecycle; generic pair
-//! intersection remains an independent unsupported gate in metric_fit_threads.
+//! Exact receiving end, whole-pair source separation and treatment lifecycle.
+//! Generic boundary-producing section Booleans remain independent gates.
 use multicad_core::{
     commands::{Actor, Channel, Session},
     constraint_sketch::Dimension,
@@ -9,7 +9,8 @@ use multicad_core::{
     project_file::{self, ProjectFile},
 };
 use multicad_kernel::{
-    MeshOptions, RigidTransform, rust_kernel::authored_internal_treatment as source,
+    BooleanOperation, GeometryErrorKind, MeshOptions, RigidTransform,
+    rust_kernel::authored_internal_treatment as source,
 };
 use multicad_model::Compiler;
 fn actor() -> Actor {
@@ -359,4 +360,155 @@ fn actual_metric_receiving_source_requires_fresh_literal_manufacturing_embedding
         failures.is_empty(),
         "Actual metric manufacturing gates: {failures:#?}"
     );
+}
+
+#[test]
+fn whole_actual_pair_separation_preserves_sources_pose_failures_and_cold_reopen() {
+    for hand in [ThreadHand::Right, ThreadHand::Left] {
+        let (session, male, female) = pair(3., 0.5, hand, true, None);
+        let built = compile(&session);
+        let a = built.solid(male.feature).unwrap();
+        let b = built.solid(female.feature).unwrap();
+        let before = (
+            a.rust_thread_entry_chamfer_data().unwrap(),
+            b.rust_internal_thread_treatment_data().unwrap(),
+        );
+        let volumes = (a.volume_mm3().unwrap(), b.volume_mm3().unwrap());
+        let calls = std::cell::Cell::new(0usize);
+        let count = || {
+            calls.set(calls.get() + 1);
+            false
+        };
+        let proof = a
+            .rust_chamfer_receiver_separation(b, Default::default(), Some(&count))
+            .unwrap();
+        let total = calls.get();
+        assert!(proof.minimum_radial_gap_mm() > 0. && proof.radial_transfer_error_mm() > 0.);
+        assert!(proof.terminal_radial_gap_mm().unwrap() > 0.);
+        assert_eq!(proof.external(), &before.0.source);
+        assert_eq!(proof.receiving(), &before.1.material);
+        for (first, second) in [(a, b), (b, a)] {
+            assert!(
+                first
+                    .boolean(second, BooleanOperation::Intersect, Default::default())
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        for stop in [0, total / 2, total - 1] {
+            calls.set(0);
+            let cancel = || {
+                let n = calls.get();
+                calls.set(n + 1);
+                n >= stop
+            };
+            assert_eq!(
+                a.rust_chamfer_receiver_separation(b, Default::default(), Some(&cancel))
+                    .err()
+                    .unwrap()
+                    .kind,
+                GeometryErrorKind::Cancelled
+            );
+        }
+        assert_eq!(
+            a.rust_chamfer_receiver_separation(
+                b,
+                multicad_kernel::rust_kernel::helical_thread::ProfileContainmentOptions {
+                    maximum_cells: 1
+                },
+                None
+            )
+            .err()
+            .unwrap()
+            .kind,
+            GeometryErrorKind::Limit
+        );
+        let pose = RigidTransform {
+            rotation: [[0.6, 0., 0.8], [0., 1., 0.], [-0.8, 0., 0.6]],
+            translation_mm: [11., -7., 5.],
+        };
+        let moved_a = a.transformed(pose).unwrap();
+        let moved_b = b.transformed(pose).unwrap();
+        assert!(
+            moved_a
+                .rust_chamfer_receiver_separation(&moved_b, Default::default(), None)
+                .unwrap()
+                .minimum_radial_gap_mm()
+                > 0.
+        );
+        assert!(
+            moved_a
+                .boolean(&moved_b, BooleanOperation::Intersect, Default::default())
+                .unwrap()
+                .is_none()
+        );
+        let wrong = a
+            .transformed(RigidTransform {
+                translation_mm: [0.001, 0., 0.],
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            wrong
+                .rust_chamfer_receiver_separation(b, Default::default(), None)
+                .err()
+                .unwrap()
+                .kind,
+            GeometryErrorKind::Unsupported
+        );
+        assert!(
+            wrong
+                .boolean(b, BooleanOperation::Intersect, Default::default())
+                .is_err()
+        );
+        assert!(
+            a.boolean(b, BooleanOperation::Union, Default::default())
+                .is_err()
+        );
+        assert!(
+            a.boolean(b, BooleanOperation::Subtract, Default::default())
+                .is_err()
+        );
+        assert_eq!(
+            (
+                a.rust_thread_entry_chamfer_data().unwrap(),
+                b.rust_internal_thread_treatment_data().unwrap()
+            ),
+            before
+        );
+        assert_eq!((a.volume_mm3().unwrap(), b.volume_mm3().unwrap()), volumes);
+        let mut bytes = Vec::new();
+        project_file::write(
+            &ProjectFile::new(session.document().clone()).unwrap(),
+            &mut bytes,
+            Default::default(),
+        )
+        .unwrap();
+        let expected_gap = proof.minimum_radial_gap_mm();
+        drop(built);
+        let reopened = project_file::read(
+            &mut std::io::Cursor::new(bytes),
+            Default::default(),
+            &project_file::supported_capabilities(),
+        )
+        .unwrap()
+        .project;
+        let fresh = Session::new(reopened.document).unwrap();
+        let rebuilt = compile(&fresh);
+        let cold_a = rebuilt.solid(male.feature).unwrap();
+        let cold_b = rebuilt.solid(female.feature).unwrap();
+        assert_eq!(
+            cold_a
+                .rust_chamfer_receiver_separation(cold_b, Default::default(), None)
+                .unwrap()
+                .minimum_radial_gap_mm(),
+            expected_gap
+        );
+        assert!(
+            cold_a
+                .boolean(cold_b, BooleanOperation::Intersect, Default::default())
+                .unwrap()
+                .is_none()
+        );
+    }
 }
