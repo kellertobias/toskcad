@@ -1,57 +1,10 @@
+use super::test_fixture::{engineering, engineering_height};
 use super::*;
 use crate::{
-    axial_pipe_thread::authored::{
-        AuthoredSection, AuthoredSpec, AuthoredThread,
-        hardware::shell::{self, occupied},
-    },
+    axial_pipe_thread::authored::hardware::shell::{self, occupied},
     radial_tensor::{Curve, Surface},
     step_read::pipe_hardware as reader,
 };
-fn engineering() -> occupied::OccupiedHead {
-    engineering_height(3.)
-}
-fn engineering_height(height: f64) -> occupied::OccupiedHead {
-    // Engineering NPT-flat law, NOT a standard/Core preset acceptance tuple.
-    // Canonical Core external NPT forwards an active crest limit and remains
-    // outside this deliberately unclipped, fixed-frame first source family.
-    let thread = AuthoredThread::new(
-        AuthoredSpec {
-            major_radius_mm: 5.,
-            pitch_mm: 1.,
-            length_mm: 6.,
-            radial_taper: 1. / 32.,
-            section: AuthoredSection::NptFlat {
-                depth_mm: 0.6,
-                flat_width_mm: 0.2,
-            },
-            crest_radius_limit_mm: None,
-        },
-        1e-7,
-        1e-6,
-    )
-    .unwrap();
-    let boundary = thread
-        .raw_boundary_ownership(1e-7, None)
-        .unwrap()
-        .ownership
-        .bind_surfaces(1e-7, None)
-        .unwrap()
-        .certify_axial(1e-7, 1e-6, None)
-        .unwrap()
-        .certify_caps(None)
-        .unwrap()
-        .certify_ordering(None)
-        .unwrap()
-        .certify_material(1e-7, None)
-        .unwrap();
-    occupied::certify(
-        shell::external_npt_head(&thread, &boundary, 16., height, None).unwrap(),
-        1e-7,
-        1e-6,
-        None,
-    )
-    .unwrap()
-}
 #[test]
 fn actual_engineering_head_file_retains_non_power_of_two_domains_after_arena_drop() {
     let source = engineering();
@@ -147,6 +100,7 @@ fn actual_engineering_head_file_retains_non_power_of_two_domains_after_arena_dro
             .any(|c| matches!(c, Curve::Spline { spans: 47, .. }))
     );
     independent_spline_chain(&source, &decoded);
+    independent_mapped_geometry_consumers(&decoded);
     drop(source);
     drop(actual);
     // Actual record bytes and owned original operators survive every parser
@@ -173,6 +127,21 @@ fn actual_file_changes_cannot_borrow_engineering_source_or_scalar_cache_admissio
     let spline = components
         .clone()
         .find(|s| s.starts_with("B_SPLINE_CURVE_WITH_KNOTS") && s.ends_with(",47),.UNSPECIFIED.)"))
+        .unwrap()
+        .to_owned();
+    let tensor = components
+        .clone()
+        .find(|s| s.starts_with("B_SPLINE_SURFACE_WITH_KNOTS"))
+        .unwrap();
+    let tensor_prefix = "B_SPLINE_SURFACE_WITH_KNOTS('',9,9,(";
+    assert!(tensor.starts_with(tensor_prefix));
+    let first_row_start = tensor_prefix.len();
+    let first_row_end = first_row_start + tensor[first_row_start..].find(')').unwrap() + 1;
+    let first_row = &tensor[first_row_start..first_row_end];
+    let row_needle = format!("{tensor_prefix}{first_row}");
+    let vector = components
+        .clone()
+        .find(|s| s.starts_with("VECTOR("))
         .unwrap()
         .to_owned();
     let inner = components
@@ -224,6 +193,36 @@ fn actual_file_changes_cannot_borrow_engineering_source_or_scalar_cache_admissio
     let cases = vec![
         (leaf, alias, Error::Unsupported),
         (
+            "B_SPLINE_CURVE_WITH_KNOTS('',9,".into(),
+            "B_SPLINE_CURVE_WITH_KNOTS('',8,".into(),
+            Error::Unsupported,
+        ),
+        (
+            "B_SPLINE_CURVE_WITH_KNOTS('',9,".into(),
+            "B_SPLINE_CURVE_WITH_KNOTS('',9.E0,".into(),
+            Error::Invalid,
+        ),
+        (
+            "B_SPLINE_SURFACE_WITH_KNOTS('',9,9,".into(),
+            "B_SPLINE_SURFACE_WITH_KNOTS('',8,9,".into(),
+            Error::Unsupported,
+        ),
+        (
+            row_needle.clone(),
+            format!("{tensor_prefix}$"),
+            Error::Invalid,
+        ),
+        (
+            row_needle,
+            format!("{tensor_prefix}(#1)"),
+            Error::Unsupported,
+        ),
+        (
+            vector.clone(),
+            vector.replacen(",1.)", ",2.)", 1),
+            Error::Unsupported,
+        ),
+        (
             spline.clone(),
             spline.replacen(",47),.UNSPECIFIED.)", ",48),.UNSPECIFIED.)", 1),
             Error::Unsupported,
@@ -259,7 +258,10 @@ fn actual_file_changes_cannot_borrow_engineering_source_or_scalar_cache_admissio
         source.receipt().retained_result_bytes_upper_bound + actual.capacity() + case_bytes;
     for (old, new, error) in &cases {
         let changed = actual.replacen(old, new, 1);
-        assert_ne!(changed, actual);
+        assert!(
+            changed != actual,
+            "mutation must change the actual STEP record: {old}"
+        );
         assert!(
             matches!(reader::read(&changed,1e-7,1e-6,reader::Options{additional_resident_bytes:outside,..Default::default()},None),Err(e)if e==*error)
         );
@@ -451,6 +453,7 @@ fn actual_file_qualification_exact_frontiers_cancel_and_same_source_retry() {
         .unwrap()
         .into_string();
     actual.shrink_to_fit();
+    public_option_contracts(&source, &actual);
     let calls = std::cell::Cell::new(0usize);
     let count = || {
         calls.set(calls.get() + 1);
@@ -468,6 +471,63 @@ fn actual_file_qualification_exact_frontiers_cancel_and_same_source_retry() {
     let receipt = baseline.receipt();
     let original_records = receipt.matched_original_records;
     drop(baseline);
+    // Independently count the two genuine public phases to target cancellation
+    // inside the subsequent dense record binder, without an injected error or
+    // test-only bypass in production. Residency changes do not change visits.
+    let phase_calls = std::cell::Cell::new(0usize);
+    let phase_count = || {
+        phase_calls.set(phase_calls.get() + 1);
+        false
+    };
+    drop(
+        propose(
+            &source,
+            Options {
+                additional_resident_bytes: actual.capacity(),
+                ..Default::default()
+            },
+            Some(&phase_count),
+        )
+        .unwrap(),
+    );
+    let proposal_calls = phase_calls.get();
+    phase_calls.set(0);
+    drop(
+        reader::read(
+            &actual,
+            1e-7,
+            1e-6,
+            reader::Options {
+                additional_resident_bytes: source.receipt().retained_result_bytes_upper_bound
+                    + actual.capacity()
+                    - actual.len(),
+                ..Default::default()
+            },
+            Some(&phase_count),
+        )
+        .unwrap(),
+    );
+    let reader_calls = phase_calls.get();
+    let binding_start = proposal_calls + reader_calls + 1;
+    assert!(binding_start < calls.get());
+    for remaining in [0, 1] {
+        assert!(matches!(
+            qualify_actual_file(
+                &source,
+                &actual,
+                1e-7,
+                1e-6,
+                QualificationOptions {
+                    maximum_work: receipt.proposal_work_used
+                        + receipt.independent_read_work_reserved
+                        + remaining,
+                    ..Default::default()
+                },
+                None
+            ),
+            Err(Error::Limit)
+        ));
+    }
     let exact = QualificationOptions {
         maximum_work: receipt.aggregate_work_reserved,
         maximum_bytes: receipt
@@ -497,7 +557,7 @@ fn actual_file_qualification_exact_frontiers_cancel_and_same_source_retry() {
     }
     // These checkpoints cross proposal, cold parsing, independent material and
     // correspondence phases. No partial QualifiedStep is returned on refusal.
-    for stop in [1, calls.get() / 2, calls.get() - 1] {
+    for stop in [1, calls.get() / 2, binding_start, calls.get() - 1] {
         let visited = std::cell::Cell::new(0usize);
         let cancel = || {
             let n = visited.get() + 1;
@@ -519,4 +579,276 @@ fn actual_file_qualification_exact_frontiers_cancel_and_same_source_retry() {
     assert_eq!(retry.as_str(), actual);
     assert_eq!(retry.material().material().head_height_mm(), [6., 9.]);
     assert_eq!(source.head_height_mm(), [6., 9.]);
+}
+
+fn independent_mapped_geometry_consumers(decoded: &reader::ReadHead) {
+    use crate::tapered_thread::interval::I;
+    use num_rational::BigRational;
+    let q = |v| BigRational::from_float(v).unwrap();
+    let contains = |bounds: [f64; 2], exact: BigRational| {
+        assert!(q(bounds[0]) <= exact && exact <= q(bounds[1]));
+    };
+    let input = decoded.material().shell().input();
+    let mut families = [false; 4];
+    for map in decoded.parameter_maps() {
+        assert!(matches!(
+            map.reference_derivative_bounds([[0., 0.]; 3], 2),
+            Err(crate::axial_pipe_thread::Error::Invalid)
+        ));
+        assert!(
+            map.reference_derivative_bounds([[f64::NAN, f64::NAN]; 3], 0)
+                .is_err()
+        );
+        assert!(map.reference_derivative_bounds([[1., -1.]; 3], 0).is_err());
+        match map.mapping() {
+            reader::ParameterMapping::Tensor { spans } => {
+                families[0] = true;
+                let reader::Target::Surface(index) = map.target() else {
+                    unreachable!()
+                };
+                let Surface::Tensor(t) = &input.surfaces[index] else {
+                    unreachable!()
+                };
+                let first = t.poles()[0];
+                for axis in 0..2 {
+                    // Integer-knot de Boor endpoint derivative has local span
+                    // width1. Reference uniform knots have width1/n instead.
+                    let next = t.poles()[if axis == 0 { 9 * spans[1] + 1 } else { 1 }];
+                    let raw = std::array::from_fn(|k| {
+                        (I::point(next[k]) - I::point(first[k])) * I::point(9.)
+                    });
+                    let mapped = map
+                        .reference_derivative_bounds(raw.map(|v| [v.lo, v.hi]), axis)
+                        .unwrap();
+                    for k in 0..3 {
+                        contains(
+                            mapped[k],
+                            (q(next[k]) - q(first[k]))
+                                * BigRational::from_integer((9 * spans[axis]).into()),
+                        );
+                    }
+                }
+            }
+            reader::ParameterMapping::Line { .. } => {
+                families[1] = true;
+                let reader::Target::Curve(index) = map.target() else {
+                    unreachable!()
+                };
+                let shell::Curve::Line(ends) = input.curves[index] else {
+                    unreachable!()
+                };
+                let a = input.vertices[ends[0]];
+                let z = input.vertices[ends[1]];
+                let delta = std::array::from_fn::<_, 3, _>(|k| I::point(z[k]) - I::point(a[k]));
+                let length = delta
+                    .into_iter()
+                    .fold(I::point(0.), |s, d| s + d.square())
+                    .sqrt();
+                let unit = delta.map(|d| d / length);
+                let mapped = map
+                    .reference_derivative_bounds(unit.map(|v| [v.lo, v.hi]), 0)
+                    .unwrap();
+                for k in 0..3 {
+                    contains(mapped[k], q(z[k]) - q(a[k]));
+                }
+                assert!(map.reference_derivative_bounds([[0., 0.]; 3], 1).is_err());
+            }
+            reader::ParameterMapping::AngularIdentity => {
+                families[2] = true;
+                let reader::Target::Curve(index) = map.target() else {
+                    unreachable!()
+                };
+                let shell::Curve::Original(Curve::Circle { axis, radius_mm }) =
+                    &input.curves[index]
+                else {
+                    unreachable!()
+                };
+                let tangent = [0., axis.normal[2] * radius_mm, 0.];
+                let mapped = map
+                    .reference_derivative_bounds(tangent.map(|v| [v, v]), 0)
+                    .unwrap();
+                for k in 0..3 {
+                    contains(mapped[k], q(tangent[k]));
+                }
+                assert!(map.reference_derivative_bounds([[0., 0.]; 3], 1).is_err());
+            }
+            reader::ParameterMapping::Cone { .. } => {
+                families[3] = true;
+                let reader::Target::Surface(index) = map.target() else {
+                    unreachable!()
+                };
+                let Surface::Cone {
+                    axis, radius_mm, ..
+                } = &input.surfaces[index]
+                else {
+                    unreachable!()
+                };
+                let tangent = [0., axis.normal[2] * radius_mm, 0.];
+                let mapped = map
+                    .reference_derivative_bounds(tangent.map(|v| [v, v]), 0)
+                    .unwrap();
+                for k in 0..3 {
+                    contains(mapped[k], q(tangent[k]));
+                }
+            }
+            reader::ParameterMapping::Spline { .. } => {}
+        }
+    }
+    assert_eq!(families, [true; 4]);
+}
+
+fn public_option_contracts(source: &occupied::OccupiedHead, actual: &str) {
+    use crate::axial_pipe_thread::Error;
+    for options in [
+        Options {
+            maximum_work: 0,
+            ..Default::default()
+        },
+        Options {
+            maximum_work: 32_000_001,
+            ..Default::default()
+        },
+        Options {
+            maximum_bytes: 0,
+            ..Default::default()
+        },
+        Options {
+            maximum_bytes: 64 * 1024 * 1024 + 1,
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            propose(source, options, None),
+            Err(Error::Invalid)
+        ));
+    }
+    for options in [
+        QualificationOptions {
+            maximum_work: 0,
+            ..Default::default()
+        },
+        QualificationOptions {
+            maximum_work: 272_000_001,
+            ..Default::default()
+        },
+        QualificationOptions {
+            maximum_bytes: 0,
+            ..Default::default()
+        },
+        QualificationOptions {
+            maximum_bytes: 64 * 1024 * 1024 + 1,
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            qualify_actual_file(source, actual, 1e-7, 1e-6, options, None),
+            Err(Error::Invalid)
+        ));
+    }
+    for options in [
+        reader::Options {
+            maximum_work: 0,
+            ..Default::default()
+        },
+        reader::Options {
+            maximum_work: 224_000_001,
+            ..Default::default()
+        },
+        reader::Options {
+            maximum_bytes: 0,
+            ..Default::default()
+        },
+        reader::Options {
+            maximum_bytes: 64 * 1024 * 1024 + 1,
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            reader::read(actual, 1e-7, 1e-6, options, None),
+            Err(Error::Invalid)
+        ));
+    }
+    assert!(matches!(
+        reader::read(
+            actual,
+            1e-7,
+            1e-6,
+            reader::Options::default(),
+            Some(&|| true)
+        ),
+        Err(Error::Cancelled)
+    ));
+    assert!(matches!(
+        propose(
+            source,
+            Options {
+                maximum_bytes: 1,
+                ..Default::default()
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    assert!(matches!(
+        propose(
+            source,
+            Options {
+                additional_resident_bytes: usize::MAX,
+                ..Default::default()
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    assert!(matches!(
+        reader::read(
+            actual,
+            1e-7,
+            1e-6,
+            reader::Options {
+                additional_resident_bytes: usize::MAX,
+                ..Default::default()
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    assert!(matches!(
+        qualify_actual_file(
+            source,
+            actual,
+            1e-7,
+            1e-6,
+            QualificationOptions {
+                additional_resident_bytes: usize::MAX,
+                ..Default::default()
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+}
+
+#[test]
+fn earned_finite_line_refuses_rounding_an_unrepresentable_endpoint_difference() {
+    use super::test_fixture::engineering_dimensions;
+    use num_rational::BigRational;
+    let source = engineering_dimensions(6.1, 100.);
+    let [lo, hi] = source.head_height_mm();
+    assert_eq!([lo, hi], [6.1, 106.1]);
+    let q = |v| BigRational::from_float(v).unwrap();
+    assert_ne!(q(hi) - q(lo), q(hi - lo));
+    assert!(matches!(
+        propose(&source, Options::default(), None),
+        Err(crate::axial_pipe_thread::Error::Unsupported)
+    ));
+    assert_eq!(source.head_height_mm(), [lo, hi]);
+    assert_eq!(
+        source.capped_thread().classify([0., 0., 3.], None).unwrap(),
+        crate::radial_tensor::Location::Inside
+    );
+    drop(source);
+    let healthy = engineering();
+    let retry = propose(&healthy, Options::default(), None).unwrap();
+    assert!(retry.as_str().contains("MANIFOLD_SOLID_BREP"));
 }

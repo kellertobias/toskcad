@@ -226,3 +226,22 @@ mod tests {
         assert!(!exact_difference(1e7, 0.001, d).unwrap());
     }
 }
+
+#[cfg(test)]
+mod malformed_controls {
+    use super::*;
+    #[test]
+    fn exact_geometry_leaves_refuse_nonfinite_and_ambiguous_decimal_grammar() {
+        for v in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(matches!(cost(v), Err(Error::Invalid)));
+            assert!(matches!(literal(v), Err(Error::Invalid)));
+        }
+        for text in ["", "0..0", "0.5.0", "-0.5", "0.E1E2"] {
+            assert!(!exact_leaf(text, 0.5).unwrap());
+        }
+        assert!(!exact_leaf(&"0".repeat(2049), 0.).unwrap());
+        assert!(exact_leaf("+0.5000E0", 0.5).unwrap());
+        assert!(exact_leaf("-0.5000E0", -0.5).unwrap());
+        assert!(!exact_difference(0.1, 0.2, -0.1_f64.next_up()).unwrap());
+    }
+}

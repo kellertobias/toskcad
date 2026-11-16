@@ -7,3 +7,6 @@ mod qualify;
 pub use qualify::{QualificationOptions, QualificationReceipt, QualifiedStep, qualify_actual_file};
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod test_fixture;

@@ -183,3 +183,139 @@ fn long_whitespace_is_charged_in_bounded_cancellable_chunks() {
     );
     assert!(plan.scan_work_used >= padded.len());
 }
+
+#[test]
+fn cold_document_grammar_and_phase_contract_refuse_unsupported_files_before_allocation() {
+    let healthy = actual_box();
+    let insert = |record: &str| {
+        let at = healthy.rfind("ENDSEC;").unwrap();
+        format!("{}{record}\n{}", &healthy[..at], &healthy[at..])
+    };
+    let added_header = healthy.replacen("ENDSEC;", "EXTRA_HEADER('retained',TYPE(1));ENDSEC;", 1);
+    let plan = reserve(&added_header, 64_000_000, 64 * 1024 * 1024, None).unwrap();
+    assert_eq!(
+        plan.represented_record_count,
+        part21::parse(&healthy).unwrap().len()
+    );
+    assert!(
+        plan.values
+            > reserve(&healthy, 64_000_000, 64 * 1024 * 1024, None)
+                .unwrap()
+                .values
+    );
+    for (text, expected) in [
+        (
+            healthy.replacen("FILE_DESCRIPTION", "OTHER_HEADER", 1),
+            Error::Invalid,
+        ),
+        (
+            healthy.replacen("ENDSEC;", "FILE_NAME();ENDSEC;", 1),
+            Error::Invalid,
+        ),
+        (healthy.replacen("DATA;", "NOT_DATA;", 1), Error::Invalid),
+        (
+            healthy.replace("END-ISO-10303-21;", "DATA;ENDSEC;END-ISO-10303-21;"),
+            Error::Unsupported,
+        ),
+        (
+            healthy.replacen("ISO-10303-21;", "ISO-10303-21", 1),
+            Error::Invalid,
+        ),
+        (
+            healthy.replacen("ISO-10303-21;", "not_a_step_file;", 1),
+            Error::Invalid,
+        ),
+        (insert("#0=X();"), Error::Invalid),
+        (insert("#=X();"), Error::Invalid),
+        (insert("#999999=();"), Error::Invalid),
+        (insert("#999999=X(.);"), Error::Invalid),
+        (insert("#999999=X(.F);"), Error::Invalid),
+        (insert("#999999=X(+);"), Error::Invalid),
+        (insert("#999999=X(1E999);"), Error::Invalid),
+        (insert("#999999=X(\"0101\");"), Error::Unsupported),
+        (insert("#999999=X(?);"), Error::Invalid),
+        (insert("#999999=X('unterminated);"), Error::Invalid),
+        (
+            insert(&format!(
+                "#999999=({});",
+                (0..65).map(|i| format!("C{i}()")).collect::<String>()
+            )),
+            Error::Limit,
+        ),
+    ] {
+        assert_eq!(
+            reserve(&text, 64_000_000, 64 * 1024 * 1024, None).unwrap_err(),
+            expected
+        );
+    }
+    for (work, bytes) in [
+        (0, 64 * 1024 * 1024),
+        (64_000_001, 64 * 1024 * 1024),
+        (64_000_000, 0),
+        (64_000_000, 64 * 1024 * 1024 + 1),
+    ] {
+        assert!(matches!(
+            reserve(&healthy, work, bytes, None),
+            Err(Error::Invalid)
+        ));
+    }
+    assert!(matches!(
+        reserve(&healthy, healthy.len() - 1, 64 * 1024 * 1024, None),
+        Err(Error::Limit)
+    ));
+    assert!(matches!(
+        reserve(&healthy, 64_000_000, healthy.len() - 1, None),
+        Err(Error::Limit)
+    ));
+    assert_eq!(
+        reserve(&healthy, 64_000_000, 64 * 1024 * 1024, None)
+            .unwrap()
+            .represented_record_count,
+        plan.represented_record_count
+    );
+}
+
+#[test]
+fn actual_cold_table_and_leaf_caps_refuse_before_neutral_arena_allocation() {
+    use std::fmt::Write;
+    let ordinary = actual_box();
+    let data = ordinary.find("DATA;").unwrap() + "DATA;".len();
+    let header = &ordinary[..data];
+    {
+        // Distinct real entity IDs, not an injected scanner counter. The raw
+        // document fits the input/work ceilings but exceeds the table cap.
+        let mut records = String::with_capacity(20 * 1_048_577);
+        records.push_str(header);
+        for id in 1..=1_048_577 {
+            writeln!(records, "#{id}=RAW_RECORD();").unwrap();
+        }
+        records.push_str("ENDSEC;END-ISO-10303-21;");
+        assert!(records.len() < 64_000_000);
+        assert!(matches!(
+            reserve(&records, 64_000_000, 64 * 1024 * 1024, None),
+            Err(Error::Limit)
+        ));
+    }
+    {
+        // One syntactically real entity with too many leaves. No enormous
+        // neutral Vec is allocated: this is exactly the preflight's purpose.
+        let mut leaves = String::with_capacity(2 * 8_388_609 + header.len() + 100);
+        leaves.push_str(header);
+        leaves.push_str("#1=RAW_RECORD(");
+        for _ in 0..8_388_608 {
+            leaves.push_str("0,");
+        }
+        leaves.push_str("0);ENDSEC;END-ISO-10303-21;");
+        assert!(leaves.len() < 64_000_000);
+        assert!(matches!(
+            reserve(&leaves, 64_000_000, 64 * 1024 * 1024, None),
+            Err(Error::Limit)
+        ));
+    }
+    assert_eq!(
+        reserve(&ordinary, 64_000_000, 64 * 1024 * 1024, None)
+            .unwrap()
+            .represented_record_count,
+        part21::parse(&ordinary).unwrap().len()
+    );
+}

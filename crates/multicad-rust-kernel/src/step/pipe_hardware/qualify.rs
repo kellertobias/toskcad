@@ -432,3 +432,6 @@ fn compare(
     // retained cone sec(angle)/line-length maps give their full pullbacks.
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
