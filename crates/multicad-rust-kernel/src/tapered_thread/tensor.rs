@@ -9,7 +9,7 @@ use super::{
 pub use hermite::{MANUFACTURING_DEGREE, ManufacturingTensor, ManufacturingTensors};
 pub(crate) use retained::calculation_cell11;
 pub use retained::{
-    NORMAL11_BYTES, NORMAL11_WORK, NormalPolynomial11, RetainedTensor, RetainedTensor11,
+    NORMAL11_BYTES, NORMAL11_WORK, NormalPolynomial11, ReducedNormal11, ReducedNormalCell11, RetainedTensor, RetainedTensor11,
     SurfaceFailure11, SurfaceOptions11, SurfaceProperties11, SurfaceStage11, TensorCell,
     TensorCell11, TensorDerivatives, TensorFirstDerivatives11,
 };
