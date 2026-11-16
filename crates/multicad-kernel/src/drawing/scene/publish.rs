@@ -96,6 +96,20 @@ impl Output {
         path: &dyn Path,
         range: [f64; 2],
     ) -> Result<(), GeometryError> {
+        self.curve_through(source, role, path, range, &[])
+    }
+
+    /// Publish a range of a path as `curve` does; where the paper curve is
+    /// neither a line nor a conic, the chords also break at `events`, exact
+    /// parameters inside the range.
+    pub(in crate::drawing) fn curve_through(
+        &mut self,
+        source: usize,
+        role: VectorRole,
+        path: &dyn Path,
+        range: [f64; 2],
+        events: &[f64],
+    ) -> Result<(), GeometryError> {
         match path.paper(range) {
             Some(Curve::Line([a, b])) => {
                 self.push(source, role, VectorCurve::Line { a, b }, vec![a, b])
@@ -119,7 +133,11 @@ impl Output {
                 self.push(source, role, curved::ellipse_vector(ellipse), preview)
             }
             None => {
-                let stops = self.stops(path, range, self.options.chord_tolerance_mm / 2.)?;
+                let mut stops = self.stops(path, range, self.options.chord_tolerance_mm / 2.)?;
+                let [lo, hi] = [range[0].min(range[1]), range[0].max(range[1])];
+                stops.extend(events.iter().copied().filter(|t| *t > lo && *t < hi));
+                stops.sort_by(f64::total_cmp);
+                stops.dedup();
                 if stops.len() > self.curves + 1 {
                     return Err(limit());
                 }

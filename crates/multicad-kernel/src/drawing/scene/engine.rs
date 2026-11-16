@@ -505,6 +505,9 @@ pub(in crate::drawing) fn project(
             }
             let first = &pieces[i];
             let mut range = first.range;
+            // The exact events inside a joined range stay chord vertices, so
+            // that its chords do not depend on the visibility of neighbours.
+            let mut events = Vec::new();
             let mut j = i + 1;
             while j < pieces.len()
                 && kept[j]
@@ -512,11 +515,12 @@ pub(in crate::drawing) fn project(
                 && pieces[j].hidden == first.hidden
                 && pieces[j].range[0] == range[1]
             {
+                events.push(range[1]);
                 range[1] = pieces[j].range[1];
                 j += 1;
             }
             let strand = &strands[first.strand];
-            output.curve(
+            output.curve_through(
                 members[strand.member].source,
                 if first.hidden {
                     VectorRole::Hidden
@@ -525,6 +529,7 @@ pub(in crate::drawing) fn project(
                 },
                 strand.path.as_ref(),
                 range,
+                &events,
             )?;
             i = j;
         }
