@@ -240,3 +240,48 @@ fn actual_selected_head_tip_join_and_cavity_faces_do_not_require_other_thread_su
         q.area_mm2
     );
 }
+
+#[test]
+fn actual_selected_thread_face_meets_native_accuracy_with_same_owner() {
+    for left in [false, true] {
+        let source =
+            super::super::query::tests::actual_owned("selected-curved-face", left, left, 1);
+        let index = (0..source.face_count())
+            .find(|&i| {
+                matches!(
+                    source.face_source(i),
+                    Some(Degree11MaterialFace::ThreadSide { .. })
+                )
+            })
+            .unwrap();
+        let extent = source
+            .local_enclosure_bounds_mm()
+            .into_iter()
+            .flatten()
+            .map(f64::abs)
+            .fold(1_f64, f64::max);
+        let options = Degree11FacePropertyOptions {
+            area_width_mm2: 1e-7 * extent / 16.,
+            first_moment_width_mm3: 1e-7 * extent * extent / 16.,
+            centroid_width_mm: 1e-7 / 16.,
+            ..Default::default()
+        };
+        let q = source.face_properties(index, options, None).unwrap();
+        assert!(std::ptr::eq(q.source(), &source));
+        assert_eq!(q.source_face, index);
+        assert!(
+            q.area_mm2[0] > 0.
+                && I::new(q.area_mm2[0], q.area_mm2[1]).width() <= options.area_width_mm2
+        );
+        for value in q.first_moment_mm3 {
+            assert!(I::new(value[0], value[1]).width() <= options.first_moment_width_mm3);
+        }
+        for value in q.centroid_mm {
+            assert!(I::new(value[0], value[1]).width() <= options.centroid_width_mm);
+        }
+        assert!(
+            q.work_used() <= options.maximum_work
+                && q.accounted_peak_bytes() <= options.maximum_bytes
+        );
+    }
+}
