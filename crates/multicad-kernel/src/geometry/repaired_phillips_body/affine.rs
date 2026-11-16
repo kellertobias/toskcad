@@ -3,12 +3,13 @@
 use super::*;
 mod inverse;
 mod prepared_normals;
-// Setup: 81 interval operations, nine point initializations and bounded
-// copies/control. Each facet: 67 interval operations, nine magnitude actions,
-// <=36 gathers/index actions, <=18 copies, <=24 array/loop actions and
-// <=12 validation/callback actions. These are logical actions, not CPU counts.
+// Setup: 81 interval operations, 36 point initializations and bounded
+// copies/control. Each facet: 67 interval operations, 27 point initializations,
+// nine magnitude actions, <=36 gathers/index actions, <=18 copies,
+// <=39 array/loop actions and <=12 validation/callback actions: 208 actions,
+// rounded up to 224. These are logical actions, not CPU instruction counts.
 pub(super) const NORMAL_PREPARATION_WORK: usize = 256;
-pub(super) const NORMAL_TRIANGLE_WORK: usize = 192;
+pub(super) const NORMAL_TRIANGLE_WORK: usize = 224;
 type Point = [f64; 3];
 type BoxPoint = [I; 3];
 fn dot(a: BoxPoint, b: BoxPoint) -> I {
