@@ -388,15 +388,12 @@ pub(in crate::drawing) fn project(
     if !options.section_only {
         let mut stops = arrange(&strands, eps);
         // Ends of strands on other strands' exact paths, off their chords.
-        for ((strand, stops), extra) in strands
-            .iter()
-            .zip(&mut stops)
-            .zip(arrange::junctions(&strands, flat, eps))
-        {
+        let junctions = arrange::junctions(&strands, flat, eps);
+        for ((strand, stops), extra) in strands.iter().zip(&mut stops).zip(&junctions) {
             if extra.is_empty() {
                 continue;
             }
-            stops.extend(extra.into_iter().map(|t| (t, strand.path.point(t))));
+            stops.extend(extra.iter().map(|&t| (t, strand.path.point(t))));
             stops.sort_by(|a, b| a.0.total_cmp(&b.0));
             stops.dedup_by(|b, a| {
                 distance(paper(a.1), paper(b.1)).max((a.1[2] - b.1[2]).abs()) <= eps
@@ -505,8 +502,18 @@ pub(in crate::drawing) fn project(
             }
             let first = &pieces[i];
             let mut range = first.range;
-            // The exact events inside a joined range stay chord vertices, so
-            // that its chords do not depend on the visibility of neighbours.
+            // A junction inside a joined range stays a chord vertex: there a
+            // contour ends tangent on the path, and a chord across it would
+            // leave the coincident contour by more than the weld distance
+            // only when both sides share one role. Transversal events need
+            // no vertex.
+            let strand = &strands[first.strand];
+            let junction = |t: f64| {
+                let at = paper(strand.path.point(t));
+                junctions[first.strand]
+                    .iter()
+                    .any(|&j| distance(paper(strand.path.point(j)), at) <= eps)
+            };
             let mut events = Vec::new();
             let mut j = i + 1;
             while j < pieces.len()
@@ -515,11 +522,12 @@ pub(in crate::drawing) fn project(
                 && pieces[j].hidden == first.hidden
                 && pieces[j].range[0] == range[1]
             {
-                events.push(range[1]);
+                if junction(range[1]) {
+                    events.push(range[1]);
+                }
                 range[1] = pieces[j].range[1];
                 j += 1;
             }
-            let strand = &strands[first.strand];
             output.curve_through(
                 members[strand.member].source,
                 if first.hidden {
