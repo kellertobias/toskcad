@@ -361,6 +361,27 @@ fn verify(nominal: f64, pitch: f64, left: bool) {
     );
     let owned = volume.owned_snapshot(Default::default(), None).unwrap();
     assert_eq!(owned.original_input(), raw);
+    let facets = owned
+        .joined_mesh_candidate(Default::default(), None)
+        .expect("actual canonical fitted D11 source must meet default mesh quality and budgets");
+    assert!(std::ptr::eq(facets.source(), &owned));
+    assert!(facets.new_surface_error_mm() <= 0.1);
+    assert_eq!(facets.certified_tessellation().angle, 0.3);
+    assert!(facets.work_used() <= 512_000_000);
+    assert!(facets.accounted_peak_bytes() <= 64 * 1024 * 1024);
+    assert_eq!(
+        multicad_kernel::rust_kernel::manufacturing::certify(facets.mesh()).unwrap(),
+        facets.connectivity()
+    );
+    eprintln!(
+        "MODEL_D11_DEFAULT nominal={nominal} left={left} facets={} work={} remaining={} peak={} combined={} c0={}",
+        facets.mesh().face_indices.len(),
+        facets.work_used(),
+        facets.remaining_work(),
+        facets.accounted_peak_bytes(),
+        facets.combined_live_upper_bound_bytes(),
+        facets.new_surface_error_mm()
+    );
     eprintln!(
         "MODEL_SUPPLIED nominal={nominal} left={left} actual_thread={:?} nominal_shank={shank_radius_mm} bytes={} cells={cells} c0_du_dv={bounds:?} source_work={} author_mass={author_volume:?} decoded_mass={decoded_volume:?} material_work={} owned_bytes={}",
         source.thread().spec(),
