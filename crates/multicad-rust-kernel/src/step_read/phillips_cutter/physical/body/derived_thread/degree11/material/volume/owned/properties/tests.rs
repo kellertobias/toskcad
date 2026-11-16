@@ -156,6 +156,25 @@ fn actual_selected_head_tip_join_and_cavity_faces_do_not_require_other_thread_su
     let source =
         super::super::query::tests::actual_owned("selected-face-properties", false, false, 1);
     let options = Degree11FacePropertyOptions::default();
+    let thread = (0..source.face_count())
+        .find(|&i| {
+            matches!(
+                source.face_source(i),
+                Some(Degree11MaterialFace::ThreadSide { .. })
+            )
+        })
+        .unwrap();
+    assert!(matches!(
+        source.face_properties(
+            thread,
+            Degree11FacePropertyOptions {
+                maximum_work: 1024,
+                ..options
+            },
+            None
+        ),
+        Err(PhillipsReadError::Limit)
+    ));
     let mut measured = 0;
     for index in 0..source.face_count() {
         if matches!(

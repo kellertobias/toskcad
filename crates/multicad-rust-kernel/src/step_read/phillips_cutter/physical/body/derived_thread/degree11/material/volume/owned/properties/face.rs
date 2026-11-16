@@ -164,6 +164,7 @@ impl OwnedDegree11Material {
                 iv(values.first_moment_mm3[2]) + z * area,
             ])
         };
+        let mut certified_centroid = None;
         let values = match source_face {
             Degree11MaterialFace::ThreadSide { index: face, .. } => {
                 let tensor = self
@@ -177,6 +178,9 @@ impl OwnedDegree11Material {
                 let outside = resident
                     .checked_sub(shared)
                     .ok_or(PhillipsReadError::Limit)?;
+                if work.remaining == 0 {
+                    return Err(PhillipsReadError::Limit);
+                }
                 let q = tensor
                     .surface_properties(
                         SurfaceOptions11 {
@@ -200,6 +204,7 @@ impl OwnedDegree11Material {
                         .checked_add(q.accounted_peak_bytes)
                         .ok_or(PhillipsReadError::Limit)?,
                 );
+                certified_centroid = Some(q.centroid_mm.map(iv));
                 [
                     iv(q.area_mm2),
                     iv(q.first_moment_mm3[0]),
@@ -239,6 +244,7 @@ impl OwnedDegree11Material {
                     .surfaces()
                     .get(segment)
                     .ok_or(PhillipsReadError::Unsupported)?;
+                certified_centroid = Some(q.centroid_mm.map(iv));
                 [
                     iv(q.area_mm2),
                     iv(q.first_moment_mm3[0]),
@@ -305,7 +311,12 @@ impl OwnedDegree11Material {
         };
         let area = values[0];
         let moments = [values[1], values[2], values[3]];
-        let centroid = moments.map(|m| m / area);
+        let ratio = moments.map(|m| m / area);
+        // Reuse the same child's centred integral certificate. Re-forming only
+        // raw M/A would lose its shared-origin/area correlation unnecessarily.
+        let centroid = certified_centroid.map_or(ratio, |c| {
+            std::array::from_fn(|i| I::new(ratio[i].lo.max(c[i].lo), ratio[i].hi.min(c[i].hi)))
+        });
         if peak > o.maximum_bytes {
             return Err(PhillipsReadError::Limit);
         }
