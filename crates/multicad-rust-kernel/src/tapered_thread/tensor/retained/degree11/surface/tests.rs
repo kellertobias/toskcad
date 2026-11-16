@@ -126,6 +126,65 @@ fn actual_finite_surface_unattainable_precision_ties_priorities_and_refuses_with
     assert_eq!(source, original);
     assert!(source.surface_properties(Default::default(), None).is_ok());
 }
+
+#[test]
+fn actual_exact_dyadic_nearparallel_planes_preserve_area_and_centroid_or_refuse() {
+    let a = 65536i64;
+    let mut accepted = 0;
+    for exponent in [30u32, 31, 32] {
+        let denominator = 1i64 << exponent;
+        let delta = 1. / denominator as f64;
+        let mut points = Vec::new();
+        for i in 0i64..12 {
+            for j in 0i64..12 {
+                let x = (a * (i + j)) as f64;
+                let y = x + delta * j as f64;
+                // Actual binary inputs are proved equal to the dyadic plane;
+                // no idealized delta is substituted for rounded coefficients.
+                assert_eq!(Q::from_float(x).unwrap(), q(a * (i + j)));
+                assert_eq!(
+                    Q::from_float(y).unwrap(),
+                    q(a * (i + j)) + q(j) / q(denominator)
+                );
+                points.push([x, y, 0.]);
+            }
+        }
+        let source = RetainedTensor11::new([1, 1], points).unwrap();
+        let original = source.clone();
+        let value = source.surface_properties_with_diagnostics(
+            SurfaceOptions11 {
+                area_width_mm2: 1e6,
+                first_moment_width_mm3: 1e16,
+                centroid_width_mm: 1e16,
+                max_depth: 0,
+                ..Default::default()
+            },
+            None,
+        );
+        eprintln!("EXACT_DYADIC_NEARPARALLEL exponent{exponent} {value:?}");
+        match value {
+            Ok(value) => {
+                accepted += 1;
+                let area = q(121 * a) / q(denominator);
+                let centroid = [q(11 * a), q(11 * a) + q(11) / q(2 * denominator), q(0)];
+                contains(value.area_mm2, area.clone());
+                assert!(value.area_mm2[0] > 0.);
+                for (bound, exact) in value.centroid_mm.into_iter().zip(centroid.clone()) {
+                    contains(bound, exact);
+                }
+                for (bound, exact) in value.first_moment_mm3.into_iter().zip(centroid) {
+                    contains(bound, &area * exact);
+                }
+                assert_eq!(value.evaluated_cells, 1);
+            }
+            Err(failure) => {
+                assert_eq!(failure.error, Error::Unresolved);
+            }
+        }
+        assert_eq!(source, original);
+    }
+    assert!(accepted > 0);
+}
 fn q(n: i64) -> Q {
     Q::from_integer(n.into())
 }
