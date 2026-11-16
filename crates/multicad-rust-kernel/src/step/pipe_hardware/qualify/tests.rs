@@ -257,6 +257,78 @@ fn independent_operator_comparison_checks_two_earned_physical_sources_and_real_l
     .unwrap();
     assert_eq!(own.original_input(), own_text);
     assert_eq!(expected.head_height_mm(), [6., 9.]);
+    // A clone keeps only genuine independently admitted operator values; the
+    // earned source-storage reservation bounds its Vec/Arc allocations.
+    let original_geometry = own.material().shell().input().clone();
+    let snapshot_bytes = own.material().receipt().retained_source_bytes;
+    let original_maps = own.parameter_maps().to_vec();
+    drop(wrong_maps);
+    assert!(original_maps.capacity() * std::mem::size_of::<reader::ParameterMap>() < caller_bytes);
+    drop(own);
+    let reordered = crate::step_read::pipe_hardware::tests::actual_cone_first_face_order(&own_text);
+    std::fs::write(&path, &reordered).unwrap();
+    drop(reordered);
+    let reordered = std::fs::read_to_string(&path).unwrap();
+    let peer = reader::read(
+        &reordered,
+        1e-7,
+        1e-6,
+        reader::Options {
+            additional_resident_bytes: expected.receipt().retained_result_bytes_upper_bound
+                + snapshot_bytes
+                + own_text.capacity()
+                + caller_bytes
+                + reordered.capacity()
+                - reordered.len(),
+            ..Default::default()
+        },
+        None,
+    )
+    .expect("same actual operators with cone-first face order must independently earn material");
+    assert_eq!(peer.material().head_height_mm(), [6., 9.]);
+    assert_eq!(
+        peer.material()
+            .capped_thread()
+            .classify([0., 0., 3.], None)
+            .unwrap(),
+        radial::Location::Inside
+    );
+    let mut wrong_family = Work {
+        remaining: MAX_WORK,
+        interrupt: None,
+    };
+    assert!(matches!(
+        compare(
+            expected.shell().input(),
+            &original_geometry,
+            peer.parameter_maps(),
+            &mut wrong_family
+        ),
+        Err(Error::Unsupported)
+    ));
+    let mut original_retry = Work {
+        remaining: MAX_WORK,
+        interrupt: None,
+    };
+    compare(
+        expected.shell().input(),
+        &original_geometry,
+        &original_maps,
+        &mut original_retry,
+    )
+    .unwrap();
+    let mut peer_retry = Work {
+        remaining: MAX_WORK,
+        interrupt: None,
+    };
+    compare(
+        peer.material().shell().input(),
+        peer.material().shell().input(),
+        peer.parameter_maps(),
+        &mut peer_retry,
+    )
+    .unwrap();
+    assert_eq!(peer.original_input(), reordered);
     std::fs::remove_file(&path).unwrap();
 }
 

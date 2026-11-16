@@ -789,3 +789,62 @@ fn physical_exclusive_curve_control_refusal_keeps_original_source_usable() {
         radial::Location::Inside
     );
 }
+
+pub(crate) fn actual_cone_first_face_order(input: &str) -> String {
+    let arena = part21::parse(input).unwrap();
+    let (&shell_id, shell) = arena
+        .iter()
+        .find(|(_, c)| c.len() == 1 && c[0].name == "CLOSED_SHELL")
+        .unwrap();
+    let shell = &shell[0];
+    let original = refs(&shell.args[1]).unwrap();
+    assert_eq!(original.len(), 13);
+    let cone_indices: Vec<_> = original
+        .iter()
+        .enumerate()
+        .filter_map(|(i, id)| {
+            let face = &arena[id][0];
+            assert_eq!(face.name, "ADVANCED_FACE");
+            (arena[&reference(&face.args[2]).unwrap()][0].name == "CONICAL_SURFACE").then_some(i)
+        })
+        .collect();
+    let [index] = cone_indices.as_slice() else {
+        panic!("one actual cone face");
+    };
+    assert!(*index > 0);
+    let mut ordered = original.clone();
+    let cone = ordered.remove(*index);
+    ordered.insert(0, cone);
+    assert_eq!(
+        ordered.iter().collect::<std::collections::BTreeSet<_>>(),
+        original.iter().collect::<std::collections::BTreeSet<_>>()
+    );
+    let mut text = input.to_owned();
+    text.replace_range(
+        fields(shell, input)[1].clone(),
+        &format!(
+            "({})",
+            ordered
+                .iter()
+                .map(|id| format!("#{id}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    );
+    assert_ne!(text, input);
+    let changed = part21::parse(&text).unwrap();
+    assert_eq!(changed.len(), arena.len());
+    for (&id, original) in &arena {
+        if id != shell_id {
+            assert_eq!(
+                original.iter().map(|e| e.source).collect::<Vec<_>>(),
+                changed[&id].iter().map(|e| e.source).collect::<Vec<_>>()
+            );
+        }
+    }
+    assert_eq!(refs(&changed[&shell_id][0].args[1]).unwrap(), ordered);
+    eprintln!(
+        "ACTUAL_CONE_FIRST shell{shell_id} cone_face{cone} moved_from{index} faces13 all_other_records_unchangedtrue"
+    );
+    text
+}
