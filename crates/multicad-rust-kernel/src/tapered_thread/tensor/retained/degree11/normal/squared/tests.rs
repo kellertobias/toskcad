@@ -14,6 +14,72 @@ fn choose_q(n: i64, k: i64) -> Q {
     (0..k).fold(q(1), |x, i| x * q(n - i) / q(i + 1))
 }
 #[test]
+fn actual_numerical_normal_storage_capacity_refuses_scalar_workspace_and_retained_limits() {
+    let source = RetainedTensor11::new(
+        [1, 1],
+        (0..12)
+            .flat_map(|i| (0..12).map(move |j| [i as f64, j as f64, 3.]))
+            .collect(),
+    )
+    .unwrap();
+    let cell = source.cell([0, 0]).unwrap();
+    let bits = |n: &NormalPolynomial11| {
+        n.polynomial
+            .controls
+            .iter()
+            .flatten()
+            .flatten()
+            .chain(n.derivative.iter().flatten())
+            .chain(n.derivative_hulls.iter().flatten().flatten())
+            .chain(n.hull.iter())
+            .flat_map(|x| [x.lo.to_bits(), x.hi.to_bits()])
+            .collect::<Vec<_>>()
+    };
+    for target_bytes in [40 * 1024usize, 60 * 1024] {
+        let mut normal = NormalPolynomial11::new(&cell).unwrap();
+        let before = bits(&normal);
+        let lengths = normal
+            .polynomial
+            .controls
+            .iter()
+            .map(Vec::len)
+            .collect::<Vec<_>>();
+        let original_bytes = normal.retained_budget_bytes();
+        let additional = (target_bytes - original_bytes).div_ceil(std::mem::size_of::<BoxPoint>());
+        // Private NUMERICAL storage-pressure contract only. Reserve actual
+        // capacity, preserving every coefficient, length and cached value.
+        // This is not a public constructor result or a material proof owner.
+        normal.polynomial.controls[0].reserve_exact(additional);
+        let actual_bytes = normal.retained_budget_bytes();
+        assert!(actual_bytes >= target_bytes && actual_bytes <= NORMAL11_BYTES);
+        assert_eq!(bits(&normal), before);
+        assert_eq!(
+            normal
+                .polynomial
+                .controls
+                .iter()
+                .map(Vec::len)
+                .collect::<Vec<_>>(),
+            lengths
+        );
+        eprintln!(
+            "ACTUAL_NORMAL_CAPACITY target{target_bytes} before{original_bytes} actual{actual_bytes} rowcapacity{}",
+            normal.polynomial.controls[0].capacity()
+        );
+        let owner = Arc::new(normal);
+        assert!(matches!(
+            SquaredNormal11::new(owner.clone()),
+            Err(Error::Limit)
+        ));
+        assert_eq!(Arc::strong_count(&owner), 1);
+        assert_eq!(bits(&owner), before);
+        assert_eq!(owner.retained_budget_bytes(), actual_bytes);
+        let retry =
+            SquaredNormal11::new(Arc::new(NormalPolynomial11::new(&cell).unwrap())).unwrap();
+        contains(retry.bounds([[0., 1.]; 2]).unwrap(), q(14641));
+    }
+}
+#[test]
 fn actual_squared_normal_all_coefficients_enclose_independent_bilinear_polynomial() {
     let tensor = RetainedTensor11::new(
         [1, 1],
