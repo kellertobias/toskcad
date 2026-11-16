@@ -333,3 +333,111 @@ fn physical_malformed_geometry_and_unsupported_curve_families_cannot_earn_materi
         crate::radial_tensor::Location::Inside
     );
 }
+
+pub(crate) struct InteriorChange {
+    pub text: String,
+    pub tensor_entity: u32,
+    pub point_entity: u32,
+    pub pole_index: usize,
+    pub old_value: f64,
+    pub new_value: f64,
+}
+// Literal preparation only. The changed document must independently earn actual
+// occupied material in the caller; this structure is not a Source certificate.
+pub(crate) fn exclusive_interior_nextup(input: &str) -> InteriorChange {
+    fn count(value: &Value<'_>, counts: &mut BTreeMap<u32, usize>) {
+        match value {
+            Value::Reference(id) => *counts.entry(*id).or_default() += 1,
+            Value::List(values) => {
+                for v in values {
+                    count(v, counts);
+                }
+            }
+            Value::Typed(e) => {
+                for v in &e.args {
+                    count(v, counts);
+                }
+            }
+            _ => {}
+        }
+    }
+    let arena = part21::parse(input).unwrap();
+    let mut counts = BTreeMap::new();
+    for e in arena.values().flatten() {
+        for v in &e.args {
+            count(v, &mut counts);
+        }
+    }
+    let mut chosen = None;
+    for (&tensor_id, components) in &arena {
+        for e in components
+            .iter()
+            .filter(|e| e.name == "B_SPLINE_SURFACE_WITH_KNOTS")
+        {
+            assert_eq!(e.args[1], Value::Number(9.));
+            assert_eq!(e.args[2], Value::Number(9.));
+            if let Value::List(rows) = &e.args[3] {
+                for (i, row) in rows.iter().enumerate() {
+                    // Exclude boundary and first derivative/seam controls in
+                    // EVERY degree9 cell, not merely the global grid corners.
+                    if !(2..=7).contains(&(i % 9)) {
+                        continue;
+                    }
+                    if let Value::List(poles) = row {
+                        for (j, pole) in poles.iter().enumerate() {
+                            if !(2..=7).contains(&(j % 9)) {
+                                continue;
+                            }
+                            let id = reference(pole).unwrap();
+                            if counts[&id] == 1 {
+                                chosen = Some((tensor_id, id, i * poles.len() + j, i, j));
+                                break;
+                            }
+                        }
+                    }
+                    if chosen.is_some() {
+                        break;
+                    }
+                }
+            }
+            if chosen.is_some() {
+                break;
+            }
+        }
+        if chosen.is_some() {
+            break;
+        }
+    }
+    let (tensor_entity, point_entity, pole_index, row, col) =
+        chosen.expect("exclusive actual interior tensor pole");
+    assert_eq!(
+        counts[&point_entity], 1,
+        "the actual ID occurs only in that tensor interior, never a boundary curve, vertex, seam, cap or another tensor"
+    );
+    let point = &arena[&point_entity][0];
+    assert_eq!(point.name, "CARTESIAN_POINT");
+    let coords = fields(point, input)[1].clone();
+    let values = arguments(&input[coords.clone()]);
+    assert_eq!(values.len(), 3);
+    let scalar = coords.start + values[0].start..coords.start + values[0].end;
+    let old_value = input[scalar.clone()].parse::<f64>().unwrap();
+    let new_value = old_value.next_up();
+    assert!(old_value.is_finite() && new_value.is_finite() && new_value > old_value);
+    let literal = writer::numbers::literal(new_value).unwrap();
+    let mut text = input.to_owned();
+    text.replace_range(scalar, &literal);
+    assert!(text != input);
+    eprintln!(
+        "EXCLUSIVE_INTERIOR tensor{tensor_entity} point{point_entity} row{row} col{col} pole{pole_index} oldbits{} newbits{} actual_references1",
+        old_value.to_bits(),
+        new_value.to_bits()
+    );
+    InteriorChange {
+        text,
+        tensor_entity,
+        point_entity,
+        pole_index,
+        old_value,
+        new_value,
+    }
+}
