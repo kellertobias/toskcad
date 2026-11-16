@@ -469,6 +469,11 @@ impl OwnedActualHead {
     pub fn actual_file(&self) -> &str {
         &self.records.input
     }
+    // Dense immutable row iteration avoids repeated ID binary searches during
+    // complete literal replay; it carries exactly the same stored spans.
+    pub(super) fn original_component_at(&self, record: usize, component: usize) -> Option<&str> {
+        self.records.component(record, component)
+    }
     pub fn original_component(&self, id: u32, component: usize) -> Option<&str> {
         self.records
             .component(self.records.record_index(id)?, component)

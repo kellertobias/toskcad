@@ -7,6 +7,7 @@ use std::{
     fmt::{self, Write},
     sync::Arc,
 };
+pub mod encoding;
 mod schema;
 mod source;
 pub use source::{MappedSourceQualification, MappedSourceReceipt};

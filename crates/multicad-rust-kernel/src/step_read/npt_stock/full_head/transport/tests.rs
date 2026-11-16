@@ -10,7 +10,7 @@ fn contains(b: [f64; 2], q: &Q) {
         "{b:?} excludes {q}"
     );
 }
-fn candidate(quarter: bool) -> String {
+pub(super) fn candidate(quarter: bool) -> String {
     let input = super::super::super::tests::fixture(quarter);
     let doc = CompoundDocument::parse(&input, Default::default(), None).unwrap();
     let parsed = Parsed::parse(
