@@ -124,6 +124,32 @@ mod tests {
         Scalar::new(text, text.parse().unwrap())
     }
     #[test]
+    fn actual_underflowing_decimals_refuse_unresolved_chart_and_excessive_exact_scale() {
+        let mut b = Budget {
+            work: 0,
+            remaining: 16_000_000,
+            bytes: 0,
+            limit: 64 * 1024 * 1024,
+            interrupt: None,
+        };
+        let (lo, value, hi) = (s("1.E-325"), s("2.E-325"), s("3.E-325"));
+        assert_eq!([lo.value, value.value, hi.value], [0.; 3]);
+        assert_eq!(compare(lo, value, &mut b).unwrap(), Ordering::Less);
+        assert_eq!(compare(value, hi, &mut b).unwrap(), Ordering::Less);
+        // Distinct exact decimals cannot justify division by their coincident
+        // binary caches. The original unresolved chart remains a refusal.
+        assert!(matches!(
+            unit(value, lo, hi, &mut b),
+            Err(Error::Unsupported)
+        ));
+        assert!(matches!(
+            exact_interval(s("1.E-20000"), &mut b),
+            Err(Error::Limit)
+        ));
+        let retry = exact_interval(s("0.25"), &mut b).unwrap();
+        assert_eq!([retry.lo, retry.hi], [0.25; 2]);
+    }
+    #[test]
     fn exact_decimal_order_rejects_hidden_binary64_domain_overshoot() {
         let mut b = Budget {
             work: 0,
