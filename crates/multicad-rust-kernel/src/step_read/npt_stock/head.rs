@@ -91,6 +91,8 @@ impl<'p, 'd, 'i> OccupiedClippedHead<'p, 'd, 'i> {
     pub fn join_sewing_mm(&self) -> f64 {
         self.join_sewing
     }
+    /// Conservative clearance of the complete actual control hull from the
+    /// hex halfspaces; this is a lower bound, not an exact surface distance.
     pub fn minimum_wall_mm(&self) -> f64 {
         self.minimum_wall
     }
@@ -152,6 +154,13 @@ fn storage(head: &HeadInput) -> Result<usize> {
     }
     Ok(bytes)
 }
+fn bounded_peak(bytes: usize, maximum: usize) -> Result<usize> {
+    if bytes > maximum {
+        Err(Error::Limit)
+    } else {
+        Ok(bytes)
+    }
+}
 fn interval([lo, hi]: [f64; 2]) -> I {
     I::new(lo, hi)
 }
@@ -199,13 +208,13 @@ pub fn certify<'p, 'd, 'i>(
         .checked_add(head_bytes)
         .and_then(|n| n.checked_add(options.additional_resident_bytes))
         .ok_or(Error::Limit)?;
-    let local_peak = other
-        .checked_add(parsed.query_budget_bytes())
-        .and_then(|n| n.checked_add(SCRATCH))
-        .ok_or(Error::Limit)?;
-    if local_peak > options.maximum_bytes {
-        return Err(Error::Limit);
-    }
+    let local_peak = bounded_peak(
+        other
+            .checked_add(parsed.query_budget_bytes())
+            .and_then(|n| n.checked_add(SCRATCH))
+            .ok_or(Error::Limit)?,
+        options.maximum_bytes,
+    )?;
     let mut work = Work {
         used: 0,
         maximum: options
@@ -238,30 +247,38 @@ pub fn certify<'p, 'd, 'i>(
     if thread.projection().cap_face_indices()[1] != cap {
         return Err(Error::Unsupported);
     }
-    work.maximum = options
-        .maximum_work
-        .checked_sub(document_work)
-        .and_then(|n| n.checked_sub(thread.work_used()))
+    // The child receipt includes Parsed once. Debit only its fresh work into
+    // the same parent meter, retaining the common work/cancellation guard.
+    let fresh_child_work = thread
+        .work_used()
+        .checked_sub(parsed.work_used())
         .ok_or(Error::Limit)?;
-    if work.used > work.maximum {
-        return Err(Error::Limit);
-    }
+    work.charge(fresh_child_work)?;
     let geometry = geometry::qualify(parsed, &thread, &head, tolerance, minimum, &mut work)?;
     work.charge(1)?;
-    let peak = local_peak.max(
-        other
-            .checked_add(thread.query_budget_bytes())
-            .ok_or(Error::Limit)?,
-    );
-    if peak > options.maximum_bytes {
-        return Err(Error::Limit);
-    }
+    // Projection/Occupied retain only the immutable Parsed borrow and inline
+    // scalars after their scratch drops. Their query byte receipt is a PAST
+    // phase peak, not retained heap. The 64 KiB local reservation covers that
+    // inline owner plus topology and the post-child geometry phase. If either
+    // typed child gains heap fields, this phase-max argument must be updated.
+    let peak = bounded_peak(
+        local_peak.max(
+            other
+                .checked_add(thread.query_budget_bytes())
+                .ok_or(Error::Limit)?,
+        ),
+        options.maximum_bytes,
+    )?;
+    let new_head_work = work
+        .used
+        .checked_sub(fresh_child_work)
+        .ok_or(Error::Limit)?;
     let receipt = Receipt {
         inherited_document_work: document_work,
         material_work_with_parsed_prefix: thread.work_used(),
-        new_head_work: work.used,
+        new_head_work,
         aggregate_work: document_work
-            .checked_add(thread.work_used())
+            .checked_add(parsed.work_used())
             .and_then(|n| n.checked_add(work.used))
             .ok_or(Error::Limit)?,
         borrowed_document_bytes: document_bytes,

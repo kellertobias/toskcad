@@ -62,6 +62,16 @@ fn canonical_clipped_d11_head_requalifies_original_thread_caps_and_ids() {
         );
         assert!(proof.capped_thread().volume_mm3()[0] > 0.);
         assert!(proof.minimum_wall_mm() > 1e-6);
+        let polygon = proof.head_polygon_mm();
+        let signed_area = (0..6)
+            .map(|i| {
+                polygon[i][0] * polygon[(i + 1) % 6][1] - polygon[i][1] * polygon[(i + 1) % 6][0]
+            })
+            .sum::<f64>()
+            / 2.;
+        assert!((signed_area - 3_f64.sqrt() * 18_f64.powi(2) / 2.).abs() < 1e-10);
+        assert!(proof.planar_sewing_mm() <= 1e-7 / 16.);
+        assert!(proof.join_sewing_mm() >= proof.planar_sewing_mm());
         assert!(proof.join_sewing_mm() <= 1e-7 / 8.);
         assert!(proof.head_stations_mm()[1] > proof.head_stations_mm()[0]);
         assert_eq!(signature(&parsed), before);
@@ -100,6 +110,30 @@ fn actual_clipped_head_refuses_wrong_rim_star_intersection_gap_and_bad_supports(
     let before = signature(&parsed);
     let input = HeadInput::regular_hex(&parsed, cap, 18., 3.).unwrap();
     let mut cases = Vec::new();
+    let mut bad = input.clone();
+    bad.vertices.pop();
+    cases.push(("missing head vertex", bad));
+    let mut bad = input.clone();
+    bad.vertices[0][0] = f64::NAN;
+    cases.push(("NaN vertex", bad));
+    let mut bad = input.clone();
+    bad.faces[0].inner.clear();
+    cases.push(("missing annulus", bad));
+    let mut bad = input.clone();
+    bad.faces[2].outer[0].0 = usize::MAX;
+    cases.push(("foreign head edge", bad));
+    let mut bad = input.clone();
+    bad.faces[2] = bad.faces[3].clone();
+    cases.push(("closed duplicate face", bad));
+    let mut bad = input.clone();
+    bad.faces[0].forward = true;
+    cases.push(("inward shoulder", bad));
+    let mut bad = input.clone();
+    bad.faces[1].forward = false;
+    cases.push(("inward top", bad));
+    let mut bad = input.clone();
+    bad.faces[1].plane.reference = [0., 0., 1.];
+    cases.push(("degenerate top frame", bad));
     let mut bad = input.clone();
     bad.faces[0].inner[0].1 = !bad.faces[0].inner[0].1;
     cases.push(("rim sense", bad));
@@ -409,6 +443,10 @@ fn clipped_head_public_options_and_actual_clearance_thresholds_are_enforced() {
         ));
     }
     assert!(HeadInput::regular_hex(&parsed, u32::MAX, 18., 3.).is_err());
+    assert!(matches!(
+        HeadInput::regular_hex(&parsed, cap, 18., 1e7),
+        Err(Error::Limit)
+    ));
     let tensor = parsed
         .faces
         .iter()
