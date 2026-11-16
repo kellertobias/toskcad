@@ -221,6 +221,11 @@ impl Solid {
             // assembly is read only by the retained provider, so its
             // refusal is the file's.
             match Self::import_rust_brep(input, feature, policy) {
+                // Topology that no solid owns is the families' proof that the
+                // file is malformed; the retained solids do not outrank it.
+                Ok(_)
+                    if refusal == ReadError::Invalid
+                        && step_read::brep::has_unowned_topology(input) => {}
                 Ok(retained) => return Ok(retained),
                 Err(error)
                     if step_read::brep::has_product_structure(input)

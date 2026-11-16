@@ -38,6 +38,44 @@ pub fn has_product_structure(input: &str) -> bool {
     })
 }
 
+/// True when `input` parses and states topology that no solid reaches: a
+/// face, loop, edge, vertex or shell outside every `MANIFOLD_SOLID_BREP` and
+/// `BREP_WITH_VOIDS`. Such a file breaks the STEP topology rules even when
+/// the solids it does state are sound.
+pub fn has_unowned_topology(input: &str) -> bool {
+    let Ok(entities) = part21::parse(input) else {
+        return false;
+    };
+    let mut reached = BTreeSet::new();
+    let mut pending: Vec<u32> = entities
+        .iter()
+        .filter(|(_, parts)| {
+            parts
+                .iter()
+                .any(|e| matches!(e.name, "MANIFOLD_SOLID_BREP" | "BREP_WITH_VOIDS"))
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    fn push(value: &Value<'_>, pending: &mut Vec<u32>) {
+        match value {
+            Value::Reference(id) => pending.push(*id),
+            Value::List(items) => items.iter().for_each(|item| push(item, pending)),
+            _ => {}
+        }
+    }
+    while let Some(id) = pending.pop() {
+        if !reached.insert(id) {
+            continue;
+        }
+        for entity in entities.get(&id).into_iter().flatten() {
+            entity.args.iter().for_each(|arg| push(arg, &mut pending));
+        }
+    }
+    entities.iter().any(|(id, parts)| {
+        !reached.contains(id) && parts.iter().any(|e| super::compound::topology(e.name))
+    })
+}
+
 /// Geometry that is not a solid. A file holding any keeps its meaning and
 /// is refused rather than imported without it.
 const NOT_SOLID: [&str; 8] = [
@@ -950,5 +988,28 @@ impl From<crate::brep::Error> for ReadError {
             crate::brep::Error::Limit => Self::Limit,
             crate::brep::Error::Invalid | crate::brep::Error::Cancelled => Self::Invalid,
         }
+    }
+}
+
+#[cfg(test)]
+mod unowned_tests {
+    use super::has_unowned_topology;
+
+    const SOLID: &str = concat!(
+        "ISO-10303-21;HEADER;FILE_DESCRIPTION(('Test'),'2;1');",
+        "FILE_NAME('x','1970-01-01T00:00:00',(''),(''),'','','');",
+        "FILE_SCHEMA(('AUTOMOTIVE_DESIGN'));ENDSEC;DATA;",
+        "#1=CARTESIAN_POINT('',(0.,0.,0.));#2=VERTEX_POINT('',#1);",
+        "#3=EDGE_LOOP('',(#4));#4=ORIENTED_EDGE('',*,*,#2,.T.);",
+        "#5=CLOSED_SHELL('',(#3));#6=MANIFOLD_SOLID_BREP('',#5);",
+        "ENDSEC;END-ISO-10303-21;"
+    );
+
+    #[test]
+    fn topology_outside_every_solid_is_reported() {
+        assert!(!has_unowned_topology(SOLID));
+        let orphan = SOLID.replace("ENDSEC;END", "#7=VERTEX_POINT('',#1);ENDSEC;END");
+        assert!(has_unowned_topology(&orphan));
+        assert!(!has_unowned_topology("not a STEP file"));
     }
 }
