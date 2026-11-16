@@ -1,16 +1,18 @@
 use super::*;
 struct Cell {
     geometry: TensorCell11,
-    normal: Arc<NormalPolynomial11>,
+    normal: Arc<SquaredNormal11>,
     value: Values,
     depth: u8,
+    split_axis: Option<usize>,
 }
 // A degree11 cell owns144 interval triples plus bounded row headers. 16KiB
 // covers its actual capacities, including a subdivision's old/new overlap.
 const CELL_BYTES: usize = 16 * 1024;
-// Two22x22 restriction grids, root copies, derivative grids through order8,
-// source position jets, Gaussian arrays and Series temporaries coexist within
-// this512KiB envelope. Original normal storage is charged separately.
+// Root construction, source position derivative grids, Gaussian arrays and
+// Series temporaries fit this conservative512KiB workspace envelope. Cached
+// normal derivatives avoid transient22x22 restriction grids. Retained normal
+// capacities and actual source/cell allocations are charged separately.
 const SCRATCH: usize = 512 * 1024;
 fn reservation(
     source: &RetainedTensor11,
@@ -23,8 +25,8 @@ fn reservation(
         .len()
         .checked_mul(std::mem::size_of::<Point>())
         .and_then(|n| n.checked_add(std::mem::size_of::<RetainedTensor11>()))
-        // Source Arc counters/alignment and the fixed calculation ledger.
-        .and_then(|n| n.checked_add(64))
+        // Source Arc counters, fixed calculation ledger and returned receipts.
+        .and_then(|n| n.checked_add(4096))
         .and_then(|n| n.checked_add(capacity.checked_mul(std::mem::size_of::<Cell>())?))
         .and_then(|n| n.checked_add(normals.checked_mul(NORMAL11_BYTES + 64)?))
         .and_then(|n| n.checked_add(live.checked_mul(CELL_BYTES)?))
@@ -58,6 +60,11 @@ fn output(value: Values, center: Point, options: SurfaceOptions11) -> Option<Sur
         remaining_work: 0,
         accounted_peak_bytes: 0,
         evaluated_cells: 0,
+        work_by_stage: [0; 10],
+        axis_samples: [0; 2],
+        axis_unresolved: [0; 2],
+        axis_remainder_max: [[0.; 4]; 2],
+        last_aggregate_widths: None,
     })
 }
 fn score(cell: &Cell, center: Point, options: SurfaceOptions11) -> f64 {
@@ -87,7 +94,10 @@ pub(super) fn calculate(
         reservation(source, options.max_cells, 0, 0)?,
         options.max_bytes,
     )?;
-    budget.charge(source.poles.len().checked_mul(6).ok_or(Error::Limit)? + 128)?;
+    budget.charge(
+        SurfaceStage11::Setup,
+        source.poles.len().checked_mul(6).ok_or(Error::Limit)? + 128,
+    )?;
     let mut bounds = [[f64::INFINITY, f64::NEG_INFINITY]; 3];
     for p in source.poles.iter() {
         for k in 0..3 {
@@ -104,20 +114,26 @@ pub(super) fn calculate(
                 reservation(source, cells.capacity(), n, n + 3)?,
                 options.max_bytes,
             )?;
-            budget.charge(NORMAL11_WORK)?;
+            budget.charge(SurfaceStage11::NormalConstruction, NORMAL11_WORK)?;
             let geometry = source.cell([u, v])?;
             let normal = Arc::new(NormalPolynomial11::new(&geometry)?);
-            let value = quadrature::enclosure(&geometry, &normal, center, budget)?;
+            budget.charge(SurfaceStage11::NormalConstruction, SQUARED11_WORK)?;
+            let normal = Arc::new(SquaredNormal11::new(normal)?);
+            let enclosure = quadrature::enclosure(&geometry, &normal, center, options, budget)?;
             cells.push(Cell {
                 geometry,
                 normal,
-                value,
+                value: enclosure.value,
                 depth: 0,
+                split_axis: enclosure.split_axis,
             });
         }
     }
     loop {
-        budget.charge(cells.len().checked_mul(128).ok_or(Error::Limit)? + 128)?;
+        budget.charge(
+            SurfaceStage11::Reduction,
+            cells.len().checked_mul(128).ok_or(Error::Limit)? + 128,
+        )?;
         let mut total = [I::point(0.); 4];
         // Rebuild every iteration: interval subtraction never accumulates a
         // fictitious historical uncertainty floor in the retained live sum.
@@ -126,14 +142,25 @@ pub(super) fn calculate(
                 *sum = *sum + value;
             }
         }
+        budget.last_aggregate_widths = Some(std::array::from_fn(|k| match k {
+            0 => total[0].width(),
+            1..=3 => (total[k] + I::point(center[k - 1]) * total[0]).width(),
+            _ if total[0].lo > 0. => (I::point(center[k - 4]) + total[k - 3] / total[0]).width(),
+            _ => f64::INFINITY,
+        }));
         if let Some(mut result) = output(total, center, options) {
             // Cancellation remains observable after the final reduction and
             // acceptance check, before publishing any successful receipt.
-            budget.charge(1)?;
+            budget.charge(SurfaceStage11::Publication, 1)?;
             result.work_used = options.max_work - budget.remaining;
             result.remaining_work = budget.remaining;
             result.accounted_peak_bytes = budget.peak;
             result.evaluated_cells = budget.evaluated;
+            result.work_by_stage = budget.work_by_stage;
+            result.axis_samples = budget.axis_samples;
+            result.axis_unresolved = budget.axis_unresolved;
+            result.axis_remainder_max = budget.axis_remainder_max;
+            result.last_aggregate_widths = budget.last_aggregate_widths;
             return Ok(result);
         }
         let index = cells
@@ -156,16 +183,18 @@ pub(super) fn calculate(
         )?;
         // Actual degree11 split: at most12 rows, two144-control children,
         // directed12-level de Casteljau arithmetic and transient transpose.
-        budget.charge(262_144)?;
+        budget.charge(SurfaceStage11::Subdivision, 32_768)?;
         let old = cells.swap_remove(index);
-        let children = old.geometry.subdivide(usize::from(old.depth % 2 == 1))?;
+        let axis = old.split_axis.unwrap_or(usize::from(old.depth % 2 == 1));
+        let children = old.geometry.subdivide(axis)?;
         for geometry in children {
-            let value = quadrature::enclosure(&geometry, &old.normal, center, budget)?;
+            let enclosure = quadrature::enclosure(&geometry, &old.normal, center, options, budget)?;
             cells.push(Cell {
                 geometry,
                 normal: old.normal.clone(),
-                value,
+                value: enclosure.value,
                 depth: old.depth + 1,
+                split_axis: enclosure.split_axis,
             });
         }
     }

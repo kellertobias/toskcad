@@ -1,5 +1,80 @@
 use super::*;
 use num_rational::BigRational as Q;
+#[test]
+fn actual_surface_failure_diagnostics_preserve_only_successful_resource_debits() {
+    let source = RetainedTensor11::new(
+        [1, 1],
+        (0..12)
+            .flat_map(|i| (0..12).map(move |j| [i as f64, j as f64, 3.]))
+            .collect(),
+    )
+    .unwrap();
+    let invalid = source
+        .surface_properties_with_diagnostics(
+            SurfaceOptions11 {
+                area_width_mm2: 0.,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap_err();
+    assert!(!invalid.execution_started);
+    assert_eq!(invalid.attempted_stage, None);
+    assert_eq!(invalid.work_used, 0);
+    assert_eq!(invalid.work_by_stage, [0; 10]);
+    let cancelled = source
+        .surface_properties_with_diagnostics(Default::default(), Some(&|| true))
+        .unwrap_err();
+    assert!(cancelled.execution_started);
+    assert_eq!(cancelled.error, Error::Cancelled);
+    assert_eq!(cancelled.attempted_stage, Some(SurfaceStage11::Setup));
+    assert_eq!(cancelled.attempted_work, 1);
+    assert_eq!(cancelled.work_used, 0);
+    let work = source
+        .surface_properties_with_diagnostics(
+            SurfaceOptions11 {
+                max_work: 1,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap_err();
+    assert_eq!(work.error, Error::Limit);
+    assert_eq!(work.work_used, 1);
+    assert_eq!(work.work_by_stage.iter().sum::<usize>(), 1);
+    assert!(work.attempted_work > work.remaining_work);
+    let bytes = source
+        .surface_properties_with_diagnostics(
+            SurfaceOptions11 {
+                max_bytes: 1,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap_err();
+    assert_eq!(bytes.error, Error::Limit);
+    assert_eq!(bytes.attempted_stage, Some(SurfaceStage11::Storage));
+    assert!(bytes.attempted_bytes > 1);
+    assert_eq!(bytes.accounted_peak_bytes, 0);
+    assert_eq!(bytes.work_by_stage.iter().sum::<usize>(), bytes.work_used);
+    let result = source
+        .surface_properties_with_diagnostics(Default::default(), None)
+        .unwrap();
+    assert_eq!(result.work_by_stage.iter().sum::<usize>(), result.work_used);
+    assert_eq!(
+        result.work_by_stage[SurfaceStage11::NormalConstruction as usize],
+        NORMAL11_WORK + SQUARED11_WORK
+    );
+    assert_eq!(
+        result.work_by_stage[SurfaceStage11::Publication as usize],
+        1
+    );
+    contains(result.area_mm2, q(121));
+    assert_eq!(
+        source.surface_properties(Default::default(), None).unwrap(),
+        result
+    );
+}
 fn q(n: i64) -> Q {
     Q::from_integer(n.into())
 }

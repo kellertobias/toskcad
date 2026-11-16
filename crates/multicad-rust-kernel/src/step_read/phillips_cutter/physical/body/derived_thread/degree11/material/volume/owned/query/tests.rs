@@ -56,6 +56,57 @@ pub(crate) fn actual_owned(
 }
 
 #[test]
+fn actual_m3_owned_d11_whole_source_face_surface_meets_distinct_requested_goals() {
+    let owner = actual_owned("surface-whole-face", false, false, 1);
+    // Same source-local extent and literal default linear policy as the
+    // Native legacy contract; no Core dependency or inferred authored size.
+    let extent = owner
+        .local_enclosure_bounds_mm()
+        .into_iter()
+        .flatten()
+        .map(f64::abs)
+        .fold(1_f64, f64::max);
+    let linear = 1e-7;
+    let source = owner.thread_faces()[0].source().clone();
+    drop(owner);
+    eprintln!("ACTUAL_M3_D11_WHOLE_SURFACE spans{:?}", source.spans());
+    let original = source.clone();
+    for (label, area, moment, centroid) in [
+        ("initial", 1e-3, 1e-3, 1e-3),
+        ("default", 1e-5, 1e-5, 1e-5),
+        ("native_proxy", 1e-7, 1e-7, 1e-8),
+        (
+            "native_contract",
+            linear * extent / 16.,
+            linear * extent * extent / 16.,
+            linear / 16.,
+        ),
+    ] {
+        let options = crate::tapered_thread::SurfaceOptions11 {
+            area_width_mm2: area,
+            first_moment_width_mm3: moment,
+            centroid_width_mm: centroid,
+            ..Default::default()
+        };
+        let result = source.surface_properties_with_diagnostics(options, None);
+        eprintln!("ACTUAL_M3_D11_WHOLE_SURFACE {label} {result:?}");
+        let result = result.unwrap();
+        assert!(result.area_mm2[0] > 0.);
+        assert!(I::new(result.area_mm2[0], result.area_mm2[1]).width() <= area);
+        for b in result.first_moment_mm3 {
+            assert!(I::new(b[0], b[1]).width() <= moment);
+        }
+        for b in result.centroid_mm {
+            assert!(I::new(b[0], b[1]).width() <= centroid);
+        }
+        assert_eq!(result.work_by_stage.iter().sum::<usize>(), result.work_used);
+        assert!(result.work_used <= options.max_work);
+        assert!(result.accounted_peak_bytes <= options.max_bytes);
+        assert_eq!(source, original);
+    }
+}
+
+#[test]
 fn actual_m3_owned_d11_selected_source_cell_surface_survives_all_owner_drop() {
     use crate::tapered_thread::{RetainedTensor11, SurfaceOptions11};
     for left in [false, true] {

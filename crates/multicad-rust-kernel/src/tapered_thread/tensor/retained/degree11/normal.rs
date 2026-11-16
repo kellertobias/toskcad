@@ -1,6 +1,8 @@
 //! Exact degree-(21,21) polynomial P_u cross P_v of a degree-eleven cell.
 //! Calculation only: a polynomial hull does not certify occupied material.
 use super::*;
+mod squared;
+pub(super) use squared::{SQUARED11_WORK, SquaredNormal11};
 /// Covers132*132 coefficient pairs, all three directed cross components,
 /// product weights, differentiation, allocation/copies and setup.
 pub const NORMAL11_WORK: usize = 400_000;
