@@ -522,6 +522,39 @@ fn actual_file_qualification_exact_frontiers_cancel_and_same_source_retry() {
         .unwrap(),
     );
     let proposal_calls = phase_calls.get();
+    assert!(proposal_calls > 2);
+    let visited = std::cell::Cell::new(0usize);
+    let late_face_cancel = || {
+        visited.set(visited.get() + 1);
+        visited.get() == proposal_calls - 2
+    };
+    // The final physical face precedes CLOSED_SHELL and MANIFOLD_SOLID_BREP.
+    // This requests real public cancellation, not an injected serializer error.
+    assert!(matches!(
+        propose(
+            &source,
+            Options {
+                maximum_work: receipt.proposal_work_used,
+                additional_resident_bytes: actual.capacity(),
+                ..Default::default()
+            },
+            Some(&late_face_cancel)
+        ),
+        Err(Error::Cancelled)
+    ));
+    assert_eq!(visited.get(), proposal_calls - 2);
+    let after_cancel = propose(
+        &source,
+        Options {
+            maximum_work: receipt.proposal_work_used,
+            additional_resident_bytes: actual.capacity(),
+            ..Default::default()
+        },
+        None,
+    )
+    .unwrap();
+    assert!(after_cancel.as_str() == actual);
+    drop(after_cancel);
     phase_calls.set(0);
     drop(
         reader::read(
