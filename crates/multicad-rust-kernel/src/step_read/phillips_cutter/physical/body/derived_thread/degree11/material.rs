@@ -567,5 +567,5 @@ mod tests;
 mod volume;
 pub use volume::{
     Degree11MaterialVolume, Degree11MaterialVolumeOptions, Degree11OwnedMaterialOptions,
-    OwnedDegree11Material,
+    OwnedDegree11Material, SuppliedDegree11MaterialMatch, SuppliedDegree11MaterialOptions,
 };

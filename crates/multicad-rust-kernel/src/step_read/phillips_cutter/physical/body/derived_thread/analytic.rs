@@ -6,7 +6,7 @@ mod common_chart;
 mod curve;
 mod supplied;
 use supplied::SuppliedLaw;
-pub use supplied::SuppliedThreadCorrespondence;
+pub use supplied::{SuppliedThreadCorrespondence, SuppliedThreadRimTransfer};
 mod finite;
 pub use common_chart::CommonChartPeriodicThreadRepair;
 pub use finite::{
@@ -64,6 +64,7 @@ pub struct AnalyticThreadRepair<'a, 'input> {
     chart: Option<CommonMouthChart>,
     frame: [Point; 3],
     transfers: Vec<AnalyticThreadTransfer>,
+    rims: Vec<SuppliedThreadRimTransfer>,
     new_work: usize,
     inherited_work: usize,
     retained: usize,
@@ -157,6 +158,7 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
                 + supplied.map_or(0, |law| {
                     supplied::resident_bytes(law.source)
                         + std::mem::size_of::<SuppliedThreadCorrespondence<'_, '_, '_>>()
+                        + 8 * std::mem::size_of::<SuppliedThreadRimTransfer>()
                 });
             if base.saturating_add(SCRATCH_ANALYTIC) > options.maximum_bytes {
                 return Err(ReadError::Limit);
@@ -238,6 +240,7 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
                 Target::raw(frame)
             };
             let mut transfers = Vec::with_capacity(raw.len());
+            let mut rims = Vec::with_capacity(if supplied.is_some() { raw.len() } else { 0 });
             for (index, r) in raw.iter().enumerate() {
                 let distance =
                     curve::literal_transfer(r, &reference, index, &target, &shell, &mut work)?;
@@ -257,10 +260,36 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
                     distance_mm: bounds[0],
                     derivative_mm: [bounds[1], bounds[2]],
                 });
+                if let Some(law) = supplied {
+                    let entry = curve::entry_transfer(
+                        r,
+                        &reference,
+                        index,
+                        &target,
+                        &shell,
+                        curve::EntryLaw {
+                            rotation: &rotation,
+                            factors: &geometry,
+                            thread: &thread,
+                            source_z: law.source.visible_thread_interval_mm()[0],
+                        },
+                        &mut work,
+                    )?;
+                    rims.push(SuppliedThreadRimTransfer {
+                        face_entity: r.face,
+                        surface_entity: r.surface,
+                        original_rail_entities: r.rails,
+                        original_v_start_cell: r.entry / 11,
+                        original_u_cells: (r.ids.len() - 1) / 11,
+                        distance_mm: entry[0],
+                        derivative_mm: entry[1],
+                    });
+                }
             }
             work.step(1)?;
-            let retained =
-                base + transfers.capacity() * std::mem::size_of::<AnalyticThreadTransfer>();
+            let retained = base
+                + transfers.capacity() * std::mem::size_of::<AnalyticThreadTransfer>()
+                + rims.capacity() * std::mem::size_of::<SuppliedThreadRimTransfer>();
             Ok(AnalyticThreadRepair {
                 body,
                 thread,
@@ -268,6 +297,7 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
                 chart,
                 frame,
                 transfers,
+                rims,
                 new_work: allowance - work.remaining,
                 inherited_work: self.work_used(),
                 retained,

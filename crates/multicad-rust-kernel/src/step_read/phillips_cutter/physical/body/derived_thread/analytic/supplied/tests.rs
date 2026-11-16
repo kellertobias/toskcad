@@ -231,3 +231,28 @@ fn actual_multistart_body_refuses_a_different_single_start_author_before_generat
         assert_eq!(head.body().inferred_thread_spec(), before);
     });
 }
+
+#[test]
+fn original_entry_rim_rotation_cannot_bypass_a_reduced_whole_source_work_budget() {
+    let (source, frame) = actual_m3_parts(true, false);
+    let input = text(&source, frame);
+    with_head(&input, &mut |head| {
+        let before = head.body().inferred_thread_spec();
+        let receipt = head
+            .supplied_thread_correspondence(&source, frame, Default::default(), None)
+            .unwrap();
+        let options = AnalyticThreadOptions {
+            maximum_work: receipt.new_work_used() - 1000,
+            ..Default::default()
+        };
+        assert!(matches!(
+            head.supplied_thread_correspondence(&source, frame, options, None),
+            Err(PhillipsReadError::Limit)
+        ));
+        assert!(
+            head.supplied_thread_correspondence(&source, frame, Default::default(), None)
+                .is_ok()
+        );
+        assert_eq!(head.body().inferred_thread_spec(), before);
+    });
+}

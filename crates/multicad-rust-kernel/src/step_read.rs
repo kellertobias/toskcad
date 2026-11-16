@@ -1148,7 +1148,10 @@ pub use phillips_cutter::{
     PeriodicThreadRepair as PhillipsPeriodicThreadRepair,
     PeriodicThreadSource as PhillipsPeriodicThreadSource,
     PeriodicVolumeOptions as PhillipsPeriodicVolumeOptions,
+    SuppliedDegree11MaterialMatch as PhillipsSuppliedDegree11MaterialMatch,
+    SuppliedDegree11MaterialOptions as PhillipsSuppliedDegree11MaterialOptions,
     SuppliedThreadCorrespondence as PhillipsSuppliedThreadCorrespondence,
+    SuppliedThreadRimTransfer as PhillipsSuppliedThreadRimTransfer,
     ThreadCarrierTransfer as PhillipsThreadCarrierTransfer,
 };
 

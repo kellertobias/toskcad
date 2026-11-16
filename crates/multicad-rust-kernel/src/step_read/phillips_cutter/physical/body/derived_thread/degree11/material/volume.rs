@@ -2,7 +2,9 @@
 //! original D11 signed flux minus the actual contained closed Cutter volume.
 use super::*;
 use crate::head_profile::{RepairedHeadVolume, RepairedHeadVolumeOptions};
+mod supplied;
 mod tensor;
+pub use supplied::{SuppliedDegree11MaterialMatch, SuppliedDegree11MaterialOptions};
 #[cfg(test)]
 mod tests;
 const WORK_LIMIT: usize = 512_000_000;

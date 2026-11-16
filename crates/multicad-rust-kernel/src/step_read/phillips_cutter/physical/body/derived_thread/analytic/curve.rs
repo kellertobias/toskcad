@@ -343,6 +343,94 @@ pub(super) fn world_transfer(
     }
 }
 
+// Whole ORIGINAL raw entry-rim coefficients, with the already-earned actual
+// A-angle factors. B is fixed at its ACTUAL retained entry coefficient here;
+// interior axial-cell errors are deliberately not substituted for that rim.
+pub(super) struct EntryLaw<'l> {
+    pub rotation: &'l rotation::Rotation,
+    pub factors: &'l Factors,
+    pub thread: &'l crate::helical_thread::Thread,
+    pub source_z: f64,
+}
+pub(super) fn entry_transfer(
+    raw: &Raw,
+    reference: &crate::step::helical::ThreadSplines,
+    index: usize,
+    frame: &Target,
+    shell: &Shell<'_, '_>,
+    law: EntryLaw<'_>,
+    work: &mut Work<'_>,
+) -> Result<[f64; 2]> {
+    let EntryLaw {
+        rotation,
+        factors,
+        thread,
+        source_z,
+    } = law;
+    work.step(16384 + raw.ids.len().saturating_mul(512))?;
+    let radial = reference.bands.get(index).ok_or(ReadError::Unsupported)?;
+    let axial = reference
+        .axial
+        .poles
+        .get(raw.entry)
+        .ok_or(ReadError::Unsupported)?;
+    let z = *reference
+        .heights
+        .get(raw.entry)
+        .ok_or(ReadError::Unsupported)?;
+    require(raw.ids.len() == radial.poles.len())?;
+    let [origin, u, v, n] = frame.columns;
+    let mut differences: Vec<[I; 3]> = Vec::with_capacity(raw.ids.len());
+    let mut literal = 0_f64;
+    let mut literal_du = 0_f64;
+    for (row, pole) in raw.ids.iter().zip(&radial.poles) {
+        let id = *row.get(raw.entry).ok_or(ReadError::Unsupported)?;
+        let a = pole.map(I::point);
+        let b = axial.map(I::point);
+        let xy = mul(a, b);
+        let expected = std::array::from_fn::<_, 3, _>(|k| {
+            I::point(origin[k])
+                + I::point(u[k]) * xy[0]
+                + I::point(v[k]) * xy[1]
+                + I::point(n[k]) * (I::point(z) - I::point(frame.z_shift))
+        });
+        let actual = shell.point(id)?.map(|x| I::new(x.next_down(), x.next_up()));
+        let difference = std::array::from_fn(|k| actual[k] - expected[k]);
+        literal = literal.max(reduce::l1(difference));
+        if let Some(previous) = differences.last() {
+            literal_du = literal_du.max(reduce::l1(std::array::from_fn(|k| {
+                I::point(11.) * (difference[k] - previous[k])
+            })));
+        }
+        differences.push(difference);
+    }
+    let angle = I::point(thread.helical_rate().signum()) * I::point(source_z)
+        / I::point(thread.helical_rate().abs());
+    let exact_b = rotation.sin_cos(angle, work)?;
+    let b_error = ((I::point(axial[0]) - exact_b[0]).square()
+        + (I::point(axial[1]) - exact_b[1]).square())
+    .sqrt();
+    let a = *factors.a.get(index).ok_or(ReadError::Unsupported)?;
+    let au = *factors.au.get(index).ok_or(ReadError::Unsupported)?;
+    let dot =
+        |p: Point, q: Point| (0..3).fold(I::point(0.), |s, k| s + I::point(p[k]) * I::point(q[k]));
+    let scale = (I::point(dot(u, u).hi.max(dot(v, v).hi)) + I::point(dot(u, v).magnitude())).sqrt();
+    let normal = dot(n, n).sqrt();
+    let error = [
+        I::point(a[0]) + (I::point(factors.major) + I::point(a[0])) * b_error,
+        I::point(a[1]) + (I::point(au) + I::point(a[1])) * b_error,
+    ];
+    let bounds = [
+        (I::point(literal)
+            + scale * error[0]
+            + normal * I::point((I::point(z) - I::point(source_z)).magnitude()))
+        .hi,
+        (I::point(literal_du) + scale * error[1]).hi,
+    ];
+    require(bounds.into_iter().all(|x| x.is_finite() && x >= 0.))?;
+    Ok(bounds)
+}
+
 #[cfg(test)]
 mod tests;
 
