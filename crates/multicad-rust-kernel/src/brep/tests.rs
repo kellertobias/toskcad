@@ -372,6 +372,97 @@ fn sections_lie_on_the_exact_boundary_and_close() {
     );
 }
 
+#[test]
+fn sections_publish_exact_lines_and_ellipses() {
+    use crate::warped_union::Curve as SectionCurve;
+    use std::f64::consts::TAU;
+    let edges = |solid: &Solid, origin: Point, normal: Point| {
+        section::section_edges(solid, origin, normal, options(0.01), None).unwrap()
+    };
+    // The frustum cut across its axis at mid-height: one whole circle of
+    // radius 6.
+    let frustum = solid(FRUSTUM);
+    let loops = edges(&frustum, [0., 0., 5.], [0., 0., 1.]);
+    assert_eq!(loops.len(), 1);
+    let [edge] = loops[0].as_slice() else {
+        panic!("{loops:?}")
+    };
+    let SectionCurve::Ellipse(arc) = edge.curve else {
+        panic!("{edge:?}")
+    };
+    assert_eq!(arc.sweep_rad(), TAU);
+    let ellipse = arc.ellipse();
+    assert!(
+        ellipse.semiaxes_mm().iter().all(|r| (r - 6.).abs() < 1e-9),
+        "{ellipse:?}"
+    );
+    assert!(distance(ellipse.center_mm(), [0., 0., 5.]) < 1e-9);
+
+    // Tilted through the side and both caps: two chords of the caps and two
+    // arcs of the cone's ellipse. The cone x^2 + y^2 = (8 - 0.4 z)^2 meets
+    // the plane z = 5 + 0.5 x in the ellipse whose vertices on y = 0 solve
+    // x = +-(8 - 0.4 (5 + 0.5 x)).
+    let normal = [-0.5, 0., 1.];
+    let loops = edges(&frustum, [0., 0., 5.], normal);
+    assert_eq!(loops.len(), 1, "{loops:?}");
+    let kinds: Vec<_> = loops[0]
+        .iter()
+        .map(|e| matches!(e.curve, SectionCurve::Line))
+        .collect();
+    assert_eq!(kinds.iter().filter(|&&line| line).count(), 0, "{kinds:?}");
+    let [edge] = loops[0].as_slice() else {
+        panic!("{loops:?}")
+    };
+    let SectionCurve::Ellipse(arc) = edge.curve else {
+        panic!("{edge:?}")
+    };
+    let [right, left] = [6. / 1.2, -6. / 0.8];
+    let ellipse = arc.ellipse();
+    assert!((ellipse.semiaxes_mm()[0] - 0.5 * (right - left) * 1.25f64.sqrt()).abs() < 1e-9);
+    assert!((ellipse.center_mm()[0] - 0.5 * (right + left)).abs() < 1e-9);
+    // Every crossing of the mesh lies on that exact arc.
+    for ring in section::section(&frustum, [0., 0., 5.], normal, options(0.01), None).unwrap() {
+        for p in ring {
+            assert!(ellipse.parameter_at(p, 1e-9).is_some(), "{p:?}");
+        }
+    }
+
+    // Steep enough to reach both caps: two exact chords and two arcs.
+    let normal = [-2., 0., 1.];
+    let loops = edges(&frustum, [0., 0., 5.], normal);
+    assert_eq!(loops.len(), 1, "{loops:?}");
+    let lines = loops[0]
+        .iter()
+        .filter(|e| matches!(e.curve, SectionCurve::Line))
+        .count();
+    let arcs = loops[0]
+        .iter()
+        .filter(|e| matches!(e.curve, SectionCurve::Ellipse(_)))
+        .count();
+    assert_eq!((lines, arcs), (2, 2), "{loops:?}");
+    for pair in loops[0].iter().zip(loops[0].iter().cycle().skip(1)) {
+        assert_eq!(pair.0.ends_mm[1], pair.1.ends_mm[0]);
+    }
+
+    // A sphere's section is a circle; a torus keeps its chords.
+    let sphere = solid(SPHERE);
+    let loops = edges(&sphere, [0., 0., 3.], [0., 0., 1.]);
+    assert!(
+        matches!(loops[0].as_slice(), [e] if matches!(e.curve, SectionCurve::Ellipse(a) if (a.ellipse().semiaxes_mm()[0] - 4.).abs() < 1e-9))
+    );
+    let torus = solid(TORUS);
+    let bounds = torus.bounds_mm();
+    let middle = std::array::from_fn(|i| 0.5 * (bounds[0][i] + bounds[1][i]));
+    let loops = edges(&torus, middle, [1., 0., 0.]);
+    assert!(!loops.is_empty());
+    assert!(
+        loops
+            .iter()
+            .flatten()
+            .all(|e| matches!(e.curve, SectionCurve::Line))
+    );
+}
+
 const STATED: &str = "#23 = CARTESIAN_POINT('',(8.,0.,0.))";
 const DECLARED: &str = "UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-07)";
 

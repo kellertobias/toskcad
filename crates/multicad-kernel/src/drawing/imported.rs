@@ -26,33 +26,46 @@ pub(super) fn section(
         .iter()
         .map(|input| members(input.solid))
         .collect::<Option<Vec<_>>>()?;
-    let [u, v, normal] = planar::view_axes(options.frame);
+    let [_, _, normal] = planar::view_axes(options.frame);
     let origin: [f64; 3] = std::array::from_fn(|i| options.frame.origin[i] + normal[i] * offset);
-    let flat = |p: [f64; 3]| {
-        let d: [f64; 3] = std::array::from_fn(|i| p[i] - options.frame.origin[i]);
-        let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-        [dot(d, u), dot(d, v)]
-    };
     let mut vectors = Vec::new();
     for (source, (input, bodies)) in solids.iter().zip(bodies).enumerate() {
+        let policy = input.solid.geometry_policy();
         // Each solid of a compound is hatched as its own region: solids may
         // touch, and their loops must not be read as one even-odd area.
         for body in bodies {
             let deflection = options.chord_tolerance_mm.max(1e-3);
-            let rings = match body.section(origin, normal, deflection) {
-                Ok(loops) => loops
-                    .into_iter()
-                    .map(|ring| ring.into_iter().map(flat).collect())
-                    .collect(),
-                Err(error) => return Some(Err(error)),
-            };
-            match section::sampled::publish(input, rings, options) {
-                Ok(published) => {
-                    vectors.extend(published.into_iter().map(|vector| ProjectedVector {
-                        source_index: source,
-                        ..vector
-                    }))
-                }
+            let published = body
+                .section_edges(origin, normal, deflection)
+                .and_then(|loops| {
+                    section::warped::publish_world(
+                        loops,
+                        options,
+                        policy,
+                        source,
+                        input.hatch.is_some(),
+                    )
+                })
+                .and_then(|(mut output, boundary)| {
+                    let Some(hatch) = input.hatch else {
+                        return Ok(output);
+                    };
+                    let mut curves = (options.maximum_curves as usize).saturating_sub(output.len());
+                    let mut points = (options.maximum_points as usize)
+                        .saturating_sub(output.iter().map(|v| v.preview_mm.len()).sum());
+                    output.extend(section::publish_hatch(
+                        source,
+                        hatch,
+                        &boundary,
+                        policy.linear_tolerance_mm,
+                        &mut curves,
+                        &mut points,
+                        &mut multicad_rust_kernel::section_hatch::Budget::default(),
+                    )?);
+                    Ok(output)
+                });
+            match published {
+                Ok(published) => vectors.extend(published),
                 Err(error) => return Some(Err(error)),
             }
         }
