@@ -565,4 +565,7 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
 mod tests;
 
 mod volume;
-pub use volume::{Degree11MaterialVolume, Degree11MaterialVolumeOptions};
+pub use volume::{
+    Degree11MaterialVolume, Degree11MaterialVolumeOptions, Degree11OwnedMaterialOptions,
+    OwnedDegree11Material,
+};

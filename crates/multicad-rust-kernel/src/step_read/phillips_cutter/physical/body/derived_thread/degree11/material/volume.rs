@@ -303,3 +303,6 @@ fn allocate_component_width(
     }
     Ok((I::point(remaining.lo) / (I::point(8.) * I::point(determinant.hi))).lo)
 }
+
+mod owned;
+pub use owned::{Degree11OwnedMaterialOptions, OwnedDegree11Material};
