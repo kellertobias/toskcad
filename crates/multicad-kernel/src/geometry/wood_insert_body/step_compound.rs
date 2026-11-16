@@ -15,7 +15,7 @@ pub struct PartitionedStepVerification {
     pub source_known_members: Vec<(u32, EntryChamferBoundaryProof)>,
     /// Independently decoded supports closed by an explicit bounded healing.
     /// These intervals are not raw-file occupied mass.
-    pub healed_members: Vec<(u32, HealedHangerStepVerification)>,
+    pub healed_members: Vec<(u32, HealedSupportStepVerification)>,
     /// Independently decoded periodic repairs, never raw occupied STEP mass.
     pub periodic_members: Vec<(u32, DecodedPeriodicPhillipsStepVerification)>,
 }
@@ -42,6 +42,7 @@ impl Solid {
             || self.rust_periodic_repaired_phillips_source().is_some()
             || self.clipped_npt_body().is_some()
             || self.hanger_body().is_some()
+            || self.orthogonal_seat_body().is_some()
             || self
                 .rust_compound()
                 .is_some_and(|compound| compound.members().any(Self::has_partitioned_step_source))
@@ -286,6 +287,28 @@ impl Solid {
                         });
                     include(&mut result.members.bounds_mm, proof.decoded_bounds_mm);
                     result.insert_correspondence.push((cursor as u32, proof));
+                } else if let Some((body, frame)) = leaf.orthogonal_seat_body() {
+                    if count != 1 {
+                        return Err(fail(
+                            GeometryErrorKind::InvalidResult,
+                            "Seated support requires one connected source member",
+                        ));
+                    }
+                    let proof = body.verify_step_member(
+                        &file,
+                        actual[0],
+                        frame,
+                        GeometryPolicy {
+                            linear_tolerance_mm: leaf.policy.linear_tolerance_mm.min(tolerance),
+                            ..leaf.policy
+                        },
+                        interrupt,
+                    )?;
+                    include(
+                        &mut result.members.bounds_mm,
+                        proof.correspondence_enclosure_mm,
+                    );
+                    result.healed_members.push((cursor as u32, proof));
                 } else if let Some((body, frame)) = leaf.hanger_body() {
                     assert_eq!(count, 1, "single connected hanger source");
                     let proof = body.verify_step_member(

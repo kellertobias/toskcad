@@ -2990,12 +2990,12 @@ impl Solid {
             SolidBody::WoodInsert(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::ClippedNpt(body) => body.supports_step(self.policy),
             SolidBody::Hanger(body, frame) => body.supports_step(*frame, self.policy),
+            SolidBody::OrthogonalSeats(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::LiteralNpt(body) => body.supports_step(),
             SolidBody::RepairedPhillips(..) => {
                 self.rust_periodic_repaired_phillips_source().is_some()
             }
-            SolidBody::OrthogonalSeats(..)
-            | SolidBody::Line8Nut(..)
+            SolidBody::Line8Nut(..)
             | SolidBody::ExternalNptStock(..)
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
@@ -3220,6 +3220,9 @@ impl Solid {
             SolidBody::WoodInsert(body, frame) => body.append_step(writer, *frame, self.policy),
             SolidBody::ClippedNpt(body) => body.append_step(writer, self.policy),
             SolidBody::Hanger(body, frame) => body.append_step(writer, *frame, self.policy),
+            SolidBody::OrthogonalSeats(body, frame) => {
+                body.append_step(writer, *frame, self.policy)
+            }
             SolidBody::LiteralNpt(body) => body.append_step(writer),
             SolidBody::RepairedPhillips(..) => self
                 .append_periodic_phillips_step(writer, None)
@@ -3230,8 +3233,7 @@ impl Solid {
                     GeometryErrorKind::Unsupported => step::StepError::Unsupported,
                     _ => step::StepError::InvalidGeometry,
                 }),
-            SolidBody::OrthogonalSeats(..)
-            | SolidBody::Line8Nut(..)
+            SolidBody::Line8Nut(..)
             | SolidBody::ExternalNptStock(..)
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)

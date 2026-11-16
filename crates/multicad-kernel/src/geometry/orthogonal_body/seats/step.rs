@@ -63,11 +63,13 @@ impl OrthogonalSeatBody {
         }
         let placement = transport::placement(frame)?;
         let cached = self.qualified_step.borrow().as_ref().cloned();
-        if let Some((quality, pose, file)) = cached {
-            if quality == policy && pose == frame && file.matches_source(&self.source, placement) {
-                checkpoint(interrupt)?;
-                return Ok(file);
-            }
+        if let Some((quality, pose, file)) = cached
+            && quality == policy
+            && pose == frame
+            && file.matches_source(&self.source, placement)
+        {
+            checkpoint(interrupt)?;
+            return Ok(file);
         }
         self.validate_frame(frame, policy)?;
         let file = Rc::new(

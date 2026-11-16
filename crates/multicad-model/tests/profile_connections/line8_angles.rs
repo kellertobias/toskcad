@@ -85,6 +85,194 @@ fn fixture(
     session.commit(draft.prepared).unwrap();
     (session, members, request, outputs)
 }
+
+#[test]
+fn rust_angle_exports_actual_cold_project_with_explicit_healed_mass_provenance() {
+    use multicad_core::exchange::{ExportResult, Scope, ScopeRoot, SetDefinition, prepare_set};
+    use multicad_model::export::{
+        ExportWorker, Exporter, StepVerificationMethod, verify_rust_step_shape_receipt,
+    };
+    for case in 0..3 {
+        let (mut session, _, _, outputs) = fixture(case);
+        let set = EntityId::new();
+        session
+            .commit(
+                prepare_set(
+                    &session,
+                    session.revision(),
+                    actor(),
+                    set,
+                    "Seated angle STEP",
+                    &SetDefinition {
+                        scope: Scope {
+                            root: ScopeRoot::Explicit {
+                                entities: vec![outputs[0].body],
+                            },
+                            tags: None,
+                        },
+                        ..Default::default()
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let mut bytes = Vec::new();
+        project_file::write(
+            &ProjectFile::new(session.document().clone()).unwrap(),
+            &mut bytes,
+            Default::default(),
+        )
+        .unwrap();
+        let reopened = project_file::read(
+            &mut bytes.as_slice(),
+            Default::default(),
+            &project_file::supported_capabilities(),
+        )
+        .unwrap()
+        .project;
+        assert_eq!(&reopened.document, session.document());
+        let cold = Session::new(reopened.document).unwrap();
+        let compiled = super::line8_nuts::compiler()
+            .compile_sources_with_backend(
+                cold.document(),
+                cold.revision(),
+                &[outputs[0].feature],
+                GeometryBackend::Rust,
+                None,
+            )
+            .unwrap();
+        let solid = compiled.solid(outputs[0].feature).unwrap();
+        assert!(solid.supports_step_export(), "Angle case={case}");
+        let snapshot = compiled.snapshot();
+        let worker =
+            ExportWorker::with_geometry_backend(Exporter::default(), GeometryBackend::Rust)
+                .unwrap();
+        let wait = |id| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+            loop {
+                if let Some(reply) = worker.poll() {
+                    assert_eq!(reply.id, id);
+                    break reply;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Angle export timed out"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        };
+        let id = worker
+            .preview(cold.document(), cold.revision(), set, actor())
+            .unwrap();
+        let ExportResult::Preview(preview) = wait(id).result else {
+            panic!("Expected angle export preview")
+        };
+        let preview = preview.unwrap();
+        assert!(preview.can_run(), "case={case}: {preview:?}");
+        let directory = tempfile::tempdir().unwrap();
+        let id = worker
+            .run(
+                cold.document(),
+                cold.revision(),
+                &preview.key,
+                directory.path(),
+                actor(),
+            )
+            .unwrap();
+        let ExportResult::Run(result) = wait(id).result else {
+            panic!("Expected angle export run")
+        };
+        let result = result.unwrap();
+        assert_eq!(result.files.len(), 1);
+        let path =
+            std::path::Path::new(&result.directory).join(&result.files[0].artifact.output.filename);
+        let receipt = verify_rust_step_shape_receipt(
+            &path,
+            solid,
+            &snapshot.shapes[&outputs[0].feature],
+            1e-7,
+        )
+        .unwrap();
+        assert_eq!(
+            receipt.method,
+            StepVerificationMethod::DecodedSupportHealing
+        );
+        assert!(receipt.decoded_volume_mm3.is_none());
+        assert!(receipt.retained_members.is_empty() && receipt.periodic_members.is_empty());
+        assert_eq!(receipt.healed_members.len(), 1);
+        assert!(receipt.document_ownership.as_ref().unwrap().work_used > 0);
+        let proof = &receipt.healed_members[0];
+        assert_eq!(proof.member_index, 0);
+        for bounds in [
+            proof.healed_volume_bounds_mm3,
+            proof.source_volume_bounds_mm3,
+        ] {
+            assert!(bounds[0] > 0. && bounds[0] <= bounds[1]);
+        }
+        assert!(proof.source_to_healed_position_error_mm <= 1e-7);
+        assert!(
+            proof
+                .source_support_derivative_error_mm
+                .iter()
+                .all(|e| *e <= 1e-7)
+        );
+        assert!(proof.original_coedge_derivative_error_mm <= 1e-7);
+        assert!(proof.matched_entities > 0 && proof.literal_binding_work > 0);
+        let actual = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            solid
+                .verify_partitioned_step_source(&actual, 1e-7, Some(&|| true))
+                .unwrap()
+                .unwrap_err()
+                .kind,
+            multicad_kernel::GeometryErrorKind::Cancelled,
+        );
+        // Exercise the same real source as one leaf in a mixed file. This
+        // verifies every emitted member rather than assigning a nominal sum.
+        let mut writer = multicad_kernel::rust_kernel::step::Writer::new();
+        writer
+            .append_box(
+                [2, 3, 4].map(|n| multicad_kernel::rust_kernel::Rational::new(n, 1).unwrap()),
+                [-40., 0., 0.],
+                [1., 0., 0.],
+                [0., 1., 0.],
+            )
+            .unwrap();
+        let ordinary = Solid::import_rust_step(
+            &writer.finish().unwrap(),
+            EntityId::new(),
+            Default::default(),
+        )
+        .unwrap();
+        let compound =
+            Solid::compound_named(&[&ordinary, solid], EntityId::new(), Default::default())
+                .unwrap();
+        let path = directory.path().join("mixed-angle.step");
+        compound.write_step(&path).unwrap();
+        let actual = std::fs::read_to_string(path).unwrap();
+        let mixed = compound
+            .verify_partitioned_step_source(&actual, 1e-7, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(mixed.members.solid_count, 2);
+        assert_eq!(mixed.members.decoded_scalar_members, vec![(0, 24.)]);
+        assert_eq!(mixed.healed_members.len(), 1);
+        assert_eq!(mixed.healed_members[0].0, 1);
+        let mut orphan = actual;
+        orphan.insert_str(
+            orphan.rfind("ENDSEC;").unwrap(),
+            "#999999=VERTEX_POINT('',#1);\n",
+        );
+        assert_eq!(
+            compound
+                .verify_partitioned_step_source(&orphan, 1e-7, None)
+                .unwrap()
+                .unwrap_err()
+                .kind,
+            multicad_kernel::GeometryErrorKind::InvalidResult,
+        );
+    }
+}
 #[test]
 fn rust_actual_angle_projects_reopen_with_all_five_physical_parts_and_both_receivers() {
     for case in 0..3 {
