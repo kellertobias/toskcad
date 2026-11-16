@@ -40,9 +40,6 @@ impl RadialBoundary {
             (I::point(2.) * error).bounded_by(area_target.lo)?;
         }
         let center = self.ordered.caps.axial.chart.nominal_height * 0.5;
-        // Allocate quadrature error independently to each returned face.
-        // No aggregate area or any mass/inertia tolerance is imposed here.
-        let epsilon = accuracy / 256.;
         let scales = std::array::from_fn(|i| match i {
             10 => length.square(),
             11..=13 => measure::power_i(length, 3),
@@ -53,25 +50,28 @@ impl RadialBoundary {
         }
         let mut output = Vec::with_capacity(sources.len());
         for (source, &error) in sources.into_iter().zip(&bounds.area_errors) {
-            let value = integrate::face(
+            let measurement = |value: &measure::Values| {
+                let area = (value[10] + symmetric(error)).positive()?;
+                let local =
+                    std::array::from_fn(|i| (value[11 + i] + symmetric(error * length)) / area);
+                let centroid = world(self, local, center)?;
+                require_width(area, area_target.lo)?;
+                for value in centroid {
+                    require_width(value, (I::point(accuracy) * length).lo)?;
+                }
+                Ok::<_, Error>((area, centroid))
+            };
+            let acceptance = |value: &measure::Values| measurement(value).is_ok();
+            let value = integrate::surface_face(
                 source.sources,
                 source.density,
                 &self.ordered.caps.axial.chart,
                 center,
-                integrate::Accuracy {
-                    scales,
-                    epsilon,
-                    selection: measure::Selection::Surface,
-                },
+                scales,
+                &acceptance,
                 &mut work,
             )?;
-            let area = (value[10] + symmetric(error)).positive()?;
-            let local = std::array::from_fn(|i| (value[11 + i] + symmetric(error * length)) / area);
-            let centroid = world(self, local, center)?;
-            require_width(area, area_target.lo)?;
-            for value in centroid {
-                require_width(value, (I::point(accuracy) * length).lo)?;
-            }
+            let (area, centroid) = measurement(&value)?;
             output.push(FaceProperties {
                 face_index: source.index,
                 area_mm2: pair(area),

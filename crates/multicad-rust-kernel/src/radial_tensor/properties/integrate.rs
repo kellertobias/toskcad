@@ -48,6 +48,50 @@ pub(super) fn with_limits(
     limits: Limits,
     work: &mut Work<'_>,
 ) -> Result<Values, Error> {
+    with_acceptance(
+        sources, density, chart, center, accuracy, limits, None, work,
+    )
+}
+/// Surface-only integration accepts the real corrected output widths, instead
+/// of imposing an independent, uniformly overspecified moment tolerance.
+pub(super) fn surface_face(
+    sources: Vec<Source>,
+    density: Density,
+    chart: &axial::Chart,
+    center: f64,
+    scales: Values,
+    acceptance: &dyn Fn(&Values) -> bool,
+    work: &mut Work<'_>,
+) -> Result<Values, Error> {
+    with_acceptance(
+        sources,
+        density,
+        chart,
+        center,
+        Accuracy {
+            scales,
+            epsilon: 0.,
+            selection: Selection::Surface,
+        },
+        Limits {
+            cells: 32768,
+            depth: 48,
+        },
+        Some(acceptance),
+        work,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn with_acceptance(
+    sources: Vec<Source>,
+    density: Density,
+    chart: &axial::Chart,
+    center: f64,
+    accuracy: Accuracy,
+    limits: Limits,
+    acceptance: Option<&dyn Fn(&Values) -> bool>,
+    work: &mut Work<'_>,
+) -> Result<Values, Error> {
     let Accuracy {
         scales,
         epsilon,
@@ -84,11 +128,21 @@ pub(super) fn with_limits(
             }
         }
         work.step()?;
-        if total
-            .iter()
-            .zip(scales)
-            .all(|(v, s)| v.width() <= (I::point(epsilon) * s).lo)
-        {
+        let accepted = if let Some(acceptance) = acceptance {
+            // The fixed 3D acceptance check uses at most ten interval
+            // operations for collar corrections, 33 for world transport,
+            // and seven for the four directed widths/centroid targets.
+            // Reserve 64, including scalar negations and fixed checks,
+            // inside the same caller ledger; no epsilon decides acceptance.
+            work.charge(64)?;
+            acceptance(&total)
+        } else {
+            total
+                .iter()
+                .zip(scales)
+                .all(|(v, s)| v.width() <= (I::point(epsilon) * s).lo)
+        };
+        if accepted {
             return Ok(total);
         }
         let (key, mut bucket) = heap.pop_last().ok_or(Error::Unresolved)?;
