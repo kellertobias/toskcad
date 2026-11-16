@@ -1,6 +1,6 @@
 //! Normal typed STEP import keeps actual original source through save/cold reopen.
 use multicad_core::{
-    commands::{Actor, Channel},
+    commands::{Actor, Channel, Session},
     document::{Document, EntityId},
     model::imports::{StepEncoding, read_step_source},
     project_file::{self, ProjectFile},
@@ -250,16 +250,43 @@ fn public_actual_head_import_typed_update_save_cold_reopen_and_atomic_failures()
             assert_eq!(host.document(), saved);
             let output = dir.path().join("held.step");
             std::fs::write(&output, "prior output").unwrap();
+            let exported = run(
+                &host,
+                "export_step",
+                json!({"part":imported["parts"][0],"file_name":"held.step"}),
+            );
+            assert_eq!(
+                exported["step_verification"]["method"],
+                "actual_mapped_head_reference"
+            );
+            assert!(
+                exported["readback_volume_mm3"].is_null(),
+                "sewn reference is not occupied raw-file mass"
+            );
+            assert!(exported["step_verification"]["decoded_volume_mm3"].is_null());
+            let evidence = &exported["step_verification"]["actual_head"];
+            assert!(
+                evidence["maximum_world_position_error_mm"]
+                    .as_f64()
+                    .unwrap()
+                    <= 1e-7
+            );
+            assert!(evidence["aggregate_work"].as_u64().unwrap() <= 272_000_000);
+            assert!(evidence["accounted_peak_bytes"].as_u64().unwrap() <= 64 * 1024 * 1024);
+            let published = std::fs::read_to_string(&output).unwrap();
+            assert_ne!(published, "prior output");
+            let reopened = Solid::read_step(&output, GeometryPolicy::default()).unwrap();
+            assert!((reopened.volume_mm3().unwrap() - volume).abs() < 1e-7);
             assert!(
                 dispatch(
                     &host,
-                    &call(false),
+                    &call(true),
                     "export_step",
                     json!({"part":imported["parts"][0],"file_name":"held.step"})
                 )
                 .is_err()
             );
-            assert_eq!(std::fs::read_to_string(&output).unwrap(), "prior output");
+            assert_eq!(std::fs::read_to_string(&output).unwrap(), published);
             assert_eq!(host.document(), saved);
             run(&host, "save_project", json!({"expected_revision":2}));
             drop(host);
@@ -273,6 +300,20 @@ fn public_actual_head_import_typed_update_save_cold_reopen_and_atomic_failures()
                 model["parts"][0]["volume_mm3"]
             );
             assert_eq!(rebuilt["parts"][0]["part"], model["parts"][0]["part"]);
+            let cold_export = run(
+                &cold,
+                "export_step",
+                json!({"part":imported["parts"][0],"file_name":"cold.step"}),
+            );
+            assert_eq!(
+                cold_export["step_verification"]["method"],
+                "actual_mapped_head_reference"
+            );
+            assert!(cold_export["readback_volume_mm3"].is_null());
+            assert_eq!(
+                std::fs::read_to_string(dir.path().join("cold.step")).unwrap(),
+                published
+            );
             // Reopening the canonical embedded source itself independently re-earns the
             // actual original file; the vanished exchange file is never a geometry cache.
             let actual = Solid::import_rust_step(
@@ -288,7 +329,71 @@ fn public_actual_head_import_typed_update_save_cold_reopen_and_atomic_failures()
                     .actual_file(),
                 input
             );
-            assert!(!actual.supports_step_export());
+            assert!(actual.supports_step_export());
+            // The same source also survives a real canonical UI transform
+            // feature, saved before a new Headless process compiles/exports it.
+            let mut session = Session::new(cold.document()).unwrap();
+            let body = EntityId::parse(imported["parts"][0].as_str().unwrap()).unwrap();
+            let producer =
+                EntityId::parse(rebuilt["parts"][0]["feature"].as_str().unwrap()).unwrap();
+            let transform = multicad_core::model::TransformRequest::new(
+                multicad_core::model::BodyInput { body, producer },
+                multicad_core::model::NumericTransform {
+                    translation: [3., -4., 5.].map(multicad_core::model::length),
+                    axis: [0., 1., 0.],
+                    angle: multicad_core::model::angle(37.),
+                    ..Default::default()
+                },
+            );
+            session
+                .commit(
+                    multicad_core::model::prepare_transform(
+                        &session,
+                        session.revision(),
+                        Actor::local(Channel::Ui),
+                        &transform,
+                    )
+                    .unwrap()
+                    .prepared,
+                )
+                .unwrap();
+            let moved_document = session.document().clone();
+            drop(cold);
+            Store
+                .save(&path, &ProjectFile::new(moved_document.clone()).unwrap())
+                .unwrap();
+            let moved = open();
+            assert_eq!(moved.document(), moved_document);
+            assert_eq!(read_step_source(&moved.document(), source).unwrap(), edited);
+            let moved_model = run(&moved, "evaluate_model", json!({}));
+            assert_eq!(moved_model["parts"][0]["part"], imported["parts"][0]);
+            let moved_export = run(
+                &moved,
+                "export_step",
+                json!({"part":body,"file_name":"moved.step"}),
+            );
+            assert_eq!(
+                moved_export["step_verification"]["method"],
+                "actual_mapped_head_reference"
+            );
+            assert!(moved_export["readback_volume_mm3"].is_null());
+            assert_eq!(moved.document(), moved_document);
+            let moved_body =
+                Solid::read_step(&dir.path().join("moved.step"), GeometryPolicy::default())
+                    .unwrap();
+            assert_eq!(
+                moved_body
+                    .rust_actual_clipped_head_source()
+                    .unwrap()
+                    .local_geometry()
+                    .actual_file(),
+                actual
+                    .rust_actual_clipped_head_source()
+                    .unwrap()
+                    .local_geometry()
+                    .actual_file()
+            );
+
             eprintln!(
                 "PUBLIC_HEAD_MCP_COLD quarter={quarter} initial_pose={posed} cold_pose={} revision=2 volume={volume}",
                 !posed

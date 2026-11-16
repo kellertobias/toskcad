@@ -1,5 +1,5 @@
 //! Public actual-file mesh plus independent Native literal embedding gate.
-//! Normal public singleton import; imported STEP export remains closed.
+//! Normal public singleton import; STEP output uses a separate actual-file proof.
 use multicad_core::{document::EntityId, references::TopologyKind};
 use multicad_kernel::{GeometryPolicy, MeshOptions, Solid, rust_kernel as pure};
 use pure::axial_pipe_thread::authored::{AuthoredSection, AuthoredSpec, AuthoredThread};
@@ -133,7 +133,7 @@ fn normal_public_singleton_import_retains_original_file_and_placement_and_fresh_
                 input
             );
             assert!(solid.rust_actual_clipped_head_occurrence().is_none());
-            assert!(!solid.supports_step_export());
+            assert!(solid.supports_step_export());
             assert_eq!(
                 solid
                     .rust_actual_clipped_head_runtime_evidence()

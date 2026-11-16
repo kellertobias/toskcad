@@ -17,6 +17,8 @@ use std::{
 mod measure;
 mod mesh;
 mod planes;
+mod step;
+pub use step::ActualHeadStepVerification;
 mod topology;
 const BYTES: usize = 64 * 1024 * 1024;
 // Fixed24vertices,17optional scalar descriptors, owner/cache headers, source

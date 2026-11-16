@@ -141,7 +141,7 @@ fn actual_native_head_cold_source_planes_selected_properties_queries_and_manufac
                 initial
             };
             assert!(solid.uses_rust_geometry());
-            assert!(!solid.supports_step_export());
+            assert!(solid.supports_step_export());
             assert!(std::ptr::eq(
                 solid.rust_actual_clipped_head_source().unwrap(),
                 source.as_ref()
@@ -369,7 +369,15 @@ fn actual_native_head_cold_source_planes_selected_properties_queries_and_manufac
             let temp = tempfile::tempdir().unwrap();
             let path = temp.path().join("must-stay.step");
             std::fs::write(&path, b"prior bytes").unwrap();
-            assert!(solid.write_step(&path).is_err());
+            let mut low =
+                pure::step_read::npt_stock::full_head::transport::replay::ReplayOptions::default();
+            low.resources.maximum_work = 1;
+            assert!(
+                solid
+                    .write_actual_clipped_head_step_with_verification(&path, low, None)
+                    .unwrap()
+                    .is_err()
+            );
             assert_eq!(std::fs::read(path).unwrap(), b"prior bytes");
             assert!(solid.face(17).is_err());
             assert!(solid.face_plane(17).is_err());

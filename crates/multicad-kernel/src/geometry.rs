@@ -24,7 +24,7 @@ use pipe_hardware_body::PipeHardwareBody;
 pub use pipe_hardware_body::{PipeThreadFactory, PipeThreadFactoryStats};
 mod actual_clipped_head_body;
 use actual_clipped_head_body::ActualClippedHeadBody;
-pub use actual_clipped_head_body::ActualClippedHeadRuntimeEvidence;
+pub use actual_clipped_head_body::{ActualClippedHeadRuntimeEvidence, ActualHeadStepVerification};
 mod literal_npt_body;
 use literal_npt_body::LiteralNptBody;
 pub use literal_npt_body::LiteralNptRuntimeEvidence;
@@ -3095,7 +3095,7 @@ impl Solid {
             SolidBody::Hanger(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::OrthogonalSeats(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::LiteralNpt(body) => body.supports_step(),
-            SolidBody::ActualClippedHead(_) => false,
+            SolidBody::ActualClippedHead(_) => standalone,
             SolidBody::RepairedPhillips(..) => {
                 self.rust_periodic_repaired_phillips_source().is_some()
             }
@@ -3138,6 +3138,11 @@ impl Solid {
         let path_text = crate::step_path(path).map_err(|e| input(e.to_string()))?;
         if let SolidBody::Occt(shape) = &self.body {
             return ffi::write_step(&shape.0, path_text).map_err(|e| native("write STEP", e));
+        }
+        if let Some(result) =
+            self.write_actual_clipped_head_step_with_verification(path, Default::default(), None)
+        {
+            return result.map(|_| ());
         }
         if let Some(result) = self.write_periodic_phillips_step_with_verification(
             path,
