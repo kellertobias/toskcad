@@ -21,6 +21,11 @@ mod verified;
 mod writer;
 pub use verified::{VerifiedAppendReceipt, VerifiedCandidate, VerifiedOptions, VerifiedReceipt};
 pub use writer::{CandidateFile, EncodingReceipt, write_source_candidate};
+pub mod full_head {
+    pub use crate::step_read::npt_stock::head::encoding::{
+        CandidateFile, Options, Receipt, propose,
+    };
+}
 #[cfg(test)]
 mod tests;
 

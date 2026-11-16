@@ -468,3 +468,188 @@ fn clipped_head_public_options_and_actual_clearance_thresholds_are_enforced() {
         Err(Error::Unsupported)
     ));
 }
+
+#[test]
+fn actual_clipped_head_candidate_preserves_raw_thread_and_has_one_physical_annulus() {
+    for quarter in [false, true] {
+        let text = super::super::tests::fixture(quarter);
+        let document = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+        let parsed = Parsed::parse(
+            &document,
+            document.represented_members()[0].item_entity(),
+            Default::default(),
+            None,
+        )
+        .unwrap();
+        let cap = upper(&parsed);
+        let head = HeadInput::regular_hex(&parsed, cap, 18., 3.).unwrap();
+        let proof = certify(&parsed, head, 1e-7, 1e-6, Default::default(), None).unwrap();
+        let file =
+            crate::step::npt_stock::full_head::propose(&proof, Default::default(), None).unwrap();
+        let physical =
+            CompoundDocument::parse(file.as_str(), DocumentOptions::default(), None).unwrap();
+        let records = physical.records();
+        let advanced = records
+            .values()
+            .flatten()
+            .filter(|e| e.name == "ADVANCED_FACE")
+            .collect::<Vec<_>>();
+        assert_eq!(advanced.len(), 17);
+        assert_eq!(
+            advanced
+                .iter()
+                .filter(|e| matches!(&e.args[1],Value::List(b) if b.len()==2))
+                .count(),
+            1
+        );
+        assert_eq!(
+            records
+                .values()
+                .flatten()
+                .filter(|e| e.name == "EDGE_CURVE")
+                .count(),
+            38
+        );
+        assert_eq!(
+            records
+                .values()
+                .flatten()
+                .filter(|e| e.name == "VERTEX_POINT")
+                .count(),
+            24
+        );
+        for curve in parsed.curves() {
+            assert_eq!(
+                document.records()[&curve.entity()],
+                records[&curve.entity()]
+            );
+            for &index in curve.point_indices() {
+                let id = parsed.points()[index].entity();
+                assert_eq!(document.records()[&id][0].source, records[&id][0].source);
+            }
+        }
+        for tensor in parsed.tensors() {
+            assert_eq!(
+                document.records()[&tensor.entity()][0].source,
+                records[&tensor.entity()][0].source
+            );
+            for &index in tensor.point_indices() {
+                let id = parsed.points()[index].entity();
+                assert_eq!(document.records()[&id][0].source, records[&id][0].source);
+            }
+        }
+        // Every original planar UV record and scalar spelling remains actual
+        // input, even though the rim's owning support is now the annulus.
+        for (&id, old) in document.records() {
+            if old.iter().any(|e|e.name=="PCURVE" || matches!(e.args.as_slice(),[_,Value::List(p)] if e.name=="CARTESIAN_POINT" && p.len()==2)) {
+                for (a,b) in old.iter().zip(&records[&id]) { assert_eq!(a.source,b.source); }
+            }
+        }
+        assert!(
+            super::super::Parsed::parse(
+                &physical,
+                physical.represented_members()[0].item_entity(),
+                Default::default(),
+                None
+            )
+            .is_err(),
+            "physical annulus must never masquerade as the standalone auxiliary cap"
+        );
+        eprintln!(
+            "CLIPPED_HEAD_CANDIDATE quarter={quarter} bytes={} receipt={:?}",
+            file.as_str().len(),
+            file.receipt()
+        );
+        let cold = crate::step_read::radial_boundary::pipe_hardware::budget::reserve(
+            file.as_str(),
+            64_000_000,
+            64 * 1024 * 1024,
+            None,
+        )
+        .unwrap();
+        eprintln!("CLIPPED_HEAD_CANDIDATE_COLD quarter={quarter} {cold:?}");
+    }
+}
+
+#[test]
+fn actual_clipped_head_candidate_work_bytes_cancel_retry_are_atomic() {
+    use std::cell::Cell;
+    let text = super::super::tests::fixture(false);
+    let document = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+    let parsed = Parsed::parse(
+        &document,
+        document.represented_members()[0].item_entity(),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let head = HeadInput::regular_hex(&parsed, upper(&parsed), 18., 3.).unwrap();
+    let proof = certify(&parsed, head, 1e-7, 1e-6, Default::default(), None).unwrap();
+    let calls = Cell::new(0usize);
+    let count = || {
+        calls.set(calls.get() + 1);
+        false
+    };
+    let good = encoding::propose(&proof, Default::default(), Some(&count)).unwrap();
+    let n = calls.get();
+    let r = good.receipt();
+    for maximum_work in [r.aggregate_work - 1, r.aggregate_work] {
+        let value = encoding::propose(
+            &proof,
+            encoding::Options {
+                maximum_work,
+                ..Default::default()
+            },
+            None,
+        );
+        if maximum_work < r.aggregate_work {
+            assert!(matches!(value, Err(Error::Limit)));
+        } else {
+            assert_eq!(value.unwrap().as_str(), good.as_str());
+        }
+    }
+    for maximum_bytes in [r.accounted_peak_bytes - 1, r.accounted_peak_bytes] {
+        let value = encoding::propose(
+            &proof,
+            encoding::Options {
+                maximum_bytes,
+                ..Default::default()
+            },
+            None,
+        );
+        if maximum_bytes < r.accounted_peak_bytes {
+            assert!(matches!(value, Err(Error::Limit)));
+        } else {
+            assert_eq!(value.unwrap().as_str(), good.as_str());
+        }
+    }
+    for at in [1, n / 2, n] {
+        let calls = Cell::new(0usize);
+        let cancel = || {
+            calls.set(calls.get() + 1);
+            calls.get() >= at
+        };
+        assert!(matches!(
+            encoding::propose(&proof, Default::default(), Some(&cancel)),
+            Err(Error::Cancelled)
+        ));
+        assert_eq!(
+            encoding::propose(&proof, Default::default(), None)
+                .unwrap()
+                .as_str(),
+            good.as_str()
+        );
+    }
+    assert!(matches!(
+        encoding::propose(
+            &proof,
+            encoding::Options {
+                additional_resident_bytes: usize::MAX,
+                ..Default::default()
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    assert_eq!(document.literal_input(), text);
+}

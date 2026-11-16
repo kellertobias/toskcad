@@ -4,6 +4,7 @@
 //! reference and does not decode arbitrary head files or bind an authored law.
 use super::*;
 use crate::tapered_thread::interval::I;
+pub(crate) mod encoding;
 mod geometry;
 #[cfg(test)]
 mod tests;
