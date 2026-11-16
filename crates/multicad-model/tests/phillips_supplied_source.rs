@@ -799,8 +799,15 @@ fn native_actual_candidate(
         warm_receipt.query_work_used() + warm_receipt.remaining_work(),
         512_000_000
     );
+    // Exercise the ordinary compiler/renderer and manufacturing entry points,
+    // in addition to the source-specific diagnostic receipt API.
+    let public_start = std::time::Instant::now();
+    let public_display = native.mesh(options).unwrap();
+    let public_elapsed = public_start.elapsed();
+    assert_eq!(public_display, mesh);
+    assert_eq!(native.manufacturing_mesh(options).unwrap(), mesh);
     eprintln!(
-        "ACTUAL_NATIVE_METRIC nominal={nominal} left={left} facets={} fresh_work={used} warm_work={} display_cold={cold_elapsed:?} display_warm={warm_elapsed:?}",
+        "ACTUAL_NATIVE_METRIC nominal={nominal} left={left} facets={} fresh_work={used} warm_work={} display_cold={cold_elapsed:?} display_warm={warm_elapsed:?} public_display_warm={public_elapsed:?}",
         mesh.indices.len() / 3,
         warm_receipt.query_work_used()
     );
