@@ -499,3 +499,106 @@ fn actual_nominal_countersunk_head_retains_cone_neck_and_decoded_exchange() {
         }
     }
 }
+
+#[test]
+fn physical_socket_cap_source_remains_outside_periodic_head_families() {
+    let base = crate::step_read::phillips_cutter::physical::tests::fixture(1, false, true, 1);
+    let head = crate::head_profile::Head::Cylindrical {
+        radius_mm: 2.8,
+        height_mm: 2.4,
+    };
+    let profile = Profile::new_for_thread_union(head, 1.5, 1.).unwrap();
+    let spec = SourceSpec {
+        head: Some(head),
+        shank_length_mm: 1.,
+        minimum_wall_mm: 1e-5,
+    };
+    let source = PhillipsScrew::new(
+        *base.thread(),
+        profile,
+        spec,
+        base.cavity().clone(),
+        100_000,
+        &|| false,
+    )
+    .unwrap();
+    assert!(source.source_volume_bounds().unwrap().volume_mm3()[0] > 0.);
+    assert!(!OwnedPeriodicMaterial::supports_authored_family(
+        source.thread(),
+        source.profile(),
+        source.spec()
+    ));
+    assert!(!OwnedPeriodicMaterial::supports_authored_parts(
+        source.thread(),
+        source.profile(),
+        source.cavity().source(),
+        source.spec()
+    ));
+    assert!(matches!(
+        OwnedPeriodicMaterial::from_authored(&source, Default::default(), None),
+        Err(PhillipsReadError::Unsupported)
+    ));
+}
+
+#[test]
+fn positive_thread_depth_lost_at_its_original_radius_refuses_material_admission() {
+    let base = crate::step_read::phillips_cutter::physical::tests::fixture(0, false, true, 1);
+    let mut thread_spec = base.thread().spec();
+    thread_spec.major_radius_mm = 100.;
+    thread_spec.depth_mm = 1e-15;
+    thread_spec.pitch_mm = 0.001;
+    thread_spec.crest_width_mm = 1e-5;
+    thread_spec.length_mm = 0.002;
+    let thread = Thread::new(thread_spec).unwrap();
+    assert!(thread.spec().depth_mm > 0.);
+    assert_eq!(
+        thread.root_radius_mm(),
+        thread.spec().major_radius_mm,
+        "the original positive depth is below the source radius resolution"
+    );
+    assert!(thread.profile_breaks().windows(2).all(|w| w[0] < w[1]));
+    let head = crate::head_profile::Head::Crowned {
+        radius_mm: 110.,
+        height_mm: 100.,
+        crown_radius_mm: 200.,
+        top_land_radius_mm: 10.,
+        neck_radius_mm: 0.1,
+    };
+    let profile = Profile::new_for_thread_union(head, thread.spec().major_radius_mm, 1.).unwrap();
+    let spec = SourceSpec {
+        head: Some(head),
+        shank_length_mm: 1.,
+        minimum_wall_mm: 1e-5,
+    };
+    assert!(OwnedPeriodicMaterial::supports_authored_parts(
+        &thread,
+        &profile,
+        base.cavity().source(),
+        spec
+    ));
+    assert!(
+        crate::profiled_screw::qualify_outer_source(&thread, &profile, spec.shank_length_mm, true)
+            .is_ok()
+    );
+    assert!(
+        profile
+            .closed_repaired_meridian(Default::default(), None)
+            .is_ok()
+    );
+    assert!(matches!(
+        OwnedPeriodicMaterial::from_authored_parts(
+            &thread,
+            &profile,
+            base.cavity().source(),
+            spec,
+            Default::default(),
+            None
+        ),
+        Err(PhillipsReadError::Unsupported)
+    ));
+    assert_eq!(
+        thread.spec(),
+        thread_spec,
+        "refusal preserves all original thread dimensions"
+    );
+}
