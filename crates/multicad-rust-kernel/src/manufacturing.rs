@@ -6,6 +6,7 @@
 //! chord tolerance before certification.
 
 use crate::display::{DisplayMesh, MeshError};
+mod counting_sort;
 
 const MAX_TRIANGLES: usize = 5_000_000;
 const MAX_VERTICES: usize = MAX_TRIANGLES * 3;
@@ -138,8 +139,15 @@ impl<E, const COUNTED: bool> Budget<'_, E, COUNTED> {
 }
 fn sort_counted<E, const COUNTED: bool>(
     edges: &mut Vec<[u32; 3]>,
+    vertices: usize,
     budget: &mut Budget<E, COUNTED>,
 ) -> Result<(), CountedError<E>> {
+    // certify_impl has validated every endpoint and generated strictly
+    // increasing coedge ordinals. Stable b/a passes therefore also retain
+    // the full third-key ordering. Avoid vertex-sized storage for sparse data.
+    if vertices <= edges.len() {
+        return counting_sort::sort(edges, vertices, budget);
+    }
     // Both buffers have exactly the original edge count. Every comparison and
     // literal edge-record copy is charged; cancellation returns normally.
     budget.storage(
@@ -248,7 +256,7 @@ fn certify_impl<E, const COUNTED: bool>(
         }
     }
     if COUNTED {
-        sort_counted(&mut edges, budget)?;
+        sort_counted(&mut edges, vertices.len(), budget)?;
     } else {
         edges.sort_unstable();
     }
