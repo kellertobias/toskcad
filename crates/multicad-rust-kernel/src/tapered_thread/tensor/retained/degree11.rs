@@ -2,15 +2,11 @@
 //! No radial chart, occupied boundary, material, normal or mass is certified.
 use super::*;
 mod normal;
-<<<<<<< HEAD
-pub use normal::{NORMAL11_BYTES, NORMAL11_WORK, NormalPolynomial11};
-mod surface;
-pub use surface::{SurfaceFailure11, SurfaceOptions11, SurfaceProperties11, SurfaceStage11};
-=======
 pub use normal::{
     NORMAL11_BYTES, NORMAL11_WORK, NormalPolynomial11, ReducedNormal11, ReducedNormalCell11,
 };
->>>>>>> d1743a74 (feat: enclose actual normals with certified elevation residuals)
+mod surface;
+pub use surface::{SurfaceFailure11, SurfaceOptions11, SurfaceProperties11, SurfaceStage11};
 const DEGREE: usize = 11;
 #[derive(Clone, Debug, PartialEq)]
 pub struct RetainedTensor11 {

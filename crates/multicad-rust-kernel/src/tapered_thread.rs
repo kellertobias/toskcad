@@ -18,9 +18,9 @@ pub use mesh::{tessellate, tessellate_with_interrupt};
 pub(crate) use series::Series;
 pub use tensor::{
     MANUFACTURING_DEGREE, ManufacturingTensor, ManufacturingTensors, NORMAL11_BYTES, NORMAL11_WORK,
-    NormalPolynomial11, ReducedNormal11, ReducedNormalCell11, RetainedTensor, RetainedTensor11, SurfaceFailure11, SurfaceOptions11,
-    SurfaceProperties11, SurfaceStage11, TaylorEnclosure, TensorCell, TensorCell11,
-    TensorDerivatives, TensorFirstDerivatives11,
+    NormalPolynomial11, ReducedNormal11, ReducedNormalCell11, RetainedTensor, RetainedTensor11,
+    SurfaceFailure11, SurfaceOptions11, SurfaceProperties11, SurfaceStage11, TaylorEnclosure,
+    TensorCell, TensorCell11, TensorDerivatives, TensorFirstDerivatives11,
 };
 pub(crate) use tensor::{
     NormalPolynomial, RadialChart, calculation_cell, calculation_cell11, certify_radial_charts,
