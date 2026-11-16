@@ -8,6 +8,10 @@ use crate::step_read::radial_boundary::pipe_hardware::budget as cold;
 use std::ops::Range;
 mod auxiliary;
 mod graph;
+mod source;
+#[cfg(test)]
+mod source_tests;
+pub use source::{HexHeadIntent, QualifiedFile, SourceOptions, SourceReceipt, qualify_actual_file};
 #[cfg(test)]
 mod tests;
 
@@ -78,6 +82,7 @@ pub struct DecodedFile<'input> {
     retained_beyond_auxiliary_input: usize,
     maximum_work: usize,
     maximum_bytes: usize,
+    derived_parser_work_reserved: usize,
 }
 pub struct OccupiedFile<'packet, 'parsed, 'document, 'auxiliary, 'actual> {
     file: &'packet DecodedFile<'actual>,
@@ -239,6 +244,7 @@ impl<'input> DecodedFile<'input> {
             retained_beyond_auxiliary_input: retained,
             maximum_work: options.maximum_work,
             maximum_bytes: options.maximum_bytes,
+            derived_parser_work_reserved: derived_cold.delegated_parser_work_reserved,
         })
     }
     pub fn actual_file(&self) -> &'input str {
