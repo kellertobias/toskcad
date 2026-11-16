@@ -282,30 +282,139 @@ fn pair_certificate_clears_the_meshing_pose_and_rejects_wrong_ones() {
     );
 }
 
+/// Gapped gears draw through the exact-curve scene engine. Expectations
+/// come from the specification and the exact B-rep face areas: the axial
+/// view spans the bore and tip circles, a cut through a tooth band encloses
+/// the band's transverse profile and a cut through the gap the root core.
 #[test]
-fn drawings_refuse_gapped_gears_explicitly() {
+fn drawings_of_gapped_gears_follow_the_bands_and_the_core() {
+    use multicad_core::{
+        drawings::{VectorCurve, VectorRole},
+        materials::HatchPattern,
+    };
+    use multicad_kernel::DrawingHatch;
+    let spec = specification(24);
     let solid =
-        Solid::rust_double_helical_named(specification(24), EntityId::new(), Default::default())
-            .unwrap();
-    for options in [
+        Solid::rust_double_helical_named(spec, EntityId::new(), Default::default()).unwrap();
+    let bounds = solid.bounds().unwrap();
+    assert!(bounds.min[2].abs() < 1e-9 && (bounds.max[2] - WIDTH).abs() < 1e-9);
+    let (root, bore, tip) = (spec.root_radius_mm, spec.bore_radius_mm, spec.tip_radius_mm);
+    let band = (WIDTH - GAP) / 2.;
+    let shoulders: f64 = solid
+        .faces()
+        .unwrap()
+        .iter()
+        .filter(|face| {
+            face.plane
+                .is_some_and(|(origin, _)| (origin[2] - band).abs() < 1e-12)
+                && face.center_mm[2] == band
+        })
+        .map(|face| face.area_mm2)
+        .sum();
+    let core = PI * (root * root - bore * bore);
+    let radius = |p: &[f64; 2]| p[0].hypot(p[1]);
+
+    let view = project_drawing(
+        &[DrawingSolid {
+            solid: &solid,
+            hatch: None,
+        }],
         DrawingProjection::default(),
-        DrawingProjection {
-            frame: PlaneFrame {
-                origin: [0., 0., 1.],
-                ..Default::default()
-            },
-            section_offset_mm: Some(0.),
-            ..Default::default()
-        },
-    ] {
-        let error = project_drawing(
+    )
+    .unwrap();
+    assert!(view.iter().all(|v| v.role == VectorRole::Visible));
+    let outer = view
+        .iter()
+        .flat_map(|v| v.preview_mm.iter().map(radius))
+        .fold(0., f64::max);
+    assert!((outer - tip).abs() < 1e-6, "{outer}");
+    assert!(
+        view.iter()
+            .all(|v| v.preview_mm.iter().all(|p| radius(p) >= bore - 1e-9))
+    );
+    assert!(view.iter().any(|v| matches!(
+        v.curve,
+        VectorCurve::Ellipse { major_mm, minor_mm, .. }
+            if (major_mm - bore).abs() < 1e-9 && (minor_mm - bore).abs() < 1e-9
+    )));
+
+    let cut = |z: f64, section_only: bool| {
+        project_drawing(
             &[DrawingSolid {
                 solid: &solid,
-                hatch: None,
+                hatch: Some(DrawingHatch {
+                    angle_rad: 0.,
+                    spacing_mm: 1.,
+                    line_width_mm: 0.18,
+                    pattern: HatchPattern::Solid,
+                }),
             }],
-            options,
+            DrawingProjection {
+                frame: PlaneFrame {
+                    origin: [0., 0., z],
+                    ..Default::default()
+                },
+                section_offset_mm: Some(0.),
+                section_only,
+                ..Default::default()
+            },
         )
-        .unwrap_err();
-        assert_eq!(error.kind, GeometryErrorKind::Unsupported, "{error:?}");
+        .unwrap()
+    };
+    let area = |vectors: &[multicad_kernel::ProjectedVector]| -> f64 {
+        vectors
+            .iter()
+            .filter_map(|v| match v.curve {
+                VectorCurve::HatchTriangle { points: [a, b, c] } => {
+                    Some(((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs() / 2.)
+                }
+                _ => None,
+            })
+            .sum()
+    };
+    for z in [1., WIDTH - 1.] {
+        let section = cut(z, true);
+        let profile = shoulders + core;
+        println!(
+            "{{\"case\":\"gapped cut at {z}\",\"hatch_mm2\":{},\"profile_mm2\":{profile},\"vectors\":{}}}",
+            area(&section),
+            section.len()
+        );
+        assert!(
+            (area(&section) - profile).abs() <= 1e-6 * profile,
+            "{z}: {} against {profile}",
+            area(&section)
+        );
+        for vector in section.iter().filter(|v| v.role == VectorRole::Section) {
+            assert!(vector.preview_mm.iter().all(|p| {
+                let r = radius(p);
+                (r - bore).abs() < 1e-6 || (r >= root - 1e-6 && r <= tip + 1e-6)
+            }));
+        }
     }
+    let gap = cut(WIDTH / 2., true);
+    println!(
+        "{{\"case\":\"gapped cut in the gap\",\"hatch_mm2\":{},\"core_mm2\":{core},\"view_vectors\":{},\"outer_mm\":{outer}}}",
+        area(&gap),
+        view.len()
+    );
+    assert!((area(&gap) - core).abs() <= 1e-6 * core, "{}", area(&gap));
+    let mut circles: Vec<f64> = gap
+        .iter()
+        .filter(|v| v.role == VectorRole::Section)
+        .map(|v| match v.curve {
+            VectorCurve::Ellipse {
+                major_mm, minor_mm, ..
+            } if (major_mm - minor_mm).abs() < 1e-9 => major_mm,
+            ref other => panic!("{other:?}"),
+        })
+        .collect();
+    circles.sort_by(f64::total_cmp);
+    circles.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+    assert_eq!(circles.len(), 2, "{circles:?}");
+    assert!((circles[0] - bore).abs() < 1e-9 && (circles[1] - root).abs() < 1e-9);
+    // The retained view behind the cut keeps the far outline.
+    let retained = cut(1., false);
+    assert!(retained.iter().any(|v| v.role == VectorRole::Section));
+    assert!(retained.iter().any(|v| v.role == VectorRole::Visible));
 }
