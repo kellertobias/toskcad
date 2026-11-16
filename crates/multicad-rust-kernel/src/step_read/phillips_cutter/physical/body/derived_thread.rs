@@ -25,12 +25,13 @@ pub use analytic::{
     PeriodicVolumeOptions, SuppliedThreadCorrespondence, SuppliedThreadRimTransfer,
 };
 pub use degree11::{
-    CoherentDegree11ThreadCarrier, Degree11ClosedMaterial, Degree11JoinCollar,
-    Degree11MaterialFace, Degree11MaterialOptions, Degree11MaterialQuery,
-    Degree11MaterialQueryError, Degree11MaterialQueryOptions, Degree11MaterialVolume,
-    Degree11MaterialVolumeOptions, Degree11OccupiedOptions, Degree11OwnedMaterialOptions,
-    Degree11RimUse, Degree11ThreadFace, Degree11ThreadOptions, OccupiedDegree11Thread,
-    OwnedDegree11Material, SuppliedDegree11MaterialMatch, SuppliedDegree11MaterialOptions,
+    CoherentDegree11ThreadCarrier, Degree11ClosedMaterial, Degree11EndDiskOptions,
+    Degree11EndDiskProperties, Degree11EndDisks, Degree11JoinCollar, Degree11MaterialFace,
+    Degree11MaterialOptions, Degree11MaterialQuery, Degree11MaterialQueryError,
+    Degree11MaterialQueryOptions, Degree11MaterialVolume, Degree11MaterialVolumeOptions,
+    Degree11OccupiedOptions, Degree11OwnedMaterialOptions, Degree11RimUse, Degree11ThreadFace,
+    Degree11ThreadOptions, OccupiedDegree11Thread, OwnedDegree11Material,
+    SuppliedDegree11MaterialMatch, SuppliedDegree11MaterialOptions,
 };
 pub use join::{
     ContactThreadCarrier, Degree11ContactOptions, Degree11DomainEnd, Degree11RimContact,

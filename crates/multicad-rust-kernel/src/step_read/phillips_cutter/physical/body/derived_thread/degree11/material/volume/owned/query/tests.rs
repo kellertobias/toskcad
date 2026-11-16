@@ -4,7 +4,12 @@ use crate::step_read::phillips_cutter::physical::body::{
     derived_thread::degree11::tests::actual_m3_parts,
 };
 use num_rational::BigRational as Q;
-fn actual_owned(label: &str, left: bool, posed: bool, starts: u32) -> OwnedDegree11Material {
+pub(crate) fn actual_owned(
+    label: &str,
+    left: bool,
+    posed: bool,
+    starts: u32,
+) -> OwnedDegree11Material {
     let (mut author, mut frame) = actual_m3_parts(true, left);
     if starts != 1 {
         let mut spec = author.thread().spec();

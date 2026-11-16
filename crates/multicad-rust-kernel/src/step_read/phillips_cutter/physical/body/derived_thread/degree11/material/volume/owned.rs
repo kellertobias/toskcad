@@ -303,3 +303,6 @@ mod tests;
 
 mod query;
 pub use query::{Degree11MaterialQuery, Degree11MaterialQueryError, Degree11MaterialQueryOptions};
+
+mod properties;
+pub use properties::{Degree11EndDiskOptions, Degree11EndDiskProperties, Degree11EndDisks};
