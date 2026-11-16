@@ -1459,3 +1459,34 @@ fn thread_chord_bounds_hold_and_meet_the_tolerance() {
         assert_eq!(total.unproven, 0, "{label}: {total:?}");
     }
 }
+
+/// A path whose chords cannot be proven publishes nothing: proven
+/// flattening returns no stops and the drawing is refused.
+#[test]
+fn unproven_chords_refuse_the_path() {
+    struct Unproven;
+    impl Path for Unproven {
+        fn point(&self, t: f64) -> P3 {
+            [t, t * t, 0.]
+        }
+        fn flatten(&self, tolerance_mm: f64) -> Vec<f64> {
+            helix::certified(self, tolerance_mm)
+        }
+        fn paper(&self, _: [f64; 2]) -> Option<Curve> {
+            None
+        }
+    }
+    impl helix::Proven for Unproven {
+        fn bound(&self, [a, b]: [f64; 2]) -> f64 {
+            // Unprovable across a third of the path.
+            if a < 1. / 3. && b > 1. / 3. {
+                f64::INFINITY
+            } else {
+                0.
+            }
+        }
+    }
+    assert!(Unproven.flatten(0.01).is_empty());
+    let error = super::arrange::flattened(&Unproven, 0.01).unwrap_err();
+    assert_eq!(error.kind, GeometryErrorKind::Limit, "{error:?}");
+}

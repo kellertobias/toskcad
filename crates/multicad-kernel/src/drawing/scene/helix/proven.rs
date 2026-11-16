@@ -579,10 +579,14 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+/// Bound evaluations one path may spend on its chords.
+const WORK: usize = 1 << 20;
+
 /// Parameters whose chords provably stay within half the tolerance: split
 /// until each chord's bound is met, into as many parts as the bound
-/// predicts. A stretch narrower than any feature the tolerance resolves is
-/// accepted as it stands.
+/// predicts. Empty, refusing the path, when a chord's bound is still not met
+/// at a parameter width of `1e-12` or the path exceeds its work budget:
+/// nothing unproven is published.
 pub(in crate::drawing) fn certified(path: &dyn Proven, tolerance: f64) -> Vec<f64> {
     let goal = 0.5 * tolerance;
     let mut output = vec![0.];
@@ -596,8 +600,7 @@ pub(in crate::drawing) fn certified(path: &dyn Proven, tolerance: f64) -> Vec<f6
         while let Some((a, b)) = stack.pop() {
             work += 1;
             let bound = path.bound([a, b]);
-            let narrow = b - a <= 1e-12 || work > 1 << 20;
-            if bound <= goal || narrow {
+            if bound <= goal {
                 #[cfg(test)]
                 RECORD.with(|record| {
                     if let Some(record) = record.borrow_mut().as_mut() {
@@ -606,6 +609,9 @@ pub(in crate::drawing) fn certified(path: &dyn Proven, tolerance: f64) -> Vec<f6
                 });
                 output.push(b);
                 continue;
+            }
+            if b - a <= 1e-12 || work >= WORK {
+                return Vec::new();
             }
             let parts = if bound.is_finite() {
                 ((bound / goal).sqrt() * 1.1).ceil().clamp(2., 16.) as usize
@@ -642,6 +648,7 @@ pub(in crate::drawing) fn tally(path: &dyn Path, tolerance: f64, tally: &mut Tal
     RECORD.with(|record| *record.borrow_mut() = Some(Vec::new()));
     let stops = path.flatten(tolerance);
     let record = RECORD.with(|record| record.borrow_mut().take()).unwrap();
+    assert!(!stops.is_empty(), "{label}: refused");
     if record.is_empty() {
         return;
     }

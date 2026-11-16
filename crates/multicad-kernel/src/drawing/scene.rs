@@ -50,7 +50,8 @@ pub(in crate::drawing) trait Path: Send + Sync {
     fn point(&self, t: f64) -> P3;
 
     /// Ascending parameters from 0 to 1 inclusive whose chords stay within
-    /// `tolerance_mm` of the curve in all three view coordinates.
+    /// `tolerance_mm` of the curve in all three view coordinates; empty when
+    /// no such chords can be certified, which refuses the drawing.
     fn flatten(&self, tolerance_mm: f64) -> Vec<f64>;
 
     /// The exact paper curve of `[from, to]` when it is a line or a conic
