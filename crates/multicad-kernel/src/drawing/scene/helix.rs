@@ -23,6 +23,7 @@
 //! two-coordinate chart, so near a branch end, where the native
 //! parametrisation has a square-root singularity, the bound is taken in the
 //! other chart coordinate, in which the curve is smooth.
+mod fastener;
 mod proven;
 
 use super::paths::{Lift, Segment, add, dot3, scaled};
@@ -1449,6 +1450,11 @@ pub(in crate::drawing) struct Thread {
     /// For a treated bore with a terminal groove: the void past the station
     /// is the tail cylinder, and the shoulder annulus closes it.
     groove: Option<Groove>,
+    /// For a hex nut: the hexagonal stock replacing the stock cylinder.
+    hex: Option<multicad_rust_kernel::hex_nut::Nut>,
+    /// For a partial-depth internal thread: the stock top beyond the void,
+    /// whose floor at `z[1]` is the full stock disc.
+    floor: Option<f64>,
     tolerance: f64,
 }
 
@@ -1772,6 +1778,9 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
             [frame.u, frame.v, frame.normal()].map(|axis| view.vector(axis)),
         )
     };
+    if let Some(built) = fastener::build(solid, view, tolerance) {
+        return Some(built);
+    }
     if let Some((relief, frame)) = solid.rust_thread_end_relief_data() {
         let thread = relief.material_thread();
         let Some(profile) = Profile::from_helical(thread) else {
@@ -1808,6 +1817,8 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
                 cone: None,
                 base: None,
                 groove: None,
+                hex: None,
+                floor: None,
                 tolerance,
             })
         })());
@@ -1880,6 +1891,8 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
                 cone: None,
                 base: Some(base),
                 groove: None,
+                hex: None,
+                floor: None,
                 tolerance,
             })
         })());
@@ -1935,6 +1948,8 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
                 cone: Some(cone),
                 base: None,
                 groove: None,
+                hex: None,
+                floor: None,
                 tolerance,
             })
         })());
@@ -1978,6 +1993,8 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
                 cone: None,
                 base: None,
                 groove: None,
+                hex: None,
+                floor: None,
                 tolerance,
             })
         })());
@@ -2002,6 +2019,8 @@ fn build(solid: &Solid, view: &View) -> Option<Result<Thread, GeometryError>> {
         cone: None,
         base: None,
         groove: None,
+        hex: None,
+        floor: None,
         tolerance,
     }))
 }
@@ -2118,6 +2137,8 @@ fn treatment(
             cone,
             base: None,
             groove,
+            hex: None,
+            floor: None,
             tolerance,
         })
     })())
@@ -2403,6 +2424,9 @@ impl Thread {
             };
             return Ok(profile::exclusive(&disc(*stock), &disc(groove.radius), 0.));
         }
+        if let Some(spans) = self.floor_line(s, d) {
+            return spans;
+        }
         if self.base.is_some() && d[2].abs() <= 1e-15 && (s[2] - self.z[0]).abs() <= self.tolerance
         {
             // In the plane where the thread starts on a screw's shank or head,
@@ -2442,6 +2466,10 @@ impl Thread {
             let profile = &self.law.profile;
             let beyond = |t: f64| {
                 let z = s[2] + t * d[2];
+                if self.floor.is_some() && z > self.z[1] {
+                    // Past a partial-depth void: the floor's full disc.
+                    return true;
+                }
                 let mut void = profile.radius(z - self.rate() * theta);
                 if let Some(groove) = self.groove.filter(|groove| z >= groove.station) {
                     void = groove.radius;
@@ -3074,10 +3102,14 @@ impl Thread {
                 match &self.stock {
                     // A bore's cap is the annulus between thread and stock;
                     // at a terminal groove's shoulder, the tail cylinder.
+                    // A partial-depth bore's floor closes the void's chord.
+                    Some(_) if self.is_floor(level) => {
+                        output.push(Arc::new(Segment(at(left), at(right))))
+                    }
                     Some(_) => {
-                        let radius = self.cap_reach(level);
-                        output.push(Arc::new(Segment(at(right), at(radius))));
-                        output.push(Arc::new(Segment(at(-radius), at(left))));
+                        let [outer, back] = [theta, theta + PI].map(|a| self.stock_reach(level, a));
+                        output.push(Arc::new(Segment(at(right), at(outer))));
+                        output.push(Arc::new(Segment(at(-back), at(left))));
                     }
                     None => output.push(Arc::new(Segment(at(left), at(right)))),
                 }
@@ -3217,10 +3249,14 @@ impl Thread {
                     .filter(|[a, _]| (a[2] - level).abs() <= 1e-12)
                     .map(|[a, b]| [dot3(*a, d), dot3(*b, d)])
                     .collect();
-                let outer: Vec<[f64; 2]> = self
-                    .disc_chord(n, c, level, self.cap_reach(level))
-                    .into_iter()
-                    .collect();
+                if self.is_floor(level) {
+                    // The floor bounds only the void's cap.
+                    for [a, b] in merge(inner, 0.) {
+                        annular.push([add(base, scaled(d, a)), add(base, scaled(d, b))]);
+                    }
+                    continue;
+                }
+                let outer: Vec<[f64; 2]> = self.stock_chord(n, c, level).into_iter().collect();
                 for [a, b] in profile::exclusive(&outer, &inner, 1e-12) {
                     annular.push([add(base, scaled(d, a)), add(base, scaled(d, b))]);
                 }
@@ -3559,6 +3595,9 @@ impl Member for Thread {
 
 impl Thread {
     fn own_bounds(&self) -> [P3; 2] {
+        if let Some(bounds) = self.stock_bounds() {
+            return bounds;
+        }
         let reach = self
             .stock
             .as_ref()

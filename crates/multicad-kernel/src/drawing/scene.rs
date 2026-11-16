@@ -124,6 +124,8 @@ mod bevel;
 mod bore;
 mod engine;
 mod families;
+#[cfg(test)]
+mod fastener_tests;
 mod helix;
 mod paths;
 mod pipe;
