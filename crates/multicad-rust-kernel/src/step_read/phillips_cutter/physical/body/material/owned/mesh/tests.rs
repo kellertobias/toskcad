@@ -734,3 +734,69 @@ fn actual_public_producer_cancellation_tracks_component_array_frontiers() {
         "PUBLIC JOIN FRONTIERS public{public_polls} assembly{assembly_polls} prefix{public_prefix} marks{marks:?}"
     );
 }
+
+#[test]
+fn exact_planar_disk_and_annulus_keep_distinct_hole_counts_and_orientation() {
+    for hole in [false, true] {
+        for positive in [false, true] {
+            let mut mesh = DisplayMesh {
+                vertices: vec![-2., -2., 0., 2., -2., 0., 2., 2., 0., -2., 2., 0.],
+                indices: vec![],
+                face_indices: vec![],
+            };
+            if hole {
+                mesh.vertices
+                    .extend([-1., -1., 0., 1., -1., 0., 1., 1., 0., -1., 1., 0.]);
+            }
+            let mut work = Work {
+                remaining: MESH_WORK,
+                held: 0,
+                peak: 0,
+                maximum_bytes: MESH_BYTES,
+                maximum_triangles: 1_000_000,
+                delegated: Default::default(),
+                interrupt: None,
+            };
+            let inner: &[u32] = if hole { &[4, 5, 6, 7] } else { &[] };
+            let error = plane(
+                &mut mesh,
+                &[0, 1, 2, 3],
+                inner,
+                false,
+                PlaneProof {
+                    face: 7,
+                    positive,
+                    source_z: 0.,
+                    boundary_error: 0.,
+                    options: JoinedMeshOptions::default().tessellation,
+                },
+                &mut work,
+            )
+            .unwrap();
+            assert!(error <= 0.1);
+            assert_eq!(mesh.face_indices.len(), if hole { 8 } else { 2 });
+            assert!(mesh.face_indices.iter().all(|&f| f == 7));
+            let area = mesh
+                .indices
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|ids| {
+                    let p = ids.map(|i| {
+                        [
+                            mesh.vertices[3 * i as usize],
+                            mesh.vertices[3 * i as usize + 1],
+                        ]
+                    });
+                    ((p[1][0] - p[0][0]) * (p[2][1] - p[0][1])
+                        - (p[1][1] - p[0][1]) * (p[2][0] - p[0][0]))
+                        * 0.5
+                })
+                .sum::<f64>();
+            assert_eq!(
+                area,
+                (if hole { 12. } else { 16. }) * (if positive { 1. } else { -1. })
+            );
+        }
+    }
+}

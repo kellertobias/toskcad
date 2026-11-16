@@ -363,8 +363,9 @@ pub use body::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSource}
 pub use body::{MaterialVolume, MaterialVolumeOptions};
 
 pub use body::{
-    DelegatedWorkspaceBounds, JoinedMaterialCandidate, JoinedMeshOptions, OwnedDerivedMaterial,
-    OwnedMaterialOptions, OwnedMaterialQuery, OwnedMaterialQueryError, OwnedMaterialQueryOptions,
+    DelegatedWorkspaceBounds, JoinedDegree11MaterialCandidate, JoinedMaterialCandidate,
+    JoinedMeshOptions, OwnedDerivedMaterial, OwnedMaterialOptions, OwnedMaterialQuery,
+    OwnedMaterialQueryError, OwnedMaterialQueryOptions,
 };
 
 pub use body::{

@@ -1176,6 +1176,7 @@ pub use phillips_cutter::{
 
 pub use phillips_cutter::{
     DelegatedWorkspaceBounds as PhillipsDelegatedWorkspaceBounds,
+    JoinedDegree11MaterialCandidate as PhillipsJoinedDegree11MaterialCandidate,
     JoinedMaterialCandidate as PhillipsJoinedMaterialCandidate,
     JoinedMeshOptions as PhillipsJoinedMeshOptions,
     OwnedDerivedMaterial as PhillipsOwnedDerivedMaterial,

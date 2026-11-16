@@ -5,7 +5,10 @@ use std::sync::Arc;
 const SCRATCH: usize = 16384;
 mod mesh;
 mod query;
-pub use mesh::{DelegatedWorkspaceBounds, JoinedMaterialCandidate, JoinedMeshOptions};
+pub use mesh::{
+    DelegatedWorkspaceBounds, JoinedDegree11MaterialCandidate, JoinedMaterialCandidate,
+    JoinedMeshOptions,
+};
 pub use query::{OwnedMaterialQuery, OwnedMaterialQueryError, OwnedMaterialQueryOptions};
 #[derive(Clone, Copy)]
 pub struct OwnedMaterialOptions {

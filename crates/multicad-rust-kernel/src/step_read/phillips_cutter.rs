@@ -264,8 +264,9 @@ pub use physical::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSou
 pub use physical::{MaterialVolume, MaterialVolumeOptions};
 
 pub use physical::{
-    DelegatedWorkspaceBounds, JoinedMaterialCandidate, JoinedMeshOptions, OwnedDerivedMaterial,
-    OwnedMaterialOptions, OwnedMaterialQuery, OwnedMaterialQueryError, OwnedMaterialQueryOptions,
+    DelegatedWorkspaceBounds, JoinedDegree11MaterialCandidate, JoinedMaterialCandidate,
+    JoinedMeshOptions, OwnedDerivedMaterial, OwnedMaterialOptions, OwnedMaterialQuery,
+    OwnedMaterialQueryError, OwnedMaterialQueryOptions,
 };
 
 pub use physical::{

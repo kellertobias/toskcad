@@ -285,6 +285,7 @@ pub use material::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSou
 pub use material::{MaterialVolume, MaterialVolumeOptions};
 
 pub use material::{
-    DelegatedWorkspaceBounds, JoinedMaterialCandidate, JoinedMeshOptions, OwnedDerivedMaterial,
-    OwnedMaterialOptions, OwnedMaterialQuery, OwnedMaterialQueryError, OwnedMaterialQueryOptions,
+    DelegatedWorkspaceBounds, JoinedDegree11MaterialCandidate, JoinedMaterialCandidate,
+    JoinedMeshOptions, OwnedDerivedMaterial, OwnedMaterialOptions, OwnedMaterialQuery,
+    OwnedMaterialQueryError, OwnedMaterialQueryOptions,
 };
