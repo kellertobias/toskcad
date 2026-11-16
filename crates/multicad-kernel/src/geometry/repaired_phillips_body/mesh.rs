@@ -589,12 +589,14 @@ impl RepairedPhillipsBody {
                 world.push(mapped);
             }
             let normal_reserve = (I::point(options.angle) / I::point(200.)).lo;
+            work.charge(affine::NORMAL_PREPARATION_WORK)?;
+            let normals = placement.prepare_normals();
             for ids in original.indices.as_chunks::<3>().0 {
-                work.charge(256)?;
+                work.charge(affine::NORMAL_TRIANGLE_WORK)?;
                 let local =
                     ids.map(|i| std::array::from_fn(|k| original.vertices[3 * i as usize + k]));
                 let actual = ids.map(|i| world[i as usize].0);
-                placement.require_normal(local, actual, normal_reserve)?;
+                normals.require_normal(local, actual, normal_reserve)?;
             }
             for (p, _) in world {
                 target.vertices.extend(p);

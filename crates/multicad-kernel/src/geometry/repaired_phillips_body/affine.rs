@@ -2,6 +2,13 @@
 //! Neither map is normalized or substituted by a rigid nominal pose.
 use super::*;
 mod inverse;
+mod prepared_normals;
+// Setup: 81 interval operations, nine point initializations and bounded
+// copies/control. Each facet: 67 interval operations, nine magnitude actions,
+// <=36 gathers/index actions, <=18 copies, <=24 array/loop actions and
+// <=12 validation/callback actions. These are logical actions, not CPU counts.
+pub(super) const NORMAL_PREPARATION_WORK: usize = 256;
+pub(super) const NORMAL_TRIANGLE_WORK: usize = 192;
 type Point = [f64; 3];
 type BoxPoint = [I; 3];
 fn dot(a: BoxPoint, b: BoxPoint) -> I {
@@ -193,21 +200,8 @@ impl Placement {
         }
         Ok([volume.lo, volume.hi])
     }
-    /// Actual emitted normals must fit the same-parameter affine normal
-    /// transport; an opposite or degenerate literal facet refuses.
-    pub(super) fn require_normal(
-        &self,
-        local: [Point; 3],
-        world: [Point; 3],
-        reserve: f64,
-    ) -> Result<(), GeometryError> {
-        if !self.normal_transfer(local, world, reserve) {
-            return Err(unsupported(
-                "Literal world normals exceed the reserved angular transfer",
-            ));
-        }
-        Ok(())
-    }
+    // Independent edge-transport oracle for the prepared cofactor path.
+    #[cfg(test)]
     pub(super) fn normal_transfer(
         &self,
         local: [Point; 3],
