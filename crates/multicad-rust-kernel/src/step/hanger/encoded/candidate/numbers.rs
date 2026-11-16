@@ -185,6 +185,72 @@ pub(super) struct PointLookup {
 mod tests {
     use super::*;
     #[test]
+    fn real_cache_capacity_and_retention_limits_preserve_uncached_values() {
+        let mut m = Memory::new(0, 64 * 1024 * 1024).unwrap();
+        let mut w = Work::new(16_000_000, None).unwrap();
+        let mut points = Points::new(&mut m).unwrap();
+        for i in 0..8192 {
+            let coordinates = [N::integer(-1 - i)];
+            let lookup = points.lookup(&coordinates, &mut w).unwrap();
+            points
+                .insert(lookup, Entity(i as usize + 1), &mut m, &mut w)
+                .unwrap();
+        }
+        let coordinates = [N::integer(1)];
+        let lookup = points.lookup(&coordinates, &mut w).unwrap();
+        points.insert(lookup, Entity(8193), &mut m, &mut w).unwrap();
+        assert!(
+            points
+                .lookup(&coordinates, &mut w)
+                .unwrap()
+                .entity
+                .is_none()
+        );
+        assert_eq!(
+            points
+                .lookup(&[N::integer(-1)], &mut w)
+                .unwrap()
+                .entity
+                .map(|e| e.0),
+            Some(1)
+        );
+        let mut small = Memory::new(0, size_of::<Cell<usize>>() + 2 * size_of::<usize>()).unwrap();
+        let mut uncached = Points::new(&mut small).unwrap();
+        let lookup = uncached.lookup(&coordinates, &mut w).unwrap();
+        uncached
+            .insert(lookup, Entity(1), &mut small, &mut w)
+            .unwrap();
+        assert!(
+            uncached
+                .lookup(&coordinates, &mut w)
+                .unwrap()
+                .entity
+                .is_none()
+        );
+        let mut m = Memory::new(0, 64 * 1024 * 1024).unwrap();
+        let mut cache = super::super::super::decimal::DecimalCache::new(&mut m, &mut w).unwrap();
+        let mut literals = Literals::new(&mut m).unwrap();
+        let mut peak = m.used;
+        for i in 0..ENTRIES {
+            literals
+                .format(&N::integer(i as i64), &mut cache, &mut m, &mut w, &mut peak)
+                .unwrap();
+        }
+        let value = N::integer(ENTRIES as i64);
+        let a = literals
+            .format(&value, &mut cache, &mut m, &mut w, &mut peak)
+            .unwrap();
+        let b = literals
+            .format(&value, &mut cache, &mut m, &mut w, &mut peak)
+            .unwrap();
+        assert_eq!(a.as_str(), b.as_str());
+        assert!(!Rc::ptr_eq(&a, &b));
+        let retained = a.retained_bytes() + b.retained_bytes() + 4 * size_of::<usize>();
+        let before = m.used;
+        release(vec![a, b], &mut m);
+        assert_eq!(before - m.used, retained);
+    }
+    #[test]
     fn real_numeric_size_and_late_work_limits_preserve_reusable_exact_definitions() {
         fn setup(
             limit: usize,
