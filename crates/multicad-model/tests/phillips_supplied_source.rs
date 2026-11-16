@@ -382,6 +382,36 @@ fn verify(nominal: f64, pitch: f64, left: bool) {
         facets.combined_live_upper_bound_bytes(),
         facets.new_surface_error_mm()
     );
+    let local_quality = multicad_kernel::rust_kernel::display::Tessellation {
+        deflection: 0.04999999999999995,
+        angle: 0.2969999999999993,
+        triangle_limit: 1_000_000,
+    };
+    let local = owned
+        .joined_mesh_candidate(
+            PhillipsJoinedMeshOptions {
+                tessellation: local_quality,
+                ..Default::default()
+            },
+            None,
+        )
+        .expect("actual Native effective local request must retain original source and budgets");
+    assert!(local.new_surface_error_mm() <= local_quality.deflection);
+    assert_eq!(local.certified_tessellation().angle, local_quality.angle);
+    assert!(local.work_used() <= 512_000_000);
+    assert!(local.accounted_peak_bytes() <= 64 * 1024 * 1024);
+    assert_eq!(
+        multicad_kernel::rust_kernel::manufacturing::certify(local.mesh()).unwrap(),
+        local.connectivity()
+    );
+    eprintln!(
+        "MODEL_D11_NATIVE_LOCAL nominal={nominal} left={left} facets={} work={} remaining={} peak={} c0={}",
+        local.mesh().face_indices.len(),
+        local.work_used(),
+        local.remaining_work(),
+        local.accounted_peak_bytes(),
+        local.new_surface_error_mm()
+    );
     eprintln!(
         "MODEL_SUPPLIED nominal={nominal} left={left} actual_thread={:?} nominal_shank={shank_radius_mm} bytes={} cells={cells} c0_du_dv={bounds:?} source_work={} author_mass={author_volume:?} decoded_mass={decoded_volume:?} material_work={} owned_bytes={}",
         source.thread().spec(),
