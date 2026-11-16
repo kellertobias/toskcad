@@ -212,3 +212,90 @@ fn rounded_cap_representative_does_not_expand_the_exact_void_domain() {
     assert!(c.contains_void([0., 0., c.full_length_mm().next_down()], 0.));
     assert!(c.contains_void([0., 0., c.full_length_mm()], 1e-7));
 }
+
+#[test]
+fn positive_ulp_terminal_band_keeps_original_source_and_bounded_literal_mesh() {
+    let length = 3.3000000000000003;
+    let binary = Q::from_float(length).unwrap();
+    let binary_end = Rational::new(
+        binary.numer().to_string().parse().unwrap(),
+        binary.denom().to_string().parse().unwrap(),
+    )
+    .unwrap();
+    let decimal_end = Rational::new(33_000_000_000_000_003, 10_000_000_000_000_000).unwrap();
+    let options = crate::display::Tessellation {
+        deflection: 0.01,
+        angle: 0.225,
+        triangle_limit: 500_000,
+    };
+    for left in [false, true] {
+        for explicit in [false, true] {
+            let original = Cavity::new(thread(left, length), intent()).unwrap();
+            assert_eq!(original.terminal_station_mm(), Some(3.0000000000000004));
+            let end = if explicit { decimal_end } else { binary_end };
+            let cavity = if explicit {
+                Cavity::new_with_exact_receiving_extent(*original.source_thread(), intent(), end)
+                    .unwrap()
+            } else {
+                original
+            };
+            let material = Material::new(stock(end), cavity, 1.).unwrap();
+            let before = material;
+            let calls = std::cell::Cell::new(0usize);
+            let count = || {
+                calls.set(calls.get() + 1);
+                false
+            };
+            let candidate = material
+                .tessellate_candidate(options, Some(&count))
+                .unwrap();
+            let complete_calls = calls.get();
+            let proof = crate::manufacturing::certify(&candidate.mesh).unwrap();
+            assert!(proof.signed_volume_mm3 > 0. && proof.vertex_links > 0);
+            assert!(candidate.source_chord_bound_mm <= options.deflection);
+            assert!(candidate.source_normal_angle_bound_rad <= options.angle);
+            assert!(candidate.work_used <= 16_000_000);
+            assert_eq!(material, before);
+            assert_eq!(cavity.source_thread(), original.source_thread());
+            assert_eq!(cavity.terminal_station_mm(), original.terminal_station_mm());
+            assert_eq!(cavity.intent(), original.intent());
+            assert_eq!(cavity.exact_receiving_extent().is_some(), explicit);
+            assert_eq!(material.stock().height(), end);
+            eprintln!(
+                "ulpTerminal left={left} explicit={explicit} facets={} work={}",
+                candidate.mesh.face_indices.len(),
+                candidate.work_used
+            );
+            if !left && explicit {
+                for stop in [0, complete_calls / 2, complete_calls - 1] {
+                    calls.set(0);
+                    let cancel = || {
+                        let n = calls.get();
+                        calls.set(n + 1);
+                        n >= stop
+                    };
+                    assert_eq!(
+                        material.tessellate_candidate(options, Some(&cancel)).err(),
+                        Some(Error::Cancelled)
+                    );
+                    assert_eq!(material, before);
+                }
+                assert_eq!(
+                    material
+                        .tessellate_candidate(
+                            crate::display::Tessellation {
+                                triangle_limit: 16,
+                                ..options
+                            },
+                            None
+                        )
+                        .err(),
+                    Some(Error::Limit)
+                );
+                let retry = material.tessellate_candidate(options, None).unwrap();
+                assert_eq!(retry.mesh, candidate.mesh);
+                assert_eq!(retry.work_used, candidate.work_used);
+            }
+        }
+    }
+}

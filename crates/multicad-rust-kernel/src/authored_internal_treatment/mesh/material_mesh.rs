@@ -512,6 +512,20 @@ pub(super) fn tessellate(
         return Err(Error::Unresolved);
     }
     let mut grid = Grid::new();
+    // A terminal station can lie arbitrarily close to a periodic knot at the
+    // angular seam. Start with the existing exact shifted chart so that this
+    // coincidence does not force a tiny literal seam edge. This changes only
+    // the sampling chart: every cell still certifies the original source.
+    grid.shifted = body.tail.is_some_and(|tail| {
+        let phase = tail.station / body.thread.spec().pitch_mm;
+        let knot = phase.round();
+        // A conservative conditioning band only proposes another sampling
+        // chart; it never proves geometric equality or separation. Keep the
+        // existing exactly integral and ordinary fractional proposals.
+        let distance = (phase - knot).abs();
+        distance > 0. && distance <= 16. * f64::EPSILON * phase.abs().max(1.)
+    });
+    let mut angular_trial = body.tail.is_some();
     loop {
         let repartition = match chart::traced_grid_attempt(body, options, &grid, &mut w)? {
             Attempt::Complete((shell, trace)) => {
@@ -525,7 +539,15 @@ pub(super) fn tessellate(
             Attempt::Refine => false,
             Attempt::Repartition => true,
         };
-        grid.advance(repartition)?;
+        if !repartition && angular_trial {
+            // Angular curvature can require more rows while the same complete
+            // axial phase band already suffices. Try that partition first;
+            // failed work remains charged to this request's original ledger.
+            angular_trial = false;
+            grid.refine_angular()?;
+        } else {
+            grid.advance(repartition)?;
+        }
     }
 }
 

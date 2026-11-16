@@ -103,6 +103,107 @@ fn unique(mesh: &multicad_kernel::Mesh) {
         );
     }
 }
+
+#[test]
+fn nearby_positive_terminal_bands_keep_old_exact_binary_domains_and_fresh_world_embedding() {
+    let options = MeshOptions {
+        linear_deflection_mm: 0.02,
+        angular_deflection_rad: 0.3,
+        maximum_triangles: 500_000,
+    };
+    let mut failures = Vec::new();
+    for steps in [-4_i32, -2, 0, 1, 2, 4] {
+        let mut length = 3.3_f64;
+        for _ in 0..steps.unsigned_abs() {
+            length = if steps < 0 {
+                length.next_down()
+            } else {
+                length.next_up()
+            };
+        }
+        // Every fixture is in[2,4), hence its exact binary significand has
+        // denominator2^51. This is actual stock data, not a rounded decimal.
+        assert!((2. ..4.).contains(&length));
+        let end = Rational::new(
+            ((length.to_bits() & ((1_u64 << 52) - 1)) | (1_u64 << 52)) as i64,
+            1_i64 << 51,
+        )
+        .unwrap();
+        assert_eq!(end.as_f64(), length);
+        for left in [false, true] {
+            let p = HelicalThread {
+                length_mm: length,
+                ..profile(ThreadFit::Metric6HInternal, left, 1)
+            };
+            let zero = Rational::new(0, 1).unwrap();
+            let stock = Solid::from_axial_cylinder(
+                AxialCylinder::new(
+                    7,
+                    Circle::new([zero; 2], Rational::new(7, 2).unwrap()).unwrap(),
+                    zero,
+                    end,
+                )
+                .unwrap(),
+                PlaneFrame::default(),
+                GeometryPolicy::default(),
+            )
+            .unwrap();
+            let solid = stock
+                .rust_cut_authored_internal_thread_treatments_with_interrupt(
+                    InternalThreadTreatmentCut {
+                        profile: p,
+                        intent: Intent {
+                            entry_depth_mm: Some(0.4),
+                            terminal: Some(Terminal {
+                                width_mm: 0.3,
+                                radial_depth_mm: 0.05,
+                            }),
+                        },
+                        minimum_wall_mm: 0.5,
+                        frame: PlaneFrame::default(),
+                    },
+                    EntityId::new(),
+                    GeometryPolicy::default(),
+                    None,
+                )
+                .unwrap();
+            let source = solid.rust_internal_thread_treatment_data().unwrap();
+            assert_eq!(source.material.cavity().exact_receiving_extent(), None);
+            assert_eq!(source.material.cavity().full_length_mm(), length);
+            assert_eq!(
+                source.material.cavity().terminal_station_mm(),
+                Some(length - 0.3)
+            );
+            assert_eq!(source.material.stock().height(), end);
+            let moved = solid
+                .transformed(RigidTransform {
+                    rotation: [[0.6, 0., 0.8], [0., 1., 0.], [-0.8, 0., 0.6]],
+                    translation_mm: [11., -7., 5.],
+                })
+                .unwrap();
+            for (posed, body) in [(false, &solid), (true, &moved)] {
+                match body.manufacturing_mesh_with_receipt(options) {
+                    Ok(receipt) => {
+                        unique(&receipt.mesh);
+                        assert!(receipt.edge_pairs > 0 && receipt.vertex_links > 0);
+                        eprintln!(
+                            "terminalNeighbor ulps={steps} left={left} posed={posed} facets={}",
+                            receipt.mesh.face_indices.len()
+                        );
+                    }
+                    Err(e) => {
+                        failures.push(format!("ulps={steps} left={left} posed={posed}: {e:?}"))
+                    }
+                }
+            }
+            assert_eq!(solid.rust_internal_thread_treatment_data().unwrap(), source);
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "Actual neighboring terminal sources: {failures:#?}"
+    );
+}
 #[test]
 fn default_native_nominal_and_six_h_meshes_keep_manufacturing_embedding_and_original_successes() {
     for fit in [ThreadFit::NominalBasic, ThreadFit::Metric6HInternal] {
