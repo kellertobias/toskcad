@@ -28,6 +28,7 @@ pub struct OwnedHeadReceipt {
     pub aggregate_work: usize,
     pub accounted_peak_bytes: usize,
     pub retained_bytes: usize,
+    pub additional_resident_bytes: usize,
 }
 struct Row {
     id: u32,
@@ -463,6 +464,7 @@ impl OwnedActualHead {
                 aggregate_work: aggregate,
                 accounted_peak_bytes: peak,
                 retained_bytes: retained,
+                additional_resident_bytes: r.additional_resident_bytes,
             },
         })
     }

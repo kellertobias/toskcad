@@ -8,6 +8,9 @@ use std::{
     sync::Arc,
 };
 pub mod encoding;
+mod pipeline;
+mod reuse;
+pub use pipeline::{VerifiedMappedFile, VerifiedMappedReceipt, encode_verified_mapped};
 mod schema;
 mod source;
 pub use source::{MappedSourceQualification, MappedSourceReceipt};
@@ -58,6 +61,7 @@ impl MappedHeadFrame {
 #[derive(Clone, Copy, Debug)]
 pub struct MappedHeadReceipt {
     pub original_cold_work_reserved: usize,
+    pub exact_local_material_reused: bool,
     pub envelope_work: usize,
     pub local: OwnedHeadReceipt,
     pub aggregate_work: usize,
@@ -69,7 +73,7 @@ pub struct MappedHeadReceipt {
 }
 pub struct MappedActualHead {
     original: Arc<str>,
-    local: OwnedActualHead,
+    local: Arc<OwnedActualHead>,
     frame: MappedHeadFrame,
     member: u32,
     operator: u32,
@@ -110,84 +114,16 @@ impl MappedActualHead {
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Self> {
         let r = options.resources;
-        if r.maximum_work == 0
-            || r.maximum_work > MAX_WORK
-            || r.maximum_bytes == 0
-            || r.maximum_bytes > MAX_BYTES
-        {
-            return Err(Error::Invalid);
-        }
-        let header = size_of::<Self>() + 4 * size_of::<usize>();
-        let outside = r
-            .additional_resident_bytes
-            .checked_add(header)
-            .ok_or(Error::Limit)?;
-        let available = r
-            .maximum_bytes
-            .checked_sub(outside)
-            .filter(|n| *n > 0)
-            .ok_or(Error::Limit)?;
-        let cold = cold::reserve(&input, r.maximum_work.min(64_000_000), available, interrupt)
-            .map_err(geometry_error)?;
-        let doc = CompoundDocument::parse(
-            &input,
-            DocumentOptions {
-                maximum_work: cold.delegated_parser_work_reserved,
-                retained_budget_bytes: available,
-            },
-            interrupt,
-        )
-        .map_err(neutral_error)?;
-        let initial = outside
-            .checked_add(doc.retained_budget_bytes())
-            .and_then(|n| n.checked_add(SCRATCH))
-            .ok_or(Error::Limit)?;
-        if initial > r.maximum_bytes {
-            return Err(Error::Limit);
-        }
-        let mut b = Budget {
-            used: 0,
-            remaining: r
-                .maximum_work
-                .checked_sub(cold.aggregate_work_reserved)
-                .ok_or(Error::Limit)?
-                .min(64_000_000),
-            bytes: initial,
-            peak: initial,
-            limit: r.maximum_bytes,
-            interrupt,
-        };
-        let envelope = schema::read(&doc, &mut b)?;
-        let remaining = b.remaining.min(16_000_000);
-        let map = crate::step_read::owned_insert::mapping::evaluate_neutral_operator(
-            doc.records(),
-            envelope.operator,
-            crate::step_read::owned_insert::Options {
-                maximum_work: remaining,
-                retained_budget_bytes: r
-                    .maximum_bytes
-                    .checked_sub(b.bytes)
-                    .filter(|n| *n > 0)
-                    .ok_or(Error::Limit)?,
-            },
-            interrupt,
-        )
-        .map_err(neutral_error)?;
-        b.step(map.work)?;
-        b.peak = b
-            .peak
-            .max(b.bytes.checked_add(map.bytes).ok_or(Error::Limit)?);
-        if b.peak > r.maximum_bytes {
-            return Err(Error::Limit);
-        }
-        if map.handedness != 1 {
-            return Err(Error::Unsupported);
-        }
-        let frame = MappedHeadFrame {
-            origin: map.origin,
-            axes: map.axes,
-            scale: map.scale,
-        };
+        let Prepared {
+            doc,
+            mut b,
+            envelope,
+            frame,
+            cold_work,
+            cold_peak,
+            outside,
+            header,
+        } = prepare_envelope(&input, r, 0, 0, interrupt)?;
         let text = derive(&doc, &envelope, &mut b)?;
         // Arc slice copy overlaps the original output allocation. Reserve the
         // exact payload and Arc header BEFORE allocating that immutable copy.
@@ -202,19 +138,14 @@ impl MappedActualHead {
         }
         b.peak = b.peak.max(conversion);
         let local_text: Arc<str> = Arc::from(text.as_str());
-        let old_peak = b.peak.max(
-            outside
-                .checked_add(cold.parser_peak_bytes_reserved)
-                .ok_or(Error::Limit)?,
-        );
-        // Reserve actual fixed interval world-box and scaled-volume work
+        let old_peak = b
+            .peak
+            .max(outside.checked_add(cold_peak).ok_or(Error::Limit)?);
+        // Reserve actual fixed interval world-box, scaled-volume and shared-owner publication work
         // before the child begins. Their numerical guards run before publish.
         b.step(256)?;
         let fresh = b.used;
-        let prefix = cold
-            .aggregate_work_reserved
-            .checked_add(fresh)
-            .ok_or(Error::Limit)?;
+        let prefix = cold_work.checked_add(fresh).ok_or(Error::Limit)?;
         let member = envelope.item;
         let operator = envelope.operator;
         drop(text);
@@ -259,14 +190,15 @@ impl MappedActualHead {
         }
         Ok(Self {
             original: input,
-            local,
+            local: Arc::new(local),
             frame,
             member,
             operator,
             world_bounds,
             world_volume,
             receipt: MappedHeadReceipt {
-                original_cold_work_reserved: cold.aggregate_work_reserved,
+                original_cold_work_reserved: cold_work,
+                exact_local_material_reused: false,
                 envelope_work: fresh,
                 local: lr,
                 aggregate_work: aggregate,
@@ -276,6 +208,123 @@ impl MappedActualHead {
             },
         })
     }
+}
+struct Prepared<'input, 'interrupt> {
+    doc: CompoundDocument<'input>,
+    b: Budget<'interrupt>,
+    envelope: schema::Envelope,
+    frame: MappedHeadFrame,
+    cold_work: usize,
+    cold_peak: usize,
+    outside: usize,
+    header: usize,
+}
+fn prepare_envelope<'input, 'interrupt>(
+    input: &'input str,
+    options: Options,
+    inherited_work: usize,
+    owner_bytes: usize,
+    interrupt: Option<&'interrupt dyn Fn() -> bool>,
+) -> Result<Prepared<'input, 'interrupt>> {
+    let r = options;
+    if r.maximum_work == 0
+        || r.maximum_work > MAX_WORK
+        || r.maximum_bytes == 0
+        || r.maximum_bytes > MAX_BYTES
+    {
+        return Err(Error::Invalid);
+    }
+    let header = size_of::<MappedActualHead>() + 4 * size_of::<usize>();
+    let outside = r
+        .additional_resident_bytes
+        .checked_add(header)
+        .ok_or(Error::Limit)?;
+    let outside = outside.checked_add(owner_bytes).ok_or(Error::Limit)?;
+    let available = r
+        .maximum_bytes
+        .checked_sub(outside)
+        .filter(|n| *n > 0)
+        .ok_or(Error::Limit)?;
+    let cold = cold::reserve(
+        input,
+        r.maximum_work
+            .checked_sub(inherited_work)
+            .ok_or(Error::Limit)?
+            .min(64_000_000),
+        available,
+        interrupt,
+    )
+    .map_err(geometry_error)?;
+    let doc = CompoundDocument::parse(
+        input,
+        DocumentOptions {
+            maximum_work: cold.delegated_parser_work_reserved,
+            retained_budget_bytes: available,
+        },
+        interrupt,
+    )
+    .map_err(neutral_error)?;
+    let initial = outside
+        .checked_add(doc.retained_budget_bytes())
+        .and_then(|n| n.checked_add(SCRATCH))
+        .ok_or(Error::Limit)?;
+    if initial > r.maximum_bytes {
+        return Err(Error::Limit);
+    }
+    let mut b = Budget {
+        used: 0,
+        remaining: r
+            .maximum_work
+            .checked_sub(inherited_work)
+            .and_then(|n| n.checked_sub(cold.aggregate_work_reserved))
+            .ok_or(Error::Limit)?
+            .min(64_000_000),
+        bytes: initial,
+        peak: initial,
+        limit: r.maximum_bytes,
+        interrupt,
+    };
+    let envelope = schema::read(&doc, &mut b)?;
+    let remaining = b.remaining.min(16_000_000);
+    let map = crate::step_read::owned_insert::mapping::evaluate_neutral_operator(
+        doc.records(),
+        envelope.operator,
+        crate::step_read::owned_insert::Options {
+            maximum_work: remaining,
+            retained_budget_bytes: r
+                .maximum_bytes
+                .checked_sub(b.bytes)
+                .filter(|n| *n > 0)
+                .ok_or(Error::Limit)?,
+        },
+        interrupt,
+    )
+    .map_err(neutral_error)?;
+    b.step(map.work)?;
+    b.peak = b
+        .peak
+        .max(b.bytes.checked_add(map.bytes).ok_or(Error::Limit)?);
+    if b.peak > r.maximum_bytes {
+        return Err(Error::Limit);
+    }
+    if map.handedness != 1 {
+        return Err(Error::Unsupported);
+    }
+    let frame = MappedHeadFrame {
+        origin: map.origin,
+        axes: map.axes,
+        scale: map.scale,
+    };
+    Ok(Prepared {
+        doc,
+        b,
+        envelope,
+        frame,
+        cold_work: cold.aggregate_work_reserved,
+        cold_peak: cold.parser_peak_bytes_reserved,
+        outside,
+        header,
+    })
 }
 struct Count(usize);
 impl Write for Count {

@@ -41,24 +41,27 @@ pub struct EncodingReceipt {
     pub accounted_peak_bytes: usize,
 }
 pub struct MappedCandidate {
-    text: String,
+    text: Arc<str>,
     receipt: EncodingReceipt,
 }
 impl MappedCandidate {
     pub fn as_str(&self) -> &str {
         &self.text
     }
+    pub fn actual_bytes(&self) -> Arc<str> {
+        Arc::clone(&self.text)
+    }
     pub fn receipt(&self) -> EncodingReceipt {
         self.receipt
     }
 }
-struct Root {
-    top: u32,
-    axis: u32,
-    context: u32,
+pub(super) struct Root {
+    pub(super) top: u32,
+    pub(super) axis: u32,
+    pub(super) context: u32,
     maximum: u32,
 }
-fn root(local: &OwnedActualHead, b: &mut Budget<'_>) -> Result<Root> {
+pub(super) fn root(local: &OwnedActualHead, b: &mut Budget<'_>) -> Result<Root> {
     let mut top = None;
     let mut maximum = 0;
     for i in 0..local.original_record_count() {
@@ -202,7 +205,8 @@ pub fn propose_mapped(
     let prior = local
         .receipt()
         .accounted_peak_bytes
-        .checked_add(placement.retained_budget_bytes())
+        .checked_sub(local.receipt().additional_resident_bytes)
+        .and_then(|n| n.checked_add(placement.retained_budget_bytes()))
         .and_then(|n| n.checked_add(options.additional_resident_bytes))
         .and_then(|n| n.checked_add(size_of::<MappedCandidate>()))
         .ok_or(Error::Limit)?;
@@ -310,6 +314,17 @@ pub fn propose_mapped(
         return Err(Error::Limit);
     }
     emit(&mut text, local, &root, ids, &strings, &scale).map_err(|_| Error::Limit)?;
+    b.step(text.len())?;
+    let conversion = b
+        .bytes
+        .checked_add(text.len())
+        .and_then(|n| n.checked_add(2 * size_of::<usize>()))
+        .ok_or(Error::Limit)?;
+    if conversion > b.limit {
+        return Err(Error::Limit);
+    }
+    b.peak = b.peak.max(conversion);
+    let text: Arc<str> = Arc::from(text.as_str());
     b.step(0)?;
     let fresh = b.used;
     Ok(MappedCandidate {
