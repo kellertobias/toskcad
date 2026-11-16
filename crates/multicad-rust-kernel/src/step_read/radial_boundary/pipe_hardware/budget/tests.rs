@@ -104,6 +104,21 @@ fn actual_cold_file_rejects_malformed_depth_tokens_and_cancellation_without_pars
     };
     for (text, expected) in [
         (insert("#999999=(A()A());"), Error::Invalid),
+        // All literal families have a bounded token contract; these are real
+        // raw bytes, not altered parser counters or injected scanner failures.
+        (
+            insert(&format!("#{}=X();", "1".repeat(65_537))),
+            Error::Limit,
+        ),
+        (
+            insert(&format!("#999999=X(.{}.);", "F".repeat(65_537))),
+            Error::Limit,
+        ),
+        (
+            insert(&format!("#999999=X({});", "0".repeat(65_537))),
+            Error::Limit,
+        ),
+        (insert("#4294967296=X();"), Error::Limit),
         (
             insert(&format!("#999999=X('{}');", "x".repeat(65_537))),
             Error::Limit,
