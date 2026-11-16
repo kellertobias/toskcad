@@ -1,4 +1,3 @@
-#![cfg(not(feature = "occt"))]
 //! Oblique cylindrical subtraction from box stock through the normal Boolean.
 
 use multicad_core::{

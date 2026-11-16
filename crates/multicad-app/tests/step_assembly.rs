@@ -4,8 +4,10 @@
 //! shared definitions. These tests follow an assembly through the canonical
 //! document: placements and names, save and source-free reopen, structured
 //! re-export and its independent readback, stable references to occurrence
-//! faces, and atomic refusals of malformed structure. With `--features occt`
-//! every occurrence is compared with OpenCascade 7.9.3's own transfer.
+//! faces, and atomic refusals of malformed structure. The comparison of every
+//! occurrence with OpenCascade 7.9.3's own transfer was removed with the
+//! native provider; its last result (b0b2ea52) is recorded in
+//! `docs/architecture/exchange-corpus-ledger.md` as historical evidence.
 use multicad_core::{
     commands::{Actor, Channel, Session},
     document::{Document, EntityId},
@@ -21,13 +23,6 @@ use std::path::{Path, PathBuf};
 
 const TWO: &str = include_str!("fixtures/exchange/corpus/occt-two-bodies.step");
 const BOARD: &str = include_str!("fixtures/exchange/corpus/kicad-board-with-part.step");
-
-#[cfg(feature = "occt")]
-fn corpus(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/exchange/corpus")
-        .join(name)
-}
 
 fn import(text: &str) -> Result<Solid, multicad_kernel::GeometryError> {
     Solid::import_rust_step(text, EntityId::new(), GeometryPolicy::default())
@@ -354,181 +349,6 @@ fn malformed_structure_refuses_atomically_with_its_kind() {
         assert_eq!(session.revision(), revision);
         assert_eq!(session.document(), &document);
     }
-}
-
-/// OpenCascade 7.9.3 reads the same file independently. Every Rust world
-/// occurrence must match one OpenCascade solid by volume and bounds, and
-/// every next-assembly-usage occurrence, found by its name or identifier,
-/// must place the same solids in its parent as OpenCascade does.
-#[cfg(feature = "occt")]
-fn agrees_with_opencascade(label: &str, path: &Path, text: &str) -> serde_json::Value {
-    use multicad_kernel::rust_kernel::step_read::brep::Occurrence;
-    let policy = GeometryPolicy::default();
-    let bounds = |solid: &Solid| {
-        let b = solid.bounds().unwrap();
-        [b.min, b.max]
-    };
-    let apart = |a: [[f64; 3]; 2], b: [[f64; 3]; 2]| {
-        a.iter()
-            .flatten()
-            .zip(b.iter().flatten())
-            .map(|(x, y)| (x - y).abs())
-            .fold(0., f64::max)
-    };
-    let solid = import(text).unwrap();
-    let found = occurrences(&solid);
-    let mut native: Vec<(f64, [[f64; 3]; 2])> = Solid::step_solids(path)
-        .unwrap()
-        .iter()
-        .map(|(_, brep)| {
-            let solid = Solid::from_brep(brep, policy).unwrap();
-            (solid.volume_mm3().unwrap(), bounds(&solid))
-        })
-        .collect();
-    assert_eq!(native.len(), found.len(), "{label}: solid count");
-    let (mut volume_gap, mut bounds_gap) = (0f64, 0f64);
-    for occurrence in &found {
-        let rust = [occurrence.bounds.min, occurrence.bounds.max];
-        let index = native
-            .iter()
-            .position(|&(v, b)| close(v, occurrence.volume_mm3, 1e-6) && apart(b, rust) <= 1e-3)
-            .unwrap_or_else(|| panic!("{label}: {:?} has no OpenCascade solid", occurrence.path));
-        let (v, b) = native.swap_remove(index);
-        volume_gap = volume_gap.max((v - occurrence.volume_mm3).abs() / v);
-        bounds_gap = bounds_gap.max(apart(b, rust));
-    }
-
-    let tolerance = policy.linear_tolerance_mm;
-    let assembly = step_read::brep::read_assembly(text, tolerance, None).unwrap();
-    let mut usages = Solid::step_occurrences(path).unwrap();
-    let mut instances = 0;
-    for node in &assembly.nodes {
-        for child in &node.children {
-            instances += 1;
-            let index = usages
-                .iter()
-                .position(|(id, name, _)| (if name.is_empty() { id } else { name }) == &child.name)
-                .unwrap_or_else(|| panic!("{label}: no OpenCascade occurrence {}", child.name));
-            let (_, _, brep) = usages.swap_remove(index);
-            let below = step_read::brep::Assembly {
-                nodes: assembly.nodes.clone(),
-                roots: vec![child.node],
-            };
-            let placed: Vec<_> = below
-                .occurrences()
-                .iter()
-                .map(|o| {
-                    let o = Occurrence {
-                        placement: child.placement.then(&o.placement),
-                        ..o.clone()
-                    };
-                    below.place(&o).unwrap()
-                })
-                .collect();
-            // A product without solids transfers as an empty compound.
-            let theirs = Solid::from_brep(&brep, policy);
-            let count = theirs
-                .as_ref()
-                .map(|s| s.solid_count().unwrap() as usize)
-                .map_err(ToString::to_string);
-            if placed.is_empty() {
-                assert!(
-                    brep.is_empty() || matches!(count, Ok(0)) || !brep.contains("\nSo"),
-                    "{label}: {} is empty but OpenCascade places {count:?}",
-                    child.name
-                );
-                continue;
-            }
-            let theirs = theirs.unwrap();
-            assert_eq!(count.unwrap(), placed.len(), "{label}");
-            let volume: f64 = placed.iter().map(|s| s.volume_mm3()).sum();
-            assert!(
-                close(theirs.volume_mm3().unwrap(), volume, 1e-6),
-                "{label}: {} volume",
-                child.name
-            );
-            let mut ours = [[f64::INFINITY; 3], [f64::NEG_INFINITY; 3]];
-            for solid in &placed {
-                let [low, high] = solid.bounds_mm();
-                for axis in 0..3 {
-                    ours[0][axis] = ours[0][axis].min(low[axis]);
-                    ours[1][axis] = ours[1][axis].max(high[axis]);
-                }
-            }
-            let gap = apart(bounds(&theirs), ours);
-            assert!(
-                gap <= 1e-3,
-                "{label}: {} bounds differ by {gap}",
-                child.name
-            );
-            bounds_gap = bounds_gap.max(gap);
-        }
-    }
-    assert!(usages.is_empty(), "{label}: unmatched {usages:?}");
-    serde_json::json!({
-        "label": label,
-        "occurrences": found.len(),
-        "instances": instances,
-        "volume_relative_gap": volume_gap,
-        "bounds_gap_mm": bounds_gap,
-    })
-}
-
-#[cfg(feature = "occt")]
-#[test]
-fn every_occurrence_agrees_with_opencascade() {
-    let directory = tempfile::tempdir().unwrap();
-    let mut rows = vec![];
-    let library = library();
-    let mut files = vec![
-        ("occt-two-bodies", corpus("occt-two-bodies.step")),
-        ("kicad-plate-holes", corpus("kicad-plate-holes.step")),
-        ("kicad-round-board", corpus("kicad-round-board.step")),
-        (
-            "kicad-slotted-rounded-board",
-            corpus("kicad-slotted-rounded-board.step"),
-        ),
-        (
-            "kicad-board-with-part",
-            corpus("kicad-board-with-part.step"),
-        ),
-    ];
-    let samtec = library.join(
-        "Connector_Samtec_HPM_THT.3dshapes/Samtec_HPM-01-05-x-S_Straight_1x01_Pitch5.08mm.step",
-    );
-    if samtec.is_file() {
-        files.push((
-            "kicad-lib-Samtec_HPM-01-05-x-S_Straight_1x01_Pitch5.08mm",
-            samtec,
-        ));
-    }
-    let converter = library.join(CONVERTER);
-    if converter.is_file() {
-        files.push(("kicad-lib-Converter_ACDC_MeanWell_IRM-60-xx_THT", converter));
-    }
-    for (label, text) in [
-        ("repeated", repeated()),
-        ("nested", nested()),
-        ("operator", operated()),
-    ] {
-        let path = directory.path().join(format!("{label}.step"));
-        std::fs::write(&path, text).unwrap();
-        files.push((label, path));
-    }
-    for (label, path) in &files {
-        let text = std::fs::read_to_string(path).unwrap();
-        rows.push(agrees_with_opencascade(label, path, &text));
-        // The structured re-export reads back the same way.
-        let exported = directory.path().join(format!("{label}-export.step"));
-        import(&text).unwrap().write_step(&exported).unwrap();
-        let written = std::fs::read_to_string(&exported).unwrap();
-        rows.push(agrees_with_opencascade(
-            &format!("{label} re-export"),
-            &exported,
-            &written,
-        ));
-    }
-    println!("{}", serde_json::to_string_pretty(&rows).unwrap());
 }
 
 /// Every placed solid of the converter imports on its own terms: exact

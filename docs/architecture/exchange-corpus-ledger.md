@@ -2,7 +2,9 @@
 
 This is the pinned pass/fail/unsupported ledger for the independent cross-CAD STEP corpus ([CAD-345](https://plans.tokenet.de/CAD/345)). The [manifest](../../crates/multicad-app/tests/fixtures/exchange/corpus/manifest.json) pins every fixture's producer, version, `FILE_NAME` strings, units, provenance, redistribution basis, SHA-256, geometry tags, expected Rust outcome, verdict and owner. Licensing and attribution are in the [corpus README](../../crates/multicad-app/tests/fixtures/exchange/corpus/README.md).
 
-The machine-readable [ledger JSON](exchange-corpus-ledger.json) is the emitted output of the OpenCascade reference run. It records the measured source commit, tolerances, and every per-fixture measurement and timing. `corpus_manifest_pins_provenance_strata_and_owners` fails when the committed JSON and the manifest disagree on any fixture or outcome.
+The machine-readable [ledger JSON](exchange-corpus-ledger.json) is the emitted output of the last OpenCascade reference run, at `3d7ac09b`. It records the measured source commit, tolerances, and every per-fixture measurement and timing. `corpus_manifest_pins_provenance_strata_and_owners` fails when the committed JSON and the manifest disagree on any fixture or outcome.
+
+**OpenCascade is historical reference evidence.** OpenCascade and the `occt` feature were removed from the repository at `430589ac` and merged into this branch at `f0f9bc6e`. The native readings of every fixture measured at `3d7ac09b` stay in the committed ledger JSON (`source_native`, `source_native_mesh_deviation_mm`, `section_native`, `native_readback`). The default build still compares each import with the pinned `source_native` volume, bounds, boundary area and planar area, and keeps the `fail` verdict rule against them. It carries all four historical fields into every emitted ledger, under `native_reference` (`historical: true`, `measured_at: 3d7ac09b`). The live OpenCascade checks of the source tessellation, the section and the re-export readback can no longer run; their last results are the measurements below. See [Historical OpenCascade reference evidence](#historical-opencascade-reference-evidence).
 
 **Measured commit.** These results were measured at `3d7ac09b` on the CAD-361 branch `claude/step-assemblies`, which adds STEP product structure on top of the CAD-360 retained-boundary provider, merged again at `2bd1933c` (`c01c6e39`) for horn tori, exact-area loop orientation, the stated-vertex fallback, the declared-uncertainty classification and exact line and ellipse section edges. The only tracked change during the run was the manifest's `Converter_ACDC_MeanWell_IRM-60-xx_THT` verdict, committed with this ledger. CAD-361 recorded 42 pass, 2 unsupported and 2 invalid at `3cc58b11`, CAD-360 36 pass, 8 unsupported and 2 invalid at `b333779e`, CAD-345 14 pass, 18 unsupported and 10 fail of 42 at `dff6a0f8`, and CAD-359 22 pass and 24 unsupported of 46 at `1f1c4fe7`. Rerun the commands below after every change to the reader, importer, drawing or Boolean code, and update the manifest outcomes, verdicts and this ledger together.
 
@@ -26,8 +28,7 @@ A **pass** means that every check below succeeded. **Unsupported** means that th
 
 | Command | Scope | Artifact | Time (debug build, shared host) |
 | --- | --- | --- | --- |
-| `cargo test --locked -p multicad-app --test exchange_corpus` | Pinned ledger without the native reader, manifest and provenance checks, and the real executable over MCP for six fixtures | `target/cargo/tmp/exchange-corpus-ledger.json` | 9 s alone; up to 93 s under parallel load |
-| `CARGO_TARGET_DIR=target/occt cargo test --locked -p multicad-app --features occt --test exchange_corpus corpus_matches_the_pinned_ledger` | The same ledger, plus OpenCascade 7.9.3 readback of every source and re-export and the deviation from OpenCascade's tessellation | `target/occt/tmp/exchange-corpus-ledger.json`. Set `MULTICAD_CORPUS_LEDGER` to write the committed JSON. | 162–243 s |
+| `cargo test --locked -p multicad-app --test exchange_corpus` | Pinned ledger with the source compared against the historical OpenCascade readings, manifest and provenance checks, and the real executable over MCP for six fixtures | `target/cargo/tmp/exchange-corpus-ledger.json`. Set `MULTICAD_CORPUS_LEDGER` to write the committed JSON. | 9 s alone; up to 93 s under parallel load |
 | `cargo test --locked -p multicad-app --test exchange_robustness` | Malformed, oversized, exhausting, healing, cancellation and damaged-project controls | `target/cargo/tmp/exchange-robustness-{malformed,healing,exhaustion}.json` | 13 s |
 | `cargo test --locked -p multicad-app --bin multicad exchange_recovery` | Recovery copies and pinned library definitions | — | 0.2 s |
 | `cargo test --locked -p multicad-app --test exchange_corpus -- --ignored kicad_library_sweep --nocapture` | Aggregate sweep over the whole KiCad library | `target/cargo/tmp/kicad-sweep.json` | 29.6 min wall (11.4 min CPU) under load |
@@ -47,12 +48,12 @@ Each admitted fixture runs every check below. The tolerances are constants in th
 | Canonical import: save the native project, delete the source, reopen, rebuild with Rust and compare the embedded source digest | Volume and bounds bit-identical; digest equal |
 | Re-export, independent readback and reimport | Volume within relative 1e-9; bounds within 1e-6 mm; faces and solids exact |
 | Geometric deviation of the readback mesh from the source mesh | ≤ 0.05 mm, searched within 0.2 mm |
-| OpenCascade 7.9.3 source readback (`--features occt`) | Volume within relative 1e-6; bounds within 1e-3 mm |
-| OpenCascade 7.9.3 source supports (`--features occt`): total boundary area and planar boundary area, which do not depend on how a surface is divided into faces | Relative 1e-6 |
-| Deviation between OpenCascade's tessellation of the source and the Rust mesh of the import (`--features occt`) | ≤ 0.1 mm, twice the deflection |
-| OpenCascade 7.9.3 re-export readback (`--features occt`) | Volume within relative 1e-6; bounds within 1e-3 mm; solids exact |
-| Deviation between the OpenCascade tessellation and the Rust readback mesh (`--features occt`) | ≤ 0.1 mm, twice the deflection |
-| A `fail` verdict (`--features occt`) | OpenCascade must accept the source as a valid solid |
+| Historical OpenCascade 7.9.3 source readback, pinned at `3d7ac09b` (default build) | Volume within relative 1e-6; bounds within 1e-3 mm |
+| Historical OpenCascade 7.9.3 source supports, pinned at `3d7ac09b` (default build): total boundary area and planar boundary area, which do not depend on how a surface is divided into faces | Relative 1e-6 |
+| Deviation between OpenCascade's tessellation of the source and the Rust mesh of the import (historical, last run at `3d7ac09b`) | ≤ 0.1 mm, twice the deflection |
+| OpenCascade 7.9.3 re-export readback (historical, last run at `3d7ac09b`) | Volume within relative 1e-6; bounds within 1e-3 mm; solids exact |
+| Deviation between the OpenCascade tessellation and the Rust readback mesh (historical, last run at `3d7ac09b`) | ≤ 0.1 mm, twice the deflection |
+| A `fail` verdict (default build, against the pinned readings) | OpenCascade must have accepted the source as a valid solid |
 | Real-executable MCP workflow | Same tolerances as above, plus an unchanged revision, project bytes and refused-file bytes after a refusal |
 
 ## Fixture ledger
@@ -108,7 +109,7 @@ Each admitted fixture runs every check below. The tolerances are constants in th
 
 ## Admitted measurements
 
-The deltas below come from the OpenCascade reference run.
+The deltas below come from the last OpenCascade reference run, at `3d7ac09b`; the OpenCascade columns are historical.
 
 - "Re-export Δ" compares the Rust readback of the re-export with the source import.
 - "Mesh deviation" compares the source mesh with the readback mesh. Both use the same Rust tessellator, so the value is effectively zero.
@@ -290,14 +291,14 @@ Sampled cross-check at `5fc4f5df`/`9a3fdda5`: 80 randomly drawn (seed 360) sweep
 - `otool -L` lists only `/System/Library` frameworks, `libSystem`, `libc++`, `libobjc` and `libiconv`. No `TK*`, OCCT or OpenCascade library is linked.
 - None of the OpenCascade runtime type names checked by the tool appear in the binary: `Standard_Transient`, `TopoDS_TShape`, `BRepCheck_Analyzer`, `STEPControl_Reader`, `BRepMesh_IncrementalMesh` and `Geom_BSplineSurface`.
 
-As a control, the same tool refuses the `--features occt` debug executable. That executable identifies `OCCT 7.9.3 (statically linked)` and contains all six type names. The default debug executable passes.
+As a historical control, before OpenCascade was removed (`430589ac`), the same tool refused the `--features occt` debug executable. That executable identified `OCCT 7.9.3 (statically linked)` and contained all six type names. The default debug executable passes.
 
 OpenCascade appears only in test code (`#[cfg(feature = "occt")]`) and in the optional `target/occt` build. The unit tests for the tool run with `npm test`. In this worktree, `npm test` reports 3 of 5 files passing. The two release-contract files cannot load the `semver` devDependency because `node_modules` is not installed, and no installation was performed. `node --test tools/verify-rust-runtime.test.mjs` passes 3/3.
 
 ## Limitations
 
 - These are debug-build test timings on a host shared with two other compiling agents. They are not performance claims.
-- Mesh deviation between source and readback uses the same Rust tessellator, so it mainly proves identical geometry. The independent deviation comes from the OpenCascade tessellation in the reference run.
+- Mesh deviation between source and readback uses the same Rust tessellator, so it mainly proves identical geometry. The independent deviation came from the OpenCascade tessellation in the last reference run (`3d7ac09b`); no independent tessellator remains in the repository.
 - The section check is one horizontal plane at mid-height. Analytic perimeters are pinned for five fixtures. KiCad section lengths are compared only between source and readback.
 - Material persistence covers material, hatch, mass and pinned-definition diagnostics. Appearance and stock are covered elsewhere in the material tests.
 - No FreeCAD, cadquery or OCP installation was available. FreeCAD-produced coverage comes from the existing fixture and from FreeCAD-authored KiCad library models.
@@ -306,6 +307,17 @@ OpenCascade appears only in test code (`#[cfg(feature = "occt")]`) and in the op
 
 ## Assembly reference (CAD-361)
 
-`CARGO_TARGET_DIR=target/occt cargo test --locked -p multicad-app --features occt --test step_assembly -- --nocapture` compares every occurrence with OpenCascade 7.9.3. Each Rust world occurrence must match one OpenCascade solid (`STEPControl_Reader`) by volume within 1e-6 relative and bounds within 1e-3 mm, and each next-assembly-usage occurrence, found by its name or identifier, must place the same number of solids with the same volume and bounds in its parent's coordinates as the shape OpenCascade binds to it. The seven passing corpus assemblies, a repeated component (one box definition placed twice), a nested placement (5, 6, 7) turned 90°, and a Cartesian-operator placement were checked at `b0b2ea52`, each also after its structured re-export: the largest volume gap was 7.7e-13 relative, every instance name and solid count agreed, and the largest bounds gap was 2.2e-16 mm except for `Converter_ACDC_MeanWell_IRM-60-xx_THT`. Its six occurrences (eight instances) match six OpenCascade solids within 2.9e-15 relative volume; their bounds differ by 1e-7 mm, OpenCascade's bounding-box enlargement (its z minimum reads -3.4000001 mm).
+The former `occt`-only test `every_occurrence_agrees_with_opencascade` (`crates/multicad-app/tests/step_assembly.rs`, removed with OpenCascade) compared every occurrence with OpenCascade 7.9.3; the results below are historical. Each Rust world occurrence must match one OpenCascade solid (`STEPControl_Reader`) by volume within 1e-6 relative and bounds within 1e-3 mm, and each next-assembly-usage occurrence, found by its name or identifier, must place the same number of solids with the same volume and bounds in its parent's coordinates as the shape OpenCascade binds to it. The seven passing corpus assemblies, a repeated component (one box definition placed twice), a nested placement (5, 6, 7) turned 90°, and a Cartesian-operator placement were checked at `b0b2ea52`, each also after its structured re-export: the largest volume gap was 7.7e-13 relative, every instance name and solid count agreed, and the largest bounds gap was 2.2e-16 mm except for `Converter_ACDC_MeanWell_IRM-60-xx_THT`. Its six occurrences (eight instances) match six OpenCascade solids within 2.9e-15 relative volume; their bounds differ by 1e-7 mm, OpenCascade's bounding-box enlargement (its z minimum reads -3.4000001 mm).
 
 `every_converter_solid_meshes_closed_including_the_horn_torus_blends` (default build, KiCad library installed) places each converter solid on its own and certifies its 0.05 mm manufacturing mesh closed. Solid 0, the case body `e50ef681-…_part` with the four horn-torus blends and 26 faces, is 133451.768918 mm³ (quadrature error bound 1.7e-3 mm³); its mesh has 2,614 triangles, a self-reported deviation of 0.0143 mm and a volume 1.09e-6 relative from the exact one. The other five solids (a 0.001 mm³ marker, two 11.1133 mm³ and two 2.80288 mm³ pins) certify with volumes within 0.64% (the pins' 0.05 mm chords). The six exact volumes sum to 133479.602204707 mm³.
+
+## Historical OpenCascade reference evidence
+
+OpenCascade 7.9.3 ran only in the former `--features occt` build, which `430589ac` removed. The tests below compared live against it and were removed in the integration branch; their sources are in the history up to `a179df2a`. Their last results are reference evidence, not current test results.
+
+| Removed comparison | Last result | Measured at |
+| --- | --- | --- |
+| `corpus_matches_the_pinned_ledger` native readback (`native_source`, `native_source_deviation`, `native_section`, `native_readback`) | 43 pass, 1 unsupported, 2 invalid, 0 fail. Every admitted source and re-export read back by OpenCascade within volume 1e-6 relative and bounds 1e-3 mm; tessellation deviations within 0.06 mm; sections within relative 1e-2. Per-fixture values are in the ledger JSON and in [Admitted measurements](#admitted-measurements). The source readings remain a default-build check. | `3d7ac09b` (ledger recorded at `1f273f6e`) |
+| `every_occurrence_agrees_with_opencascade` (`step_assembly.rs`) | Seven corpus assemblies and three synthetic placements, each also re-exported: largest volume gap 7.7e-13 relative, all instance names and solid counts equal, bounds within 2.2e-16 mm (1e-7 mm for the MeanWell converter). See [Assembly reference](#assembly-reference-cad-361). | `b0b2ea52` |
+| `regenerate_opencascade_fixtures` (ignored) | Wrote the ten vendored `occt-*.step` fixtures. They are now fixed and pinned by SHA-256 in the manifest. | written at `fab747b5` |
+

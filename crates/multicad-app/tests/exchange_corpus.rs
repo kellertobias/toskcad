@@ -11,8 +11,10 @@
 //! independent Rust readback of the source text, a certified closed
 //! manufacturing mesh, a planar section, material persistence, save and
 //! source-free reopen, re-export, independent readback of the re-export and
-//! the geometric deviation between source and readback meshes. With
-//! `--features occt` the re-export is also read back by OpenCascade 7.9.3.
+//! the geometric deviation between source and readback meshes. Each source
+//! is also compared with the historical OpenCascade 7.9.3 reading pinned in
+//! the committed ledger (`NATIVE_REFERENCE_COMMIT`); the native reader itself
+//! was removed with the OpenCascade provider.
 use multicad_core::{
     commands::{Actor, Channel, Session},
     document::{Document, Entity, EntityData, EntityId},
@@ -58,6 +60,10 @@ const SECTION_NATIVE_RELATIVE: f64 = 1e-2;
 /// tighter than twice the Rust deflection.
 const OCCT_REFERENCE_DEFLECTION_MM: f64 = 0.01;
 const OCCT_BOUNDS_MM: f64 = 1e-3;
+/// Commit at which the OpenCascade 7.9.3 reference of every fixture was last
+/// measured, before the native provider was removed. Its readings are pinned
+/// in the committed ledger JSON and carried into every emitted ledger.
+const NATIVE_REFERENCE_COMMIT: &str = "3d7ac09b31422a5b2967f932fb506520a85d6a99";
 
 fn tolerances() -> Value {
     json!({
@@ -204,14 +210,6 @@ fn independent_readback(text: &str) -> Result<Value, step_read::ReadError> {
         "faces": members.iter().map(|m| m.1).sum::<usize>(),
         "bounds_mm": bounds,
     }))
-}
-
-#[cfg(feature = "occt")]
-fn reference_mesh_options() -> MeshOptions {
-    MeshOptions {
-        linear_deflection_mm: OCCT_REFERENCE_DEFLECTION_MM,
-        ..Default::default()
-    }
 }
 
 fn mesh_options() -> MeshOptions {
@@ -629,7 +627,7 @@ fn run_entry(entry: &Value, row: &mut Value) {
         "verdict": entry["verdict"],
         "finding": entry["finding"],
     });
-    let (path, bytes) = match entry_file(entry) {
+    let (_, bytes) = match entry_file(entry) {
         Ok(file) => file,
         Err(reason) => {
             assert_eq!(
@@ -654,8 +652,9 @@ fn run_entry(entry: &Value, row: &mut Value) {
         text.contains("SI_UNIT(.MILLI.,.METRE.)"),
         "{id}: not a millimetre file"
     );
-    row["source_native"] = native_source(&path);
-    if cfg!(feature = "occt") && entry["verdict"] == "fail" {
+    let pinned = pinned_native(id);
+    row["source_native"] = pinned["source_native"].clone();
+    if entry["verdict"] == "fail" {
         // A refusal is only attributed as an incorrect result when the
         // independent reader accepts the same file as a valid solid.
         assert!(
@@ -771,10 +770,10 @@ fn run_entry(entry: &Value, row: &mut Value) {
     row["source_reader"] = reader;
     let (source_mesh, mesh) = checked_mesh(&solid, id);
     row["mesh"] = mesh;
-    row["source_native_mesh_deviation_mm"] = native_source_deviation(&path, &source_mesh);
+    row["source_native_mesh_deviation_mm"] = pinned["source_native_mesh_deviation_mm"].clone();
     let source_section = section(&solid, None);
     check_section(entry, &source_section);
-    row["section_native"] = native_section(&path, &source_section);
+    row["section_native"] = pinned["section_native"].clone();
     row["section"] = source_section.clone();
 
     let (reopened, persistence) = persist_and_reopen(entry, &bytes);
@@ -854,149 +853,30 @@ fn run_entry(entry: &Value, row: &mut Value) {
         "mesh_deviation_mm": deviation,
         "section": readback_section,
     });
-    row["native_readback"] = native_readback(&exported, volume, bounds, solids, &readback_mesh);
+    row["native_readback"] = pinned["native_readback"].clone();
 }
 
-#[cfg(not(feature = "occt"))]
-fn native_source(_: &Path) -> Value {
-    json!("not built; run with --features occt")
-}
-
-/// OpenCascade 7.9.3 reads the original source file as an independent
-/// validity and mass reference. Its result never changes the Rust outcome.
-#[cfg(feature = "occt")]
-fn native_source(path: &Path) -> Value {
-    match Solid::read_step(path, GeometryPolicy::default()) {
-        Ok(native) => match (native.volume_mm3(), native.solid_count()) {
-            (Ok(volume), Ok(solids)) => json!({
-                "reader": "OpenCascade 7.9.3",
-                "volume_mm3": volume,
-                "bounds_mm": bounds_of(&native),
-                "solids": solids,
-                "faces": native.faces().map(|f| f.len()).ok(),
-                "supports": supports_of(&native),
-            }),
-            (volume, solids) => json!({
-                "reader": "OpenCascade 7.9.3",
-                "error": format!("{:?} {:?}", volume.err(), solids.err()),
-            }),
-        },
-        Err(error) => json!({ "reader": "OpenCascade 7.9.3", "error": error.to_string() }),
-    }
-}
-
-#[cfg(not(feature = "occt"))]
-fn native_source_deviation(_: &Path, _: &multicad_kernel::Mesh) -> Value {
-    json!("not built; run with --features occt")
-}
-
-/// The Rust mesh of the imported source against OpenCascade's own
-/// tessellation of the transmitted source boundary.
-#[cfg(feature = "occt")]
-fn native_source_deviation(path: &Path, rust_mesh: &multicad_kernel::Mesh) -> Value {
-    let native = Solid::read_step(path, GeometryPolicy::default()).unwrap();
-    let native_mesh = native.mesh(reference_mesh_options()).unwrap();
-    let deviation = mesh_deviation(rust_mesh, &native_mesh, 4. * MESH_DEFLECTION_MM);
-    assert!(
-        deviation <= MESH_DEFLECTION_MM + OCCT_REFERENCE_DEFLECTION_MM,
-        "OpenCascade source tessellation deviates {deviation} mm from the Rust import"
-    );
-    json!(deviation)
-}
-
-#[cfg(not(feature = "occt"))]
-fn native_section(_: &Path, _: &Value) -> Value {
-    json!("not built; run with --features occt")
-}
-
-/// The same plane section of OpenCascade's own reading of the source. A
-/// Rust section published as chords within the drawing chord tolerance may
-/// fall short of the exact length by the chords' sag; it must agree within
-/// relative `SECTION_NATIVE_RELATIVE`.
-#[cfg(feature = "occt")]
-fn native_section(path: &Path, rust: &Value) -> Value {
-    let Some(length) = rust["length_mm"].as_f64() else {
-        return json!("no Rust section");
-    };
-    let solids = Solid::step_solids(path).unwrap();
-    let native_length = if solids.len() > 1 {
-        // Each solid of a multi-body source is cut on its own at the Rust
-        // plane: solids may overlap, as a pin through a connector housing
-        // does, and a section of the compound would not cut each body.
-        let height = rust["plane_z_mm"].as_f64().unwrap();
-        let mut total = 0.;
-        for (_, brep) in &solids {
-            let solid = Solid::from_brep(brep, GeometryPolicy::default()).unwrap();
-            let [min, max] = bounds_of(&solid);
-            if height <= min[2] || height >= max[2] {
-                continue;
-            }
-            let measured = section_at(&solid, height, None);
-            let Some(length) = measured["length_mm"].as_f64() else {
-                return json!({ "reader": "OpenCascade 7.9.3", "error": measured["error"] });
-            };
-            total += length;
-        }
-        total
-    } else {
-        let native = Solid::read_step(path, GeometryPolicy::default()).unwrap();
-        let measured = section(&native, None);
-        let Some(length) = measured["length_mm"].as_f64() else {
-            return json!({ "reader": "OpenCascade 7.9.3", "error": measured["error"] });
-        };
-        length
-    };
-    let relative = (length - native_length).abs() / native_length.max(1e-9);
-    assert!(
-        relative <= SECTION_NATIVE_RELATIVE,
-        "OpenCascade section length {native_length} differs from {length} by {relative}"
-    );
-    json!({ "reader": "OpenCascade 7.9.3", "length_mm": native_length, "relative": relative })
-}
-
-#[cfg(not(feature = "occt"))]
-fn native_readback(_: &Path, _: f64, _: [[f64; 3]; 2], _: u32, _: &multicad_kernel::Mesh) -> Value {
-    json!("not built; run with --features occt")
-}
-
-/// OpenCascade 7.9.3 reads the Rust re-export as reference evidence.
-#[cfg(feature = "occt")]
-fn native_readback(
-    path: &Path,
-    volume: f64,
-    bounds: [[f64; 3]; 2],
-    solids: u32,
-    rust_mesh: &multicad_kernel::Mesh,
-) -> Value {
-    let native = Solid::read_step(path, GeometryPolicy::default()).unwrap();
-    // Independent tessellations of the same exact boundary: each lies
-    // within its own deflection of the surface, so their mutual deviation
-    // is bounded by the sum of the two deflections.
-    let native_mesh = native.mesh(reference_mesh_options()).unwrap();
-    let deviation = mesh_deviation(rust_mesh, &native_mesh, 4. * MESH_DEFLECTION_MM);
-    assert!(
-        deviation <= MESH_DEFLECTION_MM + OCCT_REFERENCE_DEFLECTION_MM,
-        "OpenCascade tessellation deviates {deviation} mm from the Rust readback"
-    );
-    assert!(!native.uses_rust_geometry());
-    let native_volume = native.volume_mm3().unwrap();
-    let native_bounds = bounds_of(&native);
-    assert!(
-        close(native_volume, volume, OCCT_VOLUME_RELATIVE),
-        "OpenCascade volume {native_volume} != {volume}"
-    );
-    assert!(
-        same_bounds(native_bounds, bounds, OCCT_BOUNDS_MM),
-        "OpenCascade bounds {native_bounds:?}"
-    );
-    assert_eq!(native.solid_count().unwrap(), solids);
+/// The historical OpenCascade 7.9.3 measurements of one fixture, as pinned in
+/// the committed ledger at `NATIVE_REFERENCE_COMMIT`: source readback,
+/// source tessellation deviation, section and re-export readback. They are
+/// reference evidence only; the native reader no longer exists.
+fn pinned_native(id: &str) -> Value {
+    static LEDGER: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
+    let ledger = LEDGER.get_or_init(|| {
+        let path = repository().join("docs/architecture/exchange-corpus-ledger.json");
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap()
+    });
+    let entry = ledger["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == id)
+        .unwrap_or_else(|| panic!("{id}: no pinned OpenCascade reference"));
     json!({
-        "reader": "OpenCascade 7.9.3",
-        "mesh_deviation_mm": deviation,
-        "volume_mm3": native_volume,
-        "bounds_mm": native_bounds,
-        "solids": native.solid_count().unwrap(),
-        "faces": native.faces().unwrap().len(),
+        "source_native": entry["source_native"],
+        "source_native_mesh_deviation_mm": entry["source_native_mesh_deviation_mm"],
+        "section_native": entry["section_native"],
+        "native_readback": entry["native_readback"],
     })
 }
 
@@ -1071,12 +951,12 @@ fn corpus_matches_the_pinned_ledger() {
         "schema": 1,
         "item": "CAD-345",
         "source": git_head(),
-        "native_reference": cfg!(feature = "occt"),
-        "command": if cfg!(feature = "occt") {
-            "CARGO_TARGET_DIR=target/occt cargo test --locked -p multicad-app --features occt --test exchange_corpus corpus_matches_the_pinned_ledger"
-        } else {
-            "cargo test --locked -p multicad-app --test exchange_corpus corpus_matches_the_pinned_ledger"
+        "native_reference": {
+            "reader": "OpenCascade 7.9.3",
+            "historical": true,
+            "measured_at": NATIVE_REFERENCE_COMMIT,
         },
+        "command": "cargo test --locked -p multicad-app --test exchange_corpus corpus_matches_the_pinned_ledger",
         "kicad_library": kicad_library().display().to_string(),
         "tolerances": tolerances(),
         "outcomes": totals,
@@ -1456,197 +1336,6 @@ fn probe() {
             Err(error) => println!("{}: {outcome} {error}", path.display()),
         }
     }
-}
-
-/// Regenerate the vendored OpenCascade 7.9.3 producer fixtures. Run only with
-/// the optional native reference build:
-///
-/// `CARGO_TARGET_DIR=target/occt cargo test --locked -p multicad-app
-/// --features occt --test exchange_corpus -- --ignored
-/// regenerate_opencascade_fixtures`
-///
-/// The files are committed; the default build never runs OpenCascade.
-#[cfg(feature = "occt")]
-#[test]
-#[ignore = "rewrites vendored fixtures with the optional OpenCascade build"]
-fn regenerate_opencascade_fixtures() {
-    use multicad_kernel::{
-        BSpline2d, BooleanOperation, CurvedEdge2d, CurvedProfile, PlaneFrame, RevolutionAxis,
-        RigidTransform,
-    };
-    let policy = GeometryPolicy::default();
-    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/exchange/corpus");
-    std::fs::create_dir_all(&directory).unwrap();
-    let write = |name: &str, solid: &Solid| {
-        solid.write_step(&directory.join(name)).unwrap();
-    };
-    let boxed = |size: [f64; 3], at: [f64; 3]| {
-        Solid::box_solid(size, policy)
-            .unwrap()
-            .transformed(RigidTransform {
-                translation_mm: at,
-                ..Default::default()
-            })
-            .unwrap()
-    };
-    let subtract = |a: &Solid, b: &Solid| {
-        a.boolean(b, BooleanOperation::Subtract, policy)
-            .unwrap()
-            .unwrap()
-    };
-    let (sin, cos) = 30_f64.to_radians().sin_cos();
-    write(
-        "occt-placed-box.step",
-        &Solid::box_solid([24., 16., 9.], policy)
-            .unwrap()
-            .transformed(RigidTransform {
-                rotation: [[cos, -sin, 0.], [sin, cos, 0.], [0., 0., 1.]],
-                translation_mm: [50., -20., 7.],
-            })
-            .unwrap(),
-    );
-    write(
-        "occt-cylinder.step",
-        &Solid::cylinder(
-            PlaneFrame {
-                origin: [3., 4., 5.],
-                u: [1., 0., 0.],
-                v: [0., 1., 0.],
-            },
-            6.,
-            15.,
-            policy,
-        )
-        .unwrap(),
-    );
-    let xz = PlaneFrame {
-        origin: [0.; 3],
-        u: [1., 0., 0.],
-        v: [0., 0., 1.],
-    };
-    let z_axis = RevolutionAxis {
-        origin_mm: [0.; 3],
-        direction: [0., 0., 1.],
-    };
-    let line = |a: [f64; 2], b: [f64; 2]| CurvedEdge2d::Line { a, b };
-    let revolve = |outer: Vec<CurvedEdge2d>| {
-        Solid::revolve_curved_profile(
-            &CurvedProfile {
-                frame: xz,
-                outer,
-                holes: vec![],
-            },
-            z_axis,
-            std::f64::consts::TAU,
-            policy,
-        )
-        .unwrap()
-    };
-    write(
-        "occt-cone-frustum.step",
-        &revolve(vec![
-            line([0., 0.], [8., 0.]),
-            line([8., 0.], [4., 10.]),
-            line([4., 10.], [0., 10.]),
-            line([0., 10.], [0., 0.]),
-        ]),
-    );
-    write(
-        "occt-sphere.step",
-        &revolve(vec![
-            line([0., -5.], [0., 5.]),
-            CurvedEdge2d::Arc {
-                center: [0., 0.],
-                a: [0., 5.],
-                b: [0., -5.],
-                clockwise: true,
-            },
-        ]),
-    );
-    write(
-        "occt-torus.step",
-        &revolve(vec![CurvedEdge2d::Circle {
-            center: [12., 0.],
-            radius_mm: 3.,
-        }]),
-    );
-    write(
-        "occt-revolved-vase.step",
-        &revolve(vec![
-            line([0., 0.], [10., 0.]),
-            line([10., 0.], [10., 5.]),
-            CurvedEdge2d::Arc {
-                center: [6., 5.],
-                a: [10., 5.],
-                b: [6., 9.],
-                clockwise: false,
-            },
-            line([6., 9.], [6., 14.]),
-            line([6., 14.], [0., 14.]),
-            line([0., 14.], [0., 0.]),
-        ]),
-    );
-    write(
-        "occt-spline-prism.step",
-        &Solid::extrude_curved_profile(
-            &CurvedProfile {
-                frame: PlaneFrame::default(),
-                outer: vec![
-                    line([0., 0.], [20., 0.]),
-                    CurvedEdge2d::BSpline(BSpline2d {
-                        degree: 3,
-                        poles: vec![[20., 0.], [20., 12.], [0., 12.], [0., 0.]],
-                        knots: vec![0., 1.],
-                        multiplicities: vec![4, 4],
-                        weights: None,
-                    }),
-                ],
-                holes: vec![],
-            },
-            6.,
-            policy,
-        )
-        .unwrap(),
-    );
-    write(
-        "occt-box-void.step",
-        &subtract(
-            &boxed([30., 20., 10.], [0.; 3]),
-            &boxed([10., 6., 4.], [10., 7., 3.]),
-        ),
-    );
-    let cylinder = Solid::cylinder(
-        PlaneFrame {
-            origin: [30., 0., 0.],
-            ..Default::default()
-        },
-        4.,
-        8.,
-        policy,
-    )
-    .unwrap();
-    let block = boxed([10., 10., 5.], [0.; 3]);
-    write(
-        "occt-two-bodies.step",
-        &Solid::compound_named(&[&block, &cylinder], EntityId::new(), policy).unwrap(),
-    );
-    let bore = Solid::cylinder(
-        PlaneFrame {
-            origin: [10., 10., 3.],
-            ..Default::default()
-        },
-        3.,
-        6.,
-        policy,
-    )
-    .unwrap();
-    write(
-        "occt-pocketed-plate.step",
-        &subtract(
-            &subtract(&boxed([40., 30., 8.], [0.; 3]), &bore),
-            &boxed([12., 8., 4.], [22., 15., 5.]),
-        ),
-    );
 }
 
 /// Minimal newline-delimited JSON-RPC client for the real executable.

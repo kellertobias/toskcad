@@ -260,30 +260,6 @@ fn unsupported_view_types_and_output_limits_keep_typed_failures() {
             assert!((point[0] - corner[0]).hypot(point[1] - corner[1]) < 1e-12);
         }
     }
-    #[cfg(feature = "occt")]
-    {
-        // OpenCascade sections the same exact solid through the exchange.
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("panel.step");
-        solid.write_step(&path).unwrap();
-        let native = Solid::read_step(&path, solid.geometry_policy()).unwrap();
-        let native = draw(&native, oblique).unwrap();
-        assert_eq!(native.len(), 4, "{native:?}");
-        for vector in &native {
-            assert_eq!(vector.role, VectorRole::Section);
-            let VectorCurve::Line { a, b } = vector.curve else {
-                panic!("{vector:?}");
-            };
-            for point in [a, b] {
-                assert!(
-                    corners
-                        .iter()
-                        .any(|c| (point[0] - c[0]).hypot(point[1] - c[1]) < 1e-7),
-                    "{native:?}"
-                );
-            }
-        }
-    }
     assert_eq!(
         project_drawing(&[input(&solid), input(&stock())], Default::default())
             .unwrap_err()

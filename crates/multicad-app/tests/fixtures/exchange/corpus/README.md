@@ -22,14 +22,7 @@ The runner is `crates/multicad-app/tests/exchange_corpus.rs`. The results are re
 ## Producers and redistribution
 
 - **FreeCAD 1.1.1**: `../freecad-drilled-box.step` was authored for this repository and is covered by its GPL-3.0-or-later licence.
-- **OpenCascade 7.9.3**: the `occt-*.step` files were written by the repository's optional native reference build. To regenerate them:
-
-  ```sh
-  CARGO_TARGET_DIR=target/occt cargo test --locked -p multicad-app --features occt \
-    --test exchange_corpus -- --ignored regenerate_opencascade_fixtures
-  ```
-
-  The geometry was authored for this repository and is covered by GPL-3.0-or-later. Regeneration changes the header timestamps, so the manifest digests must be renewed after it.
+- **OpenCascade 7.9.3**: the `occt-*.step` files were written by the repository's former optional native reference build, through the ignored test `regenerate_opencascade_fixtures` in `exchange_corpus.rs`. OpenCascade was removed from the repository (`430589ac`), so they can no longer be regenerated; they are fixed fixtures pinned by SHA-256 in the manifest. The generator's source is preserved in the history of `crates/multicad-app/tests/exchange_corpus.rs` up to `a179df2a`. The geometry was authored for this repository and is covered by GPL-3.0-or-later.
 - **KiCad 10.0.0 (`kicad-cli`, OpenCascade 7.8.1 STEP processor)**: the `kicad-*.step` board exports come from the boards in `kicad-boards/`, which were authored for this repository and are covered by GPL-3.0-or-later. Each export was produced from the folder that holds the board and its model:
 
   ```sh
@@ -49,10 +42,6 @@ The runner is `crates/multicad-app/tests/exchange_corpus.rs`. The results are re
 ```sh
 # Pinned ledger, manifest provenance and the real-executable MCP workflow.
 cargo test --locked -p multicad-app --test exchange_corpus
-
-# The same ledger with OpenCascade 7.9.3 source and re-export readback.
-CARGO_TARGET_DIR=target/occt cargo test --locked -p multicad-app --features occt \
-  --test exchange_corpus corpus_matches_the_pinned_ledger
 
 # Aggregate sweep over the whole installed KiCad library (about 12 minutes, debug build).
 cargo test --locked -p multicad-app --test exchange_corpus -- --ignored kicad_library_sweep --nocapture

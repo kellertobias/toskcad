@@ -14,9 +14,6 @@ use multicad_kernel::{
 };
 use std::f64::consts::PI;
 
-#[cfg(feature = "occt")]
-mod native_drawing;
-
 const SPACING: f64 = 0.25;
 /// Hatch boundaries sample exact edges with chords no farther than a quarter
 /// of the default minimum feature from the edge, as for herringbone sections.
@@ -463,75 +460,6 @@ fn hub_sections_and_inclined_planes_draw_their_cut_faces() {
         .unwrap();
         for role in [VectorRole::Section, VectorRole::Hatch] {
             assert!(vectors.iter().any(|vector| vector.role == role));
-        }
-    }
-}
-
-#[cfg(feature = "occt")]
-#[test]
-fn gear_sections_match_native_open_cascade() {
-    let policy = GeometryPolicy::default();
-    for (label, solid) in [
-        (
-            "spur",
-            placed(Solid::rust_spur_gear_named(spur(3., None), EntityId::new(), policy).unwrap()),
-        ),
-        (
-            "ring",
-            placed(Solid::rust_internal_ring_named(ring(), EntityId::new(), policy).unwrap()),
-        ),
-    ] {
-        let (solid, placement) = solid;
-        for toward_cap in [true, false] {
-            let frame = section_frame(placement, 1., toward_cap);
-            let base = DrawingProjection {
-                frame,
-                section_offset_mm: Some(0.),
-                ..Default::default()
-            };
-            let axial = DrawingProjection {
-                frame,
-                ..Default::default()
-            };
-            native_drawing::assert_matches_native(
-                &[&solid],
-                axial,
-                &format!("{label} axial view toward cap {toward_cap}"),
-            );
-            // OpenCascade's section of the imported flank B-spline surfaces
-            // misses short stretches of the boundary and bridges them with
-            // chords whose midpoints lie up to 0.102 mm off the profile, in
-            // both section-only and retained results. Its axial view of the
-            // same import stays within 0.006 mm of the Rust rims. For these
-            // straight bands that axial view is the section profile, so it is
-            // the independent reference; the native section's own vertices
-            // are also accepted, but its gap chords are not required to lie
-            // on the Rust rims.
-            for (view, options) in [
-                ("section", base),
-                (
-                    "section only",
-                    DrawingProjection {
-                        section_only: true,
-                        ..base
-                    },
-                ),
-                (
-                    "finite depth",
-                    DrawingProjection {
-                        section_depth_mm: Some(0.5),
-                        ..base
-                    },
-                ),
-            ] {
-                native_drawing::assert_matches_native_with(
-                    &[&solid],
-                    options,
-                    &[axial],
-                    false,
-                    &format!("{label} {view} toward cap {toward_cap}"),
-                );
-            }
         }
     }
 }

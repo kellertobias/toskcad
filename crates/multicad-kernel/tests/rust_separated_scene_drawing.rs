@@ -11,9 +11,6 @@ use multicad_kernel::{
 };
 use std::f64::consts::PI;
 
-#[cfg(feature = "occt")]
-mod native_drawing;
-
 fn spur() -> Solid {
     let a = 20_f64.to_radians();
     let pitch = 12.;
@@ -168,37 +165,4 @@ fn overlapping_members_draw_and_exhausted_budgets_refuse_explicitly() {
     )
     .unwrap_err();
     assert_eq!(error.kind, GeometryErrorKind::Limit);
-}
-
-#[cfg(feature = "occt")]
-#[test]
-fn separated_scenes_match_the_native_projection_of_both_bodies() {
-    let gear = spur();
-    let plate = stock(-50.);
-    let axial = DrawingProjection::default();
-    native_drawing::assert_matches_native(&[&gear, &plate], axial, "separated axial");
-    native_drawing::assert_matches_native(
-        &[&gear, &plate],
-        DrawingProjection {
-            hidden_lines: true,
-            ..axial
-        },
-        "separated axial hidden",
-    );
-    // OpenCascade bridges gaps in its gear flank sections; its axial view of
-    // the same import is the reference for the gear's section rims.
-    native_drawing::assert_matches_native_with(
-        &[&gear, &plate],
-        DrawingProjection {
-            frame: PlaneFrame {
-                origin: [0., 0., 2.],
-                ..Default::default()
-            },
-            section_offset_mm: Some(0.),
-            ..Default::default()
-        },
-        &[axial],
-        false,
-        "separated section",
-    );
 }
