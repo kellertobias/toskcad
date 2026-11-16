@@ -70,10 +70,61 @@ fn actual_surface_failure_diagnostics_preserve_only_successful_resource_debits()
         1
     );
     contains(result.area_mm2, q(121));
+    assert_eq!(result.evaluated_cells, 1);
+    let gaussian_prefix = result.work_by_stage[..=SurfaceStage11::Taylor as usize]
+        .iter()
+        .sum();
+    let gaussian_failure = source
+        .surface_properties_with_diagnostics(
+            SurfaceOptions11 {
+                max_work: gaussian_prefix,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap_err();
+    assert_eq!(gaussian_failure.error, Error::Limit);
+    assert!(matches!(
+        gaussian_failure.attempted_stage,
+        Some(SurfaceStage11::Gauss2 | SurfaceStage11::Gauss4)
+    ));
+    assert_eq!(gaussian_failure.work_used, gaussian_prefix);
+    assert_eq!(gaussian_failure.remaining_work, 0);
+    assert!(gaussian_failure.attempted_work > 0);
+    assert_eq!(
+        gaussian_failure.work_by_stage.iter().sum::<usize>(),
+        gaussian_prefix
+    );
     assert_eq!(
         source.surface_properties(Default::default(), None).unwrap(),
         result
     );
+}
+#[test]
+fn actual_finite_surface_unattainable_precision_ties_priorities_and_refuses_without_publishing() {
+    let source = curved();
+    let original = source.clone();
+    let smallest = f64::from_bits(1);
+    let failure = source
+        .surface_properties_with_diagnostics(
+            SurfaceOptions11 {
+                area_width_mm2: smallest,
+                first_moment_width_mm3: smallest,
+                centroid_width_mm: smallest,
+                max_depth: 0,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap_err();
+    assert_eq!(failure.error, Error::Unresolved);
+    assert_eq!(failure.evaluated_cells, 1);
+    assert_eq!(failure.axis_samples, [1, 1]);
+    for r in failure.axis_remainder_max {
+        assert!((r[0] / smallest).is_infinite());
+    }
+    assert_eq!(source, original);
+    assert!(source.surface_properties(Default::default(), None).is_ok());
 }
 fn q(n: i64) -> Q {
     Q::from_integer(n.into())

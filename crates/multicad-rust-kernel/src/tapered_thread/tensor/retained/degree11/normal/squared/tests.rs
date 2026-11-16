@@ -64,6 +64,9 @@ fn actual_squared_normal_all_coefficients_enclose_independent_bilinear_polynomia
             squared.bounds(bad).map(|x| [x.lo, x.hi]),
             Err(Error::Invalid)
         );
+        // Independent private point-evaluator contract. The public bounds
+        // route rejects this same bad UV before reaching the point helper.
+        assert_eq!(squared.at(bad).map(|x| [x.lo, x.hi]), Err(Error::Invalid));
         assert_eq!(
             squared.taylor8(bad, false).map(|x| x.map(|x| [x.lo, x.hi])),
             Err(Error::Invalid)
