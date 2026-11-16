@@ -100,7 +100,26 @@ fn physical_malformed_geometry_and_unsupported_curve_families_cannot_earn_materi
             .map(|r| &actual[shell[1].start + r.start..shell[1].start + r.end])
             .collect::<Vec<_>>()
             .join(",");
-        let face = fields(named(&arena, "ADVANCED_FACE"), &actual);
+        let face_record = named(&arena, "ADVANCED_FACE");
+        let first_bound = &arena[&refs(&face_record.args[1]).unwrap()[0]][0];
+        let actual_loop = &arena[&reference(&first_bound.args[1]).unwrap()][0];
+        let oriented = refs(&actual_loop.args[1]).unwrap()[0];
+        let repeated = (0..81)
+            .map(|_| format!("#{oriented}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let loop_fields = fields(actual_loop, &actual);
+        let edge_record = named(&arena, "EDGE_CURVE");
+        let vertex_record = &arena[&reference(&edge_record.args[1]).unwrap()][0];
+        assert_eq!(vertex_record.name, "VERTEX_POINT");
+        let referenced_point = &arena[&reference(&vertex_record.args[1]).unwrap()][0];
+        assert_eq!(referenced_point.name, "CARTESIAN_POINT");
+        let point_fields = fields(referenced_point, &actual);
+        let edge_fields = fields(edge_record, &actual);
+        let inner = named(&arena, "FACE_BOUND");
+        let inner_name = record_range(inner, &actual).start
+            ..record_range(inner, &actual).start + inner.name.len();
+        let face = fields(face_record, &actual);
         let mut out = Vec::new();
         let mut add = |label, range, replacement: &str, expected| {
             out.push(Damage {
@@ -211,6 +230,30 @@ fn physical_malformed_geometry_and_unsupported_curve_families_cannot_earn_materi
             face[1].clone(),
             "()",
             GeometryError::Unsupported,
+        );
+        add(
+            "actual referenced vertex exceeds coordinate domain",
+            point_fields[1].clone(),
+            "(1000000000001.,0.,0.)",
+            GeometryError::Limit,
+        );
+        add(
+            "edge curve record schema",
+            edge_fields[0].clone(),
+            "$",
+            GeometryError::Invalid,
+        );
+        add(
+            "duplicate shoulder outer bound",
+            inner_name,
+            "FACE_OUTER_BOUND",
+            GeometryError::Invalid,
+        );
+        add(
+            "actual edge loop exceeds finite incidence cap",
+            loop_fields[1].clone(),
+            &format!("({repeated})"),
+            GeometryError::Limit,
         );
         out
     }; // The genuine original neutral arena and all range scaffolding die here.
