@@ -25,6 +25,32 @@ fn genuine_physical_metadata_roles_and_arities_cannot_authorize_other_records() 
     let schema = id("GEOMETRIC_REPRESENTATION_CONTEXT");
     let cases = [
         ("APPLICATION_CONTEXT", "APPLICATION_CONTEXT(1.)".to_owned()),
+        ("APPLICATION_CONTEXT", "UNSUPPORTED_METADATA('')".to_owned()),
+        (
+            "GEOMETRIC_REPRESENTATION_CONTEXT",
+            "GEOMETRIC_REPRESENTATION_CONTEXT(4.)".to_owned(),
+        ),
+        (
+            "REPRESENTATION_CONTEXT",
+            "REPRESENTATION_CONTEXT(1.,'')".to_owned(),
+        ),
+        (
+            "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT",
+            "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT(())".to_owned(),
+        ),
+        (
+            "GLOBAL_UNIT_ASSIGNED_CONTEXT",
+            "GLOBAL_UNIT_ASSIGNED_CONTEXT(())".to_owned(),
+        ),
+        ("LENGTH_UNIT", "LENGTH_UNIT(1.)".to_owned()),
+        ("PLANE_ANGLE_UNIT", "PLANE_ANGLE_UNIT(1.)".to_owned()),
+        ("SOLID_ANGLE_UNIT", "SOLID_ANGLE_UNIT(1.)".to_owned()),
+        ("NAMED_UNIT", "NAMED_UNIT()".to_owned()),
+        ("SI_UNIT", "SI_UNIT(.KILO.,.METRE.)".to_owned()),
+        (
+            "UNCERTAINTY_MEASURE_WITH_UNIT",
+            "UNCERTAINTY_MEASURE_WITH_UNIT()".to_owned(),
+        ),
         ("PRODUCT_CONTEXT", format!("PRODUCT_CONTEXT(1.,#{app},'')")),
         (
             "PRODUCT_CONTEXT",
