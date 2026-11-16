@@ -5,6 +5,7 @@ use super::*;
 use std::mem::size_of;
 pub mod mesh;
 mod moments;
+pub mod shell;
 use moments::Moments;
 #[cfg(test)]
 mod tests;
