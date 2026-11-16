@@ -640,3 +640,152 @@ fn physical_graph_vertex_and_edge_frontiers_refuse_before_material_and_retry() {
         radial::Location::Inside
     );
 }
+
+// Physical preparation only: clone a real point under a fresh ID so changing
+// its curve use cannot silently change interned tensor/vertex/seam owners.
+pub(crate) fn exclusive_curve_interior_nextup(input: &str) -> String {
+    let arena = part21::parse(input).unwrap();
+    let (&curve_id, components) = arena
+        .iter()
+        .find(|(_, components)| {
+            components.len() == 1 && components[0].name == "B_SPLINE_CURVE_WITH_KNOTS"
+        })
+        .unwrap();
+    let curve = &components[0];
+    assert_eq!(curve.args[1], Value::Number(9.));
+    let poles = refs(&curve.args[2]).unwrap();
+    let pole_index = 2;
+    assert!(poles.len() >= 10 && (2..=7).contains(&(pole_index % 9)));
+    let old_point_id = poles[pole_index];
+    let point = &arena[&old_point_id][0];
+    assert_eq!(point.name, "CARTESIAN_POINT");
+    let coords = fields(point, input)[1].clone();
+    let values = arguments(&input[coords.clone()]);
+    let scalar = coords.start + values[0].start..coords.start + values[0].end;
+    let old_value = input[scalar.clone()].parse::<f64>().unwrap();
+    let new_value = old_value.next_up();
+    assert!(old_value.is_finite() && new_value.is_finite() && new_value > old_value);
+    let new_id = *arena.keys().next_back().unwrap() + 1;
+    assert!(!arena.contains_key(&new_id));
+    let body_range = record_range(point, input);
+    let mut new_body = input[body_range.clone()].to_owned();
+    new_body.replace_range(
+        scalar.start - body_range.start..scalar.end - body_range.start,
+        &writer::numbers::literal(new_value).unwrap(),
+    );
+    let pole_list = fields(curve, input)[2].clone();
+    let pole_fields = arguments(&input[pole_list.clone()]);
+    assert_eq!(pole_fields.len(), poles.len());
+    let reference_range = pole_list.start + pole_fields[pole_index].start
+        ..pole_list.start + pole_fields[pole_index].end;
+    assert_eq!(input[reference_range.clone()], format!("#{old_point_id}"));
+    let mut text = input.to_owned();
+    text.insert_str(
+        input.rfind("ENDSEC;").unwrap(),
+        &format!("#{new_id}={new_body};\n"),
+    );
+    text.replace_range(reference_range, &format!("#{new_id}"));
+    let changed = part21::parse(&text).unwrap();
+    assert_eq!(changed.len(), arena.len() + 1);
+    for (&id, original) in &arena {
+        if id != curve_id {
+            assert_eq!(
+                original.iter().map(|e| e.source).collect::<Vec<_>>(),
+                changed[&id].iter().map(|e| e.source).collect::<Vec<_>>()
+            );
+        }
+    }
+    let actual_curve = &changed[&curve_id][0];
+    assert_eq!(curve.name, actual_curve.name);
+    for (k, (a, b)) in curve.args.iter().zip(&actual_curve.args).enumerate() {
+        if k != 2 {
+            assert_eq!(a, b);
+        }
+    }
+    let after = refs(&actual_curve.args[2]).unwrap();
+    assert_eq!(after.len(), poles.len());
+    for (i, (a, b)) in poles.iter().zip(&after).enumerate() {
+        assert_eq!(*b, if i == pole_index { new_id } else { *a });
+    }
+    eprintln!(
+        "EXCLUSIVE_CURVE_INTERIOR curve{curve_id} originalpoint{old_point_id} freshpoint{new_id} pole{pole_index} oldbits{} newbits{} actual_curve_ref_changes1 all_other_records_unchangedtrue",
+        old_value.to_bits(),
+        new_value.to_bits()
+    );
+    text
+}
+
+#[test]
+fn physical_exclusive_curve_control_refusal_keeps_original_source_usable() {
+    let source = engineering();
+    let before = source.shell().input().clone();
+    let snapshot_budget = source.receipt().retained_result_bytes_upper_bound;
+    let candidate = writer::propose(
+        &source,
+        writer::Options {
+            additional_resident_bytes: snapshot_budget,
+            ..Default::default()
+        },
+        None,
+    )
+    .unwrap();
+    let path =
+        std::env::temp_dir().join(format!("codec-curve-control-{}.step", std::process::id()));
+    std::fs::write(&path, candidate.as_str()).unwrap();
+    drop(candidate);
+    let original = std::fs::read_to_string(&path).unwrap();
+    let changed = exclusive_curve_interior_nextup(&original);
+    std::fs::write(&path, &changed).unwrap();
+    drop(changed);
+    let changed = std::fs::read_to_string(&path).unwrap();
+    // This actual changed curve is refused before material admission. Never
+    // pass it to the independent correspondence helper as an earned source.
+    assert_eq!(
+        read(
+            &changed,
+            1e-7,
+            1e-6,
+            Options {
+                additional_resident_bytes: source.receipt().retained_result_bytes_upper_bound
+                    + snapshot_budget
+                    + original.capacity()
+                    + changed.capacity()
+                    - changed.len()
+                    + 4096,
+                ..Default::default()
+            },
+            None
+        )
+        .err(),
+        Some(GeometryError::Unresolved)
+    );
+    assert_eq!(source.shell().input(), &before);
+    drop(before);
+    drop(changed);
+    std::fs::write(&path, &original).unwrap();
+    let restored = std::fs::read_to_string(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let retry = writer::qualify_actual_file(
+        &source,
+        &restored,
+        1e-7,
+        1e-6,
+        writer::QualificationOptions {
+            additional_resident_bytes: original.capacity() + restored.capacity() - restored.len()
+                + 4096,
+            ..Default::default()
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(retry.as_str(), original);
+    assert_eq!(
+        retry
+            .material()
+            .material()
+            .capped_thread()
+            .classify([0., 0., 3.], None)
+            .unwrap(),
+        radial::Location::Inside
+    );
+}
