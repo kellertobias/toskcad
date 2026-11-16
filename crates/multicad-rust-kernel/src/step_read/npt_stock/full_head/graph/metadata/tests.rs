@@ -23,6 +23,8 @@ fn genuine_physical_metadata_roles_and_arities_cannot_authorize_other_records() 
     let representation = id("ADVANCED_BREP_SHAPE_REPRESENTATION");
     let solid = id("MANIFOLD_SOLID_BREP");
     let schema = id("GEOMETRIC_REPRESENTATION_CONTEXT");
+    let length_unit = id("LENGTH_UNIT");
+    let angle_unit = id("PLANE_ANGLE_UNIT");
     let cases = [
         ("APPLICATION_CONTEXT", "APPLICATION_CONTEXT(1.)".to_owned()),
         ("APPLICATION_CONTEXT", "UNSUPPORTED_METADATA('')".to_owned()),
@@ -66,6 +68,14 @@ fn genuine_physical_metadata_roles_and_arities_cannot_authorize_other_records() 
         (
             "UNCERTAINTY_MEASURE_WITH_UNIT",
             "UNCERTAINTY_MEASURE_WITH_UNIT()".to_owned(),
+        ),
+        (
+            "UNCERTAINTY_MEASURE_WITH_UNIT",
+            format!("UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(-1.),#{length_unit},'','')"),
+        ),
+        (
+            "UNCERTAINTY_MEASURE_WITH_UNIT",
+            format!("UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(0.001),#{angle_unit},'','')"),
         ),
         ("PRODUCT_CONTEXT", format!("PRODUCT_CONTEXT(1.,#{app},'')")),
         (
@@ -164,5 +174,76 @@ fn genuine_physical_metadata_roles_and_arities_cannot_authorize_other_records() 
         let mut budget =
             Budget::new(crate::step_read::npt_stock::Options::default(), None).unwrap();
         check(&arena, parts, &mut budget).unwrap();
+    }
+}
+
+#[test]
+fn actual_optional_protocol_metadata_keeps_edition_and_owner_roles() {
+    let mut actual = super::super::super::tests::candidate(false);
+    let arena = crate::step_read::part21::parse(&actual).unwrap();
+    let owner = |name| {
+        *arena
+            .iter()
+            .find(|(_, p)| p.iter().any(|e| e.name == name))
+            .unwrap()
+            .0
+    };
+    let app = owner("APPLICATION_CONTEXT");
+    let product = owner("PRODUCT");
+    let protocol = 999_999_997;
+    let category = 999_999_998;
+    assert!(!arena.contains_key(&protocol) && !arena.contains_key(&category));
+    let protocol_body = format!(
+        "APPLICATION_PROTOCOL_DEFINITION('international standard','automotive_design',2000,#{app})"
+    );
+    let category_body = format!("PRODUCT_RELATED_PRODUCT_CATEGORY('part',$,(#{product}))");
+    let extra = format!("#{protocol}={protocol_body};\n#{category}={category_body};\n");
+    let end = actual.rfind("ENDSEC;").unwrap();
+    actual.insert_str(end, &extra);
+    let records = crate::step_read::part21::parse(&actual).unwrap();
+    for id in [protocol, category] {
+        let mut b = Budget::new(crate::step_read::npt_stock::Options::default(), None).unwrap();
+        check(&records, &records[&id], &mut b).unwrap();
+    }
+    for (id, replacement) in [
+        (
+            protocol,
+            format!("APPLICATION_PROTOCOL_DEFINITION('unknown','automotive_design',2000,#{app})"),
+        ),
+        (
+            protocol,
+            format!(
+                "APPLICATION_PROTOCOL_DEFINITION('international standard','automotive_design',1999,#{app})"
+            ),
+        ),
+        (
+            protocol,
+            format!(
+                "APPLICATION_PROTOCOL_DEFINITION('international standard','automotive_design',2000,#{product})"
+            ),
+        ),
+        (
+            category,
+            format!("PRODUCT_RELATED_PRODUCT_CATEGORY('unknown',$,(#{product}))"),
+        ),
+        (
+            category,
+            "PRODUCT_RELATED_PRODUCT_CATEGORY('part',$,())".to_owned(),
+        ),
+        (
+            category,
+            format!("PRODUCT_RELATED_PRODUCT_CATEGORY('part',$,(#{app}))"),
+        ),
+    ] {
+        let source = records[&id][0].source.unwrap();
+        let start = source.as_ptr() as usize - actual.as_ptr() as usize;
+        let mut changed = actual.clone();
+        changed.replace_range(start..start + source.len(), &replacement);
+        let parsed = crate::step_read::part21::parse(&changed).unwrap();
+        let mut b = Budget::new(crate::step_read::npt_stock::Options::default(), None).unwrap();
+        assert!(matches!(
+            check(&parsed, &parsed[&id], &mut b),
+            Err(Error::Invalid | Error::Unsupported)
+        ));
     }
 }
