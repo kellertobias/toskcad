@@ -10,6 +10,8 @@ use crate::{
 };
 mod caps;
 mod normal;
+mod world;
+pub use world::{MappedHeadMeshCandidate, MappedHeadMeshReceipt};
 #[cfg(test)]
 mod tests;
 const HEAD_SCRATCH: usize = 64 * 1024;

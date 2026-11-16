@@ -64,6 +64,9 @@ pub(super) fn transported(scale: I, r: f64, w: &mut Work<'_>) -> Result<f64> {
     // and M=KᵀK, |vᵀMf|<=((hi-lo)/2)r and |Kf×Kv|<=hi*r.
     // Thus this SAME transformed cone remains positive-dot and tan(theta)
     // obeys the quotient below. No libm angle/chord conversion is assumed.
+    transported_bounds(lo, hi, r)
+}
+fn transported_bounds(lo: f64, hi: f64, r: f64) -> Result<f64> {
     let denominator = I::point(lo) - (I::point(hi) - I::point(lo)) * I::point(r) / I::point(2.);
     if !denominator.valid() || denominator.lo <= 0. {
         return Err(Error::Unsupported);
@@ -73,6 +76,42 @@ pub(super) fn transported(scale: I, r: f64, w: &mut Work<'_>) -> Result<f64> {
         return Err(Error::Unsupported);
     }
     Ok(result.hi)
+}
+pub(super) fn transported_metric(delta: f64, r: f64, w: &mut Work<'_>) -> Result<f64> {
+    w.step(64)?;
+    if !delta.is_finite() || !(0.0..1.0).contains(&delta) || !r.is_finite() || r < 0. {
+        return Err(Error::Unsupported);
+    }
+    // delta bounds ||AᵀA-I||. Cofactor-Gram eigenvalues therefore lie
+    // in[(1-delta)^2,(1+delta)^2]. Proper uniform file B only rotates/scales
+    // this spectrum and does not change the quotient's condition.
+    let lo = (I::point(1.) - I::point(delta)).square().lo;
+    let hi = (I::point(1.) + I::point(delta)).square().hi;
+    transported_bounds(lo, hi, r)
+}
+pub(super) fn world_rounding(
+    raw: [[f64; 3]; 3],
+    actual: [[f64; 3]; 3],
+    axes: [[[f64; 2]; 3]; 3],
+    placement: Option<&super::super::super::LiteralOccurrencePlacement>,
+    w: &mut Work<'_>,
+) -> Result<(f64, [I; 3])> {
+    w.step(1024)?;
+    let old = facet(raw);
+    // B=sR, s>0, detR=+1. Its positive cofactor scale s² cancels from
+    // normal direction; retain actual EXPRESS R and then actual Native A.
+    let mut ideal = std::array::from_fn(|i| {
+        (0..3).fold(I::point(0.), |v, j| {
+            v + I::new(axes[j][i][0], axes[j][i][1]) * old[j]
+        })
+    });
+    if let Some(a) = placement {
+        ideal = a
+            .normal_bounds(ideal.map(|x| [x.lo, x.hi]))?
+            .map(|x| I::new(x[0], x[1]));
+    }
+    let actual = facet(actual);
+    Ok((cone(ideal, actual)?, actual))
 }
 pub(super) fn rounding(
     raw: [[f64; 3]; 3],
