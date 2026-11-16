@@ -7,12 +7,14 @@ fn choose(n: usize, k: usize) -> u64 {
     (0..k.min(n - k)).fold(1u64, |v, i| v * (n - i) as u64 / (i + 1) as u64)
 }
 pub(super) struct Quadrature {
+    #[cfg(test)]
     product: [[I; 12]; 11],
     integral: Weights,
 }
 impl Quadrature {
     pub(super) fn new() -> Self {
         Self {
+            #[cfg(test)]
             product: std::array::from_fn(|i| {
                 std::array::from_fn(|j| {
                     I::point((choose(10, i) * choose(11, j)) as f64)
@@ -30,6 +32,7 @@ impl Quadrature {
         }
     }
 }
+#[cfg(test)]
 pub(super) fn cell(p: [[I; 3]; 144], q: &Quadrature) -> I {
     let du: [[[I; 3]; 12]; 11] = std::array::from_fn(|i| {
         std::array::from_fn(|j| {
@@ -56,6 +59,16 @@ pub(super) fn cell(p: [[I; 3]; 144], q: &Quadrature) -> I {
             }
         }
     }
+    contract(p, q, &normal.map(|row| row.to_vec()))
+}
+pub(super) fn cached_cell(
+    p: [[I; 3]; 144],
+    q: &Quadrature,
+    normal: &crate::tapered_thread::NormalPolynomial11,
+) -> I {
+    contract(p, q, normal.coefficients())
+}
+fn contract(p: [[I; 3]; 144], q: &Quadrature, normal: &[Vec<[I; 3]>]) -> I {
     let mut value = I::point(0.);
     for k in 0..2 {
         let a: [[I; 12]; 22] = std::array::from_fn(|u| {

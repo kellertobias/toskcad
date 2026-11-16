@@ -101,6 +101,16 @@ impl NormalPolynomial11 {
         }
         Ok(result)
     }
+    pub(crate) fn coefficients(&self) -> &[Vec<[I; 3]>] {
+        &self.polynomial.controls
+    }
+    /// Fixed capacities requested by this constructor, checked again against
+    /// actual capacities before a caller publishes a persistent cache.
+    pub(crate) const fn retained_capacity_bound_bytes() -> usize {
+        std::mem::size_of::<Self>()
+            + 22 * std::mem::size_of::<Vec<BoxPoint>>()
+            + 484 * std::mem::size_of::<BoxPoint>()
+    }
     pub fn retained_budget_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             + self.polynomial.controls.capacity() * std::mem::size_of::<Vec<BoxPoint>>()

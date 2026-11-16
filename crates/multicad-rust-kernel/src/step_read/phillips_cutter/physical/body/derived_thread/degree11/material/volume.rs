@@ -2,6 +2,8 @@
 //! original D11 signed flux minus the actual contained closed Cutter volume.
 use super::*;
 use crate::head_profile::{RepairedHeadVolume, RepairedHeadVolumeOptions};
+use crate::tapered_thread::{NORMAL11_WORK, NormalPolynomial11};
+use std::sync::Arc;
 mod supplied;
 mod tensor;
 pub use supplied::{SuppliedDegree11MaterialMatch, SuppliedDegree11MaterialOptions};
@@ -11,10 +13,32 @@ const WORK_LIMIT: usize = 512_000_000;
 const BASE_SCRATCH: usize = 16 * 1024;
 const STREAM_SCRATCH: usize = 128 * 1024;
 const META_WORK: usize = 16384;
-// 17424 normal-product pairs at16 directed operations each,1584 derivative
-// operations,34672 contraction/add operations, pole copies and setup.400000
-// conservatively precharges the complete fixed cell before any construction.
-const CELL_WORK: usize = 400_000;
+// Actual normal construction includes its derivative caches. The additional
+//49152 credits cover37841 directed contraction operations, original cell/pole
+// setup, Arc publication and all loop/cancellation bookkeeping.
+const CELL_WORK: usize = NORMAL11_WORK + 49_152;
+const NORMAL_ARC_BYTES: usize = 64;
+fn normal_error(e: crate::tapered_thread::Error, work: &Work<'_>) -> ReadError {
+    use crate::tapered_thread::Error as E;
+    match e {
+        E::Invalid => ReadError::Invalid,
+        E::Limit => ReadError::Limit,
+        E::Cancelled => {
+            work.cancelled.set(true);
+            ReadError::Limit
+        }
+        E::Unresolved | E::Unsupported => ReadError::Unsupported,
+    }
+}
+fn cached_payload(normals: &[Arc<NormalPolynomial11>]) -> usize {
+    normals
+        .iter()
+        .map(|n| n.retained_budget_bytes() + NORMAL_ARC_BYTES)
+        .sum()
+}
+fn cached_bytes(normals: &[Arc<NormalPolynomial11>], capacity: usize) -> usize {
+    capacity * std::mem::size_of::<Arc<NormalPolynomial11>>() + cached_payload(normals)
+}
 #[derive(Clone, Copy)]
 pub struct Degree11MaterialVolumeOptions {
     pub maximum_width_mm3: f64,
@@ -47,6 +71,7 @@ pub struct Degree11MaterialVolume<'v, 's, 'a, 'input> {
     head_work: usize,
     new_work: usize,
     peak: usize,
+    normals: Vec<Arc<NormalPolynomial11>>,
 }
 impl<'v, 's, 'a, 'input> Degree11MaterialVolume<'v, 's, 'a, 'input> {
     pub fn source(&self) -> &'v Degree11ClosedMaterial<'s, 'a, 'input> {
@@ -84,6 +109,11 @@ impl<'v, 's, 'a, 'input> Degree11MaterialVolume<'v, 's, 'a, 'input> {
     pub fn work_used(&self) -> usize {
         self.source.work_used() + self.new_work
     }
+    pub fn retained_budget_bytes(&self) -> usize {
+        self.source.retained_budget_bytes()
+            + std::mem::size_of::<Self>()
+            + cached_bytes(&self.normals, self.normals.capacity())
+    }
     pub fn accounted_peak_bytes(&self) -> usize {
         self.peak
     }
@@ -116,10 +146,22 @@ fn fitting_limit(maximum: usize, available: usize, bytes: fn(usize) -> usize) ->
     lo
 }
 impl<'s, 'a, 'input> Degree11ClosedMaterial<'s, 'a, 'input> {
-    fn thread_flux(&self, work: &mut Work<'_>) -> Result<(I, usize)> {
+    fn thread_flux(
+        &self,
+        work: &mut Work<'_>,
+        count: usize,
+    ) -> Result<(I, usize, Vec<Arc<NormalPolynomial11>>)> {
         // Bounded integer binomial loops plus396 directed weight divisions.
         work.step(32_768)?;
         let weights = tensor::Quadrature::new();
+        let mut normals = Vec::new();
+        normals
+            .try_reserve_exact(count)
+            .map_err(|_| ReadError::Limit)?;
+        if normals.capacity() > count {
+            return Err(ReadError::Limit);
+        }
+
         let mut total = I::point(0.);
         let mut cells = 0;
         // Every retained face is degree11 and every actual cell is visited once.
@@ -134,14 +176,24 @@ impl<'s, 'a, 'input> Degree11ClosedMaterial<'s, 'a, 'input> {
                     let p = std::array::from_fn(|i| {
                         source.poles()[(11 * u + i / 12) * height + 11 * v + i % 12].map(I::point)
                     });
-                    let value = tensor::cell(p, &weights);
+                    let cell = source.cell([u, v]).map_err(|e| normal_error(e, work))?;
+                    let normal = Arc::new(
+                        NormalPolynomial11::new(&cell).map_err(|e| normal_error(e, work))?,
+                    );
+                    if normal.retained_budget_bytes()
+                        > NormalPolynomial11::retained_capacity_bound_bytes()
+                    {
+                        return Err(ReadError::Limit);
+                    }
+                    let value = tensor::cached_cell(p, &weights, &normal);
+                    normals.push(normal);
                     total = total + if face.forward() { value } else { -value };
                     work.step(0)?;
                     cells += 1;
                 }
             }
         }
-        Ok((total, cells))
+        Ok((total, cells, normals))
     }
     pub fn volume_bounds<'v>(
         &'v self,
@@ -168,10 +220,28 @@ impl<'s, 'a, 'input> Degree11ClosedMaterial<'s, 'a, 'input> {
             }
             work.step(self.work_used())?;
             work.step(META_WORK)?;
+            let count = self
+                .thread
+                .carrier()
+                .faces()
+                .iter()
+                .try_fold(0usize, |sum, f| {
+                    let [u, v] = f.source().spans();
+                    sum.checked_add(u.checked_mul(v).ok_or(ReadError::Limit)?)
+                        .ok_or(ReadError::Limit)
+                })?;
+            let cache_bound = count
+                .checked_mul(
+                    NormalPolynomial11::retained_capacity_bound_bytes()
+                        + NORMAL_ARC_BYTES
+                        + std::mem::size_of::<Arc<NormalPolynomial11>>(),
+                )
+                .ok_or(ReadError::Limit)?;
             let prefix = self
                 .retained_budget_bytes()
                 .checked_add(std::mem::size_of::<Degree11MaterialVolume<'_, '_, '_, '_>>())
                 .and_then(|n| n.checked_add(BASE_SCRATCH))
+                .and_then(|n| n.checked_add(cache_bound))
                 .ok_or(ReadError::Limit)?;
             let available = options
                 .maximum_bytes
@@ -182,11 +252,18 @@ impl<'s, 'a, 'input> Degree11ClosedMaterial<'s, 'a, 'input> {
             //23232B, weights6336B and contraction4224B.128KiB covers all live
             // copies, return temporaries, helper frames and source-cell setup.
             let before = work.remaining;
-            let (thread, thread_cells) = self.thread_flux(&mut work)?;
+            let (thread, thread_cells, normals) = self.thread_flux(&mut work, count)?;
             let thread_work = before - work.remaining;
-            Ok((prefix, available, thread, thread_cells, thread_work))
+            Ok((
+                prefix,
+                available,
+                thread,
+                thread_cells,
+                thread_work,
+                normals,
+            ))
         })();
-        let (prefix, available, thread, thread_cells, thread_work) =
+        let (prefix, available, thread, thread_cells, thread_work, normals) =
             result.map_err(|e| bound_error(e, &work))?;
         let determinant = interval(self.determinant_bounds());
         let preliminary =
@@ -287,6 +364,7 @@ impl<'s, 'a, 'input> Degree11ClosedMaterial<'s, 'a, 'input> {
             head_work,
             new_work: options.maximum_work - work.remaining - self.work_used(),
             peak,
+            normals,
         })
     }
 }

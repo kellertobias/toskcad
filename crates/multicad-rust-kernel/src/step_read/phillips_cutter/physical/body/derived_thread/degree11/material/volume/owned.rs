@@ -39,8 +39,27 @@ pub struct OwnedDegree11Material {
     components: [[f64; 2]; 3],
     work: usize,
     peak: usize,
+    normals: Vec<Arc<NormalPolynomial11>>,
 }
 impl OwnedDegree11Material {
+    /// Actual original degree21 Pu×Pv polynomial for this retained face/root,
+    /// in that original cell's normalized unit-square chart. Creation/order
+    /// are private and bound to the same retained poles by the earned volume.
+    /// This read-only numerical field alone grants no mesh/material admission.
+    pub fn thread_normal(&self, face: usize, root: [usize; 2]) -> Option<&Arc<NormalPolynomial11>> {
+        let [nu, nv] = self.thread.get(face)?.source().spans();
+        if root[0] >= nu || root[1] >= nv {
+            return None;
+        }
+        let offset = self.thread[..face]
+            .iter()
+            .map(|f| {
+                let [u, v] = f.source().spans();
+                u * v
+            })
+            .sum::<usize>();
+        self.normals.get(offset + root[0] * nv + root[1])
+    }
     pub fn original_input(&self) -> &str {
         &self.raw
     }
@@ -119,6 +138,7 @@ impl OwnedDegree11Material {
     /// Shared immutable Arc poles are counted in full, never treated as free.
     pub fn retained_budget_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
+            + cached_bytes(&self.normals, self.normals.capacity())
             + self.raw.len()
             + ARC_BYTES
             + self.thread.capacity() * std::mem::size_of::<Degree11ThreadFace>()
@@ -180,11 +200,11 @@ impl Degree11MaterialVolume<'_, '_, '_, '_> {
     /// Complete old source + earned volume receipt + copy workspace + new
     /// owner capacity envelope, reserved before any new geometry allocation.
     pub fn owned_peak_budget_bytes(&self) -> usize {
-        self.source.retained_budget_bytes()
-            + std::mem::size_of::<Self>()
+        self.retained_budget_bytes()
             + std::mem::size_of::<OwnedDegree11Material>()
             + SCRATCH
             + payload_bound(self.source)
+            + 2 * self.normals.len() * std::mem::size_of::<Arc<NormalPolynomial11>>()
     }
     /// Copy from this same immutable volume proof. Refusal/cancellation keeps
     /// the original receipt/source usable; numerical prerequisites are not rerun.
@@ -206,11 +226,10 @@ impl Degree11MaterialVolume<'_, '_, '_, '_> {
         work.step(self.work_used())
             .and_then(|_| work.step(256 + 16 * source.thread().carrier().faces().len()))
             .map_err(|e| bound_error(e, &work))?;
-        let payload = payload_bound(source);
-        let prefix = source.retained_budget_bytes()
-            + std::mem::size_of::<Self>()
-            + std::mem::size_of::<OwnedDegree11Material>()
-            + SCRATCH;
+        let payload = payload_bound(source)
+            + 2 * self.normals.len() * std::mem::size_of::<Arc<NormalPolynomial11>>();
+        let prefix =
+            self.retained_budget_bytes() + std::mem::size_of::<OwnedDegree11Material>() + SCRATCH;
         let peak = check_peak(prefix, payload, options.maximum_bytes)?;
         // Byte-linear credit covers actual descriptor copies, immutable raw
         // text, original IDs, source snapshots and all fixed metadata queries.
@@ -253,6 +272,11 @@ impl Degree11MaterialVolume<'_, '_, '_, '_> {
         let mut rim = reserve(thread.len())?;
         rim.extend(source.join_inner_uses());
         work.step(1).map_err(|e| bound_error(e, &work))?;
+        let mut normals = reserve(self.normals.len())?;
+        for normal in &self.normals {
+            work.step(1).map_err(|e| bound_error(e, &work))?;
+            normals.push(Arc::clone(normal));
+        }
         let result = OwnedDegree11Material {
             raw: Arc::from(source.body().literal_input()),
             head: source.head().owned_snapshot(),
@@ -276,8 +300,15 @@ impl Degree11MaterialVolume<'_, '_, '_, '_> {
             components: self.component_volumes_mm3(),
             work: 0,
             peak,
+            normals,
         };
-        publish(result, prefix, options, &mut work)
+        publish(
+            result,
+            prefix,
+            cached_payload(&self.normals),
+            options,
+            &mut work,
+        )
     }
 }
 // Validate actual post-allocation capacities before ownership escapes. The
@@ -286,12 +317,16 @@ impl Degree11MaterialVolume<'_, '_, '_, '_> {
 fn publish(
     mut result: OwnedDegree11Material,
     prefix: usize,
+    shared_normals: usize,
     options: Degree11OwnedMaterialOptions,
     work: &mut Work<'_>,
 ) -> std::result::Result<OwnedDegree11Material, PhillipsReadError> {
     check_peak(
         prefix,
-        result.retained_budget_bytes(),
+        result
+            .retained_budget_bytes()
+            .checked_sub(shared_normals)
+            .ok_or(PhillipsReadError::Limit)?,
         options.maximum_bytes,
     )?;
     work.step(1).map_err(|e| bound_error(e, work))?;

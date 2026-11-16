@@ -474,14 +474,11 @@ impl<'v, 's, 'a, 'input> Degree11MaterialVolume<'v, 's, 'a, 'input> {
         // The COMPLETE originating receipt is borrowed by the material. Only
         // this exact shared allocation/proof prefix is subtracted, never a
         // separately reconstructed equivalent head or its buffers/options.
-        let outer_resident = material
+        let outer_resident = self
             .retained_budget_bytes()
-            .checked_add(std::mem::size_of_val(self))
-            .and_then(|n| {
-                n.checked_add(std::mem::size_of::<
-                    SuppliedDegree11MaterialMatch<'_, '_, '_, '_, '_, '_>,
-                >())
-            })
+            .checked_add(std::mem::size_of::<
+                SuppliedDegree11MaterialMatch<'_, '_, '_, '_, '_, '_>,
+            >())
             .ok_or(PhillipsReadError::Limit)?;
         let other_resident = outer_resident
             .checked_sub(origin.retained_budget_bytes())
