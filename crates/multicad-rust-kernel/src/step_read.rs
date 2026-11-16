@@ -1200,3 +1200,11 @@ pub use phillips_cutter::{
     PeriodicReadStage as PhillipsPeriodicReadStage, read_periodic_phillips_material,
     read_periodic_phillips_material_with_progress,
 };
+
+pub use phillips_cutter::{
+    Degree11MaterialRead as PhillipsDegree11MaterialRead,
+    Degree11ReadError as PhillipsDegree11ReadError,
+    Degree11ReadOptions as PhillipsDegree11ReadOptions,
+    Degree11ReadStage as PhillipsDegree11ReadStage, read_degree11_phillips_material,
+    read_degree11_phillips_material_with_progress,
+};

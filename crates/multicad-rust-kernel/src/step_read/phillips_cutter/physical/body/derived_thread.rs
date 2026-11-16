@@ -9,6 +9,8 @@ use crate::{
 mod analytic;
 mod chart;
 mod degree11;
+#[cfg(test)]
+pub(in crate::step_read::phillips_cutter::physical::body) use degree11::tests::actual_m3;
 mod graph;
 mod join;
 mod reduce;

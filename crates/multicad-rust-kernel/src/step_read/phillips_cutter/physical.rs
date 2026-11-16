@@ -371,3 +371,8 @@ pub use body::{
     PeriodicMaterialRead, PeriodicReadError, PeriodicReadOptions, PeriodicReadStage,
     read_periodic_phillips_material, read_periodic_phillips_material_with_progress,
 };
+
+pub use body::{
+    Degree11MaterialRead, Degree11ReadError, Degree11ReadOptions, Degree11ReadStage,
+    read_degree11_phillips_material, read_degree11_phillips_material_with_progress,
+};
