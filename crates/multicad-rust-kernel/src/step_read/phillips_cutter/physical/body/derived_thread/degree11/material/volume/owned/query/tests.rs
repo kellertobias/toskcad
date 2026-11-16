@@ -54,6 +54,59 @@ pub(crate) fn actual_owned(
     drop(author);
     result.unwrap()
 }
+
+#[test]
+fn actual_m3_owned_d11_selected_source_cell_surface_survives_all_owner_drop() {
+    use crate::tapered_thread::{RetainedTensor11, SurfaceOptions11};
+    for left in [false, true] {
+        // This is one unchanged actual root tensor net, not a whole-face or
+        // whole-screw area claim. All original STEP/parser/author owners died
+        // inside actual_owned before these retained coefficients are accessed.
+        let owner = actual_owned("surface-cell", left, false, 1);
+        let source = owner.thread_faces()[0].source();
+        let height = source.dimensions()[1];
+        let v = source.spans()[1] / 2;
+        let poles = (0..12)
+            .flat_map(|i| (0..12).map(move |j| source.poles()[i * height + 11 * v + j]))
+            .collect();
+        let selected = RetainedTensor11::new([1, 1], poles).unwrap();
+        let before = selected.clone();
+        drop(owner);
+        let options = SurfaceOptions11 {
+            area_width_mm2: 1e-5,
+            first_moment_width_mm3: 1e-5,
+            centroid_width_mm: 1e-5,
+            ..Default::default()
+        };
+        let result = selected.surface_properties(options, None).unwrap();
+        eprintln!("ACTUAL_M3_D11_SURFACE left{left} {result:?}");
+        assert!(result.area_mm2[0] > 0.);
+        assert!(I::new(result.area_mm2[0], result.area_mm2[1]).width() <= options.area_width_mm2);
+        for k in 0..3 {
+            let min = selected
+                .poles()
+                .iter()
+                .map(|p| p[k])
+                .fold(f64::INFINITY, f64::min);
+            let max = selected
+                .poles()
+                .iter()
+                .map(|p| p[k])
+                .fold(f64::NEG_INFINITY, f64::max);
+            assert!(result.centroid_mm[k][0] <= max && result.centroid_mm[k][1] >= min);
+            assert!(
+                I::new(result.centroid_mm[k][0], result.centroid_mm[k][1]).width()
+                    <= options.centroid_width_mm
+            );
+            assert!(
+                I::new(result.first_moment_mm3[k][0], result.first_moment_mm3[k][1]).width()
+                    <= options.first_moment_width_mm3
+            );
+        }
+        assert_eq!(selected, before);
+        assert_eq!(selected.surface_properties(options, None).unwrap(), result);
+    }
+}
 fn point(p: Point) -> [[f64; 2]; 3] {
     p.map(|x| [x, x])
 }

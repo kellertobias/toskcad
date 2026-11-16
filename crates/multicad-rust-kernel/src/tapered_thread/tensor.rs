@@ -10,7 +10,8 @@ pub use hermite::{MANUFACTURING_DEGREE, ManufacturingTensor, ManufacturingTensor
 pub(crate) use retained::calculation_cell11;
 pub use retained::{
     NORMAL11_BYTES, NORMAL11_WORK, NormalPolynomial11, RetainedTensor, RetainedTensor11,
-    TensorCell, TensorCell11, TensorDerivatives, TensorFirstDerivatives11,
+    SurfaceOptions11, SurfaceProperties11, TensorCell, TensorCell11, TensorDerivatives,
+    TensorFirstDerivatives11,
 };
 pub(crate) use retained::{
     NormalPolynomial, calculation_cell, curve_first_bounds, curve_taylor9, normal_polynomial,

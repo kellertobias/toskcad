@@ -3,6 +3,8 @@
 use super::*;
 mod normal;
 pub use normal::{NORMAL11_BYTES, NORMAL11_WORK, NormalPolynomial11};
+mod surface;
+pub use surface::{SurfaceOptions11, SurfaceProperties11};
 const DEGREE: usize = 11;
 #[derive(Clone, Debug, PartialEq)]
 pub struct RetainedTensor11 {
