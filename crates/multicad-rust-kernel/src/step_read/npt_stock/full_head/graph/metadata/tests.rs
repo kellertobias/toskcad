@@ -31,6 +31,10 @@ fn genuine_physical_metadata_roles_and_arities_cannot_authorize_other_records() 
             "GEOMETRIC_REPRESENTATION_CONTEXT(4.)".to_owned(),
         ),
         (
+            "GEOMETRIC_REPRESENTATION_CONTEXT",
+            "GEOMETRIC_REPRESENTATION_CONTEXT(4)".to_owned(),
+        ),
+        (
             "REPRESENTATION_CONTEXT",
             "REPRESENTATION_CONTEXT(1.,'')".to_owned(),
         ),
@@ -41,6 +45,14 @@ fn genuine_physical_metadata_roles_and_arities_cannot_authorize_other_records() 
         (
             "GLOBAL_UNIT_ASSIGNED_CONTEXT",
             "GLOBAL_UNIT_ASSIGNED_CONTEXT(())".to_owned(),
+        ),
+        (
+            "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT",
+            "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT()".to_owned(),
+        ),
+        (
+            "GLOBAL_UNIT_ASSIGNED_CONTEXT",
+            "GLOBAL_UNIT_ASSIGNED_CONTEXT()".to_owned(),
         ),
         ("LENGTH_UNIT", "LENGTH_UNIT(1.)".to_owned()),
         ("PLANE_ANGLE_UNIT", "PLANE_ANGLE_UNIT(1.)".to_owned()),
