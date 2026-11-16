@@ -220,3 +220,121 @@ fn a_far_actual_rectangular_counterpart_has_an_owned_separation_proof() {
     assert!(model.snapshot().screw_connection_checks[0].native_component_collision_checked);
     assert_eq!(*session.document(), before);
 }
+
+#[test]
+fn actual_custom_wood_counterbore_bearing_keeps_source_engagement_edit_and_reopen() {
+    for left in [false, true] {
+        let (mut session, mut request) = fixture(false, left, 1);
+        request.receivers[0].source.seat = Some(ConnectionReceiverSeat::Counterbore {
+            diameter: length(12.),
+            depth: length(1.),
+        });
+        let before = session.document().clone();
+        let prepared = prepare_screw_connection(&session, 0, actor(), &request).unwrap();
+        let candidate = Compiler::default()
+            .compile(prepared.prepared.document(), 1)
+            .unwrap();
+        let check = &candidate.snapshot().screw_connection_checks[0];
+        assert!((check.actual_wood_engagement_mm.unwrap() - 12.).abs() < 1e-7);
+        let path = OccurrencePath {
+            root: request.hardware[0].instance,
+            members: vec![],
+        };
+        let screw = candidate.leaf_solid(&path).unwrap();
+        let (actual, frame) = screw.rust_machine_screw_geometry().unwrap();
+        assert_eq!(frame.origin, [10., 10., 19.]);
+        assert_eq!(actual.thread().spec().length_mm, 12.);
+        assert_eq!(actual.thread().spec().left_hand, left);
+        let stock = candidate
+            .leaf_solid(&request.receivers[0].source.occurrence)
+            .unwrap();
+        let (bound, _) = stock.rust_rectangular_blind_counterbore_source().unwrap();
+        assert_eq!(bound.spec().seat_depth_mm, 1.);
+        assert_eq!(bound.spec().bore_depth_mm, 16.);
+        for leaf in [screw, stock] {
+            leaf.manufacturing_mesh_with_receipt(Default::default())
+                .unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let file = dir.path().join("actual-seat.step");
+            leaf.write_step(&file).unwrap();
+            let text = std::fs::read_to_string(file).unwrap();
+            multicad_kernel::Solid::import_rust_step(
+                &text,
+                multicad_core::document::EntityId::new(),
+                Default::default(),
+            )
+            .unwrap()
+            .manufacturing_mesh_with_receipt(Default::default())
+            .unwrap();
+        }
+        session.commit(prepared.prepared).unwrap();
+        let created = session.document().clone();
+        session.undo(1, actor()).unwrap();
+        assert_eq!(*session.document(), before);
+        session.redo(2, actor()).unwrap();
+        assert_eq!(*session.document(), created);
+        request.receivers[0].source.seat = Some(ConnectionReceiverSeat::Counterbore {
+            diameter: length(12.),
+            depth: length(1.25),
+        });
+        let edit =
+            prepare_screw_connection(&session, session.revision(), actor(), &request).unwrap();
+        compiler()
+            .compile(edit.prepared.document(), session.revision() + 1)
+            .unwrap();
+        session.commit(edit.prepared).unwrap();
+        let mut bytes = vec![];
+        project_file::write(
+            &ProjectFile::new(session.document().clone()).unwrap(),
+            &mut bytes,
+            Default::default(),
+        )
+        .unwrap();
+        let reopened = project_file::read(
+            &mut bytes.as_slice(),
+            Default::default(),
+            &project_file::supported_capabilities(),
+        )
+        .unwrap()
+        .project
+        .document;
+        let model = compiler().compile(&reopened, 0).unwrap();
+        assert_eq!(
+            model
+                .leaf_solid(&path)
+                .unwrap()
+                .rust_machine_screw_geometry()
+                .unwrap()
+                .1
+                .origin,
+            [10., 10., 18.75]
+        );
+        assert_eq!(
+            read_screw_connection_request(&reopened, request.connection).unwrap(),
+            request
+        );
+        for seat in [
+            ConnectionReceiverSeat::Counterbore {
+                diameter: length(10.),
+                depth: length(1.),
+            },
+            ConnectionReceiverSeat::Countersink {
+                diameter: length(12.),
+                depth: length(1.),
+            },
+        ] {
+            let mut bad = request.clone();
+            bad.receivers[0].source.seat = Some(seat);
+            if let Ok(pending) =
+                prepare_screw_connection(&session, session.revision(), actor(), &bad)
+            {
+                assert!(
+                    compiler()
+                        .compile(pending.prepared.document(), session.revision() + 1)
+                        .is_err()
+                );
+            }
+            assert_eq!(*session.document(), reopened);
+        }
+    }
+}

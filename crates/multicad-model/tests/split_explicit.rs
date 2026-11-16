@@ -180,11 +180,7 @@ fn a_closed_model_partitions_every_target_at_its_real_boundary_and_keep_tool_is_
         .unwrap()
         .project;
         assert_eq!(&reopened.document, document);
-        for backend in [
-            GeometryBackend::Rust,
-            #[cfg(feature = "occt")]
-            GeometryBackend::OpenCascade,
-        ] {
+        for backend in [GeometryBackend::Rust] {
             let result = Compiler::default()
                 .compile_with_backend(&reopened.document, f.session.revision() + 1, backend, None)
                 .unwrap();
@@ -463,11 +459,7 @@ fn saved_face_offset_plane_keeps_authored_side_frames_after_edit() {
         )
         .unwrap()
         .project;
-        for backend in [
-            GeometryBackend::Rust,
-            #[cfg(feature = "occt")]
-            GeometryBackend::OpenCascade,
-        ] {
+        for backend in [GeometryBackend::Rust] {
             let rebuilt = compiler
                 .compile_with_backend(&reopened.document, 0, backend, None)
                 .unwrap();

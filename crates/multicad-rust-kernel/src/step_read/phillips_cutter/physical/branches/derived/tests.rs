@@ -284,17 +284,35 @@ fn complete_original_body_charge_is_included_before_source_allocation() {
     const { assert!(RAW_SPLINE_SCRATCH < 4 * 1024 * 1024) };
 }
 #[test]
-fn other_actual_phillips_laws_remain_explicitly_unresolved() {
+fn actual_shallow_v_planes_earn_complete_independent_derived_cavity() {
     let text = super::super::tests::text(1, false);
     let body = read_phillips_body(&text, 1e-7, 1_000_000).unwrap();
     let (lifts, cubics) = prerequisites(body.cavity());
     let sewn = lifts
         .sewn_edge_sources(&body, &cubics, SewnOptions::default(), None)
         .unwrap();
+    let receipt = body
+        .derived_cavity_representative(&sewn, Default::default(), None)
+        .unwrap();
     assert!(matches!(
-        body.derived_cavity_representative(&sewn, Default::default(), None),
-        Err(PhillipsReadError::Unsupported)
+        receipt.derived_cavity_source().spec().inner,
+        crate::phillips_drive::Inner::ShallowV { .. }
     ));
+    let transfer = receipt.transfer_bounds();
+    assert_eq!(
+        (
+            transfer.vertex_count(),
+            transfer.edge_count(),
+            transfer.face_count()
+        ),
+        (49, 76, 29)
+    );
+    assert!(
+        transfer.maximum_vertex_error_mm() < 1e-7
+            && transfer.maximum_analytic_support_error_mm() < 1e-7
+            && transfer.maximum_polynomial_error_mm() < 1e-7
+            && transfer.maximum_polynomial_support_error_mm() < 1e-7
+    );
 }
 
 // Refine one actual imported carrier to the largest admitted cubic schema.
@@ -787,4 +805,109 @@ fn closed_derived_source_resource_and_cancellation_failures_leave_original_recei
         retry.local_source_certificate().reserves(),
         good.local_source_certificate().reserves()
     );
+}
+
+#[test]
+fn actual_unfitted_shallow_v_plane_remains_mandatory_in_whole_source_comparison() {
+    let text = super::super::tests::text(1, false);
+    let body = read_phillips_body(&text, 1e-7, 1_000_000).unwrap();
+    let mut work = Work {
+        remaining: WORK,
+        interrupt: None,
+        cancelled: std::cell::Cell::new(false),
+    };
+    let baseline = fit::candidate(body.cavity(), &mut work).unwrap();
+    let dot = |a: Point, b: Point| a.into_iter().zip(b).map(|(x, y)| x * y).sum::<f64>();
+    let changed_face = body
+        .cavity()
+        .faces()
+        .iter()
+        .find(|face| match face.support {
+            Surface::Plane { axis } => {
+                let n = baseline.pose.axes.map(|a| dot(a, axis.normal));
+                n[0] > 0. && n[1] > 0. && n[2] > 0.
+            }
+            _ => false,
+        })
+        .unwrap();
+    // The proposal uses negative-local-Y upper planes. Shift a real lower
+    // plane, preserving every original vertex, edge and other support. A fit
+    // alone is consequently unchanged and cannot admit this altered file.
+    let shell = Shell::new(body.source_entities(), 1e-7, true);
+    let surface = changed_face.surface_entity;
+    let axis_id = reference(&shell.args(surface, "PLANE").unwrap()[1]).unwrap();
+    let axis = shell.args(axis_id, "AXIS2_PLACEMENT_3D").unwrap();
+    let old_point = reference(&axis[1]).unwrap();
+    let p = shell.point(old_point).unwrap();
+    let normal = shell.direction(reference(&axis[2]).unwrap()).unwrap();
+    let p: Point = std::array::from_fn(|i| p[i] + 0.001 * normal[i]);
+    let new_point = body.source_entities().keys().max().unwrap() + 1;
+    let new_axis = new_point + 1;
+    let axis_record = body.source_entities()[&axis_id][0]
+        .source
+        .unwrap()
+        .replacen(&format!("#{old_point},"), &format!("#{new_point},"), 1);
+    let old_line = text
+        .lines()
+        .find(|line| line.starts_with(&format!("#{surface}=")))
+        .unwrap();
+    let new_line = old_line.replacen(&format!("#{axis_id}"), &format!("#{new_axis}"), 1);
+    assert_ne!(old_line, new_line);
+    let mut changed = text.replacen(old_line, &new_line, 1);
+    let end = changed.rfind("ENDSEC;").unwrap();
+    changed.insert_str(
+        end,
+        &format!(
+            "#{new_point}=CARTESIAN_POINT('',({:.17E},{:.17E},{:.17E}));\n#{new_axis}={};\n",
+            p[0],
+            p[1],
+            p[2],
+            axis_record.trim_end_matches(';')
+        ),
+    );
+    let altered = read_phillips_body(&changed, 1e-7, 1_000_000).unwrap();
+    let candidate = fit::candidate(altered.cavity(), &mut work).unwrap();
+    assert_eq!(candidate.source.spec(), baseline.source.spec());
+    let topology = candidate.source.boundary_topology().unwrap();
+    let b = altered.cavity();
+    let views = b
+        .faces()
+        .iter()
+        .map(|f| SourceFaceView {
+            surface: f.surface_entity,
+            forward: f.cavity_forward,
+            uses: f
+                .uses
+                .iter()
+                .map(|&(e, s)| (b.edges()[e].entity, s))
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    let mut shell = Shell::new(altered.source_entities(), 1e-7, true);
+    let graph = graph::read_views(
+        &mut shell,
+        &views,
+        &topology,
+        &candidate.pose,
+        1e-7,
+        &mut work,
+    )
+    .unwrap();
+    assert!(geometry::verify(&shell, &graph, &topology, &candidate.pose, 1e-7, &mut work).is_err());
+    assert_eq!(body.literal_input(), text);
+}
+
+#[test]
+fn actual_sewing_collar_numeric_composition_encloses_and_refuses_invalid_or_overflow() {
+    let collar = sewn_edge_collar(0.25, [0.125, 0.5]).unwrap();
+    assert!((0.75..0.750000000000001).contains(&collar));
+    for (correction, owners) in [
+        (-1., [0., 0.]),
+        (f64::NAN, [0., 0.]),
+        (0., [f64::INFINITY, 0.]),
+        (0., [0., -1.]),
+        (f64::MAX, [f64::MAX, 0.]),
+    ] {
+        assert!(sewn_edge_collar(correction, owners).is_err());
+    }
 }

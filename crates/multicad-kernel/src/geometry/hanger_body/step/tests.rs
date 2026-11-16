@@ -1,0 +1,166 @@
+use super::*;
+fn solid(left: bool, nonbinary: bool) -> Solid {
+    Solid::rust_hanger(
+        crate::geometry::hanger_material::source_tests::source(left, nonbinary),
+        EntityId::new(),
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+        None,
+    )
+    .unwrap()
+}
+#[test]
+fn actual_local_hanger_step_exports_cache_qualification_and_keep_healed_mass_distinct() {
+    let dir = tempfile::tempdir().unwrap();
+    for (left, nb) in [(false, false), (true, true)] {
+        let source = solid(left, nb);
+        let (body, frame) = source.hanger_body().unwrap();
+        let started = std::time::Instant::now();
+        assert!(source.supports_step_export());
+        let qualified = body.qualified_step(frame, source.policy, None).unwrap();
+        let first_seconds = started.elapsed().as_secs_f64();
+        let started = std::time::Instant::now();
+        assert!(source.supports_step_export());
+        assert!(Rc::ptr_eq(
+            &qualified,
+            &body.qualified_step(frame, source.policy, None).unwrap()
+        ));
+        eprintln!(
+            "Native hanger capability left={left} first={first_seconds} cached={}",
+            started.elapsed().as_secs_f64()
+        );
+        let path = dir
+            .path()
+            .join(if left { "left.step" } else { "right.step" });
+        source.write_step(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let expected =
+            read::CompoundDocument::parse(qualified.as_str(), Default::default(), None).unwrap();
+        let actual = read::CompoundDocument::parse(&text, Default::default(), None).unwrap();
+        assert!(
+            matches!(
+                binding::bind_local_members(
+                    &expected,
+                    expected.represented_members()[0].item_entity(),
+                    &actual,
+                    actual.represented_members()[0].item_entity(),
+                    binding::Options {
+                        maximum_work: 64_000_000,
+                        ..Default::default()
+                    },
+                    None,
+                ),
+                Err(binding::Error::WorkLimit)
+            ),
+            "explicit smaller callers retain their real refusal frontier"
+        );
+        let proof = source
+            .verify_partitioned_step_source(&text, source.policy.linear_tolerance_mm, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(proof.members.solid_count, 1);
+        assert!(proof.members.retained_members.is_empty());
+        assert!(proof.members.decoded_scalar_members.is_empty());
+        assert!(proof.source_known_members.is_empty());
+        assert!(proof.insert_correspondence.is_empty());
+        assert_eq!(proof.healed_members.len(), 1);
+        let (index, mass) = &proof.healed_members[0];
+        eprintln!(
+            "Native hanger written-file binding left={left} work={} entities={} bytes={}",
+            mass.literal_binding_work,
+            mass.matched_entities,
+            text.len()
+        );
+        assert_eq!(*index, 0);
+        assert!(mass.healed_volume_bounds_mm3[0] > 0.);
+        assert_eq!(
+            mass.healed_volume_bounds_mm3,
+            qualified.healed_volume_bounds_mm3()
+        );
+        assert!(mass.source_to_healed_position_error_mm <= source.policy.linear_tolerance_mm);
+        assert!(mass.matched_entities > 100);
+        assert!(matches!(
+            source
+                .verify_partitioned_step_source(
+                    &text,
+                    source.policy.linear_tolerance_mm,
+                    Some(&|| true)
+                )
+                .unwrap(),
+            Err(GeometryError {
+                kind: GeometryErrorKind::Cancelled,
+                ..
+            })
+        ));
+        let mut strict = source.share().unwrap();
+        strict.policy.linear_tolerance_mm = 1e-10;
+        assert!(!strict.supports_step_export());
+        assert!(strict.write_step(&path).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        let placed = source
+            .transformed(RigidTransform {
+                translation_mm: [1., 2., 3.],
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(!placed.supports_step_export());
+        assert!(placed.write_step(&path).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+}
+#[test]
+fn actual_mixed_hanger_exports_keep_member_categories_and_reject_wrong_source() {
+    let policy = GeometryPolicy::default();
+    let source = solid(false, false);
+    let ordinary = Solid::rust_box(
+        EntityId::new().uuid_bits(),
+        [1, 2, 3].map(|n| Rational::new(n, 1).unwrap()),
+        PlaneFrame {
+            origin: [31., 0., 0.],
+            ..Default::default()
+        },
+        policy,
+    )
+    .unwrap();
+    let mixed = Solid::make_rust_compound(
+        &[&source, &ordinary, &source],
+        EntityId::new(),
+        policy,
+        None,
+    )
+    .unwrap();
+    let file = tempfile::NamedTempFile::new().unwrap();
+    mixed.write_step(file.path()).unwrap();
+    let text = std::fs::read_to_string(file.path()).unwrap();
+    let proof = mixed
+        .verify_partitioned_step_source(&text, policy.linear_tolerance_mm, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(proof.members.solid_count, 3);
+    assert!(proof.members.retained_members.is_empty());
+    assert_eq!(
+        proof
+            .healed_members
+            .iter()
+            .map(|(index, _)| *index)
+            .collect::<Vec<_>>(),
+        vec![0, 2]
+    );
+    assert_eq!(proof.members.decoded_scalar_members.len(), 1);
+    assert_eq!(proof.members.decoded_scalar_members[0].0, 1);
+    assert!((proof.members.decoded_scalar_members[0].1 - 6.).abs() < 1e-10);
+    let wrong = solid(true, false);
+    let wrong_mixed =
+        Solid::make_rust_compound(&[&wrong, &ordinary, &wrong], EntityId::new(), policy, None)
+            .unwrap();
+    assert!(matches!(
+        wrong_mixed
+            .verify_partitioned_step_source(&text, policy.linear_tolerance_mm, None)
+            .unwrap(),
+        Err(GeometryError {
+            kind: GeometryErrorKind::InvalidResult,
+            ..
+        })
+    ));
+    assert_eq!(std::fs::read_to_string(file.path()).unwrap(), text);
+}

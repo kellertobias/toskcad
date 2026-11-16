@@ -169,33 +169,3 @@ fn reverse_view_occludes_the_far_chamfer_and_rejects_uncertified_projection() {
     inside.frame.u = [angle, angle, 0.];
     assert!(view(&model, &document, &inside).is_err());
 }
-
-#[cfg(feature = "occt")]
-#[test]
-fn actual_toolcase_axial_vectors_match_open_cascade() {
-    let (document, page) = fixture();
-    let rust = preview(&document, &page, GeometryBackend::Rust);
-    let occt = preview(&document, &page, GeometryBackend::OpenCascade);
-    for view in &page.views {
-        let compare = |source: &drawings::DrawingEvaluation| {
-            let result = &source.views[&view.id];
-            let ViewEvaluation::Ready { vectors, .. } = result else {
-                panic!("{result:?}");
-            };
-            let mut lines: Vec<_> = vectors
-                .iter()
-                .filter_map(|v| {
-                    let VectorCurve::Line { a, b } = v.curve else {
-                        return None;
-                    };
-                    let mut points = [a.map(quantize), b.map(quantize)];
-                    points.sort_unstable();
-                    Some(points)
-                })
-                .collect();
-            lines.sort_unstable();
-            (lines, rings(result, VectorRole::Visible))
-        };
-        assert_eq!(compare(&rust), compare(&occt), "{}", view.name);
-    }
-}

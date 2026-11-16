@@ -2,8 +2,7 @@ use multicad_core::{
     document::EntityId,
     references::{GeometryIntent, Origin, Resolution, TopologyKind, resolve},
 };
-#[cfg(feature = "occt")]
-use multicad_kernel::RigidTransform;
+
 use multicad_kernel::{
     GeometryPolicy, HelicalThread, MeshOptions, PlaneFrame, Solid,
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
@@ -332,95 +331,6 @@ fn unsupported_stock_and_subminimum_features_refuse_atomically() {
             )
             .is_ok()
     );
-}
-#[cfg(feature = "occt")]
-#[test]
-fn native_construction_and_step_reader_confirm_tail_root_and_shoulder_material() {
-    use multicad_kernel::{BooleanOperation, RootRoundedHelicalThread};
-    let policy = GeometryPolicy::default();
-    let dir = tempfile::tempdir().unwrap();
-    for (length, radius, left, root) in [
-        (2.5, 4., false, None),
-        (2.5, 4.25, true, Some(1.25 * 3_f64.sqrt() / 12.)),
-        (8., 4., true, Some(1.25 * 3_f64.sqrt() / 12.)),
-        (11., 4.25, false, None),
-    ] {
-        let frame = PlaneFrame {
-            origin: [17., -3., 21.],
-            u: [0.8, 0.6, 0.],
-            v: [-0.36, 0.48, 0.8],
-        };
-        let request = root.map_or_else(
-            || spec(length, left, 1),
-            |r| rounded_spec(length, left, 1, r),
-        );
-        let rust = stock(radius, frame, EntityId::new())
-            .rust_cut_external_thread(request, root, EntityId::new(), frame, policy)
-            .unwrap();
-        let pose = RigidTransform {
-            rotation: std::array::from_fn(|i| [frame.u[i], frame.v[i], frame.normal()[i]]),
-            translation_mm: frame.origin,
-        };
-        let native_stock = Solid::cylinder(PlaneFrame::default(), radius, 8., policy).unwrap();
-        let native_tool = if let Some(root_radius_mm) = root {
-            Solid::root_rounded_helical_thread_named(
-                RootRoundedHelicalThread {
-                    profile: request,
-                    root_radius_mm,
-                },
-                EntityId::new(),
-                policy,
-            )
-            .unwrap()
-        } else {
-            Solid::helical_thread_named(request, EntityId::new(), policy).unwrap()
-        };
-        assert!(!native_tool.uses_rust_geometry());
-        let thread = native_tool
-            .boolean(&native_stock, BooleanOperation::Intersect, policy)
-            .unwrap()
-            .unwrap();
-        let native = if length < 8. {
-            let band = Solid::cylinder(PlaneFrame::default(), radius, length, policy).unwrap();
-            let tail = native_stock
-                .boolean(&band, BooleanOperation::Subtract, policy)
-                .unwrap()
-                .unwrap();
-            thread
-                .boolean(&tail, BooleanOperation::Union, policy)
-                .unwrap()
-                .unwrap()
-        } else {
-            thread
-        }
-        .transformed(pose)
-        .unwrap();
-        assert!((rust.volume_mm3().unwrap() - native.volume_mm3().unwrap()).abs() < 1e-5);
-        let area = |s: &Solid| s.faces().unwrap().iter().map(|f| f.area_mm2).sum::<f64>();
-        assert!((area(&rust) - area(&native)).abs() < 1e-4);
-        let path = dir.path().join("external.step");
-        rust.write_step(&path).unwrap();
-        let decoded = Solid::read_step(&path, policy).unwrap();
-        assert!(!decoded.uses_rust_geometry());
-        assert!((decoded.volume_mm3().unwrap() - native.volume_mm3().unwrap()).abs() < 1e-5);
-        for z in [0.625, 1.25, 7.] {
-            let point = [3.8, 0., z];
-            let inside = rust.rust_thread_contains(world(frame, point)).unwrap();
-            let probe = Solid::box_solid([0.002; 3], policy)
-                .unwrap()
-                .transformed(RigidTransform {
-                    translation_mm: point.map(|v| v - 0.001),
-                    ..Default::default()
-                })
-                .unwrap()
-                .transformed(pose)
-                .unwrap();
-            let common = decoded
-                .boolean(&probe, BooleanOperation::Intersect, policy)
-                .unwrap();
-            assert_eq!(common.is_some(), inside);
-        }
-    }
 }
 
 #[test]

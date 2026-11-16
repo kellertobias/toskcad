@@ -1900,16 +1900,16 @@ fn shared_native_owner_reuses_default_screw_preview_for_authoritative_apply() {
             std::thread::sleep(Duration::from_millis(1));
         }
     }
-    let owner = Backend::runtime(GeometryBackend::OpenCascade).unwrap();
+    let owner = Backend::runtime(GeometryBackend::Rust).unwrap();
     let mut preview = Backend {
         runtime: owner.fork(),
         expected: None,
-        geometry_backend: GeometryBackend::OpenCascade,
+        geometry_backend: GeometryBackend::Rust,
     };
     let mut canonical = Backend {
         runtime: owner.fork(),
         expected: None,
-        geometry_backend: GeometryBackend::OpenCascade,
+        geometry_backend: GeometryBackend::Rust,
     };
     let mut session = Session::new(Document::new("Default M3 shared owner").unwrap()).unwrap();
     let resources = Default::default();
@@ -2517,7 +2517,7 @@ mod painted_default_screw {
 
     #[test]
     fn actual_default_m3_controls_measure_preview_unchanged_and_apply_to_canonical_ready() {
-        let owner = Backend::runtime(GeometryBackend::OpenCascade).unwrap();
+        let owner = Backend::runtime(GeometryBackend::Rust).unwrap();
         let preview_records: Records = Default::default();
         let canonical_records: Records = Default::default();
         let factory = |records| {
@@ -2525,7 +2525,7 @@ mod painted_default_screw {
                 backend: Backend {
                     runtime: owner.fork(),
                     expected: None,
-                    geometry_backend: GeometryBackend::OpenCascade,
+                    geometry_backend: GeometryBackend::Rust,
                 },
                 records,
             }) as Box<dyn SceneBackend>

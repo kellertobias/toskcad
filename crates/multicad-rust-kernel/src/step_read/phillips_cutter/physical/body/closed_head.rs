@@ -82,7 +82,7 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
         self.retained
     }
 }
-fn repaired_error(e: RepairedHeadError) -> PhillipsReadError {
+pub(super) fn repaired_error(e: RepairedHeadError) -> PhillipsReadError {
     match e {
         // Public options were validated before invoking the source constructor.
         RepairedHeadError::Invalid | RepairedHeadError::Unresolved => {

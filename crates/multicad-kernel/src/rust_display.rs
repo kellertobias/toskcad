@@ -268,6 +268,9 @@ fn subtract(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 // Return analytic edge ordinals in loop order. These are the same ordinals
 // published by the prism topology and are distinct from mesh indices.
 pub(crate) fn planar_loops(solid: &Solid, face: u32) -> Vec<Vec<(u32, bool)>> {
+    if let Some(body) = solid.pipe_hardware_body() {
+        return body.planar_loops(face);
+    }
     if let Some((body, _)) = solid.orthogonal_body() {
         return body.loops(face);
     }
@@ -294,6 +297,21 @@ pub(crate) fn planar_loops(solid: &Solid, face: u32) -> Vec<Vec<(u32, bool)>> {
         return body.planar_loops(face);
     }
     if let Some((body, _)) = solid.rounded_cylinder_body() {
+        return body.planar_loops(face);
+    }
+    if let Some(body) = solid.line8_nut_body() {
+        return body.planar_loops(face);
+    }
+    if let Some(body) = solid.external_npt_stock_body() {
+        return body.planar_loops(face);
+    }
+    if let Some(body) = solid.literal_npt_body() {
+        return body.planar_loops(face);
+    }
+    if let Some(body) = solid.clipped_npt_body() {
+        return body.planar_loops(face);
+    }
+    if let Some((body, _)) = solid.cosmetic_profiled_body_ref() {
         return body.planar_loops(face);
     }
     if let Some((body, _)) = solid.cosmetic_fastener_body() {

@@ -168,10 +168,33 @@ fn retained_entry_material_publishes_actual_faces_mesh_and_source_known_file_pro
             .kind,
         multicad_kernel::GeometryErrorKind::Unsupported
     );
-    assert!(!compound.supports_step_export());
-    let refused = dir.path().join("unqualified-compound.step");
-    assert!(compound.write_step(&refused).is_err());
-    assert!(!refused.exists());
+    assert!(compound.supports_step_export());
+    let mixed = dir.path().join("source-known-compound.step");
+    compound.write_step(&mixed).unwrap();
+    let mixed_text = std::fs::read_to_string(&mixed).unwrap();
+    let mixed_proof = compound
+        .verify_partitioned_step_source(&mixed_text, 1e-7, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(mixed_proof.members.solid_count, 2);
+    assert!(mixed_proof.members.retained_members.is_empty());
+    assert_eq!(mixed_proof.members.decoded_scalar_members.len(), 1);
+    assert_eq!(mixed_proof.members.decoded_scalar_members[0].0, 0);
+    assert_eq!(mixed_proof.source_known_members.len(), 1);
+    assert_eq!(mixed_proof.source_known_members[0].0, 1);
+    assert_eq!(mixed_proof.source_known_members[0].1.face_count, 8);
+    assert!(
+        mixed_proof.source_known_members[0]
+            .1
+            .source_volume_bounds_mm3[0]
+            <= body.volume_mm3().unwrap()
+    );
+    assert!(
+        mixed_proof.source_known_members[0]
+            .1
+            .source_volume_bounds_mm3[1]
+            >= body.volume_mm3().unwrap()
+    );
     let path = dir.path().join("entry.step");
     body.write_step(&path).unwrap();
     let text = std::fs::read_to_string(&path).unwrap();

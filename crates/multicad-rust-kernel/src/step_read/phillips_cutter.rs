@@ -232,3 +232,38 @@ pub use physical::{
 pub use physical::{
     ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHeadSupportKind,
 };
+
+pub use physical::{
+    AnalyticThreadOptions, AnalyticThreadRepair, AnalyticThreadTransfer, AuthoredPeriodicOptions,
+    CoherentDegree11ThreadCarrier, CommonChartPeriodicThreadRepair, ContactThreadCarrier,
+    Degree11ClosedMaterial, Degree11ContactOptions, Degree11DomainEnd, Degree11JoinCollar,
+    Degree11MaterialFace, Degree11MaterialOptions, Degree11MaterialVolume,
+    Degree11MaterialVolumeOptions, Degree11OccupiedOptions, Degree11OwnedMaterialOptions,
+    Degree11RimContact, Degree11RimContactId, Degree11RimKnot, Degree11RimUse, Degree11SignDomain,
+    Degree11ThreadContacts, Degree11ThreadFace, Degree11ThreadOptions, DerivedThreadCarrier,
+    DerivedThreadOptions, DyadicParameter, OccupiedDegree11Thread, OccupiedDerivedThread,
+    OwnedDegree11Material, OwnedPeriodicMaterial, PeriodicAuthoredApproximation,
+    PeriodicClosedMaterial, PeriodicCurveOwner, PeriodicCurveQuery, PeriodicFaceProperties,
+    PeriodicFiniteCurve, PeriodicFiniteCurves, PeriodicFiniteKind, PeriodicFiniteOptions,
+    PeriodicGeometryApproximation, PeriodicLiteralCertificate, PeriodicMaterialFace,
+    PeriodicMaterialMatch, PeriodicMaterialMatchOptions, PeriodicMaterialOptions,
+    PeriodicMaterialProvenance, PeriodicMaterialVolume, PeriodicOwnedMaterialQuery,
+    PeriodicOwnedOptions, PeriodicProposalOrigin, PeriodicShoulderOptions, PeriodicShoulderRepair,
+    PeriodicThreadBounds, PeriodicThreadCorrespondence, PeriodicThreadRepair, PeriodicThreadSource,
+    PeriodicVolumeOptions, RimContact, RimContactId, RimDomainEnd, RimDomainRole, RimKnot,
+    RimSignDomain, SuppliedThreadCorrespondence, ThreadCarrierTransfer, ThreadContactOptions,
+};
+
+pub use physical::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSource};
+
+pub use physical::{MaterialVolume, MaterialVolumeOptions};
+
+pub use physical::{
+    DelegatedWorkspaceBounds, JoinedMaterialCandidate, JoinedMeshOptions, OwnedDerivedMaterial,
+    OwnedMaterialOptions, OwnedMaterialQuery, OwnedMaterialQueryError, OwnedMaterialQueryOptions,
+};
+
+pub use physical::{
+    PeriodicMaterialRead, PeriodicReadError, PeriodicReadOptions, PeriodicReadStage,
+    read_periodic_phillips_material, read_periodic_phillips_material_with_progress,
+};

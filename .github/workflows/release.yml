@@ -16,9 +16,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  foundation:
-    name: Native dependency proof
-    uses: ./.github/workflows/native-foundation.yml
+  owned-kernel:
+    name: Owned Rust kernel proof
+    uses: ./.github/workflows/owned-kernel.yml
 
   regression:
     name: Native regression suites
@@ -62,7 +62,6 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: rustup show active-toolchain
       - run: sudo apt-get update && sudo apt-get install -y libwayland-dev libxkbcommon-dev
-      - run: node tools/foundation-deps.mjs
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: npm test
@@ -115,7 +114,7 @@ jobs:
 
   release:
     name: Mint GitHub tag and hosted release
-    needs: [metadata, quality, build, foundation, regression]
+    needs: [metadata, quality, build, owned-kernel, regression]
     if: >-
       github.event_name == 'push' && github.ref == 'refs/heads/main' &&
       needs.metadata.outputs.release == 'true' &&

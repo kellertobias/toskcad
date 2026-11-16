@@ -281,7 +281,7 @@ fn fit_rows(
     }
 }
 
-fn verify_boundaries(
+pub(super) fn verify_boundaries(
     slab: &Slab,
     a: &SurfaceRow,
     b: &SurfaceRow,

@@ -180,31 +180,6 @@ fn analytic_parallel_queries_keep_concavity_holes_pose_and_real_native_metrics()
                     .unwrap(),
                 volume,
             );
-            #[cfg(feature = "occt")]
-            {
-                let native = Solid::cylinder(frame, 2., 5., GeometryPolicy::default()).unwrap();
-                let native_part = Solid::extrude_curved_profile_vector_named(
-                    &profile,
-                    pframe.normal().map(|n| n * height),
-                    EntityId::new(),
-                    &(0..profile.outer.len() + profile.holes.iter().map(Vec::len).sum::<usize>())
-                        .map(|i| Origin {
-                            source: EntityId::new(),
-                            role: format!("edge.{i}"),
-                        })
-                        .collect::<Vec<_>>(),
-                    GeometryPolicy::default(),
-                )
-                .unwrap();
-                let reference = native
-                    .inspect_pair(&native_part, 1e-3, GeometryPolicy::default())
-                    .unwrap();
-                near(reference.common_volume_mm3, result.common_volume_mm3);
-                near(
-                    reference.minimum_distance.distance_mm,
-                    result.minimum_distance.distance_mm,
-                );
-            }
         }
     }
 }

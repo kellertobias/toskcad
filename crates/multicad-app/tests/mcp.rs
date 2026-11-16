@@ -9,6 +9,193 @@ use std::{
 };
 
 const RELATIVE: f64 = 1e-7;
+#[test]
+fn default_stdio_hanger_recipe_preserves_history_export_and_saved_source() {
+    check_connection_recipe("hanger_bolt");
+}
+#[test]
+fn default_stdio_insert_recipe_preserves_history_export_and_saved_source() {
+    check_connection_recipe("wood_insert");
+}
+fn check_connection_recipe(kind: &str) {
+    for hand in ["right", "left"] {
+        let directory = tempfile::tempdir().unwrap();
+        let project = directory.path().join("created-connection.tcd");
+        let arguments = [
+            "--project",
+            project.to_str().unwrap(),
+            "--export-dir",
+            directory.path().to_str().unwrap(),
+        ];
+        let mut client = Client::start(&arguments);
+        let recipe = if kind == "hanger_bolt" {
+            json!({"kind":kind,"wood_thread":{"hand":hand},"metric_thread":{"hand":hand}})
+        } else {
+            json!({"kind":kind,"outer_thread":{"hand":hand,"length":length(4.3)},"inner_thread":{"hand":hand,"length":length(4.3)}})
+        };
+        let created = client.ok(
+            "set_mechanical_part",
+            json!({"expected_revision":0,"name":"Authored connection","recipe":recipe}),
+        );
+        let first = client.part_volume();
+        assert!(first > 0.);
+        let edit = if kind == "hanger_bolt" {
+            json!({"kind":kind,"plain_length":length(3.3)})
+        } else {
+            json!({"kind":kind,"outer_thread":{"length":length(5.1)},"inner_thread":{"length":length(5.1),"metric_fit_engagement":{"kind":"intended_length","length":length(3.)}}})
+        };
+        client.ok(
+            "set_mechanical_part",
+            json!({"expected_revision":1,"feature":created["feature"],"recipe":edit}),
+        );
+        let edited = client.part_volume();
+        if kind == "hanger_bolt" {
+            close(edited - first, PI * 1.5f64.powi(2) * 1.3);
+        } else {
+            close(edited, first * 5.1 / 4.3);
+        }
+        client.ok("undo", json!({"expected_revision":2}));
+        close(client.part_volume(), first);
+        client.ok("redo", json!({"expected_revision":3}));
+        close(client.part_volume(), edited);
+        client.ok("save_project", json!({"expected_revision":4}));
+        let saved = std::fs::read(&project).unwrap();
+        let mut nested = json!({"kind":kind});
+        nested[if kind == "hanger_bolt" {
+            "wood_thread"
+        } else {
+            "outer_thread"
+        }] = json!({"origin":[length(1.),length(0.),length(0.)]});
+        for request in [
+            json!({"expected_revision":3,"feature":created["feature"],"recipe":{"kind":kind}}),
+            json!({"expected_revision":4,"feature":created["feature"],"recipe":nested}),
+        ] {
+            client.fail("set_mechanical_part", request);
+        }
+        assert_eq!(client.revision(), 4);
+        close(client.part_volume(), edited);
+        let first_receipt = client.ok(
+            "export_step",
+            json!({"part":created["part"],"file_name":"created.step"}),
+        );
+        assert_eq!(
+            first_receipt["step_verification"]["method"],
+            if kind == "hanger_bolt" {
+                "decoded_support_healing"
+            } else {
+                "decoded_boundary_enclosure"
+            }
+        );
+        assert!(first_receipt["readback_volume_mm3"].is_null());
+        assert_eq!(std::fs::read(&project).unwrap(), saved);
+        drop(client);
+        let mut reopened = Client::start(&arguments);
+        close(reopened.part_volume(), edited);
+        let second_receipt = reopened.ok(
+            "export_step",
+            json!({"part":created["part"],"file_name":"reopened.step"}),
+        );
+        assert_eq!(
+            first_receipt["step_verification"],
+            second_receipt["step_verification"]
+        );
+        assert_eq!(
+            std::fs::read(directory.path().join("created.step")).unwrap(),
+            std::fs::read(directory.path().join("reopened.step")).unwrap()
+        );
+        assert_eq!(std::fs::read(&project).unwrap(), saved);
+    }
+}
+#[test]
+fn default_stdio_hanger_projects_export_with_healing_receipts_and_reopen_unchanged() {
+    use multicad_core::{
+        commands::{Actor, Channel, Session},
+        document::Document,
+        model::*,
+        project_file::{self, ProjectFile},
+    };
+    for left in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let project = directory.path().join("hanger.tcd");
+        let mut session = Session::new(Document::new("Hanger app export").unwrap()).unwrap();
+        let mut parameters = default_custom_connection_hanger_bolt();
+        let MechanicalPartParameters::CustomConnection { parameters: custom } = &mut parameters
+        else {
+            panic!()
+        };
+        let CustomConnectionHardwareParameters::HangerBolt {
+            wood_thread,
+            metric_thread,
+            ..
+        } = custom.as_mut()
+        else {
+            panic!()
+        };
+        let hand = if left {
+            ThreadHand::Left
+        } else {
+            ThreadHand::Right
+        };
+        wood_thread.hand = hand;
+        metric_thread.hand = hand;
+        let source = MechanicalPartRequest::new("Physical hanger", parameters);
+        session
+            .commit(
+                prepare_mechanical_part(&session, 0, Actor::local(Channel::Ui), &source)
+                    .unwrap()
+                    .prepared,
+            )
+            .unwrap();
+        project_file::write(
+            &ProjectFile::new(session.document().clone()).unwrap(),
+            &mut std::fs::File::create(&project).unwrap(),
+            Default::default(),
+        )
+        .unwrap();
+        let original = std::fs::read(&project).unwrap();
+        let arguments = [
+            "--project",
+            project.to_str().unwrap(),
+            "--export-dir",
+            directory.path().to_str().unwrap(),
+        ];
+        let mut client = Client::start(&arguments);
+        let volume = client.part_volume();
+        assert!(volume > 0.);
+        let revision = client.revision();
+        let first = client.ok(
+            "export_step",
+            json!({"part":source.body,"file_name":"first.step"}),
+        );
+        assert!(first["readback_volume_mm3"].is_null());
+        assert_eq!(
+            first["step_verification"]["method"],
+            "decoded_support_healing"
+        );
+        assert_eq!(
+            first["step_verification"]["healed_members"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(client.revision(), revision);
+        assert_eq!(std::fs::read(&project).unwrap(), original);
+        drop(client);
+        let mut reopened = Client::start(&arguments);
+        close(reopened.part_volume(), volume);
+        let second = reopened.ok(
+            "export_step",
+            json!({"part":source.body,"file_name":"second.step"}),
+        );
+        assert_eq!(first["step_verification"], second["step_verification"]);
+        assert_eq!(
+            std::fs::read(directory.path().join("first.step")).unwrap(),
+            std::fs::read(directory.path().join("second.step")).unwrap()
+        );
+        assert_eq!(std::fs::read(&project).unwrap(), original);
+    }
+}
 fn close(actual: f64, expected: f64) {
     assert!(
         (actual - expected).abs() <= RELATIVE * expected.abs().max(1.),
@@ -769,10 +956,8 @@ fn rust_stdio_round_trips_helical_tube_cut_step_after_reopen() {
     let project = directory.path().join("imported.tcd");
     let exchange = directory.path().to_str().unwrap();
     let arguments = |project| {
-        let mut arguments = vec!["--project", project, "--export-dir", exchange];
-        if cfg!(feature = "occt") {
-            arguments.push("--rust-model");
-        }
+        let arguments = vec!["--project", project, "--export-dir", exchange];
+        {}
         arguments
     };
     let mut author = Client::start(&arguments(source.to_str().unwrap()));
@@ -921,15 +1106,13 @@ fn rust_stdio_round_trips_a_mixed_helical_tube_cut_compound() {
     let lower: [f64; 3] = std::array::from_fn(|i| helical[0][i].min(ordinary[0][i]));
     let upper: [f64; 3] = std::array::from_fn(|i| helical[1][i].max(ordinary[1][i]));
 
-    let mut arguments = vec![
+    let arguments = vec![
         "--project",
         project.to_str().unwrap(),
         "--export-dir",
         directory.path().to_str().unwrap(),
     ];
-    if cfg!(feature = "occt") {
-        arguments.push("--rust-model");
-    }
+    {}
     let mut importer = Client::start(&arguments);
     let imported = importer.ok(
         "import_step",
@@ -2016,15 +2199,13 @@ fn export_spur_step_after_reopen(hub: Option<Value>) {
     let project = directory.path().join("spur.tcd");
     let exports = directory.path().join("exports");
     std::fs::create_dir(&exports).unwrap();
-    let mut arguments = vec![
+    let arguments = vec![
         "--project",
         project.to_str().unwrap(),
         "--export-dir",
         exports.to_str().unwrap(),
     ];
-    if cfg!(feature = "occt") {
-        arguments.push("--rust-model");
-    }
+    {}
     let mut client = Client::start(&arguments);
     let mut recipe = json!({
         "expected_revision": 0,
@@ -3510,7 +3691,7 @@ fn rust_stdio_tapered_cosmetic_envelopes_reopen_and_refuse_manufacturing_atomica
         close(reopened.part_volume(), expected);
         let inspected = reopened.ok("inspect_thread", json!({"thread":feature}));
         assert_eq!(inspected["resolved"]["representation"], "cosmetic_envelope");
-        if custom {
+        {
             reopened.ok(
                 "set_thread",
                 json!({"expected_revision":0,"thread":feature,"representation":"modeled"}),
@@ -3525,14 +3706,33 @@ fn rust_stdio_tapered_cosmetic_envelopes_reopen_and_refuse_manufacturing_atomica
             let revision = reopened.revision();
             reopened.ok("redo", json!({"expected_revision":revision}));
             close(reopened.part_volume(), modeled);
+            if !custom {
+                let revision = reopened.revision();
+                let exported = reopened.ok(
+                    "export_step",
+                    json!({"part":part,"file_name":"modeled-npt.step"}),
+                );
+                assert!(directory.path().join("modeled-npt.step").is_file());
+                assert!(exported["readback_volume_mm3"].is_null());
+                assert_eq!(
+                    exported["step_verification"]["retained_members"]
+                        .as_array()
+                        .unwrap()
+                        .len(),
+                    1
+                );
+                assert_eq!(
+                    exported["step_verification"]["source_correspondence"]
+                        .as_array()
+                        .unwrap()
+                        .len(),
+                    1
+                );
+                assert_eq!(reopened.revision(), revision);
+                assert_eq!(std::fs::read(&project).unwrap(), bytes);
+            }
             let revision = reopened.revision();
             reopened.ok("undo", json!({"expected_revision":revision}));
-        } else {
-            reopened.fail(
-                "set_thread",
-                json!({"expected_revision":0,"thread":feature,"representation":"modeled"}),
-            );
-            assert_eq!(reopened.revision(), 0);
         }
         close(reopened.part_volume(), expected);
         let refused = reopened.fail(
@@ -3621,6 +3821,104 @@ fn rust_stdio_external_receiving_threads_preserve_stock_edit_export_and_reopen()
         json!({"part":stock.body,"file_name":"external-shaft-again.step"}),
     );
     close(again["readback_volume_mm3"].as_f64().unwrap(), edited);
+}
+
+#[test]
+fn default_stdio_npt_stock_cut_edits_history_and_reopens_without_dropping_tail() {
+    use multicad_core::{
+        commands::{Actor, Channel, Session},
+        document::Document,
+        model::{
+            self, NptGaugeConvention, NptThreadForm, NptThreadIntent, NptThreadSize,
+            NptTruncationTarget, PrimitiveParameters, PrimitiveRequest, length as mm,
+        },
+        project_file::{self, ProjectFile},
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("external-npt-stock.tcd");
+    let intent = NptThreadIntent {
+        form: NptThreadForm::External,
+        size: NptThreadSize::OneEighth,
+        gauge: NptGaugeConvention::Nbs1959PlainFace,
+        truncation: NptTruncationTarget::MidpointConeParallel,
+    };
+    let cut_length = intent.default_length_mm();
+    let radius = intent.preset().published.pipe_od_inch * 25.4 / 2.;
+    let mut session = Session::new(Document::new("Exact pipe stock").unwrap()).unwrap();
+    let stock = PrimitiveRequest::new(
+        "Pipe stock",
+        PrimitiveParameters::Cylinder {
+            radius: mm(radius),
+            height: mm(cut_length + 2.),
+            frame: Default::default(),
+        },
+    );
+    let prepared =
+        model::prepare_primitive(&session, 0, Actor::local(Channel::Ui), &stock).unwrap();
+    session.commit(prepared.prepared).unwrap();
+    let mut bytes = Vec::new();
+    project_file::write(
+        &ProjectFile::new(session.document().clone()).unwrap(),
+        &mut bytes,
+        Default::default(),
+    )
+    .unwrap();
+    std::fs::write(&project, &bytes).unwrap();
+    let args = [
+        "--project",
+        project.to_str().unwrap(),
+        "--export-dir",
+        directory.path().to_str().unwrap(),
+    ];
+    let mut client = Client::start(&args);
+    let initial = client.part_volume();
+    close(
+        initial,
+        std::f64::consts::PI * radius * radius * (cut_length + 2.),
+    );
+    let revision = client.revision();
+    let mut request = json!({"expected_revision":revision,"name":"External NPT stock cut","mode":"cut_external","target_part":stock.body,"family":"npt","fit":"npt_historical_midpoint","npt":intent,"major_diameter":length(intent.base_major_mm()),"pitch":length(intent.preset().pitch_mm),"length":length(cut_length)});
+    request["origin"] = json!([length(0.1), length(0.), length(0.)]);
+    client.fail("set_thread", request.clone());
+    assert_eq!(client.revision(), revision);
+    close(client.part_volume(), initial);
+    request.as_object_mut().unwrap().remove("origin");
+    let created = client.ok("set_thread", request);
+    let first = client.part_volume();
+    assert!(first < initial && first > std::f64::consts::PI * radius * radius * 2.);
+    let revision = client.revision();
+    client.fail("set_thread", json!({"expected_revision":revision,"thread":created["thread"],"length":length(cut_length - 0.25)}));
+    assert_eq!(client.revision(), revision);
+    close(client.part_volume(), first);
+    client.ok("set_thread", json!({"expected_revision":revision,"thread":created["thread"],"radial_allowance":length(0.005)}));
+    let edited = client.part_volume();
+    assert!(edited < first && edited > std::f64::consts::PI * radius * radius * 2.);
+    let revision = client.revision();
+    client.ok("undo", json!({"expected_revision":revision}));
+    close(client.part_volume(), first);
+    let revision = client.revision();
+    client.ok("redo", json!({"expected_revision":revision}));
+    close(client.part_volume(), edited);
+    let destination = directory.path().join("pending.step");
+    std::fs::write(&destination, b"Retained exchange file").unwrap();
+    let revision = client.revision();
+    client.fail(
+        "export_step",
+        json!({"part":stock.body,"file_name":"pending.step"}),
+    );
+    assert_eq!(client.revision(), revision);
+    assert_eq!(
+        std::fs::read(&destination).unwrap(),
+        b"Retained exchange file"
+    );
+    client.ok("save_project", json!({"expected_revision":revision}));
+    drop(client);
+    let saved = std::fs::read(&project).unwrap();
+    let mut reopened = Client::start(&args);
+    close(reopened.part_volume(), edited);
+    let inspected = reopened.ok("inspect_thread", json!({"thread":created["thread"]}));
+    assert_eq!(inspected["source"]["parameters"]["npt"], json!(intent));
+    assert_eq!(std::fs::read(&project).unwrap(), saved);
 }
 
 #[test]
@@ -3823,7 +4121,8 @@ fn rust_stdio_rounded_families_edit_history_export_blind_import_and_reopen() {
             capabilities["modeled_new_external_fit_classes"],
             json!([fit])
         );
-        assert_eq!(capabilities["supported"], false); // Legacy field still means the complete family, including receivers.
+        assert_eq!(capabilities["supported"], true);
+        assert_eq!(capabilities["modeled_cut_internal_supported"], true);
         let imperial = matches!(family, ThreadFamily::Bsw | ThreadFamily::Bsf);
         let diameter_input = if imperial {
             json!({"value":diameter/25.4,"unit":"in"})
@@ -4747,23 +5046,185 @@ fn default_stdio_phillips_metric_screws_keep_actual_geometry_history_and_atomic_
         client.fail("set_mechanical_part",json!({"expected_revision":4,"feature":created["feature"],"recipe":{"kind":"machine_screw","drive":{"kind":"phillips_h","profile":{"mouth_diameter":length(100.)}}}}));
         assert_eq!(client.revision(), 4);
         close(client.part_volume(), second);
-        client.fail(
-            "export_step",
-            json!({"part":created["part"],"file_name":"unfinished.step"}),
-        );
-        assert!(!directory.path().join("unfinished.step").exists());
-        std::fs::write(directory.path().join("unfinished.step"), b"accepted file").unwrap();
-        client.fail(
-            "export_step",
-            json!({"part":created["part"],"file_name":"unfinished.step"}),
-        );
-        assert_eq!(
-            std::fs::read(directory.path().join("unfinished.step")).unwrap(),
-            b"accepted file"
-        );
+        let output = directory.path().join("phillips.step");
+        if fit == "nominal_basic" {
+            let exported = client.ok(
+                "export_step",
+                json!({"part":created["part"],"file_name":"phillips.step"}),
+            );
+            assert!(exported["readback_volume_mm3"].is_null());
+            let receipt = &exported["step_verification"];
+            assert_eq!(receipt["method"], "decoded_periodic_repair");
+            let members = receipt["periodic_members"].as_array().unwrap();
+            assert_eq!(members.len(), 1);
+            assert_eq!(members[0]["member_index"], 0);
+            let interval = members[0]["decoded_volume_bounds_mm3"].as_array().unwrap();
+            assert!(interval[0].as_f64().unwrap() > 0.);
+            assert!(interval[0].as_f64() <= interval[1].as_f64());
+            assert_eq!(client.revision(), 4);
+            let cold_project = directory.path().join("independent-phillips.tcd");
+            let cold_arguments = [
+                "--project",
+                cold_project.to_str().unwrap(),
+                "--export-dir",
+                directory.path().to_str().unwrap(),
+            ];
+            let mut independent = Client::start(&cold_arguments);
+            independent.ok(
+                "import_step",
+                json!({"expected_revision":0,"file_name":"phillips.step"}),
+            );
+            let imported_volume = independent.part_volume();
+            assert!(imported_volume >= interval[0].as_f64().unwrap());
+            assert!(imported_volume <= interval[1].as_f64().unwrap());
+            independent.ok("save_project", json!({"expected_revision":1}));
+            drop(independent);
+            std::fs::remove_file(&output).unwrap();
+            let mut independent_reopened = Client::start(&cold_arguments);
+            close(independent_reopened.part_volume(), imported_volume);
+        } else {
+            client.fail(
+                "export_step",
+                json!({"part":created["part"],"file_name":"phillips.step"}),
+            );
+            assert!(!output.exists());
+            std::fs::write(&output, b"accepted file").unwrap();
+            client.fail(
+                "export_step",
+                json!({"part":created["part"],"file_name":"phillips.step"}),
+            );
+            assert_eq!(std::fs::read(&output).unwrap(), b"accepted file");
+        }
         client.ok("save_project", json!({"expected_revision":4}));
         drop(client);
         let mut reopened = Client::start(&arguments);
         close(reopened.part_volume(), second);
+    }
+}
+
+fn literal_npt_stock(
+    quarter: bool,
+) -> multicad_kernel::rust_kernel::axial_pipe_thread::authored::StockClipPlan {
+    use multicad_kernel::rust_kernel::axial_pipe_thread::authored::{
+        AuthoredSection, AuthoredSpec, AuthoredThread,
+    };
+    let (tpi, e1, l1, l2, od, max) = if quarter {
+        (18., 0.49163, 0.2278, 0.4018, 0.540, 0.088)
+    } else {
+        (27., 0.37360, 0.1615, 0.2639, 0.405, 0.096)
+    };
+    let pitch = 25.4 / tpi;
+    let k = 1. / 32.;
+    let m = 3f64.sqrt();
+    let s = 1. / (m - k) + 1. / (m + k);
+    let depth = pitch / s - (0.033 + max) * pitch;
+    let spec = AuthoredSpec {
+        major_radius_mm: (e1 * 25.4 - 2. * k * l1 * 25.4 + depth) / 2.,
+        pitch_mm: pitch,
+        length_mm: l2 * 25.4,
+        radial_taper: k,
+        section: AuthoredSection::NptFlat {
+            depth_mm: depth,
+            flat_width_mm: (pitch - depth * s) / 2.,
+        },
+        crest_radius_limit_mm: Some(od * 25.4 / 2.),
+    };
+    AuthoredThread::new(spec, 1e-7, 1e-6)
+        .unwrap()
+        .stock_clip_plan(Default::default(), None)
+        .unwrap()
+}
+fn literal_npt_text(quarter: bool) -> String {
+    use multicad_kernel::rust_kernel::step::npt_stock as step;
+    let source = literal_npt_stock(quarter);
+    let curves = step::CurvePlan::new(&source, Default::default(), None).unwrap();
+    let surfaces = step::SurfacePlan::new(curves, Default::default(), None).unwrap();
+    step::write_source_candidate(&surfaces, 16_000_000, 64 * 1024 * 1024, None)
+        .unwrap()
+        .into_string()
+}
+
+#[test]
+fn default_stdio_literal_npt_import_survives_source_removal_history_and_reopen() {
+    for quarter in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let project = directory.path().join("literal-pipe.tcd");
+        let input = directory.path().join("pipe.step");
+        std::fs::write(&input, literal_npt_text(quarter)).unwrap();
+        let arguments = [
+            "--project",
+            project.to_str().unwrap(),
+            "--export-dir",
+            directory.path().to_str().unwrap(),
+        ];
+        let mut client = Client::start(&arguments);
+        let imported = client.ok(
+            "import_step",
+            json!({"expected_revision":0,"file_name":"pipe.step"}),
+        );
+        assert_eq!(imported["parts"].as_array().unwrap().len(), 1);
+        let volume = client.part_volume();
+        assert!(volume > 0.);
+        client.ok("save_project", json!({"expected_revision":1}));
+        std::fs::remove_file(&input).unwrap();
+        client.ok("undo", json!({"expected_revision":1}));
+        assert!(
+            client.ok("evaluate_model", json!({}))["parts"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        client.ok("redo", json!({"expected_revision":2}));
+        close(client.part_volume(), volume);
+        drop(client);
+        let mut reopened = Client::start(&arguments);
+        close(reopened.part_volume(), volume);
+        assert_eq!(
+            reopened.ok("evaluate_model", json!({}))["parts"][0]["solid_count"],
+            1
+        );
+        let revision = reopened.revision();
+        let exported = reopened.ok(
+            "export_step",
+            json!({"part":imported["parts"][0],"file_name":"literal-reexport.step"}),
+        );
+        assert!(exported["readback_volume_mm3"].is_null());
+        assert_eq!(
+            exported["step_verification"]["method"],
+            "decoded_boundary_enclosure"
+        );
+        let ranges = exported["step_verification"]["retained_members"]
+            .as_array()
+            .unwrap();
+        assert_eq!(ranges.len(), 1);
+        let interval = ranges[0]["decoded_volume_bounds_mm3"].as_array().unwrap();
+        assert!(interval[0].as_f64().unwrap() > 0. && interval[0].as_f64() <= interval[1].as_f64());
+        assert_eq!(reopened.revision(), revision);
+        let cold_project = directory.path().join("independent-reimport.tcd");
+        let mut independent = Client::start(&[
+            "--project",
+            cold_project.to_str().unwrap(),
+            "--export-dir",
+            directory.path().to_str().unwrap(),
+        ]);
+        independent.ok(
+            "import_step",
+            json!({"expected_revision":0,"file_name":"literal-reexport.step"}),
+        );
+        close(independent.part_volume(), volume);
+        independent.ok("save_project", json!({"expected_revision":1}));
+        drop(independent);
+
+        std::fs::write(
+            &input,
+            literal_npt_text(quarter).replace("CLOSED_SHELL", "OPEN_SHELL"),
+        )
+        .unwrap();
+        reopened.fail(
+            "import_step",
+            json!({"expected_revision":revision,"file_name":"pipe.step"}),
+        );
+        assert_eq!(reopened.revision(), revision);
+        close(reopened.part_volume(), volume);
     }
 }

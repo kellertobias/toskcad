@@ -269,10 +269,7 @@ mod tests {
     fn p() -> GeometryPolicy {
         GeometryPolicy::default()
     }
-    #[cfg(feature = "occt")]
-    fn near(a: f64, b: f64) {
-        assert!((a - b).abs() < 2e-7, "{a} != {b}");
-    }
+
     fn request(
         source: EntityId,
         topology: &TopologySnapshot,
@@ -300,82 +297,7 @@ mod tests {
             method,
         }
     }
-    #[cfg(feature = "occt")]
-    #[test]
-    fn exact_source_is_transformed_once_and_catalog_echoes_real_consumer_pose() {
-        let doc = Document::new("query").unwrap();
-        let source = EntityId::new();
-        let solid = Solid::box_named([10., 20., 5.], source, p()).unwrap();
-        let topology = solid.topology_snapshot(source, 4).unwrap();
-        let request = request(
-            source,
-            &topology,
-            |g| matches!(g,AnalyticGeometry::Plane{frame}if(frame.origin_mm[2]-5.).abs()<1e-7),
-            QueryMethod::Coplanar,
-        );
-        let relative = RigidPose {
-            rotation: [[0., -1., 0.], [1., 0., 0.], [0., 0., 1.]],
-            translation_mm: [100., 200., 30.],
-        };
-        let frame = Frame {
-            origin: [0., 0., 35.],
-            u: [1., 0., 0.],
-            v: [0., 1., 0.],
-            n: [0., 0., 1.],
-        };
-        let input = Inputs {
-            document: &doc,
-            revision: 4,
-            query: &request,
-            source: &solid,
-            topology: &topology,
-            source_to_context: relative,
-            frame,
-            policy: p(),
-        };
-        let display = RigidPose {
-            translation_mm: [-500., 42., 7.],
-            ..Default::default()
-        };
-        let catalogue = query(input, display).unwrap();
-        assert_eq!(catalogue.sketch_world_pose, display);
-        assert_eq!(catalogue.query, request);
-        assert_eq!(catalogue.source_hash, ContentHash::document(&doc).unwrap());
-        assert_eq!(catalogue.results.len(), 4);
-        for r in &catalogue.results {
-            let ExternalGeometry::Line { a_mm, b_mm } = r.geometry else {
-                panic!()
-            };
-            for at in [a_mm, b_mm] {
-                assert!((80. - 1e-7..=100. + 1e-7).contains(&at[0]));
-                assert!((200. - 1e-7..=210. + 1e-7).contains(&at[1]));
-            }
-            assert!(!r.selector.support.is_empty());
-        }
-        near(solid.volume_mm3().unwrap(), 1000.);
-        assert_eq!(solid.topology_snapshot(source, 4).unwrap(), topology);
-    }
-    #[cfg(feature = "occt")]
-    fn circle(source: EntityId) -> Solid {
-        Solid::extrude_curved_profile_named(
-            &multicad_kernel::CurvedProfile {
-                frame: Default::default(),
-                outer: vec![CurvedEdge2d::Circle {
-                    center: [0., 0.],
-                    radius_mm: 5.,
-                }],
-                holes: vec![],
-            },
-            3.,
-            source,
-            &[Origin {
-                source,
-                role: "circle".into(),
-            }],
-            p(),
-        )
-        .unwrap()
-    }
+
     fn rational(value: i64) -> multicad_kernel::rust_kernel::Rational {
         multicad_kernel::rust_kernel::Rational::new(value, 1).unwrap()
     }
@@ -394,8 +316,6 @@ mod tests {
         .unwrap();
         let rust = Solid::from_axial_cylinder(cylinder, PlaneFrame::default(), p()).unwrap();
         assert_finite_branches(source, &rust);
-        #[cfg(feature = "occt")]
-        assert_finite_branches(source, &circle(source));
     }
 
     fn assert_finite_branches(source: EntityId, solid: &Solid) {

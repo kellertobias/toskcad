@@ -11,14 +11,16 @@ pub use axial::AxialBoundary;
 mod caps;
 mod material;
 mod mesh;
+pub use mesh::{CapRimFootpoint, CapRole, CapTraceOptions, TracedMesh};
 mod ordering;
 mod properties;
 mod query;
+mod storage;
 pub use caps::CapBoundary;
 pub use material::RadialBoundary;
 pub use ordering::OrderedBoundary;
 pub use properties::{FaceProperties, MassProperties, VolumeProperties};
-pub use query::{Collars, Location};
+pub use query::{BoxQuery, BoxQueryOptions, Collars, Location};
 mod trims;
 pub use trims::TrimmedBoundary;
 #[cfg(test)]

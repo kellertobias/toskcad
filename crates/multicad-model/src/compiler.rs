@@ -344,20 +344,11 @@ pub struct Compiler {
     pub omit_display: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum GeometryBackend {
     OpenCascade,
+    #[default]
     Rust,
-}
-
-impl Default for GeometryBackend {
-    fn default() -> Self {
-        if multicad_kernel::OCCT_LINKED {
-            Self::OpenCascade
-        } else {
-            Self::Rust
-        }
-    }
 }
 
 struct EvaluationMode {
@@ -587,6 +578,7 @@ impl Compiler {
         if let Some(cache) = cache.as_deref_mut() {
             cache.reset_compile_stats();
             cache.begin_symbol_proofs();
+            cache.pipe_threads.begin_compile();
         }
         let mut result = self
             .compile_scoped_unchecked(
@@ -610,6 +602,7 @@ impl Compiler {
             });
         if let Some(cache) = cache.as_deref_mut() {
             cache.finish_symbol_proofs(result.is_ok());
+            cache.pipe_threads.finish_compile(result.is_ok());
         }
         native_publication.finish(result.is_ok() && full_evaluation);
         publication.finish(result.is_ok() && full_evaluation);
@@ -1202,11 +1195,24 @@ impl Compiler {
                     let source = model::read_mechanical_part(document, id)
                         .map_err(|e| error(Some(id), e))?;
                     let started = std::time::Instant::now();
-                    let build = match backend {
-                        GeometryBackend::Rust => crate::mechanical_parts::build_rust,
-                        GeometryBackend::OpenCascade => crate::mechanical_parts::build,
-                    };
-                    let solid = build(id, &source, context.parameters(), self.policy)?;
+                    let solid = match backend {
+                        GeometryBackend::Rust => {
+                            crate::mechanical_parts::build_rust_with_pipe_factory(
+                                id,
+                                &source,
+                                context.parameters(),
+                                self.policy,
+                                cached.as_mut().map(|c| c.pipe_thread_factory()),
+                                interrupt,
+                            )
+                        }
+                        GeometryBackend::OpenCascade => crate::mechanical_parts::build(
+                            id,
+                            &source,
+                            context.parameters(),
+                            self.policy,
+                        ),
+                    }?;
                     timings.hardware_construction_ms += started.elapsed().as_secs_f64() * 1000.;
                     solid
                 }

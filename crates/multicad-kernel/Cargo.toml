@@ -9,10 +9,8 @@ publish.workspace = true
 
 [features]
 default = []
-occt = ["dep:cxx", "dep:cxx-build", "dep:multicad-native-build"]
 
 [dependencies]
-cxx = { version = "=1.0.205", optional = true }
 multicad-core.workspace = true
 multicad-rust-kernel.workspace = true
 
@@ -20,13 +18,7 @@ multicad-rust-kernel.workspace = true
 tempfile = "=3.27.0"
 serde_json = "=1.0.154"
 
-[build-dependencies]
-cxx-build = { version = "=1.0.205", optional = true }
-multicad-native-build = { workspace = true, optional = true }
-quote = "=1.0.47"
-syn = { version = "=3.0.9", features = ["full"] }
-
-# The audited CXX declaration is the only unsafe-code exception in this crate.
+# Geometry and transfer data use safe Rust.
 [lints.rust]
 unsafe_code = "deny"
 

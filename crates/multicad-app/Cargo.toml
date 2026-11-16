@@ -14,7 +14,6 @@ path = "src/main.rs"
 
 [features]
 default = []
-occt = ["multicad-kernel/occt", "multicad-model/occt", "multicad-mcp/occt"]
 
 [dependencies]
 multicad-core.workspace = true

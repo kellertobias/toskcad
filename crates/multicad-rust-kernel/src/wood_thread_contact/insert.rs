@@ -1,8 +1,18 @@
 //! Actual authored insert in retained drilled stock, not a headed-screw alias.
 use super::*;
 use crate::wood_insert::{Classification, Insert};
+mod clamp;
 mod clearance;
-mod mating;
+mod clocked;
+pub use clamp::{
+    InsertClampContact, InsertClampRequirements, InsertClampSources, certify_insert_clamp,
+};
+pub use clocked::{
+    ClockedInsertMating, ClockedLine8Mating, ClockedLine8Placement, ClockedMatingBounds,
+    ClockedMatingOptions, certify_clocked_insert_mating, certify_clocked_insert_screw_clearance,
+    certify_clocked_line8_mating,
+};
+pub(super) mod mating;
 pub use clearance::{ScrewClearance, ScrewClearanceRequirements, certify_insert_screw_clearance};
 pub use mating::{
     InsertMating, MatingExternal, MatingRequirements, MatingScrew, certify_insert_mating,
@@ -14,8 +24,16 @@ pub struct InsertContact {
     pub thread_witness_mm: [[f64; 2]; 3],
     pub witness_volume_lower_mm3: f64,
 }
-/// Flush, same-axis blind-pilot contact. The actual insert owns both phase
-/// laws; its earned radial wall separates the cavity from all pilot bite.
+/// Actual original insert and a small proven nonnegative placement inset.
+pub struct InsetInsertContact {
+    pub pilot_radius_mm: f64,
+    pub pilot_depth_mm: f64,
+    pub pilot_mouth_mm: [[f64; 2]; 3],
+    pub contact: InsertContact,
+    pub source_chart_inset_mm: [f64; 2],
+    pub inset_mm: [f64; 2],
+}
+/// Flush contact retains the existing zero-inset contract.
 pub fn certify_insert(
     stock: Stock<'_>,
     insert: &Insert,
@@ -23,8 +41,21 @@ pub fn certify_insert(
     req: Requirements,
     interrupt: &dyn Fn() -> bool,
 ) -> R<InsertContact> {
+    certify_inset_insert(stock, insert, insert_frame, req, 0., interrupt).map(|proof| proof.contact)
+}
+/// Prove a real small inset without changing stock, source length or phase.
+/// The maximum is a caller-lowerable authoring tolerance, not material fuzz.
+pub fn certify_inset_insert(
+    stock: Stock<'_>,
+    insert: &Insert,
+    insert_frame: Frame,
+    req: Requirements,
+    maximum_inset_mm: f64,
+    interrupt: &dyn Fn() -> bool,
+) -> R<InsetInsertContact> {
     checkpoint(interrupt)?;
     let values = [
+        maximum_inset_mm,
         req.minimum_wall_mm,
         req.minimum_floor_mm,
         req.minimum_engagement_mm,
@@ -40,6 +71,7 @@ pub fn certify_insert(
         || req.minimum_engagement_mm == 0.
         || req.minimum_feature_mm == 0.
         || !(1e-7..=1e-3).contains(&req.linear_tolerance_mm)
+        || maximum_inset_mm > req.linear_tolerance_mm
     {
         return Err(Error::Invalid);
     }
@@ -65,9 +97,23 @@ pub fn certify_insert(
     let face = boundary.faces.get(stock.pilot.face).ok_or(Error::Invalid)?;
     let (axis, sign) = inward_axis(face.normal)?;
     receiving_halfspace(&stock, axis, sign, interrupt)?;
-    if columns[2][axis] != sign as i8 || origin[axis] != q(stock.pilot.center_mm[axis])? {
+    let inset = bounded(q(sign)? * (&origin[axis] - q(stock.pilot.center_mm[axis])?))?;
+    if columns[2][axis] != sign as i8
+        || inset < Q::zero()
+        || &inset * q(metric.maximum_scale.hi)? > q(maximum_inset_mm)?
+    {
         return Err(Error::Unsupported);
     }
+    let inset_interval = if inset.is_zero() {
+        ip(0.)
+    } else {
+        enclosure(&inset)?
+    };
+    let physical_inset = if inset.is_zero() {
+        ip(0.)
+    } else {
+        inset_interval * I::new(metric.minimum_scale.lo, metric.maximum_scale.hi)
+    };
     let radial = [(axis + 1) % 3, (axis + 2) % 3];
     let offset: Q = radial
         .into_iter()
@@ -92,7 +138,7 @@ pub fn certify_insert(
         .sqrt();
     let mut engagement = ip(length) * length_norm;
     let squared = bounded(q(length)?.pow(2) * dot(&n, &n)?)?;
-    let gap = bounded(q(stock.pilot.depth_mm)? - q(length)?)?;
+    let gap = bounded(q(stock.pilot.depth_mm)? - &inset - q(length)?)?;
     if squared < q(req.minimum_engagement_mm)?.pow(2)
         || gap < Q::zero()
         || &gap * q(sigma.lo)? < q(req.tip_clearance_mm)?
@@ -163,12 +209,21 @@ pub fn certify_insert(
                 && volume.valid()
                 && volume.lo > 0.
             {
+                let pilot_mouth_mm =
+                    world_point(stock.frame, vector(stock.pilot.center_mm)?, interrupt)?;
                 checkpoint(interrupt)?;
-                return Ok(InsertContact {
-                    engagement_mm: [engagement.lo, engagement.hi],
-                    tip_clearance_mm: [clearance.lo, clearance.hi],
-                    thread_witness_mm: witness,
-                    witness_volume_lower_mm3: volume.lo,
+                return Ok(InsetInsertContact {
+                    pilot_mouth_mm,
+                    pilot_radius_mm: stock.pilot.radius_mm,
+                    pilot_depth_mm: stock.pilot.depth_mm,
+                    contact: InsertContact {
+                        engagement_mm: [engagement.lo, engagement.hi],
+                        tip_clearance_mm: [clearance.lo, clearance.hi],
+                        thread_witness_mm: witness,
+                        witness_volume_lower_mm3: volume.lo,
+                    },
+                    source_chart_inset_mm: [inset_interval.lo.max(0.), inset_interval.hi],
+                    inset_mm: [physical_inset.lo.max(0.), physical_inset.hi],
                 });
             }
         }

@@ -1,5 +1,7 @@
 use super::*;
-fn closed_inputs<'a>(body: &'a Body<'_>) -> (AnalyticEdgeLifts<'a>, CubicSupportBounds<'a>) {
+pub(in crate::step_read::phillips_cutter::physical::body) fn closed_inputs<'a>(
+    body: &'a Body<'_>,
+) -> (AnalyticEdgeLifts<'a>, CubicSupportBounds<'a>) {
     let b = body.cavity();
     let ends = b
         .endpoint_coupling_bounds(
@@ -379,3 +381,5 @@ fn common_chart_budgets_foreign_receipts_and_all_query_cancellation_phases_refus
 }
 mod closed_head_probe;
 mod head_transfer_probe;
+
+pub(in crate::step_read::phillips_cutter::physical::body) mod derived_thread_probe;

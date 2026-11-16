@@ -234,7 +234,7 @@ fn import_error(error: BooleanError) -> ReadError {
 }
 
 impl Shell<'_, '_> {
-    pub(super) fn orthogonal(&self, faces: &[Face]) -> Result<ImportSolid> {
+    pub(in crate::step_read) fn orthogonal(&self, faces: &[Face]) -> Result<ImportSolid> {
         let mixed::Drills {
             pockets: recesses,
             through,

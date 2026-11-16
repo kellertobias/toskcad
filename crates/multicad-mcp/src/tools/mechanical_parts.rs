@@ -164,6 +164,25 @@ pub struct PhillipsHProfileArgs {
 #[derive(Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MechanicalRecipeArgs {
+    WoodInsert {
+        #[serde(default)]
+        outer_thread: Box<ThreadRecipeArgs>,
+        #[serde(default)]
+        inner_thread: Box<ThreadRecipeArgs>,
+        #[serde(flatten)]
+        frame: MechanicalFrameArgs,
+    },
+    /// Engineered wood/metric hanger with one shared placement frame.
+    HangerBolt {
+        #[serde(default)]
+        wood_thread: Box<ThreadRecipeArgs>,
+        #[serde(default)]
+        metric_thread: Box<ThreadRecipeArgs>,
+        plain_length: Option<Quantity>,
+        plain_diameter: Option<Quantity>,
+        #[serde(flatten)]
+        frame: MechanicalFrameArgs,
+    },
     WoodScrew {
         length_input: Option<ScrewLengthInputArgs>,
         nominal_diameter: Option<Quantity>,
@@ -432,6 +451,66 @@ fn parameters(
     };
     let mismatch = || ToolError::invalid("A mechanical Part edit retains its generator family");
     let p = match args {
+        MechanicalRecipeArgs::WoodInsert {
+            outer_thread,
+            inner_thread,
+            frame,
+        } => {
+            let default = model::default_custom_connection_wood_insert();
+            let MechanicalPartParameters::CustomConnection { parameters: old } =
+                previous.unwrap_or(&default)
+            else {
+                return Err(mismatch());
+            };
+            let model::CustomConnectionHardwareParameters::WoodInsert {
+                outer_thread: outer,
+                inner_thread: inner,
+                frame: old_frame,
+            } = old.as_ref()
+            else {
+                return Err(mismatch());
+            };
+            MechanicalPartParameters::CustomConnection {
+                parameters: Box::new(model::CustomConnectionHardwareParameters::WoodInsert {
+                    outer_thread: connection_thread(outer_thread, outer, doc, eval)?,
+                    inner_thread: connection_thread(inner_thread, inner, doc, eval)?,
+                    frame: frame.apply(old_frame.clone(), doc, eval)?,
+                }),
+            }
+        }
+        MechanicalRecipeArgs::HangerBolt {
+            wood_thread,
+            metric_thread,
+            plain_length,
+            plain_diameter,
+            frame,
+        } => {
+            let default = model::default_custom_connection_hanger_bolt();
+            let MechanicalPartParameters::CustomConnection { parameters: old } =
+                previous.unwrap_or(&default)
+            else {
+                return Err(mismatch());
+            };
+            let model::CustomConnectionHardwareParameters::HangerBolt {
+                wood_thread: wood,
+                metric_thread: metric,
+                plain_length: length,
+                plain_diameter: diameter,
+                frame: old_frame,
+            } = old.as_ref()
+            else {
+                return Err(mismatch());
+            };
+            MechanicalPartParameters::CustomConnection {
+                parameters: Box::new(model::CustomConnectionHardwareParameters::HangerBolt {
+                    wood_thread: connection_thread(wood_thread, wood, doc, eval)?,
+                    metric_thread: connection_thread(metric_thread, metric, doc, eval)?,
+                    plain_length: mm(plain_length, length)?,
+                    plain_diameter: mm(plain_diameter, diameter)?,
+                    frame: frame.apply(old_frame.clone(), doc, eval)?,
+                }),
+            }
+        }
         MechanicalRecipeArgs::WoodScrew {
             length_input,
             nominal_diameter,
@@ -924,29 +1003,56 @@ fn parameters(
     p.resolve(eval)?;
     Ok(p)
 }
+fn connection_thread(
+    args: &ThreadRecipeArgs,
+    previous: &ThreadParameters,
+    document: &Document,
+    evaluated: &EvaluatedParameters,
+) -> Result<Box<ThreadParameters>, ToolError> {
+    // Canonical connections derive thread frames from their shared datum.
+    // Reject an explicit nested edit that the resolver would otherwise ignore.
+    if args.origin.is_some()
+        || args.plane.is_some()
+        || args.axis_u.is_some()
+        || args.axis_v.is_some()
+    {
+        return Err(ToolError::invalid(
+            "Set connection placement once at recipe level; nested thread frames are derived",
+        ));
+    }
+    Ok(Box::new(thread_parameters(
+        args,
+        Some(previous),
+        document,
+        evaluated,
+    )?))
+}
 pub(super) fn mechanical_part_profiles(_: &dyn Host, call: &Request, _: NoArgs) -> ToolResult {
     if call.backend == GeometryBackend::Rust {
         return Ok(json!({
-            "supported_geometry": ["machine_screw", "hex_nut", "washer", "bearing_envelope", "wood_screw"],
+            "supported_geometry": ["machine_screw", "hex_nut", "washer", "bearing_envelope", "wood_screw", "hanger_bolt", "wood_insert"],
             "head_forms": ["socket_cap", "external_hex", "pan", "button", "countersunk"],
             "drive_forms": ["hex_socket", "external_hex", "hexalobular", "phillips_h"],
             "active_geometry_support": {
                 "head_drive_pairs": [["socket_cap", "hex_socket"], ["external_hex", "external_hex"], ["countersunk", "hex_socket"], ["button", "hex_socket"], ["socket_cap", "hexalobular"], ["pan", "hexalobular"], ["button", "hexalobular"], ["countersunk", "hexalobular"], ["pan", "phillips_h"], ["countersunk", "phillips_h"]],
-                "phillips_h": {"representation":"modeled", "manufacturing_mesh":true, "step":false, "step_scope":"Independent physical STEP boundary/import qualification remains unfinished."},
+                "phillips_h": {"representation":"modeled", "manufacturing_mesh":true, "step":true, "step_fits":["nominal_basic"], "step_scope":"Nominal Pan/Countersunk Phillips with a supported retained periodic source and a recess contained in the qualified head/plain-shank domain before the visible threaded interval. Closed material, independent decoded mass and whole-source position/derivative correspondence must qualify. Fitted rounded-root threads and recesses entering visible threaded material remain unqualified for STEP."},
                 "thread_families": ["iso_metric", "custom"],
+                "pipe_hardware": {"thread_families":["npt", "bspt"], "fits":["npt_historical_midpoint", "bspt_nominal"], "representation":"modeled", "hand":"right", "starts":1, "end_treatments":false, "machine_screw":{"head":"external_hex", "drive":"external_hex", "fully_threaded":true}, "hex_nut":true, "manufacturing_mesh":true, "step":false, "source":"Retains the original pipe law and neck/mouth datum. Other heads, drives, plain shanks and cosmetic representations remain unsupported."},
                 "metric_fits": ["nominal_basic", "metric_6g_external"],
                 "hex_nut_metric_fits": ["nominal_basic", "metric_6h_internal"],
                 "representations": ["modeled", "cosmetic_envelope"],
-                "cosmetic_head_drive_pairs": [["socket_cap", "hex_socket"], ["external_hex", "external_hex"], ["countersunk", "hex_socket"]],
+                "cosmetic_head_drive_pairs": [["socket_cap", "hex_socket"], ["external_hex", "external_hex"], ["countersunk", "hex_socket"], ["socket_cap", "hexalobular"], ["pan", "hexalobular"], ["button", "hexalobular"], ["countersunk", "hexalobular"]],
                 "cosmetic_shank": "The shank and resolved thread envelope diameters must match. The envelope is for display and placement.",
                 "plain_shank": "If present, its diameter must be at least the modeled thread crest diameter.",
                 "end_treatments": false,
                 "radial_taper": false,
                 "mesh": true,
                 "threaded_step": true,
-                "threaded_step_scope": "Except Phillips H, straight modeled threads and the listed head/drive pairs within source and spline limits. Nominal or fitted threads retain their original phase and a qualified plain shank or head/thread union. Qualified conical recesses may continue into the plain shank but must end before the original thread; wall, floor and actual placement must qualify.",
+                "threaded_step_scope": "Nominal periodic Phillips H and straight modeled threads and the listed head/drive pairs within source and spline limits. Nominal or fitted threads retain their original phase and a qualified plain shank or head/thread union. Qualified conical recesses may continue into the plain shank but must end before the original thread; wall, floor and actual placement must qualify.",
                 "wood_screw": {"representation":"simplified_envelope","head":"external_hex","drive":"external_hex","manufacturing_available":false},
-                "step_geometry": ["washer", "bearing_envelope", "machine_screw", "hex_nut"]
+                "hanger_bolt": {"wood_thread":"explicit custom profile", "metric_thread":"ISO metric 6g", "manufacturing_mesh":true, "local_step":true, "placed_step":false, "step_mass":"decoded supports with bounded healing; raw-file occupied mass is not asserted"},
+                "wood_insert": {"outer_thread":"explicit custom profile", "inner_thread":"ISO metric 6h", "manufacturing_mesh":true, "step":true, "placement":"one shared recipe datum; finite stock wall and bore span must qualify"},
+                "step_geometry": ["washer", "bearing_envelope", "machine_screw", "hex_nut", "hanger_bolt", "wood_insert"]
             },
             "machine_screw": "The underhead length runs from the head seat to the tip. Overall length adds the head height. The thread length is its extent ending at the tip, and its frame locates the underhead datum.",
             "nut_thread": "Rust supports modeled hex nuts and cosmetic cylindrical thread envelopes. The thread length sets the nut height.",

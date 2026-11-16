@@ -10,6 +10,10 @@ pub mod brep;
 mod compound;
 mod curve;
 mod helical;
+pub mod literal_member_binding;
+pub mod owned_hanger;
+pub mod owned_insert;
+pub mod owned_orthogonal_seats;
 #[cfg(test)]
 pub(crate) use helical::profiled::read_torx_cavity_fixture;
 #[cfg(test)]
@@ -43,6 +47,7 @@ mod mixed;
 mod nonplanar_loft;
 mod normal_relief;
 pub use normal_relief::{normal_relief_import_matches, verify_normal_relief};
+pub mod npt_stock;
 mod part21;
 mod phillips_cutter;
 pub use phillips_cutter::{
@@ -88,8 +93,13 @@ pub use rounded_cylinder::{
 pub use spline::SplineEdge;
 pub use tapered_thread::verify_tapered_thread;
 mod radial_boundary;
+pub use radial_boundary::pipe_hardware;
 pub use radial_boundary::read_radial_boundary;
 mod source;
+pub use compound::ownership::{
+    DocumentOwnership, DocumentOwnershipError, DocumentOwnershipOptions,
+    validate_document_topology_ownership,
+};
 pub use source::{SourceImport, read_source_compound};
 mod stadium;
 mod warped;
@@ -249,6 +259,14 @@ fn unit(v: Point) -> Result<Point> {
 fn reference(value: &Value<'_>) -> Result<u32> {
     match value {
         Value::Reference(id) => Ok(*id),
+        _ => Err(ReadError::Invalid),
+    }
+}
+
+/// Total typed list accessor; numeric/reference records remain distinct.
+fn list<'a, 'input>(value: &'a Value<'input>) -> Result<&'a [Value<'input>]> {
+    match value {
+        Value::List(items) => Ok(items),
         _ => Err(ReadError::Invalid),
     }
 }
@@ -1087,4 +1105,103 @@ pub use phillips_cutter::{
     ClosedRepairedHead as PhillipsClosedRepairedHead,
     HeadSupportTransfer as PhillipsHeadSupportTransfer,
     RawHeadSupportKind as PhillipsRawHeadSupportKind,
+};
+
+pub use phillips_cutter::{
+    AnalyticThreadOptions as PhillipsAnalyticThreadOptions,
+    AnalyticThreadRepair as PhillipsAnalyticThreadRepair,
+    AnalyticThreadTransfer as PhillipsAnalyticThreadTransfer,
+    AuthoredPeriodicOptions as PhillipsAuthoredPeriodicOptions,
+    CoherentDegree11ThreadCarrier as PhillipsCoherentDegree11ThreadCarrier,
+    CommonChartPeriodicThreadRepair as PhillipsCommonChartPeriodicThreadRepair,
+    Degree11ClosedMaterial as PhillipsDegree11ClosedMaterial,
+    Degree11ContactOptions as PhillipsDegree11ContactOptions,
+    Degree11DomainEnd as PhillipsDegree11DomainEnd,
+    Degree11JoinCollar as PhillipsDegree11JoinCollar,
+    Degree11MaterialFace as PhillipsDegree11MaterialFace,
+    Degree11MaterialOptions as PhillipsDegree11MaterialOptions,
+    Degree11MaterialVolume as PhillipsDegree11MaterialVolume,
+    Degree11MaterialVolumeOptions as PhillipsDegree11MaterialVolumeOptions,
+    Degree11OccupiedOptions as PhillipsDegree11OccupiedOptions,
+    Degree11OwnedMaterialOptions as PhillipsDegree11OwnedMaterialOptions,
+    Degree11RimContact as PhillipsDegree11RimContact,
+    Degree11RimContactId as PhillipsDegree11RimContactId,
+    Degree11RimKnot as PhillipsDegree11RimKnot, Degree11RimUse as PhillipsDegree11RimUse,
+    Degree11SignDomain as PhillipsDegree11SignDomain,
+    Degree11ThreadContacts as PhillipsDegree11ThreadContacts,
+    Degree11ThreadFace as PhillipsDegree11ThreadFace,
+    Degree11ThreadOptions as PhillipsDegree11ThreadOptions,
+    DerivedThreadCarrier as PhillipsDerivedThreadCarrier,
+    DerivedThreadOptions as PhillipsDerivedThreadOptions,
+    OccupiedDegree11Thread as PhillipsOccupiedDegree11Thread,
+    OccupiedDerivedThread as PhillipsOccupiedDerivedThread,
+    OwnedDegree11Material as PhillipsOwnedDegree11Material,
+    OwnedPeriodicMaterial as PhillipsOwnedPeriodicMaterial,
+    PeriodicAuthoredApproximation as PhillipsPeriodicAuthoredApproximation,
+    PeriodicClosedMaterial as PhillipsPeriodicClosedMaterial,
+    PeriodicCurveOwner as PhillipsPeriodicCurveOwner,
+    PeriodicCurveQuery as PhillipsPeriodicCurveQuery,
+    PeriodicFaceProperties as PhillipsPeriodicFaceProperties,
+    PeriodicFiniteCurve as PhillipsPeriodicFiniteCurve,
+    PeriodicFiniteCurves as PhillipsPeriodicFiniteCurves,
+    PeriodicFiniteKind as PhillipsPeriodicFiniteKind,
+    PeriodicFiniteOptions as PhillipsPeriodicFiniteOptions,
+    PeriodicGeometryApproximation as PhillipsPeriodicGeometryApproximation,
+    PeriodicLiteralCertificate as PhillipsPeriodicLiteralCertificate,
+    PeriodicMaterialFace as PhillipsPeriodicMaterialFace,
+    PeriodicMaterialMatch as PhillipsPeriodicMaterialMatch,
+    PeriodicMaterialMatchOptions as PhillipsPeriodicMaterialMatchOptions,
+    PeriodicMaterialOptions as PhillipsPeriodicMaterialOptions,
+    PeriodicMaterialProvenance as PhillipsPeriodicMaterialProvenance,
+    PeriodicMaterialVolume as PhillipsPeriodicMaterialVolume,
+    PeriodicOwnedMaterialQuery as PhillipsPeriodicOwnedMaterialQuery,
+    PeriodicOwnedOptions as PhillipsPeriodicOwnedOptions,
+    PeriodicProposalOrigin as PhillipsPeriodicProposalOrigin,
+    PeriodicShoulderOptions as PhillipsPeriodicShoulderOptions,
+    PeriodicShoulderRepair as PhillipsPeriodicShoulderRepair,
+    PeriodicThreadBounds as PhillipsPeriodicThreadBounds,
+    PeriodicThreadCorrespondence as PhillipsPeriodicThreadCorrespondence,
+    PeriodicThreadRepair as PhillipsPeriodicThreadRepair,
+    PeriodicThreadSource as PhillipsPeriodicThreadSource,
+    PeriodicVolumeOptions as PhillipsPeriodicVolumeOptions,
+    SuppliedThreadCorrespondence as PhillipsSuppliedThreadCorrespondence,
+    ThreadCarrierTransfer as PhillipsThreadCarrierTransfer,
+};
+
+pub use phillips_cutter::{
+    ClosedMaterialOptions as PhillipsClosedMaterialOptions,
+    DerivedClosedMaterial as PhillipsDerivedClosedMaterial,
+    MaterialFaceSource as PhillipsMaterialFaceSource,
+};
+
+pub use phillips_cutter::{
+    MaterialVolume as PhillipsMaterialVolume,
+    MaterialVolumeOptions as PhillipsMaterialVolumeOptions,
+};
+
+pub use phillips_cutter::{
+    DelegatedWorkspaceBounds as PhillipsDelegatedWorkspaceBounds,
+    JoinedMaterialCandidate as PhillipsJoinedMaterialCandidate,
+    JoinedMeshOptions as PhillipsJoinedMeshOptions,
+    OwnedDerivedMaterial as PhillipsOwnedDerivedMaterial,
+    OwnedMaterialOptions as PhillipsOwnedMaterialOptions,
+    OwnedMaterialQuery as PhillipsOwnedMaterialQuery,
+    OwnedMaterialQueryError as PhillipsOwnedMaterialQueryError,
+    OwnedMaterialQueryOptions as PhillipsOwnedMaterialQueryOptions,
+};
+
+pub use phillips_cutter::{
+    ContactThreadCarrier as PhillipsContactThreadCarrier,
+    DyadicParameter as PhillipsDyadicParameter, RimContact as PhillipsRimContact,
+    RimContactId as PhillipsRimContactId, RimDomainEnd as PhillipsRimDomainEnd,
+    RimDomainRole as PhillipsRimDomainRole, RimKnot as PhillipsRimKnot,
+    RimSignDomain as PhillipsRimSignDomain, ThreadContactOptions as PhillipsThreadContactOptions,
+};
+
+pub use phillips_cutter::{
+    PeriodicMaterialRead as PhillipsPeriodicMaterialRead,
+    PeriodicReadError as PhillipsPeriodicReadError,
+    PeriodicReadOptions as PhillipsPeriodicReadOptions,
+    PeriodicReadStage as PhillipsPeriodicReadStage, read_periodic_phillips_material,
+    read_periodic_phillips_material_with_progress,
 };

@@ -1,6 +1,14 @@
 //! Taylor's integral remainder uses the order12 derivative enclosure over the
 //! entire cell. Closed face domains are partitioned, never sampled or truncated.
-use super::{series::ORDER, source::Part, *};
+use super::{
+    series::{ORDER, S},
+    *,
+};
+/// Immutable actual-source density. The same single erased integration proof
+/// is shared by affine and circle-aware profiles; callers retain ownership.
+pub(super) trait Density {
+    fn field(&self, u: I) -> Result<[S; 4], Error>;
+}
 pub(super) struct Work<'a> {
     remaining: usize,
     interrupt: Option<&'a dyn Fn() -> bool>,
@@ -45,7 +53,7 @@ impl<'a> Work<'a> {
 fn power(v: I, n: usize) -> I {
     (0..n).fold(I::point(1.), |r, _| r * v)
 }
-fn cell(part: &Part, a: f64, b: f64) -> Result<[I; 4], Error> {
+fn cell(part: &dyn Density, a: f64, b: f64) -> Result<[I; 4], Error> {
     let c = a + (b - a) * 0.5;
     let center = part.field(I::point(c))?;
     let whole = part.field(I::new(a, b))?;
@@ -61,7 +69,7 @@ fn cell(part: &Part, a: f64, b: f64) -> Result<[I; 4], Error> {
     checked_values(result)
 }
 pub(super) fn parts(
-    parts: &[Part],
+    parts: &[&dyn Density],
     extent: f64,
     options: FacePropertyOptions,
     work: &mut Work<'_>,
@@ -99,7 +107,7 @@ pub(super) fn parts(
     }
     while let Some((index, a, b, tolerance)) = pending.pop() {
         work.cell()?;
-        let value = cell(&parts[index], a, b)?;
+        let value = cell(parts[index], a, b)?;
         if value[0].width() <= tolerance[0] && value[1..].iter().all(|v| v.width() <= tolerance[1])
         {
             for axis in 0..4 {

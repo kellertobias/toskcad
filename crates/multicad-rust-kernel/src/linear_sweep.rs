@@ -143,6 +143,18 @@ impl Sweep {
         })
     }
 
+    /// Actual retained vector capacities, including both original section
+    /// arenas. Callers can account an immutable sweep without reconstructing it.
+    pub fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + (self.base.capacity() + self.top.capacity()) * std::mem::size_of::<Vec<Point>>()
+            + self
+                .base
+                .iter()
+                .chain(&self.top)
+                .map(|ring| ring.capacity() * std::mem::size_of::<Point>())
+                .sum::<usize>()
+    }
     pub fn base(&self) -> &[Vec<Point>] {
         &self.base
     }

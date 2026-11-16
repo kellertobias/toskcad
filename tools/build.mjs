@@ -24,7 +24,7 @@ export function bootstrap({runCommand=run,captureCommand=capture,platform=proces
   runCommand('cargo',['fetch','--locked']);
 }
 export function assembleDevelopmentRuntime(stage,binary,releaseVersion=version(),assemble=assembleRuntime){
-  return assemble(stage,binary,releaseVersion,{rustOnly:true});
+  return assemble(stage,binary,releaseVersion);
 }
 export function version(){
   return readFileSync(join(root,'Cargo.toml'),'utf8').match(/\[workspace\.package\][\s\S]*?^version = "([^"]+)"/m)?.[1]??'0.1.0-dev';

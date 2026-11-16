@@ -180,13 +180,6 @@ fn rust_step_publishes_and_reopens_partially_coalesced_circular_pattern() {
     decoded[0].0.edges_mm.pop().unwrap();
     assert!(!solid.step_readback_matches(topology, &decoded, tolerance));
 
-    #[cfg(feature = "occt")]
-    {
-        let native = compile(&session, GeometryBackend::OpenCascade);
-        check(native.solid(pattern.feature).unwrap());
-        check(&Solid::read_step(&path, compiler.policy).unwrap());
-    }
-
     let input = read_step_file_with_backend(&path, GeometryBackend::Rust).unwrap();
     let mut imported = Session::new(Document::new("Reopened pattern STEP").unwrap()).unwrap();
     let prepared = prepare_step_import(&imported, imported.revision(), actor, &input).unwrap();

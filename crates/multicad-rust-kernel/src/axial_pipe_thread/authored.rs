@@ -4,7 +4,19 @@ use super::{Error, I, bounds, ceiling, interval};
 use crate::tapered_thread::Series;
 use std::f64::consts::PI;
 mod boundary;
+pub mod hardware;
+mod stock_clip;
 pub use boundary::RawAuthoredBoundary;
+pub use stock_clip::{
+    PlacedStockClipMeshCandidate, StockClipAffineCurveTaylor, StockClipBand, StockClipCapTraceEdge,
+    StockClipCellPlan, StockClipClassification, StockClipCoedge, StockClipCurve, StockClipCurveLaw,
+    StockClipCurveTaylor, StockClipFace, StockClipFaceLoop, StockClipFaceMeasure,
+    StockClipGridLine, StockClipJets, StockClipMeasureOptions, StockClipMeshCandidate,
+    StockClipOptions, StockClipPatch, StockClipPatchLaw, StockClipPatchTaylor, StockClipPlacement,
+    StockClipPlan, StockClipPoint, StockClipPointOwner, StockClipPolyline, StockClipQuery,
+    StockClipRail, StockClipSample, StockClipSlab, StockClipStation, StockClipTracedMesh,
+    StockClipVertex, StockClipVolume,
+};
 #[cfg(test)]
 mod tests;
 #[derive(Clone, Copy, Debug, PartialEq)]

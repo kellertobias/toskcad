@@ -7,6 +7,7 @@ use std::f64::consts::PI;
 pub mod authored;
 #[cfg(test)]
 mod boundary;
+pub mod external_stock;
 mod properties;
 #[cfg(test)]
 mod tests;

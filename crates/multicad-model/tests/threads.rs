@@ -209,7 +209,6 @@ fn external_cut_retains_the_unthreaded_shaft_and_internal_cut_mates_with_the_sep
 fn incomplete_or_wrong_receiving_geometry_fails_without_changing_the_session() {
     for (mode, radius) in [
         (ThreadMode::CutExternal, 3.9),
-        (ThreadMode::CutExternal, 4.5),
         (ThreadMode::CutInternal, 4.5),
     ] {
         let mut s = session();
@@ -239,7 +238,10 @@ fn incomplete_or_wrong_receiving_geometry_fails_without_changing_the_session() {
             ..Default::default()
         }
         .compile(prepared.prepared.document(), s.revision() + 1);
-        assert!(result.is_err());
+        assert!(
+            result.is_err(),
+            "{mode:?}, radius {radius}: expected invalid receiving geometry"
+        );
         assert_eq!(s.document(), &before);
     }
 }
@@ -886,4 +888,66 @@ fn blind_thread_tool_refuses_unqualified_family_prior_cut_and_step_publication()
     );
     assert_eq!(std::fs::read_dir(output.path()).unwrap().count(), 0);
     assert_eq!(s.document(), &before);
+}
+
+#[test]
+fn oversize_external_receiving_stock_keeps_the_actual_unthreaded_shoulder() {
+    for hand in [model::ThreadHand::Right, model::ThreadHand::Left] {
+        let parameters = ThreadParameters { hand, ..params() };
+        let mut reference = session();
+        let plain = shaft(&mut reference, parameters.clone());
+        let reference_model = compile(&reference);
+        let threaded_volume = reference_model
+            .solid(plain.feature)
+            .unwrap()
+            .volume_mm3()
+            .unwrap();
+        let mut s = session();
+        let stock = PrimitiveRequest::new(
+            "Oversize receiving stock",
+            PrimitiveParameters::Cylinder {
+                radius: length(4.5),
+                height: length(20.),
+                frame: Default::default(),
+            },
+        );
+        primitive(&mut s, &stock);
+        let request = ThreadRequest::receiving(
+            "Partial external cut",
+            ThreadMode::CutExternal,
+            BodyInput {
+                body: stock.body,
+                producer: stock.feature,
+            },
+            parameters,
+        )
+        .unwrap();
+        thread(&mut s, &request);
+        let before = s.document().clone();
+        let model = compile(&s);
+        let solid = model.solid(request.feature).unwrap();
+        assert!(!solid.rust_thread_contains([4.25, 0., 4.]).unwrap());
+        assert!(solid.rust_thread_contains([4.25, 0., 8.01]).unwrap());
+        assert!(solid.rust_thread_contains([4.25, 0., 19.99]).unwrap());
+        assert!(!solid.rust_thread_contains([4.51, 0., 10.]).unwrap());
+        assert!(!solid.rust_thread_contains([0., 0., 20.01]).unwrap());
+        let expected = threaded_volume + PI * 4.5_f64.powi(2) * 12.;
+        assert!((solid.volume_mm3().unwrap() - expected).abs() < 1e-4);
+        let mesh = solid
+            .manufacturing_mesh_with_receipt(Default::default())
+            .unwrap();
+        assert!(mesh.edge_pairs > 0 && mesh.vertex_links > 0);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("oversize-external.step");
+        solid.write_step(&path).unwrap();
+        let proof = multicad_model::export::verify_rust_step_shape_receipt(
+            &path,
+            solid,
+            &model.snapshot().shapes[&request.feature],
+            1e-7,
+        )
+        .unwrap();
+        assert!((proof.decoded_volume_mm3.unwrap() - expected).abs() < 1e-4);
+        assert_eq!(s.document(), &before);
+    }
 }

@@ -51,6 +51,7 @@ pub struct ThreadShell {
     shell: chart::Shell,
     trace: trace::Trace,
     work_used: usize,
+    end_station_mm: f64,
 }
 impl AuthoredThread {
     /// Actual wall facets only; the two finite rims remain open. At most16M
@@ -61,7 +62,62 @@ impl AuthoredThread {
         maximum_work: usize,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<ThreadShell, SourceError> {
-        shell(self, options, maximum_work, interrupt).map_err(failure)
+        shell(
+            self,
+            self.full_length_mm(),
+            false,
+            options,
+            maximum_work,
+            interrupt,
+        )
+        .map_err(failure)
+    }
+}
+impl AuthoredThread {
+    /// Finite prefix of this same immutable authored source. The original
+    /// specification, phase coefficients and full-length metadata are retained;
+    /// the returned open wall ends at the explicit binary64 station.
+    pub fn tessellate_prefix_shell(
+        &self,
+        end_station_mm: f64,
+        options: Tessellation,
+        maximum_work: usize,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<ThreadShell, SourceError> {
+        if !end_station_mm.is_finite()
+            || end_station_mm < self.spec().pitch_mm
+            || end_station_mm > self.full_length_mm()
+        {
+            return Err(SourceError::Invalid);
+        }
+        shell(
+            self,
+            end_station_mm,
+            false,
+            options,
+            maximum_work,
+            interrupt,
+        )
+        .map_err(failure)
+    }
+}
+impl AuthoredThread {
+    /// Alternate computational angular seam. Original phase, coefficients and
+    /// source endpoints remain unchanged; every finite field proof runs again.
+    pub fn tessellate_prefix_shell_shifted(
+        &self,
+        end_station_mm: f64,
+        options: Tessellation,
+        maximum_work: usize,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<ThreadShell, SourceError> {
+        if !end_station_mm.is_finite()
+            || end_station_mm < self.spec().pitch_mm
+            || end_station_mm > self.full_length_mm()
+        {
+            return Err(SourceError::Invalid);
+        }
+        shell(self, end_station_mm, true, options, maximum_work, interrupt).map_err(failure)
     }
 }
 fn failure(e: Error) -> SourceError {
@@ -74,6 +130,8 @@ fn failure(e: Error) -> SourceError {
 }
 fn shell(
     thread: &AuthoredThread,
+    end_station_mm: f64,
+    shifted: bool,
     options: Tessellation,
     maximum_work: usize,
     interrupt: Option<&dyn Fn() -> bool>,
@@ -85,8 +143,12 @@ fn shell(
         interrupt,
     };
     w.step()?;
-    let chart = ThreadChart::bare(thread);
+    let chart = ThreadChart {
+        top: end_station_mm,
+        ..ThreadChart::bare(thread)
+    };
     let mut grid = Grid::new();
+    grid.shifted = shifted;
     loop {
         let repartition = match chart::traced_chart(
             chart,
@@ -101,6 +163,7 @@ fn shell(
                     shell,
                     trace,
                     work_used: w.used,
+                    end_station_mm,
                 });
             }
             Attempt::Refine => false,
@@ -110,6 +173,9 @@ fn shell(
     }
 }
 impl ThreadShell {
+    pub fn end_station_mm(&self) -> f64 {
+        self.end_station_mm
+    }
     pub(crate) fn exact_rim_turns(
         &self,
         vertex: usize,

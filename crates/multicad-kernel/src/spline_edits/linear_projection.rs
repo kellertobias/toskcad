@@ -287,7 +287,6 @@ mod tests {
         assert_eq!(hits[0].tangent, [0., 1.]);
     }
 
-    #[cfg(not(feature = "occt"))]
     #[test]
     fn higher_degree_has_an_explicit_unsupported_diagnostic() {
         let spline = CurvedEdge2d::BSpline(BSpline2d {
@@ -304,38 +303,5 @@ mod tests {
                 .kind,
             GeometryErrorKind::Unsupported
         );
-    }
-
-    #[cfg(feature = "occt")]
-    #[test]
-    fn native_projection_agrees_on_weighted_interior_and_endpoints() {
-        use crate::ffi;
-
-        let policy = GeometryPolicy::default();
-        let curve = polyline(&[[0., 0.], [3., 4.]], &[2., 10.], Some(&[2., 6.]));
-        let data = curve.data(policy, 0).unwrap();
-        for point in [[1.5, 2.], [0.5, 3.], [-3., -4.], [6., 8.]] {
-            let rust = curve.project_parameters(point, policy).unwrap();
-            let native = ffi::curve_project(
-                &data,
-                &ffi::Point3 {
-                    x: point[0],
-                    y: point[1],
-                    z: 0.,
-                },
-                policy.linear_tolerance_mm,
-            )
-            .unwrap();
-            assert_eq!(rust.len(), native.len());
-            for (rust, native) in rust.iter().zip(native) {
-                assert!((rust.parameter - native.parameter).abs() <= policy.linear_tolerance_mm);
-                assert!(
-                    distance(rust.point, [native.point.x, native.point.y])
-                        <= policy.linear_tolerance_mm
-                );
-                assert!(distance(rust.tangent, [native.tangent.x, native.tangent.y]) <= 1e-9);
-                assert!((rust.distance_mm - native.distance).abs() <= policy.linear_tolerance_mm);
-            }
-        }
     }
 }

@@ -99,13 +99,7 @@ fn native_roundtrip_preserves_actual_step_and_pinned_symbol_bytes_across_source_
     assert_eq!(readback.solid_count, 1);
     assert_eq!(readback.bounds_mm, [[0.; 3], [20., 30., 8.]]);
     assert!((readback.volume_mm3 - 4800.).abs() < 1e-7);
-    #[cfg(feature = "occt")]
-    {
-        let exact = dir.path().join("reopened.step");
-        std::fs::write(&exact, &raw.bytes).unwrap();
-        let independent = multicad_kernel::Solid::read_step(&exact, Default::default()).unwrap();
-        assert!((independent.volume_mm3().unwrap() - readback.volume_mm3).abs() < 1e-7);
-    }
+
     assert_eq!(
         reopened
             .file

@@ -1,3 +1,11 @@
+#[path = "profile_connections/line8_angles.rs"]
+mod line8_angles;
+#[path = "profile_connections/line8_cache.rs"]
+mod line8_cache;
+#[path = "profile_connections/line8_nuts.rs"]
+mod line8_nuts;
+#[path = "profile_connections/line8_screws.rs"]
+mod line8_screws;
 use multicad_core::{
     commands::{Actor, Channel, Request, Session},
     document::{Document, Entity, EntityData, EntityId, Mutation},
@@ -106,6 +114,89 @@ fn compile(document: &Document, revision: u64) -> Result<Model, multicad_model::
 }
 
 #[test]
+fn rust_profile_screws_use_retained_modeled_hardware_after_project_reopen() {
+    for rotated in [false, true] {
+        let pose = |[x, y, z]: [f64; 3]| {
+            if rotated {
+                [11. + 0.8 * x - 0.6 * y, -7. + 0.6 * x + 0.8 * y, 5. + z]
+            } else {
+                [x, y, z]
+            }
+        };
+        let (mut session, members) = prepare_members([
+            (pose([0., 0., 0.]), pose([100., 0., 0.])),
+            (pose([0., 40., 0.]), pose([100., 40., 0.])),
+        ]);
+        let request = ProfileConnectionRequest::new(
+            "Rust mounting screws",
+            ProfileConnectionKind::JoiningPlate,
+            groove(&members[0], ProfileGrooveSide::MaxY, 40.),
+            groove(&members[1], ProfileGrooveSide::MaxY, 40.),
+        );
+        let draft =
+            model::prepare_profile_connection(&session, session.revision(), actor(), &request)
+                .unwrap();
+        let screws = [draft.outputs[1].feature, draft.outputs[3].feature];
+        session.commit(draft.prepared).unwrap();
+        let before = session.document().clone();
+        let mut bytes = Vec::new();
+        project_file::write(
+            &ProjectFile::new(before.clone()).unwrap(),
+            &mut bytes,
+            Default::default(),
+        )
+        .unwrap();
+        let reopened = project_file::read(
+            &mut bytes.as_slice(),
+            Default::default(),
+            &project_file::supported_capabilities(),
+        )
+        .unwrap();
+        let compiler = Compiler {
+            omit_display: true,
+            ..Default::default()
+        };
+        for feature in screws {
+            let mut volumes = Vec::new();
+            for document in [&before, &reopened.project.document] {
+                let model = compiler
+                    .compile_sources_with_backend(
+                        document,
+                        session.revision(),
+                        &[feature],
+                        GeometryBackend::Rust,
+                        None,
+                    )
+                    .unwrap();
+                let solid = model.solid(feature).unwrap();
+                assert!(solid.uses_rust_geometry());
+                let (source, _) = solid.rust_profiled_screw_geometry().unwrap();
+                assert!(source.thread().spec().length_mm > 0.);
+                assert_eq!(solid.solid_count().unwrap(), 1);
+                let volume = solid.volume_mm3().unwrap();
+                assert!(volume > 0. && volume.is_finite());
+                let manufacturing = solid
+                    .manufacturing_mesh_with_receipt(Default::default())
+                    .unwrap();
+                assert!(!manufacturing.mesh.indices.is_empty());
+                assert_eq!(
+                    manufacturing.edge_pairs as usize * 2,
+                    manufacturing.mesh.indices.len()
+                );
+                solid
+                    .topology_snapshot(feature, session.revision())
+                    .unwrap()
+                    .validate()
+                    .unwrap();
+                volumes.push(volume);
+            }
+            assert_eq!(volumes[0], volumes[1]);
+        }
+        assert_eq!(session.document(), &before);
+    }
+}
+
+#[test]
 fn joining_plate_uses_exact_rust_bores_and_countersinks_on_rotated_profile_stock() {
     let rotate = |[x, y, z]: [f64; 3]| [0.8 * x - 0.6 * y, 0.6 * x + 0.8 * y, z];
     let (mut session, members) = prepare_members(
@@ -205,10 +296,22 @@ fn joining_plate_uses_exact_rust_bores_and_countersinks_on_rotated_profile_stock
     let text = std::fs::read_to_string(path).unwrap();
     compare(&Solid::import_rust_step(&text, connector, GeometryPolicy::default()).unwrap());
 
-    for (feature, expected) in [(screw, "modeled screw head"), (nut, "modeled tap")] {
-        let error = scoped(feature, GeometryBackend::Rust).err().unwrap();
-        assert!(error.to_string().contains(expected), "{error}");
-    }
+    let screw_model = scoped(screw, GeometryBackend::Rust).unwrap();
+    assert!(
+        screw_model
+            .solid(screw)
+            .unwrap()
+            .rust_profiled_screw_geometry()
+            .is_some()
+    );
+    let nut_model = scoped(nut, GeometryBackend::Rust).unwrap();
+    assert!(
+        nut_model
+            .solid(nut)
+            .unwrap()
+            .rust_line8_nut_source()
+            .is_some()
+    );
 }
 
 #[test]
@@ -251,7 +354,7 @@ fn angle_and_flat_connections_create_five_parts_and_never_machine_the_profiles()
         assert_eq!(native.snapshot().leaf_occurrences.len(), 7);
         assert_eq!(draft.outputs.len(), 5);
         if kind == AngleBracket {
-            let error = Compiler::default()
+            let scoped = Compiler::default()
                 .compile_sources_with_backend(
                     draft.prepared.document(),
                     session.revision() + 1,
@@ -259,11 +362,13 @@ fn angle_and_flat_connections_create_five_parts_and_never_machine_the_profiles()
                     GeometryBackend::Rust,
                     None,
                 )
-                .err()
                 .unwrap();
             assert!(
-                error.to_string().contains("both angle bracket legs"),
-                "{error}"
+                scoped
+                    .solid(draft.outputs[0].feature)
+                    .unwrap()
+                    .rust_orthogonal_countersink_source()
+                    .is_some()
             );
         }
         for member in &members {

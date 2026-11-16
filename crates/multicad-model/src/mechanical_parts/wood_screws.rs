@@ -413,66 +413,7 @@ mod tests {
             assert!(binary_dimension(feature, value).is_err());
         }
     }
-    #[test]
-    #[cfg(feature = "occt")]
-    fn completed_envelope_rebinds_all_provenance_and_native_policy_still_refuses_hits() {
-        ENVELOPES.with(|cache| *cache.borrow_mut() = Cache::default());
-        let p = resolved();
-        let a = EntityId::new();
-        let b = EntityId::new();
-        let policy = GeometryPolicy::default();
-        let source = build(a, &p, policy).unwrap();
-        let before = source.to_brep().unwrap();
-        let clock = ENVELOPES.with(|c| c.borrow().clock);
-        let hit = build(b, &p, policy).unwrap();
-        assert_eq!(ENVELOPES.with(|c| c.borrow().entries.len()), 1);
-        assert_eq!(ENVELOPES.with(|c| c.borrow().clock), clock + 1);
-        let t = hit.topology_snapshot(b, 3).unwrap();
-        let side = t
-            .elements
-            .iter()
-            .find(|element| {
-                element.key.kind == multicad_core::references::TopologyKind::Face
-                    && element
-                        .origins
-                        .iter()
-                        .any(|origin| origin.role.starts_with("side/"))
-            })
-            .unwrap();
-        eprintln!("Actual cached wood side-face origins: {:?}", side.origins);
-        assert!(t.elements.iter().flat_map(|e| &e.origins).all(|o| {
-            o.source == b
-                && (authored_role(&o.role)
-                    || o.role
-                        .starts_with(&format!("side/{}/wood.envelope.", neutral_owner())))
-        }));
-        ENVELOPES.with(|cache| *cache.borrow_mut() = Cache::default());
-        let fresh = build(b, &p, policy).unwrap();
-        assert_eq!(t, fresh.topology_snapshot(b, 3).unwrap());
-        let old_topology = source.topology_snapshot(a, 3).unwrap();
-        assert!(
-            old_topology
-                .elements
-                .iter()
-                .filter(|e| e.key.kind == multicad_core::references::TopologyKind::Face)
-                .all(|e| valid_face_origins(&e.origins, a))
-        );
-        assert_eq!(source.to_brep().unwrap(), before);
-        assert_eq!(source.volume_mm3().unwrap(), hit.volume_mm3().unwrap());
-        assert_eq!(source.bounds().unwrap(), hit.bounds().unwrap());
-        assert!(
-            build(
-                EntityId::new(),
-                &p,
-                GeometryPolicy {
-                    minimum_feature_mm: 5.,
-                    ..policy
-                }
-            )
-            .is_err()
-        );
-        assert_eq!(ENVELOPES.with(|c| c.borrow().entries.len()), 1);
-    }
+
     #[test]
     fn envelope_receipts_key_reference_intent_pose_and_all_policy_fields() {
         let p = resolved();

@@ -84,6 +84,7 @@ pub struct DerivedCavityRepresentative<'a, 'input> {
     edges: [DerivedEdgeCorrespondence; 76],
     faces: [DerivedFaceCorrespondence; 29],
     transfer: PhillipsSourceKnownProof,
+    sewing_collar_mm: f64,
     work_used: usize,
     retained_bytes: usize,
 }
@@ -117,6 +118,11 @@ impl<'a, 'input> DerivedCavityRepresentative<'a, 'input> {
     /// explicitly not exact raw incidence or independent decoded mass.
     pub fn transfer_bounds(&self) -> PhillipsSourceKnownProof {
         self.transfer
+    }
+    /// Actual earned endpoint-correction plus raw-owner enclosure on each
+    /// prerequisite sewn edge. This is not the caller's requested tolerance.
+    pub fn inherited_sewing_collar_mm(&self) -> f64 {
+        self.sewing_collar_mm
     }
     pub fn work_used(&self) -> usize {
         self.work_used
@@ -168,6 +174,14 @@ impl<'input> Body<'input> {
                 return Err(ReadError::Limit);
             }
             work.step(SOURCE_WORK)?;
+            work.step(prerequisite.edges().len() * 16)?;
+            let mut sewing_collar_mm = 0f64;
+            for edge in prerequisite.edges() {
+                let correction = edge.position_transfer_mm();
+                let owners = edge.raw_owner_distances_mm();
+                let collar = sewn_edge_collar(correction, owners)?;
+                sewing_collar_mm = sewing_collar_mm.max(collar);
+            }
             let candidate = fit::candidate(self.cavity(), &mut work)?;
             let topology = candidate
                 .source
@@ -250,6 +264,7 @@ impl<'input> Body<'input> {
                 edges,
                 faces,
                 transfer,
+                sewing_collar_mm,
                 work_used: options.maximum_work - work.remaining,
                 retained_bytes,
             })
@@ -266,3 +281,18 @@ impl<'input> Body<'input> {
 
 #[cfg(test)]
 mod outer_probe;
+
+// Compose the actual earned position corrections, rejecting nonfinite input or
+// arithmetic overflow before publishing a world-space enclosure.
+fn sewn_edge_collar(correction: f64, owners: [f64; 2]) -> Result<f64> {
+    require(
+        std::iter::once(correction)
+            .chain(owners)
+            .all(|v| v.is_finite() && v >= 0.),
+    )?;
+    let collar = (crate::tapered_thread::interval::I::point(correction)
+        + crate::tapered_thread::interval::I::point(owners[0].max(owners[1])))
+    .hi;
+    require(collar.is_finite() && collar >= 0.)?;
+    Ok(collar)
+}

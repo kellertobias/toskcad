@@ -48,6 +48,22 @@ impl Solid {
         let transport =
             AuthoredThread::new(spec, policy.linear_tolerance_mm, policy.minimum_feature_mm)
                 .map_err(failure)?;
+        match transport.stock_clip_plan(Default::default(), interrupt) {
+            Ok(source) => {
+                let solid = Self::from_clipped_npt_source(source, feature, policy, interrupt)?;
+                let axes = [frame.u, frame.v, frame.normal()];
+                let pose = RigidTransform {
+                    rotation: std::array::from_fn(|i| axes.map(|axis| axis[i])),
+                    translation_mm: frame.origin,
+                };
+                checkpoint(interrupt)?;
+                let placed = solid.transformed(pose)?;
+                checkpoint(interrupt)?;
+                return Ok(placed);
+            }
+            Err(multicad_rust_kernel::axial_pipe_thread::Error::Unsupported) => {}
+            Err(cause) => return Err(failure(cause)),
+        }
         if spec.crest_radius_limit_mm.is_some() && frame != PlaneFrame::default() {
             return Err(error(
                 "authored pipe thread",

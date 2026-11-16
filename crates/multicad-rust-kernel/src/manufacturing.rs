@@ -27,23 +27,37 @@ impl Sets {
         Self((0..count as u32).collect())
     }
 
-    fn root(&mut self, node: u32) -> u32 {
+    fn root<E, const COUNTED: bool>(
+        &mut self,
+        node: u32,
+        budget: &mut Budget<E, COUNTED>,
+    ) -> Result<u32, CountedError<E>> {
+        budget.work(1)?;
         let mut root = node;
         while self.0[root as usize] != root {
+            budget.work(1)?;
             root = self.0[root as usize];
         }
         let mut node = node;
         while node != root {
+            budget.work(1)?;
             let parent = self.0[node as usize];
             self.0[node as usize] = root;
             node = parent;
         }
-        root
+        Ok(root)
     }
 
-    fn join(&mut self, a: u32, b: u32) {
-        let (a, b) = (self.root(a), self.root(b));
+    fn join<E, const COUNTED: bool>(
+        &mut self,
+        a: u32,
+        b: u32,
+        budget: &mut Budget<E, COUNTED>,
+    ) -> Result<(), CountedError<E>> {
+        let (a, b) = (self.root(a, budget)?, self.root(b, budget)?);
+        budget.work(1)?;
         self.0[a.max(b) as usize] = a.min(b);
+        Ok(())
     }
 }
 
@@ -75,6 +89,117 @@ fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 /// Distinct closed shells may have separate index identities at coincident
 /// points. Inward cavity shells contribute negative signed volume.
 pub fn certify(mesh: &DisplayMesh) -> Result<MeshProof, MeshError> {
+    let mut noop = |_: usize, _: Option<usize>| Ok::<_, std::convert::Infallible>(());
+    match certify_impl::<_, false>(mesh, &mut Budget(&mut noop)) {
+        Ok(proof) => Ok(proof),
+        Err(CountedError::Mesh(error)) => Err(error),
+        Err(CountedError::Interrupted(never)) => match never {},
+    }
+}
+
+/// Private budgeted form of the same exact indexed-connectivity algorithm.
+/// The callback charges work, or checks total live certification scratch bytes,
+/// before the corresponding operation/allocation. It never authorizes geometry.
+pub(crate) fn certify_counted<E>(
+    mesh: &DisplayMesh,
+    callback: &mut dyn FnMut(usize, Option<usize>) -> Result<(), E>,
+) -> Result<MeshProof, CountedError<E>> {
+    certify_impl::<_, true>(mesh, &mut Budget(callback))
+}
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum CountedError<E> {
+    Mesh(MeshError),
+    Interrupted(E),
+}
+impl<E> From<MeshError> for CountedError<E> {
+    fn from(error: MeshError) -> Self {
+        Self::Mesh(error)
+    }
+}
+struct Budget<'a, E, const COUNTED: bool>(&'a mut dyn FnMut(usize, Option<usize>) -> Result<(), E>);
+impl<E, const COUNTED: bool> Budget<'_, E, COUNTED> {
+    #[inline(always)]
+    fn work(&mut self, n: usize) -> Result<(), CountedError<E>> {
+        if !COUNTED {
+            return Ok(());
+        }
+        (self.0)(n, None).map_err(CountedError::Interrupted)
+    }
+    #[inline(always)]
+    fn storage(&mut self, bytes: usize) -> Result<(), CountedError<E>> {
+        if !COUNTED {
+            return Ok(());
+        }
+        let bytes = bytes
+            .checked_add(4 * std::mem::size_of::<Vec<u32>>())
+            .ok_or(MeshError::BudgetExceeded)?;
+        (self.0)(0, Some(bytes)).map_err(CountedError::Interrupted)
+    }
+}
+fn sort_counted<E, const COUNTED: bool>(
+    edges: &mut Vec<[u32; 3]>,
+    budget: &mut Budget<E, COUNTED>,
+) -> Result<(), CountedError<E>> {
+    // Both buffers have exactly the original edge count. Every comparison and
+    // literal edge-record copy is charged; cancellation returns normally.
+    budget.storage(
+        edges
+            .capacity()
+            .checked_add(edges.len())
+            .and_then(|n| n.checked_mul(12))
+            .ok_or(MeshError::BudgetExceeded)?,
+    )?;
+    budget.work(edges.len())?;
+    let mut scratch = edges.to_vec();
+    budget.storage(
+        (edges.capacity() + scratch.capacity())
+            .checked_mul(12)
+            .ok_or(MeshError::BudgetExceeded)?,
+    )?;
+    let mut source = edges.as_mut_slice();
+    let mut target = scratch.as_mut_slice();
+    let mut flipped = false;
+    let mut width = 1usize;
+    while width < source.len() {
+        for start in (0..source.len()).step_by(width * 2) {
+            let middle = (start + width).min(source.len());
+            let end = (middle + width).min(source.len());
+            let (mut left, mut right) = (start, middle);
+            for destination in &mut target[start..end] {
+                let take_left = if left == middle {
+                    false
+                } else if right == end {
+                    true
+                } else {
+                    budget.work(1)?;
+                    source[left] <= source[right]
+                };
+                budget.work(1)?;
+                *destination = if take_left {
+                    let value = source[left];
+                    left += 1;
+                    value
+                } else {
+                    let value = source[right];
+                    right += 1;
+                    value
+                };
+            }
+        }
+        std::mem::swap(&mut source, &mut target);
+        flipped = !flipped;
+        width = width.checked_mul(2).ok_or(MeshError::BudgetExceeded)?;
+    }
+    if flipped {
+        budget.work(source.len())?;
+        target.copy_from_slice(source);
+    }
+    Ok(())
+}
+fn certify_impl<E, const COUNTED: bool>(
+    mesh: &DisplayMesh,
+    budget: &mut Budget<E, COUNTED>,
+) -> Result<MeshProof, CountedError<E>> {
     let (vertices, vertex_tail) = mesh.vertices.as_chunks::<3>();
     let (triangles, index_tail) = mesh.indices.as_chunks::<3>();
     if !vertex_tail.is_empty()
@@ -82,64 +207,102 @@ pub fn certify(mesh: &DisplayMesh) -> Result<MeshProof, MeshError> {
         || triangles.is_empty()
         || mesh.face_indices.len() != triangles.len()
     {
-        return Err(INVALID);
+        return Err(INVALID.into());
     }
     shape_budget(vertices.len(), triangles.len())?;
-    if mesh
-        .vertices
-        .iter()
-        .any(|coordinate| !coordinate.is_finite())
-    {
-        return Err(INVALID);
+    for coordinate in &mesh.vertices {
+        budget.work(1)?;
+        if !coordinate.is_finite() {
+            return Err(INVALID.into());
+        }
     }
 
+    budget.storage(
+        mesh.indices
+            .len()
+            .checked_mul(12)
+            .ok_or(MeshError::BudgetExceeded)?,
+    )?;
     let mut edges = Vec::with_capacity(mesh.indices.len());
+    budget.storage(
+        edges
+            .capacity()
+            .checked_mul(12)
+            .ok_or(MeshError::BudgetExceeded)?,
+    )?;
     for (face, &triangle) in triangles.iter().enumerate() {
+        // Logical vector/record units: three vertex fetches, two differences,
+        // one cross product, finite-area and nonzero-area validations (8).
+        budget.work(8)?;
         let [Some(a), Some(b), Some(c)] = triangle.map(|i| vertices.get(i as usize)) else {
-            return Err(INVALID);
+            return Err(INVALID.into());
         };
         let area = cross(sub(*b, *a), sub(*c, *a));
         if area.iter().any(|c| !c.is_finite()) || area == [0.; 3] {
-            return Err(INVALID);
+            return Err(INVALID.into());
         }
         for (i, a) in triangle.into_iter().enumerate() {
+            budget.work(1)?;
             let b = triangle[(i + 1) % 3];
             edges.push([a.min(b), a.max(b), (face * 3 + i) as u32]);
         }
     }
-    edges.sort_unstable();
+    if COUNTED {
+        sort_counted(&mut edges, budget)?;
+    } else {
+        edges.sort_unstable();
+    }
+    let graph_bytes = edges
+        .capacity()
+        .checked_mul(12)
+        .and_then(|b| b.checked_add(mesh.indices.len() * 4))
+        .and_then(|b| b.checked_add(triangles.len() * 4))
+        .ok_or(MeshError::BudgetExceeded)?;
+    budget.storage(graph_bytes)?;
+    budget.work(mesh.indices.len() + triangles.len())?;
 
     let mut fans = Sets::new(mesh.indices.len());
     let mut shells = Sets::new(triangles.len());
+    budget.storage(edges.capacity() * 12 + (fans.0.capacity() + shells.0.capacity()) * 4)?;
     let mut uses = edges.iter().peekable();
     while let Some([a, b, start]) = uses.next().copied() {
+        // Two edge-use fetches, multiplicity and winding validations (4).
+        budget.work(4)?;
         let [c, d, opposite] = uses.next().copied().ok_or(INVALID)?;
         if [a, b] != [c, d] || uses.peek().is_some_and(|e| e[..2] == [a, b]) {
-            return Err(INVALID);
+            return Err(INVALID.into());
         }
         if mesh.indices[start as usize] == mesh.indices[opposite as usize]
             || mesh.indices[next(next(start)) as usize]
                 == mesh.indices[next(next(opposite)) as usize]
         {
-            return Err(INVALID);
+            return Err(INVALID.into());
         }
-        fans.join(start, next(opposite));
-        fans.join(next(start), opposite);
-        shells.join(start / 3, opposite / 3);
+        fans.join(start, next(opposite), budget)?;
+        fans.join(next(start), opposite, budget)?;
+        shells.join(start / 3, opposite / 3, budget)?;
     }
     let edge_pairs = (edges.len() / 2) as u32;
     drop(edges);
 
+    budget.storage(
+        (mesh.indices.len() + triangles.len() + vertices.len())
+            .checked_mul(4)
+            .ok_or(MeshError::BudgetExceeded)?,
+    )?;
+    budget.work(vertices.len())?;
     let mut links = vec![u32::MAX; vertices.len()];
+    budget.storage((fans.0.capacity() + shells.0.capacity() + links.capacity()) * 4)?;
     let mut vertex_links = 0;
     for (corner, &vertex) in mesh.indices.iter().enumerate() {
-        let root = fans.root(corner as u32);
+        budget.work(1)?;
+        let root = fans.root(corner as u32, budget)?;
         let link = &mut links[vertex as usize];
         if *link == u32::MAX {
             *link = root;
             vertex_links += 1;
         } else if *link != root {
-            return Err(INVALID);
+            return Err(INVALID.into());
         }
     }
 
@@ -148,7 +311,10 @@ pub fn certify(mesh: &DisplayMesh) -> Result<MeshProof, MeshError> {
     let mut volume = 0.;
     let mut correction = 0.;
     for (face, &triangle) in triangles.iter().enumerate() {
-        let shell = shells.root(face as u32) as usize;
+        // Three vector differences, one cross/dot volume expression and
+        // the four compensated accumulation actions (8 logical units).
+        budget.work(8)?;
+        let shell = shells.root(face as u32, budget)? as usize;
         let origin = vertices[triangles[shell][0] as usize];
         let [a, b, c] = triangle.map(|i| sub(vertices[i as usize], origin));
         let area = cross(b, c);
@@ -159,7 +325,7 @@ pub fn certify(mesh: &DisplayMesh) -> Result<MeshProof, MeshError> {
         volume = next;
     }
     if !volume.is_finite() || volume <= 0. {
-        return Err(INVALID);
+        return Err(INVALID.into());
     }
     Ok(MeshProof {
         edge_pairs,

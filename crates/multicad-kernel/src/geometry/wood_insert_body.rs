@@ -10,6 +10,9 @@ use multicad_rust_kernel::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
+mod contained_boolean;
+mod step;
+pub use step::WoodInsertStepVerification;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WoodInsertData {
     pub source: source::Insert,
@@ -386,4 +389,26 @@ impl WoodInsertBody {
 }
 
 #[cfg(test)]
+mod step_tests;
+#[cfg(test)]
 mod tests;
+
+mod step_compound;
+pub use step_compound::PartitionedStepVerification;
+
+mod step_pose;
+
+#[cfg(test)]
+mod step_mixed_tests;
+
+#[cfg(test)]
+mod step_failure_tests;
+
+#[cfg(test)]
+mod step_resource_tests;
+
+#[cfg(test)]
+mod step_coupled_candidate_tests;
+
+mod step_coupled;
+mod step_coupled_pose;

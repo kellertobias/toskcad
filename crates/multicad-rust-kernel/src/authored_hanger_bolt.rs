@@ -5,12 +5,19 @@ use crate::{
     authored_flat_thread::AuthoredThread, authored_metric_thread::AuthoredMetricThread,
     tapered_thread::interval::I,
 };
+mod boundary;
 mod classify;
+pub use boundary::{
+    Boundary, BoundaryOptions, Coedge, Component, Curve, CurveBounds, CurveKey, End, Knot,
+    VertexKey,
+};
 mod faces;
 pub use faces::FaceKey;
+mod properties;
 #[cfg(test)]
 pub(crate) mod tests;
 mod volume;
+pub use properties::{FaceProperties, FacePropertyOptions};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
     Invalid,

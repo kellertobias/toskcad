@@ -311,14 +311,6 @@ fn saved_imported_tetrahedron_booleans_follow_embedded_source_and_tool_edits() {
             )
             .unwrap();
             near(imported.volume_mm3().unwrap(), expected);
-            #[cfg(feature = "occt")]
-            near(
-                multicad_kernel::Solid::read_step(&output, Default::default())
-                    .unwrap()
-                    .volume_mm3()
-                    .unwrap(),
-                expected,
-            );
         }
         let edited = session.document().clone();
         session.undo(session.revision(), actor()).unwrap();

@@ -85,8 +85,6 @@ fn drafted_volume(
 
 #[test]
 fn rust_draft_modifies_adjacent_opposite_and_all_four_sides_for_each_cardinal_pull() {
-    #[cfg(feature = "occt")]
-    use multicad_kernel::RigidTransform;
     use multicad_kernel::rust_kernel::Rational;
 
     let policy = GeometryPolicy::default();
@@ -102,14 +100,7 @@ fn rust_draft_modifies_adjacent_opposite_and_all_four_sides_for_each_cardinal_pu
         policy,
     )
     .unwrap();
-    #[cfg(feature = "occt")]
-    let native_stock = Solid::box_solid(size, policy)
-        .unwrap()
-        .transformed(RigidTransform {
-            translation_mm: origin,
-            ..Default::default()
-        })
-        .unwrap();
+
     let feature = EntityId::new();
     for up in 0..3 {
         let [u, v] = [(up + 1) % 3, (up + 2) % 3];
@@ -181,35 +172,6 @@ fn rust_draft_modifies_adjacent_opposite_and_all_four_sides_for_each_cardinal_pu
                             .map(|(i, n)| n * (neutral_point[i] - frame.origin_mm[i]))
                             .sum();
                         near(distance, 0.);
-                    }
-                    #[cfg(feature = "occt")]
-                    {
-                        let selections = sides
-                            .iter()
-                            .map(|&(side, positive)| {
-                                selected_side(
-                                    &native_stock,
-                                    cardinal(side, positive),
-                                    feature,
-                                    format!("draft/{side}/{positive}"),
-                                )
-                            })
-                            .collect::<Vec<_>>();
-                        let native = native_stock
-                            .draft_faces_named(&selections, pull, neutral, radians, feature, policy)
-                            .unwrap();
-                        near(result.volume_mm3().unwrap(), native.volume_mm3().unwrap());
-                        let a = result.bounds().unwrap();
-                        let b = native.bounds().unwrap();
-                        for (a, b) in a
-                            .min
-                            .into_iter()
-                            .chain(a.max)
-                            .zip(b.min.into_iter().chain(b.max))
-                        {
-                            near(a, b);
-                        }
-                        assert_eq!(face_metrics(&result), face_metrics(&native));
                     }
                 }
             }
@@ -341,11 +303,7 @@ fn saved_four_side_draft_keeps_every_selected_datum_after_signed_parameter_edits
         let solid = rust.solid(input.body).unwrap();
         near(solid.volume_mm3().unwrap(), expected_volume);
         assert_eq!(solid.solid_count().unwrap(), 1);
-        for backend in [
-            GeometryBackend::Rust,
-            #[cfg(feature = "occt")]
-            GeometryBackend::OpenCascade,
-        ] {
+        for backend in [GeometryBackend::Rust] {
             let evaluated = build(&reopened, backend);
             let actual = evaluated.solid(input.body).unwrap();
             near(actual.volume_mm3().unwrap(), expected_volume);
@@ -407,12 +365,6 @@ fn saved_four_side_draft_keeps_every_selected_datum_after_signed_parameter_edits
                 &decoded,
                 tolerance,
             ));
-            #[cfg(feature = "occt")]
-            {
-                let native = Solid::read_step(&path, GeometryPolicy::default()).unwrap();
-                near(native.volume_mm3().unwrap(), expected_volume);
-                assert_eq!(face_metrics(&native), face_metrics(solid));
-            }
         }
     }
     let before = session.document().clone();
@@ -541,11 +493,7 @@ fn saved_rust_draft_rebuilds_signed_bound_angles_and_keeps_the_neutral_face_line
         let max_x = (width + level * a.tan()).max(width + (level - 10.) * a.tan());
         let expected_faces = face_metrics(rust_solid);
         assert_eq!(expected_faces.len(), 6);
-        for backend in [
-            GeometryBackend::Rust,
-            #[cfg(feature = "occt")]
-            GeometryBackend::OpenCascade,
-        ] {
+        for backend in [GeometryBackend::Rust] {
             let model = build(&reopened, backend);
             let solid = model.solid(input.body).unwrap();
             near(solid.volume_mm3().unwrap(), expected_volume);

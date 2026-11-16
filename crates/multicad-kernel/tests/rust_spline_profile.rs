@@ -215,17 +215,6 @@ fn authored_spline_sweeps_keep_source_origins_cap_charts_and_real_step_in_both_s
                     Resolution::Resolved { frame: Some(_), .. }
                 ));
             }
-            #[cfg(feature = "occt")]
-            {
-                let native =
-                    Solid::extrude_curved_profile_named(&source, height, feature, &ids, policy)
-                        .unwrap();
-                assert!(!native.uses_rust_geometry());
-                compare(&solid, &native);
-                let read = Solid::read_step(&path, policy).unwrap();
-                assert!(!read.uses_rust_geometry());
-                compare(&solid, &read);
-            }
         }
     }
 }

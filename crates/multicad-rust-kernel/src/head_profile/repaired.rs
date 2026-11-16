@@ -16,7 +16,14 @@
 use super::{Curve, Profile, Role, Segment};
 use crate::tapered_thread::interval::I;
 mod arc;
+mod correspondence;
+mod proposal;
+pub use correspondence::RepairedHeadCorrespondence;
+pub use proposal::RepairedProposalTransfer;
+pub(crate) use proposal::rotation as proposal_rotation;
+mod query;
 use arc::ArcSource;
+pub use query::{RepairedHeadLocation, RepairedHeadQuery, RepairedHeadQueryOptions};
 #[cfg(test)]
 mod tests;
 const WORK: usize = 16_000_000;
@@ -173,23 +180,39 @@ impl<'p> RepairedHeadMeridian<'p> {
         {
             return Err(RepairedHeadError::Limit);
         }
+        let value = self.certified_interval_bounds(index, parameter);
+        // Whole-unit constructor qualification plus the validated restriction
+        // proves finiteness here; repeating that same immutable proof cannot
+        // produce a new numerical failure.
+        poll(interrupt)?;
+        Ok(value)
+    }
+    /// Internal metered-query handoff. Caller must own a valid segment index
+    /// and closed subinterval of[0,1], and charge/poll its fixed evaluation.
+    /// Construction qualified Part::evaluate over the WHOLE unit interval;
+    /// its outward interval extension, including unit-domain intersections,
+    /// is inclusion-monotone. Every such restriction therefore has finite
+    /// position/first derivatives. Shared endpoint overrides are exact finite
+    /// retained stations, not approximate repairs of evaluated coefficients.
+    pub(crate) fn certified_interval_bounds(
+        &self,
+        index: usize,
+        parameter: [f64; 2],
+    ) -> RepairedMeridianBounds {
         let [mut p, d] = self.parts[index]
             .unwrap()
             .evaluate(I::new(parameter[0], parameter[1]));
-        // Exact source identities, not interval overlap or rounded pole welding.
         if parameter == [0., 0.] {
             p = self.station(index).unwrap().map(I::point)
         }
         if parameter == [1., 1.] {
             p = self.station(index + 1).unwrap().map(I::point)
         }
-        ensure(p.into_iter().chain(d).all(finite))?;
-        poll(interrupt)?;
-        Ok(RepairedMeridianBounds {
+        RepairedMeridianBounds {
             parameter,
             position_mm: p.map(|v| [v.lo, v.hi]),
             derivative_mm: d.map(|v| [v.lo, v.hi]),
-        })
+        }
     }
 }
 impl Profile {
@@ -299,5 +322,42 @@ impl Profile {
         result.work += 1;
         poll(interrupt)?;
         Ok(result)
+    }
+}
+
+mod volume;
+pub use volume::{RepairedHeadVolume, RepairedHeadVolumeOptions};
+
+/// Owned snapshot of the actual qualified repaired source expression. It does
+/// not reconstruct a meridian from a recipe or retain a self-referential view.
+pub struct OwnedRepairedHead {
+    profile: Profile,
+    parts: [Option<Part>; 5],
+    certificates: [Option<RepairedSegmentCertificate>; 5],
+    count: usize,
+    work: usize,
+}
+impl RepairedHeadMeridian<'_> {
+    pub(crate) fn owned_snapshot(&self) -> OwnedRepairedHead {
+        OwnedRepairedHead {
+            profile: *self.profile,
+            parts: self.parts,
+            certificates: self.certificates,
+            count: self.count,
+            work: self.work,
+        }
+    }
+}
+impl OwnedRepairedHead {
+    /// Temporary immutable view through the original source evaluator. All
+    /// stations, corrected arc expressions and certificates are copied exactly.
+    pub fn view(&self) -> RepairedHeadMeridian<'_> {
+        RepairedHeadMeridian {
+            profile: &self.profile,
+            parts: self.parts,
+            certificates: self.certificates,
+            count: self.count,
+            work: self.work,
+        }
     }
 }

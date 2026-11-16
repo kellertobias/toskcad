@@ -6,7 +6,7 @@ use crate::{
 };
 use std::cmp::Ordering;
 mod exact;
-pub(super) use exact::N;
+pub(crate) use exact::N;
 #[cfg(test)]
 mod tests;
 const SCRATCH: usize = 16 * 1024 * 1024;
@@ -116,6 +116,14 @@ impl<'a> DomainPlan<'a> {
         options: DomainOptions,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Self, Error> {
+        Self::prepare_with_knots(boundary, &[], options, interrupt)
+    }
+    pub(crate) fn prepare_with_knots(
+        boundary: &'a Boundary,
+        knots: &[f64],
+        options: DomainOptions,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Self, Error> {
         let mut w = Work::new(options.work, interrupt)?;
         w.charge(1)?;
         if options.maximum_stations == 0
@@ -124,6 +132,13 @@ impl<'a> DomainPlan<'a> {
             || options.maximum_slabs > 131072
             || options.bytes == 0
             || options.bytes > 64 * 1024 * 1024
+        {
+            return Err(Error::Invalid);
+        }
+        w.charge(knots.len().checked_add(1).ok_or(Error::Limit)?)?;
+        if knots.len() > 1025
+            || knots.iter().any(|x| !x.is_finite() || *x < 0. || *x > 1.)
+            || knots.windows(2).any(|k| k[0] >= k[1])
         {
             return Err(Error::Invalid);
         }
@@ -139,18 +154,6 @@ impl<'a> DomainPlan<'a> {
         ];
         let mut slabs = memory.allocate(options.maximum_slabs, &mut w)?;
         for side in [Side::Outer, Side::Inner] {
-            // Exact authored-turn chart subdivisions, not moved source events.
-            for (sign, n, d) in [(0, 0, 1), (1, 1, 4), (1, 1, 2), (1, 3, 4), (1, 1, 1)] {
-                insert_parts(
-                    &mut stations[index(side)],
-                    sign,
-                    &[n],
-                    &[d],
-                    options.maximum_stations,
-                    &mut memory,
-                    &mut w,
-                )?;
-            }
             let source = boundary.source_boundary(side);
             for cell in 0..source.cells().len() {
                 // Scratch is reused: no decoded BigInts are live during the
@@ -174,6 +177,59 @@ impl<'a> DomainPlan<'a> {
                     )?;
                 }
                 cells[index(side)].push(data);
+            }
+        }
+        // Extra cuts are exact parameters of a retained original carrier.
+        // They subdivide the same authored cells; no original event is removed.
+        for side in [Side::Outer, Side::Inner] {
+            for &knot in knots {
+                w.charge(8)?;
+                let number =
+                    num_rational::BigRational::from_float(knot).expect("finite admitted knot");
+                let (_, n) = number.numer().to_bytes_le();
+                let (_, d) = number.denom().to_bytes_le();
+                insert_parts(
+                    &mut stations[index(side)],
+                    if knot == 0. { 0 } else { 1 },
+                    &n,
+                    &d,
+                    options.maximum_stations,
+                    &mut memory,
+                    &mut w,
+                )?;
+            }
+        }
+        // Quarter cuts are OPTIONAL chart aids. Never create an artificial
+        // sub-ULP strip beside a genuine event: only the aid is omitted, while
+        // every original rational event/owner remains unchanged. This dyadic
+        // steering margin is not a geometry tolerance or acceptance criterion.
+        for side in [Side::Outer, Side::Inner] {
+            for (n, d) in [(1u8, 4u8), (1, 2), (3, 4)] {
+                let q = N::parts(1, &[n], &[d], &mut w)?;
+                let margin = N(num_rational::BigRational::new(1.into(), 1_048_576.into()));
+                let low = q.sub(&margin, &mut w)?;
+                let high = q.add(&margin, &mut w)?;
+                let mut near = false;
+                for event in &stations[index(side)] {
+                    let value = event.number(&mut w)?;
+                    if value.cmp(&low, &mut w)? != Ordering::Less
+                        && value.cmp(&high, &mut w)? != Ordering::Greater
+                    {
+                        near = true;
+                        break;
+                    }
+                }
+                if !near {
+                    insert_parts(
+                        &mut stations[index(side)],
+                        1,
+                        &[n],
+                        &[d],
+                        options.maximum_stations,
+                        &mut memory,
+                        &mut w,
+                    )?;
+                }
             }
         }
         for side in [Side::Outer, Side::Inner] {

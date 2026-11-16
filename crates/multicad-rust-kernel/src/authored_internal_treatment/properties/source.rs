@@ -35,12 +35,12 @@ fn pi() -> I {
 fn constant(v: f64) -> S {
     S::constant(I::point(v))
 }
-fn circle(radius: I, outer: Option<I>, z: f64) -> [I; 4] {
+pub(super) fn circle(radius: I, outer: Option<I>, z: f64) -> [I; 4] {
     let squared = outer.map_or_else(|| radius.square(), |r| (r - radius) * (r + radius));
     let area = pi() * squared;
     [area, I::point(0.), I::point(0.), area * I::point(z)]
 }
-fn cylinder(radius: I, z0: f64, z1: f64) -> [I; 4] {
+pub(super) fn cylinder(radius: I, z0: f64, z1: f64) -> [I; 4] {
     let area = I::point(2.) * pi() * radius * (I::point(z1) - I::point(z0));
     [
         area,
@@ -55,6 +55,7 @@ pub(super) struct Domain<'a> {
     thread: &'a AuthoredThread,
     entry: Option<Entry>,
     tail: Option<Tail>,
+    end_station_mm: f64,
 }
 impl<'a> Domain<'a> {
     pub fn treated(body: &'a Cavity) -> Self {
@@ -62,6 +63,13 @@ impl<'a> Domain<'a> {
             thread: &body.thread,
             entry: body.entry,
             tail: body.tail,
+            end_station_mm: body.full_length_mm(),
+        }
+    }
+    pub fn prefix(thread: &'a AuthoredThread, end_station_mm: f64) -> Self {
+        Self {
+            end_station_mm,
+            ..Self::bare(thread)
         }
     }
     pub fn bare(thread: &'a AuthoredThread) -> Self {
@@ -69,6 +77,7 @@ impl<'a> Domain<'a> {
             thread,
             entry: None,
             tail: None,
+            end_station_mm: thread.full_length_mm(),
         }
     }
 }
@@ -79,7 +88,7 @@ pub(super) fn evaluate(
     options: FacePropertyOptions,
     work: &mut integrate::Work<'_>,
 ) -> Result<[I; 4], Error> {
-    let length = body.thread.full_length_mm();
+    let length = body.end_station_mm;
     let kind = match face {
         FaceKey::MaterialOuterWall => {
             return Ok(cylinder(stock.ok_or(Error::Invalid)?, 0., length));
@@ -180,7 +189,9 @@ pub(super) fn evaluate(
         )
         .max(length)
         .max(1.);
-    integrate::parts(&parts, extent, options, work)
+    let densities: Vec<&dyn integrate::Density> =
+        parts.iter().map(|p| p as &dyn integrate::Density).collect();
+    integrate::parts(&densities, extent, options, work)
 }
 impl Part {
     pub fn field(&self, u: I) -> Result<[S; 4], Error> {
@@ -261,5 +272,11 @@ impl Part {
             *out = v.checked()?
         }
         Ok(checked)
+    }
+}
+
+impl integrate::Density for Part {
+    fn field(&self, u: I) -> Result<[S; 4], Error> {
+        Part::field(self, u)
     }
 }

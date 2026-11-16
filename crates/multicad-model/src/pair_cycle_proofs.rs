@@ -252,11 +252,6 @@ impl Drop for PublicationScope {
     }
 }
 
-#[cfg(all(test, feature = "occt"))]
-pub(crate) fn pending_entries() -> usize {
-    PUBLICATIONS.with(|s| s.borrow().iter().map(Vec::len).sum())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

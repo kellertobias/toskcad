@@ -1,0 +1,32 @@
+name: Owned Rust kernel proof
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  owned-kernel:
+    name: Owned Rust geometry / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    env:
+      CARGO_BUILD_JOBS: "4"
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - run: rustup show active-toolchain
+      - name: Owned exact arithmetic and geometry tests
+        run: cargo test -p multicad-precision -p multicad-rust-kernel --profile coverage --locked
+      - name: Owned kernel strict lint checks
+        run: cargo clippy -p multicad-precision -p multicad-rust-kernel --all-targets --profile coverage --locked -- -D warnings

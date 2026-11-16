@@ -1,5 +1,6 @@
 //! Keep STEP representation members independent and their topology identities distinct.
 use super::*;
+mod periodic;
 use std::collections::BTreeMap;
 
 fn record(tag: u64, coordinates: impl IntoIterator<Item = f64>) -> [u64; 11] {
@@ -498,16 +499,64 @@ pub(super) fn rebuild(
 ) -> Result<Solid, GeometryError> {
     let mut occurrences = BTreeMap::<ContentHash, u32>::new();
     let mut solids = Vec::with_capacity(members.len());
+    // Retained-source construction has a separate bounded packet scope.
+    // Remaining sources coexist with each newly prepared immutable plan;
+    // reserve one complete per-body workspace before entering its phase.
+    const LITERAL_PACKET_BYTES: usize = 512 * 1024 * 1024;
+    let mut literal_resident = members.iter().try_fold(0usize, |sum, member| {
+        let size = match member {
+            step_read::SourceImport::LiteralNpt(source) => source.retained_budget_bytes(),
+            step_read::SourceImport::PeriodicPhillips(source) => source.retained_budget_bytes(),
+            _ => 0,
+        };
+        sum.checked_add(size)
+            .filter(|n| *n <= LITERAL_PACKET_BYTES)
+            .ok_or_else(|| {
+                error(
+                    IMPORT,
+                    GeometryErrorKind::Limit,
+                    "Retained STEP packet exceeds its resident budget",
+                )
+            })
+    })?;
     enum Qualified {
+        PeriodicPhillips(Box<step_read::PhillipsOwnedPeriodicMaterial>),
         Analytic(Box<(Readback, ImportSolid)>),
         Radial(Box<multicad_rust_kernel::radial_tensor::RadialBoundary>),
+        LiteralNpt(Box<multicad_rust_kernel::step_read::npt_stock::OwnedMaterial>),
     }
     for member in members {
         let (signature, member) = match member {
+            step_read::SourceImport::PeriodicPhillips(source) => {
+                if literal_resident > LITERAL_PACKET_BYTES - 64 * 1024 * 1024 {
+                    return Err(error(
+                        IMPORT,
+                        GeometryErrorKind::Limit,
+                        "Retained periodic packet has no construction workspace",
+                    ));
+                }
+                (
+                    periodic::signature(&source),
+                    Qualified::PeriodicPhillips(source),
+                )
+            }
             step_read::SourceImport::Analytic(value) => (
                 member_signature(&value.0, &value.1),
                 Qualified::Analytic(value),
             ),
+            step_read::SourceImport::LiteralNpt(source) => {
+                if literal_resident > LITERAL_PACKET_BYTES - 64 * 1024 * 1024 {
+                    return Err(error(
+                        IMPORT,
+                        GeometryErrorKind::Limit,
+                        "Retained STEP packet has no construction workspace",
+                    ));
+                }
+                (
+                    super::super::literal_npt_body::source_signature(&source)?,
+                    Qualified::LiteralNpt(source),
+                )
+            }
             step_read::SourceImport::Radial(owned) => {
                 let boundary = Solid::qualify_imported_radial(*owned, policy)?;
                 (
@@ -525,9 +574,26 @@ pub(super) fn rebuild(
         let hash = ContentHash::of(&bytes);
         let child = EntityId::from_uuid_bits(u128::from_le_bytes(hash.0[..16].try_into().unwrap()));
         solids.push(match member {
+            Qualified::PeriodicPhillips(source) => Solid::rust_periodic_repaired_phillips_material(
+                std::rc::Rc::new(*source),
+                child,
+                PlaneFrame::default(),
+                policy,
+                None,
+            )?,
             Qualified::Analytic(value) => {
                 let (readback, imported) = *value;
                 Solid::verified_step_member(&readback, imported, child, policy)?
+            }
+            Qualified::LiteralNpt(source) => {
+                let original_bytes = source.retained_budget_bytes();
+                let solid = Solid::from_literal_npt_source(*source, child, policy, None)?;
+                let actual = solid
+                    .rust_literal_npt_runtime_evidence()
+                    .expect("literal constructor");
+                literal_resident += actual.resident_budget_bytes - original_bytes;
+                debug_assert!(literal_resident <= LITERAL_PACKET_BYTES);
+                solid
             }
             Qualified::Radial(boundary) => {
                 Solid::from_rust_radial_boundary(*boundary, child, policy)?
@@ -895,6 +961,187 @@ impl Solid {
                 result.2 = [
                     std::array::from_fn(|i| result.2[0][i].min(bounds[0][i])),
                     std::array::from_fn(|i| result.2[1][i].max(bounds[1][i])),
+                ];
+            }
+            if decoded.next().is_some() {
+                return Err(ReadError::Invalid);
+            }
+            Ok(result)
+        })())
+    }
+
+    pub fn has_literal_npt_source(&self) -> bool {
+        let mut leaves = Vec::new();
+        self.step_leaf_members(&mut leaves);
+        leaves
+            .iter()
+            .any(|leaf| leaf.rust_literal_npt_source().is_some())
+    }
+
+    /// Fresh ordered-member checks retain independent decoded mass enclosures.
+    /// Per-member proof budgets cover its subject, known literal siblings and
+    /// actual input document; no whole-scene heap bound is asserted here.
+    pub fn verify_literal_npt_step_compound(
+        &self,
+        input: &str,
+        tolerance: f64,
+    ) -> Option<std::result::Result<RetainedStepVerification, ReadError>> {
+        let mut leaves = Vec::new();
+        self.step_leaf_members(&mut leaves);
+        if !leaves
+            .iter()
+            .any(|leaf| leaf.rust_literal_npt_source().is_some())
+        {
+            return None;
+        }
+        Some((|| {
+            use crate::geometry::internal_thread_treatment_body::interval::Interval as I;
+            if !tolerance.is_finite() || tolerance <= 0. {
+                return Err(ReadError::Invalid);
+            }
+            let counts = leaves
+                .iter()
+                .map(|leaf| {
+                    leaf.solid_count()
+                        .map(|v| v as usize)
+                        .map_err(|_| ReadError::Invalid)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let expected_count = counts
+                .iter()
+                .try_fold(0usize, |n, &v| n.checked_add(v).ok_or(ReadError::Limit))?;
+            let literal_resident = leaves
+                .iter()
+                .filter_map(|leaf| leaf.rust_literal_npt_runtime_evidence())
+                .try_fold(0usize, |n, e| {
+                    n.checked_add(e.resident_budget_bytes)
+                        .ok_or(ReadError::Limit)
+                })?;
+            let mut proofs = Vec::with_capacity(leaves.len());
+            let mut offset = 0usize;
+            for (&leaf, &count) in leaves.iter().zip(&counts) {
+                if let Some(resident) = leaf.rust_literal_npt_runtime_evidence() {
+                    if count != 1 {
+                        return Err(ReadError::Invalid);
+                    }
+                    let proof = leaf
+                        .verify_literal_npt_step_member_with_resident_bytes(
+                            input,
+                            offset,
+                            tolerance,
+                            literal_resident - resident.resident_budget_bytes,
+                        )
+                        .map_err(|e| {
+                            if e.kind == GeometryErrorKind::Limit {
+                                ReadError::Limit
+                            } else {
+                                ReadError::Invalid
+                            }
+                        })?;
+                    if proof.represented_member_count() != expected_count
+                        || proof.member_index() != offset
+                    {
+                        return Err(ReadError::Invalid);
+                    }
+                    let source = leaf
+                        .rust_literal_npt_source()
+                        .expect("typed literal source")
+                        .world_volume_mm3();
+                    let mut source = I::new(source[0], source[1]);
+                    if let Some(pose) = leaf.rust_literal_npt_occurrence() {
+                        let determinant = pose.determinant_bounds();
+                        source = source * I::new(determinant[0], determinant[1]);
+                    }
+                    proofs.push(Some((proof, [source.lo, source.hi])));
+                } else {
+                    proofs.push(None);
+                }
+                offset = offset.checked_add(count).ok_or(ReadError::Limit)?;
+            }
+            // The ordinary decoder enforces complete global ownership. Its
+            // retained results never replace the source-bound checks above.
+            let decoded = step_read::read_source_compound(input, tolerance)?;
+            if decoded.len() != expected_count {
+                return Err(ReadError::Invalid);
+            }
+            let mut decoded = decoded.into_iter();
+            let mut result = RetainedStepVerification {
+                solid_count: 0,
+                bounds_mm: [[f64::INFINITY; 3], [f64::NEG_INFINITY; 3]],
+                retained_members: Vec::new(),
+                decoded_scalar_members: Vec::new(),
+            };
+            for ((leaf, count), proof) in leaves.into_iter().zip(counts).zip(proofs) {
+                let bounds = if let Some((proof, source_volume_bounds_mm3)) = proof {
+                    if !matches!(decoded.next(), Some(step_read::SourceImport::LiteralNpt(_))) {
+                        return Err(ReadError::Invalid);
+                    }
+                    result.retained_members.push(RetainedStepMemberMass {
+                        member_index: result.solid_count,
+                        decoded_volume_bounds_mm3: proof.actual_volume_mm3(),
+                        source_volume_bounds_mm3,
+                    });
+                    result.solid_count =
+                        result.solid_count.checked_add(1).ok_or(ReadError::Limit)?;
+                    let b = proof.actual_bounds_mm();
+                    [b.map(|v| v[0]), b.map(|v| v[1])]
+                } else {
+                    let mut ordinary = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        let Some(step_read::SourceImport::Analytic(pair)) = decoded.next() else {
+                            return Err(ReadError::Unsupported);
+                        };
+                        let (readback, imported) = *pair;
+                        // Mirror the analytic verifier's source contract:
+                        // finite helical/relief fields need their typed source;
+                        // ordinary surfaces use complete topology comparison.
+                        use step_read::ImportProfile;
+                        let needs_source = matches!(
+                            &imported.profile,
+                            ImportProfile::RoundedThreadBore { .. }
+                                | ImportProfile::RoundedThread { .. }
+                                | ImportProfile::ThreadEndRelief { .. }
+                                | ImportProfile::NormalRelief { .. }
+                                | ImportProfile::HelicalThread { .. }
+                                | ImportProfile::HelicalScrew { .. }
+                                | ImportProfile::ProfiledScrew { .. }
+                                | ImportProfile::HelicalReceiver { .. }
+                                | ImportProfile::ThreadedShaft { .. }
+                                | ImportProfile::HelicalNut { .. }
+                                | ImportProfile::SplineCapRelief { .. }
+                                | ImportProfile::HelicalTubeCut { .. }
+                        );
+                        ordinary.push((readback, needs_source.then_some(imported)));
+                    }
+                    let topology = leaf
+                        .rust_topology()
+                        .ok_or(ReadError::Unsupported)?
+                        .map_err(|_| ReadError::Invalid)?;
+                    if !leaf.step_readback_matches(&topology, &ordinary, tolerance * 2.) {
+                        return Err(ReadError::Invalid);
+                    }
+                    let mut bounds = [[f64::INFINITY; 3], [f64::NEG_INFINITY; 3]];
+                    for (member, _) in ordinary {
+                        if !member.volume_mm3.is_finite() || member.volume_mm3 <= 0. {
+                            return Err(ReadError::Invalid);
+                        }
+                        result
+                            .decoded_scalar_members
+                            .push((result.solid_count, member.volume_mm3));
+                        result.solid_count = result
+                            .solid_count
+                            .checked_add(member.solid_count)
+                            .ok_or(ReadError::Limit)?;
+                        bounds = [
+                            std::array::from_fn(|i| bounds[0][i].min(member.bounds_mm[0][i])),
+                            std::array::from_fn(|i| bounds[1][i].max(member.bounds_mm[1][i])),
+                        ];
+                    }
+                    bounds
+                };
+                result.bounds_mm = [
+                    std::array::from_fn(|i| result.bounds_mm[0][i].min(bounds[0][i])),
+                    std::array::from_fn(|i| result.bounds_mm[1][i].max(bounds[1][i])),
                 ];
             }
             if decoded.next().is_some() {

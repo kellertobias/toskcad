@@ -20,6 +20,28 @@ pub(super) fn with_limit(
     work: &mut Work<'_>,
     source_limit: usize,
 ) -> Result<Vec<FaceSources>, Error> {
+    selected(body, work, source_limit, None)
+}
+pub(super) fn selected(
+    body: &RadialBoundary,
+    work: &mut Work<'_>,
+    source_limit: usize,
+    selection: Option<&[usize]>,
+) -> Result<Vec<FaceSources>, Error> {
+    if let Some(indices) = selection {
+        if indices.is_empty() || indices.len() > body.input().faces.len() {
+            return Err(Error::Invalid);
+        }
+        for (position, &index) in indices.iter().enumerate() {
+            work.charge(position + 1)?;
+            let face = body.input().faces.get(index).ok_or(Error::Invalid)?;
+            if !matches!(body.input().surfaces[face.surface], Surface::Plane(_))
+                || indices[..position].contains(&index)
+            {
+                return Err(Error::Invalid);
+            }
+        }
+    }
     let axial = &body.ordered.caps.axial;
     let input = body.input();
     let chart = &axial.chart;
@@ -30,6 +52,10 @@ pub(super) fn with_limit(
     // Keep the independent calculation-source limit for every band count.
     let mut source_count = 0usize;
     for tensor in &axial.tensors {
+        if selection.is_some() {
+            work.step()?;
+            continue;
+        }
         let mut sources = Vec::new();
         source_count += tensor.spans[0] * tensor.spans[1];
         if source_count > source_limit {
@@ -62,6 +88,12 @@ pub(super) fn with_limit(
     }
     for (index, face) in input.faces.iter().enumerate() {
         work.step()?;
+        if let Some(indices) = selection {
+            work.charge(indices.len())?;
+            if !indices.contains(&index) {
+                continue;
+            }
+        }
         let (density, plane, edges) = match &input.surfaces[face.surface] {
             Surface::Tensor(_) => continue,
             Surface::Plane(axis) => {

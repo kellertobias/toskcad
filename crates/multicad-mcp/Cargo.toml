@@ -9,7 +9,6 @@ publish.workspace = true
 
 [features]
 default = []
-occt = ["multicad-kernel/occt", "multicad-model/occt"]
 
 [dependencies]
 multicad-core.workspace = true

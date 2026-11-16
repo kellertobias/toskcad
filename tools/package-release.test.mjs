@@ -1,31 +1,39 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { archiveName, sourceName, digest, rustCandidateArchiveName, targets, validateDescriptor, validateRustCandidateDiagnostics, verifyPackageSet, verifyRustCandidate, zip } from './package-release.mjs';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import { archiveName, sourceName, digest, targets, validateDescriptor, validateDiagnostics, verifyPackageSet, verifyPackage, zip } from './package-release.mjs';
 
 const version='1.2.3',commit='a'.repeat(40);
 function fixture(){
   const dir=mkdtempSync(join(tmpdir(),'multicad-package-contract-'));
-  for(const target of targets){
-    const name=archiveName(version,target),file=join(dir,name);
-    // Contract fixture, not a substitute for the real archiver smoke check.
-    writeFileSync(file,Buffer.concat([Buffer.from([0x50,0x4b,0x03,0x04]),Buffer.from(target)]));
-    const sha256=digest(file);
-    const sources=sourceName(version,target);const sourceFile=join(dir,sources);
-    writeFileSync(sourceFile,Buffer.concat([Buffer.from([0x50,0x4b,0x03,0x04]),Buffer.from('source contract fixture')]));
-    const sourceHash=digest(sourceFile);
-    writeFileSync(sourceFile+'.sha256',`${sourceHash}  ${sources}\n`);
-    writeFileSync(file+'.json',JSON.stringify({version,tag:`v${version}`,commit,target,archive:name,sha256,kind:'native-development-host',nativeSourceHash:'c'.repeat(64),sources:{archive:sources,sha256:sourceHash}}));
-    writeFileSync(file+'.sha256',`${sha256}  ${name}\n`);
-  }
-  return dir;
+  const stage=mkdtempSync(join(tmpdir(),'multicad-package-stage-'));
+  try{
+    for(const target of targets){
+      const identity={version,tag:`v${version}`,commit,target,kind:'native-development-host',geometryBackend:'rust'};
+      const name=archiveName(version,target),sources=sourceName(version,target);
+      for(const asset of [name,sources]){
+        const stem=asset.slice(0,-4);mkdirSync(join(stage,stem));
+        writeFileSync(join(stage,stem,'BUILD-IDENTITY.json'),JSON.stringify(identity));
+        if(asset===name){
+          const [os,arch]=target.split('-');
+          writeFileSync(join(stage,stem,'BUILD-IDENTITY.txt'),`ToskCAD ${version}\nTarget: ${os}/${{x64:'x86_64',arm64:'aarch64'}[arch]}\nSource commit: ${commit}\nCAD kernel: MultiCAD Rust\n`);
+        }
+        zip(stage,stem,join(dir,asset));
+        writeFileSync(join(dir,asset+'.sha256'),`${digest(join(dir,asset))}  ${asset}\n`);
+      }
+      writeFileSync(join(dir,name+'.json'),JSON.stringify({...identity,archive:name,sha256:digest(join(dir,name)),sources:{archive:sources,sha256:digest(join(dir,sources))},runtimeLibraries:[]}));
+    }
+    return dir;
+  }finally{rmSync(stage,{recursive:true,force:true});}
 }
 
 test('aggregate verification requires all three exact version/commit/target identities and is repeatable',()=>{
   const dir=fixture();try{
-    const manifest=verifyPackageSet(dir,version,commit);assert.equal(manifest.assets.length,3);
+    const manifest=verifyPackageSet(dir,version,commit);assert.equal(manifest.assets.length,3);assert.equal(manifest.geometryBackend,'rust');
     writeFileSync(join(dir,'release-manifest.json'),JSON.stringify(manifest));
     assert.deepEqual(verifyPackageSet(dir,version,commit),manifest);
   }finally{rmSync(dir,{recursive:true,force:true});}
@@ -49,75 +57,103 @@ test('descriptor validation rejects an unknown target and invalid SemVer',()=>{
   assert.throws(()=>archiveName('../bad','linux-x64'));
 });
 
-const candidateTarget='macos-arm64';
-const candidateIdentity={version,commit,target:candidateTarget,kind:'rust-only-development-host',geometryBackend:'rust'};
-const candidateDiagnostics=`ToskCAD ${version}\nTarget: macos/aarch64\nSource commit: ${commit}\nCAD kernel: MultiCAD Rust\n`;
+const releaseTarget='macos-arm64';
+const releaseIdentity={version,commit,target:releaseTarget,tag:`v${version}`,kind:'native-development-host',geometryBackend:'rust'};
+const releaseDiagnostics=`ToskCAD ${version}\nTarget: macos/aarch64\nSource commit: ${commit}\nCAD kernel: MultiCAD Rust\n`;
 
-test('candidate diagnostics demand exact version, commit, target and Rust-only kernel',()=>{
-  const verify=text=>validateRustCandidateDiagnostics(text,version,commit,candidateTarget);
-  verify(candidateDiagnostics);
-  verify(candidateDiagnostics.replaceAll('\n','\r\n'));
+test('release diagnostics demand exact version, commit, target and Rust-only kernel',()=>{
+  const verify=text=>validateDiagnostics(text,version,commit,releaseTarget);
+  verify(releaseDiagnostics);
+  verify(releaseDiagnostics.replaceAll('\n','\r\n'));
   for(const text of [
-    candidateDiagnostics.replace(version,'1.2.30'),
-    candidateDiagnostics.replace(commit,'b'.repeat(40)),
-    candidateDiagnostics.replace('macos/aarch64','macos/x86_64'),
-    candidateDiagnostics.replace('MultiCAD Rust','OCCT 7.9.3 (statically linked)'),
-    candidateDiagnostics+'OCCT source: stale\n',
-    candidateDiagnostics+'CAD kernel: OCCT 7.9.3 (statically linked)\n',
+    releaseDiagnostics.replace(version,'1.2.30'),
+    releaseDiagnostics.replace(commit,'b'.repeat(40)),
+    releaseDiagnostics.replace('macos/aarch64','macos/x86_64'),
+    releaseDiagnostics.replace('MultiCAD Rust','OCCT 7.9.3 (statically linked)'),
+    releaseDiagnostics+'OCCT source: stale\n',
+    releaseDiagnostics+'CAD kernel: OCCT 7.9.3 (statically linked)\n',
   ])assert.throws(()=>verify(text),/diagnostics/);
 });
 
-test('candidate archive verification binds both ZIPs, binary diagnostics and the local-only descriptor',()=>{
-  const dir=mkdtempSync(join(tmpdir(),'multicad-rust-candidate-'));
+test('release archive verification binds both ZIPs, binary diagnostics and the release descriptor',()=>{
+  const dir=mkdtempSync(join(tmpdir(),'multicad-rust-release-'));
   try{
-    const name=rustCandidateArchiveName(version,candidateTarget);
+    const name=archiveName(version,releaseTarget);
     const source=name.replace(/\.zip$/,'-sources.zip');
     const runtimeIdentity=join(dir,name.slice(0,-4),'BUILD-IDENTITY.json');
     const runtimeDiagnostics=join(dir,name.slice(0,-4),'BUILD-IDENTITY.txt');
     const sourceIdentity=join(dir,source.slice(0,-4),'BUILD-IDENTITY.json');
     for(const stem of [name,source].map(file=>file.slice(0,-4)))mkdirSync(join(dir,stem));
-    writeFileSync(runtimeIdentity,JSON.stringify(candidateIdentity));
-    writeFileSync(runtimeDiagnostics,candidateDiagnostics);
-    writeFileSync(sourceIdentity,JSON.stringify(candidateIdentity));
+    writeFileSync(runtimeIdentity,JSON.stringify(releaseIdentity));
+    writeFileSync(runtimeDiagnostics,releaseDiagnostics);
+    writeFileSync(sourceIdentity,JSON.stringify(releaseIdentity));
+    const adapter=join(dir,source.slice(0,-4),'crates/multicad-ui/src');
+    mkdirSync(adapter,{recursive:true});
+    writeFileSync(join(adapter,'native_window.mm'),'#import <AppKit/AppKit.h>\n#import <Foundation/Foundation.h>\n');
+    writeFileSync(join(adapter,'native_window.hpp'),'// retained macOS window adapter header\n');
     const archive=asset=>{
       const file=join(dir,asset);rmSync(file,{force:true});zip(dir,asset.slice(0,-4),file);
       const hash=digest(file);writeFileSync(file+'.sha256',`${hash}  ${asset}\n`);return hash;
     };
-    const descriptor={...candidateIdentity,archive:name,sha256:archive(name),sources:{archive:source,sha256:archive(source)},runtimeLibraries:['/usr/lib/libSystem.B.dylib']};
+    const descriptor={...releaseIdentity,archive:name,sha256:archive(name),sources:{archive:source,sha256:archive(source)},runtimeLibraries:['/usr/lib/libSystem.B.dylib']};
     const writeDescriptor=()=>writeFileSync(join(dir,name+'.json'),JSON.stringify(descriptor));
-    const verify=()=>verifyRustCandidate(dir,version,commit,candidateTarget);
+    const verify=()=>verifyPackage(dir,version,commit,releaseTarget);
     writeDescriptor();
     assert.deepEqual(verify(),descriptor);
-    assert.throws(()=>validateDescriptor(descriptor,version,commit,candidateTarget,descriptor.sha256),/Mismatched release asset/);
+    assert.doesNotThrow(()=>validateDescriptor(descriptor,version,commit,releaseTarget,descriptor.sha256));
 
     descriptor.runtimeLibraries.push('/usr/lib/libTKernel.dylib');
     writeDescriptor();assert.throws(verify,/OpenCascade/);
     descriptor.runtimeLibraries.pop();
     descriptor.nativeSourceHash='c'.repeat(64);
-    writeDescriptor();assert.throws(verify,/candidate identity/);
+    writeDescriptor();assert.throws(verify,/release identity/);
     delete descriptor.nativeSourceHash;
 
-    writeFileSync(sourceIdentity,JSON.stringify({...candidateIdentity,commit:'b'.repeat(40)}));
+    writeFileSync(sourceIdentity,JSON.stringify({...releaseIdentity,commit:'b'.repeat(40)}));
     descriptor.sources.sha256=archive(source);
-    writeDescriptor();assert.throws(verify,/candidate identity/);
-    writeFileSync(sourceIdentity,JSON.stringify(candidateIdentity));
-    descriptor.sources.sha256=archive(source);
-
-    const native=join(dir,source.slice(0,-4),'artifacts/native-deps');
-    mkdirSync(native,{recursive:true});
-    writeFileSync(join(native,'occt-7.9.3.tar.gz'),'unexpected native source');
-    descriptor.sources.sha256=archive(source);
-    writeDescriptor();assert.throws(verify,/OpenCascade asset/);
-    rmSync(native,{recursive:true});
+    writeDescriptor();assert.throws(verify,/release identity/);
+    writeFileSync(sourceIdentity,JSON.stringify(releaseIdentity));
     descriptor.sources.sha256=archive(source);
 
-    writeFileSync(runtimeDiagnostics,candidateDiagnostics.replace('MultiCAD Rust','OCCT'));
+    // Each fixture is an actual ZIP with updated valid hashes and identities.
+    // Removing a retired artifact must restore admission without weakening the
+    // manifest or binary identity contract.
+    for(const [asset,path] of [
+      [source,'artifacts/native-deps/occt-7.9.3.tar.gz'],
+      [source,'crates/multicad-native-build/src/lib.rs'],
+      [source,'crates/multicad-kernel/src/bridge.cpp'],
+      [source,'crates/multicad-kernel/assets/thread-prototypes/m8.brep'],
+      [source,'tools/generate-thread-prototypes.mjs'],
+      [name,'resources/OCCT-LGPL-EXCEPTION.txt'],
+      [name,'resources/native-dependencies.json'],
+      [name,'lib/libTKernel.dylib'],
+    ]){
+      const leaf=join(dir,asset.slice(0,-4),path);
+      const created=[];
+      for(let parent=dirname(leaf);!existsSync(parent);parent=dirname(parent))created.push(parent);
+      mkdirSync(dirname(leaf),{recursive:true});writeFileSync(leaf,'retired fixture');
+      if(asset===name)descriptor.sha256=archive(asset);else descriptor.sources.sha256=archive(asset);
+      writeDescriptor();assert.throws(verify,/retired geometry asset/);
+      rmSync(leaf);for(const directory of created)rmSync(directory,{recursive:true});
+      if(asset===name)descriptor.sha256=archive(asset);else descriptor.sources.sha256=archive(asset);
+      writeDescriptor();assert.deepEqual(verify(),descriptor);
+    }
+
+    writeFileSync(runtimeDiagnostics,releaseDiagnostics.replace('MultiCAD Rust','OCCT'));
     descriptor.sha256=archive(name);
     writeDescriptor();assert.throws(verify,/diagnostics/);
-    writeFileSync(runtimeDiagnostics,candidateDiagnostics);
+    writeFileSync(runtimeDiagnostics,releaseDiagnostics);
     descriptor.sha256=archive(name);
     writeDescriptor();
     writeFileSync(join(dir,source+'.sha256'),'stale checksum');
     assert.throws(verify,/Checksum mismatch/);
   }finally{rmSync(dir,{recursive:true,force:true});}
+});
+
+test('retired packaging CLI modes cannot select a second build provider',()=>{
+  for(const action of ['build-rust-candidate','verify-rust-candidate']){
+    const result=spawnSync(process.execPath,[fileURLToPath(new URL('./package-release.mjs',import.meta.url)),action,version],{encoding:'utf8'});
+    assert.equal(result.status,1);
+    assert.match(result.stderr,/Usage: package-release.mjs build VERSION \| verify VERSION COMMIT/);
+  }
 });

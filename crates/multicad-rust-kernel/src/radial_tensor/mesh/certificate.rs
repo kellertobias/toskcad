@@ -97,8 +97,9 @@ pub(super) struct SourceCell {
 /// Its V coordinate still uses the original patch chart.
 pub(super) struct SourceStrip {
     poles: Grid,
-    original: [[f64; 2]; 2],
+    v_domain: [f64; 2],
     u: [I; 2],
+    next_v: f64,
 }
 fn transfer(domain: [f64; 2], range: [f64; 2]) -> [I; 2] {
     range.map(|t| I::point(domain[0]) + (I::point(domain[1]) - I::point(domain[0])) * I::point(t))
@@ -115,22 +116,86 @@ impl SourceStrip {
         let poles = restrict_axis(poles.clone(), 0, local, work)?;
         Ok(Self {
             poles,
-            original: domain,
+            v_domain: domain[1],
             u: transfer(domain[0], local),
+            next_v: domain[1][0],
+        })
+    }
+    pub fn consecutive(&self, v: [f64; 2]) -> bool {
+        v[0].max(self.v_domain[0]).to_bits() == self.next_v.to_bits()
+    }
+    /// The retained tail is the ORIGINAL U-restricted position polynomial
+    /// reparameterized at an exact nominal global V boundary. Directed ratios
+    /// enclose that exact change of variable; no sampled source is substituted.
+    pub fn continued_cell(
+        &mut self,
+        v: [f64; 2],
+        work: &mut Work<'_>,
+    ) -> Result<SourceCell, Error> {
+        // Tensor position nets are exactly10×10. The bounded continuation
+        // workspace covers old/current/two split nets, row Vec capacities and
+        // de Casteljau temporaries. Other degrees keep the stateless path.
+        if self.poles.len() > 10 || self.poles.iter().any(|row| row.len() > 10) {
+            return Err(Error::Limit);
+        }
+        let start = v[0].max(self.v_domain[0]);
+        let end = v[1].min(self.v_domain[1]);
+        if !start.is_finite() || !end.is_finite() || start < self.next_v || end <= start {
+            return Err(Error::Unresolved);
+        }
+        work.charge(self.poles.len() * self.poles[0].len())?;
+        let mut poles = self.poles.clone();
+        if start > self.next_v {
+            let t = ((I::point(start) - I::point(self.next_v))
+                / (I::point(self.v_domain[1]) - I::point(self.next_v)).positive()?)
+            .checked()?;
+            poles = split_v(poles, t, work)?.1;
+        }
+        let cell = if end == self.v_domain[1] {
+            // The complete remaining tail already has this exact nominal
+            // chart. An endpoint split would be the identity, so do no split.
+            poles
+        } else {
+            let t = ((I::point(end) - I::point(start))
+                / (I::point(self.v_domain[1]) - I::point(start)).positive()?)
+            .checked()?;
+            let (cell, tail) = split_v(poles, t, work)?;
+            self.poles = tail;
+            cell
+        };
+        self.next_v = end;
+        Ok(SourceCell {
+            poles: cell,
+            domain: [self.u, [I::point(start), I::point(end)]],
         })
     }
     pub fn normal_coefficients(&self, v: [f64; 2], work: &mut Work<'_>) -> Result<Grid, Error> {
         Ok(self.cell(v, work)?.poles)
     }
     pub fn cell(&self, v: [f64; 2], work: &mut Work<'_>) -> Result<SourceCell, Error> {
+        // A continued position tail must never masquerade as the original
+        // full-V net, including through normal/derivative helper misuse.
+        if self.next_v.to_bits() != self.v_domain[0].to_bits() {
+            return Err(Error::Invalid);
+        }
         work.charge(self.poles.len() * self.poles[0].len())?;
-        let local = local_range(self.original, [self.original[0], v])?[1];
+        let local = local_range([[0., 1.], self.v_domain], [[0., 1.], v])?[1];
         let poles = restrict_axis(self.poles.clone(), 1, local, work)?;
         Ok(SourceCell {
             poles,
-            domain: [self.u, transfer(self.original[1], local)],
+            domain: [self.u, transfer(self.v_domain, local)],
         })
     }
+}
+fn split_v(poles: Grid, t: I, work: &mut Work<'_>) -> Result<(Grid, Grid), Error> {
+    let mut left = Vec::with_capacity(poles.len());
+    let mut right = Vec::with_capacity(poles.len());
+    for row in poles {
+        let (a, b) = split(&row, t, work)?;
+        left.push(a);
+        right.push(b);
+    }
+    Ok((left, right))
 }
 impl SourceCell {
     pub fn new(
@@ -309,4 +374,133 @@ pub(super) fn split(
     }
     right.reverse();
     Ok((left, right))
+}
+
+#[cfg(test)]
+mod continuation_tests {
+    use super::*;
+    fn work() -> Work<'static> {
+        Work {
+            remaining: 10_000_000,
+            interrupt: None,
+        }
+    }
+    fn contains(value: I, expected: f64) {
+        assert!(
+            value.lo <= expected && expected <= value.hi,
+            "{value:?} misses {expected}"
+        );
+    }
+    fn polynomial() -> Grid {
+        (0..3)
+            .map(|i| {
+                (0..3)
+                    .map(|j| {
+                        let u = i as f64 / 2.;
+                        let v = j as f64 / 2.;
+                        [
+                            I::point(u),
+                            I::point(v),
+                            I::point(u * v + if j == 2 { 1. } else { 0. }),
+                        ]
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+    fn evaluate(grid: &Grid, t: [I; 2]) -> [I; 3] {
+        let row_at = |points: &[[I; 3]], t: I| {
+            let mut p = points.to_vec();
+            while p.len() > 1 {
+                p = p
+                    .windows(2)
+                    .map(|p| std::array::from_fn(|k| (I::point(1.) - t) * p[0][k] + t * p[1][k]))
+                    .collect();
+            }
+            p[0]
+        };
+        let rows: Vec<_> = grid.iter().map(|r| row_at(r, t[1])).collect();
+        row_at(&rows, t[0])
+    }
+    fn derivative(grid: &Grid, axis: usize, width: I) -> Grid {
+        let degree = [grid.len() - 1, grid[0].len() - 1];
+        (0..grid.len() - usize::from(axis == 0))
+            .map(|i| {
+                (0..grid[0].len() - usize::from(axis == 1))
+                    .map(|j| {
+                        std::array::from_fn(|k| {
+                            (grid[i + usize::from(axis == 0)][j + usize::from(axis == 1)][k]
+                                - grid[i][j][k])
+                                * I::point(degree[axis] as f64)
+                                / width
+                        })
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+    #[test]
+    fn continued_original_polynomial_coefficients_and_global_derivatives_have_independent_oracles()
+    {
+        let mut w = work();
+        let mut source = SourceStrip::new(&polynomial(), [[0., 1.]; 2], [0., 1.], &mut w).unwrap();
+        for [a, b] in [
+            [0., 0.125],
+            [0.125, 0.375],
+            [0.375, 0.5],
+            [0.5, 0.875],
+            [0.875, 1.],
+        ] {
+            assert!(source.consecutive([a, b]));
+            let cell = source.continued_cell([a, b], &mut w).unwrap();
+            assert_eq!(cell.domain[1].map(|x| [x.lo, x.hi]), [[a, a], [b, b]]);
+            // Exact dyadic Bernstein coefficients of ORIGINAL P=(u,v,uv+v²),
+            // independently expanded in global coordinates for the entire cell.
+            for i in 0..3 {
+                for j in 0..3 {
+                    let u = i as f64 / 2.;
+                    let v = a + (b - a) * j as f64 / 2.;
+                    let vv = [a * a, a * b, b * b][j];
+                    for (bound, expected) in cell.poles[i][j].into_iter().zip([u, v, u * v + vv]) {
+                        contains(bound, expected);
+                    }
+                }
+            }
+            let widths = cell.domain.map(|d| d[1] - d[0]);
+            let du = derivative(&cell.poles, 0, widths[0]);
+            let dv = derivative(&cell.poles, 1, widths[1]);
+            let mixed = derivative(&du, 1, widths[1]);
+            for u in [0., 0.25, 0.5, 1.] {
+                for v in [a, (a + b) / 2., b] {
+                    let t = std::array::from_fn(|k| {
+                        (I::point([u, v][k]) - cell.domain[k][0]) / widths[k]
+                    });
+                    for (grid, expected) in [
+                        (&cell.poles, [u, v, u * v + v * v]),
+                        (&du, [1., 0., v]),
+                        (&dv, [0., 1., u + 2. * v]),
+                        (&mixed, [0., 0., 1.]),
+                    ] {
+                        for (bound, expected) in evaluate(grid, t).into_iter().zip(expected) {
+                            contains(bound, expected);
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(source.cell([0., 0.125], &mut w).err(), Some(Error::Invalid));
+        assert_eq!(
+            source.normal_coefficients([0., 0.125], &mut w).err(),
+            Some(Error::Invalid)
+        );
+        assert!(!source.consecutive([0., 0.125]));
+        assert_eq!(
+            source.continued_cell([0., 0.125], &mut w).err(),
+            Some(Error::Unresolved)
+        );
+        assert_eq!(
+            source.continued_cell([1., 1.], &mut w).err(),
+            Some(Error::Unresolved)
+        );
+    }
 }

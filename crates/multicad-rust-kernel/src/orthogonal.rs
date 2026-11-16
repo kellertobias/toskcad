@@ -52,6 +52,13 @@ pub struct OrthogonalSolid {
 }
 
 impl OrthogonalSolid {
+    pub fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.cells.capacity() * std::mem::size_of::<Box3>()
+            + self.cell_components.capacity() * std::mem::size_of::<u32>()
+            + self.quads.capacity() * std::mem::size_of::<BoundaryQuad>()
+    }
+
     /// Nonoverlapping positive-volume cells, reusable as a Boolean operand.
     pub fn cells(&self) -> &[Box3] {
         &self.cells

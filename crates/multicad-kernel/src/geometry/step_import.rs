@@ -174,6 +174,44 @@ impl Solid {
             return Err(invalid("STEP import needs a source identity"));
         }
         let tolerance = policy.linear_tolerance_mm;
+        // Discovery only: this bounded borrowed body/header view grants no
+        // material admission. Drop its arena before the independent owned
+        // reader. Unknown families keep the existing analytic/import routes
+        // and their unchanged limits; a recognized Phillips body cannot fall
+        // back to a reconstructed legacy screw after material proof fails.
+        let periodic_candidate = step_read::read_phillips_body(input, tolerance, 1_000_000).is_ok();
+        if periodic_candidate {
+            let decoded =
+                step_read::read_periodic_phillips_material(input, Default::default(), None)
+                    .map_err(|cause| {
+                        error(
+                            IMPORT,
+                            match cause.cause {
+                                step_read::PhillipsReadError::Limit => GeometryErrorKind::Limit,
+                                step_read::PhillipsReadError::Cancelled => {
+                                    GeometryErrorKind::Cancelled
+                                }
+                                step_read::PhillipsReadError::Unsupported => {
+                                    GeometryErrorKind::Unsupported
+                                }
+                                step_read::PhillipsReadError::Invalid => {
+                                    GeometryErrorKind::InvalidResult
+                                }
+                            },
+                            format!(
+                                "Independent periodic material import failed at {:?}: {:?}",
+                                cause.stage, cause.cause
+                            ),
+                        )
+                    })?;
+            return Self::rust_periodic_repaired_phillips_material(
+                std::rc::Rc::new(decoded.into_material()),
+                feature,
+                PlaneFrame::default(),
+                policy,
+                None,
+            );
+        }
         let recognised = step_read::read_source_compound(input, tolerance);
         if let Err(refusal) = recognised {
             // Outside the recognised families the solid keeps its imported
@@ -210,9 +248,21 @@ impl Solid {
         })?;
         if members.len() == 1 {
             return match members.pop().expect("one member") {
+                step_read::SourceImport::PeriodicPhillips(source) => {
+                    Self::rust_periodic_repaired_phillips_material(
+                        std::rc::Rc::new(*source),
+                        feature,
+                        PlaneFrame::default(),
+                        policy,
+                        None,
+                    )
+                }
                 step_read::SourceImport::Analytic(value) => {
                     let (readback, imported) = *value;
                     Self::verified_step_member(&readback, imported, feature, policy)
+                }
+                step_read::SourceImport::LiteralNpt(source) => {
+                    Self::from_literal_npt_source(*source, feature, policy, None)
                 }
                 step_read::SourceImport::Radial(owned) => {
                     let boundary = Self::qualify_imported_radial(*owned, policy)?;

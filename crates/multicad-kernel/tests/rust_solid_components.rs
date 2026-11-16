@@ -92,21 +92,6 @@ fn split_occupied_components_keep_source_labels_pose_and_real_step() {
             .unwrap();
             assert_eq!(read.solid_count().unwrap(), 1);
             assert!((read.volume_mm3().unwrap() - 400.).abs() < 1e-7);
-            #[cfg(feature = "occt")]
-            {
-                let native = Solid::read_step(&path, policy).unwrap();
-                assert!(!native.uses_rust_geometry());
-                assert_eq!(native.solid_count().unwrap(), 1);
-                assert!((native.volume_mm3().unwrap() - 400.).abs() < 1e-7);
-                let (a, b) = (native.bounds().unwrap(), component.bounds().unwrap());
-                assert!(
-                    a.min
-                        .into_iter()
-                        .chain(a.max)
-                        .zip(b.min.into_iter().chain(b.max))
-                        .all(|(a, b)| (a - b).abs() < 1e-7)
-                );
-            }
         }
         for (intent, expected) in intents {
             let frames = components

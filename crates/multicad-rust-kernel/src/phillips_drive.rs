@@ -6,14 +6,15 @@ mod cavity;
 mod classify;
 pub use cavity::{
     Cavity, HeadEnvelopeClearance, HeadEnvelopeOptions, HostEnvelopeProof, MouthSweepProof,
-    PhillipsScrew, ScrewFace, ScrewFaceProperties, SourceVolumeBounds,
+    PhillipsScrew, RepairedHeadContainment, RepairedHeadContainmentOptions, ScrewFace,
+    ScrewFaceProperties, SourceVolumeBounds,
 };
 mod events;
 mod finite_section;
 pub use events::{
     BoundaryEvents, BoundaryMesh, CubicTrimSpan, EventRole, FaceProperties, FacePropertyOptions,
-    FiniteTrim, PatchAtlas, PatchBounds, PatchKey, QuadErrorBound, SourceEvent, SurfacePatch,
-    TrimErrorBound, WallKind,
+    FiniteTrim, PatchAtlas, PatchBounds, PatchCorrespondence, PatchCorrespondenceOptions, PatchKey,
+    QuadErrorBound, SourceEvent, SurfacePatch, TrimErrorBound, WallKind,
 };
 pub use finite_section::{
     EdgeRole, SectionBoundary, SectionCurve, SectionEdge, SectionVertex, VertexRole,
@@ -278,6 +279,10 @@ impl Cutter {
     ) -> Result<VolumeBounds, Error> {
         self.volume_bounds_with_cancel(width_mm3, work_limit, &|| false)
     }
+    /// Aggregate source queries supply the already validated<=1M limit.
+    pub(crate) fn volume_scratch_budget_bytes(limit: usize) -> usize {
+        volume::scratch_budget_bytes(limit)
+    }
     /// Work counts each section-cell evaluation, including initial cells.
     /// Limits above one million evaluations exceed this routine’s resource cap.
     pub fn volume_bounds_with_cancel(
@@ -308,6 +313,14 @@ impl Cutter {
     pub fn classify_point_mm(&self, p: [f64; 3]) -> Result<Classification, Error> {
         classify::point(self, p)
     }
+    /// Classify the entire finite closed box against this actual cavity.
+    /// Coordinates use the cutter's mouth chart, with positive Z into the
+    /// cavity. Surface intersections remain unresolved; corner samples do
+    /// not establish containment. Evaluation uses the envelope and at most
+    /// four retained corner cuts, without adaptive subdivision.
+    pub fn classify_box_mm(&self, bounds: [Bounds; 3]) -> Result<Classification, Error> {
+        classify::enclosure(self, bounds.map(|b| I::new(b[0], b[1])))
+    }
 }
 fn bounds(value: I) -> Bounds {
     [value.lo, value.hi]
@@ -328,4 +341,8 @@ mod embedding;
 pub use embedding::{
     CertifiedPatchDomain, CertifiedTrimDomain, ClosedBoundaryCertificate, ClosedBoundaryOptions,
     ClosedBoundaryReserves, OutwardOrientationWitness, SourceChartSide,
+};
+
+pub use events::{
+    MeshCurveKey, MeshPointKey, MeshRow, MouthFootpoint, MouthTraceOptions, TracedMouthMesh,
 };

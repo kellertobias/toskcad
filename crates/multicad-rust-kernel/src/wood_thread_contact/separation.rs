@@ -2,7 +2,7 @@
 //! these bounds never replace stock material or positive overlap predicates.
 use super::*;
 
-fn world_box(local: [I; 3], frame: Frame) -> R<[I; 3]> {
+pub(super) fn world_box(local: [I; 3], frame: Frame) -> R<[I; 3]> {
     scale(frame)?;
     let bounds: [I; 3] = std::array::from_fn(|i| {
         (0..3).fold(ip(frame.origin_mm[i]), |sum, j| {
@@ -32,7 +32,7 @@ fn screw_box(screw: &Screw, frame: Frame) -> R<[I; 3]> {
         frame,
     )
 }
-fn separated(a: [I; 3], b: [I; 3]) -> bool {
+pub(super) fn separated(a: [I; 3], b: [I; 3]) -> bool {
     (0..3).any(|i| a[i].hi < b[i].lo || b[i].hi < a[i].lo)
 }
 
@@ -71,15 +71,20 @@ pub fn separated_from_rectangular_prism(
         return Ok(None);
     }
     let a = screw_box(screw, screw_frame)?;
+    let b = rectangular_box(prism, material_frame)?;
+    let result = separated(a, b);
+    checkpoint(interrupt)?;
+    Ok(Some(result))
+}
+/// The caller retains the actual Prism and has checked rounded_end()==None.
+/// Holes only remove material from this exact rational outer rectangular box.
+pub(super) fn rectangular_box(prism: &crate::prism::Prism, material_frame: Frame) -> R<[I; 3]> {
     let mut local = [ip(0.); 3];
     for (i, dimension) in prism.dimensions().into_iter().enumerate() {
         let (n, d) = dimension.ratio();
         local[i] = I::new(0., positive(enclosure(&Q::new(n.into(), d.into()))?)?.hi);
     }
-    let b = world_box(local, material_frame)?;
-    let result = separated(a, b);
-    checkpoint(interrupt)?;
-    Ok(Some(result))
+    world_box(local, material_frame)
 }
 
 #[cfg(test)]

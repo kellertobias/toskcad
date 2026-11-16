@@ -39,15 +39,6 @@ fn text(source: &Solid) -> String {
     std::fs::read_to_string(path).unwrap()
 }
 
-#[cfg(feature = "occt")]
-#[test]
-fn rust_import_reconstructs_an_independently_written_open_cascade_box() {
-    let policy = GeometryPolicy::default();
-    let source = Solid::box_solid([6.25, 10.5, 3.], policy).unwrap();
-    let imported = Solid::import_rust_step(&text(&source), EntityId::new(), policy).unwrap();
-    same_shape(&imported, &source);
-}
-
 #[test]
 fn rust_import_reconstructs_a_tilted_concave_extrusion_with_analytic_holes() {
     let policy = GeometryPolicy::default();
@@ -165,42 +156,6 @@ fn rust_import_reconstructs_a_rectilinear_blind_pocket() {
     let imported = Solid::import_rust_step(&text(&pocket), EntityId::new(), policy).unwrap();
     same_shape(&imported, &pocket);
     near(imported.volume_mm3().unwrap(), 980.);
-}
-
-#[cfg(feature = "occt")]
-#[test]
-fn rust_import_refuses_external_cone_outside_certified_layout() {
-    use multicad_kernel::{CurvedEdge2d, CurvedProfile, GeometryErrorKind, RevolutionAxis};
-
-    let policy = GeometryPolicy::default();
-    let points = [[0., 0.], [3., 0.], [1., 7.], [0., 7.]];
-    let profile = CurvedProfile {
-        frame: PlaneFrame {
-            v: [0., 0., 1.],
-            ..Default::default()
-        },
-        outer: points
-            .into_iter()
-            .zip(points.into_iter().cycle().skip(1))
-            .map(|(a, b)| CurvedEdge2d::Line { a, b })
-            .collect(),
-        holes: vec![],
-    };
-    let cone = Solid::revolve_curved_profile(
-        &profile,
-        RevolutionAxis {
-            origin_mm: [0.; 3],
-            direction: [0., 0., 1.],
-        },
-        std::f64::consts::TAU,
-        policy,
-    )
-    .unwrap();
-    near(cone.volume_mm3().unwrap(), 91. * std::f64::consts::PI / 3.);
-    let err = Solid::import_rust_step(&text(&cone), EntityId::new(), policy)
-        .err()
-        .unwrap();
-    assert_eq!(err.kind, GeometryErrorKind::Unsupported);
 }
 
 #[test]

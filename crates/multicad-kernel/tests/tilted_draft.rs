@@ -88,11 +88,7 @@ fn tilted_box_draft_matches_cardinal_geometry_and_native_for_signed_pulls_and_of
         .iter()
         .map(|e| GeometryIntent::capture(&before, e.key).unwrap())
         .collect();
-    #[cfg(feature = "occt")]
-    let native_stock = Solid::box_solid([30., 20., 10.], policy)
-        .unwrap()
-        .transformed(transform)
-        .unwrap();
+
     for up in 0..3 {
         let (u, v) = ((up + 1) % 3, (up + 2) % 3);
         for sides in [
@@ -200,32 +196,7 @@ fn tilted_box_draft_matches_cardinal_geometry_and_native_for_signed_pulls_and_of
                         )
                         .unwrap();
                         compare(&result, &imported);
-                        #[cfg(feature = "occt")]
-                        {
-                            let native_selections: Vec<_> = sides
-                                .iter()
-                                .map(|&(axis, positive)| {
-                                    selected(
-                                        &native_stock,
-                                        direction(frame, axis, if positive { 1. } else { -1. }),
-                                        feature,
-                                        format!("side.{axis}.{positive}"),
-                                    )
-                                })
-                                .collect();
-                            let native = native_stock
-                                .draft_faces_named(
-                                    &native_selections,
-                                    direction(frame, up, sense),
-                                    neutral,
-                                    degrees.to_radians(),
-                                    feature,
-                                    policy,
-                                )
-                                .unwrap();
-                            compare(&result, &native);
-                            compare(&result, &Solid::read_step(&path, policy).unwrap());
-                        }
+
                         assert_eq!(stock.topology_snapshot(owner, 0).unwrap(), before);
                     }
                 }

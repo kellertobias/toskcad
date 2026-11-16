@@ -271,23 +271,6 @@ fn small_metric_frames_preserve_mesh_and_proper_frames_exchange() {
             {
                 assert!((expected - actual).abs() <= 2. * policy.linear_tolerance_mm);
             }
-            #[cfg(feature = "occt")]
-            {
-                let native = Solid::read_step(&path, policy).unwrap();
-                assert!(
-                    (native.volume_mm3().unwrap() - geometry.volume_mm3().unwrap()).abs()
-                        < 1e-7 * geometry.volume_mm3().unwrap()
-                );
-                let expected = native.bounds().unwrap();
-                for (a, b) in bounds
-                    .min
-                    .into_iter()
-                    .chain(bounds.max)
-                    .zip(expected.min.into_iter().chain(expected.max))
-                {
-                    assert!((a - b).abs() < 5e-6, "{kind:?}: {a} vs {b}");
-                }
-            }
         }
     }
 }

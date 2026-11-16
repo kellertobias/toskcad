@@ -87,6 +87,11 @@ pub struct SectionBoundary<'a> {
     edges: Vec<SectionEdge>,
 }
 impl<'a> SectionBoundary<'a> {
+    pub(crate) fn retained_heap_bytes(&self) -> usize {
+        self.vertices.capacity() * std::mem::size_of::<SectionVertex>()
+            + self.edges.capacity() * std::mem::size_of::<SectionEdge>()
+    }
+
     pub fn source(&self) -> &'a Cutter {
         self.source
     }

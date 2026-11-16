@@ -1,5 +1,3 @@
-#![cfg(not(feature = "occt"))]
-
 use multicad_core::{
     document::EntityId,
     references::{GeometryIntent, Origin, Resolution, TopologyKind, resolve},

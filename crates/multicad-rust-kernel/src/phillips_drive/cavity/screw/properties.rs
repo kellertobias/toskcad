@@ -40,6 +40,7 @@ fn receipt(
     face: ScrewFace,
     v: Values,
     o: FacePropertyOptions,
+    transported: Option<[I; 3]>,
 ) -> Result<ScrewFaceProperties, Error> {
     if v.iter().any(|v| !v.valid())
         || v[0].lo <= 0.
@@ -50,7 +51,15 @@ fn receipt(
     {
         return Err(Error::Unresolved);
     }
-    let centroid = [v[1], v[2], v[3]].map(|m| m / v[0]);
+    let mut centroid = [v[1], v[2], v[3]].map(|m| m / v[0]);
+    if let Some(known) = transported {
+        for (value, bound) in centroid.iter_mut().zip(known) {
+            if !value.valid() || !bound.valid() {
+                return Err(Error::Unresolved);
+            }
+            *value = I::new(value.lo.max(bound.lo), value.hi.min(bound.hi));
+        }
+    }
     if centroid
         .iter()
         .any(|v| !v.valid() || v.width() > o.centroid_tolerance_mm)
@@ -65,13 +74,13 @@ fn receipt(
     })
 }
 fn finish(
-    raw: Vec<(ScrewFace, Values)>,
+    raw: Vec<(ScrewFace, Values, Option<[I; 3]>)>,
     options: FacePropertyOptions,
     interrupt: &dyn Fn() -> bool,
 ) -> Result<Vec<ScrewFaceProperties>, Error> {
     let result = raw
         .into_iter()
-        .map(|(face, value)| receipt(face, value, options))
+        .map(|(face, value, centroid)| receipt(face, value, options, centroid))
         .collect::<Result<Vec<_>, _>>()?;
     checkpoint(interrupt)?;
     Ok(result)
@@ -256,6 +265,7 @@ impl PhillipsScrew {
         result.push((
             ScrewFace::ThreadShoulder,
             [disk - cap[0], -cap[1], -cap[2], start * disk - cap[3]],
+            None,
         ));
         for f in thread.into_iter().skip(1) {
             let role = if f.face == 1 {
@@ -263,7 +273,11 @@ impl PhillipsScrew {
             } else {
                 ScrewFace::ThreadWall(f.face - 2)
             };
-            result.push((role, raw(f.area_mm2, f.first_moment_mm3)));
+            result.push((
+                role,
+                raw(f.area_mm2, f.first_moment_mm3),
+                Some(f.centroid_mm.map(|b| I::new(b[0], b[1]))),
+            ));
         }
         let mouth = cavity
             .iter()
@@ -280,12 +294,18 @@ impl PhillipsScrew {
                 -mouth[2],
                 top * (disk - mouth[0]),
             ],
+            None,
         ));
         for (i, segment) in self.profile.segments().enumerate() {
             checkpoint(interrupt)?;
+            let values = meridian(segment)?;
+            let shift = I::point(-self.spec.shank_length_mm);
+            let mut centroid = [values[1], values[2], values[3]].map(|v| v / values[0]);
+            centroid[2] = centroid[2] + shift;
             result.push((
                 ScrewFace::ProfileWall(i as u32),
-                shifted(meridian(segment)?, I::point(-self.spec.shank_length_mm)),
+                shifted(values, shift),
+                Some(centroid),
             ));
         }
         for f in cavity {
@@ -293,6 +313,12 @@ impl PhillipsScrew {
                 result.push((
                     ScrewFace::Cavity(f.face),
                     shifted(raw(f.area_mm2, f.first_moment_mm3), top),
+                    // Exact translation preserves each earned centroid's
+                    // correlation with its SAME face area/first moments.
+                    Some(std::array::from_fn(|i| {
+                        I::new(f.centroid_mm[i][0], f.centroid_mm[i][1])
+                            + if i == 2 { top } else { I::point(0.) }
+                    })),
                 ));
             }
         }
@@ -308,11 +334,11 @@ mod tests {
         let face = ScrewFace::HeadTop;
         let mut v = [I::point(1.), I::point(0.), I::point(0.), I::point(0.)];
         v[0] = I::new(1., 2.);
-        assert!(receipt(face, v, options).is_err());
-        assert!(finish(vec![(face, v)], options, &|| false).is_err());
+        assert!(receipt(face, v, options, None).is_err());
+        assert!(finish(vec![(face, v, None)], options, &|| false).is_err());
         v[0] = I::point(1e-10);
         v[1] = I::new(0., 1e-8);
-        assert!(receipt(face, v, options).is_err());
+        assert!(receipt(face, v, options, None).is_err());
         let segment = crate::head_profile::Segment {
             start: [1., 0.],
             end: [1., 0.],
@@ -337,6 +363,95 @@ mod tests {
                 Error::Invalid | Error::Limit | Error::Cancelled | Error::Unresolved
             ));
         }
+    }
+    #[test]
+    fn nominal_h0_long_plain_cavity_centroids_preserve_exact_translation() {
+        use crate::helical_thread;
+        let options = FacePropertyOptions {
+            area_tolerance_mm2: 1e-7 * 2. / 16.,
+            first_moment_tolerance_mm3: 1e-7 * 4. / 16.,
+            centroid_tolerance_mm: 1e-7 / 16.,
+            maximum_cells: 65536,
+        };
+        for left in [false, true] {
+            let mut previous: Option<(f64, Vec<ScrewFaceProperties>)> = None;
+            for plain in [1., 5.2, 16.] {
+                let fixture = super::super::tests::fixture(0, plain, left);
+                let thread = Thread::new(helical_thread::Spec {
+                    major_radius_mm: 1.,
+                    pitch_mm: 0.4,
+                    length_mm: 0.8,
+                    depth_mm: 0.21650635094610965,
+                    crest_width_mm: 0.05,
+                    ..fixture.thread().spec()
+                })
+                .unwrap();
+                let source = PhillipsScrew::new(
+                    thread,
+                    *fixture.profile(),
+                    fixture.spec(),
+                    fixture.cavity().clone(),
+                    100_000,
+                    &|| false,
+                )
+                .unwrap();
+                let before = source.thread().spec();
+                let faces = source
+                    .face_properties_with_cancel(options, &|| false)
+                    .unwrap();
+                let local = source
+                    .cavity()
+                    .face_properties_with_cancel(
+                        FacePropertyOptions {
+                            area_tolerance_mm2: 1e-10,
+                            first_moment_tolerance_mm3: 1e-10,
+                            centroid_tolerance_mm: 1e-10,
+                            maximum_cells: 65536,
+                        },
+                        &|| false,
+                    )
+                    .unwrap();
+                let top = source.head_top_z();
+                for face in &faces {
+                    let ScrewFace::Cavity(key) = face.face else {
+                        continue;
+                    };
+                    let oracle = local.iter().find(|f| f.face == key).unwrap();
+                    for axis in 0..3 {
+                        let expected =
+                            I::new(oracle.centroid_mm[axis][0], oracle.centroid_mm[axis][1])
+                                + I::point(if axis == 2 { top } else { 0. });
+                        let actual = I::new(face.centroid_mm[axis][0], face.centroid_mm[axis][1]);
+                        assert!(actual.lo <= expected.hi && expected.lo <= actual.hi);
+                        assert!(actual.width() <= options.centroid_tolerance_mm);
+                    }
+                    if let Some((old_top, old_faces)) = &previous {
+                        let old = old_faces.iter().find(|f| f.face == face.face).unwrap();
+                        let delta = I::new(face.centroid_mm[2][0], face.centroid_mm[2][1])
+                            - I::new(old.centroid_mm[2][0], old.centroid_mm[2][1]);
+                        let exact = I::point(top) - I::point(*old_top);
+                        assert!(delta.lo <= exact.lo && exact.hi <= delta.hi);
+                    }
+                }
+                assert_eq!(source.thread().spec(), before);
+                previous = Some((top, faces));
+            }
+        }
+    }
+    #[test]
+    fn transported_centroid_intersection_rejects_inconsistent_or_invalid_bounds() {
+        let options = FacePropertyOptions::default();
+        let values = [I::point(1.), I::point(0.), I::point(0.), I::point(0.)];
+        assert!(receipt(ScrewFace::HeadTop, values, options, Some([I::point(1.); 3])).is_err());
+        assert!(
+            receipt(
+                ScrewFace::HeadTop,
+                values,
+                options,
+                Some([I::new(f64::NAN, 1.); 3])
+            )
+            .is_err()
+        );
     }
     #[test]
     fn complete_retained_screw_faces_have_directed_source_measures_without_a_floor_or_mouth() {
@@ -445,7 +560,7 @@ mod tests {
         let face = actual[0];
         assert!(matches!(
             finish(
-                vec![(face.face, raw(face.area_mm2, face.first_moment_mm3))],
+                vec![(face.face, raw(face.area_mm2, face.first_moment_mm3), None)],
                 options,
                 &|| true
             ),

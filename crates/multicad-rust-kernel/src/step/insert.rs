@@ -1,16 +1,32 @@
 //! Owned insert export candidates. These source-known carrier certificates do
 //! not admit STEP solids, foreign imports, occupied material or decoded mass.
+mod angular;
+pub mod coupled;
+pub(crate) mod exact_cap;
 use crate::{
     tapered_thread::interval::I,
     wood_insert::{Boundary, BoundaryCurveKey, BoundaryVertexKey, Side},
 };
 use std::mem::size_of;
 mod curves;
-mod domains;
+pub(crate) mod domains;
+pub(crate) mod projection;
+pub(crate) mod topology;
+mod writer;
+pub use topology::{
+    CapRegularity, EdgeGeometry, FaceGeometry, ShellCoedge, ShellEdge, ShellFace, TopologyPlan,
+    WindingBounds,
+};
+pub use writer::{write_local_candidate, write_mapped_candidate};
+pub(crate) mod reduced_unit;
+pub use reduced_unit::ReducedUnitAngular;
 mod surfaces;
+pub(crate) use angular::fit_closed_unit;
+pub(crate) use angular::{AngularCarrier, fit_angular};
 pub use domains::{DomainOptions, DomainPlan, Slab, Station};
+pub use projection::ProjectionBounds;
 pub use surfaces::{RowKey, SurfacePatch, SurfacePlan, SurfaceRow, SurfaceVertex, VertexOwner};
-mod resources;
+pub(crate) mod resources;
 use resources::{Memory, Work};
 #[cfg(test)]
 mod tests;
@@ -35,7 +51,7 @@ pub struct CurveOptions {
     pub bytes: usize,
 }
 impl CurveOptions {
-    fn validate(self) -> Result<(), Error> {
+    pub(crate) fn validate(self) -> Result<(), Error> {
         if !self.position_error_mm.is_finite()
             || self.position_error_mm <= 0.
             || !self.derivative_error_mm.is_finite()

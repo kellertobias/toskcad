@@ -1,4 +1,5 @@
 //! STEP AP214 output for extruded solids with analytic lines and circles.
+pub mod orthogonal_seats;
 
 use crate::{
     Circle, Rational,
@@ -33,11 +34,17 @@ pub(crate) use worm_gear::thread_frame as worm_thread_frame;
 pub use worm_gear::{supports_worm_wheel, supports_za_worm, write_worm_wheel, write_za_worm};
 mod cubic_trim;
 mod cylindrical_revolution;
+pub mod hanger;
 pub(crate) mod helical;
 pub mod helical_trim;
 mod helical_tube_cut;
 pub(crate) mod herringbone;
 pub mod insert;
+pub mod literal_npt;
+pub mod npt_stock;
+pub mod periodic_phillips;
+pub mod pipe_hardware;
+mod retained_replay;
 pub use helical_tube_cut::{supports_helical_tube_cut, write_helical_tube_cut};
 pub use herringbone::{supports_herringbone, write_herringbone};
 mod nonplanar_loft;

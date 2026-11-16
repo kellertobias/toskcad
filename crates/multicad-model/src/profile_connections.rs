@@ -17,7 +17,8 @@ use multicad_core::{
 };
 use multicad_kernel::{
     BooleanOperation, CircularPocketTool, CurvedEdge2d, CurvedProfile, EdgeTreatment,
-    GeometryPolicy, PlaneFrame, RevolutionAxis, RigidTransform, Solid, TreatmentEdge,
+    GeometryPolicy, Line8NutCut, OrthogonalCountersink, PlaneFrame, RevolutionAxis, RigidTransform,
+    Solid, TreatmentEdge,
 };
 use std::{collections::BTreeMap, f64::consts::TAU};
 
@@ -109,6 +110,12 @@ pub(crate) struct Inputs<'a> {
     pub policy: GeometryPolicy,
 }
 
+#[derive(Clone, Copy)]
+enum ReceivingHardware {
+    Nut,
+    Screw,
+    SeatedStock,
+}
 struct Builder<'a> {
     inputs: Inputs<'a>,
     feature: EntityId,
@@ -116,6 +123,9 @@ struct Builder<'a> {
 impl Builder<'_> {
     fn checked<T, E: std::fmt::Display>(&self, value: Result<T, E>) -> Result<T, ModelError> {
         value.map_err(|e| error(Some(self.feature), e))
+    }
+    fn source_checked<T, E: std::fmt::Debug>(&self, value: Result<T, E>) -> Result<T, ModelError> {
+        value.map_err(|e| self.fail(format!("Retained source qualification: {e:?}")))
     }
     fn fail(&self, message: impl std::fmt::Display) -> ModelError {
         error(Some(self.feature), message)
@@ -241,6 +251,140 @@ impl Builder<'_> {
         Ok(plate)
     }
 
+    fn rust_angle_bracket(&self, mount: ProfileConnectionFrames) -> Result<Solid, ModelError> {
+        use multicad_kernel::rust_kernel::{
+            orthogonal::{self, Box3, Operation},
+            orthogonal_bore_seats::Seat,
+        };
+        let [a, b] = mount.sites;
+        let corner = sub(a.origin_mm, scale(b.normal(), 20.));
+        let u = cross(b.normal(), a.normal());
+        let frame = ReferenceFrame {
+            origin_mm: sub(corner, scale(u, 20.)),
+            u,
+            v: b.normal(),
+        };
+        self.checked(frame.validate())?;
+        let geometry = self
+            .source_checked(orthogonal::boolean(
+                &[
+                    Box3 {
+                        min: [0.; 3],
+                        max: [40., 40., SHEET_MM],
+                    },
+                    Box3 {
+                        min: [0.; 3],
+                        max: [40., SHEET_MM, 40.],
+                    },
+                ],
+                &[],
+                Operation::Union,
+                self.inputs.policy.linear_tolerance_mm,
+            ))?
+            .ok_or_else(|| self.fail("The original angle stock has no physical material"))?;
+        let stock = self.checked(Solid::rust_orthogonal_stock_named(
+            self.feature,
+            geometry,
+            self.inputs.policy,
+        ))?;
+        let travel = SHEET_MM + 2. * BORE_OVERTRAVEL_MM;
+        let tools = [
+            (
+                [20., 20., SHEET_MM + BORE_OVERTRAVEL_MM],
+                [0., 0., -travel],
+                [1., 0., 0.],
+                [0., -1., 0.],
+            ),
+            (
+                [20., SHEET_MM + BORE_OVERTRAVEL_MM, 20.],
+                [0., -travel, 0.],
+                [1., 0., 0.],
+                [0., 0., 1.],
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, (origin, displacement_mm, u, v))| CircularPocketTool {
+            frame: PlaneFrame { origin, u, v },
+            center_uv: [0.; 2],
+            radius_mm: BORE_RADIUS_MM,
+            displacement_mm,
+            origin: Origin {
+                source: self.feature,
+                role: format!("angle_bracket.bore.{i}"),
+            },
+        })
+        .collect::<Vec<_>>();
+        let drilled = self.checked(stock.rust_drill_circular_machining(
+            &tools,
+            &[true, true],
+            self.inputs.policy,
+        ))?;
+        let radius = BORE_MOUTH_RADIUS_MM - BORE_OVERTRAVEL_MM;
+        let seats = [0, 1].map(|bore| OrthogonalCountersink {
+            geometry: Seat {
+                bore,
+                end: false,
+                radius_mm: radius,
+                depth_mm: radius - BORE_RADIUS_MM,
+            },
+            origin: Origin {
+                source: self.feature,
+                role: format!("angle_bracket.countersink.{bore}"),
+            },
+        });
+        let local =
+            self.checked(drilled.rust_countersink_orthogonal(&seats, self.inputs.policy, None))?;
+        let bracket = self.checked(local.transformed(placement(frame)))?;
+        self.rust_angle_bore_correspondence(&bracket, mount)?;
+        Ok(bracket)
+    }
+    fn rust_angle_bore_correspondence(
+        &self,
+        bracket: &Solid,
+        mount: ProfileConnectionFrames,
+    ) -> Result<(), ModelError> {
+        use multicad_kernel::rust_kernel::axial_pipe_thread::authored::StockClipPlacement;
+        let (source, frame) = bracket
+            .rust_orthogonal_countersink_source()
+            .ok_or_else(|| self.fail("The angle lost its original finite countersinks"))?;
+        let axes = [frame.u, frame.v, frame.normal()];
+        let matrix = std::array::from_fn(|i| axes.map(|v| v[i]));
+        let placed = self.source_checked(StockClipPlacement::new(matrix, frame.origin))?;
+        let vector = self.source_checked(StockClipPlacement::new(matrix, [0.; 3]))?;
+        for (i, axis) in mount.fasteners.into_iter().enumerate() {
+            let bore = source.bores()[i];
+            let position =
+                self.source_checked(placed.point_bounds(bore.centers_mm[1].map(|v| [v, v])))?;
+            let normal = source.boundary().faces[bore.faces[0]].normal.map(|v| -v);
+            let direction = self.source_checked(vector.point_bounds(normal.map(|v| [v, v])))?;
+            let target_axes = [axis.u, axis.v, axis.normal()];
+            let target = self.source_checked(StockClipPlacement::new(
+                std::array::from_fn(|j| target_axes.map(|a| a[j])),
+                [0.; 3],
+            ))?;
+            let difference = |bounds: [[f64; 2]; 3], point: Point| {
+                (0..3).fold(0_f64, |sum, j| {
+                    (sum + (bounds[j][0] - point[j])
+                        .abs()
+                        .next_up()
+                        .max((bounds[j][1] - point[j]).abs().next_up()))
+                    .next_up()
+                })
+            };
+            let residual = (difference(position, axis.origin_mm)
+                + 80.
+                    * (difference(direction, axis.normal())
+                        + placed.metric_error()
+                        + target.metric_error())
+                    .next_up())
+            .next_up();
+            if !residual.is_finite() || residual > self.inputs.policy.linear_tolerance_mm / 16. {
+                return Err(self.fail("The actual angle bore axes do not match both retained mounting frames within the source construction budget"));
+            }
+        }
+        Ok(())
+    }
     fn rust_joining_plate(&self, mount: ProfileConnectionFrames) -> Result<Solid, ModelError> {
         let frame = joining_plate_frame(mount.sites);
         self.checked(frame.validate())?;
@@ -412,6 +556,7 @@ impl Builder<'_> {
         &self,
         kind: ProfileConnectionKind,
         frame: ReferenceFrame,
+        backend: GeometryBackend,
     ) -> Result<(Solid, ResolvedThread, ReferenceFrame), ModelError> {
         let universal = kind == ProfileConnectionKind::UniversalEnd;
         let height = 4.4;
@@ -478,8 +623,16 @@ impl Builder<'_> {
             unreachable!()
         };
         let thread = thread.as_ref().clone();
-        let solid =
-            crate::mechanical_parts::build_resolved(self.feature, resolved, self.inputs.policy)?;
+        let solid = match backend {
+            GeometryBackend::Rust => crate::mechanical_parts::build_rust_resolved(
+                self.feature,
+                resolved,
+                self.inputs.policy,
+            ),
+            GeometryBackend::OpenCascade => {
+                crate::mechanical_parts::build_resolved(self.feature, resolved, self.inputs.policy)
+            }
+        }?;
         let placed = self.checked(solid.transformed(placement(shift(frame, neck))))?;
         Ok((placed, thread, shift(frame, neck + runout)))
     }
@@ -489,6 +642,7 @@ impl Builder<'_> {
         kind: ProfileConnectionKind,
         variant: ProfileConnectionNut,
         frame: ReferenceFrame,
+        backend: GeometryBackend,
     ) -> Result<Solid, ModelError> {
         let size = variant.dimensions();
         let half_width = size.width_mm / 2.;
@@ -503,20 +657,49 @@ impl Builder<'_> {
             [-5.4, 5.0],
             [-6.5, 3.0],
         ];
-        let blank = self.checked(Solid::extrude_curved_profile(
-            &CurvedProfile {
-                frame: PlaneFrame {
-                    origin: sub(seat.origin_mm, scale(seat.u, size.bore_from_end_mm)),
-                    u: seat.v,
-                    v: seat.normal(),
+        let blank = if backend == GeometryBackend::Rust {
+            // Author the original straight local section directly. Projecting
+            // a rounded world displacement back into an arbitrary profile
+            // frame would create a different, slightly sheared receiving stock.
+            let owner = EntityId::new();
+            let origins = (0..section.len())
+                .map(|i| Origin {
+                    source: owner,
+                    role: format!("line8.stock.side.{i}"),
+                })
+                .collect::<Vec<_>>();
+            self.checked(Solid::rust_extrude_linear_named(
+                &CurvedProfile {
+                    frame: PlaneFrame {
+                        origin: [-size.bore_from_end_mm, 0., 0.],
+                        u: [0., 1., 0.],
+                        v: [0., 0., 1.],
+                    },
+                    outer: polygon(&section),
+                    holes: vec![],
                 },
-                outer: polygon(&section),
-                holes: vec![],
-            },
-            size.length_mm,
-            self.inputs.policy,
-        ))?;
-        let (screw, external, external_start) = self.screw(kind, frame)?;
+                [size.length_mm, 0., 0.],
+                0.,
+                owner,
+                &origins,
+                self.inputs.policy,
+            ))?
+        } else {
+            self.checked(Solid::extrude_curved_profile(
+                &CurvedProfile {
+                    frame: PlaneFrame {
+                        origin: sub(seat.origin_mm, scale(seat.u, size.bore_from_end_mm)),
+                        u: seat.v,
+                        v: seat.normal(),
+                    },
+                    outer: polygon(&section),
+                    holes: vec![],
+                },
+                size.length_mm,
+                self.inputs.policy,
+            ))?
+        };
+        let (screw, external, external_start) = self.screw(kind, frame, backend)?;
         let params = ThreadParameters {
             length: length(NUT_THREAD_MM),
             radial_allowance: length(THREAD_RADIAL_CLEARANCE_MM),
@@ -547,6 +730,41 @@ impl Builder<'_> {
             v: inner.v,
             n: inner.normal(),
         };
+        if backend == GeometryBackend::Rust {
+            let (sin, cos) = phase.roll_rad.sin_cos();
+            internal.frame = multicad_core::sketch::Frame {
+                origin: [0.; 3],
+                u: [cos, sin, 0.],
+                v: [-sin, cos, 0.],
+                n: [0., 0., 1.],
+            };
+            let (profile, root, local_frame) =
+                crate::threads::rust_profile(self.feature, &internal)?;
+            if root.is_some() {
+                return Err(
+                    self.fail("Rust Line8 nuts require the original flat internal thread profile")
+                );
+            }
+            let local = self.checked(blank.rust_cut_line8_nut(
+                Line8NutCut {
+                    profile,
+                    frame: local_frame,
+                    bore_from_start_mm: size.bore_from_end_mm,
+                    relief: multicad_kernel::rust_kernel::line8_nut::Relief {
+                        start_mm: NUT_THREAD_MM - 0.001,
+                        radius_mm: 4.10,
+                        tool_length_mm: size.depth_mm - NUT_THREAD_MM + 0.02,
+                    },
+                    minimum_wall_mm: internal.minimum_wall_mm,
+                },
+                self.feature,
+                self.inputs.policy,
+                None,
+            ))?;
+            let nut = self.checked(local.transformed(placement(seat)))?;
+            self.checked(screw.rust_line8_nut_mating(&nut, None))?;
+            return Ok(nut);
+        }
         let tapped = crate::threads::build_resolved(
             self.feature,
             internal,
@@ -566,6 +784,64 @@ impl Builder<'_> {
             "The supported M8 screw and T-slot nut threads interfere",
         )?;
         Ok(nut)
+    }
+    fn rust_hardware_receivers(
+        &self,
+        hardware: &Solid,
+        kind: ReceivingHardware,
+        request: &model::ProfileConnectionRequest,
+        access_bores: Option<EntityId>,
+    ) -> Result<(), ModelError> {
+        for (site, producer) in [
+            (
+                &request.first,
+                access_bores.unwrap_or(request.first.member.producer),
+            ),
+            (&request.second, request.second.member.producer),
+        ] {
+            let pose = self.checked(model::resolve_occurrence_pose(
+                self.inputs.document,
+                &site.occurrence,
+                site.member.body,
+                self.inputs.parameters,
+                self.inputs.revision,
+                self.inputs.snapshots,
+            ))?;
+            let occurrence = RigidTransform {
+                rotation: pose.rotation,
+                translation_mm: pose.translation_mm,
+            };
+            match kind {
+                ReceivingHardware::Screw => {
+                    self.checked(hardware.rust_profiled_screw_receiver_clearance(
+                        self.solid(producer)?,
+                        occurrence,
+                        HARDWARE_CLEARANCE_VOLUME_MM3,
+                        None,
+                    ))?;
+                }
+                ReceivingHardware::Nut => {
+                    self.checked(hardware.rust_line8_receiver_clearance(
+                        self.solid(producer)?,
+                        occurrence,
+                        HARDWARE_CLEARANCE_VOLUME_MM3,
+                        None,
+                    ))?;
+                }
+                ReceivingHardware::SeatedStock => {
+                    self.checked(hardware.rust_seated_stock_receiver_clearance(
+                        self.solid(producer)?,
+                        occurrence,
+                        HARDWARE_CLEARANCE_VOLUME_MM3,
+                        None,
+                    ))?;
+                }
+            }
+        }
+        if self.checked(hardware.solid_count())? != 1 {
+            return Err(self.fail("Each retained connector component must be one physical solid"));
+        }
+        Ok(())
     }
 }
 
@@ -607,19 +883,25 @@ pub(crate) fn build(
             ProfileOutputKind::Part { index } => match request.kind.roles()[index] {
                 ProfilePartRole::Connector(_) => match request.kind {
                     ProfileConnectionKind::JoiningPlate => builder.rust_joining_plate(frames),
-                    ProfileConnectionKind::AngleBracket => Err(builder.fail(
-                        "Rust profile connections do not yet support countersinks on both angle bracket legs",
-                    )),
+                    ProfileConnectionKind::AngleBracket => {
+                        let bracket=builder.rust_angle_bracket(frames)?;
+                        builder.rust_hardware_receivers(&bracket,ReceivingHardware::SeatedStock,&request,output.access_bores)?;
+                        Ok(bracket)
+                    },
                     ProfileConnectionKind::UniversalEnd => Err(builder.fail(
                         "Rust profile connections do not yet support the intersecting barrel screw passage and head seat",
                     )),
                 },
-                ProfilePartRole::Screw(_) => Err(builder.fail(
-                    "Rust profile connections do not yet support the required modeled screw head and socket",
-                )),
-                ProfilePartRole::Nut(_) => Err(builder.fail(
-                    "Rust profile connections do not yet support the modeled tap and crown relief of the Line 8 nut",
-                )),
+                ProfilePartRole::Screw(index) => {
+                    let screw = builder.screw(request.kind, frames.fasteners[index], backend)?.0;
+                    builder.rust_hardware_receivers(&screw, ReceivingHardware::Screw, &request, output.access_bores)?;
+                    Ok(screw)
+                },
+                ProfilePartRole::Nut(index) => {
+                    let nut=builder.nut(request.kind,request.nut,frames.fasteners[index],backend)?;
+                    builder.rust_hardware_receivers(&nut,ReceivingHardware::Nut,&request,output.access_bores)?;
+                    Ok(nut)
+                },
             },
         };
     }
@@ -640,9 +922,13 @@ pub(crate) fn build(
                 builder.plate(request.kind, frames)?
             }
         }
-        ProfilePartRole::Screw(index) => builder.screw(request.kind, frames.fasteners[index])?.0,
+        ProfilePartRole::Screw(index) => {
+            builder
+                .screw(request.kind, frames.fasteners[index], backend)?
+                .0
+        }
         ProfilePartRole::Nut(index) => {
-            builder.nut(request.kind, request.nut, frames.fasteners[index])?
+            builder.nut(request.kind, request.nut, frames.fasteners[index], backend)?
         }
     };
     for (site, producer) in [

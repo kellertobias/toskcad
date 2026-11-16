@@ -58,7 +58,14 @@ fn rust_mcp_round_trips_rotated_washer_step_and_edits_bearing_envelope() {
     let profiles = run(&h, "mechanical_part_profiles", json!({}));
     assert_eq!(
         profiles["active_geometry_support"]["step_geometry"],
-        json!(["washer", "bearing_envelope", "machine_screw", "hex_nut"])
+        json!([
+            "washer",
+            "bearing_envelope",
+            "machine_screw",
+            "hex_nut",
+            "hanger_bolt",
+            "wood_insert"
+        ])
     );
     let washer = run(
         &h,
@@ -155,7 +162,9 @@ fn rust_mcp_edits_and_reopens_a_modeled_m6_socket_screw() {
             "hex_nut",
             "washer",
             "bearing_envelope",
-            "wood_screw"
+            "wood_screw",
+            "hanger_bolt",
+            "wood_insert"
         ])
     );
     assert_eq!(
@@ -420,7 +429,9 @@ fn nut_uses_shared_thread_recipe_and_manufacturing_guard_while_bearing_is_explic
             "hex_nut",
             "washer",
             "bearing_envelope",
-            "wood_screw"
+            "wood_screw",
+            "hanger_bolt",
+            "wood_insert"
         ])
     );
     assert_eq!(

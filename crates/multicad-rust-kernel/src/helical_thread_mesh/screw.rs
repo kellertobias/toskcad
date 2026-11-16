@@ -8,7 +8,11 @@ use std::f64::consts::TAU;
 mod contour_tests;
 mod phillips;
 mod torx;
-pub use phillips::{PhillipsMeshError, PhillipsScrewMesh, tessellate_phillips_screw};
+pub use phillips::{
+    PhillipsCavityVertex, PhillipsHeadVertex, PhillipsMeshError, PhillipsScrewMesh,
+    PhillipsThreadVertex, PhillipsThreadVertexKind, tessellate_phillips_screw,
+    tessellate_phillips_screw_with_work,
+};
 
 fn profiled_options(
     screw: &crate::profiled_screw::Screw,
@@ -31,6 +35,24 @@ pub fn tessellate_profiled_screw(
     screw: &crate::profiled_screw::Screw,
     options: Tessellation,
 ) -> Result<DisplayMesh, MeshError> {
+    profiled_mesh(screw, options, false)
+}
+
+/// Explicit display envelope: the original physical head/recess is retained,
+/// while the thread interval has its nominal smooth cylindrical boundary.
+/// Manufacturing callers must keep selecting the modeled source path above.
+pub fn tessellate_profiled_cosmetic_screw(
+    screw: &crate::profiled_screw::Screw,
+    options: Tessellation,
+) -> Result<DisplayMesh, MeshError> {
+    profiled_mesh(screw, options, true)
+}
+
+fn profiled_mesh(
+    screw: &crate::profiled_screw::Screw,
+    options: Tessellation,
+    cosmetic: bool,
+) -> Result<DisplayMesh, MeshError> {
     use crate::profiled_screw::Face;
     let options = profiled_options(screw, options)?;
     let radius = screw.profile().support([1., 0., 0.]);
@@ -40,7 +62,11 @@ pub fn tessellate_profiled_screw(
         return Err(MeshError::BudgetExceeded);
     }
     let thread = screw.thread();
-    let strips = phase_strips(thread, TAU / angular_steps, options)?;
+    let strips = if cosmetic {
+        vec![]
+    } else {
+        phase_strips(thread, TAU / angular_steps, options)?
+    };
     let mut builder = Builder::new(thread, angular_steps as usize, strips, options);
     let coupling = screw.source_error_mm() / screw.recess().maximum_radius_bound_mm();
     match screw.recess() {
@@ -57,16 +83,38 @@ pub fn tessellate_profiled_screw(
         }
     }
     builder.lower = screw.visible_thread_interval_mm()[0];
-    builder.build_wall()?;
-    let [mut shoulder, tip] = std::mem::take(&mut builder.caps);
-    builder.add_cap(1, tip)?;
-    Builder::sort_ring(&mut shoulder)?;
     let faces = screw.faces();
     let face = |f| {
         faces
             .iter()
             .position(|&candidate| candidate == f)
             .expect("profiled screw face") as u32
+    };
+    let shoulder = if cosmetic {
+        let angles = (0..builder.steps)
+            .map(|i| TAU * builder.fraction(i))
+            .collect();
+        let mut shell = HeadMesh {
+            builder: &mut builder,
+            angles,
+        };
+        let radius = thread.spec().major_radius_mm;
+        let lower = shell.ring(screw.visible_thread_interval_mm()[0], |_| radius);
+        let tip = shell.ring(thread.spec().length_mm, |_| radius);
+        shell.wall(&lower, &tip, |_| Ok(face(Face::ThreadWall(0))), false)?;
+        let center = shell.push([0., 0., thread.spec().length_mm]);
+        for (&a, &b) in tip.iter().zip(tip.iter().cycle().skip(1)) {
+            shell
+                .builder
+                .triangle([center, a, b], face(Face::ThreadTip))?;
+        }
+        shell.angles.into_iter().zip(lower).collect()
+    } else {
+        builder.build_wall()?;
+        let [mut shoulder, tip] = std::mem::take(&mut builder.caps);
+        builder.add_cap(1, tip)?;
+        Builder::sort_ring(&mut shoulder)?;
+        shoulder
     };
     let mut shell = HeadMesh {
         builder: &mut builder,
@@ -344,7 +392,29 @@ impl HeadMesh<'_, '_> {
         faces: (u32, impl Fn(u32) -> u32),
         options: Tessellation,
     ) -> Result<Vec<u32>, MeshError> {
+        self.profile_outer_with_witnesses(
+            profile,
+            plain,
+            visible_start,
+            shaft_rim,
+            faces,
+            options,
+            None,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn profile_outer_with_witnesses(
+        &mut self,
+        profile: &crate::head_profile::Profile,
+        plain: f64,
+        visible_start: f64,
+        shaft_rim: &[u32],
+        faces: (u32, impl Fn(u32) -> u32),
+        options: Tessellation,
+        mut witnesses: Option<&mut Vec<phillips::PhillipsHeadVertex>>,
+    ) -> Result<Vec<u32>, MeshError> {
         use crate::head_profile::Curve;
+        self.builder.charge(256 * self.angles.len() + 128)?;
         let shank_radius = profile.end()[0];
         let join = if shank_radius == self.builder.thread.spec().major_radius_mm {
             self.shank_join(shaft_rim, shank_radius)
@@ -359,6 +429,17 @@ impl HeadMesh<'_, '_> {
         let mut previous = top.clone();
         let segments: Vec<_> = profile.segments().collect();
         for (index, segment) in segments.iter().enumerate() {
+            if let Some(w) = witnesses.as_deref_mut() {
+                self.builder.charge(previous.len())?;
+                w.extend(previous.iter().enumerate().map(|(j, &vertex)| {
+                    phillips::PhillipsHeadVertex {
+                        vertex,
+                        segment: index,
+                        parameter: 0.,
+                        angle: self.angles[j],
+                    }
+                }));
+            }
             let subdivisions = match segment.curve {
                 Curve::Line => 1.,
                 Curve::Arc {
@@ -372,12 +453,25 @@ impl HeadMesh<'_, '_> {
                 return Err(MeshError::BudgetExceeded);
             }
             for step in 1..=subdivisions as usize {
-                let point = segment.point(step as f64 / subdivisions);
+                self.builder.charge(128 * self.angles.len() + 128)?;
+                let parameter = step as f64 / subdivisions;
+                let point = segment.point(parameter);
                 let next = if index + 1 == segments.len() && step == subdivisions as usize {
                     join.clone()
                 } else {
                     self.ring(point[1] - plain, |_| point[0])
                 };
+                if let Some(w) = witnesses.as_deref_mut() {
+                    self.builder.charge(next.len())?;
+                    w.extend(next.iter().enumerate().map(|(j, &vertex)| {
+                        phillips::PhillipsHeadVertex {
+                            vertex,
+                            segment: index,
+                            parameter,
+                            angle: self.angles[j],
+                        }
+                    }));
+                }
                 self.wall(&previous, &next, |_| Ok(faces.1(index as u32)), false)?;
                 previous = next;
             }
@@ -487,6 +581,7 @@ impl HeadMesh<'_, '_> {
         reverse: bool,
     ) -> Result<(), MeshError> {
         for i in 0..low.len() {
+            self.builder.charge(128)?;
             let next = (i + 1) % low.len();
             let lo = self.angles[i];
             let hi = if next == 0 { TAU } else { self.angles[next] };

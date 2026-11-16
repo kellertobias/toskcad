@@ -17,6 +17,7 @@ use std::{
     f64::consts::TAU,
 };
 const MAX_SOURCES: usize = 8192;
+mod seating;
 thread_local! {
     // Computation-local recursion protection, not a source cache. Entries are
     // removed on every scope exit, including errors and unwinding.
@@ -287,10 +288,10 @@ pub(crate) fn screw_hardware_connection_evaluation_dependencies(
 ) -> Result<Option<BTreeSet<EntityId>>, DocumentError> {
     Ok(screw_hardware_connection_pose_projection(document, id)?.map(|p| p.geometry_dependencies))
 }
-fn signed_turn(hand: model::ThreadHand, station: f64, pitch: f64) -> Result<f64, DocumentError> {
-    if !station.is_finite() || !pitch.is_finite() || pitch <= 0. {
+fn signed_turn(hand: model::ThreadHand, station: f64, lead: f64) -> Result<f64, DocumentError> {
+    if !station.is_finite() || !lead.is_finite() || lead <= 0. {
         return Err(invalid(
-            "Connection phase requires a finite station and positive pitch",
+            "Connection phase requires a finite station and positive thread lead",
         ));
     }
     let sign = if hand == model::ThreadHand::Right {
@@ -298,7 +299,7 @@ fn signed_turn(hand: model::ThreadHand, station: f64, pitch: f64) -> Result<f64,
     } else {
         -1.
     };
-    Ok(sign * TAU * station.rem_euclid(pitch) / pitch)
+    Ok(sign * TAU * station.rem_euclid(lead) / lead)
 }
 fn resolved_rows(
     document: &Document,
@@ -416,6 +417,78 @@ pub fn resolve_connection_hardware_pose(
     if !grip.is_finite() || grip < 0. {
         return Err(invalid("Connection grip must be finite and nonnegative"));
     }
+    if request.mode == Mode::HangerBolt
+        && request
+            .hardware
+            .iter()
+            .all(|row| matches!(row.role, Role::HangerBolt | Role::Nut | Role::NutWasher))
+    {
+        // request_for_driver already read this exact current axis and capture
+        // from the immutable document; retain that validated source handoff.
+        let axis =
+            request
+                .axis
+                .source
+                .resolve(document, p, &request.axis.face, revision, snapshots)?;
+        return seating::pose(
+            &request.hardware,
+            &parts,
+            binding.role,
+            grip,
+            axis,
+            p,
+            seating::Options::canonical(),
+        )
+        .map(|(_, pose)| pose);
+    }
+    if request.mode == Mode::WoodInsert
+        && grip > 0.
+        && request.hardware.len() == 2
+        && request.hardware.iter().all(|row| {
+            matches!(row.source, HardwareSource::Generated { .. })
+                && matches!(row.role, Role::Screw | Role::Insert)
+        })
+        && request
+            .hardware
+            .iter()
+            .filter(|row| row.role == Role::Screw)
+            .count()
+            == 1
+        && request.receivers.len() == 2
+        && matches!(
+            request.receivers[0].source.extent,
+            model::ConnectionReceiverExtent::Through {}
+        )
+        && matches!(
+            request.receivers[0].source.seat,
+            Some(model::ConnectionReceiverSeat::Counterbore { .. })
+        )
+        && matches!(
+            request.receivers[1].source.extent,
+            model::ConnectionReceiverExtent::Blind { .. }
+        )
+        && request.receivers[1].source.seat.is_none()
+        && request
+            .receivers
+            .iter()
+            .all(|row| matches!(row.source.cut, model::ConnectionReceiverCut::Round { .. }))
+    {
+        let axis =
+            request
+                .axis
+                .source
+                .resolve(document, p, &request.axis.face, revision, snapshots)?;
+        return seating::insert_pose(
+            &request,
+            &parts,
+            binding.role,
+            grip,
+            axis,
+            p,
+            seating::Options::canonical(),
+        )
+        .map(|(_, pose)| pose);
+    }
     let mut head = 0.;
     let mut nut = 0.;
     for (row, part) in request.hardware.iter().zip(&parts) {
@@ -450,12 +523,12 @@ pub fn resolve_connection_hardware_pose(
         } else {
             grip
         };
-        let Some((start, pitch, hand)) = reference else {
+        let Some((start, lead, hand)) = reference else {
             return Err(invalid(
                 "Metric receiving thread requires an actual metric screw phase reference",
             ));
         };
-        screw_roll = signed_turn(hand, start - entry, pitch)?;
+        screw_roll = signed_turn(hand, start - entry, lead)?;
     }
     let mut head_station = screw_station;
     let mut nut_station = if request.mode == Mode::HangerBolt {
@@ -484,12 +557,12 @@ pub fn resolve_connection_hardware_pose(
                 } else {
                     grip + nut
                 };
-                let Some((start, pitch, hand)) = reference else {
+                let Some((start, lead, hand)) = reference else {
                     return Err(invalid(
                         "Nut placement requires a known metric phase reference",
                     ));
                 };
-                (at, screw_roll + signed_turn(hand, at - start, pitch)?)
+                (at, screw_roll + signed_turn(hand, at - start, lead)?)
             }
             Role::Screw => (screw_station, screw_roll),
             Role::HangerBolt | Role::Insert => (grip, 0.),

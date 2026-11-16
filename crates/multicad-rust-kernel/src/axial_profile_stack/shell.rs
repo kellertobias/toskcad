@@ -244,5 +244,6 @@ pub(super) fn build(
         vertices: builder.vertices,
         edges: builder.edges,
         faces: builder.faces,
+        blind_counterbore: None,
     })
 }

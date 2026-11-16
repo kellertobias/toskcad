@@ -259,53 +259,8 @@ fn sourced_unc_unf_profiles_keep_fits_material_history_and_verified_manufacturin
                 assert!(
                     (imported.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < 1e-3
                 );
-                #[cfg(feature = "occt")]
-                {
-                    let imported =
-                        multicad_kernel::Solid::read_step(&path, Default::default()).unwrap();
-                    assert_eq!(imported.solid_count().unwrap(), 1);
-                    assert!(
-                        (imported.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < 1e-3
-                    );
-                }
             }
-            #[cfg(feature = "occt")]
-            if hand == ThreadHand::Right {
-                let native = Compiler {
-                    omit_display: true,
-                    ..Default::default()
-                }
-                .compile_with_backend(
-                    s.document(),
-                    s.revision(),
-                    GeometryBackend::OpenCascade,
-                    None,
-                )
-                .unwrap();
-                for id in [shaft.feature, tap.feature] {
-                    let native = native.solid(id).unwrap();
-                    let rust = model.solid(id).unwrap();
-                    assert!(
-                        (native.volume_mm3().unwrap() - rust.volume_mm3().unwrap()).abs() < 1e-3
-                    );
-                    for (a, b) in native
-                        .bounds()
-                        .unwrap()
-                        .min
-                        .into_iter()
-                        .chain(native.bounds().unwrap().max)
-                        .zip(
-                            rust.bounds()
-                                .unwrap()
-                                .min
-                                .into_iter()
-                                .chain(rust.bounds().unwrap().max),
-                        )
-                    {
-                        assert!((a - b).abs() < 1e-5);
-                    }
-                }
-            }
+
             let before = s.document().clone();
             let edited = ThreadParameters {
                 length: length(3.5 * resolved.pitch_mm),

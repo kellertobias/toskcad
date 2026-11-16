@@ -3,6 +3,9 @@
 //! descriptors never become independent physical line/circle inputs.
 use crate::tapered_thread::interval::I;
 mod classify;
+mod meridian;
+pub(crate) use meridian::UnitInterval;
+pub use meridian::{MeridianBounds, RationalMeridian};
 #[cfg(test)]
 mod tests;
 mod transfer;

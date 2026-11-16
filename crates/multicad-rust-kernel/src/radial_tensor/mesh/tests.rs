@@ -1409,3 +1409,22 @@ fn actual_seven_turn_npt_preflight_preserves_the_complete_retained_mesh() {
         baseline = Some(mesh);
     }
 }
+
+#[test]
+fn same_source_taylor_normal_reuse_preserves_every_literal_mesh_bit() {
+    let body = cam();
+    let original = body.input().clone();
+    let cached = build_with_limits(&body, options(), None, DEFAULT_LIMITS).unwrap();
+    let uncached = build_with_limits(
+        &body,
+        options(),
+        None,
+        Limits {
+            reuse_taylor_normal: false,
+            ..DEFAULT_LIMITS
+        },
+    )
+    .unwrap();
+    assert_eq!(cached, uncached);
+    assert_eq!(body.input(), &original);
+}

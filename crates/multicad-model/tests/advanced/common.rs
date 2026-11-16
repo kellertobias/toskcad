@@ -136,11 +136,7 @@ pub fn persist_and_check(session: &mut Session, body: EntityId, volume: f64, cou
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("advanced.step");
     solid.write_step(&path).unwrap();
-    if cfg!(feature = "occt") {
-        let imported = multicad_kernel::Solid::read_step(&path, Default::default()).unwrap();
-        near(imported.volume_mm3().unwrap(), volume);
-        assert_eq!(imported.solid_count().unwrap(), count);
-    } else {
+    {
         use multicad_kernel::rust_kernel::step_read::{
             read_analytic_compound, read_analytic_solid,
         };

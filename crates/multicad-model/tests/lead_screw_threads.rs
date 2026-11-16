@@ -320,17 +320,24 @@ fn sourced_pairs_and_left_hand_multi_start_have_measured_flanks_lead_step_print_
 fn lead_screw_receiving_wall_and_cosmetic_manufacturing_refusal_remain_enforced() {
     let row = model::lead_screw_presets().remove(0);
     let (mut s, male, female) = pair(&row, ThreadHand::Right, 1);
+    let before = s.document().clone();
     let mut p = female.parameters.clone();
     p.minimum_wall = length(3.);
     let change = model::prepare_thread_edit(&s, s.revision(), actor(), female.feature, &p).unwrap();
-    assert!(
-        compiler()
-            .compile(change.prepared.document(), s.revision() + 1)
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("minimum wall")
-    );
+    let failure = compiler()
+        .compile(change.prepared.document(), s.revision() + 1)
+        .err()
+        .expect("the receiving wall is thinner than the requested minimum");
+    assert_eq!(failure.entity, Some(female.feature));
+    let message = failure.to_string();
+    assert!(message.contains("insufficient wall"), "{message}");
+    assert_eq!(s.document(), &before);
+    p.minimum_wall = length(1.99);
+    let change = model::prepare_thread_edit(&s, s.revision(), actor(), female.feature, &p).unwrap();
+    compiler()
+        .compile(change.prepared.document(), s.revision() + 1)
+        .expect("the same cylinder retains more than 1.99 mm of wall");
+    assert_eq!(s.document(), &before);
     let mut p = male.parameters;
     p.representation = ThreadRepresentation::CosmeticEnvelope;
     let change = model::prepare_thread_edit(&s, s.revision(), actor(), male.feature, &p).unwrap();

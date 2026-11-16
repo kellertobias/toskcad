@@ -7,10 +7,13 @@
 use crate::helical_thread::ThreadError;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 mod repaired;
+pub(crate) use repaired::proposal_rotation;
 pub(crate) mod source_volume;
 pub use repaired::{
-    AxialProgress, RepairedHeadError, RepairedHeadMeridian, RepairedHeadOptions,
-    RepairedMeridianBounds, RepairedSegmentCertificate,
+    AxialProgress, OwnedRepairedHead, RepairedHeadCorrespondence, RepairedHeadError,
+    RepairedHeadLocation, RepairedHeadMeridian, RepairedHeadOptions, RepairedHeadQuery,
+    RepairedHeadQueryOptions, RepairedHeadVolume, RepairedHeadVolumeOptions,
+    RepairedMeridianBounds, RepairedProposalTransfer, RepairedSegmentCertificate,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

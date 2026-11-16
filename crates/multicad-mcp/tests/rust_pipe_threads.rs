@@ -144,10 +144,11 @@ fn rust_bspt_mcp_creation_is_physical_atomic_and_reopens() {
     );
 }
 #[test]
-fn active_nominal_npt_stock_clips_are_not_dropped_to_claim_rust_support() {
+fn active_nominal_npt_stock_clips_keep_actual_material_and_closed_manufacturing() {
+    let dir = tempfile::tempdir().unwrap();
     let h = Headless::with_geometry_backend(
         Workspace::new(Document::new("NPT clip gap").unwrap()).unwrap(),
-        None,
+        Some(dir.path().into()),
         false,
         GeometryBackend::Rust,
     );
@@ -158,13 +159,52 @@ fn active_nominal_npt_stock_clips_are_not_dropped_to_claim_rust_support() {
         truncation: model::NptTruncationTarget::MidpointConeParallel,
     };
     let before = h.document();
-    let result = dispatch(
-        &h,
-        &call(false),
-        "set_thread",
-        json!({"expected_revision":0,"name":"Nominal NPT","family":"npt","fit":"npt_historical_midpoint","npt":i,"major_diameter":mm(i.base_major_mm()),"pitch":mm(i.preset().pitch_mm),"length":mm(i.default_length_mm())}),
-    );
-    let rejected = result.unwrap_err();
-    assert!(rejected.message.contains("stock clipping"), "{rejected:?}");
+    let arguments = json!({"expected_revision":0,"name":"Nominal NPT","family":"npt","fit":"npt_historical_midpoint","npt":i,"major_diameter":mm(i.base_major_mm()),"pitch":mm(i.preset().pitch_mm),"length":mm(i.default_length_mm())});
+    assert!(dispatch(&h, &call(true), "set_thread", arguments.clone()).is_err());
     assert_eq!(h.document(), before);
+    let created = run(&h, "set_thread", arguments);
+    let feature = serde_json::from_value(created["thread"].clone()).unwrap();
+    let compiled = Compiler {
+        omit_display: true,
+        ..Default::default()
+    }
+    .compile_with_backend(&h.document(), 1, GeometryBackend::Rust, None)
+    .unwrap();
+    let solid = compiled.solid(feature).unwrap();
+    let clipped = solid
+        .rust_clipped_npt_source()
+        .expect("Stock clipping must remain physical");
+    assert_eq!(
+        clipped.source().spec().major_radius_mm,
+        i.base_major_mm() / 2.
+    );
+    assert_eq!(clipped.source().spec().length_mm, i.default_length_mm());
+    let receipt = solid
+        .manufacturing_mesh_with_receipt(Default::default())
+        .unwrap();
+    assert!(receipt.edge_pairs > 0 && receipt.vertex_links > 0);
+    assert_eq!(receipt.removed_exact_zero_triangles, 0);
+    let inspected = run(&h, "inspect_thread", json!({"thread":feature}));
+    assert_eq!(inspected["source"]["parameters"]["npt"], json!(i));
+    let before_export = h.document();
+    let exported = run(
+        &h,
+        "export_step",
+        json!({"part":created["part"],"file_name":"nominal-npt.step"}),
+    );
+    assert!(dir.path().join("nominal-npt.step").is_file());
+    assert!(!dir.path().join(".nominal-npt.step.partial.step").exists());
+    assert!(exported["readback_volume_mm3"].is_null());
+    let decoded =
+        &exported["step_verification"]["retained_members"][0]["decoded_volume_bounds_mm3"];
+    assert!(decoded[0].as_f64().unwrap() > 470.);
+    assert!(decoded[1].as_f64().unwrap() < 471.);
+    assert_eq!(
+        exported["step_verification"]["source_correspondence"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(h.document(), before_export);
 }

@@ -1,5 +1,5 @@
 use super::*;
-pub(super) struct Work<'a> {
+pub(crate) struct Work<'a> {
     pub used: usize,
     remaining: usize,
     interrupt: Option<&'a dyn Fn() -> bool>,
@@ -27,11 +27,14 @@ impl<'a> Work<'a> {
         Ok(())
     }
 }
-pub(super) struct Memory {
+pub(crate) struct Memory {
     pub used: usize,
     limit: usize,
 }
 impl Memory {
+    pub(crate) fn remaining(&self) -> usize {
+        self.limit - self.used
+    }
     pub fn new(used: usize, limit: usize) -> Result<Self, Error> {
         if used > limit {
             Err(Error::Limit)
@@ -59,7 +62,7 @@ impl Memory {
     }
     // Admission uses ACTUAL retained capacity, including allocator overcapacity.
     // Keep this final check independently usable for a completed allocation.
-    pub(super) fn account<T>(&mut self, out: Vec<T>) -> Result<Vec<T>, Error> {
+    pub(crate) fn account<T>(&mut self, out: Vec<T>) -> Result<Vec<T>, Error> {
         let bytes = out
             .capacity()
             .checked_mul(size_of::<T>())

@@ -4,7 +4,7 @@
 
 # ToskCAD
 
-Native parametric CAD built in Rust, with exact Open CASCADE geometry and a shared transactional document API for the desktop UI and local MCP control.
+Native parametric CAD built in Rust, with a MultiCAD-owned geometry kernel and a shared transactional document API for the desktop UI and local MCP control.
 
 [Project website](https://kellertobias.github.io/TOSKCAD/) · [Build guide](docs/BUILDING.md) · [Contributing](CONTRIBUTING.md) · [Verification notes](docs/verification)
 
@@ -26,9 +26,9 @@ The website also includes the model-derived [weld plan](website/assets/workbench
 
 ## Project foundation
 
-The first native CAD dependency laboratory is under [spikes/native-foundation](spikes/native-foundation/README.md). It tests real constrained profiles, source-built OCCT solids/STEP, a Rust window and proof-only file/session behavior. It is separate from the native application host and does not establish completed application workflows.
+The application uses the owned Rust geometry crates. Their supported operations and qualification limits are tracked in the [Rust kernel qualification contract](docs/architecture/rust-kernel-qualification.md). The [original foundation decision](docs/architecture/0002-native-foundation.md) and [study evidence](docs/architecture/foundation/verification.md) describe the retired OpenCascade laboratory; its commands and geometry results do not qualify the current Rust kernel.
 
-An open-source native parametric CAD application planned for macOS, Windows and Linux, with compiled Rust application code and native geometry adapters. The native host and adapters are implemented; CAD workflows remain under development.
+An open-source native parametric CAD application planned for macOS, Windows and Linux, with compiled Rust application code and native geometry adapters. The native host includes a macOS AppKit/Foundation adapter. Geometry workflows and manufacturing qualification remain under development.
 
 The [product plan](https://plans.tokenet.de/CAD/48) is maintained in PLAINER. [CAD-107](https://plans.tokenet.de/CAD/107) establishes the local repository and kernel-neutral bootstrap. [CAD-49](https://plans.tokenet.de/CAD/49) must prove the native geometry/solver/UI foundation before dependency integration and desktop packaging in [CAD-50](https://plans.tokenet.de/CAD/50).
 
@@ -41,13 +41,13 @@ The [product plan](https://plans.tokenet.de/CAD/48) is maintained in PLAINER. [C
 ./build archive
 ```
 
-Windows uses `./build.ps1`. The wrapper acquires the pinned native/Cargo dependencies, builds every shipped component and assembles the host application. Archives include a native runtime layout, notices and matching corresponding source. `./build archive install` is the explicit macOS install action; it is not run automatically. See [BUILDING.md](docs/BUILDING.md) for prerequisites, output paths and validation limits.
+Windows uses `./build.ps1`. The wrapper selects the pinned Rust toolchain, fetches locked Cargo dependencies, builds the workspace and assembles the host application. Archives include a native runtime layout, notices and matching corresponding source. `./build archive install` is the explicit macOS install action; it is not run automatically. See [BUILDING.md](docs/BUILDING.md) for prerequisites, output paths and validation limits.
 
-The native application includes Project, contextual sketch editing in Model, Motion, Drawings and Export. The [canonical document](docs/architecture/0004-canonical-document.md) provides stable identities, typed units, transactional commands and a dependency graph. The [native model evaluator](docs/architecture/0012-native-model-evaluation.md) owns exact OCCT solids on a bounded worker; the UI uses a separate candidate lane for checked Preview, Apply and Cancel. [Native project containers](docs/architecture/project-files.md) (`.tcd`; existing `.multicad` projects still open) preserve source and provider payloads, with atomic saves, migrations and explicit recovery copies.
+The native application includes Project, contextual sketch editing in Model, Motion, Drawings and Export. The [canonical document](docs/architecture/0004-canonical-document.md) provides stable identities, typed units, transactional commands and a dependency graph. The [native model evaluator](docs/architecture/0012-native-model-evaluation.md) evaluates retained Rust geometry on a bounded worker; the UI uses a separate candidate lane for checked Preview, Apply and Cancel. [Native project containers](docs/architecture/project-files.md) (`.tcd`; existing `.multicad` projects still open) preserve source and provider payloads, with atomic saves, migrations and explicit recovery copies.
 
-The [native modeling checkpoint](docs/verification/native-modeling-2026-10-28.md) records shared-sketch extrusion, Undo/Redo, saved-project regeneration and the remaining limits. Advanced modeling controls, manufacturing exports and specialized workspaces remain under development. The [local MCP server](docs/architecture/mcp-server.md) (`multicad --mcp`) controls a headless project or the open window through the same transaction API. The foundation laboratory is a separate reference.
+The [native modeling checkpoint](docs/verification/native-modeling-2026-10-28.md) records shared-sketch extrusion, Undo/Redo, saved-project regeneration and the remaining limits. Advanced modeling controls, manufacturing exports and specialized workspaces remain under development. The [local MCP server](docs/architecture/mcp-server.md) (`multicad --mcp`) controls a headless project or the open window through the same transaction API. The linked historical checkpoints record earlier builds and are separate from current Rust kernel validation.
 
-The experimental Rust geometry backend can import STEP files containing a single supported millimeter prism or cylinder. The saved project embeds the source so it can rebuild the solid after the original file is moved. Reimport preserves the Part identity when the source changes.
+The Rust geometry backend imports its supported analytic STEP solids in millimeters and rejects unsupported geometry explicitly. The saved project embeds the source so it can rebuild the solid after the original file is moved. Reimport preserves the Part identity when the source changes.
 
 The [Parameters workflow checkpoint](docs/verification/native-parameter-workflow-2026-10-28.md) records table editing, expression diagnostics, stable renamed bindings, native solid rebuilding and save/reopen behavior.
 

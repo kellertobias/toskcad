@@ -1,6 +1,8 @@
 //! Physical uncertainty collars; no nominal-height substitution is permitted.
 use super::*;
+mod boxes;
 mod tensor;
+pub use boxes::{BoxQuery, BoxQueryOptions};
 #[cfg(test)]
 mod tests;
 
@@ -41,6 +43,10 @@ impl RadialBoundary {
         work.step()?;
         let chart = &self.ordered.caps.axial.chart;
         let q = chart.project(point);
+        self.classify_projected(q, &mut work)
+    }
+    fn classify_projected(&self, q: [I; 3], work: &mut Work<'_>) -> Result<Location, Error> {
+        let chart = &self.ordered.caps.axial.chart;
         let collars = self.collars();
         if q[2].lo <= collars.bottom_axial_mm[1] || q[2].hi >= collars.top_axial_mm[0] {
             return Ok(Location::Unresolved);
@@ -56,7 +62,7 @@ impl RadialBoundary {
             .ordered
             .rails
             .iter()
-            .map(|r| ordering::bounds(r, range, &mut work))
+            .map(|r| ordering::bounds(r, range, work))
             .collect::<Result<Vec<_>, _>>()?;
         let mut side = None;
         let radius = (q[0].square() + q[1].square()).sqrt().positive()?;
@@ -104,7 +110,7 @@ impl RadialBoundary {
                     [I::new(0., 1.), raw_v],
                     margin,
                     tensor::Refinement::DEFAULT,
-                    &mut work,
+                    work,
                 )?;
                 Ok(radial_side(delta, margin))
             }
@@ -212,6 +218,10 @@ impl RadialBoundary {
         }
         let chart = &self.ordered.caps.axial.chart;
         let p = chart.project(point);
+        self.classify_core_projected(p)
+    }
+    fn classify_core_projected(&self, p: [I; 3]) -> Result<Location, Error> {
+        let chart = &self.ordered.caps.axial.chart;
         for q in p {
             q.checked()?;
         }

@@ -278,7 +278,27 @@ impl Tensor {
         uv: [f64; 2],
         work: &mut Work<'_>,
     ) -> Result<[I; 3], Error> {
-        work.charge(512)?;
+        self.at_rectified_cached(body, uv, None, work)
+    }
+    pub fn at_rectified_cached(
+        &self,
+        body: &RadialBoundary,
+        uv: [f64; 2],
+        mut memo: Option<&mut RectifiedRows<'_>>,
+        work: &mut Work<'_>,
+    ) -> Result<[I; 3], Error> {
+        if let Some(m) = memo.as_ref() {
+            work.charge(16)?;
+            if !std::ptr::eq(m.owner, self)
+                || !std::ptr::eq(m.body, body)
+                || m.v.to_bits() != uv[1].to_bits()
+            {
+                return Err(Error::Invalid);
+            }
+        }
+        //45 U de Casteljau blends plus the same17 chart/frame operations.
+        // Each missing immutable V-row net separately pays its450 blends.
+        work.charge(if memo.is_some() { 62 } else { 512 })?;
         let axial = &body.ordered.caps.axial;
         let chart = &axial.chart;
         let source = &axial.tensors[self.source_index];
@@ -294,14 +314,37 @@ impl Tensor {
                 / (I::point(cell.domain[axis][1]) - I::point(cell.domain[axis][0]))
         });
         let height = 9 * source.spans[1] + 1;
-        let rows = (0..=9)
-            .map(|u| {
-                let row = (0..=9)
-                    .map(|v| source.controls[(9 * indices[0] + u) * height + 9 * indices[1] + v])
-                    .collect::<Vec<_>>();
+        let key = [
+            self.source_index as u64,
+            indices[0] as u64,
+            indices[1] as u64,
+            uv[1].to_bits(),
+        ];
+        let cached = memo
+            .as_ref()
+            .and_then(|m| m.entries.get(indices[0]))
+            .and_then(Option::as_ref)
+            .filter(|entry| entry.key == key)
+            .map(|entry| &entry.values);
+        let rows = if let Some(rows) = cached {
+            work.charge(10)?;
+            *rows
+        } else {
+            if memo.is_some() {
+                work.charge(450)?;
+            }
+            let rows = std::array::from_fn::<_, 10, _>(|u| {
+                let row = std::array::from_fn::<_, 10, _>(|v| {
+                    source.controls[(9 * indices[0] + u) * height + 9 * indices[1] + v]
+                });
                 evaluate(&row, t[1])
-            })
-            .collect::<Vec<_>>();
+            });
+            if let Some(slot) = memo.as_mut().and_then(|m| m.entries.get_mut(indices[0])) {
+                work.charge(10)?;
+                *slot = Some(RowEntry { key, values: rows });
+            }
+            rows
+        };
         let p = evaluate(&rows, t[0]);
         let bottom = std::array::from_fn(|k| {
             I::point(chart.bottom_point[k]) - I::point(chart.axis_origin[k])
@@ -318,6 +361,47 @@ impl Tensor {
             value.checked()?;
         }
         Ok(world)
+    }
+}
+struct RowEntry {
+    key: [u64; 4],
+    values: [[I; 3]; 10],
+}
+pub(super) struct RectifiedRows<'a> {
+    owner: &'a Tensor,
+    body: &'a RadialBoundary,
+    v: f64,
+    entries: Vec<Option<RowEntry>>,
+}
+impl<'a> RectifiedRows<'a> {
+    pub fn accounted_bytes(owner: &Tensor, limit: usize) -> usize {
+        std::mem::size_of::<Self>()
+            + owner.knots[0].len().saturating_sub(1).min(limit)
+                * std::mem::size_of::<Option<RowEntry>>()
+            + 4096
+    }
+    pub fn new(
+        owner: &'a Tensor,
+        body: &'a RadialBoundary,
+        v: f64,
+        limit: usize,
+        work: &mut Work<'_>,
+    ) -> Result<Self, Error> {
+        let count = owner.knots[0].len().saturating_sub(1).min(limit);
+        work.charge(count)?;
+        let entries = (0..count).map(|_| None).collect::<Vec<_>>();
+        if std::mem::size_of::<Self>()
+            + entries.capacity() * std::mem::size_of::<Option<RowEntry>>()
+            > Self::accounted_bytes(owner, limit)
+        {
+            return Err(Error::Limit);
+        }
+        Ok(Self {
+            owner,
+            body,
+            v,
+            entries,
+        })
     }
 }
 fn evaluate(points: &[[I; 3]], t: I) -> [I; 3] {

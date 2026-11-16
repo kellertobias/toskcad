@@ -193,6 +193,23 @@ fn rounded_profiles_distinguish_series_pipe_size_semantics_and_explicit_class_co
     );
     assert_eq!(report["bspt_presets"].as_array().unwrap().len(), 2);
     assert_eq!(report["bspt_support"]["hands"], json!(["right"]));
+    // Listing a family means at least one actual modeled mode is available;
+    // it does not promise its separate receiving or nested-hardware routes.
+    for family in ["npt", "bspt", "bsw", "bsf", "bspp", "round"] {
+        let row = report["families"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["family"] == family)
+            .unwrap();
+        assert_eq!(row["supported"], true, "{family}");
+        assert_eq!(row["modeled_new_external_supported"], true, "{family}");
+        assert_eq!(
+            row["modeled_cut_internal_supported"],
+            !matches!(family, "npt" | "bspt"),
+            "{family} receiving is a separate provider"
+        );
+    }
     for family in ["whitworth", "unified"] {
         assert_eq!(
             report["families"]

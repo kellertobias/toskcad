@@ -1,5 +1,6 @@
 //! Original generated insert, real metric mating, and one retained blind pilot.
 use super::*;
+mod stack;
 use multicad_core::model::{ConnectionReceiverExtent, ResolvedCustomConnectionHardware as Custom};
 use multicad_kernel::rust_kernel::wood_thread_contact::Requirements;
 
@@ -9,6 +10,9 @@ pub(super) fn check(
     evaluated: &Model,
     interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<ScrewConnectionCheck, ModelError> {
+    if source.receivers.len() == 2 {
+        return stack::check(input, source, evaluated, interrupt);
+    }
     let id = source.connection;
     let fail = |message: &str| error(Some(id), message);
     let unsupported = || {
@@ -171,7 +175,7 @@ pub(super) fn check(
         blind_tip_clearance_mm:clearance,
         actual_engagement_mm:Some(mating.engagement_mm[0].midpoint(mating.engagement_mm[1])),
         actual_wood_engagement_mm:Some(contact.engagement_mm[0].midpoint(contact.engagement_mm[1])),
-        native_component_collision_checked:true,
+        actual_head_bearing_gap_mm:None,actual_insert_inset_mm:None,native_component_collision_checked:true,
         scope:"Actual generated insert and metric screw: retained finite thread mating, blind pilot wall/floor and positive wood contact, whole screw separation from receiving stock, and all unrelated component collision checks; no clamp/washer, strength or installation certification".into(),
     })
 }

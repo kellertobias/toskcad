@@ -237,50 +237,6 @@ fn sphere_and_stock_hide_each_others_edges_without_losing_their_sources() {
             .flat_map(|v| &v.preview_mm)
             .all(|p| (p[0] - 2.).hypot(p[1] + 2.) < 2.000001)
     );
-
-    #[cfg(feature = "occt")]
-    {
-        let directory = tempfile::tempdir().unwrap();
-        let native = |solid: &Solid| {
-            let path = directory.path().join("part.step");
-            solid.write_step(&path).unwrap();
-            Solid::read_step(&path, Default::default()).unwrap()
-        };
-        let native_sphere = native(&sphere);
-        let visible_only = DrawingProjection {
-            hidden_lines: false,
-            ..options
-        };
-        let native_front = project(&native_sphere, &native(&front), visible_only);
-        let arc = native_front
-            .iter()
-            .filter_map(ellipse)
-            .map(|[start, end]| end - start)
-            .sum::<f64>();
-        assert!((arc - TAU / 2.).abs() < 1e-7, "{native_front:?}");
-        let native_rear = project(&native_sphere, &native(&rear), visible_only);
-        for output in [&native_rear, &rear_view] {
-            let mut intervals: Vec<_> = output
-                .iter()
-                .filter_map(|v| match v.curve {
-                    VectorCurve::Line { a, b }
-                        if v.source_index == 1
-                            && v.role == VectorRole::Visible
-                            && [a, b].into_iter().all(|p| (p[1] + 2.).abs() < 1e-9) =>
-                    {
-                        Some([a[0].min(b[0]), a[0].max(b[0])])
-                    }
-                    _ => None,
-                })
-                .collect();
-            intervals.sort_unstable_by(|a, b| a[0].total_cmp(&b[0]));
-            intervals.dedup_by(|a, b| (0..2).all(|i| (a[i] - b[i]).abs() < 1e-6));
-            assert_eq!(intervals.len(), 2, "{intervals:?}");
-            for (a, b) in intervals.into_iter().flatten().zip([0., 2., 12., 14.]) {
-                assert!((a - b).abs() < 1e-6, "{a} != {b}");
-            }
-        }
-    }
 }
 
 #[test]
@@ -387,46 +343,6 @@ fn retained_sphere_and_stock_clip_visibility_to_depth_and_windows() {
     assert!(actual.iter().flat_map(|v| &v.preview_mm).all(|[x, y]| {
         (3. - 1e-7..=12.5 + 1e-7).contains(x) && (-4. - 1e-7..=1. + 1e-7).contains(y)
     }));
-
-    #[cfg(feature = "occt")]
-    {
-        let dir = tempfile::tempdir().unwrap();
-        let native = |solid: &Solid, name: &str| {
-            let path = dir.path().join(name);
-            solid.write_step(&path).unwrap();
-            Solid::read_step(&path, Default::default()).unwrap()
-        };
-        let reference = project(
-            &native(&sphere, "sphere.step"),
-            &native(&stock, "stock.step"),
-            options,
-        );
-        let sections = |edge: &&multicad_kernel::ProjectedVector| {
-            edge.source_index == 0 && edge.role == VectorRole::Section
-        };
-        assert!(reference.iter().any(|edge| sections(&edge)));
-        for (from, to) in [(&actual, &reference), (&reference, &actual)] {
-            let spans = to
-                .iter()
-                .filter(sections)
-                .flat_map(|v| v.preview_mm.windows(2));
-            for &[x, y] in from.iter().filter(sections).flat_map(|v| &v.preview_mm) {
-                let error = spans
-                    .clone()
-                    .map(|span| {
-                        let [[a, b], [c, d]] = [span[0], span[1]];
-                        let [u, v] = [c - a, d - b];
-                        let t = (((x - a) * u + (y - b) * v) / (u * u + v * v)).clamp(0., 1.);
-                        (x - a - t * u).hypot(y - b - t * v)
-                    })
-                    .fold(f64::INFINITY, f64::min);
-                assert!(
-                    error < 3. * options.chord_tolerance_mm,
-                    "[{x}, {y}]: {error}"
-                );
-            }
-        }
-    }
 }
 
 #[test]

@@ -16,6 +16,7 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 mod display;
 mod embedding;
+pub use embedding::EmbeddingProof as LiteralMeshEmbedding;
 pub(super) mod placement;
 mod receiving;
 mod references;

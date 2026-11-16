@@ -418,6 +418,16 @@ impl Sweep {
         })
     }
 
+    pub fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.rings.capacity() * std::mem::size_of::<Vec<Edge>>()
+            + self
+                .rings
+                .iter()
+                .map(|ring| ring.capacity() * std::mem::size_of::<Edge>())
+                .sum::<usize>()
+    }
+
     pub fn rings(&self) -> &[Vec<Edge>] {
         &self.rings
     }

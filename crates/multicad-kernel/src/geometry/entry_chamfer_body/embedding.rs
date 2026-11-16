@@ -315,6 +315,47 @@ fn controlled(
     interrupt: Option<&dyn Fn() -> bool>,
     budget: usize,
 ) -> Result<usize, GeometryError> {
+    certify_with_budget(mesh, interrupt, budget).map(|proof| proof.pairs())
+}
+/// Literal embedding of this exact immutable mesh. Connectivity and source
+/// correspondence remain separate prerequisites owned by the caller.
+pub struct EmbeddingProof<'a> {
+    mesh: &'a Mesh,
+    pairs: usize,
+    used: usize,
+    remaining: usize,
+}
+impl EmbeddingProof<'_> {
+    pub fn mesh(&self) -> &Mesh {
+        self.mesh
+    }
+    pub fn pairs(&self) -> usize {
+        self.pairs
+    }
+    pub fn work_used(&self) -> usize {
+        self.used
+    }
+    pub fn remaining_work(&self) -> usize {
+        self.remaining
+    }
+}
+impl Mesh {
+    /// Prove literal triangle separation with the supplied logical work
+    /// balance. The receipt borrows this unchanged mesh; it does not prove
+    /// source correspondence, manifold connectivity or manufacturing quality.
+    pub fn prove_literal_embedding(
+        &self,
+        remaining_work: usize,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<EmbeddingProof<'_>, GeometryError> {
+        certify_with_budget(self, interrupt, remaining_work)
+    }
+}
+pub(in crate::geometry) fn certify_with_budget<'a>(
+    mesh: &'a Mesh,
+    interrupt: Option<&dyn Fn() -> bool>,
+    budget: usize,
+) -> Result<EmbeddingProof<'a>, GeometryError> {
     #[cfg(test)]
     eprintln!("literal embedding facets {}", mesh.indices.len() / 3);
     let mut work = Work {
@@ -398,9 +439,8 @@ fn controlled(
         }
         match (one.children, two.children) {
             (None, None) => {
-                if fans[one.triangle].is_some() && fans[one.triangle] == fans[two.triangle] {
-                    continue;
-                }
+                // Leaf fan IDs are copied from these same triangles by build;
+                // equal proved fans already returned at the node-pair guard.
                 pairs += 1;
                 if !pair(points, triangles[one.triangle], triangles[two.triangle]) {
                     return Err(refused());
@@ -410,7 +450,13 @@ fn controlled(
             (None, Some([l, r])) => pending.extend([(a, l), (a, r)]),
         }
     }
-    Ok(pairs)
+    work.step(1)?;
+    Ok(EmbeddingProof {
+        mesh,
+        pairs,
+        used: budget - work.remaining,
+        remaining: work.remaining,
+    })
 }
 
 #[cfg(test)]
@@ -421,6 +467,120 @@ mod tests {
             vertices: p.iter().flatten().copied().collect(),
             indices: triangles.iter().flatten().copied().collect(),
             face_indices: vec![0; triangles.len()],
+        }
+    }
+    #[test]
+    fn incomplete_or_duplicated_literal_fans_never_gain_a_separation_shortcut() {
+        let p = [
+            [0., 0., 0.],
+            [1., 0., 0.],
+            [1., 1., 0.],
+            [0., 1., 0.],
+            [-1., 1., 0.],
+            [-1., 0., 0.],
+            [-1., -1., 0.],
+        ];
+        // Two distinct, nondegenerate triangles leave the same directed rim
+        // vertex. Face labels cannot turn this into an embedded full fan.
+        let duplicated = [[0, 1, 2], [0, 1, 3], [0, 3, 4]];
+        assert!(fans(&p, &duplicated, &[0; 3]).iter().all(Option::is_none));
+        assert!(certify(&mesh(&p, &duplicated)).is_err());
+        let open = [[0, 1, 2], [0, 2, 3], [0, 3, 4]];
+        assert!(fans(&p, &open, &[0; 3]).iter().all(Option::is_none));
+        // This open disk is geometrically embedded, but it must use actual
+        // triangle-pair proofs, not the complete one-winding fan shortcut.
+        assert!(certify(&mesh(&p, &open)).unwrap() > 0);
+        let two_cycles = [
+            [0, 1, 2],
+            [0, 2, 3],
+            [0, 3, 1],
+            [0, 4, 5],
+            [0, 5, 6],
+            [0, 6, 4],
+        ];
+        assert!(fans(&p, &two_cycles, &[0; 6]).iter().all(Option::is_none));
+        // The lower cone predicate conservatively refuses a collapsed ray;
+        // the full mesh path also checks facet degeneracy independently.
+        assert!(!rays_separate([
+            vector([0.; 3]),
+            vector([1., 0., 0.]),
+            vector([0., 1., 0.]),
+            vector([0., 0., 1.])
+        ]));
+    }
+    #[test]
+    fn literal_embedding_memory_preflight_refuses_excessive_triangle_count() {
+        let m = Mesh {
+            vertices: vec![0., 0., 0., 1., 0., 0., 0., 1., 0.],
+            indices: [0, 1, 2].repeat(1_000_001),
+            face_indices: vec![0; 1_000_001],
+        };
+        assert_eq!(
+            m.prove_literal_embedding(64_000_000, None)
+                .err()
+                .unwrap()
+                .kind,
+            GeometryErrorKind::Limit
+        );
+    }
+    #[test]
+    fn exact_mesh_receipt_spends_only_the_callers_remaining_work_and_cancels_atomically() {
+        use std::cell::Cell;
+        let p = [[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.]];
+        let triangles = [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]];
+        for frame in [
+            PlaneFrame::default(),
+            PlaneFrame {
+                origin: [1e6, -2e6, 3e6],
+                u: [0.8, 0.6, 0.],
+                v: [-0.36, 0.48, 0.8],
+            },
+        ] {
+            let m = mesh(&p.map(|p| position(frame, p)), &triangles);
+            let count = Cell::new(0);
+            let proof = m
+                .prove_literal_embedding(
+                    4096,
+                    Some(&|| {
+                        count.set(count.get() + 1);
+                        false
+                    }),
+                )
+                .unwrap();
+            assert!(std::ptr::eq(proof.mesh(), &m));
+            assert_eq!(proof.pairs(), 6);
+            assert_eq!(proof.work_used() + proof.remaining_work(), 4096);
+            let exact = proof.work_used();
+            let tight = certify_with_budget(&m, None, exact).unwrap();
+            assert_eq!(tight.work_used(), exact);
+            assert_eq!(tight.remaining_work(), 0);
+            for budget in [0, exact - 1] {
+                assert_eq!(
+                    certify_with_budget(&m, None, budget).err().unwrap().kind,
+                    GeometryErrorKind::Limit
+                );
+            }
+            // Every actual checkpoint, including final publication, refuses
+            // atomically. No previously earned mesh receipt is mutated.
+            for stop in 0..count.get() {
+                let at = Cell::new(0);
+                let cancel = || {
+                    let n = at.get();
+                    at.set(n + 1);
+                    n == stop
+                };
+                assert_eq!(
+                    certify_with_budget(&m, Some(&cancel), 4096)
+                        .err()
+                        .unwrap()
+                        .kind,
+                    GeometryErrorKind::Cancelled
+                );
+            }
+            assert_eq!(
+                certify_with_budget(&m, None, 4096).unwrap().work_used(),
+                exact
+            );
         }
     }
     #[test]
@@ -697,3 +857,6 @@ mod phillips_tests;
 
 #[cfg(test)]
 mod phillips_screw_tests;
+
+#[cfg(test)]
+mod npt_stock_clip_tests;

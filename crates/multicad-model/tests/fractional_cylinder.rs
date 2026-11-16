@@ -42,20 +42,7 @@ fn fractional_cylinder_keeps_authored_dimensions_despite_derived_rational_volume
             .parameters,
         parameters
     );
-    #[cfg(feature = "occt")]
-    {
-        let native = compiler
-            .compile_with_backend(
-                s.document(),
-                s.revision(),
-                GeometryBackend::OpenCascade,
-                None,
-            )
-            .unwrap();
-        assert!(
-            (native.solid(request.feature).unwrap().volume_mm3().unwrap() - expected).abs() < 1e-8
-        );
-    }
+
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("fractional.step");
     solid.write_step(&path).unwrap();

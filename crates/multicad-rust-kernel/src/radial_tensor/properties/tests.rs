@@ -169,7 +169,7 @@ fn source_expansion_and_adaptive_cells_refuse_small_resource_budgets_atomically(
     let accuracy = || integrate::Accuracy {
         scales: [I::point(1.); measure::QUANTITIES],
         epsilon: 1e-20,
-        volume_only: false,
+        selection: measure::Selection::All,
     };
     assert_eq!(
         integrate::with_limits(
@@ -311,7 +311,7 @@ fn tied_adaptive_cells_preserve_both_integral_contributions() {
             integrate::Accuracy {
                 scales: [I::point(1.); measure::QUANTITIES],
                 epsilon: 1e-7,
-                volume_only: false,
+                selection: measure::Selection::All,
             },
             &mut work(),
         )

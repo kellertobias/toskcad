@@ -266,8 +266,6 @@ mod tests {
     #[test]
     fn c_channel_refuses_crossing_the_bend_and_recurring_openings() {
         checks_invalid_channel_cuts(GeometryBackend::Rust);
-        #[cfg(feature = "occt")]
-        checks_invalid_channel_cuts(GeometryBackend::OpenCascade);
     }
 
     fn checks_invalid_channel_cuts(backend: GeometryBackend) {

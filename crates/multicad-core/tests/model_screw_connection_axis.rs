@@ -1372,3 +1372,116 @@ fn associative_composition_removes_obsolete_roles_before_publishing_new_bindings
     f.session.commit(remove).unwrap();
     assert_eq!(f.session.document(), &baseline);
 }
+
+#[test]
+fn two_start_associative_nut_phase_uses_lead_through_both_hands_edit_and_reopen() {
+    // Actual canonical sources and pose transactions; this synthetic face
+    // fixture does not claim native physical mating or manufacturing.
+    for hand in [ThreadHand::Right, ThreadHand::Left] {
+        let mut f = fixture();
+        let mut request = connection_request(&f);
+        for row in &mut request.hardware {
+            let ScrewConnectionHardwareSource::Generated { part } = &mut row.source else {
+                panic!()
+            };
+            let thread = match &mut part.parameters {
+                MechanicalPartParameters::MachineScrew { thread, .. }
+                | MechanicalPartParameters::HexNut { thread, .. } => thread,
+                _ => panic!(),
+            };
+            thread.family = ThreadFamily::Custom;
+            thread.fit = ThreadFit::NominalBasic;
+            thread.metric_fit_engagement = None;
+            thread.starts = 2;
+            thread.hand = hand;
+            thread.custom = Some(CustomThreadProfile {
+                depth: length(0.2),
+                crest_width: length(0.05),
+                lower_flank: angle(30.),
+                upper_flank: angle(30.),
+                ..Default::default()
+            });
+        }
+        let nut = request
+            .hardware
+            .iter()
+            .find(|r| r.role == ScrewConnectionHardwareRole::Nut)
+            .unwrap()
+            .clone();
+        for grip in [10.3, 10.6] {
+            request.parameters.grip = length(grip);
+            let prepared =
+                prepare_screw_connection(&f.session, f.session.revision(), actor(), &request)
+                    .unwrap();
+            f.session.commit(prepared.prepared).unwrap();
+            let mut topology = f.topology.clone();
+            topology.revision = f.session.revision();
+            let snapshots = BTreeMap::from([(f.body.feature, topology)]);
+            let actual = resolve_instance_pose_with_snapshots(
+                f.session.document(),
+                nut.instance,
+                f.session.parameters(),
+                f.session.revision(),
+                &snapshots,
+            )
+            .unwrap();
+            let part = resolve_screw_connection_hardware(
+                f.session.document(),
+                f.session.parameters(),
+                &nut,
+            )
+            .unwrap();
+            let axis = request
+                .axis
+                .source
+                .resolve(
+                    f.session.document(),
+                    f.session.parameters(),
+                    &request.axis.face,
+                    f.session.revision(),
+                    &snapshots,
+                )
+                .unwrap();
+            let sign = if hand == ThreadHand::Right { 1. } else { -1. };
+            let control = NumericTransform {
+                translation: [length(0.), length(0.), length(grip)],
+                angle: angle(sign * 360. * grip.rem_euclid(1.)),
+                ..Default::default()
+            }
+            .resolve(f.session.parameters())
+            .unwrap();
+            let expected = part
+                .mount_pose()
+                .inverse()
+                .unwrap()
+                .then(control)
+                .unwrap()
+                .then(axis)
+                .unwrap();
+            for (a, b) in actual
+                .rotation
+                .into_iter()
+                .flatten()
+                .zip(expected.rotation.into_iter().flatten())
+                .chain(
+                    actual
+                        .translation_mm
+                        .into_iter()
+                        .zip(expected.translation_mm),
+                )
+            {
+                assert!((a - b).abs() < 1e-10);
+            }
+            let file = ProjectFile::new(f.session.document().clone()).unwrap();
+            let mut bytes = vec![];
+            project_file::write(&file, &mut bytes, Default::default()).unwrap();
+            let reopened = project_file::read(
+                &mut bytes.as_slice(),
+                Default::default(),
+                &project_file::supported_capabilities(),
+            )
+            .unwrap();
+            assert_eq!(&reopened.project.document, f.session.document());
+        }
+    }
+}

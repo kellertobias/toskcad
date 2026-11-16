@@ -8,9 +8,33 @@ use crate::{
     hex_nut::Nut,
 };
 use std::{
+    cell::Cell,
     collections::HashMap,
     f64::consts::{PI, TAU},
 };
+/// Counted logical geometry operations; allocator/CDT workspaces keep their
+/// separately bounded contracts. Every proposal/refinement loop pays before
+/// constructing its cell, including cells discarded by finite clipping.
+struct Counted<'a> {
+    remaining: Cell<usize>,
+    cancelled: Cell<bool>,
+    interrupt: &'a dyn Fn() -> bool,
+}
+impl Counted<'_> {
+    fn step(&self, n: usize) -> Result<(), MeshError> {
+        if (self.interrupt)() {
+            self.cancelled.set(true);
+            return Err(MeshError::BudgetExceeded);
+        }
+        self.remaining.set(
+            self.remaining
+                .get()
+                .checked_sub(n)
+                .ok_or(MeshError::BudgetExceeded)?,
+        );
+        Ok(())
+    }
+}
 
 mod blind_counterbore;
 pub use blind_counterbore::counterbore_volume_error_bound;
@@ -22,7 +46,14 @@ pub use external::{shaft_volume_error_bound, tessellate_shaft};
 mod thread_end_relief;
 pub use thread_end_relief::{end_relief_volume_error_bound, tessellate_end_relief};
 mod screw;
-pub use screw::{PhillipsMeshError, PhillipsScrewMesh, tessellate_phillips_screw};
+pub use screw::tessellate_profiled_cosmetic_screw;
+pub use screw::{
+    PhillipsCavityVertex, PhillipsHeadVertex, PhillipsThreadVertex, PhillipsThreadVertexKind,
+};
+pub use screw::{
+    PhillipsMeshError, PhillipsScrewMesh, tessellate_phillips_screw,
+    tessellate_phillips_screw_with_work,
+};
 pub use screw::{profiled_screw_volume_error_bound, tessellate_profiled_screw};
 pub use screw::{screw_volume_error_bound, tessellate_screw};
 
@@ -188,6 +219,14 @@ fn phase_strips(
     theta: f64,
     options: Tessellation,
 ) -> Result<Vec<Strip>, MeshError> {
+    phase_strips_counted(thread, theta, options, None)
+}
+fn phase_strips_counted(
+    thread: &Thread,
+    theta: f64,
+    options: Tessellation,
+    work: Option<&Counted<'_>>,
+) -> Result<Vec<Strip>, MeshError> {
     let spec = thread.spec();
     let root = thread.root_radius_mm();
     let rate = thread.helical_rate().abs();
@@ -196,6 +235,9 @@ fn phase_strips(
     for (band, bounds) in thread.profile_breaks().windows(2).enumerate() {
         let mut pending = vec![[bounds[0], bounds[1]]];
         while let Some([lo, hi]) = pending.pop() {
+            if let Some(w) = work {
+                w.step(256)?;
+            }
             let [a, b] = [lo, hi].map(|s| thread.slope_at_phase(s, band));
             let width = hi - lo;
             let slope = a.abs().max(b.abs());
@@ -265,11 +307,19 @@ struct Builder<'a> {
     pitch: f64,
     snap: f64,
     vertex_ids: HashMap<VertexKey, u32>,
+    cap_rails: HashMap<(usize, usize), i64>,
     caps: [Vec<(f64, u32)>; 2],
     mesh: DisplayMesh,
+    work: Option<&'a Counted<'a>>,
 }
 
 impl<'a> Builder<'a> {
+    fn charge(&self, n: usize) -> Result<(), MeshError> {
+        if let Some(w) = self.work {
+            w.step(n)?;
+        }
+        Ok(())
+    }
     fn new(thread: &'a Thread, steps: usize, strips: Vec<Strip>, options: Tessellation) -> Self {
         let spec = thread.spec();
         let lead = if spec.left_hand { -1. } else { 1. } * thread.lead_mm();
@@ -299,12 +349,14 @@ impl<'a> Builder<'a> {
                 .min(smallest_strip / 8.)
                 .min(options.deflection * 1e-3),
             vertex_ids: HashMap::new(),
+            cap_rails: HashMap::new(),
             caps: [Vec::new(), Vec::new()],
             mesh: DisplayMesh {
                 vertices: Vec::new(),
                 indices: Vec::new(),
                 face_indices: Vec::new(),
             },
+            work: None,
         }
     }
 
@@ -352,6 +404,29 @@ impl<'a> Builder<'a> {
         self.angular = Some(columns);
         Ok(())
     }
+    fn insert_cap_stations(&mut self) -> Result<(), MeshError> {
+        let stations = self.strips.len().saturating_mul(2);
+        self.charge(
+            stations
+                .saturating_mul(self.steps.saturating_add(stations))
+                .saturating_add(128),
+        )?;
+        let mut angles = Vec::with_capacity(stations);
+        for cap in [self.lower, self.length] {
+            let cap_phase = cap.rem_euclid(self.pitch);
+            for strip in &self.strips {
+                // Every intersection of a finite axial cap and a phase rail
+                // becomes a shared angular COLUMN. Adjacent bands therefore
+                // split the same original rail with identical vertex keys.
+                let fraction = ((cap_phase - strip.phase) / self.lead).rem_euclid(1.);
+                angles.push(TAU * fraction);
+            }
+        }
+        // The existing finite clipping snap covers this phase/angle conversion
+        // and the inverse rail evaluation. Merge only within that same bound;
+        // no geometric feature is proximity-welded or assigned a new owner.
+        self.insert_angular_stations(&angles, TAU * self.snap / self.lead.abs())
+    }
 
     fn build_wall(&mut self) -> Result<(), MeshError> {
         let per_period = self.strips.len() as i64;
@@ -364,6 +439,7 @@ impl<'a> Builder<'a> {
             let last = ((self.length - a.min(b)) / self.pitch).floor() as i64;
             for period in first..=last {
                 for strip in 0..self.strips.len() {
+                    self.charge(256)?;
                     let rail = period * per_period + strip as i64;
                     let lo = self.rail_position(rail);
                     let hi = self.rail_position(rail + 1);
@@ -532,25 +608,29 @@ impl<'a> Builder<'a> {
         Corner { column, rail, z }
     }
 
-    fn corner_key(&self, corner: Corner) -> Option<VertexKey> {
+    fn corner_key(&mut self, corner: Corner) -> Result<Option<VertexKey>, MeshError> {
         let column = corner.column % self.steps;
-        if corner.z == self.lower {
-            Some(VertexKey::CapColumn(column, 0))
-        } else if corner.z == self.length {
-            Some(VertexKey::CapColumn(column, 1))
-        } else if (self.lower..self.length).contains(&corner.z) {
-            // At one full revolution the phase changes by exactly one lead,
-            // so use the corresponding zero-angle rail identity.
-            let shift = if corner.column == self.steps {
-                self.lead.signum() as i64
-                    * i64::from(self.thread.spec().starts)
-                    * self.strips.len() as i64
-            } else {
-                0
-            };
-            Some(VertexKey::Grid(column, corner.rail + shift))
+        let shift = if corner.column == self.steps {
+            self.lead.signum() as i64
+                * i64::from(self.thread.spec().starts)
+                * self.strips.len() as i64
         } else {
-            None
+            0
+        };
+        if corner.z == self.lower || corner.z == self.length {
+            let cap = usize::from(corner.z == self.length);
+            let rail = corner.rail + shift;
+            if let Some(old) = self.cap_rails.insert((column, cap), rail)
+                && old != rail
+            {
+                return Err(MeshError::UnresolvedBoundary);
+            }
+            Ok(Some(VertexKey::CapColumn(column, cap)))
+        } else if (self.lower..self.length).contains(&corner.z) {
+            // The same exact rail-owner shift closes one complete revolution.
+            Ok(Some(VertexKey::Grid(column, corner.rail + shift)))
+        } else {
+            Ok(None)
         }
     }
 
@@ -558,7 +638,7 @@ impl<'a> Builder<'a> {
         let mut polygon = [0; 6];
         let mut count = 0;
         for (a, b) in corners.into_iter().zip(corners.into_iter().cycle().skip(1)) {
-            if let Some(key) = self.corner_key(a) {
+            if let Some(key) = self.corner_key(a)? {
                 polygon[count] = self.vertex(key);
                 count += 1;
             }
@@ -621,6 +701,7 @@ impl<'a> Builder<'a> {
     }
 
     fn triangle(&mut self, triangle: [u32; 3], face: u32) -> Result<(), MeshError> {
+        self.charge(128)?;
         if self.mesh.face_indices.len() == self.limit {
             return Err(MeshError::BudgetExceeded);
         }

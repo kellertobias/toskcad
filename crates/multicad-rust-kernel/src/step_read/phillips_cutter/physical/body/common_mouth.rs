@@ -7,7 +7,7 @@ use crate::{
     tapered_thread::interval::I,
 };
 #[cfg(test)]
-mod tests;
+pub(in crate::step_read::phillips_cutter::physical::body) mod tests;
 const WORK: usize = 16_000_000;
 const BYTES: usize = 64 * 1024 * 1024;
 const CELLS: usize = 65536;
@@ -44,6 +44,9 @@ pub struct CommonTensorTransfer {
     pub surface_entity: u32,
     pub control_rows: usize,
     pub control_columns: usize,
+    pub long_rails: [u32; 2],
+    pub entry_vertex_entity: u32,
+    pub entry_control_column: usize,
     pub distance_mm: f64,
 }
 /// Same-Body-bound source/carrier/envelope receipt. The old qualified finite
@@ -273,6 +276,9 @@ impl<'r, 'a, 'input> ClosedDerivedCavityCertificate<'r, 'a, 'input> {
                     surface_entity: t.surface_entity,
                     control_rows: t.control_rows,
                     control_columns: t.control_columns,
+                    long_rails: t.long_rails,
+                    entry_vertex_entity: t.entry_vertex_entity,
+                    entry_control_column: t.entry_control_column,
                     distance_mm: distance,
                 };
             }

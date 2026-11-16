@@ -177,39 +177,7 @@ fn rust_helical_gears_keep_the_full_twist_and_survive_saved_edits() {
         let text = std::fs::read_to_string(&path).unwrap();
         let verified = solid.verify_herringbone_step(&text).unwrap().unwrap();
         near(verified, solid.volume_mm3().unwrap(), 1e-5);
-        #[cfg(feature = "occt")]
-        {
-            let native = build(&session, GeometryBackend::OpenCascade);
-            let reference = native.solid(request.feature).unwrap();
-            near(
-                solid.volume_mm3().unwrap(),
-                reference.volume_mm3().unwrap(),
-                2e-4,
-            );
-            near(
-                faces.iter().map(|face| face.area_mm2).sum(),
-                reference
-                    .faces()
-                    .unwrap()
-                    .iter()
-                    .map(|face| face.area_mm2)
-                    .sum(),
-                2e-4,
-            );
-            near_point(
-                solid.bounds().unwrap().min,
-                reference.bounds().unwrap().min,
-                1e-5,
-            );
-            near_point(
-                solid.bounds().unwrap().max,
-                reference.bounds().unwrap().max,
-                1e-5,
-            );
-            let imported = multicad_kernel::Shape::read_step(&path).unwrap();
-            assert!(imported.valid().unwrap());
-            near(imported.volume().unwrap(), verified, 2e-4);
-        }
+
         request.parameters.helix_angle = angle(20.);
         request.parameters.face_width = length(10.);
         let edited = model::prepare_gear_edit(
@@ -418,21 +386,6 @@ fn rust_spur_gears_preserve_involute_geometry_placement_and_face_origins() {
             .manufacturing_mesh_with_receipt(Default::default())
             .unwrap();
         assert!(!mesh.mesh.indices.is_empty());
-
-        #[cfg(feature = "occt")]
-        {
-            let native = build(GeometryBackend::OpenCascade);
-            let reference = native.solid(feature).unwrap();
-            // The OCCT comparator evaluates tolerance-bounded spline flanks.
-            near(
-                solid.volume_mm3().unwrap(),
-                reference.volume_mm3().unwrap(),
-                1e-4,
-            );
-            let native_bounds = reference.bounds().unwrap();
-            near_point(bounds.min, native_bounds.min, 1e-5);
-            near_point(bounds.max, native_bounds.max, 1e-5);
-        }
     }
 }
 
@@ -549,22 +502,7 @@ fn rust_spur_hub_extends_the_bore_and_keeps_native_face_roles() {
     solid
         .manufacturing_mesh_with_receipt(Default::default())
         .unwrap();
-    #[cfg(feature = "occt")]
-    {
-        let native = build(GeometryBackend::OpenCascade);
-        let reference = native.solid(feature).unwrap();
-        near(volume, reference.volume_mm3().unwrap(), 1e-4);
-        near(
-            faces.iter().map(|face| face.area_mm2).sum(),
-            reference
-                .faces()
-                .unwrap()
-                .iter()
-                .map(|face| face.area_mm2)
-                .sum(),
-            1e-4,
-        );
-    }
+
     assert!(solid.supports_step_export());
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("spur-hub.step");

@@ -1,0 +1,1055 @@
+use super::*;
+use crate::step::insert::{CurveOptions, coupled::CoupledPlan};
+fn change_record(text: &str, id: u32, change: impl FnOnce(&str) -> String) -> String {
+    let prefix = format!("#{id}=");
+    let line = text.lines().find(|s| s.starts_with(&prefix)).unwrap();
+    let changed = change(line);
+    assert_ne!(line, changed);
+    text.replacen(line, &changed, 1)
+}
+fn matched_status(
+    text: &str,
+    top: &CoupledTopology<'_, '_>,
+) -> std::result::Result<(usize, usize), crate::step_read::owned_insert::Error> {
+    use crate::step_read::owned_insert::{CompoundDocument, DocumentOptions, Options};
+    let doc = CompoundDocument::parse(text, DocumentOptions::default(), None)?;
+    let member = doc.represented_members()[0];
+    let packet = doc.member_packet(member.item_entity(), Options::default(), None)?;
+    let p = packet.parsed();
+    let b = p
+        .support_bindings(Options::default(), None)
+        .expect("real changed file still has finite dual-support binding");
+    let m = b
+        .material_bounds(Options::default(), None)
+        .expect("real changed file still earns independent closed material");
+    let map = p.physical_mapping(
+        member.mapping_link().unwrap().operator_entity(),
+        Options::default(),
+        None,
+    )?;
+    let result = m.coupled_source_correspondence(top, &map, Default::default(), None)?;
+    Ok((result.work_used(), result.retained_budget_bytes()))
+}
+// Rename actual entity declarations AND all references; geometric ownership is
+// unchanged while the canonical source-to-file ordering is independently tested.
+fn exchange_entity_ids(text: &str, a: u32, b: u32) -> String {
+    let mut out = String::with_capacity(text.len());
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'#' {
+            let start = i + 1;
+            let mut end = start;
+            while end < bytes.len() && bytes[end].is_ascii_digit() {
+                end += 1;
+            }
+            let id: u32 = text[start..end].parse().unwrap();
+            out.push('#');
+            out.push_str(
+                &if id == a {
+                    b
+                } else if id == b {
+                    a
+                } else {
+                    id
+                }
+                .to_string(),
+            );
+            i = end;
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    out
+}
+#[test]
+fn actual_entity_reindexing_preserves_material_but_not_canonical_source_ownership() {
+    use crate::step_read::owned_insert::{
+        CompoundDocument, DocumentOptions, Error as ReadError, Options,
+    };
+    let source = crate::step_read::owned_insert::tests::graph(false, 4.);
+    let plan = CoupledPlan::prepare(&source, CurveOptions::default(), None).unwrap();
+    let top = CoupledTopology::prepare(&plan, 16_000_000, 64 * 1024 * 1024, None).unwrap();
+    let text = top
+        .write_mapped_candidate(
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            16_000_000,
+            64 * 1024 * 1024,
+            None,
+        )
+        .unwrap();
+    let doc = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+    let packet = doc
+        .member_packet(
+            doc.represented_members()[0].item_entity(),
+            Options::default(),
+            None,
+        )
+        .unwrap();
+    let p = packet.parsed();
+    let rows = plan.rows().len();
+    // Actual distinct ruling endpoints are reused by the whole file after the
+    // renaming; the correspondence must still preserve source vertex aliases.
+    for (a, b) in [(rows, rows + 1), (0, rows)] {
+        let changed = exchange_entity_ids(&text, p.edges()[a].entity(), p.edges()[b].entity());
+        assert!(matches!(
+            matched_status(&changed, &top),
+            Err(ReadError::Unsupported)
+        ));
+    }
+    // Reordering actual FACE entities preserves their supports, orientation and
+    // wires, but cannot silently assign their occupied domains to source keys.
+    let first = p.faces()[0].entity();
+    let last = p.faces().last().unwrap().entity();
+    let shell = text.lines().find(|l| l.contains("CLOSED_SHELL(")).unwrap();
+    let changed_shell = exchange_entity_ids(shell, first, last);
+    let changed = text.replacen(shell, &changed_shell, 1);
+    assert!(matches!(
+        matched_status(&changed, &top),
+        Err(ReadError::Unsupported)
+    ));
+    // Distinct triangle/quad patches can have the same face orientation; a
+    // face permutation must not erase the actual finite loop arity.
+    let pair = top
+        .faces()
+        .iter()
+        .enumerate()
+        .find_map(|(i, a)| {
+            top.faces().iter().enumerate().find_map(|(j, b)| {
+                (i < j
+                    && a.same_sense == b.same_sense
+                    && a.loops.len() == b.loops.len()
+                    && a.loops
+                        .iter()
+                        .zip(&b.loops)
+                        .any(|(a, b)| a.len() != b.len()))
+                .then_some((i, j))
+            })
+        })
+        .unwrap();
+    let changed_shell = exchange_entity_ids(
+        shell,
+        p.faces()[pair.0].entity(),
+        p.faces()[pair.1].entity(),
+    );
+    assert!(matches!(
+        matched_status(&text.replacen(shell, &changed_shell, 1), &top),
+        Err(ReadError::Unsupported)
+    ));
+    // A cyclic rotation has exactly the same geometric oriented wire, while
+    // the source-correspondence protocol still requires the earned start edge.
+    let bound = &p.faces()[0].loops()[0];
+    let loop_id = bound.entity();
+    let changed = change_record(&text, loop_id, |line| {
+        let start = line.find("(#").unwrap() + 1;
+        let end = line.rfind(')').unwrap() - 1;
+        let mut fields: Vec<_> = line[start..end].split(',').collect();
+        fields.rotate_left(1);
+        format!("{}{}{}", &line[..start], fields.join(","), &line[end..])
+    });
+    assert!(matches!(
+        matched_status(&changed, &top),
+        Err(ReadError::Unsupported)
+    ));
+    assert!(matched_status(&text, &top).is_ok());
+}
+#[test]
+fn output_growth_admits_old_and_new_buffers_before_allocation() {
+    let mut writer = Writer::new();
+    writer
+        .append_sphere(
+            crate::sphere::Sphere::new(1.).unwrap(),
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+        )
+        .unwrap();
+    let result: Result<(), Error> = writer.append_typed(|file| {
+        let old = file.data.capacity();
+        let required = old + 1;
+        let additional = required - file.data.len();
+        let before = file.data.clone();
+        let mut w = Work::new(16_000_000, None).unwrap();
+        // Enough for the final buffer, but not two simultaneously live buffers.
+        let mut short = Memory::new(old, required).unwrap();
+        assert!(matches!(
+            reserve(file, additional, &mut short, &mut w),
+            Err(Error::Limit)
+        ));
+        assert_eq!(file.data, before);
+        assert_eq!(file.data.capacity(), old);
+        // The exact old+new peak fits; conservative growth may not force a larger
+        // allocation or refuse this valid output-storage request.
+        let mut memory = Memory::new(old, old + required).unwrap();
+        reserve(file, additional, &mut memory, &mut w).unwrap();
+        assert!(file.data.capacity() >= required);
+        assert_eq!(memory.used, file.data.capacity());
+        assert_eq!(file.data, before);
+        Err(Error::Cancelled)
+    });
+    assert_eq!(result, Err(Error::Cancelled));
+}
+#[test]
+fn source_match_rejects_real_unit_and_sub_float_integer_changes_without_healing() {
+    use crate::step_read::owned_insert::{
+        CompoundDocument, DocumentOptions, Error as ReadError, Options,
+    };
+    let source = crate::step_read::owned_insert::tests::graph(false, 4.);
+    let plan = CoupledPlan::prepare(&source, CurveOptions::default(), None).unwrap();
+    let top = CoupledTopology::prepare(&plan, 16_000_000, 64 * 1024 * 1024, None).unwrap();
+    let text = top
+        .write_mapped_candidate(
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            16_000_000,
+            64 * 1024 * 1024,
+            None,
+        )
+        .unwrap();
+    let doc = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+    let member = doc.represented_members()[0];
+    let op = member.mapping_link().unwrap().operator_entity();
+    let packet = doc
+        .member_packet(member.item_entity(), Options::default(), None)
+        .unwrap();
+    let p = packet.parsed();
+    let record = text
+        .lines()
+        .find(|l| l.starts_with(&format!("#{op}=")))
+        .unwrap();
+    let attrs = record
+        .split("CARTESIAN_TRANSFORMATION_OPERATOR(")
+        .nth(1)
+        .unwrap()
+        .split(')')
+        .next()
+        .unwrap();
+    let scale = attrs.rsplit(',').next().unwrap();
+    let axis2: u32 = attrs
+        .split(',')
+        .nth(1)
+        .unwrap()
+        .trim_start_matches('#')
+        .parse()
+        .unwrap();
+    let reflected = change_record(&text, axis2, |line| {
+        let at = line.find("DIRECTION(").unwrap();
+        format!("{}DIRECTION('',(0.,-1.,0.));", &line[..at])
+    });
+    assert!(matches!(
+        matched_status(&reflected, &top),
+        Err(ReadError::Unsupported)
+    ));
+    for other in ["1.", "$"] {
+        let changed = change_record(&text, op, |s| {
+            s.replacen(&format!(",{scale})"), &format!(",{other})"), 1)
+        });
+        assert!(matches!(
+            matched_status(&changed, &top),
+            Err(ReadError::Unsupported)
+        ));
+    }
+    let other_source = crate::step_read::owned_insert::tests::graph(false, 8.);
+    let other_plan = CoupledPlan::prepare(&other_source, CurveOptions::default(), None).unwrap();
+    let other_top =
+        CoupledTopology::prepare(&other_plan, 16_000_000, 64 * 1024 * 1024, None).unwrap();
+    assert!(matches!(
+        matched_status(&text, &other_top),
+        Err(ReadError::Unsupported)
+    ));
+    let height = 4. / plan.coefficient_unit_mm();
+    let point = p
+        .points()
+        .iter()
+        .find(|p| {
+            p.coordinates().len() == 3
+                && p.coordinates()[2].value() > height * 0.25
+                && p.coordinates()[2].value() < height * 0.75
+        })
+        .unwrap();
+    let c = point.coordinates();
+    let integer =
+        BigInt::parse_bytes(c[2].spelling().trim_end_matches('.').as_bytes(), 10).unwrap();
+    let next = format!("{}.", integer + 1);
+    assert_eq!(next.parse::<f64>().unwrap(), c[2].value());
+    let changed = change_record(&text, point.entity(), |_| {
+        format!(
+            "#{}=CARTESIAN_POINT('',({},{},{next}));",
+            point.entity(),
+            c[0].spelling(),
+            c[1].spelling()
+        )
+    });
+    // Shared finite supports and global material remain valid. Only the
+    // source-owned exact value changed; its floating cache is identical.
+    assert!(matches!(
+        matched_status(&changed, &top),
+        Err(ReadError::Unsupported)
+    ));
+    assert!(matched_status(&text, &top).is_ok());
+}
+#[test]
+fn source_match_scope_precision_and_aggregate_resource_frontiers_are_real_requests() {
+    use crate::step_read::owned_insert::{
+        CompoundDocument, CorrespondenceOptions, DocumentOptions, Error as ReadError, Options,
+    };
+    use std::cell::Cell;
+    let source = crate::step_read::owned_insert::tests::graph(false, 4.);
+    let plan = CoupledPlan::prepare(&source, CurveOptions::default(), None).unwrap();
+    let top = CoupledTopology::prepare(&plan, 16_000_000, 64 * 1024 * 1024, None).unwrap();
+    let text = top
+        .write_mapped_candidate(
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            16_000_000,
+            64 * 1024 * 1024,
+            None,
+        )
+        .unwrap();
+    let doc = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+    let member = doc.represented_members()[0];
+    let packet = doc
+        .member_packet(member.item_entity(), Options::default(), None)
+        .unwrap();
+    let p = packet.parsed();
+    let b = p.support_bindings(Options::default(), None).unwrap();
+    let m = b.material_bounds(Options::default(), None).unwrap();
+    let map = p
+        .physical_mapping(
+            member.mapping_link().unwrap().operator_entity(),
+            Options::default(),
+            None,
+        )
+        .unwrap();
+    let good = m
+        .coupled_source_correspondence(&top, &map, Default::default(), None)
+        .unwrap();
+    for options in [
+        CorrespondenceOptions {
+            position_limit_mm: 0.,
+            ..Default::default()
+        },
+        CorrespondenceOptions {
+            derivative_limit_mm: f64::NAN,
+            ..Default::default()
+        },
+        CorrespondenceOptions {
+            maximum_work: 64_000_001,
+            ..Default::default()
+        },
+        CorrespondenceOptions {
+            retained_budget_bytes: 0,
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            m.coupled_source_correspondence(&top, &map, options, None),
+            Err(ReadError::Invalid)
+        ));
+    }
+    for options in [
+        CorrespondenceOptions {
+            position_limit_mm: good.position_error_mm().next_down(),
+            ..Default::default()
+        },
+        CorrespondenceOptions {
+            derivative_limit_mm: good.row_derivative_error_mm().next_down(),
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            m.coupled_source_correspondence(&top, &map, options, None),
+            Err(ReadError::Unsupported)
+        ));
+    }
+    for options in [
+        CorrespondenceOptions {
+            maximum_work: good.work_used() - 1,
+            ..Default::default()
+        },
+        CorrespondenceOptions {
+            retained_budget_bytes: good.retained_budget_bytes() - 1,
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            m.coupled_source_correspondence(&top, &map, options, None),
+            Err(ReadError::Limit)
+        ));
+    }
+    let other_packet = doc
+        .member_packet(member.item_entity(), Options::default(), None)
+        .unwrap();
+    let other = other_packet
+        .parsed()
+        .physical_mapping(
+            member.mapping_link().unwrap().operator_entity(),
+            Options::default(),
+            None,
+        )
+        .unwrap();
+    assert!(matches!(
+        m.coupled_source_correspondence(&top, &other, Default::default(), None),
+        Err(ReadError::Invalid)
+    ));
+    let polls = Cell::new(0usize);
+    let count = || {
+        polls.set(polls.get() + 1);
+        false
+    };
+    m.coupled_source_correspondence(&top, &map, Default::default(), Some(&count))
+        .unwrap();
+    let stop = polls.get() - 1;
+    polls.set(0);
+    let cancel = || {
+        polls.set(polls.get() + 1);
+        polls.get() >= stop
+    };
+    assert!(matches!(
+        m.coupled_source_correspondence(&top, &map, Default::default(), Some(&cancel)),
+        Err(ReadError::Cancelled)
+    ));
+    assert!(
+        m.coupled_source_correspondence(&top, &map, Default::default(), None)
+            .is_ok()
+    );
+}
+#[test]
+fn actual_shared_parallel_row_fold_is_not_hidden_by_the_strip_shortcut() {
+    use crate::step_read::owned_insert::{CompoundDocument, DocumentOptions, Options};
+    use num_traits::Zero;
+    let source = crate::step_read::owned_insert::tests::graph(false, 4.);
+    let plan = CoupledPlan::prepare(&source, CurveOptions::default(), None).unwrap();
+    let top = CoupledTopology::prepare(&plan, 16_000_000, 64 * 1024 * 1024, None).unwrap();
+    let text = top
+        .write_mapped_candidate(
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            16_000_000,
+            64 * 1024 * 1024,
+            None,
+        )
+        .unwrap();
+    let document = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+    let item = document.represented_members()[0].item_entity();
+    let packet = document
+        .member_packet(item, Options::default(), None)
+        .unwrap();
+    let p = packet.parsed();
+    let original = p.support_bindings(Options::default(), None).unwrap();
+    original.material_bounds(Options::default(), None).unwrap();
+    let integer = |s: &str| BigInt::parse_bytes(s.trim_end_matches('.').as_bytes(), 10).unwrap();
+    let weights = [1_i64, 11, 55, 165, 330, 462, 462, 330, 165, 55, 11, 1];
+    let mut change = None;
+    for t in p.tensors() {
+        if !t.rows()[0].iter().zip(t.rows()[1]).all(|(a, b)| {
+            (0..2).all(|axis| {
+                p.point(*a).unwrap().coordinates()[axis].spelling()
+                    == p.point(*b).unwrap().coordinates()[axis].spelling()
+            })
+        }) {
+            continue;
+        }
+        let mut before = BigInt::zero();
+        for (i, weight) in weights.into_iter().enumerate() {
+            let a = p.point(t.rows()[0][i]).unwrap();
+            let b = p.point(t.rows()[1][i]).unwrap();
+            before += (integer(b.coordinates()[2].spelling())
+                - integer(a.coordinates()[2].spelling()))
+                * weight;
+        }
+        let point = p.point(t.rows()[1][5]).unwrap();
+        let after = &before - integer(point.coordinates()[2].spelling()) * weights[5];
+        // Exact midpoint Bernstein sums from actual encoded INTEGER leaves,
+        // independent of interval-Jacobian implementation or source recipe.
+        if before > BigInt::zero() && after < BigInt::zero() {
+            change = Some((
+                point.entity(),
+                point.coordinates()[0].spelling(),
+                point.coordinates()[1].spelling(),
+            ));
+            break;
+        }
+    }
+    let (id, x, y) = change
+        .expect("actual finite constant-radius strip with an independently demonstrated fold");
+    let changed = change_record(&text, id, |_| {
+        format!("#{id}=CARTESIAN_POINT('',({x},{y},0.));")
+    });
+    let d = CompoundDocument::parse(&changed, DocumentOptions::default(), None).unwrap();
+    let packet = d.member_packet(item, Options::default(), None).unwrap();
+    let b = packet
+        .parsed()
+        .support_bindings(Options::default(), None)
+        .unwrap();
+    assert!(b.material_bounds(Options::default(), None).is_err());
+}
+#[test]
+fn real_mapped_pose_and_original_scale_are_not_discarded_or_guessed() {
+    use crate::step_read::owned_insert::{CompoundDocument, DocumentOptions, Options};
+    let source = crate::step_read::owned_insert::tests::graph(false, 4_f64.next_up());
+    let plan = CoupledPlan::prepare(&source, CurveOptions::default(), None).unwrap();
+    let top = CoupledTopology::prepare(&plan, 16_000_000, 64 * 1024 * 1024, None).unwrap();
+    let origin = [40., -18., 7.];
+    let u = [0.8, 0.6, 0.];
+    let v = [-0.36, 0.48, 0.8];
+    let text = top
+        .write_mapped_candidate(origin, u, v, 16_000_000, 64 * 1024 * 1024, None)
+        .unwrap();
+    let document = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+    let member = document.represented_members()[0];
+    let op = member.mapping_link().unwrap().operator_entity();
+    let packet = document
+        .member_packet(member.item_entity(), Options::default(), None)
+        .unwrap();
+    let mapping = packet
+        .parsed()
+        .physical_mapping(op, Options::default(), None)
+        .unwrap();
+    assert_eq!(mapping.handedness().unwrap(), 1);
+    for (i, x) in origin.into_iter().enumerate() {
+        let a = mapping.origin_mm()[i];
+        assert!(a[0] <= x && a[1] >= x);
+    }
+    let bindings = packet
+        .parsed()
+        .support_bindings(Options::default(), None)
+        .unwrap();
+    let material = bindings.material_bounds(Options::default(), None).unwrap();
+    let world = mapping.map_box_mm(material.bounds_mm()).unwrap();
+    assert!(
+        world
+            .iter()
+            .all(|a| a[0].is_finite() && a[1].is_finite() && a[0] < a[1])
+    );
+    let prefix = format!("#{op}=");
+    let record = text.lines().find(|l| l.starts_with(&prefix)).unwrap();
+    let attributes = record
+        .split("CARTESIAN_TRANSFORMATION_OPERATOR(")
+        .nth(1)
+        .unwrap()
+        .split(')')
+        .next()
+        .unwrap();
+    let scale = attributes.rsplit(',').next().unwrap();
+    for invalid in ["0.", "-1."] {
+        let changed = change_record(&text, op, |s| {
+            s.replacen(&format!(",{scale})"), &format!(",{invalid})"), 1)
+        });
+        let changed = CompoundDocument::parse(&changed, DocumentOptions::default(), None).unwrap();
+        let p = changed
+            .member_packet(member.item_entity(), Options::default(), None)
+            .unwrap();
+        assert!(
+            p.parsed()
+                .physical_mapping(op, Options::default(), None)
+                .is_err()
+        );
+    }
+    let missing = change_record(&text, op, |_| String::new());
+    assert!(CompoundDocument::parse(&missing, DocumentOptions::default(), None).is_err());
+    // A different positive scale is valid DIFFERENT geometry. The physical
+    // reader must retain that fact; a future source matcher must not silently
+    // restore the intended grid unit or authorize Native publication from it.
+    let changed = change_record(&text, op, |s| s.replacen(&format!(",{scale})"), ",1.)", 1));
+    let changed = CompoundDocument::parse(&changed, DocumentOptions::default(), None).unwrap();
+    let p = changed
+        .member_packet(member.item_entity(), Options::default(), None)
+        .unwrap();
+    let different = p
+        .parsed()
+        .physical_mapping(op, Options::default(), None)
+        .unwrap();
+    assert!(different.scale_bounds()[0] > plan.coefficient_unit_mm() * 1e20);
+}
+#[test]
+fn real_coupled_append_budget_pose_and_late_cancel_leave_existing_members_unchanged() {
+    use std::cell::Cell;
+    let source = crate::step_read::owned_insert::tests::graph(false, 4.);
+    let plan = CoupledPlan::prepare(&source, CurveOptions::default(), None).unwrap();
+    let top = CoupledTopology::prepare(&plan, 16_000_000, 64 * 1024 * 1024, None).unwrap();
+    let seed = || {
+        let mut w = Writer::new();
+        w.append_sphere(
+            crate::sphere::Sphere::new(1.).unwrap(),
+            [20., 0., 0.],
+            [1., 0., 0.],
+            [0., 1., 0.],
+        )
+        .unwrap();
+        w
+    };
+    let before = seed().finish().unwrap();
+    for (origin, u, v, work, bytes, error) in [
+        (
+            [f64::NAN, 0., 0.],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            16_000_000,
+            64 * 1024 * 1024,
+            Error::Invalid,
+        ),
+        (
+            [0.; 3],
+            [1., 0., 0.],
+            [1., 0., 0.],
+            16_000_000,
+            64 * 1024 * 1024,
+            Error::Unresolved,
+        ),
+        (
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            64_000_000,
+            64 * 1024 * 1024,
+            Error::Invalid,
+        ),
+        (
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            top.work_used() + 1,
+            64 * 1024 * 1024,
+            Error::Limit,
+        ),
+        (
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            16_000_000,
+            1,
+            Error::Limit,
+        ),
+    ] {
+        let mut w = seed();
+        assert_eq!(
+            w.append_coupled_insert_candidate(&top, origin, u, v, work, bytes, None),
+            Err(error)
+        );
+        assert_eq!(w.finish().unwrap(), before);
+    }
+    let polls = Cell::new(0usize);
+    let count = || {
+        polls.set(polls.get() + 1);
+        false
+    };
+    let mut good = seed();
+    good.append_coupled_insert_candidate(
+        &top,
+        [0.; 3],
+        [1., 0., 0.],
+        [0., 1., 0.],
+        16_000_000,
+        64 * 1024 * 1024,
+        Some(&count),
+    )
+    .unwrap();
+    let good = good.finish().unwrap();
+    assert!(polls.get() > 1000);
+    let stop = polls.get() - 1;
+    polls.set(0);
+    let cancel = || {
+        polls.set(polls.get() + 1);
+        polls.get() >= stop
+    };
+    let mut retry = seed();
+    assert_eq!(
+        retry.append_coupled_insert_candidate(
+            &top,
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            16_000_000,
+            64 * 1024 * 1024,
+            Some(&cancel)
+        ),
+        Err(Error::Cancelled)
+    );
+    retry
+        .append_coupled_insert_candidate(
+            &top,
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            16_000_000,
+            64 * 1024 * 1024,
+            None,
+        )
+        .unwrap();
+    assert_eq!(retry.finish().unwrap(), good);
+}
+#[test]
+fn actual_mapped_numerator_candidates_keep_literal_material_inside_original_query_budget() {
+    for (left, length) in [
+        (false, 4.),
+        (false, 4_f64.next_up()),
+        (true, 4_f64.next_up()),
+        (false, 4_f64.next_down()),
+        (true, 8.),
+    ] {
+        let source = crate::step_read::owned_insert::tests::graph(left, length);
+        let plan = CoupledPlan::prepare(&source, CurveOptions::default(), None).unwrap();
+        let top = CoupledTopology::prepare(&plan, 16_000_000, 64 * 1024 * 1024, None).unwrap();
+        let text = top
+            .write_mapped_candidate(
+                [0.; 3],
+                [1., 0., 0.],
+                [0., 1., 0.],
+                16_000_000,
+                64 * 1024 * 1024,
+                None,
+            )
+            .unwrap();
+        let fixed = text.capacity() - text.len() + 8192;
+        let options = crate::step_read::owned_insert::Options {
+            retained_budget_bytes: 64 * 1024 * 1024 - top.retained_bytes() - fixed,
+            ..Default::default()
+        };
+        eprintln!(
+            "NUMERATOR_FILE {left}/{length:?}: {}bytes capacity{} available{}",
+            text.len(),
+            text.capacity(),
+            options.retained_budget_bytes
+        );
+        let document = crate::step_read::owned_insert::CompoundDocument::parse(
+            &text,
+            Default::default(),
+            None,
+        )
+        .unwrap();
+        let member = document.represented_members()[0];
+        let packet = document
+            .member_packet(member.item_entity(), options, None)
+            .unwrap();
+        let parsed = packet.parsed();
+        let mapping = parsed
+            .physical_mapping(
+                member.mapping_link().unwrap().operator_entity(),
+                options,
+                None,
+            )
+            .unwrap();
+        let expected = plan.coefficient_unit_mm();
+        let actual = mapping.scale_bounds();
+        assert!(actual[0] <= expected && actual[1] >= expected);
+        let bindings = parsed.support_bindings(options, None).unwrap();
+        eprintln!(
+            "NUMERATOR_BINDINGS {left}/{length:?}: {}work",
+            bindings.work_used()
+        );
+        let material = bindings.material_bounds(options, None).unwrap();
+        eprintln!(
+            "NUMERATOR_MATERIAL {left}/{length:?}: {}work",
+            material.work_used()
+        );
+        let correspondence = material
+            .coupled_source_correspondence(
+                &top,
+                &mapping,
+                crate::step_read::owned_insert::CorrespondenceOptions {
+                    retained_budget_bytes: 64 * 1024 * 1024 - fixed,
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        assert!(std::ptr::eq(correspondence.actual(), &bindings));
+        assert!(std::ptr::eq(correspondence.material(), &material));
+        assert!(std::ptr::eq(correspondence.expected(), &top));
+        assert!(std::ptr::eq(correspondence.mapping(), &mapping));
+        assert_eq!(
+            correspondence.coefficient_unit_mm(),
+            plan.coefficient_unit_mm()
+        );
+        assert!(correspondence.position_error_mm() <= 1e-7);
+        assert!(correspondence.row_derivative_error_mm() <= 1e-6);
+        assert!(correspondence.ruling_derivative_error_mm() > 0.);
+        assert!(correspondence.work_used() <= 64_000_000);
+        assert!(correspondence.retained_budget_bytes() <= 64 * 1024 * 1024);
+        eprintln!(
+            "COUPLED_SOURCE_MATCH {left}/{length:?}: {}work {}bytes C0{} D1{}",
+            correspondence.work_used(),
+            correspondence.retained_budget_bytes(),
+            correspondence.position_error_mm(),
+            correspondence.row_derivative_error_mm()
+        );
+        let scale = mapping.volume_scale_bounds().unwrap();
+        let raw_width = (I::point(5e-7) / I::point(scale[1])).lo;
+        let volume = material
+            .occupied_volume(
+                crate::step_read::owned_insert::FluxOptions {
+                    maximum_width_mm3: raw_width,
+                    maximum_bytes: options.retained_budget_bytes,
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        let [lo, hi] = volume.volume_mm3();
+        let physical = I::new(lo, hi) * I::new(scale[0], scale[1]);
+        eprintln!("NUMERATOR_PHYSICAL_VOLUME {left}/{length:?}: {physical:?}");
+        assert!(physical.valid() && physical.lo > 0. && physical.hi < 1000.);
+        assert!(physical.width() <= 1e-6);
+    }
+}
+
+#[test]
+fn actual_coupled_transaction_cancellation_sweep_restores_all_published_members() {
+    use std::cell::Cell;
+    let source = crate::step_read::owned_insert::tests::graph(false, 4.);
+    let plan = CoupledPlan::prepare(&source, CurveOptions::default(), None).unwrap();
+    let top = CoupledTopology::prepare(&plan, 16_000_000, 64 * 1024 * 1024, None).unwrap();
+    let mut original = Writer::new();
+    original
+        .append_sphere(
+            crate::sphere::Sphere::new(1.).unwrap(),
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+        )
+        .unwrap();
+    let before = original.finish();
+    let count = Cell::new(0_usize);
+    let poll = || {
+        count.set(count.get() + 1);
+        false
+    };
+    let mut baseline = Writer::new();
+    baseline
+        .append_sphere(
+            crate::sphere::Sphere::new(1.).unwrap(),
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+        )
+        .unwrap();
+    baseline
+        .append_coupled_insert_candidate(
+            &top,
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            16_000_000,
+            64 * 1024 * 1024,
+            Some(&poll),
+        )
+        .unwrap();
+    let expected = baseline.finish();
+    assert!(matches!(
+        top.write_mapped_candidate(
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            1,
+            64 * 1024 * 1024,
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    for bytes in [0, 64 * 1024 * 1024 + 1] {
+        let mut invalid = Writer::new();
+        assert_eq!(
+            invalid.append_coupled_insert_candidate(
+                &top,
+                [0.; 3],
+                [1., 0., 0.],
+                [0., 1., 0.],
+                16_000_000,
+                bytes,
+                None
+            ),
+            Err(Error::Invalid)
+        );
+    }
+    let total = count.get();
+    // Interrupt actual in-flight formatting, rows, surface/PCurve construction,
+    // graph publication and representation mapping. Every interrupted attempt
+    // must restore the original sphere, IDs and bytes; retry is deterministic.
+    for stop_at in (0..1024)
+        .map(|i| total * i / 1024)
+        .chain(0..64)
+        .chain((total - 128)..total)
+    {
+        let mut writer = Writer::new();
+        writer
+            .append_sphere(
+                crate::sphere::Sphere::new(1.).unwrap(),
+                [0.; 3],
+                [1., 0., 0.],
+                [0., 1., 0.],
+            )
+            .unwrap();
+        let calls = Cell::new(0_usize);
+        let stop = || {
+            let n = calls.get();
+            calls.set(n + 1);
+            n >= stop_at
+        };
+        assert_eq!(
+            writer.append_coupled_insert_candidate(
+                &top,
+                [0.; 3],
+                [1., 0., 0.],
+                [0., 1., 0.],
+                16_000_000,
+                64 * 1024 * 1024,
+                Some(&stop)
+            ),
+            Err(Error::Cancelled)
+        );
+        assert_eq!(writer.finish(), before);
+    }
+    // Locate the actual publication frontier of the finite 2D trim context
+    // through cancelled real transactions. Bisection observes emitted records,
+    // rather than assuming a fixed callback count from producer internals.
+    let mut absent = 0;
+    let mut present = total;
+    while present - absent > 1 {
+        let stop_at = absent + (present - absent) / 2;
+        let mut writer = Writer::new();
+        writer
+            .append_sphere(
+                crate::sphere::Sphere::new(1.).unwrap(),
+                [0.; 3],
+                [1., 0., 0.],
+                [0., 1., 0.],
+            )
+            .unwrap();
+        let calls = Cell::new(0);
+        let stop = || {
+            let n = calls.get();
+            calls.set(n + 1);
+            n >= stop_at
+        };
+        let seen = Cell::new(false);
+        let result = writer.append_typed(|file| {
+            let result = encode(
+                file,
+                &top,
+                16_000_000,
+                64 * 1024 * 1024,
+                Some(&stop),
+                [[0.; 3], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+            );
+            seen.set(file.data.contains("2D SPACE"));
+            result
+        });
+        assert_eq!(result, Err(Error::Cancelled));
+        assert_eq!(writer.finish(), before);
+        if seen.get() {
+            present = stop_at;
+        } else {
+            absent = stop_at;
+        }
+    }
+    assert!(absent > 0 && present < total);
+    let mut retry = Writer::new();
+    retry
+        .append_sphere(
+            crate::sphere::Sphere::new(1.).unwrap(),
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+        )
+        .unwrap();
+    retry
+        .append_coupled_insert_candidate(
+            &top,
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            16_000_000,
+            64 * 1024 * 1024,
+            None,
+        )
+        .unwrap();
+    assert_eq!(retry.finish(), expected);
+}
+
+#[test]
+fn near_stationary_actual_cap_controls_refuse_unqualified_material_without_healing() {
+    use crate::step_read::owned_insert::{CompoundDocument, DocumentOptions, Options};
+    let source = crate::step_read::owned_insert::tests::graph(false, 4.);
+    let plan = CoupledPlan::prepare(&source, CurveOptions::default(), None).unwrap();
+    let top = CoupledTopology::prepare(&plan, 16_000_000, 64 * 1024 * 1024, None).unwrap();
+    let text = top
+        .write_mapped_candidate(
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            16_000_000,
+            64 * 1024 * 1024,
+            None,
+        )
+        .unwrap();
+    let doc = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+    let packet = doc
+        .member_packet(
+            doc.represented_members()[0].item_entity(),
+            Options::default(),
+            None,
+        )
+        .unwrap();
+    let p = packet.parsed();
+    let b = p.support_bindings(Options::default(), None).unwrap();
+    let curve = b
+        .cap_face_indices()
+        .into_iter()
+        .flat_map(|i| p.faces()[i].loops())
+        .flat_map(|l| l.coedges())
+        .find_map(|c| {
+            let e = p.edge(c.edge).unwrap();
+            let curve = p.curve(e.curve_entity()).unwrap();
+            let first = p.point(curve.pole_entities()[0]).unwrap().coordinates();
+            (first[0].value() > 0. && first[1].value() == 0.).then_some(curve)
+        })
+        .unwrap();
+    let first = p.point(curve.pole_entities()[0]).unwrap().coordinates();
+    let second = p.point(curve.pole_entities()[1]).unwrap().coordinates();
+    let mut changed = text.clone();
+    for point in p.points() {
+        let c = point.coordinates();
+        if c.len() >= 2
+            && c[0].spelling() == second[0].spelling()
+            && c[1].spelling() == second[1].spelling()
+        {
+            changed = change_record(&changed, point.entity(), |_| {
+                format!(
+                    "#{}=CARTESIAN_POINT('',({},1.{}));",
+                    point.entity(),
+                    first[0].spelling(),
+                    if c.len() == 3 {
+                        format!(",{}", c[2].spelling())
+                    } else {
+                        String::new()
+                    }
+                )
+            });
+        }
+    }
+    let doc = CompoundDocument::parse(&changed, DocumentOptions::default(), None).unwrap();
+    let packet = doc
+        .member_packet(
+            doc.represented_members()[0].item_entity(),
+            Options::default(),
+            None,
+        )
+        .unwrap();
+    let b = packet
+        .parsed()
+        .support_bindings(Options::default(), None)
+        .unwrap();
+    let result = b.material_bounds(Options::default(), None);
+    assert!(matches!(
+        result,
+        Err(crate::step_read::owned_insert::Error::Unsupported)
+    ));
+    assert!(matched_status(&text, &top).is_ok());
+}

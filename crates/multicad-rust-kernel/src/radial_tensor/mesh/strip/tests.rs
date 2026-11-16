@@ -350,3 +350,33 @@ fn actual_normal_strips_retain_each_coefficient_and_each_facet_orientation() {
     assert!(cache.normals.is_empty());
     assert!(cache.normal_coefficients(patch, r, &mut w).is_ok());
 }
+
+#[test]
+fn continued_position_strips_reset_on_gaps_and_nonmonotone_rows() {
+    let body = super::super::tests::cam();
+    let mut w = work();
+    let p = Prepared::new(
+        &body,
+        super::super::tests::options(),
+        DEFAULT_LIMITS,
+        &mut w,
+    )
+    .unwrap();
+    let owner = tensor(&p);
+    let patch = owner.patches([[0., 1.]; 2], &mut w).unwrap()[0];
+    let mut cache = Cache::new(owner, 2).with_continuation(true);
+    for v in [[0., 0.125], [0.125, 0.25], [0.5, 0.75], [0., 0.125]] {
+        let r = range(patch, v);
+        let cell = cache.cell(patch, r, &mut w).unwrap();
+        let side = p
+            .sides
+            .iter()
+            .position(|s| matches!(s, Side::Tensor(_)))
+            .unwrap();
+        let uv = [[r[0][0], r[1][0]], [r[0][1], r[1][0]], [r[0][1], r[1][1]]];
+        let vertices = uv.map(|[u, v]| p.point(side, u, v, None, &mut w).unwrap());
+        let affine = certificate::Affine::new(uv, vertices).unwrap();
+        assert!(cell.chord_error(&affine, &mut w).unwrap().is_finite());
+        assert_eq!(cache.entries.len(), 1);
+    }
+}

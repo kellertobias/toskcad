@@ -267,6 +267,12 @@ pub(super) fn convert_edge(edge: &CurvedEdge2d) -> Result<Edge, GeometryError> {
 }
 
 impl NormalSweepBody {
+    pub(super) fn line8_receiving_source(&self) -> Option<(&Sweep, bool)> {
+        self.openings
+            .is_none()
+            .then_some((&self.sweep, self.reverse))
+    }
+
     pub(super) fn unpierced_profile(&self) -> Option<(&[Vec<Edge>], f64)> {
         self.openings.is_none().then(|| {
             let height = self.sweep.height_mm();

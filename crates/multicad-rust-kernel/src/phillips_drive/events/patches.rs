@@ -1,8 +1,10 @@
 //! Actual source charts and whole-cell bounds, preceding detached mesh publication.
 use super::*;
+mod correspondence;
 mod mesh;
 mod properties;
 use crate::tapered_thread::interval::J;
+pub use correspondence::{PatchCorrespondence, PatchCorrespondenceOptions};
 pub use mesh::BoundaryMesh;
 pub use properties::{FaceProperties, FacePropertyOptions};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,6 +93,13 @@ pub struct PatchAtlas<'a> {
     topology: BoundaryTopology<'a>,
     patches: Vec<SurfacePatch>,
     radial_margin: I,
+}
+impl PatchAtlas<'_> {
+    pub(crate) fn retained_budget_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.topology.retained_heap_bytes()
+            + self.patches.capacity() * std::mem::size_of::<SurfacePatch>()
+    }
 }
 fn domain(uv: [[f64; 2]; 2]) -> Result<[I; 2], Error> {
     if uv.into_iter().flatten().any(|v| !v.is_finite())
@@ -468,3 +477,7 @@ impl PatchAtlas<'_> {
         mesh::chart_incidence(self, cancel)
     }
 }
+
+pub use mesh::{
+    MeshCurveKey, MeshPointKey, MeshRow, MouthFootpoint, MouthTraceOptions, TracedMouthMesh,
+};

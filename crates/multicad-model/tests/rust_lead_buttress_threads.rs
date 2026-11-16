@@ -41,28 +41,7 @@ fn reopen(s: &Session) -> Session {
     )
     .unwrap()
 }
-#[cfg(feature = "occt")]
-fn native_material(solid: &multicad_kernel::Solid, point: [f64; 3]) -> bool {
-    use multicad_kernel::{BooleanOperation, GeometryPolicy, RigidTransform, Solid};
-    let edge = 0.00002;
-    let probe = Solid::box_solid([edge; 3], GeometryPolicy::default())
-        .unwrap()
-        .transformed(RigidTransform {
-            translation_mm: point.map(|p| p - edge / 2.),
-            ..Default::default()
-        })
-        .unwrap();
-    solid
-        .boolean(
-            &probe,
-            BooleanOperation::Intersect,
-            GeometryPolicy::default(),
-        )
-        .unwrap()
-        .map_or(0., |s| s.volume_mm3().unwrap())
-        / edge.powi(3)
-        > 0.5
-}
+
 #[test]
 fn sourced_lead_and_asymmetric_root_pairs_keep_geometry_phase_history_and_step() {
     let mut cases: Vec<ThreadParameters> = model::lead_screw_presets()
@@ -83,8 +62,7 @@ fn sourced_lead_and_asymmetric_root_pairs_keep_geometry_phase_history_and_step()
             cases.push(p);
         }
     }
-    #[cfg(feature = "occt")]
-    let mut native_step_errors = Vec::<String>::new();
+
     for (index, mut p) in cases.into_iter().enumerate() {
         let mut s =
             Session::new(Document::new("Rust lead and buttress geometry").unwrap()).unwrap();
@@ -139,9 +117,7 @@ fn sourced_lead_and_asymmetric_root_pairs_keep_geometry_phase_history_and_step()
         .unwrap();
         let rust =
             compile(&s, GeometryBackend::Rust).unwrap_or_else(|e| panic!("case{index}: {e}"));
-        #[cfg(feature = "occt")]
-        let native = compile(&s, GeometryBackend::OpenCascade)
-            .unwrap_or_else(|e| panic!("native model case{index}: {e}"));
+
         for (internal, request) in [(false, &male), (true, &female)] {
             let solid = rust.solid(request.feature).unwrap();
             assert!(solid.uses_rust_geometry());
@@ -165,17 +141,7 @@ fn sourced_lead_and_asymmetric_root_pairs_keep_geometry_phase_history_and_step()
                         + sign * (r.profile.crest_width_mm / 2. + drop * angle.to_radians().tan());
                     for (offset, in_profile) in [(-0.001, true), (0.001, false)] {
                         let point = [r.major_radius_mm - drop + offset, 0., z];
-                        #[cfg(feature = "occt")]
-                        if r.buttress.is_some() && fraction == 0.6 {
-                            assert_eq!(
-                                native_material(
-                                    native.solid(request.feature).unwrap(),
-                                    world(point)
-                                ),
-                                if internal { !in_profile } else { in_profile },
-                                "native phase case{index} internal{internal} flank{sign}"
-                            );
-                        }
+
                         assert_eq!(
                             solid.rust_thread_contains(world(point)).unwrap(),
                             if internal { !in_profile } else { in_profile },
@@ -190,12 +156,7 @@ fn sourced_lead_and_asymmetric_root_pairs_keep_geometry_phase_history_and_step()
                     let z =
                         2. * r.pitch_mm + circle.center_axial_mm + circle.radius_mm * angle.sin();
                     let boundary = circle.center_radius_mm - circle.radius_mm * angle.cos();
-                    #[cfg(feature = "occt")]
-                    {
-                        let native = native.solid(request.feature).unwrap();
-                        assert!(native_material(native, world([boundary - 0.001, 0., z])));
-                        assert!(!native_material(native, world([boundary + 0.001, 0., z])));
-                    }
+
                     assert!(
                         solid
                             .rust_thread_contains(world([boundary - 0.001, 0., z]))
@@ -225,45 +186,8 @@ fn sourced_lead_and_asymmetric_root_pairs_keep_geometry_phase_history_and_step()
             )
             .unwrap();
             assert!((imported.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < 1e-3);
+        }
 
-            #[cfg(feature = "occt")]
-            {
-                match multicad_kernel::Solid::read_step(&path, Default::default()) {
-                    Ok(read) => assert!(
-                        (read.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < 1e-3
-                    ),
-                    Err(error) => {
-                        native_step_errors.push(format!("case{index} internal{internal}: {error}"))
-                    }
-                }
-            }
-        }
-        #[cfg(feature = "occt")]
-        {
-            for id in [male.feature, female.feature] {
-                let (a, b) = (native.solid(id).unwrap(), rust.solid(id).unwrap());
-                assert!(
-                    (a.volume_mm3().unwrap() - b.volume_mm3().unwrap()).abs() < 1e-3,
-                    "native volume case{index}"
-                );
-                for (a, b) in a
-                    .bounds()
-                    .unwrap()
-                    .min
-                    .into_iter()
-                    .chain(a.bounds().unwrap().max)
-                    .zip(
-                        b.bounds()
-                            .unwrap()
-                            .min
-                            .into_iter()
-                            .chain(b.bounds().unwrap().max),
-                    )
-                {
-                    assert!((a - b).abs() < 1e-5, "native bound case{index}");
-                }
-            }
-        }
         let before = s.document().clone();
         let updated = ThreadParameters {
             length: length(3.75 * resolved.pitch_mm),
@@ -319,16 +243,10 @@ fn sourced_lead_and_asymmetric_root_pairs_keep_geometry_phase_history_and_step()
         );
         assert_eq!(s.document(), &after);
     }
-    #[cfg(feature = "occt")]
-    assert!(
-        native_step_errors.is_empty(),
-        "{}",
-        native_step_errors.join("\n")
-    );
 }
 
 #[test]
-fn rounded_and_tapered_other_families_are_not_enabled_by_straight_admission() {
+fn sourced_rounded_and_tapered_families_keep_their_distinct_admitted_laws() {
     let mut cases: Vec<_> = model::whitworth_thread_presets()
         .into_iter()
         .map(|row| ThreadParameters {
@@ -362,11 +280,14 @@ fn rounded_and_tapered_other_families_are_not_enabled_by_straight_admission() {
         .parameters(),
     );
     for parameters in cases {
-        let s =
-            Session::new(Document::new("Unsupported rounded or tapered family").unwrap()).unwrap();
-        let request = ThreadRequest::new("Unsupported sourced profile", parameters);
+        let s = Session::new(Document::new("Distinct rounded or tapered family").unwrap()).unwrap();
+        let family = parameters.family;
+        let resolved = parameters
+            .resolve(s.parameters(), ThreadMode::NewExternal)
+            .unwrap();
+        let request = ThreadRequest::new("Sourced profile", parameters);
         let candidate = model::prepare_thread(&s, 0, actor(), &request).unwrap();
-        let error = Compiler {
+        let compiled = Compiler {
             omit_display: true,
             ..Default::default()
         }
@@ -375,11 +296,76 @@ fn rounded_and_tapered_other_families_are_not_enabled_by_straight_admission() {
             1,
             GeometryBackend::Rust,
             None,
-        )
-        .err()
-        .expect("Unsupported sourced family must not be rewritten as a straight custom profile");
-        assert_eq!(error.entity, Some(request.feature));
-        assert!(error.message.contains("Rust thread geometry"), "{error}");
+        );
+        if family == ThreadFamily::Npt {
+            let compiled = compiled.unwrap();
+            let solid = compiled.solid(request.feature).unwrap();
+            let clipped = solid
+                .rust_clipped_npt_source()
+                .expect("Actual clipped material, not the untrimmed pipe provider");
+            let spec = clipped.source().spec();
+            assert_eq!(spec.major_radius_mm, resolved.major_radius_mm);
+            assert_eq!(spec.pitch_mm, resolved.pitch_mm);
+            assert_eq!(spec.length_mm, resolved.length_mm);
+            let limit = resolved
+                .npt
+                .as_ref()
+                .unwrap()
+                .stock_crest_radius_limit_mm
+                .unwrap();
+            assert_eq!(clipped.stock_radius_limit_mm(), limit);
+            // Four thread bands, the actual stock cylinder and two end caps.
+            // The independent STEP rectangular partition has separate owners.
+            assert_eq!(solid.faces().unwrap().len(), 7);
+            assert!(solid.rust_clipped_npt_face_measures().unwrap().iter().any(|face| face.face() == multicad_kernel::rust_kernel::axial_pipe_thread::authored::StockClipFace::StockCylinder));
+            assert!(
+                solid
+                    .rust_clipped_npt_contains([0., 0., resolved.length_mm / 2.])
+                    .unwrap()
+            );
+            assert!(
+                !solid
+                    .rust_clipped_npt_contains([limit + 0.01, 0., resolved.length_mm / 2.])
+                    .unwrap()
+            );
+            let bounds = solid.bounds().unwrap();
+            assert!((bounds.max[0] - limit).abs() < 1e-10);
+            assert!((bounds.max[2] - resolved.length_mm).abs() < 1e-10);
+            let [lo, hi] = solid.rust_clipped_npt_volume_bounds_mm3().unwrap();
+            let volume = solid.volume_mm3().unwrap();
+            assert!(lo > 0. && lo <= volume && volume <= hi);
+        } else {
+            let compiled = compiled.unwrap();
+            let solid = compiled.solid(request.feature).unwrap();
+            assert!(solid.uses_rust_geometry());
+            if family == ThreadFamily::Bspt {
+                let (source, _) = solid
+                    .rust_authored_axial_pipe_thread_source()
+                    .expect("Actual authored pipe law");
+                let spec = source.transport.spec();
+                assert_eq!(spec.major_radius_mm, resolved.major_radius_mm);
+                assert_eq!(spec.pitch_mm, resolved.pitch_mm);
+                assert_eq!(spec.length_mm, resolved.length_mm);
+                assert_eq!(spec.radial_taper, resolved.profile.radial_taper);
+                assert!(matches!(spec.section, multicad_kernel::rust_kernel::axial_pipe_thread::authored::AuthoredSection::BsptRounded { .. }));
+            } else {
+                let data = solid
+                    .rust_rounded_thread_data()
+                    .expect("Actual two-circle rounded law");
+                let spec = data.thread.spec();
+                assert_eq!(spec.major_radius_mm, resolved.major_radius_mm);
+                assert_eq!(spec.pitch_mm, resolved.pitch_mm);
+                assert_eq!(spec.length_mm, resolved.length_mm);
+                assert_eq!(spec.depth_mm, resolved.profile.depth_mm);
+                assert_eq!(
+                    Some(spec.crest_radius_mm),
+                    resolved.profile.rounding_radius_mm
+                );
+                assert_eq!(spec.root_radius_mm, spec.crest_radius_mm);
+                assert_eq!(spec.flank_angle_deg, resolved.profile.lower_flank_deg);
+            }
+            assert!(solid.volume_mm3().unwrap() > 0.);
+        }
         assert_eq!(s.revision(), 0);
     }
 }

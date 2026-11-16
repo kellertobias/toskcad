@@ -1026,7 +1026,7 @@ pub(crate) fn prepare(
     let crest_clearance = closure.tangent_shank().is_some()
         || matches!(closure, Closure::Profiled(_))
         || matches!(closure,Closure::ExternalStock {radius_mm,..} if radius_mm==major);
-    reference_basis(thread, visible_z, tolerance, crest_clearance)
+    reference_basis(thread, visible_z, tolerance, crest_clearance, None)
 }
 
 /// Reconstructed local reference carrier only, for measured matching against
@@ -1044,15 +1044,69 @@ pub(crate) fn prepare_retained_reference(
     {
         return Err(StepError::InvalidGeometry);
     }
-    reference_basis(thread, visible_z, tolerance_mm.min(MAX_ERROR_MM), true)
+    reference_basis(
+        thread,
+        visible_z,
+        tolerance_mm.min(MAX_ERROR_MM),
+        true,
+        None,
+    )
+}
+/// Earned original tensor grid, used only by explicit supplied-law comparison.
+/// Each factory must match these counts BEFORE allocating knots or poles.
+#[derive(Clone, Copy)]
+pub(crate) struct RetainedReferenceGrid {
+    pub radial_poles: [usize; 4],
+    pub axial_poles: usize,
+    pub axial_entry: usize,
+}
+pub(crate) fn prepare_retained_reference_matching(
+    thread: &Thread,
+    visible_z: f64,
+    tolerance_mm: f64,
+    grid: RetainedReferenceGrid,
+) -> Result<ThreadSplines, StepError> {
+    if !visible_z.is_finite()
+        || visible_z < 0.
+        || visible_z >= thread.spec().length_mm
+        || !tolerance_mm.is_finite()
+        || tolerance_mm <= 0.
+    {
+        return Err(StepError::InvalidGeometry);
+    }
+    if grid
+        .radial_poles
+        .into_iter()
+        .any(|n| !(12..=11265).contains(&n) || !(n - 1).is_multiple_of(11))
+        || grid.axial_poles < 12
+        || grid.axial_poles > 22529
+        || !(grid.axial_poles - 1).is_multiple_of(11)
+        || !grid.axial_entry.is_multiple_of(11)
+        || grid.axial_entry > grid.axial_poles - 12
+        || grid.axial_entry > 11264
+        || grid.axial_poles - grid.axial_entry > 11265
+    {
+        return Err(StepError::Unsupported);
+    }
+    reference_basis(
+        thread,
+        visible_z,
+        tolerance_mm.min(MAX_ERROR_MM),
+        true,
+        Some(grid),
+    )
 }
 fn reference_basis(
     thread: &Thread,
     visible_z: f64,
     tolerance: f64,
     crest_clearance: bool,
+    expected: Option<RetainedReferenceGrid>,
 ) -> Result<ThreadSplines, StepError> {
     let spec = thread.spec();
+    if expected.is_some() && spec.starts != 1 {
+        return Err(StepError::Unsupported);
+    }
     let height = spec.length_mm;
     let major = spec.major_radius_mm;
     let rate = thread.helical_rate();
@@ -1064,8 +1118,22 @@ fn reference_basis(
     let hand = rate.signum();
     let (axial, heights, visible_start) = if visible_z > 0. {
         let split = visible_z / rate.abs();
-        let mut prefix = Spline::new(0., split, [1., 1.], hand, tolerance / (8. * major))?;
-        let suffix = Spline::new(split, spin, [1., 1.], hand, tolerance / (8. * major))?;
+        let mut prefix = Spline::new_matching(
+            0.,
+            split,
+            [1., 1.],
+            hand,
+            tolerance / (8. * major),
+            expected.map(|g| g.axial_entry + 1),
+        )?;
+        let suffix = Spline::new_matching(
+            split,
+            spin,
+            [1., 1.],
+            hand,
+            tolerance / (8. * major),
+            expected.map(|g| g.axial_poles - g.axial_entry),
+        )?;
         let visible_start = prefix.poles.len() - 1;
         // These are newly certified Hermite cells on both sides of the trim,
         // not knot insertion into an older approximation. The shared endpoint
@@ -1078,7 +1146,17 @@ fn reference_basis(
         heights.extend_from_slice(&suffix_heights[1..]);
         (prefix, heights, visible_start)
     } else {
-        let axial = Spline::new(0., spin, [1., 1.], hand, tolerance / (8. * major))?;
+        if expected.is_some_and(|g| g.axial_entry != 0) {
+            return Err(StepError::Unsupported);
+        }
+        let axial = Spline::new_matching(
+            0.,
+            spin,
+            [1., 1.],
+            hand,
+            tolerance / (8. * major),
+            expected.map(|g| g.axial_poles),
+        )?;
         let heights = axial.linear_poles(height);
         (axial, heights, 0)
     };
@@ -1100,21 +1178,35 @@ fn reference_basis(
                 && let Some(mut circle) = circle
             {
                 circle.phase += shift;
-                Spline::rounded_root(
-                    circle,
-                    [p[0], p[1]],
-                    [r[0], r[1]],
-                    rate.abs(),
-                    -hand,
-                    tolerance / 8.,
-                )?
+                let count = expected.map(|g| g.radial_poles[4 * start_index as usize + band]);
+                if count.is_some() {
+                    Spline::rounded_root_matching(
+                        circle,
+                        [p[0], p[1]],
+                        [r[0], r[1]],
+                        rate.abs(),
+                        -hand,
+                        tolerance / 8.,
+                        expected.map(|g| g.radial_poles[4 * start_index as usize + band]),
+                    )?
+                } else {
+                    Spline::rounded_root(
+                        circle,
+                        [p[0], p[1]],
+                        [r[0], r[1]],
+                        rate.abs(),
+                        -hand,
+                        tolerance / 8.,
+                    )?
+                }
             } else {
-                Spline::new(
+                Spline::new_matching(
                     p[0] / rate.abs(),
                     p[1] / rate.abs(),
                     [r[0], r[1]],
                     -hand,
                     tolerance / 8.,
+                    expected.map(|g| g.radial_poles[4 * start_index as usize + band]),
                 )?
             };
             bands.push(spline);
@@ -1174,6 +1266,16 @@ impl Spline {
         sense: f64,
         error: f64,
     ) -> Result<Self, StepError> {
+        Self::new_matching(a, b, radii, sense, error, None)
+    }
+    pub(super) fn new_matching(
+        a: f64,
+        b: f64,
+        radii: [f64; 2],
+        sense: f64,
+        error: f64,
+        expected: Option<usize>,
+    ) -> Result<Self, StepError> {
         let span = b - a;
         let slope = (radii[1] - radii[0]) / span;
         let max_derivative = radii[0].max(radii[1]) + (DEGREE + 1) as f64 * slope.abs();
@@ -1181,7 +1283,7 @@ impl Spline {
         // Applying the scalar bound to a projection along the error vector
         // bounds the complex norm without a component-wise penalty.
         let span_limit = 2. * (error * FACTORIAL / max_derivative).powf(1. / 12.);
-        Self::with_jets(a, b, span_limit, |t| {
+        let jet = |t| {
             let r = if t == a {
                 radii[0]
             } else if t == b {
@@ -1190,7 +1292,12 @@ impl Spline {
                 radii[0] + slope * (t - a)
             };
             affine_jet(t, r, slope, sense)
-        })
+        };
+        if let Some(count) = expected {
+            Self::with_jets_matching(a, b, span_limit, Some(count), jet)
+        } else {
+            Self::with_jets(a, b, span_limit, jet)
+        }
     }
 
     pub(super) fn with_jets(
@@ -1199,12 +1306,28 @@ impl Spline {
         span_limit: f64,
         jet: impl Fn(f64) -> [Complex; JETS],
     ) -> Result<Self, StepError> {
+        Self::with_jets_matching(a, b, span_limit, None, jet)
+    }
+    pub(super) fn with_jets_matching(
+        a: f64,
+        b: f64,
+        span_limit: f64,
+        expected: Option<usize>,
+        jet: impl Fn(f64) -> [Complex; JETS],
+    ) -> Result<Self, StepError> {
         let span = b - a;
         let segments = (span / span_limit).ceil();
         if !(1. ..=1024.).contains(&segments) {
             return Err(StepError::Limit);
         }
         let segments = segments as usize;
+        let points = segments
+            .checked_mul(DEGREE)
+            .and_then(|n| n.checked_add(1))
+            .ok_or(StepError::Limit)?;
+        if expected.is_some_and(|count| count != points) {
+            return Err(StepError::Unsupported);
+        }
         let knots = (0..=segments)
             .map(|i| {
                 if i == segments {
@@ -1214,7 +1337,7 @@ impl Spline {
                 }
             })
             .collect::<Vec<_>>();
-        let mut poles = Vec::with_capacity(segments * DEGREE + 1);
+        let mut poles = Vec::with_capacity(points);
         for pair in knots.windows(2) {
             let [start, end] = [pair[0], pair[1]];
             let length = end - start;
@@ -1726,3 +1849,6 @@ mod nut_tests;
 
 #[cfg(test)]
 mod hex_shank_tests;
+
+#[cfg(test)]
+mod matching_tests;

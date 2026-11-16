@@ -13,8 +13,7 @@ use multicad_core::{
         length,
     },
 };
-#[cfg(feature = "occt")]
-use multicad_kernel::Solid;
+
 use multicad_model::{
     Compiler, GeometryBackend,
     export::{ExportWorker, Exporter},
@@ -102,20 +101,6 @@ fn publish(session: &Session, set: EntityId, directory: &Path) -> RunReceipt {
     run.unwrap()
 }
 
-#[cfg(feature = "occt")]
-fn native_readback(path: &Path, expected: &Solid) {
-    let native = Solid::read_step(path, Default::default()).unwrap();
-    assert_eq!(
-        native.solid_count().unwrap(),
-        expected.solid_count().unwrap()
-    );
-    let volume = expected.volume_mm3().unwrap();
-    near(native.volume_mm3().unwrap(), volume, 1e-7 * volume);
-    let bounds = native.bounds().unwrap();
-    let expected = expected.bounds().unwrap();
-    bounds_match([bounds.min, bounds.max], [expected.min, expected.max], 2e-3);
-}
-
 #[test]
 fn placed_bevel_pair_assemblies_export_one_verified_two_solid_step() {
     let mut session = Session::new(Document::new("Bevel pair assembly").unwrap()).unwrap();
@@ -169,8 +154,6 @@ fn placed_bevel_pair_assemblies_export_one_verified_two_solid_step() {
     near(volume, expected, 1e-8 * expected);
     let world = aggregate.bounds().unwrap();
     bounds_match(bounds, [world.min, world.max], 1e-9);
-    #[cfg(feature = "occt")]
-    native_readback(&path, aggregate);
     println!("{{\"assembled_bevel_pair_volume_mm3\":{expected},\"rust_readback_mm3\":{volume}}}");
 
     // A placed member exported alone cannot pass as the pair, and a
@@ -267,11 +250,6 @@ fn placed_bevel_pair_assemblies_export_one_verified_two_solid_step() {
             file.artifact.volume_mm3,
             leaf.volume_mm3().unwrap(),
             1e-8 * file.artifact.volume_mm3,
-        );
-        #[cfg(feature = "occt")]
-        native_readback(
-            &Path::new(&run.directory).join(&file.artifact.output.filename),
-            leaf,
         );
     }
 }

@@ -7,6 +7,9 @@ const MIN_WORK: usize = 2_097_152;
 pub(in crate::radial_tensor) fn refill(balance: &mut usize, needed: usize) -> Result<(), Error> {
     credits::refill(balance, needed)
 }
+pub(in crate::radial_tensor) fn local_budget<T>(f: impl FnOnce() -> T) -> T {
+    credits::local_budget(f)
+}
 #[allow(clippy::too_many_arguments)]
 pub(super) fn check(
     p: &mut Prepared<'_>,

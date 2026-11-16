@@ -137,6 +137,53 @@ fn add(s: &mut Session, p: MechanicalPartParameters) -> MechanicalPartRequest {
 }
 fn probe(s: &Solid, p: [f64; 3], inside: bool) {
     let d = 0.002;
+    if s.rust_periodic_repaired_phillips_source().is_some() {
+        use multicad_kernel::rust_kernel::phillips_drive::Classification;
+        let location = s
+            .rust_periodic_repaired_phillips_classify_world_box(
+                p.map(|v| [v - d / 2., v + d / 2.]),
+                Default::default(),
+                None,
+            )
+            .unwrap()
+            .location();
+        assert_eq!(
+            location,
+            if inside {
+                Classification::Inside
+            } else {
+                Classification::Outside
+            },
+            "Actual material box at {p:?}"
+        );
+        return;
+    }
+    if s.rust_profiled_screw_geometry().is_some()
+        || s.rust_phillips_screw_geometry().is_some()
+        || s.rust_repaired_phillips_source().is_some()
+    {
+        // Query the actual retained head/recess/thread material at the center
+        // and every former Boolean probe corner, in original world coordinates.
+        for mask in 0..9 {
+            let sample = if mask == 8 {
+                p
+            } else {
+                std::array::from_fn(|i| {
+                    p[i] + if mask & (1 << i) == 0 {
+                        -d / 2.
+                    } else {
+                        d / 2.
+                    }
+                })
+            };
+            assert_eq!(
+                s.rust_thread_contains(sample).unwrap(),
+                inside,
+                "Actual material at {sample:?}"
+            );
+        }
+        return;
+    }
     let q = Solid::box_solid([d; 3], GeometryPolicy::default())
         .unwrap()
         .transformed(RigidTransform {
@@ -487,8 +534,14 @@ fn real_head_lands_necks_and_hexalobular_or_hex_recesses_match_independent_volum
         if matches!(drive, ResolvedScrewDrive::Hexalobular { .. }) {
             let snapshot = solid.topology_snapshot(r.feature, s.revision()).unwrap();
             for sector in 0..6 {
-                for curve in ["lobe", "valley"] {
-                    let role = format!("screw.hexalobular/{curve}/{sector}");
+                for (index, curve) in ["lobe", "valley"].into_iter().enumerate() {
+                    let role = if solid.rust_profiled_screw_geometry().is_some() {
+                        // Native source owners identify the twelve actual cavity
+                        // arcs by their immutable source index.
+                        format!("screw.drive/edge/{}", 2 * sector + index)
+                    } else {
+                        format!("screw.hexalobular/{curve}/{sector}")
+                    };
                     assert!(
                         snapshot
                             .elements
@@ -518,9 +571,8 @@ fn real_head_lands_necks_and_hexalobular_or_hex_recesses_match_independent_volum
     }
 }
 
-#[test]
-fn true_cc_phillips_h0_through_h4_preserve_real_wings_rounding_depth_and_step() {
-    let cases = [
+fn canonical_phillips_cases() -> [MechanicalPartParameters; 6] {
+    [
         recipe(
             ScrewHead::Pan {
                 profile: Box::new(model::CrownedScrewHeadParameters {
@@ -610,7 +662,11 @@ fn true_cc_phillips_h0_through_h4_preserve_real_wings_rounding_depth_and_step() 
             8.,
             1.25,
         ),
-    ];
+    ]
+}
+#[test]
+fn true_cc_phillips_h0_through_h4_preserve_real_wings_rounding_depth_and_step() {
+    let cases = canonical_phillips_cases();
     let dir = tempfile::tempdir().unwrap();
     for (index, p) in cases.into_iter().enumerate() {
         let mut s = session();
@@ -853,4 +909,163 @@ fn native_profile_minimum_feature_rejects_thin_annulus_and_floor_but_allows_coun
     let tip = -head.height_mm() + drive.removed_depth_mm();
     probe(solid, [0., 0., tip - 0.03], false);
     probe(solid, [0., 0., tip + 0.03], true);
+}
+
+#[test]
+fn canonical_phillips_h0_h4_both_hands_keep_qualified_geometry_and_step_contracts() {
+    use multicad_model::GeometryBackend;
+    for (index, parameters) in canonical_phillips_cases().into_iter().enumerate() {
+        for left in [false, true] {
+            let mut parameters = parameters.clone();
+            let MechanicalPartParameters::MachineScrew { thread, .. } = &mut parameters else {
+                unreachable!()
+            };
+            thread.hand = if left {
+                model::ThreadHand::Left
+            } else {
+                model::ThreadHand::Right
+            };
+            let mut session = session();
+            let request = add(&mut session, parameters);
+            let compiled = Compiler::default()
+                .compile_with_backend(
+                    session.document(),
+                    session.revision(),
+                    GeometryBackend::Rust,
+                    None,
+                )
+                .unwrap();
+            assert!(
+                !compiled.snapshot().shapes[&request.feature]
+                    .mesh
+                    .indices
+                    .is_empty()
+            );
+            let solid = compiled.solid(request.feature).unwrap();
+            let periodic = solid.rust_periodic_repaired_phillips_source();
+            if let Some((source, _)) = periodic {
+                assert_eq!(source.thread().left_hand(), left);
+                assert_eq!(source.head_z_shift_mm(), 6. - source.thread().length_mm());
+            } else {
+                let (source, _) = solid.rust_phillips_screw_geometry().unwrap();
+                assert_eq!(source.thread().spec().left_hand, left);
+                assert_eq!(
+                    source.spec().shank_length_mm,
+                    6. - source.thread().spec().length_mm
+                );
+            }
+            assert!(solid.faces().unwrap().iter().all(|f| f.area_mm2 > 0.));
+            let mesh = solid
+                .manufacturing_mesh_with_receipt(Default::default())
+                .unwrap();
+            assert!(mesh.edge_pairs > 0 && mesh.vertex_links > 0, "case{index}");
+            if let Some((source, _)) = periodic {
+                let (_, pair) = solid
+                    .rust_periodic_repaired_phillips_display_mesh_with_receipt(
+                        Default::default(),
+                        Default::default(),
+                        None,
+                    )
+                    .unwrap();
+                assert!(std::ptr::eq(source, pair.source()));
+                assert!(pair.embedding_pairs() > 0 && pair.literal_signed_volume_mm3() > 0.);
+                let volume = pair.new_source_volume_mm3();
+                assert!(
+                    volume[0] <= solid.volume_mm3().unwrap()
+                        && solid.volume_mm3().unwrap() <= volume[1]
+                );
+            } else {
+                assert!(solid.rust_phillips_mesh_volume_pair().is_some());
+            }
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("physical.step");
+            if periodic.is_some() {
+                assert!(solid.supports_step_export());
+                solid.write_step(&path).unwrap();
+                let receipt = multicad_model::export::verify_rust_step_shape_receipt(
+                    &path,
+                    solid,
+                    &compiled.snapshot().shapes[&request.feature],
+                    1e-7,
+                )
+                .unwrap();
+                assert_eq!(
+                    receipt.method,
+                    multicad_model::export::StepVerificationMethod::DecodedPeriodicRepair
+                );
+                assert!(receipt.decoded_volume_mm3.is_none());
+                assert_eq!(receipt.periodic_members.len(), 1);
+                let interval = receipt.periodic_members[0].decoded_volume_bounds_mm3;
+                assert!(interval[0] > 0. && interval[0] <= interval[1]);
+                let imported = multicad_kernel::Solid::import_rust_step(
+                    &std::fs::read_to_string(&path).unwrap(),
+                    multicad_core::document::EntityId::new(),
+                    Default::default(),
+                )
+                .unwrap();
+                assert!(imported.rust_periodic_repaired_phillips_source().is_some());
+                assert!(
+                    (imported.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < 1e-5
+                );
+            } else {
+                assert!(!solid.supports_step_export());
+                std::fs::write(&path, b"accepted geometry").unwrap();
+                assert!(solid.write_step(&path).is_err());
+                assert_eq!(std::fs::read(&path).unwrap(), b"accepted geometry");
+            }
+        }
+    }
+}
+
+#[test]
+fn core_entering_countersunk_cavity_keeps_existing_physical_source() {
+    let mut parameters = canonical_phillips_cases()[2].clone();
+    let MechanicalPartParameters::MachineScrew {
+        underhead_length,
+        thread,
+        ..
+    } = &mut parameters
+    else {
+        unreachable!()
+    };
+    *underhead_length = Some(thread.length.clone());
+    let mut session = session();
+    let request = add(&mut session, parameters.clone());
+    let compiled = compiler()
+        .compile(session.document(), session.revision())
+        .unwrap();
+    let solid = compiled.solid(request.feature).unwrap();
+    assert!(solid.rust_periodic_repaired_phillips_source().is_none());
+    let (retained, _) = solid.rust_phillips_screw_geometry().unwrap();
+    assert_eq!(retained.spec().shank_length_mm, 0.);
+    assert!(solid.volume_mm3().unwrap() > 0.);
+    assert!(!solid.supports_step_export());
+    let ResolvedMechanicalPart::MachineScrew { head, drive, .. } =
+        parameters.resolve(session.parameters()).unwrap()
+    else {
+        unreachable!()
+    };
+    let tip = -head.height_mm() + drive.removed_depth_mm();
+    probe(solid, [0., 0., tip - 0.03], false);
+    probe(solid, [0., 0., tip + 0.03], true);
+    let mut bytes = Vec::new();
+    project_file::write(
+        &ProjectFile::new(session.document().clone()).unwrap(),
+        &mut bytes,
+        Default::default(),
+    )
+    .unwrap();
+    let reopened = project_file::read(
+        &mut bytes.as_slice(),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap()
+    .project;
+    let cold = compiler()
+        .compile(&reopened.document, session.revision())
+        .unwrap();
+    let restored = cold.solid(request.feature).unwrap();
+    assert!(restored.rust_periodic_repaired_phillips_source().is_none());
+    assert!((restored.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < 1e-7);
 }

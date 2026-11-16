@@ -67,6 +67,61 @@ pub(super) fn qualify(
         .map_err(|cause| error(Some(id), cause))?;
     let metric_nut = matches!(mapped.parameters, model::MechanicalPartParameters::HexNut {thread,..} if thread.family == ThreadFamily::IsoMetric);
     match (row.role, &actual.part) {
+        (Role::HangerBolt, ResolvedMechanicalPart::CustomConnection { parameters }) => {
+            let model::ResolvedCustomConnectionHardware::HangerBolt {
+                wood_thread,
+                metric_thread,
+                plain_length_mm,
+                plain_radius_mm,
+                ..
+            } = parameters.as_ref()
+            else {
+                return Err(fail(
+                    "Pinned hanger requires its actual connected hanger source",
+                ));
+            };
+            let data = actual
+                .solid
+                .rust_hanger_data()
+                .ok_or_else(|| fail("Pinned hanger lost its actual connected material"))?;
+            let (wood, root, _) = crate::threads::rust_profile(id, wood_thread)?;
+            let (metric, metric_root, _) = crate::threads::rust_profile(id, metric_thread)?;
+            let expected_wood = multicad_kernel::rust_kernel::helical_thread::Spec {
+                major_radius_mm: wood.major_radius_mm,
+                pitch_mm: wood.pitch_mm,
+                length_mm: wood.length_mm,
+                depth_mm: wood.depth_mm,
+                crest_width_mm: wood.crest_width_mm,
+                lower_flank_deg: wood.lower_flank_deg,
+                upper_flank_deg: wood.upper_flank_deg,
+                starts: wood.starts,
+                left_hand: wood.left_hand,
+                root_radius_mm: root,
+            };
+            let expected_metric = multicad_kernel::rust_kernel::authored_metric_thread::Spec {
+                major_radius_mm: metric.major_radius_mm,
+                pitch_mm: metric.pitch_mm,
+                length_mm: metric.length_mm,
+                crest_width_mm: metric.crest_width_mm,
+                starts: metric.starts,
+                left_hand: metric.left_hand,
+            };
+            if root.is_some()
+                || metric_root.is_none()
+                || data.source.wood().spec() != expected_wood
+                || data.source.metric().spec() != expected_metric
+                || data.source.spec().plain_length_mm != *plain_length_mm
+                || data.source.spec().plain_radius_mm != *plain_radius_mm
+            {
+                return Err(fail(
+                    "Actual pinned hanger differs from its current resolved material",
+                ));
+            }
+            // Current mapped producer owns the actual source. Complete stack
+            // certification separately checks its raw frame, phase and every
+            // contact; the Library pin grants no placement/material exemption.
+            Ok(())
+        }
         (Role::HeadWasher | Role::NutWasher, ResolvedMechanicalPart::Washer { .. }) => {
             // The common bearing proof checks actual ring dimensions and the
             // complete placed frame; a pin cannot waive that physical check.
@@ -116,7 +171,7 @@ pub(super) fn qualify(
             Ok(())
         }
         _ => Err(fail(
-            "Pinned connection hardware requires an ISO metric nut or a flat washer",
+            "Pinned connection hardware requires an actual hanger, ISO metric nut or flat washer",
         )),
     }
 }

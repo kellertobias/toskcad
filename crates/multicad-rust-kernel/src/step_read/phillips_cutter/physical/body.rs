@@ -4,6 +4,11 @@
 use super::*;
 use crate::step_read::helical_import::{law::Law, seed::TensorHeader};
 mod outer;
+mod periodic_read;
+pub use periodic_read::{
+    PeriodicMaterialRead, PeriodicReadError, PeriodicReadOptions, PeriodicReadStage,
+    read_periodic_phillips_material, read_periodic_phillips_material_with_progress,
+};
 mod retained;
 pub use outer::{OuterCarrierBounds, OuterCarrierOptions, TensorCarrierBound};
 pub use retained::{ExactPointLeaf, OriginalNumericLeaf, OriginalNumericLeaves};
@@ -239,4 +244,37 @@ pub use common_mouth::{
 mod closed_head;
 pub use closed_head::{
     ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHeadSupportKind,
+};
+
+mod derived_thread;
+pub use derived_thread::{
+    AnalyticThreadOptions, AnalyticThreadRepair, AnalyticThreadTransfer, AuthoredPeriodicOptions,
+    CoherentDegree11ThreadCarrier, CommonChartPeriodicThreadRepair, ContactThreadCarrier,
+    Degree11ClosedMaterial, Degree11ContactOptions, Degree11DomainEnd, Degree11JoinCollar,
+    Degree11MaterialFace, Degree11MaterialOptions, Degree11MaterialVolume,
+    Degree11MaterialVolumeOptions, Degree11OccupiedOptions, Degree11OwnedMaterialOptions,
+    Degree11RimContact, Degree11RimContactId, Degree11RimKnot, Degree11RimUse, Degree11SignDomain,
+    Degree11ThreadContacts, Degree11ThreadFace, Degree11ThreadOptions, DerivedThreadCarrier,
+    DerivedThreadOptions, DyadicParameter, OccupiedDegree11Thread, OccupiedDerivedThread,
+    OwnedDegree11Material, OwnedPeriodicMaterial, PeriodicAuthoredApproximation,
+    PeriodicClosedMaterial, PeriodicCurveOwner, PeriodicCurveQuery, PeriodicFaceProperties,
+    PeriodicFiniteCurve, PeriodicFiniteCurves, PeriodicFiniteKind, PeriodicFiniteOptions,
+    PeriodicGeometryApproximation, PeriodicLiteralCertificate, PeriodicMaterialFace,
+    PeriodicMaterialMatch, PeriodicMaterialMatchOptions, PeriodicMaterialOptions,
+    PeriodicMaterialProvenance, PeriodicMaterialVolume, PeriodicOwnedMaterialQuery,
+    PeriodicOwnedOptions, PeriodicProposalOrigin, PeriodicShoulderOptions, PeriodicShoulderRepair,
+    PeriodicThreadBounds, PeriodicThreadCorrespondence, PeriodicThreadRepair, PeriodicThreadSource,
+    PeriodicVolumeOptions, RimContact, RimContactId, RimDomainEnd, RimDomainRole, RimKnot,
+    RimSignDomain, SuppliedThreadCorrespondence, ThreadCarrierTransfer, ThreadContactOptions,
+};
+
+mod material;
+
+pub use material::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSource};
+
+pub use material::{MaterialVolume, MaterialVolumeOptions};
+
+pub use material::{
+    DelegatedWorkspaceBounds, JoinedMaterialCandidate, JoinedMeshOptions, OwnedDerivedMaterial,
+    OwnedMaterialOptions, OwnedMaterialQuery, OwnedMaterialQueryError, OwnedMaterialQueryOptions,
 };

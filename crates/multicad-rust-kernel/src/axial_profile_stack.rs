@@ -3,7 +3,9 @@
 use crate::normal_sweep::Edge as Edge2;
 use std::{f64::consts::PI, ops::Range};
 
+mod blind_counterbore;
 mod shell;
+pub use blind_counterbore::{BlindCounterboreSource, RectangularBlindCounterbore};
 #[cfg(test)]
 mod tests;
 
@@ -59,6 +61,11 @@ pub enum Support {
         center_mm: Point2,
         radius_mm: f64,
     },
+    /// Material faces into a retained circular cavity.
+    InwardCylinder {
+        center_mm: Point2,
+        radius_mm: f64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -85,6 +92,7 @@ pub struct ProfileStack {
     vertices: Vec<Point>,
     edges: Vec<Edge>,
     faces: Vec<Face>,
+    blind_counterbore: Option<RectangularBlindCounterbore>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

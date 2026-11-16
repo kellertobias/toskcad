@@ -832,3 +832,66 @@ fn tiny_positive_authored_features_are_retained_as_source_expressions_without_cl
         Err(Error::Unresolved)
     ));
 }
+
+#[test]
+fn actual_cavity_whole_boxes_preserve_interior_exterior_and_surface_uncertainty() {
+    for index in 0..6 {
+        let (spec, domain) = fixture(index);
+        let cutter = Cutter::new(spec, domain).unwrap();
+        let interior = [[-1e-5, 1e-5], [-1e-5, 1e-5], [0.09, 0.11]];
+        assert_eq!(cutter.classify_box_mm(interior), Ok(Classification::Inside));
+        let outer = cutter.bounding_box_mm();
+        for exterior in [
+            [[outer[1][0] + 0.1, outer[1][0] + 0.2], [-1., 1.], [0., 1.]],
+            [[-1., 1.], [-1., 1.], [-0.2, -0.1]],
+            [[-1., 1.], [-1., 1.], [outer[1][2] + 0.1, outer[1][2] + 0.2]],
+        ] {
+            assert_eq!(
+                cutter.classify_box_mm(exterior),
+                Ok(Classification::Outside)
+            );
+        }
+        let mouth = [[-1e-5, 1e-5], [-1e-5, 1e-5], [-0.01, 0.01]];
+        assert_eq!(
+            cutter.classify_box_mm(mouth),
+            Ok(Classification::UnresolvedBoundary)
+        );
+        for bounds in [interior, mouth] {
+            for mask in 0..8 {
+                let p = std::array::from_fn(|axis| bounds[axis][(mask >> axis) & 1]);
+                let singleton = p.map(|x| [x, x]);
+                assert_eq!(
+                    cutter.classify_box_mm(singleton),
+                    cutter.classify_point_mm(p)
+                );
+            }
+        }
+        // This whole box contains both actual cavity and exterior points.
+        assert_eq!(
+            cutter.classify_box_mm(std::array::from_fn(|axis| [outer[0][axis], outer[1][axis]])),
+            Ok(Classification::UnresolvedBoundary)
+        );
+        assert_eq!(
+            cutter.classify_box_mm([[-1e300, 1e300]; 3]),
+            Ok(Classification::UnresolvedBoundary)
+        );
+    }
+}
+
+#[test]
+fn actual_cavity_whole_boxes_reject_invalid_coordinate_intervals() {
+    let (spec, domain) = fixture(1);
+    let cutter = Cutter::new(spec, domain).unwrap();
+    for interval in [
+        [1., -1.],
+        [f64::NAN, 1.],
+        [0., f64::INFINITY],
+        [f64::NEG_INFINITY, 0.],
+    ] {
+        for axis in 0..3 {
+            let mut bounds = [[0., 0.]; 3];
+            bounds[axis] = interval;
+            assert_eq!(cutter.classify_box_mm(bounds), Err(Error::Invalid));
+        }
+    }
+}

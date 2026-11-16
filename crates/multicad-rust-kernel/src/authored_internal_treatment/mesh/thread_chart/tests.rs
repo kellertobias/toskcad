@@ -275,6 +275,7 @@ fn actual_shifted_source_footpoints_compare_by_exact_physical_turns_for_both_han
                         shell,
                         trace,
                         work_used: w.used,
+                        end_station_mm: thread.full_length_mm(),
                     };
                 }
                 Attempt::Refine => grid.advance(false).unwrap(),
@@ -345,4 +346,87 @@ fn actual_shifted_source_footpoints_compare_by_exact_physical_turns_for_both_han
         }
         assert_eq!(*shell.source(), before);
     }
+}
+#[test]
+fn actual_finite_prefix_keeps_original_source_phase_and_earns_both_rims() {
+    let source = source(false, false, 1);
+    let end = source.full_length_mm() - 0.001;
+    let candidate = source
+        .tessellate_prefix_shell(end, options(), 16_000_000, None)
+        .unwrap();
+    assert_eq!(candidate.source(), &source);
+    assert_eq!(candidate.end_station_mm(), end);
+    assert!(candidate.source_chord_bound_mm() <= options().deflection);
+    assert!(candidate.source_normal_angle_bound_rad() <= options().angle);
+    for end_kind in [ShellEnd::Start, ShellEnd::End] {
+        let station = if end_kind == ShellEnd::Start { 0. } else { end };
+        for i in 0..candidate.rim_count(end_kind) {
+            let rim = candidate.rim_edge(end_kind, i).unwrap();
+            for v in rim.vertex_indices {
+                assert_eq!(candidate.mesh().vertices[3 * v + 2], station)
+            }
+        }
+    }
+    assert!(crate::manufacturing::certify(candidate.mesh()).is_err());
+    assert!(
+        source
+            .tessellate_prefix_shell(f64::NAN, options(), 16_000_000, None)
+            .is_err()
+    );
+    assert!(
+        source
+            .tessellate_prefix_shell(source.spec().pitch_mm / 2., options(), 16_000_000, None)
+            .is_err()
+    );
+    assert!(
+        source
+            .tessellate_prefix_shell(source.full_length_mm() + 0.01, options(), 16_000_000, None)
+            .is_err()
+    );
+    assert!(
+        source
+            .tessellate_prefix_shell(end, options(), candidate.work_used() - 1, None)
+            .is_err()
+    );
+    assert_eq!(
+        source
+            .tessellate_prefix_shell(end, options(), 16_000_000, Some(&|| true))
+            .err(),
+        Some(crate::authored_flat_thread::Error::Cancelled)
+    );
+}
+#[test]
+fn alternate_prefix_partition_retains_original_geometry_and_actual_work_frontiers() {
+    let thread = source(false, false, 1);
+    let end = thread.full_length_mm() - 0.001;
+    let candidate = thread
+        .tessellate_prefix_shell_shifted(end, options(), 16_000_000, None)
+        .unwrap();
+    assert_eq!(candidate.source(), &thread);
+    assert_eq!(candidate.end_station_mm(), end);
+    for side in [ShellEnd::Start, ShellEnd::End] {
+        let z = if side == ShellEnd::Start { 0. } else { end };
+        for i in 0..candidate.rim_count(side) {
+            for vertex in candidate.rim_edge(side, i).unwrap().vertex_indices {
+                assert_eq!(candidate.mesh().vertices[3 * vertex + 2], z)
+            }
+        }
+    }
+    assert!(
+        thread
+            .tessellate_prefix_shell_shifted(end, options(), candidate.work_used() - 1, None)
+            .is_err()
+    );
+    assert_eq!(
+        thread
+            .tessellate_prefix_shell_shifted(f64::NAN, options(), 16_000_000, None)
+            .err(),
+        Some(SourceError::Invalid)
+    );
+    assert_eq!(
+        thread
+            .tessellate_prefix_shell_shifted(end, options(), 16_000_000, Some(&|| true))
+            .err(),
+        Some(SourceError::Cancelled)
+    );
 }

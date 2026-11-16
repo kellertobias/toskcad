@@ -134,7 +134,9 @@ fn run_job(
     let Side::Tensor(t) = &p.sides[job.side] else {
         return Err((job.first, Error::Unsupported));
     };
-    let mut cache = strip::Cache::new(t, cache_limit);
+    let mut cache = strip::Cache::new(t, cache_limit).with_continuation(
+        p.limits.continue_v && p.limits.parallel_bytes >= strip::CONTINUATION_SCRATCH_BYTES,
+    );
     let result = (|| -> Result<(), Error> {
         for row in job.v[0]..job.v[1] {
             current.set(row * ring.entries.len() + ring.offsets[job.side] + job.u[0]);
@@ -181,7 +183,7 @@ fn run_job(
                     *slot = value.to_bits();
                 }
                 w.charge(128)?;
-                let cached = p.certificates.contains(&key);
+                let cached = p.cached_cell(&key, w)?;
                 let verdict = if cached {
                     Some(CellCheck::Match)
                 } else {
@@ -268,6 +270,13 @@ pub(super) fn check(
     let initial_bytes = jobs
         .capacity()
         .checked_mul(std::mem::size_of::<Job>())
+        .and_then(|b| {
+            b.checked_add(if p.limits.continue_v {
+                n * strip::CONTINUATION_SCRATCH_BYTES
+            } else {
+                0
+            })
+        })
         .ok_or(Error::Limit)?;
     let Some((buffers, bytes)) = record_buffers(&jobs, initial_bytes, p.limits.parallel_bytes)
     else {
@@ -548,6 +557,9 @@ fn apply_completed(
         if let Some(next) = &heads[job] {
             heap.push(std::cmp::Reverse((next.index, job)));
         }
+        if record.verdict == Some(CellCheck::Match) {
+            p.mark_cell_match(record.index);
+        }
         if record.cached {
             if compensate && accepted.len() < p.limits.compensation_cells {
                 work.charge(4)?;
@@ -568,7 +580,7 @@ fn apply_completed(
                 accepted.push(record.at);
             }
             work.charge(128)?;
-            if p.certificates.len() < p.limits.certificates {
+            if !p.limits.compact_certificates && p.certificates.len() < p.limits.certificates {
                 p.certificates.insert(record.key);
             }
         } else {

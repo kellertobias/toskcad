@@ -2,6 +2,7 @@
 use super::*;
 use crate::{radial_tensor as radial, tapered_thread::RetainedTensor};
 use helical::{face, ring};
+pub mod pipe_hardware;
 
 /// Decode one candidate boundary and prove its finite values and abstract
 /// manifold ownership. This is not an occupied-solid import entry point.

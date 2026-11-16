@@ -145,23 +145,6 @@ fn verify_compound(solid: &Solid, source: &str, count: u32) {
     bounds_match(bounds, [expected.min, expected.max], 1e-6);
 }
 
-#[cfg(feature = "occt")]
-fn native_readback(path: &Path, expected: &Solid) {
-    let native = Solid::read_step(path, Default::default()).unwrap();
-    assert_eq!(
-        native.solid_count().unwrap(),
-        expected.solid_count().unwrap()
-    );
-    near(
-        native.volume_mm3().unwrap(),
-        expected.volume_mm3().unwrap(),
-        5e-4,
-    );
-    let bounds = native.bounds().unwrap();
-    let expected = expected.bounds().unwrap();
-    bounds_match([bounds.min, bounds.max], [expected.min, expected.max], 2e-5);
-}
-
 #[test]
 fn patterned_hubbed_twisted_parts_publish_one_verified_multisolid_step() {
     let compiler = Compiler {
@@ -237,8 +220,6 @@ fn patterned_hubbed_twisted_parts_publish_one_verified_multisolid_step() {
             solid.volume_mm3().unwrap(),
             1e-5,
         );
-        #[cfg(feature = "occt")]
-        native_readback(&path, solid);
 
         // Changing the handedness preserves volume and the cardinal
         // compound bounds but changes both actual helicoid boundaries.
@@ -357,8 +338,6 @@ fn mixed_assembly_exports_exact_placed_parts_and_verifies_its_combined_step() {
     aggregate.write_step(&path).unwrap();
     let source = std::fs::read_to_string(&path).unwrap();
     verify_compound(aggregate, &source, 2);
-    #[cfg(feature = "occt")]
-    native_readback(&path, aggregate);
 
     let run = publish(&session, set, directory.path());
     assert_eq!(run.files.len(), 2);
@@ -387,11 +366,6 @@ fn mixed_assembly_exports_exact_placed_parts_and_verifies_its_combined_step() {
         near(file.artifact.volume_mm3, leaf.volume_mm3().unwrap(), 1e-6);
         let bounds = leaf.bounds().unwrap();
         bounds_match(file.artifact.bounds_mm, [bounds.min, bounds.max], 1e-7);
-        #[cfg(feature = "occt")]
-        native_readback(
-            &Path::new(&run.directory).join(&file.artifact.output.filename),
-            leaf,
-        );
     }
     assert_eq!(
         run.files
@@ -455,8 +429,6 @@ fn placed_twenty_four_thirty_six_pair_keeps_each_authored_boundary_in_compound_s
     let path = directory.path().join("placed-pair.step");
     solid.write_step(&path).unwrap();
     verify_compound(solid, &std::fs::read_to_string(&path).unwrap(), 2);
-    #[cfg(feature = "occt")]
-    native_readback(&path, solid);
     let run = publish(&session, set, directory.path());
     assert_eq!(run.files.len(), 2);
     for (gear, instance) in pair.gears.iter().zip(pair.outputs.instances) {

@@ -17,16 +17,39 @@ mod bevel_body;
 pub(crate) mod bore_treatment;
 pub use bore_treatment::ConicalSeatGeometry;
 pub(crate) mod circular_pocket_body;
+mod clipped_npt_body;
+mod pipe_hardware_body;
+pub use multicad_rust_kernel::axial_pipe_thread::authored::hardware::Kind as PipeHardwareKind;
+use pipe_hardware_body::PipeHardwareBody;
+pub use pipe_hardware_body::{PipeThreadFactory, PipeThreadFactoryStats};
+mod literal_npt_body;
+use literal_npt_body::LiteralNptBody;
+pub use literal_npt_body::LiteralNptRuntimeEvidence;
+mod external_npt_stock_body;
+mod line8_nut_body;
+use external_npt_stock_body::ExternalNptStockBody;
+pub use external_npt_stock_body::ExternalNptStockTransfer;
+use line8_nut_body::Line8NutBody;
+pub use line8_nut_body::{Line8NutCut, Line8NutTransfer};
 pub(crate) mod construction;
 mod cosmetic_fastener_body;
+mod cosmetic_profiled_body;
+use clipped_npt_body::ClippedNptBody;
+use cosmetic_profiled_body::CosmeticProfiledBody;
 mod entry_chamfer_body;
 mod wood_insert_body;
 use wood_insert_body::WoodInsertBody;
-pub use wood_insert_body::WoodInsertData;
+pub use wood_insert_body::{
+    PartitionedStepVerification, WoodInsertData, WoodInsertStepVerification,
+};
 mod wood_insert_material;
 pub use wood_insert_material::{WoodInsertFaceProperties, WoodInsertMaterial};
 mod hanger_material;
-pub use hanger_material::HangerMaterial;
+pub use hanger_material::{HangerFaceProperties, HangerMaterial};
+mod hanger_body;
+mod source_face_measure;
+use hanger_body::HangerBody;
+pub use hanger_body::{HangerData, HealedHangerStepVerification, HealedSupportStepVerification};
 mod helical_body;
 mod helical_tube_body;
 mod herringbone_body;
@@ -41,6 +64,13 @@ mod orthogonal_body;
 mod parallel_cylinder;
 mod planar_boolean_body;
 mod radial_boundary_body;
+mod repaired_phillips_body;
+use repaired_phillips_body::RepairedPhillipsBody;
+pub use repaired_phillips_body::{
+    DecodedPeriodicPhillipsStepVerification, PeriodicPhillipsStepCandidateResources,
+    PeriodicRepairedPhillipsMeshReceipt, PeriodicRepairedPhillipsQuery, RepairedPhillipsMeshBudget,
+    RepairedPhillipsMeshReceipt, RepairedPhillipsQuery, RepairedPhillipsQueryOptions,
+};
 mod revolution_body;
 mod rounded_cylinder_body;
 mod rounded_slot_body;
@@ -61,6 +91,7 @@ use bevel_body::BevelBody;
 pub use circular_pocket_body::CircularPocketTool;
 use cosmetic_fastener_body::CosmeticFastenerBody;
 use entry_chamfer_body::EntryChamferBody;
+pub use entry_chamfer_body::LiteralMeshEmbedding;
 pub use entry_chamfer_body::{EntryChamferBoundaryProof, EntryChamferData, EntryChamferEdge};
 use helical_body::HelicalBody;
 pub use helical_body::PhillipsMeshVolumePair;
@@ -81,6 +112,8 @@ use normal_sweep_body::NormalSweepBody;
 pub use normal_sweep_body::SweepOpening;
 use oblique_bore_body::ObliqueBoreBody;
 use orthogonal_body::OrthogonalBody;
+use orthogonal_body::seats::OrthogonalSeatBody;
+pub use orthogonal_body::seats::{OrthogonalCountersink, OrthogonalCountersinkMeasures};
 pub use orthogonal_body::slots::RoundedSlotTool;
 use planar_boolean_body::PlanarBooleanBody;
 use radial_boundary_body::RadialBoundaryBody;
@@ -679,6 +712,7 @@ impl Solid {
             SolidBody::PolygonPrism(body) => key(body, body.frame),
             SolidBody::Linear(body, frame) => key(body, *frame),
             SolidBody::Orthogonal(body, frame) => key(body, *frame),
+            SolidBody::OrthogonalSeats(body, frame) => key(body, *frame),
             SolidBody::PlanarBoolean(body, frame) => key(body, *frame),
             _ => return None,
         })
@@ -710,12 +744,20 @@ enum SolidBody {
     AxialCylinder(Rc<AxialCylinder>, PlaneFrame, Option<Rc<CylinderSketch>>),
     Annulus(Rc<AnnulusBody>, PlaneFrame),
     CosmeticFastener(Rc<CosmeticFastenerBody>, PlaneFrame),
+    CosmeticProfiled(Rc<CosmeticProfiledBody>, PlaneFrame),
+    ClippedNpt(Rc<ClippedNptBody>),
+    PipeHardware(Rc<PipeHardwareBody>),
+    LiteralNpt(Rc<LiteralNptBody>),
+    ExternalNptStock(Rc<ExternalNptStockBody>),
+    Line8Nut(Rc<Line8NutBody>),
     Helical(Rc<HelicalBody>, PlaneFrame),
     RoundedThread(Rc<RoundedThreadBody>, PlaneFrame),
     EntryChamfer(Rc<EntryChamferBody>, PlaneFrame),
     RoundedThreadBore(Rc<RoundedThreadBoreBody>, PlaneFrame),
     InternalThreadTreatment(Rc<InternalThreadTreatmentBody>, PlaneFrame),
+    RepairedPhillips(Rc<RepairedPhillipsBody>, PlaneFrame),
     WoodInsert(Rc<WoodInsertBody>, PlaneFrame),
+    Hanger(Rc<HangerBody>, PlaneFrame),
     HelicalTubeCut(Rc<HelicalTubeBody>, PlaneFrame),
     Linear(Rc<LinearBody>, PlaneFrame),
     Revolved(Rc<RevolutionBody>, PlaneFrame),
@@ -739,6 +781,7 @@ enum SolidBody {
     RustCompound(Rc<RustCompound>),
     Orthogonal(Rc<OrthogonalBody>, PlaneFrame),
     ImportedBrep(Rc<ImportedBrepBody>),
+    OrthogonalSeats(Rc<OrthogonalSeatBody>, PlaneFrame),
     PlanarBoolean(Rc<PlanarBooleanBody>, PlaneFrame),
     WarpedUnion(Rc<WarpedUnionBody>, PlaneFrame),
 }
@@ -1124,13 +1167,6 @@ impl Solid {
         }
     }
 
-    pub(crate) fn into_occt(self) -> Option<crate::OcctHandle> {
-        match self.body {
-            SolidBody::Occt(shape) => Some(shape.0),
-            _ => None,
-        }
-    }
-
     pub fn geometry_policy(&self) -> GeometryPolicy {
         self.policy
     }
@@ -1140,6 +1176,12 @@ impl Solid {
     pub(crate) fn rust_compound(&self) -> Option<&RustCompound> {
         match &self.body {
             SolidBody::RustCompound(compound) => Some(compound),
+            _ => None,
+        }
+    }
+    pub(crate) fn orthogonal_seat_body(&self) -> Option<(&OrthogonalSeatBody, PlaneFrame)> {
+        match &self.body {
+            SolidBody::OrthogonalSeats(b, f) => Some((b, *f)),
             _ => None,
         }
     }
@@ -1163,6 +1205,11 @@ impl Solid {
     /// the share stays on the thread that created it (`!Send`/`!Sync`).
     pub fn share(&self) -> Result<Self, GeometryError> {
         let body = match &self.body {
+            SolidBody::ClippedNpt(body) => SolidBody::ClippedNpt(Rc::clone(body)),
+            SolidBody::PipeHardware(body) => SolidBody::PipeHardware(Rc::clone(body)),
+            SolidBody::LiteralNpt(body) => SolidBody::LiteralNpt(Rc::clone(body)),
+            SolidBody::ExternalNptStock(body) => SolidBody::ExternalNptStock(Rc::clone(body)),
+            SolidBody::Line8Nut(body) => SolidBody::Line8Nut(Rc::clone(body)),
             SolidBody::Prism(prism, frame) => SolidBody::Prism(Rc::clone(prism), *frame),
             SolidBody::PolygonPrism(prism) => SolidBody::PolygonPrism(Rc::clone(prism)),
             SolidBody::AxialCylinder(cylinder, frame, sketch) => {
@@ -1171,6 +1218,9 @@ impl Solid {
             SolidBody::Annulus(body, frame) => SolidBody::Annulus(Rc::clone(body), *frame),
             SolidBody::CosmeticFastener(body, frame) => {
                 SolidBody::CosmeticFastener(Rc::clone(body), *frame)
+            }
+            SolidBody::CosmeticProfiled(body, frame) => {
+                SolidBody::CosmeticProfiled(Rc::clone(body), *frame)
             }
             SolidBody::EntryChamfer(body, frame) => {
                 SolidBody::EntryChamfer(Rc::clone(body), *frame)
@@ -1182,7 +1232,11 @@ impl Solid {
             SolidBody::InternalThreadTreatment(body, frame) => {
                 SolidBody::InternalThreadTreatment(Rc::clone(body), *frame)
             }
+            SolidBody::RepairedPhillips(body, frame) => {
+                SolidBody::RepairedPhillips(Rc::clone(body), *frame)
+            }
             SolidBody::WoodInsert(body, frame) => SolidBody::WoodInsert(Rc::clone(body), *frame),
+            SolidBody::Hanger(body, frame) => SolidBody::Hanger(Rc::clone(body), *frame),
             SolidBody::RoundedThread(body, frame) => {
                 SolidBody::RoundedThread(Rc::clone(body), *frame)
             }
@@ -1227,6 +1281,9 @@ impl Solid {
             SolidBody::WarpedUnion(body, frame) => SolidBody::WarpedUnion(Rc::clone(body), *frame),
             SolidBody::RustCompound(compound) => SolidBody::RustCompound(Rc::clone(compound)),
             SolidBody::Orthogonal(body, frame) => SolidBody::Orthogonal(Rc::clone(body), *frame),
+            SolidBody::OrthogonalSeats(body, frame) => {
+                SolidBody::OrthogonalSeats(Rc::clone(body), *frame)
+            }
             SolidBody::Occt(shape) => {
                 let handle = ffi::share_shape(&shape.0).map_err(|e| native("share", e))?;
                 if handle.is_null() {
@@ -1403,6 +1460,18 @@ impl Solid {
             }
         }
         if self.uses_rust_geometry() && other.uses_rust_geometry() {
+            if let Some(result) = self.contained_thread_boolean(other, operation, policy) {
+                return result;
+            }
+            if let Some(result) = self.contained_annulus_boolean(other, operation, policy) {
+                return result;
+            }
+            if let Some(result) = self.contained_insert_boolean(other, operation, policy) {
+                return result;
+            }
+            if let Some(result) = self.contained_hanger_boolean(other, operation, policy) {
+                return result;
+            }
             if let Some(result) = self.default_certified_boolean(other, operation, policy) {
                 return result;
             }
@@ -1498,6 +1567,21 @@ impl Solid {
                 return self.share();
             }
             let body = match &self.body {
+                SolidBody::Line8Nut(body) => {
+                    SolidBody::Line8Nut(Rc::new(body.transformed(transform, self.policy)?))
+                }
+                SolidBody::ExternalNptStock(body) => {
+                    SolidBody::ExternalNptStock(Rc::new(body.transformed(transform, self.policy)?))
+                }
+                SolidBody::LiteralNpt(body) => {
+                    SolidBody::LiteralNpt(Rc::new(body.transformed(transform, self.policy)?))
+                }
+                SolidBody::ClippedNpt(body) => {
+                    SolidBody::ClippedNpt(Rc::new(body.transformed(transform, self.policy)?))
+                }
+                SolidBody::PipeHardware(body) => {
+                    SolidBody::PipeHardware(Rc::new(body.transformed(transform, self.policy)?))
+                }
                 SolidBody::Prism(prism, frame) => {
                     let frame = transform.frame(*frame);
                     frame.checked_metric_extent(
@@ -1538,10 +1622,20 @@ impl Solid {
                     )?;
                     SolidBody::Annulus(Rc::clone(body), frame)
                 }
+                SolidBody::Hanger(body, frame) => {
+                    let frame = transform.frame(*frame);
+                    body.material(frame, self.policy)?;
+                    SolidBody::Hanger(Rc::clone(body), frame)
+                }
                 SolidBody::WoodInsert(body, frame) => {
                     let frame = transform.frame(*frame);
                     body.material(frame, self.policy)?;
                     SolidBody::WoodInsert(Rc::clone(body), frame)
+                }
+                SolidBody::RepairedPhillips(body, frame) => {
+                    let frame = transform.frame(*frame);
+                    body.validate_frame(frame)?;
+                    SolidBody::RepairedPhillips(Rc::clone(body), frame)
                 }
                 SolidBody::InternalThreadTreatment(body, frame) => {
                     let frame = transform.frame(*frame);
@@ -1588,6 +1682,11 @@ impl Solid {
                 }
                 SolidBody::CosmeticFastener(body, frame) => {
                     SolidBody::CosmeticFastener(Rc::clone(body), transform.frame(*frame))
+                }
+                SolidBody::CosmeticProfiled(body, frame) => {
+                    let frame = transform.frame(*frame);
+                    frame.checked_metric_bounds(body.bounds(PlaneFrame::default()), self.policy)?;
+                    SolidBody::CosmeticProfiled(Rc::clone(body), frame)
                 }
                 SolidBody::Linear(body, frame) => {
                     let frame = transform.frame(*frame);
@@ -1691,6 +1790,11 @@ impl Solid {
                 SolidBody::Orthogonal(body, frame) => {
                     SolidBody::Orthogonal(Rc::clone(body), transform.frame(*frame))
                 }
+                SolidBody::OrthogonalSeats(body, frame) => {
+                    let frame = transform.frame(*frame);
+                    body.validate_frame(frame, self.policy)?;
+                    SolidBody::OrthogonalSeats(Rc::clone(body), frame)
+                }
                 SolidBody::Occt(_) => unreachable!("checked Rust body"),
             };
             let mut result = Self {
@@ -1726,6 +1830,16 @@ impl Solid {
         Ok(result)
     }
     pub fn volume_mm3(&self) -> Result<f64, GeometryError> {
+        if let Some(body) = self.pipe_hardware_body() {
+            return body.volume_mm3();
+        }
+        if let Some((body, frame)) = self.repaired_phillips_body() {
+            let [lo, hi] = body.volume(frame)?;
+            return Ok(lo.midpoint(hi));
+        }
+        if let Some((body, frame)) = self.hanger_body() {
+            return body.volume(frame, self.policy);
+        }
         if let Some((body, frame)) = self.wood_insert_body() {
             let material = body.material(frame, self.policy)?;
             let b = material.source();
@@ -1813,6 +1927,24 @@ impl Solid {
         if let Some((body, _)) = self.spline_sweep_body() {
             return Ok(body.sweep.volume_mm3());
         }
+        if let Some(body) = self.line8_nut_body() {
+            return Ok(body.volume_mm3());
+        }
+        if let Some((body, frame)) = self.orthogonal_seat_body() {
+            return body.volume_mm3(frame);
+        }
+        if let Some(body) = self.external_npt_stock_body() {
+            return Ok(body.volume_mm3());
+        }
+        if let Some(body) = self.literal_npt_body() {
+            return Ok(body.volume_mm3());
+        }
+        if let Some(body) = self.clipped_npt_body() {
+            return Ok(body.volume_mm3());
+        }
+        if let Some((body, _)) = self.cosmetic_profiled_body_ref() {
+            return Ok(body.volume_mm3());
+        }
         if let Some((body, _)) = self.cosmetic_fastener_body() {
             return Ok(body.geometry.volume_mm3());
         }
@@ -1882,6 +2014,15 @@ impl Solid {
         ffi::solid_count(self.occt()?).map_err(|e| native("solid count", e))
     }
     pub fn bounds(&self) -> Result<Bounds, GeometryError> {
+        if let Some(body) = self.pipe_hardware_body() {
+            return body.bounds();
+        }
+        if let Some((body, frame)) = self.repaired_phillips_body() {
+            return body.bounds(frame);
+        }
+        if let Some((body, frame)) = self.hanger_body() {
+            return Ok(body.material(frame, self.policy)?.bounds());
+        }
         if let Some((body, frame)) = self.wood_insert_body() {
             return body.material(frame, self.policy)?.bounds();
         }
@@ -1946,6 +2087,24 @@ impl Solid {
             return Ok(body.bounds(frame));
         }
         if let Some((body, frame)) = self.spline_sweep_body() {
+            return Ok(body.bounds(frame));
+        }
+        if let Some(body) = self.line8_nut_body() {
+            return Ok(body.bounds());
+        }
+        if let Some((body, frame)) = self.orthogonal_seat_body() {
+            return body.bounds(frame);
+        }
+        if let Some(body) = self.external_npt_stock_body() {
+            return Ok(body.bounds());
+        }
+        if let Some(body) = self.literal_npt_body() {
+            return Ok(body.bounds());
+        }
+        if let Some(body) = self.clipped_npt_body() {
+            return Ok(body.bounds());
+        }
+        if let Some((body, frame)) = self.cosmetic_profiled_body_ref() {
             return Ok(body.bounds(frame));
         }
         if let Some((body, frame)) = self.cosmetic_fastener_body() {
@@ -2063,6 +2222,15 @@ impl Solid {
         crate::planar_contours::extract(self, face, frame, self.policy)
     }
     pub fn faces(&self) -> Result<Vec<Face>, GeometryError> {
+        if let Some(body) = self.pipe_hardware_body() {
+            return body.faces(self.policy);
+        }
+        if let Some((body, frame)) = self.repaired_phillips_body() {
+            return body.periodic_faces(frame);
+        }
+        if let Some((body, frame)) = self.hanger_body() {
+            return body.material(frame, self.policy)?.faces(self.policy, None);
+        }
         if let Some((body, frame)) = self.wood_insert_body() {
             return body.material(frame, self.policy)?.faces(self.policy, None);
         }
@@ -2132,6 +2300,24 @@ impl Solid {
             return Ok(body.faces(frame));
         }
         if let Some((body, frame)) = self.spline_sweep_body() {
+            return Ok(body.faces(frame));
+        }
+        if let Some(body) = self.line8_nut_body() {
+            return Ok(body.faces());
+        }
+        if let Some((body, frame)) = self.orthogonal_seat_body() {
+            return body.faces(frame);
+        }
+        if let Some(body) = self.external_npt_stock_body() {
+            return Ok(body.faces());
+        }
+        if let Some(body) = self.literal_npt_body() {
+            return body.faces();
+        }
+        if let Some(body) = self.clipped_npt_body() {
+            return Ok(body.faces());
+        }
+        if let Some((body, frame)) = self.cosmetic_profiled_body_ref() {
             return Ok(body.faces(frame));
         }
         if let Some((body, frame)) = self.cosmetic_fastener_body() {
@@ -2270,6 +2456,10 @@ impl Solid {
             ),
             SolidBody::EntryChamfer(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::InternalThreadTreatment(body, frame) => body.mesh(*frame, rust_options),
+            SolidBody::RepairedPhillips(body, frame) => body.mesh(*frame, rust_options, usage),
+            SolidBody::Hanger(body, frame) => {
+                body.material(*frame, self.policy)?.mesh(options, None)
+            }
             SolidBody::WoodInsert(body, frame) => body.material(*frame, self.policy)?.mesh(
                 MeshOptions {
                     linear_deflection_mm: rust_options.deflection,
@@ -2284,6 +2474,20 @@ impl Solid {
             SolidBody::HelicalTubeCut(body, frame) => {
                 crate::rust_display::placed_mesh(body.cut.mesh(rust_options), *frame, false)
             }
+            SolidBody::ClippedNpt(body) => body.mesh(rust_options),
+            SolidBody::PipeHardware(body) => body.mesh(rust_options),
+            SolidBody::LiteralNpt(body) => body.mesh(rust_options),
+            SolidBody::ExternalNptStock(body) => body.mesh(rust_options),
+            SolidBody::Line8Nut(body) => body.mesh(rust_options),
+            SolidBody::OrthogonalSeats(body, frame) => body.mesh(*frame, rust_options),
+            SolidBody::CosmeticProfiled(body, frame) => match usage {
+                MeshUse::Display => body.mesh(*frame, rust_options),
+                MeshUse::Manufacturing => Err(error(
+                    "manufacturing mesh",
+                    GeometryErrorKind::Unsupported,
+                    "Cosmetic thread envelopes require modeled thread geometry for manufacturing",
+                )),
+            },
             SolidBody::CosmeticFastener(body, frame) => match usage {
                 MeshUse::Display => body.mesh(*frame, rust_options),
                 MeshUse::Manufacturing => Err(error(
@@ -2397,7 +2601,14 @@ impl Solid {
             .is_some_and(|(body, _)| body.has_phillips_source())
             || self.has_retained_radial_source()
             || self.internal_thread_treatment_body().is_some()
+            || self.repaired_phillips_body().is_some()
+            || self.clipped_npt_body().is_some()
+            || self.pipe_hardware_body().is_some()
+            || self.literal_npt_body().is_some()
+            || self.external_npt_stock_body().is_some()
+            || self.line8_nut_body().is_some()
             || self.wood_insert_body().is_some()
+            || self.hanger_body().is_some()
             || self
                 .rust_compound()
                 .is_some_and(|compound| compound.members().any(Self::has_certified_source_mesh))
@@ -2411,6 +2622,27 @@ impl Solid {
             manufacturing,
         };
         const OPERATION: &str = "manufacturing mesh";
+        if let Some(body) = self.pipe_hardware_body() {
+            return body.manufacturing(Self::rust_mesh_options(options));
+        }
+        if let Some(body) = self.line8_nut_body() {
+            return body.manufacturing(Self::rust_mesh_options(options));
+        }
+        if let Some(body) = self.external_npt_stock_body() {
+            return body.manufacturing(Self::rust_mesh_options(options));
+        }
+        if let Some(body) = self.literal_npt_body() {
+            return body.manufacturing(Self::rust_mesh_options(options));
+        }
+        if let Some(body) = self.clipped_npt_body() {
+            return body.manufacturing(Self::rust_mesh_options(options));
+        }
+        if let Some((body, frame)) = self.repaired_phillips_body() {
+            // This provider carries its fresh actual-world manifold proof and
+            // consumes one source/placement/embedding work ledger. Do not run a
+            // second unmetered certification or an analytic-volume heuristic.
+            return body.manufacturing(frame, options);
+        }
         let Mesh {
             vertices,
             indices,
@@ -2570,7 +2802,13 @@ impl Solid {
             None => (Vec::new(), Vec::new()),
             Some(deflection) if self.uses_rust_geometry() => {
                 self.validate_display_deflection(deflection)?;
-                let edges = if let Some((body, frame)) = self.wood_insert_body() {
+                let edges = if let Some(body) = self.pipe_hardware_body() {
+                    body.display_edges(deflection, self.policy)?
+                } else if let Some((body, frame)) = self.repaired_phillips_body() {
+                    body.periodic_display_edges(frame, deflection)?
+                } else if let Some((body, frame)) = self.hanger_body() {
+                    body.display_edges(frame, deflection, self.policy)?
+                } else if let Some((body, frame)) = self.wood_insert_body() {
                     body.display_edges(frame, deflection, self.policy)?
                 } else if let Some((body, frame)) = self.internal_thread_treatment_body() {
                     body.display_edges(frame, deflection, self.policy)?
@@ -2610,6 +2848,15 @@ impl Solid {
 
     pub fn display_edges(&self, deflection_mm: f64) -> Result<Vec<DisplayEdge>, GeometryError> {
         self.validate_display_deflection(deflection_mm)?;
+        if let Some(body) = self.pipe_hardware_body() {
+            return body.display_edges(deflection_mm, self.policy);
+        }
+        if let Some((body, frame)) = self.repaired_phillips_body() {
+            return body.periodic_display_edges(frame, deflection_mm);
+        }
+        if let Some((body, frame)) = self.hanger_body() {
+            return body.display_edges(frame, deflection_mm, self.policy);
+        }
         if let Some((body, frame)) = self.wood_insert_body() {
             return body.display_edges(frame, deflection_mm, self.policy);
         }
@@ -2661,6 +2908,24 @@ impl Solid {
         ordinal: u32,
         options: multicad_rust_kernel::display::Tessellation,
     ) -> Option<Result<Vec<[f64; 3]>, multicad_rust_kernel::display::MeshError>> {
+        if let Some(body) = self.pipe_hardware_body() {
+            return body.sample_edge(ordinal, options);
+        }
+        if let Some(body) = self.line8_nut_body() {
+            return body.sample_edge(ordinal, options);
+        }
+        if let Some(body) = self.external_npt_stock_body() {
+            return body.sample_edge(ordinal, options);
+        }
+        if let Some(body) = self.literal_npt_body() {
+            return body.sample_edge(ordinal, options);
+        }
+        if let Some(body) = self.clipped_npt_body() {
+            return body.sample_edge(ordinal, options);
+        }
+        if let Some((body, frame)) = self.cosmetic_profiled_body_ref() {
+            return body.sample_edge(frame, ordinal, options);
+        }
         if let Some((body, frame)) = self.spline_cap_relief_body() {
             return body.sample_rim(frame, ordinal, options);
         }
@@ -2716,12 +2981,20 @@ impl Solid {
             SolidBody::Annulus(body, _) => body.feature,
             SolidBody::EntryChamfer(body, _) => body.feature,
             SolidBody::InternalThreadTreatment(body, _) => body.feature,
+            SolidBody::RepairedPhillips(body, _) => body.feature,
             SolidBody::WoodInsert(body, _) => body.feature,
+            SolidBody::Hanger(body, _) => body.feature,
             SolidBody::Helical(body, _) => body.feature,
             SolidBody::RoundedThreadBore(body, _) => body.feature,
             SolidBody::RoundedThread(body, _) => body.feature,
             SolidBody::HelicalTubeCut(body, _) => body.feature,
             SolidBody::CosmeticFastener(body, _) => body.feature,
+            SolidBody::CosmeticProfiled(body, _) => body.feature,
+            SolidBody::ClippedNpt(body) => body.feature,
+            SolidBody::PipeHardware(body) => body.feature,
+            SolidBody::LiteralNpt(body) => body.feature,
+            SolidBody::ExternalNptStock(body) => body.feature,
+            SolidBody::Line8Nut(body) => body.feature,
             SolidBody::Linear(body, _) => body.feature,
             SolidBody::Revolved(body, _) => body.feature,
             SolidBody::RoundedSlot(body, _) => body.feature,
@@ -2746,6 +3019,7 @@ impl Solid {
             SolidBody::WarpedUnion(body, _) => body.feature,
             SolidBody::RustCompound(compound) => compound.feature,
             SolidBody::Orthogonal(body, _) => body.feature,
+            SolidBody::OrthogonalSeats(body, _) => body.feature,
             SolidBody::Occt(_) => return None,
         };
         Some(self.topology_snapshot(feature, 0))
@@ -2781,7 +3055,7 @@ impl Solid {
             SolidBody::RustCompound(compound) => compound
                 .members()
                 .all(|member| member.supports_step_shell(false)),
-            SolidBody::EntryChamfer(..) => standalone,
+            SolidBody::EntryChamfer(..) => true,
             SolidBody::Helical(body, frame) => {
                 (standalone || body.has_importable_step_closure())
                     && body.supports_step(*frame, self.policy)
@@ -2796,10 +3070,21 @@ impl Solid {
                     self.policy.linear_tolerance_mm,
                 )
             }
-            SolidBody::CosmeticFastener(..)
+            SolidBody::WoodInsert(body, frame) => body.supports_step(*frame, self.policy),
+            SolidBody::ClippedNpt(body) => body.supports_step(self.policy),
+            SolidBody::Hanger(body, frame) => body.supports_step(*frame, self.policy),
+            SolidBody::OrthogonalSeats(body, frame) => body.supports_step(*frame, self.policy),
+            SolidBody::LiteralNpt(body) => body.supports_step(),
+            SolidBody::RepairedPhillips(..) => {
+                self.rust_periodic_repaired_phillips_source().is_some()
+            }
+            SolidBody::PipeHardware(..)
+            | SolidBody::Line8Nut(..)
+            | SolidBody::ExternalNptStock(..)
+            | SolidBody::CosmeticFastener(..)
+            | SolidBody::CosmeticProfiled(..)
             | SolidBody::InternalThreadTreatment(..)
-            | SolidBody::ObliqueBore(..)
-            | SolidBody::WoodInsert(..) => false,
+            | SolidBody::ObliqueBore(..) => false,
             SolidBody::WarpedUnion(body, _) => {
                 multicad_rust_kernel::step::supports_warped_union(&body.geometry)
             }
@@ -2833,6 +3118,13 @@ impl Solid {
         let path_text = crate::step_path(path).map_err(|e| input(e.to_string()))?;
         if let SolidBody::Occt(shape) = &self.body {
             return ffi::write_step(&shape.0, path_text).map_err(|e| native("write STEP", e));
+        }
+        if let Some(result) = self.write_periodic_phillips_step_with_verification(
+            path,
+            self.policy.linear_tolerance_mm,
+            None,
+        ) {
+            return result.map(|_| ());
         }
         let operation = "write STEP";
         if !self.supports_step_export() {
@@ -3013,10 +3305,29 @@ impl Solid {
                 frame.v,
                 self.policy.linear_tolerance_mm,
             ),
-            SolidBody::CosmeticFastener(..)
+            SolidBody::WoodInsert(body, frame) => body.append_step(writer, *frame, self.policy),
+            SolidBody::ClippedNpt(body) => body.append_step(writer, self.policy),
+            SolidBody::Hanger(body, frame) => body.append_step(writer, *frame, self.policy),
+            SolidBody::OrthogonalSeats(body, frame) => {
+                body.append_step(writer, *frame, self.policy)
+            }
+            SolidBody::LiteralNpt(body) => body.append_step(writer),
+            SolidBody::RepairedPhillips(..) => self
+                .append_periodic_phillips_step(writer, None)
+                .ok_or(step::StepError::Unsupported)?
+                .map(|_| ())
+                .map_err(|e| match e.kind {
+                    GeometryErrorKind::Limit => step::StepError::Limit,
+                    GeometryErrorKind::Unsupported => step::StepError::Unsupported,
+                    _ => step::StepError::InvalidGeometry,
+                }),
+            SolidBody::PipeHardware(..)
+            | SolidBody::Line8Nut(..)
+            | SolidBody::ExternalNptStock(..)
+            | SolidBody::CosmeticFastener(..)
+            | SolidBody::CosmeticProfiled(..)
             | SolidBody::InternalThreadTreatment(..)
-            | SolidBody::ObliqueBore(..)
-            | SolidBody::WoodInsert(..) => Err(step::StepError::Unsupported),
+            | SolidBody::ObliqueBore(..) => Err(step::StepError::Unsupported),
             SolidBody::Orthogonal(body, frame) => body.append_step(writer, *frame),
             SolidBody::Occt(_) => unreachable!("native STEP dispatched above"),
         }
@@ -3029,17 +3340,6 @@ impl Solid {
             .map_err(|e| native("read STEP", e))?
             .into_iter()
             .map(|s| (s.name, s.brep))
-            .collect())
-    }
-    /// Every next-assembly-usage occurrence of a STEP file as OpenCascade
-    /// places it: (identifier, name, located BRep text of the component in
-    /// its parent's coordinates). Reference tooling for assembly import.
-    pub fn step_occurrences(path: &Path) -> Result<Vec<(String, String, String)>, GeometryError> {
-        let path = crate::step_path(path).map_err(|e| input(e.to_string()))?;
-        Ok(ffi::step_occurrences(path)
-            .map_err(|e| native("read STEP", e))?
-            .into_iter()
-            .map(|s| (s.id, s.name, s.brep))
             .collect())
     }
     /// The exact shape as OCCT BRep text.
@@ -3082,632 +3382,6 @@ impl Solid {
             policy,
             "read STEP",
         )
-    }
-}
-
-#[cfg(all(test, feature = "occt"))]
-mod bounds_tests {
-    use super::*;
-    use crate::{AffineTransform, CurvedEdge2d, CurvedProfile, RevolutionAxis};
-    use multicad_core::{document::EntityId, references::Origin};
-
-    #[test]
-    fn legacy_cut_preserves_populated_source_and_shared_bounds_volume_and_validity() {
-        let policy = GeometryPolicy::default();
-        let original = Solid::cylinder(
-            PlaneFrame {
-                origin: [0., 3., 0.],
-                ..Default::default()
-            },
-            3.,
-            4.,
-            policy,
-        )
-        .unwrap();
-        let shared = original.share().unwrap();
-        let bounds = original.bounds().unwrap();
-        let volume = original.volume_mm3().unwrap();
-        assert_eq!(shared.bounds().unwrap(), bounds);
-        assert!((volume - 36. * std::f64::consts::PI).abs() < 1e-9);
-        assert!(ffi::valid(original.occt().unwrap()).unwrap());
-        assert!(ffi::valid(shared.occt().unwrap()).unwrap());
-
-        // Exercise the legacy entry point, rather than the newer boolean API.
-        // This removes the complete positive-X half of the offset cylinder.
-        let cut = Solid::adopt(
-            ffi::cut(shared.occt().unwrap(), 0., 4., 6., 4.).unwrap(),
-            policy,
-            "legacy cut regression",
-        )
-        .unwrap();
-        assert!((cut.volume_mm3().unwrap() - 18. * std::f64::consts::PI).abs() < 1e-9);
-        assert!(cut.bounds().unwrap().max[0].abs() < 1e-6);
-        for source in [&original, &shared] {
-            assert_eq!(source.bounds().unwrap(), bounds);
-            assert!((source.volume_mm3().unwrap() - volume).abs() < 1e-9);
-            assert!(ffi::valid(source.occt().unwrap()).unwrap());
-            assert_eq!(source.solid_count().unwrap(), 1);
-        }
-        // A fresh reader has no shared cache, so unchanged cached numbers
-        // cannot conceal an accidentally modified source B-rep.
-        let fresh = Solid::from_brep(&original.to_brep().unwrap(), policy).unwrap();
-        assert!((fresh.volume_mm3().unwrap() - volume).abs() < 1e-9);
-        let fresh_bounds = fresh.bounds().unwrap();
-        for axis in 0..3 {
-            assert!((fresh_bounds.min[axis] - bounds.min[axis]).abs() < 1e-6);
-            assert!((fresh_bounds.max[axis] - bounds.max[axis]).abs() < 1e-6);
-        }
-    }
-
-    #[test]
-    fn cold_trimmed_bounds_cache_is_consistent_across_concurrent_shared_native_owners() {
-        let profile = CurvedProfile {
-            frame: PlaneFrame {
-                origin: [0.; 3],
-                u: [1., 0., 0.],
-                v: [0., 0., 1.],
-            },
-            outer: vec![
-                CurvedEdge2d::Arc {
-                    center: [0., 0.],
-                    a: [0., -1.],
-                    b: [0., 1.],
-                    clockwise: false,
-                },
-                CurvedEdge2d::Line {
-                    a: [0., 1.],
-                    b: [0., -1.],
-                },
-            ],
-            holes: vec![],
-        };
-        let feature = EntityId::new();
-        let sphere = Solid::revolve_curved_profile_named(
-            &profile,
-            RevolutionAxis {
-                origin_mm: [0.; 3],
-                direction: [0., 0., 1.],
-            },
-            std::f64::consts::TAU,
-            feature,
-            &[
-                Origin {
-                    source: feature,
-                    role: "arc".into(),
-                },
-                Origin {
-                    source: feature,
-                    role: "axis".into(),
-                },
-            ],
-            Default::default(),
-        )
-        .unwrap();
-        let ellipsoid = sphere
-            .affine_transformed_named(
-                AffineTransform {
-                    matrix: [[1.2, 0., 0.], [0., 1.4, 0.], [0., 0., 1.6]],
-                    translation_mm: [0.; 3],
-                },
-                EntityId::new(),
-                Default::default(),
-            )
-            .unwrap();
-        assert!(ffi::bounds_cache_concurrent_probe(ellipsoid.occt().unwrap()).unwrap());
-        let bounds = ellipsoid.bounds().unwrap();
-        for (axis, radius) in [1.2, 1.4, 1.6].into_iter().enumerate() {
-            assert!((bounds.min[axis] + radius).abs() < 1e-6);
-            assert!((bounds.max[axis] - radius).abs() < 1e-6);
-        }
-        let shared = ellipsoid.share().unwrap();
-        assert_eq!(ellipsoid.bounds().unwrap(), shared.bounds().unwrap());
-    }
-}
-
-#[cfg(all(test, feature = "occt"))]
-mod volume_cache_tests {
-    use super::*;
-    use crate::{AffineTransform, HelicalThread};
-    use multicad_core::document::EntityId;
-
-    fn integrations(solid: &Solid) -> u64 {
-        ffi::volume_integration_count(solid.occt().unwrap()).unwrap()
-    }
-    fn shares(a: &Solid, b: &Solid) -> bool {
-        ffi::shares_volume_cache(a.occt().unwrap(), b.occt().unwrap())
-    }
-
-    #[test]
-    fn completed_volume_certificates_follow_only_identical_or_exact_rigid_geometry() {
-        let policy = GeometryPolicy::default();
-        let source = Solid::box_solid([4., 5., 6.], policy).unwrap();
-        let initial_bounds = source.bounds().unwrap();
-        let shared = source.share().unwrap();
-        let moved = shared
-            .transformed(RigidTransform {
-                rotation: [[1., 0., 0.], [0., 0., -1.], [0., 1., 0.]],
-                translation_mm: [9., -3., 7.],
-            })
-            .unwrap();
-        assert!(shares(&source, &shared));
-        assert!(shares(&source, &moved));
-        for solid in [&source, &shared, &moved] {
-            for _ in 0..100 {
-                assert!((solid.volume_mm3().unwrap() - 120.).abs() < 1e-10);
-            }
-            assert_eq!(integrations(solid), 1);
-        }
-        let fresh = Solid::from_brep(&moved.to_brep().unwrap(), policy).unwrap();
-        assert!(!shares(&moved, &fresh));
-        assert_eq!(integrations(&fresh), 1);
-        assert!((fresh.volume_mm3().unwrap() - 120.).abs() < 1e-10);
-        let path = tempfile::tempdir().unwrap();
-        let step = path.path().join("independent-volume.step");
-        moved.write_step(&step).unwrap();
-        let readback = Solid::read_step(&step, policy).unwrap();
-        assert!(!shares(&moved, &readback));
-        assert_eq!(integrations(&readback), 1);
-        assert!((readback.volume_mm3().unwrap() - 120.).abs() < 1e-10);
-
-        let tool = Solid::box_solid([2., 5., 6.], policy).unwrap();
-        let cut = source
-            .boolean(&tool, BooleanOperation::Subtract, policy)
-            .unwrap()
-            .unwrap();
-        assert!(!shares(&source, &cut));
-        assert_eq!(integrations(&cut), 1);
-        assert!((cut.volume_mm3().unwrap() - 60.).abs() < 1e-10);
-        let scaled = source
-            .affine_transformed_named(
-                AffineTransform {
-                    matrix: [[2., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-                    translation_mm: [0.; 3],
-                },
-                EntityId::new(),
-                policy,
-            )
-            .unwrap();
-        assert!(!shares(&source, &scaled));
-        assert_eq!(integrations(&scaled), 1);
-        assert!((scaled.volume_mm3().unwrap() - 240.).abs() < 1e-9);
-        let mirrored = source
-            .mirrored_named(
-                PlaneFrame {
-                    origin: [0.; 3],
-                    u: [0., 1., 0.],
-                    v: [0., 0., 1.],
-                },
-                EntityId::new(),
-                policy,
-            )
-            .unwrap();
-        assert!(!shares(&source, &mirrored));
-        assert_eq!(integrations(&mirrored), 1);
-        assert!((mirrored.volume_mm3().unwrap() - 120.).abs() < 1e-10);
-        assert_eq!(source.bounds().unwrap(), initial_bounds);
-        assert_eq!(integrations(&source), 1);
-        assert!((source.volume_mm3().unwrap() - 120.).abs() < 1e-10);
-        assert!(ffi::valid(source.occt().unwrap()).unwrap());
-    }
-
-    #[test]
-    fn cold_native_volume_cache_integrates_once_across_concurrent_shared_owners() {
-        let cylinder = Solid::cylinder(Default::default(), 3., 4., Default::default()).unwrap();
-        assert!(ffi::volume_cache_concurrent_probe(cylinder.occt().unwrap()).unwrap());
-        assert_eq!(integrations(&cylinder), 1);
-        assert!((cylinder.volume_mm3().unwrap() - 36. * std::f64::consts::PI).abs() < 1e-9);
-    }
-
-    #[test]
-    fn default_metric_thread_reuses_its_converged_native_volume_certificate() {
-        let spec = HelicalThread {
-            major_radius_mm: 1.5,
-            pitch_mm: 0.5,
-            length_mm: 10.,
-            depth_mm: 5. * 3_f64.sqrt() / 32.,
-            crest_width_mm: 0.5 / 8.,
-            lower_flank_deg: 30.,
-            upper_flank_deg: 30.,
-            radial_taper: 0.,
-            starts: 1,
-            left_hand: false,
-        };
-        let solid = Solid::helical_thread_named(spec, EntityId::new(), Default::default()).unwrap();
-        assert_eq!(
-            integrations(&solid),
-            1,
-            "Native guard and adopt share one completed integration"
-        );
-        let initial = solid.volume_mm3().unwrap();
-        let shared = solid.share().unwrap();
-        let moved = shared.transformed(Default::default()).unwrap();
-        let started = std::time::Instant::now();
-        for _ in 0..10_000 {
-            assert_eq!(moved.volume_mm3().unwrap(), initial);
-        }
-        if std::env::var_os("MULTICAD_NATIVE_THREAD_PROFILE").is_some() {
-            eprintln!(
-                "cached metric volume: 10000 queries {:?}, one native integration",
-                started.elapsed()
-            );
-        }
-        assert_eq!(integrations(&solid), 1);
-        assert_eq!(integrations(&moved), 1);
-        let fresh = Solid::from_brep(&solid.to_brep().unwrap(), Default::default()).unwrap();
-        assert!(!shares(&solid, &fresh));
-        let actual = fresh.volume_mm3().unwrap();
-        let area: f64 = fresh.faces().unwrap().iter().map(|f| f.area_mm2).sum();
-        assert!(
-            (actual - initial).abs()
-                <= GeometryPolicy::default().linear_tolerance_mm * area + 1e-7 * (actual + initial)
-        );
-    }
-}
-
-#[cfg(all(test, feature = "occt"))]
-mod face_cache_tests {
-    use super::*;
-    fn count(s: &Solid) -> u64 {
-        ffi::face_integration_count(s.occt().unwrap()).unwrap()
-    }
-    fn shares(a: &Solid, b: &Solid) -> bool {
-        ffi::shares_face_cache(a.occt().unwrap(), b.occt().unwrap())
-    }
-    fn area(s: &Solid) -> f64 {
-        s.faces().unwrap().iter().map(|f| f.area_mm2).sum()
-    }
-
-    #[test]
-    fn completed_face_properties_share_only_identical_geometry_and_recompute_imports_and_edits() {
-        let policy = GeometryPolicy::default();
-        let source = Solid::box_solid([4., 5., 6.], policy).unwrap();
-        let expected = source.faces().unwrap();
-        assert_eq!(expected.len(), 6);
-        assert!((area(&source) - 148.).abs() < 1e-10);
-        let shared = source.share().unwrap();
-        assert!(shares(&source, &shared));
-        for _ in 0..50 {
-            assert_eq!(shared.faces().unwrap(), expected);
-        }
-        assert_eq!(count(&source), 6);
-        let moved = source
-            .transformed(RigidTransform {
-                rotation: [[1., 0., 0.], [0., 0., -1.], [0., 1., 0.]],
-                translation_mm: [9., -3., 7.],
-            })
-            .unwrap();
-        assert!(!shares(&source, &moved));
-        let moved_faces = moved.faces().unwrap();
-        for (before, after) in expected.iter().zip(&moved_faces) {
-            assert!((before.area_mm2 - after.area_mm2).abs() < 1e-10);
-            let [x, y, z] = before.center_mm;
-            for (actual, want) in after.center_mm.into_iter().zip([x + 9., -z - 3., y + 7.]) {
-                assert!((actual - want).abs() < 1e-10);
-            }
-        }
-        assert_eq!(count(&moved), 0);
-        let fresh = Solid::from_brep(&moved.to_brep().unwrap(), policy).unwrap();
-        assert!(!shares(&moved, &fresh));
-        assert!((area(&fresh) - 148.).abs() < 1e-10);
-        assert_eq!(count(&fresh), 6);
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("independent-faces.step");
-        moved.write_step(&path).unwrap();
-        let read = Solid::read_step(&path, policy).unwrap();
-        assert!(!shares(&moved, &read));
-        assert!((area(&read) - 148.).abs() < 1e-8);
-        assert_eq!(count(&read), 6);
-        let tool = Solid::box_solid([2., 5., 6.], policy).unwrap();
-        let cut = source
-            .boolean(&tool, BooleanOperation::Subtract, policy)
-            .unwrap()
-            .unwrap();
-        assert!(!shares(&source, &cut));
-        assert!((area(&cut) - 104.).abs() < 1e-10);
-        assert_eq!(source.faces().unwrap(), expected);
-        assert_eq!(count(&source), 6);
-    }
-
-    #[test]
-    fn exact_identity_pose_preserves_numeric_face_cache_without_reusing_owner_metadata() {
-        let policy = GeometryPolicy::default();
-        let owner = multicad_core::document::EntityId::new();
-        let source = Solid::box_named([4., 5., 6.], owner, policy).unwrap();
-        let expected = source.faces().unwrap();
-        let bounds = source.bounds().unwrap();
-        let before = count(&source);
-        let identity = source.transformed(RigidTransform::default()).unwrap();
-        assert!(shares(&source, &identity));
-        assert_eq!(identity.faces().unwrap(), expected);
-        assert_eq!(identity.bounds().unwrap(), bounds);
-        assert_eq!(
-            identity.topology_snapshot(owner, 0).unwrap(),
-            source.topology_snapshot(owner, 0).unwrap()
-        );
-        assert_eq!(count(&identity), before);
-        let fresh = Solid::from_brep(&identity.to_brep().unwrap(), policy).unwrap();
-        assert!(!shares(&source, &fresh));
-        assert_eq!(fresh.faces().unwrap(), expected);
-        let translated = source
-            .transformed(RigidTransform {
-                translation_mm: [1e-10, 0., 0.],
-                ..RigidTransform::default()
-            })
-            .unwrap();
-        assert!(!shares(&source, &translated));
-        for (old, new) in expected.iter().zip(translated.faces().unwrap()) {
-            assert!((new.center_mm[0] - old.center_mm[0] - 1e-10).abs() < 1e-12);
-        }
-        assert_eq!(source.faces().unwrap(), expected);
-        assert_eq!(count(&source), before);
-    }
-
-    #[test]
-    fn proper_rigid_face_properties_match_independent_native_measurements_and_intents() {
-        use multicad_core::document::EntityId;
-        let policy = GeometryPolicy::default();
-        let owner = EntityId::new();
-        let source = Solid::helical_thread_named(
-            crate::HelicalThread {
-                major_radius_mm: 1.5,
-                pitch_mm: 0.5,
-                length_mm: 18.,
-                depth_mm: 5. * 3_f64.sqrt() / 32.,
-                crest_width_mm: 0.5 / 8.,
-                lower_flank_deg: 30.,
-                upper_flank_deg: 30.,
-                radial_taper: 0.,
-                starts: 1,
-                left_hand: false,
-            },
-            owner,
-            policy,
-        )
-        .unwrap();
-        let original = source.faces().unwrap();
-        let original_brep = source.to_brep().unwrap();
-        let original_bounds = source.bounds().unwrap();
-        let original_volume = source.volume_mm3().unwrap();
-        let original_count = count(&source);
-        let first = source
-            .transformed(RigidTransform {
-                rotation: [[0.6, -0.8, 0.], [0.8, 0.6, 0.], [0., 0., 1.]],
-                translation_mm: [7., -3., 12.],
-            })
-            .unwrap();
-        let composed = first
-            .transformed(RigidTransform {
-                rotation: [[1., 0., 0.], [0., 0.6, -0.8], [0., 0.8, 0.6]],
-                translation_mm: [-2., 8., 5.],
-            })
-            .unwrap();
-        for moved in [&first, &composed] {
-            assert!(!shares(&source, moved));
-            assert_eq!(
-                count(moved),
-                0,
-                "Proper rigid descriptor transport must avoid repeated quadrature"
-            );
-            let fresh = Solid::from_brep(&moved.to_brep().unwrap(), policy).unwrap();
-            let cached = moved.faces().unwrap();
-            let measured = fresh.faces().unwrap();
-            assert_eq!(cached.len(), measured.len());
-            for (a, b) in cached.iter().zip(&measured) {
-                assert_eq!(a.index, b.index);
-                assert_eq!(
-                    a.plane, b.plane,
-                    "Planar descriptors must use the unchanged output-native path"
-                );
-                assert!((a.area_mm2 - b.area_mm2).abs() < 1e-7 * (a.area_mm2 + b.area_mm2));
-                for (x, y) in a.center_mm.into_iter().zip(b.center_mm) {
-                    assert!((x - y).abs() < policy.linear_tolerance_mm);
-                }
-            }
-            assert_eq!(count(moved), 0);
-            let mut rebound = fresh.share().unwrap();
-            // BRep transport carries no owner metadata. Reapply the already
-            // verified ordinal receipt only to compare independent native
-            // measurement with the same persistent reference input.
-            rebound.provenance = moved.provenance.clone();
-            let cached_refs = moved.topology_snapshot(owner, 0).unwrap();
-            let measured_refs = rebound.topology_snapshot(owner, 0).unwrap();
-            assert_eq!(cached_refs.elements.len(), measured_refs.elements.len());
-            for (a, b) in cached_refs.elements.iter().zip(&measured_refs.elements) {
-                assert_eq!(a.key, b.key);
-                assert_eq!(a.origins, b.origins);
-                assert_eq!(a.boundary, b.boundary);
-                assert_eq!(a.frames, b.frames, "Anchored frame differs at {:?}", a.key);
-                if a.key.kind == multicad_core::references::TopologyKind::Face {
-                    assert_eq!(
-                        a.geometry, b.geometry,
-                        "Native plane descriptor differs at {:?}",
-                        a.key
-                    );
-                }
-            }
-            let directory = tempfile::tempdir().unwrap();
-            let path = directory.path().join("rigid-thread.step");
-            moved.write_step(&path).unwrap();
-            let step = Solid::read_step(&path, policy).unwrap();
-            for (a, b) in moved
-                .bounds()
-                .unwrap()
-                .min
-                .into_iter()
-                .chain(moved.bounds().unwrap().max)
-                .zip(
-                    step.bounds()
-                        .unwrap()
-                        .min
-                        .into_iter()
-                        .chain(step.bounds().unwrap().max),
-                )
-            {
-                assert!((a - b).abs() < policy.linear_tolerance_mm * 2.);
-            }
-            let area: f64 = cached.iter().map(|f| f.area_mm2).sum();
-            let bound = 2. * policy.linear_tolerance_mm * area
-                + 1e-7 * (step.volume_mm3().unwrap() + moved.volume_mm3().unwrap());
-            assert!((step.volume_mm3().unwrap() - moved.volume_mm3().unwrap()).abs() < bound);
-        }
-        assert!(
-            source
-                .transformed(RigidTransform {
-                    translation_mm: [f64::NAN, 0., 0.],
-                    ..Default::default()
-                })
-                .is_err()
-        );
-        assert_eq!(source.to_brep().unwrap(), original_brep);
-        assert_eq!(source.bounds().unwrap(), original_bounds);
-        assert_eq!(source.volume_mm3().unwrap(), original_volume);
-        assert_eq!(source.faces().unwrap(), original);
-        assert_eq!(count(&source), original_count);
-        let box_source = Solid::box_named([4., 5., 6.], EntityId::new(), policy).unwrap();
-        let scaled = box_source
-            .affine_transformed_named(
-                crate::AffineTransform {
-                    matrix: [[2., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-                    translation_mm: [0.; 3],
-                },
-                EntityId::new(),
-                policy,
-            )
-            .unwrap();
-        assert!(!shares(&box_source, &scaled));
-        assert_eq!(count(&scaled), 6);
-        let mirrored = box_source
-            .mirrored_named(
-                PlaneFrame {
-                    origin: [0.; 3],
-                    u: [0., 1., 0.],
-                    v: [0., 0., 1.],
-                },
-                EntityId::new(),
-                policy,
-            )
-            .unwrap();
-        assert!(!shares(&box_source, &mirrored));
-        assert_eq!(count(&mirrored), 6);
-    }
-
-    #[test]
-    fn cold_face_cache_serializes_eight_native_queries_without_crossing_rust_ownership() {
-        let solid = Solid::cylinder(Default::default(), 3., 4., Default::default()).unwrap();
-        assert!(ffi::face_cache_concurrent_probe(solid.occt().unwrap()).unwrap());
-        assert!((area(&solid) - 42. * std::f64::consts::PI).abs() < 1e-9);
-        let initial = count(&solid);
-        for _ in 0..100 {
-            assert_eq!(solid.faces().unwrap().len(), 3);
-        }
-        assert_eq!(count(&solid), initial);
-    }
-}
-
-#[cfg(all(test, feature = "occt"))]
-mod exact_geometry_digest_tests {
-    use super::*;
-    use multicad_core::document::EntityId;
-
-    #[test]
-    fn exact_geometry_digest_is_owner_independent_stable_and_display_independent() {
-        let policy = GeometryPolicy::default();
-        let owner = EntityId::new();
-        let source = Solid::box_named([4., 5., 6.], owner, policy).unwrap();
-        let bytes = source.to_brep().unwrap();
-        let digest = source.exact_geometry_digest().unwrap();
-        assert_eq!(
-            source.share().unwrap().exact_geometry_digest().unwrap(),
-            digest
-        );
-        assert_eq!(
-            source
-                .rebind_exclusive_owner(owner, EntityId::new())
-                .unwrap()
-                .exact_geometry_digest()
-                .unwrap(),
-            digest
-        );
-        let independent = Solid::box_named([4., 5., 6.], EntityId::new(), policy).unwrap();
-        assert_eq!(independent.exact_geometry_digest().unwrap(), digest);
-        let _ = source.mesh(MeshOptions::default()).unwrap();
-        assert_eq!(source.exact_geometry_digest().unwrap(), digest);
-        assert_eq!(source.to_brep().unwrap(), bytes);
-        let changed = Solid::box_named([4., 5., 6.0001], owner, policy).unwrap();
-        assert_ne!(changed.exact_geometry_digest().unwrap(), digest);
-    }
-
-    #[test]
-    fn exact_geometry_digest_retains_translation_bits_lost_by_ascii_and_rotation() {
-        let source = Solid::box_solid([4., 5., 6.], GeometryPolicy::default()).unwrap();
-        let before = source.to_brep().unwrap();
-        let moved = |x| {
-            source
-                .transformed(RigidTransform {
-                    translation_mm: [x, 0., 0.],
-                    ..Default::default()
-                })
-                .unwrap()
-        };
-        let a = moved(1.);
-        let b = moved(f64::from_bits(1f64.to_bits() + 1));
-        assert_eq!(
-            a.to_brep().unwrap(),
-            b.to_brep().unwrap(),
-            "Pinned ASCII15 output must demonstrate the unsafe key collision"
-        );
-        assert_ne!(
-            a.exact_geometry_digest().unwrap(),
-            b.exact_geometry_digest().unwrap()
-        );
-        let angle = 0.123f64;
-        let (s, c) = angle.sin_cos();
-        let rotated = source
-            .transformed(RigidTransform {
-                rotation: [[c, -s, 0.], [s, c, 0.], [0., 0., 1.]],
-                ..Default::default()
-            })
-            .unwrap();
-        assert_ne!(
-            rotated.exact_geometry_digest().unwrap(),
-            source.exact_geometry_digest().unwrap()
-        );
-        assert_eq!(source.to_brep().unwrap(), before);
-    }
-
-    #[test]
-    fn exact_geometry_digest_includes_native_tolerance_and_curved_surfaces() {
-        let policy = GeometryPolicy::default();
-        let source = Solid::cylinder(PlaneFrame::default(), 3., 4., policy).unwrap();
-        let before = source.to_brep().unwrap();
-        let digest = source.exact_geometry_digest().unwrap();
-        let independent = Solid::cylinder(PlaneFrame::default(), 3., 4., policy).unwrap();
-        assert_eq!(independent.exact_geometry_digest().unwrap(), digest);
-        let _ = source.mesh(MeshOptions::default()).unwrap();
-        assert_eq!(source.exact_geometry_digest().unwrap(), digest);
-        // Change only an actual stored vertex tolerance in the pinned public
-        // BRep codec. No geometry constructor or tolerance policy is changed.
-        let start = before.find("\nVe\n").unwrap() + 4;
-        let end = start + before[start..].find('\n').unwrap();
-        let tolerance: f64 = before[start..end].parse().unwrap();
-        let mut edited = before.clone();
-        edited.replace_range(start..end, &(tolerance * 2.).to_string());
-        let changed = Solid::from_brep(&edited, policy).unwrap();
-        assert_ne!(changed.exact_geometry_digest().unwrap(), digest);
-        assert!((changed.volume_mm3().unwrap() - source.volume_mm3().unwrap()).abs() < 1e-10);
-        assert_eq!(source.to_brep().unwrap(), before);
-    }
-
-    #[test]
-    fn exact_geometry_digest_refuses_partial_or_unbounded_serialization() {
-        let source = Solid::box_solid([4., 5., 6.], GeometryPolicy::default()).unwrap();
-        let before = source.to_brep().unwrap();
-        let complete = source.exact_geometry_digest().unwrap();
-        for limit in [0, 16, 128, 16 * 1024 * 1024 + 1] {
-            assert!(ffi::shape_binary_geometry(source.occt().unwrap(), limit).is_err());
-            assert_eq!(source.exact_geometry_digest().unwrap(), complete);
-        }
-        assert_eq!(source.to_brep().unwrap(), before);
     }
 }
 

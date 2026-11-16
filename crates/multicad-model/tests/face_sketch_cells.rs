@@ -368,8 +368,6 @@ fn rust_cuts_attached_triangles_through_both_model_commands() {
         };
         let selection = discover(GeometryBackend::Rust);
         assert_eq!(selection.targets, vec![target]);
-        #[cfg(feature = "occt")]
-        assert_eq!(selection, discover(GeometryBackend::OpenCascade));
 
         let request =
             ExtrudeBooleanRequest::new(extrusion, Operation::Cut, selection.targets, keep_tools);
@@ -473,17 +471,6 @@ fn rust_cuts_attached_triangles_through_both_model_commands() {
                 600. + 80. * height + 100. * 2.0_f64.sqrt()
             };
             near(area(&result), expected_area);
-            #[cfg(feature = "occt")]
-            {
-                let native = compile_on(&f.session, GeometryBackend::OpenCascade);
-                let native_shape = &native.snapshot().shapes[&cut.feature];
-                near(shape.volume_mm3, native_shape.volume_mm3);
-                near(area(&result), area(&native));
-                for axis in 0..3 {
-                    near(shape.bounds.min[axis], native_shape.bounds.min[axis]);
-                    near(shape.bounds.max[axis], native_shape.bounds.max[axis]);
-                }
-            }
         }
     }
 }
@@ -609,27 +596,6 @@ fn rust_chained_triangle_cuts_keep_both_wall_origins_after_reopen_and_edit() {
                             if (frame.origin_mm[2] - floor).abs() < 1e-7 && frame.normal()[2] > 0.99
                     )
             }));
-        }
-        #[cfg(feature = "occt")]
-        {
-            let oracle = compile_on(&f.session, GeometryBackend::OpenCascade);
-            let native_shape = &oracle.snapshot().shapes[&cut2];
-            near(shape.volume_mm3, native_shape.volume_mm3);
-            let area = |model: &Model| {
-                model
-                    .solid(cut2)
-                    .unwrap()
-                    .faces()
-                    .unwrap()
-                    .iter()
-                    .map(|face| face.area_mm2)
-                    .sum::<f64>()
-            };
-            near(area(&result), area(&oracle));
-            for axis in 0..3 {
-                near(shape.bounds.min[axis], native_shape.bounds.min[axis]);
-                near(shape.bounds.max[axis], native_shape.bounds.max[axis]);
-            }
         }
     }
 }

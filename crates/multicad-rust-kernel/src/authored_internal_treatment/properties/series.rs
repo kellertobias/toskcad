@@ -44,6 +44,18 @@ impl S {
         }
         Self(c).checked()
     }
+    /// The actual circular-root H is strictly positive on its finite trim.
+    pub fn positive_reciprocal(self) -> Result<Self, Error> {
+        if !self.0[0].valid() || self.0[0].lo <= 0. {
+            return Err(Error::Unresolved);
+        }
+        let mut c = [I::point(0.); ORDER + 1];
+        c[0] = I::point(1.) / self.0[0];
+        for n in 1..=ORDER {
+            c[n] = -(1..=n).fold(I::point(0.), |sum, k| sum + self.0[k] * c[n - k]) / self.0[0];
+        }
+        Self(c).checked()
+    }
     pub fn checked(self) -> Result<Self, Error> {
         if self.0.into_iter().all(I::valid) {
             Ok(self)
@@ -67,4 +79,28 @@ pub(super) fn sin_cos(base: I, slope: I, u: I) -> (S, S) {
         cosine[n] = factor * [c, -s, -c, s][n % 4];
     }
     (S(sine), S(cosine))
+}
+#[cfg(test)]
+mod reciprocal_tests {
+    use super::*;
+    #[test]
+    fn positive_reciprocal_retains_actual_taylor_coefficients_and_numeric_refusals() {
+        let f = S::constant(I::point(1.)).add(S::variable(I::point(0.)));
+        let inverse = f.positive_reciprocal().unwrap();
+        for (n, c) in inverse.0.into_iter().enumerate() {
+            let expected = if n.is_multiple_of(2) { 1. } else { -1. };
+            assert!(c.lo <= expected && c.hi >= expected);
+        }
+        assert!(S::constant(I::new(-1., 1.)).positive_reciprocal().is_err());
+        assert!(
+            S::constant(I::point(f64::NAN))
+                .positive_reciprocal()
+                .is_err()
+        );
+        assert!(
+            S::constant(I::point(f64::from_bits(1)))
+                .positive_reciprocal()
+                .is_err()
+        );
+    }
 }

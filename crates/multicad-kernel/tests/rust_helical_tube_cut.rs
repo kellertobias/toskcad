@@ -134,13 +134,6 @@ fn step_readback_preserves_cut_material_and_rejects_the_wrong_phase() {
     let measure = cut.verify_helical_tube_cut_step(&text).unwrap().unwrap();
     assert!((measure - cut.volume_mm3().unwrap()).abs() < 1e-6);
     assert!(stock.verify_helical_tube_cut_step(&text).is_none());
-    #[cfg(feature = "occt")]
-    {
-        let native = Solid::read_step(&path, policy).unwrap();
-        assert_eq!(native.solid_count().unwrap(), 1);
-        assert_eq!(native.faces().unwrap().len(), 5);
-        assert!((native.volume_mm3().unwrap() - measure).abs() < 1e-6);
-    }
 
     let rotated = stock
         .rust_cut_helical_tube(
@@ -242,12 +235,7 @@ fn mixed_step_publication_matches_the_source_geometry_of_each_member() {
     let mut readbacks = read_analytic_compound_with_helical_cuts(&text, tolerance).unwrap();
     let topology = compound.topology_snapshot(feature, 1).unwrap();
     assert!(compound.step_readback_matches(&topology, &readbacks, tolerance * 2.));
-    #[cfg(feature = "occt")]
-    {
-        let native = Solid::read_step(&path, policy).unwrap();
-        assert_eq!(native.solid_count().unwrap(), 3);
-        assert!((native.volume_mm3().unwrap() - compound.volume_mm3().unwrap()).abs() < 1e-6);
-    }
+
     readbacks.swap(0, 2);
     assert!(!compound.step_readback_matches(&topology, &readbacks, tolerance * 2.));
     readbacks.swap(0, 2);

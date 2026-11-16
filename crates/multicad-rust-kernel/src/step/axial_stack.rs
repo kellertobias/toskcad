@@ -106,14 +106,18 @@ fn encode_shell(
                     };
                     file.face(&[bound], point, placement.vector(normal), reference)
                 }
-                Support::Cylinder { radius_mm, .. } => {
+                Support::Cylinder { radius_mm, .. } | Support::InwardCylinder { radius_mm, .. } => {
                     let axis = edges[first]
                         .1
                         .expect("a cylindrical stack wall starts with an arc rim");
                     let cylinder = file.entity(format_args!(
                         "CYLINDRICAL_SURFACE('',{axis},{radius_mm:.16E})"
                     ));
-                    file.face_on(&[bound], cylinder, true)
+                    file.face_on(
+                        &[bound],
+                        cylinder,
+                        !matches!(face.support, Support::InwardCylinder { .. }),
+                    )
                 }
             }
         })

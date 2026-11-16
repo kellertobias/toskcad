@@ -21,6 +21,7 @@ use std::{
 };
 
 mod blind;
+pub(in crate::geometry) mod contained_boolean;
 mod end_relief;
 mod external;
 pub(super) mod full_height;
@@ -31,7 +32,7 @@ mod boundary;
 mod nut;
 mod phillips;
 pub use phillips::PhillipsMeshVolumePair;
-mod profiled_screw;
+pub(super) mod profiled_screw;
 mod screw;
 pub(super) mod stock_frame;
 use blind::BlindStock;
@@ -809,6 +810,12 @@ impl Solid {
     /// Query the modeled helical material in world coordinates.
     pub fn rust_thread_contains(&self, point_mm: Point) -> Result<bool, GeometryError> {
         self.policy.point(point_mm)?;
+        if let Some(body) = self.pipe_hardware_body() {
+            return body.contains(point_mm);
+        }
+        if let Some((body, frame)) = self.repaired_phillips_body() {
+            return body.contains(frame, point_mm);
+        }
         if let Some((body, frame)) = self.rounded_thread_bore_body() {
             return Ok(body.contains(frame, point_mm));
         }

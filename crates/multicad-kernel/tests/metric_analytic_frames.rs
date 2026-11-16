@@ -232,22 +232,5 @@ fn small_admitted_frames_keep_finite_mesh_and_real_step_geometry() {
             (imported.volume_mm3().unwrap() - source.volume_mm3().unwrap()).abs()
                 < 1e-7 * source.volume_mm3().unwrap()
         );
-        #[cfg(feature = "occt")]
-        {
-            let native = Solid::read_step(&path, policy).unwrap();
-            assert!(
-                (native.volume_mm3().unwrap() - source.volume_mm3().unwrap()).abs()
-                    < 1e-7 * source.volume_mm3().unwrap()
-            );
-            let native_bounds = native.bounds().unwrap();
-            for (a, b) in bounds
-                .min
-                .into_iter()
-                .chain(bounds.max)
-                .zip(native_bounds.min.into_iter().chain(native_bounds.max))
-            {
-                assert!((a - b).abs() < 5e-6, "{kind:?}: {a} vs {b}");
-            }
-        }
     }
 }

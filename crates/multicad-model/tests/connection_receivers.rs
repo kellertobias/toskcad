@@ -382,7 +382,8 @@ fn plain_blind_receiving_depth_edits_keep_actual_floor_references_history_and_re
     assert!(receipt.edge_pairs > 0 && receipt.vertex_links > 0);
 }
 #[test]
-fn plain_blind_receivers_refuse_seats_wrong_entry_and_declared_material_failures_atomically() {
+fn plain_blind_receivers_refuse_uncertified_counterbore_pose_cones_wrong_entry_and_material_failures_atomically()
+ {
     for case in 0..6 {
         let (session, mut request) = fixture();
         request.source.extent = ConnectionReceiverExtent::Blind {
@@ -419,8 +420,14 @@ fn plain_blind_receivers_refuse_seats_wrong_entry_and_declared_material_failures
             .compile(q.prepared.document(), session.revision() + 1)
             .err()
             .expect("blind source guard");
-        if case < 2 {
-            assert!(failure.message.contains("seat"), "{failure}");
+        assert_eq!(failure.entity, Some(request.feature));
+        if case == 0 {
+            assert!(
+                failure.message.contains("exact cardinal entry chart"),
+                "{failure}"
+            );
+        } else if case == 1 {
+            assert!(failure.message.contains("conical seats"), "{failure}");
         }
         assert_eq!(session.document(), &before);
     }

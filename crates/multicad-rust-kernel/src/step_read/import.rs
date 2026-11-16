@@ -325,6 +325,7 @@ pub(super) fn recognize_member(
         .or_else(|| shell.pierced_normal_sweep(faces))
         .or_else(|| shell.cylindrical_revolution(faces, &readback))
         .or_else(|| shell.axial_profile_stack(faces, &readback))
+        .or_else(|| shell.rectangular_blind_counterbore(faces, &readback))
     {
         Some(solid) => solid,
         None => match shell.orthogonal(faces) {

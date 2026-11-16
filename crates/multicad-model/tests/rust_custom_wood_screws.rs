@@ -155,34 +155,30 @@ fn custom_authored_wood_threads_keep_their_exact_start_frame_and_physical_geomet
 }
 
 #[test]
-fn unsupported_custom_hanger_keeps_the_previous_document() {
+fn supported_custom_hanger_preview_keeps_the_previous_document_until_committed() {
     let compiler = Compiler {
         omit_display: true,
         ..Default::default()
     };
-    let session = Session::new(Document::new("Atomic custom hardware refusal").unwrap()).unwrap();
+    let session = Session::new(Document::new("Atomic custom hardware preview").unwrap()).unwrap();
     let before = session.document().clone();
     {
         let source = model::default_custom_connection_hanger_bolt();
-        let request = MechanicalPartRequest::new("Needs connected material", source);
+        let request = MechanicalPartRequest::new("Actual connected hanger material", source);
         let candidate =
             model::prepare_mechanical_part(&session, 0, Actor::local(Channel::Ui), &request)
                 .unwrap();
-        let failure = compiler
+        let preview = compiler
             .compile_with_backend(
                 candidate.prepared.document(),
                 1,
                 GeometryBackend::Rust,
                 None,
             )
-            .err()
             .unwrap();
-        assert!(
-            failure
-                .message
-                .contains("hanger bolts require their own connected-material provider"),
-            "{failure:?}"
-        );
+        let shape = preview.solid(request.feature).unwrap();
+        assert!(shape.rust_hanger_data().is_some());
+        assert_eq!(shape.faces().unwrap().len(), 13);
         assert_eq!(session.document(), &before);
         assert_eq!(session.revision(), 0);
     }

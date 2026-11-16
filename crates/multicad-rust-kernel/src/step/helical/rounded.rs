@@ -14,6 +14,17 @@ impl Spline {
         sense: f64,
         error: f64,
     ) -> Result<Self, StepError> {
+        Self::rounded_root_matching(circle, phases, radii, rate, sense, error, None)
+    }
+    pub(super) fn rounded_root_matching(
+        circle: RootCircle,
+        phases: [f64; 2],
+        radii: [f64; 2],
+        rate: f64,
+        sense: f64,
+        error: f64,
+        expected: Option<usize>,
+    ) -> Result<Self, StepError> {
         // Use circle angle as the chart coordinate. It removes the square
         // root from the radial profile while preserving phase and radius.
         let angles = phases.map(|p| ((p - circle.phase) / circle.radius).asin());
@@ -32,9 +43,12 @@ impl Spline {
                 2. * rho * ((log_error - log_bound) / DERIVATIVE_ORDER).exp()
             })
             .fold(0., f64::max);
-        let mut spline = Self::with_jets(angles[0], angles[1], span_limit, |angle| {
-            rounded_jet(circle, angle, rate, sense)
-        })?;
+        let jet = |angle| rounded_jet(circle, angle, rate, sense);
+        let mut spline = if let Some(count) = expected {
+            Self::with_jets_matching(angles[0], angles[1], span_limit, Some(count), jet)?
+        } else {
+            Self::with_jets(angles[0], angles[1], span_limit, jet)?
+        };
 
         // The exact same authored phase/radius endpoints also bound the
         // neighboring flank charts. Reuse their floating-point values at

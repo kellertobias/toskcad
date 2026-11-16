@@ -50,13 +50,34 @@ pub struct Contact {
     pub witness_volume_lower_mm3: f64,
     pub source_chart_bearing_radial_land_mm: [f64; 2],
 }
+mod hanger;
 mod insert;
+pub use hanger::{
+    BearingContact, HangerComponent, HangerContact, HangerMating, HangerMatingRequirements,
+    HangerPassage, HangerStack, PassageRequirements, PlacedAnnulus, PlacedHangerComponent,
+    StackRequirements, StackSources, ThroughStock, WoodSide, certify_hanger_annulus,
+    certify_hanger_nut, certify_hanger_stack, certify_hanger_through_stock, certify_hanger_wood,
+    hanger_component_separation,
+};
+mod receiver_clearance;
+pub use receiver_clearance::{
+    Line8ReceiverClearance, ProfiledScrewPlacement, ProfiledScrewReceiverClearance,
+    ReceiverClearanceOptions, ReceivingSweep, SeatedStockPlacement, SeatedStockReceiverClearance,
+    certify_line8_receiver_clearance, certify_profiled_screw_receiver_clearance,
+    certify_seated_stock_receiver_clearance,
+};
+mod seated;
 mod separation;
 pub use insert::{
-    InsertContact, InsertMating, MatingExternal, MatingRequirements, MatingScrew, ScrewClearance,
-    ScrewClearanceRequirements, certify_insert, certify_insert_mating,
-    certify_insert_screw_clearance,
+    ClockedInsertMating, ClockedLine8Mating, ClockedLine8Placement, ClockedMatingBounds,
+    ClockedMatingOptions, InsertClampContact, InsertClampRequirements, InsertClampSources,
+    InsertContact, InsertMating, InsetInsertContact, MatingExternal, MatingRequirements,
+    MatingScrew, ScrewClearance, ScrewClearanceRequirements, certify_clocked_insert_mating,
+    certify_clocked_insert_screw_clearance, certify_clocked_line8_mating, certify_insert,
+    certify_insert_clamp, certify_insert_mating, certify_insert_screw_clearance,
+    certify_inset_insert,
 };
+pub use seated::{SeatedContact, certify_seated};
 pub use separation::{separated_from_rectangular_prism, separated_from_stock};
 
 type R<T> = Result<T, Error>;
@@ -94,6 +115,22 @@ fn enclosure(v: &Q) -> R<I> {
     } else {
         Ok(r)
     }
+}
+/// Exact literal affine point evaluation followed by checked outward caches.
+/// These data-derived datum intervals are not a contact/geometry tolerance.
+fn world_point(frame: Frame, point: [Q; 3], interrupt: &dyn Fn() -> bool) -> R<[[f64; 2]; 3]> {
+    let mut out = [[0.; 2]; 3];
+    for (i, slot) in out.iter_mut().enumerate() {
+        let mut value = q(frame.origin_mm[i])?;
+        for (j, p) in point.iter().enumerate() {
+            value = bounded(value + q(frame.axes[j][i])? * p)?;
+        }
+        let v = enclosure(&value)?;
+        *slot = [v.lo, v.hi];
+    }
+    // Publish the completed exact-source query only after a fresh poll.
+    checkpoint(interrupt)?;
+    Ok(out)
 }
 fn ip(v: f64) -> I {
     I::point(v)
@@ -1167,13 +1204,90 @@ mod tests {
             Error::Limit
         );
         let (material, p, screw, frame, req) = fixture(false, 1);
+        // A real pilot leaving only a one-ulp radial bite cannot contain this
+        // provider's strict binary64 box witness. Keep that genuine refusal.
+        let unresolved = pilot(
+            &material,
+            screw.thread().spec().major_radius_mm.next_down(),
+            false,
+        );
+        assert_eq!(
+            run(&material, unresolved, &screw, frame, req).unwrap_err(),
+            Error::Unsupported
+        );
         let mut narrow = screw.thread().spec();
         narrow.crest_width_mm = 1e-15;
         let narrow = Screw::new(Thread::new(narrow).unwrap(), screw.spec()).unwrap();
-        assert_eq!(
-            run(&material, p, &narrow, frame, req).unwrap_err(),
-            Error::Unsupported
+        // A narrow crest is not intrinsically unresolvable: the seam-aware
+        // whole-box query can now earn a real interior witness. Check it
+        // independently instead of requiring the former angular ambiguity.
+        let contact = run(&material, p, &narrow, frame, req).unwrap();
+        let w = contact.thread_witness_mm;
+        assert!(w.iter().all(|[lo, hi]| lo < hi));
+        assert_eq!(frame.origin_mm, p.center_mm);
+        assert_eq!(frame.axes, [[1., 0., 0.], [0., -1., 0.], [0., 0., -1.]]);
+        let y = q(w[1][0]).unwrap().abs().max(q(w[1][1]).unwrap().abs());
+        let angular = &y / q(w[0][0]).unwrap(); // |atan(y/x)| <= |y/x|.
+        let thread = narrow.thread();
+        let rate = q(thread.helical_rate()).unwrap().abs();
+        let tau = std::f64::consts::TAU;
+        let turn_error = [tau.next_down(), tau.next_up()]
+            .into_iter()
+            .map(|v| (&rate * q(v).unwrap() - q(thread.spec().pitch_mm).unwrap()).abs())
+            .max()
+            .unwrap();
+        let axial = w[2]
+            .into_iter()
+            .map(|z| (q(z).unwrap() - q(6.).unwrap()).abs())
+            .max()
+            .unwrap();
+        let numeric = q(64. * f64::EPSILON * thread.spec().length_mm).unwrap();
+        let phase_error = axial + rate * angular + turn_error + numeric;
+        // Both retained 30-degree flank slopes are <64; this conservative
+        // lower radius covers the entire tiny wrapped phase interval.
+        assert!(phase_error < q(1e-9).unwrap());
+        let radius_lower =
+            q(thread.spec().major_radius_mm).unwrap() - q(64.).unwrap() * phase_error;
+        let radius_upper = q(w[0][1]).unwrap() + y;
+        assert!(radius_lower > radius_upper);
+        // The cardinal source chart maps the whole witness into the retained
+        // stock cell and strictly outside its actual finite pilot.
+        let world = [
+            [
+                q(10.).unwrap() + q(w[0][0]).unwrap(),
+                q(10.).unwrap() + q(w[0][1]).unwrap(),
+            ],
+            [
+                q(10.).unwrap() - q(w[1][1]).unwrap(),
+                q(10.).unwrap() - q(w[1][0]).unwrap(),
+            ],
+            [
+                q(20.).unwrap() - q(w[2][1]).unwrap(),
+                q(20.).unwrap() - q(w[2][0]).unwrap(),
+            ],
+        ];
+        assert!(
+            material
+                .cells()
+                .iter()
+                .any(|cell| (0..3).all(|i| q(cell.min[i]).unwrap() < world[i][0]
+                    && world[i][1] < q(cell.max[i]).unwrap()))
         );
+        assert!(q(w[0][0]).unwrap() > q(p.radius_mm).unwrap());
+        assert!(w[2][0] > 0. && w[2][1] < p.depth_mm);
+        let actual_volume = w
+            .into_iter()
+            .fold(Q::from_integer(1.into()), |v, [lo, hi]| {
+                v * (q(hi).unwrap() - q(lo).unwrap())
+            });
+        assert!(q(contact.witness_volume_lower_mm3).unwrap() > Q::zero());
+        assert!(q(contact.witness_volume_lower_mm3).unwrap() <= actual_volume);
+        for corner in 0..8 {
+            assert!(narrow.contains(
+                std::array::from_fn(|i| w[i][usize::from(corner & (1 << i) != 0)]),
+                0.
+            ));
+        }
         let mut small = screw.thread().spec();
         small.major_radius_mm = 0.001;
         small.depth_mm = 2_f64.powi(-54);

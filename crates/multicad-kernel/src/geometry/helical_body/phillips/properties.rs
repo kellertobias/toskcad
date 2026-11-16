@@ -197,12 +197,18 @@ pub(in crate::geometry::helical_body) fn plane(
         std::array::from_fn(|i| (0..3).fold(I::ZERO, |s, k| s + cof[k][i] * normal[k]));
     let actual = normalized(transported_normal)?;
     let n = mid(actual);
+    // Attachment axes belong to the source face. Choosing a least-aligned
+    // WORLD axis would flip a named frame when a rigid occurrence rotates.
+    let local_n = mid(normalized(normal)?);
     let index = (0..3)
-        .min_by(|&i, &j| n[i].abs().total_cmp(&n[j].abs()))
+        .min_by(|&i, &j| local_n[i].abs().total_cmp(&local_n[j].abs()))
         .expect("three coordinates");
     let mut axis = [I::ZERO; 3];
     axis[index] = I::ONE;
-    let u = mid(normalized(cross(n.map(p), axis))?);
+    let local_u = mid(normalized(cross(local_n.map(p), axis))?);
+    let transported_u =
+        std::array::from_fn(|i| (0..3).fold(I::ZERO, |s, k| s + a[k][i] * p(local_u[k])));
+    let u = mid(normalized(transported_u)?);
     let v = mid(normalized(cross(n.map(p), u.map(p)))?);
     let published = cross(u.map(p), v.map(p));
     let en = (0..3).fold(I::ZERO, |sum, i| {

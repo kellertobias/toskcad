@@ -739,22 +739,6 @@ fn sphere_primitive_compiles_edits_and_reopens_as_an_exact_named_solid() {
                 .map(|e| e.origins)
                 .collect::<Vec<_>>()
         );
-
-        #[cfg(feature = "occt")]
-        {
-            let oracle = compiler
-                .compile_with_backend(document, revision, GeometryBackend::OpenCascade, None)
-                .unwrap();
-            let native = oracle.solid(request.feature).unwrap();
-            assert_eq!(native.solid_count().unwrap(), exact.solid_count().unwrap());
-            near(native.volume_mm3().unwrap(), exact.volume_mm3().unwrap());
-            let native_bounds = native.bounds().unwrap();
-            point_near(native_bounds.min, sphere.bounds.min);
-            point_near(native_bounds.max, sphere.bounds.max);
-            let native_faces = native.faces().unwrap();
-            assert_eq!(native_faces.len(), 1);
-            near(native_faces[0].area_mm2, faces[0].area_mm2);
-        }
     };
     check(session.document(), session.revision(), 10.);
     assert!(

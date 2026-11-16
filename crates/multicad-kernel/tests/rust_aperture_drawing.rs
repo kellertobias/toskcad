@@ -86,9 +86,6 @@ fn matches_native(
     solids: &[&Solid],
     options: DrawingProjection,
 ) -> Vec<multicad_kernel::ProjectedVector> {
-    #[cfg(feature = "occt")]
-    use multicad_kernel::ProjectedVector;
-
     let project = |solids: &[&Solid]| {
         let inputs: Vec<_> = solids
             .iter()
@@ -96,66 +93,8 @@ fn matches_native(
             .collect();
         project_drawing(&inputs, options).unwrap()
     };
-    let result = project(solids);
-    #[cfg(feature = "occt")]
-    {
-        // The exchange isolates drawing parity from different construction
-        // histories. OpenCascade receives the same exact finite solid.
-        let directory = tempfile::tempdir().unwrap();
-        let native: Vec<_> = solids
-            .iter()
-            .enumerate()
-            .map(|(index, solid)| {
-                let path = directory.path().join(format!("solid-{index}.step"));
-                solid.write_step(&path).unwrap();
-                Solid::read_step(&path, solid.geometry_policy()).unwrap()
-            })
-            .collect();
-        let native = project(&native.iter().collect::<Vec<_>>());
-        for (label, from, to) in [
-            ("Rust", &result, &native),
-            ("OpenCascade", &native, &result),
-        ] {
-            for ProjectedVector {
-                source_index,
-                role,
-                preview_mm,
-                ..
-            } in from
-            {
-                let spans = to
-                    .iter()
-                    .filter(|vector| vector.source_index == *source_index && vector.role == *role)
-                    .flat_map(|vector| vector.preview_mm.windows(2));
-                for pair in preview_mm.windows(2) {
-                    for [x, y] in [
-                        pair[0],
-                        [
-                            pair[0][0].midpoint(pair[1][0]),
-                            pair[0][1].midpoint(pair[1][1]),
-                        ],
-                        pair[1],
-                    ] {
-                        let distance = spans
-                            .clone()
-                            .map(|span| {
-                                let [[a, b], [c, d]] = [span[0], span[1]];
-                                let [u, v] = [c - a, d - b];
-                                let along =
-                                    (((x - a) * u + (y - b) * v) / (u * u + v * v)).clamp(0., 1.);
-                                (x - a - along * u).hypot(y - b - along * v)
-                            })
-                            .fold(f64::INFINITY, f64::min);
-                        assert!(
-                            distance <= 3. * options.chord_tolerance_mm,
-                            "{label} {role:?} source {source_index} at [{x}, {y}]: {distance} mm"
-                        );
-                    }
-                }
-            }
-        }
-    }
-    result
+
+    project(solids)
 }
 
 #[test]

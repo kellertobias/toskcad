@@ -432,9 +432,7 @@ fn native_fillet_switches_to_chamfer_and_rebuilds_bound_geometry_through_undo_an
         .unwrap()
         .write_step(&step)
         .unwrap();
-    #[cfg(feature = "occt")]
-    let readback = multicad_kernel::Solid::read_step(&step, Default::default()).unwrap();
-    #[cfg(not(feature = "occt"))]
+
     let readback = multicad_kernel::Solid::import_rust_step(
         &std::fs::read_to_string(&step).unwrap(),
         request.feature,
@@ -928,40 +926,6 @@ fn rust_box_fillet_preserves_planar_references_and_analytic_step_after_edit() {
         )
         .unwrap();
         near(reimported.volume_mm3().unwrap(), expected);
-        #[cfg(feature = "occt")]
-        {
-            let native = Compiler::default()
-                .compile_with_backend(
-                    session.document(),
-                    session.revision(),
-                    GeometryBackend::OpenCascade,
-                    None,
-                )
-                .unwrap();
-            let native_solid = native.solid(fillet.feature).unwrap();
-            near(native_solid.volume_mm3().unwrap(), expected);
-            let area: f64 = faces.iter().map(|face| face.area_mm2).sum();
-            near(
-                native_solid
-                    .faces()
-                    .unwrap()
-                    .iter()
-                    .map(|face| face.area_mm2)
-                    .sum(),
-                area,
-            );
-            let readback = multicad_kernel::Solid::read_step(&path, Default::default()).unwrap();
-            near(readback.volume_mm3().unwrap(), expected);
-            near(
-                readback
-                    .faces()
-                    .unwrap()
-                    .iter()
-                    .map(|face| face.area_mm2)
-                    .sum(),
-                area,
-            );
-        }
     }
 }
 

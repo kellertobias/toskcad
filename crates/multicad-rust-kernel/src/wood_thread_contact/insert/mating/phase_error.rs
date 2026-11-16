@@ -2,7 +2,7 @@
 //! No source rate, station or support is normalized or replaced.
 use super::*;
 #[derive(Clone, Copy)]
-pub(super) struct Allowance {
+pub(in crate::wood_thread_contact) struct Allowance {
     pub indexed_mm: f64,
     pub evaluator_mm: f64,
     pub total_mm: f64,
@@ -14,8 +14,23 @@ fn ulp_bound(magnitude: I) -> R<I> {
     }
     Ok(ip(finite(ip(bound.next_up()) - ip(bound))?.hi))
 }
-pub(super) fn measure(thread: &Thread, interrupt: &dyn Fn() -> bool) -> R<Allowance> {
+pub(in crate::wood_thread_contact) fn measure<'a>(
+    thread: impl Into<MatingThread<'a>>,
+    interrupt: &dyn Fn() -> bool,
+) -> R<Allowance> {
     checkpoint(interrupt)?;
+    let thread = match thread.into() {
+        MatingThread::Literal(t) => t,
+        // This source is defined by REAL periodic phase/radius nodes. Its
+        // bounded numeric queries never define indexed/f64 evaluator geometry.
+        MatingThread::Periodic(_) => {
+            return Ok(Allowance {
+                indexed_mm: 0.,
+                evaluator_mm: 0.,
+                total_mm: 0.,
+            });
+        }
+    };
     let spec = thread.spec();
     let pitch = ip(spec.pitch_mm);
     let mut indexed = 0_f64;

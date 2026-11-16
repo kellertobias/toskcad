@@ -1053,7 +1053,13 @@ impl Solid {
         revision: u64,
     ) -> Result<TopologySnapshot, GeometryError> {
         if self.uses_rust_geometry() {
-            let mut snapshot = if let Some((body, frame)) = self.wood_insert_body() {
+            let mut snapshot = if let Some(body) = self.pipe_hardware_body() {
+                body.topology(owner, revision, self.geometry_policy())?
+            } else if let Some((body, frame)) = self.repaired_phillips_body() {
+                body.periodic_topology(frame, owner, revision)?
+            } else if let Some((body, frame)) = self.hanger_body() {
+                body.topology(frame, owner, revision, self.geometry_policy())?
+            } else if let Some((body, frame)) = self.wood_insert_body() {
                 body.topology(frame, owner, revision, self.geometry_policy())?
             } else if let Some((body, frame)) = self.internal_thread_treatment_body() {
                 body.source_topology(frame, owner, revision, self.geometry_policy())?
@@ -1067,6 +1073,18 @@ impl Solid {
                 body.topology(frame, owner, revision)?
             } else if let Some((body, frame)) = self.helical_tube_cut_body() {
                 body.topology(frame, owner, revision)?
+            } else if let Some((body, frame)) = self.orthogonal_seat_body() {
+                body.topology(frame, owner, revision)?
+            } else if let Some(body) = self.line8_nut_body() {
+                body.topology(owner, revision)
+            } else if let Some(body) = self.external_npt_stock_body() {
+                body.topology(owner, revision)
+            } else if let Some(body) = self.literal_npt_body() {
+                body.topology(owner, revision)
+            } else if let Some(body) = self.clipped_npt_body() {
+                body.topology(owner, revision)
+            } else if let Some((body, frame)) = self.cosmetic_profiled_body_ref() {
+                body.topology(frame, owner, revision)
             } else if let Some((body, frame)) = self.cosmetic_fastener_body() {
                 body.topology(frame, owner, revision)?
             } else if let Some((body, frame)) = self.linear_body() {
@@ -1434,89 +1452,5 @@ impl Solid {
         // Validate native-derived data before it can enter the shared API.
         self.topology_snapshot(EntityId::new(), 0)?;
         Ok(())
-    }
-}
-
-#[cfg(all(test, feature = "occt"))]
-mod exclusive_owner_tests {
-    use super::*;
-    #[test]
-    fn exclusive_owner_rebind_preserves_geometry_and_all_source_roles_without_mutation() {
-        let old = EntityId::new();
-        let next = EntityId::new();
-        let policy = GeometryPolicy::default();
-        let source = Solid::box_named([4., 5., 6.], old, policy).unwrap();
-        let before = source.topology_snapshot(old, 0).unwrap();
-        let brep = source.to_brep().unwrap();
-        let rebound = source.rebind_exclusive_owner(old, next).unwrap();
-        let after = rebound.topology_snapshot(next, 0).unwrap();
-        assert_eq!(before.elements.len(), after.elements.len());
-        for (a, b) in before.elements.iter().zip(&after.elements) {
-            assert_eq!(a.key, b.key);
-            assert_eq!(a.geometry, b.geometry);
-            assert_eq!(
-                a.origins
-                    .iter()
-                    .map(|o| o.role.clone())
-                    .collect::<BTreeSet<_>>(),
-                b.origins.iter().map(|o| o.role.clone()).collect()
-            );
-            assert_eq!(
-                a.boundary
-                    .iter()
-                    .map(|o| o.role.clone())
-                    .collect::<BTreeSet<_>>(),
-                b.boundary.iter().map(|o| o.role.clone()).collect()
-            );
-            assert_eq!(a.frames.len(), b.frames.len());
-            for (x, y) in a.frames.iter().zip(&b.frames) {
-                assert_eq!(x.frame, y.frame);
-                assert_eq!(x.origin.role, y.origin.role);
-            }
-            assert!(
-                b.origins
-                    .iter()
-                    .chain(&b.boundary)
-                    .chain(b.frames.iter().map(|f| &f.origin))
-                    .all(|o| o.source == next)
-            );
-        }
-        assert_eq!(rebound.to_brep().unwrap(), brep);
-        assert_eq!(source.topology_snapshot(old, 0).unwrap(), before);
-        assert_eq!(source.to_brep().unwrap(), brep);
-        assert!(
-            source
-                .rebind_exclusive_owner(EntityId::nil(), next)
-                .is_err()
-        );
-        assert!(source.rebind_exclusive_owner(old, EntityId::nil()).is_err());
-        assert!(source.rebind_exclusive_owner(next, old).is_err());
-        for field in 0..3 {
-            let mut foreign = source.share().unwrap();
-            let origin = Origin {
-                source: EntityId::new(),
-                role: "foreign".into(),
-            };
-            match field {
-                0 => {
-                    foreign.provenance[0].origins.insert(origin);
-                }
-                1 => {
-                    foreign.provenance[0].boundary.insert(origin);
-                }
-                _ => {
-                    let frame = foreign
-                        .provenance
-                        .iter_mut()
-                        .flat_map(|e| &mut e.frames)
-                        .next()
-                        .unwrap();
-                    frame.origin = origin;
-                }
-            }
-            assert!(foreign.rebind_exclusive_owner(old, next).is_err());
-        }
-        let unnamed = Solid::box_solid([4., 5., 6.], policy).unwrap();
-        assert!(unnamed.rebind_exclusive_owner(old, next).is_err());
     }
 }

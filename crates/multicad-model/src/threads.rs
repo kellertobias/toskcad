@@ -3,7 +3,7 @@ mod cosmetic;
 mod end_treatments;
 mod internal;
 mod internal_treatments;
-mod pipe;
+pub(crate) mod pipe;
 use crate::{ModelError, error};
 use multicad_core::{
     document::EntityId,
@@ -229,6 +229,14 @@ pub(crate) fn build_rust(
             policy,
             interrupt,
         );
+    }
+    if source.mode == ThreadMode::CutExternal
+        && source.parameters.family == ThreadFamily::Npt
+        && thread.representation == ThreadRepresentation::Modeled
+    {
+        let target = receiving_target(feature, source, solids)?
+            .ok_or_else(|| fail("External pipe thread has no target predecessor"))?;
+        return pipe::cut_external_stock(feature, &thread, target, policy, interrupt);
     }
     validate_rust_family(feature, source.parameters.family)?;
     if thread.representation == ThreadRepresentation::CosmeticEnvelope

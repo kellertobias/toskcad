@@ -257,7 +257,7 @@ fn member_origin(assembly: EntityId, member: EntityId) -> Origin {
 }
 
 fn verify(fixture: &Fixture, session: &Session, translation: Point) -> Model {
-    let native = cfg!(feature = "occt").then(|| compile(session, GeometryBackend::OpenCascade));
+    let native = false.then(|| compile(session, GeometryBackend::OpenCascade));
     let rust = compile(session, GeometryBackend::Rust);
     let root = fixture.root.instance;
     let snapshot = rust.snapshot();

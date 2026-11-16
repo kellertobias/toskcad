@@ -137,38 +137,3 @@ fn eccentric_tilted_partial_and_missing_edges_are_not_misclassified_as_coaxial()
         GeometryErrorKind::Input
     );
 }
-
-#[cfg(feature = "occt")]
-#[test]
-fn independent_native_circle_extrema_agree_on_radial_and_axial_clearance() {
-    let scratch = tempfile::tempdir().unwrap();
-    for frame in frames() {
-        let center = std::array::from_fn(|i| frame.origin[i] + frame.normal()[i] * 4.);
-        let (a, b) = (
-            cylinder(2, frame),
-            cylinder(
-                5,
-                PlaneFrame {
-                    origin: center,
-                    ..frame
-                },
-            ),
-        );
-        let (sa, sb) = (ring(&a, frame.origin), ring(&b, center));
-        let mut native = vec![];
-        for (i, solid) in [&a, &b].into_iter().enumerate() {
-            let path = scratch.path().join(format!("{i}.step"));
-            solid.write_step(&path).unwrap();
-            native.push(Solid::read_step(&path, GeometryPolicy::default()).unwrap());
-        }
-        let actual = native[0]
-            .minimum_distance(
-                ring(&native[0], frame.origin),
-                &native[1],
-                ring(&native[1], center),
-            )
-            .unwrap();
-        let rust = a.minimum_distance(sa, &b, sb).unwrap();
-        assert!((rust.distance_mm - actual.distance_mm).abs() < 1e-7);
-    }
-}

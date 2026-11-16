@@ -548,3 +548,153 @@ fn actual_failed_transverse_cell_is_not_recovered_by_longitudinal_splits() {
         }
     }
 }
+
+#[test]
+fn actual_canonical_rc_eighth_source_reports_mesh_work_phases() {
+    use crate::axial_pipe_thread::authored::{AuthoredSection, AuthoredSpec, AuthoredThread};
+    let source = AuthoredThread::new(
+        AuthoredSpec {
+            major_radius_mm: 4.878174107142857,
+            pitch_mm: 25.4 / 28.,
+            length_mm: 7.4,
+            radial_taper: -1. / 32.,
+            section: AuthoredSection::BsptRounded {
+                depth_mm: 0.5808684050603288,
+            },
+            crest_radius_limit_mm: None,
+        },
+        1e-7,
+        1e-5,
+    )
+    .unwrap();
+    let body = source
+        .raw_boundary_ownership(1e-7, None)
+        .unwrap()
+        .ownership
+        .bind_surfaces(1e-7, None)
+        .unwrap()
+        .certify_axial(1e-7, 1e-5, None)
+        .unwrap()
+        .certify_caps(None)
+        .unwrap()
+        .certify_ordering(None)
+        .unwrap()
+        .certify_material(1e-7, None)
+        .unwrap();
+    let mut meshes = Vec::new();
+    for reuse in [false, true] {
+        STATS.with(|s| *s.borrow_mut() = Some(Stats::default()));
+        let at = Instant::now();
+        let mesh = build_with_limits(
+            &body,
+            Tessellation {
+                deflection: 0.05,
+                angle: 0.3,
+                triangle_limit: 500_000,
+            },
+            None,
+            Limits {
+                reuse_taylor_normal: true,
+                compact_certificates: true,
+                continue_v: true,
+                reuse_point_rows: reuse,
+                ..DEFAULT_LIMITS
+            },
+        )
+        .unwrap();
+        let stats = STATS.with(|s| s.borrow_mut().take().unwrap());
+        eprintln!(
+            "canonicalRc reuse={reuse} elapsed={:?} work={} V={} T={} hash={:016x}",
+            at.elapsed(),
+            stats.finished,
+            mesh.vertices.len() / 3,
+            mesh.indices.len() / 3,
+            hash(&mesh)
+        );
+        for stage in [
+            Stage::Prepare,
+            Stage::Emit,
+            Stage::Preflight,
+            Stage::Check,
+            Stage::Cells,
+            Stage::Embedding,
+        ] {
+            let i = stage as usize;
+            eprintln!(
+                "Rc reuse={reuse} {stage:?} calls={} work={} time={:?}",
+                stats.calls[i], stats.work[i], stats.time[i]
+            );
+        }
+        assert!(
+            crate::manufacturing::certify(&mesh)
+                .unwrap()
+                .signed_volume_mm3
+                > 0.
+        );
+        meshes.push(mesh);
+    }
+    assert_eq!(hash(&meshes[0]), hash(&meshes[1]));
+    assert_eq!(meshes[0], meshes[1]);
+    // Diagnostic-only separate child allowance; normal Native request keeps
+    // its unchanged aggregate512M and remains a genuine failure until fixed.
+    let trace = body
+        .tessellate_with_cap_trace(
+            Tessellation {
+                deflection: 0.05,
+                angle: 0.3,
+                triangle_limit: 500_000,
+            },
+            Default::default(),
+            None,
+        )
+        .unwrap();
+    let at = Instant::now();
+    let joined = crate::axial_pipe_thread::authored::hardware::mesh::join(
+        crate::axial_pipe_thread::authored::hardware::mesh::ThreadBoundaryMesh::Retained(&trace),
+        crate::axial_pipe_thread::authored::hardware::Kind::HexNut {
+            across_flats_mm: 18.,
+        },
+        crate::axial_pipe_thread::authored::hardware::mesh::MeshOptions {
+            tessellation: Tessellation {
+                deflection: 0.05,
+                angle: 0.3,
+                triangle_limit: 500_000,
+            },
+            maximum_work: 512_000_000,
+            maximum_bytes: 64 * 1024 * 1024,
+            additional_resident_bytes: 13_148_296,
+        },
+        None,
+    )
+    .unwrap();
+    eprintln!(
+        "Rc separated-child-only join work={} elapsed={:?} peak={} bound={} T={}",
+        joined.joining_work_used(),
+        at.elapsed(),
+        joined.accounted_peak_bytes(),
+        joined.source_distance_mm(),
+        joined.mesh().indices.len() / 3
+    );
+    assert!(matches!(
+        crate::axial_pipe_thread::authored::hardware::mesh::join(
+            crate::axial_pipe_thread::authored::hardware::mesh::ThreadBoundaryMesh::Retained(
+                &trace
+            ),
+            crate::axial_pipe_thread::authored::hardware::Kind::HexNut {
+                across_flats_mm: 1e17
+            },
+            crate::axial_pipe_thread::authored::hardware::mesh::MeshOptions {
+                tessellation: Tessellation {
+                    deflection: 0.05,
+                    angle: 0.3,
+                    triangle_limit: 500_000
+                },
+                maximum_work: 512_000_000,
+                maximum_bytes: 64 * 1024 * 1024,
+                additional_resident_bytes: 13_148_296,
+            },
+            None
+        ),
+        Err(crate::axial_pipe_thread::Error::Unsupported)
+    ));
+}

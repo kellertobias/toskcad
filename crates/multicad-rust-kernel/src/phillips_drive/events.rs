@@ -8,8 +8,8 @@ mod evaluate;
 pub(super) mod patches;
 pub use carrier::{CubicTrimSpan, TrimErrorBound};
 pub use patches::{
-    BoundaryMesh, FaceProperties, FacePropertyOptions, PatchAtlas, PatchBounds, PatchKey,
-    QuadErrorBound, SurfacePatch,
+    BoundaryMesh, FaceProperties, FacePropertyOptions, PatchAtlas, PatchBounds,
+    PatchCorrespondence, PatchCorrespondenceOptions, PatchKey, QuadErrorBound, SurfacePatch,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,6 +77,10 @@ pub struct BoundaryEvents<'a> {
     pub(super) cone_intercepts: [I; 2],
 }
 impl<'a> BoundaryEvents<'a> {
+    pub(crate) fn retained_heap_bytes(&self) -> usize {
+        self.mouth.retained_heap_bytes()
+    }
+
     pub fn source(&self) -> &'a Cutter {
         self.source
     }
@@ -360,3 +364,7 @@ pub(super) fn construct<'a>(
 }
 #[cfg(test)]
 mod tests;
+
+pub use patches::{
+    MeshCurveKey, MeshPointKey, MeshRow, MouthFootpoint, MouthTraceOptions, TracedMouthMesh,
+};

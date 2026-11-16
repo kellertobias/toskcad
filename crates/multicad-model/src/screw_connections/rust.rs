@@ -5,6 +5,7 @@ use multicad_core::model::{ResolvedScrewHead, ScrewConnectionHardwareSource};
 use multicad_kernel::rust_kernel::helical_thread::Thread;
 mod blind;
 mod conical;
+mod hanger;
 mod insert;
 mod library;
 mod washers;
@@ -48,6 +49,8 @@ pub(crate) fn validate(
             wood::check(&input, &source, evaluated, interrupt)?
         } else if source.mode == Mode::WoodInsert {
             insert::check(&input, &source, evaluated, interrupt)?
+        } else if source.mode == Mode::HangerBolt {
+            hanger::check(&input, &source, evaluated, interrupt)?
         } else if source.mode == Mode::TappedReceiver {
             blind::check(&input, &source, evaluated, interrupt)?
         } else {
@@ -344,6 +347,8 @@ fn through_nut(
         blind_tip_clearance_mm: blind_clearance,
         actual_engagement_mm: Some(mating.overlap_length_mm),
         actual_wood_engagement_mm: None,
+        actual_head_bearing_gap_mm: None,
+        actual_insert_inset_mm: None,
         native_component_collision_checked: true,
         scope: conical_bearing.as_ref().map_or_else(
             || "Exact placed metric profiles, through-bore clearance and flat seating with separation from other components".into(),

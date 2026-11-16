@@ -102,14 +102,7 @@ fn main() -> ExitCode {
             Ok(())
         }
         Action::Diagnostics => {
-            let kernel = if multicad_kernel::OCCT_LINKED {
-                format!(
-                    "OCCT 7.9.3 (statically linked)\nOCCT source: {}",
-                    multicad_kernel::source_identity()
-                )
-            } else {
-                "MultiCAD Rust".into()
-            };
+            let kernel = "MultiCAD Rust";
             println!(
                 "{} {}\nStage: native-integration\nTarget: {}/{}\nSource commit: {}\nCAD kernel: {}\nSketch solver: sketch-solver 0.1.0\nNative UI: eframe 0.36.2 / wgpu\nCAD workspaces: Project; constrained Sketch; initial New body extrusion\nNative project format: versioned .tcd container (legacy .multicad accepted); atomic saves and explicit recovery copies\nMCP server: local stdio (multicad --mcp), rmcp 3.8.0\nRuntime: compiled Rust and native libraries; no Python or Node.js dependency",
                 build.product,
