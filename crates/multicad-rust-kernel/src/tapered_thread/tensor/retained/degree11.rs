@@ -85,6 +85,24 @@ impl TensorCell11 {
         [[0, 0], [last, 0], [last, last_v], [0, last_v]]
             .map(|[u, v]| self.0.controls[u][v].map(|x| [x.lo, x.hi]))
     }
+    /// Actual unit-cell endpoint derivatives crossed at00,10,11,01.
+    /// These four values alone are NOT a whole-cell normal certificate.
+    pub fn corner_normal_bounds(&self) -> [[[f64; 2]; 3]; 4] {
+        [[0usize, 0usize], [11, 0], [11, 11], [0, 11]].map(|[u, v]| {
+            let a = u.min(10);
+            let b = v.min(10);
+            let du: [I; 3] = std::array::from_fn(|k| {
+                I::point(11.) * (self.0.controls[a + 1][v][k] - self.0.controls[a][v][k])
+            });
+            let dv: [I; 3] = std::array::from_fn(|k| {
+                I::point(11.) * (self.0.controls[u][b + 1][k] - self.0.controls[u][b][k])
+            });
+            std::array::from_fn(|k| {
+                let n = du[(k + 1) % 3] * dv[(k + 2) % 3] - du[(k + 2) % 3] * dv[(k + 1) % 3];
+                [n.lo, n.hi]
+            })
+        })
+    }
     pub fn bounds(&self) -> Result<[[f64; 2]; 3], Error> {
         self.0.bounds()
     }
@@ -92,6 +110,44 @@ impl TensorCell11 {
         self.0.point_bounds(uv)
     }
     /// Derivatives use THIS leaf's unit square, with subdivision chain factors.
+    /// Whole actual Pu and Pv-k*Pu coefficient hulls. Both derivative nets
+    /// are elevated exactly to degree(11,11) BEFORE subtraction, retaining
+    /// their shared-source dependence. For every finite k,
+    /// Pu cross (Pv-k*Pu) equals the SAME source normal Pu cross Pv.
+    /// The caller owns aggregate work/storage/cancellation policy.
+    pub fn conditioned_derivative_bounds(&self, k: f64) -> Result<[[[f64; 2]; 3]; 2], Error> {
+        let [u, r] = conditioned_controls(&self.0.controls, k)?;
+        Ok([hull(u.into_iter())?, hull(r.into_iter())?])
+    }
+    /// Convex coefficient bound of this actual source minus its exact
+    /// bilinear corner interpolant. The four corner coefficients are elevated
+    /// to degree(11,11) before subtraction; no derivative or sampling estimate.
+    pub fn bilinear_error_bound_mm(&self) -> Result<f64, Error> {
+        let corners = [
+            self.0.controls[0][0],
+            self.0.controls[11][0],
+            self.0.controls[11][11],
+            self.0.controls[0][11],
+        ];
+        let weights: [I; 12] = std::array::from_fn(|i| I::point(i as f64) / I::point(11.));
+        let mut error = 0f64;
+        for (i, row) in self.0.controls.iter().enumerate() {
+            let a = weights[i];
+            let b = I::point(1.) - a;
+            let top: [I; 3] = std::array::from_fn(|k| b * corners[0][k] + a * corners[1][k]);
+            let bottom: [I; 3] = std::array::from_fn(|k| b * corners[3][k] + a * corners[2][k]);
+            for (j, p) in row.iter().enumerate() {
+                let a = weights[j];
+                let b = I::point(1.) - a;
+                let norm = (0..3).fold(I::point(0.), |sum, k| {
+                    sum + I::point((p[k] - b * top[k] - a * bottom[k]).magnitude())
+                });
+                norm.checked()?;
+                error = error.max(norm.hi);
+            }
+        }
+        Ok(error)
+    }
     pub fn derivative_bounds(&self) -> Result<TensorDerivatives, Error> {
         self.0.derivative_bounds()
     }
@@ -108,6 +164,40 @@ impl TensorCell11 {
     pub fn subdivide(&self, axis: usize) -> Result<[Self; 2], Error> {
         self.0.subdivide(axis).map(|children| children.map(Self))
     }
+}
+// Complete actual coefficient nets, retained separately for the independent
+// rational coefficient oracle. The public calculation operation returns hulls.
+fn conditioned_controls(p: &[Vec<BoxPoint>], k: f64) -> Result<[Vec<BoxPoint>; 2], Error> {
+    if !k.is_finite() {
+        return Err(Error::Invalid);
+    }
+    let du = derivative(p, 0);
+    let dv = derivative(p, 1);
+    let mut elevated_u = Vec::with_capacity(144);
+    let mut residual = Vec::with_capacity(144);
+    for i in 0..12 {
+        for j in 0..12 {
+            let elevated = |p: &[Vec<BoxPoint>], axis: usize| {
+                let n = if axis == 0 { i } else { j };
+                let at = |n: usize| if axis == 0 { p[n][j] } else { p[i][n] };
+                if n == 0 {
+                    return at(0);
+                }
+                if n == 11 {
+                    return at(10);
+                }
+                let weight = I::point(n as f64) / I::point(11.);
+                let a = at(n - 1);
+                let b = at(n);
+                std::array::from_fn(|q| weight * a[q] + (I::point(1.) - weight) * b[q])
+            };
+            let u = elevated(&du, 0);
+            let v = elevated(&dv, 1);
+            elevated_u.push(u);
+            residual.push(std::array::from_fn(|q| v[q] - I::point(k) * u[q]));
+        }
+    }
+    Ok([elevated_u, residual])
 }
 /// Calculation-only interval coefficients in the same bounded source-mm chart;
 /// this makes no source/geometry admission or manufacturing claim.

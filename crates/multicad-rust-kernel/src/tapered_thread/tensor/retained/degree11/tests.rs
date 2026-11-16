@@ -228,3 +228,152 @@ fn actual_corner_coefficients_follow_independent_rational_tensor_polynomial() {
         }
     }
 }
+
+#[test]
+fn conditioned_actual_derivatives_enclose_independent_coefficients_and_normals() {
+    use num_rational::BigRational as Q;
+    let q = |x: f64| Q::from_float(x).unwrap();
+    let source = RetainedTensor11::new(
+        [1, 1],
+        (0..12)
+            .flat_map(|i| {
+                (0..12).map(move |j| [i as f64, j as f64, (i * i + j * j * j + i * j) as f64])
+            })
+            .collect(),
+    )
+    .unwrap();
+    let root = source.cell([0, 0]).unwrap();
+    for k in [-0.5, 0., 1.75] {
+        let [u, r] = root.conditioned_derivative_bounds(k).unwrap();
+        let [uc, rc] = conditioned_controls(&root.0.controls, k).unwrap();
+        // Independent exact Bernstein coefficients after degree elevation:
+        // Pu_z=20i+11+11j; Pv_z=27j(j-1)+60j+11+11i.
+        for i in 0..12 {
+            for j in 0usize..12 {
+                let uz = q((20 * i + 11 + 11 * j) as f64);
+                let vz = q((27 * j * j.saturating_sub(1) + 60 * j + 11 + 11 * i) as f64);
+                let expected = [q(11.), q(0.), uz.clone()];
+                let residual = [-q(k) * q(11.), q(11.), vz - q(k) * uz];
+                for axis in 0..3 {
+                    assert!(q(u[axis][0]) <= expected[axis] && expected[axis] <= q(u[axis][1]));
+                    assert!(q(r[axis][0]) <= residual[axis] && residual[axis] <= q(r[axis][1]));
+                    let a = uc[12 * i + j][axis];
+                    let b = rc[12 * i + j][axis];
+                    assert!(q(a.lo) <= expected[axis] && expected[axis] <= q(a.hi));
+                    assert!(q(b.lo) <= residual[axis] && residual[axis] <= q(b.hi));
+                }
+            }
+        }
+        let child = root.subdivide(0).unwrap()[1].subdivide(1).unwrap()[0].clone();
+        let [u, r] = child.conditioned_derivative_bounds(k).unwrap();
+        let u = u.map(|[a, b]| I::new(a, b));
+        let r = r.map(|[a, b]| I::new(a, b));
+        let normal: [I; 3] = std::array::from_fn(|a| {
+            u[(a + 1) % 3] * r[(a + 2) % 3] - u[(a + 2) % 3] * r[(a + 1) % 3]
+        });
+        for su in [0.5, 0.75, 1.] {
+            for sv in [0., 0.25, 0.5] {
+                let zu = 220. * su + 11. + 121. * sv;
+                let zv = 2970. * sv * sv + 660. * sv + 11. + 121. * su;
+                let expected = [-11. * zu * 0.25, -11. * zv * 0.25, 121. * 0.25];
+                for axis in 0..3 {
+                    contains([normal[axis].lo, normal[axis].hi], expected[axis]);
+                }
+            }
+        }
+    }
+    for k in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_eq!(
+            root.conditioned_derivative_bounds(k).unwrap_err(),
+            Error::Invalid
+        );
+    }
+    assert_eq!(
+        root.conditioned_derivative_bounds(f64::MAX).unwrap_err(),
+        Error::Unresolved
+    );
+    assert!(root.conditioned_derivative_bounds(1.75).is_ok());
+}
+
+#[test]
+fn actual_bilinear_residual_and_triangle_warp_have_independent_rational_oracles() {
+    use num_rational::BigRational as Q;
+    let q = |x: f64| Q::from_float(x).unwrap();
+    let nonlinear = RetainedTensor11::new(
+        [1, 1],
+        (0..12)
+            .flat_map(|i| {
+                (0..12).map(move |j| [i as f64, j as f64, (i * i + j * j * j + i * j) as f64])
+            })
+            .collect(),
+    )
+    .unwrap();
+    let cell = nonlinear.cell([0, 0]).unwrap();
+    let bound = cell.bilinear_error_bound_mm().unwrap();
+    let mut largest = 0i64;
+    for i in 0i64..12 {
+        for j in 0i64..12 {
+            // Exact degree-elevated bilinear z coefficient is11i+121j+ij.
+            let residual = (i * i + j * j * j + i * j) - (11 * i + 121 * j + i * j);
+            largest = largest.max(residual.abs());
+            assert!(q(bound) >= Q::from_integer(residual.abs().into()));
+        }
+    }
+    assert_eq!(largest, 540);
+    assert!(bound < 540. + 1e-8);
+    let actual = bilinear([1, 1]).cell([0, 0]).unwrap();
+    assert!(actual.bilinear_error_bound_mm().unwrap() < 1e-9);
+    // For P=(11u,11v,121uv), either literal diagonal triangle has exact
+    // signed residual -121v(1-u) or -121u(1-v). The exact maximum30.25 is
+    // attained at the common midpoint, independently of the tensor helper.
+    let warp = q(121.) / q(4.);
+    for i in 0..=16 {
+        for j in 0..=16 {
+            let (u, v) = (q(i as f64) / q(16.), q(j as f64) / q(16.));
+            let error = if u >= v {
+                q(121.) * &v * (q(1.) - &u)
+            } else {
+                q(121.) * &u * (q(1.) - &v)
+            };
+            assert!(error >= q(0.) && error <= warp);
+        }
+    }
+    assert_eq!(q(121.) * q(0.5) * (q(1.) - q(0.5)), warp);
+    for child in actual.subdivide(0).unwrap() {
+        for child in child.subdivide(1).unwrap() {
+            assert!(child.bilinear_error_bound_mm().unwrap() < 1e-8);
+        }
+    }
+}
+
+#[test]
+fn actual_endpoint_normals_include_independent_polynomial_and_leaf_scaling() {
+    use num_rational::BigRational as Q;
+    let q = |x: f64| Q::from_float(x).unwrap();
+    let root = bilinear([1, 1]).cell([0, 0]).unwrap();
+    let mut cells = vec![root.clone()];
+    cells.extend(
+        root.subdivide(0)
+            .unwrap()
+            .into_iter()
+            .flat_map(|c| c.subdivide(1).unwrap()),
+    );
+    for cell in cells {
+        let [[u0, u1], [v0, v1]] = cell.domain();
+        let factor = (q(u1) - q(u0)) * (q(v1) - q(v0));
+        for (normal, [u, v]) in
+            cell.corner_normal_bounds()
+                .into_iter()
+                .zip([[u0, v0], [u1, v0], [u1, v1], [u0, v1]])
+        {
+            let expected = [
+                -q(1331.) * q(v) * &factor,
+                -q(1331.) * q(u) * &factor,
+                q(121.) * &factor,
+            ];
+            for (actual, expected) in normal.into_iter().zip(expected) {
+                assert!(q(actual[0]) <= expected && expected <= q(actual[1]));
+            }
+        }
+    }
+}
