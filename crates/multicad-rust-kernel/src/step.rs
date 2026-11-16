@@ -32,6 +32,7 @@ pub(crate) use worm_gear::thread_frame as worm_thread_frame;
 pub use worm_gear::{supports_worm_wheel, supports_za_worm, write_worm_wheel, write_za_worm};
 mod cubic_trim;
 mod cylindrical_revolution;
+pub mod degree11_phillips;
 pub mod hanger;
 pub(crate) mod helical;
 pub mod helical_trim;

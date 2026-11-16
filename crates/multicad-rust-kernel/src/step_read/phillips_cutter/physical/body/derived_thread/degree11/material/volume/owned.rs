@@ -346,3 +346,5 @@ pub use properties::{
     Degree11EndDiskOptions, Degree11EndDiskProperties, Degree11EndDisks, Degree11FaceMeasurement,
     Degree11FacePropertyOptions,
 };
+#[cfg(test)]
+mod exchange_tests;
