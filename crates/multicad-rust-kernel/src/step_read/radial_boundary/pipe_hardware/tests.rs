@@ -494,3 +494,149 @@ pub(crate) fn exclusive_interior_nextup(input: &str) -> InteriorChange {
         new_value,
     }
 }
+// Copy actual physical records under fresh IDs. The resulting graphs are
+// deliberately over the finite decoder frontier, not earned material objects.
+fn physical_incidence_frontier(actual: &str, unique_vertices: bool) -> String {
+    use std::fmt::Write as _;
+    let arena = part21::parse(actual).unwrap();
+    let loops: Vec<_> = arena
+        .values()
+        .flatten()
+        .filter(|e| e.name == "EDGE_LOOP" && refs(&e.args[1]).unwrap().len() == 4)
+        .take(if unique_vertices { 1 } else { 2 })
+        .collect();
+    assert_eq!(loops.len(), if unique_vertices { 1 } else { 2 });
+    let mut next = *arena.keys().next_back().unwrap() + 1;
+    let mut records = String::new();
+    let mut replacements = Vec::new();
+    let mut copied_edges = 0;
+    let mut copied_vertices = 0;
+    for (index, loop_record) in loops.into_iter().enumerate() {
+        let original = refs(&loop_record.args[1]).unwrap();
+        let length = if unique_vertices {
+            52
+        } else if index == 0 {
+            80
+        } else {
+            52
+        };
+        assert!(length <= 80 && length % original.len() == 0);
+        let mut oriented_ids = Vec::new();
+        for offset in 0..length {
+            let oriented = &arena[&original[offset % original.len()]][0];
+            assert_eq!(oriented.name, "ORIENTED_EDGE");
+            let edge = &arena[&reference(&oriented.args[3]).unwrap()][0];
+            assert_eq!(edge.name, "EDGE_CURVE");
+            let mut body = edge.source.unwrap().to_owned();
+            let args = arguments(&body);
+            if unique_vertices {
+                for k in [2, 1] {
+                    let vertex = &arena[&reference(&edge.args[k]).unwrap()][0];
+                    assert_eq!(vertex.name, "VERTEX_POINT");
+                    let point = reference(&vertex.args[1]).unwrap();
+                    assert_eq!(arena[&point][0].name, "CARTESIAN_POINT");
+                    writeln!(records, "#{next}=VERTEX_POINT('',#{point});").unwrap();
+                    body.replace_range(args[k].clone(), &format!("#{next}"));
+                    next += 1;
+                    copied_vertices += 1;
+                }
+            }
+            let edge_id = next;
+            next += 1;
+            writeln!(records, "#{edge_id}={body};").unwrap();
+            copied_edges += 1;
+            let mut body = oriented.source.unwrap().to_owned();
+            body.replace_range(arguments(&body)[3].clone(), &format!("#{edge_id}"));
+            writeln!(records, "#{next}={body};").unwrap();
+            oriented_ids.push(format!("#{next}"));
+            next += 1;
+        }
+        replacements.push((
+            fields(loop_record, actual)[1].clone(),
+            format!("({})", oriented_ids.join(",")),
+        ));
+    }
+    assert_eq!(copied_edges, if unique_vertices { 52 } else { 132 });
+    assert_eq!(copied_vertices, if unique_vertices { 104 } else { 0 });
+    let mut changed = actual.to_owned();
+    changed.insert_str(actual.rfind("ENDSEC;").unwrap(), &records);
+    replacements.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
+    for (range, value) in replacements {
+        changed.replace_range(range, &value);
+    }
+    // Independently parse the actual resulting file and prove the added IDs
+    // really own the advertised distinct vertex/edge records.
+    let parsed = part21::parse(&changed).unwrap();
+    for (kind, added) in [
+        ("EDGE_CURVE", copied_edges),
+        ("VERTEX_POINT", copied_vertices),
+    ] {
+        let count = |map: &BTreeMap<u32, Vec<part21::Entity<'_>>>| {
+            map.values().flatten().filter(|e| e.name == kind).count()
+        };
+        assert_eq!(count(&parsed), count(&arena) + added);
+    }
+    changed
+}
+
+#[test]
+fn physical_graph_vertex_and_edge_frontiers_refuse_before_material_and_retry() {
+    let source = engineering();
+    let candidate = writer::propose(&source, writer::Options::default(), None).unwrap();
+    let path = std::env::temp_dir().join(format!(
+        "codec-incidence-frontier-{}.step",
+        std::process::id()
+    ));
+    std::fs::write(&path, candidate.as_str()).unwrap();
+    drop(candidate);
+    drop(source);
+    let actual = std::fs::read_to_string(&path).unwrap();
+    for unique_vertices in [false, true] {
+        let changed = physical_incidence_frontier(&actual, unique_vertices);
+        assert_ne!(changed, actual);
+        std::fs::write(&path, &changed).unwrap();
+        drop(changed); // All construction arenas and buffers die before read.
+        let damaged = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            read(
+                &damaged,
+                1e-7,
+                1e-6,
+                Options {
+                    additional_resident_bytes: actual.capacity() + damaged.capacity()
+                        - damaged.len()
+                        + 4096,
+                    ..Default::default()
+                },
+                None
+            )
+            .err(),
+            Some(GeometryError::Limit),
+            "unique vertices={unique_vertices}"
+        );
+    }
+    std::fs::write(&path, &actual).unwrap();
+    let restored = std::fs::read_to_string(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let retry = read(
+        &restored,
+        1e-7,
+        1e-6,
+        Options {
+            additional_resident_bytes: actual.capacity() + restored.capacity() - restored.len()
+                + 4096,
+            ..Default::default()
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(retry.original_input(), actual);
+    assert_eq!(
+        retry
+            .material()
+            .capped_thread()
+            .classify([0., 0., 3.], None)
+            .unwrap(),
+        radial::Location::Inside
+    );
+}
