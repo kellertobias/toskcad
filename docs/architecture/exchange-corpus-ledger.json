@@ -3,10 +3,10 @@
   "entries": [
     {
       "expected": "pass",
-      "export_ms": 0.241125,
+      "export_ms": 0.15895800000000002,
       "finding": null,
       "id": "freecad-drilled-box",
-      "import_ms": 3.890333,
+      "import_ms": 15.923291999999998,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 150,
@@ -39,12 +39,12 @@
         "mass_kg": 0.012688566394729843,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 12049,
+        "project_bytes": 12046,
         "section": {
-          "curves": 68,
+          "curves": 5,
           "hatch_vectors": 393,
           "length_exact": true,
-          "length_mm": 112.56132462781898,
+          "length_mm": 112.56637061435917,
           "plane_z_mm": 9.0
         }
       },
@@ -92,26 +92,26 @@
           "volume_mm3": 4699.469035085127
         },
         "section": {
-          "curves": 68,
+          "curves": 5,
           "hatch_vectors": 0,
           "length_exact": true,
-          "length_mm": 112.56132462781898,
+          "length_mm": 112.56637061435917,
           "plane_z_mm": 9.0
         },
         "volume_deviation_mm3": 0.0,
         "volume_mm3": 4699.469035085127
       },
       "section": {
-        "curves": 68,
+        "curves": 5,
         "hatch_vectors": 0,
         "length_exact": true,
-        "length_mm": 112.56132462781898,
+        "length_mm": 112.56637061435917,
         "plane_z_mm": 9.0
       },
       "section_native": {
         "length_mm": 112.56637061435917,
         "reader": "OpenCascade 7.9.3",
-        "relative": 0.00004482676764522505
+        "relative": 0.0
       },
       "sha256": "8f9ce63627381af481ae3ca3fb9357fa17d41fa650357caffce8d71c4ae37e51",
       "source": {
@@ -189,10 +189,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.177125,
+      "export_ms": 0.175542,
       "finding": null,
       "id": "occt-placed-box",
-      "import_ms": 0.551292,
+      "import_ms": 1.024834,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 18,
@@ -225,7 +225,7 @@
         "mass_kg": 0.0093312,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 19954,
+        "project_bytes": 19952,
         "section": {
           "curves": 4,
           "hatch_vectors": 217,
@@ -372,10 +372,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.150583,
+      "export_ms": 0.089417,
       "finding": null,
       "id": "occt-cylinder",
-      "import_ms": 0.5894579999999999,
+      "import_ms": 0.151083,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 144,
@@ -408,7 +408,7 @@
         "mass_kg": 0.004580442088933918,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 9182,
+        "project_bytes": 9185,
         "section": {
           "curves": 1,
           "hatch_vectors": 120,
@@ -556,10 +556,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.221208,
+      "export_ms": 0.121625,
       "finding": null,
       "id": "occt-torus",
-      "import_ms": 0.383916,
+      "import_ms": 0.163666,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 33696,
@@ -592,7 +592,7 @@
         "mass_kg": 0.005755953286715314,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 7562,
+        "project_bytes": 7557,
         "section": {
           "curves": 2,
           "hatch_vectors": 480,
@@ -740,10 +740,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.5927079999999999,
+      "export_ms": 0.552125,
       "finding": null,
       "id": "occt-box-void",
-      "import_ms": 1.7679589999999998,
+      "import_ms": 11.931875,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 180,
@@ -776,7 +776,7 @@
         "mass_kg": 0.015552,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 33615,
+        "project_bytes": 33617,
         "section": {
           "curves": 8,
           "hatch_vectors": 466,
@@ -923,10 +923,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.308666,
+      "export_ms": 0.237167,
       "finding": null,
       "id": "occt-pocketed-plate",
-      "import_ms": 1.715959,
+      "import_ms": 2.8694580000000003,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 171,
@@ -959,7 +959,7 @@
         "mass_kg": 0.02476069649258884,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 37855,
+        "project_bytes": 37858,
         "section": {
           "curves": 5,
           "hatch_vectors": 555,
@@ -1109,10 +1109,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.18100000000000002,
+      "export_ms": 57.849208,
       "finding": null,
       "id": "occt-cone-frustum",
-      "import_ms": 8.484167000000001,
+      "import_ms": 2.744917,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 282,
@@ -1145,12 +1145,12 @@
         "mass_kg": 0.0031667253948198665,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 9256,
+        "project_bytes": 9259,
         "section": {
-          "curves": 132,
+          "curves": 1,
           "hatch_vectors": 119,
           "length_exact": true,
-          "length_mm": 37.69536801324088,
+          "length_mm": 37.69911184309082,
           "plane_z_mm": 5.0
         }
       },
@@ -1198,26 +1198,26 @@
           "volume_mm3": 1172.8612573401895
         },
         "section": {
-          "curves": 132,
+          "curves": 1,
           "hatch_vectors": 0,
           "length_exact": true,
-          "length_mm": 37.69536801322767,
+          "length_mm": 37.69911184307753,
           "plane_z_mm": 5.0
         },
         "volume_deviation_mm3": 5.018137017032132e-10,
         "volume_mm3": 1172.8612573401895
       },
       "section": {
-        "curves": 132,
+        "curves": 1,
         "hatch_vectors": 0,
         "length_exact": true,
-        "length_mm": 37.69536801324088,
+        "length_mm": 37.69911184309082,
         "plane_z_mm": 5.0
       },
       "section_native": {
         "length_mm": 37.69911184309082,
         "reader": "OpenCascade 7.9.3",
-        "relative": 0.00009930817111873923
+        "relative": 0.0
       },
       "sha256": "360c5ca8c2610429efb48a151607e8b010be020b35c30e3edf5968c84d337af1",
       "source": {
@@ -1292,10 +1292,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.141667,
+      "export_ms": 0.082125,
       "finding": null,
       "id": "occt-sphere",
-      "import_ms": 0.319916,
+      "import_ms": 0.292833,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 1440,
@@ -1328,7 +1328,7 @@
         "mass_kg": 0.0014137166941154068,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 5572,
+        "project_bytes": 5576,
         "section": {
           "curves": 1,
           "hatch_vectors": 99,
@@ -1476,10 +1476,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.190833,
+      "export_ms": 0.43516699999999997,
       "finding": null,
       "id": "occt-revolved-vase",
-      "import_ms": 12.905125,
+      "import_ms": 7.240417,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 3765,
@@ -1512,7 +1512,7 @@
         "mass_kg": 0.008630427539781296,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 14128,
+        "project_bytes": 14130,
         "section": {
           "curves": 1164,
           "hatch_vectors": 189,
@@ -1660,10 +1660,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.235875,
+      "export_ms": 0.13483399999999998,
       "finding": null,
       "id": "occt-spline-prism",
-      "import_ms": 1.25475,
+      "import_ms": 0.915708,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 168,
@@ -1696,12 +1696,12 @@
         "mass_kg": 0.0023328,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 13294,
+        "project_bytes": 13298,
         "section": {
           "curves": 97,
           "hatch_vectors": 168,
           "length_exact": true,
-          "length_mm": 50.15235472845512,
+          "length_mm": 50.152354728455144,
           "plane_z_mm": 3.0
         }
       },
@@ -1752,7 +1752,7 @@
           "curves": 97,
           "hatch_vectors": 0,
           "length_exact": true,
-          "length_mm": 50.15235472845512,
+          "length_mm": 50.152354728455144,
           "plane_z_mm": 3.0
         },
         "volume_deviation_mm3": 0.0,
@@ -1762,13 +1762,13 @@
         "curves": 97,
         "hatch_vectors": 0,
         "length_exact": true,
-        "length_mm": 50.15235472845512,
+        "length_mm": 50.152354728455144,
         "plane_z_mm": 3.0
       },
       "section_native": {
         "length_mm": 50.14919887350308,
         "reader": "OpenCascade 7.9.3",
-        "relative": 0.00006292931936961838
+        "relative": 0.00006292931937004344
       },
       "sha256": "e67c9dfb23c5adab5d351bd705a91f081c14f2dc18aa0ed8c9acfc464d87064e",
       "source": {
@@ -1848,7 +1848,7 @@
         "summary": "STEP assembly product structure (NEXT_ASSEMBLY_USAGE_OCCURRENCE, CONTEXT_DEPENDENT_SHAPE_REPRESENTATION, ITEM_DEFINED_TRANSFORMATION) is refused; only one flat ADVANCED_BREP_SHAPE_REPRESENTATION is read."
       },
       "id": "occt-two-bodies",
-      "import_ms": 2.06575,
+      "import_ms": 0.29741700000000004,
       "location": "vendored",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -1901,7 +1901,7 @@
         "summary": "KiCad wraps even a bare board in an assembly occurrence with an ITEM_DEFINED_TRANSFORMATION, which the Rust reader refuses; every KiCad board export is currently unsupported."
       },
       "id": "kicad-plate-holes",
-      "import_ms": 0.245833,
+      "import_ms": 0.173583,
       "location": "vendored",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -1954,7 +1954,7 @@
         "summary": "KiCad assembly occurrence placement is refused (same cause as kicad-plate-holes)."
       },
       "id": "kicad-round-board",
-      "import_ms": 0.13191599999999998,
+      "import_ms": 0.095375,
       "location": "vendored",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -2006,7 +2006,7 @@
         "summary": "KiCad assembly occurrence placement is refused (same cause as kicad-plate-holes)."
       },
       "id": "kicad-slotted-rounded-board",
-      "import_ms": 0.374958,
+      "import_ms": 0.263125,
       "location": "vendored",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -2059,7 +2059,7 @@
         "summary": "Placed component assemblies (board plus component occurrence) are refused by the Rust reader; KiCad component placement is only available through the native import_kicad board reader."
       },
       "id": "kicad-board-with-part",
-      "import_ms": 0.192083,
+      "import_ms": 0.13758299999999998,
       "location": "vendored",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -2107,10 +2107,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.208875,
+      "export_ms": 0.110917,
       "finding": null,
       "id": "occt-annulus",
-      "import_ms": 0.26766700000000004,
+      "import_ms": 0.359209,
       "location": "repository",
       "mesh": {
         "edge_pairs": 300,
@@ -2292,10 +2292,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.112958,
+      "export_ms": 0.08675,
       "finding": null,
       "id": "occt-regular-torus",
-      "import_ms": 0.145458,
+      "import_ms": 0.075,
       "location": "repository",
       "mesh": {
         "edge_pairs": 16224,
@@ -2328,7 +2328,7 @@
         "mass_kg": 0.0005995784673661784,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 7693,
+        "project_bytes": 7688,
         "section": {
           "curves": 256,
           "hatch_vectors": 84,
@@ -2476,10 +2476,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.833625,
+      "export_ms": 0.151666,
       "finding": null,
       "id": "kicad-vendored-Mounting_Wuerth_WA-SMST-3.3mm_H1mm_9774010960",
-      "import_ms": 0.38204200000000005,
+      "import_ms": 0.192083,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 378,
@@ -2512,12 +2512,12 @@
         "mass_kg": 0.0000732870734229427,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 11482,
+        "project_bytes": 11473,
         "section": {
-          "curves": 192,
+          "curves": 2,
           "hatch_vectors": 74,
           "length_exact": true,
-          "length_mm": 23.55442987778149,
+          "length_mm": 23.561944901923447,
           "plane_z_mm": -0.19999999999999996
         }
       },
@@ -2564,26 +2564,26 @@
           "volume_mm3": 27.143360527015812
         },
         "section": {
-          "curves": 192,
+          "curves": 2,
           "hatch_vectors": 0,
           "length_exact": true,
-          "length_mm": 23.55442987778149,
+          "length_mm": 23.561944901923447,
           "plane_z_mm": -0.19999999999999996
         },
         "volume_deviation_mm3": 0.0,
         "volume_mm3": 27.143360527015815
       },
       "section": {
-        "curves": 192,
+        "curves": 2,
         "hatch_vectors": 0,
         "length_exact": true,
-        "length_mm": 23.55442987778149,
+        "length_mm": 23.561944901923447,
         "plane_z_mm": -0.19999999999999996
       },
       "section_native": {
         "length_mm": 23.561944901923447,
         "reader": "OpenCascade 7.9.3",
-        "relative": 0.00031894753057258135
+        "relative": 0.0
       },
       "sha256": "4d3fe8355362aee3af15510457641311f569fb1ebfb21e4d6d07bc0e84030976",
       "source": {
@@ -2658,10 +2658,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.254208,
+      "export_ms": 0.216,
       "finding": null,
       "id": "kicad-vendored-L_Wuerth_HCM-7070",
-      "import_ms": 1.553125,
+      "import_ms": 0.9109160000000001,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 150,
@@ -2694,7 +2694,7 @@
         "mass_kg": 0.0009263268,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 18659,
+        "project_bytes": 18655,
         "section": {
           "curves": 4,
           "hatch_vectors": 99,
@@ -2840,10 +2840,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.9015409999999999,
+      "export_ms": 0.17475,
       "finding": null,
       "id": "kicad-lib-Pin_D0.7mm_L6.5mm_W1.8mm_FlatFork",
-      "import_ms": 0.7788750000000001,
+      "import_ms": 0.806959,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 318,
@@ -2876,7 +2876,7 @@
         "mass_kg": 8.9971138763215e-6,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 25469,
+        "project_bytes": 25470,
         "section": {
           "curves": 8,
           "hatch_vectors": 12,
@@ -3023,10 +3023,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.549084,
+      "export_ms": 0.367333,
       "finding": null,
       "id": "kicad-lib-Heatsink_125x35x50mm_3xFixationM3",
-      "import_ms": 3.4194590000000002,
+      "import_ms": 17.235875,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 2118,
@@ -3059,12 +3059,12 @@
         "mass_kg": 0.14902708684918775,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 118818,
+        "project_bytes": 118810,
         "section": {
-          "curves": 931,
+          "curves": 71,
           "hatch_vectors": 3210,
           "length_exact": true,
-          "length_mm": 915.6890779711908,
+          "length_mm": 915.7183951529828,
           "plane_z_mm": 17.5
         }
       },
@@ -3112,26 +3112,26 @@
           "volume_mm3": 55195.21735155103
         },
         "section": {
-          "curves": 931,
+          "curves": 71,
           "hatch_vectors": 0,
           "length_exact": true,
-          "length_mm": 915.6890779711908,
+          "length_mm": 915.7183951529828,
           "plane_z_mm": 17.5
         },
         "volume_deviation_mm3": 0.0,
         "volume_mm3": 55195.21735155102
       },
       "section": {
-        "curves": 931,
+        "curves": 71,
         "hatch_vectors": 0,
         "length_exact": true,
-        "length_mm": 915.6890779711908,
+        "length_mm": 915.7183951529828,
         "plane_z_mm": 17.5
       },
       "section_native": {
         "length_mm": 915.7183951529826,
         "reader": "OpenCascade 7.9.3",
-        "relative": 0.00003201549946676311
+        "relative": 2.483008713669516e-16
       },
       "sha256": "b2012637e0f7d9184043c2545fbea5fa328bd8685fed7c2b2f113a528885ddf3",
       "source": {
@@ -3207,10 +3207,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.523833,
+      "export_ms": 0.22599999999999998,
       "finding": null,
       "id": "kicad-lib-D_SOD-882",
-      "import_ms": 10.312958,
+      "import_ms": 1.793167,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 354,
@@ -3243,7 +3243,7 @@
         "mass_kg": 7.524899999999997e-7,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 41410,
+        "project_bytes": 41412,
         "section": {
           "curves": 4,
           "hatch_vectors": 11,
@@ -3389,10 +3389,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.33399999999999996,
+      "export_ms": 0.447292,
       "finding": null,
       "id": "kicad-lib-LED_Rectangular_W3.0mm_H2.0mm",
-      "import_ms": 1.880125,
+      "import_ms": 1.213916,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 258,
@@ -3425,7 +3425,7 @@
         "mass_kg": 0.000091152,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 35237,
+        "project_bytes": 35228,
         "section": {
           "curves": 8,
           "hatch_vectors": 10,
@@ -3571,10 +3571,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.227417,
+      "export_ms": 0.20825,
       "finding": null,
       "id": "kicad-vendored-Mounting_Wuerth_WA-SMSE-ExternalM3_H5mm_9771050360",
-      "import_ms": 46.576917,
+      "import_ms": 31.981250000000003,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 4242,
@@ -3607,12 +3607,12 @@
         "mass_kg": 0.0004882994108639504,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 15122,
+        "project_bytes": 15128,
         "section": {
-          "curves": 64,
+          "curves": 1,
           "hatch_vectors": 21,
           "length_exact": true,
-          "length_mm": 6.905029525514914,
+          "length_mm": 6.911503837897546,
           "plane_z_mm": 5.25
         }
       },
@@ -3659,26 +3659,26 @@
           "volume_mm3": 180.85163365331493
         },
         "section": {
-          "curves": 64,
+          "curves": 1,
           "hatch_vectors": 0,
           "length_exact": true,
-          "length_mm": 6.905029525514914,
+          "length_mm": 6.911503837897546,
           "plane_z_mm": 5.25
         },
         "volume_deviation_mm3": 0.0,
         "volume_mm3": 180.85163365331493
       },
       "section": {
-        "curves": 64,
+        "curves": 1,
         "hatch_vectors": 0,
         "length_exact": true,
-        "length_mm": 6.905029525514914,
+        "length_mm": 6.911503837897546,
         "plane_z_mm": 5.25
       },
       "section_native": {
         "length_mm": 6.911503837897546,
         "reader": "OpenCascade 7.9.3",
-        "relative": 0.0009367443807426276
+        "relative": 0.0
       },
       "sha256": "3d4bed0c43cc1ef6177f6835931b742a71c9f63c4870f958931dc9948f5d4003",
       "source": {
@@ -3754,10 +3754,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.264291,
+      "export_ms": 0.7076250000000001,
       "finding": null,
       "id": "kicad-lib-RV_Disc_D9mm_W6.1mm_P5mm",
-      "import_ms": 780.500166,
+      "import_ms": 923.0388750000001,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 24645,
@@ -3790,7 +3790,7 @@
         "mass_kg": 0.0008070303151790006,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 34021,
+        "project_bytes": 34022,
         "section": {
           "curves": 579,
           "hatch_vectors": 77,
@@ -3937,10 +3937,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.27375,
+      "export_ms": 0.214834,
       "finding": null,
       "id": "kicad-lib-Converter_ACDC_Hi-Link_HLK-20Mxx",
-      "import_ms": 106.970375,
+      "import_ms": 50.742791000000004,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 12495,
@@ -3973,12 +3973,12 @@
         "mass_kg": 0.1238217796091653,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 50307,
+        "project_bytes": 50317,
         "section": {
-          "curves": 68,
+          "curves": 8,
           "hatch_vectors": 641,
           "length_exact": true,
-          "length_mm": 181.57008861988726,
+          "length_mm": 181.57079632679492,
           "plane_z_mm": 9.5
         }
       },
@@ -4025,26 +4025,26 @@
           "volume_mm3": 45859.91837376492
         },
         "section": {
-          "curves": 68,
+          "curves": 8,
           "hatch_vectors": 0,
           "length_exact": true,
-          "length_mm": 181.57008861988726,
+          "length_mm": 181.57079632679492,
           "plane_z_mm": 9.5
         },
         "volume_deviation_mm3": 0.0,
         "volume_mm3": 45859.91837376492
       },
       "section": {
-        "curves": 68,
+        "curves": 8,
         "hatch_vectors": 0,
         "length_exact": true,
-        "length_mm": 181.57008861988726,
+        "length_mm": 181.57079632679492,
         "plane_z_mm": 9.5
       },
       "section_native": {
         "length_mm": 181.57079632679492,
         "reader": "OpenCascade 7.9.3",
-        "relative": 3.89769126962348e-6
+        "relative": 0.0
       },
       "sha256": "417e979933c0b2461c57d17f03647340e4542c42db646f75d1dd5a9ff9a9057c",
       "source": {
@@ -4119,10 +4119,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.23308399999999999,
+      "export_ms": 0.16141699999999998,
       "finding": null,
       "id": "kicad-vendored-L_CommonModeChoke_TDK_ACM7060",
-      "import_ms": 0.8818330000000001,
+      "import_ms": 0.772583,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 18,
@@ -4300,10 +4300,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.315375,
+      "export_ms": 0.17675,
       "finding": null,
       "id": "kicad-lib-L_CommonModeChoke_Coilank_ACM2012",
-      "import_ms": 4.246958,
+      "import_ms": 3.722458,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 450,
@@ -4336,7 +4336,7 @@
         "mass_kg": 9.117643589812258e-6,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 28689,
+        "project_bytes": 28686,
         "section": {
           "curves": 4,
           "hatch_vectors": 23,
@@ -4486,7 +4486,7 @@
         "summary": "Non-manifold closed shell: four straight edges (x = +-1.225 mm, z = 1.08 mm) each bound four faces, where two lobes of the switch touch along a line. MANIFOLD_SOLID_BREP requires each edge to bound two faces, so the retained-boundary reader refuses it as invalid. OpenCascade's BRepCheck does not test manifoldness and accepts it."
       },
       "id": "kicad-lib-SW_SPST_B3U-3000P-B",
-      "import_ms": 7.811083,
+      "import_ms": 4.837833,
       "location": "kicad-library",
       "message": "imported boundary: Imported boundary is not a valid closed solid",
       "outcome": "invalid",
@@ -4529,10 +4529,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.279459,
+      "export_ms": 0.232041,
       "finding": null,
       "id": "kicad-lib-LED_D3.0mm_Horizontal_O1.27mm_Z6.0mm",
-      "import_ms": 51.291292000000006,
+      "import_ms": 7.388333,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 2436,
@@ -4565,7 +4565,7 @@
         "mass_kg": 0.00011944746193909818,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 54676,
+        "project_bytes": 54679,
         "section": {
           "curves": 8,
           "hatch_vectors": 18,
@@ -4711,10 +4711,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.362208,
+      "export_ms": 0.693375,
       "finding": null,
       "id": "kicad-lib-Buzzer_Mallory_AST1109MLTRQ",
-      "import_ms": 1.756166,
+      "import_ms": 1.495792,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 846,
@@ -4747,7 +4747,7 @@
         "mass_kg": 0.00045610896924911005,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 44201,
+        "project_bytes": 44202,
         "section": {
           "curves": 4,
           "hatch_vectors": 141,
@@ -4900,7 +4900,7 @@
         "summary": "STEP assembly product structure with placed occurrences is refused (same cause as occt-two-bodies)."
       },
       "id": "kicad-lib-Samtec_HPM-01-05-x-S_Straight_1x01_Pitch5.08mm",
-      "import_ms": 9.357833,
+      "import_ms": 0.323958,
       "location": "kicad-library",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -4944,10 +4944,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.262375,
+      "export_ms": 0.200792,
       "finding": null,
       "id": "kicad-lib-Mounting_Wuerth_WA-SMSI-M3_H1mm_9774010360",
-      "import_ms": 10.30725,
+      "import_ms": 58.863791,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 672,
@@ -4980,12 +4980,12 @@
         "mass_kg": 0.00009709529531280278,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 12296,
+        "project_bytes": 12298,
         "section": {
-          "curves": 192,
+          "curves": 2,
           "hatch_vectors": 66,
           "length_exact": true,
-          "length_mm": 20.91640215564342,
+          "length_mm": 20.92300707290802,
           "plane_z_mm": -0.19999999999999996
         }
       },
@@ -5032,26 +5032,26 @@
           "volume_mm3": 35.96122048622349
         },
         "section": {
-          "curves": 192,
+          "curves": 2,
           "hatch_vectors": 0,
           "length_exact": true,
-          "length_mm": 20.91640215564342,
+          "length_mm": 20.92300707290802,
           "plane_z_mm": -0.19999999999999996
         },
         "volume_deviation_mm3": 0.0,
         "volume_mm3": 35.961220486223255
       },
       "section": {
-        "curves": 192,
+        "curves": 2,
         "hatch_vectors": 0,
         "length_exact": true,
-        "length_mm": 20.91640215564342,
+        "length_mm": 20.92300707290802,
         "plane_z_mm": -0.19999999999999996
       },
       "section_native": {
         "length_mm": 20.92300707290802,
         "reader": "OpenCascade 7.9.3",
-        "relative": 0.0003156772466588698
+        "relative": 0.0
       },
       "sha256": "75b67971219c4b62be41b9e763917f7246a4b42423d581e936a37730a983be93",
       "source": {
@@ -5125,10 +5125,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.401792,
+      "export_ms": 0.20249999999999999,
       "finding": null,
       "id": "kicad-lib-R_Box_L13.0mm_W4.0mm_P9.00mm",
-      "import_ms": 37.301916,
+      "import_ms": 5.086709,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 402,
@@ -5307,10 +5307,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.345042,
+      "export_ms": 0.266167,
       "finding": null,
       "id": "kicad-lib-PinSocket_1x01_P2.54mm_Vertical",
-      "import_ms": 5.918791,
+      "import_ms": 3.535959,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 174,
@@ -5343,7 +5343,7 @@
         "mass_kg": 0.00013943039399999895,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 35132,
+        "project_bytes": 35136,
         "section": {
           "curves": 16,
           "hatch_vectors": 44,
@@ -5488,10 +5488,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.2125,
+      "export_ms": 0.225375,
       "finding": null,
       "id": "kicad-lib-C_Axial_L5.1mm_D3.1mm_P10.00mm_Horizontal",
-      "import_ms": 348.61483300000003,
+      "import_ms": 36.152375,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 6318,
@@ -5524,12 +5524,12 @@
         "mass_kg": 0.00010511293524772237,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 25544,
+        "project_bytes": 25545,
         "section": {
-          "curves": 140,
+          "curves": 14,
           "hatch_vectors": 65,
           "length_exact": true,
-          "length_mm": 18.695709823315486,
+          "length_mm": 18.6986803665206,
           "plane_z_mm": 0.55
         }
       },
@@ -5576,26 +5576,26 @@
           "volume_mm3": 38.93071675841569
         },
         "section": {
-          "curves": 140,
+          "curves": 14,
           "hatch_vectors": 0,
           "length_exact": true,
-          "length_mm": 18.695709823315486,
+          "length_mm": 18.6986803665206,
           "plane_z_mm": 0.55
         },
         "volume_deviation_mm3": 0.0,
         "volume_mm3": 38.93071675841569
       },
       "section": {
-        "curves": 140,
+        "curves": 14,
         "hatch_vectors": 0,
         "length_exact": true,
-        "length_mm": 18.695709823315486,
+        "length_mm": 18.6986803665206,
         "plane_z_mm": 0.55
       },
       "section_native": {
         "length_mm": 18.6986803665206,
         "reader": "OpenCascade 7.9.3",
-        "relative": 0.00015886378861425045
+        "relative": 0.0
       },
       "sha256": "aecb3a544c9105cc507bb98bd8247c449a4477c8826572f83d43cd00eceadab2",
       "source": {
@@ -5669,10 +5669,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.186167,
+      "export_ms": 0.192292,
       "finding": null,
       "id": "kicad-vendored-WLP-4_0.83x0.83mm_P0.4mm",
-      "import_ms": 118.518209,
+      "import_ms": 10.132292,
       "location": "vendored",
       "mesh": {
         "edge_pairs": 8868,
@@ -5705,7 +5705,7 @@
         "mass_kg": 6.739015893635502e-7,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 16882,
+        "project_bytes": 16877,
         "section": {
           "curves": 4,
           "hatch_vectors": 11,
@@ -5850,10 +5850,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.26304099999999997,
+      "export_ms": 0.21962500000000001,
       "finding": null,
       "id": "kicad-lib-D_SOD-923",
-      "import_ms": 135.444625,
+      "import_ms": 23.595499999999998,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 150,
@@ -5886,7 +5886,7 @@
         "mass_kg": 4.6986375548892374e-7,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 49401,
+        "project_bytes": 49403,
         "section": {
           "curves": 4,
           "hatch_vectors": 9,
@@ -6033,11 +6033,11 @@
     {
       "expected": "unsupported",
       "finding": {
-        "owner": "CAD-360",
-        "summary": "Contains a SHELL_BASED_SURFACE_MODEL with open shells beside its solids. The product has no surface-body concept, and importing only the solids would drop part of the model, so the file is refused as unsupported."
+        "owner": "CAD-363",
+        "summary": "Contains a SHELL_BASED_SURFACE_MODEL with open shells beside its solids. The product has no surface-body concept, and importing only the solids would drop part of the model, so the file is refused as unsupported. Surface bodies are deferred to CAD-363 by product decision."
       },
       "id": "kicad-lib-R_LDR_5.2x5.2mm_P3.5mm_Horizontal",
-      "import_ms": 4.3496250000000005,
+      "import_ms": 7.855916,
       "location": "kicad-library",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -6088,7 +6088,7 @@
         "summary": "Toroidal blends combined with multiple solids are refused."
       },
       "id": "kicad-lib-Converter_ACDC_MeanWell_IRM-60-xx_THT",
-      "import_ms": 0.908875,
+      "import_ms": 0.746916,
       "location": "kicad-library",
       "message": "STEP import: Rust STEP import requires a supported analytic solid in millimeters",
       "outcome": "unsupported",
@@ -6139,7 +6139,7 @@
         "summary": "An inner-shell edge, a degree-13 rational B-spline, lies up to 1.10e-5 mm off its cylinder. That exceeds the file's declared 2e-6 mm uncertainty and the 1e-5 mm incidence cap, so the retained-boundary reader refuses it as invalid. OpenCascade accepts it with its per-edge tolerances."
       },
       "id": "kicad-lib-C_Radial_D6.3mm_H7.0mm_P2.50mm",
-      "import_ms": 48.186125000000004,
+      "import_ms": 5.223584,
       "location": "kicad-library",
       "message": "imported boundary: Imported boundary is not a valid closed solid",
       "outcome": "invalid",
@@ -6186,10 +6186,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 1.2752919999999999,
+      "export_ms": 0.141875,
       "finding": null,
       "id": "kicad-lib-L_Radial_D28.0mm_P29.20mm",
-      "import_ms": 12.456416999999998,
+      "import_ms": 41.225375,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 35799,
@@ -6222,12 +6222,12 @@
         "mass_kg": 0.04663245914544175,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 19663,
+        "project_bytes": 19654,
         "section": {
-          "curves": 741,
+          "curves": 3,
           "hatch_vectors": 301,
           "length_exact": true,
-          "length_mm": 95.49605352071406,
+          "length_mm": 95.5044166691298,
           "plane_z_mm": 12.55
         }
       },
@@ -6275,26 +6275,26 @@
           "volume_mm3": 17271.281164978427
         },
         "section": {
-          "curves": 741,
+          "curves": 3,
           "hatch_vectors": 0,
           "length_exact": true,
-          "length_mm": 95.49605352071406,
+          "length_mm": 95.5044166691298,
           "plane_z_mm": 12.55
         },
         "volume_deviation_mm3": 0.0,
         "volume_mm3": 17271.281164978427
       },
       "section": {
-        "curves": 741,
+        "curves": 3,
         "hatch_vectors": 0,
         "length_exact": true,
-        "length_mm": 95.49605352071406,
+        "length_mm": 95.5044166691298,
         "plane_z_mm": 12.55
       },
       "section_native": {
         "length_mm": 95.50441666912971,
         "reader": "OpenCascade 7.9.3",
-        "relative": 0.00008756818487911213
+        "relative": 8.92787279007303e-16
       },
       "sha256": "b2990dac771ad98bf2212ec7e3885f60ec72846092a436f80962a89f83c7a9e4",
       "source": {
@@ -6369,10 +6369,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.233125,
+      "export_ms": 0.175375,
       "finding": null,
       "id": "kicad-lib-R_0603_1608Metric",
-      "import_ms": 2.774333,
+      "import_ms": 3.0409170000000003,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 342,
@@ -6405,7 +6405,7 @@
         "mass_kg": 1.4504906525336038e-6,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 45231,
+        "project_bytes": 45228,
         "section": {
           "curves": 4,
           "hatch_vectors": 17,
@@ -6552,10 +6552,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.209667,
+      "export_ms": 0.134791,
       "finding": null,
       "id": "kicad-lib-QFN-32-1EP_4x4mm_P0.4mm_EP2.9x2.9mm",
-      "import_ms": 3.9369579999999997,
+      "import_ms": 8.465874999999999,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 18,
@@ -6734,10 +6734,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.192292,
+      "export_ms": 0.13899999999999998,
       "finding": null,
       "id": "kicad-lib-DFN-8-1EP_3x2mm_P0.5mm_EP1.3x1.5mm",
-      "import_ms": 1.2728329999999999,
+      "import_ms": 1.066,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 18,
@@ -6770,7 +6770,7 @@
         "mass_kg": 9.72e-6,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 31053,
+        "project_bytes": 31056,
         "section": {
           "curves": 4,
           "hatch_vectors": 35,
@@ -6916,10 +6916,10 @@
     },
     {
       "expected": "pass",
-      "export_ms": 0.191208,
+      "export_ms": 0.114042,
       "finding": null,
       "id": "kicad-lib-L_CommonModeChoke_Bourns_SRF1260",
-      "import_ms": 0.9490419999999999,
+      "import_ms": 1.059167,
       "location": "kicad-library",
       "mesh": {
         "edge_pairs": 18,
@@ -6952,7 +6952,7 @@
         "mass_kg": 0.002615625,
         "material": "Corpus aluminium 2700 kg/m3",
         "parts": 1,
-        "project_bytes": 21267,
+        "project_bytes": 21271,
         "section": {
           "curves": 4,
           "hatch_vectors": 177,
@@ -7107,7 +7107,7 @@
   },
   "schema": 1,
   "source": {
-    "commit": "c0fddf102e09efa580679ba124439c88d80ab0d7",
+    "commit": "b333779e1fde4754b70be05935449db3ddc0dc2c",
     "tracked_changes": false
   },
   "tolerances": {
