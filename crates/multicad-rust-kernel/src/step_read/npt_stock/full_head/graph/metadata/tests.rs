@@ -188,6 +188,8 @@ fn genuine_physical_metadata_roles_and_arities_cannot_authorize_other_records() 
         .find(|id| arena[id].iter().any(|e| e.name == "AXIS2_PLACEMENT_3D"))
         .unwrap();
     let origin = reference(&arena[&axis][0].args[1]).unwrap();
+    let normal = reference(&arena[&axis][0].args[2]).unwrap();
+    let reference_direction = reference(&arena[&axis][0].args[3]).unwrap();
     for (owner, replacement) in [
         (axis, "AXIS2_PLACEMENT_3D('')".to_owned()),
         (
@@ -195,6 +197,8 @@ fn genuine_physical_metadata_roles_and_arities_cannot_authorize_other_records() 
             format!("AXIS2_PLACEMENT_3D('',#{product},#{product},#{product})"),
         ),
         (origin, "CARTESIAN_POINT('',(1.,0.,0.))".to_owned()),
+        (normal, "DIRECTION('',(0.,0.,-1.))".to_owned()),
+        (reference_direction, "DIRECTION('',(-1.,0.,0.))".to_owned()),
     ] {
         let source = arena[&owner][0].source.unwrap();
         let start = source.as_ptr() as usize - actual.as_ptr() as usize;
