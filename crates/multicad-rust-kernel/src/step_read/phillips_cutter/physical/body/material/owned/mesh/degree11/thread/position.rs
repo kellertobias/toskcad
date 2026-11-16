@@ -173,12 +173,18 @@ impl Root {
             }
             work.charge(STRIP_WORK)?;
             let strip = self.strip_at(u as f64 / divisions[0] as f64);
-            emit(
-                strip,
-                divisions[1],
-                &mut points[u * (divisions[1] + 1)..(u + 1) * (divisions[1] + 1)],
-                work,
-            )?;
+            let row = &mut points[u * (divisions[1] + 1)..(u + 1) * (divisions[1] + 1)];
+            if divisions[1] >= 4 {
+                // Independent complete-operation audit:145 interval ops plus
+                // bounded explicit loads/copies/validation/control fit640.
+                // For1/2 cells the original recursive method is cheaper.
+                for (j, point) in row.iter_mut().enumerate() {
+                    work.charge(640)?;
+                    *point = point_basis(&strip, j, divisions[1])?;
+                }
+            } else {
+                emit(strip, divisions[1], row, work)?;
+            }
         }
         Ok(Lattice {
             owner: None,
@@ -239,6 +245,47 @@ impl Root {
         }
         Ok(cell)
     }
+}
+// The original degree11 curve, evaluated
+// exactly in Bernstein form. No polynomial fitting or source substitution.
+fn point_basis(values: &[B; 12], j: usize, n: usize) -> R<B> {
+    if !n.is_power_of_two() || n > (1usize << 24) || j > n {
+        return Err(PhillipsReadError::Invalid);
+    }
+    if j == 0 {
+        return Ok(values[0]);
+    }
+    if j == n {
+        return Ok(values[11]);
+    }
+    // All integer operands<=2^24 and power-of-two divisions are EXACTf64.
+    // Computing s by its own integer ratio preserves EXACT s=1-t, without
+    // assuming rounded subtraction is exact for arbitrary external scalars.
+    let t = I::point(j as f64 / n as f64);
+    let s = I::point((n - j) as f64 / n as f64);
+    let mut up = [I::point(1.); 12];
+    let mut down = [I::point(1.); 12];
+    for i in 1..12 {
+        up[i] = up[i - 1] * t;
+        down[i] = down[i - 1] * s;
+    }
+    let choose = [
+        1., 11., 55., 165., 330., 462., 462., 330., 165., 55., 11., 1.,
+    ];
+    let weights: [I; 12] = std::array::from_fn(|i| I::point(choose[i]) * up[i] * down[11 - i]);
+    // Exact partition unity proves the anchored identity for the SAME
+    // uncertain control coefficients, avoiding a translation-dependent floor.
+    let result = std::array::from_fn::<_, 3, _>(|k| {
+        (1..12).fold(values[0][k], |sum, i| {
+            sum + weights[i] * (values[i][k] - values[0][k])
+        })
+    });
+    for value in result {
+        if !value.valid() {
+            return Err(PhillipsReadError::Unsupported);
+        }
+    }
+    Ok(result)
 }
 fn split(mut values: [B; 12]) -> [[B; 12]; 2] {
     let mut result = [[[I::point(0.); 3]; 12]; 2];
@@ -456,6 +503,62 @@ mod tests {
                 .is_ok()
         );
         assert!(root.lattice_cached([2, 8], Some(&old), &mut work()).is_ok());
+    }
+    #[test]
+    fn original_basis_points_enclose_independent_rational_monomials_and_tensor() {
+        use num_rational::BigRational as Q;
+        let falling = |j: usize, k: usize| {
+            if j < k {
+                0i64
+            } else {
+                (0..k).fold(1, |a, p| a * (j - p) as i64)
+            }
+        };
+        for power in 0..=11 {
+            let controls = std::array::from_fn(|i| {
+                let c = falling(i, power) as f64;
+                [I::point(c), I::point(-c), I::point(1_000_000. + c)]
+            });
+            for n in [1usize, 2, 4, 32] {
+                for j in 0..=n {
+                    let actual = point_basis(&controls, j, n).unwrap();
+                    let t = Q::new(j.into(), n.into());
+                    let exact = Q::from_integer(falling(11, power).into()) * t.pow(power as i32);
+                    for (b, x) in actual.into_iter().zip([
+                        exact.clone(),
+                        -exact.clone(),
+                        Q::from_integer(1_000_000.into()) + exact,
+                    ]) {
+                        assert!(
+                            Q::from_float(b.lo).unwrap() <= x && x <= Q::from_float(b.hi).unwrap()
+                        );
+                    }
+                }
+            }
+        }
+        let root = Root::new(&source(), [0, 0]).unwrap();
+        let curve = root.strip_at(0.25);
+        let mut previous = vec![[I::point(0.); 3]; 33];
+        emit(curve, 32, &mut previous, &mut work()).unwrap();
+        for (j, old) in previous.iter().enumerate() {
+            let current = point_basis(&curve, j, 32).unwrap();
+            for ((b, old), expected) in current
+                .into_iter()
+                .zip(old)
+                .zip(point(0.25, j as f64 / 32.))
+            {
+                assert!(b.lo <= expected && expected <= b.hi);
+                assert!(old.lo <= expected && expected <= old.hi);
+                assert!(b.width() < 1e-8);
+            }
+        }
+        for (j, n) in [(1, 0), (1, 3), (33, 32), (1, 1usize << 25)] {
+            assert!(matches!(
+                point_basis(&curve, j, n),
+                Err(PhillipsReadError::Invalid)
+            ));
+        }
+        assert!(point_basis(&curve, 1, 32).is_ok());
     }
     #[test]
     fn original_lattice_limits_cancellation_and_retry_keep_source_unchanged() {
