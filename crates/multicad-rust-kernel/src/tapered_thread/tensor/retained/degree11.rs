@@ -1,6 +1,8 @@
 //! Fixed degree11 numerical cells, distinct from the degree9 source machinery.
 //! No radial chart, occupied boundary, material, normal or mass is certified.
 use super::*;
+mod normal;
+pub use normal::{NORMAL11_BYTES, NORMAL11_WORK, NormalPolynomial11};
 const DEGREE: usize = 11;
 #[derive(Clone, Debug, PartialEq)]
 pub struct RetainedTensor11 {
