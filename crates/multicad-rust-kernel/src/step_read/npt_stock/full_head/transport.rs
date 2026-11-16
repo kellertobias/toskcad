@@ -8,6 +8,8 @@ use std::{
     sync::Arc,
 };
 mod schema;
+mod source;
+pub use source::{MappedSourceQualification, MappedSourceReceipt};
 #[cfg(test)]
 mod tests;
 const SCRATCH: usize = 256 * 1024;
@@ -60,6 +62,9 @@ pub struct MappedHeadReceipt {
     pub aggregate_work: usize,
     pub accounted_peak_bytes: usize,
     pub retained_bytes: usize,
+    /// Declared external residents in the inherited construction peak.
+    /// A larger caller can replace this exact prior external scope once.
+    pub additional_resident_bytes: usize,
 }
 pub struct MappedActualHead {
     original: Arc<str>,
@@ -266,6 +271,7 @@ impl MappedActualHead {
                 aggregate_work: aggregate,
                 accounted_peak_bytes: peak,
                 retained_bytes: retained,
+                additional_resident_bytes: r.additional_resident_bytes,
             },
         })
     }

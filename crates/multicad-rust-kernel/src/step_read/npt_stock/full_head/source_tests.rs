@@ -1,7 +1,7 @@
 use super::*;
 use crate::axial_pipe_thread::authored::{AuthoredSection, AuthoredSpec, AuthoredThread};
 use crate::step::npt_stock::{CurveOptions, CurvePlan, SurfacePlan};
-fn with_source<R>(quarter: bool, f: impl FnOnce(&SurfacePlan<'_>) -> R) -> R {
+pub(super) fn with_source<R>(quarter: bool, f: impl FnOnce(&SurfacePlan<'_>) -> R) -> R {
     let (tpi, e1, l1, l2, od, max) = if quarter {
         (18., 0.49163, 0.2278, 0.4018, 0.540, 0.088)
     } else {

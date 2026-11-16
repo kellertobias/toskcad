@@ -206,6 +206,7 @@ pub struct OwnedActualHead {
     planar_sewing: f64,
     join_sewing: f64,
     minimum_wall: f64,
+    material_tolerance: f64,
     local_bounds: [[f64; 2]; 3],
     sewing: AxialSewingTransfer,
     volume: [f64; 2],
@@ -451,6 +452,7 @@ impl OwnedActualHead {
             planar_sewing,
             join_sewing,
             minimum_wall,
+            material_tolerance: options.material_tolerance_mm,
             local_bounds: bounds,
             sewing,
             volume: [volume.lo, volume.hi],
@@ -502,6 +504,10 @@ impl OwnedActualHead {
     }
     pub fn join_sewing_mm(&self) -> f64 {
         self.join_sewing
+    }
+    /// Construction tolerance of the independently earned material proof.
+    pub fn material_tolerance_mm(&self) -> f64 {
+        self.material_tolerance
     }
     pub fn minimum_wall_mm(&self) -> f64 {
         self.minimum_wall

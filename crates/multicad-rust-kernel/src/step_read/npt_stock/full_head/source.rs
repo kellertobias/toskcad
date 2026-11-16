@@ -59,7 +59,7 @@ impl<'input, 'plan, 'source> QualifiedFile<'input, 'plan, 'source> {
         self.receipt
     }
 }
-fn source_error(e: crate::step::npt_stock::Error) -> Error {
+pub(super) fn source_error(e: crate::step::npt_stock::Error) -> Error {
     match e {
         crate::step::npt_stock::Error::Invalid => Error::Invalid,
         crate::step::npt_stock::Error::Unresolved => Error::Unsupported,
@@ -69,6 +69,27 @@ fn source_error(e: crate::step::npt_stock::Error) -> Error {
 }
 fn head_error(
     material: &OccupiedClippedHead<'_, '_, '_>,
+    source: &SurfacePlan<'_>,
+    intent: HexHeadIntent,
+    tolerance: f64,
+    b: &mut Budget<'_>,
+) -> Result<f64> {
+    actual_head_error(
+        material.head(),
+        material.head_polygon_mm(),
+        material.head_stations_mm(),
+        source,
+        intent,
+        tolerance,
+        b,
+    )
+}
+// Only callers retaining an independently earned head owner invoke this
+// shared arithmetic. The arrays alone never admit material or ownership.
+pub(super) fn actual_head_error(
+    head: &HeadInput,
+    polygon: &[[f64; 2]; 6],
+    stations: [f64; 2],
     source: &SurfacePlan<'_>,
     intent: HexHeadIntent,
     tolerance: f64,
@@ -97,7 +118,7 @@ fn head_error(
     let mut assigned = [false; 12];
     let mut mapping = [usize::MAX; 12];
     let mut error = 0f64;
-    for (index, actual) in material.head().vertices.iter().enumerate() {
+    for (index, actual) in head.vertices.iter().enumerate() {
         let mut matched = None;
         for (i, p) in expected.iter().enumerate() {
             b.step(256)?;
@@ -125,13 +146,12 @@ fn head_error(
     // Global convexity has already been independently proved. Explicit cyclic
     // corner correspondence gives the piecewise-affine whole-head C0 map.
     let mut upper = [0usize; 6];
-    for (i, p) in material.head_polygon_mm().iter().enumerate() {
+    for (i, p) in polygon.iter().enumerate() {
         b.step(128)?;
-        let id = material
-            .head()
+        let id = head
             .vertices
             .iter()
-            .position(|v| *v == [p[0], p[1], material.head_stations_mm()[1]])
+            .position(|v| *v == [p[0], p[1], stations[1]])
             .ok_or(Error::Unsupported)?;
         upper[i] = mapping[id];
         if upper[i] < 6 {
@@ -143,16 +163,7 @@ fn head_error(
     }
     Ok(error)
 }
-/// Qualify exact supplied bytes against an ORIGINAL clipped thread plan and
-/// a canonical fixed-frame hex-head author definition. Independent whole-head
-/// occupied admission always runs first. No Native/export flag is granted.
-pub fn qualify_actual_file<'input, 'plan, 'source>(
-    actual: &'input str,
-    source: &'plan SurfacePlan<'source>,
-    head: HexHeadIntent,
-    options: SourceOptions,
-    interrupt: Option<&dyn Fn() -> bool>,
-) -> Result<QualifiedFile<'input, 'plan, 'source>> {
+pub(super) fn validate_source_options(head: HexHeadIntent, options: SourceOptions) -> Result<()> {
     let r = options.resources;
     if r.maximum_work == 0
         || r.maximum_work > MAX_WORK
@@ -174,6 +185,20 @@ pub fn qualify_actual_file<'input, 'plan, 'source>(
     {
         return Err(Error::Invalid);
     }
+    Ok(())
+}
+/// Qualify exact supplied bytes against an ORIGINAL clipped thread plan and
+/// a canonical fixed-frame hex-head author definition. Independent whole-head
+/// occupied admission always runs first. No Native/export flag is granted.
+pub fn qualify_actual_file<'input, 'plan, 'source>(
+    actual: &'input str,
+    source: &'plan SurfacePlan<'source>,
+    head: HexHeadIntent,
+    options: SourceOptions,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<QualifiedFile<'input, 'plan, 'source>> {
+    let r = options.resources;
+    validate_source_options(head, options)?;
     let source_work = source.work_used();
     let source_bytes = source.retained_budget_bytes();
     let maximum_work = r

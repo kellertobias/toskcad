@@ -44,7 +44,7 @@ fn change(input: &str, id: u32, body: &str) -> String {
     let end = start + input[start..].find(';').unwrap() + 1;
     format!("{}#{id}={body};{}", &input[..start], &input[end..])
 }
-fn mapped(quarter: bool, pose: usize) -> String {
+pub(super) fn mapped(quarter: bool, pose: usize) -> String {
     let text = candidate(quarter);
     let doc = CompoundDocument::parse(&text, Default::default(), None).unwrap();
     let (&top, parts) = doc
