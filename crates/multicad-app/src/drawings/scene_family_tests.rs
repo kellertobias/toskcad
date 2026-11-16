@@ -1564,3 +1564,49 @@ fn exports(mut session: Session, f: &Fixture) {
         expected.len()
     );
 }
+
+/// Per-view cost through the worker: each view on its own page, requested
+/// from one uncached worker so that each request compiles only the view's
+/// own sources. Run in release with `--ignored --nocapture`.
+#[test]
+#[ignore = "timing report"]
+fn scene_family_view_timings() {
+    let mut f = fixture();
+    let mut pages = Vec::new();
+    for view in &f.page.views {
+        let mut page = drawings::Page::new(view.name.clone());
+        page.settings = f.page.settings.clone();
+        let mut single = view.clone();
+        single.id = EntityId::new();
+        page.views.push(single);
+        let (_, prepared) = drawings::prepare_create(
+            &f.session,
+            f.session.revision(),
+            actor(),
+            &view.name,
+            Some(page.clone()),
+        )
+        .unwrap();
+        f.session.commit(prepared).unwrap();
+        pages.push(page);
+    }
+    let mut worker = Backend::with_cache_and_backend(None, GeometryBackend::Rust);
+    let mut slowest = (0., String::new());
+    for page in &pages {
+        let started = Instant::now();
+        let result = preview(&mut worker, &f.session, page.id);
+        let ms = started.elapsed().as_secs_f64() * 1e3;
+        ready(&result, &page.views[0]);
+        println!(
+            "{{\"case\":\"CAD-346 scene view\",\"view\":\"{}\",\"ms\":{ms}}}",
+            page.views[0].name
+        );
+        if ms > slowest.0 {
+            slowest = (ms, page.views[0].name.clone());
+        }
+    }
+    println!(
+        "{{\"case\":\"CAD-346 slowest scene view\",\"view\":\"{}\",\"ms\":{}}}",
+        slowest.1, slowest.0
+    );
+}
