@@ -5,6 +5,7 @@ use super::{
     part21::{self, Entity, Value},
 };
 use std::{collections::BTreeMap, mem::size_of};
+pub mod full_head;
 pub mod head;
 mod material;
 mod moments;

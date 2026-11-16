@@ -119,7 +119,7 @@ impl Work<'_> {
         Ok(())
     }
 }
-fn storage(head: &HeadInput) -> Result<usize> {
+pub(super) fn storage(head: &HeadInput) -> Result<usize> {
     let mut bytes = std::mem::size_of::<HeadInput>();
     for n in [
         head.vertices
