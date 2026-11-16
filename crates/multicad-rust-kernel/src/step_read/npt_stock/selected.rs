@@ -6,9 +6,9 @@ mod owned;
 mod placement;
 pub use owned::{
     FaceMeasure, FaceMeasureOptions, LiteralEdgePolyline, LiteralEmbeddingProof,
-    LiteralGeometryOptions, LiteralGeometryPlan, LiteralMesh, LiteralMeshCandidate,
-    LiteralMeshOptions, LiteralOccurrencePlacement, LiteralTransform, LiteralVertexSample,
-    Location, MaterialQuery, OwnedMaterial, PlacedLiteralMesh, QueryOptions,
+    LiteralFaceGeometryPlan, LiteralGeometryOptions, LiteralGeometryPlan, LiteralMesh,
+    LiteralMeshCandidate, LiteralMeshOptions, LiteralOccurrencePlacement, LiteralTransform,
+    LiteralVertexSample, Location, MaterialQuery, OwnedMaterial, PlacedLiteralMesh, QueryOptions,
 };
 pub use placement::Placement;
 pub struct Selected<'document, 'input> {

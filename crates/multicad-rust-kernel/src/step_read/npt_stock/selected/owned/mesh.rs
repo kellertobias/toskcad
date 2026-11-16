@@ -12,6 +12,8 @@ mod hessian;
 mod normal;
 mod occurrence;
 pub use occurrence::PlacedLiteralMesh;
+mod face_plan;
+pub use face_plan::LiteralFaceGeometryPlan;
 mod plan;
 pub use plan::{LiteralGeometryOptions, LiteralGeometryPlan};
 mod sheared;

@@ -10,8 +10,8 @@ pub use curves::{LiteralEdgePolyline, LiteralVertexSample};
 mod mesh;
 mod query;
 pub use mesh::{
-    LiteralEmbeddingProof, LiteralGeometryOptions, LiteralGeometryPlan, LiteralMesh,
-    LiteralMeshCandidate, LiteralMeshOptions, PlacedLiteralMesh,
+    LiteralEmbeddingProof, LiteralFaceGeometryPlan, LiteralGeometryOptions, LiteralGeometryPlan,
+    LiteralMesh, LiteralMeshCandidate, LiteralMeshOptions, PlacedLiteralMesh,
 };
 pub use query::{Location, MaterialQuery, QueryOptions};
 use std::{ops::Range, sync::Arc};
