@@ -170,6 +170,30 @@ fn actual_owned_d11_points_and_whole_boxes_survive_owner_drop_and_proper_pose() 
         // [.8,.6,0]/[.36,-.48,-.8] frame when no cardinal override is requested.
         let top = source.head().view().station(0).unwrap();
         assert_eq!(top[1], source.chart().outer_top_z);
+        // Inside the complete source enclosure but outside the actual head's
+        // radial graph in its own strict slab; thread is axially disjoint.
+        let air = [
+            (top[0] + source.local_enclosure_bounds_mm()[0][1]) * 0.5,
+            0.,
+            top[1] + 0.001,
+        ];
+        assert!(air[2] < source.cap_stations_mm()[0]);
+        assert_eq!(
+            source
+                .head()
+                .view()
+                .classify_box(point(air), Default::default(), None)
+                .unwrap()
+                .location(),
+            RepairedHeadLocation::Outside
+        );
+        assert_eq!(
+            source
+                .classify_local_box(point(air), Default::default(), None)
+                .unwrap()
+                .location(),
+            C::Outside
+        );
         let void = [0., 0., top[1] + 0.1];
         let head_point = [0.99 * top[0], 0., top[1] + 0.001];
         let box_at = |p: Point| p.map(|x| [x - 1e-7, x + 1e-7]);
