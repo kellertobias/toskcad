@@ -357,7 +357,14 @@ impl Thread {
             let count = parts.len() as f64;
             let mut values = [I::point(0.); 4];
             // Relative allocation to exact dyadic parameter width bounds all
-            // accepted leaf sums without subtracting historical intervals.
+            // accepted leaf sums without subtracting historical intervals. For
+            // each part, disjoint dyadic leaf widths sum to one, so all part
+            // errors sum to at most budget/16. The remaining 15/16 is reserved
+            // for interval summation and phase/sewing allowances. Final receipt
+            // checks still enforce the complete requested widths. The former
+            // budget/32 allocation could fall below evaluation roundoff even
+            // for a valid canonical M6 root; subdivision cannot reduce that
+            // relative floor.
             let area_budget = options
                 .area_tolerance_mm2
                 .min(options.centroid_tolerance_mm / (extent + 1.));
@@ -372,7 +379,7 @@ impl Thread {
                     let proof = cell(&part, a, b);
                     let budgets =
                         [area_budget, moment_budget, moment_budget, moment_budget].map(|budget| {
-                            (I::point(budget) * I::point(b - a) / I::point(32. * count)).lo
+                            (I::point(budget) * I::point(b - a) / I::point(16. * count)).lo
                         });
                     if let Ok(value) = proof
                         && value.iter().zip(budgets).all(|(v, b)| v.width() <= b)
@@ -495,6 +502,100 @@ mod tests {
                 assert!(crest.lo <= expected && expected <= crest.hi);
                 assert_eq!(a.spec(), tool(round, false, starts).spec());
             }
+        }
+    }
+    #[test]
+    fn actual_fitted_m6_original_root_meets_native_property_accuracy() {
+        for left_hand in [false, true] {
+            let thread = Thread::new(Spec {
+                major_radius_mm: 2.942,
+                pitch_mm: 1.,
+                length_mm: 12.,
+                depth_mm: 0.5966751345948134,
+                crest_width_mm: 0.1443522341791902,
+                lower_flank_deg: 30.,
+                upper_flank_deg: 30.,
+                starts: 1,
+                left_hand,
+                root_radius_mm: Some(0.14433756729740646),
+            })
+            .unwrap();
+            let before = thread;
+            // Actual canonical Core M6x1 6g source; these are the SAME stricter
+            // per-thread allocations used by the native screw-property query.
+            let options = FacePropertyOptions {
+                area_tolerance_mm2: 6.009615384615385e-11,
+                first_moment_tolerance_mm3: 7.8125e-10,
+                centroid_tolerance_mm: 7.8125e-10,
+                maximum_cells: 32768,
+            };
+            let calls = std::cell::Cell::new(0usize);
+            let result = thread
+                .face_properties_with_cancel([0., 12.], options, &|| {
+                    calls.set(calls.get() + 1);
+                    false
+                })
+                .unwrap();
+            let actual_cells = calls.get() - 2; // Initial/final cancellation checkpoints.
+            assert!(actual_cells <= options.maximum_cells);
+            assert!(matches!(
+                thread.face_properties_with_cancel(
+                    [0., 12.],
+                    FacePropertyOptions {
+                        maximum_cells: actual_cells - 1,
+                        ..options
+                    },
+                    &|| false
+                ),
+                Err(FacePropertyError::Limit)
+            ));
+            assert!(
+                thread
+                    .face_properties_with_cancel(
+                        [0., 12.],
+                        FacePropertyOptions {
+                            maximum_cells: actual_cells,
+                            ..options
+                        },
+                        &|| false
+                    )
+                    .is_ok()
+            );
+            assert!(matches!(
+                thread.face_properties_with_cancel(
+                    [0., 12.],
+                    FacePropertyOptions {
+                        area_tolerance_mm2: 1e-30,
+                        ..options
+                    },
+                    &|| false
+                ),
+                Err(FacePropertyError::Unresolved | FacePropertyError::Limit)
+            ));
+            let stop = std::cell::Cell::new(0usize);
+            assert!(matches!(
+                thread.face_properties_with_cancel([0., 12.], options, &|| {
+                    stop.set(stop.get() + 1);
+                    stop.get() == actual_cells / 2
+                }),
+                Err(FacePropertyError::Cancelled)
+            ));
+            assert!(
+                thread
+                    .face_properties_with_cancel([0., 12.], options, &|| false)
+                    .is_ok()
+            );
+            assert_eq!(result.len(), 6);
+            for face in result {
+                assert!(face.area_mm2[1] - face.area_mm2[0] <= options.area_tolerance_mm2);
+                for moment in face.first_moment_mm3 {
+                    assert!(moment[1] - moment[0] <= options.first_moment_tolerance_mm3);
+                }
+                for center in face.centroid_mm {
+                    assert!(center[1] - center[0] <= options.centroid_tolerance_mm);
+                }
+            }
+            assert_eq!(thread, before);
         }
     }
     #[test]
