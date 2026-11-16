@@ -9,9 +9,6 @@ fn target(
     kind(records, reference(value)?, name, b)?;
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;
 fn integer(e: &Entity<'_>, v: &Value<'_>, expected: usize, b: &mut Budget<'_>) -> Result<()> {
     let mut n = numeric::Numbers::new(e, b)?;
     if n.integer(v, b)? != expected {
@@ -374,3 +371,6 @@ pub(super) fn check(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
