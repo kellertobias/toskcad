@@ -319,3 +319,34 @@ fn actual_cold_table_and_leaf_caps_refuse_before_neutral_arena_allocation() {
         part21::parse(&ordinary).unwrap().len()
     );
 }
+
+#[test]
+fn initialized_cursor_refuses_overrun_without_consuming_header_position_or_budget() {
+    let actual = actual_box();
+    let mut cursor = Scan::new(&actual, 64_000_000, None);
+    cursor.keyword("ISO-10303-21").unwrap();
+    cursor.keyword("HEADER").unwrap();
+    for name in ["FILE_DESCRIPTION", "FILE_NAME", "FILE_SCHEMA"] {
+        assert_eq!(cursor.entity(0).unwrap(), name);
+        cursor.require(b';').unwrap();
+    }
+    cursor.keyword("ENDSEC").unwrap();
+    // This is the initialized low-level cursor contract only. Whole-document
+    // parsing never requests an overrun: its advance lengths are earned by
+    // bounded token/window scans. No counters or admitted Source are forged.
+    let before = (cursor.offset, cursor.remaining);
+    assert!(matches!(
+        cursor.advance(actual.len() - cursor.offset + 1),
+        Err(Error::Invalid)
+    ));
+    assert_eq!((cursor.offset, cursor.remaining), before);
+    cursor.keyword("DATA").unwrap();
+    assert!(cursor.take(b'#').unwrap());
+    cursor.id().unwrap();
+    cursor.require(b'=').unwrap();
+    assert_eq!(cursor.entity(0).unwrap(), "CARTESIAN_POINT");
+    cursor.require(b';').unwrap();
+    assert!(cursor.offset > before.0);
+    assert!(cursor.remaining < before.1);
+    assert!(reserve(&actual, 64_000_000, 64 * 1024 * 1024, None).is_ok());
+}

@@ -42,21 +42,7 @@ pub(super) fn reserve(
     if input.len() > 64 * 1024 * 1024 || input.len() > maximum_bytes || input.len() > maximum_work {
         return Err(Error::Limit);
     }
-    let mut p = Scan {
-        input,
-        offset: 0,
-        remaining: maximum_work,
-        interrupt,
-        values: 0,
-        references: 0,
-        components: 0,
-        records: 0,
-        depth: 0,
-        value_bytes: 0,
-        component_bytes: 0,
-        component_comparisons: 0,
-        largest_vector_bytes: 0,
-    };
+    let mut p = Scan::new(input, maximum_work, interrupt);
     p.keyword("ISO-10303-21")?;
     p.keyword("HEADER")?;
     for required in ["FILE_DESCRIPTION", "FILE_NAME", "FILE_SCHEMA"] {
@@ -245,7 +231,24 @@ struct Scan<'a, 'c> {
     component_comparisons: usize,
     largest_vector_bytes: usize,
 }
-impl<'a> Scan<'a, '_> {
+impl<'a, 'c> Scan<'a, 'c> {
+    fn new(input: &'a str, maximum_work: usize, interrupt: Option<&'c dyn Fn() -> bool>) -> Self {
+        Self {
+            input,
+            offset: 0,
+            remaining: maximum_work,
+            interrupt,
+            values: 0,
+            references: 0,
+            components: 0,
+            records: 0,
+            depth: 0,
+            value_bytes: 0,
+            component_bytes: 0,
+            component_comparisons: 0,
+            largest_vector_bytes: 0,
+        }
+    }
     fn rest(&self) -> &'a str {
         &self.input[self.offset..]
     }
