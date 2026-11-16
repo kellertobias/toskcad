@@ -482,7 +482,12 @@ fn sections_publish_exact_lines_and_ellipses() {
     let SectionCurve::Ellipse(arc) = edge.curve else {
         panic!("{edge:?}")
     };
-    assert!(arc.ellipse().semiaxes_mm().iter().all(|r| (r - 4.).abs() < 1e-9));
+    assert!(
+        arc.ellipse()
+            .semiaxes_mm()
+            .iter()
+            .all(|r| (r - 4.).abs() < 1e-9)
+    );
     let torus = solid(TORUS);
     let bounds = torus.bounds_mm();
     let middle = std::array::from_fn(|i| 0.5 * (bounds[0][i] + bounds[1][i]));
