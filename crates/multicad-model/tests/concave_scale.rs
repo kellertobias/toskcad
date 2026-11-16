@@ -278,26 +278,6 @@ fn saved_concave_scale_preserves_part_occurrence_datums_and_supports_a_later_cut
         )
         .unwrap();
         near(read.volume_mm3().unwrap(), expected);
-        #[cfg(feature = "occt")]
-        {
-            let native = build(&session, GeometryBackend::OpenCascade);
-            near(
-                native.solid(part.body).unwrap().volume_mm3().unwrap(),
-                expected,
-            );
-            let (a, b) = (
-                rust.solid(part.body).unwrap().bounds().unwrap(),
-                native.solid(part.body).unwrap().bounds().unwrap(),
-            );
-            for (a, b) in a
-                .min
-                .into_iter()
-                .chain(a.max)
-                .zip(b.min.into_iter().chain(b.max))
-            {
-                near(a, b);
-            }
-        }
     }
     let tool = PrimitiveRequest::new(
         "Open notch",
@@ -334,14 +314,7 @@ fn saved_concave_scale_preserves_part_occurrence_datums_and_supports_a_later_cut
         rust.solid(part.body).unwrap().volume_mm3().unwrap(),
         648. - 0.03,
     );
-    #[cfg(feature = "occt")]
-    {
-        let native = build(&session, GeometryBackend::OpenCascade);
-        near(
-            native.solid(part.body).unwrap().volume_mm3().unwrap(),
-            648. - 0.03,
-        );
-    }
+
     let final_document = session.document().clone();
     session.undo(session.revision(), actor()).unwrap();
     near(

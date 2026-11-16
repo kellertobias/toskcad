@@ -873,8 +873,6 @@ mod layer_guard_tests {
     #[test]
     fn exact_overlap_guard_allows_contact_rejects_material_overlap_and_observes_cancel() {
         overlap_guard(GeometryBackend::Rust);
-        #[cfg(feature = "occt")]
-        overlap_guard(GeometryBackend::OpenCascade);
     }
     fn overlap_guard(backend: GeometryBackend) {
         let id = EntityId::new();

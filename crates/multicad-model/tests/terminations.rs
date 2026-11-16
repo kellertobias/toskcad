@@ -176,8 +176,6 @@ fn check_curved_step(solid: &Solid, feature: EntityId, volume: f64) {
     check(
         Solid::import_rust_step(&std::fs::read_to_string(&path).unwrap(), feature, policy).unwrap(),
     );
-    #[cfg(feature = "occt")]
-    check(Solid::read_step(&path, policy).unwrap());
 }
 
 #[test]
@@ -263,15 +261,6 @@ fn rust_circular_extrusion_to_face_follows_the_reference_and_keeps_a_through_cut
             120. * height - volume,
         );
         check_curved_step(solid, feature, volume);
-        #[cfg(feature = "occt")]
-        {
-            let native = f.compile();
-            f.compare_rust(&native);
-            near(
-                native.solid(boolean.feature).unwrap().volume_mm3().unwrap(),
-                120. * height - volume,
-            );
-        }
     }
 }
 
@@ -319,8 +308,6 @@ fn rust_circular_extrusion_to_plane_carries_its_cap_anchor_through_rigid_placeme
     assert_eq!(anchor.origin_mm, [1., 11., 0.]);
     assert_eq!(anchor.u, [0., 1., 0.]);
     assert_eq!(anchor.v, [1., 0., 0.]);
-    #[cfg(feature = "occt")]
-    f.compare_rust(&f.compile());
 }
 
 #[test]
@@ -367,8 +354,6 @@ fn rust_arc_extrusion_between_parallel_caps_preserves_reverse_sides_and_step() {
     near(cap(shape, "cap.start").frames[0].frame.origin_mm[2], 4.);
     near(cap(shape, "cap.end").frames[0].frame.origin_mm[2], -10.);
     check_curved_step(rust.solid(shape.producer).unwrap(), shape.producer, volume);
-    #[cfg(feature = "occt")]
-    f.compare_rust(&f.compile());
 }
 
 #[test]

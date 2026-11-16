@@ -247,18 +247,5 @@ mod tests {
             assert_eq!(frame.origin_mm, origin_mm);
             assert_eq!(frame.normal(), normal);
         }
-        #[cfg(feature = "occt")]
-        {
-            let reference = Solid::sweep_polyline_named(
-                &profile,
-                &path,
-                feature,
-                &origins,
-                &path_origins,
-                GeometryPolicy::default(),
-            )
-            .unwrap();
-            assert!((reference.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < 1e-5);
-        }
     }
 }

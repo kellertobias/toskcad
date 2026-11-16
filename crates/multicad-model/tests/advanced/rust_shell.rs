@@ -107,8 +107,6 @@ fn check_mesh_volume(solid: &Solid, expected: f64) {
 
 #[test]
 fn rust_shell_supports_adjacent_and_opposite_openings_with_signed_placed_geometry() {
-    #[cfg(feature = "occt")]
-    use multicad_kernel::RigidTransform;
     use multicad_kernel::rust_kernel::Rational;
 
     let policy = GeometryPolicy::default();
@@ -128,14 +126,7 @@ fn rust_shell_supports_adjacent_and_opposite_openings_with_signed_placed_geometr
             policy,
         )
         .unwrap();
-        #[cfg(feature = "occt")]
-        let native_stock = Solid::box_solid(size, policy)
-            .unwrap()
-            .transformed(RigidTransform {
-                rotation: std::array::from_fn(|i| [frame.u[i], frame.v[i], frame.normal()[i]]),
-                translation_mm: frame.origin,
-            })
-            .unwrap();
+
         let feature = EntityId::new();
         for openings in [
             vec![(2, false), (2, true)],
@@ -209,40 +200,6 @@ fn rust_shell_supports_adjacent_and_opposite_openings_with_signed_placed_geometr
                 .unwrap();
                 near(reopened.volume_mm3().unwrap(), volume);
                 assert_eq!(face_metrics(&reopened), face_metrics(&result));
-                #[cfg(feature = "occt")]
-                {
-                    let selected = openings
-                        .iter()
-                        .map(|&(axis, positive)| {
-                            selected_opening(
-                                &native_stock,
-                                placed_normal(frame, axis, positive),
-                                feature,
-                                format!("opening/{axis}/{positive}"),
-                            )
-                        })
-                        .collect::<Vec<_>>();
-                    let native = native_stock
-                        .shell_named(&selected, thickness, feature, policy)
-                        .unwrap();
-                    near(native.volume_mm3().unwrap(), volume);
-                    assert_eq!(face_metrics(&native), face_metrics(&result));
-                    check_mesh_volume(&native, volume);
-                    let a = native.bounds().unwrap();
-                    let b = result.bounds().unwrap();
-                    for (a, b) in a
-                        .min
-                        .into_iter()
-                        .chain(a.max)
-                        .zip(b.min.into_iter().chain(b.max))
-                    {
-                        near(a, b);
-                    }
-                    let readback = Solid::read_step(&path, policy).unwrap();
-                    assert_eq!(readback.solid_count().unwrap(), 1);
-                    near(readback.volume_mm3().unwrap(), volume);
-                    assert_eq!(face_metrics(&readback), face_metrics(&result));
-                }
             }
         }
         near(stock.volume_mm3().unwrap(), 6000.);
@@ -423,21 +380,7 @@ fn saved_rust_shell_rebuilds_signed_walls_and_linked_occurrences() {
             assert_eq!(base.normal(), [0., 0., thickness.signum()]);
         };
         frames(&rebuilt);
-        if cfg!(feature = "occt") {
-            let native = Compiler::default()
-                .compile_with_backend(
-                    reopened.document(),
-                    reopened.revision(),
-                    GeometryBackend::OpenCascade,
-                    None,
-                )
-                .unwrap();
-            let native_solid = native.solid(input.body).unwrap();
-            assert_eq!(face_metrics(native_solid), expected);
-            near(native_solid.volume_mm3().unwrap(), volume);
-            assert_eq!(native_solid.solid_count().unwrap(), 1);
-            frames(&native);
-        }
+        {}
         if thickness < 0. {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("rectangular-shell.step");
@@ -640,11 +583,7 @@ fn saved_two_opening_shell_preserves_rims_offset_refs_undo_and_redo() {
         let solid = rust.solid(input.body).unwrap();
         near(solid.volume_mm3().unwrap(), volume);
         check_mesh_volume(solid, volume);
-        for backend in [
-            GeometryBackend::Rust,
-            #[cfg(feature = "occt")]
-            GeometryBackend::OpenCascade,
-        ] {
+        for backend in [GeometryBackend::Rust] {
             let evaluated = Compiler::default()
                 .compile_with_backend(reopened.document(), reopened.revision(), backend, None)
                 .unwrap();
@@ -986,12 +925,5 @@ fn five_openings_leave_one_plate_and_report_the_absent_rim_as_missing() {
             Solid::import_rust_step(&std::fs::read_to_string(&path).unwrap(), feature, policy)
                 .unwrap();
         assert_eq!(face_metrics(&readback), face_metrics(&plate));
-        #[cfg(feature = "occt")]
-        {
-            let native = Solid::read_step(&path, policy).unwrap();
-            assert_eq!(native.solid_count().unwrap(), 1);
-            near(native.volume_mm3().unwrap(), 1200.);
-            assert_eq!(face_metrics(&native), face_metrics(&plate));
-        }
     }
 }

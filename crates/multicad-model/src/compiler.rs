@@ -344,20 +344,11 @@ pub struct Compiler {
     pub omit_display: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum GeometryBackend {
     OpenCascade,
+    #[default]
     Rust,
-}
-
-impl Default for GeometryBackend {
-    fn default() -> Self {
-        if multicad_kernel::OCCT_LINKED {
-            Self::OpenCascade
-        } else {
-            Self::Rust
-        }
-    }
 }
 
 struct EvaluationMode {

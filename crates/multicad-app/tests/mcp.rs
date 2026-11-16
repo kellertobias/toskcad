@@ -956,10 +956,8 @@ fn rust_stdio_round_trips_helical_tube_cut_step_after_reopen() {
     let project = directory.path().join("imported.tcd");
     let exchange = directory.path().to_str().unwrap();
     let arguments = |project| {
-        let mut arguments = vec!["--project", project, "--export-dir", exchange];
-        if cfg!(feature = "occt") {
-            arguments.push("--rust-model");
-        }
+        let arguments = vec!["--project", project, "--export-dir", exchange];
+        {}
         arguments
     };
     let mut author = Client::start(&arguments(source.to_str().unwrap()));
@@ -1108,15 +1106,13 @@ fn rust_stdio_round_trips_a_mixed_helical_tube_cut_compound() {
     let lower: [f64; 3] = std::array::from_fn(|i| helical[0][i].min(ordinary[0][i]));
     let upper: [f64; 3] = std::array::from_fn(|i| helical[1][i].max(ordinary[1][i]));
 
-    let mut arguments = vec![
+    let arguments = vec![
         "--project",
         project.to_str().unwrap(),
         "--export-dir",
         directory.path().to_str().unwrap(),
     ];
-    if cfg!(feature = "occt") {
-        arguments.push("--rust-model");
-    }
+    {}
     let mut importer = Client::start(&arguments);
     let imported = importer.ok(
         "import_step",
@@ -2203,15 +2199,13 @@ fn export_spur_step_after_reopen(hub: Option<Value>) {
     let project = directory.path().join("spur.tcd");
     let exports = directory.path().join("exports");
     std::fs::create_dir(&exports).unwrap();
-    let mut arguments = vec![
+    let arguments = vec![
         "--project",
         project.to_str().unwrap(),
         "--export-dir",
         exports.to_str().unwrap(),
     ];
-    if cfg!(feature = "occt") {
-        arguments.push("--rust-model");
-    }
+    {}
     let mut client = Client::start(&arguments);
     let mut recipe = json!({
         "expected_revision": 0,

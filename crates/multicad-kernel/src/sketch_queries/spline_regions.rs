@@ -364,13 +364,6 @@ mod tests {
                     .points
                     .is_empty()
             );
-            #[cfg(feature = "occt")]
-            {
-                let native = NativeRegionQueries::native(q.policy).unwrap();
-                assert!(
-                    (native.signed_area(&boundary, tolerance).unwrap() - expected).abs() < 1e-6
-                );
-            }
         }
         let crossing = curve(3, vec![[0., 0.], [20., 20.], [-10., 20.], [10., 0.]]);
         let hits = q.self_intersections(&crossing, tolerance).unwrap();

@@ -37,31 +37,7 @@ fn posed_cut_and_blind_import_preserve_exact_excluded_tool_queries() {
         let text = std::fs::read_to_string(&path).unwrap();
         let imported = Solid::import_rust_step(&text, EntityId::new(), policy).unwrap();
         let decoded = imported.rust_occupied_overlap_volume(&probe, policy);
-        #[cfg(feature = "occt")]
-        {
-            let read = Solid::read_step(&path, policy).unwrap();
-            assert!(!read.uses_rust_geometry());
-            assert!((read.volume_mm3().unwrap() - 1140.).abs() < 1e-6);
-            let native_probe = Solid::box_solid([5., 4., 3.], policy)
-                .unwrap()
-                .transformed(RigidTransform {
-                    translation_mm: [2., 3., 1.],
-                    ..Default::default()
-                })
-                .unwrap()
-                .transformed(pose)
-                .unwrap();
-            assert!(!native_probe.uses_rust_geometry());
-            assert!(
-                read.boolean(
-                    &native_probe,
-                    multicad_kernel::BooleanOperation::Intersect,
-                    policy
-                )
-                .unwrap()
-                .is_none()
-            );
-        }
+
         assert_eq!(original.unwrap(), 0.);
         assert_eq!(decoded.unwrap(), 0.);
     }

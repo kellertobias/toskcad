@@ -47,11 +47,7 @@ fn built_rust_backend_rebuilds_the_complete_saved_toolcase() {
         serde_json::to_vec(&json!({"tool": "evaluate_model", "arguments": {}})).unwrap(),
     )
     .unwrap();
-    let flags: &[_] = if cfg!(feature = "occt") {
-        &["--read-only", "--rust-model"]
-    } else {
-        &["--read-only"]
-    };
+    let flags: &[_] = { &["--read-only"] };
     let timings = dir.path().join("model-timings.jsonl");
     let (ok, receipt) = invoke_with_model_timings(&project, &request, flags, Some(&timings));
     assert!(ok, "{receipt}");
@@ -91,7 +87,7 @@ fn built_rust_backend_saves_and_reopens_a_spur_gear() {
             "teeth": {"value": 24, "unit": "count"}
         }
     }));
-    let explicit_backend = cfg!(feature = "occt").then_some("--rust-model");
+    let explicit_backend = false.then_some("--rust-model");
     let save_flags: Vec<_> = ["--save"].into_iter().chain(explicit_backend).collect();
     let (ok, created) = invoke(&project, &request, &save_flags);
     assert!(ok, "{created}");
@@ -175,14 +171,7 @@ fn command_dispatch_is_memory_only_unless_explicitly_saved_and_reopens_canonical
     )
     .unwrap();
     for (flags, backend) in [
-        (
-            &["--read-only"][..],
-            if cfg!(feature = "occt") {
-                "opencascade"
-            } else {
-                "rust"
-            },
-        ),
+        (&["--read-only"][..], { "rust" }),
         (&["--read-only", "--rust-model"][..], "rust"),
     ] {
         let (ok, receipt) = invoke(&project, &request, flags);
@@ -248,8 +237,7 @@ fn real_cli_connection_lifecycle_reopens_and_matches_direct_mcp() {
     };
     use std::sync::{Arc, atomic::AtomicBool};
     let fixtures = std::iter::once(connection_fixture::fixture());
-    #[cfg(feature = "occt")]
-    let fixtures = fixtures.chain(std::iter::once(connection_fixture::tapped_fixture()));
+
     for (document, mut request, stock) in fixtures {
         let dir = tempfile::tempdir().unwrap();
         let project = dir.path().join("connection.tcd");
@@ -351,7 +339,6 @@ fn real_cli_connection_lifecycle_reopens_and_matches_direct_mcp() {
     }
 }
 
-#[cfg(not(feature = "occt"))]
 #[test]
 fn rust_only_refuses_a_blind_tap_without_enough_floor_before_saving() {
     use multicad_core::model::{ConnectionReceiverExtent, length};

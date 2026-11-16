@@ -1808,8 +1808,6 @@ mod tests {
         assert!(actual.2[0].keys().all(|key| actual.2[1].contains_key(key)));
         assert!(actual.2[1].len() > actual.2[0].len());
         assert_eq!(actual.4.len(), 54);
-        #[cfg(feature = "occt")]
-        assert_eq!(actual, coverage(GeometryBackend::OpenCascade));
     }
 
     #[test]
@@ -1872,8 +1870,6 @@ mod tests {
         };
         let actual = coverage(GeometryBackend::Rust);
         assert_eq!(actual.0[&((), 1, 1_000_000)], [[-400_000, 400_000]]);
-        #[cfg(feature = "occt")]
-        assert_eq!(actual, coverage(GeometryBackend::OpenCascade));
     }
 
     #[test]
@@ -1996,17 +1992,7 @@ mod tests {
             ]
         );
         assert_eq!(actual.2[0][&((), 1, 22_500)], [[-225_000, 225_000]]);
-        #[cfg(feature = "occt")]
-        {
-            let mut native = Backend::with_cache_and_backend(None, GeometryBackend::OpenCascade);
-            assert_eq!(
-                actual,
-                coverage(
-                    &preview(&mut native, &session, page.id),
-                    GeometryBackend::OpenCascade
-                )
-            );
-        }
+
         published
             .checked_page(document, session.revision(), book, page.id)
             .unwrap();
@@ -2227,12 +2213,6 @@ mod tests {
                 _ => None,
             })
             .unwrap()
-    }
-
-    #[cfg(feature = "occt")]
-    #[test]
-    fn native_backend_places_checks_and_refreshes_a_real_bom_table() {
-        places_checks_and_refreshes_a_real_bom_table(GeometryBackend::OpenCascade);
     }
 
     #[test]

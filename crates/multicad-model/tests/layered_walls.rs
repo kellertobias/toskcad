@@ -165,8 +165,8 @@ fn compound_cutout_retains_every_wall_layers_material_on_new_cut_faces() {
     )
     .unwrap();
     session.commit(prepared.prepared).unwrap();
-    for backend in std::iter::once(GeometryBackend::Rust)
-        .chain(cfg!(feature = "occt").then_some(GeometryBackend::OpenCascade))
+    for backend in
+        std::iter::once(GeometryBackend::Rust).chain(false.then_some(GeometryBackend::OpenCascade))
     {
         let after = Compiler::default()
             .compile_with_backend(session.document(), session.revision(), backend, None)

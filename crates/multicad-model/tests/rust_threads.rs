@@ -329,42 +329,7 @@ fn rust_6g_m6_matches_native_fitted_profile_mass_and_major_extent() {
         })
         .unwrap();
     let cap_intent = GeometryIntent::capture(&shape.topology, cap.key).unwrap();
-    #[cfg(feature = "occt")]
-    {
-        let native = Compiler {
-            omit_display: true,
-            ..Default::default()
-        }
-        .compile_with_backend(document, 1, GeometryBackend::OpenCascade, None)
-        .unwrap();
-        let native = native.solid(request.feature).unwrap();
-        assert!(!native.uses_rust_geometry());
-        let area: f64 = native
-            .faces()
-            .unwrap()
-            .iter()
-            .map(|face| face.area_mm2)
-            .sum();
-        let expected_volume = native.volume_mm3().unwrap();
-        let uncertainty = multicad_kernel::GeometryPolicy::default().linear_tolerance_mm * area
-            + 1e-7 * expected_volume;
-        assert!(
-            (volume - expected_volume).abs() <= uncertainty,
-            "fitted volume Rust {volume} vs native {expected_volume}, tolerance {uncertainty}"
-        );
-        let comparison = native.bounds().unwrap();
-        for (actual, expected) in bounds
-            .min
-            .into_iter()
-            .chain(bounds.max)
-            .zip(comparison.min.into_iter().chain(comparison.max))
-        {
-            assert!(
-                (actual - expected).abs() < 5e-6,
-                "bounds {actual} vs {expected}"
-            );
-        }
-    }
+
     session.commit(candidate.prepared).unwrap();
     let before = session.document().clone();
     let changed = ThreadParameters {
@@ -448,31 +413,7 @@ fn rust_internal_6h_matches_native_cut_and_keeps_the_cylinder_face_intents() {
     assert_eq!(actual.snapshot().bodies[&stock.body], request.feature);
     assert_eq!(shape.solid_count, 1);
     assert_eq!(shape.bounds, original.bounds);
-    #[cfg(feature = "occt")]
-    {
-        let native = Compiler {
-            omit_display: true,
-            ..Default::default()
-        }
-        .compile_with_backend(document, 2, GeometryBackend::OpenCascade, None)
-        .unwrap();
-        let native = native.solid(request.feature).unwrap();
-        assert!(!native.uses_rust_geometry());
-        let native_volume = native.volume_mm3().unwrap();
-        let uncertainty = multicad_kernel::GeometryPolicy::default().linear_tolerance_mm
-            * native
-                .faces()
-                .unwrap()
-                .iter()
-                .map(|face| face.area_mm2)
-                .sum::<f64>()
-            + 1e-7 * native_volume;
-        assert!(
-            (shape.volume_mm3 - native_volume).abs() <= uncertainty,
-            "6H volume Rust {} vs OpenCascade {native_volume}, tolerance {uncertainty}",
-            shape.volume_mm3
-        );
-    }
+
     for z in [0., 0.25, 3.3, 6.35, 6.6] {
         assert!(!solid.rust_thread_contains([0., 0., z]).unwrap());
         assert!(solid.rust_thread_contains([4., 0., z]).unwrap());

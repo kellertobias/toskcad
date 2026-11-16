@@ -368,12 +368,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "occt")]
-    fn window_and_headless_control_produce_equivalent_documents() {
-        window_and_headless_equivalence(GeometryBackend::OpenCascade);
-    }
-
-    #[test]
     fn rust_window_and_headless_control_produce_equivalent_documents() {
         window_and_headless_equivalence(GeometryBackend::Rust);
     }
@@ -441,12 +435,6 @@ mod tests {
             canonical(session.document()),
             canonical(&headless.document())
         );
-    }
-
-    #[test]
-    #[cfg(feature = "occt")]
-    fn reviewed_window_changes_preview_natively_and_apply_only_when_accepted() {
-        reviewed_window_changes(GeometryBackend::OpenCascade);
     }
 
     #[test]

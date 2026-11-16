@@ -647,31 +647,6 @@ fn saved_rotated_axis_scale_preserves_every_authored_boundary_intent() {
         [-2.5, -4.5, 4.5],
         [-2.5, -4.5, 4.5],
     );
-    #[cfg(feature = "occt")]
-    {
-        let native = compiler
-            .compile_with_backend(reopened.document(), 0, GeometryBackend::OpenCascade, None)
-            .unwrap();
-        let shape = &native.snapshot().shapes[&feature];
-        bounds(shape.bounds, [-4., -5.5, 2.5], [2.5, 3., 4.5]);
-        near(shape.volume_mm3, 72.);
-        let Resolution::Resolved {
-            frame: Some(native_cap),
-            ..
-        } = references::resolve(&intents[cap_index], &shape.topology, 0)
-        else {
-            panic!("native cap lost its saved frame")
-        };
-        for (a, b) in cap.origin_mm.into_iter().chain(cap.u).chain(cap.v).zip(
-            native_cap
-                .origin_mm
-                .into_iter()
-                .chain(native_cap.u)
-                .chain(native_cap.v),
-        ) {
-            near(a, b);
-        }
-    }
 }
 
 #[test]
@@ -883,16 +858,7 @@ fn saved_axis_aligned_scale_keeps_exact_rectangular_and_round_cut_providers() {
                 Some(references::AnalyticGeometry::CircularArc { radius_mm: 0.5, .. })
             )));
         }
-        #[cfg(feature = "occt")]
-        {
-            let native = compiler
-                .compile_with_backend(opened.document(), 0, GeometryBackend::OpenCascade, None)
-                .unwrap();
-            let reference = &native.snapshot().shapes[&cut_id];
-            bounds(reference.bounds, shape.bounds.min, shape.bounds.max);
-            near(reference.volume_mm3, shape.volume_mm3);
-            assert_eq!(reference.solid_count, shape.solid_count);
-        }
+
         session.undo(session.revision(), actor()).unwrap();
         assert_eq!(session.document(), &before_cut);
         assert_eq!(
@@ -1177,25 +1143,6 @@ fn rust_compound_scale_rebuilds_saved_pattern_parts_and_owned_occurrences_atomic
             near(imported.volume_mm3().unwrap(), expected_volume);
             assert_eq!(imported.solid_count().unwrap(), 3);
             bounds(imported.bounds().unwrap(), min, max);
-            #[cfg(feature = "occt")]
-            {
-                let native = compiler
-                    .compile_with_backend(
-                        opened.document(),
-                        opened.revision(),
-                        GeometryBackend::OpenCascade,
-                        None,
-                    )
-                    .unwrap();
-                let native = native
-                    .solid(if occurrence { instance } else { output })
-                    .unwrap();
-                near(native.volume_mm3().unwrap(), expected_volume);
-                bounds(native.bounds().unwrap(), min, max);
-                let readback = Solid::read_step(&path, GeometryPolicy::default()).unwrap();
-                near(readback.volume_mm3().unwrap(), expected_volume);
-                assert_eq!(readback.solid_count().unwrap(), 3);
-            }
         }
         let subject = if occurrence { instance } else { part.body };
         let set = EntityId::new();
@@ -1432,20 +1379,6 @@ fn indexed_planar_scale_rebuilds_saved_cut_part_occurrences_datums_and_parameter
             .unwrap()
             .manufacturing_mesh_with_receipt(Default::default())
             .unwrap();
-        #[cfg(feature = "occt")]
-        {
-            let native = build(&opened, GeometryBackend::OpenCascade);
-            near(
-                native.solid(part.body).unwrap().volume_mm3().unwrap(),
-                volume,
-            );
-            let expected = native.solid(part.body).unwrap().bounds().unwrap();
-            bounds(
-                rust.solid(part.body).unwrap().bounds().unwrap(),
-                expected.min,
-                expected.max,
-            );
-        }
     }
     let final_document = session.document().clone();
     session.undo(session.revision(), actor()).unwrap();

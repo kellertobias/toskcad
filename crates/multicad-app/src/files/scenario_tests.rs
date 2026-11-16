@@ -293,25 +293,6 @@ fn tool_case_slide_pattern_reopens_and_rebuilds_exact_cutter_members() {
                 expected.map(|y| [y, tool_case::HOLE_Z]),
             );
         }
-        #[cfg(feature = "occt")]
-        {
-            let native = compiler
-                .compile_with_backend(
-                    &document,
-                    session.revision(),
-                    GeometryBackend::OpenCascade,
-                    None,
-                )
-                .unwrap();
-            let native_rail = native.solid(slide).unwrap();
-            assert!((native_rail.volume_mm3().unwrap() - volume).abs() < 1e-7);
-            for x in [tool_case::PLY, tool_case::PLY + thickness] {
-                assert_eq!(
-                    tool_case::hole_centers(&native, slide, x, radius),
-                    tool_case::hole_centers(&compiled, slide, x, radius),
-                );
-            }
-        }
     }
     let overlapping = edit_pitch("2");
     let error = compiler

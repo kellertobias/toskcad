@@ -101,23 +101,6 @@ fn finite_cylinder_point_projection_keeps_world_witnesses_and_selection_order() 
             assert_eq!(reverse.distance_mm, result.distance_mm);
             assert_eq!(reverse.witnesses[0].a_mm, result.witnesses[0].b_mm);
             assert_eq!(reverse.witnesses[0].b_mm, result.witnesses[0].a_mm);
-            #[cfg(feature = "occt")]
-            {
-                use multicad_kernel::RigidTransform;
-                let native = Solid::cylinder(frame, 2., 5., GeometryPolicy::default()).unwrap();
-                let point = Solid::box_solid([1.; 3], GeometryPolicy::default())
-                    .unwrap()
-                    .transformed(RigidTransform {
-                        translation_mm: world,
-                        ..Default::default()
-                    })
-                    .unwrap();
-                let comparison = native
-                    .minimum_distance(BRepSelection::Whole, &point, vertex(&point, world))
-                    .unwrap();
-                assert!((comparison.distance_mm - result.distance_mm).abs() < 1e-7);
-                near(comparison.witnesses[0].a_mm, result.witnesses[0].a_mm);
-            }
         }
     }
 }

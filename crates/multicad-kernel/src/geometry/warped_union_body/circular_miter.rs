@@ -223,19 +223,6 @@ mod tests {
             assert_eq!(anchor.frame.origin_mm, origin_mm);
             assert_eq!(anchor.frame.normal(), normal);
         }
-        #[cfg(feature = "occt")]
-        {
-            let native = Solid::sweep_polyline_named(
-                &profile,
-                &path,
-                feature,
-                &authored[..1],
-                &authored[1..],
-                GeometryPolicy::default(),
-            )
-            .unwrap();
-            near(native.volume_mm3().unwrap(), solid.volume_mm3().unwrap());
-        }
     }
 
     #[test]

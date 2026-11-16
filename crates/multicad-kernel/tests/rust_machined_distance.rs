@@ -204,25 +204,3 @@ fn dense_planar_stock_has_more_finite_closest_pairs_than_the_display_budget() {
     assert!(!result.witnesses_complete);
     assert!(!result.witnesses.is_empty() && result.witnesses.len() <= 64);
 }
-
-#[cfg(feature = "occt")]
-#[test]
-fn independent_native_readback_agrees_on_the_machined_material_distance() {
-    let scratch = tempfile::tempdir().unwrap();
-    for (i, stock) in [panel(), drilled_stock()].into_iter().enumerate() {
-        let probe = box_at([20, 16, 2], [0., 0., 14.]);
-        let mut native = Vec::new();
-        for (j, shape) in [&stock, &probe].into_iter().enumerate() {
-            let path = scratch.path().join(format!("part-{i}-{j}.step"));
-            shape.write_step(&path).unwrap();
-            native.push(Solid::read_step(&path, GeometryPolicy::default()).unwrap());
-        }
-        let rust = stock
-            .minimum_distance(BRepSelection::Whole, &probe, BRepSelection::Whole)
-            .unwrap();
-        let actual = native[0]
-            .minimum_distance(BRepSelection::Whole, &native[1], BRepSelection::Whole)
-            .unwrap();
-        assert!((rust.distance_mm - actual.distance_mm).abs() < 1e-7);
-    }
-}

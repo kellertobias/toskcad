@@ -253,23 +253,6 @@ fn small_helical_frames_keep_real_mesh_and_supported_step_closures() {
                         < 1e-7
                 );
             }
-            #[cfg(feature = "occt")]
-            {
-                let native = Solid::read_step(&path, GeometryPolicy::default()).unwrap();
-                assert!(
-                    (native.volume_mm3().unwrap() / proper.volume_mm3().unwrap() - 1.).abs() < 1e-7
-                );
-                let expected = proper.bounds().unwrap();
-                let actual = native.bounds().unwrap();
-                for (a, b) in expected
-                    .min
-                    .into_iter()
-                    .chain(expected.max)
-                    .zip(actual.min.into_iter().chain(actual.max))
-                {
-                    assert!((a - b).abs() < 5e-6, "{kind:?}: {a} vs {b}");
-                }
-            }
         }
     }
 }

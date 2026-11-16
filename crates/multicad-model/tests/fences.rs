@@ -125,8 +125,6 @@ fn volume(s: &Session, m: &Model, run: EntityId) -> f64 {
 #[test]
 fn panel_run_has_separate_material_parts_true_dimensions_and_independent_step_readback() {
     checks_panel_run(GeometryBackend::Rust);
-    #[cfg(feature = "occt")]
-    checks_panel_run(GeometryBackend::OpenCascade);
 }
 
 fn checks_panel_run(backend: GeometryBackend) {
@@ -182,12 +180,7 @@ fn checks_panel_run(backend: GeometryBackend) {
             0.01,
         );
     }
-    #[cfg(feature = "occt")]
-    {
-        let back = Solid::read_step(&path, GeometryPolicy::default()).unwrap();
-        assert_eq!(back.solid_count().unwrap(), 7);
-        near(back.volume_mm3().unwrap(), 180_144_000., 0.01);
-    }
+
     let project = project_file::ProjectFile::new(s.document().clone()).unwrap();
     let mut bytes = Vec::new();
     project_file::write(&project, &mut bytes, Default::default()).unwrap();

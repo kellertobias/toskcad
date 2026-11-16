@@ -578,24 +578,6 @@ fn rust_full_circle_revolution_preserves_exact_torus_geometry_and_saved_face_ide
     near(imported.volume_mm3().unwrap(), shape.volume_mm3);
     assert!(!imported.rust_revolution_contains([1., 0., 0.]).unwrap());
 
-    #[cfg(feature = "occt")]
-    {
-        let native = compile(&reopened, GeometryBackend::OpenCascade);
-        let native = native.solid(part).unwrap();
-        near(native.volume_mm3().unwrap(), solid.volume_mm3().unwrap());
-        near(
-            native.faces().unwrap()[0].area_mm2,
-            solid.faces().unwrap()[0].area_mm2,
-        );
-        let roundtrip = Solid::read_step(&exported, policy).unwrap();
-        assert_eq!(roundtrip.solid_count().unwrap(), 1);
-        near(roundtrip.volume_mm3().unwrap(), shape.volume_mm3);
-        near(
-            roundtrip.faces().unwrap()[0].area_mm2,
-            solid.faces().unwrap()[0].area_mm2,
-        );
-    }
-
     parameters.angle = model::angle(90.);
     let partial =
         model::prepare_revolve_edit(&session, session.revision(), actor(), feature, &parameters)
@@ -1010,45 +992,6 @@ fn verify_torus_drawing_scene(torus: &multicad_kernel::Solid) {
             .count(),
         4
     );
-
-    #[cfg(feature = "occt")]
-    {
-        let directory = tempfile::tempdir().unwrap();
-        let native = |solid: &Solid, name: &str| {
-            let path = directory.path().join(name);
-            solid.write_step(&path).unwrap();
-            Solid::read_step(&path, Default::default()).unwrap()
-        };
-        let native_torus = native(torus, "torus.step");
-        let bounds = native_torus.bounds().unwrap();
-        let native_transverse = project(&[&native_torus], transverse_cut);
-        for expected in [-5., 5.] {
-            assert!(
-                native_transverse
-                    .iter()
-                    .any(|edge| edge.role == VectorRole::Section
-                        && matches!(edge.curve, VectorCurve::Ellipse {
-                    center: [u, v], major_mm, minor_mm, ..
-                } if (u - expected).abs() < 1e-6 && v.abs() < 1e-6
-                    && (major_mm - 1.).abs() < 1e-6 && (minor_mm - 1.).abs() < 1e-6))
-            );
-        }
-        assert!((bounds.min[0] + 6.).abs() < 1e-6 && (bounds.max[0] - 6.).abs() < 1e-6);
-        let reference = project(&[&native_torus, &native(&rear, "stock.step")], options);
-        let reference = axial_spans(&reference, VectorRole::Visible);
-        assert!(reference.iter().any(|[lo, hi]| *lo < 0. && *hi > 0.));
-        // The native projection can omit an exterior stock span at the
-        // torus seam. The bounds and analytic intervals above certify
-        // both exterior spans independently of the native HLR output.
-        for expected in reference {
-            assert!(
-                visible.iter().any(|span| {
-                    (0..2).all(|i| (span[i] - expected[i]).abs() < 3. * options.chord_tolerance_mm)
-                }),
-                "native stock interval {expected:?}"
-            );
-        }
-    }
 }
 
 fn visible_torus_side(
@@ -2733,33 +2676,6 @@ fn sphere_round_trips_analytic_step_and_projects_exact_outline() {
         solid.display_vertices().unwrap()
     );
 
-    #[cfg(feature = "occt")]
-    {
-        let native = Solid::read_step(&destination, policy).unwrap();
-        assert_eq!(native.solid_count().unwrap(), 1);
-        let bounds = native.bounds().unwrap();
-        for (actual, expected) in bounds
-            .min
-            .into_iter()
-            .chain(bounds.max)
-            .zip(decoded.bounds_mm.into_iter().flatten())
-        {
-            near(actual, expected);
-        }
-        near(native.volume_mm3().unwrap(), decoded.volume_mm3);
-        near(
-            native.faces().unwrap()[0].area_mm2,
-            solid.faces().unwrap()[0].area_mm2,
-        );
-        let oracle = compile(&session, GeometryBackend::OpenCascade);
-        let oracle = oracle.solid(stock.feature).unwrap();
-        let oracle_path = directory.path().join("native-sphere.step");
-        oracle.write_step(&oracle_path).unwrap();
-        let independent = std::fs::read_to_string(oracle_path).unwrap();
-        let imported = Solid::import_rust_step(&independent, stock.feature, policy).unwrap();
-        near(imported.volume_mm3().unwrap(), solid.volume_mm3().unwrap());
-        assert_eq!(imported.bounds().unwrap(), solid.bounds().unwrap());
-    }
     let input = DrawingSolid { solid, hatch: None };
     let outlines = project_drawing(&[input], DrawingProjection::default()).unwrap();
     let [outline] = outlines.as_slice() else {

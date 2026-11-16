@@ -492,33 +492,4 @@ mod tests {
             GeometryErrorKind::InvalidResult
         );
     }
-
-    #[cfg(feature = "occt")]
-    #[test]
-    fn transverse_cubic_contacts_match_independent_occt() {
-        let policy = GeometryPolicy::default();
-        let cubic = cubic();
-        certify_simple(&cubic, policy).unwrap();
-        let line = [[-1., 0.75], [6., 0.75]];
-        let rust = contacts(&cubic, line, policy).unwrap();
-        let native = crate::CurvedEdge2d::BSpline(cubic)
-            .intersections(
-                &crate::CurvedEdge2d::Line {
-                    a: line[0],
-                    b: line[1],
-                },
-                policy,
-            )
-            .unwrap();
-        assert_eq!(rust.len(), 2);
-        assert_eq!(rust.len(), native.points.len());
-        for p in rust {
-            assert!(
-                native
-                    .points
-                    .iter()
-                    .any(|h| { (h.point[0] - p[0]).hypot(h.point[1] - p[1]) < 1e-7 })
-            );
-        }
-    }
 }

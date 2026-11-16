@@ -158,42 +158,6 @@ fn stationary_cusp_does_not_manufacture_a_tangent() {
     assert!(error.message.contains("no unique tangent"));
 }
 
-#[cfg(feature = "occt")]
-#[test]
-fn native_projection_agrees_on_weighted_and_multi_minimum_splines() {
-    use crate::ffi;
-
-    let policy = GeometryPolicy::default();
-    for (curve, queries) in [
-        (parabola(), [[0., 0.75], [-1., 2.], [0.3, -0.5]]),
-        (weighted_cubic(), [[4., 5.], [5., 1.], [11., 2.]]),
-    ] {
-        let data = curve.data(policy, 0).unwrap();
-        for point in queries {
-            let rust = curve.rust_project_parameters(point, policy).unwrap();
-            let native = ffi::curve_project(
-                &data,
-                &ffi::Point3 {
-                    x: point[0],
-                    y: point[1],
-                    z: 0.,
-                },
-                policy.linear_tolerance_mm,
-            )
-            .unwrap();
-            assert_eq!(rust.len(), native.len(), "{point:?}");
-            for (rust, native) in rust.iter().zip(native) {
-                assert_near(rust.parameter, native.parameter, 1e-7);
-                assert_near(rust.point[0], native.point.x, 1e-7);
-                assert_near(rust.point[1], native.point.y, 1e-7);
-                assert_near(rust.tangent[0], native.tangent.x, 1e-7);
-                assert_near(rust.tangent[1], native.tangent.y, 1e-7);
-                assert_near(rust.distance_mm, native.distance, 1e-7);
-            }
-        }
-    }
-}
-
 #[test]
 fn refuses_unrepresentable_authored_roots() {
     let start: f64 = 100_000_000.;

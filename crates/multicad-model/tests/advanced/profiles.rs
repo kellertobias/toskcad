@@ -271,8 +271,6 @@ fn mitered_sweep_preserves_path_faces_after_edit_reopen_and_step() {
         self, AnalyticGeometry, GeometryIntent, Origin, Resolution, TopologyKind,
     };
     use multicad_kernel::Solid;
-    #[cfg(feature = "occt")]
-    use multicad_model::{Compiler, GeometryBackend};
 
     let (mut session, _) = fixture();
     let (sketch, section) = add_sketch(&mut session, Datum::Xy, "Sweep section", 0., |s, _| {
@@ -356,23 +354,7 @@ fn mitered_sweep_preserves_path_faces_after_edit_reopen_and_step() {
     let reopened = check_saved_rust_profile(&mut session, &request, 600.);
     let solid = reopened.solid(request.body).unwrap();
     check_geometry(solid, 55.);
-    #[cfg(feature = "occt")]
-    {
-        let native = Compiler::default()
-            .compile_sources_with_backend(
-                session.document(),
-                session.revision(),
-                &[request.body],
-                GeometryBackend::OpenCascade,
-                None,
-            )
-            .unwrap();
-        check_geometry(native.solid(request.body).unwrap(), 55.);
-        let directory = tempfile::tempdir().unwrap();
-        let step = directory.path().join("mitered-sweep.step");
-        solid.write_step(&step).unwrap();
-        check_geometry(&Solid::read_step(&step, Default::default()).unwrap(), 55.);
-    }
+
     let topology = &reopened.snapshot().shapes[&request.feature].topology;
     let resolve = |intent| match references::resolve(intent, topology, topology.revision) {
         Resolution::Resolved {
@@ -511,15 +493,6 @@ fn concave_miter_keeps_the_notched_caps_and_authored_wall_after_edit() {
             if a[1].abs() < 1e-7 && b[1].abs() < 1e-7
                 && (a[0].min(b[0]) + 1.).abs() < 1e-7 && (a[0].max(b[0]) - 1.).abs() < 1e-7))
     );
-    #[cfg(feature = "occt")]
-    {
-        let native = compile(&session);
-        check_geometry(native.solid(request.body).unwrap(), 55.);
-        let directory = tempfile::tempdir().unwrap();
-        let step = directory.path().join("notched-sweep.step");
-        solid.write_step(&step).unwrap();
-        check_geometry(&Solid::read_step(&step, Default::default()).unwrap(), 55.);
-    }
 }
 
 #[test]
@@ -707,19 +680,6 @@ fn circular_miter_rebuilds_its_exact_trim_after_saved_path_and_radius_edits() {
         }
     }
     near(arc_sweep, PI);
-    #[cfg(feature = "occt")]
-    {
-        let native = compile(&session);
-        check_geometry(native.solid(request.body).unwrap(), 3., 55.);
-        let directory = tempfile::tempdir().unwrap();
-        let step = directory.path().join("circular-miter.step");
-        solid.write_step(&step).unwrap();
-        check_geometry(
-            &Solid::read_step(&step, Default::default()).unwrap(),
-            3.,
-            55.,
-        );
-    }
 }
 
 #[test]
@@ -873,19 +833,6 @@ fn circular_miter_chain_rebuilds_and_keeps_both_middle_cylinder_trims() {
                     && (minor_mm - 3. * (1. - diagonal).sqrt()).abs() < 1e-7
             )),
             "Missing exact projection of the joint at X={x}"
-        );
-    }
-    #[cfg(feature = "occt")]
-    {
-        let native = compile(&session);
-        check_geometry(native.solid(request.body).unwrap(), 3., 55.);
-        let directory = tempfile::tempdir().unwrap();
-        let step = directory.path().join("circular-miter-chain.step");
-        solid.write_step(&step).unwrap();
-        check_geometry(
-            &Solid::read_step(&step, Default::default()).unwrap(),
-            3.,
-            55.,
         );
     }
 }
@@ -1110,12 +1057,6 @@ fn mixed_miter_keeps_a_stadium_profile_and_its_authored_walls_after_reopen() {
     )
     .unwrap();
     check_joint(&imported);
-    #[cfg(feature = "occt")]
-    {
-        let native = compile(&session);
-        check_geometry(native.solid(request.body).unwrap(), 55.);
-        check_geometry(&Solid::read_step(&step, Default::default()).unwrap(), 55.);
-    }
 }
 
 #[test]
@@ -1260,15 +1201,7 @@ fn ruled_circular_loft_rebuilds_every_band_and_preserves_step_geometry() {
         }
         let frustum = |a, b, h| PI * h * (a * a + a * b + b * b) / 3.;
         let volume = frustum(2., radius, 7.) + frustum(radius, 5., 13.);
-        #[cfg(feature = "occt")]
-        {
-            let native = compile(&session);
-            near(
-                native.solid(request.body).unwrap().volume_mm3().unwrap(),
-                volume,
-            );
-            check_bands(&native, radius);
-        }
+
         let reopened = check_saved_rust_profile(&mut session, &request, volume);
         check_bands(&reopened, radius);
         let (source, _) = model::read_advanced(session.document(), request.feature).unwrap();
@@ -1358,12 +1291,6 @@ fn ruled_polygon_loft_preserves_section_seams_after_edit_reopen_and_step() {
     let initial_bounds = [[-2., -1., 0.], [11., 7., 26.]];
     let initial_volume = volume(12., [10., 8.]);
     check_geometry(&initial, initial_volume, initial_bounds);
-    #[cfg(feature = "occt")]
-    check_geometry(
-        &evaluate(&session, GeometryBackend::OpenCascade),
-        initial_volume,
-        initial_bounds,
-    );
     let topology = &initial.snapshot().shapes[&request.feature].topology;
     let face = |test: &dyn Fn(&references::TopologyElement) -> bool| {
         topology
@@ -1428,12 +1355,6 @@ fn ruled_polygon_loft_preserves_section_seams_after_edit_reopen_and_step() {
     );
     let edited_volume = volume(14., [11., 7.]);
     let edited_bounds = [[-2., -2., 0.], [13., 7., 26.]];
-    #[cfg(feature = "occt")]
-    check_geometry(
-        &evaluate(&session, GeometryBackend::OpenCascade),
-        edited_volume,
-        edited_bounds,
-    );
     let reopened = check_saved_rust_profile(&mut session, &request, edited_volume);
     check_geometry(&reopened, edited_volume, edited_bounds);
     let topology = &reopened.snapshot().shapes[&request.feature].topology;
@@ -1486,35 +1407,13 @@ fn smooth_planar_loft_keeps_the_intermediate_station_attachment() {
     );
     commit(&mut session, &request);
     let volume = 4. * (56. + 4. * 70.5 + 86.) / 6.;
-    #[cfg(feature = "occt")]
-    let native = compile(&session);
-    #[cfg(feature = "occt")]
-    near(
-        native.solid(request.body).unwrap().volume_mm3().unwrap(),
-        volume,
-    );
 
     let initial = check_saved_rust_profile(&mut session, &request, volume);
     assert_eq!(
         initial.solid(request.body).unwrap().faces().unwrap().len(),
         10
     );
-    #[cfg(feature = "occt")]
-    {
-        let area = |solid: &multicad_kernel::Solid| -> f64 {
-            solid
-                .faces()
-                .unwrap()
-                .iter()
-                .map(|face| face.area_mm2)
-                .sum()
-        };
-        near(
-            area(native.solid(request.body).unwrap()),
-            area(initial.solid(request.body).unwrap()),
-        );
-        verify_smooth_loft_step_with_occt(initial.solid(request.body).unwrap());
-    }
+
     let notch = |model: &multicad_model::Model| {
         let topology = &model.snapshot().shapes[&request.feature].topology;
         topology
@@ -1633,12 +1532,8 @@ fn smooth_coaxial_loft_keeps_the_exact_cone_and_all_section_origins() {
             area,
         );
     };
-    #[cfg(feature = "occt")]
-    check(&compile(&session));
     let reopened = check_saved_rust_profile(&mut session, &request, volume);
     check(&reopened);
-    #[cfg(feature = "occt")]
-    verify_smooth_loft_step_with_occt(reopened.solid(request.body).unwrap());
     assert_eq!(
         reopened.solid(request.body).unwrap().faces().unwrap().len(),
         3
@@ -1673,35 +1568,6 @@ fn smooth_coaxial_loft_keeps_the_exact_cone_and_all_section_origins() {
     assert!(error.message.contains("straight transition"));
 }
 
-#[cfg(feature = "occt")]
-fn verify_smooth_loft_step_with_occt(solid: &multicad_kernel::Solid) {
-    let directory = tempfile::tempdir().unwrap();
-    let step = directory.path().join("smooth-loft.step");
-    solid.write_step(&step).unwrap();
-    let imported = multicad_kernel::Solid::read_step(&step, Default::default()).unwrap();
-    assert_eq!(imported.solid_count().unwrap(), 1);
-    near(imported.volume_mm3().unwrap(), solid.volume_mm3().unwrap());
-    let area = |solid: &multicad_kernel::Solid| -> f64 {
-        solid
-            .faces()
-            .unwrap()
-            .iter()
-            .map(|face| face.area_mm2)
-            .sum()
-    };
-    near(area(&imported), area(solid));
-    let expected = solid.bounds().unwrap();
-    let actual = imported.bounds().unwrap();
-    for (a, b) in actual
-        .min
-        .into_iter()
-        .chain(actual.max)
-        .zip(expected.min.into_iter().chain(expected.max))
-    {
-        near(a, b);
-    }
-}
-
 #[test]
 fn default_two_section_loft_preserves_planar_notch_after_reopen() {
     let (mut session, _) = fixture();
@@ -1724,13 +1590,6 @@ fn default_two_section_loft_preserves_planar_notch_after_reopen() {
     );
     commit(&mut session, &request);
     let volume = 4. * (56. + 4. * 70.5 + 86.) / 6.;
-    #[cfg(feature = "occt")]
-    let native = compile(&session);
-    #[cfg(feature = "occt")]
-    near(
-        native.solid(request.body).unwrap().volume_mm3().unwrap(),
-        volume,
-    );
     let reopened = check_saved_rust_profile(&mut session, &request, volume);
     let solid = reopened.solid(request.body).unwrap();
     assert_eq!(solid.faces().unwrap().len(), 10);
@@ -1742,19 +1601,6 @@ fn default_two_section_loft_preserves_planar_notch_after_reopen() {
         .zip([0., -1., 0., 12., 10., 4.])
     {
         near(actual, expected);
-    }
-    #[cfg(feature = "occt")]
-    {
-        let native = native.solid(request.body).unwrap();
-        let area = |solid: &multicad_kernel::Solid| {
-            solid
-                .faces()
-                .unwrap()
-                .iter()
-                .map(|face| face.area_mm2)
-                .sum()
-        };
-        near(area(native), area(solid));
     }
 }
 
@@ -1799,65 +1645,17 @@ fn twisted_polygon_loft_rebuilds_and_reopens_from_embedded_step() {
     commit(&mut session, &request);
     // Integrate the determinant of (1 - t) I + t R across the height.
     let volume = |cos| 6. * 8. * (2. + cos) / 3.;
-    #[cfg(feature = "occt")]
-    let native = compile(&session);
+
     let model = check_saved_rust_profile(&mut session, &request, volume(cos));
     let solid = model.solid(request.body).unwrap();
-    verify_twisted_loft_sections(
-        solid,
-        #[cfg(feature = "occt")]
-        native.solid(request.body).unwrap(),
-    );
-    verify_twisted_loft_scene(
-        solid,
-        #[cfg(feature = "occt")]
-        native.solid(request.body).unwrap(),
-    );
-    verify_twisted_loft_round_scene(
-        solid,
-        #[cfg(feature = "occt")]
-        native.solid(request.body).unwrap(),
-    );
-    verify_twisted_loft_assembly_sections(
-        solid,
-        #[cfg(feature = "occt")]
-        native.solid(request.body).unwrap(),
-    );
+    verify_twisted_loft_sections(solid);
+    verify_twisted_loft_scene(solid);
+    verify_twisted_loft_round_scene(solid);
+    verify_twisted_loft_assembly_sections(solid);
     let faces = solid.faces().unwrap();
     assert_eq!(faces.len(), 6);
     assert_eq!(faces.iter().filter(|face| face.plane.is_some()).count(), 2);
-    #[cfg(feature = "occt")]
-    {
-        let native = native.solid(request.body).unwrap();
-        near(native.volume_mm3().unwrap(), volume(cos));
-        near(
-            native
-                .faces()
-                .unwrap()
-                .iter()
-                .map(|face| face.area_mm2)
-                .sum(),
-            faces.iter().map(|face| face.area_mm2).sum(),
-        );
-        verify_smooth_loft_step_with_occt(solid);
-        let exchange = tempfile::tempdir().unwrap();
-        let authored = exchange.path().join("opencascade-twisted.step");
-        native.write_step(&authored).unwrap();
-        let imported = read_step_file_with_backend(&authored, GeometryBackend::Rust).unwrap();
-        let [(_, _, signature)] = imported.solids.as_slice() else {
-            panic!("expected one imported loft");
-        };
-        near(signature.volume_mm3, volume(cos));
-        let bounds = solid.bounds().unwrap();
-        for (actual, expected) in signature
-            .min
-            .into_iter()
-            .chain(signature.max)
-            .zip(bounds.min.into_iter().chain(bounds.max))
-        {
-            near(actual, expected);
-        }
-    }
+
     let contours = solid
         .planar_face_contours_with_sources(0, Default::default())
         .unwrap();
@@ -1938,10 +1736,7 @@ fn twisted_polygon_loft_rebuilds_and_reopens_from_embedded_step() {
     );
 }
 
-fn verify_twisted_loft_assembly_sections(
-    loft: &multicad_kernel::Solid,
-    #[cfg(feature = "occt")] native: &multicad_kernel::Solid,
-) {
+fn verify_twisted_loft_assembly_sections(loft: &multicad_kernel::Solid) {
     use multicad_core::{
         drawings::{VectorCurve, VectorRole},
         materials::HatchPattern,
@@ -2057,92 +1852,9 @@ fn verify_twisted_loft_assembly_sections(
     assert!(meets_crossing(1, VectorRole::Visible, true));
     assert!(meets_crossing(2, VectorRole::Visible, false));
     assert!(meets_crossing(2, VectorRole::Hidden, true));
-
-    #[cfg(feature = "occt")]
-    {
-        use multicad_kernel::RigidTransform;
-        let [native_rear, native_middle, native_front] = stock.map(|(size, translation_mm)| {
-            Solid::box_solid(size.map(|n| n as f64), Default::default())
-                .unwrap()
-                .transformed(RigidTransform {
-                    translation_mm,
-                    ..Default::default()
-                })
-                .unwrap()
-        });
-        for options in [axial, oblique, through] {
-            let rust = project(&rear, loft, &middle, &front, options, None);
-            let reference = project(
-                &native_rear,
-                native,
-                &native_middle,
-                &native_front,
-                options,
-                None,
-            );
-            for (label, a, b) in [
-                ("Rust", &rust, &reference),
-                ("OpenCascade", &reference, &rust),
-            ] {
-                for vector in a {
-                    for &[x, y] in &vector.preview_mm {
-                        // OpenCascade keeps portions of both edges visible
-                        // along this grazing ray. Compare the geometry there
-                        // and check the Rust role transition analytically above.
-                        let grazing = options.section_depth_mm == Some(1.8)
-                            && (y - 1.).abs() < 1e-7
-                            && (1..=2).contains(&vector.source_index)
-                            && vector.role != VectorRole::Section;
-                        let segments = b
-                            .iter()
-                            .filter(|other| {
-                                other.source_index == vector.source_index
-                                    && (other.role == vector.role
-                                        || (grazing && other.role != VectorRole::Section))
-                            })
-                            .flat_map(|other| other.preview_mm.windows(2));
-                        let error = segments
-                            .clone()
-                            .map(|ends| {
-                                let [[ax, ay], [bx, by]] = [ends[0], ends[1]];
-                                let [u, v] = [bx - ax, by - ay];
-                                let t =
-                                    (((x - ax) * u + (y - ay) * v) / (u * u + v * v)).clamp(0., 1.);
-                                (x - ax - t * u).hypot(y - ay - t * v)
-                            })
-                            .fold(f64::INFINITY, f64::min);
-                        assert!(
-                            error < 3. * options.chord_tolerance_mm,
-                            "{label} {:?} from {} at [{x}, {y}] error {error} in {options:?}",
-                            vector.role,
-                            vector.source_index
-                        );
-                    }
-                }
-            }
-        }
-        let measure = |rear, loft, middle, front| {
-            let mut samples = [std::time::Duration::ZERO; 9];
-            for sample in &mut samples {
-                let start = std::time::Instant::now();
-                assert!(!project(rear, loft, middle, front, oblique, None).is_empty());
-                *sample = start.elapsed();
-            }
-            samples.sort_unstable();
-            samples[4]
-        };
-        eprintln!(
-            "Twisted loft assembly depth medians over 9 warm projections: Rust {:?}, OpenCascade {:?}",
-            measure(&rear, loft, &middle, &front),
-            measure(&native_rear, native, &native_middle, &native_front),
-        );
-    }
 }
 
-fn verify_twisted_loft_scene(
-    loft: &multicad_kernel::Solid,
-    #[cfg(feature = "occt")] native: &multicad_kernel::Solid,
-) {
+fn verify_twisted_loft_scene(loft: &multicad_kernel::Solid) {
     use multicad_core::drawings::VectorRole;
     use multicad_kernel::{
         DrawingProjection, DrawingSolid, PlaneFrame, Solid, project_drawing, rust_kernel::Rational,
@@ -2216,83 +1928,9 @@ fn verify_twisted_loft_scene(
             .flat_map(|v| &v.preview_mm)
             .all(|[u, v]| u.hypot(*v) < 1.250001)
     );
-
-    #[cfg(feature = "occt")]
-    {
-        use multicad_kernel::RigidTransform;
-        let [native_rear, native_front] = placements.map(|(size, translation_mm)| {
-            Solid::box_solid(size.map(|n| n as f64), Default::default())
-                .unwrap()
-                .transformed(RigidTransform {
-                    translation_mm,
-                    ..Default::default()
-                })
-                .unwrap()
-        });
-        for v in [[0., 1., 0.], [0., 0.8, 0.6]] {
-            let options = DrawingProjection {
-                frame: PlaneFrame {
-                    v,
-                    ..Default::default()
-                },
-                ..options
-            };
-            let rust = project(&rear, loft, &front, options);
-            let reference = project(&native_rear, native, &native_front, options);
-            for (label, a, b) in [
-                ("Rust", &rust, &reference),
-                ("OpenCascade", &reference, &rust),
-            ] {
-                for vector in a {
-                    let segments = b
-                        .iter()
-                        .filter(|other| {
-                            other.role == vector.role && other.source_index == vector.source_index
-                        })
-                        .flat_map(|other| other.preview_mm.windows(2));
-                    for &[x, y] in &vector.preview_mm {
-                        let error = segments
-                            .clone()
-                            .map(|ends| {
-                                let [[ax, ay], [bx, by]] = [ends[0], ends[1]];
-                                let [u, v] = [bx - ax, by - ay];
-                                let t =
-                                    (((x - ax) * u + (y - ay) * v) / (u * u + v * v)).clamp(0., 1.);
-                                (x - ax - t * u).hypot(y - ay - t * v)
-                            })
-                            .fold(f64::INFINITY, f64::min);
-                        assert!(
-                            error < 3. * options.chord_tolerance_mm,
-                            "{label} {:?} from {} at [{x}, {y}] error {error}",
-                            vector.role,
-                            vector.source_index
-                        );
-                    }
-                }
-            }
-        }
-        let measure = |rear, loft, front| {
-            let mut times = [std::time::Duration::ZERO; 9];
-            for elapsed in &mut times {
-                let start = std::time::Instant::now();
-                assert!(!project(rear, loft, front, options).is_empty());
-                *elapsed = start.elapsed();
-            }
-            times.sort_unstable();
-            times[4]
-        };
-        eprintln!(
-            "Twisted loft assembly projection medians over 9 warm runs: Rust {:?}, OpenCascade {:?}",
-            measure(&rear, loft, &front),
-            measure(&native_rear, native, &native_front),
-        );
-    }
 }
 
-fn verify_twisted_loft_round_scene(
-    loft: &multicad_kernel::Solid,
-    #[cfg(feature = "occt")] native: &multicad_kernel::Solid,
-) {
+fn verify_twisted_loft_round_scene(loft: &multicad_kernel::Solid) {
     use multicad_core::drawings::{VectorCurve, VectorRole};
     use multicad_kernel::{DrawingProjection, DrawingSolid, PlaneFrame, Solid, project_drawing};
 
@@ -2466,119 +2104,9 @@ fn verify_twisted_loft_round_scene(
             }
         }
     }
-
-    #[cfg(feature = "occt")]
-    {
-        let policy = Default::default();
-        let blank = Solid::cylinder(frame, 1.4, 1.5, policy).unwrap();
-        let bore = Solid::cylinder(
-            PlaneFrame {
-                origin: [1., -0.5, 6.],
-                ..frame
-            },
-            0.65,
-            3.5,
-            policy,
-        )
-        .unwrap();
-        let native_ring = blank
-            .boolean(&bore, multicad_kernel::BooleanOperation::Subtract, policy)
-            .unwrap()
-            .unwrap();
-        let reference = project(native, &native_ring, options);
-        for (a, b) in [(&axial, &reference), (&reference, &axial)] {
-            for vector in a {
-                // Axially, coincident back rims can appear in the hidden
-                // layer in the reference. Compare the visible geometry.
-                if vector.role != VectorRole::Visible {
-                    continue;
-                }
-                let segments = b
-                    .iter()
-                    .filter(|other| {
-                        other.source_index == vector.source_index && other.role == vector.role
-                    })
-                    .flat_map(|other| other.preview_mm.windows(2));
-                for &[x, y] in &vector.preview_mm {
-                    let error = segments
-                        .clone()
-                        .map(|ends| {
-                            let [[ax, ay], [bx, by]] = [ends[0], ends[1]];
-                            let [u, v] = [bx - ax, by - ay];
-                            let t = (((x - ax) * u + (y - ay) * v) / (u * u + v * v)).clamp(0., 1.);
-                            (x - ax - t * u).hypot(y - ay - t * v)
-                        })
-                        .fold(f64::INFINITY, f64::min);
-                    assert!(
-                        error < 3. * options.chord_tolerance_mm,
-                        "source {} at [{x}, {y}] error {error}",
-                        vector.source_index
-                    );
-                }
-            }
-        }
-        for cut in [axial_cut, windowed_cut, through] {
-            let rust = retained(loft, &ring, cut);
-            let reference = retained(native, &native_ring, cut);
-            for (a, b) in [(&rust, &reference), (&reference, &rust)] {
-                let rim = |v: &&multicad_kernel::ProjectedVector| {
-                    v.source_index == 1 && v.role == VectorRole::Section
-                };
-                let segments = b.iter().filter(rim).flat_map(|v| v.preview_mm.windows(2));
-                for &[x, y] in a.iter().filter(rim).flat_map(|v| &v.preview_mm) {
-                    let error = segments
-                        .clone()
-                        .map(|ends| {
-                            let [[ax, ay], [bx, by]] = [ends[0], ends[1]];
-                            let [u, v] = [bx - ax, by - ay];
-                            let t = (((x - ax) * u + (y - ay) * v) / (u * u + v * v)).clamp(0., 1.);
-                            (x - ax - t * u).hypot(y - ay - t * v)
-                        })
-                        .fold(f64::INFINITY, f64::min);
-                    assert!(
-                        error < 3. * options.chord_tolerance_mm,
-                        "{cut:?} [{x}, {y}]: {error}"
-                    );
-                }
-            }
-        }
-        let measure_section = |loft, ring| {
-            let mut times = [std::time::Duration::ZERO; 9];
-            for elapsed in &mut times {
-                let start = std::time::Instant::now();
-                assert!(!retained(loft, ring, windowed_cut).is_empty());
-                *elapsed = start.elapsed();
-            }
-            times.sort_unstable();
-            times[4]
-        };
-        eprintln!(
-            "Twisted loft and annulus windowed depth section, 9 warm runs: Rust {:?}, OpenCascade {:?}",
-            measure_section(loft, &ring),
-            measure_section(native, &native_ring),
-        );
-        let measure = |loft, ring| {
-            let mut times = [std::time::Duration::ZERO; 9];
-            for elapsed in &mut times {
-                let start = std::time::Instant::now();
-                assert!(!project(loft, ring, oblique).is_empty());
-                *elapsed = start.elapsed();
-            }
-            times.sort_unstable();
-            times[4]
-        };
-        eprintln!(
-            "Twisted loft and annulus oblique projection, 9 warm runs: Rust {:?}, OpenCascade {:?}",
-            measure(loft, &ring),
-            measure(native, &native_ring),
-        );
-    }
 }
 
-fn verify_twisted_loft_sections(
-    solid: &multicad_kernel::Solid,
-    #[cfg(feature = "occt")] native: &multicad_kernel::Solid,
-) {
+fn verify_twisted_loft_sections(solid: &multicad_kernel::Solid) {
     use multicad_core::{
         drawings::{VectorCurve, VectorRole},
         materials::HatchPattern,
@@ -2906,115 +2434,6 @@ fn verify_twisted_loft_sections(
         .unwrap()
         .is_empty()
     );
-
-    #[cfg(feature = "occt")]
-    {
-        use std::time::Instant;
-        let measure = |source, options| {
-            let mut samples = [std::time::Duration::ZERO; 9];
-            for elapsed in &mut samples {
-                let start = Instant::now();
-                assert!(!project(source, options, None).unwrap().is_empty());
-                *elapsed = start.elapsed();
-            }
-            samples.sort_unstable();
-            samples[4]
-        };
-        let point_distance = |[x, y]: [f64; 2], [a, b]: [[f64; 2]; 2]| {
-            let [u, v] = [b[0] - a[0], b[1] - a[1]];
-            let t = (((x - a[0]) * u + (y - a[1]) * v) / (u * u + v * v)).clamp(0., 1.);
-            (x - a[0] - t * u).hypot(y - a[1] - t * v)
-        };
-        for (rust, options) in [(&rust, options), (&clipped, clipped_options)] {
-            let reference = project(native, options, None).unwrap();
-            for (a, b) in [(rust, &reference), (&reference, rust)] {
-                let segments = b
-                    .iter()
-                    .flat_map(|v| v.preview_mm.windows(2))
-                    .collect::<Vec<_>>();
-                assert!(!segments.is_empty());
-                for point in a.iter().flat_map(|v| v.preview_mm.iter().copied()) {
-                    let error = segments
-                        .iter()
-                        .map(|ends| point_distance(point, [ends[0], ends[1]]))
-                        .fold(f64::INFINITY, f64::min);
-                    assert!(
-                        error < 3. * options.chord_tolerance_mm,
-                        "{point:?}: {error}"
-                    );
-                }
-            }
-        }
-        assert!(
-            project(native, outside_window, Some(hatch))
-                .unwrap()
-                .is_empty()
-        );
-        let side_options = DrawingProjection {
-            frame: PlaneFrame {
-                v: [0., 0., 1.],
-                ..PlaneFrame::default()
-            },
-            ..view
-        };
-        let side = project(solid, side_options, None).unwrap();
-        for (mode, vectors, options) in [
-            ("oblique projection", &ordinary, view),
-            ("edge-on cap projection", &side, side_options),
-            ("axial depth section", &retained, retained_options),
-            ("oblique depth section", &oblique_retained, oblique_depth),
-            ("oblique through section", &through, oblique_through),
-            ("oblique window depth", &bounded[0], window_depth),
-            ("oblique window through", &bounded[1], window_through),
-            ("axial single-axis window", &bounded[2], window_axial),
-        ] {
-            let reference = project(native, options, None).unwrap();
-            for (label, a, b) in [
-                ("Rust", vectors, &reference),
-                ("OpenCascade", &reference, vectors),
-            ] {
-                for vector in a {
-                    let segments = b
-                        .iter()
-                        .filter(|v| v.role == vector.role)
-                        .flat_map(|v| v.preview_mm.windows(2))
-                        .collect::<Vec<_>>();
-                    assert!(!segments.is_empty(), "{mode} {label} {:?}", vector.role);
-                    for &point in &vector.preview_mm {
-                        let error = segments
-                            .iter()
-                            .map(|ends| point_distance(point, [ends[0], ends[1]]))
-                            .fold(f64::INFINITY, f64::min);
-                        assert!(
-                            error < 3. * options.chord_tolerance_mm,
-                            "{mode} {label} {:?} {point:?}: {error}",
-                            vector.role
-                        );
-                    }
-                }
-            }
-        }
-        eprintln!(
-            "Twisted loft section medians over 9 warm projections: Rust {:?}, OpenCascade {:?}",
-            measure(solid, options),
-            measure(native, options),
-        );
-        eprintln!(
-            "Twisted loft hidden-line view medians over 9 warm projections: Rust {:?}, OpenCascade {:?}",
-            measure(solid, view),
-            measure(native, view),
-        );
-        eprintln!(
-            "Twisted loft oblique depth medians over 9 warm projections: Rust {:?}, OpenCascade {:?}",
-            measure(solid, oblique_depth),
-            measure(native, oblique_depth),
-        );
-        eprintln!(
-            "Twisted loft windowed depth medians over 9 warm projections: Rust {:?}, OpenCascade {:?}",
-            measure(solid, window_depth),
-            measure(native, window_depth),
-        );
-    }
 }
 
 fn notched_loft_footprints() -> [[[f64; 2]; 8]; 2] {
@@ -3158,23 +2577,6 @@ fn concave_ruled_loft_rebuilds_its_notch_and_saved_walls() {
                     .into_iter()
                     .all(|id| face.origins.iter().any(|origin| origin.source == id)))
     );
-    #[cfg(feature = "occt")]
-    {
-        near(
-            compile(&session)
-                .solid(request.body)
-                .unwrap()
-                .volume_mm3()
-                .unwrap(),
-            volume(5.),
-        );
-        let directory = tempfile::tempdir().unwrap();
-        let step = directory.path().join("notched-loft.step");
-        solid.write_step(&step).unwrap();
-        let imported = multicad_kernel::Solid::read_step(&step, Default::default()).unwrap();
-        near(imported.volume_mm3().unwrap(), volume(5.));
-        assert_eq!(imported.solid_count().unwrap(), 1);
-    }
 }
 
 #[test]

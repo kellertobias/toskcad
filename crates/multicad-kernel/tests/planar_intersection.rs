@@ -74,11 +74,6 @@ fn roundtrip(solid: &Solid) {
     solid
         .manufacturing_mesh_with_receipt(Default::default())
         .unwrap();
-    #[cfg(feature = "occt")]
-    {
-        let native = Solid::read_step(&path, Default::default()).unwrap();
-        compare(&native, solid);
-    }
 }
 
 #[test]
@@ -169,25 +164,6 @@ fn generic_intersection_preserves_authoritative_boundary_through_later_operation
         assert_eq!(stock.topology_snapshot(owner, 0).unwrap(), before);
         for output in [&common, &all, &again, &cut, &join, &tool_cut] {
             roundtrip(output);
-        }
-        #[cfg(feature = "occt")]
-        {
-            let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("stock.step");
-            stock.write_step(&path).unwrap();
-            let native = Solid::read_step(&path, Default::default()).unwrap();
-            let path = dir.path().join("tool.step");
-            first.write_step(&path).unwrap();
-            let native_tool = Solid::read_step(&path, Default::default()).unwrap();
-            let reference = native
-                .boolean(
-                    &native_tool,
-                    BooleanOperation::Intersect,
-                    Default::default(),
-                )
-                .unwrap()
-                .unwrap();
-            compare(&reference, &common);
         }
     }
 }
@@ -353,24 +329,6 @@ fn concave_raw_and_labeled_loft_operands_keep_exposed_faces_not_partition_walls(
                 );
             }
             roundtrip(&common);
-            #[cfg(feature = "occt")]
-            {
-                let dir = tempfile::tempdir().unwrap();
-                let a = dir.path().join("a.step");
-                let b = dir.path().join("b.step");
-                stock.write_step(&a).unwrap();
-                tool.write_step(&b).unwrap();
-                let reference = Solid::read_step(&a, Default::default())
-                    .unwrap()
-                    .boolean(
-                        &Solid::read_step(&b, Default::default()).unwrap(),
-                        BooleanOperation::Intersect,
-                        Default::default(),
-                    )
-                    .unwrap()
-                    .unwrap();
-                compare(&reference, &common);
-            }
         }
     }
 }

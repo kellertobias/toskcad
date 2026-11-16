@@ -102,8 +102,6 @@ fn check(solid: &Solid, frame: PlaneFrame, radii: [f64; 2]) -> f64 {
 fn cylinder_draft_exact_taper_matches_native_for_signed_angles_pulls_and_neutral_offsets() {
     let policy = GeometryPolicy::default();
     for frame in [PlaneFrame::default(), pose()] {
-        #[cfg(feature = "occt")]
-        let native = Solid::cylinder(frame, 10., 20., policy).unwrap();
         for reverse in [None, Some(false), Some(true)] {
             let owner = EntityId::new();
             let stock = source(owner, frame, reverse);
@@ -226,21 +224,7 @@ fn cylinder_draft_exact_taper_matches_native_for_signed_angles_pulls_and_neutral
                         )
                         .unwrap();
                         check(&imported, frame, radii);
-                        #[cfg(feature = "occt")]
-                        {
-                            let native_result = native
-                                .draft_faces_named(
-                                    &[wall(&native, feature)],
-                                    pull,
-                                    neutral,
-                                    angle,
-                                    feature,
-                                    policy,
-                                )
-                                .unwrap();
-                            check(&native_result, frame, radii);
-                            check(&Solid::read_step(&path, policy).unwrap(), frame, radii);
-                        }
+
                         assert_eq!(stock.topology_snapshot(owner, 0).unwrap(), before);
                     }
                 }

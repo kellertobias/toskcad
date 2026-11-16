@@ -876,46 +876,6 @@ fn check_inset_drawing_view(model: &Model, document: &Document, revision: u64, p
     }
 }
 
-#[cfg(feature = "occt")]
-fn check_native_web_aperture(sheet: &Solid) {
-    use multicad_core::drawings::{VectorCurve, VectorRole};
-    use multicad_kernel::{DrawingProjection, DrawingSolid, RigidTransform, project_drawing};
-
-    let witness = Solid::box_solid([12., 2., 1.], GeometryPolicy::default())
-        .unwrap()
-        .transformed(RigidTransform {
-            translation_mm: [17., 89., sheet.bounds().unwrap().min[2] - 8.],
-            ..Default::default()
-        })
-        .unwrap();
-    let input = [sheet, &witness].map(|solid| DrawingSolid { solid, hatch: None });
-    let vectors = project_drawing(&input, DrawingProjection::default()).unwrap();
-    let bounds = vectors
-        .iter()
-        .filter(|v| v.source_index == 1 && v.role == VectorRole::Visible)
-        .filter_map(|v| match v.curve {
-            VectorCurve::Line { a, b } if [a[1], b[1]].iter().all(|y| (y - 89.).abs() < 1e-6) => {
-                Some([a[0], b[0]])
-            }
-            _ => None,
-        })
-        .flatten()
-        .fold([f64::INFINITY, f64::NEG_INFINITY], |[lo, hi], x| {
-            [lo.min(x), hi.max(x)]
-        });
-    let chord = 15_f64.sqrt();
-    near(bounds[0], 23. - chord);
-    near(bounds[1], 23. + chord);
-    let oblique_witness = Solid::box_solid([12., 2., 1.], GeometryPolicy::default())
-        .unwrap()
-        .transformed(RigidTransform {
-            translation_mm: [17., 92., -5.],
-            ..Default::default()
-        })
-        .unwrap();
-    check_oblique_web_aperture(sheet, &oblique_witness);
-}
-
 fn prepare_sheet_rectangle(
     session: &mut Session,
     model: &Model,
@@ -1138,20 +1098,7 @@ fn rust_builds_and_develops_the_saved_front_panel_channel_before_piercing() {
         let developed = rust.unfold(session.document(), request.body).unwrap();
         assert_eq!(developed.bends.len(), 2);
         assert_eq!(developed.cut.loops.len(), 1);
-        if cfg!(feature = "occt") {
-            let native = evaluate(GeometryBackend::OpenCascade);
-            let reference = native.solid(request.feature).unwrap();
-            assert_same_solid(solid, reference);
-            let readback = Solid::read_step(&step, policy).unwrap();
-            assert_eq!(readback.faces().unwrap().len(), 14);
-            assert_same_solid(&readback, reference);
-            let expected = native.unfold(session.document(), request.body).unwrap();
-            assert_eq!(developed.bends, expected.bends);
-            near(developed.area_mm2, expected.area_mm2);
-            for (a, b) in developed.size_mm.into_iter().zip(expected.size_mm) {
-                near(a, b);
-            }
-        }
+        {}
     }
 }
 
@@ -1237,19 +1184,7 @@ fn rust_builds_and_develops_a_single_full_length_bend_with_a_web_opening() {
         assert_eq!(flat.bends.len(), 1);
         assert_eq!(flat.cut.loops.len(), 2);
         assert_eq!(flat.drills.len(), 1);
-        if cfg!(feature = "occt") {
-            let native = evaluate(GeometryBackend::OpenCascade);
-            let expected = native.solid(request.feature).unwrap();
-            assert_same_solid(solid, expected);
-            assert_same_solid(&Solid::read_step(&step, compiler.policy).unwrap(), expected);
-            let expected_flat = native.unfold(session.document(), request.body).unwrap();
-            assert_eq!(flat.bends, expected_flat.bends);
-            assert_eq!(flat.drills, expected_flat.drills);
-            near(flat.area_mm2, expected_flat.area_mm2);
-            for (a, b) in flat.size_mm.into_iter().zip(expected_flat.size_mm) {
-                near(a, b);
-            }
-        }
+        {}
     }
 }
 
@@ -1363,8 +1298,7 @@ fn control_desk_reliefs_form_one_solid_and_develop_exactly() {
             fasteners: vec![],
         };
         let request = SheetRequest::new("Relieved Control Desk panel", sheet);
-        #[cfg(feature = "occt")]
-        let mut native_source = Session::new(session.document().clone()).unwrap();
+
         let prepared =
             model::prepare_sheet(&session, session.revision(), actor.clone(), &request).unwrap();
         session.commit(prepared.prepared).unwrap();
@@ -1418,37 +1352,6 @@ fn control_desk_reliefs_form_one_solid_and_develop_exactly() {
             web_area - flange_holes + flange_span * (80. + pi * (1.5 + 0.44 * 1.5)),
         );
 
-        #[cfg(feature = "occt")]
-        {
-            let native = evaluate(&session, GeometryBackend::OpenCascade);
-            let expected = native.solid(request.feature).unwrap();
-            let bounds = |solid: &Solid| {
-                let b = solid.bounds().unwrap();
-                b.min.into_iter().chain(b.max)
-            };
-            let surface = |solid: &Solid| solid.faces().unwrap().iter().map(|f| f.area_mm2).sum();
-            let step = tempfile::tempdir().unwrap();
-            let path = step.path().join("relieved.step");
-            solid.write_step(&path).unwrap();
-            let imported = Solid::read_step(&path, GeometryPolicy::default()).unwrap();
-            for measured in [solid, &imported] {
-                assert_eq!(measured.solid_count().unwrap(), 1);
-                near(
-                    measured.volume_mm3().unwrap(),
-                    expected.volume_mm3().unwrap(),
-                );
-                near(surface(measured), surface(expected));
-                for (a, b) in bounds(measured).zip(bounds(expected)) {
-                    near(a, b);
-                }
-            }
-            let flat = native.unfold(session.document(), request.body).unwrap();
-            near(flat.area_mm2, developed.area_mm2);
-            for (a, b) in flat.size_mm.into_iter().zip(developed.size_mm) {
-                near(a, b);
-            }
-        }
-
         let (flange_cut, prepared) = prepare_sheet_rectangle(
             &mut session,
             &rust,
@@ -1461,13 +1364,6 @@ fn control_desk_reliefs_form_one_solid_and_develop_exactly() {
         session.commit(prepared.prepared).unwrap();
         let flanged = evaluate(&session, GeometryBackend::Rust);
         assert_eq!(flanged.snapshot().body_sources[&request.body], flange_cut);
-        #[cfg(feature = "occt")]
-        assert_same_solid(
-            flanged.solid(flange_cut).unwrap(),
-            evaluate(&session, GeometryBackend::OpenCascade)
-                .solid(flange_cut)
-                .unwrap(),
-        );
         let (cut, prepared) = prepare_sheet_rectangle(
             &mut session,
             &flanged,
@@ -1552,50 +1448,7 @@ fn control_desk_reliefs_form_one_solid_and_develop_exactly() {
         )
         .unwrap();
         near(verified, punched.volume_mm3().unwrap());
-        #[cfg(feature = "occt")]
-        {
-            // Independently cut the same two rectangles in OpenCascade.
-            let mut native_request = SheetRequest::new(&request.name, request.sheet.clone());
-            native_request.sheet.cutouts.extend([
-                Cutout {
-                    face: CutoutFace::Flange { index: 0 },
-                    shape: CutoutShape::Rectangle {
-                        center: [length(80.), length(20.)],
-                        size: [length(34.), length(10.)],
-                    },
-                },
-                Cutout {
-                    face: CutoutFace::Base,
-                    shape: CutoutShape::Rectangle {
-                        center: [length(166.), length(112.)],
-                        size: [length(22.), length(14.)],
-                    },
-                },
-            ]);
-            let prepared = model::prepare_sheet(
-                &native_source,
-                native_source.revision(),
-                actor.clone(),
-                &native_request,
-            )
-            .unwrap();
-            native_source.commit(prepared.prepared).unwrap();
-            let native = evaluate(&native_source, GeometryBackend::OpenCascade);
-            let expected = native.solid(native_request.feature).unwrap();
-            assert_same_solid(punched, expected);
-            check_native_web_aperture(expected);
-            assert_same_solid(
-                &Solid::read_step(&path, GeometryPolicy::default()).unwrap(),
-                expected,
-            );
-            near(
-                native
-                    .unfold(native_source.document(), native_request.body)
-                    .unwrap()
-                    .area_mm2,
-                flat.area_mm2,
-            );
-        }
+
         check_saved_step_import(&path, punched);
 
         let current = evaluate(&session, GeometryBackend::Rust);

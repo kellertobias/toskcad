@@ -1,14 +1,10 @@
 //! A headless packaged-runtime smoke check, not a CAD workspace acceptance test.
-use multicad_kernel::{Error, Mesh, Shape};
+use multicad_kernel::{Error, Mesh};
 use std::path::Path;
 
 pub fn run(directory: &Path) -> Result<(), Error> {
     std::fs::create_dir_all(directory)?;
-    if multicad_kernel::OCCT_LINKED {
-        native_smoke(directory)?;
-    } else {
-        rust_smoke(directory)?;
-    }
+    rust_smoke(directory)?;
     crate::modeling::smoke(directory).map_err(|e| -> Error { e.into() })?;
     // The packaged executable must find and open its bundled examples.
     let (examples, searched) = multicad_ui::examples::locate_bundled();
@@ -16,27 +12,6 @@ pub fn run(directory: &Path) -> Result<(), Error> {
         .map_err(|e| -> Error { e.into() })?;
     println!("{receipt}");
     println!("Native runtime smoke check passed");
-    Ok(())
-}
-
-fn native_smoke(directory: &Path) -> Result<(), Error> {
-    let [width, depth] = multicad_solver::rectangle(120.0, 80.0)?;
-    let solid = Shape::extrude(width, depth, 24.0)?.cut(90.0, 30.0, 80.0, 24.0)?;
-    let expected = 172800.0;
-    if !solid.valid()? || (solid.volume()? - expected).abs() > 1e-5 {
-        return Err("Native solid validity/volume smoke check failed".into());
-    }
-    verify_mesh(&solid.mesh(0.1)?)?;
-    let step = directory.join("native-smoke.step");
-    solid.write_step(&step)?;
-    let reimported = Shape::read_step(&step)?;
-    if !reimported.valid()? || (reimported.volume()? - expected).abs() > 1e-5 {
-        return Err("STEP round-trip failed".into());
-    }
-    std::fs::write(
-        directory.join("native-smoke.txt"),
-        "OCCT 7.9.3; constrained rectangle; valid solid; Boolean cut; tessellation; STEP round-trip: passed\n",
-    )?;
     Ok(())
 }
 

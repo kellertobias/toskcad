@@ -10,21 +10,17 @@ use multicad_core::{
     project_file::{self, ProjectFile},
     references::{AnalyticGeometry, GeometryIntent},
 };
-#[cfg(feature = "occt")]
-use multicad_kernel::{BooleanOperation, GeometryPolicy, RigidTransform};
+
 use multicad_kernel::{
     Solid,
     rust_kernel::{Rational, step::write_box},
 };
-#[cfg(feature = "occt")]
-use multicad_model::imports::read_step_file;
+
 use multicad_model::{
     Compiler, GeometryBackend, Model,
     imports::{KicadOptions, read_kicad_file_with_backend, read_step_file_with_backend},
 };
 use std::f64::consts::PI;
-#[cfg(feature = "occt")]
-use std::path::Path;
 
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
@@ -32,19 +28,13 @@ fn actor() -> Actor {
 fn near(a: f64, b: f64) {
     assert!((a - b).abs() <= 1e-3, "{a} != {b}");
 }
-#[cfg(feature = "occt")]
-fn compile(s: &Session) -> Model {
-    compile_with_backend(s, GeometryBackend::default())
-}
+
 fn compile_with_backend(s: &Session, backend: GeometryBackend) -> Model {
     Compiler::default()
         .compile_with_backend(s.document(), s.revision(), backend, None)
         .unwrap()
 }
-#[cfg(feature = "occt")]
-fn commit(s: &mut Session, p: ModelPrepared) {
-    commit_with_backend(s, p, GeometryBackend::default());
-}
+
 fn commit_with_backend(s: &mut Session, p: ModelPrepared, backend: GeometryBackend) {
     Compiler::default()
         .compile_with_backend(p.prepared.document(), s.revision() + 1, backend, None)
@@ -80,89 +70,6 @@ fn transfer_head(m: &Model, part: EntityId) -> EntityId {
         .get(&part)
         .or_else(|| s.body_sources.get(&part))
         .unwrap()
-}
-#[cfg(feature = "occt")]
-fn boxes(path: &Path, parts: &[([f64; 3], [f64; 3])]) {
-    let policy = GeometryPolicy::default();
-    let mut all: Option<Solid> = None;
-    for (size, at) in parts {
-        let b = Solid::box_solid(*size, policy)
-            .unwrap()
-            .transformed(RigidTransform {
-                translation_mm: *at,
-                ..Default::default()
-            })
-            .unwrap();
-        all = Some(match all {
-            None => b,
-            Some(a) => a
-                .boolean(&b, BooleanOperation::Union, policy)
-                .unwrap()
-                .unwrap(),
-        });
-    }
-    all.unwrap().write_step(path).unwrap();
-}
-
-#[cfg(feature = "occt")]
-#[test]
-fn step_solids_import_as_parts_and_reimport_keeps_matching_parts() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("bracket.step");
-    boxes(
-        &path,
-        &[
-            ([10., 20., 30.], [0., 0., 0.]),
-            ([5., 5., 5.], [100., 0., 0.]),
-        ],
-    );
-    let mut s = Session::new(Document::new("STEP").unwrap()).unwrap();
-    let file = read_step_file(&path).unwrap();
-    assert_eq!(file.solids.len(), 2);
-    let p = prepare_step_import(&s, 0, actor(), &file).unwrap();
-    let source = p.source;
-    let parts: Vec<_> = p.model.outputs.iter().map(|o| o.body).collect();
-    commit(&mut s, p.model);
-    let m = compile(&s);
-    let mut volumes: Vec<f64> = parts
-        .iter()
-        .map(|p| solid(&m, *p).volume_mm3().unwrap())
-        .collect();
-    volumes.sort_by(f64::total_cmp);
-    near(volumes[0], 125.);
-    near(volumes[1], 6000.);
-    // The far solid keeps its file placement.
-    let far = parts
-        .iter()
-        .find(|p| solid(&m, **p).volume_mm3().unwrap() < 200.)
-        .unwrap();
-    near(solid(&m, *far).bounds().unwrap().min[0], 100.);
-    let near_part = *parts.iter().find(|p| *p != far).unwrap();
-
-    // Reimport: the big box is unchanged, the small one moved and a third added.
-    boxes(
-        &path,
-        &[
-            ([10., 20., 30.], [0., 0., 0.]),
-            ([5., 5., 5.], [200., 0., 0.]),
-            ([1., 1., 1.], [-50., 0., 0.]),
-        ],
-    );
-    let file = read_step_file(&path).unwrap();
-    let (plan, p) = prepare_step_update(&s, s.revision(), actor(), source, &file).unwrap();
-    assert_eq!(plan.matched.len(), 1);
-    assert!(!plan.matched[0].2);
-    // Unnamed solids cannot be matched once their geometry changes.
-    assert_eq!(plan.missing.len(), 1);
-    assert_eq!(plan.added.len(), 2);
-    commit(&mut s, p.model);
-    let m = compile(&s);
-    near(solid(&m, near_part).volume_mm3().unwrap(), 6000.);
-    // The missing solid's Part keeps its last geometry and stays linked.
-    near(solid(&m, *far).bounds().unwrap().min[0], 100.);
-    let stored = read_step_source(s.document(), source).unwrap();
-    assert_eq!(stored.solids.iter().filter(|s| s.missing).count(), 1);
-    assert_eq!(step_bodies(s.document()).count(), 4);
 }
 
 #[test]
@@ -219,15 +126,6 @@ fn rust_step_reimport_and_reopen_preserve_the_part_and_exact_geometry() {
     let part = prepared.model.outputs[0].body;
     session.commit(prepared.model.prepared).unwrap();
 
-    #[cfg(feature = "occt")]
-    {
-        let native = read_step_file(&path).unwrap();
-        let refused = prepare_step_update(&session, session.revision(), actor(), source, &native)
-            .expect_err("changing encodings needs a separate import");
-        assert!(refused.to_string().contains("encoding"), "{refused}");
-        assert_eq!(session.revision(), 1);
-    }
-
     let changed = rust_box_step(15);
     std::fs::write(&path, &changed).unwrap();
     let file = read_step_file_with_backend(&path, GeometryBackend::Rust).unwrap();
@@ -276,8 +174,6 @@ fn rust_step_reimport_and_reopen_preserve_the_part_and_exact_geometry() {
         assert_eq!(rebuilt.bounds().unwrap().max, [20., 26., 37.]);
     };
     verify(GeometryBackend::Rust);
-    #[cfg(feature = "occt")]
-    verify(GeometryBackend::OpenCascade);
 }
 
 #[test]
@@ -289,26 +185,6 @@ fn rust_step_rejects_malformed_text() {
     std::fs::write(&path, [0xff]).unwrap();
     let invalid_text = read_step_file_with_backend(&path, GeometryBackend::Rust).unwrap_err();
     assert!(invalid_text.to_string().contains("UTF-8"));
-}
-
-#[cfg(feature = "occt")]
-#[test]
-fn rust_step_rejects_legacy_brep() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("solid.step");
-    boxes(&path, &[([10., 20., 30.], [0., 0., 0.])]);
-    let native = read_step_file(&path).unwrap();
-    let mut session = Session::new(Document::new("Native STEP").unwrap()).unwrap();
-    let prepared = prepare_step_import(&session, 0, actor(), &native).unwrap();
-    commit(&mut session, prepared.model);
-    let refused = Compiler::default()
-        .compile_with_backend(session.document(), 0, GeometryBackend::Rust, None)
-        .err()
-        .expect("Rust cannot parse a legacy B-rep payload");
-    assert!(
-        refused.to_string().contains("original STEP file"),
-        "{refused}"
-    );
 }
 
 #[test]
@@ -387,12 +263,6 @@ const BOARD: &str = r#"(kicad_pcb (version 20240108) (generator "pcbnew")
 )"#;
 fn board_area() -> f64 {
     6000. - (25. - PI * 25. / 4.) - PI * 25. - 2. * PI * 1.6 * 1.6
-}
-
-#[test]
-#[cfg(feature = "occt")]
-fn native_kicad_board_components_and_reimport() {
-    kicad_board_components_and_reimport(GeometryBackend::OpenCascade);
 }
 
 #[test]
@@ -558,14 +428,6 @@ fn malformed_boards_are_refused_with_reasons() {
             .unwrap_err()
             .contains("no closed")
     );
-}
-
-/// The board's mounting holes drive a panel cutout through the transfer
-/// engine.
-#[test]
-#[cfg(feature = "occt")]
-fn native_kicad_mounting_holes_transfer_into_a_panel() {
-    board_mounting_holes_transfer_into_a_mounting_panel(GeometryBackend::OpenCascade);
 }
 
 #[test]

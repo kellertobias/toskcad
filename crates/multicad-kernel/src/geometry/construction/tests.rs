@@ -36,12 +36,6 @@ fn physical(solid: &Solid) {
     )
     .unwrap();
     compare(solid, &read);
-    #[cfg(feature = "occt")]
-    {
-        let native = Solid::read_step(&path, Default::default()).unwrap();
-        assert!(!native.uses_rust_geometry());
-        compare(solid, &native);
-    }
 }
 fn frame() -> PlaneFrame {
     PlaneFrame {
@@ -315,7 +309,7 @@ fn straight_vector_and_manufacturing_profiles_keep_their_own_geometry_budget() {
     .unwrap();
     assert_backend(&public);
     near(public.volume_mm3().unwrap(), 70. * 100. * (TAU / 70.).sin());
-    #[cfg(not(feature = "occt"))]
+
     physical(&public);
 }
 

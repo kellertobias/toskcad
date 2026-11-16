@@ -136,39 +136,7 @@ fn mesh(cut: &Solid) {
         .unwrap();
     assert_eq!(receipt.edge_pairs as usize * 2, receipt.mesh.indices.len());
 }
-#[cfg(feature = "occt")]
-fn native_compare(cut: &Solid, frame: PlaneFrame, entry: PlaneFrame, blind: bool) {
-    let policy = GeometryPolicy::default();
-    let stock = if blind {
-        Solid::box_solid([30., 20., 20.], policy)
-            .unwrap()
-            .transformed(pose(frame))
-            .unwrap()
-    } else {
-        Solid::cylinder(frame, 12., 3.7, policy).unwrap()
-    };
-    let tool = Solid::helical_thread_named(spec(), EntityId::new(), policy)
-        .unwrap()
-        .transformed(pose(entry))
-        .unwrap();
-    assert!(!stock.uses_rust_geometry());
-    assert!(!tool.uses_rust_geometry());
-    let native = stock
-        .boolean(&tool, multicad_kernel::BooleanOperation::Subtract, policy)
-        .unwrap()
-        .unwrap();
-    assert!((native.volume_mm3().unwrap() - cut.volume_mm3().unwrap()).abs() < 1e-5);
-    let a = native.bounds().unwrap();
-    let b = cut.bounds().unwrap();
-    for (a, b) in a
-        .min
-        .into_iter()
-        .chain(a.max)
-        .zip(b.min.into_iter().chain(b.max))
-    {
-        assert!((a - b).abs() < 5e-6);
-    }
-}
+
 #[test]
 fn receiving_threads_keep_saved_cap_charts_for_both_directions_and_clocking() {
     let policy = GeometryPolicy::default();
@@ -224,14 +192,6 @@ fn receiving_threads_keep_saved_cap_charts_for_both_directions_and_clocking() {
                         (imported.volume_mm3().unwrap() - cut.volume_mm3().unwrap()).abs() < 1e-6
                     );
                     mesh(&imported);
-                    #[cfg(feature = "occt")]
-                    {
-                        native_compare(&cut, frame, entry, false);
-                        let read = Solid::read_step(&path, policy).unwrap();
-                        assert!(
-                            (read.volume_mm3().unwrap() - cut.volume_mm3().unwrap()).abs() < 1e-5
-                        );
-                    }
                 }
             }
         }
@@ -288,11 +248,7 @@ fn blind_threads_preserve_original_cap_uv_and_full_receiving_stock() {
                     .is_err()
             );
             assert_eq!(stock.topology_snapshot(stock_id, 0).unwrap(), before);
-            #[cfg(feature = "occt")]
-            if frame_index < 2 {
-                native_compare(&cut, frame, entry, true);
-            }
-            #[cfg(not(feature = "occt"))]
+
             let _ = frame_index;
         }
     }

@@ -150,32 +150,3 @@ fn invalid_spherical_face_vertex_and_uncertifiable_placement_are_refused() {
         GeometryErrorKind::Unsupported
     );
 }
-
-#[cfg(feature = "occt")]
-#[test]
-fn independent_native_reader_agrees_for_exterior_interior_and_boundary_points() {
-    let source = sphere();
-    let scratch = tempfile::tempdir().unwrap();
-    let path = scratch.path().join("sphere.step");
-    source.write_step(&path).unwrap();
-    let native = Solid::read_step(&path, GeometryPolicy::default()).unwrap();
-    for local in [[3., 4., 0.], [0., 1., 0.], [2., 0., 0.]] {
-        let point = std::array::from_fn(|i| [10., -20., 30.][i] + local[i]);
-        let rust_probe = probe(point);
-        let rust_vertex = vertex(&rust_probe, point);
-        let path = scratch.path().join("probe.step");
-        rust_probe.write_step(&path).unwrap();
-        let native_probe = Solid::read_step(&path, GeometryPolicy::default()).unwrap();
-        let native_vertex = vertex(&native_probe, point);
-        for selection in [BRepSelection::Whole, BRepSelection::Face(0)] {
-            let rust = source
-                .minimum_distance(selection, &rust_probe, rust_vertex)
-                .unwrap();
-            let actual = native
-                .minimum_distance(selection, &native_probe, native_vertex)
-                .unwrap();
-            assert!((rust.distance_mm - actual.distance_mm).abs() < 1e-7);
-            assert_eq!(rust.inner_solution, actual.inner_solution);
-        }
-    }
-}

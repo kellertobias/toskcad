@@ -209,11 +209,7 @@ fn saved_mirror(u: [f64; 3], v: [f64; 3]) {
                 _ => panic!("Unexpected mirrored geometry {result:?}"),
             }
         }
-        for backend in [
-            GeometryBackend::Rust,
-            #[cfg(feature = "occt")]
-            GeometryBackend::OpenCascade,
-        ] {
+        for backend in [GeometryBackend::Rust] {
             let rebuilt = build(&reopened, backend);
             let solid = rebuilt.solid(input.body).unwrap();
             near(solid.volume_mm3().unwrap(), 600. * height);
@@ -566,17 +562,7 @@ fn oblique_mirror_of_placed_stock_preserves_boundary_frames_mesh_and_step() {
                 .unwrap();
                 near(read.volume_mm3().unwrap(), result.volume_mm3().unwrap());
                 let bounds = result.bounds().unwrap();
-                for read in [
-                    Some(read),
-                    if cfg!(feature = "occt") {
-                        Some(Solid::read_step(&path, policy).unwrap())
-                    } else {
-                        None
-                    },
-                ]
-                .into_iter()
-                .flatten()
-                {
+                for read in [Some(read), { None }].into_iter().flatten() {
                     near(read.volume_mm3().unwrap(), result.volume_mm3().unwrap());
                     close(read.bounds().unwrap().min, bounds.min);
                     close(read.bounds().unwrap().max, bounds.max);

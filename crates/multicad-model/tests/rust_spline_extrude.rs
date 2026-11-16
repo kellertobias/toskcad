@@ -257,45 +257,7 @@ fn saved_driven_spline_extrusion_updates_datums_occurrences_history_and_real_ste
         )
         .unwrap();
         near(imported.volume_mm3().unwrap(), 640. / 3.);
-        #[cfg(feature = "occt")]
-        {
-            let native = Compiler::default()
-                .compile_with_backend(
-                    saved.document(),
-                    saved.revision(),
-                    GeometryBackend::OpenCascade,
-                    None,
-                )
-                .unwrap();
-            assert!(!native.solid(output.body).unwrap().uses_rust_geometry());
-            near(
-                native.solid(output.body).unwrap().volume_mm3().unwrap(),
-                640. / 3.,
-            );
-            let Resolution::Resolved { frame: Some(a), .. } =
-                model.snapshot().references.get(address).unwrap().resolution
-            else {
-                panic!()
-            };
-            let Resolution::Resolved { frame: Some(b), .. } = native
-                .snapshot()
-                .references
-                .get(address)
-                .unwrap()
-                .resolution
-            else {
-                panic!()
-            };
-            for (a, b) in a
-                .origin_mm
-                .into_iter()
-                .chain(a.u)
-                .chain(a.v)
-                .zip(b.origin_mm.into_iter().chain(b.u).chain(b.v))
-            {
-                near(a, b);
-            }
-        }
+
         session.undo(session.revision(), actor()).unwrap();
         assert_eq!(session.document(), &initial);
         near(

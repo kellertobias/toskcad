@@ -1,4 +1,3 @@
-#![cfg(not(feature = "occt"))]
 use multicad_core::document::EntityId;
 use multicad_kernel::{GeometryErrorKind, GeometryPolicy, PlaneFrame, Profile, ProfileEdge, Solid};
 

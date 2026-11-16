@@ -130,31 +130,7 @@ fn imported_cavity_probes_remain_empty_in_axis_and_posed_charts() {
                 0.
             );
         }
-        #[cfg(feature = "occt")]
-        {
-            let native = Solid::read_step(&path, GeometryPolicy::default()).unwrap();
-            assert!((native.volume_mm3().unwrap() - imported.volume_mm3().unwrap()).abs() < 1e-6);
-            for (index, probe) in probes.iter().enumerate() {
-                let probe_path = folder.path().join(format!("probe-{index}.step"));
-                probe.write_step(&probe_path).unwrap();
-                let native_probe =
-                    Solid::read_step(&probe_path, GeometryPolicy::default()).unwrap();
-                let common = native
-                    .boolean(
-                        &native_probe,
-                        BooleanOperation::Intersect,
-                        GeometryPolicy::default(),
-                    )
-                    .unwrap();
-                assert!(
-                    common
-                        .map(|solid| solid.volume_mm3().unwrap())
-                        .unwrap_or(0.)
-                        .abs()
-                        < 1e-6
-                );
-            }
-        }
+
         let volume = imported.volume_mm3().unwrap();
         for source in [&cut, &imported] {
             let material = make([1, 1, 1], [0., 0., 0.]);

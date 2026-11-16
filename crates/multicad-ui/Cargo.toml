@@ -10,7 +10,6 @@ publish.workspace = true
 [features]
 # Native comparison fixtures opt in explicitly. Rust-only workspace tests must
 # not regain OpenCascade through this crate's development dependencies.
-occt = ["multicad-model/occt", "multicad-kernel/occt"]
 
 [dependencies]
 eframe.workspace = true

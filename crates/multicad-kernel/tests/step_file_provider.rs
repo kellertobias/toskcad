@@ -70,7 +70,6 @@ fn file_reader_uses_the_linked_provider_and_round_trips_anonymous_compound_geome
     );
 }
 
-#[cfg(not(feature = "occt"))]
 #[test]
 fn owned_file_reader_refuses_oversized_invalid_and_missing_inputs_without_publishing_geometry() {
     use multicad_kernel::GeometryErrorKind;

@@ -53,13 +53,6 @@ fn actual_blind_metric_connection_has_exact_floor_and_mating_receipt() {
     assert!(receipt.native_component_collision_checked);
     assert!((receipt.actual_engagement_mm.unwrap() - 3.).abs() < 1e-10);
     assert!((receipt.blind_tip_clearance_mm - 0.5).abs() < 1e-10);
-    #[cfg(feature = "occt")]
-    {
-        let native = compile(GeometryBackend::OpenCascade);
-        let reference = native.solid(feature).unwrap();
-        let delta = (receiver.volume_mm3().unwrap() - reference.volume_mm3().unwrap()).abs();
-        assert!(delta < 1e-3, "{delta} mm³ volume difference");
-    }
 }
 
 #[test]

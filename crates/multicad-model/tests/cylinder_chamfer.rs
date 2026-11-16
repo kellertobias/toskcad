@@ -301,14 +301,6 @@ fn placed_cylinder_chamfer_survives_saved_dimension_edits_references_and_history
             .unwrap();
             near(imported.volume_mm3().unwrap(), expected);
             assert_eq!(imported.solid_count().unwrap(), 1);
-            #[cfg(feature = "occt")]
-            near(
-                multicad_kernel::Solid::read_step(&path, Default::default())
-                    .unwrap()
-                    .volume_mm3()
-                    .unwrap(),
-                expected,
-            );
         }
         let edited = session.document().clone();
         session.undo(session.revision(), actor()).unwrap();

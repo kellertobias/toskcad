@@ -63,21 +63,7 @@ fn merged_linear_pattern_rebuilds_touching_and_separate_stock_in_one_union() {
             );
         }
 
-        if cfg!(feature = "occt") {
-            let native = compile(GeometryBackend::OpenCascade);
-            let solid = native.solid(request.body).unwrap();
-            near(solid.volume_mm3().unwrap(), expected_volume);
-            assert_eq!(solid.solid_count().unwrap(), expected_solids);
-            let native_bounds = solid.bounds().unwrap();
-            for (actual, expected) in bounds
-                .min
-                .into_iter()
-                .chain(bounds.max)
-                .zip(native_bounds.min.into_iter().chain(native_bounds.max))
-            {
-                near(actual, expected);
-            }
-        }
+        {}
     }
 }
 
@@ -197,17 +183,6 @@ fn merged_rotated_pattern_rebuilds_overlapping_and_independent_members_and_reope
         let policy = GeometryPolicy::default();
         let reopened = Solid::import_rust_step(&text, request.feature, policy).unwrap();
         check(&reopened, volume, count, expected);
-        #[cfg(feature = "occt")]
-        {
-            let native = compile(GeometryBackend::OpenCascade);
-            check(native.solid(request.body).unwrap(), volume, count, expected);
-            check(
-                &Solid::read_step(&path, policy).unwrap(),
-                volume,
-                count,
-                expected,
-            );
-        }
     }
 }
 
@@ -340,14 +315,6 @@ fn saved_oblique_circular_pattern_retains_rotated_members_after_pitch_edit() {
             panic!("rotated member lost its reference after pitch {pitch}");
         };
         assert_eq!(geometry == Some(original_position), pitch == "61");
-
-        #[cfg(feature = "occt")]
-        let native = compile(GeometryBackend::OpenCascade, &saved);
-        #[cfg(feature = "occt")]
-        near(
-            native.solid(request.body).unwrap().volume_mm3().unwrap(),
-            360.,
-        );
         for index in 0..3 {
             let member = Origin {
                 source: request.feature,
@@ -355,25 +322,6 @@ fn saved_oblique_circular_pattern_retains_rotated_members_after_pitch_edit() {
             };
             let points = member_points(shape, &member);
             assert_eq!(points.len(), 8);
-            #[cfg(feature = "occt")]
-            {
-                let native_points = member_points(
-                    &native.snapshot().shapes[&request.feature].topology,
-                    &member,
-                );
-                assert_eq!(native_points.len(), 8);
-                for point in points {
-                    assert!(
-                        native_points.iter().any(|expected| {
-                            point
-                                .iter()
-                                .zip(expected)
-                                .all(|(a, b)| (a - b).abs() < 1e-7)
-                        }),
-                        "member {index} at pitch {pitch} has no native vertex for {point:?}"
-                    );
-                }
-            }
         }
     }
 }

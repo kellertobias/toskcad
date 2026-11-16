@@ -301,26 +301,7 @@ fn saved_annular_mirrors_keep_cap_datums_after_two_reflections_and_parameter_edi
             )
             .unwrap();
             near(read.volume_mm3().unwrap(), expected);
-            #[cfg(feature = "occt")]
-            {
-                let native = build(&opened, GeometryBackend::OpenCascade);
-                for feature in [first.feature, second.feature] {
-                    let native = &native.snapshot().shapes[&feature];
-                    let actual = &snapshot.shapes[&feature];
-                    near(native.volume_mm3, expected);
-                    for (a, b) in native
-                        .bounds
-                        .min
-                        .into_iter()
-                        .chain(native.bounds.max)
-                        .zip(actual.bounds.min.into_iter().chain(actual.bounds.max))
-                    {
-                        near(a, b);
-                    }
-                }
-                let native = Solid::read_step(&path, GeometryPolicy::default()).unwrap();
-                near(native.volume_mm3().unwrap(), expected);
-            }
+
             if index > 0 {
                 let changed = session.document().clone();
                 session.undo(session.revision(), actor()).unwrap();

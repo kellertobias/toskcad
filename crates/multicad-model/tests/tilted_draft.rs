@@ -233,7 +233,7 @@ fn tilted_draft_saved_parameters_attachments_occurrences_and_history_rebuild() {
         let saved = reopen(&session);
         let expected = 20. * height * (width - degrees.to_radians().tan() * (height / 2. - level));
         for backend in [GeometryBackend::Rust, GeometryBackend::OpenCascade] {
-            if backend == GeometryBackend::OpenCascade && !cfg!(feature = "occt") {
+            if backend == GeometryBackend::OpenCascade && !false {
                 continue;
             }
             let result = compile(&saved, backend);

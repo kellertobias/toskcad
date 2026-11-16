@@ -330,6 +330,3 @@ pub fn no_intersection(
     }
     Ok(empty)
 }
-
-#[cfg(all(test, feature = "occt"))]
-mod tests;

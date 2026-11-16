@@ -304,26 +304,6 @@ fn raw_concave_cut_and_join_rebuild_saved_sources_references_and_parameter_histo
             )
             .unwrap();
             near(read.volume_mm3().unwrap(), expected);
-            #[cfg(feature = "occt")]
-            {
-                let native = build(&opened, GeometryBackend::OpenCascade);
-                near(
-                    native.solid(part.body).unwrap().volume_mm3().unwrap(),
-                    expected,
-                );
-                let (a, b) = (
-                    rust.solid(part.body).unwrap().bounds().unwrap(),
-                    native.solid(part.body).unwrap().bounds().unwrap(),
-                );
-                for (a, b) in a
-                    .min
-                    .into_iter()
-                    .chain(a.max)
-                    .zip(b.min.into_iter().chain(b.max))
-                {
-                    near(a, b);
-                }
-            }
         }
         let final_document = session.document().clone();
         session.undo(session.revision(), actor()).unwrap();
