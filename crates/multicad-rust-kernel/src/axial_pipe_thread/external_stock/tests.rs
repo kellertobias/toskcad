@@ -502,10 +502,10 @@ fn actual_tail_mesh_replaces_the_internal_cap_and_has_one_connected_indexed_shel
             (0..9).collect(),
         );
         for point in owned.vertices.as_chunks::<3>().0 {
-            for axis in 0..3 {
+            for (axis, coordinate) in point.iter().enumerate() {
                 let [lower, upper] = cut.bounds_mm()[axis];
-                assert!(point[axis] >= lower - q.deflection);
-                assert!(point[axis] <= upper + q.deflection);
+                assert!(*coordinate >= lower - q.deflection);
+                assert!(*coordinate <= upper + q.deflection);
             }
         }
     }
