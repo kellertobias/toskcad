@@ -227,15 +227,6 @@ fn unsupported_view_types_and_output_limits_keep_typed_failures() {
             ..Default::default()
         },
         DrawingProjection {
-            section_offset_mm: Some(9.),
-            section_only: true,
-            frame: PlaneFrame {
-                u: [0.8, 0., 0.6],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        DrawingProjection {
             detail: Some(([6., 6.], 5.)),
             ..Default::default()
         },
@@ -244,6 +235,54 @@ fn unsupported_view_types_and_output_limits_keep_typed_failures() {
             draw(&solid, options).unwrap_err().kind,
             GeometryErrorKind::Unsupported
         );
+    }
+    // The oblique plane -0.6 x + 0.8 z = 9 leaves the stock only for x in
+    // [0, 1], above the mortise: its exact section is the 1.25 mm by 16 mm
+    // rectangle u in [6.75, 8] (u = 0.8 x + 0.6 z) by v in [0, 16].
+    let oblique = DrawingProjection {
+        section_offset_mm: Some(9.),
+        section_only: true,
+        frame: PlaneFrame {
+            u: [0.8, 0., 0.6],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let section = draw(&solid, oblique).unwrap();
+    let corners = [[6.75, 0.], [8., 0.], [8., 16.], [6.75, 16.]];
+    assert_eq!(section.len(), 4);
+    for (index, vector) in section.iter().enumerate() {
+        assert_eq!(vector.role, VectorRole::Section);
+        let VectorCurve::Line { a, b } = vector.curve else {
+            panic!("{vector:?}");
+        };
+        for (point, corner) in [(a, corners[index]), (b, corners[(index + 1) % 4])] {
+            assert!((point[0] - corner[0]).hypot(point[1] - corner[1]) < 1e-12);
+        }
+    }
+    #[cfg(feature = "occt")]
+    {
+        // OpenCascade sections the same exact solid through the exchange.
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("panel.step");
+        solid.write_step(&path).unwrap();
+        let native = Solid::read_step(&path, solid.geometry_policy()).unwrap();
+        let native = draw(&native, oblique).unwrap();
+        assert_eq!(native.len(), 4, "{native:?}");
+        for vector in &native {
+            assert_eq!(vector.role, VectorRole::Section);
+            let VectorCurve::Line { a, b } = vector.curve else {
+                panic!("{vector:?}");
+            };
+            for point in [a, b] {
+                assert!(
+                    corners
+                        .iter()
+                        .any(|c| (point[0] - c[0]).hypot(point[1] - c[1]) < 1e-7),
+                    "{native:?}"
+                );
+            }
+        }
     }
     assert_eq!(
         project_drawing(&[input(&solid), input(&stock())], Default::default())
