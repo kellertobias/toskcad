@@ -539,7 +539,15 @@ pub(super) fn build(
         + normals.face_offsets.capacity() * std::mem::size_of::<usize>();
     work.storage(actual_slots + SCRATCH)?;
     work.held += actual_slots;
-    for _ in 0..25 {
+    // A density proposal is NOT a material/mesh certificate. Probe only the
+    // actual entry-adjacent root of each U band; all other roots remain
+    // untrusted until the complete pass below. No equal-v law is assumed.
+    let mut planning = true;
+    // Preserve the original25 complete-proof proposals IN ADDITION to a
+    // separately bounded planning phase. Both phases share the SAME ledger.
+    let mut phase_passes = 25;
+    while phase_passes > 0 {
+        phase_passes -= 1;
         if levels_u.iter().max().unwrap() + levels_v.iter().max().unwrap() > 24 {
             return Err(PhillipsReadError::Limit);
         }
@@ -586,12 +594,12 @@ pub(super) fn build(
             let [us, vs] = face.source().spans();
             for u in 0..us {
                 let global_u = face_offsets[index] + u;
-                for v in 0..vs {
+                for v in 0..if planning { 1 } else { vs } {
                     // A marked source span already makes this entire proposed
                     // grid insufficient. Defer its other roots until the next
                     // conforming proposal; no successful final pass skips one.
                     work.charge(1)?;
-                    if mark_u[global_u] || mark_v[v] {
+                    if !planning && (mark_u[global_u] || mark_v[v]) {
                         continue;
                     }
                     let levels = [levels_u[global_u], levels_v[v]];
@@ -603,7 +611,8 @@ pub(super) fn build(
                         root: [u, v],
                     };
                     let receipt_index = global_u * vspans + v;
-                    if let Some(receipt) = &accepted[receipt_index]
+                    if !planning
+                        && let Some(receipt) = &accepted[receipt_index]
                         && receipt.reuse(&mut grid, patch, levels, work)?
                     {
                         continue;
@@ -673,7 +682,7 @@ pub(super) fn build(
                         } else {
                             mark_v[v] = true;
                         }
-                    } else {
+                    } else if !planning {
                         // Old+new payload overlap is preflighted by capture;
                         // replacing only this fixed original root preserves all
                         // inherited proof work and immutable source association.
@@ -687,7 +696,32 @@ pub(super) fn build(
                 }
             }
         }
+        if planning {
+            let refine = mark_u.iter().chain(&mark_v).any(|&b| b);
+            // Even successful probe roots publish no reusable geometry receipt.
+            // Their immutable numerical caches remain fully charged above.
+            drop(grid);
+            work.held -= grid_bytes;
+            work.charge(2 * (uspans + vspans) + 8)?;
+            for (level, mark) in levels_u.iter_mut().zip(mark_u) {
+                if mark {
+                    *level += 1;
+                }
+            }
+            if mark_v[0] {
+                let proposal = levels_v[0] + 1;
+                levels_v.fill(proposal);
+            }
+            if !refine || phase_passes == 0 {
+                // Planning is optional: even when its own iteration ceiling
+                // stops it, only the complete phase may publish a candidate.
+                planning = false;
+                phase_passes = 25;
+            }
+            continue;
+        }
         if mark_u.iter().chain(&mark_v).any(|&b| b) {
+            drop(grid);
             work.held -= grid_bytes;
             for (level, mark) in levels_u.iter_mut().zip(mark_u) {
                 if mark {
