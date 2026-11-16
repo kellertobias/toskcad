@@ -896,3 +896,18 @@ fn actual_unfitted_shallow_v_plane_remains_mandatory_in_whole_source_comparison(
     assert!(geometry::verify(&shell, &graph, &topology, &candidate.pose, 1e-7, &mut work).is_err());
     assert_eq!(body.literal_input(), text);
 }
+
+#[test]
+fn actual_sewing_collar_numeric_composition_encloses_and_refuses_invalid_or_overflow() {
+    let collar = sewn_edge_collar(0.25, [0.125, 0.5]).unwrap();
+    assert!((0.75..0.750000000000001).contains(&collar));
+    for (correction, owners) in [
+        (-1., [0., 0.]),
+        (f64::NAN, [0., 0.]),
+        (0., [f64::INFINITY, 0.]),
+        (0., [0., -1.]),
+        (f64::MAX, [f64::MAX, 0.]),
+    ] {
+        assert!(sewn_edge_collar(correction, owners).is_err());
+    }
+}

@@ -72,7 +72,7 @@ pub struct Degree11SignDomain {
     pub role: RimDomainRole,
 }
 pub struct Degree11ThreadContacts<'c, 'a, 'input> {
-    carrier: &'c CoherentDegree11ThreadCarrier<'a, 'input>,
+    carrier: &'c CoherentDegree11ThreadCarrier<'c, 'a, 'input>,
     radius: f64,
     contacts: Vec<Degree11RimContact>,
     domains: Vec<Degree11SignDomain>,
@@ -80,7 +80,7 @@ pub struct Degree11ThreadContacts<'c, 'a, 'input> {
     retained: usize,
 }
 impl<'c, 'a, 'input> Degree11ThreadContacts<'c, 'a, 'input> {
-    pub fn carrier(&self) -> &'c CoherentDegree11ThreadCarrier<'a, 'input> {
+    pub fn carrier(&self) -> &'c CoherentDegree11ThreadCarrier<'c, 'a, 'input> {
         self.carrier
     }
     pub fn head_circle_radius_mm(&self) -> f64 {
@@ -104,7 +104,7 @@ impl<'c, 'a, 'input> Degree11ThreadContacts<'c, 'a, 'input> {
 }
 fn knot11(
     head: &ClosedRepairedHead<'_, '_, '_, '_, '_>,
-    carrier: &CoherentDegree11ThreadCarrier<'_, '_>,
+    carrier: &CoherentDegree11ThreadCarrier<'_, '_, '_>,
     rim: usize,
     k: usize,
 ) -> Degree11RimKnot {
@@ -127,7 +127,7 @@ fn knot11(
 impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
     pub fn degree11_thread_contacts<'c>(
         &self,
-        carrier: &'c CoherentDegree11ThreadCarrier<'a, 'input>,
+        carrier: &'c CoherentDegree11ThreadCarrier<'c, 'a, 'input>,
         options: Degree11ContactOptions,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> std::result::Result<Degree11ThreadContacts<'c, 'a, 'input>, PhillipsReadError> {
@@ -142,6 +142,7 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
                 || options.maximum_total_work > TOTAL_WORK
                 || options.maximum_bytes > BYTES
                 || options.maximum_contacts > ROOTS
+                || !std::ptr::eq(self, carrier.originating_head())
                 || !std::ptr::eq(self.body(), carrier.body())
                 || self.chart() != carrier.chart()
                 || carrier.cap_stations_mm()[0] != self.virtual_bottom_station()[1]

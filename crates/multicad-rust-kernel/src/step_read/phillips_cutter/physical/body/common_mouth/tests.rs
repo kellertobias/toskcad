@@ -1,5 +1,7 @@
 use super::*;
-fn closed_inputs<'a>(body: &'a Body<'_>) -> (AnalyticEdgeLifts<'a>, CubicSupportBounds<'a>) {
+pub(in crate::step_read::phillips_cutter::physical::body) fn closed_inputs<'a>(
+    body: &'a Body<'_>,
+) -> (AnalyticEdgeLifts<'a>, CubicSupportBounds<'a>) {
     let b = body.cavity();
     let ends = b
         .endpoint_coupling_bounds(

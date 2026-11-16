@@ -254,3 +254,68 @@ fn independent_scaled_and_proper_pose_packets_retain_full_degree11_cells() {
         }
     }
 }
+
+pub(super) fn actual_m3(fitted: bool, left: bool) -> String {
+    m3_source(fitted, left, 1.5, 1., false)
+}
+pub(super) fn m3_source(fitted: bool, left: bool, shank: f64, plain: f64, counter: bool) -> String {
+    use crate::{
+        head_profile::{Head, Profile},
+        helical_thread::{Spec, Thread},
+        phillips_drive::{Cavity, Cutter, PhillipsScrew},
+        profiled_screw::SourceSpec,
+    };
+    // Exact public Core::ThreadParameters.resolve result captured in
+    // cc-m3-retained-receipt.json (CAD352,65e2321b); the flat control is NOT6g.
+    // Core remains independent of this crate; no dependency-cycle/graph change.
+    let thread = Thread::new(Spec {
+        major_radius_mm: if fitted { 1.4635 } else { 1.47 },
+        pitch_mm: 0.5,
+        length_mm: 8.,
+        depth_mm: if fitted { 0.29908756729740676 } else { 0.3 },
+        crest_width_mm: if fitted { 0.07131009168581062 } else { 0.0625 },
+        lower_flank_deg: 30.,
+        upper_flank_deg: 30.,
+        starts: 1,
+        left_hand: left,
+        root_radius_mm: fitted.then_some(0.07216878364870323),
+    })
+    .unwrap();
+    let head = if counter {
+        Head::Countersunk {
+            radius_mm: 2.75,
+            height_mm: 1.65,
+            included_angle_deg: 90.,
+            edge_chamfer_mm: 0.05,
+            neck_radius_mm: 0.1,
+        }
+    } else {
+        Head::Crowned {
+            radius_mm: 2.8,
+            height_mm: 2.4,
+            crown_radius_mm: 3.,
+            top_land_radius_mm: 2.1,
+            neck_radius_mm: 0.1,
+        }
+    };
+    let (spec, domain) = crate::phillips_drive::test_fixture(1);
+    let source = PhillipsScrew::new(
+        thread,
+        Profile::new_for_thread_union(head, shank, plain).unwrap(),
+        SourceSpec {
+            head: Some(head),
+            shank_length_mm: plain,
+            minimum_wall_mm: 1e-5,
+        },
+        Cavity::new(Cutter::new(spec, domain).unwrap(), 1e-5, 100_000).unwrap(),
+        100_000,
+        &|| false,
+    )
+    .unwrap();
+    let (origin, u, v) = if left {
+        ([105., -20., 60.], [0.8, 0.6, 0.], [0.36, -0.48, -0.8])
+    } else {
+        ([0.; 3], [1., 0., 0.], [0., 1., 0.])
+    };
+    crate::step::write_phillips_screw(&source, origin, u, v, 1e-7).unwrap()
+}

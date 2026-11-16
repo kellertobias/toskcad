@@ -1,3 +1,4 @@
+use super::super::tests::actual_m3;
 use super::*;
 
 fn square(left: bool, wraps: usize) -> Vec<Degree11ThreadFace> {
@@ -364,57 +365,6 @@ fn genuinely_positive_nonuniform_wall_uses_bounded_dyadic_fallback() {
     );
 }
 
-fn actual_m3(fitted: bool, left: bool) -> String {
-    use crate::{
-        head_profile::{Head, Profile},
-        helical_thread::{Spec, Thread},
-        phillips_drive::{Cavity, Cutter, PhillipsScrew},
-        profiled_screw::SourceSpec,
-    };
-    // Exact public Core::ThreadParameters.resolve result captured in
-    // cc-m3-retained-receipt.json (CAD352,65e2321b); the flat control is NOT6g.
-    // Core remains independent of this crate; no dependency-cycle/graph change.
-    let thread = Thread::new(Spec {
-        major_radius_mm: if fitted { 1.4635 } else { 1.47 },
-        pitch_mm: 0.5,
-        length_mm: 8.,
-        depth_mm: if fitted { 0.29908756729740676 } else { 0.3 },
-        crest_width_mm: if fitted { 0.07131009168581062 } else { 0.0625 },
-        lower_flank_deg: 30.,
-        upper_flank_deg: 30.,
-        starts: 1,
-        left_hand: left,
-        root_radius_mm: fitted.then_some(0.07216878364870323),
-    })
-    .unwrap();
-    let head = Head::Crowned {
-        radius_mm: 2.8,
-        height_mm: 2.4,
-        crown_radius_mm: 3.,
-        top_land_radius_mm: 2.1,
-        neck_radius_mm: 0.1,
-    };
-    let (spec, domain) = crate::phillips_drive::test_fixture(1);
-    let source = PhillipsScrew::new(
-        thread,
-        Profile::new_for_thread_union(head, 1.5, 1.).unwrap(),
-        SourceSpec {
-            head: Some(head),
-            shank_length_mm: 1.,
-            minimum_wall_mm: 1e-5,
-        },
-        Cavity::new(Cutter::new(spec, domain).unwrap(), 1e-5, 100_000).unwrap(),
-        100_000,
-        &|| false,
-    )
-    .unwrap();
-    let (origin, u, v) = if left {
-        ([105., -20., 60.], [0.8, 0.6, 0.], [0.36, -0.48, -0.8])
-    } else {
-        ([0.; 3], [1., 0., 0.], [0., 1., 0.])
-    };
-    crate::step::write_phillips_screw(&source, origin, u, v, 1e-7).unwrap()
-}
 #[test]
 fn actual_m3_flat_annulus_and_retained_6g_d11_nets_earn_occupancy_both_hands() {
     use crate::step_read::phillips_cutter::physical::body::common_mouth::tests::derived_thread_probe::with_head;

@@ -67,14 +67,14 @@ struct Proof {
 }
 /// Sealed occupied radial graph retaining the SAME defining D11 poles, face
 /// ownership, original-control provenance and measured transfer records.
-pub struct OccupiedDegree11Thread<'a, 'input> {
-    carrier: CoherentDegree11ThreadCarrier<'a, 'input>,
+pub struct OccupiedDegree11Thread<'head, 'a, 'input> {
+    carrier: CoherentDegree11ThreadCarrier<'head, 'a, 'input>,
     proof: Proof,
     new_work: usize,
     peak: usize,
 }
-impl<'a, 'input> OccupiedDegree11Thread<'a, 'input> {
-    pub fn carrier(&self) -> &CoherentDegree11ThreadCarrier<'a, 'input> {
+impl<'head, 'a, 'input> OccupiedDegree11Thread<'head, 'a, 'input> {
+    pub fn carrier(&self) -> &CoherentDegree11ThreadCarrier<'head, 'a, 'input> {
         &self.carrier
     }
     pub fn body(&self) -> &'a Body<'input> {
@@ -121,8 +121,8 @@ impl<'a, 'input> OccupiedDegree11Thread<'a, 'input> {
     }
 }
 fn additional_bytes() -> usize {
-    std::mem::size_of::<OccupiedDegree11Thread<'_, '_>>()
-        - std::mem::size_of::<CoherentDegree11ThreadCarrier<'_, '_>>()
+    std::mem::size_of::<OccupiedDegree11Thread<'_, '_, '_>>()
+        - std::mem::size_of::<CoherentDegree11ThreadCarrier<'_, '_, '_>>()
 }
 fn valid(o: Degree11OccupiedOptions) -> bool {
     o.minimum_radius_mm.is_finite()
@@ -139,12 +139,12 @@ fn valid(o: Degree11OccupiedOptions) -> bool {
         && o.maximum_cells <= MAX_CELLS
         && o.maximum_depth <= MAX_DEPTH
 }
-impl<'a, 'input> CoherentDegree11ThreadCarrier<'a, 'input> {
+impl<'head, 'a, 'input> CoherentDegree11ThreadCarrier<'head, 'a, 'input> {
     pub fn certify_occupied(
         self,
         options: Degree11OccupiedOptions,
         interrupt: Option<&dyn Fn() -> bool>,
-    ) -> std::result::Result<OccupiedDegree11Thread<'a, 'input>, PhillipsReadError> {
+    ) -> std::result::Result<OccupiedDegree11Thread<'head, 'a, 'input>, PhillipsReadError> {
         if !valid(options) {
             return Err(PhillipsReadError::Invalid);
         }

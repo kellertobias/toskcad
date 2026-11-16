@@ -4,6 +4,11 @@ use super::*;
 use crate::tapered_thread::RetainedTensor11;
 mod occupied;
 pub use occupied::{Degree11OccupiedOptions, OccupiedDegree11Thread};
+mod material;
+pub use material::{
+    Degree11ClosedMaterial, Degree11JoinCollar, Degree11MaterialFace, Degree11MaterialOptions,
+    Degree11RimUse,
+};
 /// A separately bounded transfer stage after the head has already qualified.
 /// `maximum_work` bounds NEW work only; inherited head work is reported
 /// separately. This does not change DerivedThreadOptions' whole-request budget.
@@ -51,8 +56,9 @@ impl Degree11ThreadFace {
 }
 /// This packet retains the actual file Body. It cannot enter the distinct D9
 /// occupied providers and does not certify finite cap, winding or head contact.
-pub struct CoherentDegree11ThreadCarrier<'a, 'input> {
+pub struct CoherentDegree11ThreadCarrier<'head, 'a, 'input> {
     body: &'a Body<'input>,
+    origin: &'head ClosedRepairedHead<'head, 'head, 'head, 'a, 'input>,
     chart: CommonMouthChart,
     faces: Vec<Degree11ThreadFace>,
     stations: [f64; 2],
@@ -60,9 +66,21 @@ pub struct CoherentDegree11ThreadCarrier<'a, 'input> {
     inherited_head_work: usize,
     retained: usize,
 }
-impl<'a, 'input> CoherentDegree11ThreadCarrier<'a, 'input> {
+impl<'head, 'a, 'input> CoherentDegree11ThreadCarrier<'head, 'a, 'input> {
     pub fn body(&self) -> &'a Body<'input> {
         self.body
+    }
+    /// Immutable provenance, not a profile reconstructed from thread headers.
+    /// closed_repaired_meridian computes fixed line/arc parts from this exact
+    /// Profile; its options only refuse, never choose different coefficients.
+    /// Holds the complete originating receipt and its immutable common/cavity
+    /// prerequisite graph alive. Pointer identity cannot be recycled while
+    /// this borrow exists; equivalent separately rebuilt receipts are distinct.
+    pub fn originating_head(&self) -> &'head ClosedRepairedHead<'head, 'head, 'head, 'a, 'input> {
+        self.origin
+    }
+    pub fn original_head_profile(&self) -> &'a crate::head_profile::Profile {
+        self.origin.source().profile_proposal()
     }
     pub fn chart(&self) -> CommonMouthChart {
         self.chart
@@ -104,11 +122,12 @@ fn valid(o: Degree11ThreadOptions) -> bool {
     })
 }
 impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
-    pub fn degree11_thread_carrier(
-        &self,
+    pub fn degree11_thread_carrier<'head>(
+        &'head self,
         options: Degree11ThreadOptions,
         interrupt: Option<&dyn Fn() -> bool>,
-    ) -> std::result::Result<CoherentDegree11ThreadCarrier<'a, 'input>, PhillipsReadError> {
+    ) -> std::result::Result<CoherentDegree11ThreadCarrier<'head, 'a, 'input>, PhillipsReadError>
+    {
         let mut work = Work {
             remaining: options.maximum_work,
             interrupt,
@@ -121,7 +140,7 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
             }
             let base = self
                 .retained_budget_bytes()
-                .saturating_add(std::mem::size_of::<CoherentDegree11ThreadCarrier<'_, '_>>());
+                .saturating_add(std::mem::size_of::<CoherentDegree11ThreadCarrier<'_, '_, '_>>());
             if base.saturating_add(SCRATCH) > options.maximum_bytes {
                 return Err(ReadError::Limit);
             }
@@ -288,6 +307,7 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
                     .sum::<usize>();
             Ok(CoherentDegree11ThreadCarrier {
                 body: self.body(),
+                origin: self,
                 chart: self.chart(),
                 faces,
                 stations,
