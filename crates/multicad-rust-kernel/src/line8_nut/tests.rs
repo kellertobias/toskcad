@@ -720,6 +720,36 @@ fn actual_candidate_resource_frontiers_and_late_cancel_preserve_same_source_retr
             Some(Error::Limit),
         );
     }
+    let facets = reference.mesh().face_indices.len();
+    assert_eq!(
+        source
+            .mesh_candidate(
+                crate::display::Tessellation {
+                    triangle_limit: facets - 1,
+                    ..quality
+                },
+                64_000_000,
+                None,
+            )
+            .err(),
+        Some(Error::Limit),
+    );
+    let exact_facets = source
+        .mesh_candidate(
+            crate::display::Tessellation {
+                triangle_limit: facets,
+                ..quality
+            },
+            64_000_000,
+            None,
+        )
+        .unwrap();
+    assert_eq!(exact_facets.mesh().vertices, reference.mesh().vertices);
+    assert_eq!(exact_facets.mesh().indices, reference.mesh().indices);
+    assert_eq!(
+        exact_facets.mesh().face_indices,
+        reference.mesh().face_indices
+    );
     for invalid in [
         crate::display::Tessellation {
             deflection: f64::NAN,
