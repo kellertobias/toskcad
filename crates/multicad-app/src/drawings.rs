@@ -221,6 +221,9 @@ impl DrawingBackend for Backend {
 #[path = "drawings/rust_parity_tests.rs"]
 mod rust_parity_tests;
 #[cfg(test)]
+#[path = "drawings/scene_family_tests.rs"]
+mod scene_family_tests;
+#[cfg(test)]
 mod tests {
     use super::*;
     use multicad_core::{
