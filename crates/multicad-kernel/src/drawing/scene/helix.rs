@@ -17,14 +17,22 @@
 //! material, section sweep events, outline existence (roots of the
 //! discriminant), contour ends on the caps, and branch ends on the caps (the
 //! exact cap chord ends). Helices and cap curves flatten with proven
-//! curvature bounds. Contour and section branch paths still flatten
-//! adaptively: near a branch end their parametrisation has a square-root
-//! singularity, so no uniform derivative bound exists.
+//! curvature bounds. Outline, seam, cone section and section branch paths
+//! flatten with proven per-chord bounds (see [`proven`]): outlines and
+//! branches are components of the zero set of an exact relation in a
+//! two-coordinate chart, so near a branch end, where the native
+//! parametrisation has a square-root singularity, the bound is taken in the
+//! other chart coordinate, in which the curve is smooth.
+mod proven;
+
 use super::paths::{Lift, Segment, add, dot3, scaled};
 use super::prism::{Band, Prism};
 use super::profile::merge;
 use super::*;
 use multicad_rust_kernel::{helical_thread, normal_sweep, rounded_thread, spur_gear::Edge};
+pub(super) use proven::{Chart, Iv, Num, Proven, bracket, certified, chord_bound, frame, settle};
+#[cfg(test)]
+pub(super) use proven::{Tally, tally};
 use std::f64::consts::{PI, TAU};
 
 /// One piece of the axial meridian profile in `(phase, radius)` coordinates.
@@ -94,6 +102,26 @@ impl Span {
 
     pub(super) fn point(&self, phi: f64) -> P2 {
         [phi, self.eval(phi)[0]]
+    }
+
+    /// Radius and slope at a phase, in chart arithmetic, as `eval`.
+    pub(super) fn radius_at<N: Num>(&self, phi: N) -> [N; 2] {
+        match *self {
+            Self::Line { a, b } => {
+                let slope = (b[1] - a[1]) / (b[0] - a[0]);
+                [N::k(a[1]) + N::k(slope) * (phi - N::k(a[0])), N::k(slope)]
+            }
+            Self::Arc {
+                center,
+                radius,
+                sign,
+                ..
+            } => {
+                let x = phi - N::k(center[0]);
+                let h = ((N::k(radius) - x) * (N::k(radius) + x)).sqrt();
+                [N::k(center[1]) + N::k(sign) * h, -(N::k(sign) * x / h)]
+            }
+        }
     }
 
     /// Phases inside the span where the radius is stationary.
@@ -549,38 +577,6 @@ pub(super) fn level_stop(z: &dyn Fn(f64) -> f64, t: f64, level: f64) -> f64 {
     t
 }
 
-/// Adaptive certified-in-practice flattening of an exact path.
-pub(super) fn adaptive(point: &dyn Fn(f64) -> P3, tolerance: f64, start: usize) -> Vec<f64> {
-    let deviation = |a: f64, b: f64| {
-        let [p, q] = [point(a), point(b)];
-        [0.25, 0.5, 0.75]
-            .into_iter()
-            .map(|s| {
-                let m = point(a + (b - a) * s);
-                let c = add(p, scaled(add(q, scaled(p, -1.)), s));
-                let d = add(m, scaled(c, -1.));
-                dot3(d, d).sqrt()
-            })
-            .fold(0., f64::max)
-    };
-    let mut output = vec![0.];
-    let count = start.max(2);
-    for i in 0..count {
-        let mut stack = vec![(i as f64 / count as f64, (i + 1) as f64 / count as f64, 0)];
-        while let Some((a, b, depth)) = stack.pop() {
-            if depth < 24 && deviation(a, b) > tolerance {
-                let m = 0.5 * (a + b);
-                stack.push((m, b, depth + 1));
-                stack.push((a, m, depth + 1));
-            } else {
-                output.push(b);
-            }
-        }
-    }
-    *output.last_mut().unwrap() = 1.;
-    output
-}
-
 /// Shared placement and the helical law of one member.
 #[derive(Clone)]
 struct Law {
@@ -753,6 +749,81 @@ impl Outline {
     fn phi(&self, t: f64) -> f64 {
         self.range[0] + (self.range[1] - self.range[0]) * t
     }
+
+    /// `A`, `B` and `C` of the contour condition `A cos psi + B sin psi = C`.
+    fn terms<N: Num>(&self, phi: N) -> [N; 3] {
+        let [r, s] = self.span.radius_at(phi);
+        let rho = self.view[0].hypot(self.view[1]);
+        [
+            -(r * N::k(rho)),
+            N::k(self.law.rate * rho) * s,
+            -(r * s * N::k(self.view[2])),
+        ]
+    }
+
+    /// The exact chart point `(phi, theta)` at a parameter. A branch end
+    /// inside the span is an isolated root of the discriminant: its phase
+    /// is enclosed by a proven sign change, and the outline angle there by
+    /// the closed form over that enclosure.
+    fn end(&self, t: f64) -> Option<[Iv; 2]> {
+        let phi = self.phi(t);
+        let [a, b] = self.span.range();
+        let root = (t == 0. && self.range[0] != a) || (t == 1. && self.range[1] != b);
+        let phi = if root {
+            bracket(phi, |x| {
+                let [p, q, r] = self.terms(x);
+                p.sqr() + q.sqr() - r.sqr()
+            })?
+        } else {
+            Iv::point(phi)
+        };
+        if !root {
+            // A proven sign change next to the computed point, when it is
+            // not at a fold of the branch.
+            let theta =
+                Self::angle_within(&self.law, &self.span, self.view, self.sign, phi.lo, 1e-9);
+            if let Some(point) = theta.and_then(|theta| settle(self, [phi.lo, theta])) {
+                return Some(point);
+            }
+        }
+        let [p, q, r] = self.terms(phi);
+        let norm = (p.sqr() + q.sqr()).sqrt();
+        let alpha = self.view[1].atan2(self.view[0]);
+        // As `angle_within`: atan2(-B, -A) = atan(B / A) since A < 0.
+        let theta =
+            Iv::point(alpha) + Iv::pi() + (q / p).atan() + Iv::point(self.sign) * (r / norm).acos();
+        Some([phi, theta])
+    }
+}
+
+/// The outline is a component of `A cos psi + B sin psi - C = 0` in the
+/// chart `(phi, theta)`, `psi = theta - alpha`.
+impl Chart for Outline {
+    fn implicit(&self) -> bool {
+        true
+    }
+
+    fn relation<N: Num>(&self, phi: N, theta: N) -> N {
+        let [a, b, c] = self.terms(phi);
+        let psi = theta - N::k(self.view[1].atan2(self.view[0]));
+        a * psi.cos() + b * psi.sin() - c
+    }
+
+    fn place<N: Num>(&self, phi: N, theta: N) -> [N; 3] {
+        let [r, _] = self.span.radius_at(phi);
+        let law = &self.law;
+        let z = phi + N::k(law.rate) * theta + N::k(self.copy);
+        frame(law.origin, law.axes, [r * theta.cos(), r * theta.sin(), z])
+    }
+}
+
+impl Proven for Outline {
+    fn bound(&self, [a, b]: [f64; 2]) -> f64 {
+        let (Some(start), Some(end)) = (self.end(a), self.end(b)) else {
+            return f64::INFINITY;
+        };
+        chord_bound(self, 0, [start, end], [self.point(a), self.point(b)])
+    }
 }
 
 impl Path for Outline {
@@ -761,7 +832,7 @@ impl Path for Outline {
     }
 
     fn flatten(&self, tolerance_mm: f64) -> Vec<f64> {
-        adaptive(&|t| self.point(t), tolerance_mm, 32)
+        certified(self, tolerance_mm)
     }
 
     fn paper(&self, _: [f64; 2]) -> Option<Curve> {
@@ -771,18 +842,43 @@ impl Path for Outline {
 
 /// A range of another path.
 pub(super) struct Range {
-    pub(super) path: Arc<dyn Path>,
+    pub(super) path: Arc<dyn Proven>,
     pub(super) range: [f64; 2],
+}
+
+impl Range {
+    fn map(&self, t: f64) -> f64 {
+        self.range[0] + (self.range[1] - self.range[0]) * t
+    }
+}
+
+impl Proven for Range {
+    fn breaks(&self) -> Vec<f64> {
+        let [from, to] = self.range;
+        let mut output = vec![0.];
+        output.extend(
+            self.path
+                .breaks()
+                .into_iter()
+                .map(|t| (t - from) / (to - from))
+                .filter(|t| *t > 0. && *t < 1.),
+        );
+        output.push(1.);
+        output
+    }
+
+    fn bound(&self, [a, b]: [f64; 2]) -> f64 {
+        self.path.bound([self.map(a), self.map(b)])
+    }
 }
 
 impl Path for Range {
     fn point(&self, t: f64) -> P3 {
-        self.path
-            .point(self.range[0] + (self.range[1] - self.range[0]) * t)
+        self.path.point(self.map(t))
     }
 
     fn flatten(&self, tolerance_mm: f64) -> Vec<f64> {
-        adaptive(&|t| self.point(t), tolerance_mm, 8)
+        certified(self, tolerance_mm)
     }
 
     fn paper(&self, [a, b]: [f64; 2]) -> Option<Curve> {
@@ -996,10 +1092,6 @@ impl Branch {
         }
     }
 
-    pub(super) fn width(&self) -> f64 {
-        (self.range[1] - self.range[0]).abs()
-    }
-
     fn shares(&self) -> [f64; 2] {
         self.touches
             .map(|touch| if touch.is_some() { TOUCH_SHARE } else { 0. })
@@ -1083,6 +1175,205 @@ impl Branch {
         }
         None
     }
+
+    /// Parameters between the touch parts and the plain part.
+    pub(super) fn breaks(&self) -> Vec<f64> {
+        let [a, b] = self.shares();
+        let mut output = vec![0.];
+        if a > 0. {
+            output.push(a);
+        }
+        if b > 0. {
+            output.push(1. - b);
+        }
+        output.push(1.);
+        output
+    }
+
+    /// `alpha`, `gamma`, the signed distance of the arc's center from the
+    /// meridian line and the line's normal length, at an angle.
+    fn line_iv(&self, theta: Iv) -> [Iv; 2] {
+        let m = &self.meridian;
+        let alpha = Iv::point(m.n[0]) * theta.cos() + Iv::point(m.n[1]) * theta.sin();
+        let gamma = Iv::point(m.c)
+            - (alpha * Iv::point(m.tau) + Iv::point(m.n[2])) * Iv::point(m.k) * theta;
+        [alpha, gamma]
+    }
+
+    /// The signed distance of the arc's center from the meridian line, with
+    /// the line's normal length and `alpha`.
+    fn offset_iv(&self, theta: Iv) -> Option<[Iv; 3]> {
+        let Span::Arc { center, .. } = self.span else {
+            return None;
+        };
+        let [alpha, gamma] = self.line_iv(theta);
+        let beta = Iv::point(self.meridian.n[2]);
+        let norm = (alpha.sqr() + beta.sqr()).sqrt();
+        let delta = (beta * Iv::point(center[0]) + alpha * Iv::point(center[1]) - gamma) / norm;
+        Some([delta, norm, alpha])
+    }
+
+    /// The exact chart point `(theta, u)` of a touching end: the touch
+    /// angle is enclosed by a proven sign change of the reach `R^2 -
+    /// delta^2`, and the foot point over that enclosure.
+    fn touching_end(&self, end: usize) -> Option<[Iv; 2]> {
+        let Span::Arc { center, radius, .. } = self.span else {
+            return None;
+        };
+        let r2 = Iv::point(radius).sqr();
+        let theta = bracket(self.range[end], |theta| {
+            let [delta, ..] = self.offset_iv(theta).expect("arc");
+            r2 - delta.sqr()
+        })?;
+        let [delta, norm, _] = self.offset_iv(theta)?;
+        let u = Iv::point(center[0]) - delta * Iv::point(self.meridian.n[2]) / norm;
+        Some([theta, u])
+    }
+
+    /// The exact profile phase of the branch's root at an angle, in closed
+    /// form.
+    fn root_iv(&self, theta: Iv) -> Option<Iv> {
+        match self.span {
+            Span::Line { a, b } => {
+                let [alpha, gamma] = self.line_iv(theta);
+                let n2 = Iv::point(self.meridian.n[2]);
+                let value = |p: P2| alpha * Iv::point(p[1]) + n2 * Iv::point(p[0]) - gamma;
+                let [fa, fb] = [value(a), value(b)];
+                let t = fa / (fa - fb);
+                Some(Iv::point(a[0]) + t * (Iv::point(b[0]) - Iv::point(a[0])))
+            }
+            Span::Arc { center, radius, .. } => {
+                let [delta, norm, alpha] = self.offset_iv(theta)?;
+                let h = (Iv::point(radius).sqr() - delta.sqr()).sqrt();
+                let side = Iv::point(if self.index == 0 { -1. } else { 1. });
+                Some(
+                    Iv::point(center[0])
+                        - delta * Iv::point(self.meridian.n[2]) / norm
+                        - side * h * alpha / norm,
+                )
+            }
+        }
+    }
+
+    /// An exact chart point `(theta, u)` next to the published point at `t`,
+    /// in the mode of `part`.
+    fn enclose(&self, chart: &BranchChart, t: f64, part: Option<usize>) -> Option<[Iv; 2]> {
+        let [a, b] = self.shares();
+        if let Some(end) = part {
+            let touch = self.touches[end]?;
+            let s = if end == 0 { t / a } else { (1. - t) / b }.max(0.);
+            if s == 0. {
+                return self.touching_end(end);
+            }
+            let Span::Arc { center, radius, .. } = self.span else {
+                return None;
+            };
+            // As `locate`: the circle point is exact up to its cosine, and
+            // the certified monotone bracket holds one root for it.
+            let beta = touch.beta[0] + s * (touch.beta[1] - touch.beta[0]);
+            let (theta, _) = touch.locate(&self.meridian, &self.span, beta);
+            let u = Iv::point(center[0]) + Iv::point(radius) * Iv::point(beta).cos();
+            let theta = bracket(theta, |theta| self.relation(theta, u))?;
+            return Some([theta, u]);
+        }
+        for end in [0, 1] {
+            if self.touching[end] && (if end == 0 { t <= 0. } else { t >= 1. }) {
+                return self.touching_end(end);
+            }
+        }
+        // A proven sign change next to the computed point, else the root at
+        // the exact angle in closed form.
+        let (theta, p) = self.locate(t);
+        settle(chart, [theta, p[0]]).or_else(|| {
+            let theta = Iv::point(theta);
+            Some([theta, self.root_iv(theta)?])
+        })
+    }
+
+    /// Proven bound of the deviation of the branch, placed in a member's
+    /// frame at a chart base angle, over `[ta, tb]` inside one break
+    /// interval, from the chord of `points`.
+    pub(super) fn bound(
+        &self,
+        (origin, axes, base): (P3, [P3; 3], f64),
+        [ta, tb]: [f64; 2],
+        points: [P3; 2],
+    ) -> f64 {
+        let [a, b] = self.shares();
+        // The part of a parameter, as in `locate`.
+        let part = |t: f64| {
+            if self.touches[0].is_some() && t < a {
+                Some(0)
+            } else if self.touches[1].is_some() && t > 1. - b {
+                Some(1)
+            } else {
+                None
+            }
+        };
+        let chart = BranchChart {
+            branch: self,
+            origin,
+            axes,
+            base,
+        };
+        // Each stop is enclosed in the part of its own parameter, so the
+        // chords on both sides of a switch between parts share its exact
+        // point and their pieces tile the branch.
+        let enclose = |t| self.enclose(&chart, t, part(t));
+        let (Some(start), Some(end)) = (enclose(ta), enclose(tb)) else {
+            return f64::INFINITY;
+        };
+        // Plain parts are graphs over the angle, touch parts over the
+        // circle angle and so over the phase.
+        let native = if part(0.5 * (ta + tb)).is_some() {
+            1
+        } else {
+            0
+        };
+        chord_bound(&chart, native, [start, end], points)
+    }
+
+    /// The plane's value at the profile point of phase `u` at `theta`.
+    fn relation<N: Num>(&self, theta: N, u: N) -> N {
+        let m = &self.meridian;
+        let alpha = N::k(m.n[0]) * theta.cos() + N::k(m.n[1]) * theta.sin();
+        let gamma = N::k(m.c) - (alpha * N::k(m.tau) + N::k(m.n[2])) * N::k(m.k) * theta;
+        let [w, _] = self.span.radius_at(u);
+        alpha * w + N::k(m.n[2]) * u - gamma
+    }
+}
+
+/// A section branch in the chart `(theta, u)`: the zero set of the plane's
+/// value at the profile point of phase `u`, placed at `r = W + tau k theta`,
+/// angle `base + theta`, `z = u + k theta` in the member's frame.
+struct BranchChart<'a> {
+    branch: &'a Branch,
+    origin: P3,
+    axes: [P3; 3],
+    base: f64,
+}
+
+impl Chart for BranchChart<'_> {
+    fn implicit(&self) -> bool {
+        true
+    }
+
+    fn relation<N: Num>(&self, theta: N, u: N) -> N {
+        self.branch.relation(theta, u)
+    }
+
+    fn place<N: Num>(&self, theta: N, u: N) -> [N; 3] {
+        let m = &self.branch.meridian;
+        let [w, _] = self.branch.span.radius_at(u);
+        let s = N::k(m.k) * theta;
+        let r = w + N::k(m.tau) * s;
+        let angle = theta + N::k(self.base);
+        frame(
+            self.origin,
+            self.axes,
+            [r * angle.cos(), r * angle.sin(), u + s],
+        )
+    }
 }
 
 /// A branch of an oblique section on a shifted span.
@@ -1113,6 +1404,18 @@ impl Sweep {
     }
 }
 
+impl Proven for Sweep {
+    fn breaks(&self) -> Vec<f64> {
+        self.branch.breaks()
+    }
+
+    fn bound(&self, [a, b]: [f64; 2]) -> f64 {
+        let placement = (self.law.origin, self.law.axes, self.base);
+        self.branch
+            .bound(placement, [a, b], [self.point(a), self.point(b)])
+    }
+}
+
 impl Path for Sweep {
     fn point(&self, t: f64) -> P3 {
         let (theta, p) = self.branch.locate(t);
@@ -1121,8 +1424,7 @@ impl Path for Sweep {
     }
 
     fn flatten(&self, tolerance_mm: f64) -> Vec<f64> {
-        let start = (self.branch.width() * 32.).ceil() as usize;
-        adaptive(&|t| self.point(t), tolerance_mm, start)
+        certified(self, tolerance_mm)
     }
 
     fn paper(&self, _: [f64; 2]) -> Option<Curve> {
@@ -1305,6 +1607,10 @@ struct Seam {
 }
 
 impl Seam {
+    fn phi(&self, t: f64) -> f64 {
+        self.range[0] + (self.range[1] - self.range[0]) * t
+    }
+
     fn at(&self, phi: f64) -> (P3, f64, f64) {
         let r = self.span.eval(phi)[0];
         let z = self.cone.station(r);
@@ -1313,15 +1619,43 @@ impl Seam {
     }
 }
 
+/// The seam is the explicit graph of its phase.
+impl Chart for Seam {
+    fn implicit(&self) -> bool {
+        false
+    }
+
+    fn relation<N: Num>(&self, _: N, _: N) -> N {
+        N::k(0.)
+    }
+
+    fn place<N: Num>(&self, phi: N, _: N) -> [N; 3] {
+        let [r, _] = self.span.radius_at(phi);
+        let z = (r - N::k(self.cone.entry)) / N::k(self.cone.slope);
+        let theta = (z - phi - N::k(self.copy)) / N::k(self.law.rate);
+        frame(
+            self.law.origin,
+            self.law.axes,
+            [r * theta.cos(), r * theta.sin(), z],
+        )
+    }
+}
+
+impl Proven for Seam {
+    fn bound(&self, [a, b]: [f64; 2]) -> f64 {
+        let end = |t: f64| [Iv::point(self.phi(t)), Iv::point(0.)];
+        chord_bound(self, 0, [end(a), end(b)], [self.point(a), self.point(b)])
+    }
+}
+
 impl Path for Seam {
     fn point(&self, t: f64) -> P3 {
-        let phi = self.range[0] + (self.range[1] - self.range[0]) * t;
-        let ([r, theta, z], _, _) = self.at(phi);
+        let ([r, theta, z], _, _) = self.at(self.phi(t));
         self.law.surface(r, theta, z)
     }
 
     fn flatten(&self, tolerance_mm: f64) -> Vec<f64> {
-        adaptive(&|t| self.point(t), tolerance_mm, 16)
+        certified(self, tolerance_mm)
     }
 
     fn paper(&self, [from, to]: [f64; 2]) -> Option<Curve> {
@@ -1368,15 +1702,48 @@ impl ConeCut {
     }
 }
 
+/// The cone section is the explicit graph of its angle.
+impl Chart for ConeCut {
+    fn implicit(&self) -> bool {
+        false
+    }
+
+    fn relation<N: Num>(&self, _: N, _: N) -> N {
+        N::k(0.)
+    }
+
+    fn place<N: Num>(&self, theta: N, _: N) -> [N; 3] {
+        let (n, c) = self.plane;
+        let cone = &self.cone;
+        let (sin, cos) = (theta.sin(), theta.cos());
+        let q = N::k(n[0]) * cos + N::k(n[1]) * sin;
+        let z = (N::k(c) - q * N::k(cone.entry)) / (q * N::k(cone.slope) + N::k(n[2]));
+        let r = N::k(cone.entry) + N::k(cone.slope) * z;
+        frame(self.law.origin, self.law.axes, [r * cos, r * sin, z])
+    }
+}
+
+impl ConeCut {
+    fn theta(&self, t: f64) -> f64 {
+        self.range[0] + (self.range[1] - self.range[0]) * t
+    }
+}
+
+impl Proven for ConeCut {
+    fn bound(&self, [a, b]: [f64; 2]) -> f64 {
+        let end = |t: f64| [Iv::point(self.theta(t)), Iv::point(0.)];
+        chord_bound(self, 0, [end(a), end(b)], [self.point(a), self.point(b)])
+    }
+}
+
 impl Path for ConeCut {
     fn point(&self, t: f64) -> P3 {
-        let theta = self.range[0] + (self.range[1] - self.range[0]) * t;
-        let p = Self::local(&self.cone, self.plane, theta).unwrap_or([f64::NAN; 3]);
+        let p = Self::local(&self.cone, self.plane, self.theta(t)).unwrap_or([f64::NAN; 3]);
         self.law.view(p)
     }
 
     fn flatten(&self, tolerance_mm: f64) -> Vec<f64> {
-        adaptive(&|t| self.point(t), tolerance_mm, 16)
+        certified(self, tolerance_mm)
     }
 
     fn paper(&self, _: [f64; 2]) -> Option<Curve> {
@@ -2959,7 +3326,7 @@ impl Thread {
                                     stops.push(t);
                                 }
                             }
-                            let sweep: Arc<dyn Path> = Arc::new(branch);
+                            let sweep: Arc<dyn Proven> = Arc::new(branch);
                             stops.sort_by(f64::total_cmp);
                             stops.dedup_by(|x, y| (*x - *y).abs() <= 1e-13);
                             for piece in stops.windows(2) {
