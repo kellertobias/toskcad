@@ -52,6 +52,41 @@ fn independent_operator_comparison_checks_two_earned_physical_sources_and_real_l
     .unwrap();
     let used = MAX_WORK - work.remaining;
     assert!(used > 0);
+    // The ledger is a small independent helper contract, not an admitted
+    // Source. Every proposed index below comes from these two genuinely earned
+    // and successfully compared physical source/operator tables.
+    let edge_pairs = actual_source
+        .shell()
+        .input()
+        .faces
+        .iter()
+        .zip(&decoded.material().shell().input().faces)
+        .flat_map(|(a, b)| {
+            a.outer
+                .iter()
+                .zip(&b.outer)
+                .map(|(&(x, _), &(y, _))| (x, y))
+        })
+        .collect::<std::collections::BTreeMap<_, _>>()
+        .into_iter()
+        .take(3)
+        .collect::<Vec<_>>();
+    let [(a0, b0), (a1, b1), (a2, b2)]: [(usize, usize); 3] = edge_pairs
+        .as_slice()
+        .try_into()
+        .expect("three real distinct edge mappings");
+    assert!(b0 != b1 && b1 != b2 && b0 != b2);
+    let mut ledger = Pairs::<128>::new();
+    ledger.pair(a0, b0).unwrap();
+    ledger.pair(a0, b0).unwrap(); // repeated real face incidence is an alias
+    ledger.pair(a1, b1).unwrap();
+    let snapshot = (ledger.forward, ledger.reverse);
+    assert!(matches!(ledger.pair(a0, b1), Err(Error::Unsupported)));
+    assert_eq!((ledger.forward, ledger.reverse), snapshot);
+    assert!(matches!(ledger.pair(a2, b0), Err(Error::Unsupported)));
+    assert_eq!((ledger.forward, ledger.reverse), snapshot);
+    ledger.pair(a2, b2).unwrap();
+    ledger.pair(a0, b0).unwrap();
     // Independent helper contract: both arguments below have earned occupied
     // admission. The public qualifier refuses this different height earlier in
     // dense binding; these checks specifically verify its second proof layer.
