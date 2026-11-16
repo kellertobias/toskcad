@@ -450,7 +450,8 @@ pub(in crate::drawing) fn project(
         let mut kept = vec![false; pieces.len()];
         let mut index: HashMap<[i64; 2], Vec<usize>> = HashMap::new();
         let key = |p: P2| p.map(|v| (v / (16. * eps)).floor() as i64);
-        // Pieces are found by their lexicographically first end.
+        // Pieces are found by their lexicographically first end among the
+        // cells of both ends of every kept piece.
         let first = |piece: &Piece| {
             let [a, b] = piece.ends;
             if (a[0], a[1]) <= (b[0], b[1]) { a } else { b }
@@ -490,7 +491,14 @@ pub(in crate::drawing) fn project(
                 });
             if !duplicate {
                 kept[i] = true;
-                index.entry([x, y]).or_default().push(i);
+                // Indexed under both ends: two coincident pieces may pick
+                // different first ends when their ends nearly tie in `x`.
+                let cells = piece.ends.map(key);
+                for (n, cell) in cells.into_iter().enumerate() {
+                    if n == 0 || cell != cells[0] {
+                        index.entry(cell).or_default().push(i);
+                    }
+                }
             }
         }
         // Adjacent pieces of one path with the same role publish together.
