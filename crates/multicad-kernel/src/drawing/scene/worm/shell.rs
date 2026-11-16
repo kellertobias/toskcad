@@ -50,6 +50,13 @@ pub(super) trait Shell: Send + Sync {
     /// Radius, start angle and sweep when the patch section at height `z` is
     /// a circular arc about the axis traversed uniformly in `u`.
     fn arc(&self, patch: usize, z: f64) -> Option<[f64; 3]>;
+    /// Radius, angle at height zero and angle per unit height when the
+    /// junction `u = 0` of the patch is a helix of constant radius about the
+    /// axis, with its angle affine in the height.
+    fn rail(&self, _patch: usize) -> Option<[f64; 3]> {
+        None
+    }
+
     /// The section boundary radius `R(θ, z)`.
     fn radius(&self, theta: f64, z: f64) -> f64;
     /// Radii below which every section is material down to the bore, and
@@ -186,6 +193,17 @@ impl Shell for Screw {
                 (s0 - s1) / self.rate,
             ]
         })
+    }
+
+    /// At `u = 0` the phase is the rail phase: constant radius, and the
+    /// angle of `eval` is affine in the height.
+    fn rail(&self, patch: usize) -> Option<[f64; 3]> {
+        let s0 = self.phases[patch];
+        Some([
+            self.radii[patch],
+            (self.half - s0) / self.rate + self.turn,
+            1. / self.rate,
+        ])
     }
 
     fn radius(&self, theta: f64, z: f64) -> f64 {

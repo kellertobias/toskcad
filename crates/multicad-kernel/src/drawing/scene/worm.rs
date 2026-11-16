@@ -435,8 +435,24 @@ impl Path for Iso {
         refine(&|t| self.point(t), &uniform(self.cells), tolerance_mm)
     }
 
-    fn paper(&self, _: [f64; 2]) -> Option<Curve> {
-        None
+    /// A helical junction seen along the axis is an arc of its circle, as
+    /// every turn of it is: coincident turns are then compared as arcs of
+    /// one conic instead of crossing each other's chords.
+    fn paper(&self, [from, to]: [f64; 2]) -> Option<Curve> {
+        let inner = &self.inner;
+        if self.level || self.fixed != 0. || inner.toward[0].hypot(inner.toward[1]) > 1e-12 {
+            return None;
+        }
+        let [radius, start, rate] = inner.shell.rail(self.patch)?;
+        let height = |t: f64| self.range[0] + (self.range[1] - self.range[0]) * t;
+        let flat = |p: P3| [p[0], p[1]];
+        conic(
+            flat(inner.origin),
+            flat(scaled(inner.axes[0], radius)),
+            flat(scaled(inner.axes[1], radius)),
+            start + rate * height(from),
+            rate * (height(to) - height(from)),
+        )
     }
 }
 

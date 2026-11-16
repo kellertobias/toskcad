@@ -1077,6 +1077,122 @@ fn line_intervals_are_the_membership_predicate_on_arbitrary_lines() {
     }
 }
 
+/// Largest distance from the preview points of `edges` in `role` to the
+/// nearest preview chord of `reference` in `roles`.
+fn reach(
+    edges: &[ProjectedVector],
+    role: VectorRole,
+    reference: &[ProjectedVector],
+    roles: &[VectorRole],
+) -> f64 {
+    let chords: Vec<[P2; 2]> = reference
+        .iter()
+        .filter(|edge| roles.contains(&edge.role))
+        .flat_map(|edge| edge.preview_mm.windows(2).map(|w| [w[0], w[1]]))
+        .collect();
+    edges
+        .iter()
+        .filter(|edge| edge.role == role)
+        .flat_map(|edge| edge.preview_mm.iter())
+        .map(|&p| {
+            chords
+                .iter()
+                .map(|&[a, b]| {
+                    let d = [b[0] - a[0], b[1] - a[1]];
+                    let w = [p[0] - a[0], p[1] - a[1]];
+                    let t = ((w[0] * d[0] + w[1] * d[1]) / (d[0] * d[0] + d[1] * d[1]).max(1e-300))
+                        .clamp(0., 1.);
+                    (w[0] - t * d[0]).hypot(w[1] - t * d[1])
+                })
+                .fold(f64::INFINITY, f64::min)
+        })
+        .fold(0., f64::max)
+}
+
+fn drawn_length(edges: &[ProjectedVector], role: VectorRole) -> f64 {
+    edges
+        .iter()
+        .filter(|edge| edge.role == role)
+        .flat_map(|edge| edge.preview_mm.windows(2))
+        .map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]))
+        .sum()
+}
+
+/// Seen along the axis every helical rail of the thread is an arc of its
+/// circle, turn after turn. The scene engine then compares the coincident
+/// turns as arcs of one conic, and draws the worm as the closed-form axial
+/// path does: the same curves in both roles, each published once.
+#[test]
+fn axial_worm_rails_are_arcs_and_the_scene_matches_the_axial_law() {
+    for (name, solid) in solids().into_iter().take(2) {
+        for (label, frame) in views().into_iter().take(2) {
+            let body = built(&solid, frame);
+            let mut rails = 0;
+            for candidate in body.candidates(0.0005).unwrap() {
+                let Some(Curve::Ellipse(arc)) = candidate.path.paper([0., 1.]) else {
+                    continue;
+                };
+                // Every chord stop of the exact path lies on the paper
+                // circle, and the arc ends are the path's ends.
+                for t in candidate.path.flatten(0.0005) {
+                    let p = candidate.path.point(t);
+                    let r = (p[0] - arc.center[0]).hypot(p[1] - arc.center[1]);
+                    assert!((r - arc.major).abs() < 1e-9, "{name} {label} {r}");
+                }
+                let ends = [0., 1.].map(|t| {
+                    let p = candidate.path.point(t);
+                    [p[0], p[1]]
+                });
+                let trim = arc.trim.map(|angle| arc.point(angle));
+                let apart = |a: P2, b: P2| (a[0] - b[0]).hypot(a[1] - b[1]);
+                assert!(
+                    (apart(ends[0], trim[0]) < 1e-9 && apart(ends[1], trim[1]) < 1e-9)
+                        || (apart(ends[0], trim[1]) < 1e-9 && apart(ends[1], trim[0]) < 1e-9),
+                    "{name} {label} {ends:?} {trim:?}"
+                );
+                rails += 1;
+            }
+            // Two rails at each of the root and crest radii in half turns,
+            // with the arcs of both end planes.
+            assert!(rails > 50, "{name} {label} {rails}");
+            let options = crate::DrawingProjection {
+                frame,
+                hidden_lines: true,
+                chord_tolerance_mm: 0.002,
+                ..Default::default()
+            };
+            let input = [crate::DrawingSolid {
+                solid: &solid,
+                hatch: None,
+            }];
+            let axial = crate::project_drawing(&input, options).unwrap();
+            let start = std::time::Instant::now();
+            let scene = super::super::project_solids(&input, options)
+                .unwrap()
+                .unwrap();
+            let elapsed = start.elapsed();
+            println!(
+                "{{\"case\":\"axial {name} {label} through the scene\",\"vectors\":{},\"axial_vectors\":{},\"ms\":{}}}",
+                scene.len(),
+                axial.len(),
+                elapsed.as_millis()
+            );
+            assert!(scene.len() < 2 * axial.len(), "{name} {label}");
+            for role in [VectorRole::Visible, VectorRole::Hidden] {
+                let forward = reach(&scene, role, &axial, &[role]);
+                let backward = reach(&axial, role, &scene, &[role]);
+                assert!(
+                    forward < 0.004 && backward < 0.004,
+                    "{name} {label} {role:?} {forward} {backward}"
+                );
+                // Coincident turns publish once.
+                let [a, b] = [&scene, &axial].map(|edges| drawn_length(edges, role));
+                assert!((a - b).abs() < 1e-3 * b, "{name} {label} {role:?} {a} {b}");
+            }
+        }
+    }
+}
+
 /// An axial line on the waist of a throated root touches the boundary at
 /// the mid plane from inside the material: the line is material on both
 /// sides of that contact, wherever the contact falls in its interval.
