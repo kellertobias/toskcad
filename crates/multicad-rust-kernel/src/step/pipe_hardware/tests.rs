@@ -471,6 +471,37 @@ fn actual_file_qualification_exact_frontiers_cancel_and_same_source_retry() {
     let receipt = baseline.receipt();
     let original_records = receipt.matched_original_records;
     drop(baseline);
+    assert!(matches!(
+        propose(
+            &source,
+            Options {
+                maximum_work: receipt.proposal_work_used - 1,
+                additional_resident_bytes: actual.capacity(),
+                ..Default::default()
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    let exact_proposal = propose(
+        &source,
+        Options {
+            maximum_work: receipt.proposal_work_used,
+            additional_resident_bytes: actual.capacity(),
+            ..Default::default()
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        exact_proposal.receipt().work_used,
+        receipt.proposal_work_used
+    );
+    assert!(
+        exact_proposal.as_str() == actual,
+        "late writer refusal must leave a deterministic same-source retry"
+    );
+    drop(exact_proposal);
     // Independently count the two genuine public phases to target cancellation
     // inside the subsequent dense record binder, without an injected error or
     // test-only bypass in production. Residency changes do not change visits.

@@ -255,6 +255,20 @@ fn physical_malformed_geometry_and_unsupported_curve_families_cannot_earn_materi
             &format!("({repeated})"),
             GeometryError::Limit,
         );
+        let record_end = record_range(referenced_point, &actual).end;
+        add(
+            "physical syntax truncation crosses referenced point record",
+            record_end - 1..record_end,
+            "",
+            GeometryError::Invalid,
+        );
+        let insert = actual.rfind("ENDSEC;").unwrap();
+        add(
+            "typed auxiliary subULP numeric alias",
+            insert..insert,
+            "#999999=CARTESIAN_POINT('',(LENGTH_MEASURE(1.0000000000000000000001),0.,0.));\n",
+            GeometryError::Unsupported,
+        );
         out
     }; // The genuine original neutral arena and all range scaffolding die here.
     let resident = actual.capacity()
