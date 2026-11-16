@@ -2,6 +2,8 @@
 //! original-cell C0/C1 transfer bounds. No material, mass or export admission.
 use super::*;
 use crate::tapered_thread::RetainedTensor11;
+mod occupied;
+pub use occupied::{Degree11OccupiedOptions, OccupiedDegree11Thread};
 /// A separately bounded transfer stage after the head has already qualified.
 /// `maximum_work` bounds NEW work only; inherited head work is reported
 /// separately. This does not change DerivedThreadOptions' whole-request budget.

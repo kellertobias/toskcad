@@ -24,7 +24,10 @@ pub use analytic::{
     PeriodicThreadBounds, PeriodicThreadCorrespondence, PeriodicThreadRepair, PeriodicThreadSource,
     PeriodicVolumeOptions,
 };
-pub use degree11::{CoherentDegree11ThreadCarrier, Degree11ThreadFace, Degree11ThreadOptions};
+pub use degree11::{
+    CoherentDegree11ThreadCarrier, Degree11OccupiedOptions, Degree11ThreadFace,
+    Degree11ThreadOptions, OccupiedDegree11Thread,
+};
 pub use join::{
     ContactThreadCarrier, Degree11ContactOptions, Degree11DomainEnd, Degree11RimContact,
     Degree11RimContactId, Degree11RimKnot, Degree11SignDomain, Degree11ThreadContacts,
