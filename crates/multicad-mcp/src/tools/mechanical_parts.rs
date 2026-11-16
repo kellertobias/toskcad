@@ -1035,7 +1035,7 @@ pub(super) fn mechanical_part_profiles(_: &dyn Host, call: &Request, _: NoArgs) 
             "drive_forms": ["hex_socket", "external_hex", "hexalobular", "phillips_h"],
             "active_geometry_support": {
                 "head_drive_pairs": [["socket_cap", "hex_socket"], ["external_hex", "external_hex"], ["countersunk", "hex_socket"], ["button", "hex_socket"], ["socket_cap", "hexalobular"], ["pan", "hexalobular"], ["button", "hexalobular"], ["countersunk", "hexalobular"], ["pan", "phillips_h"], ["countersunk", "phillips_h"]],
-                "phillips_h": {"representation":"modeled", "manufacturing_mesh":true, "step":true, "step_fits":["nominal_basic"], "step_scope":"Nominal periodic threads with independently decoded repaired material and whole source correspondence. Fitted rounded-root threads remain unsupported for STEP."},
+                "phillips_h": {"representation":"modeled", "manufacturing_mesh":true, "step":true, "step_fits":["nominal_basic"], "step_scope":"Nominal Pan/Countersunk Phillips with a supported retained periodic source and a recess contained in the qualified head/plain-shank domain before the visible threaded interval. Closed material, independent decoded mass and whole-source position/derivative correspondence must qualify. Fitted rounded-root threads and recesses entering visible threaded material remain unqualified for STEP."},
                 "thread_families": ["iso_metric", "custom"],
                 "metric_fits": ["nominal_basic", "metric_6g_external"],
                 "hex_nut_metric_fits": ["nominal_basic", "metric_6h_internal"],
