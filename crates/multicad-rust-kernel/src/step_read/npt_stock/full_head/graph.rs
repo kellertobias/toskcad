@@ -1,3 +1,4 @@
+mod metadata;
 use super::super::records::{boolean, kind, list, point, reference};
 use super::*;
 use crate::step::pipe_hardware::numbers as exact;
@@ -173,6 +174,7 @@ fn consume(records: &BTreeMap<u32, Vec<Entity<'_>>>, b: &mut Budget<'_>) -> Resu
     let mut seen = BTreeSet::new();
     let mut roots = 0;
     for (&id, parts) in records {
+        metadata::check(records, parts, b)?;
         for e in parts {
             b.step(512 + 4 * e.name.len())?;
             if e.name.contains("TRANSFORM") || e.name.contains("MAPPED") {

@@ -367,3 +367,192 @@ fn actual_full_clipped_file_rejects_detached_topology_foreign_packet_and_unit_ch
         Err(Error::Invalid)
     ));
 }
+
+#[test]
+fn actual_full_clipped_file_refuses_geometry_smuggled_through_product_metadata() {
+    use super::super::records::reference;
+    let input = candidate(false);
+    let doc = CompoundDocument::parse(&input, DocumentOptions::default(), None).unwrap();
+    let records = doc.records();
+    let (&product_id, product) = records
+        .iter()
+        .find_map(|(id, e)| matches!(e.as_slice(),[e] if e.name=="PRODUCT").then_some((id, &e[0])))
+        .unwrap();
+    let Value::List(contexts) = &product.args[3] else {
+        panic!()
+    };
+    let context = reference(&contexts[0]).unwrap();
+    let face = records
+        .values()
+        .find_map(|e| {
+            matches!(e.as_slice(),[e] if e.name=="ADVANCED_FACE").then_some(e[0].source.unwrap())
+        })
+        .unwrap();
+    let fresh = records.keys().next_back().unwrap() + 1;
+    let mut extra = input.clone();
+    let at = extra.rfind("ENDSEC;").unwrap();
+    extra.insert_str(at, &format!("#{fresh}={face};\n"));
+    let context_body = product.source.unwrap().replacen(
+        &format!("(#{context})"),
+        &format!("(#{context},#{fresh})"),
+        1,
+    );
+    assert!(matches!(&product.args[2], Value::String("")));
+    let description_body = product
+        .source
+        .unwrap()
+        .replacen("'',(", &format!("#{fresh},("), 1);
+    let mut cases = vec![
+        ("product_context", change(&extra, product_id, &context_body)),
+        (
+            "product_description",
+            change(&extra, product_id, &description_body),
+        ),
+    ];
+    let (&context_id, parts) = records
+        .iter()
+        .find(|(_, parts)| {
+            parts
+                .iter()
+                .any(|e| e.name == "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT")
+        })
+        .unwrap();
+    let original = parts.iter().map(|e| e.source.unwrap()).collect::<String>();
+    cases.push((
+        "extra_context_component",
+        change(
+            &extra,
+            context_id,
+            &format!("({original}EXTRA_OWNER(#{fresh}))"),
+        ),
+    ));
+    let mut changed = String::new();
+    for e in parts {
+        if e.name == "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT" {
+            let [Value::List(values)] = e.args.as_slice() else {
+                panic!()
+            };
+            let uncertainty = reference(&values[0]).unwrap();
+            changed.push_str(&e.source.unwrap().replacen(
+                &format!("(#{uncertainty})"),
+                &format!("(#{uncertainty},#{fresh})"),
+                1,
+            ));
+        } else {
+            changed.push_str(e.source.unwrap());
+        }
+    }
+    cases.push((
+        "uncertainty_geometry_ref",
+        change(&extra, context_id, &format!("({changed})")),
+    ));
+    let (&param_id, parts) = records
+        .iter()
+        .find(|(_, parts)| {
+            parts
+                .iter()
+                .any(|e| e.name == "PARAMETRIC_REPRESENTATION_CONTEXT")
+        })
+        .unwrap();
+    let parametric = parts
+        .iter()
+        .map(|e| {
+            if e.name == "REPRESENTATION_CONTEXT" {
+                format!("REPRESENTATION_CONTEXT('2D SPACE','',#{fresh})")
+            } else {
+                e.source.unwrap().to_owned()
+            }
+        })
+        .collect::<String>();
+    cases.push((
+        "parametric_context_geometry_ref",
+        change(&extra, param_id, &format!("({parametric})")),
+    ));
+    let parametric_args = parts
+        .iter()
+        .map(|e| {
+            if e.name == "PARAMETRIC_REPRESENTATION_CONTEXT" {
+                format!("PARAMETRIC_REPRESENTATION_CONTEXT(#{fresh})")
+            } else {
+                e.source.unwrap().to_owned()
+            }
+        })
+        .collect::<String>();
+    cases.push((
+        "parametric_owner_geometry_ref",
+        change(&extra, param_id, &format!("({parametric_args})")),
+    ));
+    let mut admitted = Vec::new();
+    for (name, altered) in cases {
+        // This is an actual literal file with a real unrepresented face; the
+        // ordinary document reader is intentionally not a metadata-schema gate.
+        CompoundDocument::parse(&altered, DocumentOptions::default(), None).unwrap();
+        let accepted = occupied(&altered, Default::default(), None).is_ok();
+        eprintln!("METADATA_SMUGGLE field={name} admitted={accepted}");
+        admitted.push(accepted);
+    }
+    assert!(admitted.iter().all(|accepted| !*accepted));
+    assert!(occupied(&input, Default::default(), None).is_ok());
+}
+
+#[test]
+fn actual_full_clipped_file_requires_one_mathematically_identity_representation_axis() {
+    use super::super::records::reference;
+    let input = candidate(false);
+    let doc = CompoundDocument::parse(&input, DocumentOptions::default(), None).unwrap();
+    let records = doc.records();
+    let (&rep_id, rep) = records
+        .iter()
+        .find_map(|(id, e)| {
+            matches!(e.as_slice(),[e] if e.name=="ADVANCED_BREP_SHAPE_REPRESENTATION")
+                .then_some((id, &e[0]))
+        })
+        .unwrap();
+    let Value::List(items) = &rep.args[1] else {
+        panic!()
+    };
+    let axis_id = items
+        .iter()
+        .map(|v| reference(v).unwrap())
+        .find(|id| records[id][0].name == "AXIS2_PLACEMENT_3D")
+        .unwrap();
+    let axis = &records[&axis_id][0];
+    let origin = reference(&axis.args[1]).unwrap();
+    for x in ["1.", "1.E-999"] {
+        let changed = change(&input, origin, &format!("CARTESIAN_POINT('',({x},0.,0.))"));
+        CompoundDocument::parse(&changed, DocumentOptions::default(), None).unwrap();
+        assert!(matches!(
+            occupied(&changed, Default::default(), None),
+            Err(Error::Unsupported)
+        ));
+    }
+    let fresh = records.keys().next_back().unwrap() + 1;
+    let mut extra = input.clone();
+    let at = extra.rfind("ENDSEC;").unwrap();
+    extra.insert_str(at, &format!("#{fresh}={};\n", axis.source.unwrap()));
+    let solid = doc.represented_members()[0].item_entity();
+    let context = reference(&rep.args[2]).unwrap();
+    let extra = change(
+        &extra,
+        rep_id,
+        &format!(
+            "ADVANCED_BREP_SHAPE_REPRESENTATION('',(#{axis_id},#{solid},#{fresh}),#{context})"
+        ),
+    );
+    CompoundDocument::parse(&extra, DocumentOptions::default(), None).unwrap();
+    assert!(matches!(
+        occupied(&extra, Default::default(), None),
+        Err(Error::Unsupported)
+    ));
+    // Positive scaling and a reference's Z component normalize to the SAME
+    // mathematical identity frame. Original finite/nondegenerate checks stay.
+    let n = reference(&axis.args[2]).unwrap();
+    let r = reference(&axis.args[3]).unwrap();
+    let scaled = change(
+        &change(&input, n, "DIRECTION('',(0.,0.,2.))"),
+        r,
+        "DIRECTION('',(3.,0.,7.))",
+    );
+    assert!(occupied(&scaled, Default::default(), None).is_ok());
+    assert!(occupied(&input, Default::default(), None).is_ok());
+}
