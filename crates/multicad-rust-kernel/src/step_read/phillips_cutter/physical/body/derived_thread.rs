@@ -26,8 +26,9 @@ pub use analytic::{
 };
 pub use degree11::{
     CoherentDegree11ThreadCarrier, Degree11ClosedMaterial, Degree11JoinCollar,
-    Degree11MaterialFace, Degree11MaterialOptions, Degree11OccupiedOptions, Degree11RimUse,
-    Degree11ThreadFace, Degree11ThreadOptions, OccupiedDegree11Thread,
+    Degree11MaterialFace, Degree11MaterialOptions, Degree11MaterialVolume,
+    Degree11MaterialVolumeOptions, Degree11OccupiedOptions, Degree11RimUse, Degree11ThreadFace,
+    Degree11ThreadOptions, OccupiedDegree11Thread,
 };
 pub use join::{
     ContactThreadCarrier, Degree11ContactOptions, Degree11DomainEnd, Degree11RimContact,

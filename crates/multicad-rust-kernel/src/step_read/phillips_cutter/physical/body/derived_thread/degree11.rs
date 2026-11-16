@@ -7,7 +7,7 @@ pub use occupied::{Degree11OccupiedOptions, OccupiedDegree11Thread};
 mod material;
 pub use material::{
     Degree11ClosedMaterial, Degree11JoinCollar, Degree11MaterialFace, Degree11MaterialOptions,
-    Degree11RimUse,
+    Degree11MaterialVolume, Degree11MaterialVolumeOptions, Degree11RimUse,
 };
 /// A separately bounded transfer stage after the head has already qualified.
 /// `maximum_work` bounds NEW work only; inherited head work is reported

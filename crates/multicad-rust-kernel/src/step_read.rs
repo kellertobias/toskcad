@@ -1103,6 +1103,8 @@ pub use phillips_cutter::{
     Degree11JoinCollar as PhillipsDegree11JoinCollar,
     Degree11MaterialFace as PhillipsDegree11MaterialFace,
     Degree11MaterialOptions as PhillipsDegree11MaterialOptions,
+    Degree11MaterialVolume as PhillipsDegree11MaterialVolume,
+    Degree11MaterialVolumeOptions as PhillipsDegree11MaterialVolumeOptions,
     Degree11OccupiedOptions as PhillipsDegree11OccupiedOptions,
     Degree11RimContact as PhillipsDegree11RimContact,
     Degree11RimContactId as PhillipsDegree11RimContactId,
