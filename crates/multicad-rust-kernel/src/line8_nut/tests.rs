@@ -673,3 +673,80 @@ fn finite_owner_queries_enforce_ranges_budgets_and_late_cancel_without_publicati
     assert_eq!(a.position_mm(), b.position_mm());
     assert_eq!(a.work_used(), b.work_used());
 }
+
+#[test]
+fn actual_candidate_resource_frontiers_and_late_cancel_preserve_same_source_retry() {
+    use std::cell::Cell;
+    let source = nut();
+    let quality = crate::display::Tessellation {
+        deflection: 0.02,
+        angle: 0.2,
+        triangle_limit: 200_000,
+    };
+    let calls = Cell::new(0usize);
+    let reference = source
+        .mesh_candidate(
+            quality,
+            64_000_000,
+            Some(&|| {
+                calls.set(calls.get() + 1);
+                false
+            }),
+        )
+        .unwrap();
+    let total = calls.get();
+    assert!(total > 10);
+    for stop in [2, total / 2, total] {
+        calls.set(0);
+        assert_eq!(
+            source
+                .mesh_candidate(
+                    quality,
+                    64_000_000,
+                    Some(&|| {
+                        calls.set(calls.get() + 1);
+                        calls.get() >= stop
+                    }),
+                )
+                .err(),
+            Some(Error::Cancelled),
+            "cancel checkpoint {stop}/{total}",
+        );
+        assert_eq!(calls.get(), stop);
+    }
+    for maximum in [0, reference.work_used() - 1, 64_000_001] {
+        assert_eq!(
+            source.mesh_candidate(quality, maximum, None).err(),
+            Some(Error::Limit),
+        );
+    }
+    for invalid in [
+        crate::display::Tessellation {
+            deflection: f64::NAN,
+            ..quality
+        },
+        crate::display::Tessellation {
+            angle: 0.,
+            ..quality
+        },
+        crate::display::Tessellation {
+            triangle_limit: 0,
+            ..quality
+        },
+    ] {
+        assert_eq!(
+            source.mesh_candidate(invalid, 64_000_000, None).err(),
+            Some(Error::Invalid)
+        );
+    }
+    let retry = source
+        .mesh_candidate(quality, reference.work_used(), None)
+        .unwrap();
+    assert_eq!(retry.work_used(), reference.work_used());
+    assert_eq!(retry.retained_bytes(), reference.retained_bytes());
+    assert_eq!(retry.connectivity(), reference.connectivity());
+    assert_eq!(retry.mesh().vertices, reference.mesh().vertices);
+    assert_eq!(retry.mesh().indices, reference.mesh().indices);
+    assert_eq!(retry.mesh().face_indices, reference.mesh().face_indices);
+    assert_eq!(source.thread(), reference.source().thread());
+}
