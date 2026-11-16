@@ -7,7 +7,8 @@ use multicad_core::references::{
     TopologySnapshot,
 };
 use multicad_rust_kernel::{
-    phillips_drive::FaceKey, step_read::PhillipsMaterialFaceSource as FaceSource,
+    phillips_drive::{FaceKey, Inner, WallKind},
+    step_read::PhillipsMaterialFaceSource as FaceSource,
 };
 use std::collections::BTreeSet;
 
@@ -96,6 +97,34 @@ fn face_name(source: &OwnedPeriodicMaterial, face: FaceSource) -> String {
         FaceSource::TopAnnulus => "screw.head/top.land".into(),
         FaceSource::ReversedCavity { face } => format!("screw.drive/phillips/face/{face:?}"),
     }
+}
+// A retained inner wall is the physical C-C curve swept through its corner.
+// Cutter's validated Inner law defines its tilted cylinder (Rounded) or the
+// signed pair of planes (ShallowV); envelopes, outer walls and head faces do
+// not inherit this construction. Multiple true patches may share ancestry.
+fn inner_curve_ancestry(source: &OwnedPeriodicMaterial, face: FaceSource) -> Option<String> {
+    let FaceSource::ReversedCavity {
+        face:
+            FaceKey::Wall {
+                kind: WallKind::Inner,
+                quarter,
+                lower,
+            },
+    } = face
+    else {
+        return None;
+    };
+    let curve = match source.cavity().spec().inner {
+        Inner::Rounded { .. } => "inner.round",
+        Inner::ShallowV { .. } => {
+            if lower {
+                "inner.lower"
+            } else {
+                "inner.upper"
+            }
+        }
+    };
+    Some(format!("screw.phillips.corner.{quarter}/{curve}"))
 }
 impl RepairedPhillipsBody {
     pub(crate) fn periodic_topology(
@@ -263,6 +292,20 @@ impl RepairedPhillipsBody {
                 adjacent,
                 &v,
             );
+        }
+        // Add semantic construction ancestry after the finite graph has used
+        // each adjacent face's unchanged primary source identity. This keeps
+        // exact edge/face incidence while retaining both physical meanings.
+        for index in 0..source.face_count() {
+            if let Some(role) = inner_curve_ancestry(
+                source,
+                source
+                    .face_source(index)
+                    .expect("same immutable face inventory"),
+            ) {
+                let origin = graph.origin(role);
+                graph.elements[index].origins.insert(origin);
+            }
         }
         let snapshot = TopologySnapshot {
             owner,

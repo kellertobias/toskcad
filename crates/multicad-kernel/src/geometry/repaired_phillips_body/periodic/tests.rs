@@ -413,6 +413,28 @@ fn actual_periodic_source_topology_retains_two_sided_finite_incidence() {
             .filter(|e| e.key.kind == TopologyKind::Face)
             .collect();
         assert_eq!(faces.len(), source.face_count());
+        for face in &faces {
+            use multicad_rust_kernel::{
+                phillips_drive::{FaceKey, WallKind},
+                step_read::PhillipsMaterialFaceSource,
+            };
+            let owns_inner_curve = matches!(
+                source.face_source(face.key.ordinal as usize),
+                Some(PhillipsMaterialFaceSource::ReversedCavity {
+                    face: FaceKey::Wall {
+                        kind: WallKind::Inner,
+                        ..
+                    }
+                })
+            );
+            assert_eq!(
+                face.origins
+                    .iter()
+                    .any(|o| o.role.starts_with("screw.phillips.corner.")),
+                owns_inner_curve,
+                "Only the actual retained inner wall owns physical C-C ancestry"
+            );
+        }
         let edges: Vec<_> = snapshot
             .elements
             .iter()
