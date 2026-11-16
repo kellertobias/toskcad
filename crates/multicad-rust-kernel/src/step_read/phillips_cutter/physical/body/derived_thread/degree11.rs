@@ -7,6 +7,7 @@ pub use occupied::{Degree11OccupiedOptions, OccupiedDegree11Thread};
 mod material;
 pub use material::{
     Degree11ClosedMaterial, Degree11JoinCollar, Degree11MaterialFace, Degree11MaterialOptions,
+    Degree11MaterialQuery, Degree11MaterialQueryError, Degree11MaterialQueryOptions,
     Degree11MaterialVolume, Degree11MaterialVolumeOptions, Degree11OwnedMaterialOptions,
     Degree11RimUse, OwnedDegree11Material, SuppliedDegree11MaterialMatch,
     SuppliedDegree11MaterialOptions,

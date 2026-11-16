@@ -307,4 +307,7 @@ fn allocate_component_width(
 }
 
 mod owned;
-pub use owned::{Degree11OwnedMaterialOptions, OwnedDegree11Material};
+pub use owned::{
+    Degree11MaterialQuery, Degree11MaterialQueryError, Degree11MaterialQueryOptions,
+    Degree11OwnedMaterialOptions, OwnedDegree11Material,
+};

@@ -300,3 +300,6 @@ fn publish(
 }
 #[cfg(test)]
 mod tests;
+
+mod query;
+pub use query::{Degree11MaterialQuery, Degree11MaterialQueryError, Degree11MaterialQueryOptions};

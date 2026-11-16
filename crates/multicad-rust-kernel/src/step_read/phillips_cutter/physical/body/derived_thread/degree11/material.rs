@@ -566,6 +566,7 @@ mod tests;
 
 mod volume;
 pub use volume::{
+    Degree11MaterialQuery, Degree11MaterialQueryError, Degree11MaterialQueryOptions,
     Degree11MaterialVolume, Degree11MaterialVolumeOptions, Degree11OwnedMaterialOptions,
     OwnedDegree11Material, SuppliedDegree11MaterialMatch, SuppliedDegree11MaterialOptions,
 };
