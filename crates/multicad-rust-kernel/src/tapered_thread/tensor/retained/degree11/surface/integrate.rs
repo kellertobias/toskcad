@@ -127,6 +127,9 @@ pub(super) fn calculate(
             }
         }
         if let Some(mut result) = output(total, center, options) {
+            // Cancellation remains observable after the final reduction and
+            // acceptance check, before publishing any successful receipt.
+            budget.charge(1)?;
             result.work_used = options.max_work - budget.remaining;
             result.remaining_work = budget.remaining;
             result.accounted_peak_bytes = budget.peak;
