@@ -363,3 +363,133 @@ fn actual_canonical_rc_eighth_nut_keeps_strict_model_manufacturing_work_ceiling(
 fn actual_canonical_rc_eighth_nut_arbitrary_pose_keeps_strict_model_work_ceiling() {
     canonical_rc_eighth_nut(true);
 }
+
+#[test]
+fn actual_curved_face_descriptors_are_lazy_exact_and_shared_across_stock_edits() {
+    let spec = spec(true, false, false);
+    let owner = EntityId::new();
+    let policy = GeometryPolicy::default();
+    let mut factory = PipeThreadFactory::new(32 * 1024 * 1024, 16);
+    factory.begin_compile();
+    let started = std::time::Instant::now();
+    let shape = factory
+        .build(
+            spec,
+            PipeHardwareKind::HexNut {
+                across_flats_mm: 18.,
+            },
+            1.,
+            owner,
+            frame(false),
+            policy,
+            None,
+        )
+        .unwrap();
+    eprintln!(
+        "LAZY_BSPT_COLD_NATIVE ms={:.6}",
+        started.elapsed().as_secs_f64() * 1000.
+    );
+    factory.finish_compile(true);
+    let body = shape.pipe_hardware_body().unwrap();
+    let prepared = &body.source._prepared;
+    assert_eq!(prepared.descriptor_queries.get(), 0);
+    assert!(prepared.lazy_measured.borrow().is_none());
+    assert!(shape.volume_mm3().unwrap() > 0.);
+    shape.bounds().unwrap();
+    shape.topology_snapshot(owner, 0).unwrap();
+    assert_eq!(
+        prepared.descriptor_queries.get(),
+        0,
+        "construction, bounds, volume and topology cannot materialize descriptors"
+    );
+    let deferred = body
+        .source
+        .faces
+        .iter()
+        .find_map(|f| match f.measure {
+            FaceMeasure::Retained(i) => Some(i),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        prepared.measure(deferred, Some(&|| true)).unwrap_err().kind,
+        GeometryErrorKind::Cancelled
+    );
+    assert!(prepared.lazy_measured.borrow().is_none());
+    let (boundary, _) = prepared.thread.rust_radial_boundary().unwrap();
+    let calls = std::cell::Cell::new(0usize);
+    let observe = || {
+        calls.set(calls.get() + 1);
+        false
+    };
+    let independent = boundary
+        .face_properties_with_interrupt(source::MEASURE_ACCURACY, Some(&observe))
+        .unwrap();
+    let stop = calls.get() + 2; // private lazy query checkpoint, full query, publication checkpoint
+    calls.set(0);
+    let cancel = || {
+        calls.set(calls.get() + 1);
+        calls.get() >= stop
+    };
+    assert_eq!(
+        prepared.measure(deferred, Some(&cancel)).unwrap_err().kind,
+        GeometryErrorKind::Cancelled
+    );
+    assert!(
+        prepared.lazy_measured.borrow().is_none(),
+        "cancelled descriptor result cannot publish"
+    );
+    let faces = shape.faces().unwrap();
+    assert_eq!(prepared.descriptor_queries.get(), 2);
+    for (index, local) in body.source.faces.iter().enumerate() {
+        if let FaceMeasure::Retained(old) = local.measure {
+            let expected = independent
+                .iter()
+                .find(|f| f.face_index == old as usize)
+                .unwrap();
+            let (area, center) = prepared.measure(old, None).unwrap();
+            assert_eq!([area.lo, area.hi], expected.area_mm2);
+            assert_eq!(center.map(|v| [v.lo, v.hi]), expected.centroid_mm);
+            assert!(faces[index].area_mm2 > 0.);
+        }
+    }
+    assert_eq!(shape.faces().unwrap(), faces);
+    assert_eq!(prepared.descriptor_queries.get(), 2);
+    factory.begin_compile();
+    let posed = factory
+        .build(
+            spec,
+            PipeHardwareKind::HexNut {
+                across_flats_mm: 20.,
+            },
+            1.,
+            owner,
+            frame(true),
+            policy,
+            None,
+        )
+        .unwrap();
+    factory.finish_compile(true);
+    assert_eq!(factory.stats().hits, 1);
+    let other = &posed.pipe_hardware_body().unwrap().source._prepared;
+    assert!(Rc::ptr_eq(prepared, other));
+    posed.faces().unwrap();
+    assert_eq!(prepared.descriptor_queries.get(), 2);
+    let mut invalid_frame = frame(false);
+    invalid_frame.origin = [policy.maximum_coordinate_mm; 3];
+    assert!(
+        factory
+            .build(
+                spec,
+                PipeHardwareKind::HexNut {
+                    across_flats_mm: 20.
+                },
+                1.,
+                owner,
+                invalid_frame,
+                policy,
+                None
+            )
+            .is_err()
+    );
+}

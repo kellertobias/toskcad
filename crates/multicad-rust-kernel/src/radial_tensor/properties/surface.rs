@@ -18,11 +18,37 @@ impl RadialBoundary {
     ) -> Result<Vec<FaceProperties>, Error> {
         self.face_properties_with_budget(relative_accuracy, interrupt, 512_000_000)
     }
+    /// Measure only the selected actual planar faces. The indices must be
+    /// nonempty, unique and refer to retained planes. Unselected curved
+    /// integrands are not constructed; cap integrals, source sewing collars
+    /// and world centroid/width guards are identical to the full face query.
+    pub fn planar_face_properties_with_interrupt(
+        &self,
+        indices: &[usize],
+        relative_accuracy: f64,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Vec<FaceProperties>, Error> {
+        self.selected_face_properties_with_budget(
+            relative_accuracy,
+            interrupt,
+            512_000_000,
+            Some(indices),
+        )
+    }
     fn face_properties_with_budget(
         &self,
         accuracy: f64,
         interrupt: Option<&dyn Fn() -> bool>,
         limit: usize,
+    ) -> Result<Vec<FaceProperties>, Error> {
+        self.selected_face_properties_with_budget(accuracy, interrupt, limit, None)
+    }
+    fn selected_face_properties_with_budget(
+        &self,
+        accuracy: f64,
+        interrupt: Option<&dyn Fn() -> bool>,
+        limit: usize,
+        selection: Option<&[usize]>,
     ) -> Result<Vec<FaceProperties>, Error> {
         if !accuracy.is_finite() || !(0. ..1.).contains(&accuracy) || accuracy == 0. {
             return Err(Error::Invalid);
@@ -32,7 +58,7 @@ impl RadialBoundary {
             interrupt,
         };
         work.step()?;
-        let sources = faces::build(self, &mut work)?;
+        let sources = faces::selected(self, &mut work, 32768, selection)?;
         let bounds = bounds::prove(self, &sources, &mut work)?;
         let length = I::point(bounds.length);
         let area_target = I::point(accuracy) * length.square();

@@ -74,7 +74,11 @@ pub(super) fn prepare(
         // aggregate summed-area-width contract. Keep the actual intervals.
         // Full inertia is not part of this facade descriptor query.
         let properties = boundary
-            .face_properties_with_interrupt(MEASURE_ACCURACY, interrupt)
+            .planar_face_properties_with_interrupt(
+                &provenance.cap_faces,
+                MEASURE_ACCURACY,
+                interrupt,
+            )
             .map_err(radial_failure)?;
         for face in properties {
             measured.insert(
@@ -102,6 +106,9 @@ pub(super) fn prepare(
         thread,
         topology: local_topology,
         measured,
+        lazy_measured: RefCell::new(None),
+        #[cfg(test)]
+        descriptor_queries: std::cell::Cell::new(0),
         caps,
         volume: thread_volume,
         radius,
@@ -156,9 +163,6 @@ pub(super) fn build(
             continue;
         }
         let index = faces.len() as u32;
-        let (area, center) = *measured
-            .get(&old_index)
-            .expect("every actual finite source face measured");
         let frame = local_topology
             .elements
             .iter()
@@ -167,9 +171,13 @@ pub(super) fn build(
                 Some(AnalyticGeometry::Plane { frame }) => Some(frame),
                 _ => None,
             });
+        let measure = measured
+            .get(&old_index)
+            .map_or(FaceMeasure::Retained(old_index), |&(area, center)| {
+                FaceMeasure::Ready { area, center }
+            });
         faces.push(LocalFace {
-            area,
-            center,
+            measure,
             frame,
             normal: frame.map(|f| f.normal().map(I::point)),
         });
@@ -238,8 +246,10 @@ pub(super) fn build(
         let u = midpoint([dx / length, dy / length, zero]);
         let frame = Some(planar_frame(origin, u, [0., 0., 1.]));
         faces.push(LocalFace {
-            area: length * (upper - lower),
-            center,
+            measure: FaceMeasure::Ready {
+                area: length * (upper - lower),
+                center,
+            },
             frame,
             normal: Some(normal),
         });
@@ -258,8 +268,7 @@ pub(super) fn build(
             z,
         ];
         Ok(LocalFace {
-            area,
-            center,
+            measure: FaceMeasure::Ready { area, center },
             frame: Some(planar_frame(
                 [0., 0., z.lo.midpoint(z.hi)],
                 [1., 0., 0.],
@@ -271,8 +280,10 @@ pub(super) fn build(
     if head.is_some() {
         faces.push(cap_face(caps[1], lower, false)?);
         faces.push(LocalFace {
-            area: hex_area,
-            center: [zero, zero, upper],
+            measure: FaceMeasure::Ready {
+                area: hex_area,
+                center: [zero, zero, upper],
+            },
             frame: Some(planar_frame(
                 [0., 0., upper.lo.midpoint(upper.hi)],
                 [1., 0., 0.],

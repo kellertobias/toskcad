@@ -30,24 +30,73 @@ mod tests;
 mod topology;
 use placement::Placement;
 #[derive(Clone)]
+enum FaceMeasure {
+    Ready { area: I, center: [I; 3] },
+    Retained(u32),
+}
+#[derive(Clone)]
 struct LocalFace {
-    area: I,
-    center: [I; 3],
+    measure: FaceMeasure,
     frame: Option<ReferenceFrame>,
     normal: Option<[I; 3]>,
 }
+type FaceMeasures = BTreeMap<u32, (I, [I; 3])>;
 struct ThreadSource {
     feature: EntityId,
     spec: AuthoredSpec,
     policy: GeometryPolicy,
     thread: Solid,
     topology: TopologySnapshot,
-    measured: BTreeMap<u32, (I, [I; 3])>,
+    measured: FaceMeasures,
+    lazy_measured: RefCell<Option<FaceMeasures>>,
+    #[cfg(test)]
+    descriptor_queries: std::cell::Cell<usize>,
     caps: [u32; 2],
     volume: I,
     radius: I,
 }
 impl ThreadSource {
+    fn measure(
+        &self,
+        index: u32,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<(I, [I; 3]), GeometryError> {
+        checkpoint(interrupt)?;
+        if let Some(value) = self.measured.get(&index) {
+            return Ok(*value);
+        }
+        if self.lazy_measured.borrow().is_none() {
+            let (boundary, pose) = self
+                .thread
+                .rust_radial_boundary()
+                .ok_or_else(|| failure(Cause::Unsupported))?;
+            if pose != PlaneFrame::default() {
+                return Err(failure(Cause::Unsupported));
+            }
+            #[cfg(test)]
+            self.descriptor_queries
+                .set(self.descriptor_queries.get() + 1);
+            let properties = boundary
+                .face_properties_with_interrupt(source::MEASURE_ACCURACY, interrupt)
+                .map_err(radial_failure)?;
+            let measured = properties
+                .into_iter()
+                .map(|face| {
+                    (
+                        face.face_index as u32,
+                        (interval(face.area_mm2), face.centroid_mm.map(interval)),
+                    )
+                })
+                .collect();
+            checkpoint(interrupt)?;
+            *self.lazy_measured.borrow_mut() = Some(measured);
+        }
+        self.lazy_measured
+            .borrow()
+            .as_ref()
+            .and_then(|m| m.get(&index).copied())
+            .ok_or_else(|| failure(Cause::Unsupported))
+    }
     fn retained_bytes(&self) -> usize {
         // Actual complete retained source capacities/unique Arc poles, plus a
         // conservative 1 MiB for <=34 face/112 edge/80 vertex Native descriptors,
@@ -287,12 +336,12 @@ impl PipeHardwareBody {
         {
             return Err(failure(Cause::Unsupported));
         }
+        self.curved_centroid_shift(policy)?;
         let bounds = self.bounds()?;
         policy.point(bounds.min)?;
         policy.point(bounds.max)?;
-        for face in self.faces(policy)? {
-            policy.point(face.center_mm)?;
-        }
+        // Complete physical bounds enclose every source point and therefore
+        // its area centroid. Descriptor integration is deferred until queried.
         Ok(())
     }
     pub(super) fn bounds(&self) -> Result<Bounds, GeometryError> {
@@ -330,7 +379,7 @@ impl PipeHardwareBody {
         }
         Ok(v.lo.midpoint(v.hi))
     }
-    pub(super) fn faces(&self, policy: GeometryPolicy) -> Result<Vec<Face>, GeometryError> {
+    fn curved_centroid_shift(&self, policy: GeometryPolicy) -> Result<I, GeometryError> {
         let span = self
             .source
             .bounds
@@ -340,34 +389,46 @@ impl PipeHardwareBody {
         let scale = self.placement.area_scale();
         let delta = scale / I::point(scale.lo) - I::ONE;
         let shift = I::point(self.placement.sigma[1]) * span * delta / (I::ONE - delta);
+        if self.source.faces.iter().any(|f| f.frame.is_none())
+            && (!shift.valid() || shift.hi > policy.linear_tolerance_mm / 8.)
+        {
+            return Err(failure(Cause::Unresolved));
+        }
+        Ok(shift)
+    }
+    pub(super) fn faces(&self, policy: GeometryPolicy) -> Result<Vec<Face>, GeometryError> {
+        let shift = self.curved_centroid_shift(policy)?;
+        let scale = self.placement.area_scale();
         self.source
             .faces
             .iter()
             .enumerate()
             .map(|(index, f)| {
+                let (local_area, local_center) = match f.measure {
+                    FaceMeasure::Ready { area, center } => (area, center),
+                    FaceMeasure::Retained(old) => self.source._prepared.measure(old, None)?,
+                };
                 let (area, center, plane) = if let Some(frame) = f.frame {
                     let n = f.normal.expect("sealed actual planar source normal");
                     let factor = self.placement.normal_factor(n)?;
                     let normal = self.placement.normal(n)?;
                     let origin = self.placement.point_bounds(frame.origin_mm.map(I::point))?;
                     (
-                        f.area * factor,
-                        self.placement.point_bounds(f.center)?,
+                        local_area * factor,
+                        self.placement.point_bounds(local_center)?,
                         Some((midpoint(origin), midpoint(normal))),
                     )
                 } else {
-                    if !shift.valid() || shift.hi > policy.linear_tolerance_mm / 8. {
-                        return Err(failure(Cause::Unresolved));
-                    }
                     let center = self
                         .placement
-                        .point_bounds(f.center)?
+                        .point_bounds(local_center)?
                         .map(|v| v + I::new(-shift.hi, shift.hi));
-                    (f.area * scale, center, None)
+                    (local_area * scale, center, None)
                 };
                 if !area.valid() || area.lo <= 0. || center.iter().any(|v| !v.valid()) {
                     return Err(failure(Cause::Unresolved));
                 }
+                policy.point(midpoint(center))?;
                 Ok(Face {
                     index: index as u32,
                     plane,

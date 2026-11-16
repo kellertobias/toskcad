@@ -180,3 +180,113 @@ fn face_queries_refuse_invalid_tight_work_and_cancellation_then_retry() {
         expected
     );
 }
+
+#[test]
+fn selected_planar_faces_keep_actual_full_values_pose_and_tolerance() {
+    let body = cam();
+    let posed = body
+        .transformed_with_interrupt(
+            [[20., -10., 30.], [0., 1., 0.], [0., 0., 1.]],
+            1e-7,
+            1e-6,
+            None,
+        )
+        .unwrap();
+    for body in [&body, &posed] {
+        for accuracy in [1e-4, 1e-5] {
+            let original = body.input().clone();
+            let full = body.face_properties_with_interrupt(accuracy, None).unwrap();
+            let selected = body
+                .planar_face_properties_with_interrupt(&[1, 0], accuracy, None)
+                .unwrap();
+            assert_eq!(
+                selected,
+                full.into_iter()
+                    .filter(|f| [0, 1].contains(&f.face_index))
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(body.input(), &original);
+        }
+    }
+    let body = actual_bspt(true);
+    let caps = body.ordered.caps.axial.caps;
+    let full = body.face_properties_with_interrupt(1e-4, None).unwrap();
+    let start = std::time::Instant::now();
+    let selected = body
+        .planar_face_properties_with_interrupt(&caps, 1e-4, None)
+        .unwrap();
+    eprintln!(
+        "BSPT_ACTUAL_CAP_QUERY ms={:.6}",
+        start.elapsed().as_secs_f64() * 1000.
+    );
+    assert_eq!(
+        selected,
+        full.into_iter()
+            .filter(|f| caps.contains(&f.face_index))
+            .collect::<Vec<_>>()
+    );
+}
+#[test]
+fn selected_planar_refuses_invalid_selection_work_width_and_cancel_then_retries() {
+    let body = cam();
+    let original = body.input().clone();
+    let curved = body
+        .input()
+        .faces
+        .iter()
+        .position(|f| !matches!(body.input().surfaces[f.surface], Surface::Plane(_)))
+        .unwrap();
+    for selection in [vec![], vec![0, 0], vec![usize::MAX], vec![curved]] {
+        assert_eq!(
+            body.planar_face_properties_with_interrupt(&selection, 1e-5, None)
+                .err(),
+            Some(Error::Invalid)
+        );
+    }
+    for accuracy in [0., -1., 1., f64::NAN, f64::INFINITY] {
+        assert_eq!(
+            body.planar_face_properties_with_interrupt(&[0, 1], accuracy, None)
+                .err(),
+            Some(Error::Invalid)
+        );
+    }
+    for budget in [0, 1, 1000] {
+        assert_eq!(
+            body.selected_face_properties_with_budget(1e-5, None, budget, Some(&[0, 1]))
+                .err(),
+            Some(Error::Limit)
+        );
+    }
+    assert_eq!(
+        body.planar_face_properties_with_interrupt(&[0, 1], 1e-30, None)
+            .err(),
+        Some(Error::Unresolved)
+    );
+    let count = std::cell::Cell::new(0usize);
+    let observe = || {
+        count.set(count.get() + 1);
+        false
+    };
+    let expected = body
+        .planar_face_properties_with_interrupt(&[0, 1], 1e-5, Some(&observe))
+        .unwrap();
+    let total = count.get();
+    for stop in [1, 2, total / 2, total - 1, total] {
+        count.set(0);
+        let cancel = || {
+            count.set(count.get() + 1);
+            count.get() >= stop
+        };
+        assert_eq!(
+            body.planar_face_properties_with_interrupt(&[0, 1], 1e-5, Some(&cancel))
+                .err(),
+            Some(Error::Cancelled)
+        );
+    }
+    assert_eq!(body.input(), &original);
+    assert_eq!(
+        body.planar_face_properties_with_interrupt(&[0, 1], 1e-5, None)
+            .unwrap(),
+        expected
+    );
+}
