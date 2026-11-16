@@ -22,7 +22,7 @@ fn genuine_physical_metadata_roles_and_arities_cannot_authorize_other_records() 
     let shape = id("PRODUCT_DEFINITION_SHAPE");
     let representation = id("ADVANCED_BREP_SHAPE_REPRESENTATION");
     let solid = id("MANIFOLD_SOLID_BREP");
-    let schema = id("GEOMETRIC_REPRESENTATION_CONTEXT");
+    let schema = reference(&arena[&representation][0].args[2]).unwrap();
     let length_unit = id("LENGTH_UNIT");
     let angle_unit = id("PLANE_ANGLE_UNIT");
     let cases = [
@@ -161,6 +161,33 @@ fn genuine_physical_metadata_roles_and_arities_cannot_authorize_other_records() 
                 "{kind}: {replacement}"
             );
         }
+    }
+    let items = list(&arena[&representation][0].args[1]).unwrap();
+    let axis = items
+        .iter()
+        .map(|v| reference(v).unwrap())
+        .find(|id| arena[id].iter().any(|e| e.name == "AXIS2_PLACEMENT_3D"))
+        .unwrap();
+    let origin = reference(&arena[&axis][0].args[1]).unwrap();
+    for (owner, replacement) in [
+        (axis, "AXIS2_PLACEMENT_3D('')".to_owned()),
+        (
+            axis,
+            format!("AXIS2_PLACEMENT_3D('',#{product},#{product},#{product})"),
+        ),
+        (origin, "CARTESIAN_POINT('',(1.,0.,0.))".to_owned()),
+    ] {
+        let source = arena[&owner][0].source.unwrap();
+        let start = source.as_ptr() as usize - actual.as_ptr() as usize;
+        let mut changed = actual.clone();
+        changed.replace_range(start..start + source.len(), &replacement);
+        let records = crate::step_read::part21::parse(&changed).unwrap();
+        let mut budget =
+            Budget::new(crate::step_read::npt_stock::Options::default(), None).unwrap();
+        assert!(matches!(
+            check(&records, &records[&representation], &mut budget),
+            Err(Error::Invalid | Error::Unsupported)
+        ));
     }
     // Empty component input is a separate helper contract; the physical
     // parser rejects an empty record before it could reach this validator.
