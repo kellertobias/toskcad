@@ -96,13 +96,46 @@ fn grid_delta(
     }
     Ok([I::point(0.); 2])
 }
-fn gradient(a: V2, b: V2, c: V2, dx: I, dy: I, upper: bool) -> f64 {
-    let (x, y) = if upper {
-        (sub2(b, c), sub2(c, a))
-    } else {
-        (sub2(b, a), sub2(c, b))
-    };
-    (I::point(norm2(x.map(|v| v / dx))) + I::point(norm2(y.map(|v| v / dy)))).hi
+fn grid_slope(
+    nodes: [(P, V2); 2],
+    axis: usize,
+    span: I,
+    rings: &[Vec<P>],
+    deltas: &BTreeMap<[u64; 2], V2>,
+    budget: &mut Budget<'_>,
+) -> std::result::Result<V2, Error> {
+    let [(p, dp), (q, dq)] = nodes;
+    let fixed = 1 - axis;
+    for ring in rings {
+        for (a, b) in ring.iter().zip(ring.iter().cycle().skip(1)) {
+            budget.charge(32)?;
+            let within = |v: f64| v >= a[axis].min(b[axis]) && v <= a[axis].max(b[axis]);
+            if a[fixed] == b[fixed]
+                && a[axis] != b[axis]
+                && p[fixed] == a[fixed]
+                && q[fixed] == a[fixed]
+                && within(p[axis])
+                && within(q[axis])
+            {
+                let length = I::point(b[axis]) - I::point(a[axis]);
+                if length.valid() && (length.lo > 0. || length.hi < 0.) {
+                    budget.charge(256)?;
+                    let key = |p: P| p.map(|v| if v == 0. { 0 } else { v.to_bits() });
+                    // Both exact nodal values use these SAME original wire
+                    // endpoints. Their affine interpolation difference divided
+                    // by the grid span is (Db-Da)/(b_axis-a_axis), including
+                    // reversed wire orientation. This cancellation preserves
+                    // shared coefficient dependence without merging grid rows.
+                    return Ok(sub2(deltas[&key(*b)], deltas[&key(*a)]).map(|v| v / length));
+                }
+            }
+        }
+    }
+    // Interior and collar transitions keep the original independent enclosure.
+    Ok(sub2(dq, dp).map(|v| v / span))
+}
+fn gradient(x: V2, y: V2) -> f64 {
+    (I::point(norm2(x)) + I::point(norm2(y))).hi
 }
 pub(super) fn certify(
     view: &View<'_>,
@@ -345,9 +378,21 @@ pub(super) fn certify(
             let b = grid[j * xs.len() + i + 1];
             let c = grid[(j + 1) * xs.len() + i + 1];
             let d = grid[(j + 1) * xs.len() + i];
-            pl_k = pl_k
-                .max(gradient(a, b, c, dx, dy, false))
-                .max(gradient(a, c, d, dx, dy, true));
+            let p = [xs[i], ys[j]];
+            let q = [xs[i + 1], ys[j]];
+            let r = [xs[i + 1], ys[j + 1]];
+            let t = [xs[i], ys[j + 1]];
+            let mut slopes = [[I::point(0.); 2]; 4];
+            for (slope, (nodes, axis, span)) in slopes.iter_mut().zip([
+                ([(p, a), (q, b)], 0, dx),
+                ([(q, b), (r, c)], 1, dy),
+                ([(t, d), (r, c)], 0, dx),
+                ([(p, a), (t, d)], 1, dy),
+            ]) {
+                *slope = grid_slope(nodes, axis, span, &rings, &deltas, budget)?;
+            }
+            let [bottom, right, top, left] = slopes;
+            pl_k = pl_k.max(gradient(bottom, right)).max(gradient(top, left));
         }
     }
     let k = pl_k.max(collar_k);
@@ -504,6 +549,29 @@ mod tests {
                 .unwrap();
             assert!(matched.source_to_healed_position_error_mm() < 1e-7);
             assert!(matched.source_to_healed_normalized_derivative_error_mm() < 1e-7);
+            eprintln!(
+                "four-hole {label}: C0={} D1={} material_work={} source_match_work={}",
+                matched.source_to_healed_position_error_mm(),
+                matched.source_to_healed_normalized_derivative_error_mm(),
+                material.work_used(),
+                matched.work_used()
+            );
+            if label == "arbitrary" {
+                let bores = material.healed_source().bores();
+                assert!(
+                    bores
+                        .iter()
+                        .enumerate()
+                        .any(
+                            |(i, a)| bores.iter().skip(i + 1).any(|b| (0..3).any(|axis| {
+                                let difference =
+                                    (a.centers_mm[0][axis] - b.centers_mm[0][axis]).abs();
+                                difference > 0. && difference < 1e-12
+                            }))
+                        ),
+                    "the distinct near-aligned retained coordinates must survive healing"
+                );
+            }
             assert!(material.healed_volume_bounds_mm3()[0] > 0.);
             let qualified =
                 orthogonal_seats::qualify(&source, pose, Default::default(), &|| false).unwrap();
