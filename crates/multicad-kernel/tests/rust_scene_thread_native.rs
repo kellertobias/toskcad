@@ -620,3 +620,102 @@ fn axial_pipe_threads_match_native_open_cascade() {
         ],
     );
 }
+
+fn iso(length_mm: f64, left_hand: bool) -> HelicalThread {
+    HelicalThread {
+        major_radius_mm: 3.,
+        pitch_mm: 1.,
+        length_mm,
+        depth_mm: 5. * 3_f64.sqrt() / 16.,
+        crest_width_mm: 0.125,
+        lower_flank_deg: 30.,
+        upper_flank_deg: 30.,
+        radial_taper: 0.,
+        starts: 1,
+        left_hand,
+    }
+}
+
+/// A plain helical thread with a rounded root.
+fn plain(left_hand: bool) -> Solid {
+    let root = 1. / (4. * 3_f64.sqrt());
+    Solid::rust_helical_thread(
+        HelicalThread {
+            depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().tan()) - root,
+            ..iso(6.6, left_hand)
+        },
+        Some(root),
+        EntityId::new(),
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+    )
+    .unwrap()
+}
+
+/// A radius-5, 4 mm authored stock cylinder with an internal thread of
+/// `length`: an overrunning tool, or a partial-depth cut with a floor.
+fn internal(length: f64) -> Solid {
+    use multicad_kernel::rust_kernel::{Circle, Rational, cylinder::AxialCylinder};
+    let policy = GeometryPolicy::default();
+    let zero = Rational::new(0, 1).unwrap();
+    let stock = AxialCylinder::new(
+        7,
+        Circle::new([zero; 2], Rational::new(5, 1).unwrap()).unwrap(),
+        zero,
+        Rational::new(4, 1).unwrap(),
+    )
+    .unwrap();
+    Solid::from_axial_cylinder(stock, PlaneFrame::default(), policy)
+        .unwrap()
+        .rust_cut_internal_thread(
+            iso(length, false),
+            0.2,
+            EntityId::new(),
+            PlaneFrame::default(),
+            policy,
+        )
+        .unwrap()
+}
+
+fn nut(left_hand: bool) -> Solid {
+    Solid::rust_hex_nut(
+        HelicalThread {
+            major_radius_mm: 1.55,
+            pitch_mm: 0.5,
+            length_mm: 2.4,
+            depth_mm: 0.28,
+            crest_width_mm: 0.08,
+            ..iso(2.4, left_hand)
+        },
+        5.5,
+        0.2,
+        EntityId::new(),
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn plain_helical_threads_match_native_open_cascade() {
+    assert!(check("plain", &plain(false), [0.2, 0.1, 3.3]).is_empty());
+    assert!(check("plain left", &plain(true), [0.2, 0.1, 2.1]).is_empty());
+}
+
+#[test]
+fn internal_threads_match_native_open_cascade() {
+    for (label, length, origin) in [
+        ("overrun internal", 5.2, [0.2, 0.1, 2.]),
+        ("floor internal", 2.5, [0.2, 0.1, 1.2]),
+        ("floor internal past void", 2.5, [0.2, 0.1, 3.2]),
+    ] {
+        let unavailable = check(label, &internal(length), origin);
+        assert!(unavailable.is_empty(), "{label}: {unavailable:?}");
+    }
+}
+
+#[test]
+fn hex_nuts_match_native_open_cascade() {
+    assert!(check("nut", &nut(false), [0.2, 0.1, 1.2]).is_empty());
+    assert!(check("nut left", &nut(true), [0.2, 0.1, 0.9]).is_empty());
+}
