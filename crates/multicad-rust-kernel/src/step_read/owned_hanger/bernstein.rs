@@ -155,6 +155,76 @@ pub(super) fn lower(a: &[I]) -> f64 {
 mod tests {
     use super::*;
     #[test]
+    fn invalid_polynomial_domains_and_real_resource_refusals_preserve_retry() {
+        let mut b = Budget {
+            work: 0,
+            remaining: 16_000_000,
+            bytes: 0,
+            limit: 64 * 1024 * 1024,
+            interrupt: None,
+        };
+        let algebra = Algebra::new(&mut b).unwrap();
+        let x = [p(0.), p(1.)];
+        assert!(matches!(
+            algebra.multiply(&[], &x, &mut b),
+            Err(Error::Invalid)
+        ));
+        assert!(matches!(
+            algebra.multiply(&x, &[], &mut b),
+            Err(Error::Invalid)
+        ));
+        assert!(matches!(
+            algebra.multiply(&vec![p(1.); MAX + 1], &x, &mut b),
+            Err(Error::Unsupported)
+        ));
+        let invalid = I {
+            lo: f64::NAN,
+            hi: f64::NAN,
+        };
+        assert!(matches!(
+            algebra.multiply(&[invalid], &x, &mut b),
+            Err(Error::Unsupported)
+        ));
+        for (degree, index) in [(2, 3), (MAX + 1, 0)] {
+            assert!(matches!(
+                algebra.basis(&x, &x, degree, index, &mut b),
+                Err(Error::Invalid)
+            ));
+        }
+        assert!(matches!(add(&mut [p(0.)], &x, &mut b), Err(Error::Invalid)));
+        assert!(matches!(
+            subtract(&[p(0.)], &x, &mut b),
+            Err(Error::Invalid)
+        ));
+        assert!(matches!(derivative(&[p(0.)], &mut b), Err(Error::Invalid)));
+        for (coefficients, t) in [(&[][..], p(0.5)), (&x[..], invalid)] {
+            assert!(matches!(
+                split(coefficients, t, &mut b),
+                Err(Error::Invalid)
+            ));
+        }
+        assert!(matches!(
+            split(&vec![p(1.); MAX + 2], p(0.5), &mut b),
+            Err(Error::Invalid)
+        ));
+        for (lo, hi) in [(p(-0.1), p(0.5)), (p(0.5), p(1.1)), (p(0.5), p(0.5))] {
+            assert!(matches!(
+                restrict(&x, lo, hi, &mut b),
+                Err(Error::Unsupported)
+            ));
+        }
+        assert_eq!(magnitude(&[invalid]), f64::INFINITY);
+        assert_eq!(lower(&[invalid]), f64::NEG_INFINITY);
+        let mut limited = Budget { remaining: 79, ..b };
+        assert!(matches!(
+            algebra.multiply(&[p(2.)], &[p(3.)], &mut limited),
+            Err(Error::Limit)
+        ));
+        // A failed operation has not changed either source or the algebra.
+        let result = algebra.multiply(&[p(2.)], &[p(3.)], &mut b).unwrap();
+        assert!(result[0].lo <= 6. && result[0].hi >= 6.);
+    }
+    #[test]
     fn bernstein_product_derivative_and_restriction_enclose_known_polynomials() {
         let mut b = Budget {
             work: 0,

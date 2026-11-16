@@ -274,6 +274,22 @@ fn actual_trimmed_candidate_is_independently_decoded_from_literal_step_entities(
             polar.plane_heights_mm().unwrap()
         );
         let lifts = decoded.surface_lifts(LiftOptions::default(), None).unwrap();
+        assert!(matches!(
+            decoded.surface_lifts(
+                LiftOptions {
+                    derivative_limit_mm: f64::MIN_POSITIVE,
+                    maximum_subdivisions: 1,
+                    ..Default::default()
+                },
+                None
+            ),
+            Err(Error::Limit)
+        ));
+        let retried = decoded.surface_lifts(LiftOptions::default(), None).unwrap();
+        assert_eq!(retried.edges().len(), lifts.edges().len());
+        assert_eq!(retried.work_used(), lifts.work_used());
+        assert_eq!(decoded.literal_input(), file.as_str());
+        drop(retried);
         let occupied =
             HealedMaterial::prepare(&polar, &lifts, HealingOptions::default(), None).unwrap();
         assert!(matches!(
