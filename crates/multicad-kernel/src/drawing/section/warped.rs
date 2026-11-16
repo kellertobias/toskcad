@@ -53,12 +53,7 @@ pub(in crate::drawing) fn publish_world(
     let loops = frame.clip(loops, options, policy)?;
     let output = frame.vectors(&loops, options, source)?;
     let boundary = if hatch {
-        frame.hatch(
-            &loops,
-            options
-                .chord_tolerance_mm
-                .min(policy.minimum_feature_mm / 4.),
-        )?
+        frame.hatch(&loops, options.chord_tolerance_mm)?
     } else {
         Vec::new()
     };

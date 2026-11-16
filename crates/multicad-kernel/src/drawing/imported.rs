@@ -29,6 +29,10 @@ pub(super) fn section(
     let [_, _, normal] = planar::view_axes(options.frame);
     let origin: [f64; 3] = std::array::from_fn(|i| options.frame.origin[i] + normal[i] * offset);
     let mut vectors = Vec::new();
+    // One hatch budget for the whole section, as in the other section
+    // projectors; every published curve and point counts against the
+    // drawing's output limits.
+    let mut hatch_budget = multicad_rust_kernel::section_hatch::Budget::default();
     for (source, (input, bodies)) in solids.iter().zip(bodies).enumerate() {
         let policy = input.solid.geometry_policy();
         // Each solid of a compound is hatched as its own region: solids may
@@ -47,21 +51,19 @@ pub(super) fn section(
                     )
                 })
                 .and_then(|(mut output, boundary)| {
-                    let Some(hatch) = input.hatch else {
-                        return Ok(output);
-                    };
-                    let mut curves = (options.maximum_curves as usize).saturating_sub(output.len());
-                    let mut points = (options.maximum_points as usize)
-                        .saturating_sub(output.iter().map(|v| v.preview_mm.len()).sum());
-                    output.extend(section::publish_hatch(
-                        source,
-                        hatch,
-                        &boundary,
-                        policy.linear_tolerance_mm,
-                        &mut curves,
-                        &mut points,
-                        &mut multicad_rust_kernel::section_hatch::Budget::default(),
-                    )?);
+                    if let Some(hatch) = input.hatch {
+                        let mut curves = options.maximum_curves as usize;
+                        let mut points = options.maximum_points as usize;
+                        output.extend(section::publish_hatch(
+                            source,
+                            hatch,
+                            &boundary,
+                            policy.linear_tolerance_mm,
+                            &mut curves,
+                            &mut points,
+                            &mut hatch_budget,
+                        )?);
+                    }
                     Ok(output)
                 });
             match published {
@@ -69,6 +71,13 @@ pub(super) fn section(
                 Err(error) => return Some(Err(error)),
             }
         }
+    }
+    let points: usize = vectors.iter().map(|vector| vector.preview_mm.len()).sum();
+    if vectors.len() > options.maximum_curves as usize || points > options.maximum_points as usize {
+        return Some(Err(err(
+            GeometryErrorKind::Limit,
+            "Rust drawing section exceeded its output budget",
+        )));
     }
     Some(Ok(vectors))
 }
