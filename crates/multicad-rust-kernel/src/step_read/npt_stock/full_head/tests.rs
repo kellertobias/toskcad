@@ -1,5 +1,5 @@
 use super::*;
-fn candidate(quarter: bool) -> String {
+pub(super) fn candidate(quarter: bool) -> String {
     let source = super::super::tests::fixture(quarter);
     let doc = CompoundDocument::parse(&source, DocumentOptions::default(), None).unwrap();
     let parsed = Parsed::parse(
