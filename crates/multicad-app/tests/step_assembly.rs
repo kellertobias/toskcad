@@ -17,9 +17,7 @@ use multicad_kernel::{
     AssemblyOccurrence, GeometryErrorKind, GeometryPolicy, Solid, rust_kernel::step_read,
 };
 use multicad_model::{Compiler, GeometryBackend, imports::read_step_file_with_backend};
-use std::path::Path;
-#[cfg(feature = "occt")]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const TWO: &str = include_str!("fixtures/exchange/corpus/occt-two-bodies.step");
 const BOARD: &str = include_str!("fixtures/exchange/corpus/kicad-board-with-part.step");
@@ -110,6 +108,19 @@ fn operated() -> String {
          #20030=CARTESIAN_TRANSFORMATION_OPERATOR_3D('','','',#20031,#20032,#20034,1.,#20033);",
     )
 }
+
+/// The installed KiCad 3D-model library, or `MULTICAD_KICAD_3DMODELS`.
+fn library() -> PathBuf {
+    std::env::var_os("MULTICAD_KICAD_3DMODELS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from("/Applications/KiCad/KiCad.app/Contents/SharedSupport/3dmodels")
+        })
+}
+
+/// The MeanWell IRM-60 converter: an assembly whose component solid `#110`
+/// has horn-torus corner blends (major = minor = 0.125 mm).
+const CONVERTER: &str = "Converter_ACDC.3dshapes/Converter_ACDC_MeanWell_IRM-60-xx_THT.step";
 
 fn close(a: f64, b: f64, relative: f64) -> bool {
     (a - b).abs() <= relative * b.abs().max(1.)
@@ -468,11 +479,7 @@ fn agrees_with_opencascade(label: &str, path: &Path, text: &str) -> serde_json::
 fn every_occurrence_agrees_with_opencascade() {
     let directory = tempfile::tempdir().unwrap();
     let mut rows = vec![];
-    let library = std::env::var_os("MULTICAD_KICAD_3DMODELS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from("/Applications/KiCad/KiCad.app/Contents/SharedSupport/3dmodels")
-        });
+    let library = library();
     let mut files = vec![
         ("occt-two-bodies", corpus("occt-two-bodies.step")),
         ("kicad-plate-holes", corpus("kicad-plate-holes.step")),
@@ -494,6 +501,10 @@ fn every_occurrence_agrees_with_opencascade() {
             "kicad-lib-Samtec_HPM-01-05-x-S_Straight_1x01_Pitch5.08mm",
             samtec,
         ));
+    }
+    let converter = library.join(CONVERTER);
+    if converter.is_file() {
+        files.push(("kicad-lib-Converter_ACDC_MeanWell_IRM-60-xx_THT", converter));
     }
     for (label, text) in [
         ("repeated", repeated()),
@@ -517,5 +528,71 @@ fn every_occurrence_agrees_with_opencascade() {
             &written,
         ));
     }
+    println!("{}", serde_json::to_string_pretty(&rows).unwrap());
+}
+
+/// Every placed solid of the converter imports on its own terms: exact
+/// volume and bounds per occurrence, the horn-torus component among them,
+/// and a certified closed manufacturing mesh of each solid whose enclosed
+/// volume agrees with the exact one.
+#[test]
+fn every_converter_solid_meshes_closed_including_the_horn_torus_blends() {
+    use multicad_kernel::rust_kernel::{brep, manufacturing};
+    let path = library().join(CONVERTER);
+    if !path.is_file() {
+        eprintln!("{} is not installed; skipped", path.display());
+        return;
+    }
+    let text = std::fs::read_to_string(&path).unwrap();
+    let tolerance = GeometryPolicy::default().linear_tolerance_mm;
+    let assembly = step_read::brep::read_assembly(&text, tolerance, None).unwrap();
+    let occurrences = assembly.occurrences();
+    assert_eq!(occurrences.len(), 6, "OpenCascade transfers six solids");
+    let mut rows = vec![];
+    let mut horn = 0;
+    let mut total = 0.;
+    for (index, occurrence) in occurrences.iter().enumerate() {
+        let solid = assembly.place(occurrence).unwrap();
+        let horns = solid
+            .boundary()
+            .faces
+            .iter()
+            .filter(|f| matches!(f.surface, brep::Surface::Torus { major, minor, .. } if major == minor))
+            .count();
+        horn += horns;
+        let options = brep::mesh::Options {
+            deflection_mm: 0.05,
+            angle_rad: 0.3,
+            triangle_limit: 5_000_000,
+        };
+        let mesh = brep::mesh::tessellate(&solid, options, None)
+            .unwrap_or_else(|e| panic!("solid {index}: mesh: {e:?}"));
+        assert!(
+            mesh.maximum_deviation_mm <= 0.05,
+            "solid {index}: deviation {}",
+            mesh.maximum_deviation_mm
+        );
+        let proof = manufacturing::certify(&mesh.display())
+            .unwrap_or_else(|e| panic!("solid {index}: certification: {e:?}"));
+        let exact = solid.volume_mm3();
+        let relative = (proof.signed_volume_mm3 - exact).abs() / exact;
+        assert!(relative <= 0.02, "solid {index}: mesh volume {relative}");
+        total += exact;
+        rows.push(serde_json::json!({
+            "solid": index,
+            "node": assembly.nodes[occurrence.node].name,
+            "volume_mm3": exact,
+            "volume_error_mm3": solid.volume_error_mm3(),
+            "bounds_mm": solid.bounds_mm(),
+            "faces": solid.faces().len(),
+            "horn_torus_faces": horns,
+            "triangles": mesh.triangles.len(),
+            "edge_pairs": proof.edge_pairs,
+            "mesh_deviation_mm": mesh.maximum_deviation_mm,
+            "mesh_volume_relative": relative,
+        }));
+    }
+    assert_eq!(horn, 4, "four horn-torus corner blends");
+    assert!(close(total, 133_479.602_204_707, 1e-9), "total {total}");
     println!("{}", serde_json::to_string_pretty(&rows).unwrap());
 }
