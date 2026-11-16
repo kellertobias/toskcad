@@ -1,5 +1,6 @@
 //! Whole-coefficient analytic factor and tensor transfer bounds.
 use super::*;
+mod rounded;
 fn choose(n: usize, k: usize) -> f64 {
     (0..k).fold(1., |a, i| a * (n - i) as f64 / (i + 1) as f64)
 }
@@ -171,19 +172,29 @@ pub(super) fn factors(
                     _ => major,
                 })
             };
-            let cell_radius = radii[0].magnitude().max(radii[1].magnitude());
-            radius_bound = radius_bound.max(cell_radius);
             let angle = endpoints.map(|p| -hand * p / rate);
-            let (candidate, remainder) = exp_factor_bounds(rotation, angle, radii, work)?;
+            let (candidate, remainder, cell_radius, cell_du) =
+                if let Some(root) = thread.root_circle().filter(|_| band == 1) {
+                    let angles = [
+                        I::point(spline.knots[cell]),
+                        I::point(spline.knots[cell + 1]),
+                    ];
+                    let factor = rounded::bounds(root, angles, rate, hand, work)?;
+                    (factor.poles, factor.remainder, factor.radius, factor.du)
+                } else {
+                    let cell_radius = radii[0].magnitude().max(radii[1].magnitude());
+                    let (candidate, remainder) = exp_factor_bounds(rotation, angle, radii, work)?;
+                    let du = (I::point((radii[1] - radii[0]).magnitude())
+                        + I::point(cell_radius) * I::point((angle[1] - angle[0]).magnitude()))
+                    .hi;
+                    (candidate, remainder, cell_radius, du)
+                };
+            radius_bound = radius_bound.max(cell_radius);
             let transfer = factor_transfer(&spline.poles[11 * cell..=11 * cell + 11], &candidate);
             for k in 0..2 {
                 a[k] = a[k].max((I::point(transfer[k]) + I::point(remainder[k])).hi);
             }
-            au = au.max(
-                (I::point((radii[1] - radii[0]).magnitude())
-                    + I::point(cell_radius) * I::point((angle[1] - angle[0]).magnitude()))
-                .hi,
-            );
+            au = au.max(cell_du);
         }
         all_a.push(a);
         all_au.push(au);

@@ -255,7 +255,10 @@ fn independent_scaled_and_proper_pose_packets_retain_full_degree11_cells() {
     }
 }
 
-pub(super) fn actual_m3(fitted: bool, left: bool) -> String {
+pub(in crate::step_read::phillips_cutter::physical::body) fn actual_m3(
+    fitted: bool,
+    left: bool,
+) -> String {
     m3_source(fitted, left, 1.5, 1., false)
 }
 pub(super) fn m3_source(fitted: bool, left: bool, shank: f64, plain: f64, counter: bool) -> String {

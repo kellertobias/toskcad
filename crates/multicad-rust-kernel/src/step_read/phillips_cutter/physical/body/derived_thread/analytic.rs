@@ -136,9 +136,10 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
             work.remaining = allowance.checked_sub(1).ok_or(ReadError::Limit)?;
             let body = self.body();
             let thread = body.thread;
-            // Rounded roots require their own non-affine radial Taylor law;
-            // no flat-root surrogate or template substitution is admitted.
-            if thread.spec().root_radius_mm.is_some() || thread.spec().starts != 1 {
+            // Exact-periodic sources still have affine radial bands only.
+            // The nonperiodic route must independently prove the actual circle
+            // factor against every original cell using the cached source rate.
+            if (periodic && thread.spec().root_radius_mm.is_some()) || thread.spec().starts != 1 {
                 return Err(ReadError::Unsupported);
             }
             let base =

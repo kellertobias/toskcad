@@ -174,23 +174,46 @@ fn actual_left_handed_posed_packet_qualifies_and_distinct_unsupported_laws_refus
             &text,
             &mut |head| {
                 let result = head.analytic_thread_repair(Default::default(), None);
-                if starts == 1 && root.is_none() {
-                    let receipt = result.unwrap();
+                if starts == 1 {
+                    let receipt =
+                        result.unwrap_or_else(|e| panic!("starts{starts} root{root:?}: {e:?}"));
                     assert!(receipt.thread().spec().left_hand);
                     assert_eq!(receipt.frame(), head.body().inferred_thread_frame());
-                    let periodic = head
-                        .periodic_thread_repair(Default::default(), None)
-                        .unwrap();
-                    assert!(periodic.source().left_hand());
-                    let common = head
-                        .common_chart_periodic_thread_repair(Default::default(), None)
-                        .unwrap();
-                    assert_eq!(common.chart(), head.chart());
-                    assert!(common.source().left_hand());
-                    let finite = head
-                        .periodic_thread_finite_curves(&common, Default::default(), None)
-                        .unwrap();
-                    assert_eq!(finite.curves().len(), 16);
+                    assert_eq!(receipt.thread().spec(), head.body().inferred_thread_spec());
+                    assert_eq!(
+                        receipt.thread().spec().root_radius_mm.is_some(),
+                        root.is_some()
+                    );
+                    for t in receipt.transfers() {
+                        assert!(
+                            t.distance_mm <= 1e-7 && t.derivative_mm.into_iter().all(|d| d <= 1e-7)
+                        );
+                        assert!(t.original_cells.into_iter().all(|n| n > 0));
+                    }
+                    if root.is_some() {
+                        assert!(matches!(
+                            head.periodic_thread_repair(Default::default(), None),
+                            Err(PhillipsReadError::Unsupported)
+                        ));
+                        assert!(matches!(
+                            head.common_chart_periodic_thread_repair(Default::default(), None),
+                            Err(PhillipsReadError::Unsupported)
+                        ));
+                    } else {
+                        let periodic = head
+                            .periodic_thread_repair(Default::default(), None)
+                            .unwrap();
+                        assert!(periodic.source().left_hand());
+                        let common = head
+                            .common_chart_periodic_thread_repair(Default::default(), None)
+                            .unwrap();
+                        assert_eq!(common.chart(), head.chart());
+                        assert!(common.source().left_hand());
+                        let finite = head
+                            .periodic_thread_finite_curves(&common, Default::default(), None)
+                            .unwrap();
+                        assert_eq!(finite.curves().len(), 16);
+                    }
                 } else {
                     assert!(matches!(result, Err(PhillipsReadError::Unsupported)));
                     assert!(matches!(
@@ -201,4 +224,143 @@ fn actual_left_handed_posed_packet_qualifies_and_distinct_unsupported_laws_refus
             },
         );
     }
+}
+
+#[test]
+fn actual_m3_flat_and_real_fitted_root_whole_angle_cells_both_hands_and_pose() {
+    for fitted in [false, true] {
+        for left in [false, true] {
+            let text = super::super::degree11::tests::actual_m3(fitted, left);
+            super::super::super::common_mouth::tests::derived_thread_probe::with_head(
+                &text,
+                &mut |head| {
+                    let receipt = head
+                        .analytic_thread_repair(Default::default(), None)
+                        .unwrap();
+                    assert_eq!(receipt.thread().spec().root_radius_mm.is_some(), fitted);
+                    assert_eq!(receipt.thread().spec(), head.body().inferred_thread_spec());
+                    assert!(std::ptr::eq(receipt.body(), head.body()));
+                    let mut c0 = 0f64;
+                    let mut d = [0f64; 2];
+                    let mut cells = 0usize;
+                    for t in receipt.transfers() {
+                        c0 = c0.max(t.distance_mm);
+                        for (a, b) in d.iter_mut().zip(t.derivative_mm) {
+                            *a = a.max(b);
+                        }
+                        cells += t.original_cells[0] * t.original_cells[1];
+                        assert!(
+                            t.distance_mm <= 1e-7 && t.derivative_mm.into_iter().all(|x| x <= 1e-7)
+                        );
+                    }
+                    eprintln!(
+                        "ROUNDED_ANALYTIC fitted={fitted} left={left} work={} inherited={} retained={} originalcells={cells} c0={c0} d={d:?}",
+                        receipt.new_work_used(),
+                        receipt.inherited_head_work_used(),
+                        receipt.retained_budget_bytes()
+                    );
+                    assert!(receipt.new_work_used() <= WORK && receipt.total_work_used() <= TOTAL);
+                    assert_eq!(receipt.body().literal_input(), text);
+                    if fitted {
+                        assert!(matches!(
+                            head.periodic_thread_repair(Default::default(), None),
+                            Err(PhillipsReadError::Unsupported)
+                        ));
+                        assert!(matches!(
+                            head.analytic_thread_repair(
+                                AnalyticThreadOptions {
+                                    maximum_distance_mm: 1e-20,
+                                    ..Default::default()
+                                },
+                                None
+                            ),
+                            Err(PhillipsReadError::Unsupported)
+                        ));
+                    }
+                },
+            );
+        }
+    }
+}
+
+#[test]
+fn real_fitted_root_correspondence_preserves_limits_cancel_and_exact_retry() {
+    let text = super::super::degree11::tests::actual_m3(true, false);
+    super::super::super::common_mouth::tests::derived_thread_probe::with_head(&text, &mut |head| {
+        let o = AnalyticThreadOptions::default();
+        let good = head.analytic_thread_repair(o, None).unwrap();
+        for bad in [
+            AnalyticThreadOptions {
+                maximum_work: good.new_work_used() - 1,
+                ..o
+            },
+            AnalyticThreadOptions {
+                maximum_total_work: good.total_work_used() - 1,
+                ..o
+            },
+            AnalyticThreadOptions {
+                maximum_bytes: head.retained_budget_bytes()
+                    + std::mem::size_of::<AnalyticThreadRepair<'_, '_>>()
+                    + SCRATCH_ANALYTIC
+                    - 1,
+                ..o
+            },
+            AnalyticThreadOptions {
+                maximum_cell_derivative_mm: 1e-20,
+                ..o
+            },
+        ] {
+            assert!(head.analytic_thread_repair(bad, None).is_err());
+        }
+        let exact = AnalyticThreadOptions {
+            maximum_work: good.new_work_used(),
+            maximum_total_work: good.total_work_used(),
+            ..o
+        };
+        let calls = Cell::new(0usize);
+        let observed = head
+            .analytic_thread_repair(
+                exact,
+                Some(&|| {
+                    calls.set(calls.get() + 1);
+                    false
+                }),
+            )
+            .unwrap();
+        assert_eq!(observed.new_work_used(), good.new_work_used());
+        for stop in [1, 2, calls.get() / 2, calls.get()] {
+            let count = Cell::new(0usize);
+            assert!(matches!(
+                head.analytic_thread_repair(
+                    exact,
+                    Some(&|| {
+                        count.set(count.get() + 1);
+                        count.get() == stop
+                    })
+                ),
+                Err(PhillipsReadError::Cancelled)
+            ));
+        }
+        let retry = head.analytic_thread_repair(exact, None).unwrap();
+        assert_eq!(retry.thread().spec(), good.thread().spec());
+        assert_eq!(retry.new_work_used(), good.new_work_used());
+        for (a, b) in retry.transfers().iter().zip(good.transfers()) {
+            assert_eq!(
+                (
+                    a.face_entity,
+                    a.surface_entity,
+                    a.distance_mm,
+                    a.derivative_mm,
+                    a.original_cells
+                ),
+                (
+                    b.face_entity,
+                    b.surface_entity,
+                    b.distance_mm,
+                    b.derivative_mm,
+                    b.original_cells
+                )
+            );
+        }
+    });
 }
