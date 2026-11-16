@@ -403,3 +403,56 @@ fn genuine_stock_mesh_rejects_invalid_resources_unresolvable_quality_and_too_thi
         );
     }
 }
+
+#[test]
+fn genuine_exact_stock_precision_and_large_radial_transfer_refuse_without_changing_source() {
+    let base = engineering_cut(0.01);
+    let zero = Rational::new(0, 1).unwrap();
+    let far = Rational::new(1_i64 << 55, 1).unwrap();
+    for (label, center, bottom, radius) in [
+        (
+            "radial-transfer",
+            [zero; 2],
+            zero,
+            Rational::new(51, 5).unwrap(),
+        ),
+        (
+            "unresolvable-join",
+            [zero; 2],
+            far,
+            Rational::new(51, 10).unwrap(),
+        ),
+        (
+            "unresolvable-center",
+            [far, zero],
+            zero,
+            Rational::new(51, 10).unwrap(),
+        ),
+    ] {
+        let stock = crate::cylinder::AxialCylinder::new(
+            73,
+            crate::Circle::new(center, radius).unwrap(),
+            bottom,
+            Rational::new(7, 1).unwrap(),
+        )
+        .unwrap();
+        let cut = ExternalStockCut::new(*base.thread(), stock, Default::default(), None).unwrap();
+        assert_eq!(cut.stock().circle().center(), center);
+        assert_eq!(cut.stock().bottom(), bottom);
+        assert_eq!(cut.stock().circle().radius(), radius);
+        let before = cut.thread().source().spec();
+        assert!(
+            matches!(
+                cut.mesh_candidate(quality(), 512_000_000, 64 * 1024 * 1024, None),
+                Err(Error::Unresolved)
+            ),
+            "{label}"
+        );
+        assert_eq!(cut.thread().source().spec(), before);
+        eprintln!("EXACT_STOCK_PUBLIC_REFUSAL {label}");
+    }
+    assert!(
+        base.mesh_candidate(quality(), 512_000_000, 64 * 1024 * 1024, None)
+            .is_ok()
+    );
+}
