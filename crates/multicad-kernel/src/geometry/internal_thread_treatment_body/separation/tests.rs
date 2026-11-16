@@ -163,3 +163,53 @@ fn actual_roles_laws_policy_and_added_geometry_cannot_borrow_pair_authority() {
         positive.minimum_radial_gap_mm()
     );
 }
+
+#[test]
+fn distinct_exact_receiving_end_cannot_borrow_a_stock_with_the_same_rounded_height() {
+    let correct = Rational::new(4, 1).unwrap();
+    let wrong = Rational::new(40_000_000_000_000_001, 10_000_000_000_000_000).unwrap();
+    assert_eq!(correct.as_f64(), wrong.as_f64());
+    assert_ne!(correct, wrong);
+    for left in [false, true] {
+        let frame = PlaneFrame::default();
+        let stock = super::super::tests::fixture_stock(correct, frame);
+        let request = super::super::tests::cut(frame, left, 1);
+        let before = (stock.bounds().unwrap(), stock.volume_mm3().unwrap());
+        assert_eq!(
+            stock
+                .rust_cut_authored_internal_thread_treatments_with_exact_extent_and_interrupt(
+                    request,
+                    wrong,
+                    EntityId::new(),
+                    GeometryPolicy::default(),
+                    None,
+                )
+                .err()
+                .unwrap()
+                .kind,
+            GeometryErrorKind::Unsupported
+        );
+        assert_eq!(
+            (stock.bounds().unwrap(), stock.volume_mm3().unwrap()),
+            before
+        );
+        let retry = stock
+            .rust_cut_authored_internal_thread_treatments_with_exact_extent_and_interrupt(
+                request,
+                correct,
+                EntityId::new(),
+                GeometryPolicy::default(),
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            retry
+                .rust_internal_thread_treatment_data()
+                .unwrap()
+                .material
+                .stock()
+                .height(),
+            correct
+        );
+    }
+}

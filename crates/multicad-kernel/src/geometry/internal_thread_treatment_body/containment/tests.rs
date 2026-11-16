@@ -264,3 +264,64 @@ fn exact_extended_end_and_absent_treatments_preserve_actual_finite_domains() {
         );
     }
 }
+
+#[test]
+fn treatment_dispatch_preserves_plain_box_intersections_and_refuses_other_real_source_roles() {
+    let policy = GeometryPolicy::default();
+    let a = Solid::box_solid([1.; 3], policy).unwrap();
+    let b = a
+        .transformed(RigidTransform {
+            translation_mm: [0.5, 0., 0.],
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(
+        a.boolean(&b, BooleanOperation::Intersect, policy)
+            .unwrap()
+            .unwrap()
+            .volume_mm3()
+            .unwrap(),
+        0.5
+    );
+    let source = male(false, true);
+    let one = Rational::new(1, 1).unwrap();
+    let rounded = Solid::from_rust_prism(
+        crate::rust_kernel::prism::Prism::extrude(17, one, one, one).unwrap(),
+        policy,
+    )
+    .unwrap();
+    assert!(rounded.rust_prism().unwrap().rounded_end().is_some());
+    assert!(
+        source
+            .boolean(&rounded, BooleanOperation::Intersect, policy)
+            .is_err()
+    );
+    let frame = PlaneFrame::default();
+    let stock = super::super::tests::fixture_stock(Rational::new(4, 1).unwrap(), frame);
+    let request = super::super::tests::cut(frame, false, 1);
+    let cutter = stock
+        .rust_cut_external_thread_entry_chamfer_with_interrupt(
+            request.profile,
+            None,
+            0.2,
+            Some(thread_end_relief::Intent {
+                width_mm: 0.5,
+                radial_depth_mm: 0.05,
+            }),
+            EntityId::new(),
+            frame,
+            policy,
+            None,
+        )
+        .unwrap();
+    let probe = box_at([1.4, 0., 0.01], [0.00002; 3]);
+    let before = cutter.rust_thread_entry_chamfer_data().unwrap();
+    for (first, second) in [(&cutter, &probe), (&probe, &cutter)] {
+        assert!(
+            first
+                .boolean(second, BooleanOperation::Intersect, policy)
+                .is_err()
+        );
+    }
+    assert_eq!(cutter.rust_thread_entry_chamfer_data().unwrap(), before);
+}

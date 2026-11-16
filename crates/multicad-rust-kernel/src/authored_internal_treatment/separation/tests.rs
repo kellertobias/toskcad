@@ -226,3 +226,36 @@ fn actual_whole_period_support_retains_literal_overshoot_and_independent_flank_e
         }
     }
 }
+
+#[test]
+fn entry_only_actual_receiver_earns_whole_pair_gap_without_a_terminal_cylinder() {
+    for left in [false, true] {
+        let combined = female(left, Rational::new(4, 1).unwrap());
+        let cavity = Cavity::new(
+            *combined.cavity().source_thread(),
+            Intent {
+                entry_depth_mm: Some(0.4),
+                terminal: None,
+            },
+        )
+        .unwrap();
+        let receiving = Material::new(*combined.stock(), cavity, 1.).unwrap();
+        let external = male(spec(left, 1.375));
+        let proof = receiving
+            .prove_coaxial_chamfer_separation(&external, Default::default(), None)
+            .unwrap();
+        assert!(proof.minimum_radial_gap_mm() > 0.);
+        assert_eq!(proof.terminal_radial_gap_mm(), None);
+        assert!(proof.overlap_end_mm().lower <= 4. && proof.overlap_end_mm().upper >= 4.);
+        // Supporting actual source sections near the former terminal region;
+        // the whole-profile certificate above, not these samples, is authority.
+        for theta in [0., 0.43, 2.1, 6.] {
+            let r = external.radius(theta, 3.8);
+            assert!(
+                receiving
+                    .cavity()
+                    .contains_void([r * theta.cos(), r * theta.sin(), 3.8], 0.)
+            );
+        }
+    }
+}
