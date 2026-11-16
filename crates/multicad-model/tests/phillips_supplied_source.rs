@@ -369,6 +369,138 @@ fn verify(nominal: f64, pitch: f64, left: bool) {
         volume.work_used(),
         owned.retained_budget_bytes()
     );
+    // Explicit actual-owner Native handoff. Cheap plane selection must not
+    // request the unrelated complete curved-surface measurement inventory.
+    let owned = std::rc::Rc::new(owned);
+    let native = multicad_kernel::Solid::rust_degree11_repaired_phillips_material(
+        owned.clone(),
+        request.feature,
+        Default::default(),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let (retained, occurrence) = native.rust_degree11_repaired_phillips_source().unwrap();
+    assert!(std::ptr::eq(retained, owned.as_ref()));
+    assert_eq!(occurrence, multicad_kernel::PlaneFrame::default());
+    let mut planes = 0;
+    for index in 0..owned.face_count() {
+        if native.face_plane(index as u32).unwrap().is_some() {
+            planes += 1;
+        }
+    }
+    let topology = native.topology_snapshot(request.feature, 0).unwrap();
+    use multicad_core::references::TopologyKind;
+    let faces = topology
+        .elements
+        .iter()
+        .filter(|e| e.key.kind == TopologyKind::Face)
+        .collect::<Vec<_>>();
+    let edges = topology
+        .elements
+        .iter()
+        .filter(|e| e.key.kind == TopologyKind::Edge)
+        .collect::<Vec<_>>();
+    let vertices = topology
+        .elements
+        .iter()
+        .filter(|e| e.key.kind == TopologyKind::Vertex)
+        .collect::<Vec<_>>();
+    let n = owned.thread_faces().len();
+    let h = owned.head().view().segment_count();
+    let cavity = owned.cavity().boundary_topology().unwrap();
+    assert_eq!(faces.len(), owned.face_count());
+    assert_eq!(edges.len(), 3 * n + h + 1 + cavity.edges().len());
+    assert_eq!(vertices.len(), 2 * n + cavity.vertices().len());
+    for edge in &edges {
+        assert_eq!(
+            faces
+                .iter()
+                .filter(|face| face.origins.iter().any(|o| edge.boundary.contains(o)))
+                .count(),
+            2
+        );
+    }
+    for index in 0..n {
+        let role = format!("thread/source/{index}");
+        let face = faces
+            .iter()
+            .find(|f| f.origins.iter().any(|o| o.role == role))
+            .unwrap();
+        assert_eq!(face.boundary.len(), 4);
+        let entry = format!("thread/cap/0/rim/{index}");
+        let edge = edges
+            .iter()
+            .find(|e| e.origins.iter().any(|o| o.role == entry))
+            .unwrap();
+        assert!(edge.boundary.iter().any(|o| o.role == "screw.thread/start"));
+    }
+    assert!(edges.iter().any(|e| {
+        e.origins
+            .iter()
+            .any(|o| o.role == "screw.head/thread.junction")
+    }));
+    assert!(planes >= 3);
+    let far = [1e6, 1e6, 1e6];
+    assert!(!native.rust_thread_contains(far).unwrap());
+    let query = native
+        .rust_degree11_repaired_phillips_classify_world_box(
+            far.map(|v| [v, v]),
+            Default::default(),
+            None,
+        )
+        .unwrap();
+    assert!(std::ptr::eq(query.source(), owned.as_ref()));
+    assert_eq!(
+        query.location(),
+        multicad_kernel::rust_kernel::phillips_drive::Classification::Outside
+    );
+    assert!(query.accounted_peak_bytes() <= 64 * 1024 * 1024);
+
+    assert!(native.face_plane(owned.face_count() as u32).is_err());
+    let curved = (0..owned.face_count())
+        .find(|&i| {
+            matches!(
+                owned.face_source(i),
+                Some(PhillipsDegree11MaterialFace::ThreadSide { .. })
+            )
+        })
+        .unwrap();
+    assert!(native.face_plane(curved as u32).unwrap().is_none());
+    let tip = (0..owned.face_count())
+        .find(|&i| {
+            matches!(
+                owned.face_source(i),
+                Some(PhillipsDegree11MaterialFace::ThreadTip { .. })
+            )
+        })
+        .unwrap();
+    let selected = native.face(tip as u32).unwrap();
+    assert_eq!(selected.index, tip as u32);
+    let repeated = native.face(tip as u32).unwrap();
+    assert_eq!(repeated.center_mm, selected.center_mm);
+    assert_eq!(repeated.area_mm2.to_bits(), selected.area_mm2.to_bits());
+    let translated = native
+        .transformed(RigidTransform {
+            translation_mm: [3., -2., 5.],
+            ..Default::default()
+        })
+        .unwrap();
+    let moved = translated.face(tip as u32).unwrap();
+    for k in 0..3 {
+        assert!((moved.center_mm[k] - selected.center_mm[k] - [3., -2., 5.][k]).abs() <= 1e-7);
+    }
+    assert_eq!(moved.area_mm2.to_bits(), selected.area_mm2.to_bits());
+
+    assert!(selected.area_mm2 > 0. && selected.center_mm.into_iter().all(f64::is_finite));
+    assert_eq!(
+        native
+            .rust_degree11_repaired_phillips_source()
+            .unwrap()
+            .0
+            .original_input(),
+        raw
+    );
     // Saved/cold canonical reconstruction must retain the actual fit and source.
     let mut bytes = Vec::new();
     project_file::write(
@@ -435,4 +567,66 @@ fn core_m6_right_actual_supplied_source_bridge() {
 #[test]
 fn core_m6_left_posed_actual_supplied_source_bridge() {
     verify(6., 1., true)
+}
+
+#[test]
+fn actual_core_m3_owned_native_coarse_candidate_earns_fresh_world_embedding() {
+    let mut session = Session::new(Document::new("Native actual M3 mesh").unwrap()).unwrap();
+    let request = MechanicalPartRequest::new("Actual M3", parameters(3., 0.5, false));
+    let prepared = model::prepare_mechanical_part(
+        &session,
+        session.revision(),
+        Actor::local(Channel::Mcp),
+        &request,
+    )
+    .unwrap()
+    .prepared;
+    session.commit(prepared).unwrap();
+    let compiled = compiler()
+        .compile_with_backend(
+            session.document(),
+            session.revision(),
+            GeometryBackend::Rust,
+            None,
+        )
+        .unwrap();
+    let (author, frame) = compiled
+        .solid(request.feature)
+        .unwrap()
+        .rust_phillips_screw_geometry()
+        .unwrap();
+    let text = step::write_phillips_screw(author, frame.origin, frame.u, frame.v, 1e-7).unwrap();
+    let owned = std::rc::Rc::new(
+        read_degree11_phillips_material(&text, Default::default(), None)
+            .unwrap()
+            .into_material(),
+    );
+    let native = multicad_kernel::Solid::rust_degree11_repaired_phillips_material(
+        owned.clone(),
+        request.feature,
+        Default::default(),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let options = multicad_kernel::MeshOptions {
+        // A nonidentity actual source frame receives half the caller's
+        // distance and99% of its angle before Native transport validation.
+        // This explicitly coarse integration fixture leaves the qualified
+        // 0.5mm/0.7rad source request intact; it is not a default-quality gate.
+        linear_deflection_mm: 1.1,
+        angular_deflection_rad: 0.72,
+        maximum_triangles: 1_000_000,
+    };
+    let (mesh, receipt) = native
+        .rust_degree11_repaired_phillips_mesh_with_receipt(options, Default::default(), None)
+        .unwrap();
+    assert!(std::ptr::eq(receipt.source(), owned.as_ref()));
+    assert!(!mesh.indices.is_empty());
+    assert!(receipt.literal_signed_volume_mm3() > 0.);
+    assert!(receipt.embedding_pairs() > 0);
+    assert!(receipt.query_work_used() <= 512_000_000);
+    assert!(receipt.consumer_accounted_peak_bytes() <= 64 * 1024 * 1024);
+    assert!(receipt.local_source_surface_error_mm() <= options.linear_deflection_mm);
+    assert!(!receipt.reused_display_receipt());
 }

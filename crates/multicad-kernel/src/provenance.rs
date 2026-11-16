@@ -1056,7 +1056,11 @@ impl Solid {
             let mut snapshot = if let Some(body) = self.pipe_hardware_body() {
                 body.topology(owner, revision, self.geometry_policy())?
             } else if let Some((body, frame)) = self.repaired_phillips_body() {
-                body.periodic_topology(frame, owner, revision)?
+                if body.has_degree11_source() {
+                    body.degree11_topology(frame, owner, revision)?
+                } else {
+                    body.periodic_topology(frame, owner, revision)?
+                }
             } else if let Some((body, frame)) = self.hanger_body() {
                 body.topology(frame, owner, revision, self.geometry_policy())?
             } else if let Some((body, frame)) = self.wood_insert_body() {

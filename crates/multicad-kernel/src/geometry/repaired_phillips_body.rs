@@ -3,11 +3,14 @@
 use super::internal_thread_treatment_body::interval::Interval as I;
 use super::*;
 use multicad_rust_kernel::step_read::{
+    PhillipsOwnedDegree11Material as OwnedDegree11Material,
     PhillipsOwnedDerivedMaterial as OwnedDerivedMaterial,
     PhillipsOwnedPeriodicMaterial as OwnedPeriodicMaterial,
 };
 use std::cell::RefCell;
 mod affine;
+mod degree11;
+pub use degree11::{Degree11RepairedPhillipsQuery, Degree11RepairedPhillipsQueryOptions};
 pub(in crate::geometry) mod step;
 pub use step::{DecodedPeriodicPhillipsStepVerification, PeriodicPhillipsStepCandidateResources};
 mod periodic;
@@ -17,7 +20,8 @@ mod query;
 mod workspace;
 use affine::Placement;
 pub use mesh::{
-    PeriodicRepairedPhillipsMeshReceipt, RepairedPhillipsMeshBudget, RepairedPhillipsMeshReceipt,
+    Degree11RepairedPhillipsMeshReceipt, PeriodicRepairedPhillipsMeshReceipt,
+    RepairedPhillipsMeshBudget, RepairedPhillipsMeshReceipt,
 };
 pub use query::{RepairedPhillipsQuery, RepairedPhillipsQueryOptions};
 type Point = [f64; 3];
@@ -53,8 +57,16 @@ mod tests;
 enum Source {
     Retained(Rc<OwnedDerivedMaterial>),
     Periodic(Rc<OwnedPeriodicMaterial>),
+    Degree11(Rc<OwnedDegree11Material>),
 }
 impl Source {
+    fn degree11(&self) -> Option<&OwnedDegree11Material> {
+        if let Self::Degree11(s) = self {
+            Some(s)
+        } else {
+            None
+        }
+    }
     fn retained(&self) -> Option<&OwnedDerivedMaterial> {
         if let Self::Retained(s) = self {
             Some(s)
@@ -73,30 +85,35 @@ impl Source {
         match self {
             Self::Retained(s) => s.chart(),
             Self::Periodic(s) => s.chart(),
+            Self::Degree11(s) => s.chart(),
         }
     }
     fn local_enclosure_bounds(&self) -> [[f64; 2]; 3] {
         match self {
             Self::Retained(s) => s.local_enclosure_bounds(),
             Self::Periodic(s) => periodic_enclosure_bounds(s),
+            Self::Degree11(s) => s.local_enclosure_bounds_mm(),
         }
     }
     fn local_volume_mm3(&self) -> [f64; 2] {
         match self {
             Self::Retained(s) => s.local_volume_mm3(),
             Self::Periodic(s) => s.local_volume_mm3(),
+            Self::Degree11(s) => s.local_volume_mm3(),
         }
     }
     fn retained_budget_bytes(&self) -> usize {
         match self {
             Self::Retained(s) => s.retained_budget_bytes(),
             Self::Periodic(s) => s.retained_budget_bytes(),
+            Self::Degree11(s) => s.retained_budget_bytes(),
         }
     }
     fn identity(&self) -> usize {
         match self {
             Self::Retained(s) => Rc::as_ptr(s) as usize,
             Self::Periodic(s) => Rc::as_ptr(s) as usize,
+            Self::Degree11(s) => Rc::as_ptr(s) as usize,
         }
     }
     fn joined_mesh_candidate(
@@ -111,8 +128,17 @@ impl Source {
                 .map_err(source_failure),
             Self::Periodic(s) => periodic::candidate::build(s, options, interrupt)
                 .map(periodic::candidate::Candidate::Periodic),
+            Self::Degree11(s) => s
+                .joined_mesh_candidate(options, interrupt)
+                .map(periodic::candidate::Candidate::Degree11)
+                .map_err(source_failure),
         }
     }
+}
+#[derive(Clone, Copy)]
+struct Degree11LocalFace {
+    area_mm2: [f64; 2],
+    centroid_mm: [[f64; 2]; 3],
 }
 pub(crate) struct RepairedPhillipsBody {
     source: Source,
@@ -122,6 +148,7 @@ pub(crate) struct RepairedPhillipsBody {
     display: RefCell<Option<mesh::Cached>>,
     periodic_properties:
         RefCell<Option<Vec<multicad_rust_kernel::step_read::PhillipsPeriodicFaceProperties>>>,
+    degree11_properties: RefCell<Vec<Option<Degree11LocalFace>>>,
     query_depth: std::cell::Cell<usize>,
     #[cfg(test)]
     builds: std::cell::Cell<usize>,
@@ -220,6 +247,7 @@ impl RepairedPhillipsBody {
             local_bounds: bounds,
             display: RefCell::new(None),
             periodic_properties: RefCell::new(None),
+            degree11_properties: RefCell::new(Vec::new()),
             query_depth: std::cell::Cell::new(0),
             #[cfg(test)]
             builds: std::cell::Cell::new(0),

@@ -109,14 +109,9 @@ impl FaceProfileInputs<'_> {
             .solids
             .get(&link.target)
             .ok_or_else(|| self.failure("Profile face producer has no current solid"))?;
-        let face = solid
-            .faces()
+        let (origin, outward) = solid
+            .face_plane(key.ordinal)
             .map_err(|e| self.failure(e))?
-            .into_iter()
-            .find(|face| face.index == key.ordinal)
-            .ok_or_else(|| self.failure("Profile face is missing from the current solid"))?;
-        let (origin, outward) = face
-            .plane
             .ok_or_else(|| self.failure("This face is curved. Choose a planar face."))?;
         let normal = frame.normal();
         if dot(normal, outward).abs() < 1. - 1e-8

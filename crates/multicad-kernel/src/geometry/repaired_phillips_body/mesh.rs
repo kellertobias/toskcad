@@ -100,14 +100,16 @@ pub struct RepairedPhillipsMeshReceipt<'s> {
     source: &'s OwnedDerivedMaterial,
     metadata: Metadata,
 }
-/// Fresh or exact-key cached proof attached to the distinct owned periodic
-/// material. Its source getter cannot return a retained polynomial receipt.
-pub struct PeriodicRepairedPhillipsMeshReceipt<'s> {
-    source: &'s OwnedPeriodicMaterial,
+/// Fresh or exact-key cached proof attached to its immutable typed source.
+/// The default source is periodic; the degree-eleven alias remains distinct.
+pub struct PeriodicRepairedPhillipsMeshReceipt<'s, S = OwnedPeriodicMaterial> {
+    source: &'s S,
     metadata: Metadata,
 }
-impl PeriodicRepairedPhillipsMeshReceipt<'_> {
-    pub fn source(&self) -> &OwnedPeriodicMaterial {
+pub type Degree11RepairedPhillipsMeshReceipt<'s> =
+    PeriodicRepairedPhillipsMeshReceipt<'s, OwnedDegree11Material>;
+impl<S> PeriodicRepairedPhillipsMeshReceipt<'_, S> {
+    pub fn source(&self) -> &S {
         self.source
     }
     pub fn occurrence(&self) -> PlaneFrame {
@@ -323,6 +325,12 @@ impl RepairedPhillipsBody {
             .retained_budget_bytes()
             .saturating_add(std::mem::size_of::<Self>() + 8 * std::mem::size_of::<usize>())
             .saturating_add(self.display.borrow().as_ref().map_or(0, |c| bytes(&c.mesh)))
+            .saturating_add(
+                self.degree11_properties
+                    .borrow()
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Option<Degree11LocalFace>>()),
+            )
             .saturating_add(self.periodic_properties.borrow().as_ref().map_or(0, |p| {
                 p.capacity()
                     * std::mem::size_of::<
@@ -622,7 +630,7 @@ impl RepairedPhillipsBody {
         work.charge(used)?;
         let volume = self.volume(frame)?;
         let (periodic_literal_volume, periodic_mass_difference) =
-            if self.source.periodic().is_some() {
+            if self.source.periodic().is_some() || self.source.degree11().is_some() {
                 work.charge(mesh.indices.len().saturating_mul(128))?;
                 let literal = periodic::candidate::literal_volume(&mesh)?;
                 let difference = I::new(literal[0], literal[1]) - I::new(volume[0], volume[1]);
@@ -733,6 +741,47 @@ impl Solid {
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<(Mesh, PeriodicRepairedPhillipsMeshReceipt<'_>), GeometryError> {
         self.periodic_repaired_mesh_query(options, budget, MeshUse::Display, interrupt)
+    }
+    fn degree11_repaired_mesh_query(
+        &self,
+        options: MeshOptions,
+        budget: RepairedPhillipsMeshBudget,
+        usage: MeshUse,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<(Mesh, Degree11RepairedPhillipsMeshReceipt<'_>), GeometryError> {
+        let (body, frame) = self
+            .repaired_phillips_body()
+            .ok_or_else(|| unsupported("Solid has no degree-eleven repaired source"))?;
+        let source = body
+            .source
+            .degree11()
+            .ok_or_else(|| unsupported("Use the matching source mesh API"))?;
+        let q = Tessellation {
+            deflection: options.linear_deflection_mm,
+            angle: options.angular_deflection_rad,
+            triangle_limit: options.maximum_triangles as usize,
+        };
+        let (mesh, metadata) = body.controlled(frame, q, usage, budget, interrupt)?;
+        Ok((
+            mesh,
+            PeriodicRepairedPhillipsMeshReceipt { source, metadata },
+        ))
+    }
+    pub fn rust_degree11_repaired_phillips_mesh_with_receipt(
+        &self,
+        options: MeshOptions,
+        budget: RepairedPhillipsMeshBudget,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<(Mesh, Degree11RepairedPhillipsMeshReceipt<'_>), GeometryError> {
+        self.degree11_repaired_mesh_query(options, budget, MeshUse::Manufacturing, interrupt)
+    }
+    pub fn rust_degree11_repaired_phillips_display_mesh_with_receipt(
+        &self,
+        options: MeshOptions,
+        budget: RepairedPhillipsMeshBudget,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<(Mesh, Degree11RepairedPhillipsMeshReceipt<'_>), GeometryError> {
+        self.degree11_repaired_mesh_query(options, budget, MeshUse::Display, interrupt)
     }
     fn repaired_mesh_query(
         &self,

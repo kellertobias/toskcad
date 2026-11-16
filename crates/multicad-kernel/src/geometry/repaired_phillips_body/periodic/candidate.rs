@@ -8,7 +8,8 @@ use multicad_rust_kernel::{
     manufacturing::MeshProof,
     phillips_drive::ScrewFace,
     step_read::{
-        PhillipsJoinedMaterialCandidate, PhillipsJoinedMeshOptions, PhillipsMaterialFaceSource,
+        PhillipsJoinedDegree11MaterialCandidate, PhillipsJoinedMaterialCandidate,
+        PhillipsJoinedMeshOptions, PhillipsMaterialFaceSource,
     },
 };
 pub(in crate::geometry::repaired_phillips_body) fn literal_volume(
@@ -37,6 +38,7 @@ pub(in crate::geometry::repaired_phillips_body) fn literal_volume(
 pub(in crate::geometry::repaired_phillips_body) enum Candidate<'s> {
     Retained(PhillipsJoinedMaterialCandidate<'s>),
     Periodic(PeriodicCandidate<'s>),
+    Degree11(PhillipsJoinedDegree11MaterialCandidate<'s>),
 }
 pub(in crate::geometry::repaired_phillips_body) struct PeriodicCandidate<'s> {
     _source: &'s OwnedPeriodicMaterial,
@@ -53,24 +55,28 @@ impl Candidate<'_> {
         match self {
             Self::Retained(_) => None,
             Self::Periodic(c) => Some(c.distance),
+            Self::Degree11(c) => Some(c.new_surface_error_mm()),
         }
     }
     pub(in crate::geometry::repaired_phillips_body) fn mesh(&self) -> &DisplayMesh {
         match self {
             Self::Retained(c) => c.mesh(),
             Self::Periodic(c) => &c.mesh,
+            Self::Degree11(c) => c.mesh(),
         }
     }
     pub(in crate::geometry::repaired_phillips_body) fn connectivity(&self) -> MeshProof {
         match self {
             Self::Retained(c) => c.connectivity(),
             Self::Periodic(c) => c.proof,
+            Self::Degree11(c) => c.connectivity(),
         }
     }
     pub(in crate::geometry::repaired_phillips_body) fn work_used(&self) -> usize {
         match self {
             Self::Retained(c) => c.work_used(),
             Self::Periodic(c) => c.used,
+            Self::Degree11(c) => c.work_used(),
         }
     }
     pub(in crate::geometry::repaired_phillips_body) fn combined_live_upper_bound_bytes(
@@ -79,6 +85,7 @@ impl Candidate<'_> {
         match self {
             Self::Retained(c) => c.combined_live_upper_bound_bytes(),
             Self::Periodic(c) => c.peak,
+            Self::Degree11(c) => c.combined_live_upper_bound_bytes(),
         }
     }
 }

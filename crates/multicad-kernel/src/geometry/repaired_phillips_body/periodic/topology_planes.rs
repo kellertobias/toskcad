@@ -87,6 +87,22 @@ pub(super) fn plane(
     } else {
         return Ok(None);
     };
+    publish(
+        anchor,
+        normal,
+        source.local_enclosure_bounds(),
+        placement,
+        policy,
+    )
+    .map(Some)
+}
+pub(in crate::geometry::repaired_phillips_body) fn publish(
+    anchor: [I; 3],
+    normal: [I; 3],
+    domain: [[f64; 2]; 3],
+    placement: Placement,
+    policy: GeometryPolicy,
+) -> Result<ReferenceFrame, GeometryError> {
     let axes: [[I; 3]; 3] = std::array::from_fn(|i| {
         let mut e = [I::ZERO; 3];
         e[i] = I::ONE;
@@ -120,7 +136,7 @@ pub(super) fn plane(
     let ep = (0..3).fold(I::ZERO, |s, i| {
         s + I::point((world[i] - I::point(origin[i])).magnitude())
     });
-    let domain = source.local_enclosure_bounds().map(|v| I::new(v[0], v[1]));
+    let domain = domain.map(|v| I::new(v[0], v[1]));
     let relative = placement.linear_bounds(std::array::from_fn(|i| domain[i] - anchor[i]));
     let radius = relative
         .into_iter()
@@ -137,5 +153,5 @@ pub(super) fn plane(
         v,
     };
     frame.validate().map_err(unsupported)?;
-    Ok(Some(frame))
+    Ok(frame)
 }
