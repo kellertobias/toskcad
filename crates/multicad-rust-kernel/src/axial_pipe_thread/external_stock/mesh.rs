@@ -784,3 +784,6 @@ impl ExternalStockCut {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;
