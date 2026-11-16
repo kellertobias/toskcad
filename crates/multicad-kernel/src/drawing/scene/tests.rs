@@ -1379,3 +1379,114 @@ fn thread_near_axis_side_cuts_close_with_the_grid_area() {
         }
     }
 }
+
+/// A rounded thread (BSW-like profile) for flattening checks.
+fn rounded(left_hand: bool, frame: PlaneFrame) -> crate::Solid {
+    use multicad_core::document::EntityId;
+    use multicad_rust_kernel::rounded_thread::Spec;
+    let p = 1.27;
+    let a = 27.5_f64.to_radians();
+    let r = p * a.cos() / (12. * (1. - a.sin()));
+    crate::Solid::rust_rounded_thread(
+        Spec {
+            major_radius_mm: 3.175,
+            pitch_mm: p,
+            length_mm: 3.7 * p,
+            depth_mm: p / (3. * a.tan()),
+            crest_radius_mm: r,
+            root_radius_mm: r,
+            flank_angle_deg: 27.5,
+            starts: 1,
+            left_hand,
+        },
+        EntityId::new(),
+        frame,
+        GeometryPolicy::default(),
+    )
+    .unwrap()
+}
+
+/// Every outline, seam, cone section and section branch of the thread
+/// families flattens into chords whose proven bound meets half the
+/// tolerance and holds the deviation of densely sampled path points.
+#[test]
+fn thread_chord_bounds_hold_and_meet_the_tolerance() {
+    let s = 0.5_f64.sqrt();
+    let t = (1_f64 / 6.).sqrt();
+    let axes = [
+        [[1., 0., 0.], [0., 0., 1.]],
+        [[s, s, 0.], [0., 0., 1.]],
+        [[s, -s, 0.], [t, t, -2. * t]],
+        [[1., 0., 0.], [0., 1., 0.]],
+        [[1., 0., 0.], [0., 0.9995_f64.sqrt(), 0.0005_f64.sqrt()]],
+    ];
+    let solids = [
+        ("rounded", rounded(true, PlaneFrame::default()), 2.35),
+        ("two-start", two_start(true, PlaneFrame::default()), 3.3),
+        ("bore", rounded_bore(false, PlaneFrame::default()), 2.35),
+        ("chamfer", chamfered(true, true, PlaneFrame::default()), 0.8),
+        (
+            "socket screw",
+            screw(true, false, PlaneFrame::default()),
+            0.5,
+        ),
+        ("hex screw", screw(false, true, PlaneFrame::default()), 1.5),
+        ("treatment", treated(true, 2, PlaneFrame::default()), 3.25),
+        ("groove", grooved(false, 1, PlaneFrame::default()), 3.25),
+    ];
+    let tolerance = 0.0025;
+    for (label, solid, center) in &solids {
+        let mut total = helix::Tally::default();
+        let started = std::time::Instant::now();
+        for [u, v] in axes {
+            for origin in [[0.2, 0.1, *center], [0.3, -0.2, center + 0.37]] {
+                let view = View::new(PlaneFrame { origin, u, v });
+                let member = families::member(solid, &view).unwrap().unwrap();
+                let mut paths: Vec<_> = member
+                    .candidates(tolerance)
+                    .unwrap()
+                    .into_iter()
+                    .map(|candidate| candidate.path)
+                    .collect();
+                paths.extend(member.section(0., tolerance).unwrap().into_iter().flatten());
+                for path in paths {
+                    helix::tally(&*path, tolerance, &mut total, label);
+                }
+            }
+        }
+        eprintln!("{label}: {total:?} in {:?}", started.elapsed());
+        assert!(total.chords > 100, "{label}: {total:?}");
+        assert_eq!(total.unproven, 0, "{label}: {total:?}");
+    }
+}
+
+/// A path whose chords cannot be proven publishes nothing: proven
+/// flattening returns no stops and the drawing is refused.
+#[test]
+fn unproven_chords_refuse_the_path() {
+    struct Unproven;
+    impl Path for Unproven {
+        fn point(&self, t: f64) -> P3 {
+            [t, t * t, 0.]
+        }
+        fn flatten(&self, tolerance_mm: f64) -> Vec<f64> {
+            helix::certified(self, tolerance_mm)
+        }
+        fn paper(&self, _: [f64; 2]) -> Option<Curve> {
+            None
+        }
+    }
+    impl helix::Proven for Unproven {
+        fn bound(&self, [a, b]: [f64; 2]) -> f64 {
+            // Unprovable across a third of the path.
+            if a < 1. / 3. && b > 1. / 3. {
+                f64::INFINITY
+            } else {
+                0.
+            }
+        }
+    }
+    assert!(Unproven.flatten(0.01).is_empty());
+    let error = super::arrange::flattened(&Unproven, 0.01).unwrap_err();
+    assert_eq!(error.kind, GeometryErrorKind::Limit, "{error:?}");
+}

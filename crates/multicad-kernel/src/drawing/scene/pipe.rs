@@ -17,7 +17,12 @@
 //! root inside a proven monotone window on a crest or root arc, and the two
 //! straight generators of a cone band. Every event (line material, sweep and
 //! contour range ends, cap contour points) is isolated with a proven bound.
-use super::helix::{Branch, Meridian, RESOLVED, Range, Span, adaptive, isolate, level_stop};
+//! Contour and section branch paths flatten with proven per-chord bounds in
+//! their charts (see `helix::proven`).
+use super::helix::{
+    Branch, Chart, Iv, Meridian, Num, Proven, RESOLVED, Range, Span, certified, chord_bound, frame,
+    isolate, level_stop, settle,
+};
 use super::paths::{Lift, Segment, add, dot3, scaled};
 use super::profile::merge;
 use super::*;
@@ -281,14 +286,109 @@ impl Contour {
     }
 }
 
+impl Contour {
+    fn theta(&self, t: f64) -> f64 {
+        self.range[0] + (self.range[1] - self.range[0]) * t
+    }
+
+    /// The exact chart point at a parameter: on an arc `(theta, beta)`, a
+    /// root next to the window's computed root, enclosed by a proven sign
+    /// change.
+    fn end(&self, t: f64) -> Option<[Iv; 2]> {
+        let theta = self.theta(t);
+        let Span::Arc {
+            center,
+            radius,
+            sign,
+            ..
+        } = self.span
+        else {
+            return Some([Iv::point(theta), Iv::point(0.)]);
+        };
+        let law = &self.law;
+        let beta = arc_root(law, center, radius, sign, self.window, &self.sight, theta)?;
+        settle(self, [theta, beta])
+    }
+}
+
+/// On a flank line the contour is the closed-form graph of the angle; on an
+/// arc it is the window's root of the arc's condition in `(theta, beta)`,
+/// with `u = c0 + R sin beta` and `W = c1 + sign R cos beta`.
+impl Chart for Contour {
+    fn implicit(&self) -> bool {
+        matches!(self.span, Span::Arc { .. })
+    }
+
+    fn relation<N: Num>(&self, theta: N, beta: N) -> N {
+        let Span::Arc {
+            center,
+            radius,
+            sign,
+            ..
+        } = self.span
+        else {
+            return N::k(0.);
+        };
+        let (law, sight) = (&self.law, &self.sight);
+        let psi = theta - N::k(sight.alpha);
+        let [p, q] = [N::k(sight.rho) * psi.cos(), N::k(sight.rho) * psi.sin()];
+        let c = N::k(center[1]) + N::k(law.taper * law.rate) * theta;
+        let s = N::k(law.rate) * q;
+        let e = c * p + N::k(law.taper) * s;
+        let f = N::k(sign) * (c * N::k(sight.vz) + s);
+        let (sin, cos) = (beta.sin(), beta.cos());
+        e * cos + f * sin + N::k(sign * radius) * cos * (p * cos + N::k(sign * sight.vz) * sin)
+    }
+
+    fn place<N: Num>(&self, theta: N, beta: N) -> [N; 3] {
+        let law = &self.law;
+        let s = N::k(law.rate) * theta;
+        let (u, w) = match self.span {
+            Span::Line { a, b } => {
+                let w = (b[1] - a[1]) / (b[0] - a[0]);
+                let sight = &self.sight;
+                let psi = theta - N::k(sight.alpha);
+                let [p, q] = [N::k(sight.rho) * psi.cos(), N::k(sight.rho) * psi.sin()];
+                let target = N::k(law.rate * (w - law.taper)) * q / (p - N::k(w * sight.vz))
+                    - N::k(law.taper) * s;
+                let u = N::k(a[0]) + (target - N::k(a[1])) / N::k(w);
+                (u, self.span.radius_at(u)[0])
+            }
+            Span::Arc {
+                center,
+                radius,
+                sign,
+                ..
+            } => (
+                N::k(center[0]) + N::k(radius) * beta.sin(),
+                N::k(center[1]) + N::k(sign * radius) * beta.cos(),
+            ),
+        };
+        let r = w + N::k(law.taper) * s;
+        frame(
+            law.origin,
+            law.axes,
+            [r * theta.cos(), r * theta.sin(), u + s],
+        )
+    }
+}
+
+impl Proven for Contour {
+    fn bound(&self, [a, b]: [f64; 2]) -> f64 {
+        let (Some(start), Some(end)) = (self.end(a), self.end(b)) else {
+            return f64::INFINITY;
+        };
+        chord_bound(self, 0, [start, end], [self.point(a), self.point(b)])
+    }
+}
+
 impl Path for Contour {
     fn point(&self, t: f64) -> P3 {
-        self.at(self.range[0] + (self.range[1] - self.range[0]) * t)
+        self.at(self.theta(t))
     }
 
     fn flatten(&self, tolerance_mm: f64) -> Vec<f64> {
-        let start = ((self.range[1] - self.range[0]).abs() * 8.).ceil() as usize;
-        adaptive(&|t| self.point(t), tolerance_mm, start.clamp(8, 1 << 16))
+        certified(self, tolerance_mm)
     }
 
     fn paper(&self, _: [f64; 2]) -> Option<Curve> {
@@ -407,6 +507,18 @@ impl Sweep {
     }
 }
 
+impl Proven for Sweep {
+    fn breaks(&self) -> Vec<f64> {
+        self.branch.breaks()
+    }
+
+    fn bound(&self, [a, b]: [f64; 2]) -> f64 {
+        let placement = (self.law.origin, self.law.axes, self.base);
+        self.branch
+            .bound(placement, [a, b], [self.point(a), self.point(b)])
+    }
+}
+
 impl Path for Sweep {
     fn point(&self, t: f64) -> P3 {
         let (theta, p) = self.branch.locate(t);
@@ -416,8 +528,7 @@ impl Path for Sweep {
     }
 
     fn flatten(&self, tolerance_mm: f64) -> Vec<f64> {
-        let start = (self.branch.width() * 32.).ceil() as usize;
-        adaptive(&|t| self.point(t), tolerance_mm, start)
+        certified(self, tolerance_mm)
     }
 
     fn paper(&self, _: [f64; 2]) -> Option<Curve> {
@@ -1414,7 +1525,7 @@ impl Pipe {
                                     stops.push(t);
                                 }
                             }
-                            let sweep: Arc<dyn Path> = Arc::new(branch);
+                            let sweep: Arc<dyn Proven> = Arc::new(branch);
                             stops.sort_by(f64::total_cmp);
                             stops.dedup_by(|x, y| (*x - *y).abs() <= 1e-13);
                             for piece in stops.windows(2) {

@@ -667,3 +667,39 @@ fn pipe_near_axis_side_cuts_close_with_the_grid_area() {
         }
     }
 }
+
+/// Every contour and section branch of the pipe threads flattens into
+/// chords whose proven bound meets half the tolerance and holds the
+/// deviation of densely sampled path points.
+#[test]
+fn pipe_chord_bounds_hold_and_meet_the_tolerance() {
+    let tolerance = 0.0025;
+    let lead = PlaneFrame {
+        origin: [0.2, 0.1, 2.7],
+        u: [1., 0., 0.],
+        v: [0., 0.9995_f64.sqrt(), 0.0005_f64.sqrt()],
+    };
+    for (label, solid) in solids() {
+        let mut total = super::helix::Tally::default();
+        let started = std::time::Instant::now();
+        let mut views = frames(2.7);
+        views.extend(frames(0.9));
+        views.push(lead);
+        for frame in views {
+            let view = View::new(frame);
+            let member = families::member(&solid, &view).unwrap().unwrap();
+            let mut paths: Vec<_> = match member.candidates(tolerance) {
+                Ok(candidates) => candidates.into_iter().map(|c| c.path).collect(),
+                // Views refused by the member are not drawn at all.
+                Err(_) => Vec::new(),
+            };
+            paths.extend(member.section(0., tolerance).unwrap().into_iter().flatten());
+            for path in paths {
+                super::helix::tally(&*path, tolerance, &mut total, label);
+            }
+        }
+        eprintln!("{label}: {total:?} in {:?}", started.elapsed());
+        assert!(total.chords > 100, "{label}: {total:?}");
+        assert_eq!(total.unproven, 0, "{label}: {total:?}");
+    }
+}

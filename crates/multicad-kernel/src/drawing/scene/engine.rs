@@ -169,7 +169,7 @@ pub(in crate::drawing) fn project(
         let mut own = Vec::new();
         if let Some(top) = top {
             for path in entry.member.section(top, flat)?.into_iter().flatten() {
-                for (ts, pts, _) in clip(&path, lateral, flat, eps) {
+                for (ts, pts, _) in clip(&path, lateral, flat, eps)? {
                     own.push(Strand {
                         member: index,
                         path: path.clone(),
@@ -203,7 +203,7 @@ pub(in crate::drawing) fn project(
                 }
             }
             for (kind, path) in paths {
-                for (ts, pts, plane) in clip(&path, &all, flat, eps) {
+                for (ts, pts, plane) in clip(&path, &all, flat, eps)? {
                     let strand = Strand {
                         member: index,
                         path: path.clone(),
@@ -257,7 +257,7 @@ pub(in crate::drawing) fn project(
                 .map(|(_, limit)| limit)
                 .collect();
             borders.extend(
-                border_strands(&path, &rest, flat, eps)
+                border_strands(&path, &rest, flat, eps)?
                     .into_iter()
                     .map(|s| (s, true)),
             );
@@ -284,7 +284,7 @@ pub(in crate::drawing) fn project(
             });
             let rest: Vec<&Limit> = limits[lateral_start..detail_limit].iter().collect();
             borders.extend(
-                border_strands(&path, &rest, flat, eps)
+                border_strands(&path, &rest, flat, eps)?
                     .into_iter()
                     .map(|s| (s, false)),
             );
@@ -547,14 +547,14 @@ pub(in crate::drawing) fn project(
                 strand.path.as_ref(),
                 range,
             )?;
-            boundary.extend(output.chords(strand.path.as_ref(), range, sampled));
+            boundary.extend(output.chords(strand.path.as_ref(), range, sampled)?);
         }
         for (path, range) in &seams[index] {
             output.curve(entry.source, VectorRole::Section, path.as_ref(), *range)?;
         }
         for (path, range) in &section_extra[index] {
             output.curve(entry.source, VectorRole::Section, path.as_ref(), *range)?;
-            boundary.extend(output.chords(path.as_ref(), *range, sampled));
+            boundary.extend(output.chords(path.as_ref(), *range, sampled)?);
         }
         if let Some(hatch) = entry.hatch
             && !boundary.is_empty()
@@ -574,8 +574,13 @@ pub(in crate::drawing) fn project(
     Ok(output.finish(eps))
 }
 
-fn border_strands(path: &Arc<dyn Path>, limits: &[&Limit], flat: f64, eps: f64) -> Vec<Strand> {
-    clip(path, limits, flat, eps)
+fn border_strands(
+    path: &Arc<dyn Path>,
+    limits: &[&Limit],
+    flat: f64,
+    eps: f64,
+) -> Result<Vec<Strand>, GeometryError> {
+    Ok(clip(path, limits, flat, eps)?
         .into_iter()
         .map(|(ts, pts, _)| Strand {
             member: 0,
@@ -584,7 +589,7 @@ fn border_strands(path: &Arc<dyn Path>, limits: &[&Limit], flat: f64, eps: f64) 
             pts,
             plane: None,
         })
-        .collect()
+        .collect())
 }
 
 /// Parameters within one arranged piece of a strand where the exact path

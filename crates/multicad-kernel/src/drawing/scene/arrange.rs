@@ -76,14 +76,33 @@ fn root(path: &dyn Path, value: &dyn Fn(P3) -> f64, mut a: f64, mut b: f64) -> f
     0.5 * (a + b)
 }
 
+/// Certified chord parameters of a path; a path that certifies none
+/// refuses the drawing.
+pub(in crate::drawing) fn flattened(
+    path: &dyn Path,
+    tolerance: f64,
+) -> Result<Vec<f64>, GeometryError> {
+    let ts = path.flatten(tolerance);
+    if ts.is_empty() {
+        return Err(err(
+            GeometryErrorKind::Limit,
+            "Rust scene curve cannot be certified within its chord tolerance",
+        ));
+    }
+    Ok(ts)
+}
+
+/// A clipped run of parameters and points, with the plane limit it lies on.
+pub(in crate::drawing) type Run = (Vec<f64>, Vec<P3>, Option<usize>);
+
 /// The parts of a path inside every limit, as runs of parameters and points.
 pub(in crate::drawing) fn clip(
     path: &Arc<dyn Path>,
     limits: &[&Limit],
     tolerance: f64,
     eps: f64,
-) -> Vec<(Vec<f64>, Vec<P3>, Option<usize>)> {
-    let ts = path.flatten(tolerance);
+) -> Result<Vec<Run>, GeometryError> {
+    let ts = flattened(path.as_ref(), tolerance)?;
     let pts: Vec<P3> = ts.iter().map(|&t| path.point(t)).collect();
     let mut runs = vec![(ts, pts)];
     for limit in limits {
@@ -183,7 +202,8 @@ pub(in crate::drawing) fn clip(
         next.retain(|run: &(Vec<f64>, Vec<P3>)| run.0.len() >= 2);
         runs = next;
     }
-    runs.into_iter()
+    Ok(runs
+        .into_iter()
         .filter(|(_, pts)| {
             pts.windows(2)
                 .map(|pair| {
@@ -206,7 +226,7 @@ pub(in crate::drawing) fn clip(
             });
             (ts, pts, plane)
         })
-        .collect()
+        .collect())
 }
 
 /// The parameter within chord `index` whose exact paper point has the same

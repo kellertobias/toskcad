@@ -1,4 +1,5 @@
 //! Publish exact scene curves as drawing vectors within the output budget.
+use super::arrange::flattened;
 use super::*;
 use multicad_rust_kernel::section_hatch;
 use std::{collections::HashMap, f64::consts::FRAC_PI_2};
@@ -51,16 +52,21 @@ impl Output {
     }
 
     /// Parameters of the path's certified chords within a range.
-    fn stops(&self, path: &dyn Path, [from, to]: [f64; 2], tolerance: f64) -> Vec<f64> {
+    fn stops(
+        &self,
+        path: &dyn Path,
+        [from, to]: [f64; 2],
+        tolerance: f64,
+    ) -> Result<Vec<f64>, GeometryError> {
         let [lo, hi] = [from.min(to), from.max(to)];
         let mut stops = vec![lo];
         stops.extend(
-            path.flatten(tolerance)
+            flattened(path, tolerance)?
                 .into_iter()
                 .filter(|t| *t > lo && *t < hi),
         );
         stops.push(hi);
-        stops
+        Ok(stops)
     }
 
     /// Chords of a range of a path in the paper, for hatch regions.
@@ -69,16 +75,16 @@ impl Output {
         path: &dyn Path,
         range: [f64; 2],
         tolerance: f64,
-    ) -> Vec<[P2; 2]> {
+    ) -> Result<Vec<[P2; 2]>, GeometryError> {
         let points: Vec<P2> = self
-            .stops(path, range, tolerance)
+            .stops(path, range, tolerance)?
             .into_iter()
             .map(|t| {
                 let p = path.point(t);
                 [p[0], p[1]]
             })
             .collect();
-        points.windows(2).map(|pair| [pair[0], pair[1]]).collect()
+        Ok(points.windows(2).map(|pair| [pair[0], pair[1]]).collect())
     }
 
     /// Publish a range of a path: an exact line or conic arc where the paper
@@ -113,7 +119,7 @@ impl Output {
                 self.push(source, role, curved::ellipse_vector(ellipse), preview)
             }
             None => {
-                let stops = self.stops(path, range, self.options.chord_tolerance_mm / 2.);
+                let stops = self.stops(path, range, self.options.chord_tolerance_mm / 2.)?;
                 if stops.len() > self.curves + 1 {
                     return Err(limit());
                 }
