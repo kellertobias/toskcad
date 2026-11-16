@@ -1457,6 +1457,9 @@ impl Solid {
             if let Some(result) = self.separated_treatment_intersection(other, operation, policy) {
                 return result;
             }
+            if let Some(result) = self.contained_treatment_box_boolean(other, operation, policy) {
+                return result;
+            }
             if let Some(result) = self.contained_thread_boolean(other, operation, policy) {
                 return result;
             }

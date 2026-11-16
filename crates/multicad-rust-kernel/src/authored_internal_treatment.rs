@@ -3,6 +3,7 @@
 use crate::authored_flat_thread::AuthoredThread;
 use crate::tapered_thread::interval::I;
 pub use crate::thread_internal_treatment::{Enclosure, Error, Intent, QueryOptions, Terminal};
+mod classify;
 mod material;
 mod mesh;
 pub(crate) mod properties;

@@ -1,5 +1,6 @@
 //! Actual cylindrical stock minus an explicitly authored shared-boundary MAX
 //! cavity. No display mesh, legacy thread approximation or recipe is material.
+mod containment;
 mod display;
 mod faces;
 pub(super) mod interval;
