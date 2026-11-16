@@ -75,7 +75,7 @@ impl Graph {
                 2 + 4 * self.source.thread.spec().starts + u32::from(self.source.entry.is_some());
             let r = Q::float(tail.radius, w)?;
             let z0 = Q::float(tail.station, w)?;
-            let z1 = Q::float(self.source.full_length_mm(), w)?;
+            let z1 = self.source.exact_end(w)?;
             for edge in top {
                 let curve = &self.curves[edge.curve];
                 let original = curve.endpoints;

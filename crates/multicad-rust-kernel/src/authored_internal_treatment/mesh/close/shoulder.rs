@@ -164,7 +164,7 @@ mod tests {
         let outer = super::super::outer(
             &body,
             edge,
-            body.tail.unwrap().station,
+            I::point(body.tail.unwrap().station),
             &mut map,
             &mut shell.mesh,
             &mut w,

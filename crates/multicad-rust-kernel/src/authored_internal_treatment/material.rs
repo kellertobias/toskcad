@@ -59,7 +59,10 @@ impl Material {
         // At most four bounded rational operands: stored integer ratios have
         // <=64bit operands, each binary64 <=1075bits. Fixed comparisons and one
         // subtraction stay below4400bits, with no unbounded expression graph.
-        if exact(stock.height()) != binary(cavity.full_length_mm()) {
+        let end = cavity
+            .exact_receiving_extent()
+            .map_or_else(|| binary(cavity.full_length_mm()), exact);
+        if exact(stock.height()) != end {
             return Err(Error::Unresolved);
         }
         checkpoint(interrupt)?;

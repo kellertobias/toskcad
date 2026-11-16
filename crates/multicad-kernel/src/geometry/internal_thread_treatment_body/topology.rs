@@ -99,9 +99,16 @@ impl InternalThreadTreatmentBody {
             let mut origins = BTreeSet::from([primary.clone()]);
             let mut frames = Vec::new();
             let station = match key {
-                source::FaceKey::StartCap => Some(0.),
-                source::FaceKey::EndCap => Some(self.material.cavity().full_length_mm()),
-                source::FaceKey::TerminalShoulder => self.material.cavity().terminal_station_mm(),
+                source::FaceKey::StartCap => Some(source::Enclosure {
+                    lower: 0.,
+                    upper: 0.,
+                }),
+                source::FaceKey::EndCap => Some(self.material.cavity().full_length_bounds_mm()),
+                source::FaceKey::TerminalShoulder => self
+                    .material
+                    .cavity()
+                    .terminal_station_mm()
+                    .map(|z| source::Enclosure { lower: z, upper: z }),
                 _ => None,
             };
             let plane = if let Some(z) = station {
@@ -109,11 +116,7 @@ impl InternalThreadTreatmentBody {
                     lower: 0.,
                     upper: 0.,
                 };
-                let p = transport.local_point([
-                    zero,
-                    zero,
-                    source::Enclosure { lower: z, upper: z },
-                ])?;
+                let p = transport.local_point([zero, zero, z])?;
                 let support = multicad_core::references::ReferenceFrame {
                     origin_mm: p,
                     u: frame.u,

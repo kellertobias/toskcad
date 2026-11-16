@@ -260,7 +260,10 @@ pub(crate) fn build_rust(
         {
             let target = receiving_target(feature, source, solids)?
                 .ok_or_else(|| fail("Combined internal treatments have no target predecessor"))?;
-            return internal_treatments::build(feature, &thread, target, policy, interrupt);
+            let extent =
+                multicad_core::parameters::exact_length_mm(&source.parameters.length, parameters)
+                    .map_err(|e| error(Some(feature), format!("Canonical receiving extent: {e}")))?;
+            return internal_treatments::build(feature, &thread, extent, target, policy, interrupt);
         }
         if !matches!(
             source.mode,

@@ -153,13 +153,16 @@ fn coordinates(material: &Material, face: FaceKey) -> [B; 3] {
     let c = material.cavity();
     let z = match face {
         FaceKey::StartCap => B::ZERO,
-        FaceKey::EndCap => B::point(c.full_length_mm()),
+        FaceKey::EndCap => B::new(
+            c.full_length_bounds_mm().lower,
+            c.full_length_bounds_mm().upper,
+        ),
         FaceKey::TerminalShoulder => B::point(c.terminal_station_mm().expect("validated shoulder")),
         FaceKey::TerminalCylinder => B::new(
             c.terminal_station_mm().expect("validated cylinder"),
-            c.full_length_mm(),
+            c.full_length_bounds_mm().upper,
         ),
-        _ => B::new(0., c.full_length_mm()),
+        _ => B::new(0., c.full_length_bounds_mm().upper),
     };
     [
         B::new(-radius.hi, radius.hi),
@@ -178,7 +181,10 @@ fn world_point(placement: Placement, p: [B; 3]) -> [B; 3] {
 fn area_upper(material: &Material, face: FaceKey) -> Result<f64, GeometryError> {
     let c = material.cavity();
     let r = B::point(radius_upper(material));
-    let l = B::point(c.full_length_mm());
+    let l = B::new(
+        c.full_length_bounds_mm().lower,
+        c.full_length_bounds_mm().upper,
+    );
     let pi = B::new(
         std::f64::consts::PI.next_down(),
         std::f64::consts::PI.next_up(),

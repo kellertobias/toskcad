@@ -12,6 +12,9 @@ pub(crate) trait Source {
     fn profile(&self, band: usize, q: I) -> (I, I);
     fn pitch_mm(&self) -> f64;
     fn full_length_mm(&self) -> f64;
+    fn full_length_interval(&self) -> I {
+        I::point(self.full_length_mm())
+    }
     fn prefix_length_mm(&self) -> f64;
     fn terminal_radius_mm(&self) -> Option<f64>;
     fn entry(&self) -> Option<Entry>;
@@ -60,7 +63,7 @@ pub(crate) fn integrate<S: Source>(
     let factor = pi / I::point(source.pitch_mm());
     let mut sum = source.terminal_radius_mm().map_or(I::point(0.), |radius| {
         pi * I::point(radius).square()
-            * (I::point(source.full_length_mm()) - I::point(source.prefix_length_mm()))
+            * (source.full_length_interval() - I::point(source.prefix_length_mm()))
     });
     // Both sealed providers qualify dimension, factor, derivative and slope
     // bounds before this entry point. Restricted cells preserve those finite

@@ -136,6 +136,28 @@ impl Solid {
         policy: GeometryPolicy,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Self, GeometryError> {
+        self.cut_internal_treatment(cut, None, feature, policy, interrupt)
+    }
+    /// Canonical shared receiving end. Exact stock equality is mandatory;
+    /// floating profile length never supplies this topological identity.
+    pub fn rust_cut_authored_internal_thread_treatments_with_exact_extent_and_interrupt(
+        &self,
+        cut: InternalThreadTreatmentCut,
+        extent: Rational,
+        feature: EntityId,
+        policy: GeometryPolicy,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Self, GeometryError> {
+        self.cut_internal_treatment(cut, Some(extent), feature, policy, interrupt)
+    }
+    fn cut_internal_treatment(
+        &self,
+        cut: InternalThreadTreatmentCut,
+        extent: Option<Rational>,
+        feature: EntityId,
+        policy: GeometryPolicy,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Self, GeometryError> {
         checkpoint(interrupt)?;
         policy.validate()?;
         if self.policy != policy || policy.boolean_fuzzy_mm != 0. {
@@ -174,6 +196,9 @@ impl Solid {
                 ));
             }
         }
+        if extent.is_some_and(|end| end != stock.height()) {
+            return Err(failure(source::Error::Unresolved));
+        }
         policy.length(cut.minimum_wall_mm)?;
         if let Some(depth) = cut.intent.entry_depth_mm {
             policy.length(depth)?;
@@ -203,7 +228,11 @@ impl Solid {
                 unsupported("Authored flat-thread transfer cannot be certified")
             }
         })?;
-        let cavity = Cavity::new(thread, cut.intent).map_err(failure)?;
+        let cavity = match extent {
+            Some(end) => Cavity::new_with_exact_receiving_extent(thread, cut.intent, end),
+            None => Cavity::new(thread, cut.intent),
+        }
+        .map_err(failure)?;
         let (_, scale) = metric(frame)?;
         let local_wall = (cut.minimum_wall_mm / scale).next_up();
         let material =
@@ -272,7 +301,7 @@ impl InternalThreadTreatmentBody {
             [
                 radius_upper(&self.material),
                 radius_upper(&self.material),
-                self.material.cavity().full_length_mm(),
+                self.material.cavity().full_length_bounds_mm().upper,
             ],
             policy,
         )?;
@@ -288,7 +317,7 @@ impl InternalThreadTreatmentBody {
     }
     pub(super) fn bounds(&self, frame: PlaneFrame) -> Bounds {
         let radius = radius_upper(&self.material);
-        let length = self.material.cavity().full_length_mm();
+        let length = self.material.cavity().full_length_bounds_mm().upper;
         let n = frame.normal();
         let reach: [f64; 3] =
             std::array::from_fn(|i| product(radius, up(frame.u[i].abs(), frame.v[i].abs())));

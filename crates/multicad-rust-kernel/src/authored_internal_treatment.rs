@@ -8,6 +8,8 @@ mod mesh;
 pub(crate) mod properties;
 pub use properties::{FaceKey, FaceProperties, FacePropertyOptions, ThreadBandRole};
 #[cfg(test)]
+mod exact_extent_tests;
+#[cfg(test)]
 mod tests;
 mod volume;
 pub use material::Material;
@@ -33,6 +35,7 @@ pub struct Cavity {
     intent: Intent,
     entry: Option<Entry>,
     tail: Option<Tail>,
+    exact_receiving_end: Option<crate::Rational>,
 }
 impl Cavity {
     pub fn new(thread: AuthoredThread, intent: Intent) -> Result<Self, Error> {
@@ -79,7 +82,75 @@ impl Cavity {
             intent,
             entry,
             tail,
+            exact_receiving_end: None,
         })
+    }
+    /// Explicit stock-relative receiving domain. The supplied canonical end
+    /// is authoritative, not inferred from a floating height comparison. The
+    /// original visible periodic law, entry, terminal station/radius remain
+    /// unchanged; only the analytic terminal cylinder closes at this exact end.
+    /// Material construction separately requires EXACT equality to stock.
+    /// The actual terminal span is end minus the retained station; an arbitrary
+    /// explicit end does not assert unchanged physical relief width.
+    pub fn new_with_exact_receiving_extent(
+        thread: AuthoredThread,
+        intent: Intent,
+        end: crate::Rational,
+    ) -> Result<Self, Error> {
+        let mut body = Self::new(thread, intent)?;
+        if body.entry.is_none() || body.tail.is_none() {
+            return Err(Error::Invalid);
+        }
+        let (n, d) = end.ratio();
+        let exact = num_rational::BigRational::new(n.into(), d.into());
+        let station = num_rational::BigRational::from_float(body.tail.unwrap().station)
+            .ok_or(Error::Invalid)?;
+        if n <= 0 || exact > num_rational::BigRational::from_integer(10_000_000.into()) {
+            return Err(Error::Invalid);
+        }
+        if exact <= station {
+            return Err(Error::Unresolved);
+        }
+        body.exact_receiving_end = Some(end);
+        Ok(body)
+    }
+    pub fn exact_receiving_extent(&self) -> Option<crate::Rational> {
+        self.exact_receiving_end
+    }
+    pub fn full_length_bounds_mm(&self) -> Enclosure {
+        let x = self.end_interval();
+        Enclosure {
+            lower: x.lo,
+            upper: x.hi,
+        }
+    }
+    fn end_interval(&self) -> I {
+        match self.exact_receiving_end {
+            None => I::point(self.thread.full_length_mm()),
+            Some(end) => {
+                let integer = |v: i64| {
+                    let x = v as f64;
+                    if v.unsigned_abs() <= 1u64 << 53 {
+                        I::point(x)
+                    } else {
+                        I::new(x.next_down(), x.next_up())
+                    }
+                };
+                let (n, d) = end.ratio();
+                let magnitude = n.unsigned_abs();
+                // Preserve exact binary endpoints such as4mm. Reduced dyadic
+                // ratios in this bounded scalar range are exactly binary64
+                // when the odd numerator fits the53bit significand.
+                if (d as u64).is_power_of_two()
+                    && (magnitude == 0
+                        || 64 - magnitude.leading_zeros() - magnitude.trailing_zeros() <= 53)
+                {
+                    I::point(end.as_f64())
+                } else {
+                    integer(n) / integer(d)
+                }
+            }
+        }
     }
     pub fn source_thread(&self) -> &AuthoredThread {
         &self.thread
@@ -87,8 +158,11 @@ impl Cavity {
     pub fn intent(&self) -> Intent {
         self.intent
     }
+    /// Rounded display/sampling representative only. Certificates use the
+    /// directed/exact receiving end when this domain has one.
     pub fn full_length_mm(&self) -> f64 {
-        self.thread.full_length_mm()
+        self.exact_receiving_end
+            .map_or(self.thread.full_length_mm(), |x| x.as_f64())
     }
     pub fn entry_radius_mm(&self) -> Option<f64> {
         self.entry.map(|e| e.radius)
@@ -170,9 +244,25 @@ impl Cavity {
             return false;
         }
         let [x, y, z] = point;
-        if z < -tolerance || z > self.full_length_mm() + tolerance {
+        if z < -tolerance {
             return false;
         }
+        if let Some(end) = self.exact_receiving_end {
+            // Exact source domain, including rounded representatives which
+            // happen to lie just outside the canonical end. No float equality
+            // ever replaces the authoritative receiving constraint.
+            let (n, d) = end.ratio();
+            let end = num_rational::BigRational::new(n.into(), d.into());
+            let point = num_rational::BigRational::from_float(z).expect("finite point");
+            let tolerance =
+                num_rational::BigRational::from_float(tolerance).expect("finite tolerance");
+            if point > end + tolerance {
+                return false;
+            }
+        } else if z > self.full_length_mm() + tolerance {
+            return false;
+        }
+
         x.hypot(y) <= self.radius_mm(y.atan2(x), z.clamp(0., self.full_length_mm())) + tolerance
     }
 }

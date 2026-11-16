@@ -49,6 +49,9 @@ impl Source for Cavity {
     fn full_length_mm(&self) -> f64 {
         Cavity::full_length_mm(self)
     }
+    fn full_length_interval(&self) -> I {
+        self.end_interval()
+    }
     fn prefix_length_mm(&self) -> f64 {
         self.tail.map_or(self.full_length_mm(), |t| t.station)
     }

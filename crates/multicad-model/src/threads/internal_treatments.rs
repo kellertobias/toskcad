@@ -9,6 +9,7 @@ use multicad_kernel::{
 pub(super) fn build(
     feature: EntityId,
     thread: &ResolvedThread,
+    extent: multicad_kernel::rust_kernel::Rational,
     target: &Solid,
     policy: GeometryPolicy,
     interrupt: Option<&dyn Fn() -> bool>,
@@ -25,7 +26,7 @@ pub(super) fn build(
         .as_ref()
         .expect("combined treatment route");
     target
-        .rust_cut_authored_internal_thread_treatments_with_interrupt(
+        .rust_cut_authored_internal_thread_treatments_with_exact_extent_and_interrupt(
             InternalThreadTreatmentCut {
                 profile,
                 intent: authored::Intent {
@@ -38,6 +39,7 @@ pub(super) fn build(
                 minimum_wall_mm: thread.minimum_wall_mm,
                 frame,
             },
+            extent,
             feature,
             policy,
             interrupt,

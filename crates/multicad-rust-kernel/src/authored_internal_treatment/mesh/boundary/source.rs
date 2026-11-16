@@ -9,6 +9,7 @@ pub(super) struct Source {
     pub tail: Option<Tail>,
     // Preserve the complete actual treatment identity for stock-material checks.
     intent: Option<Intent>,
+    exact_end: Option<crate::Rational>,
 }
 impl Source {
     pub fn treated(source: Cavity) -> Self {
@@ -17,6 +18,7 @@ impl Source {
             entry: source.entry,
             tail: source.tail,
             intent: Some(source.intent),
+            exact_end: source.exact_receiving_extent(),
         }
     }
     pub fn bare(thread: AuthoredThread) -> Self {
@@ -25,10 +27,20 @@ impl Source {
             entry: None,
             tail: None,
             intent: None,
+            exact_end: None,
         }
     }
     pub fn full_length_mm(&self) -> f64 {
-        self.thread.full_length_mm()
+        self.exact_end
+            .map_or(self.thread.full_length_mm(), |x| x.as_f64())
+    }
+    pub fn exact_end(&self, w: &mut Work<'_>) -> Result<Q, Error> {
+        if let Some(end) = self.exact_end {
+            let (n, d) = end.ratio();
+            Q::integer(n, w)?.div(&Q::integer(d, w)?, w)
+        } else {
+            Q::float(self.full_length_mm(), w)
+        }
     }
     pub fn chart(&self) -> ThreadChart<'_> {
         ThreadChart {
