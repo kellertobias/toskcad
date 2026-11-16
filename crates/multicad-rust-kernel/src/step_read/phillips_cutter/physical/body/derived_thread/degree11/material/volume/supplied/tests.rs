@@ -427,3 +427,5 @@ fn allocated_pair_accuracy_satisfies_independent_complete_annulus_inequalities()
         .is_err()
     );
 }
+
+mod associations;
