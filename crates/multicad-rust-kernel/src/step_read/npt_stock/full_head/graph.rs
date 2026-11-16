@@ -528,3 +528,6 @@ pub(super) fn decode<'i>(doc: &CompoundDocument<'i>, b: &mut Budget<'_>) -> Resu
         rehomes,
     })
 }
+
+#[cfg(test)]
+mod tests;
