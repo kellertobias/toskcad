@@ -289,6 +289,34 @@ fn verify(nominal: f64, pitch: f64, left: bool) {
     let volume = material
         .volume_bounds(Default::default(), None)
         .expect("independent original D11 signed flux mass");
+    let matched = volume
+        .match_supplied_author(source, actual_frame, Default::default(), None)
+        .expect("complete original author to independently closed D11 material correspondence");
+    assert!(std::ptr::eq(matched.author(), source));
+    assert!(std::ptr::eq(matched.decoded_volume(), &volume));
+    assert!(matched.maximum_world_distance_mm() <= 1e-7);
+    assert!(matched.maximum_world_chart_derivative_mm() <= 1e-7);
+    assert!(
+        matched
+            .independent_volume_difference_mm3()
+            .into_iter()
+            .all(|v| v.abs() <= 1e-5)
+    );
+    assert!(matched.total_work_used() <= 512_000_000);
+    assert!(matched.accounted_peak_bytes() <= 64 * 1024 * 1024);
+    assert_eq!(matched.supplied_thread().entry_rim_transfers().len(), 4);
+    eprintln!(
+        "MODEL_SUPPLIED_MATERIAL nominal={nominal} left={left} c0={} d1={} mass={:?} total_work={} fresh_work={} cavity_cells={} retained_bytes={} peak_bytes={} cavity_accuracy={:?}",
+        matched.maximum_world_distance_mm(),
+        matched.maximum_world_chart_derivative_mm(),
+        matched.independent_volume_difference_mm3(),
+        matched.total_work_used(),
+        matched.new_work_used(),
+        matched.cavity_cells_used(),
+        matched.retained_budget_bytes(),
+        matched.accounted_peak_bytes(),
+        matched.cavity_accuracy_mm()
+    );
     let author_receipt = source.source_volume_bounds().unwrap();
     let author_volume = author_receipt.volume_mm3();
     let decoded_volume = volume.world_volume_mm3();
@@ -320,7 +348,7 @@ fn verify(nominal: f64, pitch: f64, left: bool) {
         .unwrap()
         .volume_mm3();
     eprintln!(
-        "MODEL_COMPONENTS nominal={nominal} left={left} source_head_repaired={original_head_mass:?} source_head_nominal_debug={} source_thread_nominal_debug={} source_cavity={:?} decoded_components={:?} source_precision={} source_phase_error={} source_cavity_width={} world_difference={difference:?} whole_material_match=UNEARNED source_spec={:?} decoded_spec={:?}",
+        "MODEL_COMPONENTS nominal={nominal} left={left} source_head_repaired={original_head_mass:?} source_head_nominal_debug={} source_thread_nominal_debug={} source_cavity={:?} decoded_components={:?} source_precision={} source_phase_error={} source_cavity_width={} world_difference={difference:?} whole_material_match=EARNED_UNDER_POLICY source_spec={:?} decoded_spec={:?}",
         source.profile().volume_mm3(),
         source.thread().volume_mm3(),
         source.cavity().volume().volume_mm3,
