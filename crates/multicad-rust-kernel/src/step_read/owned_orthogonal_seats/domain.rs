@@ -385,6 +385,9 @@ mod tests {
     };
     use std::rc::Rc;
     fn source(center: [f64; 2], radius: f64, mouth: f64) -> Seats {
+        sources(&[(center, radius, mouth)])
+    }
+    fn sources(holes: &[([f64; 2], f64, f64)]) -> Seats {
         let stock = Rc::new(
             orthogonal::boolean(
                 &[
@@ -405,25 +408,35 @@ mod tests {
             .unwrap(),
         );
         let boundary = orthogonal_boundary::build(stock.quads()).unwrap();
-        let bore = orthogonal_pockets::identify_through_bore(
-            &stock,
-            &boundary,
-            [-0.1, center[0], center[1]],
-            [40.1, center[0], center[1]],
-            radius,
-            1e-7,
-            1e-5,
-        )
-        .unwrap();
+        let bores = holes
+            .iter()
+            .map(|(center, radius, _)| {
+                orthogonal_pockets::identify_through_bore(
+                    &stock,
+                    &boundary,
+                    [-0.1, center[0], center[1]],
+                    [40.1, center[0], center[1]],
+                    *radius,
+                    1e-7,
+                    1e-5,
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let seats = holes
+            .iter()
+            .enumerate()
+            .map(|(bore, (_, _, mouth))| Seat {
+                bore,
+                end: false,
+                radius_mm: *mouth,
+                depth_mm: 0.5,
+            })
+            .collect::<Vec<_>>();
         Seats::new(
             stock,
-            Rc::from([bore]),
-            &[Seat {
-                bore: 0,
-                end: false,
-                radius_mm: mouth,
-                depth_mm: 0.5,
-            }],
+            Rc::from(bores),
+            &seats,
             SourceOptions {
                 clearance_mm: 1e-7,
                 minimum_feature_mm: 1e-5,
@@ -433,6 +446,176 @@ mod tests {
             &|| false,
         )
         .unwrap()
+    }
+    #[test]
+    fn multiple_holes_on_each_nonconvex_cap_preserve_disjoint_collars_and_owners() {
+        let source = sources(&[
+            ([12., 2.5], 0.5, 1.),
+            ([22., 2.5], 0.5, 1.),
+            ([2.5, 12.], 0.5, 1.),
+            ([2.5, 22.], 0.5, 1.),
+        ]);
+        for (label, pose) in [
+            (
+                "identity",
+                StockClipPlacement::new([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]], [0.; 3])
+                    .unwrap(),
+            ),
+            (
+                "arbitrary",
+                StockClipPlacement::new(
+                    [[0.36, -0.48, 0.8], [0.8, 0.6, 0.], [-0.48, 0.64, 0.6]],
+                    [11., -7., 5.],
+                )
+                .unwrap(),
+            ),
+        ] {
+            let candidate =
+                orthogonal_seats::candidate(&source, pose, Default::default(), &|| false).unwrap();
+            let document =
+                CompoundDocument::parse(candidate.as_str(), Default::default(), None).unwrap();
+            let boundary = decode(
+                &document,
+                document.represented_members()[0].item_entity(),
+                Options::default(),
+                &|| false,
+            )
+            .unwrap();
+            let material = boundary
+                .heal_material(MaterialOptions::default(), &|| false)
+                .unwrap_or_else(|e| panic!("public healing failed for {label}: {e:?}"));
+            assert_eq!(material.chains().bores().len(), 4);
+            let caps = material.chains().bores()[0].cap_face_entities();
+            assert!(
+                material
+                    .chains()
+                    .bores()
+                    .iter()
+                    .all(|b| b.cap_face_entities() == caps)
+            );
+            let matched = material
+                .check_original(
+                    &source,
+                    pose,
+                    candidate.face_entities(),
+                    TransferOptions::default(),
+                    &|| false,
+                )
+                .unwrap();
+            assert!(matched.source_to_healed_position_error_mm() < 1e-7);
+            assert!(matched.source_to_healed_normalized_derivative_error_mm() < 1e-7);
+            assert!(material.healed_volume_bounds_mm3()[0] > 0.);
+            let qualified =
+                orthogonal_seats::qualify(&source, pose, Default::default(), &|| false).unwrap();
+            let actual = qualified
+                .verify_actual_member(
+                    &document,
+                    boundary.item_entity(),
+                    Default::default(),
+                    &|| false,
+                )
+                .unwrap();
+            assert!(actual.literal_binding_work_used() > 0);
+            assert!(actual.literal_binding_work_used() <= actual.work_used());
+
+            // These cylinders share the same two cap owners. Actual wall/seat
+            // ownership must still distinguish their different finite holes.
+            let first_wall = source.boundary().faces.len();
+            for offset in [first_wall, first_wall + source.bores().len()] {
+                let mut wrong = candidate.face_entities().to_vec();
+                wrong.swap(offset, offset + 1);
+                assert!(matches!(
+                    material.check_original(
+                        &source,
+                        pose,
+                        &wrong,
+                        TransferOptions::default(),
+                        &|| false
+                    ),
+                    Err(Error::Unsupported)
+                ));
+            }
+            let exact = MaterialOptions {
+                transfer: TransferOptions {
+                    maximum_work: material.work_used(),
+                    maximum_bytes: material.query_budget_bytes(),
+                    ..TransferOptions::default()
+                },
+                ..MaterialOptions::default()
+            };
+            assert!(boundary.heal_material(exact, &|| false).is_ok());
+            for (work, bytes) in [
+                (
+                    exact.transfer.maximum_work - 1,
+                    exact.transfer.maximum_bytes,
+                ),
+                (
+                    exact.transfer.maximum_work,
+                    exact.transfer.maximum_bytes - 1,
+                ),
+            ] {
+                let refused = MaterialOptions {
+                    transfer: TransferOptions {
+                        maximum_work: work,
+                        maximum_bytes: bytes,
+                        ..exact.transfer
+                    },
+                    ..exact
+                };
+                assert!(matches!(
+                    boundary.heal_material(refused, &|| false),
+                    Err(Error::Limit)
+                ));
+            }
+            assert!(
+                material
+                    .check_original(
+                        &source,
+                        pose,
+                        candidate.face_entities(),
+                        TransferOptions::default(),
+                        &|| false
+                    )
+                    .is_ok()
+            );
+        }
+    }
+    #[test]
+    fn multiple_holes_with_clear_disks_but_overlapping_collar_boxes_refuse() {
+        // Both circular mouths fit and are strictly disjoint, while their
+        // bounding rectangles overlap in both axes. No rectangular collar
+        // certificate can be inferred from circle separation alone.
+        let source = sources(&[([12., 1.25], 0.5, 1.), ([13.5, 2.75], 0.5, 1.)]);
+        let pose =
+            StockClipPlacement::new([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]], [0.; 3]).unwrap();
+        let candidate =
+            orthogonal_seats::candidate(&source, pose, Default::default(), &|| false).unwrap();
+        let document =
+            CompoundDocument::parse(candidate.as_str(), Default::default(), None).unwrap();
+        let boundary = decode(
+            &document,
+            document.represented_members()[0].item_entity(),
+            Options::default(),
+            &|| false,
+        )
+        .unwrap();
+        assert_eq!(
+            boundary
+                .through_chains(Options::default(), &|| false)
+                .unwrap()
+                .bores()
+                .len(),
+            2
+        );
+        assert!(source.volume_bounds_mm3()[0] > 0.);
+        assert!(matches!(
+            boundary.heal_material(MaterialOptions::default(), &|| false),
+            Err(Error::Unsupported)
+        ));
+        assert!(matches!(
+            orthogonal_seats::qualify(&source, pose, Default::default(), &|| false),
+            Err(orthogonal_seats::QualificationError::Unsupported)
+        ));
     }
     #[test]
     fn pierced_nonconvex_caps_earn_global_grid_and_hole_collar_maps() {
