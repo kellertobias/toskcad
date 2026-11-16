@@ -771,7 +771,9 @@ fn convert(error: ReadError) -> crate::brep::Error {
 /// length uncertainty and fails that check is read again to the declared
 /// value, capped at [`MAX_DECLARED_TOLERANCE_MM`]; every vertex is then
 /// re-derived on the supports that meet there, and edges and faces must
-/// agree to the wider value.
+/// agree to the wider value. A file that fails the capped value too but
+/// declares more is read once more to its own declaration: agreement there
+/// makes it unsupported, not invalid.
 pub fn read_solids(
     input: &str,
     tolerance: f64,
@@ -783,15 +785,30 @@ pub fn read_solids(
         .declared_uncertainty()
         .map(|declared| declared.min(MAX_DECLARED_TOLERANCE_MM))
         .filter(|&wider| wider > tolerance);
-    match (strict, wider) {
-        (Err(crate::brep::Error::Invalid), Some(wider)) => {
-            let source = Source {
-                tolerance: wider,
-                ..source
-            };
-            solids_of(&source, tolerance, Some(wider), interrupt)
-        }
-        (result, _) => result,
+    let Some(wider) = wider else { return strict };
+    if !matches!(strict, Err(crate::brep::Error::Invalid)) {
+        return strict;
+    }
+    let declared = source.declared_uncertainty().unwrap_or(wider);
+    let capped = Source {
+        tolerance: wider,
+        ..source
+    };
+    let result = solids_of(&capped, tolerance, Some(wider), interrupt);
+    if !matches!(result, Err(crate::brep::Error::Invalid)) || declared <= wider {
+        return result;
+    }
+    // Beyond the cap the file may still agree with itself to its own
+    // declared uncertainty. Such a file is not invalid, but its boundary is
+    // looser than the provider retains: it is unsupported. Only a file that
+    // fails its own uncertainty too is invalid.
+    let own = Source {
+        tolerance: declared,
+        ..capped
+    };
+    match solids_of(&own, tolerance, Some(declared), interrupt) {
+        Ok(_) => Err(crate::brep::Error::Unsupported),
+        Err(error) => Err(error),
     }
 }
 

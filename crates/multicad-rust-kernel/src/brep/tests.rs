@@ -411,10 +411,15 @@ fn a_declared_uncertainty_admits_vertices_and_re_derives_them_on_their_supports(
     assert!(distance(vertex, [8., 0., 0.]) < 1e-12, "{vertex:?}");
     assert!(close(solid.volume_mm3(), exact, 1e-9));
     certified(&solid, 0.05);
-    // A gap beyond the capped tolerance stays refused, whatever is declared.
+    // A gap beyond the capped tolerance is never read. Within the file's
+    // own declared uncertainty it is unsupported; beyond that, invalid.
     let far = tampered(FRUSTUM, STATED, "#23 = CARTESIAN_POINT('',(8.00002,0.,0.))");
     assert_eq!(
         solids(&declared(&far, "1.E-03")).unwrap_err(),
+        Error::Unsupported
+    );
+    assert_eq!(
+        solids(&declared(&far, "1.5E-05")).unwrap_err(),
         Error::Invalid
     );
     // So do a flipped face and an open shell.
