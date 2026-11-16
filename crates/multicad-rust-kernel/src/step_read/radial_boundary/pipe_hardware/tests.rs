@@ -848,3 +848,53 @@ pub(crate) fn actual_cone_first_face_order(input: &str) -> String {
     );
     text
 }
+
+pub(crate) struct CircleChange {
+    pub text: String,
+    pub entity: u32,
+    pub old_radius: f64,
+    pub new_radius: f64,
+}
+// Only actual physical bytes change. This value carries no geometry admission.
+pub(crate) fn actual_circle_radius_nextup(input: &str) -> CircleChange {
+    let arena = part21::parse(input).unwrap();
+    let (&id, components) = arena
+        .iter()
+        .find(|(_, c)| c.len() == 1 && c[0].name == "CIRCLE")
+        .unwrap();
+    let circle = &components[0];
+    let Value::Number(old_radius) = circle.args[2] else {
+        panic!("actual radius literal");
+    };
+    let new_radius = old_radius.next_up();
+    assert!(old_radius > 0. && new_radius.is_finite() && new_radius > old_radius);
+    let mut text = input.to_owned();
+    text.replace_range(
+        fields(circle, input)[2].clone(),
+        &writer::numbers::literal(new_radius).unwrap(),
+    );
+    assert_ne!(text, input);
+    let changed = part21::parse(&text).unwrap();
+    assert_eq!(arena.len(), changed.len());
+    for (&other, before) in &arena {
+        if other != id {
+            assert_eq!(
+                before.iter().map(|e| e.source).collect::<Vec<_>>(),
+                changed[&other].iter().map(|e| e.source).collect::<Vec<_>>()
+            );
+        }
+    }
+    assert_eq!(circle.args[0..2], changed[&id][0].args[0..2]);
+    assert_eq!(changed[&id][0].args[2], Value::Number(new_radius));
+    eprintln!(
+        "ACTUAL_CIRCLE_RADIUS entity{id} oldbits{} newbits{} all_other_records_unchangedtrue",
+        old_radius.to_bits(),
+        new_radius.to_bits()
+    );
+    CircleChange {
+        text,
+        entity: id,
+        old_radius,
+        new_radius,
+    }
+}

@@ -540,3 +540,161 @@ fn real_literal_binding_invalid_selection_keeps_typed_error_and_valid_retry() {
     assert_eq!(a.literal_input(), expected);
     assert_eq!(b.literal_input(), actual);
 }
+
+#[test]
+fn actual_circle_radius_change_must_earn_material_before_curve_correspondence() {
+    use crate::step_read::pipe_hardware::tests::{CircleChange, actual_circle_radius_nextup};
+    use num_rational::BigRational;
+    let source = engineering_height(3.);
+    let candidate = propose(&source, Options::default(), None).unwrap();
+    let original_path =
+        std::env::temp_dir().join(format!("circle-original-{}.step", std::process::id()));
+    let changed_path =
+        std::env::temp_dir().join(format!("circle-nextup-{}.step", std::process::id()));
+    std::fs::write(&original_path, candidate.as_str()).unwrap();
+    drop(candidate);
+    let original = std::fs::read_to_string(&original_path).unwrap();
+    let normal = reader::read(
+        &original,
+        1e-7,
+        1e-6,
+        reader::Options {
+            additional_resident_bytes: source.receipt().retained_result_bytes_upper_bound
+                + original.capacity()
+                - original.len()
+                + 4096,
+            ..Default::default()
+        },
+        None,
+    )
+    .unwrap();
+    let snapshot_bytes = normal.material().receipt().retained_source_bytes;
+    let before = normal.material().shell().input().clone();
+    drop(normal);
+    let CircleChange {
+        text,
+        entity,
+        old_radius,
+        new_radius,
+    } = actual_circle_radius_nextup(&original);
+    assert!(
+        BigRational::from_float(new_radius).unwrap() > BigRational::from_float(old_radius).unwrap()
+    );
+    std::fs::write(&changed_path, &text).unwrap();
+    drop(text);
+    drop(original);
+    let changed = std::fs::read_to_string(&changed_path).unwrap();
+    // No helper/source mismatch is claimed until this changed physical file
+    // independently earns real occupied material under the unchanged guards.
+    let admitted = reader::read(
+        &changed,
+        1e-7,
+        1e-6,
+        reader::Options {
+            additional_resident_bytes: source.receipt().retained_result_bytes_upper_bound
+                + snapshot_bytes
+                + changed.capacity()
+                - changed.len()
+                + 4096,
+            ..Default::default()
+        },
+        None,
+    )
+    .expect("actual radius nextup must independently earn occupied material first");
+    assert_eq!(admitted.material().head_height_mm(), [6., 9.]);
+    assert_eq!(
+        admitted
+            .material()
+            .capped_thread()
+            .classify([0., 0., 3.], None)
+            .unwrap(),
+        radial::Location::Inside
+    );
+    let after = admitted.material().shell().input();
+    assert_eq!(before.vertices, after.vertices);
+    assert_eq!(before.edges, after.edges);
+    assert_eq!(before.faces, after.faces);
+    assert_eq!(before.surfaces, after.surfaces);
+    assert_eq!(before.curves.len(), after.curves.len());
+    let target = admitted
+        .parameter_maps()
+        .iter()
+        .find(|m| m.actual_entity() == entity)
+        .unwrap()
+        .target();
+    let Target::Curve(index) = target else {
+        panic!("actual circle map");
+    };
+    for (i, (a, b)) in before.curves.iter().zip(&after.curves).enumerate() {
+        if i != index {
+            assert_eq!(a, b);
+            continue;
+        }
+        let (
+            shell::Curve::Original(radial::Curve::Circle {
+                axis: a,
+                radius_mm: ar,
+            }),
+            shell::Curve::Original(radial::Curve::Circle {
+                axis: b,
+                radius_mm: br,
+            }),
+        ) = (a, b)
+        else {
+            panic!("actual decoded circle operators");
+        };
+        assert_eq!(a, b);
+        assert_eq!(ar.to_bits(), old_radius.to_bits());
+        assert_eq!(br.to_bits(), new_radius.to_bits());
+    }
+    eprintln!(
+        "EARNED_CHANGED_CIRCLE entity{entity} one_radius_scalar_changedtrue all_other_operators_unchangedtrue"
+    );
+    let mut work = Work {
+        remaining: MAX_WORK,
+        interrupt: None,
+    };
+    assert!(matches!(
+        compare(
+            source.shell().input(),
+            after,
+            admitted.parameter_maps(),
+            &mut work
+        ),
+        Err(Error::Unsupported)
+    ));
+    drop(admitted);
+    drop(before);
+    assert!(matches!(
+        qualify_actual_file(
+            &source,
+            &changed,
+            1e-7,
+            1e-6,
+            QualificationOptions {
+                additional_resident_bytes: changed.capacity() - changed.len() + 4096,
+                ..Default::default()
+            },
+            None
+        ),
+        Err(Error::Unsupported)
+    ));
+    drop(changed);
+    let original = std::fs::read_to_string(&original_path).unwrap();
+    let retry = qualify_actual_file(
+        &source,
+        &original,
+        1e-7,
+        1e-6,
+        QualificationOptions {
+            additional_resident_bytes: original.capacity() - original.len() + 4096,
+            ..Default::default()
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(retry.as_str(), original);
+    assert_eq!(source.head_height_mm(), [6., 9.]);
+    std::fs::remove_file(&original_path).unwrap();
+    std::fs::remove_file(&changed_path).unwrap();
+}
