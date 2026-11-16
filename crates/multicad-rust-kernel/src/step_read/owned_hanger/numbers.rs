@@ -177,7 +177,7 @@ mod tests {
         ));
         assert!(unit_coordinate(s("0."), &mut b).unwrap().lo == 0.);
         assert!(unit_coordinate(s("1."), &mut b).unwrap().hi == 1.);
-        for text in ["0.1", "-3.125", "1.E-9", "0.", "1."] {
+        for text in ["0.1", "0.3", "-3.125", "1.E-9", "0.", "1."] {
             let interval = exact_interval(s(text), &mut b).unwrap();
             let q = rational(s(text), &mut b).unwrap();
             assert!(num_rational::BigRational::from_float(interval.lo).unwrap() <= q);

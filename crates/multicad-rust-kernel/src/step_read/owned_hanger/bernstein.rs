@@ -240,6 +240,16 @@ mod tests {
         for (actual, expected) in product.iter().zip([0., 0.5, 0.]) {
             assert!(actual.lo <= expected && actual.hi >= expected)
         }
+        let offset = [p(2.); 3];
+        let mut shifted = product.clone();
+        add(&mut shifted, &offset, &mut b).unwrap();
+        for (actual, expected) in shifted.iter().zip([2., 2.5, 2.]) {
+            assert!(actual.lo <= expected && actual.hi >= expected);
+        }
+        let restored = subtract(&shifted, &offset, &mut b).unwrap();
+        for (actual, expected) in restored.iter().zip([0., 0.5, 0.]) {
+            assert!(actual.lo <= expected && actual.hi >= expected);
+        }
         let dx = derivative(&x, &mut b).unwrap();
         assert!(dx[0].lo <= 1. && dx[0].hi >= 1.);
         let restricted = restrict(&product, p(0.25), p(0.75), &mut b).unwrap();
