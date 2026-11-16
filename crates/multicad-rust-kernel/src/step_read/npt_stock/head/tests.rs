@@ -156,6 +156,9 @@ fn actual_clipped_head_refuses_wrong_rim_star_intersection_gap_and_bad_supports(
     bad.vertices[6][0] += 0.001;
     cases.push(("nonvertical head", bad));
     let mut bad = input.clone();
+    bad.vertices[6][2] += 0.001;
+    cases.push(("tilted top station", bad));
+    let mut bad = input.clone();
     for p in &mut bad.vertices {
         p[2] += 1e-5;
     }
