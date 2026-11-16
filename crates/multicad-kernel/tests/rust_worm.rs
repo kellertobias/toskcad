@@ -341,12 +341,57 @@ fn preview_distance(
         .fold(0., f64::max)
 }
 
+/// Preview chords of drawn edges, bucketed in square cells for nearest
+/// distance queries within one cell.
+struct Chords {
+    cell: f64,
+    grid: std::collections::HashMap<[i64; 2], Vec<[[f64; 2]; 2]>>,
+}
+
+impl Chords {
+    fn new<'a>(edges: impl IntoIterator<Item = &'a multicad_kernel::ProjectedVector>) -> Self {
+        let cell = 0.05;
+        let mut grid: std::collections::HashMap<[i64; 2], Vec<[[f64; 2]; 2]>> = Default::default();
+        for edge in edges {
+            for w in edge.preview_mm.windows(2) {
+                let low = [0, 1].map(|k| (w[0][k].min(w[1][k]) / cell).floor() as i64);
+                let high = [0, 1].map(|k| (w[0][k].max(w[1][k]) / cell).floor() as i64);
+                for x in low[0]..=high[0] {
+                    for y in low[1]..=high[1] {
+                        grid.entry([x, y]).or_default().push([w[0], w[1]]);
+                    }
+                }
+            }
+        }
+        Self { cell, grid }
+    }
+
+    /// Distance to the nearest chord, at most the cell size; infinite when
+    /// no chord is that close.
+    fn distance(&self, p: [f64; 2]) -> f64 {
+        let [x, y] = p.map(|v| (v / self.cell).floor() as i64);
+        let mut best = f64::INFINITY;
+        for cell in (-1..=1).flat_map(|dx| (-1..=1).map(move |dy| [x + dx, y + dy])) {
+            for &[a, b] in self.grid.get(&cell).into_iter().flatten() {
+                let d = [b[0] - a[0], b[1] - a[1]];
+                let w = [p[0] - a[0], p[1] - a[1]];
+                let t = ((w[0] * d[0] + w[1] * d[1]) / (d[0] * d[0] + d[1] * d[1]).max(1e-300))
+                    .clamp(0., 1.);
+                best = best.min((w[0] - t * d[0]).hypot(w[1] - t * d[1]));
+            }
+        }
+        if best <= self.cell {
+            best
+        } else {
+            f64::INFINITY
+        }
+    }
+}
+
 #[test]
 fn rust_worm_drawings_follow_exact_axial_visibility_and_sections() {
     use multicad_core::drawings::{VectorCurve, VectorRole};
-    use multicad_kernel::{
-        DrawingHatch, DrawingProjection, DrawingSolid, GeometryErrorKind, project_drawing,
-    };
+    use multicad_kernel::{DrawingHatch, DrawingProjection, DrawingSolid, project_drawing};
     let policy = GeometryPolicy::default();
     let spec = ZaWorm {
         axial_module_mm: 1.,
@@ -549,7 +594,7 @@ fn rust_worm_drawings_follow_exact_axial_visibility_and_sections() {
     }
     println!("{{\"case\":\"worm across the axis\",\"worst_silhouette_mm\":{worst}}}");
     assert!(worst < 1e-3, "{worst}");
-    // Wheels: exact sections, explicit refusal of views.
+    // Wheels: exact sections, and the worm drawn in the wheel bore.
     let wheel = Solid::rust_generated_za_worm_wheel_named(
         GeneratedZaWormWheel {
             teeth: 40,
@@ -588,20 +633,179 @@ fn rust_worm_drawings_follow_exact_axial_visibility_and_sections() {
         wheel_area > 0.85 * disk && wheel_area < disk,
         "{wheel_area}"
     );
-    let both = project_drawing(
-        &[
-            DrawingSolid {
-                solid: &worm,
-                hatch: None,
-            },
-            DrawingSolid {
-                solid: &wheel,
-                hatch: None,
-            },
-        ],
-        view,
+    // The worm through the bore of the wheel, both on one axis: the scene
+    // engine draws the pair within the default budget. Ahead of the wheel
+    // the worm covers its whole crest disk, so the pair is the worm alone
+    // and the wheel alone with every wheel curve inside the crest radius
+    // hidden. The axial wheel law draws the tangent-continuous junctions of
+    // the generated tooth space as edges, which the scene draws only with
+    // tangent edges; the pair is compared with it both ways in that
+    // drawing, and the requested drawing is the same without those seams.
+    let wheel_alone = draw(&wheel, view).unwrap();
+    let pair = |options: DrawingProjection| {
+        let started = std::time::Instant::now();
+        let drawn = project_drawing(
+            &[
+                DrawingSolid {
+                    solid: &worm,
+                    hatch: None,
+                },
+                DrawingSolid {
+                    solid: &wheel,
+                    hatch: None,
+                },
+            ],
+            options,
+        )
+        .unwrap();
+        (drawn, started.elapsed())
+    };
+    let (both, elapsed) = pair(view);
+    let (seamed, seamed_elapsed) = pair(DrawingProjection {
+        tangent_edges: true,
+        ..view
+    });
+    let of = |edges: &[multicad_kernel::ProjectedVector], source: usize, role: VectorRole| {
+        edges
+            .iter()
+            .filter(|edge| edge.source_index == source && edge.role == role)
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let roles = [VectorRole::Visible, VectorRole::Hidden];
+    let split = |edges: &[multicad_kernel::ProjectedVector], source: usize| {
+        roles.map(|role| of(edges, source, role))
+    };
+    let [pair_worm, pair_wheel, seamed_wheel] =
+        [(&both, 0), (&both, 1), (&seamed, 1)].map(|(edges, source)| split(edges, source));
+    let [alone_visible, alone_hidden] = split(&wheel_alone, 0);
+    assert_eq!(
+        both.len(),
+        pair_worm
+            .iter()
+            .chain(&pair_wheel)
+            .map(Vec::len)
+            .sum::<usize>()
     );
-    assert_eq!(both.unwrap_err().kind, GeometryErrorKind::Unsupported);
+    let chords = |edges: &[multicad_kernel::ProjectedVector]| Chords::new(edges.iter());
+    // Largest distance from the preview points of `edges` that `keep`
+    // selects to the chords of `reference`.
+    let worst = |edges: &[multicad_kernel::ProjectedVector],
+                 keep: &dyn Fn([f64; 2]) -> bool,
+                 reference: &Chords| {
+        edges
+            .iter()
+            .flat_map(|edge| edge.preview_mm.iter().copied())
+            .filter(|&p| keep(p))
+            .map(|p| reference.distance(p))
+            .fold(0_f64, f64::max)
+    };
+    let crest = 6.;
+    let band = 0.01;
+    let any = |_: [f64; 2]| true;
+    let outside = |p: [f64; 2]| p[0].hypot(p[1]) > crest + band;
+    let within = |p: [f64; 2]| p[0].hypot(p[1]) < crest - band;
+    let mut checks = Vec::new();
+    for (index, role) in roles.into_iter().enumerate() {
+        let alone: Vec<_> = projected
+            .iter()
+            .filter(|e| e.role == role)
+            .cloned()
+            .collect();
+        checks.push((
+            "worm",
+            role,
+            worst(&pair_worm[index], &any, &chords(&alone)),
+        ));
+        checks.push((
+            "worm alone",
+            role,
+            worst(&alone, &any, &chords(&pair_worm[index])),
+        ));
+        // The requested drawing is part of the drawing with tangent edges.
+        let wider = chords(&of(&seamed, 1, role));
+        checks.push((
+            "wheel in seamed",
+            role,
+            worst(&pair_wheel[index], &any, &wider),
+        ));
+    }
+    let [visible, hidden] = seamed_wheel.each_ref().map(|edges| chords(edges));
+    let alone_any = chords(&wheel_alone);
+    // Visible only where the wheel alone is visible, outside the crest.
+    for (label, edges) in [
+        ("wheel visible", &pair_wheel[0]),
+        ("seamed visible", &seamed_wheel[0]),
+    ] {
+        checks.push((
+            label,
+            VectorRole::Visible,
+            worst(edges, &any, &chords(&alone_visible)),
+        ));
+        assert!(
+            edges
+                .iter()
+                .flat_map(|edge| edge.preview_mm.iter())
+                .all(|p| p[0].hypot(p[1]) >= crest - band),
+            "{label}"
+        );
+    }
+    // Every visible curve of the wheel alone outside the crest stays visible;
+    // inside it, it is hidden behind the worm.
+    checks.push((
+        "wheel alone outside",
+        VectorRole::Visible,
+        worst(&alone_visible, &outside, &visible),
+    ));
+    checks.push((
+        "wheel alone inside",
+        VectorRole::Hidden,
+        worst(&alone_visible, &within, &hidden),
+    ));
+    // Hidden curves of the wheel stay hidden, and nothing else is hidden.
+    // The axial wheel law also publishes the far rims behind the visible
+    // near rims of the tip land; there the visible curve is drawn once.
+    let shown = chords(&alone_visible);
+    let behind = |p: [f64; 2]| shown.distance(p) > 0.004;
+    checks.push((
+        "wheel alone hidden",
+        VectorRole::Hidden,
+        worst(&alone_hidden, &behind, &hidden),
+    ));
+    for (label, beyond, edges) in [
+        ("wheel hidden", "wheel hidden outside", &pair_wheel[1]),
+        ("seamed hidden", "seamed hidden outside", &seamed_wheel[1]),
+    ] {
+        checks.push((label, VectorRole::Hidden, worst(edges, &any, &alone_any)));
+        checks.push((
+            beyond,
+            VectorRole::Hidden,
+            worst(edges, &outside, &chords(&alone_hidden)),
+        ));
+    }
+    for (label, role, distance) in &checks {
+        println!(
+            "{{\"case\":\"worm in wheel bore\",\"check\":\"{label}\",\"role\":\"{role:?}\",\"mm\":{distance}}}"
+        );
+        assert!(*distance < 0.004, "{label} {role:?} {distance}");
+    }
+    let counts = [&pair_worm, &pair_wheel, &seamed_wheel].map(|pair| pair.each_ref().map(Vec::len));
+    println!(
+        "{{\"case\":\"worm in wheel bore\",\"vectors\":{},\"worm\":{:?},\"wheel\":{:?},\"seamed_wheel\":{:?},\"worm_alone\":{},\"wheel_alone\":{},\"ms\":{},\"seamed_ms\":{}}}",
+        both.len(),
+        counts[0],
+        counts[1],
+        counts[2],
+        projected.len(),
+        wheel_alone.len(),
+        elapsed.as_millis(),
+        seamed_elapsed.as_millis()
+    );
+    // Each curve publishes once: about the two drawings alone, with the
+    // splits where the wheel's curves pass the crest circle.
+    assert!(4 * seamed.len() < 5 * (projected.len() + wheel_alone.len()));
+    assert!(both.len() < seamed.len());
+    assert!(counts[1][0] > 100 && counts[1][1] > 100);
     if !multicad_kernel::OCCT_LINKED {
         return;
     }
