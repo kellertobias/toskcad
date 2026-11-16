@@ -22,9 +22,25 @@ pub fn read_source_compound(input: &str, tolerance: f64) -> Result<Vec<SourceImp
         return Ok(periodic);
     }
     match ordinary(input, tolerance) {
-        Err(ReadError::Unsupported) => literal_npt::read(input, tolerance),
+        // The literal NPT reader recognises only members with a degree-11
+        // B-spline face; any other unfamiliar file stays unsupported rather
+        // than meeting that reader's stricter document contract.
+        Err(ReadError::Unsupported) if has_degree_eleven_surface(input) => {
+            literal_npt::read(input, tolerance)
+        }
         other => other,
     }
+}
+/// True when the file states a degree-11 by degree-11 B-spline surface, the
+/// necessary premise of every literal NPT candidate member.
+fn has_degree_eleven_surface(input: &str) -> bool {
+    super::part21::parse(input).is_ok_and(|entities| {
+        entities.values().flatten().any(|entity| {
+            entity.name == "B_SPLINE_SURFACE_WITH_KNOTS"
+                && matches!(entity.args.get(1), Some(Value::Number(d)) if *d == 11.)
+                && matches!(entity.args.get(2), Some(Value::Number(d)) if *d == 11.)
+        })
+    })
 }
 fn ordinary(input: &str, tolerance: f64) -> Result<Vec<SourceImport>> {
     compound::read_members_by(input, tolerance, true, false, ordinary_member)
