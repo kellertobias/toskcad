@@ -65,7 +65,6 @@ mod orthogonal_body;
 mod parallel_cylinder;
 mod planar_boolean_body;
 mod radial_boundary_body;
-pub type FacePlane = ([f64; 3], [f64; 3]);
 mod repaired_phillips_body;
 use repaired_phillips_body::RepairedPhillipsBody;
 pub use repaired_phillips_body::{
@@ -2205,33 +2204,6 @@ impl Solid {
     ) -> Result<multicad_core::manufacturing::PlanarContours, GeometryError> {
         crate::planar_contours::extract(self, face, frame, self.policy)
     }
-    /// Query a selected plane without integrating unrelated curved surfaces.
-    pub fn face_plane(&self, index: u32) -> Result<Option<FacePlane>, GeometryError> {
-        if let Some((body, frame)) = self.repaired_phillips_body()
-            && body.has_degree11_source()
-        {
-            return body.degree11_face_plane(frame, index);
-        }
-        Ok(self.face(index)?.plane)
-    }
-    /// Measure one selected face; providers may avoid all other face integrals.
-    pub fn face(&self, index: u32) -> Result<Face, GeometryError> {
-        if let Some((body, frame)) = self.repaired_phillips_body()
-            && body.has_degree11_source()
-        {
-            return body.degree11_face(frame, index);
-        }
-        self.faces()?
-            .into_iter()
-            .find(|face| face.index == index)
-            .ok_or_else(|| {
-                error(
-                    "face",
-                    GeometryErrorKind::Input,
-                    "Selected face does not exist",
-                )
-            })
-    }
     pub fn faces(&self) -> Result<Vec<Face>, GeometryError> {
         if let Some(body) = self.pipe_hardware_body() {
             return body.faces(self.policy);
@@ -2973,6 +2945,11 @@ impl Solid {
         if let Some(body) = self.actual_clipped_head_body() {
             return body.face(index);
         }
+        if let Some((body, frame)) = self.repaired_phillips_body()
+            && body.has_degree11_source()
+        {
+            return body.degree11_face(frame, index);
+        }
         self.faces()?
             .into_iter()
             .find(|f| f.index == index)
@@ -2982,6 +2959,11 @@ impl Solid {
     pub fn face_plane(&self, index: u32) -> Result<Option<FacePlane>, GeometryError> {
         if let Some(body) = self.actual_clipped_head_body() {
             return Ok(body.plane(index)?.map(|f| (f.origin_mm, f.normal())));
+        }
+        if let Some((body, frame)) = self.repaired_phillips_body()
+            && body.has_degree11_source()
+        {
+            return body.degree11_face_plane(frame, index);
         }
         Ok(self.face(index)?.plane)
     }
