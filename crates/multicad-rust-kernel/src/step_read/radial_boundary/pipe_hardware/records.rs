@@ -93,3 +93,6 @@ impl RetainedRecords for Records {
             .get(self.components.get(row.first + index)?.clone())
     }
 }
+
+#[cfg(test)]
+mod tests;
