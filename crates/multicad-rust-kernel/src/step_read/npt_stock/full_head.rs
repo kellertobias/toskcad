@@ -13,6 +13,7 @@ pub use owned::{AxialSewingTransfer, OwnedActualHead, OwnedHeadOptions, OwnedHea
 mod source;
 #[cfg(test)]
 mod source_tests;
+pub mod transport;
 pub use source::{HexHeadIntent, QualifiedFile, SourceOptions, SourceReceipt, qualify_actual_file};
 #[cfg(test)]
 mod tests;
