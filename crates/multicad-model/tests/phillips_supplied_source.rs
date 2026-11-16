@@ -653,8 +653,41 @@ fn core_m6_left_posed_actual_supplied_source_bridge() {
 
 #[test]
 fn actual_core_m3_owned_native_coarse_candidate_earns_fresh_world_embedding() {
-    let mut session = Session::new(Document::new("Native actual M3 mesh").unwrap()).unwrap();
-    let request = MechanicalPartRequest::new("Actual M3", parameters(3., 0.5, false));
+    native_actual_candidate(
+        multicad_kernel::MeshOptions {
+            // Preserve the separately qualified coarse integration request.
+            linear_deflection_mm: 1.1,
+            angular_deflection_rad: 0.72,
+            maximum_triangles: 1_000_000,
+        },
+        3.,
+        0.5,
+        false,
+        false,
+    );
+}
+
+#[test]
+fn actual_core_metric_owned_native_default_and_cached_candidates_earn_fresh_world_embedding() {
+    for (nominal, pitch, left) in [
+        (3., 0.5, false),
+        (3., 0.5, true),
+        (6., 1., false),
+        (6., 1., true),
+    ] {
+        native_actual_candidate(Default::default(), nominal, pitch, left, true);
+    }
+}
+
+fn native_actual_candidate(
+    options: multicad_kernel::MeshOptions,
+    nominal: f64,
+    pitch: f64,
+    left: bool,
+    exercise_cache: bool,
+) {
+    let mut session = Session::new(Document::new("Native actual metric mesh").unwrap()).unwrap();
+    let request = MechanicalPartRequest::new("Actual metric", parameters(nominal, pitch, left));
     let prepared = model::prepare_mechanical_part(
         &session,
         session.revision(),
@@ -691,15 +724,6 @@ fn actual_core_m3_owned_native_coarse_candidate_earns_fresh_world_embedding() {
         None,
     )
     .unwrap();
-    let options = multicad_kernel::MeshOptions {
-        // A nonidentity actual source frame receives half the caller's
-        // distance and99% of its angle before Native transport validation.
-        // This explicitly coarse integration fixture leaves the qualified
-        // 0.5mm/0.7rad source request intact; it is not a default-quality gate.
-        linear_deflection_mm: 1.1,
-        angular_deflection_rad: 0.72,
-        maximum_triangles: 1_000_000,
-    };
     let (mesh, receipt) = native
         .rust_degree11_repaired_phillips_mesh_with_receipt(options, Default::default(), None)
         .unwrap();
@@ -708,7 +732,76 @@ fn actual_core_m3_owned_native_coarse_candidate_earns_fresh_world_embedding() {
     assert!(receipt.literal_signed_volume_mm3() > 0.);
     assert!(receipt.embedding_pairs() > 0);
     assert!(receipt.query_work_used() <= 512_000_000);
+    assert_eq!(
+        receipt.query_work_used() + receipt.remaining_work(),
+        512_000_000
+    );
     assert!(receipt.consumer_accounted_peak_bytes() <= 64 * 1024 * 1024);
     assert!(receipt.local_source_surface_error_mm() <= options.linear_deflection_mm);
     assert!(!receipt.reused_display_receipt());
+    if !exercise_cache {
+        return;
+    }
+    let used = receipt.query_work_used();
+    if nominal == 3. && !left {
+        assert_eq!(
+            native
+                .rust_degree11_repaired_phillips_mesh_with_receipt(
+                    options,
+                    multicad_kernel::RepairedPhillipsMeshBudget {
+                        maximum_work: used - 1,
+                        ..Default::default()
+                    },
+                    None
+                )
+                .err()
+                .unwrap()
+                .kind,
+            multicad_kernel::GeometryErrorKind::Limit
+        );
+        let (retry, _) = native
+            .rust_degree11_repaired_phillips_mesh_with_receipt(
+                options,
+                multicad_kernel::RepairedPhillipsMeshBudget {
+                    maximum_work: used,
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        assert_eq!(retry, mesh);
+    }
+    let cold_start = std::time::Instant::now();
+    let (cold, cold_receipt) = native
+        .rust_degree11_repaired_phillips_display_mesh_with_receipt(
+            options,
+            Default::default(),
+            None,
+        )
+        .unwrap();
+    let cold_elapsed = cold_start.elapsed();
+    assert!(!cold_receipt.reused_display_receipt());
+    assert_eq!(cold, mesh);
+    let warm_start = std::time::Instant::now();
+    let (warm, warm_receipt) = native
+        .rust_degree11_repaired_phillips_display_mesh_with_receipt(
+            options,
+            Default::default(),
+            None,
+        )
+        .unwrap();
+    let warm_elapsed = warm_start.elapsed();
+    assert!(warm_receipt.reused_display_receipt());
+    assert!(std::ptr::eq(warm_receipt.source(), owned.as_ref()));
+    assert_eq!(warm, mesh);
+    assert!(warm_receipt.query_work_used() < used);
+    assert_eq!(
+        warm_receipt.query_work_used() + warm_receipt.remaining_work(),
+        512_000_000
+    );
+    eprintln!(
+        "ACTUAL_NATIVE_METRIC nominal={nominal} left={left} facets={} fresh_work={used} warm_work={} display_cold={cold_elapsed:?} display_warm={warm_elapsed:?}",
+        mesh.indices.len() / 3,
+        warm_receipt.query_work_used()
+    );
 }
