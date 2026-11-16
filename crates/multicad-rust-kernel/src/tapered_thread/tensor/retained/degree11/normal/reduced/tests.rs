@@ -166,6 +166,78 @@ fn convex_coefficient_cone_preserves_coupled_vector_direction_and_refuses_real_e
             .certifies_normal_cone(axis.map(|x| [-x, -x]), 0.1)
             .unwrap()
     );
+    let direction = axis.map(|x| [x - 1e-12, x + 1e-12]);
+    let prepared = cell.prepare_normal_cones(direction).unwrap();
+    assert!(std::mem::size_of_val(&prepared) <= 4096);
+    assert!(prepared.hull_cone(0.1).unwrap());
+    assert!(prepared.grouped_cones(0.1).unwrap());
+    assert!(prepared.coefficient_cones(0.1).unwrap());
+    for angle in [0.01, 0.1, 0.3, 0.7] {
+        assert_eq!(
+            prepared.coefficient_cones(angle).unwrap(),
+            cell.certifies_normal_cone(direction, angle).unwrap()
+        );
+    }
+    for angle in [0., f64::NAN, std::f64::consts::FRAC_PI_2] {
+        assert_eq!(prepared.hull_cone(angle), Err(Error::Invalid));
+        assert_eq!(prepared.grouped_cones(angle), Err(Error::Invalid));
+        assert_eq!(prepared.coefficient_cones(angle), Err(Error::Invalid));
+    }
+    assert!(matches!(
+        cell.prepare_normal_cones([[f64::MAX; 2]; 3]),
+        Err(Error::Unresolved)
+    ));
+    assert!(matches!(
+        cell.prepare_normal_cones([[f64::NAN; 2]; 3]),
+        Err(Error::Invalid)
+    ));
+
+    assert!(
+        cell.certifies_projected_normal_cone(direction, 0.1)
+            .unwrap()
+    );
+    assert!(
+        !cell
+            .certifies_projected_normal_cone(axis.map(|x| [-x, -x]), 0.1)
+            .unwrap()
+    );
+    let residual = cell.source().coefficient_residual_bounds();
+    for axis in 0..2 {
+        for child in cell.subdivide(axis).unwrap() {
+            assert_eq!(child.source().coefficient_residual_bounds(), residual);
+            assert!(
+                child
+                    .certifies_projected_normal_cone(direction, 0.1)
+                    .unwrap()
+            );
+        }
+    }
+    assert_eq!(
+        cell.certifies_projected_normal_cone([[f64::MAX; 2]; 3], 0.3),
+        Err(Error::Unresolved)
+    );
+    assert_eq!(
+        cell.certifies_projected_normal_cone([[f64::NAN; 2]; 3], 0.3),
+        Err(Error::Invalid)
+    );
+    assert_eq!(
+        cell.certifies_projected_normal_cone([[1., -1.]; 3], 0.3),
+        Err(Error::Invalid)
+    );
+    for angle in [0., f64::NAN, std::f64::consts::FRAC_PI_2] {
+        assert_eq!(
+            cell.certifies_projected_normal_cone(direction, angle),
+            Err(Error::Invalid)
+        );
+    }
+    assert!(matches!(
+        cell.certifies_projected_normal_cone(direction, f64::from_bits(1)),
+        Ok(false) | Err(Error::Unresolved)
+    ));
+    assert!(
+        cell.certifies_projected_normal_cone(direction, 0.1)
+            .unwrap()
+    );
     let saddle = RetainedTensor11::new(
         [1, 1],
         (0..12)
@@ -180,7 +252,25 @@ fn convex_coefficient_cone_preserves_coupled_vector_direction_and_refuses_real_e
         .unwrap(),
     );
     let saddle = owner.root_cell();
+    let prepared = saddle
+        .prepare_normal_cones([[0.; 2], [0.; 2], [1.; 2]])
+        .unwrap();
+    assert!(!prepared.hull_cone(0.3).unwrap());
+    assert!(!prepared.grouped_cones(0.3).unwrap());
+    assert!(!prepared.coefficient_cones(0.3).unwrap());
+    assert_eq!(
+        prepared.coefficient_cones(0.3).unwrap(),
+        saddle
+            .certifies_normal_cone([[0.; 2], [0.; 2], [1.; 2]], 0.3)
+            .unwrap()
+    );
+
     // Positive dot everywhere, but actual normals leave the Z cone.
+    assert!(
+        !saddle
+            .certifies_projected_normal_cone([[0.; 2], [0.; 2], [1.; 2]], 0.3)
+            .unwrap()
+    );
     assert!(
         !saddle
             .certifies_normal_cone([[0.; 2], [0.; 2], [1.; 2]], 0.3)
@@ -212,4 +302,50 @@ fn convex_coefficient_cone_preserves_coupled_vector_direction_and_refuses_real_e
         cell.certifies_normal_cone(axis.map(|x| [x, x]), 0.1)
             .unwrap()
     );
+}
+
+#[test]
+fn cached_actual_normal_midpoints_preserve_all_original_proposal_row_bits() {
+    let tensor = RetainedTensor11::new(
+        [1, 1],
+        (0..12)
+            .flat_map(|i| {
+                (0..12).map(move |j| [i as f64, j as f64, (i * i * j + i * j * j) as f64])
+            })
+            .collect(),
+    )
+    .unwrap();
+    let source = NormalPolynomial11::new(&tensor.cell([0, 0]).unwrap()).unwrap();
+    assert!(
+        source
+            .polynomial
+            .controls
+            .iter()
+            .flatten()
+            .flatten()
+            .any(|v| v.lo.to_bits() != v.hi.to_bits())
+    );
+    let weights = std::array::from_fn::<_, SMALL, _>(|i| basis(i as f64 / 7.));
+    let cached = proposal_rows(&source, &weights);
+    // Frozen original contraction order, independently recomputing every
+    // directed-source midpoint at each node. This oracle checks exact bits,
+    // not merely closeness or samples of the final geometry.
+    let mut original = [[[0.; 3]; LARGE]; SMALL];
+    for (node, values) in original.iter_mut().enumerate() {
+        for (j, value) in values.iter_mut().enumerate() {
+            for (i, row) in source.polynomial.controls.iter().enumerate() {
+                for k in 0..3 {
+                    value[k] += weights[node][i] * row[j][k].midpoint();
+                }
+            }
+        }
+    }
+    for (actual, expected) in cached
+        .iter()
+        .flatten()
+        .flatten()
+        .zip(original.iter().flatten().flatten())
+    {
+        assert_eq!(actual.to_bits(), expected.to_bits());
+    }
 }

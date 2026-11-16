@@ -59,48 +59,77 @@ fn head(
     work.storage(n * std::mem::size_of::<usize>())?;
     let mut counts = vec![1usize; n];
     work.held += counts.capacity() * std::mem::size_of::<usize>();
-    for _ in 0..64 {
-        match head_attempt_curve(source.head(), angular, &counts, quality, work)? {
-            Ok(head) => return Ok(head),
-            Err(Split::T(part)) => {
-                counts[part] = counts[part]
-                    .checked_mul(2)
-                    .ok_or(PhillipsReadError::Limit)?
-            }
-            Err(Split::U) => {
-                let old = angular.capacity() * std::mem::size_of::<AngularCurve<'_, 12>>();
-                let count = angular
-                    .len()
-                    .checked_mul(2)
-                    .ok_or(PhillipsReadError::Limit)?;
-                work.storage(count * std::mem::size_of::<AngularCurve<'_, 12>>())?;
-                let mut children = Vec::with_capacity(count);
-                work.storage(children.capacity() * std::mem::size_of::<AngularCurve<'_, 12>>())?;
-                for &a in angular.iter() {
-                    work.charge(1)?;
-                    let m = a.range[0] + (a.range[1] - a.range[0]) / 2.;
-                    if m <= a.range[0] || m >= a.range[1] {
-                        return Err(PhillipsReadError::Unsupported);
+    let mut prepared: Option<PreparedHeadAngular<'_>> = None;
+    let mut prepared_bytes = 0;
+    let result = (|| {
+        for _ in 0..64 {
+            let attempt = if let Some(prepared) = &prepared {
+                prepared.attempt(source.head(), &counts, quality, work)?
+            } else {
+                match PreparedHeadAngular::new(angular, work) {
+                    Ok(cache) => {
+                        prepared_bytes = cache.bytes();
+                        work.held += prepared_bytes;
+                        let attempt = cache.attempt(source.head(), &counts, quality, work)?;
+                        prepared = Some(cache);
+                        attempt
                     }
-                    children.extend([
-                        AngularCurve {
-                            range: [a.range[0], m],
-                            ..a
-                        },
-                        AngularCurve {
-                            range: [m, a.range[1]],
-                            ..a
-                        },
-                    ]);
+                    Err(error) => angular_rejection(error)?,
                 }
-                work.held = work.held - old
-                    + children.capacity() * std::mem::size_of::<AngularCurve<'_, 12>>();
-                work.storage(old)?;
-                *angular = children;
+            };
+            match attempt {
+                Ok(head) => return Ok(head),
+                Err(Split::T(part)) => {
+                    counts[part] = counts[part]
+                        .checked_mul(2)
+                        .ok_or(PhillipsReadError::Limit)?
+                }
+                Err(Split::U) => {
+                    // A new actual angular partition invalidates the cached views;
+                    // meridian-only count changes above do not. Release payload
+                    // BEFORE subtracting its resident debit or allocating children.
+                    drop(prepared.take());
+                    work.held -= prepared_bytes;
+                    prepared_bytes = 0;
+                    let old = angular.capacity() * std::mem::size_of::<AngularCurve<'_, 12>>();
+                    let count = angular
+                        .len()
+                        .checked_mul(2)
+                        .ok_or(PhillipsReadError::Limit)?;
+                    work.storage(count * std::mem::size_of::<AngularCurve<'_, 12>>())?;
+                    let mut children = Vec::with_capacity(count);
+                    work.storage(
+                        children.capacity() * std::mem::size_of::<AngularCurve<'_, 12>>(),
+                    )?;
+                    for &a in angular.iter() {
+                        work.charge(1)?;
+                        let m = a.range[0] + (a.range[1] - a.range[0]) / 2.;
+                        if m <= a.range[0] || m >= a.range[1] {
+                            return Err(PhillipsReadError::Unsupported);
+                        }
+                        children.extend([
+                            AngularCurve {
+                                range: [a.range[0], m],
+                                ..a
+                            },
+                            AngularCurve {
+                                range: [m, a.range[1]],
+                                ..a
+                            },
+                        ]);
+                    }
+                    work.held = work.held - old
+                        + children.capacity() * std::mem::size_of::<AngularCurve<'_, 12>>();
+                    work.storage(old)?;
+                    *angular = children;
+                }
             }
         }
-    }
-    Err(PhillipsReadError::Limit)
+        Err(PhillipsReadError::Limit)
+    })();
+    drop(prepared);
+    work.held -= prepared_bytes;
+    result
 }
 fn cavity_face(source: &OwnedDegree11Material, key: CavityFace) -> Option<u32> {
     (0..source.face_count()).find_map(|i| match source.face_source(i)? {

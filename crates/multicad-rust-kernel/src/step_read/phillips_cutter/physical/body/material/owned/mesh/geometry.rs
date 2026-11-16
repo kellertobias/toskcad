@@ -1,5 +1,9 @@
 //! Actual repaired meridian/source-ring proofs, independent of display normals.
 use super::*;
+mod prepared;
+pub(super) use prepared::PreparedHeadAngular;
+#[cfg(test)]
+pub(super) use prepared::head_attempt_curve_cached;
 pub(super) type P = [f64; 3];
 pub(super) type B = [I; 3];
 pub(super) type R<T> = std::result::Result<T, PhillipsReadError>;
@@ -218,6 +222,21 @@ pub(super) fn head_attempt_curve<const N: usize>(
     options: Tessellation,
     work: &mut Work<'_>,
 ) -> R<std::result::Result<Head, Split>> {
+    head_attempt_curve_impl(
+        head,
+        prepared::AngularInput::Original(angular),
+        counts,
+        options,
+        work,
+    )
+}
+fn head_attempt_curve_impl<const N: usize>(
+    head: &crate::head_profile::OwnedRepairedHead,
+    angular: prepared::AngularInput<'_, '_, N>,
+    counts: &[usize],
+    options: Tessellation,
+    work: &mut Work<'_>,
+) -> R<std::result::Result<Head, Split>> {
     let h = &head.view();
     let n = angular.len();
     let vertices = (1 + counts.iter().sum::<usize>()) * n;
@@ -231,8 +250,8 @@ pub(super) fn head_attempt_curve<const N: usize>(
         face_indices: Vec::with_capacity((vertices - n) * 2),
     };
     let mut row = Vec::with_capacity(n);
-    for &a in angular {
-        let p = position(h, 0, 0., a, work)?;
+    for i in 0..n {
+        let p = angular.position(h, 0, 0., i, false, work)?;
         row.push((mesh.vertices.len() / 3) as u32);
         mesh.vertices.extend(p.map(I::midpoint));
     }
@@ -247,8 +266,8 @@ pub(super) fn head_attempt_curve<const N: usize>(
             work.storage(
                 mesh_bytes(&mesh) + (top.capacity() + row.capacity() + next.capacity()) * 4,
             )?;
-            for &a in angular {
-                let p = position(h, part, ts[1], a, work)?;
+            for i in 0..n {
+                let p = angular.position(h, part, ts[1], i, false, work)?;
                 next.push((mesh.vertices.len() / 3) as u32);
                 mesh.vertices.extend(p.map(I::midpoint));
             }
@@ -262,19 +281,17 @@ pub(super) fn head_attempt_curve<const N: usize>(
                     + width / I::point(2.)
                         * I::point((field[1][j] - (ends[1][j] - ends[0][j]) / width).magnitude())
             });
-            for (i, &a) in angular.iter().enumerate() {
+            for i in 0..n {
                 work.charge(4096)?;
-                let (sag, d) = match a.sag(work) {
+                let (sag, d) = match angular.sag(i, work) {
                     Ok(v) => v,
                     Err(error) => return angular_rejection(error),
                 };
-                let mut last = a;
-                last.range = [a.range[1]; 2];
                 let ideal = [
-                    position(h, part, ts[0], a, work)?,
-                    position(h, part, ts[0], last, work)?,
-                    position(h, part, ts[1], last, work)?,
-                    position(h, part, ts[1], a, work)?,
+                    angular.position(h, part, ts[0], i, false, work)?,
+                    angular.position(h, part, ts[0], i, true, work)?,
+                    angular.position(h, part, ts[1], i, true, work)?,
+                    angular.position(h, part, ts[1], i, false, work)?,
                 ];
                 let ids = [row[i], row[(i + 1) % n], next[(i + 1) % n], next[i]];
                 let points = ids.map(|id| {
@@ -300,8 +317,7 @@ pub(super) fn head_attempt_curve<const N: usize>(
                 let nf = normal(d, field[1]);
                 for tri in [[0, 1, 2], [0, 2, 3]] {
                     if !normal_match(tri.map(|j| points[j]), nf, options.angle) {
-                        let du =
-                            a.direction([a.range[0] + (a.range[1] - a.range[0]) / 2.; 2], work)?;
+                        let du = angular.middle(i, work)?;
                         let nu = normal(d, meridian(h, part, [tmid; 2])[1]);
                         let nt = normal(du, field[1]);
                         let wu = nu.iter().map(|i| i.hi - i.lo).sum::<f64>();

@@ -3,6 +3,7 @@
 //! Sample/interpolation values never authorize a normal bound by themselves.
 use super::*;
 use std::sync::Arc;
+mod mvt;
 const SMALL: usize = 8;
 const LARGE: usize = 22;
 pub struct ReducedNormal11 {
@@ -65,10 +66,41 @@ fn elevation() -> [[I; SMALL]; LARGE] {
         })
     })
 }
+// Keep this cache in its own bounded frame. The parent constructor's full
+// array frame remains conservatively reserved even before its later stages.
+// Cache11616B +local/returned rows8448B +fixed metadata fit24KiB; the
+// constructor's named arrays and bounded copies fit40KiB: total<=64KiB.
+#[inline(never)]
+fn proposal_rows(
+    source: &NormalPolynomial11,
+    weights: &[[f64; LARGE]; SMALL],
+) -> [[Point; LARGE]; SMALL] {
+    let mut midpoint = [[[0.; 3]; LARGE]; LARGE];
+    for (i, row) in midpoint.iter_mut().enumerate() {
+        for (j, value) in row.iter_mut().enumerate() {
+            *value = source.polynomial.controls[i][j].map(I::midpoint);
+        }
+    }
+    let mut rows = [[[0.; 3]; LARGE]; SMALL];
+    for (node, values) in rows.iter_mut().enumerate() {
+        for (j, value) in values.iter_mut().enumerate() {
+            for (i, row) in midpoint.iter().enumerate() {
+                for k in 0..3 {
+                    value[k] += weights[node][i] * row[j][k];
+                }
+            }
+        }
+    }
+    rows
+}
 impl ReducedNormal11 {
     /// Proposal contractions, exact elevation, complete coefficient residual,
     /// integer matrix setup, all validation/copies and loop bookkeeping.
-    pub const WORK_BOUND: usize = 131_072;
+    // One actual N21 midpoint per component (1452), not once for EACH of8
+    // proposal nodes (11616):10164calls/30492 scalar arithmetic operations
+    // removed. New fixed cache/copy/control overhead <=8192; starting with
+    // the prior131072 bound gives108772, rounded conservatively to118784.
+    pub const WORK_BOUND: usize = 118_784;
     /// Fresh constructor scratch, excluding the immutable source owner.
     pub const WORKSPACE_BYTES: usize = 64 * 1024;
     /// Two bounded degree7 tensor restrictions, hull/error arithmetic and
@@ -79,16 +111,7 @@ impl ReducedNormal11 {
         // The proposal is ordinary finite arithmetic only. Its accuracy is
         // NOT trusted: actual N21 minus exact elevation below is authority.
         let weights = std::array::from_fn::<_, SMALL, _>(|i| basis(i as f64 / 7.));
-        let mut rows = [[[0.; 3]; LARGE]; SMALL];
-        for (node, values) in rows.iter_mut().enumerate() {
-            for (j, value) in values.iter_mut().enumerate() {
-                for (i, row) in source.polynomial.controls.iter().enumerate() {
-                    for k in 0..3 {
-                        value[k] += weights[node][i] * row[j][k].midpoint();
-                    }
-                }
-            }
-        }
+        let rows = proposal_rows(&source, &weights);
         let samples: [[Point; SMALL]; SMALL] = std::array::from_fn(|u| {
             std::array::from_fn(|v| {
                 std::array::from_fn(|k| (0..LARGE).map(|j| weights[v][j] * rows[u][j][k]).sum())
@@ -181,9 +204,14 @@ pub struct ReducedNormalCell11 {
 }
 impl ReducedNormal11 {
     pub const CELL_ROOT_WORK: usize = 512;
-    pub const CELL_SPLIT_WORK: usize = 4096;
+    pub const CELL_SPLIT_WORK: usize = 3072;
     pub const CELL_BOUND_WORK: usize = 1024;
     pub const CELL_CONE_WORK: usize = 8192;
+    pub const CELL_PROJECTED_WORK: usize = 3072;
+    pub const CELL_PREPARE_WORK: usize = PreparedNormalCones11::PREPARE_WORK;
+    pub const CELL_HULL_WORK: usize = PreparedNormalCones11::HULL_WORK;
+    pub const CELL_GROUP_WORK: usize = PreparedNormalCones11::GROUP_WORK;
+    pub const CELL_REFINE_WORK: usize = PreparedNormalCones11::COEFFICIENT_WORK;
     pub const CELL_BYTES: usize = 4096;
     pub fn root_cell(self: &Arc<Self>) -> ReducedNormalCell11 {
         ReducedNormalCell11 {
@@ -201,12 +229,95 @@ fn split_curve(mut p: [[I; 3]; 8]) -> ([[I; 3]; 8], [[I; 3]; 8]) {
     right[7] = p[7];
     for level in 1..8 {
         for i in 0..8 - level {
-            p[i] = std::array::from_fn(|k| I::point(0.5) * p[i][k] + I::point(0.5) * p[i + 1][k]);
+            p[i] = std::array::from_fn(|k| (p[i][k] + p[i + 1][k]) * I::point(0.5));
         }
         left[level] = p[0];
         right[7 - level] = p[7 - level];
     }
     (left, right)
+}
+/// Fixed4KiB numerical buffer; construction is private to the SAME retained
+/// cell. Every value projects coefficient+UNCHANGED root residual exactly as
+/// the original per-coefficient cone predicate. No geometry admission follows.
+pub(crate) struct PreparedNormalCones11 {
+    values: [[I; 4]; 64],
+}
+fn cone_tangent(angle: f64) -> Result<f64, Error> {
+    if !(angle > 0. && angle < std::f64::consts::FRAC_PI_2) {
+        return Err(Error::Invalid);
+    }
+    let tangent = (I::point(angle).sin() / I::point(angle).cos()).checked()?;
+    if tangent.lo < 0. {
+        return Err(Error::Unresolved);
+    }
+    Ok(tangent.lo)
+}
+fn projected_cone(value: [I; 4], tangent: f64) -> Result<bool, Error> {
+    if value[0].lo <= 0. {
+        return Ok(false);
+    }
+    let perpendicular = value[1..]
+        .iter()
+        .fold(I::point(0.), |sum, v| sum + v.square())
+        .checked()?;
+    let allowed = (I::point(value[0].lo) * I::point(tangent))
+        .square()
+        .checked()?;
+    Ok(perpendicular.hi <= allowed.lo)
+}
+fn projected_hull(values: impl Iterator<Item = [I; 4]>) -> [I; 4] {
+    values.fold(
+        [I::new(f64::INFINITY, f64::NEG_INFINITY); 4],
+        |mut hull, value| {
+            for k in 0..4 {
+                hull[k].lo = hull[k].lo.min(value[k].lo);
+                hull[k].hi = hull[k].hi.max(value[k].hi);
+            }
+            hull
+        },
+    )
+}
+impl PreparedNormalCones11 {
+    pub(crate) const PREPARE_WORK: usize = 3072;
+    pub(crate) const HULL_WORK: usize = 1024;
+    pub(crate) const GROUP_WORK: usize = 1536;
+    pub(crate) const COEFFICIENT_WORK: usize = 3072;
+    pub(crate) fn hull_cone(&self, angle: f64) -> Result<bool, Error> {
+        projected_cone(
+            projected_hull(self.values.iter().copied()),
+            cone_tangent(angle)?,
+        )
+    }
+    /// All16 disjoint2×2 coefficient groups cover ALL64 original vectors.
+    /// A group hull in a convex circular cone proves every member is in it.
+    pub(crate) fn grouped_cones(&self, angle: f64) -> Result<bool, Error> {
+        let tangent = cone_tangent(angle)?;
+        for u in 0..4 {
+            for v in 0..4 {
+                let values = [
+                    [2 * u, 2 * v],
+                    [2 * u + 1, 2 * v],
+                    [2 * u, 2 * v + 1],
+                    [2 * u + 1, 2 * v + 1],
+                ]
+                .into_iter()
+                .map(|[u, v]| self.values[u * 8 + v]);
+                if !projected_cone(projected_hull(values), tangent)? {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+    pub(crate) fn coefficient_cones(&self, angle: f64) -> Result<bool, Error> {
+        let tangent = cone_tangent(angle)?;
+        for value in self.values {
+            if !projected_cone(value, tangent)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
 }
 impl ReducedNormalCell11 {
     pub fn source(&self) -> &ReducedNormal11 {
@@ -228,6 +339,87 @@ impl ReducedNormalCell11 {
             return Err(Error::Unresolved);
         }
         Ok(result.map(|x| [x.lo, x.hi]))
+    }
+    pub(crate) fn prepare_normal_cones(
+        &self,
+        direction: [[f64; 2]; 3],
+    ) -> Result<PreparedNormalCones11, Error> {
+        if direction
+            .iter()
+            .any(|d| !d[0].is_finite() || !d[1].is_finite() || d[0] > d[1])
+        {
+            return Err(Error::Invalid);
+        }
+        let n = direction.map(|[a, b]| I::new(a, b));
+        let mut values = [[I::point(0.); 4]; 64];
+        for (target, p) in values.iter_mut().zip(self.controls.iter().flatten()) {
+            let p: [I; 3] = std::array::from_fn(|k| p[k] + self.source.residual[k]);
+            let projection = (0..3).fold(I::point(0.), |sum, k| sum + n[k] * p[k]);
+            let cross: [I; 3] = std::array::from_fn(|k| {
+                n[(k + 1) % 3] * p[(k + 2) % 3] - n[(k + 2) % 3] * p[(k + 1) % 3]
+            });
+            *target = [projection, cross[0], cross[1], cross[2]];
+            for v in *target {
+                v.checked()?;
+            }
+        }
+        Ok(PreparedNormalCones11 { values })
+    }
+    /// Project the complete restricted proposal BEFORE four scalar hulls.
+    /// Actual N21=Q7+R uses this SAME unchanged global residual; projecting
+    /// R separately preserves the full actual field, not sampled directions.
+    pub fn certifies_projected_normal_cone(
+        &self,
+        direction: [[f64; 2]; 3],
+        angle: f64,
+    ) -> Result<bool, Error> {
+        if !(angle > 0. && angle < std::f64::consts::FRAC_PI_2)
+            || direction
+                .iter()
+                .any(|d| !d[0].is_finite() || !d[1].is_finite() || d[0] > d[1])
+        {
+            return Err(Error::Invalid);
+        }
+        let n = direction.map(|[a, b]| I::new(a, b));
+        let project = |p: [I; 3]| -> [I; 4] {
+            let projection = (0..3).fold(I::point(0.), |sum, k| sum + n[k] * p[k]);
+            let cross: [I; 3] = std::array::from_fn(|k| {
+                n[(k + 1) % 3] * p[(k + 2) % 3] - n[(k + 2) % 3] * p[(k + 1) % 3]
+            });
+            [projection, cross[0], cross[1], cross[2]]
+        };
+        let residual = project(self.source.residual);
+        if residual.iter().any(|v| !v.valid()) {
+            return Err(Error::Unresolved);
+        }
+        let mut hull = [I::new(f64::INFINITY, f64::NEG_INFINITY); 4];
+        for p in self.controls.iter().flatten() {
+            let value = project(*p);
+            for k in 0..4 {
+                value[k].checked()?;
+                hull[k].lo = hull[k].lo.min(value[k].lo);
+                hull[k].hi = hull[k].hi.max(value[k].hi);
+            }
+        }
+        let value: [I; 4] = std::array::from_fn(|k| hull[k] + residual[k]);
+        for v in value {
+            v.checked()?;
+        }
+        if value[0].lo <= 0. {
+            return Ok(false);
+        }
+        let tangent = (I::point(angle).sin() / I::point(angle).cos()).checked()?;
+        if tangent.lo < 0. {
+            return Err(Error::Unresolved);
+        }
+        let perpendicular = value[1..]
+            .iter()
+            .fold(I::point(0.), |sum, v| sum + v.square())
+            .checked()?;
+        let allowed = (I::point(value[0].lo) * I::point(tangent.lo))
+            .square()
+            .checked()?;
+        Ok(perpendicular.hi <= allowed.lo)
     }
     /// Sufficient whole-field normal cone proof. Each restricted B7 vector
     /// coefficient plus the UNCHANGED root residual box must lie in the same
