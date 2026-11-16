@@ -438,6 +438,64 @@ pub(in crate::drawing) fn arrange(strands: &[Strand], eps: f64) -> Vec<Vec<(f64,
         .collect()
 }
 
+/// Extra stops where an end of one strand lies on the exact path of another
+/// strand, though off its chords by up to `reach`: a contour ending on an
+/// edge is tangent to it on paper, so neither a chord crossing nor an end
+/// within `eps` of a chord finds that junction, where visibility changes.
+/// Each stop is the exact parameter whose paper point is within `eps` of the
+/// end; interior stops only.
+pub(in crate::drawing) fn junctions(strands: &[Strand], reach: f64, eps: f64) -> Vec<Vec<f64>> {
+    let boxes: Vec<[P2; 2]> = strands
+        .iter()
+        .map(|strand| {
+            strand.pts.iter().fold(
+                [[f64::INFINITY; 2], [f64::NEG_INFINITY; 2]],
+                |[lo, hi], p| {
+                    [
+                        [lo[0].min(p[0] - reach), lo[1].min(p[1] - reach)],
+                        [hi[0].max(p[0] + reach), hi[1].max(p[1] + reach)],
+                    ]
+                },
+            )
+        })
+        .collect();
+    let mut output = vec![Vec::new(); strands.len()];
+    for (i, strand) in strands.iter().enumerate() {
+        for end in [strand.pts[0], *strand.pts.last().unwrap()] {
+            let target = paper(end);
+            for (j, other) in strands.iter().enumerate() {
+                let [lo, hi] = boxes[j];
+                if j == i
+                    || target[0] < lo[0]
+                    || target[0] > hi[0]
+                    || target[1] < lo[1]
+                    || target[1] > hi[1]
+                {
+                    continue;
+                }
+                let [first, last] = [other.ts[0], *other.ts.last().unwrap()];
+                for k in 0..other.pts.len() - 1 {
+                    let [a, b] = [paper(other.pts[k]), paper(other.pts[k + 1])];
+                    if segment_distance(target, a, b) > reach {
+                        continue;
+                    }
+                    let t = locate(other, k, target, eps);
+                    let at = paper(other.path.point(t));
+                    if distance(at, target) <= eps
+                        && distance(at, paper(other.pts[0])) > eps
+                        && distance(at, paper(*other.pts.last().unwrap())) > eps
+                        && t > first
+                        && t < last
+                    {
+                        output[j].push(t);
+                    }
+                }
+            }
+        }
+    }
+    output
+}
+
 fn meet(
     strands: &[Strand],
     ca: (usize, usize),

@@ -387,6 +387,21 @@ pub(in crate::drawing) fn project(
 
     if !options.section_only {
         let mut stops = arrange(&strands, eps);
+        // Ends of strands on other strands' exact paths, off their chords.
+        for ((strand, stops), extra) in strands
+            .iter()
+            .zip(&mut stops)
+            .zip(arrange::junctions(&strands, flat, eps))
+        {
+            if extra.is_empty() {
+                continue;
+            }
+            stops.extend(extra.into_iter().map(|t| (t, strand.path.point(t))));
+            stops.sort_by(|a, b| a.0.total_cmp(&b.0));
+            stops.dedup_by(|b, a| {
+                distance(paper(a.1), paper(b.1)).max((a.1[2] - b.1[2]).abs()) <= eps
+            });
+        }
         // A path that pierces another member changes visibility where it
         // enters or leaves that member's material, with no paper crossing.
         for (strand, stops) in strands.iter().zip(&mut stops) {
