@@ -1,5 +1,6 @@
 //! Native mounting geometry and nut threads from retained canonical parameters.
 mod custom_connection;
+mod pipe_hardware;
 mod profiled_heads;
 mod screw_profiles;
 mod wood_screws;
@@ -408,6 +409,10 @@ pub(crate) fn build_rust(
 ) -> Result<Solid, ModelError> {
     if let MechanicalPartParameters::MachineScrew { thread, .. }
     | MechanicalPartParameters::HexNut { thread, .. } = &source.parameters
+        && !matches!(
+            thread.family,
+            multicad_core::model::ThreadFamily::Npt | multicad_core::model::ThreadFamily::Bspt
+        )
     {
         crate::threads::validate_rust_family(feature, thread.family)?;
     }
@@ -423,6 +428,9 @@ pub(crate) fn build_rust_resolved(
     resolved: ResolvedMechanicalPart,
     policy: GeometryPolicy,
 ) -> Result<Solid, ModelError> {
+    if let Some(result) = pipe_hardware::build(feature, &resolved, policy) {
+        return result;
+    }
     match resolved {
         ResolvedMechanicalPart::CustomConnection { parameters } => {
             custom_connection::build_rust(feature, *parameters, policy)

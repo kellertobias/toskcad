@@ -3,7 +3,7 @@ mod cosmetic;
 mod end_treatments;
 mod internal;
 mod internal_treatments;
-mod pipe;
+pub(crate) mod pipe;
 use crate::{ModelError, error};
 use multicad_core::{
     document::EntityId,

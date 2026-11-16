@@ -52,7 +52,7 @@ fn pipe_error(feature: EntityId, cause: multicad_kernel::GeometryError) -> Model
     }
 }
 
-fn authored_spec(
+pub(crate) fn authored_spec(
     feature: EntityId,
     family: ThreadFamily,
     thread: &ResolvedThread,
