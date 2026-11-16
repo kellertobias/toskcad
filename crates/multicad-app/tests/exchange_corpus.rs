@@ -1387,6 +1387,50 @@ fn kicad_library_sweep() {
     );
 }
 
+/// KiCad's horizontal Fastron 77A, MICC and SMCC axial inductors, which
+/// OpenCascade 7.9.3's shape check rejects. At each lead bend the seam of
+/// the torus and its end circle are 4.98e-6 mm from their shared vertex in
+/// orthogonal directions, within the declared 5e-6 mm uncertainty.
+/// OpenCascade's wire explorer cannot chain them in the torus's parameter
+/// space, so it reports the bend's wire not closed; its 3D checks pass. The
+/// volumes are pinned to an independent evaluation of the STEP entities: the
+/// body and lead stubs as one solid of revolution (Gauss-Legendre quadrature
+/// of pi r^2 dx on each circle or de Boor B-spline generatrix), the bends as
+/// torus sectors and the vertical leads as cylinders.
+#[test]
+fn axial_inductors_that_opencascade_rejects_match_an_independent_volume() {
+    for (name, independent) in [
+        (
+            "L_Axial_L26.0mm_D9.0mm_P30.48mm_Horizontal_Fastron_77A",
+            1_328.373_183_679_39,
+        ),
+        (
+            "L_Axial_L7.0mm_D3.3mm_P10.16mm_Horizontal_Fastron_MICC",
+            53.028_494_866_023,
+        ),
+        (
+            "L_Axial_L9.5mm_D4.0mm_P15.24mm_Horizontal_Fastron_SMCC",
+            104.971_367_863_974,
+        ),
+    ] {
+        let path = kicad_library().join(format!("Inductor_THT.3dshapes/{name}.step"));
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            eprintln!("{} is not installed; skipped", path.display());
+            continue;
+        };
+        let solid = import(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(solid.solid_count().unwrap(), 1, "{name}");
+        let volume = solid.volume_mm3().unwrap();
+        // The vertices stand up to 5e-6 mm off their supports; 1e-8 relative
+        // is far inside that uncertainty swept over the boundary.
+        assert!(
+            close(volume, independent, 1e-8),
+            "{name}: {volume} against {independent}"
+        );
+        checked_mesh(&solid, name);
+    }
+}
+
 /// Developer probe: `MULTICAD_STEP_PROBE=a.step:b.step cargo test --locked -p
 /// multicad-app --test exchange_corpus -- --ignored probe --nocapture` prints
 /// the Rust import outcome, volume and bounds of each file.
