@@ -11,7 +11,7 @@ use crate::{
     step::pipe_hardware::numbers as exact_numbers,
 };
 use std::{cell::Cell, sync::Arc};
-mod budget;
+pub(crate) mod budget;
 mod records;
 pub(crate) use records::Records;
 type GeometryResult<T> = std::result::Result<T, GeometryError>;

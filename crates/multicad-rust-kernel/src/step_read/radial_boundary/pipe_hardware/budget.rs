@@ -13,7 +13,7 @@ const NODES: usize = 1_048_576;
 #[cfg(test)]
 mod tests;
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Receipt {
+pub(crate) struct Receipt {
     pub input_bytes: usize,
     pub represented_record_count: usize,
     pub values: usize,
@@ -26,7 +26,7 @@ pub(super) struct Receipt {
     pub delegated_parser_work_reserved: usize,
     pub aggregate_work_reserved: usize,
 }
-pub(super) fn reserve(
+pub(crate) fn reserve(
     input: &str,
     maximum_work: usize,
     maximum_bytes: usize,
