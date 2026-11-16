@@ -77,6 +77,24 @@ fn independent_operator_comparison_checks_two_earned_physical_sources_and_real_l
         assert_eq!(removed.mapping(), earned.mapping());
     }
     drop(ambiguous);
+    // The geometry inputs below are genuine and identical; their intended
+    // head is3mm high. This immutable ledger belongs to the independently
+    // decoded4mm physical file and must not substitute for its operator maps.
+    // Public dense binding refuses that owner mismatch earlier; this checks
+    // the independent helper contract without fabricating map fields.
+    let mut wrong_owner = Work {
+        remaining: MAX_WORK,
+        interrupt: None,
+    };
+    assert!(matches!(
+        compare(
+            expected.shell().input(),
+            expected.shell().input(),
+            decoded.parameter_maps(),
+            &mut wrong_owner
+        ),
+        Err(Error::Unsupported)
+    ));
     // The ledger is a small independent helper contract, not an admitted
     // Source. Every proposed index below comes from these two genuinely earned
     // and successfully compared physical source/operator tables.
