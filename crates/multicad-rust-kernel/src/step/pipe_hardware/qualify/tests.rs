@@ -424,3 +424,47 @@ fn actual_exclusive_interior_change_must_reearn_material_before_operator_refusal
     std::fs::remove_file(&original_path).unwrap();
     std::fs::remove_file(&changed_path).unwrap();
 }
+
+// The real public qualifier selects members from earned decoder ownership.
+// This independently checks its error adapter using a genuine public binder
+// refusal and valid actual-document retry, without constructing error values.
+#[test]
+fn real_literal_binding_invalid_selection_keeps_typed_error_and_valid_retry() {
+    use crate::{Rational, step::Writer, step_read::owned_insert::CompoundDocument};
+    let mut writer = Writer::new();
+    writer
+        .append_box(
+            [Rational::new(4, 1).unwrap(); 3],
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+        )
+        .unwrap();
+    let produced = writer.finish().unwrap();
+    let path =
+        std::env::temp_dir().join(format!("codec-binding-adapter-{}.step", std::process::id()));
+    std::fs::write(&path, &produced).unwrap();
+    drop(produced);
+    let expected = std::fs::read_to_string(&path).unwrap();
+    let actual = std::fs::read_to_string(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let a = CompoundDocument::parse(&expected, Default::default(), None).unwrap();
+    let b = CompoundDocument::parse(&actual, Default::default(), None).unwrap();
+    assert_eq!(a.represented_members().len(), 1);
+    assert_eq!(b.represented_members().len(), 1);
+    let first = a.represented_members()[0].item_entity();
+    let second = b.represented_members()[0].item_entity();
+    assert!(first > 0 && second > 0);
+    let refused = binding::bind_local_members(&a, first, &b, 0, binding::Options::default(), None)
+        .err()
+        .unwrap();
+    assert_eq!(refused, binding::Error::Invalid);
+    assert_eq!(binding_error(refused), Error::Invalid);
+    let retry =
+        binding::bind_local_members(&a, first, &b, second, binding::Options::default(), None)
+            .unwrap();
+    assert!(retry.matched_entities() > 50);
+    assert!(retry.work_used() > retry.matched_entities());
+    assert_eq!(a.literal_input(), expected);
+    assert_eq!(b.literal_input(), actual);
+}
