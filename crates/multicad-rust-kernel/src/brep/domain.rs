@@ -3,7 +3,9 @@
 //! Loops are stored counter-clockwise about the surface normal, whatever
 //! the face sense. Periodic parameters are continuous along a loop; a loop
 //! that closes one period away from its start winds about the surface.
-use super::{Boundary, Error, Point, Result, Surface, distance, ensure, nearest};
+use super::{
+    Boundary, Error, Point, Result, Surface, add, cross, distance, dot, ensure, nearest, norm, sub,
+};
 
 /// Identity of a boundary point shared between the faces that meet there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -50,14 +52,50 @@ impl UvLoop {
         })
     }
 
-    pub fn area(&self) -> f64 {
-        let n = self.points.len();
-        (0..n)
-            .map(|i| {
-                let (a, b) = (self.points[i].uv, self.points[(i + 1) % n].uv);
-                0.5 * (a[0] * b[1] - b[0] * a[1])
-            })
-            .sum()
+    /// The signed area enclosed by the loop's exact edges in the parameter
+    /// plane. Chords between the loop points cut inside curved edges, so a
+    /// thin face between two near arcs can enclose a polygon of the wrong
+    /// sign; Gauss quadrature of `(u dv - v du) / 2` along each edge does
+    /// not. Rows across a pole are straight in the parameter plane.
+    pub fn exact_area(&self, boundary: &Boundary, surface: &Surface) -> f64 {
+        let periods = surface.periods();
+        let mut total = 0.;
+        for (i, segment) in self.segments.iter().enumerate() {
+            let ends = [self.at(i, periods), self.at(i + 1, periods)];
+            let chord = 0.5 * (ends[0][0] * ends[1][1] - ends[1][0] * ends[0][1]);
+            let Some(segment) = segment else {
+                total += chord;
+                continue;
+            };
+            let curve = &boundary.edges[segment.edge].curve;
+            let width = segment.t[1] - segment.t[0];
+            let mut piece = 0.;
+            let mut exact = true;
+            for (node, weight) in super::GAUSS {
+                let t = segment.t[0] + 0.5 * width * (1. + node);
+                let along = 0.5 * (1. + node);
+                let (point, tangent) = curve.evaluate(t);
+                let seed =
+                    [0, 1].map(|axis| ends[0][axis] + (ends[1][axis] - ends[0][axis]) * along);
+                let uv = surface.invert(point, Some(seed));
+                let (_, [su, sv]) = surface.evaluate(uv);
+                let (a, b, c) = (dot(su, su), dot(su, sv), dot(sv, sv));
+                let (ru, rv) = (dot(tangent, su), dot(tangent, sv));
+                let determinant = a * c - b * b;
+                if determinant <= 1e-12 * a * c {
+                    exact = false;
+                    break;
+                }
+                let rate = [
+                    (c * ru - b * rv) / determinant,
+                    (a * rv - b * ru) / determinant,
+                ];
+                piece += 0.5 * width * weight * 0.5 * (uv[0] * rate[1] - uv[1] * rate[0]);
+            }
+            // Where the parameter rate is undefined the chord stands.
+            total += if exact { piece } else { chord };
+        }
+        total
     }
 
     fn shift(&mut self, axis: usize, by: f64) {
@@ -82,6 +120,30 @@ pub(crate) enum Domain {
         /// A lone winding loop closes at this v, optionally at a vertex.
         pole: Option<(f64, Key)>,
     },
+}
+
+/// Whether a loop through `points` encloses no more than a strip
+/// `tolerance` wide along its own length: its edges then coincide within
+/// the tolerance and bound no region. Measured in space, since a parameter
+/// plane may be stretched without bound.
+fn sliver(points: &[Raw], tolerance: f64) -> bool {
+    let Some(first) = points.first() else {
+        return true;
+    };
+    let mut vector = [0.; 3];
+    let mut length = 0.;
+    for (i, point) in points.iter().enumerate() {
+        let next = points[(i + 1) % points.len()].position;
+        vector = add(
+            vector,
+            cross(
+                sub(point.position, first.position),
+                sub(next, first.position),
+            ),
+        );
+        length += distance(point.position, next);
+    }
+    0.5 * norm(vector) <= tolerance * length
 }
 
 pub(crate) struct Raw {
@@ -352,7 +414,9 @@ pub(crate) fn build(
     )?;
     let (mut winding, mut flat): (Vec<_>, Vec<_>) =
         loops.into_iter().partition(|l| l.winding != [0, 0]);
-    let (mut outer, holes): (Vec<_>, Vec<_>) = flat.drain(..).partition(|l| l.area() > 0.);
+    let (mut outer, holes): (Vec<_>, Vec<_>) = flat
+        .drain(..)
+        .partition(|l| l.exact_area(boundary, surface) > 0.);
     let mut pole = None;
     match (winding.len(), outer.len()) {
         (0, 1) => {}
@@ -406,6 +470,31 @@ pub(crate) fn build(
     })
 }
 
+/// Whether every loop of a face lacking a winding loop encloses no more
+/// than a strip the tolerance wide, so that the face bounds no region.
+pub(crate) fn degenerate(
+    boundary: &Boundary,
+    face_index: usize,
+    samples: &[Vec<f64>],
+    tolerance: f64,
+) -> Result<bool> {
+    let face = &boundary.faces[face_index];
+    let mut any = false;
+    for trim in face.loops.iter().filter(|trim| !trim.uses.is_empty()) {
+        let points = raw(boundary, &trim.uses, samples, false);
+        let thin = sliver(&points, tolerance);
+        // The points must still lie on the face.
+        let Some(unrolled) = unroll(&face.surface, points, tolerance)? else {
+            return Ok(false);
+        };
+        if unrolled.winding != [0, 0] || !thin {
+            return Ok(false);
+        }
+        any = true;
+    }
+    Ok(any)
+}
+
 /// Whether the face's loops, as stored, run counter-clockwise about the
 /// surface normal. Writers disagree on whether the loops of a reversed face
 /// run about the face normal or the surface normal, so the direction is
@@ -422,22 +511,27 @@ pub(crate) fn orientation(
         return Ok(None);
     }
     let mut outer = 0.;
+    let mut narrow = false;
     let mut winding = Vec::new();
     for trim in face.loops.iter().filter(|trim| !trim.uses.is_empty()) {
         let points = raw(boundary, &trim.uses, samples, false);
+        let thin = sliver(&points, tolerance);
         let Some(unrolled) = unroll(&face.surface, points, tolerance)? else {
             continue;
         };
         if unrolled.winding == [0, 0] {
-            let area = unrolled.area();
+            let area = unrolled.exact_area(boundary, &face.surface);
             if area.abs() > f64::abs(outer) {
                 outer = area;
+                narrow = thin;
             }
         } else {
             winding.push(unrolled);
         }
     }
-    if outer != 0. {
+    // The sign of an area within the tolerance is rounding: it may confirm
+    // the stated sense, but never overturn it.
+    if outer != 0. && !(narrow && winding.is_empty() && (outer > 0.) != face.same_sense) {
         return Ok(Some(outer > 0.));
     }
     let above = |low: &UvLoop, high: &UvLoop| low.winding[0] > 0 && low.mean(1) < high.mean(1);

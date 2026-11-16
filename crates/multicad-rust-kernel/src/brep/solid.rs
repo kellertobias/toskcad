@@ -292,10 +292,25 @@ impl Solid {
         let mut error = 0.;
         for (index, face) in boundary.faces.iter().enumerate() {
             checkpoint(interrupt)?;
-            let domain = domain::build(&boundary, index, &samples, tolerance)?;
-            let coarse = mass::integrate(&boundary, face, &domain, anchor, 1, tolerance)?;
-            let fine = mass::integrate(&boundary, face, &domain, anchor, 2, tolerance)?;
-            ensure(fine[1].is_finite() && fine[1] > 0., Error::Invalid)?;
+            let integrated =
+                domain::build(&boundary, index, &samples, tolerance).and_then(|domain| {
+                    let coarse = mass::integrate(&boundary, face, &domain, anchor, 1, tolerance)?;
+                    let fine = mass::integrate(&boundary, face, &domain, anchor, 2, tolerance)?;
+                    ensure(fine[1].is_finite() && fine[1] > 0., Error::Invalid)?;
+                    Ok((domain, coarse, fine))
+                });
+            let (domain, coarse, fine) = match integrated {
+                // A face whose edges coincide within the tolerance bounds no
+                // region. Writers emit such slivers between faces that meet
+                // within their uncertainty; they are not invalid, but the
+                // boundary would need them merged away.
+                Err(Error::Invalid)
+                    if domain::degenerate(&boundary, index, &samples, tolerance)? =>
+                {
+                    return Err(Error::Unsupported);
+                }
+                other => other?,
+            };
             error += (fine[0] - coarse[0]).abs();
             faces.push(FaceProperties {
                 area_mm2: fine[1],

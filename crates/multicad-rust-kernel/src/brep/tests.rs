@@ -1788,6 +1788,216 @@ fn faces_whose_loops_do_not_place_their_region_are_refused() {
     assert_eq!(solids(&crossed).unwrap_err(), Error::Invalid);
 }
 
+/// A 10 mm cube whose front top edge bends up 1e-9 mm at its middle, at
+/// (5, 0, 10 + 1e-9): the triangle from the bend down to the straight top
+/// edge is a fin on the plane y = 0 that encloses 5e-9 mm².
+const SLIVER: &str = "\
+#1=CARTESIAN_POINT('',(0.0,0.0,0.0));#2=VERTEX_POINT('',#1);\
+#3=CARTESIAN_POINT('',(10.0,0.0,0.0));#4=VERTEX_POINT('',#3);\
+#5=CARTESIAN_POINT('',(10.0,10.0,0.0));#6=VERTEX_POINT('',#5);\
+#7=CARTESIAN_POINT('',(0.0,10.0,0.0));#8=VERTEX_POINT('',#7);\
+#9=CARTESIAN_POINT('',(0.0,0.0,10.0));#10=VERTEX_POINT('',#9);\
+#11=CARTESIAN_POINT('',(10.0,0.0,10.0));#12=VERTEX_POINT('',#11);\
+#13=CARTESIAN_POINT('',(10.0,10.0,10.0));#14=VERTEX_POINT('',#13);\
+#15=CARTESIAN_POINT('',(0.0,10.0,10.0));#16=VERTEX_POINT('',#15);\
+#17=CARTESIAN_POINT('',(5.0,0.0,10.000000001));#18=VERTEX_POINT('',#17);\
+#19=CARTESIAN_POINT('',(0.0,0.0,0.0));#20=DIRECTION('',(1.0,0.0,0.0));\
+#21=VECTOR('',#20,10.0);#22=LINE('',#19,#21);#23=EDGE_CURVE('',#2,#4,#22,.T.);\
+#24=CARTESIAN_POINT('',(10.0,0.0,0.0));#25=DIRECTION('',(0.0,1.0,0.0));\
+#26=VECTOR('',#25,10.0);#27=LINE('',#24,#26);#28=EDGE_CURVE('',#4,#6,#27,.T.);\
+#29=CARTESIAN_POINT('',(10.0,10.0,0.0));#30=DIRECTION('',(-1.0,0.0,0.0));\
+#31=VECTOR('',#30,10.0);#32=LINE('',#29,#31);#33=EDGE_CURVE('',#6,#8,#32,.T.);\
+#34=CARTESIAN_POINT('',(0.0,10.0,0.0));#35=DIRECTION('',(0.0,-1.0,0.0));\
+#36=VECTOR('',#35,10.0);#37=LINE('',#34,#36);#38=EDGE_CURVE('',#8,#2,#37,.T.);\
+#39=CARTESIAN_POINT('',(0.0,0.0,10.0));#40=DIRECTION('',(1.0,0.0,0.0));\
+#41=VECTOR('',#40,10.0);#42=LINE('',#39,#41);#43=EDGE_CURVE('',#10,#12,#42,.T.);\
+#44=CARTESIAN_POINT('',(10.0,0.0,10.0));#45=DIRECTION('',(0.0,1.0,0.0));\
+#46=VECTOR('',#45,10.0);#47=LINE('',#44,#46);#48=EDGE_CURVE('',#12,#14,#47,.T.);\
+#49=CARTESIAN_POINT('',(10.0,10.0,10.0));#50=DIRECTION('',(-1.0,0.0,0.0));\
+#51=VECTOR('',#50,10.0);#52=LINE('',#49,#51);#53=EDGE_CURVE('',#14,#16,#52,.T.);\
+#54=CARTESIAN_POINT('',(0.0,10.0,10.0));#55=DIRECTION('',(0.0,-1.0,0.0));\
+#56=VECTOR('',#55,10.0);#57=LINE('',#54,#56);#58=EDGE_CURVE('',#16,#10,#57,.T.);\
+#59=CARTESIAN_POINT('',(0.0,0.0,0.0));#60=DIRECTION('',(0.0,0.0,1.0));\
+#61=VECTOR('',#60,10.0);#62=LINE('',#59,#61);#63=EDGE_CURVE('',#2,#10,#62,.T.);\
+#64=CARTESIAN_POINT('',(10.0,0.0,0.0));#65=DIRECTION('',(0.0,0.0,1.0));\
+#66=VECTOR('',#65,10.0);#67=LINE('',#64,#66);#68=EDGE_CURVE('',#4,#12,#67,.T.);\
+#69=CARTESIAN_POINT('',(10.0,10.0,0.0));#70=DIRECTION('',(0.0,0.0,1.0));\
+#71=VECTOR('',#70,10.0);#72=LINE('',#69,#71);#73=EDGE_CURVE('',#6,#14,#72,.T.);\
+#74=CARTESIAN_POINT('',(0.0,10.0,0.0));#75=DIRECTION('',(0.0,0.0,1.0));\
+#76=VECTOR('',#75,10.0);#77=LINE('',#74,#76);#78=EDGE_CURVE('',#8,#16,#77,.T.);\
+#79=CARTESIAN_POINT('',(10.0,0.0,10.0));#80=DIRECTION('',(-1.0,0.0,2.000000165480742E-10));\
+#81=VECTOR('',#80,5.0);#82=LINE('',#79,#81);#83=EDGE_CURVE('',#12,#18,#82,.T.);\
+#84=CARTESIAN_POINT('',(5.0,0.0,10.000000001));\
+#85=DIRECTION('',(-1.0,0.0,-2.000000165480742E-10));#86=VECTOR('',#85,5.0);\
+#87=LINE('',#84,#86);#88=EDGE_CURVE('',#18,#10,#87,.T.);#89=ORIENTED_EDGE('',*,*,#38,.F.);\
+#90=ORIENTED_EDGE('',*,*,#33,.F.);#91=ORIENTED_EDGE('',*,*,#28,.F.);\
+#92=ORIENTED_EDGE('',*,*,#23,.F.);#93=EDGE_LOOP('',(#89,#90,#91,#92));\
+#94=FACE_OUTER_BOUND('',#93,.T.);#95=CARTESIAN_POINT('',(0.0,0.0,0.0));\
+#96=DIRECTION('',(0.0,0.0,-1.0));#97=DIRECTION('',(1.0,0.0,0.0));\
+#98=AXIS2_PLACEMENT_3D('',#95,#96,#97);#99=PLANE('',#98);\
+#100=ADVANCED_FACE('',(#94),#99,.T.);#101=ORIENTED_EDGE('',*,*,#43,.T.);\
+#102=ORIENTED_EDGE('',*,*,#48,.T.);#103=ORIENTED_EDGE('',*,*,#53,.T.);\
+#104=ORIENTED_EDGE('',*,*,#58,.T.);#105=EDGE_LOOP('',(#101,#102,#103,#104));\
+#106=FACE_OUTER_BOUND('',#105,.T.);#107=CARTESIAN_POINT('',(0.0,0.0,10.0));\
+#108=DIRECTION('',(0.0,0.0,1.0));#109=DIRECTION('',(1.0,0.0,0.0));\
+#110=AXIS2_PLACEMENT_3D('',#107,#108,#109);#111=PLANE('',#110);\
+#112=ADVANCED_FACE('',(#106),#111,.T.);#113=ORIENTED_EDGE('',*,*,#23,.T.);\
+#114=ORIENTED_EDGE('',*,*,#68,.T.);#115=ORIENTED_EDGE('',*,*,#83,.T.);\
+#116=ORIENTED_EDGE('',*,*,#88,.T.);#117=ORIENTED_EDGE('',*,*,#63,.F.);\
+#118=EDGE_LOOP('',(#113,#114,#115,#116,#117));#119=FACE_OUTER_BOUND('',#118,.T.);\
+#120=CARTESIAN_POINT('',(0.0,0.0,0.0));#121=DIRECTION('',(0.0,-1.0,0.0));\
+#122=DIRECTION('',(1.0,0.0,0.0));#123=AXIS2_PLACEMENT_3D('',#120,#121,#122);\
+#124=PLANE('',#123);#125=ADVANCED_FACE('',(#119),#124,.T.);\
+#126=ORIENTED_EDGE('',*,*,#28,.T.);#127=ORIENTED_EDGE('',*,*,#73,.T.);\
+#128=ORIENTED_EDGE('',*,*,#48,.F.);#129=ORIENTED_EDGE('',*,*,#68,.F.);\
+#130=EDGE_LOOP('',(#126,#127,#128,#129));#131=FACE_OUTER_BOUND('',#130,.T.);\
+#132=CARTESIAN_POINT('',(10.0,0.0,0.0));#133=DIRECTION('',(1.0,0.0,0.0));\
+#134=DIRECTION('',(0.0,1.0,0.0));#135=AXIS2_PLACEMENT_3D('',#132,#133,#134);\
+#136=PLANE('',#135);#137=ADVANCED_FACE('',(#131),#136,.T.);\
+#138=ORIENTED_EDGE('',*,*,#33,.T.);#139=ORIENTED_EDGE('',*,*,#78,.T.);\
+#140=ORIENTED_EDGE('',*,*,#53,.F.);#141=ORIENTED_EDGE('',*,*,#73,.F.);\
+#142=EDGE_LOOP('',(#138,#139,#140,#141));#143=FACE_OUTER_BOUND('',#142,.T.);\
+#144=CARTESIAN_POINT('',(0.0,10.0,0.0));#145=DIRECTION('',(0.0,1.0,0.0));\
+#146=DIRECTION('',(1.0,0.0,0.0));#147=AXIS2_PLACEMENT_3D('',#144,#145,#146);\
+#148=PLANE('',#147);#149=ADVANCED_FACE('',(#143),#148,.T.);\
+#150=ORIENTED_EDGE('',*,*,#38,.T.);#151=ORIENTED_EDGE('',*,*,#63,.T.);\
+#152=ORIENTED_EDGE('',*,*,#58,.F.);#153=ORIENTED_EDGE('',*,*,#78,.F.);\
+#154=EDGE_LOOP('',(#150,#151,#152,#153));#155=FACE_OUTER_BOUND('',#154,.T.);\
+#156=CARTESIAN_POINT('',(0.0,0.0,0.0));#157=DIRECTION('',(-1.0,0.0,0.0));\
+#158=DIRECTION('',(0.0,1.0,0.0));#159=AXIS2_PLACEMENT_3D('',#156,#157,#158);\
+#160=PLANE('',#159);#161=ADVANCED_FACE('',(#155),#160,.T.);\
+#162=ORIENTED_EDGE('',*,*,#43,.F.);#163=ORIENTED_EDGE('',*,*,#88,.F.);\
+#164=ORIENTED_EDGE('',*,*,#83,.F.);#165=EDGE_LOOP('',(#162,#163,#164));\
+#166=FACE_OUTER_BOUND('',#165,.T.);#167=CARTESIAN_POINT('',(0.0,0.0,10.0));\
+#168=DIRECTION('',(0.0,1.0,0.0));#169=DIRECTION('',(1.0,0.0,0.0));\
+#170=AXIS2_PLACEMENT_3D('',#167,#168,#169);#171=PLANE('',#170);\
+#172=ADVANCED_FACE('',(#166),#171,.T.);\
+#173=CLOSED_SHELL('',(#100,#112,#125,#137,#149,#161,#172));\
+#174=MANIFOLD_SOLID_BREP('',#173);\n";
+
+#[test]
+fn faces_narrower_than_the_tolerance_never_turn_on_their_rounding() {
+    // Stated in agreement with its loop, the fin reads as one more face.
+    let cube = solid(&part21("#174", SLIVER));
+    assert!(close(cube.volume_mm3(), 1000., 1e-9));
+    // Stated against its loop by an area within the tolerance, the fin's
+    // direction is rounding: it is not turned to fit, nor refused as
+    // invalid, but cannot be placed.
+    let against = tampered(
+        SLIVER,
+        "#172=ADVANCED_FACE('',(#166),#171,.T.)",
+        "#172=ADVANCED_FACE('',(#166),#171,.F.)",
+    );
+    assert_eq!(
+        solids(&part21("#174", &against)).unwrap_err(),
+        Error::Unsupported
+    );
+    // With its bend flattened, the fin bounds nothing at all.
+    let flat = SLIVER
+        .replace("(5.0,0.0,10.000000001)", "(5.0,0.0,10.0)")
+        .replace("2.000000165480742E-10", "0.0");
+    assert_eq!(
+        solids(&part21("#174", &flat)).unwrap_err(),
+        Error::Unsupported
+    );
+}
+
+/// A crescent prism 1 mm tall between two arcs over the chord from
+/// (-1, 0) to (1, 0): a radius 6 circle, sampled at its ends alone, and a
+/// flatter radius 6.66 circle, of 0.9 times the first one's
+/// height, written as a four-span rational spline,
+/// sampled at its knots. The chords of the crescent enclose a negative
+/// area, its arcs 0.0112 mm2.
+const CRESCENT: &str = "\
+#1=CARTESIAN_POINT('',(-1.0,0.0,0.0));#2=VERTEX_POINT('',#1);\
+#3=CARTESIAN_POINT('',(1.0,0.0,0.0));#4=VERTEX_POINT('',#3);\
+#5=CARTESIAN_POINT('',(-1.0,0.0,1.0));#6=VERTEX_POINT('',#5);\
+#7=CARTESIAN_POINT('',(1.0,0.0,1.0));#8=VERTEX_POINT('',#7);\
+#9=CARTESIAN_POINT('',(0.0,-5.916079783099616,0.0));#10=DIRECTION('',(0.0,0.0,-1.0));\
+#11=DIRECTION('',(1.0,0.0,0.0));#12=AXIS2_PLACEMENT_3D('',#9,#10,#11);\
+#13=CIRCLE('',#12,6.0);#14=EDGE_CURVE('',#2,#4,#13,.T.);\
+#15=CARTESIAN_POINT('',(-1.0,0.0,0.0));\
+#16=CARTESIAN_POINT('',(-0.7517796174689421,0.037710394270029646,0.0));\
+#17=CARTESIAN_POINT('',(-0.5014240990099426,0.05661929474018734,0.0));\
+#18=CARTESIAN_POINT('',(-0.251068580550943,0.07552819521034593,0.0));\
+#19=CARTESIAN_POINT('',(4.0767318863933883E-16,0.07552819521034593,0.0));\
+#20=CARTESIAN_POINT('',(0.25106858055094383,0.07552819521034593,0.0));\
+#21=CARTESIAN_POINT('',(0.5014240990099433,0.05661929474018734,0.0));\
+#22=CARTESIAN_POINT('',(0.751779617468943,0.037710394270029646,0.0));\
+#23=CARTESIAN_POINT('',(1.0,0.0,0.0));\
+#24=(BOUNDED_CURVE()B_SPLINE_CURVE(2,(#15,#16,#17,#18,#19,#20,#21,#22,#23),.CIRCULAR_ARC.,.F.,.F.)B_SPLINE_CURVE_WITH_KNOTS((3,2,2,2,3),(0.,1.,2.,3.,4.),.UNSPECIFIED.)CURVE()GEOMETRIC_REPRESENTATION_ITEM()RATIONAL_B_SPLINE_CURVE((1.0,0.9992897205446609,1.0,0.9992897205446609,1.0,0.9992897205446609,1.0,0.9992897205446609,1.0))REPRESENTATION_ITEM(''));\
+#25=EDGE_CURVE('',#2,#4,#24,.T.);#26=CARTESIAN_POINT('',(0.0,-5.916079783099616,1.0));\
+#27=DIRECTION('',(0.0,0.0,-1.0));#28=DIRECTION('',(1.0,0.0,0.0));\
+#29=AXIS2_PLACEMENT_3D('',#26,#27,#28);#30=CIRCLE('',#29,6.0);\
+#31=EDGE_CURVE('',#6,#8,#30,.T.);#32=CARTESIAN_POINT('',(-1.0,0.0,1.0));\
+#33=CARTESIAN_POINT('',(-0.7517796174689421,0.037710394270029646,1.0));\
+#34=CARTESIAN_POINT('',(-0.5014240990099426,0.05661929474018734,1.0));\
+#35=CARTESIAN_POINT('',(-0.251068580550943,0.07552819521034593,1.0));\
+#36=CARTESIAN_POINT('',(4.0767318863933883E-16,0.07552819521034593,1.0));\
+#37=CARTESIAN_POINT('',(0.25106858055094383,0.07552819521034593,1.0));\
+#38=CARTESIAN_POINT('',(0.5014240990099433,0.05661929474018734,1.0));\
+#39=CARTESIAN_POINT('',(0.751779617468943,0.037710394270029646,1.0));\
+#40=CARTESIAN_POINT('',(1.0,0.0,1.0));\
+#41=(BOUNDED_CURVE()B_SPLINE_CURVE(2,(#32,#33,#34,#35,#36,#37,#38,#39,#40),.CIRCULAR_ARC.,.F.,.F.)B_SPLINE_CURVE_WITH_KNOTS((3,2,2,2,3),(0.,1.,2.,3.,4.),.UNSPECIFIED.)CURVE()GEOMETRIC_REPRESENTATION_ITEM()RATIONAL_B_SPLINE_CURVE((1.0,0.9992897205446609,1.0,0.9992897205446609,1.0,0.9992897205446609,1.0,0.9992897205446609,1.0))REPRESENTATION_ITEM(''));\
+#42=EDGE_CURVE('',#6,#8,#41,.T.);#43=CARTESIAN_POINT('',(-1.0,0.0,0.0));\
+#44=DIRECTION('',(0.0,0.0,1.0));#45=VECTOR('',#44,1.);#46=LINE('',#43,#45);\
+#47=EDGE_CURVE('',#2,#6,#46,.T.);#48=CARTESIAN_POINT('',(1.0,0.0,0.0));\
+#49=DIRECTION('',(0.0,0.0,1.0));#50=VECTOR('',#49,1.);#51=LINE('',#48,#50);\
+#52=EDGE_CURVE('',#4,#8,#51,.T.);#53=CARTESIAN_POINT('',(0.0,0.0,1.0));\
+#54=DIRECTION('',(0.0,0.0,1.0));#55=DIRECTION('',(1.0,0.0,0.0));\
+#56=AXIS2_PLACEMENT_3D('',#53,#54,#55);#57=PLANE('',#56);#58=ORIENTED_EDGE('',*,*,#42,.T.);\
+#59=ORIENTED_EDGE('',*,*,#31,.F.);#60=EDGE_LOOP('',(#58,#59));\
+#61=FACE_OUTER_BOUND('',#60,.T.);#62=ADVANCED_FACE('',(#61),#57,.T.);\
+#63=CARTESIAN_POINT('',(0.0,0.0,0.0));#64=DIRECTION('',(0.0,0.0,-1.0));\
+#65=DIRECTION('',(1.0,0.0,0.0));#66=AXIS2_PLACEMENT_3D('',#63,#64,#65);#67=PLANE('',#66);\
+#68=ORIENTED_EDGE('',*,*,#14,.T.);#69=ORIENTED_EDGE('',*,*,#25,.F.);\
+#70=EDGE_LOOP('',(#68,#69));#71=FACE_OUTER_BOUND('',#70,.T.);\
+#72=ADVANCED_FACE('',(#71),#67,.T.);#73=CARTESIAN_POINT('',(0.0,-5.916079783099616,0.0));\
+#74=DIRECTION('',(0.0,0.0,1.0));#75=DIRECTION('',(1.0,0.0,0.0));\
+#76=AXIS2_PLACEMENT_3D('',#73,#74,#75);#77=CYLINDRICAL_SURFACE('',#76,6.0);\
+#78=ORIENTED_EDGE('',*,*,#31,.T.);#79=ORIENTED_EDGE('',*,*,#52,.F.);\
+#80=ORIENTED_EDGE('',*,*,#14,.F.);#81=ORIENTED_EDGE('',*,*,#47,.T.);\
+#82=EDGE_LOOP('',(#78,#79,#80,#81));#83=FACE_OUTER_BOUND('',#82,.T.);\
+#84=ADVANCED_FACE('',(#83),#77,.T.);#85=CARTESIAN_POINT('',(0.0,-6.582280226339064,0.0));\
+#86=DIRECTION('',(0.0,0.0,1.0));#87=DIRECTION('',(1.0,0.0,0.0));\
+#88=AXIS2_PLACEMENT_3D('',#85,#86,#87);#89=CYLINDRICAL_SURFACE('',#88,6.65780842154941);\
+#90=ORIENTED_EDGE('',*,*,#25,.T.);#91=ORIENTED_EDGE('',*,*,#52,.T.);\
+#92=ORIENTED_EDGE('',*,*,#42,.F.);#93=ORIENTED_EDGE('',*,*,#47,.F.);\
+#94=EDGE_LOOP('',(#90,#91,#92,#93));#95=FACE_OUTER_BOUND('',#94,.T.);\
+#96=ADVANCED_FACE('',(#95),#89,.F.);#97=CLOSED_SHELL('',(#62,#72,#84,#96));\
+#98=MANIFOLD_SOLID_BREP('',#97);\n";
+
+#[test]
+fn thin_faces_between_near_arcs_take_their_sense_from_the_arcs() {
+    // Each arc's segment is its sector less the triangle on the chord.
+    let segment = |r: f64| r * r * (1. / r).asin() - (r * r - 1.).sqrt();
+    let flat = 0.9 * (6. - 35f64.sqrt());
+    let area = segment(6.) - segment((1. + flat * flat) / (2. * flat));
+    let text = part21("#98", CRESCENT);
+    let boundary = read_boundaries(&text, TOLERANCE).unwrap().remove(0);
+    let samples = boundary.sample(f64::INFINITY, f64::INFINITY).unwrap();
+    let top = &boundary.faces[0];
+    let points = domain::raw(&boundary, &top.loops[0].uses, &samples, false);
+    let unrolled = domain::unroll(&top.surface, points, TOLERANCE)
+        .unwrap()
+        .unwrap();
+    let n = unrolled.points.len();
+    let chords: f64 = (0..n)
+        .map(|i| {
+            let (a, b) = (unrolled.points[i].uv, unrolled.points[(i + 1) % n].uv);
+            0.5 * (a[0] * b[1] - b[0] * a[1])
+        })
+        .sum();
+    assert!(chords < -0.05, "{chords}");
+    assert!(unrolled.exact_area(&boundary, &top.surface) > 0.);
+    let crescent = solid(&text);
+    assert!(
+        close(crescent.volume_mm3(), area, 1e-6),
+        "{} {area}",
+        crescent.volume_mm3()
+    );
+}
+
 /// A square picture frame: a closed bilinear spline net, 20 mm across with
 /// a 0.4 by 4 mm square section scaled about its axis, whose every cell
 /// is a flat quadrilateral.
