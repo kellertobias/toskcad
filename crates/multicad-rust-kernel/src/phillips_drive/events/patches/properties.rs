@@ -124,13 +124,25 @@ impl Cavity {
         options: FacePropertyOptions,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<FaceProperties, Error> {
+        self.source()
+            .local_face_properties_with_cancel(face, options, cancelled)
+    }
+}
+
+impl Cutter {
+    pub fn local_face_properties_with_cancel(
+        &self,
+        face: FaceKey,
+        options: FacePropertyOptions,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<FaceProperties, Error> {
         options.validate()?;
         let mut work = Work {
             remaining: options.maximum_cells,
             cancelled,
         };
         work.check()?;
-        let atlas = self.source().surface_patches_with_cancel(cancelled)?;
+        let atlas = self.surface_patches_with_cancel(cancelled)?;
         let index = atlas
             .topology
             .faces()
