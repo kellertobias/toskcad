@@ -182,6 +182,38 @@ pub fn propose_mapped(
     options: EncodingOptions,
     interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<MappedCandidate> {
+    propose_operator(
+        local,
+        OperatorProposal {
+            rows: placement
+                .linear_rows_bounds()
+                .map(|r| r.map(|x| I::new(x[0], x[1]))),
+            origin: placement
+                .translation_bounds_mm()
+                .map(|x| I::new(x[0], x[1])),
+            work: placement.work_used(),
+            retained: placement.retained_budget_bytes(),
+            peak: placement.accounted_peak_bytes(),
+        },
+        options,
+        interrupt,
+    )
+}
+/// Private numerical candidate packet, never geometry/source authority. The
+/// actual imported-source gate independently earns its decoded operator C0.
+pub(super) struct OperatorProposal {
+    pub(super) rows: [[I; 3]; 3],
+    pub(super) origin: [I; 3],
+    pub(super) work: usize,
+    pub(super) retained: usize,
+    pub(super) peak: usize,
+}
+pub(super) fn propose_operator(
+    local: &OwnedActualHead,
+    placement: OperatorProposal,
+    options: EncodingOptions,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<MappedCandidate> {
     if options.maximum_work == 0
         || options.maximum_work > MAX_WORK
         || options.maximum_bytes == 0
@@ -192,12 +224,12 @@ pub fn propose_mapped(
     let inherited = local
         .receipt()
         .aggregate_work
-        .checked_add(placement.work_used())
+        .checked_add(placement.work)
         .ok_or(Error::Limit)?;
     let resident = local
         .receipt()
         .retained_bytes
-        .checked_add(placement.retained_budget_bytes())
+        .checked_add(placement.retained)
         .and_then(|n| n.checked_add(options.additional_resident_bytes))
         .and_then(|n| n.checked_add(size_of::<MappedCandidate>()))
         .ok_or(Error::Limit)?;
@@ -206,12 +238,12 @@ pub fn propose_mapped(
         .receipt()
         .accounted_peak_bytes
         .checked_sub(local.receipt().additional_resident_bytes)
-        .and_then(|n| n.checked_add(placement.retained_budget_bytes()))
+        .and_then(|n| n.checked_add(placement.retained))
         .and_then(|n| n.checked_add(options.additional_resident_bytes))
         .and_then(|n| n.checked_add(size_of::<MappedCandidate>()))
         .ok_or(Error::Limit)?;
     let pose_peak = placement
-        .accounted_peak_bytes()
+        .peak
         .checked_add(local.receipt().retained_bytes)
         .and_then(|n| n.checked_add(options.additional_resident_bytes))
         .and_then(|n| n.checked_add(size_of::<MappedCandidate>()))
@@ -251,9 +283,7 @@ pub fn propose_mapped(
     };
     let ids = [rep, map, item, op, origin, x, y, z];
     b.step(1024)?;
-    let rows = placement
-        .linear_rows_bounds()
-        .map(|r| r.map(|x| I::new(x[0], x[1])));
+    let rows = placement.rows;
     let scale = (0..3)
         .fold(I::point(0.), |s, i| s + rows[i][0].square())
         .sqrt()
@@ -261,9 +291,7 @@ pub fn propose_mapped(
     if !scale.is_finite() || scale <= 0. {
         return Err(Error::Unsupported);
     }
-    let origin = placement
-        .translation_bounds_mm()
-        .map(|x| I::new(x[0], x[1]).midpoint());
+    let origin = placement.origin.map(I::midpoint);
     let values = std::array::from_fn::<_, 4, _>(|i| {
         if i == 0 {
             origin
@@ -331,7 +359,7 @@ pub fn propose_mapped(
         text,
         receipt: EncodingReceipt {
             inherited_material_work: local.receipt().aggregate_work,
-            inherited_placement_work: placement.work_used(),
+            inherited_placement_work: placement.work,
             fresh_encoding_work: fresh,
             aggregate_work: inherited.checked_add(fresh).ok_or(Error::Limit)?,
             accounted_peak_bytes: b.peak,

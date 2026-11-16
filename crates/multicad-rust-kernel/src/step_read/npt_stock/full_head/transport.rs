@@ -9,6 +9,7 @@ use std::{
 };
 pub mod encoding;
 mod pipeline;
+pub mod replay;
 mod reuse;
 pub use pipeline::{VerifiedMappedFile, VerifiedMappedReceipt, encode_verified_mapped};
 mod schema;
