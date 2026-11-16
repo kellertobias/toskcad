@@ -3,6 +3,8 @@
 use super::*;
 use crate::head_profile::OwnedRepairedHead;
 use std::sync::Arc;
+mod match_material;
+pub use match_material::{Degree11ReplayMatch, Degree11ReplayMatchOptions};
 const SCRATCH: usize = 16 * 1024;
 const ARC_BYTES: usize = 64;
 #[derive(Clone, Copy)]

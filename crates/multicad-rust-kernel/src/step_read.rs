@@ -1116,6 +1116,8 @@ pub use phillips_cutter::{
     Degree11MaterialVolumeOptions as PhillipsDegree11MaterialVolumeOptions,
     Degree11OccupiedOptions as PhillipsDegree11OccupiedOptions,
     Degree11OwnedMaterialOptions as PhillipsDegree11OwnedMaterialOptions,
+    Degree11ReplayMatch as PhillipsDegree11ReplayMatch,
+    Degree11ReplayMatchOptions as PhillipsDegree11ReplayMatchOptions,
     Degree11RimContact as PhillipsDegree11RimContact,
     Degree11RimContactId as PhillipsDegree11RimContactId,
     Degree11RimKnot as PhillipsDegree11RimKnot, Degree11RimUse as PhillipsDegree11RimUse,

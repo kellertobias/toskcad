@@ -569,6 +569,6 @@ pub use volume::{
     Degree11EndDiskOptions, Degree11EndDiskProperties, Degree11EndDisks, Degree11FaceMeasurement,
     Degree11FacePropertyOptions, Degree11MaterialQuery, Degree11MaterialQueryError,
     Degree11MaterialQueryOptions, Degree11MaterialVolume, Degree11MaterialVolumeOptions,
-    Degree11OwnedMaterialOptions, OwnedDegree11Material, SuppliedDegree11MaterialMatch,
-    SuppliedDegree11MaterialOptions,
+    Degree11OwnedMaterialOptions, Degree11ReplayMatch, Degree11ReplayMatchOptions,
+    OwnedDegree11Material, SuppliedDegree11MaterialMatch, SuppliedDegree11MaterialOptions,
 };

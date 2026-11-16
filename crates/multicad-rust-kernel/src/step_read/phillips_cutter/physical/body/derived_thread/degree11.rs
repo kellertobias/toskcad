@@ -10,8 +10,8 @@ pub use material::{
     Degree11FaceMeasurement, Degree11FacePropertyOptions, Degree11JoinCollar, Degree11MaterialFace,
     Degree11MaterialOptions, Degree11MaterialQuery, Degree11MaterialQueryError,
     Degree11MaterialQueryOptions, Degree11MaterialVolume, Degree11MaterialVolumeOptions,
-    Degree11OwnedMaterialOptions, Degree11RimUse, OwnedDegree11Material,
-    SuppliedDegree11MaterialMatch, SuppliedDegree11MaterialOptions,
+    Degree11OwnedMaterialOptions, Degree11ReplayMatch, Degree11ReplayMatchOptions, Degree11RimUse,
+    OwnedDegree11Material, SuppliedDegree11MaterialMatch, SuppliedDegree11MaterialOptions,
 };
 /// A separately bounded transfer stage after the head has already qualified.
 /// `maximum_work` bounds NEW work only; inherited head work is reported
