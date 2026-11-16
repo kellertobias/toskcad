@@ -73,6 +73,11 @@ fn original_perpendicular_seats_emit_candidate_with_shared_closed_rims() {
         StockClipPlacement::new([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]], [0.; 3]).unwrap();
     let candidate = candidate(&source, placement, Options::default(), &|| false).unwrap();
     assert!(std::ptr::eq(candidate.source(), &source));
+    assert_eq!(candidate.placement().matrix(), placement.matrix());
+    assert_eq!(
+        candidate.placement().translation_mm(),
+        placement.translation_mm()
+    );
     assert_eq!(
         candidate.face_entities().len(),
         source.boundary().faces.len() + 4

@@ -120,6 +120,9 @@ fn literal_perpendicular_seats_keep_original_owners_and_decimal_spellings() {
         .iter()
         .find(|n| n.spelling().contains("4.9000000000000004"))
         .unwrap();
+    let record = &document.records()[&leaf.entity()][0];
+    let spellings = part21::numeric_spellings(record).unwrap();
+    assert_eq!(spellings[leaf.ordinal()], leaf.spelling());
     let original = leaf.spelling();
     // Append a decimal mantissa digit, preserving the parsed f64 cache while
     // changing the actual literal. This stage retains both, never equates them.
@@ -273,4 +276,75 @@ fn selected_query_has_separate_exact_work_frontier_and_atomic_cancellation() {
             .face_entities(),
         earned.face_entities()
     );
+}
+
+#[test]
+fn independently_parsed_trim_owner_aliases_and_unsupported_supports_refuse() {
+    let original = text();
+    let face = original
+        .lines()
+        .find(|l| l.contains("ADVANCED_FACE("))
+        .unwrap();
+    let start = face.find(",(").unwrap() + 2;
+    let end = start + face[start..].find(')').unwrap();
+    let first = face[start..end].split(',').next().unwrap();
+    let duplicate = format!(
+        "{}{},{}{}",
+        &face[..start],
+        first,
+        &face[start..end],
+        &face[end..]
+    );
+    let duplicated_bound = original.replacen(face, &duplicate, 1);
+
+    let bounds = original
+        .lines()
+        .filter(|l| l.contains("=FACE_OUTER_BOUND("))
+        .take(2)
+        .collect::<Vec<_>>();
+    let wire = |l: &str| {
+        l.split_once(",#")
+            .unwrap()
+            .1
+            .split(',')
+            .next()
+            .unwrap()
+            .to_owned()
+    };
+    let shared_wire = bounds[1].replacen(
+        &format!(",#{},", wire(bounds[1])),
+        &format!(",#{},", wire(bounds[0])),
+        1,
+    );
+    let aliased_wire = original.replacen(bounds[1], &shared_wire, 1);
+    let unknown_support = original.replacen("CONICAL_SURFACE(", "TOROIDAL_SURFACE(", 1);
+    for (label, text, expected) in [
+        (
+            "duplicate face-bound owner",
+            duplicated_bound,
+            Error::Invalid,
+        ),
+        ("shared wire owner", aliased_wire, Error::Invalid),
+        ("unsupported support", unknown_support, Error::Unsupported),
+    ] {
+        assert_ne!(text, original, "{label}");
+        let document = parse_document(&text);
+        let item = document.represented_members()[0].item_entity();
+        assert_eq!(
+            decode(&document, item, Options::default(), &|| false).err(),
+            Some(expected),
+            "{label}"
+        );
+        // Rejection has no effect on the independently borrowed original file.
+        let original_document = parse_document(&original);
+        assert!(
+            decode(
+                &original_document,
+                original_document.represented_members()[0].item_entity(),
+                Options::default(),
+                &|| false
+            )
+            .is_ok()
+        );
+    }
 }
