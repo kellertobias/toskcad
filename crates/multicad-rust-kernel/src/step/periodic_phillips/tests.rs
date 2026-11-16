@@ -1,4 +1,5 @@
 use super::*;
+mod public_import;
 pub(super) fn source(left: bool, extra: f64) -> Material {
     use crate::{
         head_profile::{Head, Profile},
