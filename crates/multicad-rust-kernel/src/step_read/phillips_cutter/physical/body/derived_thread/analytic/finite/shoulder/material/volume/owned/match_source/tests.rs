@@ -71,6 +71,55 @@ fn actual_metric_files_match_complete_boundary_caps_world_maps_and_independent_m
     }
 }
 #[test]
+fn complete_material_match_cancels_after_preparation_and_retries_without_mutating_sources() {
+    let source = owned_source(false, 0.);
+    let (text, occurrence) = file(&source, true);
+    let decoded =
+        crate::step_read::read_periodic_phillips_material(&text, Default::default(), None).unwrap();
+    let polls = Cell::new(0usize);
+    let count = || {
+        polls.set(polls.get() + 1);
+        false
+    };
+    let baseline = source
+        .match_material(
+            decoded.material(),
+            occurrence,
+            Default::default(),
+            Some(&count),
+        )
+        .unwrap();
+    let total = polls.get();
+    assert!(total >= 8);
+    for checkpoint in [2, total / 4, total / 2, total - 1, total] {
+        polls.set(0);
+        let cancel = || {
+            polls.set(polls.get() + 1);
+            polls.get() >= checkpoint
+        };
+        assert!(matches!(
+            source.match_material(
+                decoded.material(),
+                occurrence,
+                Default::default(),
+                Some(&cancel)
+            ),
+            Err(PhillipsReadError::Cancelled)
+        ));
+        assert_eq!(polls.get(), checkpoint);
+    }
+    let retry = source
+        .match_material(decoded.material(), occurrence, Default::default(), None)
+        .unwrap();
+    assert_eq!(retry.fixed_work_used(), baseline.fixed_work_used());
+    assert_eq!(retry.cavity_cells_used(), baseline.cavity_cells_used());
+    assert_eq!(
+        retry.maximum_world_distance_mm(),
+        baseline.maximum_world_distance_mm()
+    );
+    assert_eq!(decoded.material().original_input(), Some(text.as_str()));
+}
+#[test]
 fn actual_geometry_and_occurrence_mismatches_refuse_without_scalar_or_header_shortcuts() {
     let source = owned_source(false, 0.);
     let (text, occurrence) = file(&source, false);
