@@ -350,7 +350,7 @@ pub use body::{
     PeriodicOwnedOptions, PeriodicProposalOrigin, PeriodicShoulderOptions, PeriodicShoulderRepair,
     PeriodicThreadBounds, PeriodicThreadCorrespondence, PeriodicThreadRepair, PeriodicThreadSource,
     PeriodicVolumeOptions, RimContact, RimContactId, RimDomainEnd, RimDomainRole, RimKnot,
-    RimSignDomain, ThreadCarrierTransfer, ThreadContactOptions,
+    RimSignDomain, SuppliedThreadCorrespondence, ThreadCarrierTransfer, ThreadContactOptions,
 };
 
 pub use body::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSource};

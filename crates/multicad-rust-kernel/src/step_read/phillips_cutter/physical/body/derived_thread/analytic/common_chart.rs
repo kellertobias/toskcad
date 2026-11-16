@@ -40,7 +40,7 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
         options: AnalyticThreadOptions,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> std::result::Result<CommonChartPeriodicThreadRepair<'a, 'input>, PhillipsReadError> {
-        self.build_thread_repair(options, interrupt, true, Some(self.chart()))
+        self.build_thread_repair(options, interrupt, true, Some(self.chart()), None)
             .map(|field| CommonChartPeriodicThreadRepair { field })
     }
 }

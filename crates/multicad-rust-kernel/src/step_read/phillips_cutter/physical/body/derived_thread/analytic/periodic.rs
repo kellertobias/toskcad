@@ -168,7 +168,7 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
         options: AnalyticThreadOptions,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> std::result::Result<PeriodicThreadRepair<'a, 'input>, PhillipsReadError> {
-        self.build_thread_repair(options, interrupt, true, None)
+        self.build_thread_repair(options, interrupt, true, None, None)
             .map(|field| PeriodicThreadRepair { field })
     }
 }

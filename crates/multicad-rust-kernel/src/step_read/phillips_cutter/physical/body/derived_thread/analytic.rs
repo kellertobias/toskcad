@@ -4,6 +4,9 @@
 use super::*;
 mod common_chart;
 mod curve;
+mod supplied;
+use supplied::SuppliedLaw;
+pub use supplied::SuppliedThreadCorrespondence;
 mod finite;
 pub use common_chart::CommonChartPeriodicThreadRepair;
 pub use finite::{
@@ -108,7 +111,7 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
         options: AnalyticThreadOptions,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> std::result::Result<AnalyticThreadRepair<'a, 'input>, PhillipsReadError> {
-        self.build_thread_repair(options, interrupt, false, None)
+        self.build_thread_repair(options, interrupt, false, None, None)
     }
     fn build_thread_repair(
         &self,
@@ -116,6 +119,7 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
         interrupt: Option<&dyn Fn() -> bool>,
         periodic: bool,
         chart: Option<CommonMouthChart>,
+        supplied: Option<SuppliedLaw<'_>>,
     ) -> std::result::Result<AnalyticThreadRepair<'a, 'input>, PhillipsReadError> {
         let mut work = Work {
             remaining: options.maximum_work,
@@ -135,15 +139,25 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
             );
             work.remaining = allowance.checked_sub(1).ok_or(ReadError::Limit)?;
             let body = self.body();
-            let thread = body.thread;
+            if let Some(law) = supplied {
+                work.step(512)?;
+                if periodic || chart.is_some() || !supplied::valid_frame(law.frame) {
+                    return Err(ReadError::Invalid);
+                }
+            }
+            let thread = supplied.map_or(body.thread, |law| *law.source.thread());
             // Exact-periodic sources still have affine radial bands only.
             // The nonperiodic route must independently prove the actual circle
             // factor against every original cell using the cached source rate.
             if (periodic && thread.spec().root_radius_mm.is_some()) || thread.spec().starts != 1 {
                 return Err(ReadError::Unsupported);
             }
-            let base =
-                self.retained_budget_bytes() + std::mem::size_of::<AnalyticThreadRepair<'_, '_>>();
+            let base = self.retained_budget_bytes()
+                + std::mem::size_of::<AnalyticThreadRepair<'_, '_>>()
+                + supplied.map_or(0, |law| {
+                    supplied::resident_bytes(law.source)
+                        + std::mem::size_of::<SuppliedThreadCorrespondence<'_, '_, '_>>()
+                });
             if base.saturating_add(SCRATCH_ANALYTIC) > options.maximum_bytes {
                 return Err(ReadError::Limit);
             }
@@ -170,19 +184,42 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
             // receives the complete measured transfer below. Counts are earned
             // by the SAME original grids, so no guessed cheap source wins quota.
             work.step(factors.saturating_mul(1024))?;
-            let reference = crate::step::helical::prepare_retained_reference(
-                &thread,
-                body.visible[0],
-                body.tolerance,
-            )
-            .map_err(helical::step_error)?;
-            // Body::outer_carrier_bounds already prepared this SAME immutable
-            // Body thread/visible/tolerance triple (outer.rs116), checked the
-            // band count against tensor_face_count and validated every grid via
-            // helical::tensor_surface. One-start non-rounded profiles have four
-            // phase bands. A discrepancy here is an internal implementation bug.
-            assert_eq!(raw.len(), reference.bands.len());
-            assert_eq!(reference.bands.len(), 4);
+            let reference = if let Some(law) = supplied {
+                if raw.len() != 4 || raw.iter().any(|r| r.ids.is_empty() || r.ids[0].is_empty()) {
+                    return Err(ReadError::Unsupported);
+                }
+                let height = raw[0].ids[0].len();
+                let entry = raw[0].entry;
+                if raw
+                    .iter()
+                    .any(|r| r.entry != entry || r.ids.iter().any(|row| row.len() != height))
+                {
+                    return Err(ReadError::Unsupported);
+                }
+                crate::step::helical::prepare_retained_reference_matching(
+                    &thread,
+                    law.source.visible_thread_interval_mm()[0],
+                    body.tolerance,
+                    crate::step::helical::RetainedReferenceGrid {
+                        radial_poles: std::array::from_fn(|i| raw[i].ids.len()),
+                        axial_poles: height,
+                        axial_entry: entry,
+                    },
+                )
+                .map_err(helical::step_error)?
+            } else {
+                let reference = crate::step::helical::prepare_retained_reference(
+                    &thread,
+                    body.visible[0],
+                    body.tolerance,
+                )
+                .map_err(helical::step_error)?;
+                // Same immutable inferred Body/visible/tolerance triple already
+                // qualified by outer_carrier_bounds; these are local invariants.
+                assert_eq!(raw.len(), reference.bands.len());
+                assert_eq!(reference.bands.len(), 4);
+                reference
+            };
             let rotation = rotation::Rotation::new(&mut work)?;
             let source = if periodic {
                 Some(PeriodicThreadSource::new(thread, &mut work)?)
@@ -191,7 +228,7 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
             };
             let geometry =
                 curve::factors(&thread, &reference, &rotation, source.as_ref(), &mut work)?;
-            let frame = body.frame;
+            let frame = supplied.map_or(body.frame, |law| law.frame);
             let target = if let Some(chart) = chart {
                 Target {
                     columns: chart.columns,

@@ -255,20 +255,19 @@ pub(super) fn literal_transfer(
     let [origin, u, v, n] = frame.columns;
     let mut distance = 0_f64;
     let mut derivative = [0_f64; 2];
-    // Caller enumerates the same count of raw/reference bands, asserted after
-    // the inherited Body::outer_carrier_bounds receipt. Its tensor_surface
-    // validation required the exact radial row count, and Proof::poles required
-    // every axial coefficient and exactly the same number of point IDs. raw()
-    // rereads those immutable grids; no untrusted-source check is skipped here.
-    let radial = reference
-        .bands
-        .get(index)
-        .expect("validated analytic band index");
+    // Inferred and supplied paths both retain the actual raw cell map. A
+    // mismatched external reference refuses before indexing or allocating any
+    // coefficient-difference buffer; no metadata replacement is performed.
+    let radial = reference.bands.get(index).ok_or(ReadError::Unsupported)?;
     {
-        let (width, height) = (r.ids.len(), r.ids[0].len());
-        assert_eq!(width, radial.poles.len());
-        assert_eq!(height, reference.axial.poles.len());
-        assert!(r.ids.iter().all(|row| row.len() == height));
+        let (width, height) = (r.ids.len(), r.ids.first().map_or(0, |row| row.len()));
+        require_matching_grid(
+            width,
+            height,
+            r.ids.iter().all(|row| row.len() == height),
+            radial.poles.len(),
+            reference.axial.poles.len(),
+        )?;
         let mut differences = Vec::with_capacity(width * height);
         for (i, row) in r.ids.iter().enumerate() {
             for (j, &id) in row.iter().enumerate() {
@@ -346,3 +345,17 @@ pub(super) fn world_transfer(
 
 #[cfg(test)]
 mod tests;
+
+fn require_matching_grid(
+    width: usize,
+    height: usize,
+    coherent: bool,
+    expected_width: usize,
+    expected_height: usize,
+) -> Result<()> {
+    if width > 0 && height > 0 && coherent && width == expected_width && height == expected_height {
+        Ok(())
+    } else {
+        Err(ReadError::Unsupported)
+    }
+}

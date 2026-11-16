@@ -262,6 +262,22 @@ pub(in crate::step_read::phillips_cutter::physical::body) fn actual_m3(
     m3_source(fitted, left, 1.5, 1., false)
 }
 pub(super) fn m3_source(fitted: bool, left: bool, shank: f64, plain: f64, counter: bool) -> String {
+    let (source, [origin, u, v]) = m3_parts(fitted, left, shank, plain, counter);
+    crate::step::write_phillips_screw(&source, origin, u, v, 1e-7).unwrap()
+}
+pub(in crate::step_read::phillips_cutter::physical::body) fn actual_m3_parts(
+    fitted: bool,
+    left: bool,
+) -> (crate::phillips_drive::PhillipsScrew, [Point; 3]) {
+    m3_parts(fitted, left, 1.5, 1., false)
+}
+fn m3_parts(
+    fitted: bool,
+    left: bool,
+    shank: f64,
+    plain: f64,
+    counter: bool,
+) -> (crate::phillips_drive::PhillipsScrew, [Point; 3]) {
     use crate::{
         head_profile::{Head, Profile},
         helical_thread::{Spec, Thread},
@@ -320,5 +336,5 @@ pub(super) fn m3_source(fitted: bool, left: bool, shank: f64, plain: f64, counte
     } else {
         ([0.; 3], [1., 0., 0.], [0., 1., 0.])
     };
-    crate::step::write_phillips_screw(&source, origin, u, v, 1e-7).unwrap()
+    (source, [origin, u, v])
 }

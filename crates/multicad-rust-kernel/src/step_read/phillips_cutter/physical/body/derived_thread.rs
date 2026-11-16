@@ -22,7 +22,7 @@ pub use analytic::{
     PeriodicMaterialProvenance, PeriodicMaterialVolume, PeriodicOwnedMaterialQuery,
     PeriodicOwnedOptions, PeriodicProposalOrigin, PeriodicShoulderOptions, PeriodicShoulderRepair,
     PeriodicThreadBounds, PeriodicThreadCorrespondence, PeriodicThreadRepair, PeriodicThreadSource,
-    PeriodicVolumeOptions,
+    PeriodicVolumeOptions, SuppliedThreadCorrespondence,
 };
 pub use degree11::{
     CoherentDegree11ThreadCarrier, Degree11ClosedMaterial, Degree11JoinCollar,
