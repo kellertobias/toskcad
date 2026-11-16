@@ -16,6 +16,10 @@ fn real_periodic_curve_points_retain_shared_nodes_radii_and_exact_closure() {
             assert!(query.thread_rail_second_bound_mm(band).unwrap() > 0.);
             assert!(query.thread_rim_second_bound_mm(band).unwrap() > 0.);
             assert!(query.join_rim_second_bound_mm(band).unwrap() > 0.);
+            overlap(
+                query.join_rim_point_mm(band, 1.).unwrap(),
+                query.join_rim_point_mm((band + 1) % 4, 0.).unwrap(),
+            );
             for cap in 0..2 {
                 overlap(
                     query.thread_rail_point_mm(band, cap as f64).unwrap(),
@@ -27,6 +31,15 @@ fn real_periodic_curve_points_retain_shared_nodes_radii_and_exact_closure() {
                 );
             }
             for t in [0., 0.25, 0.5, 0.75, 1.] {
+                let join = query.join_rim_point_mm(band, t).unwrap().map(interval);
+                let join_radius_squared = join[0].square() + join[1].square();
+                let radius_squared = owner.head_bottom_station_mm()[0].powi(2);
+                assert!(
+                    join_radius_squared.lo <= radius_squared
+                        && join_radius_squared.hi >= radius_squared
+                );
+                let station = expression(owner.cap_expressions_mm()[0]);
+                assert!(join[2].lo <= station.lo && join[2].hi >= station.hi);
                 let p = query.thread_rail_point_mm(band, t).unwrap().map(interval);
                 let radius = p[0].square() + p[1].square();
                 assert!(
@@ -99,6 +112,14 @@ fn actual_curve_batch_resources_invalid_inputs_and_cancellation_remain_distinct(
     ));
     assert!(matches!(
         q.thread_rim_point_mm(2, 0, 0.5),
+        Err(PhillipsReadError::Invalid)
+    ));
+    assert!(matches!(
+        q.join_rim_point_mm(4, 0.5),
+        Err(PhillipsReadError::Invalid)
+    ));
+    assert!(matches!(
+        q.join_rim_point_mm(0, f64::NAN),
         Err(PhillipsReadError::Invalid)
     ));
     assert!(matches!(
