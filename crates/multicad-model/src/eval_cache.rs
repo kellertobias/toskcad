@@ -336,6 +336,7 @@ pub struct EvaluationCache {
     symbol_nodes: BTreeMap<CacheKey, SymbolEntry>,
     pending_symbol_nodes: BTreeMap<CacheKey, SymbolEntry>,
     full_rust: Option<FullRustModel>,
+    pub(crate) pipe_threads: multicad_kernel::PipeThreadFactory,
 }
 impl Default for EvaluationCache {
     fn default() -> Self {
@@ -362,7 +363,11 @@ impl EvaluationCache {
             symbol_nodes: BTreeMap::new(),
             pending_symbol_nodes: BTreeMap::new(),
             full_rust: None,
+            pipe_threads: multicad_kernel::PipeThreadFactory::new(retained_bytes, max_entries),
         }
+    }
+    pub fn pipe_thread_factory_stats(&self) -> multicad_kernel::PipeThreadFactoryStats {
+        self.pipe_threads.stats()
     }
     /// Statistics of the most recent cached compile (also when it failed or
     /// was superseded).
@@ -388,8 +393,10 @@ impl EvaluationCache {
             .map(|e| e.bytes)
             .sum::<usize>()
             .saturating_add(self.full_rust.as_ref().map_or(0, |full| full.bytes))
+            .saturating_add(self.pipe_threads.retained_bytes())
     }
     pub fn clear(&mut self) {
+        self.pipe_threads.clear();
         self.entries.clear();
         self.full_rust = None;
         self.gear_pairs.clear();
@@ -545,7 +552,11 @@ impl EvaluationCache {
             .map(|(k, e)| (e.used, *k, e.bytes))
             .collect();
         stale.sort();
-        let mut stale_bytes: usize = stale.iter().map(|s| s.2).sum();
+        let mut stale_bytes: usize = stale
+            .iter()
+            .map(|s| s.2)
+            .sum::<usize>()
+            .saturating_add(self.pipe_threads.retained_bytes());
         let mut evicted = 0;
         for (_, key, bytes) in stale {
             if stale_bytes <= self.retained_bytes && self.entries.len() <= self.max_entries {
@@ -637,6 +648,9 @@ impl<'a> Session<'a> {
                 BTreeMap::new()
             },
         }
+    }
+    pub(crate) fn pipe_thread_factory(&mut self) -> &mut multicad_kernel::PipeThreadFactory {
+        &mut self.cache.pipe_threads
     }
     fn profile_pose(&mut self, id: EntityId) -> Option<Arc<profile_connections::PoseInputs>> {
         if let Some(found) = self.profile_poses.get(&id) {
@@ -893,6 +907,9 @@ impl<'a> Session<'a> {
 }
 impl Drop for Session<'_> {
     fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.cache.pipe_threads.finish_compile(false);
+        }
         let mut stats = std::mem::take(&mut self.stats);
         stats.evicted = self.cache.evict();
         if self.cache.full_rust.is_some()

@@ -204,3 +204,162 @@ fn original_npt_hex_hardware_keeps_physical_pose_manufacture_history_and_cold_re
 fn original_bspt_hex_hardware_keeps_physical_pose_manufacture_history_and_cold_reopen() {
     check_original_pipe_hardware(false);
 }
+
+#[test]
+fn compiler_owned_prepared_pipe_source_reuses_af_and_frame_edits() {
+    use multicad_model::EvaluationCache;
+    let compiler = Compiler {
+        omit_display: true,
+        ..Default::default()
+    };
+    let mut session = Session::new(Document::new("Owner prepared BSPT").unwrap()).unwrap();
+    let original = recipe(false, false, false);
+    let request = MechanicalPartRequest::new("BSPT", original);
+    session
+        .commit(
+            model::prepare_mechanical_part(&session, 0, actor(), &request)
+                .unwrap()
+                .prepared,
+        )
+        .unwrap();
+    let mut cache = EvaluationCache::new(32 * 1024 * 1024, 16);
+    let first = compiler
+        .compile_cached_with_backend(
+            &mut cache,
+            session.document(),
+            1,
+            GeometryBackend::Rust,
+            None,
+        )
+        .unwrap();
+    assert_eq!(cache.pipe_thread_factory_stats().prepared, 1);
+    assert_eq!(cache.pipe_thread_factory_stats().entries, 1);
+    assert!(cache.pipe_thread_factory_stats().retained_bytes < 32 * 1024 * 1024);
+    let mut edited = recipe(false, false, true);
+    let MechanicalPartParameters::HexNut { across_flats, .. } = &mut edited else {
+        unreachable!()
+    };
+    *across_flats = length(20.);
+    session
+        .commit(
+            model::prepare_mechanical_part_edit(&session, 1, actor(), request.feature, &edited)
+                .unwrap()
+                .prepared,
+        )
+        .unwrap();
+    let at = std::time::Instant::now();
+    let changed = compiler
+        .compile_cached_with_backend(
+            &mut cache,
+            session.document(),
+            2,
+            GeometryBackend::Rust,
+            None,
+        )
+        .unwrap();
+    eprintln!(
+        "COMPILER_PREPARED_AF_FRAME ms={:.6} stats={:?}",
+        at.elapsed().as_secs_f64() * 1000.,
+        cache.pipe_thread_factory_stats()
+    );
+    assert_eq!(cache.pipe_thread_factory_stats().hits, 1);
+    assert_eq!(cache.pipe_thread_factory_stats().prepared, 0);
+    let direct = compiler
+        .compile_with_backend(session.document(), 2, GeometryBackend::Rust, None)
+        .unwrap();
+    let a = changed.solid(request.feature).unwrap();
+    let b = direct.solid(request.feature).unwrap();
+    assert_eq!(a.bounds().unwrap(), b.bounds().unwrap());
+    assert_eq!(a.volume_mm3().unwrap(), b.volume_mm3().unwrap());
+    assert_eq!(
+        a.topology_snapshot(request.feature, 2).unwrap(),
+        b.topology_snapshot(request.feature, 2).unwrap()
+    );
+    assert!(first.solid(request.feature).unwrap().volume_mm3().unwrap() < a.volume_mm3().unwrap());
+    cache.clear();
+    assert_eq!(cache.pipe_thread_factory_stats().entries, 0);
+    assert_eq!(cache.pipe_thread_factory_stats().retained_bytes, 0);
+    assert_eq!(cache.estimated_bytes(), 0);
+    assert!(a.volume_mm3().unwrap() > 0.);
+}
+
+#[test]
+fn compiler_late_cancellation_aborts_pending_sources_and_preserves_previous_owner() {
+    use multicad_model::EvaluationCache;
+    use std::cell::Cell;
+    let compiler = Compiler {
+        omit_display: true,
+        ..Default::default()
+    };
+    let mut session = Session::new(Document::new("Prepared source cancellation").unwrap()).unwrap();
+    let first = MechanicalPartRequest::new("first", recipe(true, true, false));
+    session
+        .commit(
+            model::prepare_mechanical_part(&session, 0, actor(), &first)
+                .unwrap()
+                .prepared,
+        )
+        .unwrap();
+    let mut observed = EvaluationCache::default();
+    let mut cancelled = EvaluationCache::default();
+    for cache in [&mut observed, &mut cancelled] {
+        compiler
+            .compile_cached_with_backend(cache, session.document(), 1, GeometryBackend::Rust, None)
+            .unwrap();
+        assert_eq!(cache.pipe_thread_factory_stats().entries, 1);
+    }
+    let second = MechanicalPartRequest::new("second", recipe(true, true, true));
+    session
+        .commit(
+            model::prepare_mechanical_part(&session, 1, actor(), &second)
+                .unwrap()
+                .prepared,
+        )
+        .unwrap();
+    let ticks = Cell::new(0usize);
+    let observe = || {
+        ticks.set(ticks.get() + 1);
+        false
+    };
+    compiler
+        .compile_cached_with_backend(
+            &mut observed,
+            session.document(),
+            2,
+            GeometryBackend::Rust,
+            Some(&observe),
+        )
+        .unwrap();
+    assert_eq!(observed.pipe_thread_factory_stats().entries, 2);
+    let total = ticks.get();
+    ticks.set(0);
+    let stop = || {
+        ticks.set(ticks.get() + 1);
+        ticks.get() == total
+    };
+    assert!(
+        compiler
+            .compile_cached_with_backend(
+                &mut cancelled,
+                session.document(),
+                2,
+                GeometryBackend::Rust,
+                Some(&stop)
+            )
+            .is_err()
+    );
+    assert_eq!(cancelled.pipe_thread_factory_stats().entries, 1);
+    assert_eq!(cancelled.pipe_thread_factory_stats().pending, 0);
+    let retry = compiler
+        .compile_cached_with_backend(
+            &mut cancelled,
+            session.document(),
+            2,
+            GeometryBackend::Rust,
+            None,
+        )
+        .unwrap();
+    assert!(retry.solid(first.feature).unwrap().volume_mm3().unwrap() > 0.);
+    assert!(retry.solid(second.feature).unwrap().volume_mm3().unwrap() > 0.);
+    assert_eq!(cancelled.pipe_thread_factory_stats().pending, 0);
+}

@@ -8,27 +8,24 @@ fn planar_frame(origin: [f64; 3], u: [f64; 3], v: [f64; 3]) -> ReferenceFrame {
         v,
     }
 }
-pub(super) fn build(
+pub(super) const MEASURE_ACCURACY: f64 = 1e-4;
+pub(super) fn prepare(
     thread: Solid,
-    intent: Material,
+    transport: &AuthoredThread,
+    af: f64,
     minimum_wall: f64,
     feature: EntityId,
     policy: GeometryPolicy,
     interrupt: Option<&dyn Fn() -> bool>,
-) -> Result<Source, GeometryError> {
+) -> Result<Rc<ThreadSource>, GeometryError> {
     checkpoint(interrupt)?;
-    let spec = intent.thread().spec();
-    let kind = intent.kind();
-    let (af, head) = match kind {
-        PipeHardwareKind::HexHead {
-            across_flats_mm,
-            height_mm,
-        } => (across_flats_mm, Some(height_mm)),
-        PipeHardwareKind::HexNut { across_flats_mm } => (across_flats_mm, None),
-    };
-    let mut local_topology = thread.topology_snapshot(feature, 0)?;
+    let spec = transport.spec();
+    let local_topology = thread.topology_snapshot(feature, 0)?;
     let mut measured = BTreeMap::new();
     let (caps, thread_volume, radius) = if let Some(source) = thread.rust_clipped_npt_source() {
+        if source.source() != transport {
+            return Err(failure(Cause::Unsupported));
+        }
         let measures = thread
             .rust_clipped_npt_face_measures()
             .expect("actual clipped source measures");
@@ -60,7 +57,7 @@ pub(super) fn build(
         let (provenance, construction) = thread
             .rust_authored_axial_pipe_thread_source()
             .ok_or_else(|| failure(Cause::Unsupported))?;
-        if construction != PlaneFrame::default() || provenance.transport != *intent.thread() {
+        if construction != PlaneFrame::default() || provenance.transport != *transport {
             return Err(failure(Cause::Unsupported));
         }
         let author = provenance
@@ -77,7 +74,7 @@ pub(super) fn build(
         // aggregate summed-area-width contract. Keep the actual intervals.
         // Full inertia is not part of this facade descriptor query.
         let properties = boundary
-            .face_properties_with_interrupt(1e-4, interrupt)
+            .face_properties_with_interrupt(MEASURE_ACCURACY, interrupt)
             .map_err(radial_failure)?;
         for face in properties {
             measured.insert(
@@ -89,13 +86,55 @@ pub(super) fn build(
             provenance.cap_faces.map(|i| i as u32),
             interval(
                 boundary
-                    .volume_with_interrupt(1e-4, interrupt)
+                    .volume_with_interrupt(MEASURE_ACCURACY, interrupt)
                     .map_err(radial_failure)?
                     .volume_mm3,
             ),
             radius,
         )
     };
+
+    checkpoint(interrupt)?;
+    Ok(Rc::new(ThreadSource {
+        feature,
+        spec,
+        policy,
+        thread,
+        topology: local_topology,
+        measured,
+        caps,
+        volume: thread_volume,
+        radius,
+    }))
+}
+
+pub(super) fn build(
+    prepared: Rc<ThreadSource>,
+    intent: Material,
+    minimum_wall: f64,
+    feature: EntityId,
+    policy: GeometryPolicy,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<Source, GeometryError> {
+    checkpoint(interrupt)?;
+    let spec = intent.thread().spec();
+    let kind = intent.kind();
+    let (af, head) = match kind {
+        PipeHardwareKind::HexHead {
+            across_flats_mm,
+            height_mm,
+        } => (across_flats_mm, Some(height_mm)),
+        PipeHardwareKind::HexNut { across_flats_mm } => (across_flats_mm, None),
+    };
+    if prepared.feature != feature || prepared.spec != spec || prepared.policy != policy {
+        return Err(failure(Cause::Invalid));
+    }
+    let thread = prepared.thread.share()?;
+    let mut local_topology = prepared.topology.clone();
+    let measured = &prepared.measured;
+    let caps = prepared.caps;
+    let thread_volume = prepared.volume;
+    let radius = prepared.radius;
     let child_faces = local_topology
         .elements
         .iter()
@@ -318,6 +357,7 @@ pub(super) fn build(
         feature,
         intent,
         thread,
+        _prepared: prepared,
         faces,
         face_map,
         topology: local_topology,

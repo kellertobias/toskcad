@@ -7,6 +7,8 @@ pub(super) fn build(
     feature: EntityId,
     resolved: &ResolvedMechanicalPart,
     policy: GeometryPolicy,
+    factory: Option<&mut multicad_kernel::PipeThreadFactory>,
+    interrupt: Option<&dyn Fn() -> bool>,
 ) -> Option<Result<Solid, ModelError>> {
     let thread = match resolved {
         ResolvedMechanicalPart::MachineScrew { thread, .. }
@@ -83,15 +85,27 @@ pub(super) fn build(
                 ));
             }
         };
-        Solid::rust_authored_axial_pipe_hardware_with_interrupt(
-            crate::threads::pipe::authored_spec(feature, family, thread)?,
-            kind,
-            thread.minimum_wall_mm,
-            feature,
-            frame,
-            policy,
-            None,
-        )
+        let spec = crate::threads::pipe::authored_spec(feature, family, thread)?;
+        match factory {
+            Some(factory) => factory.build(
+                spec,
+                kind,
+                thread.minimum_wall_mm,
+                feature,
+                frame,
+                policy,
+                interrupt,
+            ),
+            None => Solid::rust_authored_axial_pipe_hardware_with_interrupt(
+                spec,
+                kind,
+                thread.minimum_wall_mm,
+                feature,
+                frame,
+                policy,
+                interrupt,
+            ),
+        }
         .map_err(|cause| error(Some(feature), cause))
     })())
 }

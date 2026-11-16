@@ -21,6 +21,7 @@ mod clipped_npt_body;
 mod pipe_hardware_body;
 pub use multicad_rust_kernel::axial_pipe_thread::authored::hardware::Kind as PipeHardwareKind;
 use pipe_hardware_body::PipeHardwareBody;
+pub use pipe_hardware_body::{PipeThreadFactory, PipeThreadFactoryStats};
 mod literal_npt_body;
 use literal_npt_body::LiteralNptBody;
 pub use literal_npt_body::LiteralNptRuntimeEvidence;

@@ -173,6 +173,67 @@ mod tests {
         });
     }
     #[test]
+    fn actual_pipe_stock_and_frame_edits_retain_native_owner_across_requests() {
+        use multicad_core::{
+            commands::{Actor, Channel},
+            model,
+        };
+        use std::sync::atomic::AtomicBool;
+        let host = Arc::new(Headless::with_geometry_backend(
+            Workspace::new(Document::new("Prepared BSPT owner").unwrap()).unwrap(),
+            None,
+            false,
+            multicad_model::GeometryBackend::Rust,
+        ));
+        let worker = NativeWorker::new(host.clone());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let mm = |value: f64| json!({"value":value,"unit":"mm"});
+        let intent = model::PipeThreadIntent {
+            form: model::PipeThreadForm::Rc,
+            size: model::PipeThreadSize::OneEighth,
+            gauge: model::PipeGaugeConvention::Iso7Nominal1994,
+        };
+        let request = json!({"expected_revision":0,"name":"BSPT nut","recipe":{
+            "kind":"hex_nut","across_flats":mm(18.),"thread":{
+                "family":"bspt","fit":"bspt_nominal","representation":"modeled",
+                "major_diameter":mm(intent.base_major_mm()),"pitch":mm(intent.preset().pitch_mm),
+                "length":mm(intent.default_length_mm()),"pipe":intent
+            }
+        }});
+        let call = || Call {
+            actor: Actor::local(Channel::Mcp),
+            cancel: Arc::new(AtomicBool::new(false)),
+        };
+        runtime.block_on(async {
+            let created = worker.dispatch(call(), "set_mechanical_part".into(), request).await.unwrap();
+            let feature = created["feature"].clone();
+            let source = host.document();
+            let started = std::time::Instant::now();
+            let edited = worker.dispatch(call(), "set_mechanical_part".into(), json!({
+                "expected_revision":1,"feature":feature,"recipe":{
+                    "kind":"hex_nut","across_flats":mm(20.),
+                    "thread":{"plane":"yz","origin":[mm(11.),mm(-7.),mm(5.)]}
+                }
+            })).await.unwrap();
+            eprintln!("MCP_OWNER_AF_FRAME ms={:.6}",started.elapsed().as_secs_f64()*1000.);
+            assert_eq!(edited["part"],created["part"]);
+            assert_eq!(edited["revision"],2);
+            let before_invalid = host.document();
+            assert_ne!(before_invalid,source);
+            assert!(worker.dispatch(call(), "set_mechanical_part".into(),json!({
+                "expected_revision":2,"feature":feature,"recipe":{"kind":"hex_nut","across_flats":mm(1.)}
+            })).await.is_err());
+            assert_eq!(host.document(),before_invalid);
+            let retry = worker.dispatch(call(), "set_mechanical_part".into(),json!({
+                "expected_revision":2,"feature":feature,"recipe":{"kind":"hex_nut","across_flats":mm(22.)}
+            })).await.unwrap();
+            assert_eq!(retry["revision"],3);
+            assert_eq!(retry["part"],created["part"]);
+        });
+    }
+    #[test]
     fn queue_is_bounded_fifo_and_cancelled_mutation_keeps_source_unchanged() {
         use multicad_core::commands::{Actor, Channel};
         use std::sync::atomic::{AtomicBool, Ordering};

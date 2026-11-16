@@ -401,11 +401,13 @@ pub(crate) fn build(
     build_resolved(feature, resolved, policy)
 }
 
-pub(crate) fn build_rust(
+pub(crate) fn build_rust_with_pipe_factory(
     feature: EntityId,
     source: &MechanicalPartDefinition,
     evaluated: &EvaluatedParameters,
     policy: GeometryPolicy,
+    factory: Option<&mut multicad_kernel::PipeThreadFactory>,
+    interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<Solid, ModelError> {
     if let MechanicalPartParameters::MachineScrew { thread, .. }
     | MechanicalPartParameters::HexNut { thread, .. } = &source.parameters
@@ -420,7 +422,7 @@ pub(crate) fn build_rust(
         .parameters
         .resolve(evaluated)
         .map_err(|cause| error(Some(feature), cause))?;
-    build_rust_resolved(feature, resolved, policy)
+    build_rust_resolved_with_pipe_factory(feature, resolved, policy, factory, interrupt)
 }
 
 pub(crate) fn build_rust_resolved(
@@ -428,7 +430,16 @@ pub(crate) fn build_rust_resolved(
     resolved: ResolvedMechanicalPart,
     policy: GeometryPolicy,
 ) -> Result<Solid, ModelError> {
-    if let Some(result) = pipe_hardware::build(feature, &resolved, policy) {
+    build_rust_resolved_with_pipe_factory(feature, resolved, policy, None, None)
+}
+fn build_rust_resolved_with_pipe_factory(
+    feature: EntityId,
+    resolved: ResolvedMechanicalPart,
+    policy: GeometryPolicy,
+    factory: Option<&mut multicad_kernel::PipeThreadFactory>,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<Solid, ModelError> {
+    if let Some(result) = pipe_hardware::build(feature, &resolved, policy, factory, interrupt) {
         return result;
     }
     match resolved {

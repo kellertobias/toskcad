@@ -19,7 +19,9 @@ use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
 };
+mod factory;
 mod mesh;
+pub use factory::{PipeThreadFactory, PipeThreadFactoryStats};
 mod placement;
 mod query;
 mod source;
@@ -34,10 +36,35 @@ struct LocalFace {
     frame: Option<ReferenceFrame>,
     normal: Option<[I; 3]>,
 }
+struct ThreadSource {
+    feature: EntityId,
+    spec: AuthoredSpec,
+    policy: GeometryPolicy,
+    thread: Solid,
+    topology: TopologySnapshot,
+    measured: BTreeMap<u32, (I, [I; 3])>,
+    caps: [u32; 2],
+    volume: I,
+    radius: I,
+}
+impl ThreadSource {
+    fn retained_bytes(&self) -> usize {
+        // Actual complete retained source capacities/unique Arc poles, plus a
+        // conservative 1 MiB for <=34 face/112 edge/80 vertex Native descriptors,
+        // topology/role strings and the small measured face map. Clipped
+        // plans and their <=34 finite face measures fit this same fixed bound.
+        1024 * 1024
+            + self
+                .thread
+                .rust_radial_boundary()
+                .map_or(0, |(b, _)| b.retained_budget_bytes())
+    }
+}
 struct Source {
     feature: EntityId,
     intent: Material,
     thread: Solid,
+    _prepared: Rc<ThreadSource>,
     faces: Vec<LocalFace>,
     face_map: BTreeMap<u32, u32>,
     topology: TopologySnapshot,
@@ -127,53 +154,17 @@ impl Solid {
         policy: GeometryPolicy,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Self, GeometryError> {
-        policy.validate()?;
-        frame.checked(policy)?;
-        checkpoint(interrupt)?;
-        if feature.is_nil()
-            || !minimum_wall_mm.is_finite()
-            || minimum_wall_mm < 0.
-            || policy.boolean_fuzzy_mm != 0.
-        {
-            return Err(failure(Cause::Invalid));
-        }
-        let authored =
-            AuthoredThread::new(spec, policy.linear_tolerance_mm, policy.minimum_feature_mm)
-                .map_err(failure)?;
-        let intent = Material::new(authored, kind, MaterialOptions::default(), interrupt)
-            .map_err(failure)?;
-        let thread = Self::rust_authored_axial_pipe_thread_with_interrupt(
+        construct(
             spec,
+            kind,
+            minimum_wall_mm,
             feature,
-            PlaneFrame::default(),
+            frame,
             policy,
             interrupt,
-        )?;
-        let source = source::build(
-            thread,
-            intent,
-            minimum_wall_mm.max(policy.minimum_feature_mm),
-            feature,
-            policy,
-            interrupt,
-        )?;
-        let placement = Placement::new(frame, kind, spec.length_mm, policy)?;
-        let body = PipeHardwareBody {
-            feature,
-            source: Rc::new(source),
-            placement,
-            display: RefCell::new(None),
-            mesh_builds: std::cell::Cell::new(0),
-        };
-        body.validate(policy)?;
-        checkpoint(interrupt)?;
-        Ok(Self {
-            body: SolidBody::PipeHardware(Rc::new(body)),
-            policy,
-            provenance: vec![],
-            rust_origins: vec![],
-            retained_placement: None,
-        })
+            None,
+        )
+        .map(|(solid, _)| solid)
     }
     pub(crate) fn pipe_hardware_body(&self) -> Option<&PipeHardwareBody> {
         match &self.body {
@@ -189,6 +180,84 @@ impl Solid {
     pub fn rust_pipe_hardware_mesh_build_count(&self) -> Option<usize> {
         self.pipe_hardware_body().map(|b| b.mesh_builds.get())
     }
+}
+#[allow(clippy::too_many_arguments)]
+fn construct(
+    spec: AuthoredSpec,
+    kind: PipeHardwareKind,
+    minimum_wall_mm: f64,
+    feature: EntityId,
+    frame: PlaneFrame,
+    policy: GeometryPolicy,
+    interrupt: Option<&dyn Fn() -> bool>,
+    prepared: Option<Rc<ThreadSource>>,
+) -> Result<(Solid, Rc<ThreadSource>), GeometryError> {
+    policy.validate()?;
+    frame.checked(policy)?;
+    checkpoint(interrupt)?;
+    if feature.is_nil()
+        || !minimum_wall_mm.is_finite()
+        || minimum_wall_mm < 0.
+        || policy.boolean_fuzzy_mm != 0.
+    {
+        return Err(failure(Cause::Invalid));
+    }
+    let authored = AuthoredThread::new(spec, policy.linear_tolerance_mm, policy.minimum_feature_mm)
+        .map_err(failure)?;
+    let intent =
+        Material::new(authored, kind, MaterialOptions::default(), interrupt).map_err(failure)?;
+    let prepared = if let Some(prepared) = prepared {
+        prepared
+    } else {
+        let thread = Solid::rust_authored_axial_pipe_thread_with_interrupt(
+            spec,
+            feature,
+            PlaneFrame::default(),
+            policy,
+            interrupt,
+        )?;
+        let across = match kind {
+            PipeHardwareKind::HexHead {
+                across_flats_mm, ..
+            }
+            | PipeHardwareKind::HexNut { across_flats_mm } => across_flats_mm,
+        };
+        source::prepare(
+            thread,
+            intent.thread(),
+            across,
+            minimum_wall_mm.max(policy.minimum_feature_mm),
+            feature,
+            policy,
+            interrupt,
+        )?
+    };
+    let source = source::build(
+        Rc::clone(&prepared),
+        intent,
+        minimum_wall_mm.max(policy.minimum_feature_mm),
+        feature,
+        policy,
+        interrupt,
+    )?;
+    let placement = Placement::new(frame, kind, spec.length_mm, policy)?;
+    let body = PipeHardwareBody {
+        feature,
+        source: Rc::new(source),
+        placement,
+        display: RefCell::new(None),
+        mesh_builds: std::cell::Cell::new(0),
+    };
+    body.validate(policy)?;
+    checkpoint(interrupt)?;
+    let solid = Solid {
+        body: SolidBody::PipeHardware(Rc::new(body)),
+        policy,
+        provenance: vec![],
+        rust_origins: vec![],
+        retained_placement: None,
+    };
+    Ok((solid, prepared))
 }
 impl PipeHardwareBody {
     pub(super) fn transformed(
