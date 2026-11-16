@@ -1,5 +1,6 @@
 //! Actual owned degree-eleven material through the native affine occurrence.
 use super::*;
+mod display_edges;
 mod planes;
 mod properties;
 mod topology;

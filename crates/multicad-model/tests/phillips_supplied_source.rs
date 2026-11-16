@@ -440,6 +440,37 @@ fn verify(nominal: f64, pitch: f64, left: bool) {
             .iter()
             .any(|o| o.role == "screw.head/thread.junction")
     }));
+    let curves = native.display_edges(0.05).unwrap();
+    assert_eq!(curves.len(), edges.len());
+    for curve in &curves {
+        assert!(curve.points_mm.len() >= 2);
+        assert!(curve.points_mm.iter().flatten().all(|v| v.is_finite()));
+        assert!(edges.iter().any(|e| e.key.ordinal == curve.index));
+    }
+    for vertex in &vertices {
+        let Some(multicad_core::references::AnalyticGeometry::Point { position_mm }) =
+            vertex.geometry
+        else {
+            panic!("Source vertex has no point");
+        };
+        for edge in edges
+            .iter()
+            .filter(|e| e.origins.iter().any(|o| vertex.boundary.contains(o)))
+        {
+            let curve = curves.iter().find(|c| c.index == edge.key.ordinal).unwrap();
+            assert!(
+                curve.points_mm.first() == Some(&position_mm)
+                    || curve.points_mm.last() == Some(&position_mm)
+            );
+        }
+    }
+    let overlays = native
+        .topology_with_display(request.feature, 1, Some(0.05))
+        .unwrap();
+    assert_eq!(overlays.edges.len(), curves.len());
+    assert_eq!(overlays.vertices.len(), vertices.len());
+    assert!(native.display_edges(f64::from_bits(1)).is_err());
+    assert_eq!(native.display_edges(0.05).unwrap().len(), curves.len());
     assert!(planes >= 3);
     let far = [1e6, 1e6, 1e6];
     assert!(!native.rust_thread_contains(far).unwrap());

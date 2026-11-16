@@ -2790,7 +2790,11 @@ impl Solid {
                 let edges = if let Some(body) = self.pipe_hardware_body() {
                     body.display_edges(deflection, self.policy)?
                 } else if let Some((body, frame)) = self.repaired_phillips_body() {
-                    body.periodic_display_edges(frame, deflection)?
+                    if body.has_degree11_source() {
+                        body.degree11_display_edges(frame, deflection)?
+                    } else {
+                        body.periodic_display_edges(frame, deflection)?
+                    }
                 } else if let Some((body, frame)) = self.hanger_body() {
                     body.display_edges(frame, deflection, self.policy)?
                 } else if let Some((body, frame)) = self.wood_insert_body() {
@@ -2837,7 +2841,11 @@ impl Solid {
             return body.display_edges(deflection_mm, self.policy);
         }
         if let Some((body, frame)) = self.repaired_phillips_body() {
-            return body.periodic_display_edges(frame, deflection_mm);
+            return if body.has_degree11_source() {
+                body.degree11_display_edges(frame, deflection_mm)
+            } else {
+                body.periodic_display_edges(frame, deflection_mm)
+            };
         }
         if let Some((body, frame)) = self.hanger_body() {
             return body.display_edges(frame, deflection_mm, self.policy);
