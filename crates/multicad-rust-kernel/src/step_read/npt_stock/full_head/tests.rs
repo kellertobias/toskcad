@@ -91,6 +91,29 @@ fn actual_full_clipped_d11_file_earns_independent_occupied_head_with_derived_cap
 #[test]
 fn actual_cold_reader_errors_and_real_parser_transport_preserve_original_retry() {
     let actual = candidate(false);
+    for options in [
+        Options {
+            maximum_work: 0,
+            ..Default::default()
+        },
+        Options {
+            maximum_work: 272_000_001,
+            ..Default::default()
+        },
+        Options {
+            maximum_bytes: 0,
+            ..Default::default()
+        },
+        Options {
+            maximum_bytes: 64 * 1024 * 1024 + 1,
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            DecodedFile::parse(&actual, options, None),
+            Err(Error::Invalid)
+        ));
+    }
     assert!(matches!(
         DecodedFile::parse("not a STEP physical file", Default::default(), None),
         Err(Error::Invalid)
