@@ -195,6 +195,69 @@ fn independent_operator_comparison_checks_two_earned_physical_sources_and_real_l
     assert_eq!(expected.head_height_mm(), [6., 9.]);
     assert_eq!(actual_source.head_height_mm(), [6., 10.]);
     assert_eq!(decoded.original_input(), actual);
+    // A second independently decoded physical file aligns the actual target
+    // numbering while changing only the earned head-height operator law.
+    // Keep the peer receipt values intact, and release its other owners before
+    // the next bounded operation rather than hiding them from the byte ledger.
+    let wrong_maps = decoded.parameter_maps().to_vec();
+    let caller_bytes = wrong_maps.capacity() * std::mem::size_of::<reader::ParameterMap>() + 16384;
+    drop(decoded);
+    drop(actual_source);
+    drop(actual);
+    let file = propose(
+        &expected,
+        Options {
+            additional_resident_bytes: caller_bytes,
+            ..Default::default()
+        },
+        None,
+    )
+    .unwrap();
+    std::fs::write(&path, file.as_str()).unwrap();
+    drop(file);
+    let own_text = std::fs::read_to_string(&path).unwrap();
+    let own = reader::read(
+        &own_text,
+        1e-7,
+        1e-6,
+        reader::Options {
+            additional_resident_bytes: expected.receipt().retained_result_bytes_upper_bound
+                + caller_bytes
+                + own_text.capacity()
+                - own_text.len(),
+            ..Default::default()
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(own.material().head_height_mm(), [6., 9.]);
+    let mut wrong_owner = Work {
+        remaining: MAX_WORK,
+        interrupt: None,
+    };
+    assert!(matches!(
+        compare(
+            expected.shell().input(),
+            own.material().shell().input(),
+            &wrong_maps,
+            &mut wrong_owner
+        ),
+        Err(Error::Unsupported)
+    ));
+    let mut own_retry = Work {
+        remaining: MAX_WORK,
+        interrupt: None,
+    };
+    compare(
+        expected.shell().input(),
+        own.material().shell().input(),
+        own.parameter_maps(),
+        &mut own_retry,
+    )
+    .unwrap();
+    assert_eq!(own.original_input(), own_text);
+    assert_eq!(expected.head_height_mm(), [6., 9.]);
+    std::fs::remove_file(&path).unwrap();
 }
 
 #[test]
