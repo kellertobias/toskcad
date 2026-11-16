@@ -1079,6 +1079,8 @@ impl Solid {
                 body.topology(owner, revision)
             } else if let Some(body) = self.external_npt_stock_body() {
                 body.topology(owner, revision)
+            } else if let Some(body) = self.actual_clipped_head_body() {
+                body.topology(owner, revision)?
             } else if let Some(body) = self.literal_npt_body() {
                 body.topology(owner, revision)
             } else if let Some(body) = self.clipped_npt_body() {
