@@ -112,6 +112,21 @@ fn actual_full_clipped_source_matches_original_law_and_directed_head_author_corn
             );
             assert!(r.head_author_corner_error_mm > 0. && r.head_author_corner_error_mm < 1e-7);
             assert!(r.sewn_reference_position_error_mm <= 1e-7);
+            let owned = OwnedActualHead::read(
+                std::sync::Arc::from(actual.as_str()),
+                Default::default(),
+                None,
+            )
+            .unwrap();
+            assert_eq!(
+                r.thread_axial_transfer_displacement_mm,
+                owned.axial_sewing_transfer().domain_displacement_mm()
+            );
+            assert!(
+                r.sewn_reference_position_error_mm
+                    >= r.original_thread.position_error_mm()
+                        + r.thread_axial_transfer_displacement_mm
+            );
             assert!(r.aggregate_work <= 272_000_000 && r.accounted_peak_bytes <= 64 * 1024 * 1024);
             assert_eq!(
                 r.aggregate_work,

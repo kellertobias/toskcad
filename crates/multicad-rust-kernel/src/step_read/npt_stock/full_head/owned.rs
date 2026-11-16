@@ -117,6 +117,30 @@ pub struct AxialSewingTransfer {
     displacement: f64,
 }
 impl AxialSewingTransfer {
+    // Callers charge the fixed interval arithmetic before entering. Raw bounds
+    // are the earned complete retained control hull, not a cap-plane proxy.
+    pub(super) fn from_raw_domain(
+        lower: [f64; 2],
+        upper: [f64; 2],
+        target_upper: f64,
+        raw_bounds: [[f64; 2]; 3],
+    ) -> Result<Self> {
+        let lo = I::new(lower[0], lower[1]);
+        let hi = I::new(upper[0], upper[1]);
+        let factor = (I::point(target_upper) - lo) / (hi - lo);
+        let displacement =
+            (factor - I::point(1.)) * (I::new(raw_bounds[2][0], raw_bounds[2][1]) - lo);
+        if !factor.valid() || factor.lo <= 0. || !displacement.valid() {
+            return Err(Error::Unsupported);
+        }
+        Ok(Self {
+            lower,
+            upper,
+            target_upper,
+            factor: [factor.lo, factor.hi],
+            displacement: displacement.magnitude(),
+        })
+    }
     pub fn lower_raw_height_mm(self) -> [f64; 2] {
         self.lower
     }
@@ -367,15 +391,17 @@ impl OwnedActualHead {
         if !area.valid() || area.lo <= 0. || !volume.valid() || volume.lo <= 0. {
             return Err(Error::Unsupported);
         }
-        let sewing = AxialSewingTransfer {
-            lower: cap_heights[0],
-            upper: cap_heights[1],
-            target_upper: stations[0],
-            factor: [factor.lo, factor.hi],
-            displacement: join_sewing,
-        };
+        // Complete actual control hull, including any cap-plane collars.
+        work.step(64)?;
+        let raw_bounds = auxiliary.local_enclosure_mm();
+        let sewing = AxialSewingTransfer::from_raw_domain(
+            cap_heights[0],
+            cap_heights[1],
+            stations[0],
+            raw_bounds,
+        )?;
         work.step(256)?;
-        let mut bounds = sewing.map_raw_box_mm(auxiliary.local_enclosure_mm())?;
+        let mut bounds = sewing.map_raw_box_mm(raw_bounds)?;
         for vertex in &head.vertices {
             work.step(12)?;
             for k in 0..3 {

@@ -1,7 +1,7 @@
 use super::*;
 use num_bigint::BigInt;
 use num_rational::BigRational as Q;
-use num_traits::{One, Zero};
+use num_traits::{One, Signed, Zero};
 fn q(x: f64) -> Q {
     Q::from_float(x).unwrap()
 }
@@ -105,6 +105,13 @@ fn owned_actual_head_survives_all_original_arenas_and_has_actual_roles_and_sewn_
         let scale = (q(owned.head_stations_mm()[0]) - &lower) / (&upper - &lower);
         assert!(scale > Q::zero());
         contains(transfer.positive_axial_scale_bounds(), &scale);
+        // Independently enclose affine displacement at BOTH actual hull
+        // endpoints. Convexity then bounds every interior raw image point,
+        // including controls slightly outside the nominal cap interval.
+        for z in thread.local_enclosure_mm()[2] {
+            let delta = ((&scale - Q::one()) * (q(z) - &lower)).abs();
+            assert!(delta <= q(transfer.domain_displacement_mm()));
+        }
         let mut area = Q::zero();
         let poly = owned.head_polygon_mm();
         for i in 0..6 {
@@ -132,7 +139,9 @@ fn owned_actual_head_survives_all_original_arenas_and_has_actual_roles_and_sewn_
                 let point = coordinates.map(|s| decimal(s.spelling()));
                 contains(bounds[0], &point[0]);
                 contains(bounds[1], &point[1]);
-                contains(bounds[2], &(&lower + (&point[2] - &lower) * &scale));
+                let mapped_z = &lower + (&point[2] - &lower) * &scale;
+                contains(bounds[2], &mapped_z);
+                assert!((mapped_z - &point[2]).abs() <= q(transfer.domain_displacement_mm()));
             }
         }
         let v = [0.25, -0.75, 1.25];

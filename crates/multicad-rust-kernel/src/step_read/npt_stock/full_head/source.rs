@@ -36,6 +36,8 @@ pub struct SourceReceipt {
     pub original_thread: CorrespondenceReceipt,
     pub head_author_corner_error_mm: f64,
     pub declared_head_planar_sewing_mm: f64,
+    /// Whole actual thread image displacement under the declared axial map.
+    pub thread_axial_transfer_displacement_mm: f64,
     pub sewn_reference_position_error_mm: f64,
     pub head_matching_work: usize,
     pub aggregate_work: usize,
@@ -306,6 +308,32 @@ pub fn qualify_actual_file<'input, 'plan, 'source>(
         return Err(Error::Limit);
     }
     drop(selected);
+    // SAME global axial reference as OwnedActualHead, bounded over the
+    // complete actual retained image rather than only the contact rim.
+    b.step(128)?;
+    let mut cap_heights = [[0.; 2]; 2];
+    let mut cap_count = 0;
+    for face in retained.faces() {
+        if let Support::Plane { height } = face.support() {
+            if cap_count == 2 {
+                return Err(Error::Unsupported);
+            }
+            cap_heights[cap_count] =
+                retained.point(height).ok_or(Error::Invalid)?.coordinates()[2].bounds();
+            cap_count += 1;
+        }
+    }
+    if cap_count != 2 {
+        return Err(Error::Unsupported);
+    }
+    cap_heights.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    let transfer = AxialSewingTransfer::from_raw_domain(
+        cap_heights[0],
+        cap_heights[1],
+        occupied.material().head_stations_mm()[0],
+        retained.local_enclosure_mm(),
+    )?;
+    let matching_work = b.used;
     // Correspondence includes source+owned prefixes once. The outside scope
     // already includes source residency, so remove only that known shared plan.
     let compare_outside = outside.checked_sub(source_bytes).ok_or(Error::Limit)?;
@@ -320,7 +348,7 @@ pub fn qualify_actual_file<'input, 'plan, 'source>(
         .and_then(|n| n.checked_sub(matching_work))
         .filter(|n| *n > 0)
         .ok_or(Error::Limit)?;
-    let raw_position = options.position_error_mm - occupied.material().join_sewing_mm();
+    let raw_position = options.position_error_mm - transfer.domain_displacement_mm();
     if !raw_position.is_finite() || raw_position <= 0. {
         return Err(Error::Unsupported);
     }
@@ -337,7 +365,7 @@ pub fn qualify_actual_file<'input, 'plan, 'source>(
         )
         .map_err(source_error)?;
     let sewn_thread =
-        (I::point(thread.position_error_mm()) + I::point(occupied.material().join_sewing_mm())).hi;
+        (I::point(thread.position_error_mm()) + I::point(transfer.domain_displacement_mm())).hi;
     let sewn = sewn_thread.max(head_error);
     if !sewn.is_finite() || sewn > options.position_error_mm {
         return Err(Error::Unsupported);
@@ -375,6 +403,7 @@ pub fn qualify_actual_file<'input, 'plan, 'source>(
             original_thread: thread,
             head_author_corner_error_mm: corner,
             declared_head_planar_sewing_mm: occupied.material().planar_sewing_mm(),
+            thread_axial_transfer_displacement_mm: transfer.domain_displacement_mm(),
             sewn_reference_position_error_mm: sewn,
             head_matching_work: matching_work,
             aggregate_work: aggregate,
