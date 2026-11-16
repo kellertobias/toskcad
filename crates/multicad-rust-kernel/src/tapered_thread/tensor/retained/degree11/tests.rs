@@ -377,3 +377,56 @@ fn actual_endpoint_normals_include_independent_polynomial_and_leaf_scaling() {
         }
     }
 }
+
+#[test]
+fn actual_degree11_position_taylor_and_first_bounds_retain_original_polynomial() {
+    let cell = bilinear([1, 1]).cell([0, 0]).unwrap();
+    for uv in [[[0.25, 0.25], [0.75, 0.75]], [[0.25, 0.5], [0.5, 0.75]]] {
+        let b = cell.first_derivative_bounds_at(uv).unwrap();
+        for u in uv[0] {
+            for v in uv[1] {
+                for (k, x) in [11. * u, 11. * v, 121. * u * v].into_iter().enumerate() {
+                    contains(b.position[k], x);
+                }
+                for (k, x) in [11., 0., 121. * v].into_iter().enumerate() {
+                    contains(b.du[k], x);
+                }
+                for (k, x) in [0., 11., 121. * u].into_iter().enumerate() {
+                    contains(b.dv[k], x);
+                }
+            }
+        }
+    }
+    for axis in [false, true] {
+        let jet = cell.position_taylor8_bounds(axis);
+        contains(jet[0][0], 0.);
+        contains(jet[0][0], 11.);
+        for (k, x) in (if axis {
+            [0., 11., 121.]
+        } else {
+            [11., 0., 121.]
+        })
+        .into_iter()
+        .enumerate()
+        {
+            contains(jet[1][k], x);
+        }
+        for order in jet.iter().skip(2) {
+            for &bound in order {
+                contains(bound, 0.);
+            }
+        }
+    }
+    for uv in [
+        [[f64::NAN, 1.], [0., 1.]],
+        [[-0.1, 1.], [0., 1.]],
+        [[0., 1.1], [0., 1.]],
+        [[1., 0.], [0., 1.]],
+    ] {
+        assert_eq!(cell.first_derivative_bounds_at(uv), Err(Error::Invalid));
+    }
+    let [_, child] = cell.subdivide(0).unwrap();
+    let jet = child.position_taylor8_bounds(false);
+    contains(jet[1][0], 5.5);
+    contains(jet[1][2], 60.5);
+}

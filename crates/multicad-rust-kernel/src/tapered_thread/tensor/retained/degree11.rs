@@ -160,6 +160,39 @@ impl TensorCell11 {
             dv: hull(derivative(&self.0.controls, 1).into_iter().flatten())?,
         })
     }
+    /// Whole-interval first derivatives of this actual degree-eleven leaf.
+    /// These are calculation bounds, without material or normal admission.
+    pub fn first_derivative_bounds_at(
+        &self,
+        uv: [[f64; 2]; 2],
+    ) -> Result<TensorFirstDerivatives11, Error> {
+        if uv.iter().any(|d| {
+            !d[0].is_finite() || !d[1].is_finite() || d[0] < 0. || d[0] > d[1] || d[1] > 1.
+        }) {
+            return Err(Error::Invalid);
+        }
+        let [position, du, dv] = tensor_first_bounds(&self.0, uv.map(|d| I::new(d[0], d[1])));
+        let pair = |p: [I; 3]| p.map(|x| [x.lo, x.hi]);
+        Ok(TensorFirstDerivatives11 {
+            position: pair(position),
+            du: pair(du),
+            dv: pair(dv),
+        })
+    }
+    /// Actual position Taylor coefficients through order eight on this leaf's
+    /// unit square. Differentiate this degree-eleven net, never a D9 proxy.
+    pub fn position_taylor8_bounds(&self, along_v: bool) -> [[[f64; 2]; 3]; 9] {
+        let mut controls = self.0.controls.clone();
+        let mut factorial = 1.;
+        std::array::from_fn(|order| {
+            let coefficient = coefficient_hull(&controls).map(|x| x / I::point(factorial));
+            if order < 8 {
+                controls = derivative(&controls, usize::from(along_v));
+                factorial *= (order + 1) as f64;
+            }
+            coefficient.map(|x| [x.lo, x.hi])
+        })
+    }
     pub fn derivative_bounds_at(&self, uv: [[f64; 2]; 2]) -> Result<TensorDerivatives, Error> {
         self.0.derivative_bounds_at(uv)
     }
