@@ -423,6 +423,7 @@ pub(in crate::drawing) fn project(
                 });
             }
         }
+        arrange::share(&strands, &mut stops, eps);
         let mut pieces: Vec<Piece> = Vec::new();
         for (index, (strand, stops)) in strands.iter().zip(&stops).enumerate() {
             for pair in stops.windows(2) {

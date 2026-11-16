@@ -306,6 +306,70 @@ fn crossing(a: (&Strand, usize), b: (&Strand, usize), start: [f64; 2], eps: f64)
     t
 }
 
+/// Pairs `[i, j]`, `i < j`, of strands on one paper conic.
+pub(in crate::drawing) fn twins(strands: &[Strand], eps: f64) -> Vec<[usize; 2]> {
+    let conics: Vec<Option<Ellipse>> = strands
+        .iter()
+        .map(|s| match s.path.paper([s.ts[0], *s.ts.last().unwrap()]) {
+            Some(Curve::Ellipse(ellipse)) => Some(ellipse),
+            _ => None,
+        })
+        .collect();
+    let mut output = Vec::new();
+    for i in 0..strands.len() {
+        for j in i + 1..strands.len() {
+            if let (Some(a), Some(b)) = (conics[i], conics[j])
+                && same_conic(a, b, eps)
+            {
+                output.push([i, j]);
+            }
+        }
+    }
+    output
+}
+
+/// The exact parameter of `strand` whose paper point is within `eps` of
+/// `target`, located on the chord nearest to it.
+fn on_strand(strand: &Strand, target: P2, eps: f64) -> Option<f64> {
+    let reach = |k: usize| segment_distance(target, paper(strand.pts[k]), paper(strand.pts[k + 1]));
+    let chord = (0..strand.pts.len() - 1).min_by(|&x, &y| reach(x).total_cmp(&reach(y)))?;
+    let t = locate(strand, chord, target, eps);
+    (distance(paper(strand.path.point(t)), target) <= eps).then_some(t)
+}
+
+/// Stops of every strand at the events of the strands on its paper conic.
+/// Coincident arcs then split at the same paper points, wherever an event
+/// came from: a crossing, a junction, or a passage through another member
+/// that only one of them makes. Each list stays ascending with its ends.
+pub(in crate::drawing) fn share(strands: &[Strand], stops: &mut [Vec<(f64, P3)>], eps: f64) {
+    let mut extra: Vec<Vec<f64>> = vec![Vec::new(); strands.len()];
+    for [i, j] in twins(strands, eps) {
+        for [on, other] in [[i, j], [j, i]] {
+            for &(_, point) in &stops[other] {
+                if let Some(t) = on_strand(&strands[on], paper(point), eps)
+                    && t > strands[on].ts[0]
+                    && t < *strands[on].ts.last().unwrap()
+                {
+                    extra[on].push(t);
+                }
+            }
+        }
+    }
+    for ((strand, stops), extra) in strands.iter().zip(stops.iter_mut()).zip(extra) {
+        for t in extra {
+            let point = strand.path.point(t);
+            let at = stops.partition_point(|stop| stop.0 < t);
+            // A stop already at the same point keeps its parameter.
+            let near = |stop: &(f64, P3)| {
+                distance(paper(stop.1), paper(point)).max((stop.1[2] - point[2]).abs()) <= eps
+            };
+            if !(at > 0 && near(&stops[at - 1]) || at < stops.len() && near(&stops[at])) {
+                stops.insert(at, (t, point));
+            }
+        }
+    }
+}
+
 /// Parameters at which every strand must be split so that two pieces either
 /// coincide in the paper or meet only at their ends. Each list is ascending
 /// and includes both strand ends, with the exact point of every stop.
@@ -331,40 +395,12 @@ pub(in crate::drawing) fn arrange(strands: &[Strand], eps: f64) -> Vec<Vec<(f64,
     // Strands on one paper conic coincide along whole arcs, whatever their
     // parametrisations. Their chords would cross at spurious points, so they
     // are split at each other's ends instead and compared as arcs.
-    let conics: Vec<Option<Ellipse>> = strands
-        .iter()
-        .map(|s| match s.path.paper([s.ts[0], *s.ts.last().unwrap()]) {
-            Some(Curve::Ellipse(ellipse)) => Some(ellipse),
-            _ => None,
-        })
-        .collect();
-    let mut twins: HashSet<[usize; 2]> = HashSet::new();
-    for i in 0..strands.len() {
-        for j in i + 1..strands.len() {
-            if let (Some(a), Some(b)) = (conics[i], conics[j])
-                && same_conic(a, b, eps)
-            {
-                twins.insert([i, j]);
-                for [on, other] in [[i, j], [j, i]] {
-                    for end in [strands[other].pts[0], *strands[other].pts.last().unwrap()] {
-                        let target = paper(end);
-                        let nearest = (0..strands[on].pts.len() - 1).min_by(|&x, &y| {
-                            let reach = |k: usize| {
-                                segment_distance(
-                                    target,
-                                    paper(strands[on].pts[k]),
-                                    paper(strands[on].pts[k + 1]),
-                                )
-                            };
-                            reach(x).total_cmp(&reach(y))
-                        });
-                        if let Some(chord) = nearest {
-                            let t = locate(&strands[on], chord, target, eps);
-                            if distance(paper(strands[on].path.point(t)), target) <= eps {
-                                splits[on].push(t);
-                            }
-                        }
-                    }
+    let twins: HashSet<[usize; 2]> = twins(strands, eps).into_iter().collect();
+    for &[i, j] in &twins {
+        for [on, other] in [[i, j], [j, i]] {
+            for end in [strands[other].pts[0], *strands[other].pts.last().unwrap()] {
+                if let Some(t) = on_strand(&strands[on], paper(end), eps) {
+                    splits[on].push(t);
                 }
             }
         }
