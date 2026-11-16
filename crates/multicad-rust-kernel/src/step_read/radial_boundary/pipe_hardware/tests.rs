@@ -120,6 +120,47 @@ fn physical_malformed_geometry_and_unsupported_curve_families_cannot_earn_materi
         let inner_name = record_range(inner, &actual).start
             ..record_range(inner, &actual).start + inner.name.len();
         let face = fields(face_record, &actual);
+        // Genuine distinct face/edge records retain their original incidence;
+        // substituting another actual support must not grant occupied material.
+        let tensor_faces: Vec<_> = arena
+            .values()
+            .flatten()
+            .filter(|e| {
+                e.name == "ADVANCED_FACE"
+                    && arena[&reference(&e.args[2]).unwrap()][0].name
+                        == "B_SPLINE_SURFACE_WITH_KNOTS"
+            })
+            .collect();
+        assert!(tensor_faces.len() > 1);
+        let support0 = reference(&tensor_faces[0].args[2]).unwrap();
+        let support1 = reference(&tensor_faces[1].args[2]).unwrap();
+        assert_ne!(support0, support1);
+        let aliased_face = fields(tensor_faces[1], &actual)[2].clone();
+        let spline_edges: Vec<_> = arena
+            .values()
+            .flatten()
+            .filter(|e| {
+                e.name == "EDGE_CURVE"
+                    && arena[&reference(&e.args[3]).unwrap()][0].name == "B_SPLINE_CURVE_WITH_KNOTS"
+            })
+            .collect();
+        assert!(spline_edges.len() > 1);
+        let curve0 = reference(&spline_edges[0].args[3]).unwrap();
+        let other_edge = spline_edges
+            .iter()
+            .find(|e| reference(&e.args[3]).unwrap() != curve0)
+            .unwrap();
+        assert_ne!(
+            [
+                reference(&spline_edges[0].args[1]).unwrap(),
+                reference(&spline_edges[0].args[2]).unwrap()
+            ],
+            [
+                reference(&other_edge.args[1]).unwrap(),
+                reference(&other_edge.args[2]).unwrap()
+            ]
+        );
+        let aliased_edge = fields(other_edge, &actual)[3].clone();
         let mut out = Vec::new();
         let mut add = |label, range, replacement: &str, expected| {
             out.push(Damage {
@@ -268,6 +309,18 @@ fn physical_malformed_geometry_and_unsupported_curve_families_cannot_earn_materi
             insert..insert,
             "#999999=CARTESIAN_POINT('',(LENGTH_MEASURE(1.0000000000000000000001),0.,0.));\n",
             GeometryError::Unsupported,
+        );
+        add(
+            "distinct tensor face borrows another actual support ID",
+            aliased_face,
+            &format!("#{support0}"),
+            GeometryError::Unresolved,
+        );
+        add(
+            "distinct spline edge borrows another actual curve ID",
+            aliased_edge,
+            &format!("#{curve0}"),
+            GeometryError::Invalid,
         );
         out
     }; // The genuine original neutral arena and all range scaffolding die here.
