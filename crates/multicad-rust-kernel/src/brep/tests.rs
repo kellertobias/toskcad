@@ -1,9 +1,10 @@
 //! The retained boundary provider against analytic oracles and tampered
 //! exchange text.
+use super::domain::{Domain, Key, LoopPoint, UvLoop};
 use super::*;
 use crate::manufacturing::certify;
 use crate::step_read::ReadError;
-use crate::step_read::brep::{read_boundaries, read_solids};
+use crate::step_read::brep::{read_boundaries, read_solids, verify_retained};
 use std::f64::consts::PI;
 
 const TOLERANCE: f64 = 1e-7;
@@ -506,7 +507,6 @@ fn revolved_faces_closing_near_their_axis_refine_to_the_deflection() {
 
 #[test]
 fn retained_exports_verify_only_against_their_own_boundary() {
-    use crate::step_read::brep::verify_retained;
     let frustum = solid(FRUSTUM);
     let mut writer = crate::step::Writer::new();
     writer.append_brep(&frustum).unwrap();
@@ -1460,13 +1460,16 @@ fn caps_off_seam_meridians_and_off_surface_rims() {
         "{areas:?}"
     );
     assert!(distance(dome.bounds_mm()[1], [3., 3., 3.]) < 1e-9);
-    // Unfinished: a cap closed at its pole by a loop without a seam edge
-    // integrates exactly but its tessellation is refused, not guessed.
-    let refused = mesh::tessellate(&dome, options(0.01), None);
-    assert_eq!(
-        refused.map(|m| m.triangles.len()).unwrap_err(),
-        Error::Unsupported
-    );
+    // A cap closed at its pole by a loop without a seam edge meshes
+    // closed, every vertex on its sphere or its plane.
+    for deflection in [0.05, 0.01] {
+        let mesh = certified(&dome, deflection);
+        assert!(
+            mesh.positions
+                .iter()
+                .all(|p| (norm(*p) - 3.).abs() < 1e-9 || p[2].abs() < 1e-12)
+        );
+    }
     // The meridian away from the sphere's seam: up one side and back.
     let turned = tampered(
         &part21("#31", MERIDIAN),
@@ -1529,4 +1532,895 @@ fn open_conics_evaluate_invert_and_move_exactly() {
     // a cosh t along x, b sinh t along y of the frame.
     assert!(distance(hyperbola.evaluate(0.).0, [1., 4., 3.]) < 1e-12);
     assert!(distance(parabola.evaluate(1.).0, [0., 2.5, 3.]) < 1e-12);
+}
+
+/// `a` and `b` in one boundary: `b`'s shells beside `a`'s, or its faces
+/// joined into `a`'s exterior shell.
+fn beside(a: &Boundary, b: &Boundary, joined: bool) -> Boundary {
+    let (vertices, edges, faces) = (a.vertices.len(), a.edges.len(), a.faces.len());
+    let mut out = a.clone();
+    out.vertices.extend(&b.vertices);
+    out.edges.extend(b.edges.iter().map(|edge| Edge {
+        vertices: edge.vertices.map(|v| v + vertices),
+        ..edge.clone()
+    }));
+    out.faces.extend(b.faces.iter().map(|face| {
+        Face {
+            loops: face
+                .loops
+                .iter()
+                .map(|trim| Loop {
+                    uses: trim.uses.iter().map(|&(e, f)| (e + edges, f)).collect(),
+                    vertex: trim.vertex.map(|v| v + vertices),
+                })
+                .collect(),
+            ..face.clone()
+        }
+    }));
+    let shells = b.shells.iter().map(|shell| Shell {
+        faces: shell.faces.iter().map(|f| f + faces).collect(),
+        reversed: shell.reversed,
+    });
+    if joined {
+        let joined: Vec<usize> = shells.flat_map(|shell| shell.faces).collect();
+        out.shells[0].faces.extend(joined);
+    } else {
+        out.shells.extend(shells);
+    }
+    out
+}
+
+#[test]
+fn constructed_boundaries_with_shared_or_stray_records_are_invalid() {
+    let elliptic = read_boundaries(&part21("#61", ELLIPTIC), TOLERANCE)
+        .unwrap()
+        .remove(0);
+    let shifted = elliptic.mapped(&|p| add(p, [10., 0., 0.]), &|v| v);
+    let refused = |boundary: Boundary| Solid::new(boundary, TOLERANCE, None).unwrap_err();
+    // Two cylinders side by side are two solids, not one shell.
+    assert_eq!(refused(beside(&elliptic, &shifted, true)), Error::Invalid);
+    // One face claimed by two shells.
+    let mut twice = elliptic.clone();
+    twice.shells.push(Shell {
+        faces: vec![0],
+        reversed: false,
+    });
+    assert_eq!(refused(twice), Error::Invalid);
+    // A vertex loop naming no vertex.
+    let mut stray = elliptic.clone();
+    stray.faces[0].loops.push(Loop {
+        uses: vec![],
+        vertex: Some(99),
+    });
+    assert_eq!(refused(stray), Error::Invalid);
+    // Both bottom discs as one planar face with two outer loops: a face is
+    // one connected region.
+    let mut discs = beside(&elliptic, &shifted, true);
+    let moved = discs.faces.remove(3);
+    discs.faces[0].loops.extend(moved.loops);
+    discs.shells[0].faces.retain(|&face| face != 3);
+    for face in &mut discs.shells[0].faces {
+        *face -= usize::from(*face > 3);
+    }
+    assert_eq!(refused(discs), Error::Invalid);
+}
+
+/// A prism 5 mm tall over the region between an open conic from `a` to
+/// `b` and the chord back to `a`. `conic` names the curve with `{}` for
+/// its placement; the curve opens along +x, so its own normal points into
+/// the region.
+fn conic_prism(conic: &str, a: Point, b: Point) -> String {
+    let at = |p: Point, z: f64| format!("({:?},{:?},{z:?})", p[0], p[1]);
+    let bottom = conic.replace("{}", "#5");
+    let top = conic.replace("{}", "#6");
+    let body = format!(
+        "#1=CARTESIAN_POINT('',(0.,0.,0.));#2=CARTESIAN_POINT('',(0.,0.,5.));\
+         #3=DIRECTION('',(0.,0.,1.));#4=DIRECTION('',(1.,0.,0.));\
+         #5=AXIS2_PLACEMENT_3D('',#1,#3,#4);#6=AXIS2_PLACEMENT_3D('',#2,#3,#4);\
+         #7={bottom};#8={top};\
+         #10=CARTESIAN_POINT('',{});#11=CARTESIAN_POINT('',{});\
+         #12=CARTESIAN_POINT('',{});#13=CARTESIAN_POINT('',{});\
+         #14=VERTEX_POINT('',#10);#15=VERTEX_POINT('',#11);\
+         #16=VERTEX_POINT('',#12);#17=VERTEX_POINT('',#13);\
+         #18=DIRECTION('',(0.,-1.,0.));#19=VECTOR('',#18,1.);#20=VECTOR('',#3,1.);\
+         #21=EDGE_CURVE('',#14,#15,#7,.T.);#22=LINE('',#11,#19);#23=EDGE_CURVE('',#15,#14,#22,.T.);\
+         #24=EDGE_CURVE('',#16,#17,#8,.T.);#25=LINE('',#13,#19);#26=EDGE_CURVE('',#17,#16,#25,.T.);\
+         #27=LINE('',#10,#20);#28=EDGE_CURVE('',#14,#16,#27,.T.);\
+         #29=LINE('',#11,#20);#30=EDGE_CURVE('',#15,#17,#29,.T.);\
+         #31=PLANE('',#5);#32=PLANE('',#6);#33=SURFACE_OF_LINEAR_EXTRUSION('',#7,#20);\
+         #34=AXIS2_PLACEMENT_3D('',#11,#4,#18);#35=PLANE('',#34);\
+         #40=ORIENTED_EDGE('',*,*,#21,.T.);#41=ORIENTED_EDGE('',*,*,#23,.T.);\
+         #42=EDGE_LOOP('',(#40,#41));#43=FACE_OUTER_BOUND('',#42,.T.);#44=ADVANCED_FACE('',(#43),#31,.F.);\
+         #45=ORIENTED_EDGE('',*,*,#26,.F.);#46=ORIENTED_EDGE('',*,*,#24,.F.);\
+         #47=EDGE_LOOP('',(#45,#46));#48=FACE_OUTER_BOUND('',#47,.T.);#49=ADVANCED_FACE('',(#48),#32,.T.);\
+         #50=ORIENTED_EDGE('',*,*,#21,.F.);#51=ORIENTED_EDGE('',*,*,#28,.T.);\
+         #52=ORIENTED_EDGE('',*,*,#24,.T.);#53=ORIENTED_EDGE('',*,*,#30,.F.);\
+         #54=EDGE_LOOP('',(#50,#51,#52,#53));#55=FACE_BOUND('',#54,.T.);#56=ADVANCED_FACE('',(#55),#33,.F.);\
+         #57=ORIENTED_EDGE('',*,*,#23,.F.);#58=ORIENTED_EDGE('',*,*,#30,.T.);\
+         #59=ORIENTED_EDGE('',*,*,#26,.T.);#60=ORIENTED_EDGE('',*,*,#28,.F.);\
+         #61=EDGE_LOOP('',(#57,#58,#59,#60));#62=FACE_BOUND('',#61,.T.);#63=ADVANCED_FACE('',(#62),#35,.T.);\
+         #70=CLOSED_SHELL('',(#44,#49,#56,#63));#71=MANIFOLD_SOLID_BREP('',#70);\n",
+        at(a, 0.),
+        at(b, 0.),
+        at(a, 5.),
+        at(b, 5.),
+    );
+    part21("#71", &body)
+}
+
+#[test]
+fn parabolic_and_hyperbolic_prisms_match_their_closed_forms_and_round_trip() {
+    // x = t^2, y = 2 t for -1 <= t <= 1 against the chord x = 1: the
+    // region holds 8/3 mm^2.
+    let parabola = conic_prism("PARABOLA('',{},1.)", [1., -2., 0.], [1., 2., 0.]);
+    // x = cosh t, y = sinh t: the region holds sinh(2) / 2 - 1.
+    let (c, h) = (1f64.cosh(), 1f64.sinh());
+    let hyperbola = conic_prism("HYPERBOLA('',{},1.,1.)", [c, -h, 0.], [c, h, 0.]);
+    for (text, cap) in [(parabola, 8. / 3.), (hyperbola, 2f64.sinh() / 2. - 1.)] {
+        let prism = solid(&text);
+        assert!(
+            close(prism.volume_mm3(), 5. * cap, 1e-12),
+            "{} {}",
+            prism.volume_mm3(),
+            5. * cap
+        );
+        let areas = sorted_areas(&prism);
+        assert!(close(areas[0], cap, 1e-12) && close(areas[1], cap, 1e-12));
+        certified(&prism, 0.01);
+        let mut writer = crate::step::Writer::new();
+        writer.append_brep(&prism).unwrap();
+        let back = solid(&writer.finish().unwrap());
+        assert!(close(back.volume_mm3(), prism.volume_mm3(), 1e-12));
+        assert_eq!(back.boundary().edges, prism.boundary().edges);
+    }
+}
+
+/// The cone of half-angle 30 degrees over the equator disc of `DOME`: its
+/// side, 18 pi mm^2 like the hemisphere's, closes at the apex without a
+/// vertex.
+fn comet() -> String {
+    tampered(
+        &part21("#20", DOME),
+        "#5=SPHERICAL_SURFACE('',#4,3.)",
+        "#5=CONICAL_SURFACE('',#41,3.,0.5235987755982988);\
+         #41=AXIS2_PLACEMENT_3D('',#1,#42,#3);#42=DIRECTION('',(0.,0.,-1.))",
+    )
+}
+
+#[test]
+fn seam_free_loops_close_at_apexes_and_split_seams_cover_the_torus() {
+    // The cone is 27^0.5 mm tall.
+    let cone = solid(&comet());
+    let height = 27f64.sqrt();
+    assert!(
+        close(cone.volume_mm3(), 3. * PI * height, 1e-12),
+        "{}",
+        cone.volume_mm3()
+    );
+    let areas = sorted_areas(&cone);
+    assert!(close(areas[0], 9. * PI, 1e-12) && close(areas[1], 18. * PI, 1e-12));
+    assert!((cone.bounds_mm()[1][2] - height).abs() < 1e-9);
+    for deflection in [0.05, 0.01] {
+        certified(&cone, deflection);
+    }
+    // The same cone with its apex stated as a vertex bounding the side.
+    let apex = tampered(
+        &comet(),
+        "#14=ADVANCED_FACE('',(#13),#5,.T.)",
+        &format!(
+            "#14=ADVANCED_FACE('',(#13,#45),#5,.T.);#43=CARTESIAN_POINT('',(0.,0.,{height:?}));\
+             #44=VERTEX_POINT('',#43);#46=VERTEX_LOOP('',#44);#45=FACE_BOUND('',#46,.T.)"
+        ),
+    );
+    let pointed = solid(&apex);
+    assert!(close(pointed.volume_mm3(), cone.volume_mm3(), 1e-12));
+    certified(&pointed, 0.01);
+    // The torus with its two seams as two loops, each running along both
+    // seams once: neither loop is anchored, and together they bound the
+    // whole surface.
+    let split = tampered(
+        TORUS,
+        "#17 = ADVANCED_FACE('',(#18),#31,.T.);",
+        "#17 = ADVANCED_FACE('',(#18,#90),#31,.T.);\n\
+         #90 = FACE_BOUND('',#91,.T.);\n#91 = EDGE_LOOP('',(#71,#72));",
+    );
+    let split = tampered(
+        &split,
+        "#19 = EDGE_LOOP('',(#20,#49,#71,#72));",
+        "#19 = EDGE_LOOP('',(#20,#49));",
+    );
+    let torus = solid(&split);
+    assert!(close(torus.volume_mm3(), 2. * PI * PI * 12. * 9., 1e-12));
+    certified(&torus, 0.05);
+}
+
+/// A sphere of radius 3 bounded by its pole-to-pole seam, less the cap
+/// beyond the plane y = -2.6, which a disc closes.
+const NICKED: &str = "\
+#1=CARTESIAN_POINT('',(0.,0.,0.));#2=DIRECTION('',(0.,0.,1.));#3=DIRECTION('',(1.,0.,0.));\
+#4=AXIS2_PLACEMENT_3D('',#1,#2,#3);#5=SPHERICAL_SURFACE('',#4,3.);\
+#6=DIRECTION('',(0.,-1.,0.));#7=AXIS2_PLACEMENT_3D('',#1,#6,#3);#8=CIRCLE('',#7,3.);\
+#10=CARTESIAN_POINT('',(0.,0.,-3.));#11=VERTEX_POINT('',#10);\
+#12=CARTESIAN_POINT('',(0.,0.,3.));#13=VERTEX_POINT('',#12);\
+#14=EDGE_CURVE('',#11,#13,#8,.T.);\
+#15=CARTESIAN_POINT('',(0.,-2.6,0.));#16=AXIS2_PLACEMENT_3D('',#15,#6,#3);\
+#17=CIRCLE('',#16,1.4966629547095765);#18=PLANE('',#16);\
+#19=CARTESIAN_POINT('',(1.4966629547095765,-2.6,0.));#9=VERTEX_POINT('',#19);\
+#25=EDGE_CURVE('',#9,#9,#17,.T.);\
+#20=ORIENTED_EDGE('',*,*,#14,.T.);#21=ORIENTED_EDGE('',*,*,#14,.F.);\
+#22=EDGE_LOOP('',(#20,#21));#23=FACE_OUTER_BOUND('',#22,.T.);\
+#26=ORIENTED_EDGE('',*,*,#25,.T.);#27=EDGE_LOOP('',(#26));#28=FACE_BOUND('',#27,.T.);\
+#24=ADVANCED_FACE('',(#23,#28),#5,.T.);\
+#29=ORIENTED_EDGE('',*,*,#25,.F.);#32=EDGE_LOOP('',(#29));#33=FACE_OUTER_BOUND('',#32,.T.);\
+#34=ADVANCED_FACE('',(#33),#18,.F.);\
+#30=CLOSED_SHELL('',(#24,#34));#31=MANIFOLD_SOLID_BREP('',#30);\n";
+
+#[test]
+fn faces_whose_loops_do_not_place_their_region_are_refused() {
+    // A seam loop from pole to pole and back does not say where the hole
+    // beside it cuts the sphere's parameter plane.
+    assert_eq!(
+        solids(&part21("#31", NICKED)).unwrap_err(),
+        Error::Unsupported
+    );
+    // A reversed sphere bounded only by its pole could be either side.
+    assert_eq!(
+        solids(&tampered(
+            SPHERE,
+            "#17 = ADVANCED_FACE('',(#18),#22,.T.)",
+            "#17 = ADVANCED_FACE('',(#18),#22,.F.)"
+        ))
+        .unwrap_err(),
+        Error::Unsupported
+    );
+    // Both rims of the seamless side wind the same way once the top disc
+    // faces into the cylinder: the band between them is not a region.
+    let crossed = tampered(
+        &seamless_cylinder(),
+        "#185=FACE_BOUND('',#184,.T.)",
+        "#185=FACE_BOUND('',#184,.F.)",
+    );
+    let crossed = tampered(
+        &crossed,
+        "#173=ADVANCED_FACE('',(#172),#151,.T.)",
+        "#173=ADVANCED_FACE('',(#172),#151,.F.)",
+    );
+    assert_eq!(solids(&crossed).unwrap_err(), Error::Invalid);
+}
+
+/// A square picture frame: a closed bilinear spline net, 20 mm across with
+/// a 0.4 by 4 mm square section scaled about its axis, whose every cell
+/// is a flat quadrilateral.
+fn frame_net() -> (NurbsSurface, impl Fn(usize, usize) -> Point) {
+    let at = |i: usize, j: usize| {
+        let corner = [[10., 10.], [-10., 10.], [-10., -10.], [10., -10.]][i % 4];
+        let (k, z) = [(0.8, -2.), (1.2, -2.), (1.2, 2.), (0.8, 2.)][j % 4];
+        [corner[0] * k, corner[1] * k, z]
+    };
+    let points = (0..5).flat_map(|i| (0..5).map(move |j| at(i, j))).collect();
+    let knots = vec![0., 1., 2., 3., 4.];
+    let multiplicities = vec![2, 1, 1, 1, 2];
+    let net = NurbsSurface::new(
+        [1, 1],
+        [5, 5],
+        points,
+        None,
+        [knots.clone(), knots],
+        [multiplicities.clone(), multiplicities],
+    )
+    .unwrap();
+    (net, at)
+}
+
+#[test]
+fn loops_winding_both_ways_round_a_closed_net_are_refused() {
+    let (net, at) = frame_net();
+    let surface = Surface::nurbs(net, TOLERANCE);
+    assert_eq!(surface.periods(), [Some(4.), Some(4.)]);
+    // A closed net repeats past its knot range.
+    let (inside, _) = surface.evaluate([0.5, 0.3]);
+    assert!(distance(surface.evaluate([4.5, 4.3]).0, inside) < 1e-12);
+    // Two diagonals across the flat cells each wind once along u and once
+    // along v; together they cut the frame into two strips.
+    let diagonal = |offset: usize| {
+        let points = (0..5).map(|k| at(k, k + offset)).collect();
+        let curve = NurbsCurve::new(
+            1,
+            points,
+            None,
+            vec![0., 1., 2., 3., 4.],
+            vec![2, 1, 1, 1, 2],
+        )
+        .unwrap();
+        Curve::nurbs(curve, TOLERANCE)
+    };
+    let vertices = vec![at(0, 0), at(0, 2)];
+    let edges = vec![
+        Edge::new(diagonal(0), [0, 0], [vertices[0]; 2], TOLERANCE).unwrap(),
+        Edge::new(diagonal(2), [1, 1], [vertices[1]; 2], TOLERANCE).unwrap(),
+    ];
+    let strip = |first: usize, second: usize| Face {
+        surface: surface.clone(),
+        same_sense: true,
+        loops: vec![
+            Loop {
+                uses: vec![(first, true)],
+                vertex: None,
+            },
+            Loop {
+                uses: vec![(second, false)],
+                vertex: None,
+            },
+        ],
+    };
+    let boundary = Boundary {
+        vertices,
+        edges,
+        faces: vec![strip(0, 1), strip(1, 0)],
+        shells: vec![Shell {
+            faces: vec![0, 1],
+            reversed: false,
+        }],
+    };
+    assert_eq!(
+        Solid::new(boundary, TOLERANCE, None).unwrap_err(),
+        Error::Unsupported
+    );
+}
+
+fn flat(points: &[[f64; 2]], first: usize) -> UvLoop {
+    UvLoop {
+        points: points
+            .iter()
+            .enumerate()
+            .map(|(k, &uv)| LoopPoint {
+                uv,
+                pole: false,
+                key: Key::Extra(0, first + k),
+            })
+            .collect(),
+        segments: vec![None; points.len()],
+        winding: [0, 0],
+    }
+}
+
+fn circle(radius: f64, clockwise: bool) -> Vec<[f64; 2]> {
+    (0..12)
+        .map(|k| {
+            let t = f64::from(k) * PI / 6. * if clockwise { -1. } else { 1. };
+            [radius * t.cos(), radius * t.sin()]
+        })
+        .collect()
+}
+
+fn plane() -> Surface {
+    Surface::Plane(Frame {
+        origin: [0.; 3],
+        x: [1., 0., 0.],
+        y: [0., 1., 0.],
+        z: [0., 0., 1.],
+    })
+}
+
+fn covered(triangles: &[polygon::Triangle]) -> f64 {
+    triangles
+        .iter()
+        .map(|[a, b, c]| {
+            0.5 * ((b.uv[0] - a.uv[0]) * (c.uv[1] - a.uv[1])
+                - (b.uv[1] - a.uv[1]) * (c.uv[0] - a.uv[0]))
+        })
+        .sum()
+}
+
+#[test]
+fn parameter_regions_triangulate_or_refuse_what_they_cannot_cover() {
+    let square = [[-4., -4.], [4., -4.], [4., 4.], [-4., 4.]];
+    let region = |loops: Vec<UvLoop>| Domain::Trimmed { loops, pole: None };
+    // A hole inside another hole cannot be bridged to the outer loop.
+    let nested = region(vec![
+        flat(&square, 0),
+        flat(&circle(2., true), 10),
+        flat(&circle(1., true), 30),
+    ]);
+    assert_eq!(
+        polygon::triangulate(&nested, &plane(), 0, &[]).unwrap_err(),
+        Error::Unsupported
+    );
+    // A triangle whose corners repeat a boundary point has no extent.
+    let mut pinched = flat(&[[0., 0.], [1., 0.], [0., 1.]], 0);
+    pinched.points[2].key = pinched.points[0].key;
+    assert_eq!(
+        polygon::triangulate(&region(vec![pinched]), &plane(), 0, &[]).unwrap_err(),
+        Error::Unsupported
+    );
+    // A strip whose ends repeat the same two boundary points, as a band
+    // cut open along a seam: the second diagonal between them is refused
+    // once the first is laid, and the strip is still covered once.
+    let mut band = flat(
+        &[[0., 0.], [1., 0.], [2., 0.], [2., 1.], [1., 1.], [0., 1.]],
+        0,
+    );
+    band.points[2].key = band.points[0].key;
+    band.points[5].key = band.points[3].key;
+    let triangles = polygon::triangulate(&region(vec![band]), &plane(), 0, &[]).unwrap();
+    assert!(close(covered(&triangles), 2., 1e-12), "{triangles:?}");
+    // A boundary point on the diagonal of an ear keeps that ear closed:
+    // the triangle beside it takes the point as a corner.
+    let notch = flat(&[[0., 0.], [2., 0.], [2., 2.], [1., 1.]], 0);
+    let triangles = polygon::triangulate(&region(vec![notch]), &plane(), 0, &[]).unwrap();
+    assert!(close(covered(&triangles), 2., 1e-12));
+    assert!(
+        triangles
+            .iter()
+            .flatten()
+            .any(|c| c.key == Key::Extra(0, 3))
+    );
+    // Two squares touching at one point, as one ring through it twice:
+    // once both are covered the pinch is a sliver without area.
+    let mut pinch = flat(
+        &[
+            [0., 0.],
+            [1., 0.],
+            [1., 1.],
+            [2., 1.],
+            [2., 2.],
+            [1., 2.],
+            [1., 1.],
+            [0., 1.],
+        ],
+        0,
+    );
+    pinch.points[6].key = pinch.points[2].key;
+    let triangles = polygon::triangulate(&region(vec![pinch]), &plane(), 0, &[]).unwrap();
+    assert!(close(covered(&triangles), 2., 1e-12));
+    // A ring that meets one boundary point twice at different parameters:
+    // the first diagonal laid to that point forbids a second, which an
+    // ear judged before must notice when it is taken.
+    let points = [
+        [0.75, 0.25],
+        [0.25, 0.75],
+        [-0.25, 1.5],
+        [-1.25, 0.25],
+        [-0.75, -0.5],
+        [-0.25, -0.75],
+        [1., -1.],
+    ];
+    let mut twice = flat(&points, 0);
+    twice.points[3].key = twice.points[5].key;
+    let triangles = polygon::triangulate(&region(vec![twice]), &plane(), 0, &[]).unwrap();
+    assert!(close(covered(&triangles), 3.0625, 1e-12));
+    // Points on one straight side all become corners.
+    let run = flat(
+        &[[0., 0.], [1., 0.], [2., 0.], [3., 0.], [3., 1.], [0., 1.]],
+        0,
+    );
+    let triangles = polygon::triangulate(&region(vec![run]), &plane(), 0, &[]).unwrap();
+    assert!(close(covered(&triangles), 3., 1e-12));
+    for k in 0..6 {
+        assert!(
+            triangles
+                .iter()
+                .flatten()
+                .any(|c| c.key == Key::Extra(0, k))
+        );
+    }
+}
+
+#[test]
+fn degenerate_parameters_seeds_and_budgets_behave() {
+    // A cone made by revolving a line through its axis: at the apex the
+    // u derivative vanishes and Newton steps along v alone.
+    let cone = Surface::Revolution {
+        curve: Curve::Line {
+            origin: [0.; 3],
+            direction: [1., 0., 1.],
+        },
+        origin: [0.; 3],
+        axis: [0., 0., 1.],
+    };
+    let target = cone.evaluate([0.7, 0.5]).0;
+    for seed in [Some([0.7, 0.]), None] {
+        let uv = cone.invert(target, seed);
+        assert!(distance(cone.evaluate(uv).0, target) < 1e-12, "{seed:?}");
+    }
+    assert_eq!(plane().pole(true), None);
+    // A seeded spline inversion settles on the foot point.
+    let spline = Curve::nurbs(
+        NurbsCurve::new(
+            2,
+            vec![[0., 0., 0.], [1., 2., 0.], [3., 2., 0.], [4., 0., 0.]],
+            None,
+            vec![0., 0.5, 1.],
+            vec![3, 1, 3],
+        )
+        .unwrap(),
+        TOLERANCE,
+    );
+    let (point, _) = spline.evaluate(0.37);
+    assert!((spline.invert(point, Some(0.2)) - 0.37).abs() < 1e-9);
+    // An edge's polyline runs along its curve from end to end.
+    let elliptic = solid(&part21("#61", ELLIPTIC));
+    for edge in &elliptic.boundary().edges {
+        let line = edge.polyline(0.01, 0.3).unwrap();
+        assert!(line.len() >= 2);
+        assert_eq!(line[0], edge.curve.evaluate(edge.range[0]).0);
+        assert_eq!(*line.last().unwrap(), edge.curve.evaluate(edge.range[1]).0);
+        for p in &line {
+            let t = edge.curve.invert(*p, None);
+            assert!(distance(edge.curve.evaluate(t).0, *p) < 1e-9);
+        }
+    }
+    // Refinement stops at the triangle budget.
+    let sphere = solid(SPHERE);
+    let tight = mesh::Options {
+        triangle_limit: 300,
+        ..options(0.001)
+    };
+    assert_eq!(
+        mesh::tessellate(&sphere, tight, None).unwrap_err(),
+        Error::Limit
+    );
+    // Coordinates beyond the exchange range are not written.
+    let far = elliptic.moved(&|p| add(p, [2e12, 0., 0.]), &|v| v).unwrap();
+    assert_eq!(
+        crate::step::Writer::new().append_brep(&far).unwrap_err(),
+        crate::step::StepError::InvalidPlacement
+    );
+}
+
+#[test]
+fn spline_records_units_and_uncertainties_are_read_to_their_arity() {
+    let refused = |from: &str, to: &str| solids(&elliptic(from, to)).map(|s| s.len()).unwrap_err();
+    let line = "#16=LINE('',#10,#15)";
+    let rational = |base: &str, knots: &str, weights: &str| {
+        format!(
+            "#16=(BOUNDED_CURVE(){base}{knots}CURVE()GEOMETRIC_REPRESENTATION_ITEM()\
+             {weights}REPRESENTATION_ITEM(''))"
+        )
+    };
+    let base = "B_SPLINE_CURVE(1,(#10,#12),.UNSPECIFIED.,.F.,.F.)";
+    let knots = "B_SPLINE_CURVE_WITH_KNOTS((2,2),(0.,1.),.UNSPECIFIED.)";
+    let weights = "RATIONAL_B_SPLINE_CURVE((1.,1.))";
+    // The rational, plain and Bezier lines written as complex records read
+    // as the line.
+    for to in [
+        rational(base, knots, weights),
+        rational(base, knots, ""),
+        rational(base, "BEZIER_CURVE()", ""),
+    ] {
+        let read = solids(&elliptic(line, &to)).unwrap();
+        assert!(close(read[0].volume_mm3(), 30. * PI, 1e-12), "{to}");
+    }
+    for (to, error) in [
+        (
+            "#16=B_SPLINE_CURVE_WITH_KNOTS('',1,(#10,#12))".to_owned(),
+            Error::Unsupported,
+        ),
+        (
+            rational(base, "B_SPLINE_CURVE_WITH_KNOTS((2,2),(0.,1.))", weights),
+            Error::Invalid,
+        ),
+        (
+            rational(base, knots, "RATIONAL_B_SPLINE_CURVE((1.,1.),1.)"),
+            Error::Invalid,
+        ),
+        (
+            rational("B_SPLINE_CURVE(1)", knots, weights),
+            Error::Invalid,
+        ),
+        // Without knots a spline is a Bezier curve, which must say so.
+        (rational(base, "", weights), Error::Unsupported),
+    ] {
+        assert_eq!(refused(line, &to), error, "{to}");
+    }
+    let plane = "#20=PLANE('',#5)";
+    let points = "#70=CARTESIAN_POINT('',(-4.,-3.,0.));#71=CARTESIAN_POINT('',(-4.,3.,0.));\
+                  #72=CARTESIAN_POINT('',(4.,-3.,0.));#73=CARTESIAN_POINT('',(4.,3.,0.))";
+    let net = |base: &str, knots: &str, weights: &str| {
+        format!(
+            "#20=(BOUNDED_SURFACE(){base}{knots}GEOMETRIC_REPRESENTATION_ITEM()\
+             {weights}REPRESENTATION_ITEM('')SURFACE());{points}"
+        )
+    };
+    let base = "B_SPLINE_SURFACE(1,1,((#70,#71),(#72,#73)),.UNSPECIFIED.,.F.,.F.,.F.)";
+    let knots = "B_SPLINE_SURFACE_WITH_KNOTS((2,2),(2,2),(0.,1.),(0.,1.),.UNSPECIFIED.)";
+    let weights = "RATIONAL_B_SPLINE_SURFACE(((1.,1.),(1.,1.)))";
+    for to in [net(base, knots, ""), net(base, "BEZIER_SURFACE()", "")] {
+        let read = solids(&elliptic(plane, &to)).unwrap();
+        assert!(close(read[0].volume_mm3(), 30. * PI, 1e-12), "{to}");
+    }
+    for (to, error) in [
+        (net(base, "", weights), Error::Unsupported),
+        (
+            format!("#20=B_SPLINE_SURFACE_WITH_KNOTS('',1,1);{points}"),
+            Error::Unsupported,
+        ),
+        (
+            net(
+                base,
+                "B_SPLINE_SURFACE_WITH_KNOTS((2,2),(2,2),(0.,1.),(0.,1.))",
+                weights,
+            ),
+            Error::Invalid,
+        ),
+        (
+            net(
+                base,
+                knots,
+                "RATIONAL_B_SPLINE_SURFACE(((1.,1.),(1.,1.)),1.)",
+            ),
+            Error::Invalid,
+        ),
+        (net("B_SPLINE_SURFACE(1,1)", knots, weights), Error::Invalid),
+        // Knot multiplicities must be a list.
+        (
+            net(
+                base,
+                "B_SPLINE_SURFACE_WITH_KNOTS(2,(2,2),(0.,1.),(0.,1.),.UNSPECIFIED.)",
+                weights,
+            ),
+            Error::Invalid,
+        ),
+    ] {
+        assert_eq!(refused(plane, &to), error, "{to}");
+    }
+    // A vertex written as a complex record is outside the boundary kinds.
+    assert_eq!(
+        refused(
+            "#9=VERTEX_POINT('',#10)",
+            "#9=(VERTEX_POINT('',#10)REPRESENTATION_ITEM(''))"
+        ),
+        Error::Unsupported
+    );
+    // An edge stated against its curve reads as the same edge.
+    let reversed = elliptic(
+        "#17=EDGE_CURVE('',#9,#11,#16,.T.)",
+        "#17=EDGE_CURVE('',#11,#9,#16,.F.)",
+    );
+    let reversed = tampered(
+        &reversed,
+        "#51=ORIENTED_EDGE('',*,*,#17,.T.)",
+        "#51=ORIENTED_EDGE('',*,*,#17,.F.)",
+    );
+    let reversed = tampered(
+        &reversed,
+        "#53=ORIENTED_EDGE('',*,*,#17,.F.)",
+        "#53=ORIENTED_EDGE('',*,*,#17,.T.)",
+    );
+    assert!(close(solid(&reversed).volume_mm3(), 30. * PI, 1e-12));
+    // Uncertainties: one length per measure, and only of a simple record.
+    assert_eq!(
+        refused("LENGTH_MEASURE(1.E-07)", "LENGTH_MEASURE(1.E-07,1.)"),
+        Error::Invalid
+    );
+    assert_eq!(
+        refused(
+            "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#905))",
+            "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#902))"
+        ),
+        Error::Unsupported
+    );
+    // A second context in degrees disagrees with the first in radians.
+    let degrees = "#990=(GEOMETRIC_REPRESENTATION_CONTEXT(3)\
+                   GLOBAL_UNIT_ASSIGNED_CONTEXT((#902,#991,#904))REPRESENTATION_CONTEXT('',''));\
+                   #991=(CONVERSION_BASED_UNIT('DEGREE',#992)NAMED_UNIT(*)PLANE_ANGLE_UNIT());\
+                   #992=PLANE_ANGLE_MEASURE_WITH_UNIT(PLANE_ANGLE_MEASURE(1.745329251994E-02),#903);";
+    assert_eq!(
+        refused("#60=", &format!("{degrees}#60=")),
+        Error::Unsupported
+    );
+    // A conversion names its measure, a simple record holding one value.
+    let converted = tampered(
+        FRUSTUM,
+        "#115 = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );",
+        "#115 = ( CONVERSION_BASED_UNIT('DEGREE',#119) NAMED_UNIT(*) PLANE_ANGLE_UNIT() );\n\
+         #119 = PLANE_ANGLE_MEASURE_WITH_UNIT(PLANE_ANGLE_MEASURE(1.745329251994E-02),#120);\n\
+         #120 = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );",
+    );
+    for (from, to, error) in [
+        ("'DEGREE',#119)", "'DEGREE')", Error::Invalid),
+        ("'DEGREE',#119)", "'DEGREE',#120)", Error::Unsupported),
+        (
+            "WITH_UNIT(PLANE_ANGLE_MEASURE(1.745329251994E-02),#120)",
+            "WITH_UNIT(1.745329251994E-02,#120)",
+            Error::Invalid,
+        ),
+        (
+            "PLANE_ANGLE_MEASURE(1.745329251994E-02)",
+            "PLANE_ANGLE_MEASURE(1.745329251994E-02,1.)",
+            Error::Invalid,
+        ),
+    ] {
+        let text = tampered(&converted, from, to);
+        assert_eq!(solids(&text).map(|s| s.len()).unwrap_err(), error, "{to}");
+    }
+}
+
+#[test]
+fn sources_list_their_solids_and_verification_compares_every_measure() {
+    let text = part21("#61", ELLIPTIC);
+    let source = crate::step_read::brep::Source::parse(&text, TOLERANCE).unwrap();
+    assert_eq!(source.solids(), &[61]);
+    assert!(!source.is_assembly());
+    // The cone over the equator disc has the hemisphere's vertex, counts
+    // and face areas but not its volume.
+    let dome = part21("#20", DOME);
+    let cone = solid(&comet());
+    assert!(verify_retained(&comet(), &[&cone], TOLERANCE).is_ok());
+    assert_eq!(
+        verify_retained(&dome, &[&cone], TOLERANCE),
+        Err(ReadError::Invalid)
+    );
+    // A steeper cone differs in area as well.
+    let steeper = solid(&tampered(&comet(), "3.,0.5235987755982988)", "3.,0.6)"));
+    assert_eq!(
+        verify_retained(&dome, &[&steeper], TOLERANCE),
+        Err(ReadError::Invalid)
+    );
+    // A source the provider does not read keeps its refusal kind.
+    let open = elliptic("#60=", "#990=OPEN_SHELL('',(#33));#60=");
+    let elliptic = solid(&text);
+    assert_eq!(
+        verify_retained(&open, &[&elliptic], TOLERANCE),
+        Err(ReadError::Unsupported)
+    );
+    // A revolved boundary writes its axis and profile back.
+    assert_eq!(
+        solids(&tampered(
+            DISC,
+            "AXIS1_PLACEMENT('',#150,#151)",
+            "AXIS1_PLACEMENT('',#150)"
+        ))
+        .unwrap_err(),
+        Error::Invalid
+    );
+    let disc = solid(DISC);
+    let mut writer = crate::step::Writer::new();
+    writer.append_brep(&disc).unwrap();
+    let written = writer.finish().unwrap();
+    assert!(written.contains("SURFACE_OF_REVOLUTION"));
+    assert!(verify_retained(&written, &[&disc], TOLERANCE).is_ok());
+    // A sphere whose pole vertex is stated 2 um off its surface reads to
+    // its declared 5 um uncertainty with the vertex re-derived onto it.
+    let loose = tampered(SPHERE, "(3.061616996623E-16,0.,-5.)", "(0.,0.,-5.000002)");
+    assert_eq!(solids(&loose).unwrap_err(), Error::Invalid);
+    let declared = tampered(&loose, "LENGTH_MEASURE(1.E-07)", "LENGTH_MEASURE(5.E-06)");
+    let sphere = solid(&declared);
+    assert!(close(sphere.volume_mm3(), 4. / 3. * PI * 125., 1e-12));
+    assert!(distance(sphere.boundary().vertices[0], [0., 0., -5.]) < 1e-12);
+    // Of several declared length uncertainties the smallest governs.
+    let both = |second: &str| {
+        let text = tampered(
+            &declared,
+            "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#31))",
+            "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#31,#90))",
+        );
+        tampered(
+            &text,
+            "#32 = ",
+            &format!(
+                "#90 = UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE({second}),#28,'','');\n#32 = "
+            ),
+        )
+    };
+    assert!(solids(&both("3.E-06")).is_ok());
+    assert_eq!(solids(&both("1.E-06")).unwrap_err(), Error::Invalid);
+}
+
+#[test]
+fn caps_closing_below_their_loop_and_parallel_parameters_integrate_or_refuse() {
+    // The lower hemisphere: the equator runs the other way round the
+    // sphere, so the cap closes at the south pole below its loop.
+    let bowl = tampered(
+        &part21("#20", DOME),
+        "#6=CIRCLE('',#4,3.)",
+        "#6=CIRCLE('',#40,3.);#40=AXIS2_PLACEMENT_3D('',#1,#41,#3);#41=DIRECTION('',(0.,0.,-1.))",
+    );
+    let bowl = tampered(
+        &bowl,
+        "#18=ADVANCED_FACE('',(#17),#7,.F.)",
+        "#18=ADVANCED_FACE('',(#17),#7,.T.)",
+    );
+    let bowl = solid(&bowl);
+    assert!(
+        close(bowl.volume_mm3(), 18. * PI, 1e-12),
+        "{}",
+        bowl.volume_mm3()
+    );
+    assert!(distance(bowl.bounds_mm()[0], [-3., -3., -3.]) < 1e-9);
+    certified(&bowl, 0.01);
+    // A face swept along its own profile has no area element: the rate of
+    // its parameters along the boundary is undefined and is refused.
+    let line = Curve::Line {
+        origin: [0.; 3],
+        direction: [1., 0., 0.],
+    };
+    let boundary = Boundary {
+        vertices: vec![[0.; 3], [1., 0., 0.]],
+        edges: vec![Edge::new(line.clone(), [0, 1], [[0.; 3], [1., 0., 0.]], TOLERANCE).unwrap()],
+        faces: vec![],
+        shells: vec![],
+    };
+    let face = Face {
+        surface: Surface::Extrusion {
+            curve: line,
+            direction: [1., 0., 0.],
+        },
+        same_sense: true,
+        loops: vec![],
+    };
+    let point = |vertex: usize, t: [f64; 2]| {
+        let uv = face.surface.invert(boundary.vertices[vertex], None);
+        (
+            LoopPoint {
+                uv,
+                pole: false,
+                key: Key::Vertex(vertex),
+            },
+            Some(domain::Segment { edge: 0, t }),
+        )
+    };
+    let (points, segments) = [point(0, [0., 1.]), point(1, [1., 0.])].into_iter().unzip();
+    let domain = Domain::Trimmed {
+        loops: vec![UvLoop {
+            points,
+            segments,
+            winding: [0, 0],
+        }],
+        pole: None,
+    };
+    assert_eq!(
+        mass::integrate(&boundary, &face, &domain, [0.; 3], 1, TOLERANCE).unwrap_err(),
+        Error::Unsupported
+    );
+}
+
+#[test]
+fn interior_extrema_are_sought_only_where_newton_settles() {
+    // The graph z = u^4 / 4 - u^2 + 2 u + y^2 over 0 <= u <= 1 and
+    // -1 <= y <= 1 as one Bezier patch. Its height has no stationary point
+    // over the face; from the corners u = 0 and u = 1 Newton's method on
+    // the height's gradient cycles between them and is abandoned.
+    // The patch spans -1 <= u <= 2 and -2 <= y <= 2 so that the face's
+    // corners lie inside it, where the height's derivatives are exact.
+    let height = [-2.75, -0.5, 2.5, -0.5, 4.];
+    let square = [4., -4., 4.];
+    let points = (0..5)
+        .flat_map(|i| {
+            (0..3).map(move |j| {
+                [
+                    -1. + 3. * i as f64 / 4.,
+                    2. * j as f64 - 2.,
+                    height[i] + square[j],
+                ]
+            })
+        })
+        .collect();
+    let patch = NurbsSurface::new(
+        [4, 2],
+        [5, 3],
+        points,
+        None,
+        [vec![0., 1.], vec![0., 1.]],
+        [vec![5, 5], vec![3, 3]],
+    )
+    .unwrap();
+    let surface = Surface::nurbs(patch, TOLERANCE);
+    let (top, _) = surface.evaluate([2. / 3., 0.5]);
+    assert!(distance(top, [1., 0., 1.25]) < 1e-12);
+    let boundary = Boundary {
+        faces: vec![Face {
+            surface,
+            same_sense: true,
+            loops: vec![],
+        }],
+        ..Boundary::default()
+    };
+    let (a, b) = (1. / 3., 2. / 3.);
+    let domain = Domain::Trimmed {
+        loops: vec![flat(&[[a, 0.25], [b, 0.25], [b, 0.75], [a, 0.75]], 0)],
+        pole: None,
+    };
+    let [low, high] = extent::bounds(&boundary, &[domain]).unwrap();
+    assert_eq!((low, high), ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]));
 }

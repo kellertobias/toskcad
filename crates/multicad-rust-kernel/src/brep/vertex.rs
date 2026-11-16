@@ -60,14 +60,11 @@ pub fn rederive(boundary: &Boundary, tolerance: f64) -> Result<(Boundary, f64)> 
                 .iter()
                 .map(|&p| distance(p, point))
                 .fold(0., f64::max);
-            let count = projections.len().max(1) as f64;
+            let count = projections.len() as f64;
             let next = scale(projections.into_iter().fold([0.; 3], add), 1. / count);
             let settled = distance(next, point) <= 1e-15 * (1. + super::norm(point));
-            point = if edges.is_empty() && faces.is_empty() {
-                point
-            } else {
-                next
-            };
+            // Every vertex the reader keeps bounds an edge or a vertex loop.
+            point = next;
             if settled {
                 break;
             }

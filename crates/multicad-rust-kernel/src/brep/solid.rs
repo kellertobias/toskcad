@@ -274,6 +274,17 @@ impl Solid {
             }
         }
         boundary.validate()?;
+        // A lone vertex bounding a face, as at a sphere's pole, lies on it.
+        for face in &boundary.faces {
+            for vertex in face.loops.iter().filter_map(|trim| trim.vertex) {
+                let point = boundary.vertices[vertex];
+                let uv = face.surface.invert(point, None);
+                ensure(
+                    distance(face.surface.evaluate(uv).0, point) <= tolerance,
+                    Error::Invalid,
+                )?;
+            }
+        }
         let anchor = *boundary.vertices.first().ok_or(Error::Invalid)?;
         let signs = boundary.signs();
         let mut domains = Vec::with_capacity(boundary.faces.len());
