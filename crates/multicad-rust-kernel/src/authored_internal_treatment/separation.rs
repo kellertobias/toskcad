@@ -63,6 +63,13 @@ fn profile_error(error: ProfileContainmentError) -> Error {
         ProfileContainmentError::Cancelled => Error::Cancelled,
     }
 }
+fn whole_male_radius(thread: &crate::helical_thread::Thread) -> Result<I, Error> {
+    // Both one-sided literal laws at every join belong to the actual source.
+    // A nominal major radius is not a general legacy support certificate.
+    thread
+        .radius_at_phase_interval(I::new(0., thread.spec().pitch_mm))
+        .ok_or(Error::Unresolved)
+}
 impl Material {
     /// Prove empty occupied intersection with an actual external Chamfer in
     /// this SAME coaxial chart. The male source is its authoritative Thread,
@@ -129,10 +136,11 @@ impl Material {
         // The constructor's actual terminal cylinder replaces that source
         // after its retained station. Compare it directly to the whole male
         // source's maximum radius; the male MIN/neck cannot enlarge that.
-        let terminal_gap = self
-            .cavity()
-            .tail
-            .map(|tail| I::point(tail.radius) - I::point(a.major_radius_mm));
+        let terminal_gap = if let Some(tail) = self.cavity().tail {
+            Some(I::point(tail.radius) - I::point(whole_male_radius(male)?.hi))
+        } else {
+            None
+        };
         if terminal_gap.is_some_and(|g| !g.valid() || g.lo <= 0.) {
             return Err(Error::Unresolved);
         }

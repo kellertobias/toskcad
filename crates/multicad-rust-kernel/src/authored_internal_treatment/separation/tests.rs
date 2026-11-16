@@ -186,3 +186,43 @@ fn changed_actual_laws_overlap_contact_limits_and_cancellation_do_not_earn_separ
     assert_eq!(retry.minimum_radial_gap_mm(), done.minimum_radial_gap_mm());
     assert_eq!(retry.cells_visited(), done.cells_visited());
 }
+
+#[test]
+fn actual_whole_period_support_retains_literal_overshoot_and_independent_flank_endpoints() {
+    let overshoot = Thread::new(Spec {
+        major_radius_mm: 1e7,
+        pitch_mm: 0.0032990690049907053,
+        length_mm: 0.03,
+        depth_mm: 0.0007390051778989907,
+        crest_width_mm: 0.0007390799746356486,
+        lower_flank_deg: 30.,
+        upper_flank_deg: 30.,
+        starts: 1,
+        left_hand: false,
+        root_radius_mm: Some(0.0014780103557979804),
+    })
+    .unwrap();
+    let actual = overshoot.radius_at_phase(overshoot.profile_breaks()[2]);
+    assert!(actual > overshoot.spec().major_radius_mm);
+    let support = whole_male_radius(&overshoot).unwrap();
+    assert!(support.hi >= actual && support.hi > overshoot.spec().major_radius_mm);
+    // This is a genuine public Thread support test, not a forged Chamfer:
+    // the existing material constructor correctly refuses that raw source.
+    assert_eq!(
+        Chamfer::new(overshoot, 0.001, None),
+        Err(crate::thread_entry_chamfer::Error::Unresolved)
+    );
+    let q = |v: f64| num_rational::BigRational::from_float(v).unwrap();
+    for thread in [overshoot, Thread::new(spec(false, 1.375)).unwrap()] {
+        let bound = whole_male_radius(&thread).unwrap();
+        let knots = thread.profile_breaks();
+        for band in [1, 3] {
+            let anchor = if band == 1 { knots[1] } else { knots[4] };
+            let slope = thread.slope_at_phase(anchor, band);
+            for end in [knots[band], knots[band + 1]] {
+                let exact = q(thread.spec().major_radius_mm) + q(slope) * (q(end) - q(anchor));
+                assert!(q(bound.lo) <= exact && exact <= q(bound.hi));
+            }
+        }
+    }
+}
