@@ -542,8 +542,9 @@ impl<'i> Source<'i> {
             }),
             ("TOROIDAL_SURFACE", [_, frame, major, minor]) => {
                 let (major, minor) = (radius(major, false)?, radius(minor, false)?);
-                // A spindle torus intersects itself along its axis.
-                check(major > minor, ReadError::Unsupported)?;
+                // A spindle torus intersects itself along its axis. A horn
+                // torus only touches it, at a point where u is free.
+                check(major >= minor, ReadError::Unsupported)?;
                 Ok(Surface::Torus {
                     frame: self.frame(reference(frame)?)?,
                     major,

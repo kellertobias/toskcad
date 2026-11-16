@@ -359,7 +359,9 @@ pub(crate) fn build(
         (1, 0) => {
             let turn = winding[0].winding;
             ensure(turn[1] == 0, Error::Unsupported)?;
-            let v = surface.pole(turn[0] > 0).ok_or(Error::Invalid)?;
+            let v = surface
+                .pole(turn[0] > 0, winding[0].mean(1))
+                .ok_or(Error::Invalid)?;
             let apex = surface.evaluate([0., v]).0;
             let vertex = face
                 .loops

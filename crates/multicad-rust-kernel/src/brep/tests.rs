@@ -1425,8 +1425,8 @@ fn surface_inversion_handles_poles_apexes_and_both_nappes() {
         distance(cone.evaluate(uv).0, below) < 1e-12 && (uv[0] - 0.5).abs() < 1e-12,
         "{uv:?}"
     );
-    assert_eq!(cone.pole(true), None);
-    assert!(cone.pole(false).is_some_and(|v| (v + 1.).abs() < 1e-12));
+    assert_eq!(cone.pole(true, 0.), None);
+    assert!(cone.pole(false, 0.).is_some_and(|v| (v + 1.).abs() < 1e-12));
     let plane = Surface::Plane(frame);
     assert_eq!(plane.bounded(), [None, None]);
     assert!(plane.candidates([1., 2., 3.]).is_empty());
@@ -2023,7 +2023,7 @@ fn degenerate_parameters_seeds_and_budgets_behave() {
         let uv = cone.invert(target, seed);
         assert!(distance(cone.evaluate(uv).0, target) < 1e-12, "{seed:?}");
     }
-    assert_eq!(plane().pole(true), None);
+    assert_eq!(plane().pole(true, 0.), None);
     // A seeded spline inversion settles on the foot point.
     let spline = Curve::nurbs(
         NurbsCurve::new(
@@ -2423,4 +2423,113 @@ fn interior_extrema_are_sought_only_where_newton_settles() {
     };
     let [low, high] = extent::bounds(&boundary, &[domain]).unwrap();
     assert_eq!((low, high), ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]));
+}
+
+/// A horn torus (major radius equal to the minor radius, 2 mm) without the
+/// inner upper quarter that runs from its top circle down to the point
+/// where it touches its axis; the plane through that circle closes it.
+const HORN_RING: &str = "\
+#1=CARTESIAN_POINT('',(0.,0.,0.));#2=DIRECTION('',(0.,0.,1.));#3=DIRECTION('',(1.,0.,0.));\
+#4=AXIS2_PLACEMENT_3D('',#1,#2,#3);#5=TOROIDAL_SURFACE('',#4,2.,2.);\
+#21=CARTESIAN_POINT('',(0.,0.,2.));#22=AXIS2_PLACEMENT_3D('',#21,#2,#3);\
+#6=CIRCLE('',#22,2.);#7=PLANE('',#22);#8=CARTESIAN_POINT('',(2.,0.,2.));#9=VERTEX_POINT('',#8);\
+#10=EDGE_CURVE('',#9,#9,#6,.T.);\
+#11=ORIENTED_EDGE('',*,*,#10,.F.);#12=EDGE_LOOP('',(#11));#13=FACE_BOUND('',#12,.T.);\
+#14=ADVANCED_FACE('',(#13),#5,.T.);\
+#15=ORIENTED_EDGE('',*,*,#10,.T.);#16=EDGE_LOOP('',(#15));#17=FACE_OUTER_BOUND('',#16,.T.);\
+#18=ADVANCED_FACE('',(#17),#7,.T.);\
+#19=CLOSED_SHELL('',(#14,#18));#20=MANIFOLD_SOLID_BREP('',#19);\n";
+
+#[test]
+fn horn_torus_faces_close_at_the_point_on_their_axis() {
+    let text = part21("#20", HORN_RING);
+    let ring = solid(&text);
+    // The horn torus encloses 2 pi^2 R^3; the cup between the plane z = R
+    // and the removed funnel rho = R - sqrt(R^2 - z^2) adds
+    // pi R^3 (5/3 - pi/2). The funnel's area 2 pi R^2 (pi/2 - 1) leaves
+    // the torus's 4 pi^2 R^2.
+    let volume = 16. * PI * PI + 8. * PI * (5. / 3. - PI / 2.);
+    assert!(
+        close(ring.volume_mm3(), volume, 1e-10),
+        "{}",
+        ring.volume_mm3()
+    );
+    let areas = sorted_areas(&ring);
+    let torus = 16. * PI * PI - 8. * PI * (PI / 2. - 1.);
+    assert!(
+        close(areas[0], 4. * PI, 1e-12) && close(areas[1], torus, 1e-10),
+        "{areas:?}"
+    );
+    let bounds = ring.bounds_mm();
+    assert!(distance(bounds[0], [-4., -4., -2.]) < 1e-9, "{bounds:?}");
+    assert!(distance(bounds[1], [4., 4., 2.]) < 1e-9, "{bounds:?}");
+    for deflection in [0.05, 0.01] {
+        let mesh = certified(&ring, deflection);
+        // Every vertex lies on the torus or the plane, and one is the point
+        // where the torus touches its axis.
+        assert!(mesh.positions.iter().all(|p| {
+            let rho = p[0].hypot(p[1]);
+            ((rho - 2.).hypot(p[2]) - 2.).abs() < 1e-9 || (p[2] - 2.).abs() < 1e-12
+        }));
+        assert!(mesh.positions.iter().any(|p| norm(*p) < 1e-12));
+    }
+    // Through the axis the section is the two tube circles, each without
+    // its inner upper quarter, joined by the plane's chord and meeting at
+    // the axis point: length 4 + 6 pi, area 2 (3 pi + 4).
+    let loops = section::section(&ring, [0.; 3], [0., 1., 0.], options(0.01), None).unwrap();
+    assert_eq!(loops.len(), 1, "{loops:?}");
+    let shoelace: f64 = (0..loops[0].len())
+        .map(|i| {
+            let (a, b) = (loops[0][i], loops[0][(i + 1) % loops[0].len()]);
+            0.5 * (a[2] * b[0] - b[2] * a[0])
+        })
+        .sum();
+    let length = section::length(&loops[0]);
+    // Chords run inside the curved arcs, every point on the exact section.
+    assert!(
+        length <= 4. + 6. * PI && length > 4. + 6. * PI - 0.05,
+        "{length}"
+    );
+    assert!(loops[0].iter().all(|p| {
+        p[1].abs() < 1e-12
+            && ((p[0].abs() - 2.).hypot(p[2]) - 2.)
+                .abs()
+                .min((p[2] - 2.).abs())
+                < 1e-9
+    }));
+    assert!(
+        (shoelace.abs() - 2. * (3. * PI + 4.)).abs() < 0.01 * length,
+        "{shoelace}"
+    );
+    // The loop passes the axis point within the merge distance: beside it
+    // the plane's height grows only with the square of the distance.
+    let nearest = loops[0]
+        .iter()
+        .map(|p| norm(*p))
+        .fold(f64::INFINITY, f64::min);
+    assert!(nearest < 1e-5, "{nearest}");
+    // Across the removed funnel the section is one disk of radius 2 + sqrt 3.
+    let loops = section::section(&ring, [0., 0., 1.], [0., 0., 1.], options(0.01), None).unwrap();
+    assert_eq!(loops.len(), 1, "{loops:?}");
+    assert!(
+        loops[0]
+            .iter()
+            .all(|p| (p[0].hypot(p[1]) - (2. + 3f64.sqrt())).abs() < 1e-9)
+    );
+    // The removed quarter with the plane is the cup alone. Its torus face is
+    // reversed and its lone loop bounds a region on either side, both
+    // closing at the axis point, so its side is not decided.
+    let cup = tampered(
+        &text,
+        "#14=ADVANCED_FACE('',(#13),#5,.T.)",
+        "#14=ADVANCED_FACE('',(#13),#5,.F.)",
+    );
+    assert_eq!(solids(&cup).unwrap_err(), Error::Unsupported);
+    // A spindle torus, its minor radius past the major one, stays refused.
+    let spindle = tampered(
+        &text,
+        "TOROIDAL_SURFACE('',#4,2.,2.)",
+        "TOROIDAL_SURFACE('',#4,2.,2.5)",
+    );
+    assert_eq!(solids(&spindle).unwrap_err(), Error::Unsupported);
 }
