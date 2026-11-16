@@ -506,10 +506,49 @@ fn rust_worm_drawings_follow_exact_axial_visibility_and_sections() {
         },
         ..view
     };
-    assert_eq!(
-        draw(&worm, side).unwrap_err().kind,
-        GeometryErrorKind::Unsupported
-    );
+    // Across the axis: the silhouette at each height is the extreme of the
+    // exact thread radius turned into the paper, on either side. The worm
+    // is centred, so a paper height z is the thread height z + 10.
+    let across = draw(&worm, side).unwrap();
+    assert!(across.iter().any(|edge| edge.role == VectorRole::Visible));
+    assert!(across.iter().all(|edge| {
+        edge.preview_mm
+            .iter()
+            .all(|p| p[0].abs() <= 6. + 1e-9 && p[1].abs() <= 10. + 1e-9)
+    }));
+    let mut worst = 0_f64;
+    for k in 1..100 {
+        let z = 20. * f64::from(k) / 100. - 10.;
+        let drawn = |sign: f64| {
+            across
+                .iter()
+                .filter(|edge| edge.role == VectorRole::Visible)
+                .flat_map(|edge| edge.preview_mm.windows(2))
+                .filter(|w| (w[0][1] - z) * (w[1][1] - z) <= 0. && w[0][1] != w[1][1])
+                .map(|w| {
+                    sign * (w[0][0] + (z - w[0][1]) / (w[1][1] - w[0][1]) * (w[1][0] - w[0][0]))
+                })
+                .fold(f64::NEG_INFINITY, f64::max)
+        };
+        let exact = |sign: f64| {
+            (0..=20_000)
+                .map(|i| {
+                    let angle = std::f64::consts::PI * (f64::from(i) / 20_000. - 0.5);
+                    let angle = if sign > 0. {
+                        angle
+                    } else {
+                        angle + std::f64::consts::PI
+                    };
+                    sign * at(angle, z + 10.) * angle.cos()
+                })
+                .fold(f64::NEG_INFINITY, f64::max)
+        };
+        for sign in [1., -1.] {
+            worst = worst.max((drawn(sign) - exact(sign)).abs());
+        }
+    }
+    println!("{{\"case\":\"worm across the axis\",\"worst_silhouette_mm\":{worst}}}");
+    assert!(worst < 1e-3, "{worst}");
     // Wheels: exact sections, explicit refusal of views.
     let wheel = Solid::rust_generated_za_worm_wheel_named(
         GeneratedZaWormWheel {
