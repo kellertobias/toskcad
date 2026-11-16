@@ -180,3 +180,51 @@ fn first_order_only_whole_leaf_bounds_match_independent_bilinear_and_chain_scali
     contains(first.du[2], 121.);
     contains(first.dv[2], 121.);
 }
+
+#[test]
+fn actual_corner_coefficients_follow_independent_rational_tensor_polynomial() {
+    use num_rational::BigRational as Q;
+    let q = |x: f64| Q::from_float(x).unwrap();
+    let source = RetainedTensor11::new(
+        [1, 1],
+        (0..12)
+            .flat_map(|i| {
+                (0..12).map(move |j| [i as f64, j as f64, (i * i + j * j * j + i * j) as f64])
+            })
+            .collect(),
+    )
+    .unwrap();
+    // E[i^2]=110u^2+11u, E[j^3]=990v^3+330v^2+11v,
+    // E[ij]=121uv for Bernstein degree11. This rational polynomial is
+    // independent of the implementation's interval de Casteljau subdivision.
+    let mut cells = vec![source.cell([0, 0]).unwrap()];
+    for axis in [0, 1, 0] {
+        cells = cells
+            .into_iter()
+            .flat_map(|cell| cell.subdivide(axis).unwrap())
+            .collect();
+    }
+    for cell in cells {
+        let [[u0, u1], [v0, v1]] = cell.domain();
+        for (actual, [u, v]) in
+            cell.corner_bounds()
+                .into_iter()
+                .zip([[u0, v0], [u1, v0], [u1, v1], [u0, v1]])
+        {
+            let (u, v) = (q(u), q(v));
+            let expected = [
+                q(11.) * &u,
+                q(11.) * &v,
+                q(110.) * &u * &u
+                    + q(11.) * &u
+                    + q(990.) * &v * &v * &v
+                    + q(330.) * &v * &v
+                    + q(11.) * &v
+                    + q(121.) * &u * &v,
+            ];
+            for (actual, expected) in actual.into_iter().zip(expected) {
+                assert!(q(actual[0]) <= expected && expected <= q(actual[1]));
+            }
+        }
+    }
+}

@@ -76,6 +76,15 @@ impl TensorCell11 {
     pub fn domain(&self) -> [[f64; 2]; 2] {
         self.0.domain()
     }
+    /// Actual interval Bernstein corner coefficients, counterclockwise in
+    /// the cell's (u,v) chart: 00,10,11,01. Subdivision's directed transfers
+    /// remain included; this is calculation data, not a solid admission.
+    pub fn corner_bounds(&self) -> [[[f64; 2]; 3]; 4] {
+        let last = self.0.controls.len() - 1;
+        let last_v = self.0.controls[0].len() - 1;
+        [[0, 0], [last, 0], [last, last_v], [0, last_v]]
+            .map(|[u, v]| self.0.controls[u][v].map(|x| [x.lo, x.hi]))
+    }
     pub fn bounds(&self) -> Result<[[f64; 2]; 3], Error> {
         self.0.bounds()
     }
