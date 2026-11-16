@@ -14,7 +14,9 @@
 //!   discarded when `G` provably keeps its sign on it, and a sign change in
 //!   a cell narrower than the resolution is bisected on `G`. Every interval
 //!   between consecutive events is decided by the membership predicate at
-//!   its midpoint. Sign certificates, each from a bound of its function's
+//!   an interior point off the boundary: `G` keeps its sign there but may
+//!   touch zero where the line is tangent to the boundary inside the
+//!   material. Sign certificates, each from a bound of its function's
 //!   rate along the line over the cell's width:
 //!   - `|G| > K w / 2` for the global Lipschitz bound `K`;
 //!   - in the flank band of a wheel, where flanks are nearly radial and
@@ -343,10 +345,19 @@ impl Inner {
         events.sort_by(f64::total_cmp);
         let mut output: Vec<[f64; 2]> = Vec::new();
         for pair in events.windows(2) {
-            let mid = point(0.5 * (pair[0] + pair[1]));
+            // The margin keeps its sign between events, but may touch zero
+            // without changing it: a line tangent to the boundary from inside
+            // the material, such as an axial line on the waist of a throated
+            // root. The interval is decided at the first of a few interior
+            // points that is off the boundary.
+            let sample = [0.5, 0.25, 0.75, 0.125, 0.875]
+                .map(|f| pair[0] + (pair[1] - pair[0]) * f)
+                .into_iter()
+                .find(|&t| margin(t).abs() > tau)
+                .unwrap_or(0.5 * (pair[0] + pair[1]));
             if pair[1] - pair[0] <= 1e-12 * self.scale
-                || !self.inside(mid, slab)
-                || (snapped && margin(0.5 * (pair[0] + pair[1])) <= 0.)
+                || !self.inside(point(sample), slab)
+                || (snapped && margin(sample) <= 0.)
             {
                 continue;
             }

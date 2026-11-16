@@ -1076,3 +1076,35 @@ fn line_intervals_are_the_membership_predicate_on_arbitrary_lines() {
         assert_eq!(error.kind, GeometryErrorKind::Input);
     }
 }
+
+/// An axial line on the waist of a throated root touches the boundary at
+/// the mid plane from inside the material: the line is material on both
+/// sides of that contact, wherever the contact falls in its interval.
+#[test]
+fn axial_lines_on_the_root_waist_are_material_through_the_contact() {
+    for (name, solid) in solids().into_iter().skip(2) {
+        let frame = views()[0].1;
+        let body = built(&solid, frame);
+        let inner = &body.0;
+        let [waist, _] = inner.shell.annulus();
+        let half = inner.shell.half();
+        let mut inside = 0;
+        for k in 0..64 {
+            let angle = TAU * f64::from(k) / 64.;
+            let at = |z: f64| inner.view([waist * angle.cos(), waist * angle.sin(), z]);
+            let spans = body.sight([at(0.)[0], at(0.)[1]]).unwrap();
+            for z in [-0.5 * half, 0.5 * half] {
+                let depth = at(z)[2];
+                let expected = match classify(&solid, inner.local(at(z)), 1e-9) {
+                    Containment::Inside => true,
+                    Containment::Outside => false,
+                    Containment::Boundary => continue,
+                };
+                let found = spans.iter().any(|[a, b]| *a < depth && depth < *b);
+                assert_eq!(found, expected, "{name} {angle} {z} {spans:?}");
+                inside += usize::from(found);
+            }
+        }
+        assert!(inside > 32, "{name} {inside}");
+    }
+}
