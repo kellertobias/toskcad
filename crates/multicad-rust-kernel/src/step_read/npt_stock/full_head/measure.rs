@@ -4,6 +4,8 @@
 use super::*;
 use crate::tapered_thread::interval::I;
 use std::mem::size_of;
+mod curved;
+pub use curved::{HeadGeometryOptions, HeadGeometryPlan};
 const MEASURE_WORK: usize = 512_000_000;
 const MEASURE_SCRATCH: usize = 16 * 1024;
 #[derive(Clone, Copy, Default)]
@@ -18,6 +20,7 @@ pub struct HeadFaceMeasure<'source> {
     area: [f64; 2],
     centroid: [[f64; 2]; 3],
     work: usize,
+    inherited_plan_work: usize,
     peak: usize,
 }
 impl<'source> HeadFaceMeasure<'source> {
@@ -41,6 +44,14 @@ impl<'source> HeadFaceMeasure<'source> {
     /// Fresh integration work, not immutable material construction.
     pub fn work_used(&self) -> usize {
         self.work
+    }
+    /// Preparation of the immutable geometry plan, counted once in the
+    /// composed property allowance; zero for the direct planar helper.
+    pub fn inherited_plan_work_used(&self) -> usize {
+        self.inherited_plan_work
+    }
+    pub fn aggregate_work_used(&self) -> usize {
+        self.inherited_plan_work + self.work
     }
     pub fn accounted_peak_bytes(&self) -> usize {
         self.peak
@@ -252,6 +263,7 @@ impl OwnedActualHead {
             area: [area.lo, area.hi],
             centroid: centroid.map(|v| [v.lo, v.hi]),
             work: b.used,
+            inherited_plan_work: 0,
             peak: b.peak,
         })
     }
