@@ -7,6 +7,12 @@ use multicad_rust_kernel::{
 };
 pub(super) const SCRATCH: usize = 65536;
 const CACHE_BYTES: usize = 32 * 1024 * 1024;
+// Per triangle: 26 interval primitives, 27 scalar indexing operations,
+// 19 point constructions, <=24 loads/copies and <=20 control actions.
+// Round 116 up to 128, plus 16 fixed setup/finalization actions. As elsewhere
+// in this ledger, an interval primitive is one action, not one CPU instruction.
+const LITERAL_VOLUME_TRIANGLE_WORK: usize = 128;
+const LITERAL_VOLUME_FIXED_WORK: usize = 16;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RepairedPhillipsMeshBudget {
     pub maximum_work: usize,
@@ -631,7 +637,11 @@ impl RepairedPhillipsBody {
         let volume = self.volume(frame)?;
         let (periodic_literal_volume, periodic_mass_difference) =
             if self.source.periodic().is_some() || self.source.degree11().is_some() {
-                work.charge(mesh.indices.len().saturating_mul(128))?;
+                work.charge(
+                    (mesh.indices.len() / 3)
+                        .saturating_mul(LITERAL_VOLUME_TRIANGLE_WORK)
+                        .saturating_add(LITERAL_VOLUME_FIXED_WORK),
+                )?;
                 let literal = periodic::candidate::literal_volume(&mesh)?;
                 let difference = I::new(literal[0], literal[1]) - I::new(volume[0], volume[1]);
                 (Some(literal), Some(difference.magnitude()))
