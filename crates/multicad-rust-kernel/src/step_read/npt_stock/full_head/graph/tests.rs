@@ -158,3 +158,34 @@ fn actual_graph_consumption_reserves_its_tree_and_preserves_cancel_retry() {
     let retry = DecodedFile::parse(&actual, Default::default(), None).unwrap();
     assert_eq!(retry.actual_file(), actual);
 }
+
+#[test]
+fn actual_record_graph_rejects_extra_transform_and_multiple_product_roots() {
+    let actual = super::super::tests::candidate(false);
+    let original = crate::step_read::part21::parse(&actual).unwrap();
+    let id = original.keys().max().unwrap() + 1;
+    let root = original
+        .values()
+        .find(|parts| parts[0].name == "SHAPE_DEFINITION_REPRESENTATION")
+        .unwrap()[0]
+        .source
+        .unwrap();
+    for component in ["UNSUPPORTED_TRANSFORM('')", root] {
+        let mut changed = actual.clone();
+        changed.insert_str(
+            changed.rfind("ENDSEC;").unwrap(),
+            &format!("#{id}={component};\n"),
+        );
+        // The real public full-head parser supplies its own complete budget.
+        assert_eq!(
+            DecodedFile::parse(&changed, Default::default(), None).map(|_| ()),
+            Err(Error::Unsupported)
+        );
+    }
+    assert_eq!(
+        DecodedFile::parse(&actual, Default::default(), None)
+            .unwrap()
+            .actual_file(),
+        actual
+    );
+}
