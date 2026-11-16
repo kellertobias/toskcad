@@ -16,6 +16,8 @@
 use super::{Curve, Profile, Role, Segment};
 use crate::tapered_thread::interval::I;
 mod arc;
+mod surface;
+pub use surface::{RepairedHeadSurface, RepairedHeadSurfaceOptions, RepairedHeadSurfaces};
 mod correspondence;
 mod proposal;
 pub use correspondence::RepairedHeadCorrespondence;

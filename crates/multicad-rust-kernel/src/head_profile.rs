@@ -12,8 +12,9 @@ pub(crate) mod source_volume;
 pub use repaired::{
     AxialProgress, OwnedRepairedHead, RepairedHeadCorrespondence, RepairedHeadError,
     RepairedHeadLocation, RepairedHeadMeridian, RepairedHeadOptions, RepairedHeadQuery,
-    RepairedHeadQueryOptions, RepairedHeadVolume, RepairedHeadVolumeOptions,
-    RepairedMeridianBounds, RepairedProposalTransfer, RepairedSegmentCertificate,
+    RepairedHeadQueryOptions, RepairedHeadSurface, RepairedHeadSurfaceOptions,
+    RepairedHeadSurfaces, RepairedHeadVolume, RepairedHeadVolumeOptions, RepairedMeridianBounds,
+    RepairedProposalTransfer, RepairedSegmentCertificate,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
