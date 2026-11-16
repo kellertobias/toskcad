@@ -155,6 +155,11 @@ struct Rims {
     vertices: [Vec<u32>; 2],
     caps: [u32; 2],
     height: [f64; 2],
+    // Every unchanged source face, including a retained head-tip cap fan,
+    // retains the source's proven distance bound.
+    // This may be a guaranteed requested quality, not a measured residual.
+    unchanged_source_bound: f64,
+    // Actual finite original cap-curve to emitted rim chord correspondence.
     distance: f64,
 }
 fn rims(source: ThreadBoundaryMesh<'_, '_>, work: &mut Work<'_>) -> Result<Rims, Error> {
@@ -162,11 +167,12 @@ fn rims(source: ThreadBoundaryMesh<'_, '_>, work: &mut Work<'_>) -> Result<Rims,
         ThreadBoundaryMesh::Clipped(trace) => {
             let count = trace.candidate().mesh().vertices.len() / 3;
             let mut vertices = [Vec::new(), Vec::new()];
-            let mut distance = trace.candidate().source_distance_mm();
+            let unchanged_source_bound = trace.candidate().source_distance_mm();
+            let mut distance = 0f64;
             let allowed = (I::point(2.)
                 * (I::point(work.options.tessellation.angle) / I::point(2.)).sin())
             .lo;
-            if distance > work.options.tessellation.deflection
+            if unchanged_source_bound > work.options.tessellation.deflection
                 || trace.candidate().normal_chord() > allowed
             {
                 return Err(Error::Unsupported);
@@ -206,6 +212,7 @@ fn rims(source: ThreadBoundaryMesh<'_, '_>, work: &mut Work<'_>) -> Result<Rims,
                 vertices,
                 caps: [5, 6],
                 height: [0., trace.source().source().source().spec().length_mm],
+                unchanged_source_bound,
                 distance,
             })
         }
@@ -229,7 +236,7 @@ fn rims(source: ThreadBoundaryMesh<'_, '_>, work: &mut Work<'_>) -> Result<Rims,
             }
             let rings = trace.cap_rims();
             work.storage((rings[0].len() + rings[1].len()) * 4)?;
-            let mut distance = q.deflection;
+            let mut distance = 0f64;
             let vertices = std::array::from_fn(|end| {
                 rings[end]
                     .iter()
@@ -244,6 +251,7 @@ fn rims(source: ThreadBoundaryMesh<'_, '_>, work: &mut Work<'_>) -> Result<Rims,
                 vertices,
                 caps: rings.map(|r| r[0].cap_face as u32),
                 height: axes.map(|a| a.origin[2]),
+                unchanged_source_bound: q.deflection,
                 distance,
             })
         }
@@ -384,6 +392,8 @@ pub fn join<'a, 's>(
     // Preserve those SAME literal coordinates and charge their full plane lift
     // in the annulus transfer; every new actual facet normal is still checked.
     rings.distance = (I::point(rings.distance) + I::point(cap_height_error)).hi;
+    work.charge(4)?;
+    let containment_distance = rings.unchanged_source_bound.max(rings.distance);
     let root3 = I::point(3.).sqrt();
     let half = I::point(af) / I::point(2.);
     let radius = I::point(af) / root3;
@@ -404,9 +414,9 @@ pub fn join<'a, 's>(
         // contains the complete actual thread source, not merely its vertices.
         if (root3 * I::point(p[0].abs())
             + I::point(p[1].abs())
-            + I::point(2.) * I::point(rings.distance))
+            + I::point(2.) * I::point(containment_distance))
         .hi >= I::point(af).lo
-            || (I::point(p[1].abs()) + I::point(rings.distance)).hi >= half.lo
+            || (I::point(p[1].abs()) + I::point(containment_distance)).hi >= half.lo
         {
             return Err(Error::Unsupported);
         }
@@ -476,7 +486,12 @@ pub fn join<'a, 's>(
             mesh.vertices.extend(literal);
         }
     }
-    let distance = (I::point(rings.distance) + I::point(rounding)).hi;
+    // The retained lateral triangles are unchanged. New planar hex/cap
+    // patches alone incur the actual rim/plane/literal-hex transfer. A bound
+    // for the complete disjoint face union is their MAXIMUM, not adding new
+    // cap error to every unchanged lateral face's already-earned quality.
+    let cap_distance = (I::point(rings.distance) + I::point(rounding)).hi;
+    let distance = rings.unchanged_source_bound.max(cap_distance).max(rounding);
     if distance > options.tessellation.deflection {
         return Err(Error::Unsupported);
     }
@@ -538,6 +553,7 @@ pub fn join<'a, 's>(
         indices: Vec::with_capacity(mesh.indices.len()),
         face_indices: mesh.face_indices.clone(),
     };
+    let old_mesh_bytes = mesh_bytes(&mesh);
     for id in mesh.indices {
         work.charge(1)?;
         let new = &mut remap[id as usize];
@@ -549,13 +565,23 @@ pub fn join<'a, 's>(
         }
         compact.indices.push(*new);
     }
-    work.charge(compact.indices.len() * 128)?;
+
     assert_eq!(
         compact.face_indices.len(),
         expected_triangles,
         "sealed original cap fan and planar region triangle counts"
     );
-    let connectivity = manufacturing::certify(&compact).map_err(|_| Error::Unresolved)?;
+    let resident = old_mesh_bytes + mesh_bytes(&compact) + remap.capacity() * 4;
+    let connectivity = manufacturing::certify_counted(&compact, &mut |n, scratch| {
+        if let Some(scratch) = scratch {
+            work.storage(resident.checked_add(scratch).ok_or(Error::Limit)?)?;
+        }
+        work.charge(n)
+    })
+    .map_err(|error| match error {
+        manufacturing::CountedError::Mesh(_) => Error::Unresolved,
+        manufacturing::CountedError::Interrupted(error) => error,
+    })?;
     Ok(JoinedMeshCandidate {
         source,
         mesh: compact,

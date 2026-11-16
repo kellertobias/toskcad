@@ -1053,7 +1053,9 @@ impl Solid {
         revision: u64,
     ) -> Result<TopologySnapshot, GeometryError> {
         if self.uses_rust_geometry() {
-            let mut snapshot = if let Some((body, frame)) = self.repaired_phillips_body() {
+            let mut snapshot = if let Some(body) = self.pipe_hardware_body() {
+                body.topology(owner, revision, self.geometry_policy())?
+            } else if let Some((body, frame)) = self.repaired_phillips_body() {
                 body.periodic_topology(frame, owner, revision)?
             } else if let Some((body, frame)) = self.hanger_body() {
                 body.topology(frame, owner, revision, self.geometry_policy())?

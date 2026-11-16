@@ -101,6 +101,18 @@ impl RadialBoundary {
     ) -> Result<TracedMesh<'_>, Error> {
         self.tessellate_with_cap_trace_budget(options, trace, DEFAULT_LIMITS.work, interrupt)
     }
+    /// Same source, facet, embedding and trace proof with an explicit logical
+    /// work allowance, at most512M. The receipt reports actual charged work;
+    /// a composing caller must debit it before subsequent proof phases.
+    pub fn tessellate_with_cap_trace_with_work_budget(
+        &self,
+        options: Tessellation,
+        trace: CapTraceOptions,
+        maximum_work: usize,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<TracedMesh<'_>, Error> {
+        self.tessellate_with_cap_trace_budget(options, trace, maximum_work, interrupt)
+    }
     pub(crate) fn tessellate_with_cap_trace_budget(
         &self,
         options: Tessellation,

@@ -18,6 +18,9 @@ pub(crate) mod bore_treatment;
 pub use bore_treatment::ConicalSeatGeometry;
 pub(crate) mod circular_pocket_body;
 mod clipped_npt_body;
+mod pipe_hardware_body;
+pub use multicad_rust_kernel::axial_pipe_thread::authored::hardware::Kind as PipeHardwareKind;
+use pipe_hardware_body::PipeHardwareBody;
 mod literal_npt_body;
 use literal_npt_body::LiteralNptBody;
 pub use literal_npt_body::LiteralNptRuntimeEvidence;
@@ -736,6 +739,7 @@ enum SolidBody {
     CosmeticFastener(Rc<CosmeticFastenerBody>, PlaneFrame),
     CosmeticProfiled(Rc<CosmeticProfiledBody>, PlaneFrame),
     ClippedNpt(Rc<ClippedNptBody>),
+    PipeHardware(Rc<PipeHardwareBody>),
     LiteralNpt(Rc<LiteralNptBody>),
     ExternalNptStock(Rc<ExternalNptStockBody>),
     Line8Nut(Rc<Line8NutBody>),
@@ -1193,6 +1197,7 @@ impl Solid {
     pub fn share(&self) -> Result<Self, GeometryError> {
         let body = match &self.body {
             SolidBody::ClippedNpt(body) => SolidBody::ClippedNpt(Rc::clone(body)),
+            SolidBody::PipeHardware(body) => SolidBody::PipeHardware(Rc::clone(body)),
             SolidBody::LiteralNpt(body) => SolidBody::LiteralNpt(Rc::clone(body)),
             SolidBody::ExternalNptStock(body) => SolidBody::ExternalNptStock(Rc::clone(body)),
             SolidBody::Line8Nut(body) => SolidBody::Line8Nut(Rc::clone(body)),
@@ -1558,6 +1563,9 @@ impl Solid {
                 SolidBody::ClippedNpt(body) => {
                     SolidBody::ClippedNpt(Rc::new(body.transformed(transform, self.policy)?))
                 }
+                SolidBody::PipeHardware(body) => {
+                    SolidBody::PipeHardware(Rc::new(body.transformed(transform, self.policy)?))
+                }
                 SolidBody::Prism(prism, frame) => {
                     let frame = transform.frame(*frame);
                     frame.checked_metric_extent(
@@ -1798,6 +1806,9 @@ impl Solid {
         Ok(result)
     }
     pub fn volume_mm3(&self) -> Result<f64, GeometryError> {
+        if let Some(body) = self.pipe_hardware_body() {
+            return body.volume_mm3();
+        }
         if let Some((body, frame)) = self.repaired_phillips_body() {
             let [lo, hi] = body.volume(frame)?;
             return Ok(lo.midpoint(hi));
@@ -1973,6 +1984,9 @@ impl Solid {
         ffi::solid_count(self.occt()?).map_err(|e| native("solid count", e))
     }
     pub fn bounds(&self) -> Result<Bounds, GeometryError> {
+        if let Some(body) = self.pipe_hardware_body() {
+            return body.bounds();
+        }
         if let Some((body, frame)) = self.repaired_phillips_body() {
             return body.bounds(frame);
         }
@@ -2172,6 +2186,9 @@ impl Solid {
         crate::planar_contours::extract(self, face, frame, self.policy)
     }
     pub fn faces(&self) -> Result<Vec<Face>, GeometryError> {
+        if let Some(body) = self.pipe_hardware_body() {
+            return body.faces(self.policy);
+        }
         if let Some((body, frame)) = self.repaired_phillips_body() {
             return body.periodic_faces(frame);
         }
@@ -2416,6 +2433,7 @@ impl Solid {
                 crate::rust_display::placed_mesh(body.cut.mesh(rust_options), *frame, false)
             }
             SolidBody::ClippedNpt(body) => body.mesh(rust_options),
+            SolidBody::PipeHardware(body) => body.mesh(rust_options),
             SolidBody::LiteralNpt(body) => body.mesh(rust_options),
             SolidBody::ExternalNptStock(body) => body.mesh(rust_options),
             SolidBody::Line8Nut(body) => body.mesh(rust_options),
@@ -2539,6 +2557,7 @@ impl Solid {
             || self.internal_thread_treatment_body().is_some()
             || self.repaired_phillips_body().is_some()
             || self.clipped_npt_body().is_some()
+            || self.pipe_hardware_body().is_some()
             || self.literal_npt_body().is_some()
             || self.external_npt_stock_body().is_some()
             || self.line8_nut_body().is_some()
@@ -2557,6 +2576,9 @@ impl Solid {
             manufacturing,
         };
         const OPERATION: &str = "manufacturing mesh";
+        if let Some(body) = self.pipe_hardware_body() {
+            return body.manufacturing(Self::rust_mesh_options(options));
+        }
         if let Some(body) = self.line8_nut_body() {
             return body.manufacturing(Self::rust_mesh_options(options));
         }
@@ -2734,7 +2756,9 @@ impl Solid {
             None => (Vec::new(), Vec::new()),
             Some(deflection) if self.uses_rust_geometry() => {
                 self.validate_display_deflection(deflection)?;
-                let edges = if let Some((body, frame)) = self.repaired_phillips_body() {
+                let edges = if let Some(body) = self.pipe_hardware_body() {
+                    body.display_edges(deflection, self.policy)?
+                } else if let Some((body, frame)) = self.repaired_phillips_body() {
                     body.periodic_display_edges(frame, deflection)?
                 } else if let Some((body, frame)) = self.hanger_body() {
                     body.display_edges(frame, deflection, self.policy)?
@@ -2778,6 +2802,9 @@ impl Solid {
 
     pub fn display_edges(&self, deflection_mm: f64) -> Result<Vec<DisplayEdge>, GeometryError> {
         self.validate_display_deflection(deflection_mm)?;
+        if let Some(body) = self.pipe_hardware_body() {
+            return body.display_edges(deflection_mm, self.policy);
+        }
         if let Some((body, frame)) = self.repaired_phillips_body() {
             return body.periodic_display_edges(frame, deflection_mm);
         }
@@ -2835,6 +2862,9 @@ impl Solid {
         ordinal: u32,
         options: multicad_rust_kernel::display::Tessellation,
     ) -> Option<Result<Vec<[f64; 3]>, multicad_rust_kernel::display::MeshError>> {
+        if let Some(body) = self.pipe_hardware_body() {
+            return body.sample_edge(ordinal, options);
+        }
         if let Some(body) = self.line8_nut_body() {
             return body.sample_edge(ordinal, options);
         }
@@ -2912,6 +2942,7 @@ impl Solid {
             SolidBody::CosmeticFastener(body, _) => body.feature,
             SolidBody::CosmeticProfiled(body, _) => body.feature,
             SolidBody::ClippedNpt(body) => body.feature,
+            SolidBody::PipeHardware(body) => body.feature,
             SolidBody::LiteralNpt(body) => body.feature,
             SolidBody::ExternalNptStock(body) => body.feature,
             SolidBody::Line8Nut(body) => body.feature,
@@ -2995,7 +3026,8 @@ impl Solid {
             SolidBody::RepairedPhillips(..) => {
                 self.rust_periodic_repaired_phillips_source().is_some()
             }
-            SolidBody::Line8Nut(..)
+            SolidBody::PipeHardware(..)
+            | SolidBody::Line8Nut(..)
             | SolidBody::ExternalNptStock(..)
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
@@ -3233,7 +3265,8 @@ impl Solid {
                     GeometryErrorKind::Unsupported => step::StepError::Unsupported,
                     _ => step::StepError::InvalidGeometry,
                 }),
-            SolidBody::Line8Nut(..)
+            SolidBody::PipeHardware(..)
+            | SolidBody::Line8Nut(..)
             | SolidBody::ExternalNptStock(..)
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)

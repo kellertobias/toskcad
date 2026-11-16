@@ -3,6 +3,7 @@ use super::*;
 use crate::display::{DisplayMesh, Tessellation};
 use std::collections::{BTreeMap, BTreeSet};
 mod cap;
+mod cell_cache;
 mod certificate;
 mod cone;
 mod edge;
@@ -28,6 +29,10 @@ struct Limits {
     certificates: usize,
     strips: usize,
     normal_strips: bool,
+    reuse_taylor_normal: bool,
+    compact_certificates: bool,
+    continue_v: bool,
+    reuse_point_rows: bool,
     compensate_v: bool,
     preflight: bool,
     probe_cells: usize,
@@ -44,6 +49,10 @@ const DEFAULT_LIMITS: Limits = Limits {
     certificates: 65536,
     strips: 128,
     normal_strips: true,
+    reuse_taylor_normal: true,
+    compact_certificates: true,
+    continue_v: true,
+    reuse_point_rows: true,
     compensate_v: true,
     preflight: true,
     probe_cells: 512,
@@ -77,6 +86,8 @@ struct Prepared<'a> {
     options: Tessellation,
     points: BTreeMap<[u64; 3], Point>,
     certificates: BTreeSet<[u64; 18]>,
+    cell_cache: Option<cell_cache::Snapshot>,
+    cell_matches_pending: Option<Box<[bool]>>,
     limits: Limits,
     // Coupled-grid heuristics are qualified for closed tensor-side cycles.
     // Mixed analytic-cone cycles retain their prior grid steering.
@@ -326,6 +337,8 @@ impl<'a> Prepared<'a> {
             options,
             points: BTreeMap::new(),
             certificates: BTreeSet::new(),
+            cell_cache: None,
+            cell_matches_pending: None,
             limits,
         })
     }
@@ -335,6 +348,18 @@ impl<'a> Prepared<'a> {
         u: f64,
         v: f64,
         row: Option<&cone::Row>,
+        work: &mut Work<'_>,
+    ) -> Result<Point, Error> {
+        self.point_with_rows(side, u, v, row, None, work)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn point_with_rows(
+        &self,
+        side: usize,
+        u: f64,
+        v: f64,
+        row: Option<&cone::Row>,
+        tensor_rows: Option<&mut tensor::RectifiedRows<'_>>,
         work: &mut Work<'_>,
     ) -> Result<Point, Error> {
         let p = if v == 0. || v == 1. {
@@ -354,7 +379,13 @@ impl<'a> Prepared<'a> {
             })
         } else {
             match &self.sides[side] {
-                Side::Tensor(t) => t.at_rectified(self.body, [u, v], work)?,
+                Side::Tensor(t) => {
+                    if tensor_rows.is_some() {
+                        t.at_rectified_cached(self.body, [u, v], tensor_rows, work)?
+                    } else {
+                        t.at_rectified(self.body, [u, v], work)?
+                    }
+                }
                 Side::Cone(c) => {
                     c.jet_at_row(
                         self.body,
@@ -386,7 +417,32 @@ impl<'a> Prepared<'a> {
             indices: Vec::with_capacity(3 * triangles),
             face_indices: Vec::with_capacity(triangles),
         };
+        work.charge(self.sides.len())?;
+        let point_row_bytes = self
+            .sides
+            .iter()
+            .try_fold(
+                std::mem::size_of::<Vec<Option<tensor::RectifiedRows<'_>>>>()
+                    + self.sides.len() * std::mem::size_of::<Option<tensor::RectifiedRows<'_>>>(),
+                |bytes, side| {
+                    bytes.checked_add(match side {
+                        Side::Tensor(t) => {
+                            tensor::RectifiedRows::accounted_bytes(t, self.limits.strips)
+                        }
+                        Side::Cone(_) => 0,
+                    })
+                },
+            )
+            .ok_or(Error::Limit)?;
+        let cache_rows =
+            self.limits.reuse_point_rows && point_row_bytes <= self.limits.parallel_bytes;
         for &v in &grid.v {
+            let mut tensor_rows = if cache_rows {
+                work.charge(self.sides.len())?;
+                (0..self.sides.len()).map(|_| None).collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
             let mut rows = vec![None; self.sides.len()];
             for &(side, index) in &ring.entries {
                 work.charge(64)?;
@@ -403,7 +459,26 @@ impl<'a> Prepared<'a> {
                     {
                         rows[side] = Some(c.row(I::point(v), work)?);
                     }
-                    let p = self.point(side, u, v, rows[side].as_ref(), work)?;
+                    if cache_rows
+                        && tensor_rows[side].is_none()
+                        && let Side::Tensor(t) = &self.sides[side]
+                    {
+                        tensor_rows[side] = Some(tensor::RectifiedRows::new(
+                            t,
+                            self.body,
+                            v,
+                            self.limits.strips,
+                            work,
+                        )?);
+                    }
+                    let p = self.point_with_rows(
+                        side,
+                        u,
+                        v,
+                        rows[side].as_ref(),
+                        tensor_rows.get_mut(side).and_then(Option::as_mut),
+                        work,
+                    )?;
                     // Optional, request-local acceleration. Reaching a
                     // cache cap never replaces or skips the actual proof.
                     if self.points.len() < self.limits.points {
@@ -461,6 +536,7 @@ impl<'a> Prepared<'a> {
         let options = self.options;
         let compensate = self.limits.compensate_v && self.tensor_cycle;
         let mut accepted = Vec::new();
+        self.begin_cell_cache(grid, ring, work)?;
         #[cfg(test)]
         let probe = parallel_probe::start(parallel_probe::Stage::Cells, work);
         let parallel = parallel::check(self, mesh, grid, ring, pass, changes, &mut accepted, work)?;
@@ -469,7 +545,12 @@ impl<'a> Prepared<'a> {
                 .sides
                 .iter()
                 .map(|side| match side {
-                    Side::Tensor(t) => Some(strip::Cache::new(t, self.limits.strips)),
+                    Side::Tensor(t) => {
+                        Some(strip::Cache::new(t, self.limits.strips).with_continuation(
+                            self.limits.continue_v
+                                && self.limits.parallel_bytes >= strip::CONTINUATION_SCRATCH_BYTES,
+                        ))
+                    }
                     Side::Cone(_) => None,
                 })
                 .collect::<Vec<_>>();
@@ -535,7 +616,10 @@ impl<'a> Prepared<'a> {
                         // immutable owner/options and exact UV/topology/point
                         // key prevent reuse across a different actual facet.
                         work.charge(128)?;
-                        if self.certificates.contains(&key) {
+                        if self.cached_cell(&key, work)? {
+                            if let Some(flags) = &mut self.cell_matches_pending {
+                                flags[cell] = true;
+                            }
                             if compensate && accepted.len() < self.limits.compensation_cells {
                                 work.charge(4)?;
                                 accepted.push([side, u, row]);
@@ -565,12 +649,17 @@ impl<'a> Prepared<'a> {
                             accepted.push([side, u, row]);
                         }
                         if verdict == Some(CellCheck::Match) {
+                            if let Some(flags) = &mut self.cell_matches_pending {
+                                flags[cell] = true;
+                            }
                             if compensate && accepted.len() < self.limits.compensation_cells {
                                 work.charge(4)?;
                                 accepted.push([side, u, row]);
                             }
                             work.charge(128)?;
-                            if self.certificates.len() < self.limits.certificates {
+                            if !self.limits.compact_certificates
+                                && self.certificates.len() < self.limits.certificates
+                            {
                                 self.certificates.insert(key);
                             }
                         } else {
@@ -581,6 +670,7 @@ impl<'a> Prepared<'a> {
                 }
             }
         }
+        self.finish_cell_cache(mesh, grid, work)?;
         #[cfg(test)]
         parallel_probe::end(probe, work);
         if compensate {
@@ -686,13 +776,15 @@ impl<'a> Prepared<'a> {
                 let mut patches = t
                     .patches(range, work)?
                     .into_iter()
-                    .map(|patch| (patch, None, None, None))
+                    .map(|patch| (patch, None, None, None, None))
                     .collect::<Vec<_>>();
                 for indices in actual {
                     let triangle = indices.map(|i| vertices[i]);
                     let affine = certificate::Affine::new(indices.map(|i| uv[i]), triangle)?;
                     let normal = certificate::facet_normal(triangle);
-                    for (patch, source_normal, source_cell, normal_coefficients) in &mut patches {
+                    for (patch, source_normal, source_cell, normal_coefficients, taylor_normal) in
+                        &mut patches
+                    {
                         let cell = if let Some(cell) = source_cell {
                             cell
                         } else {
@@ -713,7 +805,22 @@ impl<'a> Prepared<'a> {
                         {
                             return Ok(CellCheck::Chord);
                         }
-                        if uncertain(patch.taylor_normal_box(range, work).and_then(|value| {
+                        // This whole-source normal enclosure depends only on
+                        // the same immutable patch/range, never on the facet.
+                        // Each actual triangle still proves its own normal cone.
+                        let taylor = if self.limits.reuse_taylor_normal {
+                            match *taylor_normal {
+                                Some(value) => value,
+                                None => {
+                                    let value = patch.taylor_normal_box(range, work);
+                                    *taylor_normal = Some(value);
+                                    value
+                                }
+                            }
+                        } else {
+                            patch.taylor_normal_box(range, work)
+                        };
+                        if uncertain(taylor.and_then(|value| {
                             certificate::normal_matches(
                                 vec![vec![value]],
                                 [[0., 1.]; 2],

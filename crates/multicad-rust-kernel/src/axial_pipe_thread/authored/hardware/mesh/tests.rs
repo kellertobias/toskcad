@@ -36,20 +36,33 @@ fn verify(source: ThreadBoundaryMesh<'_, '_>, kind: Kind) {
         ThreadBoundaryMesh::Retained(t) => t.work_used(),
     };
     assert_eq!(inherited, source.work());
-    if let ThreadBoundaryMesh::Retained(_) = source {
-        assert!(matches!(
-            join(
-                source,
-                kind,
-                MeshOptions {
-                    maximum_work: 64_000_000,
-                    ..options()
-                },
-                None
-            ),
-            Err(Error::Limit)
-        ));
-    }
+    // Resource refusal follows the actual counted algorithm, rather than
+    // assuming the former128-per-index upper estimate consumes64M.
+    let required = result.joining_work_used();
+    assert!(matches!(
+        join(
+            source,
+            kind,
+            MeshOptions {
+                maximum_work: required - 1,
+                ..options()
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    let exact = join(
+        source,
+        kind,
+        MeshOptions {
+            maximum_work: required,
+            ..options()
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(exact.mesh(), mesh);
+    assert_eq!(exact.connectivity(), result.connectivity());
     let volume = mesh
         .indices
         .as_chunks::<3>()

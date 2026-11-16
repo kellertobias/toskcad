@@ -311,3 +311,100 @@ fn uncertain_or_overflowed_stencils_fall_through_to_full_literal_source_checks()
     assert!(!changes.empty());
     assert_eq!(body.input(), &original);
 }
+
+#[test]
+fn exact_rectified_row_cache_keeps_source_owner_chart_bits_and_cancel_retry() {
+    let body = super::super::tests::cam();
+    let mut work = Work {
+        remaining: 10_000_000,
+        interrupt: None,
+    };
+    let p = Prepared::new(
+        &body,
+        super::super::tests::options(),
+        DEFAULT_LIMITS,
+        &mut work,
+    )
+    .unwrap();
+    let owners = p
+        .sides
+        .iter()
+        .filter_map(|s| {
+            if let Side::Tensor(t) = s {
+                Some(t)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    let owner = owners[0];
+    let v = 0.375;
+    let mut rows = RectifiedRows::new(owner, &body, v, 128, &mut work).unwrap();
+    for u in [0.125, 0.25, 0.375, 0.5, 0.125] {
+        let a = owner.at_rectified(&body, [u, v], &mut work).unwrap();
+        let b = owner
+            .at_rectified_cached(&body, [u, v], Some(&mut rows), &mut work)
+            .unwrap();
+        assert_eq!(
+            a.map(|x| [x.lo.to_bits(), x.hi.to_bits()]),
+            b.map(|x| [x.lo.to_bits(), x.hi.to_bits()])
+        );
+    }
+    assert_eq!(
+        owner
+            .at_rectified_cached(&body, [0.125, v + 0.125], Some(&mut rows), &mut work)
+            .err(),
+        Some(Error::Invalid)
+    );
+    assert_eq!(
+        owners[1]
+            .at_rectified_cached(&body, [0.125, v], Some(&mut rows), &mut work)
+            .err(),
+        Some(Error::Invalid)
+    );
+    let other = super::super::tests::cam();
+    assert_eq!(
+        owner
+            .at_rectified_cached(&other, [0.125, v], Some(&mut rows), &mut work)
+            .err(),
+        Some(Error::Invalid)
+    );
+    for count in [0, 1] {
+        let mut small = RectifiedRows::new(owner, &body, v, count, &mut work).unwrap();
+        assert_eq!(
+            owner
+                .at_rectified(&body, [0.375, v], &mut work)
+                .unwrap()
+                .map(|x| [x.lo.to_bits(), x.hi.to_bits()]),
+            owner
+                .at_rectified_cached(&body, [0.375, v], Some(&mut small), &mut work)
+                .unwrap()
+                .map(|x| [x.lo.to_bits(), x.hi.to_bits()])
+        );
+    }
+    let mut empty = Work {
+        remaining: 0,
+        interrupt: None,
+    };
+    assert_eq!(
+        owner
+            .at_rectified_cached(&body, [0.125, v], Some(&mut rows), &mut empty)
+            .err(),
+        Some(Error::Limit)
+    );
+    let mut cancelled = Work {
+        remaining: 100_000,
+        interrupt: Some(&|| true),
+    };
+    assert_eq!(
+        owner
+            .at_rectified_cached(&body, [0.125, v], Some(&mut rows), &mut cancelled)
+            .err(),
+        Some(Error::Cancelled)
+    );
+    assert!(
+        owner
+            .at_rectified_cached(&body, [0.125, v], Some(&mut rows), &mut work)
+            .is_ok()
+    );
+}

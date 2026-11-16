@@ -248,11 +248,16 @@ fn trace_metadata_work_and_cancel_refusals_leave_source_and_old_path_reusable() 
     let exact = trace.retained_metadata_bytes();
     let work = trace.work_used();
     assert!(
-        body.tessellate_with_cap_trace_budget(options, Default::default(), work, None)
+        body.tessellate_with_cap_trace_with_work_budget(options, Default::default(), work, None)
             .is_ok()
     );
     assert!(matches!(
-        body.tessellate_with_cap_trace_budget(options, Default::default(), work - 1, None),
+        body.tessellate_with_cap_trace_with_work_budget(
+            options,
+            Default::default(),
+            work - 1,
+            None
+        ),
         Err(Error::Limit)
     ));
     assert!(matches!(

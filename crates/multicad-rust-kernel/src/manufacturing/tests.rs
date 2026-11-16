@@ -137,3 +137,103 @@ fn counts_are_bounded_before_any_certification_allocation() {
         );
     }
 }
+
+#[test]
+fn counted_connectivity_preserves_valid_invalid_and_multi_shell_proofs() {
+    let valid = tetrahedron([0.; 3], 8., true);
+    let mut multi = valid.clone();
+    append(&mut multi, tetrahedron([1.; 3], 1., false));
+    append(&mut multi, tetrahedron([1e12, -1e12, 1e12], 4., true));
+    let mut open = valid.clone();
+    open.indices.truncate(9);
+    open.face_indices.truncate(3);
+    let mut wrong = valid.clone();
+    wrong.indices.swap(0, 1);
+    let mut degenerate = valid.clone();
+    degenerate.indices[0] = degenerate.indices[1];
+    let mut nonfinite = valid.clone();
+    nonfinite.vertices[0] = f64::INFINITY;
+    let mut badindex = valid.clone();
+    badindex.indices[0] = u32::MAX;
+    for mesh in [valid, multi, open, wrong, degenerate, nonfinite, badindex] {
+        let original = mesh.clone();
+        let mut work = 0;
+        let mut peak = 0;
+        let counted = super::certify_counted(&mesh, &mut |n, bytes| {
+            work += n;
+            peak = peak.max(bytes.unwrap_or(0));
+            Ok::<_, ()>(())
+        })
+        .map_err(|error| match error {
+            super::CountedError::Mesh(error) => error,
+            super::CountedError::Interrupted(()) => panic!("ample budget"),
+        });
+        assert_eq!(counted, certify(&mesh));
+        assert_eq!(mesh, original);
+        assert!(work > 0);
+        if counted.is_ok() {
+            assert!(peak > 0);
+        }
+    }
+}
+#[test]
+fn counted_connectivity_budget_cancel_storage_failure_and_clean_retry() {
+    let mesh = tetrahedron([0.; 3], 8., true);
+    let expected = certify(&mesh).unwrap();
+    let mut total = 0;
+    super::certify_counted(&mesh, &mut |n, _| {
+        total += n;
+        Ok::<_, ()>(())
+    })
+    .unwrap();
+    for limit in [0, total / 2, total - 1] {
+        let mut left = limit;
+        let result = super::certify_counted(&mesh, &mut |n, _| {
+            left = left.checked_sub(n).ok_or("budget")?;
+            Ok(())
+        });
+        assert_eq!(result, Err(super::CountedError::Interrupted("budget")));
+    }
+    let mut calls = 0;
+    super::certify_counted(&mesh, &mut |_, _| {
+        calls += 1;
+        Ok::<_, ()>(())
+    })
+    .unwrap();
+    for checkpoint in [1, calls / 2, calls] {
+        let mut seen = 0;
+        assert_eq!(
+            super::certify_counted(&mesh, &mut |_, _| {
+                seen += 1;
+                if seen == checkpoint {
+                    Err("cancel")
+                } else {
+                    Ok(())
+                }
+            }),
+            Err(super::CountedError::Interrupted("cancel"))
+        );
+    }
+    assert_eq!(
+        super::certify_counted(&mesh, &mut |_, storage| if storage.is_some() {
+            Err("bytes")
+        } else {
+            Ok(())
+        }),
+        Err(super::CountedError::Interrupted("bytes"))
+    );
+    assert_eq!(
+        super::certify_counted(&mesh, &mut |_, _| Ok::<_, ()>(())),
+        Ok(expected)
+    );
+}
+
+#[test]
+fn public_uncounted_specialization_never_invokes_budget_callbacks() {
+    let mesh = tetrahedron([0.; 3], 8., true);
+    let mut never = |_: usize, _: Option<usize>| -> Result<(), ()> { panic!("uncounted callback") };
+    assert_eq!(
+        super::certify_impl::<_, false>(&mesh, &mut super::Budget(&mut never)),
+        Ok(certify(&mesh).unwrap())
+    );
+}
