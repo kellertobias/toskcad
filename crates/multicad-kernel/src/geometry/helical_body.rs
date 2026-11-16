@@ -24,7 +24,9 @@ mod blind;
 mod end_relief;
 mod external;
 pub(super) mod full_height;
+mod internal_data;
 use external::ExternalStock;
+pub use internal_data::InternalThreadData;
 mod boundary;
 mod nut;
 mod phillips;
@@ -152,6 +154,15 @@ impl Solid {
             return None;
         }
         Some([(screw.geometry, *screw_frame), (nut.geometry, *nut_frame)])
+    }
+
+    /// Exact retained thread and placement of a plain helical thread body,
+    /// the material `r <= R(theta, z)` between its caps at `z = 0` and the
+    /// thread length. Read-only: other helical forms return `None`.
+    pub fn rust_helical_thread_data(&self) -> Option<(Thread, PlaneFrame)> {
+        let (body, frame) = self.helical_body()?;
+        (matches!(body.form, HelicalForm::Shaft) && body.receiving.is_none())
+            .then_some((body.geometry, frame))
     }
 
     /// Build a real thread with finite planar ends and a periodic analytic wall.
