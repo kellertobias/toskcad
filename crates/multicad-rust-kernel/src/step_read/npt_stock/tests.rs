@@ -39,6 +39,55 @@ pub(super) fn fixture(quarter: bool) -> String {
         .unwrap()
         .into_string()
 }
+
+#[test]
+fn public_literal_npt_import_refuses_changed_units_and_exact_noninteger_dimensions() {
+    use crate::step_read::{ReadError, SourceImport, read_source_compound};
+    let original = fixture(false);
+    let before = original.clone();
+    for (find, replace, expected) in [
+        (
+            "SI_UNIT(.MILLI.,.METRE.)",
+            "SI_UNIT(.CENTI.,.METRE.)",
+            ReadError::Unsupported,
+        ),
+        (
+            "GEOMETRIC_REPRESENTATION_CONTEXT(3)",
+            "GEOMETRIC_REPRESENTATION_CONTEXT(4)",
+            ReadError::Unsupported,
+        ),
+        (
+            "GEOMETRIC_REPRESENTATION_CONTEXT(3)",
+            "GEOMETRIC_REPRESENTATION_CONTEXT(3.000000000000000000001)",
+            ReadError::Invalid,
+        ),
+    ] {
+        let changed = original.replacen(find, replace, 1);
+        assert_ne!(
+            changed, original,
+            "the actual unit/context record must change"
+        );
+        assert!(matches!(read_source_compound(&changed, 1e-7), Err(error) if error == expected));
+    }
+    assert_eq!(original, before);
+    assert_eq!("3.000000000000000000001".parse::<f64>().unwrap(), 3.);
+    // The unchanged millimetre input must still import, retaining actual
+    // original records and independently bounded material after its input dies.
+    let material = {
+        let mut imported = read_source_compound(&original, 1e-7).unwrap();
+        assert_eq!(imported.len(), 1);
+        let SourceImport::LiteralNpt(material) = imported.pop().unwrap() else {
+            panic!("the original literal NPT file lost its owned source")
+        };
+        material
+    };
+    drop(original);
+    assert!(material.point_count() > 0 && material.source_entity_count() > material.point_count());
+    assert!(material.local_volume_mm3()[0] > 470. && material.local_volume_mm3()[1] < 471.);
+    let point = material.point(0).unwrap();
+    assert!(material.original_component(point.entity(), 0).is_some());
+}
+
 #[test]
 fn actual_packet_parses_numeric_leaves_coupled_boundary_controls_and_closed_owning_graph() {
     for quarter in [false, true] {
