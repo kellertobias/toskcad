@@ -57,3 +57,85 @@ fn real_public_exporter_refusals_keep_typed_transport_and_atomic_members() {
         MAX_COMPOUND_SOLIDS
     );
 }
+
+#[test]
+fn public_preflight_spline_and_tensor_metadata_cancellation_keeps_real_source_reusable() {
+    use super::{Options, propose};
+    use crate::{
+        axial_pipe_thread::Error,
+        radial_tensor::{Curve, Surface},
+    };
+    let source = crate::step::pipe_hardware::test_fixture::engineering();
+    let input = source.shell().input();
+    use crate::axial_pipe_thread::authored::hardware::shell::Curve as ShellCurve;
+    // Independent count of actual preflight interrupt checkpoints on the
+    // real retained operator tables: scalar charge+size,3 scalars+point size.
+    // This identifies the metadata boundary after a COMPLETE original net,
+    // rather than guessing a fraction of the whole encoder run.
+    let mut prefix = input.vertices.len() * 8;
+    let mut spline_metadata = None;
+    for curve in &input.curves {
+        let checkpoints = match curve {
+            ShellCurve::Line(_) => 7,
+            ShellCurve::Original(Curve::Spline { poles, .. }) => {
+                let n = poles.len() * 7 + 1;
+                spline_metadata.get_or_insert(prefix + n);
+                n
+            }
+            ShellCurve::Original(Curve::Circle { .. }) => 23,
+        };
+        prefix += checkpoints;
+    }
+    let mut tensor_metadata = None;
+    for surface in &input.surfaces {
+        let checkpoints = match surface {
+            Surface::Tensor(t) => {
+                let n = t.poles().len() * 7 + 1;
+                tensor_metadata.get_or_insert(prefix + n);
+                n
+            }
+            Surface::Plane(_) => 21,
+            Surface::Cone { .. } => 25,
+        };
+        prefix += checkpoints;
+    }
+    let stops = [spline_metadata.unwrap(), tensor_metadata.unwrap()];
+    assert!(stops[0] < stops[1] && stops[1] <= prefix);
+    let observed = std::cell::Cell::new(0usize);
+    let count = || {
+        observed.set(observed.get() + 1);
+        false
+    };
+    let baseline = propose(&source, Options::default(), Some(&count))
+        .unwrap()
+        .into_string();
+    assert!(observed.get() > prefix);
+    for stop in stops {
+        assert!(stop < observed.get());
+        let visited = std::cell::Cell::new(0usize);
+        let cancel = || {
+            visited.set(visited.get() + 1);
+            visited.get() == stop
+        };
+        let options = Options {
+            additional_resident_bytes: baseline.capacity(),
+            ..Default::default()
+        };
+        assert!(matches!(
+            propose(&source, options, Some(&cancel)),
+            Err(Error::Cancelled)
+        ));
+        assert_eq!(visited.get(), stop);
+        println!(
+            "ACTUAL_PREFLIGHT_CANCEL observed={} stop={stop} visited={}",
+            observed.get(),
+            visited.get()
+        );
+        let retry = propose(&source, options, None).unwrap();
+        assert_eq!(retry.as_str(), baseline);
+        assert_eq!(
+            source.capped_thread().classify([0., 0., 3.], None).unwrap(),
+            crate::radial_tensor::Location::Inside
+        );
+    }
+}
