@@ -249,14 +249,77 @@ impl Selected<'_, '_> {
             .parsed
             .projection(proof_options, interrupt)?
             .occupied(proof_options, interrupt)?;
-        let used = occupied.work_used() + pose_work;
+        self.capture_occupied(
+            &occupied,
+            &pose,
+            options.maximum_work,
+            options.maximum_bytes,
+            0,
+            interrupt,
+        )
+    }
+
+    /// Capture a SAME-selected immutable occupied certificate without rerunning
+    /// projection/material. Only new capture budgets are configurable here;
+    /// proof subdivision policies belong to the already earned certificate.
+    pub(crate) fn retain_occupied(
+        &self,
+        occupied: &Occupied<'_, '_, '_>,
+        maximum_work: usize,
+        maximum_bytes: usize,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<OwnedMaterial> {
+        if maximum_work == 0
+            || maximum_work > 64_000_000
+            || maximum_bytes == 0
+            || maximum_bytes > 64 * 1024 * 1024
+        {
+            return Err(Error::Invalid);
+        }
+        if interrupt.is_some_and(|f| f()) {
+            return Err(Error::Cancelled);
+        }
+        if !std::ptr::eq(occupied.projection().parsed(), &self.parsed) {
+            return Err(Error::Invalid);
+        }
+        if maximum_work <= 128 {
+            return Err(Error::Limit);
+        }
+        let pose = self.placement(
+            Options {
+                maximum_work: (maximum_work - 128).min(16_000_000),
+                maximum_bytes,
+            },
+            interrupt,
+        )?;
+        self.capture_occupied(occupied, &pose, maximum_work, maximum_bytes, 128, interrupt)
+    }
+
+    fn capture_occupied(
+        &self,
+        occupied: &Occupied<'_, '_, '_>,
+        pose: &Placement<'_, '_, '_>,
+        maximum_work: usize,
+        maximum_bytes: usize,
+        association_work: usize,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<OwnedMaterial> {
+        let pose_work = pose.work_used() - self.parsed.work;
+        let used = occupied
+            .work_used()
+            .checked_add(pose_work)
+            .and_then(|n| n.checked_add(association_work))
+            .ok_or(Error::Limit)?;
         let bytes = occupied.query_budget_bytes() + size_of::<Placement<'_, '_, '_>>();
+        if bytes > maximum_bytes {
+            return Err(Error::Limit);
+        }
         let mut budget = Budget {
             used,
-            remaining: options.maximum_work.checked_sub(used).ok_or(Error::Limit)?,
+            remaining: maximum_work.checked_sub(used).ok_or(Error::Limit)?,
             bytes,
             peak: bytes.max(pose.query_budget_bytes()),
-            limit: options.maximum_bytes,
+            limit: maximum_bytes,
             interrupt,
         };
         // Graph work is included exactly once in occupied; pose contributes
@@ -434,6 +497,8 @@ impl Selected<'_, '_> {
         })))
     }
 }
+#[cfg(test)]
+mod occupied_tests;
 #[cfg(test)]
 mod tests;
 

@@ -8,6 +8,8 @@ use crate::step_read::radial_boundary::pipe_hardware::budget as cold;
 use std::ops::Range;
 mod auxiliary;
 mod graph;
+mod owned;
+pub use owned::{AxialSewingTransfer, OwnedActualHead, OwnedHeadOptions, OwnedHeadReceipt};
 mod source;
 #[cfg(test)]
 mod source_tests;
@@ -62,6 +64,17 @@ impl ComponentBinding {
         self.derived.clone()
     }
 }
+/// Actual physical record identities, distinct from the derived cap entity.
+#[derive(Clone, Copy, Debug)]
+pub struct PhysicalRoles {
+    pub solid_entity: u32,
+    pub annulus_face_entity: u32,
+    pub thread_face_entities: [u32; 9],
+    /// Orders correspond exactly to HeadInput faces/edges/vertices.
+    pub head_face_entities: [u32; 8],
+    pub head_edge_entities: [u32; 18],
+    pub head_vertex_entities: [u32; 12],
+}
 #[derive(Clone, Copy, Debug)]
 pub struct CapChart {
     pub physical_support_entity: u32,
@@ -78,6 +91,7 @@ pub struct DecodedFile<'input> {
     head: HeadInput,
     bindings: Vec<ComponentBinding>,
     chart: CapChart,
+    roles: PhysicalRoles,
     receipt: Receipt,
     retained_beyond_auxiliary_input: usize,
     maximum_work: usize,
@@ -126,6 +140,15 @@ impl<'input> DecodedFile<'input> {
         options: Options,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Self> {
+        Self::parse_with_capture(input, options, interrupt, |_, _| Ok(((), 0)))
+            .map(|(packet, ())| packet)
+    }
+    fn parse_with_capture<T>(
+        input: &'input str,
+        options: Options,
+        interrupt: Option<&dyn Fn() -> bool>,
+        capture: impl FnOnce(&CompoundDocument<'input>, &mut Budget<'_>) -> Result<(T, usize)>,
+    ) -> Result<(Self, T)> {
         if options.maximum_work == 0
             || options.maximum_work > MAX_WORK
             || options.maximum_bytes == 0
@@ -180,6 +203,7 @@ impl<'input> DecodedFile<'input> {
         };
         let plan = graph::decode(&document, &mut budget)?;
         let result = auxiliary::derive(&document, plan, &mut budget)?;
+        let (captured, captured_bytes) = capture(&document, &mut budget)?;
         let decode_work = budget.used;
         let physical_peak = budget
             .peak
@@ -198,6 +222,7 @@ impl<'input> DecodedFile<'input> {
         let derived_live = input
             .len()
             .checked_add(result.retained_without_derived)
+            .and_then(|n| n.checked_add(captured_bytes))
             .and_then(|n| n.checked_add(result.text.capacity() - result.text.len()))
             .and_then(|n| n.checked_add(size_of::<Self>()))
             .and_then(|n| n.checked_add(options.additional_resident_bytes))
@@ -219,6 +244,7 @@ impl<'input> DecodedFile<'input> {
         let retained = input
             .len()
             .checked_add(result.retained_without_derived)
+            .and_then(|n| n.checked_add(captured_bytes))
             .and_then(|n| n.checked_add(result.text.capacity() - result.text.len()))
             .and_then(|n| n.checked_add(size_of::<Self>()))
             .and_then(|n| n.checked_add(options.additional_resident_bytes))
@@ -228,24 +254,28 @@ impl<'input> DecodedFile<'input> {
             return Err(Error::Limit);
         }
         budget.step(0)?;
-        Ok(Self {
-            actual: input,
-            derived: result.text,
-            head: result.head,
-            bindings: result.bindings,
-            chart: result.chart,
-            receipt: Receipt {
-                physical_cold_work_reserved: original_cold.aggregate_work_reserved,
-                fresh_decoding_work: decode_work,
-                derived_cold_work_reserved: derived_cold.aggregate_work_reserved,
-                aggregate_work: aggregate,
-                accounted_peak_bytes: peak,
+        Ok((
+            Self {
+                actual: input,
+                derived: result.text,
+                head: result.head,
+                bindings: result.bindings,
+                chart: result.chart,
+                roles: result.roles,
+                receipt: Receipt {
+                    physical_cold_work_reserved: original_cold.aggregate_work_reserved,
+                    fresh_decoding_work: decode_work,
+                    derived_cold_work_reserved: derived_cold.aggregate_work_reserved,
+                    aggregate_work: aggregate,
+                    accounted_peak_bytes: peak,
+                },
+                retained_beyond_auxiliary_input: retained,
+                maximum_work: options.maximum_work,
+                maximum_bytes: options.maximum_bytes,
+                derived_parser_work_reserved: derived_cold.delegated_parser_work_reserved,
             },
-            retained_beyond_auxiliary_input: retained,
-            maximum_work: options.maximum_work,
-            maximum_bytes: options.maximum_bytes,
-            derived_parser_work_reserved: derived_cold.delegated_parser_work_reserved,
-        })
+            captured,
+        ))
     }
     pub fn actual_file(&self) -> &'input str {
         self.actual
@@ -259,6 +289,9 @@ impl<'input> DecodedFile<'input> {
     }
     pub fn cap_chart(&self) -> CapChart {
         self.chart
+    }
+    pub fn physical_roles(&self) -> PhysicalRoles {
+        self.roles
     }
     pub fn receipt(&self) -> Receipt {
         self.receipt

@@ -6,6 +6,7 @@ use crate::tapered_thread::interval::I;
 use std::collections::BTreeSet;
 pub(super) struct Plan<'i> {
     pub head: HeadInput,
+    pub roles: PhysicalRoles,
     pub shell: u32,
     pub thread_faces: Vec<u32>,
     pub inner_wire: u32,
@@ -367,6 +368,7 @@ pub(super) fn decode<'i>(doc: &CompoundDocument<'i>, b: &mut Budget<'_>) -> Resu
     let mut edge_ids = b.allocate(18)?;
     let mut edges = b.allocate(18)?;
     let mut head_faces = b.allocate(8)?;
+    let mut head_face_entities = [0u32; 8];
     for (i, f) in decoded.iter().enumerate() {
         if f.tensor || i == bottom {
             continue;
@@ -445,6 +447,10 @@ pub(super) fn decode<'i>(doc: &CompoundDocument<'i>, b: &mut Budget<'_>) -> Resu
         }
         let mut inner = b.allocate(f.inner.len())?;
         inner.extend_from_slice(&f.inner);
+        if head_faces.len() == 8 {
+            return Err(Error::Unsupported);
+        }
+        head_face_entities[head_faces.len()] = f.id;
         head_faces.push(head::HeadFace {
             plane: p,
             outer: uses,
@@ -488,6 +494,15 @@ pub(super) fn decode<'i>(doc: &CompoundDocument<'i>, b: &mut Budget<'_>) -> Resu
             return Err(Error::Unsupported);
         }
     }
+    b.step(64)?;
+    let roles = PhysicalRoles {
+        solid_entity: solid,
+        annulus_face_entity: a.id,
+        thread_face_entities: std::array::from_fn(|i| thread_faces[i]),
+        head_face_entities,
+        head_edge_entities: std::array::from_fn(|i| edge_ids[i]),
+        head_vertex_entities: std::array::from_fn(|i| vertex_ids[i]),
+    };
     let head = HeadInput {
         vertices,
         edges,
@@ -504,6 +519,7 @@ pub(super) fn decode<'i>(doc: &CompoundDocument<'i>, b: &mut Budget<'_>) -> Resu
     b.release(&decoded);
     Ok(Plan {
         head,
+        roles,
         shell,
         thread_faces,
         inner_wire: a.inner_wire,
