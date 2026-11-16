@@ -493,3 +493,277 @@ fn actual_curved_face_descriptors_are_lazy_exact_and_shared_across_stock_edits()
             .is_err()
     );
 }
+
+// Independent numerical Green integrals over the actual retained rim. Degree-9
+// spline positions/derivatives use the explicit Bernstein formula, and circles
+// use their literal axes and endpoint sweep. This is a test oracle, not a
+// geometry receipt; step doubling must converge before comparison to the
+// independently certified cap enclosures.
+fn cap_green_oracle(
+    input: &multicad_rust_kernel::radial_tensor::BoundaryInput,
+    cap: usize,
+    steps: usize,
+) -> (f64, [f64; 3]) {
+    use multicad_rust_kernel::radial_tensor::{Curve, Surface};
+    fn bernstein(p: &[[f64; 3]], t: f64) -> [f64; 3] {
+        let weights: &[f64] = match p.len() {
+            10 => &[1., 9., 36., 84., 126., 126., 84., 36., 9., 1.],
+            9 => &[1., 8., 28., 56., 70., 56., 28., 8., 1.],
+            _ => panic!("actual retained cap degree"),
+        };
+        std::array::from_fn(|k| {
+            p.iter()
+                .enumerate()
+                .map(|(i, q)| {
+                    weights[i] * t.powi(i as i32) * (1. - t).powi((p.len() - 1 - i) as i32) * q[k]
+                })
+                .sum()
+        })
+    }
+    let mut sums = [0.; 3];
+    let mut integrate = |evaluate: &dyn Fn(f64) -> ([f64; 3], [f64; 3])| {
+        for i in 0..=steps {
+            let (p, d) = evaluate(i as f64 / steps as f64);
+            let weight = if i == 0 || i == steps {
+                1.
+            } else if i % 2 == 0 {
+                2.
+            } else {
+                4.
+            };
+            for (sum, value) in sums.iter_mut().zip([
+                (p[0] * d[1] - p[1] * d[0]) / 2.,
+                p[0] * p[0] * d[1] / 2.,
+                -p[1] * p[1] * d[0] / 2.,
+            ]) {
+                *sum += weight * value / (3. * steps as f64);
+            }
+        }
+    };
+    for &(edge, direction) in &input.faces[cap].outer {
+        let edge = input.edges[edge];
+        match &input.curves[edge.curve] {
+            Curve::Spline { spans, poles } => {
+                let mut poles = poles.clone();
+                if edge.forward != direction {
+                    poles.reverse();
+                }
+                for span in 0..*spans {
+                    let p = &poles[9 * span..=9 * span + 9];
+                    let derivative = p
+                        .windows(2)
+                        .map(|p| std::array::from_fn(|k| 9. * (p[1][k] - p[0][k])))
+                        .collect::<Vec<_>>();
+                    integrate(&|t| (bernstein(p, t), bernstein(&derivative, t)));
+                }
+            }
+            Curve::Circle { axis, radius_mm } => {
+                assert!(axis.normal[0] == 0. && axis.normal[1] == 0. && axis.normal[2].abs() == 1.);
+                assert_eq!(axis.reference[2], 0.);
+                let norm = axis.reference[0].hypot(axis.reference[1]);
+                let u = [axis.reference[0] / norm, axis.reference[1] / norm, 0.];
+                let v = [-axis.normal[2] * u[1], axis.normal[2] * u[0], 0.];
+                let [a, b] = if direction {
+                    edge.vertices
+                } else {
+                    [edge.vertices[1], edge.vertices[0]]
+                };
+                let phase = |index: usize| {
+                    let p = input.vertices[index];
+                    let x = p[0] - axis.origin[0];
+                    let y = p[1] - axis.origin[1];
+                    (x * v[0] + y * v[1]).atan2(x * u[0] + y * u[1])
+                };
+                let start = phase(a);
+                let positive = (phase(b) - start).rem_euclid(std::f64::consts::TAU);
+                let sweep = if edge.forward == direction {
+                    positive
+                } else {
+                    positive - std::f64::consts::TAU
+                };
+                integrate(&|t| {
+                    let angle = start + sweep * t;
+                    (
+                        std::array::from_fn(|k| {
+                            axis.origin[k] + radius_mm * (u[k] * angle.cos() + v[k] * angle.sin())
+                        }),
+                        std::array::from_fn(|k| {
+                            radius_mm * sweep * (-u[k] * angle.sin() + v[k] * angle.cos())
+                        }),
+                    )
+                });
+            }
+        }
+    }
+    let Surface::Plane(axis) = input.surfaces[input.faces[cap].surface] else {
+        panic!("actual cap plane")
+    };
+    (
+        sums[0].abs(),
+        [sums[1] / sums[0], sums[2] / sums[0], axis.origin[2]],
+    )
+}
+
+#[test]
+fn actual_external_pipe_head_lazy_ready_descriptors_match_independent_cap_and_hex_integrals() {
+    let source_spec = spec(true, true, false);
+    let policy = GeometryPolicy::default();
+    let owner = EntityId::new();
+    let across = 18.;
+    let height = 3.;
+    let shape = Solid::rust_authored_axial_pipe_hardware_with_interrupt(
+        source_spec,
+        PipeHardwareKind::HexHead {
+            across_flats_mm: across,
+            height_mm: height,
+        },
+        1.,
+        owner,
+        frame(false),
+        policy,
+        None,
+    )
+    .unwrap();
+    let body = shape.pipe_hardware_body().unwrap();
+    let prepared = &body.source._prepared;
+    assert_eq!(prepared.descriptor_queries.get(), 0);
+    let (boundary, pose) = prepared.thread.rust_radial_boundary().unwrap();
+    assert_eq!(pose, PlaneFrame::default());
+    let original = boundary.input().clone();
+    let full = boundary
+        .face_properties_with_interrupt(source::MEASURE_ACCURACY, None)
+        .unwrap();
+    let contains = |range: I, value: f64| {
+        assert!(
+            range.lo <= value && value <= range.hi,
+            "{range:?} misses {value}"
+        )
+    };
+    let oracles = prepared.caps.map(|cap| {
+        let coarse = cap_green_oracle(&original, cap as usize, 256);
+        let fine = cap_green_oracle(&original, cap as usize, 512);
+        assert!((coarse.0 - fine.0).abs() < 1e-8);
+        for (a, b) in coarse.1.into_iter().zip(fine.1) {
+            assert!((a - b).abs() < 1e-9);
+        }
+        let actual = prepared.measure(cap, None).unwrap();
+        let old = full.iter().find(|f| f.face_index == cap as usize).unwrap();
+        assert_eq!([actual.0.lo, actual.0.hi], old.area_mm2);
+        assert_eq!(actual.1.map(|x| [x.lo, x.hi]), old.centroid_mm);
+        contains(actual.0, fine.0);
+        for (range, value) in actual.1.into_iter().zip(fine.1) {
+            contains(range, value);
+        }
+        fine
+    });
+    assert_eq!(
+        prepared.descriptor_queries.get(),
+        0,
+        "actual ready cap reads cannot force curved integration"
+    );
+    let faces = shape.faces().unwrap();
+    assert_eq!(prepared.descriptor_queries.get(), 1);
+    assert_eq!(shape.faces().unwrap(), faces);
+    assert_eq!(prepared.descriptor_queries.get(), 1);
+    let hex_area = 3_f64.sqrt() * across * across / 2.;
+    let last = body.source.faces.len() - 1;
+    let FaceMeasure::Ready { area, center } = body.source.faces[last].measure else {
+        panic!("head top is actual planar stock")
+    };
+    contains(area, hex_area);
+    for (range, value) in center
+        .into_iter()
+        .zip([0., 0., source_spec.length_mm + height])
+    {
+        contains(range, value);
+    }
+    assert!((faces[last].area_mm2 - hex_area).abs() < 1e-10);
+    assert!((faces[last].center_mm[2] + height).abs() < 1e-12);
+    let shoulder_area = hex_area - oracles[1].0;
+    let expected = [
+        -oracles[1].0 * oracles[1].1[0] / shoulder_area,
+        -oracles[1].0 * oracles[1].1[1] / shoulder_area,
+        source_spec.length_mm,
+    ];
+    let FaceMeasure::Ready { area, center } = body.source.faces[last - 1].measure else {
+        panic!("actual cap subtraction")
+    };
+    contains(area, shoulder_area);
+    for (range, value) in center.into_iter().zip(expected) {
+        contains(range, value);
+    }
+    let bottom = body.source.face_map[&prepared.caps[0]] as usize;
+    assert!((faces[bottom].area_mm2 - oracles[0].0).abs() < 1e-4);
+    assert!((faces[bottom].center_mm[2] - source_spec.length_mm).abs() < 1e-12);
+    let lateral_area = across / 3_f64.sqrt() * height;
+    for (i, face) in faces[last - 7..last - 1].iter().enumerate() {
+        assert!((face.area_mm2 - lateral_area).abs() < 1e-10);
+        let angles = [i as f64, (i + 1) as f64].map(|i| i * std::f64::consts::PI / 3.);
+        let radius = across / 3_f64.sqrt();
+        let expected = [
+            radius * (angles[0].cos() + angles[1].cos()) / 2.,
+            -radius * (angles[0].sin() + angles[1].sin()) / 2.,
+            -height / 2.,
+        ];
+        for (actual, expected) in face.center_mm.into_iter().zip(expected) {
+            assert!((actual - expected).abs() < 1e-11);
+        }
+    }
+    assert_eq!(boundary.input(), &original);
+}
+
+#[test]
+fn actual_pipe_affine_centroid_shift_refuses_before_lazy_queries_and_valid_retry_keeps_source() {
+    let source_spec = spec(true, false, false);
+    let owner = EntityId::new();
+    let policy = GeometryPolicy::default();
+    let mut factory = PipeThreadFactory::new(32 * 1024 * 1024, 16);
+    let kind = PipeHardwareKind::HexNut {
+        across_flats_mm: 18.,
+    };
+    factory.begin_compile();
+    let shape = factory
+        .build(source_spec, kind, 1., owner, frame(false), policy, None)
+        .unwrap();
+    factory.finish_compile(true);
+    let body = shape.pipe_hardware_body().unwrap();
+    let prepared = &body.source._prepared;
+    let (boundary, _) = prepared.thread.rust_radial_boundary().unwrap();
+    let original = boundary.input().clone();
+    let transform = |epsilon| RigidTransform {
+        rotation: [[1. + epsilon, 0., 0.], [0., 1. - epsilon, 0.], [0., 0., 1.]],
+        translation_mm: [0.; 3],
+    };
+    let rejected = transform(4.9e-11);
+    rejected.validate(policy).unwrap(); // reach the actual provider, not the public rigid-input guard
+    let p = body.placement.transformed(rejected, policy).unwrap();
+    let span = body.source.bounds.iter().map(|b| b[1] - b[0]).sum::<f64>();
+    let scale = p.area_scale();
+    let delta = scale.hi / scale.lo - 1.;
+    assert!(p.sigma[1] * span * delta / (1. - delta) > policy.linear_tolerance_mm / 8.);
+    assert_eq!(
+        shape.transformed(rejected).err().unwrap().kind,
+        GeometryErrorKind::Unsupported
+    );
+    assert_eq!(prepared.descriptor_queries.get(), 0);
+    assert!(prepared.lazy_measured.borrow().is_none());
+    let valid = shape.transformed(transform(1e-13)).unwrap();
+    assert!(Rc::ptr_eq(
+        prepared,
+        &valid.pipe_hardware_body().unwrap().source._prepared
+    ));
+    assert!((valid.volume_mm3().unwrap() / shape.volume_mm3().unwrap() - 1.).abs() < 1e-12);
+    factory.begin_compile();
+    let retry = factory
+        .build(source_spec, kind, 1., owner, frame(true), policy, None)
+        .unwrap();
+    factory.finish_compile(true);
+    assert_eq!(factory.stats().hits, 1);
+    assert_eq!(prepared.descriptor_queries.get(), 0);
+    assert!(Rc::ptr_eq(
+        prepared,
+        &retry.pipe_hardware_body().unwrap().source._prepared
+    ));
+    retry.bounds().unwrap();
+    assert_eq!(boundary.input(), &original);
+}
