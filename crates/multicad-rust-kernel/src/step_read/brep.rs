@@ -1000,7 +1000,8 @@ mod unowned_tests {
         "FILE_NAME('x','1970-01-01T00:00:00',(''),(''),'','','');",
         "FILE_SCHEMA(('AUTOMOTIVE_DESIGN'));ENDSEC;DATA;",
         "#1=CARTESIAN_POINT('',(0.,0.,0.));#2=VERTEX_POINT('',#1);",
-        "#3=EDGE_LOOP('',(#4));#4=ORIENTED_EDGE('',*,*,#2,.T.);",
+        "#3=EDGE_LOOP('',(#4));#4=ORIENTED_EDGE('',*,*,#7,.T.);",
+        "#7=EDGE_CURVE('',#2,#2,#1,.T.);",
         "#5=CLOSED_SHELL('',(#3));#6=MANIFOLD_SOLID_BREP('',#5);",
         "ENDSEC;END-ISO-10303-21;"
     );
@@ -1008,7 +1009,7 @@ mod unowned_tests {
     #[test]
     fn topology_outside_every_solid_is_reported() {
         assert!(!has_unowned_topology(SOLID));
-        let orphan = SOLID.replace("ENDSEC;END", "#7=VERTEX_POINT('',#1);ENDSEC;END");
+        let orphan = SOLID.replace("ENDSEC;END", "#8=VERTEX_POINT('',#1);ENDSEC;END");
         assert!(has_unowned_topology(&orphan));
         assert!(!has_unowned_topology("not a STEP file"));
     }
