@@ -2,6 +2,7 @@
 //! outer polygon. Linear angular sweeping creates a checked oriented annulus.
 use super::*;
 use crate::rounded_thread::ThroughBore;
+pub(super) mod blind;
 
 pub fn tessellate_bore(bore: &ThroughBore, options: Tessellation) -> Result<DisplayMesh, Error> {
     tessellate_bore_with_interrupt(bore, options, None)
@@ -11,7 +12,12 @@ pub fn tessellate_bore_with_interrupt<'a>(
     options: Tessellation,
     interrupt: Option<&'a dyn Fn() -> bool>,
 ) -> Result<DisplayMesh, Error> {
-    tessellate_shape(bore.thread(), Some(bore), options, interrupt)
+    tessellate_shape(
+        bore.thread(),
+        Some(Receiver::Through(bore)),
+        options,
+        interrupt,
+    )
 }
 pub fn bore_volume_error_bound(bore: &ThroughBore, options: Tessellation) -> Result<f64, Error> {
     let inner = volume_error_bound(bore.thread(), options)?;

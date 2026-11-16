@@ -7,6 +7,7 @@ use std::{collections::HashMap, f64::consts::TAU};
 mod bore;
 mod certificate;
 mod sampling;
+pub use bore::blind::tessellate_blind_bore_with_interrupt;
 pub use bore::{bore_volume_error_bound, tessellate_bore, tessellate_bore_with_interrupt};
 use sampling::{Receipt, phase_strips};
 #[cfg(test)]
@@ -35,7 +36,7 @@ pub fn tessellate_with_interrupt<'a>(
 }
 fn tessellate_shape<'a>(
     thread: &'a Thread,
-    bore: Option<&crate::rounded_thread::ThroughBore>,
+    bore: Option<Receiver<'a>>,
     options: Tessellation,
     interrupt: Option<&'a dyn Fn() -> bool>,
 ) -> Result<DisplayMesh, Error> {
@@ -45,10 +46,10 @@ fn tessellate_shape<'a>(
     let receipt = Receipt::new(thread, options)?;
     let max_angle = (options.angle / 4.)
         .min((options.deflection / (2. * thread.spec().major_radius_mm)).sqrt());
-    let max_angle = if let Some(bore) = bore {
-        bore::max_angle(bore, options, max_angle)?
-    } else {
-        max_angle
+    let max_angle = match bore {
+        Some(Receiver::Through(bore)) => bore::max_angle(bore, options, max_angle)?,
+        Some(Receiver::Blind(bore)) => bore::blind::max_angle(bore, options, max_angle)?,
+        None => max_angle,
     };
     let count = (TAU / max_angle).ceil();
     if !count.is_finite() || count * 2. > options.triangle_limit as f64 {
@@ -69,6 +70,12 @@ fn tessellate_shape<'a>(
             }
         }
     }
+}
+
+#[derive(Clone, Copy)]
+enum Receiver<'a> {
+    Through(&'a crate::rounded_thread::ThroughBore),
+    Blind(&'a crate::rounded_thread::BlindBore),
 }
 
 /// Bound signed-volume error of a successfully emitted closed radial graph.
@@ -252,14 +259,14 @@ impl<'a, 'b> Builder<'a, 'b> {
         }
     }
 
-    fn build(
-        mut self,
-        bore: Option<&crate::rounded_thread::ThroughBore>,
-    ) -> Result<DisplayMesh, AttemptError> {
+    fn build(mut self, bore: Option<Receiver<'_>>) -> Result<DisplayMesh, AttemptError> {
         self.work.checkpoint()?;
         self.build_wall()?;
         if let Some(bore) = bore {
-            self.add_bore(bore.radius_mm())?;
+            match bore {
+                Receiver::Through(bore) => self.add_bore(bore.radius_mm())?,
+                Receiver::Blind(bore) => self.add_blind_bore(bore)?,
+            }
         } else {
             let caps = std::mem::take(&mut self.caps);
             for (cap, ring) in caps.into_iter().enumerate() {
