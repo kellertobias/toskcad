@@ -1245,12 +1245,8 @@
         "sphere",
         "torus"
       ],
-      "expected": "unsupported",
-      "verdict": "unsupported",
-      "finding": {
-        "owner": "CAD-360",
-        "summary": "The assembly structure reads (CAD-361), but component e50ef681-4cb7-11ee-8265-85d007bab819_part (solid #110) carries four horn-torus corner blends (TOROIDAL_SURFACE with major = minor = 0.125 mm), which the retained boundary reader refuses; the import refuses atomically rather than drop the component."
-      }
+      "expected": "pass",
+      "verdict": "pass"
     },
     {
       "id": "kicad-lib-C_Radial_D6.3mm_H7.0mm_P2.50mm",
