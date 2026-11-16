@@ -489,6 +489,52 @@ fn re_derivation_refuses_supports_that_do_not_meet_near_the_vertex() {
 }
 
 #[test]
+fn a_stated_vertex_nearer_to_its_supports_than_their_balance_stands() {
+    // A vertex 0.95 tolerances above three faces in z = 0 and an edge in it,
+    // and 0.95 below an edge 1.9 above them: the supports have no common
+    // point, and their balance at 0.38 lies 1.52 from the high edge. The
+    // stated vertex is within the tolerance of all five.
+    let tolerance = 1e-5;
+    let line = |origin: Point, direction: Point| Curve::Line { origin, direction };
+    let stated = [0., 0., 0.95 * tolerance];
+    let vertices = vec![stated, [10., 0., 1.9 * tolerance], [0., 10., 0.]];
+    let high = line([0., 0., 1.9 * tolerance], [1., 0., 0.]);
+    let low = line([0.; 3], [0., 1., 0.]);
+    let edges = vec![
+        Edge::new(high, [0, 1], [vertices[0], vertices[1]], tolerance).unwrap(),
+        Edge::new(low, [0, 2], [vertices[0], vertices[2]], tolerance).unwrap(),
+    ];
+    let plane = Surface::Plane(Frame {
+        origin: [0.; 3],
+        x: [1., 0., 0.],
+        y: [0., 1., 0.],
+        z: [0., 0., 1.],
+    });
+    let face = Face {
+        surface: plane,
+        same_sense: true,
+        loops: vec![Loop {
+            uses: vec![(1, true)],
+            vertex: None,
+        }],
+    };
+    let boundary = Boundary {
+        vertices,
+        edges,
+        faces: vec![face.clone(), face.clone(), face],
+        shells: vec![],
+    };
+    let (kept, residual) = vertex::rederive(&boundary, tolerance).unwrap();
+    assert_eq!(kept.vertices[0], stated);
+    assert!((residual - 0.95 * tolerance).abs() < 1e-12, "{residual:e}");
+    // A tolerance below the stated vertex's own distance refuses it.
+    assert_eq!(
+        vertex::rederive(&boundary, 0.9 * tolerance).unwrap_err(),
+        Error::Invalid
+    );
+}
+
+#[test]
 fn thin_wedges_along_curved_edges_mesh_without_folds() {
     // OpenCascade 7.9.3 measures 0.17402361314366 mm3 for this model.
     let solid = solid(WEDGES);

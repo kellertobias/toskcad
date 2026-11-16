@@ -36,8 +36,10 @@ fn supports(boundary: &Boundary) -> Vec<(BTreeSet<usize>, BTreeSet<usize>)> {
 /// Move every vertex onto the common point of its supports, found by
 /// averaging the closest points on them until it settles. Returns the
 /// boundary and the largest remaining distance from a vertex to one of its
-/// supports. A vertex whose supports do not settle on one point within
-/// `tolerance` of the stated vertex is refused as invalid.
+/// supports. A vertex whose supports do not settle within `tolerance` of
+/// each of them and of the stated vertex keeps its stated point if that
+/// lies within `tolerance` of every support, and is refused as invalid
+/// otherwise.
 pub fn rederive(boundary: &Boundary, tolerance: f64) -> Result<(Boundary, f64)> {
     let incident = supports(boundary);
     let mut vertices = boundary.vertices.clone();
@@ -46,7 +48,8 @@ pub fn rederive(boundary: &Boundary, tolerance: f64) -> Result<(Boundary, f64)> 
         let stated = vertices[vertex];
         let mut point = stated;
         let mut worst = f64::INFINITY;
-        for _ in 0..SWEEPS {
+        let mut at_stated = f64::INFINITY;
+        for sweep in 0..SWEEPS {
             let mut projections: Vec<Point> = Vec::with_capacity(edges.len() + faces.len());
             for &edge in edges {
                 let curve = &boundary.edges[edge].curve;
@@ -60,6 +63,9 @@ pub fn rederive(boundary: &Boundary, tolerance: f64) -> Result<(Boundary, f64)> 
                 .iter()
                 .map(|&p| distance(p, point))
                 .fold(0., f64::max);
+            if sweep == 0 {
+                at_stated = worst;
+            }
             let count = projections.len() as f64;
             let next = scale(projections.into_iter().fold([0.; 3], add), 1. / count);
             let settled = distance(next, point) <= 1e-15 * (1. + super::norm(point));
@@ -69,10 +75,13 @@ pub fn rederive(boundary: &Boundary, tolerance: f64) -> Result<(Boundary, f64)> 
                 break;
             }
         }
-        ensure(
-            worst <= tolerance && distance(point, stated) <= tolerance,
-            Error::Invalid,
-        )?;
+        if !(worst <= tolerance && distance(point, stated) <= tolerance) {
+            // Supports that disagree within the tolerance have no common
+            // point, and their balance may lie farther from one of them
+            // than the stated vertex does, which then stands.
+            ensure(at_stated <= tolerance, Error::Invalid)?;
+            (point, worst) = (stated, at_stated);
+        }
         residual = residual.max(worst);
         vertices[vertex] = point;
     }
