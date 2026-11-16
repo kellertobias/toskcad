@@ -444,12 +444,45 @@ fn sections_publish_exact_lines_and_ellipses() {
         assert_eq!(pair.0.ends_mm[1], pair.1.ends_mm[0]);
     }
 
-    // A sphere's section is a circle; a torus keeps its chords.
+    // The cylinder of radius 6 about (3, 4) cut at a slope of 0.3 through
+    // its side alone: one whole ellipse with semiaxes 6 sqrt 1.09 and 6.
+    let cylinder = solid(CYLINDER);
+    let loops = edges(&cylinder, [3., 4., 12.5], [0.3, 0., 1.]);
+    let [edge] = loops[0].as_slice() else {
+        panic!("{loops:?}")
+    };
+    let SectionCurve::Ellipse(arc) = edge.curve else {
+        panic!("{edge:?}")
+    };
+    assert_eq!(arc.sweep_rad().abs(), TAU);
+    let [major, minor] = arc.ellipse().semiaxes_mm();
+    assert!((major - 6. * 1.09f64.sqrt()).abs() < 1e-9 && (minor - 6.).abs() < 1e-9);
+    assert!(distance(arc.ellipse().center_mm(), [3., 4., 12.5]) < 1e-9);
+    // Cut along its axis, a cone meets the plane in a hyperbola, which
+    // keeps its chords, as do the caps' exact chords beside it.
+    let loops = edges(&frustum, [3., 0., 5.], [1., 0., 0.]);
+    assert_eq!(loops.len(), 1);
+    let lines = loops[0]
+        .iter()
+        .filter(|e| matches!(e.curve, SectionCurve::Line))
+        .count();
+    assert_eq!(lines, loops[0].len());
+    assert!(lines > 4, "{lines}");
+    // A sphere's section is a circle, across any axis; a torus keeps its
+    // chords.
     let sphere = solid(SPHERE);
     let loops = edges(&sphere, [0., 0., 3.], [0., 0., 1.]);
     assert!(
         matches!(loops[0].as_slice(), [e] if matches!(e.curve, SectionCurve::Ellipse(a) if (a.ellipse().semiaxes_mm()[0] - 4.).abs() < 1e-9))
     );
+    let loops = edges(&sphere, [3., 0., 0.], [1., 0., 0.]);
+    let [edge] = loops[0].as_slice() else {
+        panic!("{loops:?}")
+    };
+    let SectionCurve::Ellipse(arc) = edge.curve else {
+        panic!("{edge:?}")
+    };
+    assert!(arc.ellipse().semiaxes_mm().iter().all(|r| (r - 4.).abs() < 1e-9));
     let torus = solid(TORUS);
     let bounds = torus.bounds_mm();
     let middle = std::array::from_fn(|i| 0.5 * (bounds[0][i] + bounds[1][i]));

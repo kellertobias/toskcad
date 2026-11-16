@@ -144,11 +144,11 @@ pub fn section_edges(
 ) -> Result<Vec<Vec<SectionEdge>>> {
     let unit = scale(normal, 1. / norm(normal));
     let mut loops = Vec::new();
-    for ring in crossings(solid, origin, normal, options, interrupt)? {
-        let ring = merged(ring, MERGE * options.deflection_mm);
-        if ring.len() < 3 {
-            continue;
-        }
+    let rings = crossings(solid, origin, normal, options, interrupt)?
+        .into_iter()
+        .map(|ring| merged(ring, MERGE * options.deflection_mm))
+        .filter(|ring| ring.len() >= 3);
+    for ring in rings {
         let n = ring.len();
         // Start at a change of face, so that every run lies on one face.
         let start = (0..n)
@@ -294,17 +294,11 @@ fn conic(surface: &Surface, (origin, normal): (Point, Point)) -> Option<Ellipse>
     let mean = 0.5 * (a + c);
     let spread = (0.25 * (a - c) * (a - c) + b * b).sqrt();
     let (low, high) = (mean - spread, mean + spread);
-    if low <= 0. || h <= 0. {
-        return None;
-    }
-    // The major axis is the eigenvector of the smaller eigenvalue.
-    let direction = if spread <= 1e-12 * mean {
-        [1., 0.]
-    } else if (a - low).abs() >= (c - low).abs() {
-        [b, low - a]
-    } else {
-        [low - c, b]
-    };
+    // The major axis is the eigenvector of the smaller eigenvalue, a
+    // quarter turn from the principal angle of the larger one. Semiaxes
+    // that are not positive and finite are refused by the ellipse.
+    let angle = 0.5 * (2. * b).atan2(a - c);
+    let direction = [-angle.sin(), angle.cos()];
     let major = add(scale(e1, direction[0]), scale(e2, direction[1]));
     let centre = add(origin, add(scale(e1, y0[0]), scale(e2, y0[1])));
     Ellipse::new(centre, normal, major, [(h / low).sqrt(), (h / high).sqrt()]).ok()
@@ -323,28 +317,19 @@ fn arc(
         let d = sub(p, ellipse.center_mm());
         let mut t =
             (dot(d, ellipse.minor_axis()) / minor).atan2(dot(d, ellipse.major_axis()) / major);
-        if distance(ellipse.point_at(t), p) > near(p) {
-            return None;
-        }
+        (distance(ellipse.point_at(t), p) <= near(p)).then_some(())?;
         if let Some(&previous) = angles.last() {
             t = previous + (t - previous + PI).rem_euclid(TAU) - PI;
             // Consecutive crossings are a chord apart, far less than a
             // half turn: a larger step would leave the run ambiguous.
-            if (t - previous).abs() >= FRAC_PI_2 {
-                return None;
-            }
+            ((t - previous).abs() < FRAC_PI_2).then_some(())?;
         }
         angles.push(t);
     }
     let sweep = angles[angles.len() - 1] - angles[0];
-    let sweep = if closed {
-        if (sweep.abs() - TAU).abs() > 1e-6 {
-            return None;
-        }
-        TAU.copysign(sweep)
-    } else {
-        sweep
-    };
+    // A closed run goes once round.
+    (!closed || (sweep.abs() - TAU).abs() <= 1e-6).then_some(())?;
+    let sweep = if closed { TAU.copysign(sweep) } else { sweep };
     // Every crossing moves the same way round the ellipse.
     let monotonic = angles
         .windows(2)

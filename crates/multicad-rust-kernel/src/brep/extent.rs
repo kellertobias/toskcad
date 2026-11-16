@@ -39,10 +39,7 @@ fn stationary(surface: &Surface, axis: usize, seed: [f64; 2], span: [f64; 2]) ->
         let (cu, cv) = (column(0), column(1));
         let determinant = cu[0] * cv[1] - cv[0] * cu[1];
         let size = (cu[0].abs() + cv[0].abs()) * (cu[1].abs() + cv[1].abs());
-        if !determinant.is_finite() {
-            return None;
-        }
-        let step = if determinant.abs() > 1e-9 * size {
+        let step = if determinant.is_finite() && determinant.abs() > 1e-9 * size {
             [
                 (g[0] * cv[1] - cv[0] * g[1]) / determinant,
                 (cu[0] * g[1] - g[0] * cu[1]) / determinant,
@@ -52,7 +49,10 @@ fn stationary(surface: &Surface, axis: usize, seed: [f64; 2], span: [f64; 2]) ->
             // stationary along a whole parallel, such as a torus's top
             // circle: step along the parameter whose rate still changes.
             let (du, dv) = (cu[0].abs(), cv[1].abs());
-            if du.max(dv) == 0. || cu[1].abs() + cv[0].abs() > 1e-9 * du.max(dv) {
+            if !determinant.is_finite()
+                || du.max(dv) == 0.
+                || cu[1].abs() + cv[0].abs() > 1e-9 * du.max(dv)
+            {
                 return None;
             }
             if du >= dv {

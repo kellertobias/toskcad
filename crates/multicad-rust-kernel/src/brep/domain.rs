@@ -69,31 +69,29 @@ impl UvLoop {
             };
             let curve = &boundary.edges[segment.edge].curve;
             let width = segment.t[1] - segment.t[0];
-            let mut piece = 0.;
-            let mut exact = true;
-            for (node, weight) in super::GAUSS {
-                let t = segment.t[0] + 0.5 * width * (1. + node);
-                let along = 0.5 * (1. + node);
-                let (point, tangent) = curve.evaluate(t);
-                let seed =
-                    [0, 1].map(|axis| ends[0][axis] + (ends[1][axis] - ends[0][axis]) * along);
-                let uv = surface.invert(point, Some(seed));
-                let (_, [su, sv]) = surface.evaluate(uv);
-                let (a, b, c) = (dot(su, su), dot(su, sv), dot(sv, sv));
-                let (ru, rv) = (dot(tangent, su), dot(tangent, sv));
-                let determinant = a * c - b * b;
-                if determinant <= 1e-12 * a * c {
-                    exact = false;
-                    break;
-                }
-                let rate = [
-                    (c * ru - b * rv) / determinant,
-                    (a * rv - b * ru) / determinant,
-                ];
-                piece += 0.5 * width * weight * 0.5 * (uv[0] * rate[1] - uv[1] * rate[0]);
-            }
             // Where the parameter rate is undefined the chord stands.
-            total += if exact { piece } else { chord };
+            let piece: Option<f64> = super::GAUSS
+                .iter()
+                .map(|&(node, weight)| {
+                    let t = segment.t[0] + 0.5 * width * (1. + node);
+                    let along = 0.5 * (1. + node);
+                    let (point, tangent) = curve.evaluate(t);
+                    let seed =
+                        [0, 1].map(|axis| ends[0][axis] + (ends[1][axis] - ends[0][axis]) * along);
+                    let uv = surface.invert(point, Some(seed));
+                    let (_, [su, sv]) = surface.evaluate(uv);
+                    let (a, b, c) = (dot(su, su), dot(su, sv), dot(sv, sv));
+                    let (ru, rv) = (dot(tangent, su), dot(tangent, sv));
+                    let determinant = a * c - b * b;
+                    let rate = [
+                        (c * ru - b * rv) / determinant,
+                        (a * rv - b * ru) / determinant,
+                    ];
+                    (determinant > 1e-12 * a * c)
+                        .then(|| 0.5 * width * weight * 0.5 * (uv[0] * rate[1] - uv[1] * rate[0]))
+                })
+                .sum();
+            total += piece.unwrap_or(chord);
         }
         total
     }
@@ -127,20 +125,12 @@ pub(crate) enum Domain {
 /// the tolerance and bound no region. Measured in space, since a parameter
 /// plane may be stretched without bound.
 fn sliver(points: &[Raw], tolerance: f64) -> bool {
-    let Some(first) = points.first() else {
-        return true;
-    };
+    let first = points.first().map_or([0.; 3], |point| point.position);
     let mut vector = [0.; 3];
     let mut length = 0.;
     for (i, point) in points.iter().enumerate() {
         let next = points[(i + 1) % points.len()].position;
-        vector = add(
-            vector,
-            cross(
-                sub(point.position, first.position),
-                sub(next, first.position),
-            ),
-        );
+        vector = add(vector, cross(sub(point.position, first), sub(next, first)));
         length += distance(point.position, next);
     }
     0.5 * norm(vector) <= tolerance * length
@@ -484,10 +474,8 @@ pub(crate) fn degenerate(
         let points = raw(boundary, &trim.uses, samples, false);
         let thin = sliver(&points, tolerance);
         // The points must still lie on the face.
-        let Some(unrolled) = unroll(&face.surface, points, tolerance)? else {
-            return Ok(false);
-        };
-        if unrolled.winding != [0, 0] || !thin {
+        let unrolled = unroll(&face.surface, points, tolerance)?;
+        if !thin || unrolled.is_none_or(|unrolled| unrolled.winding != [0, 0]) {
             return Ok(false);
         }
         any = true;
