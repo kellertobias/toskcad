@@ -35,6 +35,10 @@ fn genuine_physical_metadata_roles_and_arities_cannot_authorize_other_records() 
             "GEOMETRIC_REPRESENTATION_CONTEXT(4)".to_owned(),
         ),
         (
+            "GEOMETRIC_REPRESENTATION_CONTEXT",
+            "GEOMETRIC_REPRESENTATION_CONTEXT()".to_owned(),
+        ),
+        (
             "REPRESENTATION_CONTEXT",
             "REPRESENTATION_CONTEXT(1.,'')".to_owned(),
         ),
@@ -121,23 +125,40 @@ fn genuine_physical_metadata_roles_and_arities_cannot_authorize_other_records() 
         ),
     ];
     for (kind, replacement) in cases {
-        let owner = id(kind);
-        let component = arena[&owner].iter().find(|e| e.name == kind).unwrap();
-        let source = component.source.unwrap();
-        let start = source.as_ptr() as usize - actual.as_ptr() as usize;
-        let mut changed = actual.clone();
-        changed.replace_range(start..start + source.len(), &replacement);
-        let records = crate::step_read::part21::parse(&changed).unwrap();
-        let mut budget =
-            Budget::new(crate::step_read::npt_stock::Options::default(), None).unwrap();
-        assert!(
-            matches!(
-                check(&records, &records[&owner], &mut budget),
-                Err(Error::Invalid | Error::Unsupported)
-            ),
-            "{kind}: {replacement}"
-        );
+        let owners = arena
+            .iter()
+            .filter_map(|(&owner, parts)| {
+                parts
+                    .iter()
+                    .find(|e| e.name == kind)
+                    .map(|component| (owner, component))
+            })
+            .collect::<Vec<_>>();
+        assert!(!owners.is_empty());
+        for (owner, component) in owners {
+            let source = component.source.unwrap();
+            let start = source.as_ptr() as usize - actual.as_ptr() as usize;
+            let mut changed = actual.clone();
+            changed.replace_range(start..start + source.len(), &replacement);
+            let records = crate::step_read::part21::parse(&changed).unwrap();
+            let mut budget =
+                Budget::new(crate::step_read::npt_stock::Options::default(), None).unwrap();
+            assert!(
+                matches!(
+                    check(&records, &records[&owner], &mut budget),
+                    Err(Error::Invalid | Error::Unsupported)
+                ),
+                "{kind}: {replacement}"
+            );
+        }
     }
+    // Empty component input is a separate helper contract; the physical
+    // parser rejects an empty record before it could reach this validator.
+    let mut budget = Budget::new(crate::step_read::npt_stock::Options::default(), None).unwrap();
+    assert!(matches!(
+        check(&arena, &[], &mut budget),
+        Err(Error::Invalid)
+    ));
     // Reuse the untouched original raw records after every rejected mutation.
     for parts in arena.values() {
         let mut budget =
