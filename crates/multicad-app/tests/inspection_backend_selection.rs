@@ -69,8 +69,7 @@ fn pair_query(session: &Session, a: &PrimitiveRequest, b: &PrimitiveRequest) -> 
     }
 }
 
-#[test]
-fn desktop_inspection_workers_keep_the_selected_backend_for_the_same_source() {
+fn sphere_and_box_fixture() -> (Session, PrimitiveRequest, PrimitiveRequest) {
     let mut session = Session::new(Document::new("Inspection backend").unwrap()).unwrap();
     let sphere = PrimitiveRequest::new(
         "Round stock",
@@ -83,27 +82,39 @@ fn desktop_inspection_workers_keep_the_selected_backend_for_the_same_source() {
     for primitive in [&sphere, &box_] {
         add(&mut session, primitive);
     }
+    (session, sphere, box_)
+}
+
+#[test]
+fn removed_provider_desktop_inspection_refuses_both_workers_explicitly() {
+    let (session, sphere, box_) = sphere_and_box_fixture();
+    let before = session.document().clone();
     let document = session.document();
     let revision = session.revision();
     let measurement = MeasurementStamp::capture(document, revision).unwrap();
     let assembly = AssemblyInspectionQuery::Current(pair_query(&session, &sphere, &box_));
-
     let mut native_measure =
         inspection::Backend::with_geometry_backend(GeometryBackend::OpenCascade);
     native_measure.request(document, measurement, None).unwrap();
-    assert!(reply(|| native_measure.poll()).result.is_ok());
+    let failure = reply(|| native_measure.poll()).result.unwrap_err();
+    assert!(failure.contains("OpenCascade is unavailable"), "{failure}");
     let mut native_assembly =
         assembly_inspection::Backend::with_geometry_backend(GeometryBackend::OpenCascade);
     native_assembly.request(document, &assembly).unwrap();
-    let AssemblyInspectionReport::Current(report) =
-        reply(|| native_assembly.poll()).result.unwrap()
-    else {
-        panic!("Expected current assembly report");
-    };
-    let pair = report.pairs[0].result.as_ref().unwrap();
-    assert_eq!(pair.relation, PairRelation::Separated);
-    assert!((pair.minimum_clearance_mm - 7.).abs() < 1e-6);
+    let failure = reply(|| native_assembly.poll()).result.unwrap_err();
+    assert!(failure.contains("OpenCascade is unavailable"), "{failure}");
+    assert_eq!(session.document(), &before);
+    assert_eq!(session.revision(), revision);
+}
 
+#[test]
+fn rust_desktop_workers_keep_sphere_measurement_and_explicit_pair_refusal() {
+    let (session, sphere, box_) = sphere_and_box_fixture();
+    let before = session.document().clone();
+    let document = session.document();
+    let revision = session.revision();
+    let measurement = MeasurementStamp::capture(document, revision).unwrap();
+    let assembly = AssemblyInspectionQuery::Current(pair_query(&session, &sphere, &box_));
     let mut rust_measure = inspection::Backend::with_geometry_backend(GeometryBackend::Rust);
     rust_measure.request(document, measurement, None).unwrap();
     let mut rust_assembly =
@@ -119,6 +130,7 @@ fn desktop_inspection_workers_keep_the_selected_backend_for_the_same_source() {
         failure.kind,
         multicad_core::assembly_inspection::InspectionFailureKind::Unsupported
     );
+    assert_eq!(session.document(), &before);
     assert_eq!(session.revision(), revision);
 }
 
