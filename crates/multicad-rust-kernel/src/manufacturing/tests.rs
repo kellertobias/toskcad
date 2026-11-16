@@ -237,3 +237,51 @@ fn public_uncounted_specialization_never_invokes_budget_callbacks() {
         Ok(certify(&mesh).unwrap())
     );
 }
+
+#[test]
+fn counted_vertex_cycles_match_independent_shells_cavities_and_unused_vertices() {
+    let mut mesh = tetrahedron([0.; 3], 4., true);
+    append(&mut mesh, tetrahedron([0.125; 3], 0.25, false));
+    for i in 1..128 {
+        let x = i as f64 * 8.;
+        append(&mut mesh, tetrahedron([x, 0., 0.], 4., true));
+        append(
+            &mut mesh,
+            tetrahedron([x + 0.125, 0.125, 0.125], 0.25, false),
+        );
+    }
+    mesh.vertices.extend([9999.; 3]);
+    let original = mesh.clone();
+    let expected = certify(&mesh).unwrap();
+    assert_eq!(expected.vertex_links, 128 * 8);
+    let mut calls = 0;
+    let mut last_storage = 0;
+    let actual = super::certify_counted(&mesh, &mut |_, bytes| {
+        calls += 1;
+        if bytes.is_some() {
+            last_storage = calls;
+        }
+        Ok::<_, ()>(())
+    })
+    .unwrap();
+    assert_eq!(actual, expected);
+    // The last allocation is the vertex-link table; interrupt after its
+    // allocation and within traversal, after private links have changed.
+    let mut seen = 0;
+    assert_eq!(
+        super::certify_counted(&mesh, &mut |_, _| {
+            seen += 1;
+            if seen == last_storage + 4 {
+                Err("cycle cancel")
+            } else {
+                Ok(())
+            }
+        }),
+        Err(super::CountedError::Interrupted("cycle cancel"))
+    );
+    assert_eq!(mesh, original);
+    assert_eq!(
+        super::certify_counted(&mesh, &mut |_, _| Ok::<_, ()>(())),
+        Ok(expected)
+    );
+}

@@ -7,6 +7,7 @@
 
 use crate::display::{DisplayMesh, MeshError};
 mod counting_sort;
+mod fan_cycles;
 
 const MAX_TRIANGLES: usize = 5_000_000;
 const MAX_VERTICES: usize = MAX_TRIANGLES * 3;
@@ -286,33 +287,55 @@ fn certify_impl<E, const COUNTED: bool>(
         {
             return Err(INVALID.into());
         }
-        fans.join(start, next(opposite), budget)?;
-        fans.join(next(start), opposite, budget)?;
+        if COUNTED {
+            // Pairing is an involution and next() permutes triangle corners.
+            // Their composition permutes ALL corners, preserving the vertex
+            // by the opposite-winding test above. Its cycles are precisely
+            // the components of the original fan-union graph.
+            budget.work(2)?;
+            fans.0[start as usize] = next(opposite);
+            fans.0[opposite as usize] = next(start);
+        } else {
+            fans.join(start, next(opposite), budget)?;
+            fans.join(next(start), opposite, budget)?;
+        }
         shells.join(start / 3, opposite / 3, budget)?;
     }
     let edge_pairs = (edges.len() / 2) as u32;
     drop(edges);
 
-    budget.storage(
-        (mesh.indices.len() + triangles.len() + vertices.len())
-            .checked_mul(4)
-            .ok_or(MeshError::BudgetExceeded)?,
-    )?;
-    budget.work(vertices.len())?;
-    let mut links = vec![u32::MAX; vertices.len()];
-    budget.storage((fans.0.capacity() + shells.0.capacity() + links.capacity()) * 4)?;
-    let mut vertex_links = 0;
-    for (corner, &vertex) in mesh.indices.iter().enumerate() {
-        budget.work(1)?;
-        let root = fans.root(corner as u32, budget)?;
-        let link = &mut links[vertex as usize];
-        if *link == u32::MAX {
-            *link = root;
-            vertex_links += 1;
-        } else if *link != root {
-            return Err(INVALID.into());
+    let vertex_links = if COUNTED {
+        fan_cycles::validate(
+            &mut fans.0,
+            &mesh.indices,
+            vertices.len(),
+            shells.0.capacity(),
+            budget,
+        )?
+    } else {
+        budget.storage(
+            (mesh.indices.len() + triangles.len() + vertices.len())
+                .checked_mul(4)
+                .ok_or(MeshError::BudgetExceeded)?,
+        )?;
+        budget.work(vertices.len())?;
+        let mut links = vec![u32::MAX; vertices.len()];
+        budget.storage((fans.0.capacity() + shells.0.capacity() + links.capacity()) * 4)?;
+        let mut vertex_links = 0;
+        for (corner, &vertex) in mesh.indices.iter().enumerate() {
+            budget.work(1)?;
+            let root = fans.root(corner as u32, budget)?;
+            let link = &mut links[vertex as usize];
+            if *link == u32::MAX {
+                *link = root;
+                vertex_links += 1;
+            } else if *link != root {
+                return Err(INVALID.into());
+            }
         }
-    }
+        vertex_links
+    };
+    drop(fans);
 
     // Recenter each shell before integration so distant placements do not
     // turn volume into a subtraction of large world-coordinate products.
