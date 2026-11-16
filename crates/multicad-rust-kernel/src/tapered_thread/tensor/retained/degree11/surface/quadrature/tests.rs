@@ -1,4 +1,76 @@
 use super::*;
+fn fresh_default_budget() -> Budget<'static> {
+    // The same valid initial state as the public calculation: no successful
+    // debit, observed work or earned receipt is fabricated by this fixture.
+    Budget {
+        initial: MAX_WORK,
+        remaining: MAX_WORK,
+        peak: 0,
+        evaluated: 0,
+        interrupt: None,
+        work_by_stage: [0; 10],
+        attempted_stage: None,
+        attempted_work: 0,
+        attempted_bytes: 0,
+        axis_samples: [0; 2],
+        axis_unresolved: [0; 2],
+        axis_remainder_max: [[0.; 4]; 2],
+        last_aggregate_widths: None,
+    }
+}
+#[test]
+fn actual_distinct_plane_pairs_refuse_disjoint_private_numeric_arguments_and_retry() {
+    let plane = |scale| {
+        let source = RetainedTensor11::new(
+            [1, 1],
+            (0..12)
+                .flat_map(|i| (0..12).map(move |j| [scale * i as f64, j as f64, 3.]))
+                .collect(),
+        )
+        .unwrap();
+        let geometry = source.cell([0, 0]).unwrap();
+        let normal = Arc::new(NormalPolynomial11::new(&geometry).unwrap());
+        let squared = SquaredNormal11::new(normal).unwrap();
+        (geometry, squared)
+    };
+    let (a, normal_a) = plane(1.);
+    let (b, normal_b) = plane(2.);
+    assert!(!std::ptr::eq(normal_a.source(), normal_b.source()));
+    let options = SurfaceOptions11::default();
+    let own_a = enclosure(&a, &normal_a, [0.; 3], options, &mut fresh_default_budget())
+        .unwrap()
+        .value
+        .map(pair);
+    let own_b = enclosure(&b, &normal_b, [0.; 3], options, &mut fresh_default_budget())
+        .unwrap()
+        .value
+        .map(pair);
+    assert!(own_a[0][0] <= 121. && 121. <= own_a[0][1]);
+    assert!(own_b[0][0] <= 242. && 242. <= own_b[0][1]);
+    // TWO different genuine numeric sources, not contradictory enclosures
+    // claimed for one source. The public Cell route always pairs its own
+    // position and normal. This specific disjoint pair must refuse; this is
+    // not a universal wrong-owner detector or a public-reach claim.
+    assert_eq!(
+        enclosure(&a, &normal_b, [0.; 3], options, &mut fresh_default_budget())
+            .map(|x| x.value.map(pair)),
+        Err(Error::Unresolved)
+    );
+    assert_eq!(
+        enclosure(&a, &normal_a, [0.; 3], options, &mut fresh_default_budget())
+            .unwrap()
+            .value
+            .map(pair),
+        own_a
+    );
+    assert_eq!(
+        enclosure(&b, &normal_b, [0.; 3], options, &mut fresh_default_budget())
+            .unwrap()
+            .value
+            .map(pair),
+        own_b
+    );
+}
 #[test]
 fn actual_d11_point_and_squared_normal_helper_enclose_independent_child_geometry() {
     let source = RetainedTensor11::new(
