@@ -230,6 +230,8 @@ Recovery copies were tested with FreeCAD, OpenCascade and KiCad library imports 
 
 The sweep covered 7236 STEP models in KiCad 10.0.0 at `3d7ac09b` (CAD-361 with CAD-360 merged at `2bd1933c`; 20.3 min wall, 16.7 min summed import time, debug build, host shared with the owned-core coverage run). Every file was classified; there were no panics or unclassified errors. A pass here means the import succeeded: volume, bounds and topology from the retained or recognised boundary, and for an assembly every placed occurrence. The full corpus workflow (mesh, section, persistence, export, OpenCascade) runs only for the pinned fixtures.
 
+**After merging Codex's kernel at `beefe073`** (integration commit `f0f9bc6e`, measured with the unowned-topology fix that follows it; release build): 6716 pass, 32 unsupported, 488 invalid, 0 limit. The tables below are still the `3d7ac09b` run. One flat file moved from unsupported to invalid: `Connector_AMASS.3dshapes/AMASS_XT60-M_1x02_P7.2mm_Vertical.step`. The recognised families now try Codex's literal NPT reader after an unfamiliar refusal; that reader refuses this file as invalid, and the retained boundary refuses it as unsupported, so the families' invalid verdict stands. No pass changed.
+
 | Producer (`FILE_NAME`) | Files | Pass | Unsupported | Invalid | Limit |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | KiCad | 5181 | 4811 | 17 | 353 | 0 |
