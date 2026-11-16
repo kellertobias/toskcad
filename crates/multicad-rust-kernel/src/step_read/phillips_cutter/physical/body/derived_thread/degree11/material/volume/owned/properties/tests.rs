@@ -150,3 +150,74 @@ fn actual_owned_d11_end_disks_survive_owner_drop_and_resource_refusals() {
         );
     }
 }
+
+#[test]
+fn actual_selected_head_tip_join_and_cavity_faces_do_not_require_other_thread_surface_queries() {
+    let source =
+        super::super::query::tests::actual_owned("selected-face-properties", false, false, 1);
+    let options = Degree11FacePropertyOptions::default();
+    let mut measured = 0;
+    for index in 0..source.face_count() {
+        if matches!(
+            source.face_source(index),
+            Some(Degree11MaterialFace::ThreadSide { .. })
+        ) {
+            continue;
+        }
+        let q = source
+            .face_properties(index, options, None)
+            .unwrap_or_else(|e| panic!("face{index} {:?}: {e:?}", source.face_source(index)));
+        assert!(std::ptr::eq(q.source(), &source));
+        assert_eq!(q.source_face, index);
+        assert!(q.area_mm2[0] > 0. && q.area_mm2[1] - q.area_mm2[0] <= options.area_width_mm2);
+        assert!(q.work_used() > 0 && q.accounted_peak_bytes() <= options.maximum_bytes);
+        measured += 1;
+    }
+    assert!(measured >= 5);
+    assert!(matches!(
+        source.face_properties(source.face_count(), options, None),
+        Err(PhillipsReadError::Invalid)
+    ));
+    let index = (0..source.face_count())
+        .find(|&i| {
+            matches!(
+                source.face_source(i),
+                Some(Degree11MaterialFace::ThreadTip { .. })
+            )
+        })
+        .unwrap();
+    let q = source.face_properties(index, options, None).unwrap();
+    assert!(matches!(
+        source.face_properties(
+            index,
+            Degree11FacePropertyOptions {
+                maximum_work: q.work_used() - 1,
+                ..options
+            },
+            None
+        ),
+        Err(PhillipsReadError::Limit)
+    ));
+    assert!(matches!(
+        source.face_properties(
+            index,
+            Degree11FacePropertyOptions {
+                maximum_bytes: q.accounted_peak_bytes() - 1,
+                ..options
+            },
+            None
+        ),
+        Err(PhillipsReadError::Limit)
+    ));
+    assert!(matches!(
+        source.face_properties(index, options, Some(&|| true)),
+        Err(PhillipsReadError::Cancelled)
+    ));
+    assert_eq!(
+        source
+            .face_properties(index, options, None)
+            .unwrap()
+            .area_mm2,
+        q.area_mm2
+    );
+}

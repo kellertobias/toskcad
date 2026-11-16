@@ -1,6 +1,8 @@
 //! Actual D11 planar end-disk measures. No nominal circle or mesh supplies them.
 use super::*;
+mod face;
 mod planar;
+pub use face::{Degree11FaceMeasurement, Degree11FacePropertyOptions};
 const END_WORK: usize = 512_000_000;
 #[derive(Clone, Copy, Debug)]
 pub struct Degree11EndDiskOptions {
