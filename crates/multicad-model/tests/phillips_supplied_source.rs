@@ -118,7 +118,7 @@ fn verify(nominal: f64, pitch: f64, left: bool) {
         .unwrap();
     assert_eq!(shank_radius_mm, nominal / 2.);
     assert!(resolved.major_radius_mm < shank_radius_mm && root > 0.);
-    let compiled = compiler()
+    let compiled = Compiler::default()
         .compile_with_backend(
             session.document(),
             session.revision(),
@@ -126,6 +126,18 @@ fn verify(nominal: f64, pitch: f64, left: bool) {
             None,
         )
         .unwrap();
+    let display = &compiled.snapshot().shapes[&request.feature].mesh;
+    assert!(!display.indices.is_empty());
+    assert!(display.vertices.iter().all(|v| v.is_finite()));
+    let manufacturing = compiled
+        .solid(request.feature)
+        .unwrap()
+        .manufacturing_mesh_with_receipt(Default::default())
+        .unwrap();
+    assert_eq!(
+        manufacturing.edge_pairs as usize * 2,
+        manufacturing.mesh.indices.len()
+    );
     let pose = if left {
         RigidTransform {
             translation_mm: [105., -20., 60.],
