@@ -52,6 +52,31 @@ fn independent_operator_comparison_checks_two_earned_physical_sources_and_real_l
     .unwrap();
     let used = MAX_WORK - work.remaining;
     assert!(used > 0);
+    // Helper-only ambiguity contract: duplicate an actual earned plain map
+    // value, never its fields or the sealed decoded material. The public
+    // decoder emits unique maps and does not expose this ambiguity route.
+    let mut ambiguous = decoded.parameter_maps().to_vec();
+    for earned in decoded.parameter_maps() {
+        ambiguous.push(earned.clone());
+        let mut ambiguity = Work {
+            remaining: MAX_WORK,
+            interrupt: None,
+        };
+        assert!(matches!(
+            compare(
+                actual_source.shell().input(),
+                decoded.material().shell().input(),
+                &ambiguous,
+                &mut ambiguity
+            ),
+            Err(Error::Unsupported)
+        ));
+        let removed = ambiguous.pop().unwrap();
+        assert_eq!(removed.target(), earned.target());
+        assert_eq!(removed.actual_entity(), earned.actual_entity());
+        assert_eq!(removed.mapping(), earned.mapping());
+    }
+    drop(ambiguous);
     // The ledger is a small independent helper contract, not an admitted
     // Source. Every proposed index below comes from these two genuinely earned
     // and successfully compared physical source/operator tables.
