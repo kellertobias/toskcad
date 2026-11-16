@@ -25,7 +25,26 @@ fn genuine_physical_metadata_roles_and_arities_cannot_authorize_other_records() 
     let schema = reference(&arena[&representation][0].args[2]).unwrap();
     let length_unit = id("LENGTH_UNIT");
     let angle_unit = id("PLANE_ANGLE_UNIT");
+    let parametric_context = id("PARAMETRIC_REPRESENTATION_CONTEXT");
     let cases = [
+        (
+            "SHAPE_DEFINITION_REPRESENTATION",
+            "SHAPE_DEFINITION_REPRESENTATION()".to_owned(),
+        ),
+        (
+            "ADVANCED_BREP_SHAPE_REPRESENTATION",
+            format!("ADVANCED_BREP_SHAPE_REPRESENTATION('',(#{solid},#{length_unit}),#{schema})"),
+        ),
+        (
+            "ADVANCED_BREP_SHAPE_REPRESENTATION",
+            format!(
+                "ADVANCED_BREP_SHAPE_REPRESENTATION('',(#{solid},#{solid}),#{parametric_context})"
+            ),
+        ),
+        (
+            "DEFINITIONAL_REPRESENTATION",
+            format!("DEFINITIONAL_REPRESENTATION('',(),#{parametric_context})"),
+        ),
         ("APPLICATION_CONTEXT", "APPLICATION_CONTEXT(1.)".to_owned()),
         ("APPLICATION_CONTEXT", "UNSUPPORTED_METADATA('')".to_owned()),
         (
