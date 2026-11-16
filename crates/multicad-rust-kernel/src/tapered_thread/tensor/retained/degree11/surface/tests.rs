@@ -79,6 +79,103 @@ fn actual_curved_d11_surface_integrals_enclose_independent_exact_polynomial() {
     assert!(result.work_used <= options.max_work);
     assert!(result.accounted_peak_bytes <= options.max_bytes);
     assert!(result.evaluated_cells > 1);
+    for tiny in [
+        SurfaceOptions11 {
+            max_bytes: result.accounted_peak_bytes - 1,
+            ..options
+        },
+        SurfaceOptions11 {
+            max_work: result.work_used - 1,
+            ..options
+        },
+    ] {
+        assert_eq!(source.surface_properties(tiny, None), Err(Error::Limit));
+    }
+    let exact = source
+        .surface_properties(
+            SurfaceOptions11 {
+                max_work: result.work_used,
+                max_bytes: result.accounted_peak_bytes,
+                ..options
+            },
+            None,
+        )
+        .unwrap();
+    assert_eq!(exact.area_mm2, result.area_mm2);
+    assert_eq!(exact.first_moment_mm3, result.first_moment_mm3);
+    assert_eq!(exact.centroid_mm, result.centroid_mm);
+    let before = source.clone();
+    let calls = std::cell::Cell::new(0);
+    let count = || {
+        calls.set(calls.get() + 1);
+        false
+    };
+    assert_eq!(
+        source.surface_properties(options, Some(&count)).unwrap(),
+        result
+    );
+    for stop in [calls.get() / 2, calls.get() - 1, calls.get()] {
+        let count = std::cell::Cell::new(0);
+        let cancel = || {
+            count.set(count.get() + 1);
+            count.get() == stop
+        };
+        assert_eq!(
+            source.surface_properties(options, Some(&cancel)),
+            Err(Error::Cancelled)
+        );
+        assert_eq!(count.get(), stop);
+        assert_eq!(source, before);
+    }
+    assert_eq!(source.surface_properties(options, None).unwrap(), result);
+}
+
+#[test]
+fn actual_two_root_d11_surface_refuses_initial_cell_limit_and_retries_exact_geometry() {
+    let source = RetainedTensor11::new(
+        [1, 2],
+        (0..12)
+            .flat_map(|i| (0..23).map(move |j| [i as f64, j as f64, 3.]))
+            .collect(),
+    )
+    .unwrap();
+    let before = source.clone();
+    assert_eq!(
+        source.surface_properties(
+            SurfaceOptions11 {
+                max_cells: 1,
+                ..Default::default()
+            },
+            None
+        ),
+        Err(Error::Limit)
+    );
+    let result = source
+        .surface_properties(
+            SurfaceOptions11 {
+                max_cells: 2,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+    contains(result.area_mm2, q(242));
+    for (b, v) in result
+        .centroid_mm
+        .into_iter()
+        .zip([Q::new(11.into(), 2.into()), q(11), q(3)])
+    {
+        contains(b, v);
+    }
+    for (b, v) in result
+        .first_moment_mm3
+        .into_iter()
+        .zip([q(1331), q(2662), q(726)])
+    {
+        contains(b, v);
+    }
+    assert_eq!(result.evaluated_cells, 2);
+    assert_eq!(source, before);
 }
 #[test]
 fn actual_planar_d11_surface_resource_cancel_and_retry_are_atomic() {
