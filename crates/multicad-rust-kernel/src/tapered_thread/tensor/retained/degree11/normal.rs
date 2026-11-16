@@ -10,6 +10,7 @@ pub const NORMAL11_BYTES: usize = 64 * 1024;
 pub struct NormalPolynomial11 {
     polynomial: NormalPolynomial,
     derivative: [[I; 3]; 2],
+    derivative_hulls: [[[I; 3]; 9]; 2],
     hull: [I; 3],
 }
 fn choose(n: usize, k: usize) -> u64 {
@@ -45,11 +46,52 @@ impl NormalPolynomial11 {
         if controls.iter().flatten().flatten().any(|x| !x.valid()) {
             return Err(Error::Unresolved);
         }
+        // Source tangent grids have finished their last use. Release them
+        // before cloning the normal grid for its derivative-cache pass.
+        drop(du);
+        drop(dv);
         let hull = coefficient_hull(&controls);
-        let derivative = std::array::from_fn(|axis| coefficient_hull(&derivative(&controls, axis)));
+        let derivative_hulls = std::array::from_fn(|axis| {
+            let mut grid = controls.clone();
+            std::array::from_fn(|order| {
+                let value = coefficient_hull(&grid);
+                if order < 8 {
+                    let degree = if axis == 0 {
+                        grid.len() - 1
+                    } else {
+                        grid[0].len() - 1
+                    };
+                    // Ascending updates read the next unmodified coefficient.
+                    // No second derivative grid overlaps this single copy.
+                    for i in 0..grid.len() - usize::from(axis == 0) {
+                        for j in 0..grid[0].len() - usize::from(axis == 1) {
+                            let next = if axis == 0 {
+                                grid[i + 1][j]
+                            } else {
+                                grid[i][j + 1]
+                            };
+                            let current = grid[i][j];
+                            grid[i][j] = std::array::from_fn(|k| {
+                                (next[k] - current[k]) * I::point(degree as f64)
+                            });
+                        }
+                    }
+                    if axis == 0 {
+                        grid.pop();
+                    } else {
+                        for row in &mut grid {
+                            row.pop();
+                        }
+                    }
+                }
+                value
+            })
+        });
+        let derivative = derivative_hulls.map(|rows| rows[1]);
         let result = Self {
             polynomial: NormalPolynomial { controls },
             derivative,
+            derivative_hulls,
             hull,
         };
         if result.retained_budget_bytes() > NORMAL11_BYTES {
@@ -149,6 +191,31 @@ impl NormalPolynomial11 {
             return Err(Error::Unresolved);
         }
         Ok(result.map(|v| [v.lo, v.hi]))
+    }
+    /// Cached whole-root high derivative hulls with the cheaper proved
+    /// Lipschitz enclosure for order zero. Higher coefficients use the same
+    /// root derivatives and child Jacobian convention as taylor8.
+    pub fn fast_taylor8(
+        &self,
+        domain: [[f64; 2]; 2],
+        along_v: bool,
+    ) -> Result<[[[f64; 2]; 3]; 9], Error> {
+        let position = self.lipschitz_bounds(domain)?.map(|b| I::new(b[0], b[1]));
+        let width = domain.map(|d| I::point(d[1]) - I::point(d[0]));
+        let mut scale = width[0] * width[1];
+        let mut factorial = 1.;
+        let axis = usize::from(along_v);
+        Ok(std::array::from_fn(|order| {
+            let hull = if order == 0 {
+                position
+            } else {
+                self.derivative_hulls[axis][order]
+            };
+            let value = hull.map(|v| v * scale / I::point(factorial));
+            scale = scale * width[axis];
+            factorial *= (order + 1) as f64;
+            value.map(|v| [v.lo, v.hi])
+        }))
     }
 }
 

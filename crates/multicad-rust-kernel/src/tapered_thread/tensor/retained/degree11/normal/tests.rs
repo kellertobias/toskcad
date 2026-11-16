@@ -123,3 +123,46 @@ fn actual_correlated_normal_hulls_and_child_taylor_scaling_enclose_independent_g
     }
     assert!(normal.bounds(domain).is_ok());
 }
+
+#[test]
+fn cached_normal_taylor_coefficients_retain_the_same_actual_root_derivatives() {
+    let source = RetainedTensor11::new(
+        [1, 1],
+        (0..12)
+            .flat_map(|i| {
+                (0..12).map(move |j| {
+                    [
+                        i as f64,
+                        j as f64,
+                        (if i == 11 { 1. } else { 0. }) + (if j == 11 { 1. } else { 0. }),
+                    ]
+                })
+            })
+            .collect(),
+    )
+    .unwrap();
+    let normal = NormalPolynomial11::new(&source.cell([0, 0]).unwrap()).unwrap();
+    for domain in [[[0., 1.]; 2], [[0.25, 0.75], [0.5, 1.]]] {
+        for axis in [false, true] {
+            let slow = normal.taylor8(domain, axis).unwrap();
+            let fast = normal.fast_taylor8(domain, axis).unwrap();
+            assert_eq!(&slow[1..], &fast[1..]);
+            for u in domain[0] {
+                for v in domain[1] {
+                    let expected = [-121. * u.powi(10), -121. * v.powi(10), 121.];
+                    let factor = (domain[0][1] - domain[0][0]) * (domain[1][1] - domain[1][0]);
+                    for k in 0..3 {
+                        assert!(
+                            fast[0][k][0] <= expected[k] * factor
+                                && expected[k] * factor <= fast[0][k][1]
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(
+        normal.fast_taylor8([[f64::NAN, 1.], [0., 1.]], false),
+        Err(Error::Invalid)
+    );
+}
