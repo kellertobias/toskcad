@@ -10,6 +10,7 @@ mod auxiliary;
 mod graph;
 pub mod mesh;
 mod owned;
+pub mod query;
 pub use owned::{AxialSewingTransfer, OwnedActualHead, OwnedHeadOptions, OwnedHeadReceipt};
 mod source;
 #[cfg(test)]
