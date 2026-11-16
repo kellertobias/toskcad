@@ -196,3 +196,5 @@ fn normal_public_route_refuses_malformed_operator_and_mixed_whole_files_without_
         [SourceImport::ActualMappedHead(_)]
     ));
 }
+
+mod discovery;
