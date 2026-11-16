@@ -72,6 +72,10 @@ fn real_external_pipe_cut_keeps_original_owners_and_one_manifold_stock_tail_boun
                 cut.stock_radius_mm(),
                 cut.stock().circle().radius().as_f64()
             );
+            let radius = exact(cut.stock().circle().radius());
+            let [lower, upper] = cut.stock_radius_bounds_mm();
+            assert!(BigRational::from_float(lower).unwrap() <= radius);
+            assert!(radius <= BigRational::from_float(upper).unwrap());
             for axis in 0..3 {
                 let original = cut.stock().bounds();
                 assert!(
@@ -484,6 +488,26 @@ fn actual_tail_mesh_replaces_the_internal_cap_and_has_one_connected_indexed_shel
         );
         let actual = candidate.connectivity().signed_volume_mm3;
         assert!((actual - volume[0]).abs() < q.deflection * 500.);
+        // Consuming the source-bearing candidate must leave a usable indexed
+        // export buffer with the original face owners, winding and stock tail.
+        let proof = candidate.connectivity();
+        let owned = candidate.into_mesh();
+        assert_eq!(crate::manufacturing::certify(&owned).unwrap(), proof);
+        assert_eq!(
+            owned
+                .face_indices
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>(),
+            (0..9).collect(),
+        );
+        for point in owned.vertices.as_chunks::<3>().0 {
+            for axis in 0..3 {
+                let [lower, upper] = cut.bounds_mm()[axis];
+                assert!(point[axis] >= lower - q.deflection);
+                assert!(point[axis] <= upper + q.deflection);
+            }
+        }
     }
 }
 #[test]

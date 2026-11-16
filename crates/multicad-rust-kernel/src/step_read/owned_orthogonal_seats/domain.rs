@@ -528,7 +528,7 @@ mod tests {
             .unwrap();
             let material = boundary
                 .heal_material(MaterialOptions::default(), &|| false)
-                .unwrap_or_else(|e| panic!("public healing failed for {label}: {e:?}"));
+                .expect("public four-hole healing must succeed for both retained poses");
             assert_eq!(material.chains().bores().len(), 4);
             let caps = material.chains().bores()[0].cap_face_entities();
             assert!(

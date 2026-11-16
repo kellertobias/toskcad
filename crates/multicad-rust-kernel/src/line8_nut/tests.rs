@@ -176,6 +176,19 @@ fn actual_open_crown_nut_candidate_is_one_connected_seventeen_face_shell() {
             n.mesh_candidate(q, 64_000_000, Some(&|| true)).err(),
             Some(Error::Cancelled)
         );
+        // An export consumer takes the indexed buffer after the candidate and
+        // its source owner are consumed; connectivity and winding must survive.
+        let proof = mesh.connectivity();
+        let owned = mesh.into_mesh();
+        assert_eq!(crate::manufacturing::certify(&owned).unwrap(), proof);
+        assert_eq!(
+            owned
+                .face_indices
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>(),
+            faces,
+        );
     }
 }
 #[test]
@@ -212,6 +225,40 @@ fn all_seventeen_physical_face_measures_are_source_integrals_including_crown_not
             Some(Error::Cancelled)
         );
     }
+}
+
+#[test]
+fn threaded_face_precision_and_late_cancellation_refuse_without_poisoning_retry() {
+    let source = nut();
+    let underflow = crate::authored_internal_treatment::FacePropertyOptions {
+        area_tolerance_mm2: f64::from_bits(1),
+        ..Default::default()
+    };
+    assert!(source.face_measure(11, underflow, None).is_err());
+    let callbacks = std::cell::Cell::new(0);
+    assert_eq!(
+        source
+            .face_measure(
+                11,
+                Default::default(),
+                Some(&|| {
+                    let next = callbacks.get() + 1;
+                    callbacks.set(next);
+                    next >= 2
+                }),
+            )
+            .err(),
+        Some(Error::Cancelled),
+    );
+    assert!(callbacks.get() >= 2);
+    let retry = source.face_measure(11, Default::default(), None).unwrap();
+    assert!(retry.area_mm2()[0] > 0.);
+    assert!(
+        retry
+            .centroid_mm()
+            .iter()
+            .all(|v| v[0].is_finite() && v[0] <= v[1])
+    );
 }
 #[test]
 fn original_finite_topology_and_every_coedge_keep_exact_owners_for_both_hands() {
