@@ -185,6 +185,12 @@ impl Shell<'_, '_> {
     }
 
     pub(super) fn spline_extrusion(&self, id: u32) -> Result<(u32, Point)> {
+        self.spline_extrusion_vector(id)
+            .map(|(curve, direction, _)| (curve, direction))
+    }
+
+    /// The swept curve, unit direction and parameter speed of `S(u, v) = C(u) + v V`.
+    pub(super) fn spline_extrusion_vector(&self, id: u32) -> Result<(u32, Point, f64)> {
         let [Value::String(_), curve, vector] = self.args(id, "SURFACE_OF_LINEAR_EXTRUSION")?
         else {
             return Err(ReadError::Invalid);
@@ -197,7 +203,11 @@ impl Shell<'_, '_> {
         if !scale.is_finite() || *scale <= 0. {
             return Err(ReadError::Invalid);
         }
-        Ok((reference(curve)?, self.direction(reference(direction)?)?))
+        Ok((
+            reference(curve)?,
+            self.direction(reference(direction)?)?,
+            *scale,
+        ))
     }
 }
 

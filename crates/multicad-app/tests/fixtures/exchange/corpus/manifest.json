@@ -1,0 +1,1399 @@
+{
+  "schema": 1,
+  "item": "CAD-345",
+  "description": "Independent cross-CAD STEP exchange corpus. See README.md for provenance and licensing.",
+  "entries": [
+    {
+      "id": "freecad-drilled-box",
+      "location": "vendored",
+      "path": "freecad-drilled-box.step",
+      "sha256": "8f9ce63627381af481ae3ca3fb9357fa17d41fa650357caffce8d71c4ae37e51",
+      "bytes": 8341,
+      "producer": {
+        "name": "FreeCAD",
+        "version": "1.1.1 (Open CASCADE STEP processor 7.8)",
+        "file_name": [
+          "Open CASCADE STEP processor 7.8",
+          "FreeCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "FreeCAD 1.1.1 export of a 20 x 30 x 8 mm box at (13, -7, 5) minus a radius-2 through-cylinder; added in cb2a9a69",
+      "license": "GPL-3.0-or-later (authored for this repository)",
+      "tags": [
+        "box",
+        "cylinder",
+        "trims-seams",
+        "placement",
+        "hole"
+      ],
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 4699.469035085127,
+        "bounds_mm": [
+          [
+            13,
+            -7,
+            5
+          ],
+          [
+            33,
+            23,
+            13
+          ]
+        ],
+        "faces": 7,
+        "solids": 1
+      }
+    },
+    {
+      "id": "occt-placed-box",
+      "location": "vendored",
+      "path": "corpus/occt-placed-box.step",
+      "sha256": "11fe52beecff6e6ba60d54cfa7936cda49a32e00ee28c2fd6af77a4245d3a7b6",
+      "bytes": 16042,
+      "producer": {
+        "name": "OpenCascade",
+        "version": "7.9.3 (Open CASCADE STEP processor 7.9)",
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ]
+      },
+      "units": "mm",
+      "source": "regenerate_opencascade_fixtures: 24 x 16 x 9 mm box rotated 30 degrees about Z and moved to (50, -20, 7)",
+      "license": "GPL-3.0-or-later (authored for this repository)",
+      "tags": [
+        "box",
+        "placement"
+      ],
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 3456,
+        "bounds_mm": [
+          [
+            42,
+            -20,
+            7
+          ],
+          [
+            70.78460969082653,
+            5.856406460551018,
+            16
+          ]
+        ],
+        "faces": 6,
+        "solids": 1,
+        "section_length_mm": 80
+      }
+    },
+    {
+      "id": "occt-cylinder",
+      "location": "vendored",
+      "path": "corpus/occt-cylinder.step",
+      "sha256": "e481d610a7c8e1a74a1db141bba3e57f634a790f080e5d5b5bfe1db1948a812d",
+      "bytes": 5605,
+      "producer": {
+        "name": "OpenCascade",
+        "version": "7.9.3 (Open CASCADE STEP processor 7.9)",
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ]
+      },
+      "units": "mm",
+      "source": "regenerate_opencascade_fixtures: radius 6 mm, height 15 mm cylinder at (3, 4, 5)",
+      "license": "GPL-3.0-or-later (authored for this repository)",
+      "tags": [
+        "cylinder",
+        "trims-seams",
+        "placement"
+      ],
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 1696.4600329384882,
+        "bounds_mm": [
+          [
+            -3,
+            -2,
+            5
+          ],
+          [
+            9,
+            10,
+            20
+          ]
+        ],
+        "faces": 3,
+        "solids": 1,
+        "section_length_mm": 37.69911184307752
+      }
+    },
+    {
+      "id": "occt-torus",
+      "location": "vendored",
+      "path": "corpus/occt-torus.step",
+      "sha256": "98a5775152057701c67b8c3eb1a99ec223f3d6d216e7f94b54b20d65c28d62c8",
+      "bytes": 4039,
+      "producer": {
+        "name": "OpenCascade",
+        "version": "7.9.3 (Open CASCADE STEP processor 7.9)",
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ]
+      },
+      "units": "mm",
+      "source": "regenerate_opencascade_fixtures: full revolution of a radius 3 mm circle at 12 mm about Z",
+      "license": "GPL-3.0-or-later (authored for this repository)",
+      "tags": [
+        "torus",
+        "revolution",
+        "trims-seams"
+      ],
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 2131.834550635301,
+        "bounds_mm": [
+          [
+            -15,
+            -15,
+            -3
+          ],
+          [
+            15,
+            15,
+            3
+          ]
+        ],
+        "faces": 1,
+        "solids": 1,
+        "section_length_mm": 150.79644737231007
+      }
+    },
+    {
+      "id": "occt-box-void",
+      "location": "vendored",
+      "path": "corpus/occt-box-void.step",
+      "sha256": "5935d0d03b057989682c4924fe3a6b168fa4bed7e994a1f49319d88f3ea85d5d",
+      "bytes": 29397,
+      "producer": {
+        "name": "OpenCascade",
+        "version": "7.9.3 (Open CASCADE STEP processor 7.9)",
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ]
+      },
+      "units": "mm",
+      "source": "regenerate_opencascade_fixtures: 30 x 20 x 10 mm box minus an enclosed 10 x 6 x 4 mm box (BREP_WITH_VOIDS)",
+      "license": "GPL-3.0-or-later (authored for this repository)",
+      "tags": [
+        "box",
+        "voids"
+      ],
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 5760,
+        "bounds_mm": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            30,
+            20,
+            10
+          ]
+        ],
+        "faces": 12,
+        "solids": 1,
+        "section_length_mm": 132
+      }
+    },
+    {
+      "id": "occt-pocketed-plate",
+      "location": "vendored",
+      "path": "corpus/occt-pocketed-plate.step",
+      "sha256": "7c66016ab4a24a0f015c0e92fd2883d0e2d320b4bd83c992a72a9a72da2c0b41",
+      "bytes": 33494,
+      "producer": {
+        "name": "OpenCascade",
+        "version": "7.9.3 (Open CASCADE STEP processor 7.9)",
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ]
+      },
+      "units": "mm",
+      "source": "regenerate_opencascade_fixtures: 40 x 30 x 8 mm plate with a radius 3 mm blind bore and a 12 x 8 x 3 mm blind pocket",
+      "license": "GPL-3.0-or-later (authored for this repository)",
+      "tags": [
+        "box",
+        "cylinder",
+        "trims-seams",
+        "hole",
+        "pocket"
+      ],
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 9170.628330588459,
+        "bounds_mm": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            40,
+            30,
+            8
+          ]
+        ],
+        "faces": 13,
+        "solids": 1,
+        "section_length_mm": 158.84955592153875
+      }
+    },
+    {
+      "id": "occt-cone-frustum",
+      "location": "vendored",
+      "path": "corpus/occt-cone-frustum.step",
+      "sha256": "360c5ca8c2610429efb48a151607e8b010be020b35c30e3edf5968c84d337af1",
+      "bytes": 5659,
+      "producer": {
+        "name": "OpenCascade",
+        "version": "7.9.3 (Open CASCADE STEP processor 7.9)",
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ]
+      },
+      "units": "mm",
+      "source": "regenerate_opencascade_fixtures: revolved frustum, radii 8 and 4 mm, height 10 mm",
+      "license": "GPL-3.0-or-later (authored for this repository)",
+      "tags": [
+        "cone",
+        "revolution"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "occt-sphere",
+      "location": "vendored",
+      "path": "corpus/occt-sphere.step",
+      "sha256": "fbc1d0dcb601e65ad75ae138a127a62363c9f1611f15c284eb1146e340c20842",
+      "bytes": 2107,
+      "producer": {
+        "name": "OpenCascade",
+        "version": "7.9.3 (Open CASCADE STEP processor 7.9)",
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ]
+      },
+      "units": "mm",
+      "source": "regenerate_opencascade_fixtures: revolved half disk, radius 5 mm (one complete spherical face bounded by a reversed vertex loop at its pole)",
+      "license": "GPL-3.0-or-later (authored for this repository)",
+      "tags": [
+        "sphere",
+        "revolution",
+        "trims-seams"
+      ],
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 523.5987755982989,
+        "bounds_mm": [
+          [
+            -5,
+            -5,
+            -5
+          ],
+          [
+            5,
+            5,
+            5
+          ]
+        ],
+        "faces": 1,
+        "solids": 1,
+        "area_mm2": 314.1592653589793,
+        "planar_faces": 0,
+        "section_length_mm": 31.41592653589793
+      }
+    },
+    {
+      "id": "occt-revolved-vase",
+      "location": "vendored",
+      "path": "corpus/occt-revolved-vase.step",
+      "sha256": "7ca667360a7e2473fffc901ea9d8e7d20e71720186c06104b3d31bb3f59608d0",
+      "bytes": 10381,
+      "producer": {
+        "name": "OpenCascade",
+        "version": "7.9.3 (Open CASCADE STEP processor 7.9)",
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ]
+      },
+      "units": "mm",
+      "source": "regenerate_opencascade_fixtures: full revolution of a stepped profile with a quarter-round shoulder (planes, two cylinders and a torus band)",
+      "license": "GPL-3.0-or-later (authored for this repository)",
+      "tags": [
+        "revolution",
+        "torus",
+        "cylinder"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "occt-spline-prism",
+      "location": "vendored",
+      "path": "corpus/occt-spline-prism.step",
+      "sha256": "e67c9dfb23c5adab5d351bd705a91f081c14f2dc18aa0ed8c9acfc464d87064e",
+      "bytes": 9604,
+      "producer": {
+        "name": "OpenCascade",
+        "version": "7.9.3 (Open CASCADE STEP processor 7.9)",
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ]
+      },
+      "units": "mm",
+      "source": "regenerate_opencascade_fixtures: 6 mm extrusion of a cubic B-spline arch closed by a line (SURFACE_OF_LINEAR_EXTRUSION)",
+      "license": "GPL-3.0-or-later (authored for this repository)",
+      "tags": [
+        "spline",
+        "trims-seams"
+      ],
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 864,
+        "bounds_mm": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            20,
+            9,
+            6
+          ]
+        ],
+        "faces": 4,
+        "solids": 1,
+        "area_mm2": 588.9224380856431,
+        "planar_faces": 3,
+        "note": "The cubic Bezier (20,0) (20,12) (0,12) (0,0) closed by its chord encloses exactly 144 mm2 and is extruded 6 mm; its arc length 30.153739680940525 mm is integrated numerically."
+      }
+    },
+    {
+      "id": "occt-two-bodies",
+      "location": "vendored",
+      "path": "corpus/occt-two-bodies.step",
+      "sha256": "66c1ea814b4a8a0ab77443911d7a8352a4cc655f702f94016cc96fb172e7ad70",
+      "bytes": 22794,
+      "producer": {
+        "name": "OpenCascade",
+        "version": "7.9.3 (Open CASCADE STEP processor 7.9)",
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ]
+      },
+      "units": "mm",
+      "source": "regenerate_opencascade_fixtures: compound of a 10 x 10 x 5 mm box and a separate radius 4 mm cylinder; OpenCascade writes it as an assembly with NEXT_ASSEMBLY_USAGE_OCCURRENCE placements",
+      "license": "GPL-3.0-or-later (authored for this repository)",
+      "tags": [
+        "multi-body",
+        "placement",
+        "assembly",
+        "box",
+        "cylinder"
+      ],
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 902.1238596594935,
+        "bounds_mm": [
+          [
+            0,
+            -4,
+            0
+          ],
+          [
+            34,
+            10,
+            8
+          ]
+        ],
+        "faces": 9,
+        "solids": 2,
+        "area_mm2": 701.5928947446201,
+        "planar_faces": 8,
+        "note": "Two occurrences under one root product: the 10 x 10 x 5 mm box (500 mm3, area 400 mm2) and the radius 4 mm, 8 mm cylinder at (30, 0) (128 pi mm3, area 96 pi mm2), both placed at the identity."
+      }
+    },
+    {
+      "id": "kicad-plate-holes",
+      "location": "vendored",
+      "path": "corpus/kicad-plate-holes.step",
+      "sha256": "544b1f5fd9719976c20f6c104c41331b43a2245caa06b2f6d458cd9bb4de1c8c",
+      "bytes": 11892,
+      "producer": {
+        "name": "KiCad",
+        "version": "10.0.0 (kicad-cli pcb export step, Open CASCADE STEP processor 7.8)",
+        "file_name": [
+          "Open CASCADE STEP processor 7.8",
+          "KiCad to STEP converter"
+        ]
+      },
+      "units": "mm",
+      "source": "Authored board kicad-boards/plate-holes.kicad_pcb: 80 x 50 x 1.6 mm plate with two radius 1.6 mm holes, exported with --board-only",
+      "license": "GPL-3.0-or-later (authored for this repository)",
+      "tags": [
+        "board",
+        "box",
+        "cylinder",
+        "hole",
+        "assembly"
+      ],
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 6095.390019788839,
+        "bounds_mm": [
+          [
+            100,
+            -150,
+            0
+          ],
+          [
+            180,
+            -100,
+            1.53
+          ]
+        ],
+        "faces": 8,
+        "solids": 1,
+        "area_mm2": 8396.392566491191,
+        "planar_faces": 6,
+        "note": "The 80 x 50 mm board with two radius 1.6 mm holes is 1.53 mm thick in the export (KiCad's 1.6 mm board less two 0.035 mm copper layers), in board coordinates; its one occurrence places it at the identity."
+      }
+    },
+    {
+      "id": "kicad-round-board",
+      "location": "vendored",
+      "path": "corpus/kicad-round-board.step",
+      "sha256": "b6733b4f0109ef30fc79558eaa8b0676f15aa4b5d64e9c0ae4442f8bc4602897",
+      "bytes": 6889,
+      "producer": {
+        "name": "KiCad",
+        "version": "10.0.0 (kicad-cli pcb export step, Open CASCADE STEP processor 7.8)",
+        "file_name": [
+          "Open CASCADE STEP processor 7.8",
+          "KiCad to STEP converter"
+        ]
+      },
+      "units": "mm",
+      "source": "Authored board kicad-boards/round-board.kicad_pcb: radius 25 mm disc with a radius 4 mm centre hole, exported with --board-only",
+      "license": "GPL-3.0-or-later (authored for this repository)",
+      "tags": [
+        "board",
+        "cylinder",
+        "hole",
+        "assembly"
+      ],
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 2927.2417868353614,
+        "bounds_mm": [
+          [
+            125,
+            -145,
+            0
+          ],
+          [
+            175,
+            -95,
+            1.53
+          ]
+        ],
+        "faces": 4,
+        "solids": 1,
+        "area_mm2": 4105.244784151926,
+        "planar_faces": 2,
+        "note": "A radius 25 mm disc centred at (150, -120) with a radius 4 mm hole, 1.53 mm thick; its one occurrence places it at the identity."
+      }
+    },
+    {
+      "id": "kicad-slotted-rounded-board",
+      "location": "vendored",
+      "path": "corpus/kicad-slotted-rounded-board.step",
+      "sha256": "89bca4c4d1a183c1574d7fbe4ee07f88a104a1605ea802a24a629b25be59d9fc",
+      "bytes": 19966,
+      "producer": {
+        "name": "KiCad",
+        "version": "10.0.0 (kicad-cli pcb export step, Open CASCADE STEP processor 7.8)",
+        "file_name": [
+          "Open CASCADE STEP processor 7.8",
+          "KiCad to STEP converter"
+        ]
+      },
+      "units": "mm",
+      "source": "Authored board kicad-boards/slotted-rounded-board.kicad_pcb: 60 x 40 mm outline with 5 mm corner arcs and a 20 x 10 mm rectangular cutout, exported with --board-only",
+      "license": "GPL-3.0-or-later (authored for this repository)",
+      "tags": [
+        "board",
+        "cylinder",
+        "trims-seams",
+        "pocket",
+        "assembly"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-board-with-part",
+      "location": "vendored",
+      "path": "corpus/kicad-board-with-part.step",
+      "sha256": "c9646efeb5dd01e3335b356e375669ff4a284f17600feacfe43814d68384395d",
+      "bytes": 12507,
+      "producer": {
+        "name": "KiCad",
+        "version": "10.0.0 (kicad-cli pcb export step, Open CASCADE STEP processor 7.8)",
+        "file_name": [
+          "Open CASCADE STEP processor 7.8",
+          "KiCad to STEP converter"
+        ]
+      },
+      "units": "mm",
+      "source": "Authored board kicad-boards/board-with-part.kicad_pcb with corpus/occt-cylinder.step placed as component U1 at (130, 120) rotated 90 degrees",
+      "license": "GPL-3.0-or-later (authored for this repository)",
+      "tags": [
+        "board",
+        "multi-body",
+        "placement",
+        "assembly",
+        "cylinder"
+      ],
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 5368.460032938488,
+        "bounds_mm": [
+          [
+            100,
+            -140,
+            0
+          ],
+          [
+            160,
+            -100,
+            21.615
+          ]
+        ],
+        "faces": 9,
+        "solids": 2,
+        "area_mm2": 5897.681348704627,
+        "planar_faces": 8,
+        "note": "The 60 x 40 x 1.53 mm board and component U1, the radius 6 mm, 15 mm occt-cylinder at (3, 4, 5), placed by its occurrence at (130, -120, 1.615) turned 90 degrees about z: its axis lands at (126, -117)."
+      }
+    },
+    {
+      "id": "occt-annulus",
+      "location": "repository",
+      "path": "crates/multicad-rust-kernel/src/step_read/tests/fixtures/occt-annulus.step",
+      "sha256": "a2bb0f3ce60329f9d155b5ea9d62470ec90d73d1654a1ea7fd28307af61e04e0",
+      "bytes": 9904,
+      "producer": {
+        "name": "OpenCascade",
+        "version": "7.9 (Open CASCADE STEP processor 7.9)",
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ]
+      },
+      "units": "mm",
+      "source": "Existing reader fixture: placed annulus, inner radius 2.75 mm, outer radius 6.125 mm, height 1.25 mm",
+      "license": "GPL-3.0-or-later (authored for this repository)",
+      "tags": [
+        "cylinder",
+        "hole",
+        "placement",
+        "trims-seams"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "occt-regular-torus",
+      "location": "repository",
+      "path": "crates/multicad-rust-kernel/src/step_read/tests/fixtures/occt-regular-torus.step",
+      "sha256": "e17f3916d3adba91ed823d9dc604f95c7bac01c98f41e8d8c74dd03784c3e796",
+      "bytes": 4114,
+      "producer": {
+        "name": "OpenCascade",
+        "version": "7.9 (Open CASCADE STEP processor 7.9)",
+        "file_name": [
+          "Open CASCADE STEP processor 7.9",
+          "Open CASCADE 7.9"
+        ]
+      },
+      "units": "mm",
+      "source": "Existing reader fixture: placed regular torus",
+      "license": "GPL-3.0-or-later (authored for this repository)",
+      "tags": [
+        "torus",
+        "revolution",
+        "placement"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-vendored-Mounting_Wuerth_WA-SMST-3.3mm_H1mm_9774010960",
+      "location": "vendored",
+      "path": "corpus/kicad-library/Mounting_Wuerth_WA-SMST-3.3mm_H1mm_9774010960.step",
+      "sha256": "4d3fe8355362aee3af15510457641311f569fb1ebfb21e4d6d07bc0e84030976",
+      "bytes": 7537,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''",
+        "file_name": [
+          "KiCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "Copied byte-for-byte, license header intact, from the KiCad 10.0.0 bundled 3D model library (kicad-packages3D) file Mounting_Wuerth.3dshapes/Mounting_Wuerth_WA-SMST-3.3mm_H1mm_9774010960.step",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "cylinder",
+        "hole"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-vendored-L_Wuerth_HCM-7070",
+      "location": "vendored",
+      "path": "corpus/kicad-library/L_Wuerth_HCM-7070.step",
+      "sha256": "36596e4058cb75c05b62ea2d734619924d9103f249649500c4f7b7f6d43cfb06",
+      "bytes": 14714,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''",
+        "file_name": [
+          "KiCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "Copied byte-for-byte, license header intact, from the KiCad 10.0.0 bundled 3D model library (kicad-packages3D) file Inductor_SMD.3dshapes/L_Wuerth_HCM-7070.step",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "box",
+        "planar"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-Pin_D0.7mm_L6.5mm_W1.8mm_FlatFork",
+      "location": "kicad-library",
+      "path": "Connector_Pin.3dshapes/Pin_D0.7mm_L6.5mm_W1.8mm_FlatFork.step",
+      "sha256": "356605e80acec717c40031621a46e215e935d80c78394d12f850cadd66202a6f",
+      "bytes": 20760,
+      "producer": {
+        "name": "FreeCAD",
+        "version": "originating system 'FreeCAD', preprocessor 'Open CASCADE STEP processor 7.1'",
+        "file_name": [
+          "Open CASCADE STEP processor 7.1",
+          "FreeCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Connector_Pin.3dshapes/Pin_D0.7mm_L6.5mm_W1.8mm_FlatFork.step",
+      "license": "unstated; referenced by path and digest only, never vendored",
+      "tags": [
+        "cylinder",
+        "trims-seams"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-Heatsink_125x35x50mm_3xFixationM3",
+      "location": "kicad-library",
+      "path": "Heatsink.3dshapes/Heatsink_125x35x50mm_3xFixationM3.step",
+      "sha256": "b2012637e0f7d9184043c2545fbea5fa328bd8685fed7c2b2f113a528885ddf3",
+      "bytes": 110115,
+      "producer": {
+        "name": "FreeCAD",
+        "version": "originating system 'FreeCAD', preprocessor 'Open CASCADE STEP processor 7.1'",
+        "file_name": [
+          "Open CASCADE STEP processor 7.1",
+          "FreeCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Heatsink.3dshapes/Heatsink_125x35x50mm_3xFixationM3.step",
+      "license": "unstated; referenced by path and digest only, never vendored",
+      "tags": [
+        "cylinder",
+        "hole",
+        "planar"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-D_SOD-882",
+      "location": "kicad-library",
+      "path": "Diode_SMD.3dshapes/D_SOD-882.step",
+      "sha256": "b109a9e50feebcf8bae5a230cf805dc06e2eb2b9d976f1922b195c16710c5415",
+      "bytes": 36174,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''",
+        "file_name": [
+          "KiCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Diode_SMD.3dshapes/D_SOD-882.step",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "box",
+        "planar"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-LED_Rectangular_W3.0mm_H2.0mm",
+      "location": "kicad-library",
+      "path": "LED_THT.3dshapes/LED_Rectangular_W3.0mm_H2.0mm.step",
+      "sha256": "dd7b583a18d7417abff59c0ed14ce343abd1441ece2447a2e82c554fb72641b0",
+      "bytes": 30128,
+      "producer": {
+        "name": "FreeCAD",
+        "version": "originating system 'FreeCAD', preprocessor 'Open CASCADE STEP processor 6.8'",
+        "file_name": [
+          "Open CASCADE STEP processor 6.8",
+          "FreeCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at LED_THT.3dshapes/LED_Rectangular_W3.0mm_H2.0mm.step",
+      "license": "unstated; referenced by path and digest only, never vendored",
+      "tags": [
+        "planar"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-vendored-Mounting_Wuerth_WA-SMSE-ExternalM3_H5mm_9771050360",
+      "location": "vendored",
+      "path": "corpus/kicad-library/Mounting_Wuerth_WA-SMSE-ExternalM3_H5mm_9771050360.step",
+      "sha256": "3d4bed0c43cc1ef6177f6835931b742a71c9f63c4870f958931dc9948f5d4003",
+      "bytes": 11056,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''",
+        "file_name": [
+          "KiCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "Copied byte-for-byte, license header intact, from the KiCad 10.0.0 bundled 3D model library (kicad-packages3D) file Mounting_Wuerth.3dshapes/Mounting_Wuerth_WA-SMSE-ExternalM3_H5mm_9771050360.step",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "cone",
+        "revolution",
+        "torus"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-RV_Disc_D9mm_W6.1mm_P5mm",
+      "location": "kicad-library",
+      "path": "Varistor.3dshapes/RV_Disc_D9mm_W6.1mm_P5mm.step",
+      "sha256": "6e077dea223411378c2d1caa9afa280e7b9a9d3179a3e4868c475966301460c4",
+      "bytes": 28892,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'kicad StepUp', preprocessor 'OCC'",
+        "file_name": [
+          "OCC",
+          "kicad StepUp"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Varistor.3dshapes/RV_Disc_D9mm_W6.1mm_P5mm.step",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "revolution",
+        "torus"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-Converter_ACDC_Hi-Link_HLK-20Mxx",
+      "location": "kicad-library",
+      "path": "Converter_ACDC.3dshapes/Converter_ACDC_Hi-Link_HLK-20Mxx.step",
+      "sha256": "417e979933c0b2461c57d17f03647340e4542c42db646f75d1dd5a9ff9a9057c",
+      "bytes": 45543,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''",
+        "file_name": [
+          "KiCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Converter_ACDC.3dshapes/Converter_ACDC_Hi-Link_HLK-20Mxx.step",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "sphere",
+        "torus"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-vendored-L_CommonModeChoke_TDK_ACM7060",
+      "location": "vendored",
+      "path": "corpus/kicad-library/L_CommonModeChoke_TDK_ACM7060.step",
+      "sha256": "27b7ee4ace781c7d74e3a858edf5da894e3df7b198ad619619e571c57b501b42",
+      "bytes": 17086,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''",
+        "file_name": [
+          "KiCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "Copied byte-for-byte, license header intact, from the KiCad 10.0.0 bundled 3D model library (kicad-packages3D) file Inductor_SMD.3dshapes/L_CommonModeChoke_TDK_ACM7060.step",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "planar"
+      ],
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 147,
+        "bounds_mm": [
+          [
+            -3.5,
+            -3,
+            0
+          ],
+          [
+            3.5,
+            3,
+            3.5
+          ]
+        ],
+        "faces": 6,
+        "solids": 1,
+        "area_mm2": 175,
+        "planar_faces": 6,
+        "section_length_mm": 26,
+        "note": "A 7 x 6 x 3.5 mm box whose 15 transmitted planar faces partition its six sides into pad regions and a marker disc; the import merges each plane into one face."
+      }
+    },
+    {
+      "id": "kicad-lib-L_CommonModeChoke_Coilank_ACM2012",
+      "location": "kicad-library",
+      "path": "Inductor_SMD.3dshapes/L_CommonModeChoke_Coilank_ACM2012.step",
+      "sha256": "a9cc34331f919ba98d2090ef4708ac49e89c224473613be81eaf6a48d6a85e7e",
+      "bytes": 24399,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''",
+        "file_name": [
+          "KiCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Inductor_SMD.3dshapes/L_CommonModeChoke_Coilank_ACM2012.step",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "cylinder"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-SW_SPST_B3U-3000P-B",
+      "location": "kicad-library",
+      "path": "Button_Switch_SMD.3dshapes/SW_SPST_B3U-3000P-B.step",
+      "sha256": "83d93fdb593d5750c215ffea7536cf2fca153c2aa05ced02d95648884e571bfd",
+      "bytes": 104440,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''",
+        "file_name": [
+          "KiCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Button_Switch_SMD.3dshapes/SW_SPST_B3U-3000P-B.step",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "cone"
+      ],
+      "expected": "invalid",
+      "verdict": "unsupported",
+      "finding": {
+        "owner": "CAD-360",
+        "summary": "Non-manifold closed shell: four straight edges (x = +-1.225 mm, z = 1.08 mm) each bound four faces, where two lobes of the switch touch along a line. MANIFOLD_SOLID_BREP requires each edge to bound two faces, so the retained-boundary reader refuses it as invalid. OpenCascade's BRepCheck does not test manifoldness and accepts it."
+      }
+    },
+    {
+      "id": "kicad-lib-LED_D3.0mm_Horizontal_O1.27mm_Z6.0mm",
+      "location": "kicad-library",
+      "path": "LED_THT.3dshapes/LED_D3.0mm_Horizontal_O1.27mm_Z6.0mm.step",
+      "sha256": "e0cab2a428f2b9688c6d96d09a8fce2394eb36f1f9921075cc8f21b35afe8b56",
+      "bytes": 48639,
+      "producer": {
+        "name": "FreeCAD",
+        "version": "originating system 'FreeCAD', preprocessor 'Open CASCADE STEP processor 6.8'",
+        "file_name": [
+          "Open CASCADE STEP processor 6.8",
+          "FreeCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at LED_THT.3dshapes/LED_D3.0mm_Horizontal_O1.27mm_Z6.0mm.step",
+      "license": "unstated; referenced by path and digest only, never vendored",
+      "tags": [
+        "sphere"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-Buzzer_Mallory_AST1109MLTRQ",
+      "location": "kicad-library",
+      "path": "Buzzer_Beeper.3dshapes/Buzzer_Mallory_AST1109MLTRQ.step",
+      "sha256": "d69e777e97e07cc99aaefe1811ce18c08c1f16d499fcd43dfba882bfa98b6311",
+      "bytes": 39582,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''",
+        "file_name": [
+          "KiCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Buzzer_Beeper.3dshapes/Buzzer_Mallory_AST1109MLTRQ.step",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "box",
+        "cylinder",
+        "hole",
+        "pocket"
+      ],
+      "expected": "pass",
+      "verdict": "pass",
+      "oracle": {
+        "volume_mm3": 168.92924787004074,
+        "bounds_mm": [
+          [
+            -7.5,
+            -4.5,
+            0
+          ],
+          [
+            7.5,
+            4.5,
+            1.7
+          ]
+        ],
+        "faces": 24,
+        "solids": 1,
+        "area_mm2": 286.992920065877,
+        "planar_faces": 18,
+        "section_length_mm": 40,
+        "note": "An 11 x 9 x 1.7 mm body with four blind pockets (radius 0.35, depth 0.5) and two 2 x 2 x 0.2 mm tabs with through bores (radius 0.4). The 26 transmitted faces include two tab undersides coplanar with the body underside; the rebuilt shell has 24."
+      }
+    },
+    {
+      "id": "kicad-lib-Samtec_HPM-01-05-x-S_Straight_1x01_Pitch5.08mm",
+      "location": "kicad-library",
+      "path": "Connector_Samtec_HPM_THT.3dshapes/Samtec_HPM-01-05-x-S_Straight_1x01_Pitch5.08mm.step",
+      "sha256": "41d3ccf88f97caf5aefb72e7ede7b6056830098bf2450959b5ad77da37d9bbe7",
+      "bytes": 32281,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''",
+        "file_name": [
+          "KiCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Connector_Samtec_HPM_THT.3dshapes/Samtec_HPM-01-05-x-S_Straight_1x01_Pitch5.08mm.step",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "assembly",
+        "multi-body"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-Mounting_Wuerth_WA-SMSI-M3_H1mm_9774010360",
+      "location": "kicad-library",
+      "path": "Mounting_Wuerth.3dshapes/Mounting_Wuerth_WA-SMSI-M3_H1mm_9774010360.step",
+      "sha256": "75b67971219c4b62be41b9e763917f7246a4b42423d581e936a37730a983be93",
+      "bytes": 8380,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''",
+        "file_name": [
+          "KiCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Mounting_Wuerth.3dshapes/Mounting_Wuerth_WA-SMSI-M3_H1mm_9774010360.step",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "cone"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-R_Box_L13.0mm_W4.0mm_P9.00mm",
+      "location": "kicad-library",
+      "path": "Resistor_THT.3dshapes/R_Box_L13.0mm_W4.0mm_P9.00mm.step",
+      "sha256": "21dd36dd9b264f034a1eb7c2248ab0173b2b9278614ad6442a6cfa8728f544fa",
+      "bytes": 15770,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'kicad StepUp', preprocessor 'OCC'",
+        "file_name": [
+          "OCC",
+          "kicad StepUp"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Resistor_THT.3dshapes/R_Box_L13.0mm_W4.0mm_P9.00mm.step",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "cylinder"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-PinSocket_1x01_P2.54mm_Vertical",
+      "location": "kicad-library",
+      "path": "Connector_PinSocket_2.54mm.3dshapes/PinSocket_1x01_P2.54mm_Vertical.step",
+      "sha256": "431ab52ecf6734bc10315069a4da18b443269a6c5d38b2b5698353719b94376c",
+      "bytes": 30629,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''",
+        "file_name": [
+          "KiCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Connector_PinSocket_2.54mm.3dshapes/PinSocket_1x01_P2.54mm_Vertical.step",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "planar"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-C_Axial_L5.1mm_D3.1mm_P10.00mm_Horizontal",
+      "location": "kicad-library",
+      "path": "Capacitor_THT.3dshapes/C_Axial_L5.1mm_D3.1mm_P10.00mm_Horizontal.step",
+      "sha256": "aecb3a544c9105cc507bb98bd8247c449a4477c8826572f83d43cd00eceadab2",
+      "bytes": 21289,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'kicad StepUp', preprocessor ''",
+        "file_name": [
+          "kicad StepUp"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Capacitor_THT.3dshapes/C_Axial_L5.1mm_D3.1mm_P10.00mm_Horizontal.step",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "revolution"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-vendored-WLP-4_0.83x0.83mm_P0.4mm",
+      "location": "vendored",
+      "path": "corpus/kicad-library/WLP-4_0.83x0.83mm_P0.4mm.step",
+      "sha256": "21f5eb82ba804059ee7742d00cb73caaea76dbfb5c01c6bf178260b004e7e0e7",
+      "bytes": 12910,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''",
+        "file_name": [
+          "KiCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "Copied byte-for-byte, license header intact, from the KiCad 10.0.0 bundled 3D model library (kicad-packages3D) file Package_BGA.3dshapes/WLP-4_0.83x0.83mm_P0.4mm.step",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "sphere"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-D_SOD-923",
+      "location": "kicad-library",
+      "path": "Diode_SMD.3dshapes/D_SOD-923.step",
+      "sha256": "2ab2eb57942276dc90db0148894bc98e40b6ed97c8a35c3c24e1f40fc146235f",
+      "bytes": 43849,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'kicad StepUp', preprocessor 'OCC'",
+        "file_name": [
+          "OCC",
+          "kicad StepUp"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Diode_SMD.3dshapes/D_SOD-923.step",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "spline"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-R_LDR_5.2x5.2mm_P3.5mm_Horizontal",
+      "location": "kicad-library",
+      "path": "OptoDevice.3dshapes/R_LDR_5.2x5.2mm_P3.5mm_Horizontal.step",
+      "sha256": "d6990779de26a64b31a6250145868c66bd32eea8c3bd2d3310082a21b930d954",
+      "bytes": 101116,
+      "producer": {
+        "name": "FreeCAD",
+        "version": "originating system 'FreeCAD', preprocessor 'Open CASCADE STEP processor 6.8'",
+        "file_name": [
+          "Open CASCADE STEP processor 6.8",
+          "FreeCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at OptoDevice.3dshapes/R_LDR_5.2x5.2mm_P3.5mm_Horizontal.step",
+      "license": "unstated; referenced by path and digest only, never vendored",
+      "tags": [
+        "multi-body",
+        "surface-model",
+        "torus"
+      ],
+      "expected": "unsupported",
+      "verdict": "unsupported",
+      "finding": {
+        "owner": "CAD-363",
+        "summary": "Contains a SHELL_BASED_SURFACE_MODEL with open shells beside its solids. The product has no surface-body concept, and importing only the solids would drop part of the model, so the file is refused as unsupported. Surface bodies are deferred to CAD-363 by product decision."
+      }
+    },
+    {
+      "id": "kicad-lib-Converter_ACDC_MeanWell_IRM-60-xx_THT",
+      "location": "kicad-library",
+      "path": "Converter_ACDC.3dshapes/Converter_ACDC_MeanWell_IRM-60-xx_THT.step",
+      "sha256": "fcedf2ec6d87d5d594ad242bb4f243ef42758467cda270843a4d993620c09ff1",
+      "bytes": 63599,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''",
+        "file_name": [
+          "KiCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Converter_ACDC.3dshapes/Converter_ACDC_MeanWell_IRM-60-xx_THT.step",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "assembly",
+        "multi-body",
+        "sphere",
+        "torus"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-C_Radial_D6.3mm_H7.0mm_P2.50mm",
+      "location": "kicad-library",
+      "path": "Capacitor_THT.3dshapes/C_Radial_D6.3mm_H7.0mm_P2.50mm.step",
+      "sha256": "d83453d10fde051ce32be171f03becbcdeaa455faa38caf366dcf50ba0040fcc",
+      "bytes": 65332,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'kicad StepUp', preprocessor 'OCC'",
+        "file_name": [
+          "OCC",
+          "kicad StepUp"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Capacitor_THT.3dshapes/C_Radial_D6.3mm_H7.0mm_P2.50mm.step",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "revolution",
+        "spline",
+        "torus",
+        "voids"
+      ],
+      "expected": "invalid",
+      "verdict": "unsupported",
+      "finding": {
+        "owner": "CAD-360",
+        "summary": "An inner-shell edge, a degree-13 rational B-spline, lies up to 1.10e-5 mm off its cylinder. That exceeds the file's declared 2e-6 mm uncertainty and the 1e-5 mm incidence cap, so the retained-boundary reader refuses it as invalid. OpenCascade accepts it with its per-edge tolerances."
+      }
+    },
+    {
+      "id": "kicad-lib-L_Radial_D28.0mm_P29.20mm",
+      "location": "kicad-library",
+      "path": "Inductor_THT.3dshapes/L_Radial_D28.0mm_P29.20mm.step",
+      "sha256": "b2990dac771ad98bf2212ec7e3885f60ec72846092a436f80962a89f83c7a9e4",
+      "bytes": 15322,
+      "producer": {
+        "name": "FreeCAD",
+        "version": "originating system 'FreeCAD', preprocessor 'Open CASCADE STEP processor 6.8'",
+        "file_name": [
+          "Open CASCADE STEP processor 6.8",
+          "FreeCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Inductor_THT.3dshapes/L_Radial_D28.0mm_P29.20mm.step",
+      "license": "unstated; referenced by path and digest only, never vendored",
+      "tags": [
+        "multi-body",
+        "torus"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-R_0603_1608Metric",
+      "location": "kicad-library",
+      "path": "Resistor_SMD.3dshapes/R_0603_1608Metric.step",
+      "sha256": "1875571c326d0d9e96f36b4efeb8094068ef7619f0a449c781caf0b49c2e5861",
+      "bytes": 40618,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'kicad StepUp', preprocessor 'OCC'",
+        "file_name": [
+          "OCC",
+          "kicad StepUp"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Resistor_SMD.3dshapes/R_0603_1608Metric.step. A chip resistor whose rounded body ends are divided by coplanar terminal faces; imported as one normal sweep after the planes and their split edges are merged. Pinned by CAD-359 as a regression for the merged planar partitions.",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "cylinder",
+        "planar"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-QFN-32-1EP_4x4mm_P0.4mm_EP2.9x2.9mm",
+      "location": "kicad-library",
+      "path": "Package_DFN_QFN.3dshapes/QFN-32-1EP_4x4mm_P0.4mm_EP2.9x2.9mm.step",
+      "sha256": "7b482a511cdf2cf875c31931f9fea7f745b8dac2ea6203531cd6604f40a290cb",
+      "bytes": 78287,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''",
+        "file_name": [
+          "KiCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Package_DFN_QFN.3dshapes/QFN-32-1EP_4x4mm_P0.4mm_EP2.9x2.9mm.step. A moulded package whose 72 transmitted planar faces partition a box into flush pads and a marker disc; imported as the box. Pinned by CAD-359 as a regression for the merged planar partitions.",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "box",
+        "planar"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-DFN-8-1EP_3x2mm_P0.5mm_EP1.3x1.5mm",
+      "location": "kicad-library",
+      "path": "Package_DFN_QFN.3dshapes/DFN-8-1EP_3x2mm_P0.5mm_EP1.3x1.5mm.step",
+      "sha256": "9c8bfd3e0369ff6b1c43ac179e27cbd279dfc62d951e38954ac67dcefb6dfd8d",
+      "bytes": 26705,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''",
+        "file_name": [
+          "KiCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Package_DFN_QFN.3dshapes/DFN-8-1EP_3x2mm_P0.5mm_EP1.3x1.5mm.step. A moulded package whose 24 transmitted planar faces partition a box into flush pads and a marker disc; imported as the box. Pinned by CAD-359 as a regression for the merged planar partitions.",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "box",
+        "planar"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    },
+    {
+      "id": "kicad-lib-L_CommonModeChoke_Bourns_SRF1260",
+      "location": "kicad-library",
+      "path": "Inductor_SMD.3dshapes/L_CommonModeChoke_Bourns_SRF1260.step",
+      "sha256": "f0df0e0435710569a09af04663cb4dced266ab19572124c427135f50e615b20e",
+      "bytes": 17196,
+      "producer": {
+        "name": "KiCad",
+        "version": "originating system 'KiCAD', preprocessor ''",
+        "file_name": [
+          "KiCAD"
+        ]
+      },
+      "units": "mm",
+      "source": "KiCad 10.0.0 bundled 3D model library (kicad-packages3D) at Inductor_SMD.3dshapes/L_CommonModeChoke_Bourns_SRF1260.step. A choke whose 15 transmitted planar faces partition a box into pad regions and a marker disc; imported as the box. Pinned by CAD-359 as a regression for the merged planar partitions.",
+      "license": "CC-BY-SA-4.0 with the KiCad library exception; header retained verbatim; attribution: KiCad Libraries team, https://gitlab.com/kicad/libraries/kicad-packages3D",
+      "tags": [
+        "box",
+        "planar"
+      ],
+      "expected": "pass",
+      "verdict": "pass"
+    }
+  ]
+}

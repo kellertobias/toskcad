@@ -29,7 +29,7 @@ impl Default for Writer {
     }
 }
 
-fn exceeds_readback_budget(file: &StepFile) -> bool {
+pub(super) fn exceeds_readback_budget(file: &StepFile) -> bool {
     file.next - 1 > MAX_STEP_ENTITIES || file.data.len() > MAX_PLANAR_STEP_BYTES
 }
 
@@ -127,6 +127,12 @@ impl Writer {
             let face = file.face_on(&[bound], surface, true);
             Ok(file.solid(&[face]))
         })
+    }
+
+    /// Append a retained imported boundary with its own surfaces, curves,
+    /// loops and voids.
+    pub fn append_brep(&mut self, solid: &crate::brep::Solid) -> Result<(), StepError> {
+        self.append(|file| super::brep::encode(file, solid))
     }
 
     /// Append one complete regular torus with both periodic seams.

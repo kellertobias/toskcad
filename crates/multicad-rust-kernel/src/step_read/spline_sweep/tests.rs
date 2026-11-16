@@ -128,6 +128,40 @@ impl<'a> Fixture<'a> {
     fn list(&self, id: u32, field: usize) -> Vec<u32> {
         refs(&self.args(id)[field]).unwrap()
     }
+    /// Copy a face with fresh bounds, loops and edges over the same vertices
+    /// and geometry.
+    fn duplicate(&mut self, id: u32) -> u32 {
+        let entity = &self.records[&id][0];
+        let name = entity.name;
+        if !matches!(
+            name,
+            "ADVANCED_FACE" | "FACE_BOUND" | "FACE_OUTER_BOUND" | "EDGE_LOOP" | "ORIENTED_EDGE"
+        ) && name != "EDGE_CURVE"
+        {
+            return id;
+        }
+        let mut args = entity.args.iter().map(copied).collect::<Vec<_>>();
+        if name == "EDGE_CURVE" {
+            // The vertices and the curve stay shared.
+            args.truncate(5);
+        } else {
+            for value in &mut args {
+                self.remap(value);
+            }
+        }
+        let copy = self.records.keys().next_back().unwrap() + 1;
+        let source = None;
+        self.records
+            .insert(copy, vec![Entity { source, name, args }]);
+        copy
+    }
+    fn remap(&mut self, value: &mut Value<'a>) {
+        match value {
+            Value::Reference(id) => *id = self.duplicate(*id),
+            Value::List(items) => items.iter_mut().for_each(|item| self.remap(item)),
+            _ => {}
+        }
+    }
     fn cap_plane(&self, cap: usize) -> u32 {
         self.id(self.faces[cap], 2)
     }
@@ -146,6 +180,82 @@ impl<'a> Fixture<'a> {
     }
 }
 
+fn copied<'a>(value: &Value<'a>) -> Value<'a> {
+    match value {
+        Value::Reference(id) => Value::Reference(*id),
+        Value::List(items) => Value::List(items.iter().map(copied).collect()),
+        Value::String(text) => Value::String(text),
+        Value::Enum(flag) => Value::Enum(flag),
+        _ => Value::Derived,
+    }
+}
+
+#[test]
+fn only_excessive_face_and_edge_counts_are_resource_refusals() {
+    damaged(
+        |f| f.faces = vec![f.faces[0]; MAX_VERTICES + 8],
+        ReadError::Limit,
+    );
+    let long = |f: &mut Fixture<'_>| {
+        let bound = f.list(f.faces[0], 1)[0];
+        let wire = f.id(bound, 1);
+        let first = f.list(wire, 1)[0];
+        let repeated = (0..=MAX_VERTICES).map(|_| Value::Reference(first));
+        f.edit(wire)[1] = Value::List(repeated.collect());
+        wire
+    };
+    damaged(
+        |f| {
+            long(f);
+        },
+        ReadError::Limit,
+    );
+    // The same refusal reaches both entry points through the flat reader.
+    let source = write_spur_gear(&profile(20, 2.), ORIGIN, U, V, TOL).unwrap();
+    let mut f = Fixture::new(&source);
+    let wire = long(&mut f);
+    let first = f.list(wire, 1)[0];
+    let record = source
+        .lines()
+        .find(|line| line.starts_with(&format!("#{wire}=")))
+        .unwrap();
+    let repeated = vec![format!("#{first}"); MAX_VERTICES + 1].join(",");
+    let oversized = source.replacen(record, &format!("#{wire}=EDGE_LOOP('',({repeated}));"), 1);
+    assert_eq!(
+        read_import_solid(&oversized, TOL).err(),
+        Some(ReadError::Limit)
+    );
+    assert_eq!(
+        read_analytic_solid(&oversized, TOL).err(),
+        Some(ReadError::Limit)
+    );
+}
+
+#[test]
+fn a_second_positive_cap_is_a_stepped_solid_outside_this_family() {
+    for cap in [0, 1] {
+        damaged(
+            |f| {
+                let copy = f.duplicate(f.faces[cap]);
+                f.faces.push(copy);
+            },
+            ReadError::Unsupported,
+        );
+    }
+    // Unlabeled bounds are valid, but the exterior is not derived here.
+    damaged(
+        |f| {
+            let bound = f.list(f.faces[0], 1)[0];
+            let copy = f.duplicate(bound);
+            for bound in [bound, copy] {
+                f.records.get_mut(&bound).unwrap()[0].name = "FACE_BOUND";
+            }
+            f.edit(f.faces[0])[1] = Value::List([bound, copy].map(Value::Reference).into());
+        },
+        ReadError::Unsupported,
+    );
+}
+
 fn damaged(edit: impl FnOnce(&mut Fixture<'_>), error: ReadError) {
     let source = write_spur_gear(&profile(20, 2.), ORIGIN, U, V, TOL).unwrap();
     let mut f = Fixture::new(&source);
@@ -155,7 +265,8 @@ fn damaged(edit: impl FnOnce(&mut Fixture<'_>), error: ReadError) {
 
 #[test]
 fn rejects_missing_and_duplicate_topology_or_invalid_cap_geometry() {
-    damaged(|f| f.faces.truncate(4), ReadError::Limit);
+    damaged(|f| f.faces.truncate(3), ReadError::Unsupported);
+    damaged(|f| f.faces.truncate(4), ReadError::Unsupported);
     damaged(|f| f.faces.push(f.faces[0]), ReadError::Invalid);
     damaged(
         |f| {
@@ -271,7 +382,7 @@ fn rejects_invalid_face_edge_and_extrusion_records() {
             let loop_ = f.id(bound, 1);
             f.edit(loop_)[1] = Value::List(vec![]);
         },
-        ReadError::Limit,
+        ReadError::Invalid,
     );
     damaged(
         |f| {
@@ -962,4 +1073,71 @@ fn copy_traversal(edge: &Traversal) -> Traversal {
         end: edge.end,
         forward: edge.forward,
     }
+}
+
+/// OpenCascade 7.9.3: the cubic Bezier (20,0) (20,12) (0,12) (0,0) closed by
+/// its chord and extruded 6 mm, with parameter-space master curves.
+const PRISM: &str = include_str!("../tests/fixtures/occt-spline-prism.step");
+
+#[test]
+fn a_cubic_and_chord_prism_imports_with_its_exact_area_and_master_rims() {
+    let (proof, body) = read_import_solid(PRISM, TOL).unwrap();
+    assert_eq!(read_analytic_solid(PRISM, TOL).unwrap(), proof);
+    assert!((proof.volume_mm3 - 864.).abs() < 1e-9);
+    assert_eq!([proof.face_count, proof.splines.len()], [4, 2]);
+    for (actual, expected) in proof
+        .bounds_mm
+        .into_iter()
+        .flatten()
+        .zip([0., 0., 0., 20., 9., 6.])
+    {
+        assert!((actual - expected).abs() < 1e-12);
+    }
+    let ImportProfile::SplineSweep { sweep } = &body.profile else {
+        panic!("{:?}", body.profile)
+    };
+    assert!((sweep.area_mm2() - 144.).abs() < 1e-9);
+    assert_eq!(sweep.height_mm(), 6.);
+    let edit = |from: &str, to: &str| {
+        let changed = PRISM.replacen(from, to, 1);
+        assert_ne!(changed, PRISM, "{from}");
+        read_import_solid(&changed, TOL).err()
+    };
+    // A master line that is not the unit-speed rim parameter is outside the proof.
+    for (from, to) in [
+        (
+            "#174 = CARTESIAN_POINT('',(0.,0.));",
+            "#174 = CARTESIAN_POINT('',(0.5,0.));",
+        ),
+        ("#175 = VECTOR('',#176,1.);", "#175 = VECTOR('',#176,2.);"),
+    ] {
+        assert_eq!(edit(from, to), Some(ReadError::Unsupported));
+    }
+    // A rim that leaves its master, or a swept curve that leaves the rims, is invalid.
+    for (from, to) in [
+        (
+            "#168 = CARTESIAN_POINT('',(20.,12.,0.));",
+            "#168 = CARTESIAN_POINT('',(20.,12.5,0.));",
+        ),
+        (
+            "#47 = CARTESIAN_POINT('',(20.,12.,0.));",
+            "#47 = CARTESIAN_POINT('',(20.,12.5,0.));",
+        ),
+    ] {
+        assert_eq!(edit(from, to), Some(ReadError::Invalid));
+    }
+    // Without master curves the swept curve is still compared with the rims.
+    let plain = PRISM
+        .replacen("#60,#24,#141,.T.", "#60,#24,#142,.T.", 1)
+        .replacen("#88,#22,#165,.T.", "#88,#22,#166,.T.", 1);
+    assert_eq!(read_import_solid(&plain, TOL).unwrap().0, proof);
+    let moved = plain.replacen(
+        "#47 = CARTESIAN_POINT('',(20.,12.,0.));",
+        "#47 = CARTESIAN_POINT('',(20.,12.5,0.));",
+        1,
+    );
+    assert_eq!(
+        read_import_solid(&moved, TOL).err(),
+        Some(ReadError::Invalid)
+    );
 }

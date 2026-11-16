@@ -125,9 +125,10 @@ fn only_periodic_seams_may_repeat_and_circular_edges_need_a_wall() {
         normal: [0., 0., 1.],
         radius_mm: 1.,
     });
+    // A round edge between two other supports is outside the families.
     assert_eq!(
         incidence_with_curves([([1, 1], [0, 1], circle)], 2),
-        Err(ReadError::Invalid)
+        Err(ReadError::Unsupported)
     );
     let half = Curve::Semicircle(SemicircleEdge {
         center_mm: [0.; 3],
@@ -137,7 +138,7 @@ fn only_periodic_seams_may_repeat_and_circular_edges_need_a_wall() {
     });
     assert_eq!(
         incidence_with_curves([([1, 2], [0, 1], half)], 2),
-        Err(ReadError::Invalid)
+        Err(ReadError::Unsupported)
     );
 }
 

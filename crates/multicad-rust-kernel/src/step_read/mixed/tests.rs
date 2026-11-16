@@ -214,7 +214,7 @@ fn mixed_profiles_and_partial_walls_refuse_inconsistent_topology() {
         normal: z,
         area: 1.,
     };
-    assert_eq!(shell.check_incidence(&faces), Err(ReadError::Invalid));
+    assert_eq!(shell.check_incidence(&faces), Err(ReadError::Unsupported));
     let uses = &mut shell.edges.get_mut(&low).unwrap().uses;
     uses[1].forward = uses[0].forward;
     assert_eq!(shell.check_incidence(&faces), Err(ReadError::Invalid));
@@ -265,6 +265,78 @@ fn exact_planar_validation_distinguishes_coincident_and_complementary_arcs() {
     assert!(crate::normal_sweep::signed_area(&profile_ring(&stadium)) > 0.);
     assert_eq!(
         face_area(&mixed, &[stadium], TOLERANCE),
+        Err(ReadError::Invalid)
+    );
+}
+
+#[test]
+fn a_correctly_wound_ring_the_certificate_cannot_resolve_is_not_malformed() {
+    // The bent sheet section of a KiCad battery holder
+    // (BatteryHolder_Keystone_3034_1x20mm), as transmitted on its plane.
+    let line = |a, b| ProfileEdge::Line { a, b };
+    let arc = |center, a, b, clockwise| ProfileEdge::Arc {
+        center,
+        a,
+        b,
+        clockwise,
+    };
+    let bend = [0.3741515015950001, 5.989157758304];
+    let section = || {
+        Trim::Mixed(vec![
+            line([1., 0.], [1., 1.3458487407739996]),
+            line(
+                [1., 1.3458487407739996],
+                [-0.5655411191910003, 5.647137614978],
+            ),
+            arc(
+                bend,
+                [-0.5655411191910003, 5.647137614978],
+                [-0.6258484984050001, 5.989157758304],
+                true,
+            ),
+            line(
+                [-0.6258484984050001, 5.989157758304],
+                [-0.6258484984050001, 6.489157758304],
+            ),
+            line(
+                [-0.6258484984050001, 6.489157758304],
+                [-1.025848498405, 6.489157758304],
+            ),
+            line(
+                [-1.025848498405, 6.489157758304],
+                [-1.025848498405, 5.989157758304],
+            ),
+            arc(
+                bend,
+                [-1.025848498405, 5.989157758304],
+                [-0.9414181675050002, 5.510329557647999],
+                false,
+            ),
+            line(
+                [-0.9414181675050002, 5.510329557647999],
+                [0.9396926207859999, 0.3420201433259997],
+            ),
+            arc(
+                [0., 0.],
+                [0.9396926207859999, 0.3420201433259997],
+                [1., 0.],
+                true,
+            ),
+        ])
+    };
+    assert!(section().signed_area() > 2.);
+    assert_eq!(
+        face_area(&section(), &[], 1e-7),
+        Err(ReadError::Unsupported)
+    );
+    // The same ring as a hole of nothing has the wrong winding.
+    let outer = Trim::Mixed(vec![ProfileEdge::Circle {
+        center: [0., 3.],
+        radius_mm: 0.1,
+        clockwise: false,
+    }]);
+    assert_eq!(
+        face_area(&outer, &[section()], 1e-7),
         Err(ReadError::Invalid)
     );
 }

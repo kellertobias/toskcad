@@ -399,7 +399,8 @@ fn blind_candidate_support_depth_resource_and_shell_ownership_failures_are_typed
     .collect::<Vec<_>>()
     .join(",");
     // A spline-supported shell below the legacy reader's minimum face
-    // count is a resource refusal; the new provider must never mask it.
+    // count is outside that family, not a resource refusal (CAD-359); the
+    // new provider must not turn it into an import.
     let short_ids = with_shell(&source, |s, solid| {
         let faces = s.member_faces(solid).unwrap();
         let spline = *faces
@@ -415,11 +416,11 @@ fn blind_candidate_support_depth_resource_and_shell_ownership_failures_are_typed
     let short = source.replacen(row, &format!("{id}=CLOSED_SHELL('',({short_ids}));"), 1);
     assert_eq!(
         read_import_solid(&short, 1e-7).err(),
-        Some(ReadError::Limit)
+        Some(ReadError::Unsupported)
     );
     assert_eq!(
         read_analytic_solid(&short, 1e-7).err(),
-        Some(ReadError::Limit)
+        Some(ReadError::Unsupported)
     );
     let huge = source.replacen(row, &format!("{id}=CLOSED_SHELL('',({ids}));"), 1);
     let cause = read_spline_cap_relief(&huge, 1e-7).err().unwrap();

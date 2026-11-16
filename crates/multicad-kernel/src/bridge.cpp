@@ -67,6 +67,9 @@
 #include <StepRepr_RepresentationItem.hxx>
 #include <TCollection_HAsciiString.hxx>
 #include <XSControl_TransferReader.hxx>
+#include <StepRepr_NextAssemblyUsageOccurrence.hxx>
+#include <Transfer_TransientProcess.hxx>
+#include <TransferBRep.hxx>
 #include <XSControl_WorkSession.hxx>
 #include <sstream>
 #include <TopExp.hxx>
@@ -924,6 +927,40 @@ rust::Vec<StepSolidData> step_solids(rust::Str path) {
       std::ostringstream text;
       BRepTools::Write(e.Current(), text);
       out.push_back(StepSolidData{rust::String(name), rust::String(text.str())});
+    }
+    return out;
+  });
+}
+// Every next-assembly-usage occurrence of a STEP file with the located
+// component OpenCascade binds to it, in the coordinates of its parent.
+rust::Vec<StepOccurrenceData> step_occurrences(rust::Str path) {
+  return guard([&] {
+    const std::lock_guard<std::mutex> exchange_lock(step_exchange_mutex);
+    STEPControl_Reader reader;
+    if (reader.ReadFile(std::string(path).c_str()) != IFSelect_RetDone)
+      throw std::runtime_error("STEP read failed");
+    reader.SetSystemLengthUnit(1.0);
+    if (reader.TransferRoots() == 0)
+      throw std::runtime_error("STEP contains no transferable geometry");
+    const Handle(Transfer_TransientProcess) process =
+        reader.WS()->TransferReader()->TransientProcess();
+    const Handle(Interface_InterfaceModel) model = reader.Model();
+    rust::Vec<StepOccurrenceData> out;
+    for (Standard_Integer i = 1; i <= model->NbEntities(); ++i) {
+      const auto usage = Handle(StepRepr_NextAssemblyUsageOccurrence)::DownCast(
+          model->Value(i));
+      if (usage.IsNull())
+        continue;
+      const TopoDS_Shape shape =
+          TransferBRep::ShapeResult(process->Find(usage));
+      std::ostringstream text;
+      if (!shape.IsNull())
+        BRepTools::Write(shape, text);
+      const auto string = [](const Handle(TCollection_HAsciiString) &value) {
+        return rust::String(value.IsNull() ? "" : value->ToCString());
+      };
+      out.push_back(StepOccurrenceData{string(usage->Id()), string(usage->Name()),
+                                       rust::String(text.str())});
     }
     return out;
   });

@@ -174,7 +174,27 @@ impl Solid {
             return Err(invalid("STEP import needs a source identity"));
         }
         let tolerance = policy.linear_tolerance_mm;
-        let mut members = step_read::read_source_compound(input, tolerance).map_err(|cause| {
+        let recognised = step_read::read_source_compound(input, tolerance);
+        if let Err(refusal) = recognised {
+            // Outside the recognised families the solid keeps its imported
+            // boundary. When that is refused too, the families' refusal
+            // stands unless they only found the file unfamiliar and the
+            // boundary itself is invalid: then the file is invalid. An
+            // assembly is read only by the retained provider, so its
+            // refusal is the file's.
+            match Self::import_rust_brep(input, feature, policy) {
+                Ok(retained) => return Ok(retained),
+                Err(error)
+                    if step_read::brep::has_product_structure(input)
+                        || (refusal == ReadError::Unsupported
+                            && error.kind == GeometryErrorKind::InvalidResult) =>
+                {
+                    return Err(error);
+                }
+                Err(_) => {}
+            }
+        }
+        let mut members = recognised.map_err(|cause| {
             let (kind, message) = match cause {
                 ReadError::Invalid => (GeometryErrorKind::InvalidResult, "Invalid STEP geometry"),
                 ReadError::Limit => (
@@ -213,6 +233,7 @@ impl Solid {
             &imported.profile,
             ImportProfile::Orthogonal { .. }
                 | ImportProfile::PocketedOrthogonal { .. }
+                | ImportProfile::DrilledOrthogonal { .. }
                 | ImportProfile::SlottedOrthogonal { .. }
         );
         if matches!(&imported.profile, ImportProfile::SplineCapRelief { .. }) {

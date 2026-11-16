@@ -260,3 +260,105 @@ fn complex_geometry_may_not_hide_topology_in_the_ownership_walk() {
         Err(ReadError::Unsupported),
     );
 }
+
+#[test]
+fn a_related_shape_representation_links_the_solid_to_its_product() {
+    let text = write_box([n(4); 3], [0.; 3], U, V).unwrap();
+    let direct = read_import_compound(&text, TOLERANCE).unwrap();
+    let (link, args) = records(&text, "SHAPE_DEFINITION_REPRESENTATION")
+        .next()
+        .unwrap();
+    let (shape, solid) = args
+        .trim_start_matches("SHAPE_DEFINITION_REPRESENTATION(")
+        .trim_end_matches(");")
+        .split_once(',')
+        .unwrap();
+    let context = records(&text, "ADVANCED_BREP_SHAPE_REPRESENTATION")
+        .next()
+        .unwrap()
+        .1
+        .trim_end_matches(");")
+        .rsplit_once(',')
+        .unwrap()
+        .1;
+    let hybrid = |relation: &str| {
+        append(
+            &text.replace(
+                &format!("{link}={args}"),
+                &format!("{link}=SHAPE_DEFINITION_REPRESENTATION({shape},#900001);"),
+            ),
+            &format!(
+                "#900001=SHAPE_REPRESENTATION('',(),{context});\n\
+                 #900002=SHAPE_REPRESENTATION_RELATIONSHIP('',$,{relation});"
+            ),
+        )
+    };
+    for relation in [format!("#900001,{solid}"), format!("{solid},#900001")] {
+        assert_eq!(
+            read_import_compound(&hybrid(&relation), TOLERANCE).unwrap(),
+            direct
+        );
+    }
+    // A relationship between other representations does not own the solid.
+    assert_eq!(
+        read_import_compound(&hybrid("#900001,#900001"), TOLERANCE).err(),
+        Some(ReadError::Invalid)
+    );
+}
+
+#[test]
+fn a_reference_cycle_below_a_solid_is_invalid_for_every_entity_kind() {
+    let text = write_box([n(4); 3], [0.; 3], U, V).unwrap();
+    for kind in ["EDGE_LOOP", "VERTEX_POINT", "CARTESIAN_POINT"] {
+        let (id, args) = records(&text, kind).next().unwrap();
+        let (head, tail) = args.split_once("',").unwrap();
+        let end = tail
+            .find(|c: char| !(c.is_ascii_alphanumeric() || "#(.-+".contains(c)))
+            .unwrap();
+        let cyclic = text.replacen(
+            &format!("{id}={args}"),
+            &format!(
+                "{id}={head}',{}{id}{}",
+                &tail[..usize::from(tail.starts_with('('))],
+                &tail[end..]
+            ),
+            1,
+        );
+        assert_ne!(cyclic, text);
+        assert_eq!(
+            read_import_compound(&cyclic, TOLERANCE).err(),
+            Some(ReadError::Invalid),
+            "{kind}"
+        );
+        assert_eq!(
+            read_analytic_compound(&cyclic, TOLERANCE).err(),
+            Some(ReadError::Invalid)
+        );
+    }
+    let entity = |name, args| {
+        vec![Entity {
+            source: None,
+            name,
+            args,
+        }]
+    };
+    let typed = |id| {
+        Value::Typed(Entity {
+            source: None,
+            name: "PARAMETER_VALUE",
+            args: vec![Value::Reference(id)],
+        })
+    };
+    let mut entities = BTreeMap::new();
+    entities.insert(1, entity("TRIMMED_CURVE", vec![typed(2), Value::Omitted]));
+    entities.insert(
+        2,
+        entity("LINE", vec![Value::List(vec![Value::Reference(3)])]),
+    );
+    assert_eq!(reject_reference_cycles(&entities, &[1, 1]), Ok(()));
+    entities.insert(3, entity("VECTOR", vec![typed(1)]));
+    assert_eq!(
+        reject_reference_cycles(&entities, &[1]),
+        Err(ReadError::Invalid)
+    );
+}

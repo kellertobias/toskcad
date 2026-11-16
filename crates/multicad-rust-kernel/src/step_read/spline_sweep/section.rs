@@ -32,7 +32,7 @@ pub(super) fn verify(
     if !legacy_hole {
         return verify_general(reader, edges, plane, face);
     }
-    if face.outer.len() < 3
+    if face.outer.len() < 2
         || face
             .outer
             .iter()
@@ -57,7 +57,11 @@ pub(super) fn verify(
         remaining: MAX_PAIR_WORK,
         interrupt: None,
     };
-    simple(&section, tolerance, &mut budget).map_err(certificate_error)?;
+    if section.len() == 2 {
+        convex_pair(&section, tolerance)?;
+    } else {
+        simple(&section, tolerance, &mut budget).map_err(certificate_error)?;
+    }
     let mut area = face
         .outer
         .iter()
@@ -85,6 +89,39 @@ pub(super) fn verify(
         return Err(ReadError::Invalid);
     }
     Ok(area)
+}
+
+/// Two edges meet at both of their vertices, so no direction of common
+/// travel separates them. Their closed control polygon instead turns
+/// strictly one way and exactly once: every line then meets the polygon, and
+/// by variation diminution the curve, at most twice, so the ring is convex.
+fn convex_pair(section: &[Boundary], tolerance: f64) -> Result<()> {
+    let mut polygon = Vec::new();
+    for piece in section.iter().flat_map(|edge| &edge.pieces) {
+        match *piece {
+            Piece::Line([start, _]) => polygon.push(start),
+            Piece::Bezier([start, first, second, _]) => polygon.extend([start, first, second]),
+            Piece::Arc(_) => return Err(ReadError::Unsupported),
+        }
+    }
+    let corner = |index: usize| {
+        let [a, b, c] = [0, 1, 2].map(|step| polygon[(index + step) % polygon.len()]);
+        [sub2(b, a), sub2(c, b)]
+    };
+    let side = cross2(corner(0)[0], corner(0)[1]).signum();
+    let mut turning = 0.;
+    for index in 0..polygon.len() {
+        let [before, after] = corner(index);
+        let turn = side * cross2(before, after);
+        if turn.is_nan() || turn <= tolerance * norm(before).max(norm(after)) {
+            return Err(ReadError::Unsupported);
+        }
+        turning += turn.atan2(dot2(before, after));
+    }
+    if (turning - TAU).abs() > 1e-9 {
+        return Err(ReadError::Unsupported);
+    }
+    Ok(())
 }
 
 /// An internal ring cap: one counterclockwise outside circle around a
@@ -305,6 +342,57 @@ mod error_tests {
             (ConstructionError::Cancelled, ReadError::Unsupported),
         ] {
             assert_eq!(certificate_error(source), expected);
+        }
+    }
+}
+
+#[cfg(test)]
+mod convex_pair_tests {
+    use super::*;
+
+    fn edge(pieces: Vec<Piece>) -> Boundary {
+        let bounds = [[0.; 2]; 2];
+        Boundary { pieces, bounds }
+    }
+
+    fn ring(points: &[Point2]) -> Vec<Boundary> {
+        let next = |index: usize| points[(index + 1) % points.len()];
+        let lines = (0..points.len()).map(|index| Piece::Line([points[index], next(index)]));
+        vec![edge(lines.collect()), edge(Vec::new())]
+    }
+
+    #[test]
+    fn two_edges_need_a_convex_control_polygon_that_turns_once() {
+        let cubic = [[20., 0.], [20., 12.], [0., 12.], [0., 0.]];
+        let chord = Piece::Line([[0., 0.], [20., 0.]]);
+        let section = vec![edge(vec![Piece::Bezier(cubic)]), edge(vec![chord])];
+        assert_eq!(convex_pair(&section, 1e-7), Ok(()));
+        // The reversed ring is convex too; its winding is judged by its area.
+        let mut reversed = cubic;
+        reversed.reverse();
+        let back = Piece::Line([[20., 0.], [0., 0.]]);
+        let section = vec![edge(vec![back]), edge(vec![Piece::Bezier(reversed)])];
+        assert_eq!(convex_pair(&section, 1e-7), Ok(()));
+        let arc = Piece::Arc(Arc {
+            center: [10., 0.],
+            radius: 10.,
+            start: 0.,
+            sweep: PI,
+        });
+        let section = vec![edge(vec![arc]), edge(vec![back])];
+        assert_eq!(convex_pair(&section, 1e-7), Err(ReadError::Unsupported));
+        // A reflex corner, a straight corner and a ring that turns twice.
+        let reflex = [[0., 0.], [4., 0.], [4., 4.], [2., 1.], [0., 4.]];
+        let straight = [[0., 0.], [2., 0.], [4., 0.], [4., 4.]];
+        let star = [0., 2., 4., 1., 3.].map(|step: f64| {
+            let (sin, cos) = (step * TAU / 5.).sin_cos();
+            [cos, sin]
+        });
+        for points in [&reflex[..], &straight, &star] {
+            assert_eq!(
+                convex_pair(&ring(points), 1e-7),
+                Err(ReadError::Unsupported)
+            );
         }
     }
 }

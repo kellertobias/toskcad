@@ -66,6 +66,14 @@ mod ffi {
         pub name: String,
         pub brep: String,
     }
+    /// One next-assembly-usage occurrence as OpenCascade transfers it: its
+    /// identifier and name and the located B-rep of the placed component in
+    /// its parent's coordinates.
+    pub struct StepOccurrenceData {
+        pub id: String,
+        pub name: String,
+        pub brep: String,
+    }
     pub struct SweepLimits {
         tolerance: f64,
         minimum_feature: f64,
@@ -440,6 +448,7 @@ mod ffi {
         fn write_step(shape: &Shape, path: &str) -> Result<()>;
         fn read_step(path: &str) -> Result<UniquePtr<Shape>>;
         fn step_solids(path: &str) -> Result<Vec<StepSolidData>>;
+        fn step_occurrences(path: &str) -> Result<Vec<StepOccurrenceData>>;
         fn shape_to_brep(shape: &Shape) -> Result<String>;
         fn shape_binary_geometry(shape: &Shape, maximum_bytes: u64) -> Result<Vec<u8>>;
         fn shape_from_brep(text: &str) -> Result<UniquePtr<Shape>>;

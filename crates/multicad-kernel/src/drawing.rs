@@ -3,6 +3,7 @@
 use crate::{GeometryError, GeometryErrorKind, GeometryPolicy, PlaneFrame, Solid, ffi};
 use multicad_core::drawings::{VectorCurve, VectorRole};
 mod curved;
+mod imported;
 mod panel;
 mod planar;
 mod scene;
@@ -222,6 +223,13 @@ fn project_rust(
             "Rust drawing projection requires all sources to use Rust geometry",
         ));
     }
+    // Sections through retained imported boundaries cut the exact faces.
+    if options.section_only
+        && let Some(offset) = options.section_offset_mm
+        && let Some(vectors) = imported::section(solids, options, offset)
+    {
+        return vectors;
+    }
     // Bored rectangular prisms draw through the equivalent orthogonal
     // stock, which the curved, aperture and section providers qualify.
     let equivalents = solids
@@ -375,6 +383,25 @@ fn project_rust(
 }
 
 pub fn project_drawing(
+    solids: &[DrawingSolid<'_>],
+    options: DrawingProjection,
+) -> Result<Vec<ProjectedVector>, GeometryError> {
+    let result = project_drawing_with_families(solids, options);
+    // A plane section that the family projectors refuse is cut through the
+    // exact boundary the solids export, retained as written.
+    match (&result, options.section_offset_mm) {
+        (Err(error), Some(offset))
+            if error.kind == GeometryErrorKind::Unsupported
+                && options.section_only
+                && solids.iter().all(|input| input.solid.uses_rust_geometry()) =>
+        {
+            imported::section_through_export(solids, options, offset).unwrap_or(result)
+        }
+        _ => result,
+    }
+}
+
+fn project_drawing_with_families(
     solids: &[DrawingSolid<'_>],
     options: DrawingProjection,
 ) -> Result<Vec<ProjectedVector>, GeometryError> {

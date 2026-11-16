@@ -545,12 +545,17 @@ fn read_rust_step(
         .or_else(|| solid.verify_herringbone_step(source))
         .or_else(|| solid.verify_bevel_step(source))
         .or_else(|| solid.verify_worm_step(source))
+        .or_else(|| solid.verify_imported_brep_step(source))
     {
         let volume = proof.map_err(readback_error)?;
         // The verified boundary gives the source bounds within its uniform
         // position error. Volume comes from the independently decoded boundary.
         let bounds = solid.bounds().map_err(io)?;
-        return Ok((1, volume, [bounds.min, bounds.max]));
+        return Ok((
+            solid.solid_count().map_err(io)?,
+            volume,
+            [bounds.min, bounds.max],
+        ));
     }
     let decoded = step_read::read_analytic_compound_with_helical_cuts(source, tolerance)
         .map_err(readback_error)?;

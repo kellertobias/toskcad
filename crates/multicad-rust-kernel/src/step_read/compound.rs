@@ -190,15 +190,45 @@ pub(super) fn read_members_retaining_arena<'input, T>(
     single: bool,
     mut member: impl FnMut(&mut Shell<'_, 'input>, u32, bool) -> Result<T>,
 ) -> Result<RetainedMembers<'input, T>> {
-    let entities = parse_entities(input, tolerance)?;
-    let solids = Shell::new(&entities, tolerance, allow_circles).represented_solids(single)?;
+    let mut entities = parse_entities(input, tolerance)?;
+    let transmitted = read_arena(&entities, tolerance, allow_circles, single, &mut member);
+    let error = match transmitted {
+        Ok(members) => return Ok((entities, members)),
+        Err(ReadError::Limit) => return Err(ReadError::Limit),
+        Err(error) => error,
+    };
+    // A refused shell may only differ from a recognized family by faces that
+    // partition one plane. Only a recognized merged boundary replaces the
+    // verdict on the transmitted one.
+    let solids = Shell::new(&entities, tolerance, allow_circles).represented_solids(single);
+    let merged = match solids {
+        Ok(solids) => same_domain::unify(&mut entities, &solids, tolerance),
+        Err(_) => false,
+    };
+    if merged
+        && let Ok(members) = read_arena(&entities, tolerance, allow_circles, single, &mut member)
+    {
+        return Ok((entities, members));
+    }
+    Err(error)
+}
+
+fn read_arena<'input, T>(
+    entities: &BTreeMap<u32, Vec<Entity<'input>>>,
+    tolerance: f64,
+    allow_circles: bool,
+    single: bool,
+    member: &mut impl FnMut(&mut Shell<'_, 'input>, u32, bool) -> Result<T>,
+) -> Result<Vec<T>> {
+    let solids = Shell::new(entities, tolerance, allow_circles).represented_solids(single)?;
     let (topology_count, analytic_candidate) = inspect_flat_entities(entities.values().flatten())?;
+    reject_reference_cycles(entities, &solids)?;
     let may_be_warped = allow_circles && analytic_candidate;
     let mut owners = BTreeMap::new();
     let members = solids
         .into_iter()
         .map(|id| {
-            let mut shell = Shell::new(&entities, tolerance, allow_circles);
+            let mut shell = Shell::new(entities, tolerance, allow_circles);
             let result = member(&mut shell, id, may_be_warped)?;
             claim_topology(&shell, id, &mut owners)?;
             Ok(result)
@@ -207,7 +237,47 @@ pub(super) fn read_members_retaining_arena<'input, T>(
     if owners.len() != topology_count {
         return Err(ReadError::Invalid);
     }
-    Ok((entities, members))
+    Ok(members)
+}
+
+/// The topology and geometry below a solid form a hierarchy. A reference
+/// back to an entity that is still being expanded is malformed, whatever
+/// entity kind the referring attribute expects.
+fn reject_reference_cycles(
+    entities: &BTreeMap<u32, Vec<Entity<'_>>>,
+    solids: &[u32],
+) -> Result<()> {
+    fn collect(value: &Value<'_>, pending: &mut Vec<(u32, bool)>) {
+        match value {
+            Value::Reference(id) => pending.push((*id, false)),
+            Value::List(items) => items.iter().for_each(|item| collect(item, pending)),
+            Value::Typed(entity) => entity.args.iter().for_each(|arg| collect(arg, pending)),
+            _ => {}
+        }
+    }
+    let mut closed = BTreeMap::new();
+    let mut pending = solids.iter().map(|&id| (id, false)).collect::<Vec<_>>();
+    while let Some((id, leaving)) = pending.pop() {
+        if leaving {
+            closed.insert(id, true);
+            continue;
+        }
+        match closed.get(&id) {
+            Some(true) => continue,
+            Some(false) => return Err(ReadError::Invalid),
+            None => {}
+        }
+        closed.insert(id, false);
+        pending.push((id, true));
+        // A dangling reference is reported by the member reader.
+        for entity in entities.get(&id).into_iter().flatten() {
+            entity
+                .args
+                .iter()
+                .for_each(|arg| collect(arg, &mut pending));
+        }
+    }
+    Ok(())
 }
 
 fn inspect_flat_entities<'a>(
@@ -233,7 +303,7 @@ fn inspect_flat_entities<'a>(
     Ok((count, ellipse || cylinder))
 }
 
-fn topology(name: &str) -> bool {
+pub(super) fn topology(name: &str) -> bool {
     matches!(
         name,
         "MANIFOLD_SOLID_BREP"
