@@ -103,7 +103,9 @@ fn actual_bounded_buffers_work_frontiers_and_cancellation_preserve_retry() {
             }
         );
     }
-    for stop in [1, calls / 2, calls] {
+    // Include cancellation after scratch allocation, at its actual-capacity
+    // checkpoint, before the first counting pass can mutate any records.
+    for stop in [1, 2, 3, calls / 2, calls] {
         let mut seen = 0;
         let result = sort(
             &mut original.clone(),

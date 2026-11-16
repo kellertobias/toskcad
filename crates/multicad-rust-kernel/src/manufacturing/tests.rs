@@ -56,12 +56,23 @@ fn coincident_points_keep_separate_shell_indices_and_shared_fans_refuse() {
     let proof = certify(&mesh).unwrap();
     assert_eq!(proof.vertex_links, 8);
     assert!((proof.signed_volume_mm3 - 16. / 6.).abs() < 1e-12);
+    let counted = super::certify_counted(&mesh, &mut |_, _| Ok::<_, ()>(())).unwrap();
+    assert_eq!(counted, proof);
     for index in &mut mesh.indices {
         if *index == 4 {
             *index = 0;
         }
     }
     assert_eq!(certify(&mesh), Err(INVALID));
+    // Both shells retain valid opposite edge uses, but identifying only the
+    // touching vertex creates two fan cycles. Exercise the counted cycle
+    // validator as well as the independent union-based implementation.
+    let original = mesh.clone();
+    assert_eq!(
+        super::certify_counted(&mesh, &mut |_, _| Ok::<_, ()>(())),
+        Err(super::CountedError::Mesh(INVALID))
+    );
+    assert_eq!(mesh, original);
 }
 
 #[test]
