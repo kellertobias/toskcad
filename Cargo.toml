@@ -67,3 +67,13 @@ opt-level = 0
 
 [profile.coverage.package.num-bigint]
 opt-level = 2
+# Native example regeneration is expensive without Rust optimization.
+# Keep development assertions while avoiding release LTO for test binaries.
+[profile.ci]
+inherits = "dev"
+opt-level = 2
+debug = 0
+debug-assertions = true
+overflow-checks = true
+codegen-units = 16
+incremental = false
