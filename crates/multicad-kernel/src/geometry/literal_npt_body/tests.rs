@@ -485,7 +485,7 @@ fn actual_original_scaled_mapping_keeps_usable_cap_frames_and_exact_identity() {
     assert!(failure.message.contains("STEP trim disagreement"));
     assert!(failure.message.contains("plane #26247"));
     assert!(failure.message.contains("edge #26595"));
-    assert!(failure.message.contains("deviation_mm="));
+    assert!(failure.message.contains("deviation_mm>="));
     assert!(failure.message.contains("tolerance_mm="));
 }
 #[test]

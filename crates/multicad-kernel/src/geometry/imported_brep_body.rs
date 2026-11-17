@@ -148,8 +148,24 @@ impl Solid {
         feature: EntityId,
         policy: GeometryPolicy,
     ) -> Result<Self, GeometryError> {
-        let mut assembly = step_read::brep::read_assembly(input, policy.linear_tolerance_mm, None)
-            .map_err(failure)?;
+        let verified = super::step_import::pcurve_validation::validate(input, policy)?;
+        Self::import_rust_brep_validated(&verified, feature, policy)
+    }
+
+    pub(super) fn import_rust_brep_validated(
+        verified: &step_read::brep::PcurveValidatedInput<'_>,
+        feature: EntityId,
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        if verified.tolerance() != policy.linear_tolerance_mm {
+            return Err(error(
+                OPERATION,
+                GeometryErrorKind::Input,
+                "STEP trim verification tolerance does not match the import policy",
+            ));
+        }
+        let mut assembly =
+            step_read::brep::read_assembly_validated(verified, None).map_err(failure)?;
         if assembly.nodes.len() == 1 && assembly.nodes[0].children.is_empty() {
             return Self::import_flat_brep(assembly.nodes.remove(0).solids, feature, policy);
         }

@@ -15,6 +15,7 @@ use multicad_rust_kernel::{Error as RationalError, polygon::PolygonError};
 use std::f64::consts::{PI, TAU};
 mod compound;
 mod involute;
+pub(super) mod pcurve_validation;
 
 type Point = [f64; 3];
 type Segment = [Point; 2];
@@ -174,6 +175,10 @@ impl Solid {
             return Err(invalid("STEP import needs a source identity"));
         }
         let tolerance = policy.linear_tolerance_mm;
+        // An immutable input-bound certificate checks every stated trim before
+        // either family admission or retained-boundary fallback. Reuse this
+        // same earned certificate; no repeated geometric verification.
+        let verified_trims = pcurve_validation::validate(input, policy)?;
         // Discovery only: this bounded borrowed body/header view grants no
         // material admission. Drop its arena before the independent owned
         // reader. Unknown families keep the existing analytic/import routes
@@ -220,7 +225,7 @@ impl Solid {
             // boundary itself is invalid: then the file is invalid. An
             // assembly is read only by the retained provider, so its
             // refusal is the file's.
-            match Self::import_rust_brep(input, feature, policy) {
+            match Self::import_rust_brep_validated(&verified_trims, feature, policy) {
                 // Topology that no solid owns is the families' proof that the
                 // file is malformed; the retained solids do not outrank it.
                 Ok(_)

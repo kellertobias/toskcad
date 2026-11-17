@@ -805,7 +805,8 @@ impl Reader<'_, '_> {
 /// Read every solid of a flat file. Assemblies and files holding anything
 /// but solids are refused as unsupported.
 pub fn read_boundaries(input: &str, tolerance: f64) -> Result<Vec<Boundary>> {
-    let source = Source::parse(input, tolerance)?;
+    let verified = validate_pcurve_input(input, tolerance, None).map_err(|e| e.kind)?;
+    let source = Source::parse(verified.input(), verified.tolerance())?;
     check(!source.is_assembly(), ReadError::Unsupported)?;
     source.boundaries()
 }
@@ -848,6 +849,25 @@ pub fn read_assembly(
     tolerance: f64,
     interrupt: crate::brep::Interrupt<'_>,
 ) -> std::result::Result<Assembly<Solid>, crate::brep::Error> {
+    let verified = validate_pcurve_input(input, tolerance, interrupt).map_err(|e| {
+        if e.cancelled {
+            crate::brep::Error::Cancelled
+        } else {
+            convert(e.kind)
+        }
+    })?;
+    read_assembly_validated(&verified, interrupt)
+}
+
+/// Read the exact immutable input and tolerance whose complete trim checks
+/// were earned by the sealed receipt. Geometry, incidence and placement are
+/// still checked normally; declared-incidence widening never widens trim proof.
+pub fn read_assembly_validated(
+    verified: &PcurveValidatedInput<'_>,
+    interrupt: crate::brep::Interrupt<'_>,
+) -> std::result::Result<Assembly<Solid>, crate::brep::Error> {
+    let input = verified.input();
+    let tolerance = verified.tolerance();
     let source = Source::parse(input, tolerance).map_err(convert)?;
     let strict = assembly_of(&source, tolerance, None, interrupt);
     let wider = source
