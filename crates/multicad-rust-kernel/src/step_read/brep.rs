@@ -895,14 +895,19 @@ pub fn read_assembly_validated(
     read_assembly_geometry(verified.input(), verified.tolerance(), interrupt)
 }
 
-/// Inspect retained geometry for an independent refusal. This cannot return
-/// geometry or a trim certificate, and success grants no import admission.
+/// Inspect boundary incidence for an independent refusal. This checks the
+/// same prefix as full solid construction, including orientation normalization,
+/// without integrating properties of a solid that cannot be admitted. None
+/// means no refusal was established; it does not mean valid geometry.
 pub fn retained_geometry_refusal(
     input: &str,
     tolerance: f64,
     interrupt: crate::brep::Interrupt<'_>,
 ) -> Option<crate::brep::Error> {
-    read_assembly_geometry(input, tolerance, interrupt).err()
+    read_assembly_with(input, tolerance, interrupt, &mut |boundary, tol| {
+        crate::brep::solid::validate_incidence(boundary, tol, interrupt)
+    })
+    .err()
 }
 
 fn read_assembly_geometry(
@@ -910,11 +915,22 @@ fn read_assembly_geometry(
     tolerance: f64,
     interrupt: crate::brep::Interrupt<'_>,
 ) -> std::result::Result<Assembly<Solid>, crate::brep::Error> {
+    read_assembly_with(input, tolerance, interrupt, &mut |boundary, tol| {
+        Solid::new(boundary, tol, interrupt)
+    })
+}
+
+fn read_assembly_with<T>(
+    input: &str,
+    tolerance: f64,
+    interrupt: crate::brep::Interrupt<'_>,
+    construct: &mut impl FnMut(Boundary, f64) -> std::result::Result<T, crate::brep::Error>,
+) -> std::result::Result<Assembly<T>, crate::brep::Error> {
     if interrupt.is_some_and(|f| f()) {
         return Err(crate::brep::Error::Cancelled);
     }
     let source = Source::parse(input, tolerance).map_err(convert)?;
-    let strict = assembly_of(&source, tolerance, None, interrupt);
+    let strict = assembly_of(&source, tolerance, None, construct);
     let wider = source
         .declared_uncertainty()
         .map(|declared| declared.min(MAX_DECLARED_TOLERANCE_MM))
@@ -928,7 +944,7 @@ fn read_assembly_geometry(
         tolerance: wider,
         ..source
     };
-    let result = assembly_of(&capped, tolerance, Some(wider), interrupt);
+    let result = assembly_of(&capped, tolerance, Some(wider), construct);
     if !matches!(result, Err(crate::brep::Error::Invalid)) || declared <= wider {
         return result;
     }
@@ -940,18 +956,18 @@ fn read_assembly_geometry(
         tolerance: declared,
         ..capped
     };
-    match assembly_of(&own, tolerance, Some(declared), interrupt) {
+    match assembly_of(&own, tolerance, Some(declared), construct) {
         Ok(_) => Err(crate::brep::Error::Unsupported),
         Err(error) => Err(error),
     }
 }
 
-fn assembly_of(
+fn assembly_of<T>(
     source: &Source<'_>,
     tolerance: f64,
     rederive: Option<f64>,
-    interrupt: crate::brep::Interrupt<'_>,
-) -> std::result::Result<Assembly<Solid>, crate::brep::Error> {
+    construct: &mut impl FnMut(Boundary, f64) -> std::result::Result<T, crate::brep::Error>,
+) -> std::result::Result<Assembly<T>, crate::brep::Error> {
     let structure = if source.is_assembly() {
         assembly::read(source).map_err(convert)?
     } else {
@@ -971,10 +987,10 @@ fn assembly_of(
         // Every solid belongs to exactly one definition.
         let boundary = boundaries.remove(&id).ok_or(crate::brep::Error::Invalid)?;
         match rederive {
-            None => Solid::new(boundary, tolerance, interrupt),
+            None => construct(boundary, tolerance),
             Some(wider) => {
                 let (boundary, _) = crate::brep::vertex::rederive(&boundary, wider)?;
-                Solid::new(boundary, wider, interrupt)
+                construct(boundary, wider)
             }
         }
     })

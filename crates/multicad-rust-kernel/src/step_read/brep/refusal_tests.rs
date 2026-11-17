@@ -6,6 +6,23 @@ const PLACED: &str = include_str!(concat!(
 ));
 
 #[test]
+fn independent_refusal_propagates_an_interrupt_after_inspection_starts() {
+    let polls = std::cell::Cell::new(0);
+    let interrupt = || {
+        polls.set(polls.get() + 1);
+        polls.get() >= 3
+    };
+    assert_eq!(
+        retained_geometry_refusal(PLACED, 1e-7, Some(&interrupt)),
+        Some(crate::brep::Error::Cancelled)
+    );
+    assert_eq!(polls.get(), 3);
+    // A later fresh request can still inspect the same immutable input.
+    assert_eq!(retained_geometry_refusal(PLACED, 1e-7, None), None);
+    assert!(read_assembly(PLACED, 1e-7, None).is_ok());
+}
+
+#[test]
 fn missing_trim_certificate_never_admits_geometry_or_hides_a_proved_bad_solid() {
     // A zero-offset parameter-space curve has the original line geometry,
     // but this representation is outside the current trim certificates.

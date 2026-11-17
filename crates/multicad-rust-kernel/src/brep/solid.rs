@@ -246,45 +246,65 @@ pub struct Solid {
     bounds_mm: [Point; 2],
 }
 
+/// Check only the same boundary-incidence prefix used by positive construction.
+/// Success grants neither a solid nor an import certificate. Domain integration,
+/// enclosed volume, extents and shell nesting deliberately remain unclassified.
+pub(crate) fn validate_incidence(
+    boundary: Boundary,
+    tolerance: f64,
+    interrupt: Interrupt<'_>,
+) -> Result<()> {
+    prepare_boundary(boundary, tolerance, interrupt).map(|_| ())
+}
+
+fn prepare_boundary(
+    boundary: Boundary,
+    tolerance: f64,
+    interrupt: Interrupt<'_>,
+) -> Result<(Boundary, Vec<Vec<f64>>)> {
+    ensure(tolerance.is_finite() && tolerance > 0., Error::Invalid)?;
+    let mut boundary = boundary;
+    let samples = boundary.sample(f64::INFINITY, f64::INFINITY)?;
+    for index in 0..boundary.faces.len() {
+        checkpoint(interrupt)?;
+        let counter_clockwise = domain::orientation(&boundary, index, &samples, tolerance)?;
+        let face = &mut boundary.faces[index];
+        // A reversed face whose loops alone do not show their direction
+        // could be either of its surface's two sides.
+        ensure(
+            counter_clockwise.is_some() || face.same_sense,
+            Error::Unsupported,
+        )?;
+        if counter_clockwise.is_some_and(|ccw| ccw != face.same_sense) {
+            // Keep one convention: loops run about the face normal.
+            for trim in &mut face.loops {
+                trim.uses.reverse();
+                for used in &mut trim.uses {
+                    used.1 = !used.1;
+                }
+            }
+        }
+    }
+    boundary.validate()?;
+    // A lone vertex bounding a face, as at a sphere's pole, lies on it.
+    for face in &boundary.faces {
+        for vertex in face.loops.iter().filter_map(|trim| trim.vertex) {
+            let point = boundary.vertices[vertex];
+            let uv = face.surface.invert(point, None);
+            ensure(
+                distance(face.surface.evaluate(uv).0, point) <= tolerance,
+                Error::Invalid,
+            )?;
+        }
+    }
+    Ok((boundary, samples))
+}
+
 impl Solid {
     /// Validate the boundary and integrate its properties. `tolerance` is
     /// the largest admitted gap between a vertex, its edges and their faces.
     pub fn new(boundary: Boundary, tolerance: f64, interrupt: Interrupt<'_>) -> Result<Self> {
-        ensure(tolerance.is_finite() && tolerance > 0., Error::Invalid)?;
-        let mut boundary = boundary;
-        let samples = boundary.sample(f64::INFINITY, f64::INFINITY)?;
-        for index in 0..boundary.faces.len() {
-            checkpoint(interrupt)?;
-            let counter_clockwise = domain::orientation(&boundary, index, &samples, tolerance)?;
-            let face = &mut boundary.faces[index];
-            // A reversed face whose loops alone do not show their direction
-            // could be either of its surface's two sides.
-            ensure(
-                counter_clockwise.is_some() || face.same_sense,
-                Error::Unsupported,
-            )?;
-            if counter_clockwise.is_some_and(|ccw| ccw != face.same_sense) {
-                // Keep one convention: loops run about the face normal.
-                for trim in &mut face.loops {
-                    trim.uses.reverse();
-                    for used in &mut trim.uses {
-                        used.1 = !used.1;
-                    }
-                }
-            }
-        }
-        boundary.validate()?;
-        // A lone vertex bounding a face, as at a sphere's pole, lies on it.
-        for face in &boundary.faces {
-            for vertex in face.loops.iter().filter_map(|trim| trim.vertex) {
-                let point = boundary.vertices[vertex];
-                let uv = face.surface.invert(point, None);
-                ensure(
-                    distance(face.surface.evaluate(uv).0, point) <= tolerance,
-                    Error::Invalid,
-                )?;
-            }
-        }
+        let (boundary, samples) = prepare_boundary(boundary, tolerance, interrupt)?;
         let anchor = *boundary.vertices.first().ok_or(Error::Invalid)?;
         let signs = boundary.signs();
         let mut domains = Vec::with_capacity(boundary.faces.len());
