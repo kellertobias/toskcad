@@ -671,3 +671,97 @@ fn numeric_owner_scan_debits_even_empty_complex_components() {
     }
     assert_eq!(costs[1], costs[0] + 16);
 }
+
+fn numeric_label_owner(name: &str, values: &str, numbers: usize) -> String {
+    let label = std::iter::repeat_n("1.", numbers)
+        .collect::<Vec<_>>()
+        .join(",");
+    let record = format!("\n#990001={name}(TYPED(({label})),{values});\n");
+    let at = INPUT.rfind("ENDSEC;").unwrap();
+    format!("{}{}{}", &INPUT[..at], record, &INPUT[at..])
+}
+
+#[test]
+fn small_numeric_owners_bound_typed_label_tokens_before_allocation() {
+    for (name, values) in [
+        ("CARTESIAN_POINT", "(1.,2.,3.)"),
+        ("DIRECTION", "(0.,0.,1.)"),
+        ("VECTOR", "#1,2."),
+        ("CIRCLE", "#1,2."),
+        ("ELLIPSE", "#1,2.,1."),
+        ("CYLINDRICAL_SURFACE", "#1,2."),
+        ("CONICAL_SURFACE", "#1,2.,0.25"),
+        ("SPHERICAL_SURFACE", "#1,2."),
+        ("TOROIDAL_SURFACE", "#1,3.,1."),
+    ] {
+        let text = numeric_label_owner(name, values, 2048);
+        let source = Source::parse(&text, TOL).unwrap();
+        let args = source.args(990001, name).unwrap();
+        let value = if matches!(name, "CARTESIAN_POINT" | "DIRECTION") {
+            &list(&args[1]).unwrap()[0]
+        } else {
+            &args[args.len() - 1]
+        };
+        let mut work = budget();
+        assert_eq!(
+            spelling(&source, 990001, value, &mut work),
+            Err(ReadError::Limit),
+            "{name}"
+        );
+        // The complete charged literal traversal happens before token allocation.
+        let entity = source.simple(990001).unwrap();
+        let (mut count, mut found) = (0, None);
+        let mut prefix = budget();
+        prefix.charge(16).unwrap();
+        locate(&entity.args, value, &mut count, &mut found, &mut prefix).unwrap();
+        prefix.charge(entity.source.unwrap().len() + count).unwrap();
+        assert_eq!(work.used(), prefix.used(), "{name}");
+        assert!(found.is_some());
+    }
+}
+
+#[test]
+fn bounded_point_and_direction_labels_keep_real_reads_resource_and_cancel_contracts() {
+    use std::cell::Cell;
+    for name in ["CARTESIAN_POINT", "DIRECTION"] {
+        let text = numeric_label_owner(name, "(1.,2.,3.)", 2045);
+        let source = Source::parse(&text, TOL).unwrap();
+        let args = source.args(990001, name).unwrap();
+        let value = &list(&args[1]).unwrap()[0];
+        let run = |b: &mut Budget<'_>| rational(&source, 990001, value, b);
+        let mut full = budget();
+        assert_eq!(run(&mut full).unwrap(), BigRational::from_integer(1.into()));
+        let used = full.used();
+        assert_eq!(run(&mut Budget::new(used - 1, None)), Err(ReadError::Limit));
+        assert_eq!(
+            run(&mut Budget::new(used, None)).unwrap(),
+            BigRational::from_integer(1.into())
+        );
+        let calls = Cell::new(0);
+        let count = || {
+            calls.set(calls.get() + 1);
+            false
+        };
+        run(&mut Budget::new(used, Some(&count))).unwrap();
+        let last = calls.get();
+        calls.set(0);
+        let cancel = || {
+            calls.set(calls.get() + 1);
+            calls.get() == last
+        };
+        let mut stopped = Budget::new(used, Some(&cancel));
+        assert_eq!(run(&mut stopped), Err(ReadError::Limit));
+        assert!(stopped.cancelled.get());
+        assert_eq!(
+            run(&mut Budget::new(used, None)).unwrap(),
+            BigRational::from_integer(1.into())
+        );
+        let ordinary = numeric_label_owner(name, "(1.,2.,3.)", 0);
+        let ordinary = ordinary.replace("TYPED(())", "'ordinary label'");
+        let source = Source::parse(&ordinary, TOL).unwrap();
+        let actual = coordinates(&source, 990001, name, 3, &mut budget()).unwrap();
+        for (a, expected) in actual.into_iter().zip([1., 2., 3.]) {
+            assert!(a.lo <= expected && expected <= a.hi);
+        }
+    }
+}

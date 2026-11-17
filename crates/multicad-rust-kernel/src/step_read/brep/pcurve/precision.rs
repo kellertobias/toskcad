@@ -252,19 +252,41 @@ fn spelling<'i>(
         let Some(index) = found else { continue };
         let text = entity.source.ok_or(ReadError::Unsupported)?;
         budget.charge(text.len().saturating_add(count))?;
+        // Small geometric records may hide Typed numeric children in their
+        // ignored labels. Their schema arity does not bound the token Vec.
+        // Reserve at most half of the 128KiB small-helper scratch for tokens;
+        // large spline coefficient/knot owners retain their separate bound.
+        let token_workspace = if matches!(
+            entity.name,
+            "CARTESIAN_POINT"
+                | "DIRECTION"
+                | "VECTOR"
+                | "CIRCLE"
+                | "ELLIPSE"
+                | "CYLINDRICAL_SURFACE"
+                | "CONICAL_SURFACE"
+                | "SPHERICAL_SURFACE"
+                | "TOROIDAL_SURFACE"
+        ) {
+            64 * 1024
+        } else {
+            TOKEN_WORKSPACE
+        };
         // numeric_spellings grows a Vec geometrically. Two capacities of
         // borrowed str fat pointers fit the explicit helper scratch envelope.
-        if count.saturating_mul(2 * std::mem::size_of::<&str>()) > TOKEN_WORKSPACE {
+        if count.saturating_mul(2 * std::mem::size_of::<&str>()) > token_workspace {
             return Err(ReadError::Limit);
         }
         let tokens = part21::numeric_spellings(entity).ok_or(ReadError::Unsupported)?;
-        if tokens.len() != count
-            || tokens
-                .capacity()
-                .saturating_mul(std::mem::size_of::<&str>())
-                > TOKEN_WORKSPACE
-        {
+        if tokens.len() != count {
             return Err(ReadError::Unsupported);
+        }
+        if tokens
+            .capacity()
+            .saturating_mul(std::mem::size_of::<&str>())
+            > token_workspace
+        {
+            return Err(ReadError::Limit);
         }
         let token = *tokens.get(index).ok_or(ReadError::Unsupported)?;
         let Value::Number(cached) = value else {

@@ -722,3 +722,45 @@ fn raw_quartic_101_pole_source_retains_every_original_span() {
         }
     }
 }
+
+#[test]
+fn original_point_typed_label_is_bounded_for_raw_and_unitbox_extraction() {
+    let ordinary = input(false);
+    let oversized = std::iter::repeat_n("1.", 2049)
+        .collect::<Vec<_>>()
+        .join(",");
+    let bad = ordinary.replace(
+        "#900011=CARTESIAN_POINT('',",
+        &format!("#900011=CARTESIAN_POINT(TYPED(({oversized})),"),
+    );
+    assert_ne!(bad, ordinary);
+    let min = [decimal("10."), decimal("20.")];
+    let max = [decimal("14."), decimal("24.")];
+    for text in [&bad, &ordinary] {
+        let source = Source::parse(text, 1e-7).unwrap();
+        let definition = definition(&source);
+        let Curve::Nurbs { curve, .. } = &definition.geometry else {
+            panic!()
+        };
+        for chart in [
+            Coordinates::Raw(2),
+            Coordinates::UnitBox2 {
+                min: &min,
+                max: &max,
+            },
+        ] {
+            let result = original_curve(
+                &source,
+                900001,
+                curve,
+                chart,
+                &mut Budget::new(512_000_000, None),
+            );
+            if std::ptr::eq(text, &bad) {
+                assert!(matches!(result, Err(ReadError::Limit)));
+            } else {
+                assert!(result.is_ok());
+            }
+        }
+    }
+}
