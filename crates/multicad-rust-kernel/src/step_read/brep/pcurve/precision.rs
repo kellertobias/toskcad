@@ -10,6 +10,7 @@ use num_rational::BigRational;
 use num_traits::{ToPrimitive, Zero};
 mod analytic;
 mod conic;
+mod sense_line;
 type V = [I; 3];
 const MAX_NUMBERS: usize = 262_144;
 const TOKEN_WORKSPACE: usize = 8 * 1024 * 1024;
@@ -700,6 +701,30 @@ struct Iso {
     origin: V,
     rate: I,
 }
+/// Actual finite positive-rational UV segment, in ORIGINAL REAL bounds.
+/// This calculation descriptor grants no infinite-support or surface-domain
+/// permission; each finite caller must earn the master window separately.
+pub(super) struct AxisSegment {
+    pub(super) moving: usize,
+    pub(super) endpoints: [V; 2],
+}
+pub(super) fn axis_segment(
+    source: &Source<'_>,
+    definition: &super::uv::Definition,
+    budget: &mut Budget<'_>,
+) -> Result<Option<AxisSegment>> {
+    if !matches!(definition.geometry, Curve::Nurbs { closed: false, .. }) {
+        return Ok(None);
+    }
+    let iso = isoline(source, definition, budget)?;
+    let end = iso.endpoint_id.ok_or(ReadError::Unsupported)?;
+    let endpoint = point(source, end, 2, budget)?;
+    budget.charge(128)?;
+    Ok(Some(AxisSegment {
+        moving: iso.moving,
+        endpoints: [iso.origin, endpoint],
+    }))
+}
 fn isoline(
     source: &Source<'_>,
     definition: &super::uv::Definition,
@@ -1333,6 +1358,9 @@ pub(super) fn sense(
             Curve::Nurbs { closed: false, .. },
             Curve::Nurbs { closed: false, .. },
         ) => Ok(()),
+        (Surface::Nurbs { .. }, _, Curve::Line { .. }) => {
+            sense_line::certify(source, curve3d_id, definition, surface, edge, budget)
+        }
         (Surface::Nurbs { .. }, _, Curve::Nurbs { closed: false, .. }) => {
             isoline(source, definition, budget)?;
             Ok(())

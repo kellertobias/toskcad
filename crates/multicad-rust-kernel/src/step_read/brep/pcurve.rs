@@ -5,6 +5,7 @@ use crate::tapered_thread::interval::I;
 mod affine;
 mod analytic;
 mod finite_analytic;
+mod finite_axis;
 mod precision;
 mod sweep;
 mod units;
@@ -603,6 +604,17 @@ fn validate_source(
                 return Err(ReadError::Unsupported);
             }
             if let Some(proof) = finite_analytic::certify(
+                source,
+                binding.curve,
+                &definition,
+                &surface,
+                &edge,
+                tol,
+                budget,
+            )? {
+                return Ok((proof, definition.surface, surface_kind(&surface), 0.));
+            }
+            if let Some(proof) = finite_axis::certify(
                 source,
                 binding.curve,
                 &definition,

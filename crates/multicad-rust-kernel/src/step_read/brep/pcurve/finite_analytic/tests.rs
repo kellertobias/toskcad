@@ -152,6 +152,9 @@ fn actual_spherical_curve_wrong_half_and_overlong_arc_are_not_full_circle_admiss
         .unwrap();
     // Same ACTUAL curve operator with different finite subarcs. These are
     // mathematical domain controls, not forged STEP/topology certificates.
+    // The stronger OriginalVERTEX_POINT window binding may refuse this
+    // deliberate mismatch before the finite-domain estimate; neither route
+    // can publish a positive certificate for the altered window.
     for range in [
         [std::f64::consts::PI, std::f64::consts::PI + 0.2],
         [0., 2. * std::f64::consts::TAU],
@@ -170,10 +173,8 @@ fn actual_spherical_curve_wrong_half_and_overlong_arc_are_not_full_circle_admiss
                 &edge,
                 1e-7,
                 &mut budget
-            )
-            .unwrap()
-            .unwrap(),
-            Proof::Unsupported
+            ),
+            Ok(Some(Proof::Unsupported)) | Err(ReadError::Unsupported)
         ));
     }
 }

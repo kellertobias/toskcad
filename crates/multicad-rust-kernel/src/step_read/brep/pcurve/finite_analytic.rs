@@ -113,7 +113,14 @@ fn sphere(
     // This raw coefficient field is an analytic CONTINUATION. Only the
     // comparison map earned below gives authority inside the actual V domain.
     let image = precision::analytic_image(source, definition, surface, budget)?;
-    let target_error = precision::analytic_curve_reserve(source, curve_id, edge, budget)?;
+    // The actual original vertex-derived finite window need not equal the
+    // rounded reference window. Compose its separately earned transport once.
+    let target_error = (I::point(precision::analytic_curve_reserve(
+        source, curve_id, edge, budget,
+    )?) + I::point(finite_axis::endpoint_reserve(
+        source, curve_id, edge, budget,
+    )?))
+    .hi;
     let h = std::f64::consts::FRAC_PI_2.next_down();
     let mut best = f64::INFINITY;
     for shift in [-std::f64::consts::TAU, 0., std::f64::consts::TAU] {
@@ -213,7 +220,14 @@ fn cone_polyline(
     let generator = add(frame.axes[2], scale(radial, slope));
     let origin = add(frame.origin, scale(radial, r));
     let controls = v.map(|v| add(origin, scale(generator, v)));
-    let target_error = precision::analytic_curve_reserve(source, curve_id, edge, budget)?;
+    // The actual original vertex-derived finite window need not equal the
+    // rounded reference window. Compose its separately earned transport once.
+    let target_error = (I::point(precision::analytic_curve_reserve(
+        source, curve_id, edge, budget,
+    )?) + I::point(finite_axis::endpoint_reserve(
+        source, curve_id, edge, budget,
+    )?))
+    .hi;
     // The two actual raw endpoints define a finite segment. The existing
     // finite certificate earns positive coverage of the ACTUAL edge, allowing
     // a legitimate subinterval of an overlong master curve, never extrapolation.

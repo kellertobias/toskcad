@@ -199,27 +199,41 @@ pub(super) fn actual_image(
     if source.angle != 1. {
         return Err(ReadError::Unsupported);
     }
-    let Curve::Line { direction, .. } = &definition.geometry else {
-        return Err(ReadError::Unsupported);
-    };
-    let moving = if direction[0] != 0. && direction[1] == 0. {
-        0
-    } else if direction[0] == 0. && direction[1] != 0. {
-        1
-    } else {
-        return Err(ReadError::Unsupported);
-    };
-    if !zero_direction_component(source, definition.curve_id, 1 - moving, budget)? {
-        return Err(ReadError::Unsupported);
-    }
-    let Image::Line {
-        origin,
-        direction: raw_direction,
-    } = raw_curve(source, definition.curve_id, 2, budget)?
-    else {
-        return Err(ReadError::Unsupported);
-    };
-    let rate = raw_direction[moving];
+    let (moving, origin, rate, decoded_sign) =
+        if let Curve::Line { direction, .. } = &definition.geometry {
+            let moving = if direction[0] != 0. && direction[1] == 0. {
+                0
+            } else if direction[0] == 0. && direction[1] != 0. {
+                1
+            } else {
+                return Err(ReadError::Unsupported);
+            };
+            if !zero_direction_component(source, definition.curve_id, 1 - moving, budget)? {
+                return Err(ReadError::Unsupported);
+            }
+            let Image::Line {
+                origin,
+                direction: raw_direction,
+            } = raw_curve(source, definition.curve_id, 2, budget)?
+            else {
+                return Err(ReadError::Unsupported);
+            };
+            (
+                moving,
+                origin,
+                raw_direction[moving],
+                direction[moving].signum(),
+            )
+        } else {
+            let segment =
+                super::axis_segment(source, definition, budget)?.ok_or(ReadError::Unsupported)?;
+            let rate = segment.endpoints[1][segment.moving] - segment.endpoints[0][segment.moving];
+            let Curve::Nurbs { curve, .. } = &definition.geometry else {
+                return Err(ReadError::Unsupported);
+            };
+            let decoded = curve.points()[1][segment.moving] - curve.points()[0][segment.moving];
+            (segment.moving, segment.endpoints[0], rate, decoded.signum())
+        };
     let sign = if rate.valid() && rate.lo > 0. {
         1.
     } else if rate.valid() && rate.hi < 0. {
@@ -227,12 +241,13 @@ pub(super) fn actual_image(
     } else {
         return Err(ReadError::Unsupported);
     };
-    if sign != direction[moving].signum() {
+    if sign != decoded_sign {
         return Err(ReadError::Unsupported);
     }
     // The original fixed coordinate is exactly constant. The moving rate and
-    // origin only reparameterize the complete periodic image; positivity of
-    // |rate| preserves source sense and full natural-domain coverage.
+    // origin reparameterize its analytic continuation. For finite rational
+    // segments ONLY a finite caller earns the actual endpoint window; this
+    // coefficient builder never grants natural-domain coverage by itself.
     let entity = source.simple(id)?;
     let result = match (surface, entity.name, entity.args.as_slice()) {
         (Surface::Cylinder { .. }, "CYLINDRICAL_SURFACE", [_, axis, r]) => {
