@@ -274,16 +274,22 @@ fn minimum_hole_size_reads_the_board_again_off_the_window_thread() {
         fixture("control-panel.kicad_pcb"),
         Target::New,
     );
-    // Every signal pad: more holes than one board profile can build.
+    // Every signal pad. The owned kernel builds the board as one exact normal
+    // sweep, so all 21 drilled holes are checked rather than refused by the
+    // former 16-hole interactive profile budget.
     import.set_min_hole(0.9);
     assert!(import.pending(), "the board is read again on the worker");
     settle(&mut import, &s);
-    assert!(!import.can_apply(&s));
+    let Some(ReadFile::Kicad(board)) = import.file() else {
+        panic!()
+    };
+    assert_eq!(board.board.holes.len(), 21, "every signal pad is drilled");
     assert!(
-        matches!(import.checked(), Some(Err(e)) if e.contains("does not build")),
+        matches!(import.checked(), Some(Ok(_))),
         "{:?}",
         import.checked()
     );
+    assert!(import.can_apply(&s));
     // The 1.2 mm switch pins join the mounting holes.
     import.set_min_hole(1.1);
     settle(&mut import, &s);
