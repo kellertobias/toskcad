@@ -152,6 +152,19 @@ impl RoundedBlindBoreBody {
                 }
             }
         }
+        if let Some(identity) = &self.import_identity {
+            let stamp = |origin: &Origin| Origin {
+                source: self.feature,
+                role: format!("{}/{}", identity.role, origin.role),
+            };
+            for element in &mut result.elements {
+                element.origins = element.origins.iter().map(stamp).collect();
+                element.boundary = element.boundary.iter().map(stamp).collect();
+                for anchor in &mut element.frames {
+                    anchor.origin = stamp(&anchor.origin);
+                }
+            }
+        }
         result
             .validate()
             .map_err(|e| failure(GeometryErrorKind::InvalidResult, e))?;

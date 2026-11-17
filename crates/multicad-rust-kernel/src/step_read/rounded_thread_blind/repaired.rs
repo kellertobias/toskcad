@@ -108,6 +108,11 @@ fn raw_records(shell: &Shell<'_, '_>, member: u32) -> Result<SourceRecords> {
                         refs_in(v, seen, pending);
                     }
                 }
+                Value::Typed(entity) => {
+                    for v in &entity.args {
+                        refs_in(v, seen, pending);
+                    }
+                }
                 _ => {}
             }
         }
@@ -130,6 +135,9 @@ fn raw_records(shell: &Shell<'_, '_>, member: u32) -> Result<SourceRecords> {
     }
     Ok(records.into())
 }
+/// Reconstruct one closed canonical interpretation with whole-boundary C0.
+/// The returned readback's decoded flux scalar is a numerical diagnostic,
+/// not a certified raw physical-mass interval or raw exact closure proof.
 pub fn read_repaired_rounded_blind_bore(
     input: &str,
     tolerance: f64,
@@ -138,6 +146,81 @@ pub fn read_repaired_rounded_blind_bore(
         read_member(shell, id)
     })?;
     members.pop().ok_or(ReadError::Invalid)
+}
+pub(in crate::step_read) fn recognize_member(
+    shell: &mut Shell<'_, '_>,
+    id: u32,
+    faces: &[u32],
+) -> Result<Option<(Readback, ImportSolid)>> {
+    if faces.len() != 9 {
+        return Ok(None);
+    }
+    let mut splines = 0;
+    let mut cylinders = 0;
+    for &id in faces {
+        let (surface, _, _) = helical::face(shell, id)?;
+        match shell.simple(surface)?.name {
+            "B_SPLINE_SURFACE_WITH_KNOTS" => splines += 1,
+            "CYLINDRICAL_SURFACE" => cylinders += 1,
+            _ => {}
+        }
+    }
+    if splines != 5 || cylinders != 1 {
+        return Ok(None);
+    }
+    let (readback, candidate) = read_member(shell, id)?;
+    let [origin_mm, u, v] = candidate.frame;
+    Ok(Some((
+        readback,
+        ImportSolid {
+            origin_mm,
+            u,
+            v,
+            height_mm: candidate.bore.stock_height_mm().as_f64(),
+            profile: ImportProfile::RepairedRoundedBlind {
+                candidate: Box::new(candidate),
+            },
+        },
+    )))
+}
+/// Compare complete canonical thread controls and finite stock support.
+/// The imported opaque candidate already owns the independent raw repair proof.
+pub fn repaired_rounded_blind_import_matches(
+    imported: &RepairedRoundedBlindCandidate,
+    expected: &BlindBore,
+    frame: [Point; 3],
+    tolerance: f64,
+) -> bool {
+    if !tolerance.is_finite() || tolerance <= 0. || imported.c0 > tolerance {
+        return false;
+    }
+    if !rounded_thread::rounded_thread_import_matches(
+        &rounded_thread::ImportedRoundedThread {
+            thread: *imported.bore.cutter(),
+            origin_mm: imported.frame[0],
+            u: imported.frame[1],
+            v: imported.frame[2],
+        },
+        expected.cutter(),
+        frame,
+        tolerance,
+    ) {
+        return false;
+    }
+    use crate::step_read::helical_import::cylindrical_closure::{self, Cylinder};
+    let error = cylindrical_closure::error(
+        Cylinder {
+            frame,
+            radius_mm: expected.stock_radius_mm().as_f64(),
+            axial_mm: [0., expected.stock_height_mm().as_f64()],
+        },
+        Cylinder {
+            frame: imported.frame,
+            radius_mm: imported.bore.stock_radius_mm().as_f64(),
+            axial_mm: [0., imported.bore.stock_height_mm().as_f64()],
+        },
+    );
+    error.is_finite() && error <= tolerance.min(1e-7) / 16.
 }
 fn read_member(
     shell: &mut Shell<'_, '_>,
@@ -240,6 +323,7 @@ fn read_member(
             bounds[end][axis] = if end == 0 { x.next_down() } else { x.next_up() };
         }
     }
+    let total = super::correspondence::total_bound(&bore, frame, tolerance, true)?;
     let records = raw_records(shell, id)?;
     Ok((
         Readback {
@@ -259,7 +343,7 @@ fn read_member(
             frame,
             source_member: id,
             records,
-            c0: tolerance,
+            c0: total,
         },
     ))
 }
@@ -316,7 +400,10 @@ mod tests {
                         .source_records()
                         .any(|(id, _)| id == candidate.source_member_entity())
                 );
-                assert_eq!(candidate.maximum_source_c0_error_mm(), 1e-7);
+                assert!(
+                    candidate.maximum_source_c0_error_mm() > 0.
+                        && candidate.maximum_source_c0_error_mm() <= 1e-7
+                );
                 let cylinder = candidate
                     .source_records()
                     .flat_map(|(_, p)| p)

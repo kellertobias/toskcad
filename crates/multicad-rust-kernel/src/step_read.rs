@@ -73,7 +73,8 @@ pub use rounded_thread::{
     rounded_thread_import_matches, verify_rounded_thread,
 };
 pub use rounded_thread_blind::{
-    RepairedRoundedBlindCandidate, read_repaired_rounded_blind_bore,
+    RepairedRoundedBlindCandidate, RoundedBlindCorrespondence, read_repaired_rounded_blind_bore,
+    repaired_rounded_blind_import_matches, verify_rounded_blind_correspondence,
     verify_rounded_thread_blind_bore,
 };
 pub use rounded_thread_bore::{

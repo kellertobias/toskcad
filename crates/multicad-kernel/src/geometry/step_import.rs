@@ -326,6 +326,9 @@ impl Solid {
                 }
                 Self::rust_profiled_screw_from_source(*screw, feature, frame, policy)
             }
+            ImportProfile::RepairedRoundedBlind { candidate } => {
+                Self::import_repaired_rounded_blind(*candidate, frame, feature, policy)
+            }
             ImportProfile::RoundedThreadBore {
                 spec,
                 stock_radius_mm,
@@ -1133,7 +1136,8 @@ fn verify(
     orthogonal: bool,
 ) -> Result<(), GeometryError> {
     verify_step_metrics(solid, readback, tolerance)?;
-    if solid.rounded_thread_bore_body().is_some()
+    if solid.rounded_blind_bore_body().is_some()
+        || solid.rounded_thread_bore_body().is_some()
         || solid.rounded_thread_body().is_some()
         || solid.helical_body().is_some()
         || solid.helical_tube_cut_body().is_some()

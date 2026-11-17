@@ -207,6 +207,20 @@ fn source_known_step_and_owned_lifecycle_preserve_the_authored_floor() {
         .abs()
             < 1e-6
     );
+    let total = source
+        .verify_source_known_rounded_blind_position_bound(&input, 1e-7)
+        .unwrap();
+    assert!(total > 0. && total <= 1e-7);
+    assert!(
+        source
+            .verify_source_known_rounded_blind_position_bound(&input, 0.)
+            .is_err()
+    );
+    assert!(
+        source
+            .verify_source_known_rounded_blind_position_bound(&input, 1e-15)
+            .is_err()
+    );
     drop(source);
     assert_eq!(shared.rust_rounded_blind_bore_data().unwrap(), data);
     assert!(
@@ -335,6 +349,85 @@ fn normal_stock_cut_keeps_original_caps_and_actual_floor_distinct_in_both_direct
                     .is_err()
             );
             assert_eq!(stock.volume_mm3().unwrap(), before);
+        }
+    }
+}
+#[test]
+fn generic_repaired_import_keeps_raw_records_canonical_properties_and_deterministic_reexport() {
+    for left in [false, true] {
+        for posed in [false, true] {
+            let frame = if posed {
+                PlaneFrame {
+                    origin: [17., -8., 13.],
+                    u: [0.8, 0.6, 0.],
+                    v: [-0.36, 0.48, 0.8],
+                }
+            } else {
+                Default::default()
+            };
+            let original = make(left, frame);
+            let dir = tempfile::tempdir().unwrap();
+            let raw = dir.path().join("original.step");
+            original.write_step(&raw).unwrap();
+            let text = std::fs::read_to_string(&raw).unwrap();
+            let imported =
+                Solid::import_rust_step(&text, EntityId::new(), Default::default()).unwrap();
+            let source = imported.rust_repaired_rounded_blind_source().unwrap();
+            assert_eq!(source.canonical_bore().cutter().spec().left_hand, left);
+            assert!(source.maximum_source_c0_error_mm() <= 1e-7);
+            let member = source.source_member_entity();
+            let records = source
+                .source_records()
+                .map(|(id, p)| (id, p.iter().map(|s| s.to_string()).collect::<Vec<_>>()))
+                .collect::<Vec<_>>();
+            assert!(records.iter().any(|(id, _)| *id == member));
+            assert!((imported.volume_mm3().unwrap() - original.volume_mm3().unwrap()).abs() < 1e-6);
+            assert_eq!(imported.faces().unwrap().len(), 9);
+            let properties = imported
+                .rust_rounded_blind_bore_mass_properties()
+                .unwrap()
+                .unwrap();
+            assert!(
+                properties
+                    .inertia_mm5
+                    .iter()
+                    .flatten()
+                    .all(|v| v.is_finite())
+            );
+            let manufactured = imported.manufacturing_mesh_with_receipt(quality()).unwrap();
+            assert!(manufactured.edge_pairs > 0 && manufactured.vertex_links > 0);
+            let a = dir.path().join("canonical-a.step");
+            let b = dir.path().join("canonical-b.step");
+            imported.write_step(&a).unwrap();
+            imported.write_step(&b).unwrap();
+            let canonical_text = std::fs::read_to_string(&a).unwrap();
+            let total = imported
+                .verify_source_known_rounded_blind_position_bound(&canonical_text, 1e-7)
+                .unwrap();
+            assert!(total > 0. && total <= 1e-7);
+            assert_eq!(std::fs::read(&a).unwrap(), std::fs::read(&b).unwrap());
+            assert_eq!(
+                imported
+                    .rust_repaired_rounded_blind_source()
+                    .unwrap()
+                    .source_records()
+                    .map(|(id, p)| (id, p.iter().map(|s| s.to_string()).collect::<Vec<_>>()))
+                    .collect::<Vec<_>>(),
+                records
+            );
+            let reopened = Solid::read_step(&a, Default::default()).unwrap();
+            assert!(reopened.rust_repaired_rounded_blind_source().is_some());
+            assert!((reopened.volume_mm3().unwrap() - imported.volume_mm3().unwrap()).abs() < 1e-6);
+            drop(text);
+            drop(original);
+            assert_eq!(
+                imported
+                    .rust_repaired_rounded_blind_source()
+                    .unwrap()
+                    .source_member_entity(),
+                member
+            );
+            assert!(imported.bounds().unwrap().max.iter().all(|v| v.is_finite()));
         }
     }
 }

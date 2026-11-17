@@ -77,4 +77,12 @@ pub fn verify_rounded_thread_blind_bore(
 mod tests;
 
 mod repaired;
-pub use repaired::{RepairedRoundedBlindCandidate, read_repaired_rounded_blind_bore};
+pub use repaired::{
+    RepairedRoundedBlindCandidate, read_repaired_rounded_blind_bore,
+    repaired_rounded_blind_import_matches,
+};
+
+pub(super) use repaired::recognize_member;
+
+mod correspondence;
+pub use correspondence::{RoundedBlindCorrespondence, verify_rounded_blind_correspondence};

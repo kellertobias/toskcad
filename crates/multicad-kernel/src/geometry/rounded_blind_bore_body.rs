@@ -12,6 +12,7 @@ use multicad_rust_kernel::{
 };
 use std::collections::BTreeSet;
 mod mesh;
+mod repaired;
 mod stock;
 mod topology;
 pub use mesh::{RoundedBlindMeshBudget, RoundedBlindMeshReceipt};
@@ -28,6 +29,8 @@ pub(crate) struct RoundedBlindBoreBody {
     pub(super) feature: EntityId,
     inner: Rc<RoundedThreadBody>,
     inherited: Option<(TopologySnapshot, PlaneFrame, bool)>,
+    import_identity: Option<Origin>,
+    import_source: Option<multicad_rust_kernel::step_read::RepairedRoundedBlindCandidate>,
 }
 fn failure(kind: GeometryErrorKind, message: impl Into<String>) -> GeometryError {
     error(OPERATION, kind, message)
@@ -61,6 +64,8 @@ impl Solid {
             feature,
             inner,
             inherited: None,
+            import_identity: None,
+            import_source: None,
         };
         body.validate_frame(frame, policy)?;
         Ok(Self {
@@ -114,6 +119,45 @@ impl Solid {
             failure(
                 GeometryErrorKind::Unsupported,
                 format!("Source-known blind STEP refused: {e:?}"),
+            )
+        })
+    }
+    /// Earn the TOTAL source-known positional allowance at the requested
+    /// tolerance. Diagnostic spline flux supplies no physical mass authority.
+    pub fn verify_source_known_rounded_blind_position_bound(
+        &self,
+        input: &str,
+        tolerance: f64,
+    ) -> Result<f64, GeometryError> {
+        if !tolerance.is_finite() || tolerance <= 0. {
+            return Err(failure(
+                GeometryErrorKind::Input,
+                "Invalid blind correspondence tolerance",
+            ));
+        }
+        let (body, frame) = self.rounded_blind_bore_body().ok_or_else(|| {
+            failure(
+                GeometryErrorKind::Unsupported,
+                "No canonical rounded blind body",
+            )
+        })?;
+        multicad_rust_kernel::step_read::verify_rounded_blind_correspondence(
+            input,
+            &body.geometry,
+            frame.origin,
+            frame.u,
+            frame.v,
+            tolerance.min(self.policy.linear_tolerance_mm),
+        )
+        .map(|p| p.maximum_position_error_mm())
+        .map_err(|e| {
+            failure(
+                if e == multicad_rust_kernel::step_read::ReadError::Limit {
+                    GeometryErrorKind::Limit
+                } else {
+                    GeometryErrorKind::Unsupported
+                },
+                format!("Complete blind correspondence refused: {e:?}"),
             )
         })
     }

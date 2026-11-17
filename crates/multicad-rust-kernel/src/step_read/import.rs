@@ -27,6 +27,11 @@ use pocketed::{PocketRim, canonical_pockets};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ImportProfile {
+    /// Physically closed canonical repair, with actual raw member records and
+    /// whole-boundary C0. No raw physical-mass or original-chart D1 authority.
+    RepairedRoundedBlind {
+        candidate: Box<super::RepairedRoundedBlindCandidate>,
+    },
     /// Five inward rounded patches, both annular caps and the full outer stock cylinder.
     RoundedThreadBore {
         spec: crate::rounded_thread::Spec,
