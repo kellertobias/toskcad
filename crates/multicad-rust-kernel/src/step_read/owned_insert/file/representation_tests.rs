@@ -1,8 +1,10 @@
 use super::super::tests::{argument_change, record_change};
 use super::*;
 
+#[track_caller]
 fn refused(text: &str, expected: Error) {
-    assert!(matches!(File::parse(text, Options::default(), None), Err(e) if e == expected));
+    let actual = File::parse(text, Options::default(), None).err();
+    assert_eq!(actual, Some(expected));
 }
 #[test]
 fn actual_represented_headers_require_one_linked_nonempty_member_list() {
@@ -130,5 +132,196 @@ fn actual_map_records_require_complete_local_identity_ownership() {
             .represented_members()
             .len(),
         1
+    );
+}
+// Real authored geometry, with only product/representation metadata changed.
+// Wrapper datums do not place the BREP; no transformed/extra body is discarded.
+fn related_box(wrappers: usize, reverse: bool) -> (String, String, u32, u32, u32) {
+    let q = crate::Rational::new(4, 1).unwrap();
+    let original = crate::step::write_box([q; 3], [0.; 3], [1., 0., 0.], [0., 1., 0.]).unwrap();
+    let file = File::parse(&original, Options::default(), None).unwrap();
+    let (&link, parts) = file
+        .entities
+        .iter()
+        .find(|(_, p)| p[0].name == "SHAPE_DEFINITION_REPRESENTATION")
+        .unwrap();
+    let [Value::Reference(shape), Value::Reference(top)] = parts[0].args.as_slice() else {
+        panic!("actual SDR")
+    };
+    let (shape, top) = (*shape, *top);
+    let context = reference(
+        &kind(&file.entities, top, "ADVANCED_BREP_SHAPE_REPRESENTATION")
+            .unwrap()
+            .args[2],
+    )
+    .unwrap();
+    let datum = *file
+        .entities
+        .iter()
+        .find(|(_, p)| p[0].name == "AXIS2_PLACEMENT_3D")
+        .unwrap()
+        .0;
+    let mut records = String::new();
+    for i in 0..wrappers {
+        let id = 1_100_000 + i as u32;
+        let next = if i + 1 == wrappers { top } else { id + 1 };
+        let (a, b) = if reverse { (next, id) } else { (id, next) };
+        records.push_str(&format!("#{id}=SHAPE_REPRESENTATION('',(#{datum}),#{context});\n#{}=SHAPE_REPRESENTATION_RELATIONSHIP('',$,#{a},#{b});\n",1_200_000+i));
+    }
+    let linked = argument_change(&original, link, 1, "#1100000");
+    let end = linked.rfind("ENDSEC;").unwrap();
+    let linked = format!("{}{}{}", &linked[..end], records, &linked[end..]);
+    (original, linked, shape, top, context)
+}
+#[test]
+fn legal_related_representation_paths_keep_actual_members_and_selected_geometry() {
+    for reverse in [false, true] {
+        for count in [1, 3, 63] {
+            let (original, text, _, _, _) = related_box(count, reverse);
+            let baseline = File::parse(&original, Options::default(), None).unwrap();
+            let file = File::parse(&text, Options::default(), None).unwrap();
+            assert_eq!(file.represented_members(), baseline.represented_members());
+            let member = file.represented_members()[0];
+            let view = file
+                .local_member_document(member.item_entity(), Options::default(), None)
+                .unwrap();
+            assert!(std::ptr::eq(view.source(), &file));
+            assert_eq!(view.member(), member);
+            let actual = crate::step_read::read_analytic_solid(view.as_str(), 1e-7).unwrap();
+            assert_eq!(actual.solid_count, 1);
+            assert_eq!(actual.face_count, 6);
+            assert!((actual.volume_mm3 - 64.).abs() < 1e-10);
+            assert_eq!(file.literal_input(), text);
+            assert_eq!(
+                crate::step_read::read_analytic_solid(&text, 1e-7)
+                    .unwrap()
+                    .face_count,
+                6
+            );
+        }
+    }
+}
+#[test]
+fn related_graphs_refuse_ambiguous_cycles_extra_geometry_and_bad_schema_atomically() {
+    let (original, text, shape, top, context) = related_box(2, false);
+    let add = |extra: &str| {
+        let end = text.rfind("ENDSEC;").unwrap();
+        format!("{}{}{}", &text[..end], extra, &text[end..])
+    };
+    // A second path gives no unique metadata tree; no branch is silently picked.
+    refused(
+        &add(&format!(
+            "#1300000=SHAPE_REPRESENTATION_RELATIONSHIP('','',#1100000,#{top});\n"
+        )),
+        Error::Unsupported,
+    );
+    // Two product shapes claim the same related represented graph.
+    let base = File::parse(&original, Options::default(), None).unwrap();
+    let product = kind(&base.entities, shape, "PRODUCT_DEFINITION_SHAPE")
+        .unwrap()
+        .source
+        .unwrap();
+    refused(
+        &add(&format!(
+            "#1300000={product};\n#1300001=SHAPE_DEFINITION_REPRESENTATION(#1300000,#1100000);\n"
+        )),
+        Error::Unsupported,
+    );
+    refused(
+        &argument_change(&text, 1_200_001, 2, &format!("#{top}")),
+        Error::Unsupported,
+    );
+    refused(&argument_change(&text, 1_200_000, 0, "$"), Error::Invalid);
+    refused(&argument_change(&text, 1_200_000, 1, ".T."), Error::Invalid);
+    refused(
+        &argument_change(&text, 1_200_000, 2, "#2000000000"),
+        Error::Invalid,
+    );
+    refused(&argument_change(&text, 1_100_000, 0, "$"), Error::Invalid);
+    refused(
+        &argument_change(&text, 1_100_000, 1, "(#1100001)"),
+        Error::Unsupported,
+    );
+    let datum = base.represented_members()[0].local_solid_entity();
+    // Duplicate datum SET items are malformed, even when individually valid.
+    let actual = File::parse(&text, Options::default(), None).unwrap();
+    let axis = refs(
+        &kind(&actual.entities, 1_100_000, "SHAPE_REPRESENTATION")
+            .unwrap()
+            .args[1],
+    )
+    .unwrap()[0];
+    refused(
+        &argument_change(&text, 1_100_000, 1, &format!("(#{axis},#{axis})")),
+        Error::Invalid,
+    );
+    refused(
+        &argument_change(&text, 1_100_000, 1, &format!("(#{datum})")),
+        Error::Unsupported,
+    );
+    let bad_dimension = argument_change(&text, 1_100_000, 2, "#1300000");
+    let end = bad_dimension.rfind("ENDSEC;").unwrap();
+    let bad_dimension = format!(
+        "{}#1300000=GEOMETRIC_REPRESENTATION_CONTEXT(2.);{}",
+        &bad_dimension[..end],
+        &bad_dimension[end..]
+    );
+    assert!(File::parse(&bad_dimension, Options::default(), None).is_err());
+    let transformed = record_change(&text, 1_200_000, |_| {
+        "#1200000=(REPRESENTATION_RELATIONSHIP('','',#1100000,#1100001)SHAPE_REPRESENTATION_RELATIONSHIP());".to_owned()
+    });
+    refused(&transformed, Error::Unsupported);
+    let (_, too_many, _, _, _) = related_box(64, false);
+    refused(&too_many, Error::Limit);
+    assert_eq!(
+        File::parse(&text, Options::default(), None)
+            .unwrap()
+            .represented_members()
+            .len(),
+        1
+    );
+    let _ = context;
+}
+#[test]
+fn related_representation_queries_keep_exact_work_frontier_and_observed_cancellation_retry() {
+    use std::cell::Cell;
+    let (_, text, _, _, _) = related_box(3, true);
+    let calls = Cell::new(0usize);
+    let count = || {
+        calls.set(calls.get() + 1);
+        false
+    };
+    let file = File::parse(&text, Options::default(), Some(&count)).unwrap();
+    let work = file.work_used();
+    let polls = calls.get();
+    assert!(polls > 10);
+    refused_with_work(&text, work - 1, Error::Limit);
+    let exact = Options {
+        maximum_work: work,
+        ..Options::default()
+    };
+    assert!(File::parse(&text, exact, None).is_ok());
+    for stop in [1, polls / 2, polls] {
+        let seen = Cell::new(0usize);
+        let cancel = || {
+            seen.set(seen.get() + 1);
+            seen.get() >= stop
+        };
+        assert!(matches!(
+            File::parse(&text, Options::default(), Some(&cancel)),
+            Err(Error::Cancelled)
+        ));
+        assert!(seen.get() >= stop);
+        assert_eq!(
+            File::parse(&text, exact, None)
+                .unwrap()
+                .represented_members(),
+            file.represented_members()
+        );
+    }
+}
+fn refused_with_work(text: &str, work: usize, expected: Error) {
+    assert!(
+        matches!(File::parse(text,Options{maximum_work:work,..Options::default()},None),Err(e) if e==expected)
     );
 }

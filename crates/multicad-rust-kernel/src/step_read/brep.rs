@@ -40,8 +40,8 @@ pub fn has_product_structure(input: &str) -> bool {
 
 /// True when `input` parses and states topology that no solid reaches: a
 /// face, loop, edge, vertex or shell outside every `MANIFOLD_SOLID_BREP` and
-/// `BREP_WITH_VOIDS`. Such a file breaks the STEP topology rules even when
-/// the solids it does state are sound.
+/// `BREP_WITH_VOIDS`. This violates this importer's complete-solid ownership
+/// contract; it does not classify general STEP surface or wireframe models.
 pub fn has_unowned_topology(input: &str) -> bool {
     let Ok(entities) = part21::parse(input) else {
         return false;

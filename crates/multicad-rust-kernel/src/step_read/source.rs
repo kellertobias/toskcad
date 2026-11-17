@@ -26,8 +26,9 @@ pub fn read_source_compound(input: &str, tolerance: f64) -> Result<Vec<SourceImp
     }
     match ordinary(input, tolerance) {
         // The literal NPT reader recognises only members with a degree-11
-        // B-spline face; any other unfamiliar file stays unsupported rather
-        // than meeting that reader's stricter document contract.
+        // B-spline face. This is a candidate/performance cue only; legal
+        // representation ownership is independently resolved by its document
+        // reader, including non-transform shape-representation relationships.
         Err(ReadError::Unsupported) if has_degree_eleven_surface(input) => {
             literal_npt::read(input, tolerance)
         }

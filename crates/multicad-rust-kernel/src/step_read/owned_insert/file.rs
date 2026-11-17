@@ -80,8 +80,9 @@ impl<'input> File<'input> {
                 }
             }
         }
-        let members = representation::read(&entities, &mut w)?;
-        let view = view::roots(&entities, input, &mut w)?;
+        let represented = representation::read(&entities, &mut w)?;
+        let view = view::roots(&entities, input, represented.root, &mut w)?;
+        let members = represented.members;
         let solids = members
             .iter()
             .filter(|m| m.mapping_link().is_none())

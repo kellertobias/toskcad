@@ -38,10 +38,21 @@ impl Member {
         self.mapping
     }
 }
+#[derive(Clone, Copy)]
+pub(super) struct Root {
+    pub(super) representation: u32,
+    pub(super) context: u32,
+    pub(super) shape: u32,
+}
+pub(super) struct Represented {
+    pub(super) members: Vec<Member>,
+    pub(super) root: Root,
+}
 pub(super) fn read(
     entities: &BTreeMap<u32, Vec<Entity<'_>>>,
     w: &mut Ledger<'_>,
-) -> Result<Vec<Member>> {
+) -> Result<Represented> {
+    w.step(entities.len())?;
     let mut reps = entities.iter().filter_map(|(&id, r)| {
         matches!(r.as_slice(),[e]if e.name=="ADVANCED_BREP_SHAPE_REPRESENTATION").then_some(id)
     });
@@ -56,10 +67,8 @@ pub(super) fn read(
     else {
         return Err(Error::Invalid);
     };
-    let linked=entities.values().any(|r|matches!(r.as_slice(),[Entity{name:"SHAPE_DEFINITION_REPRESENTATION",args,..}]if matches!(args.as_slice(),[Value::Reference(shape),Value::Reference(target)]if *target==rep&&kind(entities,*shape,"PRODUCT_DEFINITION_SHAPE").is_ok())));
-    if !linked {
-        return Err(Error::Invalid);
-    }
+    let shape =
+        crate::step_read::representation_links::product_shape(entities, rep, &mut |n| w.step(n))?;
     let shell = Shell::new(entities, 1e-7, false);
     shell
         .check_units(reference(context)?)
@@ -90,7 +99,14 @@ pub(super) fn read(
     if members.len() > crate::step::MAX_COMPOUND_SOLIDS {
         return Err(Error::Limit);
     }
-    Ok(members)
+    Ok(Represented {
+        members,
+        root: Root {
+            representation: rep,
+            context: reference(context)?,
+            shape,
+        },
+    })
 }
 fn mapped(
     entities: &BTreeMap<u32, Vec<Entity<'_>>>,

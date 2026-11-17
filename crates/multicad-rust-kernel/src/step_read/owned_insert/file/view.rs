@@ -47,37 +47,17 @@ pub(super) struct Roots {
 pub(super) fn roots(
     entities: &BTreeMap<u32, Vec<Entity<'_>>>,
     input: &str,
+    root: representation::Root,
     w: &mut Ledger<'_>,
 ) -> Result<Roots> {
-    // These are readonly lookups of a root and link already structurally proved
-    // by representation::read. Cache once, not once per scene member.
-    w.step(entities.len().saturating_mul(2))?;
-    let (&top, r) = entities
-        .iter()
-        .find(|(_, r)| matches!(r.as_slice(),[e]if e.name=="ADVANCED_BREP_SHAPE_REPRESENTATION"))
-        .expect("File root validated");
-    let context = reference(&r[0].args[2]).expect("validated root context reference");
-    let shape = entities
-        .values()
-        .find_map(|r| match r.as_slice() {
-            [
-                Entity {
-                    name: "SHAPE_DEFINITION_REPRESENTATION",
-                    args,
-                    ..
-                },
-            ] => match args.as_slice() {
-                [Value::Reference(shape), Value::Reference(rep)]
-                    if *rep == top
-                        && kind(entities, *shape, "PRODUCT_DEFINITION_SHAPE").is_ok() =>
-                {
-                    Some(*shape)
-                }
-                _ => None,
-            },
-            _ => None,
-        })
-        .expect("File product link validated");
+    // Reuse the exact product/root resolved once by representation::read.
+    // An indirect SRR link must never be reinterpreted as a missing direct link.
+    w.step(1)?;
+    let representation::Root {
+        representation: top,
+        context,
+        shape,
+    } = root;
     // The retained Part21 arena has <=1,048,576 entities. Searching at
     // most len+2 positive IDs therefore finds two free u32 IDs; no nominal
     // max-ID assumption or renumbering of original geometry is needed.

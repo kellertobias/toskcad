@@ -14,6 +14,7 @@ pub mod literal_member_binding;
 pub mod owned_hanger;
 pub mod owned_insert;
 pub mod owned_orthogonal_seats;
+mod representation_links;
 #[cfg(test)]
 pub(crate) use helical::profiled::read_torx_cavity_fixture;
 #[cfg(test)]
@@ -515,24 +516,9 @@ impl<'a, 'input> Shell<'a, 'input> {
         let [Value::String(_), items, context] = representation.args.as_slice() else {
             return Err(ReadError::Invalid);
         };
-        // A product shape either owns the solid representation or owns a
-        // shape representation related to it without a transformation.
-        let related = |rep: u32| {
-            rep == representation_id
-                || self.entities.values().any(|components| {
-                    matches!(components.as_slice(), [Entity { name: "SHAPE_REPRESENTATION_RELATIONSHIP", args, .. }]
-                        if matches!(args.as_slice(), [_, _, Value::Reference(a), Value::Reference(b)]
-                            if [*a, *b] == [rep, representation_id] || [*b, *a] == [rep, representation_id]))
-                })
-        };
-        let linked = self.entities.values().any(|components| {
-            matches!(components.as_slice(), [Entity { name: "SHAPE_DEFINITION_REPRESENTATION", args, .. }]
-                if matches!(args.as_slice(), [Value::Reference(definition), Value::Reference(rep)]
-                    if related(*rep) && self.args(*definition, "PRODUCT_DEFINITION_SHAPE").is_ok()))
-        });
-        if !linked {
-            return Err(ReadError::Invalid);
-        }
+        representation_links::product_shape(self.entities, representation_id, &mut |_| {
+            Ok::<_, ReadError>(())
+        })?;
         self.check_units(reference(context)?)?;
         let mut solids = Vec::new();
         let mut seen = BTreeSet::new();
