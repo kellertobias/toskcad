@@ -314,8 +314,10 @@ pub(super) fn certify(
     accept: &mut dyn FnMut(&CellProof, &mut Budget<'_>) -> Result<bool>,
     b: &mut Budget<'_>,
 ) -> Result<bool> {
+    // UV traces are degree<=7; a composed polynomial TARGET may reach the
+    // decoded spline limit of 11 (it is only elevated, never multiplied).
     check(
-        uv.iter().chain(target).all(|p| p.degree() <= MAX_DEGREE),
+        uv.iter().all(|p| p.degree() <= MAX_DEGREE) && target.iter().all(|p| p.degree() <= 11),
         ReadError::Unsupported,
     )?;
     let uv = [lift(&uv[0])?, lift(&uv[1])?];

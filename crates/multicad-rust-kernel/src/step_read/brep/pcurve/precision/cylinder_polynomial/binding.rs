@@ -12,7 +12,11 @@ fn bits(q: &BigRational) -> Result<usize> {
     check(n <= 4096, ReadError::Unsupported)?;
     usize::try_from(n).map_err(|_| ReadError::Limit)
 }
-fn compare(a: &BigRational, c: &BigRational, b: &mut Budget<'_>) -> Result<std::cmp::Ordering> {
+pub(in super::super) fn compare(
+    a: &BigRational,
+    c: &BigRational,
+    b: &mut Budget<'_>,
+) -> Result<std::cmp::Ordering> {
     let size = bits(a)?.saturating_add(bits(c)?).saturating_add(2);
     // Structural equality alone proves equality even without relying on
     // canonical reduction. BigInt digit equality is linear, not a cross-product.
@@ -25,7 +29,7 @@ fn compare(a: &BigRational, c: &BigRational, b: &mut Budget<'_>) -> Result<std::
     ))?;
     Ok(a.cmp(c))
 }
-fn operation(
+pub(in super::super) fn operation(
     a: &BigRational,
     c: &BigRational,
     divide: bool,

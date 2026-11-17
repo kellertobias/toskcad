@@ -13,6 +13,7 @@ mod analytic_polynomial;
 mod bernstein80;
 mod bezier;
 mod bilinear;
+mod c0_trace;
 mod cone_polynomial;
 mod cone_separation;
 mod conic;
@@ -50,6 +51,20 @@ pub(super) fn finite_boundary_certificate(
     budget: &mut Budget<'_>,
 ) -> Result<Option<super::Proof>> {
     finite_boundary::certify(
+        source, curve_id, definition, surface, edge, tolerance, budget,
+    )
+}
+/// Polynomial traces on tensor surfaces with C0 interior joints.
+pub(super) fn c0_trace_certificate(
+    source: &Source<'_>,
+    curve_id: u32,
+    definition: &super::uv::Definition,
+    surface: &Surface,
+    edge: &Edge,
+    tolerance: f64,
+    budget: &mut Budget<'_>,
+) -> Result<Option<super::Proof>> {
+    c0_trace::certify(
         source, curve_id, definition, surface, edge, tolerance, budget,
     )
 }

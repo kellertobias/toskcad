@@ -86,7 +86,7 @@ impl<'a> Budget<'a> {
         self.remaining = self.remaining.checked_sub(count).ok_or(ReadError::Limit)?;
         Ok(())
     }
-    fn used(&self) -> usize {
+    pub(super) fn used(&self) -> usize {
         self.initial - self.remaining
     }
 }
@@ -603,6 +603,21 @@ fn validate_source(
                         .any(|(i, yes)| yes && !zero_axis(&definition.geometry, i)))
             {
                 return Err(ReadError::Unsupported);
+            }
+            match precision::c0_trace_certificate(
+                source,
+                binding.curve,
+                &definition,
+                &surface,
+                &edge,
+                tol,
+                budget,
+            ) {
+                Ok(Some(proof @ Proof::Certified(_))) => {
+                    return Ok((proof, definition.surface, surface_kind(&surface), 0.));
+                }
+                Ok(_) | Err(ReadError::Unsupported) => {}
+                Err(error) => return Err(error),
             }
             match precision::cone_separation_certificate(
                 source,

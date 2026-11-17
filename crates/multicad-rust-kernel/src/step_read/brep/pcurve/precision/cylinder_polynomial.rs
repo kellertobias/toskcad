@@ -136,7 +136,7 @@ pub(super) fn cell(
 }
 
 mod binding;
-pub(super) use binding::certify;
+pub(super) use binding::{certify, compare, operation};
 
 #[cfg(test)]
 mod tests;
