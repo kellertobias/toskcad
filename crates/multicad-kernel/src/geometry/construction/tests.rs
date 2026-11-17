@@ -340,19 +340,18 @@ fn failed_constructor_admission_is_typed_and_keeps_authored_source_unchanged() {
         holes: vec![],
     };
     let before = source.clone();
-    assert_eq!(
-        vector(
-            &source,
-            [0.01, 0., 3.],
-            feature,
-            &origins(feature, 1),
-            policy
-        )
-        .err()
-        .unwrap()
-        .kind,
-        GeometryErrorKind::Unsupported
-    );
+    // An oblique displacement keeps the circle as an exact ruled boundary.
+    let oblique = vector(
+        &source,
+        [0.01, 0., 3.],
+        feature,
+        &origins(feature, 1),
+        policy,
+    )
+    .unwrap();
+    assert!((oblique.volume_mm3().unwrap() - 12. * std::f64::consts::PI).abs() < 1e-9);
+    assert!((oblique.bounds().unwrap().max[0] - 2.01).abs() < 1e-12);
+    assert_eq!(source, before);
     assert!(normal(&source, 3., EntityId::nil(), &origins(feature, 1), policy).is_err());
     let mut lines = CurvedProfile {
         frame: PlaneFrame::default(),

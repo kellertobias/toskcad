@@ -173,6 +173,18 @@ impl Solid {
         };
         profile.checked(policy)?;
         let count = checked_edge_count(profile, feature, origins)?;
+        if !all_straight(profile) {
+            return Self::rust_authored_plane_sweep(
+                profile,
+                direction,
+                start,
+                end,
+                matches!(terminations, PlaneTerminations::FromSketch { .. }),
+                feature,
+                origins,
+                policy,
+            );
+        }
         let crossing = dot(direction, profile.frame.normal());
         if !crossing.is_finite() || crossing.abs() < 1e-10 {
             return Err(input("Extrusion direction must cross the sketch plane"));
@@ -346,6 +358,26 @@ impl Solid {
                 policy,
             )?)
         };
+        if !all_straight(profile) {
+            checked_edge_count(profile, feature, origins)?;
+            return match &end {
+                Some(end) => Self::rust_authored_taper(
+                    profile,
+                    end,
+                    displacement_mm,
+                    feature,
+                    origins,
+                    policy,
+                ),
+                None => crate::geometry::construction::vector(
+                    profile,
+                    displacement_mm,
+                    feature,
+                    origins,
+                    policy,
+                ),
+            };
+        }
         policy.point(displacement_mm)?;
         policy.length(length(displacement_mm))?;
         let count = checked_edge_count(profile, feature, origins)?;
@@ -485,6 +517,13 @@ impl Solid {
             _ => None,
         }
     }
+}
+
+fn all_straight(profile: &CurvedProfile) -> bool {
+    std::iter::once(&profile.outer)
+        .chain(&profile.holes)
+        .flatten()
+        .all(|edge| matches!(edge, CurvedEdge2d::Line { .. }))
 }
 
 fn linear_ring(
