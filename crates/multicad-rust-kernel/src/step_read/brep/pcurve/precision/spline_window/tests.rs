@@ -167,3 +167,6 @@ fn installed_dip_original_truncated_targets_earn_finite_windows_separately() {
 
 #[path = "coverage_tests.rs"]
 mod coverage_contracts;
+
+#[path = "argument_tests.rs"]
+mod argument_contracts;

@@ -206,3 +206,6 @@ fn opposite_original_uv_sense_is_not_a_finite_boundary_permission() {
 
 #[path = "coverage_tests.rs"]
 mod coverage_contracts;
+
+#[path = "argument_tests.rs"]
+mod argument_contracts;
