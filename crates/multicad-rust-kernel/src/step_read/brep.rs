@@ -14,6 +14,11 @@ use std::f64::consts::PI;
 
 mod assembly;
 pub use assembly::{Assembly, Instance, MAX_DEPTH, Node, Occurrence, Placement};
+mod pcurve;
+pub use pcurve::{
+    PcurveDisagreement, PcurveValidatedInput, PcurveValidationError, PcurveValidationReport,
+    validate_pcurve_input, validate_pcurves, validate_pcurves_with_interrupt,
+};
 
 /// The largest number of solids read from one file.
 pub const MAX_SOLIDS: usize = 1024;
