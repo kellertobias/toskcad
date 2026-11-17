@@ -184,6 +184,14 @@ fn physical_floor_top_wall_and_original_tensor_mutations_refuse_with_original_re
             _ => unreachable!(),
         });
         assert_ne!(bad, good);
+        // The independently reconstructed repaired interpretation must reject
+        // the same actual broken floor/top/stock/tensor graphs.
+        assert!(
+            read_repaired_rounded_blind_bore(&bad, 1e-7).is_err(),
+            "repaired case {case}"
+        );
+        assert!(read_repaired_rounded_blind_bore(&good, 1e-7).is_ok());
+
         assert!(
             verify_rounded_thread_blind_bore(&bad, &b, f[0], f[1], f[2], 1e-7).is_err(),
             "case{case}"

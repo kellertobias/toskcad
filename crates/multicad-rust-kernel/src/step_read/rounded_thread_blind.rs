@@ -75,3 +75,6 @@ pub fn verify_rounded_thread_blind_bore(
 
 #[cfg(test)]
 mod tests;
+
+mod repaired;
+pub use repaired::{RepairedRoundedBlindCandidate, read_repaired_rounded_blind_bore};

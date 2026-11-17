@@ -96,6 +96,23 @@ pub(super) fn verify_blind_member(
         Some(bore.stock_height_mm().as_f64()),
     )
 }
+pub(super) fn verify_repaired_blind_member(
+    shell: &mut Shell<'_, '_>,
+    id: u32,
+    bore: &crate::rounded_thread::BlindBore,
+    frame: [Point; 3],
+    error: f64,
+) -> Result<f64> {
+    verify_material(
+        shell,
+        id,
+        bore.cutter(),
+        frame,
+        Some(error),
+        Some(bore.stock_radius_mm().as_f64()),
+        Some(bore.stock_height_mm().as_f64()),
+    )
+}
 fn verify_material(
     shell: &mut Shell<'_, '_>,
     id: u32,
