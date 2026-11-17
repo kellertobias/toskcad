@@ -1667,15 +1667,23 @@ pub(super) fn plane_analytic_certificate(
     budget.charge(256)?;
     let image = analytic::actual_image(source, definition, surface, budget)?;
     let curve3d_id = unwrapped(source, curve3d_id, budget)?;
-    let target = if matches!(edge.curve, Curve::Nurbs { .. }) {
-        curve_nurbs(source, curve3d_id, &edge.curve, 3, budget)?.error
+    let (target_image, target) = if matches!(edge.curve, Curve::Nurbs { .. }) {
+        (
+            None,
+            curve_nurbs(source, curve3d_id, &edge.curve, 3, budget)?.error,
+        )
     } else {
-        analytic::curve_reserve(source, curve3d_id, edge, budget)?
+        let (image, reserve) = analytic::curve_packet(source, curve3d_id, edge, budget)?;
+        (Some(image), reserve)
     };
     let proof = super::analytic::certify_image(image, edge, tol, budget)?;
     let proof = match proof {
         super::Proof::Certified(upper) => {
-            analytic::sense(source, curve3d_id, definition, surface, edge, budget)?;
+            if let Some(target) = target_image {
+                analytic::sense_images(target, image, budget)?;
+            } else {
+                analytic::sense(source, curve3d_id, definition, surface, edge, budget)?;
+            }
             let total = I::point(upper) + I::point(target);
             if total.valid() && total.hi <= tol {
                 super::Proof::Certified(total.hi)

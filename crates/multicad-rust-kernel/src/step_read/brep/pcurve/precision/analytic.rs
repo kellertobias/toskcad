@@ -536,6 +536,17 @@ pub(super) fn curve_reserve(
     edge: &Edge,
     budget: &mut Budget<'_>,
 ) -> Result<f64> {
+    Ok(curve_packet(source, id, edge, budget)?.1)
+}
+/// The immutable Original image and its numeric transfer are prepared once
+/// for one finite association. The caller retains this packet for its sense
+/// check instead of re-reading the same source operators.
+pub(super) fn curve_packet(
+    source: &Source<'_>,
+    id: u32,
+    edge: &Edge,
+    budget: &mut Budget<'_>,
+) -> Result<(Image, f64)> {
     budget.charge(2048)?;
     let id = unwrapped(source, id, budget)?;
     let raw = raw_curve(source, id, 3, budget)?;
@@ -569,7 +580,7 @@ pub(super) fn curve_reserve(
         )?,
         _ => return Err(ReadError::Unsupported),
     };
-    Ok(reserve.hi)
+    Ok((raw, reserve.hi))
 }
 
 /// Original REAL IP2 sense is checked independently of positional tolerance.
@@ -583,10 +594,15 @@ pub(super) fn sense(
     _edge: &Edge,
     budget: &mut Budget<'_>,
 ) -> Result<()> {
-    budget.charge(2048)?;
     let id = unwrapped(source, curve3d_id, budget)?;
     let target = raw_curve(source, id, 3, budget)?;
     let image = actual_image(source, definition, surface, budget)?;
+    sense_images(target, image, budget)
+}
+/// Only the alignment arithmetic is shared. Preparing the two Original
+/// packets and earning their finite correspondence remain caller obligations.
+pub(super) fn sense_images(target: Image, image: Image, budget: &mut Budget<'_>) -> Result<()> {
+    budget.charge(2048)?;
     let alignment = match (target, image) {
         (Image::Line { direction: a, .. }, Image::Line { direction: b, .. }) => dot(a, b),
         (

@@ -290,3 +290,78 @@ fn original_decimal_cardinal_plane_translation_cancels_before_enclosure() {
         );
     }
 }
+
+#[test]
+fn actual_plane_packet_reuse_matches_independent_original_queries_with_less_work() {
+    let mut checked = 0;
+    for text in [CYLINDER, CONE, TORUS] {
+        let source = Source::parse(text, 1e-7).unwrap();
+        for (edge_id, definition, surface, edge) in pairs(&source) {
+            if !matches!(surface, Surface::Plane(_)) {
+                continue;
+            }
+            let id = curve_id(&source, edge_id);
+            let mut independent = Budget::new(512_000_000, None);
+            let image = actual_image(&source, &definition, &surface, &mut independent).unwrap();
+            let reserve = curve_reserve(&source, id, &edge, &mut independent).unwrap();
+            let Proof::Certified(upper) =
+                retained::certify_image(image, &edge, 1e-7, &mut independent).unwrap()
+            else {
+                panic!("actual plane association lacks full-field agreement")
+            };
+            sense(&source, id, &definition, &surface, &edge, &mut independent).unwrap();
+            let expected = (I::point(upper) + I::point(reserve)).hi;
+            let mut reused = Budget::new(512_000_000, None);
+            let actual = super::super::plane_analytic_certificate(
+                &source,
+                id,
+                &definition,
+                &surface,
+                &edge,
+                1e-7,
+                &mut reused,
+            )
+            .unwrap();
+            assert!(matches!(actual,Some(Proof::Certified(value))if value==expected));
+            assert!(reused.used() < independent.used());
+            checked += 1;
+        }
+    }
+    assert!(checked >= 4);
+}
+
+#[test]
+fn actual_reused_plane_packets_keep_work_frontiers_cancellation_and_retry() {
+    let source = Source::parse(CYLINDER, 1e-7).unwrap();
+    let (edge_id, definition, surface, edge) = pairs(&source)
+        .into_iter()
+        .find(|(_, _, s, _)| matches!(s, Surface::Plane(_)))
+        .unwrap();
+    let id = curve_id(&source, edge_id);
+    let run = |b: &mut Budget<'_>| {
+        super::super::plane_analytic_certificate(&source, id, &definition, &surface, &edge, 1e-7, b)
+    };
+    let mut full = Budget::new(512_000_000, None);
+    let Some(Proof::Certified(first)) = run(&mut full).unwrap() else {
+        panic!()
+    };
+    let used = full.used();
+    let mut exact = Budget::new(used, None);
+    assert!(matches!(run(&mut exact).unwrap(),Some(Proof::Certified(v))if v==first));
+    assert_eq!(exact.remaining, 0);
+    assert!(matches!(
+        run(&mut Budget::new(used - 1, None)),
+        Err(ReadError::Limit)
+    ));
+    let polls = std::cell::Cell::new(0);
+    let stop = || {
+        polls.set(polls.get() + 1);
+        polls.get() == 20
+    };
+    let mut cancelled = Budget::new(512_000_000, Some(&stop));
+    assert!(matches!(run(&mut cancelled), Err(ReadError::Limit)));
+    assert!(cancelled.cancelled.get());
+    let mut retry = Budget::new(512_000_000, None);
+    assert!(matches!(run(&mut retry).unwrap(),Some(Proof::Certified(v))if v==first));
+    assert_eq!(retry.used(), used);
+}
