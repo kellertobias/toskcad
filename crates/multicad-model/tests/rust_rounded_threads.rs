@@ -219,7 +219,8 @@ fn rounded_mode_availability_keeps_multistart_and_external_receiving_unqualified
 }
 
 #[test]
-fn unqualified_partial_and_external_receiving_tools_refuse_real_stock_atomically() {
+fn partial_internal_receivers_are_blind_and_external_receiving_tools_refuse_real_stock_atomically()
+{
     use model::{BodyInput, PrimitiveParameters, PrimitiveRequest};
     for family in [
         ThreadFamily::Bsw,
@@ -256,6 +257,7 @@ fn unqualified_partial_and_external_receiving_tools_refuse_real_stock_atomically
                     _ => ThreadFit::WhitworthMediumInternal,
                 };
             }
+            let mode_resolved = p.resolve(s.parameters(), mode).ok();
             let request = ThreadRequest::receiving(
                 "Unsupported rounded receiver",
                 mode,
@@ -267,7 +269,7 @@ fn unqualified_partial_and_external_receiving_tools_refuse_real_stock_atomically
             )
             .unwrap();
             let prepared = model::prepare_thread(&s, s.revision(), actor(), &request).unwrap();
-            let err = Compiler {
+            let candidate = Compiler {
                 omit_display: true,
                 ..Default::default()
             }
@@ -276,13 +278,33 @@ fn unqualified_partial_and_external_receiving_tools_refuse_real_stock_atomically
                 s.revision() + 1,
                 GeometryBackend::Rust,
                 None,
-            )
-            .err()
-            .unwrap();
-            assert!(
-                err.to_string().contains("not certified"),
-                "{family:?} {mode:?}: {err}"
             );
+            if mode == ThreadMode::CutInternal {
+                // A thread shorter than the stock is the certified blind
+                // receiver, never a through bore or a refused estimate.
+                let candidate = candidate.unwrap();
+                let solid = candidate.solid(request.feature).unwrap();
+                assert!(solid.rust_rounded_thread_bore_data().is_none());
+                let data = solid.rust_rounded_blind_bore_data().unwrap();
+                assert_eq!(
+                    data.bore.cutter().spec().major_radius_mm,
+                    mode_resolved.unwrap().major_radius_mm
+                );
+                let [low, high] = data.bore.stock_height_bounds_mm();
+                assert!(low <= 10. * resolved.pitch_mm && 10. * resolved.pitch_mm <= high);
+                assert!(data.bore.floor_thickness_bounds_mm()[0] > 0.);
+                let volume = solid.volume_mm3().unwrap();
+                assert!(
+                    volume > 0. && volume < before_volume,
+                    "{family:?}: {volume}"
+                );
+            } else {
+                let err = candidate.err().unwrap();
+                assert!(
+                    err.to_string().contains("not certified"),
+                    "{family:?} {mode:?}: {err}"
+                );
+            }
             assert_eq!(s.document(), &before);
             assert_eq!(s.revision(), 1);
             assert_eq!(
