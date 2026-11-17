@@ -163,13 +163,8 @@ impl Verify<'_> {
         let uv = self.expected_uv(shell, e.pcurves[0].1, 3, &knots, points)?;
         self.bind(wall.verify(&curve, &uv, self.tolerance / 2., work)?)?;
         if g.active {
-            let k = (self.body.source_thread().spec().major_radius_mm
-                - self.body.entry_radius_mm())
-                / self.body.entry_length_mm();
-            let cosine = k.atan().cos();
             let points = g.trims.iter().enumerate().flat_map(|(j, t)| {
-                (usize::from(j != 0)..4)
-                    .map(move |i| [t.angle_poles[i], t.height_poles[i] / cosine])
+                (usize::from(j != 0)..4).map(move |i| [t.angle_poles[i], t.height_poles[i]])
             });
             let uv = self.expected_uv(shell, e.pcurves[1].1, 3, &knots, points)?;
             self.bind(cone.verify(&curve, &uv, self.tolerance / 2., work)?)?;
@@ -402,11 +397,7 @@ impl Verify<'_> {
         require(e.forward && e.seam == seam && e.pcurves.len() == if seam { 2 } else { 1 })?;
         let curve = graph.polynomial(shell, id)?;
         require(curve.domain() == [0., z / rate.abs()])?;
-        let cosine = ((self.body.source_thread().spec().major_radius_mm
-            - self.body.entry_radius_mm())
-            / self.body.entry_length_mm())
-        .atan()
-        .cos();
+
         for (i, &(surface, pc)) in e.pcurves.iter().enumerate() {
             require(surface == cone_id)?;
             let shift = if i == 0 {
@@ -415,7 +406,7 @@ impl Verify<'_> {
                 -rate.signum() * std::f64::consts::TAU
             };
             let domain = [0., z / rate.abs()];
-            let ends = [[theta + shift, 0.], [theta + z / rate + shift, z / cosine]];
+            let ends = [[theta + shift, 0.], [theta + z / rate + shift, z]];
             let uv = self.expected_uv(shell, pc, 1, &domain, ends.into_iter())?;
             self.bind(cone.verify(&curve, &uv, self.tolerance / 2., work)?)?;
         }

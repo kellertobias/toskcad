@@ -214,12 +214,10 @@ impl Shell<'_> {
             .spline(self.file, self.walls[group.wall], 3, &knots, &wall)?;
         let mut pcurves = vec![wall];
         if group.active {
-            let k = (self.body.source_thread().spec().major_radius_mm
-                - self.body.entry_radius_mm())
-                / self.body.entry_length_mm();
-            let cosine = k.atan().cos();
+            // STEP CONICAL_SURFACE uses axial height as v. The 3D trim
+            // already stores that same height; slant distance is not its chart.
             let (knots, uv) = cubic_uv(&group.trims, |trim, i| {
-                [trim.angle_poles[i], trim.height_poles[i] / cosine]
+                [trim.angle_poles[i], trim.height_poles[i]]
             });
             pcurves.push(self.uv.spline(self.file, self.cone, 3, &knots, &uv)?);
         }
@@ -290,8 +288,7 @@ impl Shell<'_> {
             .zip(heights)
             .map(|(&r, z)| self.placement.point_f64(helical::product(rotation, r), z))
             .collect::<Vec<_>>();
-        let cosine = k.atan().cos();
-        let last = [theta + d[2] / rate, d[2] / cosine];
+        let last = [theta + d[2] / rate, d[2]];
         let mut pcurves =
             vec![
                 self.uv

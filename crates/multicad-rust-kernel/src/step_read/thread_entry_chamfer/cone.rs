@@ -28,17 +28,20 @@ impl Cone {
                 && *angle < std::f64::consts::FRAC_PI_2,
         )?;
         let angle = I::point(*angle);
+        let cosine = angle.cos();
+        require(cosine.lo > 0.)?;
         Ok(Self {
             frame: frame::Frame::read(shell, reference(axis)?)?,
             radius: I::point(*radius),
             sin: angle.sin(),
-            cos: angle.cos(),
+            cos: cosine,
         })
     }
     fn composition(&self, uv: [Jet; 2]) -> Result<[Jet; 3]> {
         let [sin, cos] = uv[0].sin_cos().map_err(|_| ReadError::Unsupported)?;
-        let radius = Jet::constant(self.radius) + uv[1].scale(self.sin);
-        let local = [radius * cos, radius * sin, uv[1].scale(self.cos)];
+        // STEP v is axial displacement, not cone-generatrix/slant distance.
+        let radius = Jet::constant(self.radius) + uv[1].scale(self.sin / self.cos);
+        let local = [radius * cos, radius * sin, uv[1]];
         let world = std::array::from_fn(|i| {
             (0..3).fold(Jet::constant(I::point(0.)), |sum, a| {
                 sum + local[a].scale(self.frame.axes[a][i])
@@ -205,11 +208,25 @@ mod failure_tests {
                     1,
                     vec![0., 1.],
                     vec![2, 2],
-                    vec![[2., 0., 0.], [2. + angle.sin(), 0., angle.cos()]],
+                    vec![[2., 0., 0.], [2. + angle.tan(), 0., 1.]],
                 )
                 .unwrap();
                 let uv = Curve::new(1, vec![0., 1.], vec![2, 2], vec![[0., 0.], [0., 1.]]).unwrap();
                 assert!(cone.verify(&c, &uv, 1e-10, &mut work()).unwrap() < 1e-10);
+                let old_slant_map = Curve::new(
+                    1,
+                    vec![0., 1.],
+                    vec![2, 2],
+                    vec![[2., 0., 0.], [2. + angle.sin(), 0., angle.cos()]],
+                )
+                .unwrap();
+                // This source-known verifier promises the actual emitted
+                // equal-domain map, not an unearned slant reparameterization.
+                assert!(matches!(
+                    cone.verify(&old_slant_map, &uv, 1e-10, &mut work()),
+                    Err(ReadError::Unsupported)
+                ));
+
                 let mut bad = c.clone();
                 for p in &mut bad.poles {
                     p[2] = p[2] + I::point(0.1);
