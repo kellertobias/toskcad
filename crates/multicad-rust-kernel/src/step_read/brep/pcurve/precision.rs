@@ -18,11 +18,27 @@ mod conic;
 mod cylinder_ellipse;
 mod cylinder_polynomial;
 mod cylinder_trace;
+mod finite_boundary;
 mod polynomial_axis;
 mod polynomial_trace;
 mod sense_line;
 mod spline_window;
 type V = [I; 3];
+/// Original finite tensor-boundary proof, including the complete numeric
+/// and finite-window transfer. Its result must not be reserved a second time.
+pub(super) fn finite_boundary_certificate(
+    source: &Source<'_>,
+    curve_id: u32,
+    definition: &super::uv::Definition,
+    surface: &Surface,
+    edge: &Edge,
+    tolerance: f64,
+    budget: &mut Budget<'_>,
+) -> Result<Option<super::Proof>> {
+    finite_boundary::certify(
+        source, curve_id, definition, surface, edge, tolerance, budget,
+    )
+}
 pub(super) fn cone_polynomial_certificate(
     source: &Source<'_>,
     curve_id: u32,

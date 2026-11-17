@@ -278,6 +278,31 @@ pub(super) fn prepare<'s, 'i, 'e>(
     data: &CurveCells<'_, '_, '_>,
     budget: &mut Budget<'_>,
 ) -> Result<Window<'s, 'i, 'e>> {
+    prepare_inner(source, target_id, definition, edge, data, false, budget)
+}
+/// Original and decoded natural knot domains are related by their positive
+/// affine normalization, rather than identifying their endpoint REALs.
+/// Its cached-window discrepancy is expressed back in ORIGINAL parameters;
+/// the same normalized-domain numeric reserve then transfers to the body.
+pub(super) fn prepare_normalized<'s, 'i, 'e>(
+    source: &'s Source<'i>,
+    target_id: u32,
+    definition: &'e super::super::uv::Definition,
+    edge: &'e Edge,
+    data: &CurveCells<'_, '_, '_>,
+    budget: &mut Budget<'_>,
+) -> Result<Window<'s, 'i, 'e>> {
+    prepare_inner(source, target_id, definition, edge, data, true, budget)
+}
+fn prepare_inner<'s, 'i, 'e>(
+    source: &'s Source<'i>,
+    target_id: u32,
+    definition: &'e super::super::uv::Definition,
+    edge: &'e Edge,
+    data: &CurveCells<'_, '_, '_>,
+    normalized: bool,
+    budget: &mut Budget<'_>,
+) -> Result<Window<'s, 'i, 'e>> {
     budget.charge(4096)?;
     let Curve::Nurbs {
         curve: target,
@@ -312,7 +337,7 @@ pub(super) fn prepare<'s, 'i, 'e>(
     }
     numeric_preflight(source, target_id, budget)?;
     numeric_preflight(source, definition.curve_id, budget)?;
-    let _natural = knot_domain(source, target_id, target, true, budget)?;
+    let natural = knot_domain(source, target_id, target, true, budget)?;
     let f = fields(source, target_id, 1, budget)?;
     let Some((_, k)) = f.knots[0] else {
         return Err(ReadError::Unsupported);
@@ -321,14 +346,44 @@ pub(super) fn prepare<'s, 'i, 'e>(
     let range = target.range();
     // NumericNurbs normalizes its knot domain. Exact equality here earns
     // interpreting its reserve at the SAME original global parameter t.
-    for (i, index) in [0, k.len() - 1].into_iter().enumerate() {
-        if !exact_binary(
-            spelling(source, target_id, &k[index], budget)?,
-            range[i],
-            budget,
-        )? {
-            return Err(ReadError::Unsupported);
+    if !normalized {
+        for (i, index) in [0, k.len() - 1].into_iter().enumerate() {
+            if !exact_binary(
+                spelling(source, target_id, &k[index], budget)?,
+                range[i],
+                budget,
+            )? {
+                return Err(ReadError::Unsupported);
+            }
         }
+    }
+    // The normalized numeric transfer is earned on the entire NATURAL
+    // domain. An extrapolated cached parameter has no such authority.
+    if normalized && (edge.range[0] < range[0] || edge.range[1] > range[1]) {
+        return Err(ReadError::Unsupported);
+    }
+    budget.charge(256)?;
+    let raw_span = valid(natural[1] - natural[0])?;
+    let cached_span = valid(I::point(range[1]) - I::point(range[0]))?;
+    if raw_span.lo <= 0. || cached_span.lo <= 0. {
+        return Err(ReadError::Unsupported);
+    }
+    let cached_raw = if normalized {
+        edge.range
+            .map(|t| natural[0] + (I::point(t) - I::point(range[0])) / cached_span * raw_span)
+    } else {
+        edge.range.map(I::point)
+    };
+    if cached_raw.iter().any(|v| !v.valid()) {
+        return Err(ReadError::Unsupported);
+    }
+    let clamp = if normalized {
+        [natural[0].hi, natural[1].lo]
+    } else {
+        range
+    };
+    if clamp.iter().any(|x| !x.is_finite()) || clamp[0] > clamp[1] {
+        return Err(ReadError::Unsupported);
     }
     let numeric = curve_nurbs(source, target_id, &edge.curve, 3, budget)?.error;
     curve_nurbs(source, definition.curve_id, &definition.geometry, 2, budget)?;
@@ -342,18 +397,21 @@ pub(super) fn prepare<'s, 'i, 'e>(
     let mut cached: f64 = 0.;
     for i in 0..2 {
         budget.charge(1024)?;
-        // Natural endpoints are exact binary REALs above. Clamp the complete
-        // original UV endpoint enclosure; add its original-to-clamp distance.
+        // The legacy branch has exact binary natural endpoints. For the
+        // normalized branch [RawA.hi,RawB.lo] is CERTAINLY inside every
+        // actual original natural domain. Clamp a candidate into that
+        // interior and include its complete distance to the UV endpoint;
+        // no original endpoint is silently replaced by its cached value.
         let t = valid(I::new(
-            domain[i].lo.clamp(range[0], range[1]),
-            domain[i].hi.clamp(range[0], range[1]),
+            domain[i].lo.clamp(clamp[0], clamp[1]),
+            domain[i].hi.clamp(clamp[0], clamp[1]),
         ))?;
         let offset = magnitude(domain[i] - t)?;
         let point = evaluate(data, t, budget)?;
         let vertex = raw_vertex(source, edge.vertices[i], budget)?;
         let r = valid(norm(std::array::from_fn(|j| point[j] - vertex[j])))?;
         closest[i] = valid(I::point(offset) + I::point(2.) * I::point(r.hi) / I::point(gamma))?.hi;
-        cached = cached.max(magnitude(domain[i] - I::point(edge.range[i]))?);
+        cached = cached.max(magnitude(domain[i] - cached_raw[i])?);
     }
     if valid(width - I::point(closest[0]) - I::point(closest[1]))?.lo <= 0. {
         return Err(ReadError::Unsupported);
@@ -379,3 +437,6 @@ pub(super) fn prepare<'s, 'i, 'e>(
 }
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod normalized_tests;

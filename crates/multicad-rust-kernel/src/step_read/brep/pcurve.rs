@@ -691,6 +691,17 @@ fn validate_source(
                 Ok(_) | Err(ReadError::Unsupported) => {}
                 Err(error) => return Err(error),
             }
+            if let Some(proof) = precision::finite_boundary_certificate(
+                source,
+                binding.curve,
+                &definition,
+                &surface,
+                &edge,
+                tol,
+                budget,
+            )? {
+                return Ok((proof, definition.surface, surface_kind(&surface), 0.));
+            }
             match precision::bilinear_certificate(
                 source,
                 binding.curve,
