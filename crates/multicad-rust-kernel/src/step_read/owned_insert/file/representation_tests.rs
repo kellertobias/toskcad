@@ -283,6 +283,50 @@ fn related_graphs_refuse_ambiguous_cycles_extra_geometry_and_bad_schema_atomical
     let _ = context;
 }
 #[test]
+fn related_metadata_does_not_allocate_unbounded_datums_or_claim_unrelated_transform_graphs() {
+    let (_, text, _, _, context) = related_box(2, false);
+    let actual = File::parse(&text, Options::default(), None).unwrap();
+    let axis = refs(
+        &kind(&actual.entities, 1_100_000, "SHAPE_REPRESENTATION")
+            .unwrap()
+            .args[1],
+    )
+    .unwrap()[0];
+    let datum = kind(&actual.entities, axis, "AXIS2_PLACEMENT_3D")
+        .unwrap()
+        .source
+        .unwrap();
+    let with_datums = |count: usize| {
+        let records: String = (0..count)
+            .map(|i| format!("#{}={datum};\n", 1_300_000 + i))
+            .collect();
+        let end = text.rfind("ENDSEC;").unwrap();
+        let extended = format!("{}{}{}", &text[..end], records, &text[end..]);
+        let ids: Vec<String> = (0..count).map(|i| format!("#{}", 1_300_000 + i)).collect();
+        argument_change(&extended, 1_100_000, 1, &format!("({})", ids.join(",")))
+    };
+    assert!(File::parse(&with_datums(64), Options::default(), None).is_ok());
+    refused(&with_datums(65), Error::Limit);
+    let end = text.rfind("ENDSEC;").unwrap();
+    let unrelated = format!(
+        "{}#1400000=SHAPE_REPRESENTATION('',(#{axis}),#{context});\n#1400001=SHAPE_REPRESENTATION('',(#{axis}),#{context});\n#1400002=(REPRESENTATION_RELATIONSHIP('','',#1400000,#1400001)SHAPE_REPRESENTATION_RELATIONSHIP());\n{}",
+        &text[..end],
+        &text[end..]
+    );
+    let document = File::parse(&unrelated, Options::default(), None).unwrap();
+    assert_eq!(document.represented_members(), actual.represented_members());
+    assert_eq!(
+        crate::step_read::read_analytic_solid(&unrelated, 1e-7)
+            .unwrap()
+            .face_count,
+        6
+    );
+    let connected = unrelated.replace("#1400000,#1400001)", "#1100000,#1400001)");
+    assert_ne!(connected, unrelated);
+    refused(&connected, Error::Unsupported);
+    assert!(File::parse(&unrelated, Options::default(), None).is_ok());
+}
+#[test]
 fn related_representation_queries_keep_exact_work_frontier_and_observed_cancellation_retry() {
     use std::cell::Cell;
     let (_, text, _, _, _) = related_box(3, true);

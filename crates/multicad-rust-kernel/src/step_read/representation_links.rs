@@ -4,6 +4,7 @@ use super::*;
 // datum-only wrappers cannot silently contribute omitted geometry. The EXPRESS
 // graph treats representation relationships as undirected links (ISO10303-41).
 const ROOT_LINK_NODES: usize = 64;
+const ROOT_DATUM_ITEMS: usize = 64;
 pub(super) fn product_shape<E: From<ReadError>>(
     entities: &BTreeMap<u32, Vec<Entity<'_>>>,
     top: u32,
@@ -52,10 +53,15 @@ pub(super) fn product_shape<E: From<ReadError>>(
         for (&id, parts) in entities {
             charge(1)?;
             let [e] = parts.as_slice() else {
-                charge(parts.len())?;
+                charge(parts.len().saturating_mul(2))?;
                 if parts
                     .iter()
                     .any(|e| e.name == "SHAPE_REPRESENTATION_RELATIONSHIP")
+                    && parts.iter().any(|e| {
+                        matches!(e.name, "REPRESENTATION_RELATIONSHIP" | "SHAPE_REPRESENTATION_RELATIONSHIP")
+                            && matches!(e.args.as_slice(), [_, _, Value::Reference(a), Value::Reference(b)]
+                                if *a == current || *b == current)
+                    })
                 {
                     return Err(ReadError::Unsupported.into());
                 }
@@ -91,10 +97,19 @@ pub(super) fn product_shape<E: From<ReadError>>(
                 return Err(ReadError::Invalid.into());
             };
             shell.check_units(reference(context)?)?;
-            let mut datums = BTreeSet::new();
-            for datum in refs(items)? {
-                charge(1)?;
-                if !datums.insert(datum) {
+            // Borrow the parser arena: no temporary Vec or tree allocation is
+            // hidden outside the caller's retained-arena byte accounting.
+            let datums = list(items)?;
+            if datums.len() > ROOT_DATUM_ITEMS {
+                return Err(ReadError::Limit.into());
+            }
+            for (i, value) in datums.iter().enumerate() {
+                charge(i + 1)?;
+                let datum = reference(value)?;
+                if datums[..i]
+                    .iter()
+                    .any(|old| matches!(old, Value::Reference(id) if *id == datum))
+                {
                     return Err(ReadError::Invalid.into());
                 }
                 shell.args(datum, "AXIS2_PLACEMENT_3D")?;
