@@ -14,6 +14,7 @@ mod bilinear;
 mod conic;
 mod cylinder_ellipse;
 mod cylinder_trace;
+mod polynomial_axis;
 mod sense_line;
 type V = [I; 3];
 /// This distinct certificate owns the Original-REAL bounded target trace,
@@ -796,6 +797,14 @@ pub(super) fn axis_segment(
     definition: &super::uv::Definition,
     budget: &mut Budget<'_>,
 ) -> Result<Option<AxisSegment>> {
+    if let Curve::Nurbs {
+        curve,
+        closed: false,
+    } = &definition.geometry
+        && curve.degree() >= 2
+    {
+        return polynomial_axis::segment(source, definition, budget);
+    }
     if !matches!(definition.geometry, Curve::Nurbs { closed: false, .. }) {
         return Ok(None);
     }

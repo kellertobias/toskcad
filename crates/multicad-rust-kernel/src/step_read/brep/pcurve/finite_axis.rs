@@ -160,7 +160,10 @@ pub(super) fn certify(
     else {
         return Ok(None);
     };
-    if curve.degree() != 1 || curve.points().len() != 2 {
+    if (curve.degree() == 1 && (curve.points().len() != 2 || curve.knots().1 != [2, 2]))
+        || curve.degree() > 11
+        || curve.points().len() > 1024
+    {
         return Ok(None);
     }
     budget.charge(512)?;
@@ -171,8 +174,9 @@ pub(super) fn certify(
     {
         return Err(ReadError::Invalid);
     }
-    let segment =
-        precision::axis_segment(source, definition, budget)?.ok_or(ReadError::Unsupported)?;
+    let Some(segment) = precision::axis_segment(source, definition, budget)? else {
+        return Ok(None);
+    };
     let image = precision::analytic_image(source, definition, surface, budget)?;
     let coefficients = precision::analytic_curve_reserve(source, curve_id, edge, budget)?;
     let target =
