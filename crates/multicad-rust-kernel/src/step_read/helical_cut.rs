@@ -2,7 +2,7 @@
 use super::*;
 use crate::{
     helical_tube_cut::{BoundaryEdge, Cut, CylinderTrim, Spec},
-    step::helical_trim::{CavityCapPcurve, CavitySurface, Pcurve, Rail, TopCavity, UvSpline},
+    step::helical_trim::{CavitySurface, Pcurve, Rail, TopCavity},
 };
 use helical::{face, require, ring, step_error};
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
@@ -718,8 +718,11 @@ impl Verification {
         plane: Frame,
         surface_bound: f64,
     ) -> Result<()> {
-        let (spline, [cavity, cap]) =
-            decode::wrapper(shell, edge, "SURFACE_CURVE", "CURVE_3D", surfaces)?;
+        // The writer states only the exact top-plane pcurve: on the cavity
+        // support this trim crosses C0 sweep joints at irrational parameters
+        // and no reader could re-certify a stated cavity pcurve.
+        let (spline, [cap]) =
+            decode::wrapper(shell, edge, "SURFACE_CURVE", "CURVE_3D", [surfaces[1]])?;
         let mut spline = decode::curve(shell, spline)?.into_spline(self.frame);
         let domain = self.cut.edge_domain(BoundaryEdge::TopCavity);
         let cap_drift = align_domain(&mut spline.knots, domain, self.angle)?;
@@ -741,48 +744,7 @@ impl Verification {
             support.certify(&projected).map_err(step_error)? + planar_drift * self.top_speed();
         require(cap_bound + projected_bound < self.model)?;
         self.boundary(shell, edge, BoundaryEdge::TopCavity)?;
-        self.top_cavity_uv(shell, cavity, cap_bound + surface_bound)
-    }
-
-    fn top_cavity_uv(self, shell: &Shell<'_, '_>, uv: u32, already_used: f64) -> Result<()> {
-        let decode::Curve {
-            mut axis,
-            mut points,
-        } = decode::curve(shell, uv)?;
-        let domain = self.cut.edge_domain(BoundaryEdge::TopCavity);
-        let chart_drift = align_domain(&mut axis.knots, domain, self.angle)?;
-        let support = CavitySurface::new(self.cut, self.model).map_err(step_error)?;
-        let [first, .., last] = points.as_mut_slice() else {
-            return Err(ReadError::Invalid);
-        };
-        let spec = self.cut.spec();
-        let sweep_speed = self.sweep_speed();
-        let mut correction: f64 = 0.;
-        // The reconstructed chart can differ from the encoded chart by
-        // roundoff. Pin its cap endpoints only after verifying the shift,
-        // and charge the full convex-hull error of that coefficient change.
-        for (point, angle) in [first, last].into_iter().zip(domain) {
-            let expected = [
-                angle,
-                support.top_parameter(angle).ok_or(ReadError::Invalid)?,
-            ];
-            near(point[0], expected[0], self.angle)?;
-            near(point[1], expected[1], self.angle)?;
-            let drift = spec.tube_radius_mm * (point[0] - expected[0]).abs()
-                + sweep_speed * (point[1] - expected[1]).abs();
-            correction = correction.max(drift);
-            *point = expected;
-        }
-        let support = CavityCapPcurve::new(self.cut, self.model).map_err(step_error)?;
-        let error = support
-            .certify(&UvSpline {
-                degree: axis.degree,
-                knots: axis.knots,
-                multiplicities: axis.multiplicities,
-                poles_uv: points,
-            })
-            .map_err(step_error)?;
-        require(already_used + error + correction + chart_drift * self.top_speed() < self.model)
+        require(cap_bound + surface_bound < self.model)
     }
 }
 

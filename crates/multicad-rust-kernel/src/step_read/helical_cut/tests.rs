@@ -120,12 +120,13 @@ fn rejects_changed_incidence_spline_controls_and_parameter_curves() {
     let edges = incidence(&shell, &wires).unwrap();
     let [_, top, cylinder, cavity, _] = std::array::from_fn(|i| named[i].0);
 
-    let (top_curve, [cavity_uv, planar_uv]) = decode::wrapper(
+    // The top trim states only its exact top-plane pcurve.
+    let (top_curve, [planar_uv]) = decode::wrapper(
         &shell,
         edges[TOP_CAVITY],
         "SURFACE_CURVE",
         "CURVE_3D",
-        [cavity, top],
+        [top],
     )
     .unwrap();
     let (rail, [rail_uv, _]) = decode::wrapper(
@@ -161,7 +162,6 @@ fn rejects_changed_incidence_spline_controls_and_parameter_curves() {
     let surface_control = refs(&net[1]).unwrap()[1];
     for point in [
         control(top_curve),
-        control(cavity_uv),
         control(planar_uv),
         control(rail),
         control(rail_uv),
@@ -500,12 +500,12 @@ fn refuses_different_stock_and_floor_supports_or_chart_endpoints() {
         },
         reject,
     );
-    let (_, [cap_uv, _]) = decode::wrapper(
+    let (_, [cap_uv]) = decode::wrapper(
         &shell,
         edges[TOP_CAVITY],
         "SURFACE_CURVE",
         "CURVE_3D",
-        [cavity, top],
+        [top],
     )
     .unwrap();
     mutate(

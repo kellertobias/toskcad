@@ -1,7 +1,7 @@
 //! Five-face analytic STEP boundary of a bounded helical tube cut.
 use super::*;
 use crate::helical_tube_cut::{BoundaryEdge, Cut, CylinderTrim};
-use helical_trim::{CavityCapPcurve, CavitySurface, Rail, Spline, Surface, TopCavity, UvSpline};
+use helical_trim::{CavitySurface, Rail, Spline, Surface, TopCavity, UvSpline};
 use std::f64::consts::{PI, TAU};
 
 mod curves;
@@ -28,7 +28,6 @@ struct Chart {
     rails: [Rail; 3],
     cavity: CavitySurface,
     top: TopCavity,
-    cap: CavityCapPcurve,
 }
 
 impl Chart {
@@ -74,7 +73,6 @@ impl Chart {
             rails: [seam?, positive?, negative?],
             cavity: CavitySurface::new(cut, tolerance)?,
             top: TopCavity::new(cut, tolerance)?,
-            cap: CavityCapPcurve::new(cut, tolerance)?,
         })
     }
 }
@@ -98,9 +96,7 @@ pub(super) fn encode(
     let surface_bound = chart.cavity.certify(&tensor)?;
     let top_curve = chart.top.spline()?;
     let top_bound = chart.top.certify(&top_curve)?;
-    let top_uv = chart.cap.spline()?;
-    let cap_bound = chart.cap.certify(&top_uv)?;
-    check_error_budget(surface_bound + top_bound + cap_bound, tolerance)?;
+    check_error_budget(surface_bound + top_bound, tolerance)?;
     let domains = chart.cavity.domains();
     let [phi_positive, phi_negative] = domains[0];
     let [seam, rail_pos, rail_neg] = chart.rails.map(prepared_rail);
@@ -271,19 +267,20 @@ pub(super) fn encode(
         &[floor_cylinder_uv],
         curves::Master::Curve,
     );
-    let top_pcurves = [
-        uv.spline(file, cavity_support, &top_uv),
-        uv.spline(
-            file,
-            top_plane,
-            &UvSpline {
-                degree: top_curve.degree,
-                knots: top_curve.knots.clone(),
-                multiplicities: top_curve.multiplicities.clone(),
-                poles_uv: top_curve.poles_mm.iter().map(|p| [p[0], p[1]]).collect(),
-            },
-        ),
-    ];
+    // The top trim has NO pcurve on the cavity support: there it is a
+    // degree-11 trace crossing C0 sweep joints at irrational parameters,
+    // which a reader cannot re-certify from the file. Its 3D curve and its
+    // exact top-plane pcurve fully define the edge.
+    let top_pcurves = [uv.spline(
+        file,
+        top_plane,
+        &UvSpline {
+            degree: top_curve.degree,
+            knots: top_curve.knots.clone(),
+            multiplicities: top_curve.multiplicities.clone(),
+            poles_uv: top_curve.poles_mm.iter().map(|p| [p[0], p[1]]).collect(),
+        },
+    )];
     let top_cavity_curve = encode_spline(file, &top_curve, [positive_top, negative_top])?;
     let top_cavity = curves::edge(
         file,
