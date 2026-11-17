@@ -27,7 +27,7 @@ impl Source {
             entry: None,
             tail: None,
             intent: None,
-            exact_end: None,
+            exact_end: thread.exact_axial_extent(),
         }
     }
     pub fn full_length_mm(&self) -> f64 {
@@ -47,6 +47,11 @@ impl Source {
             thread: &self.thread,
             entry: self.entry,
             top: self.tail.map_or(self.full_length_mm(), |t| t.station),
+            exact_top: if self.tail.is_none() {
+                self.exact_end
+            } else {
+                None
+            },
         }
     }
 }

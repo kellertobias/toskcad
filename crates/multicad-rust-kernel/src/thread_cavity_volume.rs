@@ -16,6 +16,9 @@ pub(crate) trait Source {
         I::point(self.full_length_mm())
     }
     fn prefix_length_mm(&self) -> f64;
+    fn prefix_length_interval(&self) -> I {
+        I::point(self.prefix_length_mm())
+    }
     fn terminal_radius_mm(&self) -> Option<f64>;
     fn entry(&self) -> Option<Entry>;
 }
@@ -63,7 +66,7 @@ pub(crate) fn integrate<S: Source>(
     let factor = pi / I::point(source.pitch_mm());
     let mut sum = source.terminal_radius_mm().map_or(I::point(0.), |radius| {
         pi * I::point(radius).square()
-            * (source.full_length_interval() - I::point(source.prefix_length_mm()))
+            * (source.full_length_interval() - source.prefix_length_interval())
     });
     // Both sealed providers qualify dimension, factor, derivative and slope
     // bounds before this entry point. Restricted cells preserve those finite
@@ -112,7 +115,7 @@ fn accuracy_budget(options: QueryOptions, reserve: f64) -> Result<f64, Error> {
     Ok(available)
 }
 fn column<S: Source>(source: &S, r: I) -> I {
-    let f = I::point(source.prefix_length_mm());
+    let f = source.prefix_length_interval();
     let Some(e) = source.entry() else {
         return r.square() * f;
     };
@@ -127,7 +130,7 @@ fn cell<S: Source>(source: &S, a: f64, b: f64, band: usize, factor: I) -> I {
     let midpoint = (I::point(a) + I::point(b)) / I::point(2.);
     let (r, _) = source.profile(band, midpoint);
     let (range, slope) = source.profile(band, I::new(a, b));
-    let f = I::point(source.prefix_length_mm());
+    let f = source.prefix_length_interval();
     let extra = source.entry().map_or(I::point(0.), |e| {
         I::point(range.magnitude()) / I::new(e.slope[0], e.slope[1])
     });

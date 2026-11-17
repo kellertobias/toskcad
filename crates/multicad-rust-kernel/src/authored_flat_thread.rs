@@ -6,6 +6,9 @@
 //! with a derived per-band surface correspondence and never source authority.
 use crate::helical_thread::{Spec, Thread, ThreadError};
 use crate::tapered_thread::interval::I;
+mod domain;
+#[cfg(test)]
+mod domain_tests;
 #[cfg(test)]
 mod tests;
 mod transfer;
@@ -56,6 +59,7 @@ pub struct AuthoredThread {
     radii: [f64; 6],
     approximation: Thread,
     transfer: TransferBounds,
+    exact_axial_end: Option<crate::Rational>,
 }
 impl AuthoredThread {
     pub fn new(spec: Spec, options: SourceOptions) -> Result<Self, Error> {
@@ -63,6 +67,26 @@ impl AuthoredThread {
     }
     pub fn new_with_interrupt(
         spec: Spec,
+        options: SourceOptions,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Self, Error> {
+        Self::build(spec, None, options, interrupt)
+    }
+    /// Author the same periodic law on an explicit exact finite axial domain.
+    /// Original Spec and all shared phase/radius expressions are retained.
+    /// The independently evaluated legacy approximation has a covering finite
+    /// domain; it is never substituted for this authoritative source.
+    pub fn new_with_exact_axial_domain(
+        spec: Spec,
+        end: crate::Rational,
+        options: SourceOptions,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Self, Error> {
+        Self::build(spec, Some(end), options, interrupt)
+    }
+    fn build(
+        spec: Spec,
+        exact_axial_end: Option<crate::Rational>,
         options: SourceOptions,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Self, Error> {
@@ -77,10 +101,25 @@ impl AuthoredThread {
         if spec.root_radius_mm.is_some() {
             return Err(Error::Unsupported);
         }
-        let approximation = Thread::new(spec).map_err(|e| match e {
+        let failure = |e| match e {
             ThreadError::Invalid => Error::Invalid,
             ThreadError::Limit => Error::Limit,
-        })?;
+        };
+        let original_approximation = Thread::new(spec).map_err(failure)?;
+        let end = match exact_axial_end {
+            None => I::point(spec.length_mm),
+            Some(q) => domain::validate(spec, q)?,
+        };
+        checkpoint(interrupt)?;
+        let approximation = if exact_axial_end.is_some() {
+            Thread::new(Spec {
+                length_mm: end.hi,
+                ..spec
+            })
+            .map_err(failure)?
+        } else {
+            original_approximation
+        };
         // These are authored finite shared expressions from the canonical
         // dimensions, not a recipe inferred from a retained Thread object.
         let half = spec.crest_width_mm * 0.5;
@@ -100,7 +139,8 @@ impl AuthoredThread {
         // The same finite canonical phase expressions have just passed
         // Thread admission; transfer::certify independently requires every
         // normalized source width and literal radius enclosure to be positive.
-        let transfer = transfer::certify(spec, phases, radii, &approximation, options, interrupt)?;
+        let transfer =
+            transfer::certify(spec, phases, radii, &approximation, end, options, interrupt)?;
         checkpoint(interrupt)?;
         Ok(Self {
             spec,
@@ -108,6 +148,7 @@ impl AuthoredThread {
             radii,
             approximation,
             transfer,
+            exact_axial_end,
         })
     }
     pub fn spec(&self) -> Spec {
@@ -123,6 +164,8 @@ impl AuthoredThread {
         self.transfer
     }
     /// This evaluated object is not the shared-boundary manufacturing source.
+    /// For an exact axial domain its finite length is a directed covering
+    /// representative; Original Spec remains available from `spec()`.
     pub fn legacy_approximation(&self) -> (&Thread, TransferBounds) {
         (&self.approximation, self.transfer)
     }
@@ -132,8 +175,28 @@ impl AuthoredThread {
     pub fn maximum_radius_mm(&self) -> f64 {
         self.spec.major_radius_mm
     }
+    /// Rounded sampling/display representative; the exact domain, when
+    /// present, is separate source authority.
     pub fn full_length_mm(&self) -> f64 {
-        self.spec.length_mm
+        self.exact_axial_end
+            .map_or(self.spec.length_mm, |q| q.as_f64())
+    }
+    pub fn exact_axial_extent(&self) -> Option<crate::Rational> {
+        self.exact_axial_end
+    }
+    pub fn axial_extent_bounds_mm(&self) -> [f64; 2] {
+        let end = self.axial_end_interval();
+        [end.lo, end.hi]
+    }
+    pub(crate) fn axial_end_interval(&self) -> I {
+        self.exact_axial_end
+            .map_or(I::point(self.spec.length_mm), domain::interval)
+    }
+    pub(crate) fn contains_axial_parameter(&self, z: f64) -> bool {
+        self.exact_axial_end.map_or_else(
+            || z.is_finite() && (0. ..=self.spec.length_mm).contains(&z),
+            |end| domain::contains(end, z),
+        )
     }
     /// Nominal point plus an outward Euclidean evaluation enclosure.
     /// The authoritative chart closes by true 2pi after exactly one full lead.
@@ -149,7 +212,7 @@ impl AuthoredThread {
             || !u.is_finite()
             || !(0. ..=1.).contains(&u)
             || !z.is_finite()
-            || !(0. ..=self.spec.length_mm).contains(&z)
+            || !self.contains_axial_parameter(z)
         {
             return Err(Error::Invalid);
         }

@@ -301,7 +301,7 @@ fn prefix_properties(
     };
     if !end.is_finite()
         || end < source.spec().pitch_mm
-        || end > source.full_length_mm()
+        || !source.contains_axial_parameter(end)
         || !face_valid
     {
         return Err(Error::Invalid);

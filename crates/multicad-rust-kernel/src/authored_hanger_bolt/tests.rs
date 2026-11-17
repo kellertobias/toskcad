@@ -458,3 +458,24 @@ fn actual_nonbinary_left_hand_closed_candidate_keeps_full_source_and_quota() {
     assert_eq!(c.source(), &source);
     assert!(c.work_used() <= 16_000_000);
 }
+
+#[test]
+fn exact_periodic_wood_domain_requires_a_separate_connected_cap_contract() {
+    let original = fixture(false, false);
+    assert!(Hanger::new(original, None).is_ok());
+    let wood = AuthoredThread::new_with_exact_axial_domain(
+        original.wood.spec(),
+        crate::Rational::new(123, 10).unwrap(),
+        SourceOptions {
+            position_limit_mm: 1e-7,
+            normal_angle_limit_rad: 1e-6,
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        Hanger::new(Spec { wood, ..original }, None),
+        Err(Error::Unsupported)
+    );
+    assert!(Hanger::new(original, None).is_ok());
+}

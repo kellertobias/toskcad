@@ -55,6 +55,10 @@ impl Source for Cavity {
     fn prefix_length_mm(&self) -> f64 {
         self.tail.map_or(self.full_length_mm(), |t| t.station)
     }
+    fn prefix_length_interval(&self) -> I {
+        self.tail
+            .map_or(self.end_interval(), |t| I::point(t.station))
+    }
     fn terminal_radius_mm(&self) -> Option<f64> {
         Cavity::terminal_radius_mm(self)
     }

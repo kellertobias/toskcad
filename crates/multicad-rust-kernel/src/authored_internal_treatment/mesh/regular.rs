@@ -80,7 +80,12 @@ impl Patch {
                 Ok((radius, k))
             })
             .transpose()?;
-        let top = Q::float(body.top, w)?;
+        let top = if let Some(end) = body.exact_top {
+            let (n, d) = end.ratio();
+            Q::integer(n, w)?.div(&Q::integer(d, w)?, w)?
+        } else {
+            Q::float(body.top, w)?
+        };
         Ok(Self {
             band,
             period,

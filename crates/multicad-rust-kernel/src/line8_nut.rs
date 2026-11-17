@@ -89,6 +89,11 @@ impl Nut {
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Self, Error> {
         checkpoint(interrupt)?;
+        // Line-eight cap correspondence currently binds binary end stations.
+        if thread.exact_axial_extent().is_some() {
+            return Err(Error::Unsupported);
+        }
+
         if !bore_from_start_mm.is_finite()
             || [relief.start_mm, relief.radius_mm, relief.tool_length_mm]
                 .iter()

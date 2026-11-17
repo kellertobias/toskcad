@@ -38,11 +38,15 @@ fn field_at(body: &Cavity, edge: Edge, station: f64, mode: Surface, t: Jet) -> s
     let bound = span(edge);
     let v = Jet::constant(I::point(bound.lo))
         .add(Jet::variable(0).scale(I::point(bound.hi) - I::point(bound.lo)));
-    let z = Jet::constant(if matches!(mode, Surface::OuterCap) {
-        body.end_interval()
-    } else {
-        I::point(station)
-    });
+    let z = Jet::constant(
+        if matches!(mode, Surface::OuterCap)
+            || (matches!(mode, Surface::InnerCap) && station != 0. && body.tail.is_none())
+        {
+            body.end_interval()
+        } else {
+            I::point(station)
+        },
+    );
     let rho = if matches!(edge.kind, Kind::Cone) {
         Jet::constant(I::point(body.entry.unwrap().radius))
     } else {

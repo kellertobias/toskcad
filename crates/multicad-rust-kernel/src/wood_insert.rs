@@ -58,6 +58,10 @@ impl Insert {
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Self, Error> {
         checkpoint(interrupt)?;
+        // The paired stock graph has not earned exact canonical end caps.
+        if outer.exact_axial_extent().is_some() || inner.exact_axial_extent().is_some() {
+            return Err(Error::Unsupported);
+        }
         if !minimum_wall_mm.is_finite() || minimum_wall_mm <= 0. {
             return Err(Error::Invalid);
         }

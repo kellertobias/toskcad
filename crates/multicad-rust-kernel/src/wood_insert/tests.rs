@@ -295,3 +295,21 @@ fn finite_huge_axial_box_cannot_become_a_periodic_membership_receipt() {
         Ok(Classification::UnresolvedBoundary)
     );
 }
+
+#[test]
+fn exact_finite_periodic_domain_does_not_borrow_unearned_binary_insert_caps() {
+    let outer = source(true, false, 1, false);
+    let inner = source(false, true, 1, false);
+    assert!(Insert::new(outer, inner, 0.5, None).is_ok());
+    let options = SourceOptions {
+        position_limit_mm: 1e-7,
+        normal_angle_limit_rad: 1e-7,
+    };
+    let end = crate::Rational::new(43, 10).unwrap();
+    let a = AuthoredThread::new_with_exact_axial_domain(outer.spec(), end, options, None).unwrap();
+    let b = AuthoredThread::new_with_exact_axial_domain(inner.spec(), end, options, None).unwrap();
+    for (a, b) in [(a, inner), (outer, b), (a, b)] {
+        assert_eq!(Insert::new(a, b, 0.5, None), Err(Error::Unsupported));
+    }
+    assert!(Insert::new(outer, inner, 0.5, None).is_ok());
+}

@@ -780,3 +780,35 @@ fn actual_candidate_resource_frontiers_and_late_cancel_preserve_same_source_retr
     assert_eq!(retry.mesh().face_indices, reference.mesh().face_indices);
     assert_eq!(source.thread(), reference.source().thread());
 }
+
+#[test]
+fn exact_periodic_tap_domain_requires_its_own_line8_end_correspondence() {
+    let original = nut();
+    let source = AuthoredThread::new_with_exact_axial_domain(
+        thread().spec(),
+        crate::Rational::new(13, 3).unwrap(),
+        crate::authored_flat_thread::SourceOptions {
+            position_limit_mm: 1e-7,
+            normal_angle_limit_rad: 1e-7,
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        Nut::new(
+            stock(),
+            7.5,
+            source,
+            [[1., 0.], [0., 1.]],
+            Relief {
+                start_mm: 4.099,
+                radius_mm: 4.1,
+                tool_length_mm: 3.22
+            },
+            None
+        )
+        .err(),
+        Some(Error::Unsupported)
+    );
+    assert_eq!(nut().thread(), original.thread());
+}

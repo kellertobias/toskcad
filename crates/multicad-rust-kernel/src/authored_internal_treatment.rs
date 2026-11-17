@@ -10,6 +10,8 @@ pub(crate) mod properties;
 pub use properties::{FaceKey, FaceProperties, FacePropertyOptions, ThreadBandRole};
 #[cfg(test)]
 mod exact_extent_tests;
+#[cfg(test)]
+mod periodic_extent_tests;
 mod separation;
 #[cfg(test)]
 mod tests;
@@ -80,18 +82,33 @@ impl Cavity {
         // is <=1e7 (ulp<2e-9). Endpoint addition/subtraction therefore cannot
         // collapse an enabled radius or interval, and the endpoint-derived
         // slope stays inside [.5,2]. The retained central pitch is >=.001.
+        if let Some(end) = thread.exact_axial_extent() {
+            let (n, d) = end.ratio();
+            let q = num_rational::BigRational::new(n.into(), d.into());
+            let minimum = num_rational::BigRational::from_float(c).ok_or(Error::Invalid)?
+                + num_rational::BigRational::from_float(spec.pitch_mm).ok_or(Error::Invalid)?;
+            if q < minimum
+                || tail.is_some_and(|t| {
+                    num_rational::BigRational::from_float(t.station)
+                        .is_none_or(|station| q <= station)
+                })
+            {
+                return Err(Error::Unresolved);
+            }
+        }
         Ok(Self {
             thread,
             intent,
             entry,
             tail,
-            exact_receiving_end: None,
+            exact_receiving_end: thread.exact_axial_extent(),
         })
     }
     /// Explicit stock-relative receiving domain. The supplied canonical end
     /// is authoritative, not inferred from a floating height comparison. The
     /// original visible periodic law, entry, terminal station/radius remain
-    /// unchanged; only the analytic terminal cylinder closes at this exact end.
+    /// unchanged. A terminal cylinder may close at this exact end; an entry-only
+    /// periodic wall requires an independently authored matching exact domain.
     /// Material construction separately requires EXACT equality to stock.
     /// The actual terminal span is end minus the retained station; an arbitrary
     /// explicit end does not assert unchanged physical relief width.
@@ -101,15 +118,21 @@ impl Cavity {
         end: crate::Rational,
     ) -> Result<Self, Error> {
         let mut body = Self::new(thread, intent)?;
-        // Only the terminal cylinder may extend to this exact receiving end;
-        // no finite authored helical source is extrapolated. Its entry MAX
-        // cone is optional and has no bearing on this endpoint ownership.
-        if body.tail.is_none() {
+        // A terminal cylinder may extend to this exact receiving end. Without
+        // that cylinder the actual periodic source must already own this exact
+        // domain: no older finite authored wall is silently extrapolated.
+        if let Some(domain) = thread.exact_axial_extent() {
+            if domain != end {
+                return Err(Error::Unresolved);
+            }
+        } else if body.tail.is_none() {
+            // An entry-only periodic wall requires its own exact finite
+            // source, never extrapolation of an older binary endpoint.
             return Err(Error::Invalid);
         }
         let (n, d) = end.ratio();
         let exact = num_rational::BigRational::new(n.into(), d.into());
-        let station = num_rational::BigRational::from_float(body.tail.unwrap().station)
+        let station = num_rational::BigRational::from_float(body.tail.map_or(0., |t| t.station))
             .ok_or(Error::Invalid)?;
         if n <= 0 || exact > num_rational::BigRational::from_integer(10_000_000.into()) {
             return Err(Error::Invalid);
