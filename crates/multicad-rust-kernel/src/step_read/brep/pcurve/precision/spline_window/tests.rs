@@ -170,3 +170,6 @@ mod coverage_contracts;
 
 #[path = "argument_tests.rs"]
 mod argument_contracts;
+
+#[path = "partial_sma_tests.rs"]
+mod partial_sma_contracts;
