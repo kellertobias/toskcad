@@ -165,7 +165,11 @@ impl<'i> Source<'i> {
     /// Parse the file and check its units. Lengths must be millimetres;
     /// plane angles may be radians or a stated multiple of them.
     pub fn parse(input: &'i str, tolerance: f64) -> Result<Self> {
-        let entities = part21::parse(input)?;
+        Self::from_entities(part21::parse(input)?, tolerance)
+    }
+    // The supplementary-curve preflight already parsed this exact immutable
+    // text. Reuse that AST without repeating the delegated parser work.
+    fn from_entities(entities: BTreeMap<u32, Vec<Entity<'i>>>, tolerance: f64) -> Result<Self> {
         let mut solids = Vec::new();
         let mut angle = None;
         let mut declared = None;
@@ -320,7 +324,7 @@ impl<'i> Source<'i> {
 
     /// The boundaries of every solid. Solids may touch, but no vertex, edge
     /// or face record belongs to two of them.
-    pub fn boundaries(&self) -> Result<Vec<Boundary>> {
+    pub(crate) fn boundaries(&self) -> Result<Vec<Boundary>> {
         let mut claimed = BTreeSet::new();
         let mut boundaries = Vec::with_capacity(self.solids.len());
         for &solid in &self.solids {

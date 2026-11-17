@@ -60,7 +60,7 @@ fn byte_scan_and_cancellation_receipt_are_bound_to_actual_text_and_tolerance() {
     let receipt = validate_pcurve_input(input, TOL, None).unwrap();
     assert!(std::ptr::eq(receipt.input(), input));
     assert_eq!(receipt.tolerance(), TOL);
-    assert_eq!(receipt.report().work_used, input.len());
+    assert_eq!(receipt.report().work_used, input.len() * 4);
     assert_eq!(receipt.report().pcurves_checked, 0);
     let cancelled = validate_pcurve_input(input, TOL, Some(&|| true)).unwrap_err();
     assert!(cancelled.cancelled);
@@ -339,4 +339,88 @@ fn complete_nonuniform_nurbs_basis_requires_exact_positive_knot_map() {
         .unwrap(),
         Proof::Certified(_)
     ));
+}
+#[test]
+fn nominated_master_must_exist_and_be_an_actual_pcurve() {
+    let original = "#26 = SURFACE_CURVE('',#27,(#31,#43),.PCURVE_S1.);";
+    for replacement in [
+        "#26 = SURFACE_CURVE('',#27,(#31),.PCURVE_S2.);",
+        "#26 = SURFACE_CURVE('',#27,(#32,#43),.PCURVE_S1.);",
+    ] {
+        let input = replace_once(PLACED, original, replacement);
+        assert_eq!(
+            validate_pcurves(&input, TOL).unwrap_err().kind,
+            ReadError::Invalid
+        );
+    }
+    // This valid direct-support association contains no supplementary curve
+    // at all. The 3D geometry still belongs to the ordinary retained reader.
+    let input = replace_once(
+        PLACED,
+        original,
+        "#26 = SURFACE_CURVE('',#27,(#32,#44),.CURVE_3D.);",
+    );
+    assert_eq!(validate_pcurves(&input, TOL).unwrap().pcurves_checked, 22);
+}
+fn metadata_file(records: &str) -> String {
+    format!(
+        "ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('test'),'2;1');\nFILE_NAME('','',(''),(''),'','','');\nFILE_SCHEMA(('AP242'));\nENDSEC;\nDATA;\n{records}\nENDSEC;\nEND-ISO-10303-21;"
+    )
+}
+#[test]
+fn quoted_or_unowned_curve_names_do_not_impose_a_retained_solid_provider() {
+    for record in [
+        "#1=GEOMETRIC_SET('PCURVE SURFACE_CURVE',());",
+        "/* PCURVE SURFACE_CURVE */ #1=GEOMETRIC_SET('',());",
+        // An unused construction definition is not an edge-owned trim.
+        "#1=PCURVE('',#2,#3);#2=PLANE('',#4);",
+    ] {
+        let input = metadata_file(record);
+        assert!(Source::parse(&input, TOL).is_err());
+        assert_eq!(validate_pcurves(&input, TOL).unwrap().pcurves_checked, 0);
+    }
+    // Even without a single PCURVE entity or keyword in a label, a selected
+    // missing supplementary representation is refused by the exact AST pass.
+    let input = metadata_file(
+        "#1=EDGE_CURVE('',#8,#9,#2,.T.);#2=SURFACE_CURVE('',#3,(#4),.PCURVE_S1.);#3=LINE('',#5,#6);#4=PLANE('',#7);",
+    );
+    assert_eq!(
+        validate_pcurves(&input, TOL).unwrap_err().kind,
+        ReadError::Invalid
+    );
+}
+#[test]
+fn recursive_geometry_value_visits_are_billed_even_without_any_references() {
+    let numbers = std::iter::repeat_n("1.", 2048)
+        .collect::<Vec<_>>()
+        .join(",");
+    let input = replace_once(
+        PLACED,
+        "ENDSEC;\nEND-ISO-10303-21;",
+        &format!("#900001=UNSUPPORTED_SURFACE('',({numbers}));\nENDSEC;\nEND-ISO-10303-21;"),
+    );
+    let source = Source::parse(&input, TOL).unwrap();
+    let mut budget = Budget::new(MAX_WORK, None);
+    geometry_preflight(&source, 900001, &mut budget).unwrap();
+    let used = budget.used();
+    assert!(used >= 2048 * 16);
+    assert_eq!(
+        geometry_preflight(&source, 900001, &mut Budget::new(used - 1, None)),
+        Err(ReadError::Limit)
+    );
+    assert_eq!(
+        geometry_preflight(&source, 900001, &mut Budget::new(used, None)),
+        Ok(())
+    );
+    let calls = std::cell::Cell::new(0);
+    let stop = || {
+        calls.set(calls.get() + 1);
+        calls.get() > 100
+    };
+    let mut budget = Budget::new(MAX_WORK, Some(&stop));
+    assert_eq!(
+        geometry_preflight(&source, 900001, &mut budget),
+        Err(ReadError::Limit)
+    );
+    assert!(budget.cancelled.get());
 }

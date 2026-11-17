@@ -128,7 +128,16 @@ fn all_actual_extrusion_and_planar_cubic_pairs_keep_the_original_limit() {
         let Proof::Certified(upper) = proof else {
             panic!("decoded actual pair unproved")
         };
-        let raw = reserve(&source, curve, &definition, &surface, &edge, &mut budget()).unwrap();
+        let raw = reserve(
+            &source,
+            curve,
+            &definition,
+            &surface,
+            &edge,
+            &mut budget(),
+            &mut Cache::new(&source),
+        )
+        .unwrap();
         sense(&source, curve, &definition, &surface, &edge, &mut budget()).unwrap();
         assert!(
             raw.is_finite() && raw >= 0. && (I::point(raw) + I::point(upper)).hi < TOL,
@@ -147,7 +156,17 @@ fn all_actual_extrusion_and_planar_cubic_pairs_keep_the_original_limit() {
             Proof::Certified(_)
         ));
         assert!(
-            reserve(&source, curve, &definition, &surface, &edge, &mut budget()).unwrap() < TOL
+            reserve(
+                &source,
+                curve,
+                &definition,
+                &surface,
+                &edge,
+                &mut budget(),
+                &mut Cache::new(&source)
+            )
+            .unwrap()
+                < TOL
         );
         sense(&source, curve, &definition, &surface, &edge, &mut budget()).unwrap();
     }
@@ -163,7 +182,15 @@ fn raw_knot_boundary_aliases_and_noninteger_degree_aliases_do_not_become_origina
     let source = Source::parse(&changed, TOL).unwrap();
     let (definition, surface, edge, curve) = pair(&source, 43, 21);
     assert!(matches!(
-        reserve(&source, curve, &definition, &surface, &edge, &mut budget()),
+        reserve(
+            &source,
+            curve,
+            &definition,
+            &surface,
+            &edge,
+            &mut budget(),
+            &mut Cache::new(&source)
+        ),
         Err(ReadError::Unsupported)
     ));
     let changed = INPUT.replace(
@@ -223,7 +250,16 @@ fn actual_numeric_proof_work_and_observed_cancellation_frontiers_preserve_retry(
         false
     };
     let mut b = Budget::new(512_000_000, Some(&callback));
-    let original = reserve(&source, curve, &definition, &surface, &edge, &mut b).unwrap();
+    let original = reserve(
+        &source,
+        curve,
+        &definition,
+        &surface,
+        &edge,
+        &mut b,
+        &mut Cache::new(&source),
+    )
+    .unwrap();
     let (used, polls) = (b.used(), calls.get());
     assert!(used > 1024 && polls > 10);
     assert!(matches!(
@@ -233,7 +269,8 @@ fn actual_numeric_proof_work_and_observed_cancellation_frontiers_preserve_retry(
             &definition,
             &surface,
             &edge,
-            &mut Budget::new(used - 1, None)
+            &mut Budget::new(used - 1, None),
+            &mut Cache::new(&source)
         ),
         Err(ReadError::Limit)
     ));
@@ -244,7 +281,8 @@ fn actual_numeric_proof_work_and_observed_cancellation_frontiers_preserve_retry(
             &definition,
             &surface,
             &edge,
-            &mut Budget::new(used, None)
+            &mut Budget::new(used, None),
+            &mut Cache::new(&source)
         )
         .unwrap()
         .to_bits(),
@@ -263,15 +301,24 @@ fn actual_numeric_proof_work_and_observed_cancellation_frontiers_preserve_retry(
                 &definition,
                 &surface,
                 &edge,
-                &mut Budget::new(512_000_000, Some(&callback))
+                &mut Budget::new(512_000_000, Some(&callback)),
+                &mut Cache::new(&source)
             ),
             Err(ReadError::Limit)
         ));
         assert!(seen.get() >= stop);
         assert_eq!(
-            reserve(&source, curve, &definition, &surface, &edge, &mut budget())
-                .unwrap()
-                .to_bits(),
+            reserve(
+                &source,
+                curve,
+                &definition,
+                &surface,
+                &edge,
+                &mut budget(),
+                &mut Cache::new(&source)
+            )
+            .unwrap()
+            .to_bits(),
             original.to_bits()
         );
     }
@@ -376,7 +423,19 @@ fn original_finite_uv_splines_cover_exact_full_isocurve_and_refuse_partial_or_al
         affine::certify(&surface, &definition.geometry, &edge, TOL, &mut budget()).unwrap(),
         Proof::Certified(_)
     ));
-    assert!(reserve(&source, curve, &definition, &surface, &edge, &mut budget()).unwrap() < TOL);
+    assert!(
+        reserve(
+            &source,
+            curve,
+            &definition,
+            &surface,
+            &edge,
+            &mut budget(),
+            &mut Cache::new(&source)
+        )
+        .unwrap()
+            < TOL
+    );
     sense(&source, curve, &definition, &surface, &edge, &mut budget()).unwrap();
     // Positive rational weights change only the monotone finite segment
     // parameterization; they do not turn it into an unbounded LINE.
@@ -388,7 +447,19 @@ fn original_finite_uv_splines_cover_exact_full_isocurve_and_refuse_partial_or_al
         affine::certify(&surface, &definition.geometry, &edge, TOL, &mut budget()).unwrap(),
         Proof::Certified(_)
     ));
-    assert!(reserve(&source, curve, &definition, &surface, &edge, &mut budget()).unwrap() < TOL);
+    assert!(
+        reserve(
+            &source,
+            curve,
+            &definition,
+            &surface,
+            &edge,
+            &mut budget(),
+            &mut Cache::new(&source)
+        )
+        .unwrap()
+            < TOL
+    );
     for replacement in [
         "(0.5,-6.)",
         "(1.0000000000000001,-6.)",
@@ -399,8 +470,100 @@ fn original_finite_uv_splines_cover_exact_full_isocurve_and_refuse_partial_or_al
         let source = Source::parse(&changed, TOL).unwrap();
         let (definition, surface, edge, curve) = pair(&source, 147, 140);
         assert!(matches!(
-            reserve(&source, curve, &definition, &surface, &edge, &mut budget()),
+            reserve(
+                &source,
+                curve,
+                &definition,
+                &surface,
+                &edge,
+                &mut budget(),
+                &mut Cache::new(&source)
+            ),
             Err(ReadError::Unsupported)
         ));
     }
+}
+
+#[test]
+fn invocation_surface_cache_reuses_only_whole_same_source_proof_and_rechecks_each_finite_trim() {
+    let tensor=INPUT.replace("#44 = SURFACE_OF_LINEAR_EXTRUSION('',#45,#50);","#44 = B_SPLINE_SURFACE_WITH_KNOTS('',3,1,((#143,#46),(#144,#47),(#145,#48),(#146,#49)),.UNSPECIFIED.,.F.,.F.,.F.,(4,4),(2,2),(0.,1.),(-6.,0.),.UNSPECIFIED.);");
+    let partial=tensor.replace("#173 = LINE('',#174,#175);","#173 = B_SPLINE_CURVE_WITH_KNOTS('',1,(#174,#900001),.UNSPECIFIED.,.F.,.F.,(2,2),(0.,1.),.UNSPECIFIED.);");
+    let end = partial.rfind("ENDSEC;").unwrap();
+    let partial = format!(
+        "{}#900001 = CARTESIAN_POINT('',(0.5,0.));\n{}",
+        &partial[..end],
+        &partial[end..]
+    );
+    let source = Source::parse(&partial, TOL).unwrap();
+    let (definition, surface, edge, curve) = pair(&source, 147, 140);
+    let mut cache = Cache::new(&source);
+    let mut cold = budget();
+    let first = reserve(
+        &source,
+        curve,
+        &definition,
+        &surface,
+        &edge,
+        &mut cold,
+        &mut cache,
+    )
+    .unwrap();
+    let mut warm = budget();
+    let second = reserve(
+        &source,
+        curve,
+        &definition,
+        &surface,
+        &edge,
+        &mut warm,
+        &mut cache,
+    )
+    .unwrap();
+    assert_eq!(first.to_bits(), second.to_bits());
+    assert!(warm.used() < cold.used());
+    assert!(cache.retained_bytes() <= cache.peak_bytes() && cache.peak_bytes() <= CACHE_PEAK_BYTES);
+    assert_eq!(cache.surfaces.len(), 1);
+    // This genuine second trim is incomplete in the SAME immutable source.
+    // Its surface's cached uniform bound cannot replace finite UV coverage.
+    let (bad_definition, bad_surface, bad_edge, bad_curve) = pair(&source, 171, 164);
+    assert!(matches!(
+        reserve(
+            &source,
+            bad_curve,
+            &bad_definition,
+            &bad_surface,
+            &bad_edge,
+            &mut budget(),
+            &mut cache
+        ),
+        Err(ReadError::Unsupported)
+    ));
+    // Identical text in another actual parser owner does not own this cache.
+    let foreign = Source::parse(&partial, TOL).unwrap();
+    let (d, s, e, c) = pair(&foreign, 147, 140);
+    assert!(matches!(
+        reserve(&foreign, c, &d, &s, &e, &mut budget(), &mut cache),
+        Err(ReadError::Invalid)
+    ));
+    let mut own = Cache::new(&foreign);
+    assert_eq!(
+        reserve(&foreign, c, &d, &s, &e, &mut budget(), &mut own)
+            .unwrap()
+            .to_bits(),
+        first.to_bits()
+    );
+    assert_eq!(
+        reserve(
+            &source,
+            curve,
+            &definition,
+            &surface,
+            &edge,
+            &mut budget(),
+            &mut cache
+        )
+        .unwrap()
+        .to_bits(),
+        first.to_bits()
+    );
 }

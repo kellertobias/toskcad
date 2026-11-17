@@ -13,6 +13,95 @@ type V = [I; 3];
 const MAX_NUMBERS: usize = 262_144;
 const TOKEN_WORKSPACE: usize = 8 * 1024 * 1024;
 
+const MAX_SURFACE_CACHE: usize = 4096;
+const CACHE_PEAK_BYTES: usize = 256 * 1024;
+/// Invocation-local successful WHOLE-surface numeric transfers. The immutable
+/// owner and entity ID bind the same Source::surface(id) reference each time.
+/// Every queried finite trim/domain/sense check remains outside this cache.
+pub(super) struct Cache<'s, 'i> {
+    source: &'s Source<'i>,
+    surfaces: Vec<(u32, f64)>,
+    peak: usize,
+}
+impl<'s, 'i> Cache<'s, 'i> {
+    pub(super) fn new(source: &'s Source<'i>) -> Self {
+        Self {
+            source,
+            surfaces: Vec::new(),
+            peak: std::mem::size_of::<Self>(),
+        }
+    }
+    fn owner(&self, source: &Source<'_>) -> Result<()> {
+        if !std::ptr::eq(self.source, source) {
+            return Err(ReadError::Invalid);
+        }
+        Ok(())
+    }
+    fn get(&self, source: &Source<'_>, id: u32, budget: &mut Budget<'_>) -> Result<Option<f64>> {
+        self.owner(source)?;
+        budget.charge(self.surfaces.len().saturating_mul(8).saturating_add(64))?;
+        Ok(self
+            .surfaces
+            .iter()
+            .find_map(|&(key, value)| (key == id).then_some(value)))
+    }
+    fn remember(
+        &mut self,
+        source: &Source<'_>,
+        id: u32,
+        error: f64,
+        budget: &mut Budget<'_>,
+    ) -> Result<()> {
+        self.owner(source)?;
+        if !error.is_finite() || error < 0. {
+            return Err(ReadError::Unsupported);
+        }
+        if self.surfaces.len() == MAX_SURFACE_CACHE {
+            return Ok(());
+        }
+        let old = self
+            .surfaces
+            .capacity()
+            .saturating_mul(std::mem::size_of::<(u32, f64)>());
+        let grows = self.surfaces.len() == self.surfaces.capacity();
+        let proposed = (self.surfaces.len() + 1).saturating_mul(std::mem::size_of::<(u32, f64)>());
+        let metadata = std::mem::size_of::<Self>() + 64;
+        let pre = if grows {
+            old.saturating_add(proposed)
+        } else {
+            old
+        };
+        if pre.saturating_add(metadata) > CACHE_PEAK_BYTES {
+            return Err(ReadError::Limit);
+        }
+        // Lookup/copy/comparison and the possible old tuple-buffer relocation
+        // are actual new work, not a repeated debit for an unexecuted proof.
+        budget.charge(self.surfaces.len().saturating_mul(8).saturating_add(128))?;
+        self.surfaces
+            .try_reserve_exact(1)
+            .map_err(|_| ReadError::Limit)?;
+        let retained = self
+            .surfaces
+            .capacity()
+            .saturating_mul(std::mem::size_of::<(u32, f64)>());
+        let peak = retained
+            .saturating_add(if grows { old } else { 0 })
+            .saturating_add(metadata);
+        if peak > CACHE_PEAK_BYTES {
+            return Err(ReadError::Limit);
+        }
+        self.peak = self.peak.max(peak);
+        self.surfaces.push((id, error));
+        Ok(())
+    }
+    pub(super) fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + self.surfaces.capacity() * std::mem::size_of::<(u32, f64)>()
+    }
+    pub(super) fn peak_bytes(&self) -> usize {
+        self.peak
+    }
+}
+
 fn locate(
     items: &[Value<'_>],
     needle: *const Value<'_>,
@@ -776,6 +865,7 @@ fn surface_nurbs(
     definition: &super::uv::Definition,
     surface: &Surface,
     budget: &mut Budget<'_>,
+    cache: &mut Cache<'_, '_>,
 ) -> Result<f64> {
     let Surface::Nurbs { surface, closed } = surface else {
         return Err(ReadError::Unsupported);
@@ -841,7 +931,10 @@ fn surface_nurbs(
     {
         return Err(ReadError::Unsupported);
     }
-    Ok(nurbs_error(
+    if let Some(error) = cache.get(source, definition.surface, budget)? {
+        return Ok(error);
+    }
+    let error = nurbs_error(
         source,
         definition.surface,
         &field,
@@ -853,7 +946,9 @@ fn surface_nurbs(
         None,
         budget,
     )?
-    .error)
+    .error;
+    cache.remember(source, definition.surface, error, budget)?;
+    Ok(error)
 }
 fn plane_nurbs(
     source: &Source<'_>,
@@ -988,6 +1083,7 @@ pub(super) fn reserve(
     surface: &Surface,
     edge: &Edge,
     budget: &mut Budget<'_>,
+    cache: &mut Cache<'_, '_>,
 ) -> Result<f64> {
     budget.charge(256)?;
     let curve3d_id = unwrapped(source, curve3d_id, budget)?;
@@ -1000,7 +1096,7 @@ pub(super) fn reserve(
         (Surface::Plane(_), Curve::Nurbs { .. }) => {
             plane_nurbs(source, definition, surface, budget)?
         }
-        (Surface::Nurbs { .. }, _) => surface_nurbs(source, definition, surface, budget)?,
+        (Surface::Nurbs { .. }, _) => surface_nurbs(source, definition, surface, budget, cache)?,
         (Surface::Extrusion { .. }, _) => extrusion(source, definition, surface, edge, budget)?,
         // Raw revolution transfer is deliberately not inferred from the
         // decoded Rodrigues certificate; its independent REAL stage is open.

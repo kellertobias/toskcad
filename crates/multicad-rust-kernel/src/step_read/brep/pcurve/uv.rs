@@ -31,7 +31,8 @@ pub(super) fn definition(
         dimension.valid() && dimension.lo == 2. && dimension.hi == 2.,
         ReadError::Unsupported,
     )?;
-    let items = refs(items)?;
+    check(list(items)?.len() == 1, ReadError::Unsupported)?;
+    let items = bounded_refs(items, 1, budget)?;
     let [curve_id] = items.as_slice() else {
         return Err(ReadError::Unsupported);
     };
@@ -155,7 +156,7 @@ fn spline(source: &Source<'_>, id: u32, budget: &mut Budget<'_>) -> Result<Curve
     };
     let degree = count(degree)?;
     check((1..=MAX_DEGREE).contains(&degree), ReadError::Invalid)?;
-    let controls = refs(controls)?;
+    let controls = bounded_refs(controls, MAX_CONTROL_POINTS, budget)?;
     check(
         controls.len() > degree && controls.len() <= MAX_CONTROL_POINTS,
         ReadError::Limit,

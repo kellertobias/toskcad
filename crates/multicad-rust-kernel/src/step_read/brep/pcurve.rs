@@ -17,7 +17,7 @@ pub struct PcurveValidationReport {
     pub edges_checked: usize,
     pub pcurves_checked: usize,
     pub certified_maximum_deviation_mm: f64,
-    /// Fresh geometry/checking actions plus one visit per input byte. The
+    /// Fresh geometry/checking actions plus four cue visits per input byte. The
     /// existing bounded Part21 parser is a separate delegated parse scope.
     pub work_used: usize,
 }
@@ -149,19 +149,28 @@ pub fn validate_pcurve_input<'i>(
         budget.poll()?;
         check(tolerance.is_finite() && tolerance > 0., ReadError::Invalid)?;
         check(input.len() <= part21::MAX_BYTES, ReadError::Limit)?;
-        budget.charge(input.len())?;
-        // Necessary lexical cue only: false positives merely cause parsing.
-        // Every spelling accepted as a PCURVE contains these ASCII bytes.
-        // Chunk overlap retains keywords crossing the polling boundary.
+        budget.charge(input.len().saturating_mul(4))?;
+        // Necessary metadata cue only. Quoted labels/comments can trigger
+        // parsing, but only an ACTUAL edge-owned wrapper invokes the retained
+        // reader's geometric/unit semantics. No construction entity is owned
+        // merely because its name occurs in the text.
+        let names: &[&[u8]] = &[
+            b"PCURVE",
+            b"SURFACE_CURVE",
+            b"SEAM_CURVE",
+            b"INTERSECTION_CURVE",
+        ];
         let bytes = input.as_bytes();
         let mut cue = false;
         for start in (0..bytes.len()).step_by(4096) {
             budget.poll()?;
-            let end = (start + 4096 + 6).min(bytes.len());
-            if bytes[start..end].windows(7).any(|s| {
-                s[..6].eq_ignore_ascii_case(b"PCURVE")
-                    && !s[6].is_ascii_alphanumeric()
-                    && s[6] != b'_'
+            let end = (start + 4096 + 18).min(bytes.len());
+            if names.iter().any(|name| {
+                bytes[start..end].windows(name.len() + 1).any(|s| {
+                    s[..name.len()].eq_ignore_ascii_case(name)
+                        && !s[name.len()].is_ascii_alphanumeric()
+                        && s[name.len()] != b'_'
+                })
             }) {
                 cue = true;
                 break;
@@ -170,7 +179,12 @@ pub fn validate_pcurve_input<'i>(
         if !cue {
             return Ok(PcurveValidationReport::default());
         }
-        let source = Source::parse(input, tolerance)?;
+        // Existing Part21 limits still bound this separate delegated parse.
+        let entities = part21::parse(input)?;
+        if !has_owned_pcurves(&entities, &mut budget)? {
+            return Ok(PcurveValidationReport::default());
+        }
+        let source = Source::from_entities(entities, tolerance)?;
         budget.poll()?;
         let report = validate_source(&source, tolerance, &mut budget)?;
         drop(source);
@@ -205,13 +219,130 @@ struct Binding {
     curve: u32,
     pcurve: u32,
 }
-fn add_refs(value: &Value<'_>, pending: &mut Vec<u32>) {
+fn bounded_refs(value: &Value<'_>, maximum: usize, budget: &mut Budget<'_>) -> Result<Vec<u32>> {
+    let items = list(value)?;
+    check(items.len() <= maximum, ReadError::Limit)?;
+    budget.charge(items.len().saturating_mul(32).saturating_add(64))?;
+    let mut result = Vec::new();
+    result
+        .try_reserve_exact(items.len())
+        .map_err(|_| ReadError::Limit)?;
+    check(
+        result.capacity() * std::mem::size_of::<u32>() <= MAX_WORKSPACE / 8,
+        ReadError::Limit,
+    )?;
+    for item in items {
+        budget.poll()?;
+        result.push(reference(item)?);
+    }
+    Ok(result)
+}
+fn push_ref(id: u32, pending: &mut Vec<u32>, budget: &mut Budget<'_>) -> Result<()> {
+    budget.charge(32)?;
+    check(
+        pending.len() < MAX_WORKSPACE / 8 / std::mem::size_of::<u32>(),
+        ReadError::Limit,
+    )?;
+    // A grow may briefly retain both old and new allocations, each bounded
+    // by 8MiB; that overlap is inside the 64MiB fresh workspace envelope.
+    pending.try_reserve_exact(1).map_err(|_| ReadError::Limit)?;
+    check(
+        pending.capacity() * std::mem::size_of::<u32>() <= MAX_WORKSPACE / 8,
+        ReadError::Limit,
+    )?;
+    pending.push(id);
+    Ok(())
+}
+fn add_refs(value: &Value<'_>, pending: &mut Vec<u32>, budget: &mut Budget<'_>) -> Result<()> {
+    // Scalar/list/typed visits count too, even when they add no references.
+    // Repeated unsupported components cannot consume unmetered traversal.
+    budget.charge(16)?;
     match value {
-        Value::Reference(id) => pending.push(*id),
-        Value::List(items) => items.iter().for_each(|v| add_refs(v, pending)),
-        Value::Typed(entity) => entity.args.iter().for_each(|v| add_refs(v, pending)),
+        Value::Reference(id) => push_ref(*id, pending, budget)?,
+        Value::List(items) => {
+            for item in items {
+                add_refs(item, pending, budget)?;
+            }
+        }
+        Value::Typed(entity) => {
+            for item in &entity.args {
+                add_refs(item, pending, budget)?;
+            }
+        }
         _ => {}
     }
+    Ok(())
+}
+fn selected_master(
+    master: &str,
+    associated: &[u32],
+    is_pcurve: impl Fn(u32) -> Result<bool>,
+) -> Result<()> {
+    let selected = match master {
+        "CURVE_3D" => return Ok(()),
+        "PCURVE_S1" => 0,
+        "PCURVE_S2" => 1,
+        _ => return Err(ReadError::Unsupported),
+    };
+    let id = *associated.get(selected).ok_or(ReadError::Invalid)?;
+    check(is_pcurve(id)?, ReadError::Invalid)
+}
+fn wrapper_name(name: &str) -> bool {
+    matches!(name, "SURFACE_CURVE" | "SEAM_CURVE" | "INTERSECTION_CURVE")
+}
+fn has_owned_pcurves(
+    entities: &BTreeMap<u32, Vec<Entity<'_>>>,
+    budget: &mut Budget<'_>,
+) -> Result<bool> {
+    fn curve(
+        entities: &BTreeMap<u32, Vec<Entity<'_>>>,
+        id: u32,
+        depth: usize,
+        budget: &mut Budget<'_>,
+    ) -> Result<bool> {
+        budget.charge(256)?;
+        check(depth < 8, ReadError::Invalid)?;
+        let parts = entities.get(&id).ok_or(ReadError::Invalid)?;
+        if parts.iter().all(|p| !wrapper_name(p.name)) {
+            return Ok(false);
+        }
+        let [part] = parts.as_slice() else {
+            return Err(ReadError::Unsupported);
+        };
+        let [_, child, associated, Value::Enum(master)] = part.args.as_slice() else {
+            return Err(ReadError::Invalid);
+        };
+        check(list(associated)?.len() <= 2, ReadError::Invalid)?;
+        let associated = bounded_refs(associated, 2, budget)?;
+        check((1..=2).contains(&associated.len()), ReadError::Invalid)?;
+        let is_pcurve = |id: u32| -> Result<bool> {
+            Ok(entities
+                .get(&id)
+                .ok_or(ReadError::Invalid)?
+                .iter()
+                .any(|p| p.name == "PCURVE"))
+        };
+        selected_master(master, &associated, is_pcurve)?;
+        let mut found = false;
+        for id in associated {
+            budget.charge(32)?;
+            found |= is_pcurve(id)?;
+        }
+        Ok(curve(entities, reference(child)?, depth + 1, budget)? || found)
+    }
+    let mut found = false;
+    for parts in entities.values() {
+        budget.charge(16)?;
+        for part in parts {
+            budget.charge(8)?;
+            if part.name == "EDGE_CURVE"
+                && let [_, _, _, Value::Reference(id), _] = part.args.as_slice()
+            {
+                found |= curve(entities, *id, 0, budget)?;
+            }
+        }
+    }
+    Ok(found)
 }
 fn geometry_preflight(source: &Source<'_>, id: u32, budget: &mut Budget<'_>) -> Result<()> {
     let mut seen = BTreeSet::new();
@@ -234,10 +365,10 @@ fn geometry_preflight(source: &Source<'_>, id: u32, budget: &mut Budget<'_>) -> 
                 let [_, curve, ..] = part.args.as_slice() else {
                     return Err(ReadError::Invalid);
                 };
-                pending.push(reference(curve)?);
+                push_ref(reference(curve)?, &mut pending, budget)?;
             } else {
                 for arg in &part.args {
-                    add_refs(arg, &mut pending);
+                    add_refs(arg, &mut pending, budget)?;
                 }
             }
             let added = pending.len() - before;
@@ -262,6 +393,10 @@ fn unwrap(
     check(depth < 8, ReadError::Invalid)?;
     let parts = source.components(id)?;
     let [part] = parts else {
+        check(
+            parts.iter().all(|p| !wrapper_name(p.name)),
+            ReadError::Unsupported,
+        )?;
         return Ok(id);
     };
     if !matches!(
@@ -277,8 +412,12 @@ fn unwrap(
         matches!(*master, "CURVE_3D" | "PCURVE_S1" | "PCURVE_S2"),
         ReadError::Unsupported,
     )?;
-    let associated = refs(associated)?;
+    check(list(associated)?.len() <= 2, ReadError::Invalid)?;
+    let associated = bounded_refs(associated, 2, budget)?;
     check((1..=2).contains(&associated.len()), ReadError::Invalid)?;
+    selected_master(master, &associated, |id| {
+        Ok(source.components(id)?.iter().any(|p| p.name == "PCURVE"))
+    })?;
     for pc in associated {
         if source.components(pc)?.iter().any(|p| p.name == "PCURVE") {
             pcs.push(pc);
@@ -378,7 +517,8 @@ fn si_radians(source: &Source<'_>, budget: &mut Budget<'_>) -> Result<bool> {
             let [units] = entity.args.as_slice() else {
                 return Err(ReadError::Invalid);
             };
-            for id in refs(units)? {
+            for id in bounded_refs(units, MAX_PAIRS, budget)? {
+                budget.charge(64)?;
                 if source.component(id, "PLANE_ANGLE_UNIT")?.is_none() {
                     continue;
                 }
@@ -416,6 +556,11 @@ fn validate_source(
     let mut edges = BTreeSet::new();
     let mut disagreements = Vec::new();
     let mut report = PcurveValidationReport::default();
+    // This Source-bound numeric cache owns no geometric admission. Its
+    // bounded 256KiB peak is reserved inside the fresh 64MiB envelope;
+    // finite trim/domain/orientation checks run on EVERY actual association.
+    budget.charge(64)?;
+    let mut precision_cache = precision::Cache::new(source);
     let mut unqualified = false;
     for binding in pairs {
         budget.charge(256)?;
@@ -456,8 +601,21 @@ fn validate_source(
             )? {
                 return Ok((proof, definition.surface, surface_kind(&surface), 0.));
             }
-            let reserve =
-                precision::reserve(source, binding.curve, &definition, &surface, &edge, budget)?;
+            let reserve = precision::reserve(
+                source,
+                binding.curve,
+                &definition,
+                &surface,
+                &edge,
+                budget,
+                &mut precision_cache,
+            )?;
+            budget.charge(8)?;
+            check(
+                precision_cache.retained_bytes() <= 256 * 1024
+                    && precision_cache.peak_bytes() <= 256 * 1024,
+                ReadError::Limit,
+            )?;
             if !reserve.is_finite() || reserve < 0. {
                 return Err(ReadError::Unsupported);
             }
