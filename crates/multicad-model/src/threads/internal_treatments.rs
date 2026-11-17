@@ -1,4 +1,4 @@
-//! Internal terminal cuts use the actual authored material and shared exact end.
+//! Internal entry and terminal cuts use the actual authored material and shared exact end.
 use super::*;
 #[cfg(test)]
 mod tests;
@@ -18,13 +18,13 @@ pub(super) fn build(
     if root.is_some() {
         return Err(error(
             Some(feature),
-            "Internal terminal treatments require the actual flat-band source; rounded roots are not supported",
+            "Internal authored treatments require the actual flat-band source; rounded roots are not supported",
         ));
     }
     let ends = thread
         .end_treatments
         .as_ref()
-        .expect("internal terminal treatment route");
+        .expect("internal authored treatment route");
     target
         .rust_cut_authored_internal_thread_treatments_with_exact_extent_and_interrupt(
             InternalThreadTreatmentCut {
@@ -32,7 +32,7 @@ pub(super) fn build(
                 intent: authored::Intent {
                     entry_depth_mm: (ends.start_chamfer_radial_depth_mm > 0.)
                         .then_some(ends.start_chamfer_radial_depth_mm),
-                    terminal: Some(authored::Terminal {
+                    terminal: (ends.end_relief_length_mm > 0.).then_some(authored::Terminal {
                         width_mm: ends.end_relief_length_mm,
                         radial_depth_mm: ends.end_relief_radial_depth_mm,
                     }),

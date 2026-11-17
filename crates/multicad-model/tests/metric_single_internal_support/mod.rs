@@ -13,6 +13,14 @@ pub fn source_dimension(
     left: bool,
     height: multicad_core::constraint_sketch::Dimension,
 ) -> (Session, ThreadRequest) {
+    source_dimension_with_fit(entry, left, height, ThreadFit::Metric6HInternal)
+}
+pub fn source_dimension_with_fit(
+    entry: bool,
+    left: bool,
+    height: multicad_core::constraint_sketch::Dimension,
+    fit: ThreadFit,
+) -> (Session, ThreadRequest) {
     let actor = Actor::local(Channel::Ui);
     let mut session =
         Session::new(Document::new("Single metric receiving treatment").unwrap()).unwrap();
@@ -37,7 +45,7 @@ pub fn source_dimension(
             major_diameter: length(3.),
             pitch: length(0.5),
             length: height,
-            fit: ThreadFit::Metric6HInternal,
+            fit,
             hand: if left {
                 ThreadHand::Left
             } else {

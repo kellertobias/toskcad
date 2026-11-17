@@ -210,24 +210,27 @@ impl Solid {
             policy.length(tail.radial_depth_mm)?;
         }
         let legacy = helical_body::checked_thread(cut.profile, None, policy)?;
-        let thread = AuthoredThread::new_with_interrupt(
-            legacy.spec(),
-            SourceOptions {
-                position_limit_mm: policy.linear_tolerance_mm / 16.,
-                normal_angle_limit_rad: policy.linear_tolerance_mm
-                    / (16. * cut.profile.major_radius_mm.max(1.)),
-            },
-            interrupt,
-        )
+        let options = SourceOptions {
+            position_limit_mm: policy.linear_tolerance_mm / 16.,
+            normal_angle_limit_rad: policy.linear_tolerance_mm
+                / (16. * cut.profile.major_radius_mm.max(1.)),
+        };
+        let thread = if let Some(end) = extent.filter(|_| cut.intent.terminal.is_none()) {
+            // Entry-only walls need an actual canonical finite source. The
+            // older binary endpoint is never extended by a stock tolerance.
+            AuthoredThread::new_with_exact_axial_domain(legacy.spec(), end, options, interrupt)
+        } else {
+            AuthoredThread::new_with_interrupt(legacy.spec(), options, interrupt)
+        }
         // The identical Spec already passed checked_thread. Root isNone,
         // and both caller-derived SourceOptions are positive finite under the
-        // admitted policy/radius bounds. Authored construction can now only
-        // cancel or conservatively fail its independent transfer proof.
+        // admitted policy/radius bounds. The explicit canonical domain, when
+        // present, still earns its finite extent/cardinality and transfer proof.
         .map_err(|cause| {
             if cause == multicad_rust_kernel::authored_flat_thread::Error::Cancelled {
                 failure(source::Error::Cancelled)
             } else {
-                unsupported("Authored flat-thread transfer cannot be certified")
+                unsupported("Authored flat-thread finite source cannot be certified")
             }
         })?;
         let cavity = match extent {

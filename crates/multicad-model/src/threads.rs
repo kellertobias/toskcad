@@ -251,15 +251,15 @@ pub(crate) fn build_rust(
         .as_ref()
         .filter(|ends| ends.start_chamfer_radial_depth_mm != 0. || ends.end_relief_length_mm != 0.);
     if let Some(ends) = terminal {
-        // The actual terminal cylinder owns the shared exact receiving end;
-        // its entry cone is optional. Entry-only cuts need a separately earned
-        // exact periodic endpoint and cannot use this finite-tail contract.
+        // Terminal cylinders retain their original station and shared exact
+        // end. Entry-only cuts author a true canonical finite periodic source;
+        // neither route silently extends an older binary-domain material.
         if source.mode == ThreadMode::CutInternal
             && source.parameters.family == ThreadFamily::IsoMetric
-            && ends.end_relief_length_mm > 0.
+            && (ends.start_chamfer_radial_depth_mm > 0. || ends.end_relief_length_mm > 0.)
         {
             let target = receiving_target(feature, source, solids)?
-                .ok_or_else(|| fail("Internal terminal treatments have no target predecessor"))?;
+                .ok_or_else(|| fail("Internal authored treatments have no target predecessor"))?;
             let extent =
                 multicad_core::parameters::exact_length_mm(&source.parameters.length, parameters)
                     .map_err(|e| error(Some(feature), format!("Canonical receiving extent: {e}")))?;
