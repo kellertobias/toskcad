@@ -187,7 +187,7 @@ impl Solid {
                     error(
                         "fillet",
                         cause.kind,
-                        "Edge treatment failed: the fillet radius leaves no straight box face between the rounded edges",
+                        "Edge treatment failed: the fillet radius leaves a straight box face below the minimum feature size",
                     )
                 })?;
             let a = shift(corners[i], directions[i], clip[i]);
