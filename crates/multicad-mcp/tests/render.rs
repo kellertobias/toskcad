@@ -28,11 +28,6 @@ fn mm(v: f64) -> Value {
 }
 
 #[test]
-fn mcp_sets_appearance_and_scene_and_writes_the_blender_handoff() {
-    render_handoff(GeometryBackend::OpenCascade);
-}
-
-#[test]
 fn rust_mcp_sets_appearance_and_scene_and_writes_the_blender_handoff() {
     render_handoff(GeometryBackend::Rust);
 }

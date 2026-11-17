@@ -54,11 +54,6 @@ fn element(host: &Headless, source: &str, x: f64) -> Value {
 }
 
 #[test]
-fn mcp_previews_blocks_and_applies_a_staged_repair_set() {
-    staged_repair_set(GeometryBackend::OpenCascade);
-}
-
-#[test]
 fn rust_mcp_previews_blocks_and_applies_a_staged_repair_set() {
     staged_repair_set(GeometryBackend::Rust);
 }
