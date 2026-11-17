@@ -11,6 +11,7 @@ use num_traits::{ToPrimitive, Zero};
 mod analytic;
 mod bezier;
 mod bilinear;
+mod cone_separation;
 mod conic;
 mod cylinder_ellipse;
 mod cylinder_trace;
@@ -55,6 +56,21 @@ pub(super) fn bilinear_certificate(
     budget: &mut Budget<'_>,
 ) -> Result<Option<super::Proof>> {
     bilinear::certify(
+        source, curve_id, definition, surface, edge, tolerance, budget,
+    )
+}
+/// This stage can only prove disjoint original curve images; no positive
+/// agreement or material permission is returned by a separating witness.
+pub(super) fn cone_separation_certificate(
+    source: &Source<'_>,
+    curve_id: u32,
+    definition: &super::uv::Definition,
+    surface: &Surface,
+    edge: &Edge,
+    tolerance: f64,
+    budget: &mut Budget<'_>,
+) -> Result<Option<super::Proof>> {
+    cone_separation::certify(
         source, curve_id, definition, surface, edge, tolerance, budget,
     )
 }

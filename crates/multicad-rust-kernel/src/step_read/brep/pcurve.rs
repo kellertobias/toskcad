@@ -604,6 +604,21 @@ fn validate_source(
             {
                 return Err(ReadError::Unsupported);
             }
+            match precision::cone_separation_certificate(
+                source,
+                binding.curve,
+                &definition,
+                &surface,
+                &edge,
+                tol,
+                budget,
+            ) {
+                Ok(Some(proof @ Proof::Disagreement(_))) => {
+                    return Ok((proof, definition.surface, surface_kind(&surface), 0.));
+                }
+                Ok(_) | Err(ReadError::Unsupported) => {}
+                Err(error) => return Err(error),
+            }
             if let Some(proof) = finite_analytic::certify(
                 source,
                 binding.curve,
