@@ -708,10 +708,10 @@ pub(super) fn thread_profiles(_: &dyn Host, call: &Request, _: NoArgs) -> ToolRe
             "representations": ["modeled", "cosmetic_envelope"],
             "cosmetic_scope": "new_external only; receiving cuts require modeled geometry",
             "end_treatments": true,
-            "end_treatments_scope": "Modeled ISO metric external entry chamfers and terminal reliefs; combined internal nominal basic or 6H chamfer45 plus cylindrical terminal relief supports the exact full-height cylinder stock and flat single-start profile; small entry, partial stock and other unresolved source domains are refused. STEP for this combined internal provider is unsupported",
+            "end_treatments_scope": "Modeled ISO metric external entry chamfers and terminal reliefs; internal nominal basic or 6H cylindrical terminal relief, with optional chamfer45 entry, supports exact full-height cylinder stock and flat single-start profiles. Entry-only internal cuts, small unresolved entries and partial stock are refused. These internal terminal providers do not support STEP",
             "radial_taper": false,
             "step": true,
-            "step_scope": "Standalone straight modeled shafts with one to eight starts, flat or circular roots, and partial, full or overrun cap-entry external cuts and blind or through internal threads in round stock, within the bounded spline budget; combined internal entry plus terminal treatments are excluded from STEP",
+            "step_scope": "Standalone straight modeled shafts with one to eight starts, flat or circular roots, and partial, full or overrun cap-entry external cuts and blind or through internal threads in round stock, within the bounded spline budget; internal terminal-relief providers are excluded from STEP",
             "manufacturing_mesh": true,
             "reference_data_includes_other_backends": true
         });
@@ -723,11 +723,19 @@ pub(super) fn thread_profiles(_: &dyn Host, call: &Request, _: NoArgs) -> ToolRe
             "scope":"Complete source boundary, minimum wall and precision proofs remain mandatory; unresolved small entries and partial stock are refused",
             "manufacturing_mesh":true,"step":false
         });
+        report["active_geometry_support"]["internal_terminal_treatments"] = json!({
+            "families":["iso_metric"],"fits":["nominal_basic","metric_6h_internal"],"starts":[1],"representation":"modeled",
+            "receiving_stock":"original full-height cylinder with the exact canonical receiving end and resolved source frame",
+            "profile":"actual flat bands; no rounded-root substitution",
+            "start":["flat_cut","chamfer45"],"end":"positive cylindrical_relief",
+            "scope":"The original visible law and terminal station remain unchanged. Only the actual terminal cylinder reaches the exact receiving end; complete boundary, minimum wall, precision and manufacturing proofs remain mandatory",
+            "manufacturing_mesh":true,"step":false
+        });
         report["fit"] = json!(
             "ISO metric supports nominal basic and listed historical 6g external and 6H internal fits. UNC/UNF use sourced 2A/2B fits. Straight custom, Trapezoidal, Acme and Buttress profiles use nominal basic dimensions."
         );
         report["manufacturing"] = json!(
-            "Modeled external shafts and cap-entry cylindrical receivers support certified mesh and STEP output within the bounded geometry budget. Source tool length is retained; manufacturing output contains only material within the stock. Combined internal entry and terminal treatments support certified mesh only and explicitly refuse STEP. Cosmetic envelopes are refused for manufacturing output."
+            "Modeled external shafts and cap-entry cylindrical receivers support certified mesh and STEP output within the bounded geometry budget. Source tool length is retained; manufacturing output contains only material within the stock. Internal terminal relief, with optional entry treatment, supports certified mesh only and explicitly refuses STEP. Cosmetic envelopes are refused for manufacturing output."
         );
     }
     Ok(report)
