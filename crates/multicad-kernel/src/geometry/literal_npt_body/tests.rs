@@ -484,7 +484,9 @@ fn actual_original_scaled_mapping_keeps_usable_cap_frames_and_exact_identity() {
     assert_eq!(failure.kind, GeometryErrorKind::Input);
     assert!(failure.message.contains("STEP trim disagreement"));
     assert!(failure.message.contains("plane #26247"));
-    assert!(failure.message.contains("edge #26595"));
+    for edge in [26595, 26597, 26599, 26601] {
+        assert!(failure.message.contains(&format!("edge #{edge}")));
+    }
     assert!(failure.message.contains("deviation_mm>="));
     assert!(failure.message.contains("tolerance_mm="));
 }
