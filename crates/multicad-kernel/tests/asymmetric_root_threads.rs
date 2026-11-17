@@ -1,7 +1,7 @@
 use multicad_core::document::EntityId;
 use multicad_kernel::{
-    BooleanOperation, GeometryPolicy, HelicalThread, RigidTransform, RootRoundedHelicalThread,
-    Solid,
+    BooleanOperation, GeometryPolicy, HelicalThread, PlaneFrame, RigidTransform,
+    RootRoundedHelicalThread, Solid,
 };
 fn material(solid: &Solid, point: [f64; 3]) -> f64 {
     // On a 3-degree flank a radial displacement has a small normal
@@ -69,22 +69,41 @@ fn asymmetric_root_is_a_true_tangent_circle_for_each_hand_and_axial_orientation(
             let cz = p.crest_width_mm / 2. + intersection * hi.tan() - r * tilt.sin() / half.sin();
             let cr = p.major_radius_mm - intersection + r * tilt.cos() / half.sin();
             let feature = EntityId::new();
-            let solid = Solid::root_rounded_helical_thread_named(spec, feature, Default::default())
-                .unwrap_or_else(|e| panic!("left={left},reverse={reverse}: {e}"));
+            let solid = Solid::rust_helical_thread(
+                spec.profile,
+                Some(spec.root_radius_mm),
+                feature,
+                PlaneFrame::default(),
+                Default::default(),
+            )
+            .unwrap_or_else(|e| panic!("left={left},reverse={reverse}: {e}"));
             assert_eq!(solid.solid_count().unwrap(), 1);
             let bounds = solid.bounds().unwrap();
             assert!(bounds.min[2].abs() < 16e-7);
             assert!((bounds.max[2] - p.length_mm).abs() < 16e-7);
             let names = solid.topology_snapshot(feature, 0).unwrap();
             assert!(names.elements.iter().all(|e| !e.origins.is_empty()));
-            for side in ["lower", "upper"] {
-                let role = format!("thread/start/0/root/{side}");
-                assert!(names.elements.iter().any(|e| {
+            // The owned kernel keeps the tangent root circle as one exact
+            // periodic band (OCCT split it into root/lower and root/upper
+            // faces); every band and the shared root identity stay named.
+            for side in ["lower", "crest", "upper", "root"] {
+                let role = format!("thread/start/0/{side}");
+                assert!(
+                    names.elements.iter().any(|e| {
+                        e.origins
+                            .iter()
+                            .any(|o| o.source == feature && o.role == role)
+                    }),
+                    "missing {role}"
+                );
+            }
+            assert!(names.elements.iter().any(|e| {
+                ["thread/start/0/root", "thread.root"].iter().all(|role| {
                     e.origins
                         .iter()
-                        .any(|o| o.source == feature && o.role == role)
-                }));
-            }
+                        .any(|o| o.source == feature && o.role == *role)
+                })
+            }));
             let path = dir.path().join(format!("root-{left}-{reverse}.step"));
             solid.write_step(&path).unwrap();
             let back = Solid::read_step(&path, Default::default()).unwrap();

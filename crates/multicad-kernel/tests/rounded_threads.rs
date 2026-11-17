@@ -1,7 +1,42 @@
 use multicad_core::{document::EntityId, references::TopologyKind};
 use multicad_kernel::{
-    BooleanOperation, GeometryPolicy, MeshOptions, RigidTransform, RoundedHelicalThread, Solid,
+    BooleanOperation, GeometryError, GeometryPolicy, MeshOptions, PlaneFrame, RigidTransform,
+    RoundedHelicalThread, Solid, rust_kernel::rounded_thread,
 };
+
+/// Owned-kernel single-radius rounded (Whitworth-form) thread: identical
+/// tangent crest and root circles on symmetric straight flanks.
+/// Fresh exact readback through the owned STEP exchange, replacing the former
+/// OCCT BRep text round trip.
+fn step_reopen(solid: &Solid) -> Solid {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("reopen.step");
+    solid.write_step(&path).unwrap();
+    Solid::read_step(&path, GeometryPolicy::default()).unwrap()
+}
+
+fn rust_spec(s: RoundedHelicalThread) -> rounded_thread::Spec {
+    assert_eq!(s.radial_taper, 0., "owned rounded threads are straight");
+    rounded_thread::Spec {
+        major_radius_mm: s.major_radius_mm,
+        pitch_mm: s.pitch_mm,
+        length_mm: s.length_mm,
+        depth_mm: s.depth_mm,
+        crest_radius_mm: s.rounding_radius_mm,
+        root_radius_mm: s.rounding_radius_mm,
+        flank_angle_deg: s.flank_angle_deg,
+        starts: s.starts,
+        left_hand: s.left_hand,
+    }
+}
+fn rust_rounded(s: RoundedHelicalThread, feature: EntityId) -> Result<Solid, GeometryError> {
+    Solid::rust_rounded_thread(
+        rust_spec(s),
+        feature,
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+    )
+}
 
 fn spec() -> RoundedHelicalThread {
     let pitch = 25.4 / 20.;
@@ -18,19 +53,35 @@ fn spec() -> RoundedHelicalThread {
         left_hand: false,
     }
 }
+/// Fraction of the probe cube's centre and eight corners that the owned
+/// kernel's exact point classification places in material. Owned rounded
+/// bodies have no exact Boolean or overlap volume (the former OCCT probe
+/// intersected the cube). Each probe cube sits farther from the expected
+/// boundary than its half-diagonal, so the former volume fraction was 0 or 1;
+/// nine exact classifications detect the same side unless a material feature
+/// smaller than the cube lies wholly inside it. This is a proxy, not an
+/// exact replacement for the cube volume.
 fn material(solid: &Solid, point: [f64; 3], size: f64) -> f64 {
-    let cube = Solid::box_solid([size; 3], Default::default())
-        .unwrap()
-        .transformed(RigidTransform {
-            translation_mm: point.map(|v| v - size / 2.),
-            ..Default::default()
+    let samples = std::iter::once([0.; 3]).chain((0..8).map(|corner| {
+        std::array::from_fn(|axis| {
+            if corner >> axis & 1 == 1 {
+                size / 2.
+            } else {
+                -size / 2.
+            }
         })
-        .unwrap();
-    solid
-        .boolean(&cube, BooleanOperation::Intersect, Default::default())
-        .unwrap()
-        .map_or(0., |s| s.volume_mm3().unwrap())
-        / size.powi(3)
+    }));
+    samples
+        .filter(|offset: &[f64; 3]| {
+            let p = std::array::from_fn(|i| point[i] + offset[i]);
+            solid.rust_thread_contains(p).unwrap_or_else(|_| {
+                solid
+                    .rust_rounded_blind_bore_contains(p)
+                    .expect("owned rounded material classification")
+            })
+        })
+        .count() as f64
+        / 9.
 }
 fn expected_volume(s: RoundedHelicalThread, n: usize) -> f64 {
     let angle = 27.5_f64.to_radians();
@@ -96,7 +147,7 @@ fn rounded_crest_and_root_are_true_axial_circles_with_native_ancestry_and_step_g
             ..spec()
         };
         let feature = EntityId::new();
-        let solid = Solid::rounded_helical_thread_named(s, feature, Default::default()).unwrap();
+        let solid = rust_rounded(s, feature).unwrap();
         assert_eq!(solid.solid_count().unwrap(), 1);
         check_circles(&solid, s);
         let topology = solid.topology_snapshot(feature, 0).unwrap();
@@ -106,15 +157,18 @@ fn rounded_crest_and_root_are_true_axial_circles_with_native_ancestry_and_step_g
             .filter(|e| e.key.kind == TopologyKind::Face)
             .collect();
         assert!(faces.iter().all(|f| !f.origins.is_empty()));
+        // Owned rounded threads name each exact meridian band: the crest
+        // circle is split at the periodic seam (crest.start/crest.end) and the
+        // root circle is one band, where OCCT split the root into two faces.
         for role in [
             "cap.start",
             "cap.end",
             "thread.root",
-            "thread/start/0/crest",
-            "thread/start/0/lower",
-            "thread/start/0/upper",
-            "thread/start/0/root/lower",
-            "thread/start/0/root/upper",
+            "thread/rounded/crest.start",
+            "thread/rounded/crest.end",
+            "thread/rounded/lower",
+            "thread/rounded/upper",
+            "thread/rounded/root",
         ] {
             assert!(
                 faces.iter().any(|f| f
@@ -187,7 +241,7 @@ fn rounded_crest_and_root_are_true_axial_circles_with_native_ancestry_and_step_g
             solid.share().unwrap().bounds().unwrap(),
             solid.bounds().unwrap()
         );
-        let reopened = Solid::from_brep(&solid.to_brep().unwrap(), Default::default()).unwrap();
+        let reopened = step_reopen(&solid);
         assert!((reopened.bounds().unwrap().min[1] + s.major_radius_mm).abs() < 1e-6);
         assert!(reopened.bounds().unwrap().min[2].abs() < 1e-6);
         let moved = solid
@@ -260,8 +314,7 @@ fn fitted_bsf_inch_pitch_preserves_the_exact_fractional_endpoint() {
         starts: 1,
         left_hand: false,
     };
-    let solid =
-        Solid::rounded_helical_thread_named(s, EntityId::new(), Default::default()).unwrap();
+    let solid = rust_rounded(s, EntityId::new()).unwrap();
     assert_eq!(solid.solid_count().unwrap(), 1);
     check_circles(&solid, s);
     let dir = tempfile::tempdir().unwrap();
@@ -348,12 +401,7 @@ fn all_sourced_fits_survive_tpi_units_integer_fractional_lengths_and_allowances(
                     starts: 1,
                     left_hand,
                 };
-                let solid = Solid::rounded_helical_thread_named(
-                    s,
-                    EntityId::new(),
-                    Default::default(),
-                )
-                .unwrap_or_else(|error| {
+                let solid = rust_rounded(s, EntityId::new()).unwrap_or_else(|error| {
                     panic!(
                         "{} internal={internal} allowance={allowance} spec={s:.17?}: {error}",
                         preset.designation
@@ -393,8 +441,7 @@ fn fitted_left_bsw_fractional_preserves_diagonal_material_and_step_geometry() {
         starts: 1,
         left_hand: true,
     };
-    let solid =
-        Solid::rounded_helical_thread_named(s, EntityId::new(), Default::default()).unwrap();
+    let solid = rust_rounded(s, EntityId::new()).unwrap();
     check_circles(&solid, s);
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("bsw-left-fractional.step");
@@ -438,8 +485,7 @@ fn fitted_bspp_internal_preserves_native_circles_and_step_geometry() {
         starts: 1,
         left_hand: false,
     };
-    let solid =
-        Solid::rounded_helical_thread_named(s, EntityId::new(), Default::default()).unwrap();
+    let solid = rust_rounded(s, EntityId::new()).unwrap();
     check_circles(&solid, s);
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("bspp-internal.step");
@@ -463,7 +509,6 @@ fn blind_and_through_rounded_receivers_keep_rigid_geometry_ancestry_and_step_bou
         document::Document,
         model::{ThreadFamily, ThreadFit, ThreadMode, ThreadParameters, length},
     };
-    use multicad_kernel::PlaneFrame;
     let session = Session::new(Document::new("Rounded receiver representation").unwrap()).unwrap();
     let parameters = ThreadParameters {
         family: ThreadFamily::Bsw,
@@ -504,13 +549,12 @@ fn blind_and_through_rounded_receivers_keep_rigid_geometry_ancestry_and_step_bou
         .unwrap(),
     );
     let feature = EntityId::new();
-    let local_cutter = Solid::rounded_helical_thread_named(s, feature, Default::default()).unwrap();
+    let local_cutter = rust_rounded(s, feature).unwrap();
     let shared_cutter = local_cutter.share().unwrap();
     let original_bounds = local_cutter.bounds().unwrap();
     let original_volume = local_cutter.volume_mm3().unwrap();
     let original_topology = local_cutter.topology_snapshot(feature, 0).unwrap();
-    let male = Solid::rounded_helical_thread_named(male_spec, EntityId::new(), Default::default())
-        .unwrap();
+    let male = rust_rounded(male_spec, EntityId::new()).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let point = |pose: RigidTransform, p: [f64; 3]| -> [f64; 3] {
         std::array::from_fn(|i| {
@@ -553,9 +597,16 @@ fn blind_and_through_rounded_receivers_keep_rigid_geometry_ancestry_and_step_bou
             let shared_stock = stock.share().unwrap();
             let stock_bounds = stock.bounds().unwrap();
             let stock_volume = stock.volume_mm3().unwrap();
+            // The owned kernel cuts rounded receivers through its dedicated
+            // coaxial-stock operation (through or blind) on the same frame.
             let receiver = stock
-                .boolean(&cutter, BooleanOperation::Subtract, Default::default())
-                .unwrap()
+                .rust_cut_rounded_internal_thread(
+                    rust_spec(s),
+                    1.,
+                    feature,
+                    frame,
+                    Default::default(),
+                )
                 .unwrap();
             let names = receiver.topology_snapshot(feature, 0).unwrap();
             assert!(
@@ -565,10 +616,12 @@ fn blind_and_through_rounded_receivers_keep_rigid_geometry_ancestry_and_step_bou
                     .filter(|e| e.key.kind == TopologyKind::Face)
                     .all(|e| !e.origins.is_empty())
             );
+            // Owned receivers flip the generating meridian's material side and
+            // publish the cutter root as an inward receiving face.
             assert!(names.elements.iter().any(|e| {
                 e.origins
                     .iter()
-                    .any(|o| o.source == feature && o.role == "thread.root")
+                    .any(|o| o.source == feature && o.role == "receiving.inward/thread.root")
             }));
             let path = dir.path().join(format!("receiver-{blind}-{index}.step"));
             receiver.write_step(&path).unwrap();
@@ -658,7 +711,7 @@ fn blind_and_through_rounded_receivers_keep_rigid_geometry_ancestry_and_step_bou
             shape.topology_snapshot(feature, 0).unwrap(),
             original_topology
         );
-        let fresh = Solid::from_brep(&shape.to_brep().unwrap(), Default::default()).unwrap();
+        let fresh = step_reopen(shape);
         assert_eq!(fresh.solid_count().unwrap(), 1);
         check_circles(&fresh, s);
     }

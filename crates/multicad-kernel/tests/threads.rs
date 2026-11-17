@@ -20,7 +20,17 @@ fn metric() -> HelicalThread {
     }
 }
 fn build(spec: HelicalThread) -> Solid {
-    Solid::helical_thread_named(spec, EntityId::new(), GeometryPolicy::default()).unwrap()
+    rust_thread(spec, EntityId::new())
+}
+fn rust_thread(spec: HelicalThread, feature: EntityId) -> Solid {
+    Solid::rust_helical_thread(
+        spec,
+        None,
+        feature,
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+    )
+    .unwrap()
 }
 #[test]
 fn metric_complete_turn_and_fractional_spines_produce_measurable_accurate_solids() {
@@ -76,8 +86,14 @@ fn short_unf_internal_tools_retain_helices_at_nonintegral_lengths() {
             ..metric()
         };
         let feature = EntityId::new();
-        let solid = Solid::helical_thread_named(spec, feature, Default::default())
-            .unwrap_or_else(|e| panic!("UNF internal-tool length {length}: {e}"));
+        let solid = Solid::rust_helical_thread(
+            spec,
+            None,
+            feature,
+            PlaneFrame::default(),
+            Default::default(),
+        )
+        .unwrap_or_else(|e| panic!("UNF internal-tool length {length}: {e}"));
         assert!((solid.volume_mm3().unwrap() - expected_volume(spec)).abs() < 1e-3);
         let bounds = solid.bounds().unwrap();
         assert!(bounds.min[2].abs() < 1e-6);
@@ -166,7 +182,7 @@ fn handedness_and_multiple_starts_follow_the_requested_lead_with_complete_face_a
             ..metric()
         };
         let feature = EntityId::new();
-        let solid = Solid::helical_thread_named(spec, feature, GeometryPolicy::default()).unwrap();
+        let solid = rust_thread(spec, feature);
         assert_eq!(spec.lead_mm(), spec.pitch_mm * f64::from(starts));
         assert!((solid.volume_mm3().unwrap() - expected_volume(spec)).abs() < 1e-3);
         let z = 3.37;
@@ -209,14 +225,21 @@ fn handedness_and_multiple_starts_follow_the_requested_lead_with_complete_face_a
 #[test]
 fn receiving_body_cut_and_mating_clearance_are_real_native_geometry() {
     let male = build(metric());
-    let tool = build(HelicalThread {
+    let tool = HelicalThread {
         major_radius_mm: 4.1,
         ..metric()
-    });
+    };
     let blank = Solid::cylinder(PlaneFrame::default(), 6., 8., GeometryPolicy::default()).unwrap();
+    // The owned kernel cuts a receiving thread through its dedicated
+    // cylindrical-stock operation instead of a generic native Boolean.
     let receiver = blank
-        .boolean(&tool, BooleanOperation::Subtract, GeometryPolicy::default())
-        .unwrap()
+        .rust_cut_internal_thread(
+            tool,
+            1.,
+            EntityId::new(),
+            PlaneFrame::default(),
+            GeometryPolicy::default(),
+        )
         .unwrap();
     assert_eq!(receiver.solid_count().unwrap(), 1);
     assert!(receiver.volume_mm3().unwrap() < blank.volume_mm3().unwrap() - 300.);
@@ -239,7 +262,15 @@ fn custom_conical_threads_and_step_mesh_export_retain_physical_helices() {
             radial_taper,
             ..metric()
         };
-        let solid = build(spec);
+        // Tapered custom profiles use the owned retained radial-boundary law.
+        let solid = Solid::rust_retained_helical_thread_with_interrupt(
+            spec,
+            EntityId::new(),
+            PlaneFrame::default(),
+            GeometryPolicy::default(),
+            None,
+        )
+        .unwrap();
         assert_eq!(solid.solid_count().unwrap(), 1);
         let z = 4.;
         let theta = TAU * z / spec.lead_mm();
