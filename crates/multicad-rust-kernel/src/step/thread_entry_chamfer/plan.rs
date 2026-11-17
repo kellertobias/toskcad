@@ -26,6 +26,18 @@ pub(super) fn key(body: &Chamfer, start: u32, phase: f64) -> (u32, u64) {
 }
 
 fn qualify_trim(body: &Chamfer, trim: &Trim, tolerance: f64) -> Result<(), Error> {
+    // These are the actual emitted cone-v controls and rail endpoint heights.
+    // Positive polynomial bases keep every complete boundary in [0,c]. The
+    // source-angle comparison uses the conservative enclosing domain [0,2c].
+    let c = body.entry_length_mm();
+    if trim
+        .height_poles
+        .into_iter()
+        .chain(trim.poles.map(|p| p[2]))
+        .any(|z| !z.is_finite() || z < 0. || z > c)
+    {
+        return Err(Error::Unsupported);
+    }
     if trim.error_bound(body)? > tolerance / 16. {
         Err(Error::Unsupported)
     } else {
@@ -41,12 +53,17 @@ fn cone_angle(body: &Chamfer, tolerance: f64) -> Result<f64, Error> {
         return Err(Error::Unsupported);
     }
     let angle_i = trim::I::point(angle);
-    let denominator = trim::I::point(angle.cos());
+    let denominator = angle_i.cos();
+    if denominator.lo <= 0. {
+        return Err(Error::Unsupported);
+    }
     let exact = (trim::I::point(r) - trim::I::point(r0)) / trim::I::point(c);
-    let error = trim::I::point(2.)
-        * trim::I::point(c)
-        * ((angle_i.sin() / denominator - exact).abs()
-            + (angle_i.cos() / denominator - trim::I::point(1.)).abs());
+    // AXIAL v gives radius r0+v*tan(angle), z=v. Thus only the radial
+    // slope differs from the canonical source; no slant-height cosine term
+    // belongs in this proof. qualify_trim earns the complete emitted height
+    // range [0,c], including shared rail endpoints, inside this [0,2c] bound.
+    let error =
+        trim::I::point(2.) * trim::I::point(c) * (angle_i.sin() / denominator - exact).abs();
     if error.checked()?.hi > tolerance / 128. {
         return Err(Error::Unsupported);
     }
@@ -322,3 +339,6 @@ mod angle_tests {
         assert!(cone_angle(&Chamfer::new(source, 0.4, None).unwrap(), 1e-7).is_ok());
     }
 }
+
+#[cfg(test)]
+mod axial_tests;
