@@ -714,11 +714,6 @@ fn rust_existing_internal_thread_previews_the_open_bore_and_its_helical_wall() {
 }
 
 #[test]
-fn native_reusable_assembly_publishes_one_root_and_exact_explodable_leaf_receipts() {
-    reusable_assembly_scene(GeometryBackend::OpenCascade);
-}
-
-#[test]
 fn rust_reusable_assembly_publishes_one_root_and_exact_explodable_leaf_receipts() {
     reusable_assembly_scene(GeometryBackend::Rust);
 }
@@ -2023,11 +2018,11 @@ fn shared_native_owner_reuses_default_screw_preview_for_authoritative_apply() {
 
 #[test]
 fn app_backend_factory_keeps_candidate_and_canonical_publications_separate() {
-    let factory = Backend::factory(GeometryBackend::OpenCascade).unwrap();
+    let factory = Backend::factory(GeometryBackend::Rust).unwrap();
     let mut candidate = factory();
     let mut canonical = factory();
-    assert!(!candidate.supports_fast_hardware_preview());
-    assert!(Backend::factory(GeometryBackend::Rust).unwrap()().supports_fast_hardware_preview());
+    assert!(candidate.supports_fast_hardware_preview());
+    assert!(canonical.supports_fast_hardware_preview());
     let (session, _) = box_session();
     let stamp = SceneStamp {
         document: session.document().id(),

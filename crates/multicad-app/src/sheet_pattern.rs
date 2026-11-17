@@ -184,7 +184,7 @@ mod tests {
                 .id
         };
         let part = entity("Front panel sheet");
-        let mut backend = Backend::new(Default::default(), GeometryBackend::OpenCascade);
+        let mut backend = Backend::new(Default::default(), GeometryBackend::Rust);
 
         backend.request(&document, 0, part).unwrap();
         backend.cancel();
@@ -228,12 +228,15 @@ mod tests {
         );
 
         let exported = multicad_model::export::Exporter::default()
-            .developed_sheet_dxf(
+            .developed_sheet_dxf_with_backend(
                 &document,
                 0,
                 part,
-                multicad_core::exchange::LengthUnit::Millimeter,
-                &Default::default(),
+                multicad_model::export::sheet_dxf::SheetDxfOptions {
+                    backend: GeometryBackend::Rust,
+                    units: multicad_core::exchange::LengthUnit::Millimeter,
+                    layers: &Default::default(),
+                },
                 None,
             )
             .unwrap();
