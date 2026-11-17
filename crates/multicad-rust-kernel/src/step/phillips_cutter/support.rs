@@ -1,6 +1,7 @@
 //! Directed whole-support source-to-literal envelopes. Requested precision is
 //! never an input to the derived numeric error.
 use super::*;
+mod correspondence;
 pub(crate) type BPoint = [I; 3];
 pub(crate) fn b([a, z]: [f64; 2]) -> I {
     I::new(a, z)

@@ -329,3 +329,6 @@ pub(super) mod tests;
 
 #[cfg(test)]
 mod raw_trim_c1;
+
+#[cfg(test)]
+mod raw_support_c1;

@@ -220,7 +220,8 @@ fn verify(
 
 pub use physical::{
     DerivedCavityOptions, DerivedCavityRepresentative, DerivedEdgeCorrespondence,
-    DerivedFaceCorrespondence, DerivedVertexCorrespondence,
+    DerivedFaceCorrespondence, DerivedVertexCorrespondence, RawCavitySupportCorrespondence,
+    RawCavitySupportFace, RawCavitySupportOptions,
 };
 
 pub use physical::ClosedDerivedCavityCertificate;

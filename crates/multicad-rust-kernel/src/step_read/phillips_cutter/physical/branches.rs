@@ -12,6 +12,7 @@ mod sewn;
 pub use derived::{
     ClosedDerivedCavityCertificate, DerivedCavityOptions, DerivedCavityRepresentative,
     DerivedEdgeCorrespondence, DerivedFaceCorrespondence, DerivedVertexCorrespondence,
+    RawCavitySupportCorrespondence, RawCavitySupportFace, RawCavitySupportOptions,
 };
 pub use sewn::{SewnEdgeSource, SewnEdgeSources, SewnEvaluation, SewnOptions, SewnParameter};
 use supports::chart::Chart;

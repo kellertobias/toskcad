@@ -1095,6 +1095,9 @@ pub use phillips_cutter::{
     DerivedEdgeCorrespondence as PhillipsDerivedEdgeCorrespondence,
     DerivedFaceCorrespondence as PhillipsDerivedFaceCorrespondence,
     DerivedVertexCorrespondence as PhillipsDerivedVertexCorrespondence,
+    RawCavitySupportCorrespondence as PhillipsRawCavitySupportCorrespondence,
+    RawCavitySupportFace as PhillipsRawCavitySupportFace,
+    RawCavitySupportOptions as PhillipsRawCavitySupportOptions,
 };
 
 pub use phillips_cutter::ClosedDerivedCavityCertificate as PhillipsClosedDerivedCavityCertificate;

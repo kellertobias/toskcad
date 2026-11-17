@@ -4,7 +4,11 @@ use super::*;
 use crate::phillips_drive::{CurveKey, Cutter, FaceKey, VertexKey};
 mod closed;
 mod fit;
+mod raw_support;
 pub use closed::ClosedDerivedCavityCertificate;
+pub use raw_support::{
+    RawCavitySupportCorrespondence, RawCavitySupportFace, RawCavitySupportOptions,
+};
 #[cfg(test)]
 mod tests;
 // Only the 49V/76E/29F rounded-inner family is proposed. Construction/topology

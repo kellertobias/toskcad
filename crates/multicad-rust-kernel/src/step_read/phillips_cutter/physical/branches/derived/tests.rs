@@ -911,3 +911,117 @@ fn actual_sewing_collar_numeric_composition_encloses_and_refuses_invalid_or_over
         assert!(sewn_edge_collar(correction, owners).is_err());
     }
 }
+
+#[test]
+fn actual_raw_cavity_supports_preserve_original_chart_derivatives_and_limits() {
+    for scale in [1., 1.137] {
+        for posed in [false, true] {
+            let text = super::super::representative::scaled_text(scale, posed);
+            let body = read_phillips_body(&text, 1e-7, 1_000_000).unwrap();
+            let (lifts, cubics) = prerequisites(body.cavity());
+            let sewn = lifts
+                .sewn_edge_sources(&body, &cubics, SewnOptions::default(), None)
+                .unwrap();
+            let representative = body
+                .derived_cavity_representative(&sewn, DerivedCavityOptions::default(), None)
+                .unwrap();
+            let receipt = representative
+                .raw_support_correspondence(RawCavitySupportOptions::default(), None)
+                .unwrap();
+            assert!(std::ptr::eq(receipt.source(), &representative));
+            assert_eq!(
+                receipt.work_used(),
+                representative.work_used() + receipt.new_work_used()
+            );
+            let mut max = [0f64; 3];
+            for (face, original) in receipt.faces().iter().zip(representative.faces()) {
+                assert_eq!(face.source_role, original.source_role);
+                assert_eq!(face.raw_surface_entity, original.raw_surface_entity);
+                assert!(face.source_patches > 0);
+                max[0] = max[0].max(face.maximum_position_mm);
+                for (a, b) in max[1..].iter_mut().zip(face.maximum_chart_derivative_mm) {
+                    *a = a.max(b);
+                }
+            }
+            eprintln!(
+                "actual cavity support scale={scale} posed={posed} max={max:?} fresh={} peak={}",
+                receipt.new_work_used(),
+                receipt.accounted_peak_bytes()
+            );
+            assert!(max.into_iter().all(|x| x.is_finite() && x <= 1e-7));
+            let exact = RawCavitySupportOptions {
+                maximum_fresh_work: receipt.new_work_used(),
+                maximum_bytes: receipt.accounted_peak_bytes(),
+            };
+            assert!(
+                representative
+                    .raw_support_correspondence(exact, None)
+                    .is_ok()
+            );
+            assert!(matches!(
+                representative.raw_support_correspondence(
+                    RawCavitySupportOptions {
+                        maximum_fresh_work: exact.maximum_fresh_work - 1,
+                        ..exact
+                    },
+                    None
+                ),
+                Err(PhillipsReadError::Limit)
+            ));
+            assert!(matches!(
+                representative.raw_support_correspondence(
+                    RawCavitySupportOptions {
+                        maximum_bytes: exact.maximum_bytes - 1,
+                        ..exact
+                    },
+                    None
+                ),
+                Err(PhillipsReadError::Limit)
+            ));
+            assert!(matches!(
+                representative.raw_support_correspondence(exact, Some(&|| true)),
+                Err(PhillipsReadError::Cancelled)
+            ));
+            let calls = std::cell::Cell::new(0);
+            assert!(matches!(
+                representative.raw_support_correspondence(
+                    exact,
+                    Some(&|| {
+                        calls.set(calls.get() + 1);
+                        calls.get() > 40
+                    })
+                ),
+                Err(PhillipsReadError::Cancelled)
+            ));
+            assert!(calls.get() > 40);
+            for invalid in [
+                RawCavitySupportOptions {
+                    maximum_fresh_work: 0,
+                    ..exact
+                },
+                RawCavitySupportOptions {
+                    maximum_fresh_work: WORK + 1,
+                    ..exact
+                },
+                RawCavitySupportOptions {
+                    maximum_bytes: 0,
+                    ..exact
+                },
+                RawCavitySupportOptions {
+                    maximum_bytes: BYTES + 1,
+                    ..exact
+                },
+            ] {
+                assert!(matches!(
+                    representative.raw_support_correspondence(invalid, None),
+                    Err(PhillipsReadError::Invalid)
+                ));
+            }
+            assert!(
+                representative
+                    .raw_support_correspondence(exact, None)
+                    .is_ok()
+            );
+        }
+    }
+}

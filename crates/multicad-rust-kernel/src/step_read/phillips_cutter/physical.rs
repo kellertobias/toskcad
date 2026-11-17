@@ -321,7 +321,8 @@ pub(crate) fn read_member(
 
 pub use branches::{
     DerivedCavityOptions, DerivedCavityRepresentative, DerivedEdgeCorrespondence,
-    DerivedFaceCorrespondence, DerivedVertexCorrespondence,
+    DerivedFaceCorrespondence, DerivedVertexCorrespondence, RawCavitySupportCorrespondence,
+    RawCavitySupportFace, RawCavitySupportOptions,
 };
 
 pub use branches::ClosedDerivedCavityCertificate;
