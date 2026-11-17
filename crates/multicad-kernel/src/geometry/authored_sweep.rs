@@ -18,6 +18,7 @@ use multicad_rust_kernel::spline_sweep::Cubic;
 use std::f64::consts::{FRAC_1_SQRT_2, TAU};
 
 mod glue;
+mod revolution;
 
 const OPERATION: &str = "Rust authored sweep";
 type P = [f64; 3];
@@ -231,6 +232,35 @@ impl Path {
                 weights: weights.clone(),
                 knots: knots.clone(),
                 multiplicities: multiplicities.clone(),
+            },
+        }
+    }
+
+    /// The same curve traversed the other way.
+    fn reversed(&self) -> Self {
+        match self {
+            Self::Line([a, b]) => Self::Line([*b, *a]),
+            Self::Conic {
+                center,
+                axes,
+                range,
+            } => Self::Conic {
+                center: *center,
+                axes: [axes[0], axes[1].map(|x| -x)],
+                range: [-range[1], -range[0]],
+            },
+            Self::Spline {
+                degree,
+                poles,
+                weights,
+                knots,
+                multiplicities,
+            } => Self::Spline {
+                degree: *degree,
+                poles: poles.iter().rev().copied().collect(),
+                weights: weights.as_ref().map(|w| w.iter().rev().copied().collect()),
+                knots: knots.iter().rev().map(|k| -k).collect(),
+                multiplicities: multiplicities.iter().rev().copied().collect(),
             },
         }
     }

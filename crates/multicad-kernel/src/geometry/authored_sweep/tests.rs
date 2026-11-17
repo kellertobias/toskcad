@@ -1,4 +1,6 @@
 use super::*;
+use crate::BSpline2d;
+use multicad_core::references::TopologyKind;
 use std::f64::consts::PI;
 
 fn policy() -> GeometryPolicy {
@@ -369,4 +371,221 @@ fn glued_unions_match_shared_edges_authored_in_opposite_directions() {
     near(joined.volume_mm3().unwrap(), 4.5 * PI * 8.);
     // Two far caps and two walls on each side of the waist remain.
     assert_eq!(joined.faces().unwrap().len(), 6);
+}
+
+fn plate_with_hole() -> CurvedProfile {
+    CurvedProfile {
+        frame: PlaneFrame::default(),
+        outer: vec![
+            line([0., 0.], [80., 0.]),
+            line([80., 0.], [80., 60.]),
+            line([80., 60.], [0., 60.]),
+            line([0., 60.], [0., 0.]),
+        ],
+        holes: vec![vec![CurvedEdge2d::Circle {
+            center: [20., 20.],
+            radius_mm: 6.,
+        }]],
+    }
+}
+
+fn revolve(profile: &CurvedProfile, origin: P, degrees: f64) -> Result<Solid, GeometryError> {
+    Solid::rust_authored_revolution(
+        profile,
+        crate::RevolutionAxis {
+            origin_mm: origin,
+            direction: [0., 1., 0.],
+        },
+        degrees.to_radians(),
+        EntityId::new(),
+        &names(profile),
+        policy(),
+    )
+}
+
+fn caps(solid: &Solid) -> usize {
+    solid
+        .topology_snapshot(EntityId::new(), 0)
+        .unwrap()
+        .elements
+        .iter()
+        .filter(|e| {
+            e.key.kind == TopologyKind::Face
+                && e.origins
+                    .iter()
+                    .any(|o| o.role == "cap.start" || o.role == "cap.end")
+        })
+        .count()
+}
+
+#[test]
+fn revolved_plate_with_a_hole_obeys_pappus_for_signed_partial_and_full_turns() {
+    // First moment about the axis x = -10: plate minus the disc.
+    let moment = 80. * 60. * 50. - 36. * PI * 30.;
+    for degrees in [90_f64, -90., 225., 360., -360.] {
+        let solid = revolve(&plate_with_hole(), [-10., 0., 0.], degrees).unwrap();
+        near(
+            solid.volume_mm3().unwrap(),
+            moment * degrees.to_radians().abs(),
+        );
+        assert_eq!(solid.solid_count().unwrap(), 1);
+        assert_eq!(caps(&solid), if degrees.abs() == 360. { 0 } else { 2 });
+        let bounds = solid.bounds().unwrap();
+        near(bounds.max[1], 60.);
+        if degrees.abs() == 360. {
+            near(bounds.min[0], -100.);
+            near(bounds.max[2], 90.);
+            // The hole closes into a toroidal void of its own shell.
+            let body = solid.imported_brep_body().unwrap();
+            assert_eq!(body.solid.boundary().shells.len(), 2);
+        } else if degrees == 90. {
+            near(bounds.min[2], -90.);
+            near(bounds.max[2], 0.);
+        }
+    }
+    let solid = revolve(&plate_with_hole(), [-10., 0., 0.], 360.).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("revolved-void.step");
+    solid.write_step(&path).unwrap();
+    near(
+        Solid::read_step(&path, policy())
+            .unwrap()
+            .volume_mm3()
+            .unwrap(),
+        moment * TAU,
+    );
+}
+
+#[test]
+fn meridians_on_the_axis_close_discs_and_poles_without_walls() {
+    // A cylinder with a rounded lower edge; its left side lies on the axis.
+    let filleted = CurvedProfile {
+        frame: PlaneFrame::default(),
+        outer: vec![
+            line([0., 0.], [5., 0.]),
+            CurvedEdge2d::Arc {
+                center: [5., 3.],
+                a: [5., 0.],
+                b: [8., 3.],
+                clockwise: false,
+            },
+            line([8., 3.], [8., 10.]),
+            line([8., 10.], [0., 10.]),
+            line([0., 10.], [0., 0.]),
+        ],
+        holes: vec![],
+    };
+    let moment = 320. - 58.5 + 9. * PI / 4. * (5. + 4. / PI);
+    for degrees in [90_f64, -120., 360.] {
+        let solid = revolve(&filleted, [0.; 3], degrees).unwrap();
+        near(
+            solid.volume_mm3().unwrap(),
+            moment * degrees.to_radians().abs(),
+        );
+        // Four swept walls; the axis edge sweeps none.
+        let walls = solid.faces().unwrap().len() - caps(&solid);
+        assert_eq!(walls, 4);
+    }
+    // A half disc on the axis becomes a ball with two poles.
+    let half = CurvedProfile {
+        frame: PlaneFrame::default(),
+        outer: vec![
+            CurvedEdge2d::Arc {
+                center: [0., 0.],
+                a: [0., -3.],
+                b: [0., 3.],
+                clockwise: false,
+            },
+            line([0., 3.], [0., -3.]),
+        ],
+        holes: vec![],
+    };
+    for degrees in [360_f64, 90.] {
+        let solid = revolve(&half, [0.; 3], degrees).unwrap();
+        near(solid.volume_mm3().unwrap(), 36. * PI * degrees / 360.);
+    }
+}
+
+#[test]
+fn spline_meridians_revolve_their_source_curve() {
+    let profile = CurvedProfile {
+        frame: PlaneFrame::default(),
+        outer: vec![
+            CurvedEdge2d::BSpline(BSpline2d {
+                degree: 2,
+                poles: vec![[2., 0.], [4., 4.], [6., 0.]],
+                knots: vec![0., 1.],
+                multiplicities: vec![3, 3],
+                weights: None,
+            }),
+            line([6., 0.], [2., 0.]),
+        ],
+        holes: vec![],
+    };
+    // Parabolic segment of area 16/3 centred at radius four.
+    for degrees in [60_f64, 360.] {
+        let solid = revolve(&profile, [0.; 3], degrees).unwrap();
+        near(
+            solid.volume_mm3().unwrap(),
+            16. / 3. * 4. * degrees.to_radians(),
+        );
+    }
+}
+
+#[test]
+fn pinched_tangent_crossing_and_spline_axis_contacts_refuse() {
+    let circle = |center: P2, radius_mm| CurvedProfile {
+        frame: PlaneFrame::default(),
+        outer: vec![CurvedEdge2d::Circle { center, radius_mm }],
+        holes: vec![],
+    };
+    // Tangent to the axis inside the curve.
+    let tangent = revolve(&circle([3., 0.], 3.), [0.; 3], 90.);
+    assert!(
+        tangent
+            .err()
+            .unwrap()
+            .message
+            .contains("away from its ends")
+    );
+    // Crossing the axis.
+    let crossing = revolve(&circle([1., 0.], 3.), [0.; 3], 90.);
+    assert!(crossing.err().unwrap().message.contains("crosses"));
+    // Two separate vertices on the axis pinch the solid.
+    let pinched = CurvedProfile {
+        frame: PlaneFrame::default(),
+        outer: vec![
+            line([0., 0.], [4., 2.]),
+            line([4., 2.], [0., 4.]),
+            CurvedEdge2d::Arc {
+                center: [0., 6.],
+                a: [0., 4.],
+                b: [0., 8.],
+                clockwise: false,
+            },
+            line([0., 8.], [6., 8.]),
+            line([6., 8.], [6., -2.]),
+            line([6., -2.], [0., 0.]),
+        ],
+        holes: vec![],
+    };
+    let pinched = revolve(&pinched, [0.; 3], 90.);
+    assert!(pinched.err().unwrap().message.contains("pinch"));
+    // A spline ending on the axis is not yet closed at a pole.
+    let spline = CurvedProfile {
+        frame: PlaneFrame::default(),
+        outer: vec![
+            CurvedEdge2d::BSpline(BSpline2d {
+                degree: 2,
+                poles: vec![[0., 0.], [4., 2.], [0., 4.]],
+                knots: vec![0., 1.],
+                multiplicities: vec![3, 3],
+                weights: None,
+            }),
+            line([0., 4.], [0., 0.]),
+        ],
+        holes: vec![],
+    };
+    let spline = revolve(&spline, [0.; 3], 90.);
+    assert_eq!(spline.err().unwrap().kind, GeometryErrorKind::Unsupported);
 }
