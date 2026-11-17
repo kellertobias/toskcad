@@ -52,6 +52,22 @@ fn origins(profile: &CurvedProfile) -> Vec<Origin> {
         })
         .collect()
 }
+/// Unnamed revolution through the Rust kernel with fresh authored identities.
+fn revolve(
+    profile: &CurvedProfile,
+    axis: RevolutionAxis,
+    angle_rad: f64,
+    policy: GeometryPolicy,
+) -> Result<Solid, GeometryError> {
+    Solid::rust_revolve_curved_profile_named(
+        profile,
+        axis,
+        angle_rad,
+        EntityId::new(),
+        &origins(profile),
+        policy,
+    )
+}
 fn origin(id: EntityId, role: &str) -> Origin {
     Origin {
         source: id,
@@ -96,8 +112,9 @@ fn exact_hollow_partial_and_full_revolution_have_named_real_support_frames() {
     let origins = origins(&profile);
     let original = profile.clone();
     for angle in [TAU, PI / 2., -PI / 2.] {
-        let solid = Solid::revolve_curved_profile_named(&profile, axis(), angle, id, &origins, p())
-            .unwrap();
+        let solid =
+            Solid::rust_revolve_curved_profile_named(&profile, axis(), angle, id, &origins, p())
+                .unwrap();
         near(solid.volume_mm3().unwrap(), 56. * angle.abs());
         assert_eq!(profile, original);
         let snap = solid.topology_snapshot(id, 0).unwrap();
@@ -150,7 +167,7 @@ fn true_spline_revolution_with_hole_roundtrips_step_without_planar_side_fiction(
     let id = EntityId::new();
     let origins = origins(&profile);
     let solid =
-        Solid::revolve_curved_profile_named(&profile, axis(), TAU, id, &origins, p()).unwrap();
+        Solid::rust_revolve_curved_profile_named(&profile, axis(), TAU, id, &origins, p()).unwrap();
     near(solid.volume_mm3().unwrap(), 70. * PI);
     let bounds = solid.bounds().unwrap();
     near(bounds.max[0], 8.);
@@ -188,9 +205,15 @@ fn hemisphere_arc_can_touch_axis_without_crossing_or_creating_fake_axis_face() {
         holes: vec![],
     };
     let id = EntityId::new();
-    let solid =
-        Solid::revolve_curved_profile_named(&profile, axis(), TAU, id, &origins(&profile), p())
-            .unwrap();
+    let solid = Solid::rust_revolve_curved_profile_named(
+        &profile,
+        axis(),
+        TAU,
+        id,
+        &origins(&profile),
+        p(),
+    )
+    .unwrap();
     near(solid.volume_mm3().unwrap(), 36. * PI);
     let snap = solid.topology_snapshot(id, 0).unwrap();
     let faces: Vec<_> = snap
@@ -211,7 +234,7 @@ fn cap_reference_follows_signed_angle_and_offset_axis_after_dimension_edit() {
     };
     let id = EntityId::new();
     let curves = origins(&profile);
-    let first = Solid::revolve_curved_profile_named(&profile, axis, PI / 2., id, &curves, p())
+    let first = Solid::rust_revolve_curved_profile_named(&profile, axis, PI / 2., id, &curves, p())
         .unwrap()
         .topology_snapshot(id, 0)
         .unwrap();
@@ -227,7 +250,7 @@ fn cap_reference_follows_signed_angle_and_offset_axis_after_dimension_edit() {
         angle_rad: 0.,
     });
     profile.outer = rect([2., 0.], [7., 6.]);
-    let next = Solid::revolve_curved_profile_named(&profile, axis, -PI / 2., id, &curves, p())
+    let next = Solid::rust_revolve_curved_profile_named(&profile, axis, -PI / 2., id, &curves, p())
         .unwrap()
         .topology_snapshot(id, 1)
         .unwrap();
@@ -244,9 +267,9 @@ fn cap_reference_follows_signed_angle_and_offset_axis_after_dimension_edit() {
 fn invalid_revolution_inputs_reject_without_mutating_profile_or_valid_result() {
     let profile = profile();
     let before = profile.clone();
-    let valid = Solid::revolve_curved_profile(&profile, axis(), TAU, p()).unwrap();
+    let valid = revolve(&profile, axis(), TAU, p()).unwrap();
     for a in [0., f64::NAN, f64::INFINITY, TAU + 1e-9, 1e-9, TAU - 1e-9] {
-        assert!(Solid::revolve_curved_profile(&profile, axis(), a, p()).is_err());
+        assert!(revolve(&profile, axis(), a, p()).is_err());
     }
     for a in [
         RevolutionAxis {
@@ -270,13 +293,13 @@ fn invalid_revolution_inputs_reject_without_mutating_profile_or_valid_result() {
             ..axis()
         },
     ] {
-        assert!(Solid::revolve_curved_profile(&profile, a, TAU, p()).is_err());
+        assert!(revolve(&profile, a, TAU, p()).is_err());
     }
     let mut cross = profile.clone();
     cross.outer = rect([-2., 0.], [5., 6.]);
     cross.holes.clear();
     assert!(
-        Solid::revolve_curved_profile(&cross, axis(), TAU, p())
+        revolve(&cross, axis(), TAU, p())
             .err()
             .unwrap()
             .message
@@ -286,7 +309,8 @@ fn invalid_revolution_inputs_reject_without_mutating_profile_or_valid_result() {
     let mut duplicate = origins(&profile);
     duplicate[1] = duplicate[0].clone();
     assert!(
-        Solid::revolve_curved_profile_named(&profile, axis(), TAU, id, &duplicate, p()).is_err()
+        Solid::rust_revolve_curved_profile_named(&profile, axis(), TAU, id, &duplicate, p())
+            .is_err()
     );
     assert_eq!(profile, before);
     near(valid.volume_mm3().unwrap(), 112. * PI);
@@ -343,8 +367,9 @@ fn circular_section_makes_exact_torus_and_rotated_axis_uses_world_frame() {
         holes: vec![],
     };
     let id = EntityId::new();
-    let solid = Solid::revolve_curved_profile_named(&torus, axis(), TAU, id, &origins(&torus), p())
-        .unwrap();
+    let solid =
+        Solid::rust_revolve_curved_profile_named(&torus, axis(), TAU, id, &origins(&torus), p())
+            .unwrap();
     near(solid.volume_mm3().unwrap(), 6. * PI * PI);
     let snapshot = solid.topology_snapshot(id, 0).unwrap();
     assert!(
@@ -366,7 +391,7 @@ fn circular_section_makes_exact_torus_and_rotated_axis_uses_world_frame() {
     };
     let id = EntityId::new();
     let solid =
-        Solid::revolve_curved_profile_named(&profile, axis, TAU, id, &origins(&profile), p())
+        Solid::rust_revolve_curved_profile_named(&profile, axis, TAU, id, &origins(&profile), p())
             .unwrap();
     near(solid.volume_mm3().unwrap(), 112. * PI);
     check_frames(&solid, id);

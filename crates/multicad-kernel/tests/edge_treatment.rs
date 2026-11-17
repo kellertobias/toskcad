@@ -531,8 +531,8 @@ fn named_cylinder_rims_treat_exactly_but_seam_and_impossible_radius_fail_without
 }
 
 #[test]
-fn actual_degenerate_cone_apex_edge_is_rejected_explicitly() {
-    let source = Solid::revolve_curved_profile(
+fn cone_apex_is_a_vertex_not_a_degenerate_edge_and_is_rejected_explicitly() {
+    let source = Solid::rust_revolve_curved_profile_named(
         &CurvedProfile {
             frame: PlaneFrame {
                 origin: [0.; 3],
@@ -560,26 +560,45 @@ fn actual_degenerate_cone_apex_edge_is_rejected_explicitly() {
             direction: [0., 0., 1.],
         },
         std::f64::consts::TAU,
+        EntityId::new(),
+        &(0..3)
+            .map(|_| Origin {
+                source: EntityId::new(),
+                role: "curve".into(),
+            })
+            .collect::<Vec<_>>(),
         policy(),
     )
     .unwrap();
     let feature = EntityId::new();
     let snapshot = source.topology_snapshot(feature, 0).unwrap();
-    let degenerate = snapshot
+    // OCCT represented the apex as a degenerate edge. The Rust revolution
+    // stores it only as the apex vertex, so no geometry-less edge can be
+    // selected, and treating that apex as an edge is still refused.
+    assert!(
+        snapshot
+            .elements
+            .iter()
+            .all(|e| e.key.kind != TopologyKind::Edge || e.geometry.is_some())
+    );
+    let apex = snapshot
         .elements
         .iter()
-        .find(|e| e.key.kind == TopologyKind::Edge && e.geometry.is_none())
+        .find(|e| {
+            e.key.kind == TopologyKind::Vertex
+                && matches!(e.geometry, Some(AnalyticGeometry::Point { position_mm }) if position_mm == [0., 0., 20.])
+        })
         .unwrap();
     let error = source
         .treat_edges_named(
-            &[selected(degenerate.key, feature)],
+            &[selected(apex.key, feature)],
             EdgeTreatment::Fillet { radius_mm: 1. },
             feature,
             policy(),
         )
         .err()
         .unwrap();
-    assert!(error.message.contains("Degenerate"), "{error}");
+    assert!(error.message.contains("present, distinct edges"), "{error}");
     assert_eq!(source.topology_snapshot(feature, 0).unwrap(), snapshot);
 }
 

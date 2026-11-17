@@ -190,12 +190,8 @@ fn signed_partial_revolution_has_two_ordered_cap_wires_and_a_real_cavity() {
     let rust =
         Solid::rust_revolve_curved_profile_named(&profile, axis, sweep, feature, &origins, policy)
             .unwrap();
-    let native =
-        Solid::revolve_curved_profile_named(&profile, axis, sweep, feature, &origins, policy)
-            .unwrap();
     let expected = FRAC_PI_2 * 291.;
     assert!((rust.volume_mm3().unwrap() - expected).abs() < 1e-8);
-    assert!((native.volume_mm3().unwrap() - expected).abs() < 1e-7);
     let angle = PI / 4.;
     let (sin, cos) = angle.sin_cos();
     assert!(

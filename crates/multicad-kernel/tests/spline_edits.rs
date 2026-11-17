@@ -1,6 +1,7 @@
 use multicad_core::{
     constraint_sketch::SplineBasis,
-    sketch_regions::{ExactCurve, RegionQueries},
+    document::EntityId,
+    sketch_regions::{Edge, ExactCurve, RegionQueries},
 };
 use multicad_kernel::*;
 fn p() -> GeometryPolicy {
@@ -50,6 +51,44 @@ fn exact(s: &BSpline2d) -> ExactCurve {
             weights: s.weights.clone(),
         },
     }
+}
+fn exact_edge(edge: &CurvedEdge2d) -> ExactCurve {
+    match edge.clone() {
+        CurvedEdge2d::Line { a, b } => ExactCurve::Line { a, b },
+        CurvedEdge2d::Arc {
+            center,
+            a,
+            b,
+            clockwise,
+        } => ExactCurve::Arc {
+            center,
+            a,
+            b,
+            clockwise,
+        },
+        CurvedEdge2d::Circle { center, radius_mm } => ExactCurve::Circle { center, radius_mm },
+        CurvedEdge2d::BSpline(s) => exact(&s),
+    }
+}
+/// A reported hit lies exactly on `curve`: its exact projection has no
+/// residual and evaluating the curve at that parameter reproduces the hit.
+fn on_curve(curve: &CurvedEdge2d, hit: [f64; 2]) {
+    let projections = NativeRegionQueries::default()
+        .project_parameters(&exact_edge(curve), hit, p().linear_tolerance_mm)
+        .unwrap();
+    let nearest = projections
+        .iter()
+        .min_by(|a, b| a.distance_mm.total_cmp(&b.distance_mm))
+        .unwrap();
+    assert!(nearest.distance_mm < 1e-7, "{nearest:?}");
+    let [first, last] = curve.domain(p()).unwrap();
+    point(
+        curve
+            .evaluate(first + nearest.parameter * (last - first), p())
+            .unwrap()
+            .point,
+        hit,
+    );
 }
 #[test]
 fn rust_segmentation_preserves_rational_and_nonrational_spans_and_original_source() {
@@ -192,20 +231,20 @@ fn exact_segment_hits_line_arc_circle_and_spline_boundaries_and_builds_a_real_so
         ),
     ];
     for (boundary, x) in boundaries {
-        let hits = edge.intersections(&boundary, p()).unwrap();
-        assert_eq!(hits.overlap_segments, 0);
+        let hits = NativeRegionQueries::default()
+            .intersections(
+                &exact_edge(&edge),
+                &exact_edge(&boundary),
+                p().linear_tolerance_mm,
+            )
+            .unwrap();
+        assert!(!hits.overlap);
         assert_eq!(hits.points.len(), 1);
         let hit = hits.points[0];
-        near(hit.point[0], x);
-        near(hit.point[1], (1. - x * x).sqrt());
-        point(
-            edge.evaluate(hit.first_parameter, p()).unwrap().point,
-            hit.point,
-        );
-        point(
-            boundary.evaluate(hit.second_parameter, p()).unwrap().point,
-            hit.point,
-        );
+        near(hit[0], x);
+        near(hit[1], (1. - x * x).sqrt());
+        on_curve(&edge, hit);
+        on_curve(&boundary, hit);
     }
     let a = retained.evaluate(0.1, p()).unwrap().point;
     let b = retained.evaluate(0.9, p()).unwrap().point;
@@ -219,7 +258,23 @@ fn exact_segment_hits_line_arc_circle_and_spline_boundaries_and_builds_a_real_so
         holes: vec![],
     };
     let expected = (b[1].atan2(b[0]) - a[1].atan2(a[0])) * 0.5;
-    near(profile.area_mm2(p()).unwrap(), expected);
+    let boundary: Vec<_> = profile
+        .outer
+        .iter()
+        .map(|edge| Edge {
+            authored: EntityId::new(),
+            reversed: false,
+            fragment: None,
+            curve: exact_edge(edge),
+        })
+        .collect();
+    near(
+        NativeRegionQueries::default()
+            .signed_area(&boundary, p().linear_tolerance_mm)
+            .unwrap()
+            .abs(),
+        expected,
+    );
     let solid = Solid::extrude_curved_profile(&profile, 3., p()).unwrap();
     near(solid.volume_mm3().unwrap(), 3. * expected);
 }

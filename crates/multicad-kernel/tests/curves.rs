@@ -1,6 +1,8 @@
 use multicad_core::{
+    constraint_sketch::SplineBasis,
     document::EntityId,
     references::{GeometryIntent, Origin, Resolution, TopologyKind, resolve},
+    sketch_regions::{Edge, ExactCurve, PointLocation, QueryError, RegionQueries},
 };
 use multicad_kernel::*;
 
@@ -9,6 +11,91 @@ fn policy() -> GeometryPolicy {
 }
 fn near(a: f64, b: f64) {
     assert!((a - b).abs() < 1e-6, "{a} != {b}");
+}
+/// The exact Rust sketch-region service used by sketch editing and profiles.
+fn queries() -> NativeRegionQueries {
+    NativeRegionQueries::new(policy()).unwrap()
+}
+fn tolerance() -> f64 {
+    policy().linear_tolerance_mm
+}
+fn exact(edge: &CurvedEdge2d) -> ExactCurve {
+    match edge.clone() {
+        CurvedEdge2d::Line { a, b } => ExactCurve::Line { a, b },
+        CurvedEdge2d::Arc {
+            center,
+            a,
+            b,
+            clockwise,
+        } => ExactCurve::Arc {
+            center,
+            a,
+            b,
+            clockwise,
+        },
+        CurvedEdge2d::Circle { center, radius_mm } => ExactCurve::Circle { center, radius_mm },
+        CurvedEdge2d::BSpline(s) => ExactCurve::BSpline {
+            poles: s.poles,
+            basis: SplineBasis {
+                degree: s.degree,
+                knots: s.knots,
+                multiplicities: s.multiplicities,
+                weights: s.weights,
+            },
+        },
+    }
+}
+fn boundary(wire: &[CurvedEdge2d]) -> Vec<Edge> {
+    wire.iter()
+        .map(|edge| Edge {
+            authored: EntityId::new(),
+            reversed: false,
+            fragment: None,
+            curve: exact(edge),
+        })
+        .collect()
+}
+/// Exact face area: the outer boundary magnitude less every hole magnitude.
+fn area(p: &CurvedProfile) -> Result<f64, QueryError> {
+    let q = queries();
+    let outer = q.signed_area(&boundary(&p.outer), tolerance())?.abs();
+    p.holes.iter().try_fold(outer, |area, hole| {
+        Ok(area - q.signed_area(&boundary(hole), tolerance())?.abs())
+    })
+}
+/// Exact face classification: inside the outer boundary and outside every hole.
+fn classify(p: &CurvedProfile, point: [f64; 2]) -> Result<PointLocation, QueryError> {
+    let q = queries();
+    let outer = q.classify_boundary(&boundary(&p.outer), point, tolerance())?;
+    if outer != PointLocation::Inside {
+        return Ok(outer);
+    }
+    for hole in &p.holes {
+        match q.classify_boundary(&boundary(hole), point, tolerance())? {
+            PointLocation::Inside => return Ok(PointLocation::Outside),
+            PointLocation::Boundary => return Ok(PointLocation::Boundary),
+            PointLocation::Outside => {}
+        }
+    }
+    Ok(PointLocation::Inside)
+}
+/// A reported hit lies exactly on `curve`: its exact projection has no
+/// residual and evaluating the curve at that parameter reproduces the hit.
+fn on_curve(curve: &CurvedEdge2d, hit: [f64; 2]) {
+    let projections = queries()
+        .project_parameters(&exact(curve), hit, tolerance())
+        .unwrap();
+    let nearest = projections
+        .iter()
+        .min_by(|a, b| a.distance_mm.total_cmp(&b.distance_mm))
+        .unwrap();
+    assert!(nearest.distance_mm < 1e-6, "{nearest:?}");
+    let [first, last] = curve.domain(policy()).unwrap();
+    let evaluated = curve
+        .evaluate(first + nearest.parameter * (last - first), policy())
+        .unwrap();
+    near(evaluated.point[0], hit[0]);
+    near(evaluated.point[1], hit[1]);
 }
 fn line(a: [f64; 2], b: [f64; 2]) -> CurvedEdge2d {
     CurvedEdge2d::Line { a, b }
@@ -148,36 +235,39 @@ fn invalid_and_unbounded_bases_fail_before_native_geometry() {
 
 #[test]
 fn exact_intersections_report_parameters_and_overlap_without_polylines() {
+    let q = queries();
     let curve = CurvedEdge2d::BSpline(arch());
-    let hits = curve
-        .intersections(&line([0., 2.5], [10., 2.5]), policy())
+    let chord = line([0., 2.5], [10., 2.5]);
+    let hits = q
+        .intersections(&exact(&curve), &exact(&chord), tolerance())
         .unwrap();
     assert_eq!(hits.points.len(), 2);
-    assert_eq!(hits.overlap_segments, 0);
+    assert!(!hits.overlap);
     for hit in hits.points {
-        near(hit.point[1], 2.5);
-        let evaluated = curve.evaluate(hit.first_parameter, policy()).unwrap();
-        near(evaluated.point[0], hit.point[0]);
-        near(evaluated.point[1], hit.point[1]);
+        near(hit[1], 2.5);
+        on_curve(&curve, hit);
+        on_curve(&chord, hit);
     }
     assert!(
-        curve
-            .self_intersections(policy())
+        q.self_intersections(&exact(&curve), tolerance())
             .unwrap()
             .points
             .is_empty()
     );
-    let overlap = curve.intersections(&curve, policy()).unwrap();
-    assert!(overlap.overlap_segments > 0);
+    let overlap = q
+        .intersections(&exact(&curve), &exact(&curve), tolerance())
+        .unwrap();
+    assert!(overlap.overlap);
     let quarter = CurvedEdge2d::BSpline(quarter());
-    let hits = quarter
-        .intersections(&line([0., 0.], [10., 10.]), policy())
+    let hits = q
+        .intersections(
+            &exact(&quarter),
+            &exact(&line([0., 0.], [10., 10.])),
+            tolerance(),
+        )
         .unwrap();
     assert_eq!(hits.points.len(), 1);
-    near(
-        hits.points[0].point[0],
-        10. * std::f64::consts::FRAC_1_SQRT_2,
-    );
+    near(hits.points[0][0], 10. * std::f64::consts::FRAC_1_SQRT_2);
 }
 
 #[test]
@@ -190,16 +280,18 @@ fn self_crossing_spline_is_reported_and_cannot_bound_a_face() {
         weights: None,
     };
     let edge = CurvedEdge2d::BSpline(spline);
-    let hits = edge.self_intersections(policy()).unwrap();
+    let hits = queries()
+        .self_intersections(&exact(&edge), tolerance())
+        .unwrap();
     assert_eq!(hits.points.len(), 1);
-    near(hits.points[0].point[0], 5.);
-    near(hits.points[0].point[1], 6.);
+    near(hits.points[0][0], 5.);
+    near(hits.points[0][1], 6.);
     let p = CurvedProfile {
         frame: Default::default(),
         outer: vec![edge, line([10., 0.], [0., 0.])],
         holes: vec![],
     };
-    assert!(p.area_mm2(policy()).is_err());
+    assert!(area(&p).is_err());
     assert!(Solid::extrude_curved_profile(&p, 2., policy()).is_err());
     // A genuinely closed clamped curve may meet itself only at its endpoints.
     let closed = CurvedProfile {
@@ -213,7 +305,7 @@ fn self_crossing_spline_is_reported_and_cannot_bound_a_face() {
         })],
         holes: vec![],
     };
-    assert!(closed.area_mm2(policy()).unwrap() > 0.);
+    assert!(area(&closed).unwrap() > 0.);
     assert!(
         Solid::extrude_curved_profile(&closed, 2., policy())
             .unwrap()
@@ -227,29 +319,17 @@ fn self_crossing_spline_is_reported_and_cannot_bound_a_face() {
 fn true_spline_face_holes_winding_classification_and_extrusion() {
     let mut p = arch_profile();
     p.holes.push(rectangle([4., 1.], [6., 2.]));
-    near(p.area_mm2(policy()).unwrap(), 100. / 3. - 2.);
-    assert_eq!(
-        p.classify([5., 3.], policy()).unwrap(),
-        CurvePointLocation::Inside
-    );
-    assert_eq!(
-        p.classify([5., 1.5], policy()).unwrap(),
-        CurvePointLocation::Outside
-    );
-    assert_eq!(
-        p.classify([5., 5.], policy()).unwrap(),
-        CurvePointLocation::Boundary
-    );
-    assert_eq!(
-        p.classify([20., 0.], policy()).unwrap(),
-        CurvePointLocation::Outside
-    );
+    near(area(&p).unwrap(), 100. / 3. - 2.);
+    assert_eq!(classify(&p, [5., 3.]).unwrap(), PointLocation::Inside);
+    assert_eq!(classify(&p, [5., 1.5]).unwrap(), PointLocation::Outside);
+    assert_eq!(classify(&p, [5., 5.]).unwrap(), PointLocation::Boundary);
+    assert_eq!(classify(&p, [20., 0.]).unwrap(), PointLocation::Outside);
     let source = p.clone();
     let a = Solid::extrude_curved_profile(&p, 3., policy()).unwrap();
     near(a.volume_mm3().unwrap(), 94.);
     assert_eq!(p, source);
     reverse_profile(&mut p);
-    near(p.area_mm2(policy()).unwrap(), 100. / 3. - 2.);
+    near(area(&p).unwrap(), 100. / 3. - 2.);
     p.frame = PlaneFrame {
         origin: [20., 30., 40.],
         u: [0., 1., 0.],
@@ -282,7 +362,7 @@ fn rational_solid_step_roundtrip_keeps_exact_volume_and_named_faces() {
                 role: format!("curve-{i}"),
             })
             .collect();
-        near(p.area_mm2(policy()).unwrap(), 25. * std::f64::consts::PI);
+        near(area(&p).unwrap(), 25. * std::f64::consts::PI);
         let solid =
             Solid::extrude_curved_profile_named(&p, 4., feature, &origins, policy()).unwrap();
         near(solid.volume_mm3().unwrap(), 100. * std::f64::consts::PI);
@@ -392,7 +472,7 @@ fn mixed_true_arcs_circles_and_spline_profiles_have_exact_material_and_origins()
     let mut p = arch_profile();
     p.holes.push(vec![circle.clone()]);
     let expected = 100. / 3. - std::f64::consts::PI * 0.25;
-    near(p.area_mm2(policy()).unwrap(), expected);
+    near(area(&p).unwrap(), expected);
     near(
         Solid::extrude_curved_profile(&p, 4., policy())
             .unwrap()
@@ -469,23 +549,21 @@ fn mixed_true_arcs_circles_and_spline_profiles_have_exact_material_and_origins()
             .point[0],
         10.,
     );
-    let hit = arc
+    let hit = queries()
         .intersections(
-            &CurvedEdge2d::BSpline(BSpline2d {
+            &exact(&arc),
+            &exact(&CurvedEdge2d::BSpline(BSpline2d {
                 degree: 1,
                 poles: vec![[0., 0.], [10., 10.]],
                 knots: vec![0., 1.],
                 multiplicities: vec![2, 2],
                 weights: None,
-            }),
-            policy(),
+            })),
+            tolerance(),
         )
         .unwrap();
     assert_eq!(hit.points.len(), 1);
-    near(
-        hit.points[0].point[0],
-        10. * std::f64::consts::FRAC_1_SQRT_2,
-    );
+    near(hit.points[0][0], 10. * std::f64::consts::FRAC_1_SQRT_2);
     let invalid = CurvedEdge2d::Arc {
         center: [0., 0.],
         a: [1., 0.],
