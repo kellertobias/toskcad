@@ -897,8 +897,9 @@ pub fn read_assembly_validated(
 
 /// Inspect boundary incidence for an independent refusal. This checks the
 /// existing point incidence as full solid construction; only analytic support
-/// orientations are normalized. Unresolved orientations grant no topology or
-/// geometry authority. None means no refusal was established, never valid geometry.
+/// orientations are normalized. Non-analytic winding/pole/lune domain checks
+/// remain unresolved, as does normalization-dependent topology. None means no
+/// refusal was established; it never means valid geometry or import admission.
 pub fn retained_geometry_refusal(
     input: &str,
     tolerance: f64,

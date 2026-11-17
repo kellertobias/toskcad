@@ -207,6 +207,28 @@ fn seams(surface: &Surface, uv: [f64; 2]) -> [bool; 2] {
     })
 }
 
+/// The original first-pass inversion order and previous-seed sequence.
+/// The callback runs only after the same point residual check succeeds.
+/// This grants no winding, pole-chain, lune-width or orientation authority.
+fn walk_incidence(
+    surface: &Surface,
+    points: &[Raw],
+    tolerance: f64,
+    mut visit: impl FnMut([f64; 2]),
+) -> Result<()> {
+    let mut previous: Option<[f64; 2]> = None;
+    for point in points {
+        let uv = surface.invert(point.position, previous);
+        previous = Some(uv);
+        ensure(
+            distance(surface.evaluate(uv).0, point.position) <= tolerance,
+            Error::Invalid,
+        )?;
+        visit(uv);
+    }
+    Ok(())
+}
+
 /// Unroll one loop. `None` means every point lies on a seam or a pole, so
 /// the loop carries no information beyond the closed surface itself.
 pub(crate) fn unroll(
@@ -218,18 +240,11 @@ pub(crate) fn unroll(
     let mut free = Vec::with_capacity(points.len());
     // Each point is sought from its predecessor: loop points lie close
     // together, and a global search per point would scale with the net.
-    let mut previous: Option<[f64; 2]> = None;
-    for point in &points {
-        let uv = surface.invert(point.position, previous);
-        previous = Some(uv);
-        ensure(
-            distance(surface.evaluate(uv).0, point.position) <= tolerance,
-            Error::Invalid,
-        )?;
+    walk_incidence(surface, &points, tolerance, |uv| {
         let pole = surface.is_pole(uv, tolerance);
         let seam = seams(surface, relative(surface, uv));
         free.push((uv, pole, pole || seam[0] || seam[1], seam));
-    }
+    })?;
     // A loop that runs along one seam alone, such as a meridian closing a
     // band of a torus, is anchored at a seam point: the band's partner loop
     // places it. A loop on both seams or only at poles, or one that winds
@@ -483,8 +498,9 @@ pub(crate) fn degenerate(
     Ok(any)
 }
 
-/// Check only the same sampled point incidence as the orientation path.
-/// No signed area, loop normalization, topology or material is certified.
+/// Check the same raw samples using only the original first-pass incidence.
+/// Later unroll conditions, including the two-pole lune-width Invalid guard,
+/// remain unclassified here. No winding, orientation or material is certified.
 pub(crate) fn incidence_only(
     boundary: &Boundary,
     face_index: usize,
@@ -497,7 +513,7 @@ pub(crate) fn incidence_only(
     }
     for trim in face.loops.iter().filter(|trim| !trim.uses.is_empty()) {
         let points = raw(boundary, &trim.uses, samples, false);
-        unroll(&face.surface, points, tolerance)?;
+        walk_incidence(&face.surface, &points, tolerance, |_| {})?;
     }
     Ok(())
 }
@@ -549,3 +565,6 @@ pub(crate) fn orientation(
         _ => None,
     })
 }
+
+#[cfg(test)]
+mod incidence_walk_tests;
