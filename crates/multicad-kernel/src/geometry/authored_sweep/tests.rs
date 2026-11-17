@@ -589,3 +589,65 @@ fn pinched_tangent_crossing_and_spline_axis_contacts_refuse() {
     let spline = revolve(&spline, [0.; 3], 90.);
     assert_eq!(spline.err().unwrap().kind, GeometryErrorKind::Unsupported);
 }
+
+#[test]
+fn slanted_and_inward_spline_meridians_keep_exact_volumes_in_either_winding() {
+    // Cylinder, cone and a bulging arc; first moment 96 + 56/3 + 12 pi.
+    let forward = CurvedProfile {
+        frame: PlaneFrame::default(),
+        outer: vec![
+            line([2., 0.], [6., 0.]),
+            line([6., 0.], [6., 2.]),
+            CurvedEdge2d::Arc {
+                center: [6., 4.],
+                a: [6., 2.],
+                b: [6., 6.],
+                clockwise: false,
+            },
+            line([6., 6.], [2., 8.]),
+            line([2., 8.], [2., 0.]),
+        ],
+        holes: vec![],
+    };
+    // The same region authored clockwise, so the cone runs the other way.
+    let mut reversed = forward.clone();
+    reversed.outer = vec![
+        line([2., 0.], [2., 8.]),
+        line([2., 8.], [6., 6.]),
+        CurvedEdge2d::Arc {
+            center: [6., 4.],
+            a: [6., 6.],
+            b: [6., 2.],
+            clockwise: true,
+        },
+        line([6., 2.], [6., 0.]),
+        line([6., 0.], [2., 0.]),
+    ];
+    let moment = 96. + 56. / 3. + 12. * PI;
+    for profile in [&forward, &reversed] {
+        for degrees in [75_f64, 360.] {
+            let solid = revolve(profile, [0.; 3], degrees).unwrap();
+            near(solid.volume_mm3().unwrap(), moment * degrees.to_radians());
+        }
+    }
+    // A spline wall bulging toward the axis faces it in a full turn.
+    let inward = CurvedProfile {
+        frame: PlaneFrame::default(),
+        outer: vec![
+            line([4., 0.], [8., 0.]),
+            line([8., 0.], [8., 4.]),
+            line([8., 4.], [4., 4.]),
+            CurvedEdge2d::BSpline(BSpline2d {
+                degree: 2,
+                poles: vec![[4., 4.], [2., 2.], [4., 0.]],
+                knots: vec![0., 1.],
+                multiplicities: vec![3, 3],
+                weights: None,
+            }),
+        ],
+        holes: vec![],
+    };
+    // Square moment 96 plus a parabolic segment of area 8/3 at radius 3.6.
+    let solid = revolve(&inward, [0.; 3], 360.).unwrap();
+    near(solid.volume_mm3().unwrap(), (96. + 8. / 3. * 3.6) * TAU);
+}
