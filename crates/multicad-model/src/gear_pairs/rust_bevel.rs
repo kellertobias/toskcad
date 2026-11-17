@@ -52,6 +52,7 @@ pub(super) fn validate(
     pair: EntityId,
     source: &GearPairDefinition,
     resolved: &model::ResolvedGearPair,
+    (phases, reused): (Vec<f64>, bool),
 ) -> Result<GearPairCheck, ModelError> {
     let document = inputs.document;
     let evaluated = inputs.evaluated;
@@ -71,11 +72,8 @@ pub(super) fn validate(
                 .ok_or_else(|| error(Some(pair), "Bevel pairs require two bevel members"))
         })
         .sum::<Result<f64, _>>()?;
-    let phases: Vec<_> = (0..SAMPLES)
-        .map(|i| TAU / f64::from(resolved.gears[0].teeth()) * i as f64 / (SAMPLES - 1) as f64)
-        .collect();
     let start = std::time::Instant::now();
-    for &drive in &phases {
+    for &drive in phases.iter().filter(|_| !reused) {
         checkpoint(inputs.interrupt)?;
         let sample = sample_document(document, pair, source, drive)?;
         let [pa, pb] = source.outputs.instances.map(|instance| {
@@ -86,7 +84,11 @@ pub(super) fn validate(
         let placed_b = placed(b, pb?, pair)?;
         check(pair, [&placed_a, &placed_b], drive, clearance, inputs)?;
     }
-    let sampled_cycle_ms = start.elapsed().as_secs_f64() * 1000.;
+    let sampled_cycle_ms = if reused {
+        0.
+    } else {
+        start.elapsed().as_secs_f64() * 1000.
+    };
     checkpoint(inputs.interrupt)?;
     let current = source
         .parameters
@@ -111,7 +113,7 @@ pub(super) fn validate(
         worm: None,
         current_engagement: Some(witness),
         cycle_drive_angles_rad: phases,
-        cycle_reused: false,
+        cycle_reused: reused,
         sampled_cycle_ms,
         current_pose_ms: start.elapsed().as_secs_f64() * 1000.,
         current_drive_angle_rad: current,
