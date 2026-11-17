@@ -1508,6 +1508,9 @@ impl Solid {
             if let Some(result) = self.contained_sweep_boolean(other, operation, policy) {
                 return result;
             }
+            if let Some(result) = self.subtract_cylinder_through_sweep(other, operation, policy) {
+                return result;
+            }
             if let Some(result) = self.concentric_ring_boolean(other, operation, policy) {
                 return result;
             }

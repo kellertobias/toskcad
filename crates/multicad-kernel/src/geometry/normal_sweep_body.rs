@@ -14,6 +14,7 @@ mod contained_boolean;
 mod fillet;
 mod piercing;
 mod profile_depth;
+mod through_hole;
 pub use piercing::SweepOpening;
 
 #[derive(Clone)]

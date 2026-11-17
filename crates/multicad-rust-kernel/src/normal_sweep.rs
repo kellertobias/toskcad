@@ -6,6 +6,7 @@ use crate::{
 use std::f64::consts::{FRAC_PI_2, TAU};
 
 mod classify;
+mod hole;
 mod piercing;
 mod validation;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
