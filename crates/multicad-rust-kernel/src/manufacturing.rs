@@ -99,17 +99,19 @@ pub fn certify(mesh: &DisplayMesh) -> Result<MeshProof, MeshError> {
     }
 }
 
-/// Private budgeted form of the same exact indexed-connectivity algorithm.
-/// The callback charges work, or checks total live certification scratch bytes,
-/// before the corresponding operation/allocation. It never authorizes geometry.
-pub(crate) fn certify_counted<E>(
+/// Budgeted indexed connectivity, preserving the input coordinates/topology.
+/// The callback receives incremental logical work and/or current certification
+/// scratch bytes before the operation/allocation. Scratch excludes the input
+/// mesh and caller-owned data. Returning an error aborts without a proof.
+/// Connectivity alone supplies no source correspondence or literal embedding.
+pub fn certify_counted<E>(
     mesh: &DisplayMesh,
     callback: &mut dyn FnMut(usize, Option<usize>) -> Result<(), E>,
 ) -> Result<MeshProof, CountedError<E>> {
     certify_impl::<_, true>(mesh, &mut Budget(callback))
 }
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum CountedError<E> {
+pub enum CountedError<E> {
     Mesh(MeshError),
     Interrupted(E),
 }
