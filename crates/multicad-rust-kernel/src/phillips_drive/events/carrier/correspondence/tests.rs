@@ -46,7 +46,7 @@ fn bezier(p: &[[Q; 3]; 4], t: &Q, derivative: bool) -> [Q; 3] {
     })
 }
 #[test]
-fn trim_c1_taylor3_bound_encloses_independent_rational_polynomials_and_chain_factors() {
+fn trim_c1_taylor4_bound_encloses_independent_rational_polynomials_and_chain_factors() {
     let columns = [[0.8, 0.6, 0.], [-0.36, 0.48, 0.8], [0.48, -0.64, 0.6]];
     let origin = [11., -7., 23.];
     let scale = [
@@ -59,7 +59,7 @@ fn trim_c1_taylor3_bound_encloses_independent_rational_polynomials_and_chain_fac
         Q::from_integer((-1_000_000).into()),
         Q::new(7.into(), 10.into()),
     ];
-    for degree in 0..=4usize {
+    for degree in 0..=6usize {
         for (a, b) in [
             (Q::zero(), Q::one()),
             (Q::new(1.into(), 10.into()), Q::new(3.into(), 10.into())),
@@ -88,11 +88,14 @@ fn trim_c1_taylor3_bound_encloses_independent_rational_polynomials_and_chain_fac
             });
             let p = polynomial(midpoint, hi);
             let fourth = std::array::from_fn(|axis| {
-                if degree == 4 {
+                let whole = if degree >= 4 {
                     enclose(&scale[axis])
+                        * I::point(choose(degree, 4) as f64)
+                        * power(I::new(ai.lo, bi.hi), degree - 4)
                 } else {
                     I::point(0.)
-                }
+                };
+                whole - midpoint[axis].c[4]
             });
             let value = |t: &Q, derivative: bool| {
                 std::array::from_fn::<_, 3, _>(|axis| {
@@ -154,7 +157,7 @@ fn trim_c1_taylor3_bound_encloses_independent_rational_polynomials_and_chain_fac
             }
         }
     }
-    let huge = [[[I::point(f64::MAX); 3]; 4]; 1][0];
+    let huge = [[I::point(f64::MAX); 3]; 5];
     assert!(matches!(
         difference_bounds(
             huge,

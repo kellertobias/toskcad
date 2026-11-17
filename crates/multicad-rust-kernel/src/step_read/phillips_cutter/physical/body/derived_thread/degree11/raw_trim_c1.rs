@@ -30,6 +30,7 @@ fn actual_m3_raw_trim_c1_uses_original_decimal_points_knots_and_all_corner_orbit
             let mut curves = 0usize;
             let mut position = 0_f64;
             let mut derivative = 0_f64;
+            let mut whole_trim_derivative = 0_f64;
             let mut worst = None;
             for mapping in representative.edges() {
                 let CurveKey::Trim {
@@ -178,6 +179,10 @@ fn actual_m3_raw_trim_c1_uses_original_decimal_points_knots_and_all_corner_orbit
                         .unwrap();
                     let p = compared.maximum_position_mm();
                     let d = compared.maximum_derivative_mm();
+                    let width = interval(parameters[1]) - interval(parameters[0]);
+                    assert!(width.lo > 0.);
+                    whole_trim_derivative =
+                        whole_trim_derivative.max((I::point(d) / I::point(width.lo)).hi);
                     position = position.max(p);
                     if d > derivative {
                         derivative = d;
@@ -194,12 +199,16 @@ fn actual_m3_raw_trim_c1_uses_original_decimal_points_knots_and_all_corner_orbit
                 }
             }
             eprintln!(
-                "RAW_TRIM_C1 left={left} curves={curves} spans={spans} canonical={} original_points={} fresh_work={work} inherited_head_work={} maximum_c0={position:.17E} maximum_c1={derivative:.17E} worst={worst:?}",
+                "RAW_TRIM_C1 left={left} curves={curves} spans={spans} canonical={} original_points={} fresh_work={work} inherited_head_work={} maximum_c0={position:.17E} maximum_c1={derivative:.17E} whole_trim_c1={whole_trim_derivative:.17E} worst={worst:?}",
                 prepared.len(),
                 points.len(),
                 head.work_used()
             );
             assert!(curves > 0 && spans > 0 && prepared.len() < spans);
+            assert!(
+                whole_trim_derivative <= 1e-7,
+                "actual raw whole-trim C1 {whole_trim_derivative}"
+            );
             assert!(position <= 1e-7, "actual raw C0 policy {position}");
             assert!(
                 derivative <= 1e-7,
