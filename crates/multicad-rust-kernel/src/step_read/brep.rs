@@ -887,7 +887,8 @@ pub fn read_assembly(
 
 /// Read the exact immutable input and tolerance whose complete trim checks
 /// were earned by the sealed receipt. Geometry, incidence and placement are
-/// still checked normally; declared-incidence widening never widens trim proof.
+/// still checked normally. Trims were proved to the declared uncertainty
+/// (capped at [`MAX_DECLARED_TOLERANCE_MM`]) when the file states a wider one.
 pub fn read_assembly_validated(
     verified: &PcurveValidatedInput<'_>,
     interrupt: crate::brep::Interrupt<'_>,

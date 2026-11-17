@@ -190,7 +190,11 @@ pub fn validate_pcurve_input<'i>(
         }
         let source = Source::from_entities(entities, tolerance)?;
         budget.poll()?;
-        let report = validate_source(&source, tolerance, &mut budget)?;
+        // Trims are proved to the file's declared length uncertainty when it
+        // is wider, capped exactly like vertex incidence (product decision
+        // 2026-11-17). The caller's tolerance remains the lower bound.
+        let trim = trim_tolerance(&source, tolerance);
+        let report = validate_source(&source, trim, &mut budget)?;
         drop(source);
         budget.poll()?;
         Ok(report)
@@ -216,6 +220,13 @@ pub fn validate_pcurve_input<'i>(
             Err(error)
         }
     }
+}
+/// The tolerance trim proofs use: the caller's, widened to a declared
+/// length uncertainty capped at [`MAX_DECLARED_TOLERANCE_MM`].
+fn trim_tolerance(source: &Source<'_>, tolerance: f64) -> f64 {
+    source.declared_uncertainty().map_or(tolerance, |declared| {
+        tolerance.max(declared.min(MAX_DECLARED_TOLERANCE_MM))
+    })
 }
 #[derive(Clone, Copy)]
 struct Binding {
