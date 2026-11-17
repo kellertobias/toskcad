@@ -345,3 +345,28 @@ fn boundary_failures_keep_their_kind_and_names_cover_every_face() {
     );
     assert!(unit([0.; 3]).is_err());
 }
+
+#[test]
+fn glued_unions_match_shared_edges_authored_in_opposite_directions() {
+    let forward = half_disc();
+    let mut reversed = forward.clone();
+    reversed.outer = vec![
+        line([3., 0.], [-3., 0.]),
+        CurvedEdge2d::Arc {
+            center: [0., 0.],
+            a: [-3., 0.],
+            b: [3., 0.],
+            clockwise: false,
+        },
+    ];
+    let up = translated(&forward, [1., 0., 4.]).unwrap();
+    let down = translated(&reversed, [1., 0., -4.]).unwrap();
+    let joined = up
+        .glued_brep_union(&down, BooleanOperation::Union, policy())
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    near(joined.volume_mm3().unwrap(), 4.5 * PI * 8.);
+    // Two far caps and two walls on each side of the waist remain.
+    assert_eq!(joined.faces().unwrap().len(), 6);
+}

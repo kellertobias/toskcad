@@ -868,7 +868,7 @@ impl Solid {
         naming: AuthoredNaming,
         policy: GeometryPolicy,
     ) -> Result<Self, GeometryError> {
-        Self::from_retained_brep(solid, feature, Some(Rc::new(naming)), policy)
+        Self::from_retained_brep(solid, feature, Rc::new(naming), policy)
     }
 
     /// Translate a certified curved section by an oblique displacement.

@@ -228,23 +228,17 @@ impl Solid {
     pub(super) fn from_retained_brep(
         solid: brep::Solid,
         feature: EntityId,
-        naming: Option<Rc<super::authored_sweep::AuthoredNaming>>,
+        naming: Rc<super::authored_sweep::AuthoredNaming>,
         policy: GeometryPolicy,
     ) -> Result<Self, GeometryError> {
-        let names = match naming {
-            Some(naming) => {
-                if naming.faces.len() != solid.boundary().faces.len() {
-                    return Err(error(
-                        OPERATION,
-                        GeometryErrorKind::InvalidResult,
-                        "Authored names must cover every retained face",
-                    ));
-                }
-                Names::Authored(naming)
-            }
-            None => Names::Imported(Rc::new(roles(&solid))),
-        };
-        Self::retained(solid, feature, names, policy)
+        if naming.faces.len() != solid.boundary().faces.len() {
+            return Err(error(
+                OPERATION,
+                GeometryErrorKind::InvalidResult,
+                "Authored names must cover every retained face",
+            ));
+        }
+        Self::retained(solid, feature, Names::Authored(naming), policy)
     }
 
     fn retained(
