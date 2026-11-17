@@ -1,5 +1,6 @@
 //! Whole-period radial containment of two ACTUAL retained thread profiles.
 //! Placement and finite material domains remain the consumer's responsibility.
+use super::classify::phase_radius;
 use super::*;
 use crate::tapered_thread::interval::I;
 
@@ -94,6 +95,62 @@ impl Thread {
                 cells: 0,
             });
         }
+        let lower = self.subdivide_containment(options, interrupt, |phase| {
+            cavity.radius_at_phase_interval(phase)
+        })?;
+        Ok(ProfileContainment {
+            external: self,
+            cavity,
+            lower: lower.0,
+            cells: lower.1,
+        })
+    }
+
+    /// Like [`Self::prove_profile_containment`], with the cavity's phase law
+    /// displaced by an axial phase shift known to lie in `shift_mm`. A
+    /// coaxial cavity rotated about or translated along the common axis is
+    /// such a shift. Coincident profiles still need the cell proof here.
+    pub fn prove_shifted_profile_containment<'a>(
+        &'a self,
+        cavity: &'a Thread,
+        shift_mm: [f64; 2],
+        options: ProfileContainmentOptions,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<ProfileContainment<'a>, ProfileContainmentError> {
+        use ProfileContainmentError::*;
+        checkpoint(interrupt)?;
+        let shift = I::new(shift_mm[0], shift_mm[1]);
+        if options.maximum_cells == 0
+            || options.maximum_cells > 1_000_000
+            || self.spec.pitch_mm != cavity.spec.pitch_mm
+            || self.spec.starts != cavity.spec.starts
+            || self.spec.left_hand != cavity.spec.left_hand
+            || !shift.valid()
+            || shift.width() >= cavity.spec.pitch_mm
+        {
+            return Err(Invalid);
+        }
+        let pitch = I::point(cavity.spec.pitch_mm);
+        let lower = self.subdivide_containment(options, interrupt, |phase| {
+            let q = phase - shift;
+            phase_radius(cavity, q, q / pitch)
+        })?;
+        Ok(ProfileContainment {
+            external: self,
+            cavity,
+            lower: lower.0,
+            cells: lower.1,
+        })
+    }
+
+    /// The certified lower gap bound and the cells visited over one period.
+    fn subdivide_containment(
+        &self,
+        options: ProfileContainmentOptions,
+        interrupt: Option<&dyn Fn() -> bool>,
+        cavity_radius: impl Fn(I) -> Option<I>,
+    ) -> Result<(f64, usize), ProfileContainmentError> {
+        use ProfileContainmentError::*;
         let initial = Cell {
             lo: 0.,
             hi: self.spec.pitch_mm,
@@ -113,7 +170,7 @@ impl Thread {
             let cell = stack[len];
             let phase = I::new(cell.lo, cell.hi);
             let outer = self.radius_at_phase_interval(phase).ok_or(Unresolved)?;
-            let inner = cavity.radius_at_phase_interval(phase).ok_or(Unresolved)?;
+            let inner = cavity_radius(phase).ok_or(Unresolved)?;
             let gap = inner - outer;
             if gap.lo > 0. {
                 lower = lower.min(gap.lo);
@@ -144,12 +201,7 @@ impl Thread {
             len += 2;
         }
         checkpoint(interrupt)?;
-        Ok(ProfileContainment {
-            external: self,
-            cavity,
-            lower,
-            cells,
-        })
+        Ok((lower, cells))
     }
 }
 

@@ -202,3 +202,68 @@ fn cancellation_is_polled_through_real_subdivision_and_before_publication() {
             .unwrap();
     }
 }
+#[test]
+fn shifted_cavities_are_proved_at_their_actual_phase() {
+    use ProfileContainmentError::*;
+    for starts in [1, 3] {
+        let outer = thread(2., true, false, starts);
+        // A deep cavity whose root still clears the outer crest at any phase.
+        let loose = thread(2.6, true, false, starts);
+        let pitch = outer.spec().pitch_mm;
+        for shift in [0., 0.13, pitch / 2., -0.4, 5. * pitch + 0.02] {
+            let proof = outer
+                .prove_shifted_profile_containment(
+                    &loose,
+                    [shift - 1e-12, shift + 1e-12],
+                    Default::default(),
+                    None,
+                )
+                .unwrap();
+            assert!(proof.minimum_gap_mm() > 0.);
+            for i in 0..512 {
+                let phase = i as f64 * pitch / 512.;
+                let gap = loose.radius_at_phase((phase - shift).rem_euclid(pitch))
+                    - outer.radius_at_phase(phase);
+                assert!(gap + 1e-12 >= proof.minimum_gap_mm(), "{shift} {phase}");
+            }
+        }
+        // A close cavity clears only near its own phase.
+        let close = thread(2.2, true, false, starts);
+        let zero = outer
+            .prove_shifted_profile_containment(&close, [0., 0.], Default::default(), None)
+            .unwrap();
+        let unshifted = outer
+            .prove_profile_containment(&close, Default::default(), None)
+            .unwrap();
+        assert_eq!(zero.minimum_gap_mm(), unshifted.minimum_gap_mm());
+        assert_eq!(
+            outer
+                .prove_shifted_profile_containment(
+                    &close,
+                    [pitch / 2., pitch / 2.],
+                    Default::default(),
+                    None
+                )
+                .unwrap_err(),
+            Unresolved
+        );
+    }
+    let outer = thread(2., true, false, 1);
+    let cavity = thread(2.2, true, false, 1);
+    let pitch = outer.spec().pitch_mm;
+    for bad in [[1., 0.], [f64::NAN, 0.], [0., pitch]] {
+        assert_eq!(
+            outer
+                .prove_shifted_profile_containment(&cavity, bad, Default::default(), None)
+                .unwrap_err(),
+            Invalid
+        );
+    }
+    let left = thread(2.2, true, true, 1);
+    assert_eq!(
+        outer
+            .prove_shifted_profile_containment(&left, [0., 0.], Default::default(), None)
+            .unwrap_err(),
+        Invalid
+    );
+}

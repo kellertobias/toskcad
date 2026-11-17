@@ -1,8 +1,9 @@
 //! Whole-source containment/disjointness only. No cut surface is approximated
 //! or manufactured by this path: a proved result shares an unchanged operand.
 use super::*;
+use crate::geometry::coaxial::Coaxial;
 use crate::geometry::internal_thread_treatment_body::interval::Interval as B;
-use multicad_rust_kernel::helical_thread::BoxClassification;
+use multicad_rust_kernel::helical_thread::{BoxClassification, ProfileContainmentError};
 mod headed;
 
 fn exact(value: Rational) -> B {
@@ -102,6 +103,24 @@ fn bore_relation(
         Some(UnresolvedBoundary)
     }
 }
+/// Which axial interval must contain the other for a profile proof to
+/// cover every pair of material points.
+#[derive(Clone, Copy)]
+enum Span {
+    ShaftInCavity,
+    CavityInShaft,
+    Unbounded,
+}
+impl Span {
+    /// `offset` is the cavity start along the shaft axis, within `error`.
+    fn admits(self, offset: f64, error: f64, shaft: f64, cavity: f64) -> bool {
+        match self {
+            Span::ShaftInCavity => offset <= error && offset + cavity >= shaft - error,
+            Span::CavityInShaft => offset >= -error && offset + cavity <= shaft + error,
+            Span::Unbounded => true,
+        }
+    }
+}
 impl Solid {
     fn disjoint_thread_mating(
         &self,
@@ -115,30 +134,58 @@ impl Solid {
         };
         let (a, af) = self.helical_body()?;
         let (b, bf) = other.helical_body()?;
-        if af != bf {
-            return None;
-        }
-        // The profiles use the same actual raw chart, not merely nearly
-        // coaxial metadata. A blind bore needs the entire shaft in its void's
-        // finite axial interval; a through nut has no stock beyond its thread.
-        let (shaft, cavity) = match (&a.form, &b.form) {
-            (HelicalForm::Shaft, HelicalForm::Bore(_))
-                if a.geometry.spec().length_mm <= b.geometry.spec().length_mm =>
-            {
-                (&a.geometry, &b.geometry)
+        // The external thread in its own chart, then the cavity, and which
+        // finite axial interval must contain the other. A bore needs the
+        // entire shaft in its void's interval; a through nut has no stock
+        // beyond its thread; a nut on a headed screw must sit wholly on the
+        // threaded length, away from the shank and head.
+        let (shaft, frame, cavity, cavity_frame, rule) = match (&a.form, &b.form) {
+            (HelicalForm::Shaft, HelicalForm::Bore(_)) => {
+                (&a.geometry, af, &b.geometry, bf, Span::ShaftInCavity)
             }
-            (HelicalForm::Bore(_), HelicalForm::Shaft)
-                if b.geometry.spec().length_mm <= a.geometry.spec().length_mm =>
-            {
-                (&b.geometry, &a.geometry)
+            (HelicalForm::Bore(_), HelicalForm::Shaft) => {
+                (&b.geometry, bf, &a.geometry, af, Span::ShaftInCavity)
             }
-            (HelicalForm::Shaft, HelicalForm::Nut(_)) => (&a.geometry, &b.geometry),
-            (HelicalForm::Nut(_), HelicalForm::Shaft) => (&b.geometry, &a.geometry),
+            (HelicalForm::Shaft, HelicalForm::Nut(_)) => {
+                (&a.geometry, af, &b.geometry, bf, Span::Unbounded)
+            }
+            (HelicalForm::Nut(_), HelicalForm::Shaft) => {
+                (&b.geometry, bf, &a.geometry, af, Span::Unbounded)
+            }
+            (HelicalForm::Screw(screw), HelicalForm::Nut(nut)) => {
+                (screw.thread(), af, nut.thread(), bf, Span::CavityInShaft)
+            }
+            (HelicalForm::Nut(nut), HelicalForm::Screw(screw)) => {
+                (screw.thread(), bf, nut.thread(), af, Span::CavityInShaft)
+            }
             _ => return None,
         };
-        shaft
-            .prove_profile_containment(cavity, Default::default(), None)
-            .ok()?;
+        let [shaft_length, cavity_length] = [shaft, cavity].map(|thread| thread.spec().length_mm);
+        let proof = if frame == cavity_frame {
+            if !rule.admits(0., 0., shaft_length, cavity_length) {
+                return None;
+            }
+            shaft.prove_profile_containment(cavity, Default::default(), None)
+        } else {
+            // A cavity rotated about or moved along the common axis is the
+            // same profile law at a certified phase shift.
+            let placement = Coaxial::of(frame, cavity_frame, shaft_length + cavity_length)?;
+            if !rule.admits(
+                placement.axial_mm,
+                placement.error_mm,
+                shaft_length,
+                cavity_length,
+            ) {
+                return None;
+            }
+            let shift = placement.phase_shift(cavity.helical_rate(), cavity.root_radius_mm())?;
+            shaft
+                .prove_shifted_profile_containment(cavity, shift, Default::default(), None)
+                .ok()
+                .filter(|proof| proof.minimum_gap_mm() >= placement.radial_mm)
+                .ok_or(ProfileContainmentError::Unresolved)
+        };
+        proof.ok()?;
         // A nonnegative whole-profile gap proves no common INTERIOR. Exact
         // coincident boundary contact cannot produce a three-dimensional solid.
         Some(if retain_left {

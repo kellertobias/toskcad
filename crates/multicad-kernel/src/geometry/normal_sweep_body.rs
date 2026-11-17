@@ -10,9 +10,11 @@ use multicad_core::references::{
 use multicad_rust_kernel::normal_sweep::{self, Edge, Sweep};
 use std::{collections::BTreeSet, f64::consts::TAU};
 
+mod contained_boolean;
 mod fillet;
 mod piercing;
 mod profile_depth;
+mod through_hole;
 pub use piercing::SweepOpening;
 
 #[derive(Clone)]

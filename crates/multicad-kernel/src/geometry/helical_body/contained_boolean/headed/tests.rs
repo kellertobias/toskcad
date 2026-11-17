@@ -219,3 +219,68 @@ fn numeric_enclosures_and_empty_shanks_cannot_publish_uncertain_material() {
         UnresolvedBoundary
     );
 }
+
+#[test]
+fn a_nut_on_the_threaded_length_clears_a_headed_screw_but_not_its_shank() {
+    let policy = GeometryPolicy::default();
+    for left in [false, true] {
+        let frame = PlaneFrame {
+            origin: [11., -7., 5.],
+            u: [0.8, 0.6, 0.],
+            v: [-0.36, 0.48, 0.8],
+        };
+        let screw = Solid::rust_machine_screw_at_thread_frame(
+            thread(left),
+            None,
+            ScrewSpec {
+                head: ScrewHead::ExternalHex {
+                    across_flats_mm: 8.,
+                    height_mm: 2.5,
+                },
+                shank_length_mm: 1.3,
+                shank_radius_mm: 2.1,
+            },
+            EntityId::new(),
+            frame,
+            policy,
+        )
+        .unwrap();
+        let nut = |along: f64| {
+            let n = frame.normal();
+            Solid::rust_hex_nut(
+                HelicalThread {
+                    major_radius_mm: 2.2,
+                    length_mm: 2.1,
+                    ..thread(left)
+                },
+                8.,
+                0.5,
+                EntityId::new(),
+                PlaneFrame {
+                    origin: std::array::from_fn(|i| frame.origin[i] + n[i] * along),
+                    ..frame
+                },
+                policy,
+            )
+            .unwrap()
+        };
+        // Two pitches along the thread: the nut spans [1.4, 3.5] of [0, 4.2].
+        let seated = nut(1.4);
+        for (a, b) in [(&screw, &seated), (&seated, &screw)] {
+            assert!(
+                a.boolean(b, BooleanOperation::Intersect, policy)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        // Reaching back over the shank, or past the thread end, is not proved.
+        for along in [-1.4, 2.8] {
+            assert!(
+                screw
+                    .disjoint_thread_mating(&nut(along), BooleanOperation::Intersect)
+                    .is_none(),
+                "{along}"
+            );
+        }
+    }
+}

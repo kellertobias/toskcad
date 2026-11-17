@@ -11,6 +11,7 @@ use multicad_rust_kernel::{
 };
 use std::collections::BTreeSet;
 
+mod clearance;
 mod topology;
 type Point = [f64; 3];
 const OPERATION: &str = "Rust rounded receiving thread";

@@ -5,6 +5,8 @@ use std::f64::consts::{PI, TAU};
 
 mod blind;
 mod bore;
+mod classify;
+mod clearance;
 mod metrics;
 mod support;
 pub use blind::BlindBore;
