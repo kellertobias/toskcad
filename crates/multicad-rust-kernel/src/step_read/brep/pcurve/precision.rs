@@ -9,6 +9,7 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{ToPrimitive, Zero};
 mod analytic;
+mod analytic_polynomial;
 mod bernstein80;
 mod bezier;
 mod bilinear;

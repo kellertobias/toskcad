@@ -1,5 +1,6 @@
 //! Original common-parameter subdivision and source-bound finite admission.
 use super::super::super::Proof;
+use super::super::analytic_polynomial::{self, Support};
 use super::super::bezier::{self, Coordinates, CurveCells};
 use super::super::spline_window;
 use super::*;
@@ -201,6 +202,47 @@ fn restrict(
     Err(ReadError::Unsupported)
 }
 
+/// Points of the decoded common parameter range compared before any exact
+/// extraction.
+const DECODED_SCAN: usize = 256;
+/// Refusal-only scan of the already decoded curves and support at a common
+/// parameter, before any exact rational extraction. A gap clearly beyond
+/// `tol` (with a relative and absolute floating margin far above f64
+/// evaluation error) means no proof below could certify this pair; `true`
+/// grants nothing and every later proof is unchanged.
+fn decoded_scan(
+    surface: &Surface,
+    uv: &crate::brep::NurbsCurve,
+    target: &crate::brep::NurbsCurve,
+    tol: f64,
+    b: &mut Budget<'_>,
+) -> Result<bool> {
+    let [a, c] = [uv.range(), target.range()];
+    let (from, to) = (a[0].max(c[0]), a[1].min(c[1]));
+    if !(from.is_finite() && to.is_finite() && from < to) {
+        return Ok(true);
+    }
+    let cost = (uv.degree() + target.degree() + 2).pow(2) * 16 + 256;
+    for j in 0..DECODED_SCAN {
+        b.charge(cost)?;
+        let t = from + (to - from) * (2 * j + 1) as f64 / (2 * DECODED_SCAN) as f64;
+        let (p, _) = uv.evaluate(t);
+        let (image, _) = surface.evaluate([p[0], p[1]]);
+        let (actual, _) = target.evaluate(t);
+        let gap = (0..3)
+            .map(|i| (image[i] - actual[i]).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        let scale = image
+            .iter()
+            .chain(&actual)
+            .fold(1_f64, |m, v| m.max(v.abs()));
+        if gap.is_finite() && gap > tol * (1. + 1e-6) + scale * 1e-12 {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
 pub(in super::super) fn certify(
     source: &Source<'_>,
     curve_id: u32,
@@ -211,7 +253,7 @@ pub(in super::super) fn certify(
     b: &mut Budget<'_>,
 ) -> Result<Option<Proof>> {
     let (
-        Surface::Cylinder { .. },
+        Surface::Cylinder { .. } | Surface::Cone { .. },
         Curve::Nurbs {
             curve: uv,
             closed: false,
@@ -224,8 +266,12 @@ pub(in super::super) fn certify(
     else {
         return Ok(None);
     };
-    if uv.degree() > 3
-        || target.degree() > 4
+    let cone = matches!(surface, Surface::Cone { .. });
+    // The original Polynomial16 cylinder route keeps its exact guards and
+    // work; every other degree<=7 trace uses the Bernstein80 analytic proof.
+    let legacy = !cone && uv.degree() <= 3 && target.degree() <= 4;
+    if uv.degree() > analytic_polynomial::MAX_DEGREE
+        || target.degree() > analytic_polynomial::MAX_DEGREE
         || uv.points().len() > 1024
         || target.points().len() > 1024
     {
@@ -237,6 +283,9 @@ pub(in super::super) fn certify(
         super::super::super::si_radians(source, b)?,
         ReadError::Unsupported,
     )?;
+    if !legacy && !decoded_scan(surface, uv, target, tol, b)? {
+        return Ok(Some(Proof::Unsupported));
+    }
     let id = unwrapped(source, curve_id, b)?;
     spline_window::numeric_preflight(source, d.curve_id, b)?;
     spline_window::numeric_preflight(source, id, b)?;
@@ -302,11 +351,34 @@ pub(in super::super) fn certify(
             ReadError::Invalid,
         )?;
     }
-    let [_, placement, r] = source.args(d.surface, "CYLINDRICAL_SURFACE")? else {
-        return Err(ReadError::Invalid);
+    let (placement, r, slope) = if cone {
+        let [_, placement, r, angle] = source.args(d.surface, "CONICAL_SURFACE")? else {
+            return Err(ReadError::Invalid);
+        };
+        let angle = scalar(source, d.surface, angle, b)?;
+        check(
+            angle.valid() && angle.lo > 0. && angle.hi < std::f64::consts::FRAC_PI_2,
+            ReadError::Unsupported,
+        )?;
+        let cosine = angle.cos();
+        check(cosine.valid() && cosine.lo > 0., ReadError::Unsupported)?;
+        let slope = angle.sin() / cosine;
+        check(slope.valid(), ReadError::Unsupported)?;
+        (placement, r, slope)
+    } else {
+        let [_, placement, r] = source.args(d.surface, "CYLINDRICAL_SURFACE")? else {
+            return Err(ReadError::Invalid);
+        };
+        (placement, r, I::point(0.))
     };
     let frame = frame(source, reference(placement)?, 3, b)?;
     let radius = scalar(source, d.surface, r, b)?;
+    check(radius.valid() && radius.lo > 0., ReadError::Unsupported)?;
+    let support = Support {
+        frame,
+        radius,
+        slope,
+    };
     let phase = I::point(window.closest_delta()) + I::point(window.cached_window_delta());
     let width_error = I::point(window.closest_delta_sum())
         + I::point(2.) * I::point(window.cached_window_delta());
@@ -319,34 +391,58 @@ pub(in super::super) fn certify(
         ReadError::Unsupported,
     )?;
     let reserve = I::point(window.speed()) * phase + I::point(window.numeric_reserve());
+    if !legacy {
+        // Refusal-only scan of EVERY common cell first, so a pair whose
+        // actual deviation already exceeds `tol` spends no proof work.
+        let (mut source_cursor, mut target_cursor) = (0usize, 0usize);
+        for pair in points.windows(2) {
+            b.charge(1024)?;
+            let p = restrict(&a, &ka, &pair[0], &pair[1], &mut source_cursor, b)?;
+            let q = restrict(&c, &kc, &pair[0], &pair[1], &mut target_cursor, b)?;
+            if !analytic_polynomial::scan(&support, &[p[0], p[1]], &q, tol, b)? {
+                return Ok(Some(Proof::Unsupported));
+            }
+        }
+    }
     let mut maximum = 0f64;
     let (mut source_cursor, mut target_cursor) = (0usize, 0usize);
     for pair in points.windows(2) {
         b.charge(4096)?;
         let p = restrict(&a, &ka, &pair[0], &pair[1], &mut source_cursor, b)?;
         let q = restrict(&c, &kc, &pair[0], &pair[1], &mut target_cursor, b)?;
-        let proof = cell(&frame, radius, &[p[0], p[1]], &q, b)?;
         let span = enclose(&operation(&pair[1], &pair[0], false, b)?, b)?;
         let shifted = I::point(window.acceleration()) * phase * span
             + I::point(window.speed()) * span * ratio;
-        let first = I::point(proof.derivative) + shifted;
         let global_speed = I::point(window.gamma()) * span * speed_factor;
-        let local_speed = I::point(proof.speed) - shifted;
-        check(
-            global_speed.valid() && local_speed.valid(),
-            ReadError::Unsupported,
-        )?;
-        let speed = I::point(global_speed.lo.max(local_speed.lo));
-        let position = I::point(proof.position) + reserve;
-        if !first.valid()
-            || !speed.valid()
-            || !position.valid()
-            || first.hi >= speed.lo
-            || position.hi > tol
-        {
+        check(global_speed.valid(), ReadError::Unsupported)?;
+        // The window transfer is identical for every piece of this pair:
+        // a piece is admitted only with its own complete proof.
+        let mut admit = |proof: &CellProof, _: &mut Budget<'_>| -> Result<bool> {
+            let first = I::point(proof.derivative) + shifted;
+            let local_speed = I::point(proof.speed) - shifted;
+            check(local_speed.valid(), ReadError::Unsupported)?;
+            let speed = I::point(global_speed.lo.max(local_speed.lo));
+            let position = I::point(proof.position) + reserve;
+            if !first.valid()
+                || !speed.valid()
+                || !position.valid()
+                || first.hi >= speed.lo
+                || position.hi > tol
+            {
+                return Ok(false);
+            }
+            maximum = maximum.max(position.hi);
+            Ok(true)
+        };
+        let admitted = if legacy {
+            let proof = cell(&support.frame, radius, &[p[0], p[1]], &q, b)?;
+            admit(&proof, b)?
+        } else {
+            analytic_polynomial::certify(&support, &[p[0], p[1]], &q, tol, &mut admit, b)?
+        };
+        if !admitted {
             return Ok(Some(Proof::Unsupported));
         }
-        maximum = maximum.max(position.hi);
     }
     b.charge(64)?;
     Ok(Some(Proof::Certified(maximum)))
