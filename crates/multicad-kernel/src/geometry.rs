@@ -12,6 +12,7 @@ use std::path::Path;
 use std::rc::{Rc, Weak};
 mod annulus_body;
 mod arithmetic;
+mod authored_sweep;
 mod axial_stack_body;
 mod bevel_body;
 pub(crate) mod bore_treatment;
@@ -1478,6 +1479,9 @@ impl Solid {
             }
         }
         if self.uses_rust_geometry() && other.uses_rust_geometry() {
+            if let Some(result) = self.glued_brep_union(other, operation, policy) {
+                return result;
+            }
             if let Some(result) = self.separated_treatment_intersection(other, operation, policy) {
                 return result;
             }

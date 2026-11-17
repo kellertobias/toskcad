@@ -3,7 +3,8 @@
 //! Volume, bounds, meshes, sections and STEP export read that boundary.
 use super::*;
 use multicad_core::references::{
-    AnalyticGeometry, ReferenceFrame, TopologyElement, TopologyKey, TopologyKind, TopologySnapshot,
+    AnalyticGeometry, AnchoredFrame, ReferenceFrame, TopologyElement, TopologyKey, TopologyKind,
+    TopologySnapshot,
 };
 use multicad_rust_kernel::brep::{self, Curve, Surface};
 use multicad_rust_kernel::display::{MeshError, Tessellation};
@@ -18,9 +19,16 @@ const MAX_ELEMENTS: usize = 100_000;
 pub(crate) struct ImportedBrepBody {
     pub(super) solid: brep::Solid,
     pub(super) feature: EntityId,
+    names: Names,
+}
+
+/// How a retained boundary names its topology.
+enum Names {
     /// Stable role of every face, edge and vertex, taken from the source
     /// geometry so that a placed copy keeps its references.
-    roles: Rc<[Vec<String>; 3]>,
+    Imported(Rc<[Vec<String>; 3]>),
+    /// Authored face identities of a boundary this kernel constructed.
+    Authored(Rc<super::authored_sweep::AuthoredNaming>),
 }
 
 pub(super) fn failure(cause: brep::Error) -> GeometryError {
@@ -229,6 +237,32 @@ impl Solid {
         roles: Rc<[Vec<String>; 3]>,
         policy: GeometryPolicy,
     ) -> Result<Self, GeometryError> {
+        Self::retained(solid, feature, Names::Imported(roles), policy)
+    }
+
+    /// Retain a boundary this kernel constructed, with authored face names.
+    pub(super) fn from_retained_brep(
+        solid: brep::Solid,
+        feature: EntityId,
+        naming: Rc<super::authored_sweep::AuthoredNaming>,
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        if naming.faces.len() != solid.boundary().faces.len() {
+            return Err(error(
+                OPERATION,
+                GeometryErrorKind::InvalidResult,
+                "Authored names must cover every retained face",
+            ));
+        }
+        Self::retained(solid, feature, Names::Authored(naming), policy)
+    }
+
+    fn retained(
+        solid: brep::Solid,
+        feature: EntityId,
+        names: Names,
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
         let boundary = solid.boundary();
         let elements = boundary.faces.len() + boundary.edges.len() + boundary.vertices.len();
         if elements > MAX_ELEMENTS {
@@ -241,7 +275,7 @@ impl Solid {
             body: SolidBody::ImportedBrep(Rc::new(ImportedBrepBody {
                 solid,
                 feature,
-                roles,
+                names,
             })),
             policy,
             provenance: vec![],
@@ -357,8 +391,19 @@ impl ImportedBrepBody {
         Ok(Self {
             solid: self.solid.moved(&map, &linear).map_err(failure)?,
             feature: self.feature,
-            roles: Rc::clone(&self.roles),
+            names: match &self.names {
+                Names::Imported(roles) => Names::Imported(Rc::clone(roles)),
+                Names::Authored(naming) => Names::Authored(Rc::new(naming.moved(transform))),
+            },
         })
+    }
+
+    /// Authored face names, when this kernel constructed the boundary.
+    pub(super) fn authored_naming(&self) -> Option<&super::authored_sweep::AuthoredNaming> {
+        match &self.names {
+            Names::Authored(naming) => Some(naming),
+            Names::Imported(_) => None,
+        }
     }
 
     pub(super) fn bounds(&self) -> Bounds {
@@ -431,9 +476,17 @@ impl ImportedBrepBody {
 
     pub(crate) fn topology(&self, owner: EntityId, revision: u64) -> TopologySnapshot {
         let boundary = self.solid.boundary();
-        let origin = |kind: usize, index: usize| Origin {
-            source: self.feature,
-            role: self.roles[kind][index].clone(),
+        // Every name of a face, edge (kind 1) or vertex (kind 2). Authored
+        // edges and vertices take the names of the faces they bound.
+        let names = |kind: usize, index: usize| -> Vec<Origin> {
+            match &self.names {
+                Names::Imported(roles) => vec![Origin {
+                    source: self.feature,
+                    role: roles[kind][index].clone(),
+                }],
+                Names::Authored(naming) if kind == 0 => naming.faces[index].origins.clone(),
+                Names::Authored(_) => vec![],
+            }
         };
         // The faces around every edge and vertex.
         let mut edge_faces = vec![std::collections::BTreeSet::new(); boundary.edges.len()];
@@ -441,16 +494,39 @@ impl ImportedBrepBody {
         for (index, face) in boundary.faces.iter().enumerate() {
             for trim in &face.loops {
                 if let Some(vertex) = trim.vertex {
-                    vertex_faces[vertex].insert(origin(0, index));
+                    vertex_faces[vertex].extend(names(0, index));
                 }
                 for &(edge, _) in &trim.uses {
-                    edge_faces[edge].insert(origin(0, index));
+                    edge_faces[edge].extend(names(0, index));
                     for vertex in boundary.edges[edge].vertices {
-                        vertex_faces[vertex].insert(origin(0, index));
+                        vertex_faces[vertex].extend(names(0, index));
                     }
                 }
             }
         }
+        let authored = self.authored_naming();
+        let mut edge_owners = vec![Vec::new(); boundary.edges.len()];
+        for (index, face) in boundary.faces.iter().enumerate() {
+            for trim in &face.loops {
+                for &(edge, _) in &trim.uses {
+                    edge_owners[edge].push(index);
+                }
+            }
+        }
+        // The names of the faces across each edge of a face.
+        let neighbors = |index: usize| {
+            let mut around = std::collections::BTreeSet::new();
+            for trim in &boundary.faces[index].loops {
+                for &(edge, _) in &trim.uses {
+                    for &other in &edge_owners[edge] {
+                        if other != index {
+                            around.extend(names(0, other));
+                        }
+                    }
+                }
+            }
+            around
+        };
         let frame = |frame: &brep::Frame, flip: bool| ReferenceFrame {
             origin_mm: frame.origin,
             u: frame.x,
@@ -458,21 +534,49 @@ impl ImportedBrepBody {
         };
         let mut elements = Vec::new();
         for (index, face) in boundary.faces.iter().enumerate() {
-            elements.push(TopologyElement {
-                key: TopologyKey {
-                    kind: TopologyKind::Face,
-                    ordinal: index as u32,
+            let geometry = match &face.surface {
+                Surface::Plane(plane) => Some(AnalyticGeometry::Plane {
+                    frame: frame(plane, !face.same_sense),
+                }),
+                _ => None,
+            };
+            let element = match authored {
+                None => TopologyElement {
+                    key: TopologyKey {
+                        kind: TopologyKind::Face,
+                        ordinal: index as u32,
+                    },
+                    origins: names(0, index).into_iter().collect(),
+                    boundary: Default::default(),
+                    frames: vec![],
+                    geometry,
                 },
-                origins: [origin(0, index)].into(),
-                boundary: Default::default(),
-                frames: vec![],
-                geometry: match &face.surface {
-                    Surface::Plane(plane) => Some(AnalyticGeometry::Plane {
-                        frame: frame(plane, !face.same_sense),
-                    }),
-                    _ => None,
-                },
-            });
+                Some(naming) => {
+                    let name = &naming.faces[index];
+                    TopologyElement {
+                        key: TopologyKey {
+                            kind: TopologyKind::Face,
+                            ordinal: index as u32,
+                        },
+                        origins: name.origins.iter().cloned().collect(),
+                        boundary: neighbors(index),
+                        frames: name
+                            .anchor
+                            .zip(name.origins.first())
+                            .map(|(frame, origin)| AnchoredFrame {
+                                origin: origin.clone(),
+                                frame,
+                            })
+                            .into_iter()
+                            .collect(),
+                        geometry: name
+                            .support
+                            .map(|frame| AnalyticGeometry::Plane { frame })
+                            .or(geometry),
+                    }
+                }
+            };
+            elements.push(element);
         }
         for (index, edge) in boundary.edges.iter().enumerate() {
             let [start, end] = edge.range;
@@ -509,7 +613,7 @@ impl ImportedBrepBody {
                 origins: edge_faces[index]
                     .iter()
                     .cloned()
-                    .chain([origin(1, index)])
+                    .chain(names(1, index))
                     .collect(),
                 boundary: edge_faces[index].clone(),
                 frames: vec![],
@@ -525,7 +629,7 @@ impl ImportedBrepBody {
                 origins: vertex_faces[index]
                     .iter()
                     .cloned()
-                    .chain([origin(2, index)])
+                    .chain(names(2, index))
                     .collect(),
                 boundary: vertex_faces[index].clone(),
                 frames: vec![],

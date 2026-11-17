@@ -667,7 +667,13 @@ fn display_snapshot(
         volume_mm3: solid.volume_mm3()?,
         solid_count: solid.solid_count()?,
         mesh,
-        topology: solid.provenance.clone(),
+        // Owned bodies derive their names from source geometry instead of a
+        // stored native naming table.
+        topology: if solid.uses_rust_geometry() {
+            solid.topology_snapshot(EntityId::new(), 0)?.elements
+        } else {
+            solid.provenance.clone()
+        },
         edges: solid.display_edges(options.linear_deflection_mm)?,
         vertices: solid.display_vertices()?,
     })

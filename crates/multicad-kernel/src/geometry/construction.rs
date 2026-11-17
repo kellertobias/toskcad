@@ -330,11 +330,9 @@ pub(crate) fn vector(
     let length = |p: [f64; 3]| p[0].hypot(p[1]).hypot(p[2]);
     let roundoff = 64. * f64::EPSILON * length(displacement).max(1.);
     if !height.is_finite() || length(residual) > roundoff.min(policy.linear_tolerance_mm / 64.) {
-        return Err(error(
-            "vector extrusion",
-            GeometryErrorKind::Unsupported,
-            "Curved extrusion requires a certified normal displacement; oblique curved sweeps are unsupported",
-        ));
+        // An oblique displacement rules every source curve along the same
+        // vector; the retained boundary keeps the curves themselves.
+        return Solid::rust_authored_translation(profile, displacement, feature, origins, policy);
     }
     self::normal(profile, height, feature, origins, policy)
 }

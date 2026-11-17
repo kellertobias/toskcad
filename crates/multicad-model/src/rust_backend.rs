@@ -445,11 +445,39 @@ fn linear_sweep(
     origins: &[Origin],
     policy: GeometryPolicy,
 ) -> Result<Solid, ModelError> {
-    let (length, backward) = sweep_distances(id, controls)?;
     let normal = profile.frame.normal();
     let [u, v, n] = controls.direction;
     let direction: [f64; 3] =
         std::array::from_fn(|i| profile.frame.u[i] * u + profile.frame.v[i] * v + normal[i] * n);
+    if controls.taper_rad != 0. {
+        use ResolvedTermination::Distance;
+        // Both halves draft away from the authored section at the start
+        // offset instead of re-tapering from a shifted far end.
+        let halves = match controls.extent {
+            ResolvedExtent::Symmetric { total_mm } => Some([total_mm / 2., total_mm / 2.]),
+            ResolvedExtent::TwoSided {
+                forward: Distance { distance_mm: front },
+                backward: Distance { distance_mm: back },
+            } => Some([front, back]),
+            _ => None,
+        };
+        if let Some(halves) = halves {
+            profile.frame.origin = std::array::from_fn(|i| {
+                profile.frame.origin[i] + normal[i] * controls.start_offset_mm
+            });
+            return Solid::rust_extrude_tapered_halves_named(
+                &profile,
+                direction,
+                halves,
+                controls.taper_rad,
+                id,
+                origins,
+                policy,
+            )
+            .map_err(|cause| error(Some(id), cause));
+        }
+    }
+    let (length, backward) = sweep_distances(id, controls)?;
     profile.frame.origin = std::array::from_fn(|i| {
         profile.frame.origin[i] + normal[i] * controls.start_offset_mm - direction[i] * backward
     });
