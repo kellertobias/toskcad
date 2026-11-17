@@ -326,3 +326,6 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
 
 #[cfg(test)]
 pub(super) mod tests;
+
+#[cfg(test)]
+mod raw_trim_c1;
