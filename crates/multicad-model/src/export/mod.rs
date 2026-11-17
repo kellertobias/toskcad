@@ -12,9 +12,9 @@ pub use print::PrintWorker;
 mod publish;
 pub use publish::{
     StepActualHeadReceipt, StepDocumentOwnershipReceipt, StepHealedMemberReceipt,
-    StepPeriodicMemberReceipt, StepRetainedMemberReceipt, StepSourceCorrespondenceReceipt,
-    StepSourceKnownMemberReceipt, StepVerificationMethod, StepVerificationReceipt,
-    verify_rust_step_shape, verify_rust_step_shape_receipt,
+    StepPeriodicMemberReceipt, StepRetainedMemberReceipt, StepRoundedBlindRepairReceipt,
+    StepSourceCorrespondenceReceipt, StepSourceKnownMemberReceipt, StepVerificationMethod,
+    StepVerificationReceipt, verify_rust_step_shape, verify_rust_step_shape_receipt,
 };
 mod schedule;
 pub use schedule::ScheduleTarget;

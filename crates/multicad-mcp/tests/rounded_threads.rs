@@ -228,6 +228,13 @@ fn rounded_profiles_distinguish_series_pipe_size_semantics_and_explicit_class_co
 
 #[test]
 fn bsw_bsf_bspp_native_pairs_preserve_fits_omitted_fields_output_history_saved_reopen_and_step() {
+    rounded_pair_workflow(true);
+}
+#[test]
+fn rounded_through_workflow_preserves_existing_decoded_receipt_contract() {
+    rounded_pair_workflow(false);
+}
+fn rounded_pair_workflow(blind: bool) {
     for family in [
         model::ThreadFamily::Bsw,
         model::ThreadFamily::Bsf,
@@ -244,7 +251,7 @@ fn bsw_bsf_bspp_native_pairs_preserve_fits_omitted_fields_output_history_saved_r
             "Receiver stock",
             PrimitiveParameters::Cylinder {
                 radius: length(preset.diameter_mm),
-                height: length(4. * preset.pitch_mm),
+                height: length((if blind { 4. } else { 3. }) * preset.pitch_mm),
                 frame: Default::default(),
             },
         );
@@ -300,6 +307,16 @@ fn bsw_bsf_bspp_native_pairs_preserve_fits_omitted_fields_output_history_saved_r
         assert_eq!(h.document(), saved);
         let history = run(&h, "history", json!({}));
         assert!(history.to_string().contains("mcp:rounded-threads"));
+        let before_reopen = if blind {
+            run(
+                &h,
+                "export_step",
+                json!({"part":receiver["part"],"file_name":"receiver-before-reopen.step"}),
+            );
+            Some(std::fs::read(dir.path().join("receiver-before-reopen.step")).unwrap())
+        } else {
+            None
+        };
         run(&h, "save_project", json!({"expected_revision":5}));
         drop(h);
         let reopened = Headless::new(
@@ -324,7 +341,55 @@ fn bsw_bsf_bspp_native_pairs_preserve_fits_omitted_fields_output_history_saved_r
                 "export_step",
                 json!({"part":part,"file_name":name}),
             );
-            assert!(output["readback_volume_mm3"].as_f64().unwrap() > 0.);
+            if blind && name == "receiver.step" {
+                assert!(output["readback_volume_mm3"].is_null());
+                let proof = &output["step_verification"];
+                assert_eq!(proof["method"], "regenerated_rounded_blind_canonical");
+                assert!(proof["decoded_volume_mm3"].is_null());
+                eprintln!("ROUNDED_BLIND_REPAIR_RECEIPT family={family:?} {proof}");
+                let repair = &proof["rounded_blind_repair"];
+                assert!(repair["canonical_volume_mm3"].as_f64().unwrap() > 0.);
+                assert!(
+                    (repair["canonical_volume_mm3"].as_f64().unwrap()
+                        - output["model_volume_mm3"].as_f64().unwrap())
+                    .abs()
+                        < 1e-9
+                );
+                let c0 = repair["maximum_raw_to_canonical_position_error_mm"]
+                    .as_f64()
+                    .unwrap();
+                assert!(c0 > 0. && c0 <= 1e-7);
+                assert!(repair["raw_physical_volume_bounds_mm3"].is_null());
+                assert!(repair["raw_chart_derivative_error_mm"].is_null());
+                assert!(
+                    repair["verified_output_geometry_record_count"]
+                        .as_u64()
+                        .unwrap()
+                        > 100
+                );
+                let output_bytes = std::fs::read(dir.path().join(name)).unwrap();
+                assert_eq!(output_bytes, before_reopen.as_ref().unwrap().as_slice());
+                run(
+                    &reopened,
+                    "export_step",
+                    json!({"part":part,"file_name":"receiver-again.step"}),
+                );
+                assert_eq!(
+                    output_bytes,
+                    std::fs::read(dir.path().join("receiver-again.step")).unwrap()
+                );
+            } else {
+                assert!(output["readback_volume_mm3"].as_f64().unwrap() > 0.);
+                if !blind && name == "receiver.step" {
+                    assert_eq!(output["step_verification"]["method"], "decoded_boundary");
+                    assert!(
+                        output["step_verification"]
+                            .get("rounded_blind_repair")
+                            .is_none()
+                    );
+                }
+            }
+
             let solid =
                 multicad_kernel::Solid::read_step(&dir.path().join(name), Default::default())
                     .unwrap();

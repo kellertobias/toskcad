@@ -24,6 +24,7 @@ pub enum StepVerificationMethod {
     DecodedSupportHealing,
     DecodedPeriodicRepair,
     ActualMappedHeadReference,
+    RegeneratedRoundedBlindCanonical,
 }
 /// Independently decoded periodic material after the bounded source repair.
 /// Volume belongs to that material, not the exact occupied raw STEP surfaces.
@@ -133,11 +134,25 @@ pub struct StepActualHeadReceipt {
     pub aggregate_work: usize,
     pub accounted_peak_bytes: usize,
 }
+/// A regenerated, closed canonical rounded blind body. Source-known complete
+/// boundary C0 and raw-member ownership are verified separately from mass.
+/// The raw file has no independently sealed physical mass or chart-D1 proof.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StepRoundedBlindRepairReceipt {
+    pub canonical_volume_mm3: f64,
+    pub maximum_raw_to_canonical_position_error_mm: f64,
+    pub raw_physical_volume_bounds_mm3: Option<[f64; 2]>,
+    pub raw_chart_derivative_error_mm: Option<f64>,
+    pub verified_output_member_entity: u32,
+    pub verified_output_geometry_record_count: usize,
+}
 /// Distinguishes decoded file mass from certified authored-source mass.
 /// Missing decoded mass is explicit; source support tolerance is not a
 /// substitute for an independently integrated file-volume error bound.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StepVerificationReceipt {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rounded_blind_repair: Option<StepRoundedBlindRepairReceipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actual_head: Option<StepActualHeadReceipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -170,6 +185,7 @@ impl StepVerificationReceipt {
     pub fn decoded(volume: f64) -> Self {
         Self {
             actual_head: None,
+            rounded_blind_repair: None,
             document_ownership: None,
             method: StepVerificationMethod::DecodedBoundary,
             decoded_volume_mm3: Some(volume),
@@ -434,6 +450,19 @@ pub fn verify_rust_step_shape_receipt(
             "STEP verification needs a finite positive tolerance",
         ));
     }
+    if let Some(proof) = verify_rounded_blind_canonical_step(
+        path,
+        solid,
+        (
+            shape.solid_count,
+            shape.volume_mm3,
+            [shape.bounds.min, shape.bounds.max],
+        ),
+        shape.producer,
+        tolerance,
+    ) {
+        return proof;
+    }
     if let Some(proof) = verify_actual_head_step(
         path,
         solid,
@@ -602,6 +631,7 @@ fn verify_actual_head_step(
         }
         let mut receipt = StepVerificationReceipt {
             actual_head: None,
+            rounded_blind_repair: None,
             document_ownership: None,
             method: StepVerificationMethod::ActualMappedHeadReference,
             decoded_volume_mm3: None,
@@ -680,6 +710,7 @@ fn verify_partitioned_step(
             })?;
         Ok(StepVerificationReceipt {
             actual_head: None,
+            rounded_blind_repair: None,
             document_ownership: Some(StepDocumentOwnershipReceipt {
                 topology_entity_count: proof.topology_entity_count,
                 work_used: proof.document_ownership_work,
@@ -828,6 +859,7 @@ fn verify_periodic_step(
         let verified_tolerance = proof.verified_tolerance_mm;
         Ok(StepVerificationReceipt {
             actual_head: None,
+            rounded_blind_repair: None,
             document_ownership: None,
             method: StepVerificationMethod::DecodedPeriodicRepair,
             decoded_volume_mm3: None,
@@ -916,6 +948,7 @@ fn verify_retained_step(
         }
         Ok(StepVerificationReceipt {
             actual_head: None,
+            rounded_blind_repair: None,
             document_ownership: None,
             method: StepVerificationMethod::DecodedBoundaryEnclosure,
             decoded_volume_mm3: None,
@@ -1001,6 +1034,7 @@ fn verify_source_known_step(
         }
         Ok(StepVerificationReceipt {
             actual_head: None,
+            rounded_blind_repair: None,
             document_ownership: None,
             method: StepVerificationMethod::SourceKnownBoundary,
             decoded_volume_mm3: None,
@@ -1018,6 +1052,83 @@ fn verify_source_known_step(
     })())
 }
 
+fn verify_rounded_blind_canonical_step(
+    path: &Path,
+    solid: &Solid,
+    expected: StepMetrics,
+    producer: EntityId,
+    tolerance: f64,
+) -> Option<Result<StepVerificationReceipt, ExportError>> {
+    let data = solid.rust_rounded_blind_bore_data()?;
+    Some((|| {
+        let invalid = |message: String| failure(ErrorKind::Invalid, Some(producer), message);
+        let bounds = solid.bounds().map_err(io)?;
+        let canonical_volume = solid.volume_mm3().map_err(io)?;
+        verify_step_dimensions(
+            producer,
+            expected,
+            (1, canonical_volume, [bounds.min, bounds.max]),
+            tolerance,
+        )?;
+        let input = read_step_source(path, producer)?;
+        // This full source-known nine-face check binds the actual output to
+        // the current closed body. Its numerical decoded flux is diagnostic;
+        // it is NEVER published as independently decoded raw physical mass.
+        let total = solid
+            .verify_source_known_rounded_blind_position_bound(&input, tolerance)
+            .map_err(|e| {
+                failure(
+                    if e.kind == multicad_kernel::GeometryErrorKind::Limit {
+                        ErrorKind::Budget
+                    } else {
+                        ErrorKind::Invalid
+                    },
+                    Some(producer),
+                    format!("Canonical rounded blind source proof failed: {e}"),
+                )
+            })?;
+        let (readback, candidate) = step_read::read_repaired_rounded_blind_bore(&input, tolerance)
+            .map_err(|e| invalid(format!("Actual rounded blind repair failed: {e:?}")))?;
+        if readback.solid_count != 1
+            || readback.face_count != 9
+            || !step_read::repaired_rounded_blind_import_matches(
+                &candidate,
+                &data.bore,
+                [data.frame.origin, data.frame.u, data.frame.v],
+                tolerance * 2.,
+            )
+        {
+            return Err(invalid(
+                "Regenerated rounded blind geometry differs from its canonical body".into(),
+            ));
+        }
+        let verified = tolerance.min(1e-7);
+        Ok(StepVerificationReceipt {
+            rounded_blind_repair: Some(StepRoundedBlindRepairReceipt {
+                canonical_volume_mm3: canonical_volume,
+                maximum_raw_to_canonical_position_error_mm: total,
+                raw_physical_volume_bounds_mm3: None,
+                raw_chart_derivative_error_mm: None,
+                verified_output_member_entity: candidate.source_member_entity(),
+                verified_output_geometry_record_count: candidate.source_records().count(),
+            }),
+            actual_head: None,
+            document_ownership: None,
+            method: StepVerificationMethod::RegeneratedRoundedBlindCanonical,
+            decoded_volume_mm3: None,
+            retained_members: vec![],
+            decoded_scalar_members: vec![],
+            source_correspondence: vec![],
+            source_known_members: vec![],
+            healed_members: vec![],
+            periodic_members: vec![],
+            source_volume_bounds_mm3: None,
+            verified_tolerance_mm: Some(verified),
+            maximum_polynomial_trim_error_mm: None,
+            analytic_closure_tolerance_mm: None,
+        })
+    })())
+}
 fn read_step_source(path: &Path, producer: EntityId) -> Result<String, ExportError> {
     let mut bytes = Vec::new();
     fs::File::open(path)
