@@ -137,6 +137,7 @@ fn spelling<'i>(
     budget: &mut Budget<'_>,
 ) -> Result<&'i str> {
     for entity in source.components(id)? {
+        budget.charge(16)?;
         let (mut count, mut found) = (0, None);
         locate(&entity.args, value, &mut count, &mut found, budget)?;
         let Some(index) = found else { continue };
@@ -233,15 +234,52 @@ fn exact_same(
     b: (u32, &Value<'_>),
     budget: &mut Budget<'_>,
 ) -> Result<bool> {
-    let (a, b) = (
+    let (left, right) = (
         spelling(source, a.0, a.1, budget)?,
         spelling(source, b.0, b.1, budget)?,
     );
-    budget.charge(a.len().saturating_add(b.len()).saturating_add(1024))?;
-    let (Ok(a), Ok(b)) = (Rational::parse_decimal(a), Rational::parse_decimal(b)) else {
-        return Err(ReadError::Unsupported);
-    };
-    Ok(a == b)
+    budget.charge(
+        left.len()
+            .saturating_add(right.len())
+            .saturating_mul(3)
+            .saturating_add(1024),
+    )?;
+    for (value, token) in [(a.1, left), (b.1, right)] {
+        let Value::Number(cached) = value else {
+            return Err(ReadError::Invalid);
+        };
+        if !cached.is_finite() {
+            return Err(ReadError::Unsupported);
+        }
+        if *cached == 0.
+            && !token
+                .split('E')
+                .next()
+                .ok_or(ReadError::Unsupported)?
+                .bytes()
+                .filter(|b| !matches!(b, b'+' | b'-' | b'.'))
+                .all(|b| b == b'0')
+        {
+            return Err(ReadError::Unsupported);
+        }
+    }
+    // Identity of actual validated numeric tokens proves exact REAL equality,
+    // including tiny normal values beyond the fixed i64 rational range.
+    if left == right {
+        return Ok(true);
+    }
+    let left = rational(source, a.0, a.1, budget)?;
+    let right = rational(source, b.0, b.1, budget)?;
+    let bits = left
+        .numer()
+        .bits()
+        .max(left.denom().bits())
+        .saturating_add(right.numer().bits().max(right.denom().bits()))
+        .saturating_add(2);
+    budget.charge(bigint_work(
+        usize::try_from(bits).map_err(|_| ReadError::Limit)?,
+    ))?;
+    Ok(left == right)
 }
 fn coordinates(
     source: &Source<'_>,

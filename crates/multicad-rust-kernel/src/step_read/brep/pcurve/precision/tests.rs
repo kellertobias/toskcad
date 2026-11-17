@@ -567,3 +567,107 @@ fn invocation_surface_cache_reuses_only_whole_same_source_proof_and_rechecks_eac
         first.to_bits()
     );
 }
+#[test]
+fn original_tiny_converter_coordinates_compare_exactly_without_cached_aliases() {
+    for (a, b, equal) in [
+        ("8.881784197001E-16", "8.881784197001E-16", true),
+        ("1.110223024625E-015", "1.1102230246250E-15", true),
+        ("2.287302224786E-033", "2.2873022247860E-33", true),
+        (
+            "8.881784197001E-16",
+            "8.881784197001000000000001E-16",
+            false,
+        ),
+    ] {
+        let text = INPUT
+            .replace(
+                "#46 = CARTESIAN_POINT('',(20.,0.,0.));",
+                &format!("#46 = CARTESIAN_POINT('',({a},0.,0.));"),
+            )
+            .replace(
+                "#47 = CARTESIAN_POINT('',(20.,12.,0.));",
+                &format!("#47 = CARTESIAN_POINT('',({b},12.,0.));"),
+            );
+        let source = Source::parse(&text, TOL).unwrap();
+        assert_eq!(source.point(46).unwrap()[0], source.point(47).unwrap()[0]);
+        let mut first = budget();
+        assert_eq!(
+            exact_same(
+                &source,
+                (46, leaf(&source, 46, 0)),
+                (47, leaf(&source, 47, 0)),
+                &mut first
+            )
+            .unwrap(),
+            equal
+        );
+        let used = first.used();
+        assert!(matches!(
+            exact_same(
+                &source,
+                (46, leaf(&source, 46, 0)),
+                (47, leaf(&source, 47, 0)),
+                &mut Budget::new(used - 1, None)
+            ),
+            Err(ReadError::Limit)
+        ));
+        assert_eq!(
+            exact_same(
+                &source,
+                (46, leaf(&source, 46, 0)),
+                (47, leaf(&source, 47, 0)),
+                &mut Budget::new(used, None)
+            )
+            .unwrap(),
+            equal
+        );
+        let foreign = Source::parse(&text, TOL).unwrap();
+        assert!(matches!(
+            exact_same(
+                &source,
+                (46, leaf(&source, 46, 0)),
+                (47, leaf(&foreign, 47, 0)),
+                &mut budget()
+            ),
+            Err(ReadError::Invalid)
+        ));
+    }
+    let text = INPUT.replace(
+        "#46 = CARTESIAN_POINT('',(20.,0.,0.));",
+        "#46 = CARTESIAN_POINT('',(1E-1000,0.,0.));",
+    );
+    let source = Source::parse(&text, TOL).unwrap();
+    assert!(matches!(
+        exact_same(
+            &source,
+            (46, leaf(&source, 46, 0)),
+            (46, leaf(&source, 46, 0)),
+            &mut budget()
+        ),
+        Err(ReadError::Unsupported)
+    ));
+}
+#[test]
+fn numeric_owner_scan_debits_even_empty_complex_components() {
+    let original = Source::parse(INPUT, TOL).unwrap();
+    let old = original.simple(45).unwrap().source.unwrap();
+    let body = "(BOUNDED_CURVE() B_SPLINE_CURVE(3,(#46,#47,#48,#49),.UNSPECIFIED.,.F.,.F.) B_SPLINE_CURVE_WITH_KNOTS((4,4),(0.,1.),.PIECEWISE_BEZIER_KNOTS.) CURVE() GEOMETRIC_REPRESENTATION_ITEM() REPRESENTATION_ITEM(''))";
+    let plain = INPUT.replacen(old, body, 1);
+    let extra = plain.replacen("(BOUNDED_CURVE()", "(AUDIT_COMPONENT() BOUNDED_CURVE()", 1);
+    assert_ne!(plain, extra);
+    let mut costs = Vec::new();
+    for input in [&plain, &extra] {
+        // Both owners come from the actual neutral parser; the extra unknown
+        // empty component grants no schema or geometry permission.
+        let source = Source::parse(input, TOL).unwrap();
+        let fields = source
+            .component(45, "B_SPLINE_CURVE_WITH_KNOTS")
+            .unwrap()
+            .unwrap();
+        let value = &list(&fields[1]).unwrap()[1];
+        let mut work = budget();
+        assert_eq!(spelling(&source, 45, value, &mut work).unwrap(), "1.");
+        costs.push(work.used());
+    }
+    assert_eq!(costs[1], costs[0] + 16);
+}
