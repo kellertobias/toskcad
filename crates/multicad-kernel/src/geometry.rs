@@ -16,6 +16,7 @@ mod authored_sweep;
 mod axial_stack_body;
 mod bevel_body;
 pub(crate) mod bore_treatment;
+mod coaxial;
 pub use bore_treatment::ConicalSeatGeometry;
 pub(crate) mod circular_pocket_body;
 mod clipped_npt_body;
@@ -1508,6 +1509,9 @@ impl Solid {
                 return result;
             }
             if let Some(result) = self.concentric_ring_boolean(other, operation, policy) {
+                return result;
+            }
+            if let Some(result) = self.rounded_thread_clearance_boolean(other, operation, policy) {
                 return result;
             }
             return match self.orthogonal_boolean(other, operation, policy) {

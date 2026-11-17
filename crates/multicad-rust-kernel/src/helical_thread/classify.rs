@@ -84,7 +84,7 @@ fn radius(thread: &Thread, phase: I) -> Option<I> {
     }
     result.valid().then_some(result)
 }
-fn phase_radius(thread: &Thread, q: I, quotient: I) -> Option<I> {
+pub(super) fn phase_radius(thread: &Thread, q: I, quotient: I) -> Option<I> {
     let result = if quotient.width() >= 1. {
         radius(thread, I::new(0., thread.spec.pitch_mm))?
     } else {

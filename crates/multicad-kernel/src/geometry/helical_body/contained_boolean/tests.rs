@@ -554,3 +554,83 @@ fn unrelated_families_curved_proposals_and_fuzzy_or_mismatched_policies_keep_the
         );
     }
 }
+
+fn turned(frame: PlaneFrame, angle: f64, along: f64) -> PlaneFrame {
+    let (sin, cos) = angle.sin_cos();
+    PlaneFrame {
+        origin: position(frame, [0., 0., along]),
+        u: std::array::from_fn(|i| cos * frame.u[i] + sin * frame.v[i]),
+        v: std::array::from_fn(|i| cos * frame.v[i] - sin * frame.u[i]),
+    }
+}
+
+#[test]
+fn coaxial_cavities_turned_or_moved_along_the_axis_clear_at_their_actual_phase() {
+    let policy = GeometryPolicy::default();
+    for left in [false, true] {
+        for posed in [false, true] {
+            let frame = frame(posed);
+            let shaft =
+                Solid::rust_helical_thread(spec(left), None, EntityId::new(), frame, policy)
+                    .unwrap();
+            let bore = |major: f64, chart: PlaneFrame| {
+                Solid::cylinder(chart, 5., 6., policy)
+                    .unwrap()
+                    .rust_cut_internal_thread(
+                        HelicalThread {
+                            major_radius_mm: major,
+                            ..spec(left)
+                        },
+                        1.,
+                        EntityId::new(),
+                        chart,
+                        policy,
+                    )
+                    .unwrap()
+            };
+            // A deep cavity clears the crest at any turn; a close one only
+            // at its own phase, not half a turn away.
+            let loose = bore(2.6, turned(frame, 0.4, 0.));
+            let close = bore(2.2, turned(frame, std::f64::consts::PI, 0.));
+            for (a, b) in [(&shaft, &loose), (&loose, &shaft)] {
+                assert!(
+                    a.boolean(b, BooleanOperation::Intersect, policy)
+                        .unwrap()
+                        .is_none()
+                );
+            }
+            assert!(
+                shaft
+                    .disjoint_thread_mating(&close, BooleanOperation::Intersect)
+                    .is_none()
+            );
+            // A bore that starts after the shaft starts leaves it exposed
+            // to the stock beyond the cavity's interval.
+            let late = bore(2.6, turned(frame, 0., 0.7));
+            assert!(
+                shaft
+                    .disjoint_thread_mating(&late, BooleanOperation::Intersect)
+                    .is_none()
+            );
+            // A through nut one pitch along the axis sits at the same phase.
+            let nut = Solid::rust_hex_nut(
+                HelicalThread {
+                    major_radius_mm: 2.2,
+                    length_mm: 2.1,
+                    ..spec(left)
+                },
+                8.,
+                0.5,
+                EntityId::new(),
+                turned(frame, 0., 0.7),
+                policy,
+            )
+            .unwrap();
+            let kept = nut
+                .boolean(&shaft, BooleanOperation::Subtract, policy)
+                .unwrap()
+                .unwrap();
+            assert_eq!(kept.volume_mm3().unwrap(), nut.volume_mm3().unwrap());
+        }
+    }
+}
