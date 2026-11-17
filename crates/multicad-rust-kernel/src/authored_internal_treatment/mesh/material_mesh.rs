@@ -529,10 +529,20 @@ pub(super) fn tessellate(
     loop {
         let repartition = match chart::traced_grid_attempt(body, options, &grid, &mut w)? {
             Attempt::Complete((shell, trace)) => {
-                if let Some(prepared) = close::prepare(shell, body, options, &mut w)?
-                    && let Some(candidate) = assemble(material, prepared, trace, options, &mut w)?
-                {
-                    return Ok(candidate);
+                if let Some(prepared) = close::prepare(shell, body, options, &mut w)? {
+                    if let Some(candidate) = assemble(material, prepared, trace, options, &mut w)? {
+                        return Ok(candidate);
+                    }
+                    if body.tail.is_some() && !grid.shifted {
+                        // The two actual cap traces can produce distinct knots
+                        // arbitrarily close to a dyadic angular grid vertex.
+                        // Doubling that grid retains the ill-conditioned stock
+                        // wall facet. Propose the existing exact shifted chart
+                        // first; all failed work stays on this same ledger and
+                        // every new source/closure/stock facet is re-certified.
+                        grid.shifted = true;
+                        continue;
+                    }
                 }
                 false
             }
@@ -1411,3 +1421,6 @@ mod partition_closure_tests {
         assert_eq!(actual.stock().circle().radius(), radius);
     }
 }
+
+#[cfg(test)]
+mod conditioning_tests;
