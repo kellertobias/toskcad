@@ -270,12 +270,43 @@ fn buffers(v: usize, i: usize, f: usize) -> usize {
 }
 // This validation layer accepts literal mesh data; it grants no source
 // correspondence. Production reaches it only after full affine transport.
+#[cfg(test)]
 pub(super) fn placed_connectivity(target: &DisplayMesh) -> Result<MeshProof, GeometryError> {
     manufacturing::certify(target).map_err(|e| {
         failure(
             GeometryErrorKind::InvalidResult,
             format!("Placed repaired manifold refused: {e:?}"),
         )
+    })
+}
+fn placed_connectivity_counted(
+    target: &DisplayMesh,
+    resident_buffers: usize,
+    work: &mut Work<'_>,
+) -> Result<MeshProof, GeometryError> {
+    manufacturing::certify_counted(target, &mut |n, scratch| {
+        work.charge(n)?;
+        if let Some(scratch) = scratch {
+            let extra = resident_buffers.checked_add(scratch).ok_or_else(|| {
+                failure(
+                    GeometryErrorKind::Limit,
+                    "Placed connectivity storage overflow",
+                )
+            })?;
+            work.storage(extra)?;
+        }
+        Ok(())
+    })
+    .map_err(|error| match error {
+        manufacturing::CountedError::Interrupted(error) => error,
+        manufacturing::CountedError::Mesh(error) => failure(
+            if error == multicad_rust_kernel::display::MeshError::BudgetExceeded {
+                GeometryErrorKind::Limit
+            } else {
+                GeometryErrorKind::InvalidResult
+            },
+            format!("Placed repaired manifold refused: {error:?}"),
+        ),
     })
 }
 struct Work<'a> {
@@ -566,6 +597,12 @@ impl RepairedPhillipsBody {
                     .saturating_add(target_bound),
             )?;
             let mut world = Vec::with_capacity(vertices);
+            work.charge(
+                original
+                    .indices
+                    .len()
+                    .saturating_add(original.face_indices.len()),
+            )?;
             let mut target = DisplayMesh {
                 vertices: Vec::with_capacity(original.vertices.len()),
                 indices: original.indices.clone(),
@@ -598,23 +635,22 @@ impl RepairedPhillipsBody {
                 let actual = ids.map(|i| world[i as usize].0);
                 normals.require_normal(local, actual, normal_reserve)?;
             }
+            // One bounded three-coordinate record copy per mapped vertex.
+            work.charge(vertices)?;
             for (p, _) in world {
                 target.vertices.extend(p);
             }
-            work.charge(
-                target
-                    .face_indices
-                    .len()
-                    .saturating_mul(52)
-                    .saturating_add(vertices),
-            )?;
             #[cfg(test)]
             {
                 placement_time = start.elapsed();
             }
             #[cfg(test)]
             let start = std::time::Instant::now();
-            let proof = placed_connectivity(&target)?;
+            let proof = placed_connectivity_counted(
+                &target,
+                display_bytes(original).saturating_add(display_bytes(&target)),
+                work,
+            )?;
             #[cfg(test)]
             {
                 manifold_time = start.elapsed();
