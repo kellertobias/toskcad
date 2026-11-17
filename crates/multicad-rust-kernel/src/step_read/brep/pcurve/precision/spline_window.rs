@@ -78,12 +78,10 @@ pub(super) fn numeric_preflight(
         items: &[Value<'_>],
         nodes: &mut usize,
         numbers: &mut usize,
-        depth: usize,
         budget: &mut Budget<'_>,
     ) -> Result<()> {
-        if depth > 64 {
-            return Err(ReadError::Limit);
-        }
+        // Every Source AST comes from Part21's depth-limited parser (24).
+        // This walk follows literal children only, never entity references.
         for value in items {
             budget.charge(16)?;
             *nodes += 1;
@@ -97,8 +95,8 @@ pub(super) fn numeric_preflight(
                         return Err(ReadError::Limit);
                     }
                 }
-                Value::List(v) => visit(v, nodes, numbers, depth + 1, budget)?,
-                Value::Typed(e) => visit(&e.args, nodes, numbers, depth + 1, budget)?,
+                Value::List(v) => visit(v, nodes, numbers, budget)?,
+                Value::Typed(e) => visit(&e.args, nodes, numbers, budget)?,
                 _ => {}
             }
         }
@@ -108,7 +106,7 @@ pub(super) fn numeric_preflight(
     for e in source.components(id)? {
         budget.charge(32)?;
         let mut numbers = 0;
-        visit(&e.args, &mut nodes, &mut numbers, 0, budget)?;
+        visit(&e.args, &mut nodes, &mut numbers, budget)?;
     }
     Ok(())
 }

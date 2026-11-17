@@ -8,6 +8,10 @@ use crate::step_read::brep::check;
 const MAX_CONTROLS: usize = 1024;
 const LOCAL_BYTES: usize = 512 * 1024;
 const EXTRACTION_BYTES: usize = 2 * 1024 * 1024;
+// This envelope is input-independent. Enforce it when compiling rather than
+// carrying an unreachable resource-failure branch through every query.
+const _: () =
+    assert!(EXTRACTION_BYTES + LOCAL_BYTES + spline_window::EXTRA_SCRATCH_BYTES <= 8 * 1024 * 1024);
 
 fn equal(
     source: &Source<'_>,
@@ -256,10 +260,6 @@ fn prove(
     check(
         (1..=11).contains(&target.degree()) && target.knots().0.len() <= 129,
         ReadError::Unsupported,
-    )?;
-    check(
-        EXTRACTION_BYTES + LOCAL_BYTES + spline_window::EXTRA_SCRATCH_BYTES <= 8 * 1024 * 1024,
-        ReadError::Limit,
     )?;
     let iso = original_uv(source, d, work)?;
     let sf = fields(source, d.surface, 2, work)?;
