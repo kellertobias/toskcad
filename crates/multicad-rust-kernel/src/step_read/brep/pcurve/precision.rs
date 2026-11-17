@@ -13,6 +13,7 @@ mod analytic_polynomial;
 mod bernstein80;
 mod bezier;
 mod bilinear;
+mod c0_curved;
 mod c0_trace;
 mod cone_polynomial;
 mod cone_separation;

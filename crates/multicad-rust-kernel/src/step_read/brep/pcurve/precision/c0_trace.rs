@@ -667,7 +667,55 @@ pub(super) fn certify(
     else {
         return Ok(None);
     };
-    if !has_c0_joint(net) || uv.degree() != 1 || uv.points().len() != 2 {
+    if !has_c0_joint(net) || !polynomial_curve(uv) {
+        return Ok(None);
+    }
+    if uv.degree() >= 2 {
+        let Curve::Nurbs {
+            curve: target,
+            closed: false,
+        } = &edge.curve
+        else {
+            return Ok(None);
+        };
+        if uv.degree() > MAX_DEGREE
+            || target.degree() > MAX_DEGREE
+            || !polynomial_curve(target)
+            || net.degrees().iter().any(|&p| p > MAX_DEGREE)
+            || net.weights().is_some_and(|w| w.iter().any(|&x| x != 1.))
+        {
+            return Ok(None);
+        }
+        b.charge(8192)?;
+        check(tol.is_finite() && tol > 0., ReadError::Invalid)?;
+        let id = unwrapped(source, curve_id, b)?;
+        let surface_knots = [
+            distinct_knots(source, d.surface, 2, 0, b)?,
+            distinct_knots(source, d.surface, 2, 1, b)?,
+        ];
+        let controls = uv_controls(source, d.curve_id, &surface_knots, b)?;
+        let ka = distinct_knots(source, d.curve_id, 1, 0, b)?;
+        let kc = distinct_knots(source, id, 1, 0, b)?;
+        let breaks = merge(&ka, &kc, b)?;
+        return super::c0_curved::certify(
+            source,
+            d,
+            id,
+            net,
+            uv,
+            target,
+            super::c0_curved::Inputs {
+                surface_knots: &surface_knots,
+                controls: &controls,
+                ka: &ka,
+                kc: &kc,
+                breaks: &breaks,
+            },
+            tol,
+            b,
+        );
+    }
+    if uv.points().len() != 2 {
         return Ok(None);
     }
     let target = match &edge.curve {
