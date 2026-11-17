@@ -3,7 +3,7 @@ use super::*;
 use std::collections::BTreeSet;
 mod document;
 mod representation;
-pub use document::{CompoundDocument, DocumentOptions, MemberPacket};
+pub use document::{CompoundDocument, DocumentOptions, MemberPacket, SelectedSourceDocument};
 mod view;
 pub use representation::{MappingLink, Member};
 pub use view::MemberDocument;

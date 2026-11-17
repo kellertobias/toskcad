@@ -29,6 +29,41 @@ pub struct MemberPacket<'document, 'input> {
     parsed: Parsed<'input>,
     bytes: usize,
 }
+/// The ACTUAL selected source-local token graph, with original represented
+/// member and optional MappingLink retained. This is not a world-space solid.
+/// Mapped coordinates are deliberately NOT applied or silently discarded;
+/// callers must separately earn actual operator/source-origin transport.
+pub struct SelectedSourceDocument<'document, 'input> {
+    document: &'document CompoundDocument<'input>,
+    member: Member,
+    text: String,
+    work: usize,
+    bytes: usize,
+}
+impl<'document, 'input> SelectedSourceDocument<'document, 'input> {
+    pub fn document(&self) -> &'document CompoundDocument<'input> {
+        self.document
+    }
+    pub fn member(&self) -> Member {
+        self.member
+    }
+    pub fn mapping_link(&self) -> Option<MappingLink> {
+        self.member.mapping_link()
+    }
+    /// Ordinary singleton wrapper around the original LOCAL solid closure.
+    /// Numeric/ref/component tokens and original IDs remain unchanged.
+    pub fn as_str(&self) -> &str {
+        &self.text
+    }
+    pub fn work_used(&self) -> usize {
+        self.work
+    }
+    /// Additional output/closure scratch/metadata peak; the borrowed document
+    /// has its own live retained-byte scope and is NOT included again here.
+    pub fn query_budget_bytes(&self) -> usize {
+        self.bytes
+    }
+}
 impl<'document, 'input> MemberPacket<'document, 'input> {
     pub fn document(&self) -> &'document CompoundDocument<'input> {
         self.document
@@ -92,6 +127,30 @@ impl<'input> CompoundDocument<'input> {
     ) -> Result<MemberDocument<'a, 'input>> {
         self.source
             .member_document_scoped(item, options, interrupt, 0, 0)
+    }
+    /// Select actual source-local geometry, including represented MAPPED_ITEM
+    /// instances, without flattening or rebuilding any geometry. This typed
+    /// result retains actual Member+MappingLink and borrows this document.
+    /// The ordinary local_member_document API continues to refuse mappings.
+    pub fn local_source_document<'a>(
+        &'a self,
+        item: u32,
+        options: Options,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<SelectedSourceDocument<'a, 'input>> {
+        let data = self.source.source_document_data_scoped(
+            item,
+            options,
+            interrupt,
+            size_of::<SelectedSourceDocument<'_, '_>>(),
+        )?;
+        Ok(SelectedSourceDocument {
+            document: self,
+            member: data.member,
+            text: data.text,
+            work: data.work,
+            bytes: data.bytes,
+        })
     }
     /// Decode ONLY the selected actual dependency closure. Original IDs,
     /// component/numeric slices, source origin and map/operator are retained.
@@ -274,3 +333,6 @@ fn copy_values<'a>(values: &[Value<'a>], w: &mut Ledger<'_>) -> Result<Vec<Value
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod source_tests;
