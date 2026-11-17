@@ -18,14 +18,23 @@ fn check(
     let reason = match result {
         ResultKind::Clear => {
             return witness
-                .map(|w| GearEngagementWitness {
-                    distance_mm: w.distance_mm,
-                    kind: "rust_bevel_flank_witness",
-                    faces: a
+                .map(|w| {
+                    let faces = a
                         .bevel_face_at(w.points_mm[0])
                         .zip(b.bevel_face_at(w.points_mm[1]))
-                        .map(|(p, q)| [p, q]),
-                    points_mm: w.points_mm,
+                        .map(|(p, q)| [p, q]);
+                    GearEngagementWitness {
+                        distance_mm: w.distance_mm,
+                        // Points on named flank faces are the same witness
+                        // the native check reports; otherwise say so.
+                        kind: if faces.is_some() {
+                            "bevel_flank_faces"
+                        } else {
+                            "rust_bevel_flank_witness"
+                        },
+                        faces,
+                        points_mm: w.points_mm,
+                    }
                 })
                 .ok_or_else(|| {
                     error(
