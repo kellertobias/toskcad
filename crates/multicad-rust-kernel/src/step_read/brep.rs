@@ -852,6 +852,12 @@ pub fn read_assembly(
     let verified = validate_pcurve_input(input, tolerance, interrupt).map_err(|e| {
         if e.cancelled {
             crate::brep::Error::Cancelled
+        } else if e.kind == ReadError::Unsupported {
+            match retained_geometry_refusal(input, tolerance, interrupt) {
+                Some(crate::brep::Error::Invalid) => crate::brep::Error::Invalid,
+                Some(crate::brep::Error::Cancelled) => crate::brep::Error::Cancelled,
+                _ => crate::brep::Error::Unsupported,
+            }
         } else {
             convert(e.kind)
         }
@@ -866,8 +872,27 @@ pub fn read_assembly_validated(
     verified: &PcurveValidatedInput<'_>,
     interrupt: crate::brep::Interrupt<'_>,
 ) -> std::result::Result<Assembly<Solid>, crate::brep::Error> {
-    let input = verified.input();
-    let tolerance = verified.tolerance();
+    read_assembly_geometry(verified.input(), verified.tolerance(), interrupt)
+}
+
+/// Inspect retained geometry for an independent refusal. This cannot return
+/// geometry or a trim certificate, and success grants no import admission.
+pub fn retained_geometry_refusal(
+    input: &str,
+    tolerance: f64,
+    interrupt: crate::brep::Interrupt<'_>,
+) -> Option<crate::brep::Error> {
+    read_assembly_geometry(input, tolerance, interrupt).err()
+}
+
+fn read_assembly_geometry(
+    input: &str,
+    tolerance: f64,
+    interrupt: crate::brep::Interrupt<'_>,
+) -> std::result::Result<Assembly<Solid>, crate::brep::Error> {
+    if interrupt.is_some_and(|f| f()) {
+        return Err(crate::brep::Error::Cancelled);
+    }
     let source = Source::parse(input, tolerance).map_err(convert)?;
     let strict = assembly_of(&source, tolerance, None, interrupt);
     let wider = source
@@ -1015,6 +1040,9 @@ impl From<crate::brep::Error> for ReadError {
         }
     }
 }
+
+#[cfg(test)]
+mod refusal_tests;
 
 #[cfg(test)]
 mod unowned_tests {
