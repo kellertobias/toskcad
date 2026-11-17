@@ -1400,17 +1400,30 @@ fn bezier_and_rational_supports_and_degree_units_read_as_written() {
         "#115 = ( CONVERSION_BASED_UNIT('DEGREE',#119) NAMED_UNIT(*) PLANE_ANGLE_UNIT() );\n#119 = PLANE_ANGLE_MEASURE_WITH_UNIT(PLANE_ANGLE_MEASURE(1.745329251994E-02),#120);\n#120 = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );",
     );
     let degrees = tampered(&degrees, "8.,0.380506377112)", "8.,21.8014094863518)");
+    // Keep the old unit-only mutation as a negative: the second seam still
+    // says -6.28 degrees, not one complete turn, and misses the 3D edge.
+    assert!(matches!(
+        crate::step_read::brep::read_solids(&degrees, TOLERANCE, None),
+        Err(Error::Invalid)
+    ));
+    let stale_degrees = degrees;
+    let degrees = tampered(&stale_degrees, "(-6.28318530718,-0.)", "(-360.,-0.)");
     assert!(close(
         solid(&degrees).volume_mm3(),
         PI * 10. / 3. * 112.,
         1e-9
     ));
     let gradians = tampered(
-        &degrees,
+        &stale_degrees,
         "PLANE_ANGLE_MEASURE(1.745329251994E-02)",
         "PLANE_ANGLE_MEASURE(1.570796326795E-02)",
     );
     let gradians = tampered(&gradians, "8.,21.8014094863518)", "8.,24.2237883181687)");
+    assert!(matches!(
+        crate::step_read::brep::read_solids(&gradians, TOLERANCE, None),
+        Err(Error::Invalid)
+    ));
+    let gradians = tampered(&gradians, "(-6.28318530718,-0.)", "(-400.,-0.)");
     assert!(close(
         solid(&gradians).volume_mm3(),
         PI * 10. / 3. * 112.,

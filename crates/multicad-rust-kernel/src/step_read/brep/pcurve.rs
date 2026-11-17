@@ -6,6 +6,7 @@ mod affine;
 mod analytic;
 mod precision;
 mod sweep;
+mod units;
 mod uv;
 
 const MAX_WORK: usize = 512_000_000;
@@ -570,6 +571,19 @@ fn validate_source(
             let definition = uv::definition(source, binding.pcurve, budget)?;
             geometry_preflight(source, definition.surface, budget)?;
             let surface = source.surface(definition.surface)?;
+            if !radians
+                && let Some(proof) = units::certify(
+                    source,
+                    binding.curve,
+                    &definition,
+                    &surface,
+                    &edge,
+                    tol,
+                    budget,
+                )?
+            {
+                return Ok((proof, definition.surface, surface_kind(&surface), 0.));
+            }
             if !radians
                 && (matches!(surface, Surface::Cone { .. })
                     || angular_axes(&surface)

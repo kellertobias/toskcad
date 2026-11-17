@@ -678,22 +678,38 @@ fn units_of(entities: &BTreeMap<u32, Vec<Entity<'_>>>, units: &[u32]) -> Result<
                 let measure = entities
                     .get(&reference(measure)?)
                     .ok_or(ReadError::Invalid)?;
-                let [Entity { args, .. }] = measure.as_slice() else {
+                let [Entity { name, args, .. }] = measure.as_slice() else {
                     return Err(ReadError::Unsupported);
                 };
-                let [Value::Typed(Entity { args: value, .. }), _] = args.as_slice() else {
+                check(
+                    matches!(*name, "PLANE_ANGLE_MEASURE_WITH_UNIT" | "MEASURE_WITH_UNIT"),
+                    ReadError::Unsupported,
+                )?;
+                let [
+                    Value::Typed(Entity {
+                        name, args: value, ..
+                    }),
+                    base,
+                ] = args.as_slice()
+                else {
                     return Err(ReadError::Invalid);
                 };
+                check(*name == "PLANE_ANGLE_MEASURE", ReadError::Unsupported)?;
+                let base = entities.get(&reference(base)?).ok_or(ReadError::Invalid)?;
+                check(
+                    base.iter().any(|e| e.name == "PLANE_ANGLE_UNIT")
+                        && base.iter().any(|e| {
+                            e.name == "SI_UNIT"
+                                && e.args.as_slice() == [Value::Omitted, Value::Enum("RADIAN")]
+                        }),
+                    ReadError::Unsupported,
+                )?;
                 let [value] = value.as_slice() else {
                     return Err(ReadError::Invalid);
                 };
                 let factor = number(value)?;
                 check(factor > 0., ReadError::Invalid)?;
-                if (factor - PI / 180.).abs() <= 1e-9 {
-                    PI / 180.
-                } else {
-                    factor
-                }
+                factor
             };
             check(angle.is_none(), ReadError::Unsupported)?;
             angle = Some(factor);

@@ -16,7 +16,9 @@ fn main() {
         if inspect_refusal {
             println!(
                 "{path}: retained_geometry_refusal={:?} (diagnostic only; no admission)",
-                multicad_rust_kernel::step_read::brep::retained_geometry_refusal(&input, 1e-7, None)
+                multicad_rust_kernel::step_read::brep::retained_geometry_refusal(
+                    &input, 1e-7, None
+                )
             );
         }
     }
