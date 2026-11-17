@@ -17,9 +17,14 @@ pub(in crate::geometry) fn validate<'i>(
                     ),
                     Some(multicad_rust_kernel::brep::Error::Invalid)
                 )
+                && step_read::read_source_compound(input, policy.linear_tolerance_mm).is_err()
+                && step_read::read_phillips_body(input, policy.linear_tolerance_mm, 1_000_000)
+                    .is_err()
             {
                 // A missing trim certificate cannot hide a separately proved
-                // invalid solid. This diagnostic path never returns a body.
+                // invalid solid. Preserve the original family-before-fallback
+                // priority: a less capable retained provider does not overrule a
+                // recognized exact family. No diagnostic path returns a body.
                 return crate::geometry::imported_brep_body::failure(
                     multicad_rust_kernel::brep::Error::Invalid,
                 );
