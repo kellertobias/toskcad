@@ -1,7 +1,7 @@
 //! Bounded positive-clearance and strict common-interior proofs on exact
 //! external spur outlines. Chords carry analytic error tubes and never
 //! replace either manufacturing boundary.
-use super::{Edge, Point, Profile, ToothEdge, add, normal_sweep, scale, sub};
+use super::{Edge, Point, Profile, add, normal_sweep, scale, sub};
 use crate::revolution::{cross, dot, length};
 
 const MAX_CHORDS: usize = 32_768;
@@ -160,7 +160,7 @@ impl Rim {
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Self, Error> {
         Self::from_outline(
-            profile.outline(),
+            profile.outline().iter().map(|item| item.edge),
             profile.bore_radius_mm().unwrap_or(0.),
             placement,
             tolerance,
@@ -169,18 +169,17 @@ impl Rim {
     }
 
     fn from_outline(
-        outline: &[ToothEdge],
+        outline: impl IntoIterator<Item = Edge>,
         bore_mm: f64,
         placement: Placement,
         tolerance: f64,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Self, Error> {
         let mut points = Vec::new();
-        let mut endpoints = Vec::with_capacity(outline.len());
+        let mut endpoints = Vec::new();
         let mut arc_fit_error: f64 = 0.;
-        for item in outline {
+        for edge in outline {
             checkpoint(interrupt)?;
-            let edge = item.edge;
             if let Edge::Planar(normal_sweep::Edge::Arc { center, a, b, .. }) = edge {
                 // Arc evaluation returns the authored endpoint literally.
                 // Enclose its radial difference from the analytic support.
@@ -397,8 +396,12 @@ fn certify_with_uncertainty(
 
 mod chevron;
 mod internal;
+mod rack;
+mod witness;
 pub use chevron::certify_herringbone;
 pub use internal::certify_internal;
+pub use rack::certify_rack;
+pub use witness::{Witness, nearest_boundary};
 
 #[cfg(test)]
 mod tests;

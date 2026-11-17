@@ -149,7 +149,14 @@ fn grid_pairing_refuses_excess_pair_work() {
     let ring = ring(48);
     let pinion = pinion(0.);
     let [a, b] = pose(48, 0., 0., 0.);
-    let cavity = Rim::from_outline(ring.cavity(), 0., a, 1e-3, None).unwrap();
+    let cavity = Rim::from_outline(
+        ring.cavity().iter().map(|item| item.edge),
+        0.,
+        a,
+        1e-3,
+        None,
+    )
+    .unwrap();
     let teeth = Rim::build(&pinion, b, 1e-3, None).unwrap();
     assert_eq!(
         grid_clear(&cavity, &teeth, 1e-6, 10, None),
