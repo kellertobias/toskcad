@@ -8,6 +8,7 @@ mod finite_analytic;
 mod finite_axis;
 mod precision;
 mod sweep;
+mod trim_surface;
 mod units;
 mod uv;
 
@@ -580,7 +581,7 @@ fn validate_source(
             let edge = edge(source, binding, budget)?;
             let definition = uv::definition(source, binding.pcurve, budget)?;
             geometry_preflight(source, definition.surface, budget)?;
-            let surface = source.surface(definition.surface)?;
+            let surface = trim_surface::read(source, &definition, budget)?;
             if !radians
                 && let Some(proof) = units::certify(
                     source,
