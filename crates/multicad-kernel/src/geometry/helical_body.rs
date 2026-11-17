@@ -575,7 +575,7 @@ impl Solid {
             return Err(error(
                 OPERATION,
                 GeometryErrorKind::Input,
-                "The receiving cylinder has insufficient wall outside the thread crest",
+                "The receiving cylinder leaves less than the minimum wall outside the thread crest",
             ));
         }
         if cylinder.feature() == feature.uuid_bits() {
