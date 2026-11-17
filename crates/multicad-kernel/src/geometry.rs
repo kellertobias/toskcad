@@ -84,6 +84,7 @@ mod rounded_slot_body;
 mod rounded_thread_body;
 mod rounded_thread_bore_body;
 mod rust_compound;
+mod separated_boolean;
 mod sphere_body;
 mod spline_sweep_body;
 mod spur_gear_body;
@@ -1503,7 +1504,12 @@ impl Solid {
             if let Some(result) = self.default_certified_boolean(other, operation, policy) {
                 return result;
             }
-            return self.orthogonal_boolean(other, operation, policy);
+            return match self.orthogonal_boolean(other, operation, policy) {
+                Err(error) if error.kind == GeometryErrorKind::Unsupported => self
+                    .separated_boolean(other, operation, policy)
+                    .unwrap_or_else(|| Err(self.no_exact_boolean(other, operation, error))),
+                result => result,
+            };
         }
         let op = match operation {
             BooleanOperation::Union => 0,
@@ -3515,3 +3521,83 @@ impl Solid {
 
 #[cfg(test)]
 mod wood_insert_world_tests;
+
+// Typed refusal for operand pairs outside every exact Rust provider.
+impl Solid {
+    /// The last Rust provider's operand refusal names both operand kinds,
+    /// so an unsupported pair is never reported as a rectilinear limitation.
+    fn no_exact_boolean(
+        &self,
+        other: &Self,
+        operation: BooleanOperation,
+        refusal: GeometryError,
+    ) -> GeometryError {
+        if refusal.operation != "orthogonal Boolean"
+            || !refusal.message.contains("requires a rectilinear prism")
+        {
+            return refusal;
+        }
+        error(
+            "Boolean",
+            GeometryErrorKind::Unsupported,
+            format!(
+                "Rust Boolean has no exact provider for {} {operation:?} {}",
+                self.body_kind_name(),
+                other.body_kind_name()
+            ),
+        )
+    }
+
+    fn body_kind_name(&self) -> &'static str {
+        match &self.body {
+            SolidBody::Occt(..) => "Occt",
+            SolidBody::Prism(..) => "Prism",
+            SolidBody::PolygonPrism(..) => "PolygonPrism",
+            SolidBody::AxialCylinder(..) => "AxialCylinder",
+            SolidBody::Annulus(..) => "Annulus",
+            SolidBody::CosmeticFastener(..) => "CosmeticFastener",
+            SolidBody::CosmeticProfiled(..) => "CosmeticProfiled",
+            SolidBody::ClippedNpt(..) => "ClippedNpt",
+            SolidBody::PipeHardware(..) => "PipeHardware",
+            SolidBody::LiteralNpt(..) => "LiteralNpt",
+            SolidBody::ActualClippedHead(..) => "ActualClippedHead",
+            SolidBody::ExternalNptStock(..) => "ExternalNptStock",
+            SolidBody::Line8Nut(..) => "Line8Nut",
+            SolidBody::Helical(..) => "Helical",
+            SolidBody::RoundedThread(..) => "RoundedThread",
+            SolidBody::EntryChamfer(..) => "EntryChamfer",
+            SolidBody::RoundedThreadBore(..) => "RoundedThreadBore",
+            SolidBody::RoundedBlindBore(..) => "RoundedBlindBore",
+            SolidBody::InternalThreadTreatment(..) => "InternalThreadTreatment",
+            SolidBody::RepairedPhillips(..) => "RepairedPhillips",
+            SolidBody::WoodInsert(..) => "WoodInsert",
+            SolidBody::Hanger(..) => "Hanger",
+            SolidBody::HelicalTubeCut(..) => "HelicalTubeCut",
+            SolidBody::Linear(..) => "Linear",
+            SolidBody::Revolved(..) => "Revolved",
+            SolidBody::RoundedSlot(..) => "RoundedSlot",
+            SolidBody::NormalSweep(..) => "NormalSweep",
+            SolidBody::NormalRelief(..) => "NormalRelief",
+            SolidBody::SplineCapRelief(..) => "SplineCapRelief",
+            SolidBody::RadialBoundary(..) => "RadialBoundary",
+            SolidBody::NonplanarLoft(..) => "NonplanarLoft",
+            SolidBody::SplineSweep(..) => "SplineSweep",
+            SolidBody::SpurGear(..) => "SpurGear",
+            SolidBody::InternalRing(..) => "InternalRing",
+            SolidBody::Herringbone(..) => "Herringbone",
+            SolidBody::Bevel(..) => "Bevel",
+            SolidBody::Worm(..) => "Worm",
+            SolidBody::Sphere(..) => "Sphere",
+            SolidBody::Torus(..) => "Torus",
+            SolidBody::ObliqueBore(..) => "ObliqueBore",
+            SolidBody::RoundedCylinder(..) => "RoundedCylinder",
+            SolidBody::AxialStack(..) => "AxialStack",
+            SolidBody::RustCompound(..) => "RustCompound",
+            SolidBody::Orthogonal(..) => "Orthogonal",
+            SolidBody::ImportedBrep(..) => "ImportedBrep",
+            SolidBody::OrthogonalSeats(..) => "OrthogonalSeats",
+            SolidBody::PlanarBoolean(..) => "PlanarBoolean",
+            SolidBody::WarpedUnion(..) => "WarpedUnion",
+        }
+    }
+}
