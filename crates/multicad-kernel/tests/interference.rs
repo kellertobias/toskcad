@@ -63,9 +63,30 @@ fn rust_pair_verifies_gap_contact_interference_and_containment() {
         near(result.minimum_distance.distance_mm, clearance);
         assert!(!result.minimum_distance.witnesses.is_empty());
     }
-    let mixed = Solid::box_solid([10.; 3], p()).unwrap();
+    // The canonical box constructor is owned Rust geometry, so it inspects
+    // exactly like the rational stock instead of being a mixed-kernel pair.
+    let canonical = Solid::box_solid([10.; 3], p()).unwrap();
+    let result = a.inspect_pair(&canonical, 1e-7, p()).unwrap();
+    assert_eq!(result.relation, SolidPairRelation::Overlapping);
+    near(result.common_volume_mm3, 1000.);
+    near(result.minimum_distance.distance_mm, 0.);
+    assert!(!result.minimum_distance.witnesses.is_empty());
+    // Material outside the certified prism and parallel-cylinder families is
+    // still refused rather than estimated.
+    let s = 2f64.sqrt().recip();
+    let oblique = Solid::cylinder(
+        PlaneFrame {
+            origin: [5., 5., -5.],
+            u: [1., 0., 0.],
+            v: [0., s, s],
+        },
+        2.,
+        20.,
+        p(),
+    )
+    .unwrap();
     assert_eq!(
-        a.inspect_pair(&mixed, 1e-7, p()).unwrap_err().kind,
+        a.inspect_pair(&oblique, 1e-7, p()).unwrap_err().kind,
         GeometryErrorKind::Unsupported
     );
 }
@@ -234,10 +255,13 @@ fn rotated_intersecting_solids_keep_only_consistent_native_witnesses() {
             0.,
         );
     }
-    assert!(!result.minimum_distance.witnesses_complete);
-    assert!(
-        result.minimum_distance.total_solutions.unwrap()
-            > result.minimum_distance.witnesses.len() as u32
+    // The owned kernel reports every distinct exact witness it enumerates;
+    // completeness is exactly the published total matching the retained list.
+    let total = result.minimum_distance.total_solutions.unwrap() as usize;
+    assert!(total > 0);
+    assert_eq!(
+        result.minimum_distance.witnesses_complete,
+        total == result.minimum_distance.witnesses.len()
     );
 }
 #[test]

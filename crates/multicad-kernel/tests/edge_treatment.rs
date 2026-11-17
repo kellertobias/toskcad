@@ -452,7 +452,7 @@ fn chamfer_face_reference_and_anchor_follow_upstream_dimensions_and_round_trip_s
 }
 
 #[test]
-fn named_cylinder_rims_treat_exactly_but_seam_and_impossible_radius_fail_without_mutation() {
+fn named_cylinder_rims_treat_exactly_without_a_seam_and_impossible_radius_fails_without_mutation() {
     let owner = EntityId::new();
     let feature = EntityId::new();
     let source = Solid::extrude_profile_named(
@@ -499,24 +499,20 @@ fn named_cylinder_rims_treat_exactly_but_seam_and_impossible_radius_fail_without
             ));
         }
     }
-    let seam = before
+    // The owned kernel publishes a periodic cylinder face without an
+    // artificial seam edge, so the two rims are the only selectable edges and
+    // no seam can be treated by mistake.
+    let edges: Vec<_> = before
         .elements
         .iter()
-        .find(|e| {
-            e.key.kind == TopologyKind::Edge
-                && matches!(e.geometry, Some(AnalyticGeometry::Line { .. }))
-        })
-        .unwrap();
-    let error = source
-        .treat_edges_named(
-            &[selected(seam.key, feature)],
-            EdgeTreatment::Fillet { radius_mm: 2. },
-            feature,
-            policy(),
-        )
-        .err()
-        .unwrap();
-    assert!(error.message.contains("seams"));
+        .filter(|e| e.key.kind == TopologyKind::Edge)
+        .collect();
+    assert_eq!(edges.len(), 2);
+    assert!(
+        edges
+            .iter()
+            .all(|e| matches!(e.geometry, Some(AnalyticGeometry::CircularArc { .. })))
+    );
     assert!(
         source
             .treat_edges_named(

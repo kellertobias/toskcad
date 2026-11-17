@@ -395,8 +395,19 @@ fn rust_batched_cuts_keep_empty_and_refused_outcomes_distinct() {
     );
 
     let invalid_tools = [
+        // A disjoint exact cylinder is a valid Rust solid that the
+        // rectilinear batch cannot represent.
         (
-            Solid::box_solid([2.; 3], policy).unwrap(),
+            Solid::cylinder(
+                PlaneFrame {
+                    origin: [4.5, 4.5, -1.],
+                    ..Default::default()
+                },
+                0.5,
+                8.,
+                policy,
+            )
+            .unwrap(),
             GeometryErrorKind::Unsupported,
         ),
         (

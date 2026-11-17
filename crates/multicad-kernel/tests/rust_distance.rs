@@ -227,13 +227,15 @@ fn whole_compound_containment_classifies_members_independently_and_refuses_curve
             .kind,
         GeometryErrorKind::Input,
     );
-    let native = stock(false, [2; 3], [2.; 3]);
-    assert_eq!(
-        a.minimum_distance(BRepSelection::Whole, &native, BRepSelection::Whole)
-            .unwrap_err()
-            .kind,
-        GeometryErrorKind::Unsupported,
-    );
+    // The canonical box constructor is owned Rust geometry: it is classified
+    // exactly like the rational stock, not refused as a mixed-kernel pair.
+    let canonical = stock(false, [2; 3], [2.; 3]);
+    let canonical = a
+        .minimum_distance(BRepSelection::Whole, &canonical, BRepSelection::Whole)
+        .unwrap();
+    near(canonical.distance_mm, 0.);
+    assert!(canonical.inner_solution);
+    check_witnesses(&canonical);
     let n = |v| Rational::new(v, 1).unwrap();
     let cylinder = AxialCylinder::new(
         EntityId::new().uuid_bits(),
