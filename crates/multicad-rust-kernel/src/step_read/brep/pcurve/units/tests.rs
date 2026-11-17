@@ -73,3 +73,153 @@ fn wrong_unit_bases_underflow_directions_and_reverse_sense_never_earn_a_certific
     assert!(cancelled.cancelled);
     assert!(cancelled.disagreements.is_empty());
 }
+
+/// A proper cyclic rotation R(x,y,z)=(y,z,x), followed by (11,-7,5).
+/// Every actual 3D point/direction record moves; all original 2D charts stay
+/// unchanged. Original direction decimal spellings are merely permuted.
+fn posed(input: &str) -> String {
+    let source = Source::parse(input, TOL).unwrap();
+    let mut edits = Vec::new();
+    for parts in source.entities.values() {
+        let [entity] = parts.as_slice() else { continue };
+        if !matches!(entity.name, "CARTESIAN_POINT" | "DIRECTION") {
+            continue;
+        }
+        let [_, coordinates] = entity.args.as_slice() else {
+            panic!()
+        };
+        let values = list(coordinates).unwrap();
+        if values.len() != 3 {
+            continue;
+        }
+        let original = entity.source.unwrap();
+        let start = original.rfind('(').unwrap() + 1;
+        let end = original[start..].find(')').unwrap() + start;
+        let coordinates: Vec<_> = original[start..end].split(',').map(str::trim).collect();
+        assert_eq!(coordinates.len(), 3);
+        let ordered = [coordinates[1], coordinates[2], coordinates[0]];
+        let changed = if entity.name == "DIRECTION" {
+            ordered.join(",")
+        } else {
+            // All 3D points in this actual fixture have exact integer leaves.
+            // Thus this decimal rewrite is an exact rigid transform, not an
+            // f64 reevaluation of the original support or an author recipe.
+            ordered
+                .into_iter()
+                .zip([11_i64, -7, 5])
+                .map(|(value, shift)| {
+                    let n = value.parse::<f64>().unwrap();
+                    assert!(n.is_finite() && n.fract() == 0. && n.abs() < 1e6);
+                    format!("{}.", n as i64 + shift)
+                })
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let replacement = format!("{}{}{}", &original[..start], changed, &original[end..]);
+        let offset = original.as_ptr() as usize - input.as_ptr() as usize;
+        assert_eq!(&input[offset..offset + original.len()], original);
+        edits.push((offset, original.len(), replacement));
+    }
+    edits.sort_by_key(|e| e.0);
+    let mut output = input.to_owned();
+    for (offset, length, replacement) in edits.into_iter().rev() {
+        output.replace_range(offset..offset + length, &replacement);
+    }
+    output
+}
+
+#[test]
+fn actual_proper_pose_preserves_converted_raw_cone_whole_trace_and_seam_rejection() {
+    let input = fixture("1.745329251994E-02", "21.8014094863518", "-360.");
+    let posed = posed(&input);
+    assert_ne!(input, posed);
+    let original = validate_pcurves(&input, TOL).unwrap();
+    let report = validate_pcurves(&posed, TOL).unwrap();
+    assert_eq!(report.pcurves_checked, original.pcurves_checked);
+    assert_eq!(report.edges_checked, original.edges_checked);
+    assert_eq!(report.pcurves_checked, 6);
+    assert!(report.certified_maximum_deviation_mm <= TOL);
+    // Independent metrology checks the actual transformed support; the
+    // positive authority above remains the complete OriginalREAL proof.
+    let source = Source::parse(&posed, TOL).unwrap();
+    let (point, _) = source.surface(43).unwrap().evaluate([0., -10.]);
+    for (actual, expected) in point.into_iter().zip([11., 3., 9.]) {
+        assert!((actual - expected).abs() < 1e-10);
+    }
+    let stale = posed.replace("(-360.,-0.)", "(-6.28318530718,-0.)");
+    assert_ne!(stale, posed);
+    let error = validate_pcurves(&stale, TOL).unwrap_err();
+    assert_eq!(error.kind, ReadError::Invalid);
+    assert!(
+        error
+            .disagreements
+            .iter()
+            .any(
+                |d| (d.surface_entity, d.edge_entity, d.pcurve_entity) == (43, 59, 74)
+                    && d.deviation_mm > 0.1
+            )
+    );
+}
+
+#[test]
+fn actual_original_converted_seam_has_exact_work_frontier_late_cancel_and_retry() {
+    let input = posed(&fixture("1.745329251994E-02", "21.8014094863518", "-360."));
+    let source = Source::parse(&input, TOL).unwrap();
+    // Preparation is separate from the actual leaf contract under test.
+    // Its inputs are earned from the unchanged public parser/binding path.
+    let mut preparation = Budget::new(MAX_WORK, None);
+    let binding = bindings(&source, &mut preparation)
+        .unwrap()
+        .into_iter()
+        .find(|b| b.pcurve == 74)
+        .unwrap();
+    let edge = edge(&source, binding, &mut preparation).unwrap();
+    let definition = uv::definition(&source, binding.pcurve, &mut preparation).unwrap();
+    let surface = source.surface(definition.surface).unwrap();
+    let run = |budget: &mut Budget<'_>| {
+        certify(
+            &source,
+            binding.curve,
+            &definition,
+            &surface,
+            &edge,
+            TOL,
+            budget,
+        )
+    };
+    let mut full = Budget::new(MAX_WORK, None);
+    let Some(Proof::Certified(first)) = run(&mut full).unwrap() else {
+        panic!()
+    };
+    assert!(first <= TOL);
+    let used = full.used();
+    assert!(used > 16384 && used < MAX_WORK);
+    let mut exact = Budget::new(used, None);
+    let Some(Proof::Certified(same)) = run(&mut exact).unwrap() else {
+        panic!()
+    };
+    assert_eq!(same, first);
+    assert_eq!(exact.remaining, 0);
+    assert!(matches!(
+        run(&mut Budget::new(used - 1, None)),
+        Err(ReadError::Limit)
+    ));
+    let calls = std::cell::Cell::new(0);
+    let interrupt = || {
+        calls.set(calls.get() + 1);
+        calls.get() == 20
+    };
+    let mut cancelled = Budget::new(MAX_WORK, Some(&interrupt));
+    assert!(matches!(run(&mut cancelled), Err(ReadError::Limit)));
+    assert!(cancelled.cancelled.get());
+    assert_eq!(calls.get(), 20);
+    assert!(cancelled.used() > 0);
+    let mut retry = Budget::new(MAX_WORK, None);
+    let Some(Proof::Certified(after)) = run(&mut retry).unwrap() else {
+        panic!()
+    };
+    assert_eq!(after, first);
+    assert_eq!(retry.used(), used);
+    // A failed private attempt never changes the actual input or public result.
+    assert_eq!(validate_pcurves(&input, TOL).unwrap().pcurves_checked, 6);
+}
