@@ -693,7 +693,6 @@ pub(super) fn certify(
             distinct_knots(source, d.surface, 2, 0, b)?,
             distinct_knots(source, d.surface, 2, 1, b)?,
         ];
-        let controls = uv_controls(source, d.curve_id, &surface_knots, b)?;
         let ka = distinct_knots(source, d.curve_id, 1, 0, b)?;
         let kc = distinct_knots(source, id, 1, 0, b)?;
         let breaks = merge(&ka, &kc, b)?;
@@ -706,7 +705,6 @@ pub(super) fn certify(
             target,
             super::c0_curved::Inputs {
                 surface_knots: &surface_knots,
-                controls: &controls,
                 ka: &ka,
                 kc: &kc,
                 breaks: &breaks,

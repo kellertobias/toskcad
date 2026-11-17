@@ -175,6 +175,49 @@ impl Partials {
         check(rows.len() == *w, ReadError::Unsupported)?;
         evaluate(&rows, x, b)
     }
+    /// All partials of total order <= 3 at one (point or interval) argument,
+    /// in two passes: the v-derivatives of every u-row, then the
+    /// u-derivatives of those values. `out[i][j]` is `d^(i+j) S / du^i dv^j`.
+    fn at(&self, x: I, y: I, b: &mut Budget<'_>) -> Result<[[V3; 4]; 4]> {
+        let (w, h, base) = &self.nets[0];
+        let mut rows: Vec<[V3; 4]> = Vec::new();
+        rows.try_reserve_exact(*w).map_err(|_| ReadError::Limit)?;
+        for row in base.chunks_exact(*h) {
+            let mut values = [[I::point(0.); 3]; 4];
+            let mut current = row.to_vec();
+            for slot in &mut values {
+                if current.is_empty() {
+                    break;
+                }
+                *slot = evaluate(&current, y, b)?;
+                current = derivative(&current);
+            }
+            rows.push(values);
+        }
+        let mut out = [[[I::point(0.); 3]; 4]; 4];
+        for j in 0..4 {
+            let mut current: Vec<V3> = rows.iter().map(|r| r[j]).collect();
+            for slot in out.iter_mut().take(4 - j) {
+                if current.is_empty() {
+                    break;
+                }
+                slot[j] = evaluate(&current, x, b)?;
+                current = derivative(&current);
+            }
+        }
+        Ok(out)
+    }
+    /// The partial (i, j) enclosed over the whole closed patch: the hull
+    /// of its Bernstein controls (convex hull property). Valid only for
+    /// boxes inside `[0,1]^2`.
+    fn hull(&self, i: usize, j: usize, b: &mut Budget<'_>) -> Result<V3> {
+        let (_, _, p) = &self.nets[Self::index(i, j)];
+        b.charge(p.len() * 3 * 4 + 64)?;
+        let first = p.first().ok_or(ReadError::Unsupported)?;
+        Ok(std::array::from_fn(|k| {
+            p.iter().fold(first[k], |range, q| hull(range, q[k]))
+        }))
+    }
     fn bytes(&self) -> usize {
         self.nets
             .iter()
@@ -204,13 +247,26 @@ fn composition(
         }
     }
     let mut out = [zero(); 3];
+    let at = if range {
+        None
+    } else {
+        Some(patch.at(point[0], point[1], b)?)
+    };
     for i in 0..ORDER {
         for j in 0..ORDER - i {
             if !range && i + j >= ORDER - 1 {
                 continue;
             }
             b.charge(3 * ORDER * ORDER * 8)?;
-            let value = patch.partial(i, j, point[0], point[1], b)?;
+            // A range box inside the closed patch is enclosed by the
+            // control hull; otherwise (an extension box) by interval
+            // de Casteljau over the box itself.
+            let inside = point.iter().all(|p| p.lo >= 0. && p.hi <= 1.);
+            let value = match &at {
+                Some(at) => at[i][j],
+                None if inside => patch.hull(i, j, b)?,
+                None => patch.partial(i, j, point[0], point[1], b)?,
+            };
             let monomial = mul(powers[0][i], powers[1][j]);
             let factor = I::point(FACTORIAL[i] * FACTORIAL[j]);
             for (axis, jet) in out.iter_mut().enumerate() {
@@ -410,26 +466,84 @@ fn restrict<const N: usize>(
     }
     Ok(out)
 }
-/// The patch (closed domain, exact rationals) containing all `points`.
-fn locate(
-    points: &[[BigRational; 2]],
+/// ORIGINAL UV controls, read exactly only when a decoded one-ulp
+/// enclosure cannot decide a comparison. The decoded doubles are the
+/// correctly rounded originals, so `[x.next_down(), x.next_up()]` encloses
+/// each original decimal.
+struct Controls<'s, 'i> {
+    source: &'s Source<'i>,
+    ids: Vec<u32>,
+    enclosures: Vec<[I; 2]>,
+    exact: Vec<Option<[BigRational; 2]>>,
+}
+impl Controls<'_, '_> {
+    fn exact(&mut self, i: usize, b: &mut Budget<'_>) -> Result<&[BigRational; 2]> {
+        if self.exact[i].is_none() {
+            b.charge(256)?;
+            let [_, values] = self.source.args(self.ids[i], "CARTESIAN_POINT")? else {
+                return Err(ReadError::Invalid);
+            };
+            let values = list(values)?;
+            check(values.len() == 2, ReadError::Unsupported)?;
+            self.exact[i] = Some([
+                rational(self.source, self.ids[i], &values[0], b)?,
+                rational(self.source, self.ids[i], &values[1], b)?,
+            ]);
+        }
+        self.exact[i].as_ref().ok_or(ReadError::Unsupported)
+    }
+    /// Exact `control[i][axis]` against `knot` (with its enclosure).
+    fn order(
+        &mut self,
+        i: usize,
+        axis: usize,
+        knot: (&BigRational, I),
+        b: &mut Budget<'_>,
+    ) -> Result<std::cmp::Ordering> {
+        let e = self.enclosures[i][axis];
+        if e.hi < knot.1.lo {
+            return Ok(std::cmp::Ordering::Less);
+        }
+        if e.lo > knot.1.hi {
+            return Ok(std::cmp::Ordering::Greater);
+        }
+        let q = self.exact(i, b)?[axis].clone();
+        compare(&q, knot.0, b)
+    }
+}
+fn ulp(x: f64) -> I {
+    I::new(x.next_down(), x.next_up())
+}
+/// The patch whose closed domain contains every control in `range`
+/// (exact decision; enclosures only skip comparisons they settle).
+fn locate_lazy(
+    controls: &mut Controls<'_, '_>,
+    range: std::ops::RangeInclusive<usize>,
     knots: &[Vec<BigRational>; 2],
+    enclosed: &[Vec<I>; 2],
     b: &mut Budget<'_>,
 ) -> Result<Option<(usize, usize)>> {
     let mut found = [0_usize; 2];
-    for (axis, k) in knots.iter().enumerate() {
+    for axis in 0..2 {
+        let (k, e) = (&knots[axis], &enclosed[axis]);
+        let lo = range
+            .clone()
+            .map(|i| controls.enclosures[i][axis].lo)
+            .fold(f64::INFINITY, f64::min);
+        let start = e.partition_point(|knot| knot.hi < lo).saturating_sub(1);
         let mut hit = None;
-        for i in 0..k.len() - 1 {
+        'span: for i in start..k.len() - 1 {
             b.charge(128)?;
-            let mut all = true;
-            for q in points {
-                if compare(&q[axis], &k[i], b)?.is_lt() || compare(&q[axis], &k[i + 1], b)?.is_gt()
-                {
-                    all = false;
-                    break;
+            let mut beyond = false;
+            for c in range.clone() {
+                if controls.order(c, axis, (&k[i], e[i]), b)?.is_lt() {
+                    break 'span;
+                }
+                if controls.order(c, axis, (&k[i + 1], e[i + 1]), b)?.is_gt() {
+                    beyond = true;
                 }
             }
-            if all {
+            if !beyond {
                 hit = Some(i);
                 break;
             }
@@ -444,7 +558,6 @@ fn locate(
 /// Shared exact inputs from the straight-trace route.
 pub(super) struct Inputs<'a> {
     pub(super) surface_knots: &'a [Vec<BigRational>; 2],
-    pub(super) controls: &'a [[BigRational; 2]],
     pub(super) ka: &'a [BigRational],
     pub(super) kc: &'a [BigRational],
     pub(super) breaks: &'a [BigRational],
@@ -468,7 +581,53 @@ pub(super) fn certify(
         (2..=MAX_DEGREE).contains(&uv.degree()),
         ReadError::Unsupported,
     )?;
-    // Exact patch of every ORIGINAL UV span (span k uses controls k-p..k).
+    // Exact patch of every ORIGINAL UV span (span k uses controls k-p..k),
+    // and every control inside the exact surface domain.
+    let mut enclosed = [Vec::new(), Vec::new()];
+    for (axis, out) in enclosed.iter_mut().enumerate() {
+        out.try_reserve_exact(inputs.surface_knots[axis].len())
+            .map_err(|_| ReadError::Limit)?;
+        for q in &inputs.surface_knots[axis] {
+            out.push(enclose(q, b)?);
+        }
+    }
+    let field = fields(source, d.curve_id, 1, b)?;
+    let refs = list(field.controls)?;
+    check(refs.len() == uv.points().len(), ReadError::Unsupported)?;
+    let mut controls = Controls {
+        source,
+        ids: Vec::new(),
+        enclosures: Vec::new(),
+        exact: Vec::new(),
+    };
+    controls
+        .ids
+        .try_reserve_exact(refs.len())
+        .map_err(|_| ReadError::Limit)?;
+    controls
+        .enclosures
+        .try_reserve_exact(refs.len())
+        .map_err(|_| ReadError::Limit)?;
+    controls
+        .exact
+        .try_reserve_exact(refs.len())
+        .map_err(|_| ReadError::Limit)?;
+    for (r, point) in refs.iter().zip(uv.points()) {
+        b.charge(64)?;
+        controls.ids.push(reference(r)?);
+        controls.enclosures.push([ulp(point[0]), ulp(point[1])]);
+        controls.exact.push(None);
+    }
+    for i in 0..controls.ids.len() {
+        for (axis, (k, e)) in inputs.surface_knots.iter().zip(&enclosed).enumerate() {
+            let last = k.len() - 1;
+            check(
+                controls.order(i, axis, (&k[0], e[0]), b)?.is_ge()
+                    && controls.order(i, axis, (&k[last], e[last]), b)?.is_le(),
+                ReadError::Unsupported,
+            )?;
+        }
+    }
     let p = uv.degree();
     let mut span_patch = Vec::new();
     span_patch
@@ -478,10 +637,12 @@ pub(super) fn certify(
     for &m in uv.knots().1.iter().take(inputs.ka.len() - 1) {
         expanded += m;
         let k = expanded - 1;
-        check(k >= p && k < inputs.controls.len(), ReadError::Unsupported)?;
-        span_patch.push(locate(
-            &inputs.controls[k - p..=k],
+        check(k >= p && k < controls.ids.len(), ReadError::Unsupported)?;
+        span_patch.push(locate_lazy(
+            &mut controls,
+            k - p..=k,
             inputs.surface_knots,
+            &enclosed,
             b,
         )?);
     }
