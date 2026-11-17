@@ -38,7 +38,7 @@ impl RoundedBlindMeshReceipt<'_> {
     pub fn producer_reserved_work(&self) -> usize {
         PRODUCER_WORK
     }
-    /// Native balance debits, including the delegated connectivity reservation;
+    /// Native balance debits, including incrementally counted connectivity;
     /// not a count of executed CPU instructions.
     pub fn native_work_used(&self) -> usize {
         self.native
@@ -46,8 +46,8 @@ impl RoundedBlindMeshReceipt<'_> {
     pub fn remaining_work(&self) -> usize {
         self.remaining
     }
-    /// Native local/result buffers only. Producer and delegated validators
-    /// keep their independently bounded arenas; this is not process RSS.
+    /// Native local/result buffers and counted-connectivity scratch. Producer
+    /// and embedding validator arenas remain separate; this is not process RSS.
     pub fn native_buffer_peak_bytes(&self) -> usize {
         self.peak
     }
@@ -304,20 +304,30 @@ impl RoundedBlindBoreBody {
         };
         drop(local.vertices);
         work.storage(buffers(&world))?;
-        // Same explicit delegated connectivity reservation as the existing
-        // Native repaired-source adapter; validator arenas remain separate.
-        work.charge(
-            world
-                .face_indices
-                .len()
-                .saturating_mul(52)
-                .saturating_add(world.vertices.len() / 3),
-        )?;
-        let proof = manufacturing::certify(&world).map_err(|e| {
-            failure(
-                GeometryErrorKind::InvalidResult,
-                format!("Blind world manifold refused: {e:?}"),
-            )
+        let resident = buffers(&world);
+        let proof = manufacturing::certify_counted(&world, &mut |n, scratch| {
+            work.charge(n)?;
+            if let Some(scratch) = scratch {
+                let bytes = resident.checked_add(scratch).ok_or_else(|| {
+                    failure(
+                        GeometryErrorKind::Limit,
+                        "Blind connectivity storage overflow",
+                    )
+                })?;
+                work.storage(bytes)?;
+            }
+            Ok(())
+        })
+        .map_err(|e| match e {
+            manufacturing::CountedError::Interrupted(error) => error,
+            manufacturing::CountedError::Mesh(error) => failure(
+                if error == multicad_rust_kernel::display::MeshError::BudgetExceeded {
+                    GeometryErrorKind::Limit
+                } else {
+                    GeometryErrorKind::InvalidResult
+                },
+                format!("Blind world manifold refused: {error:?}"),
+            ),
         })?;
         let mesh = Mesh {
             vertices: world.vertices,
