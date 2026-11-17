@@ -216,11 +216,22 @@ pub(super) fn encode(
                 [trim.azimuth_rad[1], trim.height_mm[1]],
             ],
         );
+        // A rail on the cavity support's profile boundary ends on the
+        // support's own sweep end. The two expressions agree exactly but
+        // round differently; state the support's value so the pcurve stays
+        // inside the written surface domain.
+        let length = trim.azimuth_rad[1] - trim.azimuth_rad[0];
+        let sweep_end = domains[1][1];
+        let length = if (length - sweep_end).abs() <= 64. * f64::EPSILON * sweep_end.abs().max(1.) {
+            sweep_end
+        } else {
+            length
+        };
         let cavity = uv.line(
             file,
             cavity_support,
             trim.azimuth_rad,
-            [[phi, 0.], [phi, trim.azimuth_rad[1] - trim.azimuth_rad[0]]],
+            [[phi, 0.], [phi, length]],
         );
         let curve = encode_spline(file, &spline, vertices)?;
         Ok::<_, StepError>(curves::edge(
