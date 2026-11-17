@@ -582,16 +582,30 @@ fn rust_full_circle_revolution_preserves_exact_torus_geometry_and_saved_face_ide
     let partial =
         model::prepare_revolve_edit(&session, session.revision(), actor(), feature, &parameters)
             .unwrap();
-    let Err(error) = compiler().compile_with_backend(
-        partial.prepared.document(),
-        session.revision(),
-        GeometryBackend::Rust,
-        None,
-    ) else {
-        panic!("Rust accepted an unsupported partial torus");
-    };
-    assert_eq!(error.entity, Some(feature));
-    assert!(error.message.contains("straight"), "{error}");
+    // A quarter turn keeps the exact torus support between two planar caps
+    // and, by Pappus, a quarter of the full volume.
+    let quarter = compiler()
+        .compile_with_backend(
+            partial.prepared.document(),
+            session.revision(),
+            GeometryBackend::Rust,
+            None,
+        )
+        .unwrap();
+    let partial_shape = &quarter.snapshot().shapes[&feature];
+    near(partial_shape.volume_mm3, shape.volume_mm3 / 4.);
+    let caps = partial_shape
+        .topology
+        .elements
+        .iter()
+        .filter(|e| {
+            e.key.kind == TopologyKind::Face
+                && e.origins
+                    .iter()
+                    .any(|o| o.source == feature && (o.role == "cap.start" || o.role == "cap.end"))
+        })
+        .count();
+    assert_eq!(caps, 2);
 }
 
 fn verify_torus_drawing_scene(torus: &multicad_kernel::Solid) {

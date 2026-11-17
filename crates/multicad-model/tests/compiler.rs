@@ -976,3 +976,146 @@ fn revolve_angle_edits_preserve_identity_and_crossing_axis_is_an_explicit_error(
     assert_eq!(error.entity, Some(outer.feature));
     assert!(error.message.contains("nonzero"));
 }
+
+/// Closed, consistently oriented manufacturing triangles whose enclosed volume
+/// matches the exact solid within the requested chordal accuracy.
+fn assert_closed_accurate_mesh(solid: &Solid, exact: f64) {
+    let deflection = 0.01;
+    let receipt = solid
+        .manufacturing_mesh_with_receipt(multicad_kernel::MeshOptions {
+            linear_deflection_mm: deflection,
+            maximum_triangles: 4_000_000,
+            ..Default::default()
+        })
+        .unwrap();
+    let mesh = &receipt.mesh;
+    let point = |i: u32| -> [f64; 3] { std::array::from_fn(|k| mesh.vertices[3 * i as usize + k]) };
+    let mut directed = std::collections::BTreeMap::<(u32, u32), i32>::new();
+    let mut volume = 0.;
+    for t in mesh.indices.chunks(3) {
+        for k in 0..3 {
+            let (a, b) = (t[k], t[(k + 1) % 3]);
+            *directed.entry((a.min(b), a.max(b))).or_default() += if a < b { 1 } else { -1 };
+        }
+        let [a, b, c] = [point(t[0]), point(t[1]), point(t[2])];
+        volume += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+            + a[2] * (b[0] * c[1] - b[1] * c[0]))
+            / 6.;
+    }
+    assert!(directed.values().all(|&uses| uses == 0));
+    assert!(receipt.maximum_displacement_mm <= deflection);
+    let area: f64 = solid.faces().unwrap().iter().map(|f| f.area_mm2).sum();
+    assert!(
+        (volume - exact).abs() <= deflection * area,
+        "{volume} != {exact}"
+    );
+}
+#[test]
+fn curved_revolution_keeps_identity_through_sketch_and_angle_edits_undo_redo_and_cold_reopen() {
+    let (mut fixture, request) = revolved_fixture(90.);
+    let outer = request
+        .outputs
+        .iter()
+        .find(|output| output.region.holes.len() == 1)
+        .unwrap();
+    let (feature, body) = (outer.feature, outer.body);
+    // Pappus: the plate's first moment about x = -10 minus the disc's.
+    let expected = |width: f64, degrees: f64| {
+        (width * HEIGHT * (width / 2. + 10.) - INNER_AREA * 30.) * degrees.to_radians().abs()
+    };
+    let check = |document: &Document, revision: u64, width: f64| {
+        let degrees = 90.;
+        let model = Compiler::default().compile(document, revision).unwrap();
+        let result = shape(&model, body);
+        assert_eq!(result.producer, feature);
+        assert_eq!(result.solid_count, 1);
+        near(result.volume_mm3, expected(width, degrees));
+        // A positive quarter turn sweeps toward -z from the sketch plane.
+        point_near(result.bounds.max, [width, HEIGHT, 0.]);
+        result.topology.validate().unwrap();
+        assert_closed_accurate_mesh(model.solid(feature).unwrap(), expected(width, degrees));
+        result.topology.elements.clone()
+    };
+    let first = check(
+        fixture.session.document(),
+        fixture.session.revision(),
+        WIDTH,
+    );
+
+    // A sketch edit moves the outer corners; the feature and Part persist.
+    fixture.set_width(70.);
+    let narrowed = check(fixture.session.document(), fixture.session.revision(), 70.);
+    let faces = |elements: &[multicad_core::references::TopologyElement]| {
+        elements
+            .iter()
+            .filter(|e| e.key.kind == TopologyKind::Face)
+            .map(|e| (e.key, e.origins.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(faces(&narrowed), faces(&first));
+    fixture
+        .session
+        .undo(fixture.session.revision(), actor())
+        .unwrap();
+    assert_eq!(
+        check(
+            fixture.session.document(),
+            fixture.session.revision(),
+            WIDTH
+        ),
+        first
+    );
+    fixture
+        .session
+        .redo(fixture.session.revision(), actor())
+        .unwrap();
+    assert_eq!(
+        check(fixture.session.document(), fixture.session.revision(), 70.),
+        narrowed
+    );
+
+    // A full reverse turn closes the hole into a void and drops both caps.
+    let mut full = request.parameters.clone();
+    full.angle = angle(-360.);
+    let prepared = model::prepare_revolve_edit(
+        &fixture.session,
+        fixture.session.revision(),
+        actor(),
+        feature,
+        &full,
+    )
+    .unwrap();
+    fixture.session.commit(prepared.prepared).unwrap();
+    let model = Compiler::default()
+        .compile(fixture.session.document(), fixture.session.revision())
+        .unwrap();
+    let result = shape(&model, body);
+    near(result.volume_mm3, expected(70., 360.));
+    point_near(result.bounds.min, [-90., 0., -80.]);
+    assert!(!result.topology.elements.iter().any(|e| {
+        e.origins
+            .iter()
+            .any(|o| o.source == feature && (o.role == "cap.start" || o.role == "cap.end"))
+    }));
+    assert_closed_accurate_mesh(model.solid(feature).unwrap(), expected(70., 360.));
+    let turned = result.topology.elements.clone();
+
+    let project = ProjectFile::new(fixture.session.document().clone()).unwrap();
+    let mut bytes = vec![];
+    project_file::write(&project, &mut bytes, Default::default()).unwrap();
+    let supported = project_file::supported_capabilities();
+    let opened = project_file::read(&mut bytes.as_slice(), Default::default(), &supported)
+        .unwrap()
+        .project;
+    assert_eq!(opened.document, project.document);
+    assert_eq!(
+        model::read_revolve(&opened.document, feature)
+            .unwrap()
+            .parameters,
+        full
+    );
+    let reopened = Compiler::default().compile(&opened.document, 0).unwrap();
+    let again = shape(&reopened, body);
+    near(again.volume_mm3, expected(70., 360.));
+    assert_eq!(again.topology.elements, turned);
+}

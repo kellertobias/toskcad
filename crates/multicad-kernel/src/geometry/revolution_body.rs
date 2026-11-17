@@ -172,11 +172,10 @@ impl Solid {
                 let (CurvedEdge2d::Line { a, b }, CurvedEdge2d::Line { a: next, .. }) =
                     (edge, next)
                 else {
-                    return Err(error(
-                        OPERATION,
-                        GeometryErrorKind::Unsupported,
-                        "Rust revolution currently requires straight meridian edges",
-                    ));
+                    // Curved meridians keep their arcs and splines exactly.
+                    return Self::rust_authored_revolution(
+                        profile, axis, angle_rad, feature, origins, policy,
+                    );
                 };
                 if (b[0] - next[0]).hypot(b[1] - next[1]) > policy.linear_tolerance_mm {
                     return Err(input(
