@@ -248,7 +248,8 @@ pub use common_mouth::{
 
 mod closed_head;
 pub use closed_head::{
-    ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHeadSupportKind,
+    ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHeadCorrespondence,
+    RawHeadFaceCorrespondence, RawHeadSupportKind,
 };
 
 mod derived_thread;

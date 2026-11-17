@@ -1090,6 +1090,8 @@ pub use phillips_cutter::{
     ClosedHeadOptions as PhillipsClosedHeadOptions,
     ClosedRepairedHead as PhillipsClosedRepairedHead,
     HeadSupportTransfer as PhillipsHeadSupportTransfer,
+    RawHeadCorrespondence as PhillipsRawHeadCorrespondence,
+    RawHeadFaceCorrespondence as PhillipsRawHeadFaceCorrespondence,
     RawHeadSupportKind as PhillipsRawHeadSupportKind,
 };
 

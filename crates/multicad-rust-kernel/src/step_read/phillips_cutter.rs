@@ -230,7 +230,8 @@ pub use physical::{
 };
 
 pub use physical::{
-    ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHeadSupportKind,
+    ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHeadCorrespondence,
+    RawHeadFaceCorrespondence, RawHeadSupportKind,
 };
 
 pub use physical::{

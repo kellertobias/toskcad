@@ -7,7 +7,9 @@ use crate::{
     head_profile::{RepairedHeadError, RepairedHeadMeridian, RepairedHeadOptions, Role},
     tapered_thread::interval::I,
 };
+mod raw_correspondence;
 mod supports;
+pub use raw_correspondence::{RawHeadCorrespondence, RawHeadFaceCorrespondence};
 pub use supports::RawHeadSupportKind;
 #[cfg(test)]
 pub(super) mod tests;

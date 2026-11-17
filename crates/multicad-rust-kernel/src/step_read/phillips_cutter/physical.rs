@@ -330,7 +330,10 @@ pub use body::{
     CommonMouthChart, CommonMouthHeadEnvelope, CommonMouthOptions, CommonTensorTransfer,
 };
 
-pub use body::{ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHeadSupportKind};
+pub use body::{
+    ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHeadCorrespondence,
+    RawHeadFaceCorrespondence, RawHeadSupportKind,
+};
 
 pub use body::{
     AnalyticThreadOptions, AnalyticThreadRepair, AnalyticThreadTransfer, AuthoredPeriodicOptions,

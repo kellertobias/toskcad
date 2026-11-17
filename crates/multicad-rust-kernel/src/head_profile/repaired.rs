@@ -149,6 +149,14 @@ impl<'p> RepairedHeadMeridian<'p> {
     pub fn retained_budget_bytes(&self) -> usize {
         std::mem::size_of::<Self>() + std::mem::size_of::<Profile>()
     }
+    /// Internal metered handoff. Caller charges at least 1024 logical actions
+    /// and owns a constructor-qualified segment index. No new geometry/angles.
+    pub(crate) fn raw_support_arc_envelope(&self, index: usize) -> Option<[f64; 3]> {
+        match self.parts[index].unwrap() {
+            Part::Line(_) => None,
+            Part::Arc(arc) => Some(arc.raw_support_envelope()),
+        }
+    }
     pub fn evaluate(
         &self,
         index: usize,

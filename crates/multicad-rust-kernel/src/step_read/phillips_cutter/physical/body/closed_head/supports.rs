@@ -24,7 +24,7 @@ pub(super) struct RawSupport {
 fn valid(x: I) -> bool {
     x.valid() && x.lo.is_finite() && x.hi.is_finite()
 }
-fn norm<const N: usize>(v: [I; N]) -> Result<f64> {
+pub(super) fn norm<const N: usize>(v: [I; N]) -> Result<f64> {
     let n = v
         .into_iter()
         .fold(I::point(0.), |a, v| a + v.square())
@@ -32,10 +32,10 @@ fn norm<const N: usize>(v: [I; N]) -> Result<f64> {
     require(valid(n))?;
     Ok(n.hi)
 }
-fn dot(a: [I; 3], b: [I; 3]) -> I {
+pub(super) fn dot(a: [I; 3], b: [I; 3]) -> I {
     (0..3).fold(I::point(0.), |v, i| v + a[i] * b[i])
 }
-fn vector(f: &support::Frame, p: Point) -> [I; 3] {
+pub(super) fn vector(f: &support::Frame, p: Point) -> [I; 3] {
     std::array::from_fn(|i| dot(f.axes[i], p.map(I::point)))
 }
 fn origin(f: &support::Frame, c: CommonMouthChart, z: I) -> [I; 3] {
@@ -82,7 +82,7 @@ pub(super) fn read(shell: &Shell<'_, '_>, id: u32) -> Result<RawSupport> {
 /// Chosen support-parameter basis only. It does not normalize or replace the
 /// actual derived affine frame. Every finite phase and either sine orientation
 /// parameterize the exact same raw circle/cylinder/cone support.
-fn phase(u: [I; 3]) -> [I; 2] {
+pub(super) fn phase(u: [I; 3]) -> [I; 2] {
     let mut seed = [u[0].lo / 2. + u[0].hi / 2., u[1].lo / 2. + u[1].hi / 2.];
     if seed == [0.; 2] {
         seed = [1., 0.]
