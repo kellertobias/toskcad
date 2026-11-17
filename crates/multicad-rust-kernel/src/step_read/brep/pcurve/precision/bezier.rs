@@ -5,9 +5,51 @@ use crate::brep::NurbsCurve;
 type H = [I; 4];
 const MAX_DEGREE: usize = 11;
 const MAX_CONTROLS: usize = 1024;
-const MAX_SPANS: usize = 128;
+// The actual cubic chamfer traces have 769 controls and 256 spans. With
+// p<=11 the completed net has at most 2817 homogeneous controls; exported
+// cells hold at most 3072. Old/new nets and tags, final cell capacities and
+// 128KiB scratch remain within the unchanged 8MiB capacity ledger. Actual
+// insertions and copies still consume the same caller work/cancel budget.
+const MAX_SPANS: usize = 256;
 const SCRATCH: usize = 128 * 1024;
 const MAX_BYTES: usize = 8 * 1024 * 1024;
+fn spelling_scratch(source: &Source<'_>, id: u32, budget: &mut Budget<'_>) -> Result<()> {
+    fn visit(value: &Value<'_>, count: &mut usize, budget: &mut Budget<'_>) -> Result<()> {
+        budget.charge(16)?;
+        match value {
+            Value::Number(_) => {
+                *count = count.checked_add(1).ok_or(ReadError::Limit)?;
+                if *count > SCRATCH / (4 * std::mem::size_of::<&str>()) {
+                    return Err(ReadError::Limit);
+                }
+            }
+            Value::List(values) => {
+                for value in values {
+                    visit(value, count, budget)?;
+                }
+            }
+            Value::Typed(entity) => {
+                for value in &entity.args {
+                    visit(value, count, budget)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    for entity in source.components(id)? {
+        budget.charge(16)?;
+        let mut count = 0;
+        for value in &entity.args {
+            visit(value, &mut count, budget)?;
+        }
+    }
+    // The numeric owner may include ignored/typed numeric arguments. Two
+    // capacities of its borrowed-string vector occupy at most half of the
+    // declared scratch; bounded rational temporaries occupy the other half.
+    // This preflight precedes EVERY first scalar/rational read of the curve.
+    Ok(())
+}
 #[derive(Clone, Copy)]
 pub(super) enum Coordinates<'a> {
     Raw(usize),
@@ -296,6 +338,7 @@ pub(super) fn original_curve<'s, 'i, 'a>(
         return Err(ReadError::Unsupported);
     }
     let parts = source.components(id)?;
+    spelling_scratch(source, id, budget)?;
     let closed = if let [entity] = parts {
         entity.args.get(4)
     } else {

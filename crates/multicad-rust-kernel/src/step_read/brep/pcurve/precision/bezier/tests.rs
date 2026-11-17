@@ -388,14 +388,17 @@ fn basis_table(p: usize, t: &BigRational, knots: &[BigRational]) -> Vec<BigRatio
     current
 }
 #[test]
-fn actual_degree_eleven_309_and_540_pole_sources_and_lower_multiplicity_keep_raw_three_space() {
-    for (span_count, multiplicity, unit_weights) in [
-        (28_usize, 11_usize, false),
-        (49, 11, false),
-        (49, 10, false),
-        (49, 10, true),
+fn actual_dense_cubic_and_degree_eleven_sources_keep_raw_three_space_and_capacity_bounds() {
+    for (degree, span_count, multiplicity, unit_weights) in [
+        (11_usize, 28_usize, 11_usize, false),
+        (11, 49, 11, false),
+        (11, 49, 10, false),
+        (11, 49, 10, true),
+        (3, 256, 3, true),
+        (11, 256, 1, true),
+        (3, 257, 3, true),
     ] {
-        let n = 12 + (span_count - 1) * multiplicity;
+        let n = degree + 1 + (span_count - 1) * multiplicity;
         let references = (0..n)
             .map(|i| format!("#{}", 910000 + i))
             .collect::<Vec<_>>()
@@ -419,7 +422,7 @@ fn actual_degree_eleven_309_and_540_pole_sources_and_lower_multiplicity_keep_raw
         let mult = (0..=span_count)
             .map(|i| {
                 if i == 0 || i == span_count {
-                    12
+                    degree + 1
                 } else {
                     multiplicity
                 }
@@ -432,7 +435,7 @@ fn actual_degree_eleven_309_and_540_pole_sources_and_lower_multiplicity_keep_raw
             .collect::<Vec<_>>()
             .join(",");
         let records = format!(
-            "\n#900001=(BOUNDED_CURVE() B_SPLINE_CURVE(11,({references}),.UNSPECIFIED.,.F.,.F.) B_SPLINE_CURVE_WITH_KNOTS(({mult}),({knots}),.UNSPECIFIED.) CURVE() GEOMETRIC_REPRESENTATION_ITEM() RATIONAL_B_SPLINE_CURVE(({weights})) REPRESENTATION_ITEM(''));\n{points}\n"
+            "\n#900001=(BOUNDED_CURVE() B_SPLINE_CURVE({degree},({references}),.UNSPECIFIED.,.F.,.F.) B_SPLINE_CURVE_WITH_KNOTS(({mult}),({knots}),.UNSPECIFIED.) CURVE() GEOMETRIC_REPRESENTATION_ITEM() RATIONAL_B_SPLINE_CURVE(({weights})) REPRESENTATION_ITEM(''));\n{points}\n"
         );
         let at = BASE.rfind("ENDSEC;").unwrap();
         let text = format!("{}{}{}", &BASE[..at], records, &BASE[at..]);
@@ -442,9 +445,13 @@ fn actual_degree_eleven_309_and_540_pole_sources_and_lower_multiplicity_keep_raw
         };
         assert_eq!(curve.points().len(), n);
         let mut budget = Budget::new(512_000_000, None);
-        let result =
-            original_curve(&source, 900001, &curve, Coordinates::Raw(3), &mut budget).unwrap();
-        assert_eq!(result.degree(), 11);
+        let extracted = original_curve(&source, 900001, &curve, Coordinates::Raw(3), &mut budget);
+        if span_count == 257 {
+            assert!(matches!(extracted, Err(ReadError::Unsupported)));
+            continue;
+        }
+        let result = extracted.unwrap();
+        assert_eq!(result.degree(), degree);
         assert_eq!(result.cells().len(), span_count);
         if unit_weights {
             assert!(result.cells().iter().all(|cell| {
@@ -483,7 +490,37 @@ fn actual_degree_eleven_309_and_540_pole_sources_and_lower_multiplicity_keep_raw
 
         assert!(result.peak_bytes() < MAX_BYTES);
         assert!(budget.used() < 512_000_000);
-        let mut u = vec![decimal("0"); 12];
+        if span_count == 256 {
+            assert!(result.peak_bytes() < 1024 * 1024);
+            assert_eq!(result.cells().first().unwrap().knot_indices(), [0, 1]);
+            assert_eq!(result.cells().last().unwrap().knot_indices(), [255, 256]);
+            let used = budget.used();
+            let run = |b: &mut Budget<'_>| {
+                original_curve(&source, 900001, &curve, Coordinates::Raw(3), b)
+            };
+            assert!(matches!(
+                run(&mut Budget::new(used - 1, None)),
+                Err(ReadError::Limit)
+            ));
+            assert!(run(&mut Budget::new(used, None)).is_ok());
+            let calls = std::cell::Cell::new(0usize);
+            let observe = || {
+                calls.set(calls.get() + 1);
+                false
+            };
+            assert!(run(&mut Budget::new(used, Some(&observe))).is_ok());
+            let total = calls.get();
+            calls.set(0);
+            let cancel = || {
+                calls.set(calls.get() + 1);
+                calls.get() == total
+            };
+            let mut interrupted = Budget::new(used, Some(&cancel));
+            assert!(matches!(run(&mut interrupted), Err(ReadError::Limit)));
+            assert!(interrupted.cancelled.get());
+            assert!(run(&mut Budget::new(used, None)).is_ok());
+        }
+        let mut u = vec![decimal("0"); degree + 1];
         for i in 1..span_count {
             u.extend(std::iter::repeat_n(
                 BigRational::from_integer(i.into()),
@@ -492,11 +529,11 @@ fn actual_degree_eleven_309_and_540_pole_sources_and_lower_multiplicity_keep_raw
         }
         u.extend(std::iter::repeat_n(
             BigRational::from_integer(span_count.into()),
-            12,
+            degree + 1,
         ));
         for index in [0, span_count / 2, span_count - 1] {
             let t = BigRational::from_integer(index.into()) + decimal("0.5");
-            let basis = basis_table(11, &t, &u);
+            let basis = basis_table(degree, &t, &u);
             assert_eq!(basis.len(), n);
             let mut h: [BigRational; 4] = std::array::from_fn(|_| decimal("0"));
             for (i, coefficient) in basis.iter().enumerate() {
@@ -557,6 +594,55 @@ fn raw_polynomial_and_rational_quartics_still_match_exact_cox_de_boor() {
                 }
                 assert_exact_contains(actual[2], &decimal("0"));
             }
+        }
+    }
+}
+
+#[test]
+fn selected_complex_record_numeric_scratch_includes_ignored_and_typed_values() {
+    let ordinary = input(true);
+    for count in [128, 2049] {
+        let numbers = std::iter::repeat_n("1.", count)
+            .collect::<Vec<_>>()
+            .join(",");
+        // These are actual parsed tokens, not forged Source/Value fields.
+        // Ignored component arguments still belong to spelling's traversal.
+        for text in [
+            ordinary.replace(
+                "BOUNDED_CURVE()",
+                &format!("BOUNDED_CURVE(NESTED(({numbers})))"),
+            ),
+            ordinary.replacen(
+                "),.UNSPECIFIED.,.F.,.F.) B_SPLINE_CURVE_WITH_KNOTS",
+                &format!("),NESTED(({numbers})),.F.,.F.) B_SPLINE_CURVE_WITH_KNOTS"),
+                1,
+            ),
+        ] {
+            assert_ne!(text, ordinary);
+            let source = Source::parse(&text, 1e-7).unwrap();
+            let definition = definition(&source);
+            let Curve::Nurbs { curve, .. } = &definition.geometry else {
+                panic!()
+            };
+            let run = |budget: &mut Budget<'_>| {
+                original_curve(&source, 900001, curve, Coordinates::Raw(2), budget)
+            };
+            let mut full = Budget::new(512_000_000, None);
+            if count == 2049 {
+                assert!(matches!(run(&mut full), Err(ReadError::Limit)));
+            } else {
+                assert!(run(&mut full).is_ok());
+                let used = full.used();
+                assert!(matches!(
+                    run(&mut Budget::new(used - 1, None)),
+                    Err(ReadError::Limit)
+                ));
+                assert!(run(&mut Budget::new(used, None)).is_ok());
+            }
+            let cancel = || true;
+            let mut interrupted = Budget::new(512_000_000, Some(&cancel));
+            assert!(matches!(run(&mut interrupted), Err(ReadError::Limit)));
+            assert!(interrupted.cancelled.get());
         }
     }
 }
