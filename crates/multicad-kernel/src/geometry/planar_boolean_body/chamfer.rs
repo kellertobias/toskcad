@@ -89,7 +89,11 @@ impl Solid {
                 // The first distance lies in the selected face.
                 Some(0) => across.swap(0, 1),
                 Some(1) => (),
-                _ => return Err(input("Chamfer reference face must touch the selected edge")),
+                _ => {
+                    return Err(input(
+                        "Chamfer reference face is not adjacent to the selected edge",
+                    ));
+                }
             }
         }
 
