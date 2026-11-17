@@ -483,6 +483,25 @@ pub(crate) fn degenerate(
     Ok(any)
 }
 
+/// Check only the same sampled point incidence as the orientation path.
+/// No signed area, loop normalization, topology or material is certified.
+pub(crate) fn incidence_only(
+    boundary: &Boundary,
+    face_index: usize,
+    samples: &[Vec<f64>],
+    tolerance: f64,
+) -> Result<()> {
+    let face = &boundary.faces[face_index];
+    if whole(face).is_some() {
+        return Ok(());
+    }
+    for trim in face.loops.iter().filter(|trim| !trim.uses.is_empty()) {
+        let points = raw(boundary, &trim.uses, samples, false);
+        unroll(&face.surface, points, tolerance)?;
+    }
+    Ok(())
+}
+
 /// Whether the face's loops, as stored, run counter-clockwise about the
 /// surface normal. Writers disagree on whether the loops of a reversed face
 /// run about the face normal or the surface normal, so the direction is
