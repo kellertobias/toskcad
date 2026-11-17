@@ -218,3 +218,123 @@ fn source_known_step_and_owned_lifecycle_preserve_the_authored_floor() {
             < 1e-6
     );
 }
+#[test]
+fn normal_stock_cut_keeps_original_caps_and_actual_floor_distinct_in_both_directions() {
+    use multicad_core::references::{GeometryIntent, Origin, Resolution, resolve};
+    use multicad_kernel::rust_kernel::{Circle, cylinder::AxialCylinder};
+    let q = |n, d| Rational::new(n, d).unwrap();
+    for left in [false, true] {
+        for reverse in [false, true] {
+            let frame = PlaneFrame {
+                origin: [17., -8., 13.],
+                u: [0.8, 0.6, 0.],
+                v: [-0.36, 0.48, 0.8],
+            };
+            let source_id = EntityId::new();
+            let feature = EntityId::new();
+            let stock = Solid::from_axial_cylinder_sweep(
+                AxialCylinder::new(
+                    source_id.uuid_bits(),
+                    Circle::new([q(0, 1); 2], q(127, 20)).unwrap(),
+                    q(0, 1),
+                    q(127, 25),
+                )
+                .unwrap(),
+                frame,
+                [0.; 2],
+                false,
+                Origin {
+                    source: source_id,
+                    role: "actual.stock.circle".into(),
+                },
+                Default::default(),
+            )
+            .unwrap();
+            let before = stock.volume_mm3().unwrap();
+            let old = stock.topology_snapshot(source_id, 1).unwrap();
+            let intents = old
+                .elements
+                .iter()
+                .map(|e| GeometryIntent::capture(&old, e.key).unwrap())
+                .collect::<Vec<_>>();
+            let request = if reverse {
+                PlaneFrame {
+                    origin: std::array::from_fn(|i| frame.origin[i] + 5.08 * frame.normal()[i]),
+                    u: frame.u,
+                    v: frame.v.map(|v| -v),
+                }
+            } else {
+                frame
+            };
+            let result = stock
+                .rust_cut_rounded_internal_thread(
+                    spec(left),
+                    0.5,
+                    feature,
+                    request,
+                    Default::default(),
+                )
+                .unwrap();
+            let data = result.rust_rounded_blind_bore_data().unwrap();
+            assert_eq!(data.bore.stock_height_mm(), q(127, 25));
+            assert_eq!(data.bore.stock_radius_mm(), q(127, 20));
+            assert_eq!(data.bore.cutter().spec(), spec(left));
+            assert!(
+                (result.volume_mm3().unwrap() - (before - data.bore.cutter().volume_mm3())).abs()
+                    < 1e-9
+            );
+            let topology = result.topology_snapshot(feature, 2).unwrap();
+            for intent in &intents {
+                assert!(matches!(
+                    resolve(intent, &topology, 2),
+                    Resolution::Resolved { .. }
+                ));
+            }
+            let floor = topology
+                .elements
+                .iter()
+                .find(|e| e.key.kind == TopologyKind::Face && e.key.ordinal == 1)
+                .unwrap();
+            let top = topology
+                .elements
+                .iter()
+                .find(|e| e.key.kind == TopologyKind::Face && e.key.ordinal == 8)
+                .unwrap();
+            assert!(!floor.origins.iter().any(|o| o.source == source_id));
+            assert!(top.origins.iter().any(|o| o.source == source_id));
+            let display = result
+                .topology_with_display(feature, 2, Some(0.05))
+                .unwrap();
+            assert_eq!(display.edges.len(), 17);
+            let mesh = result.manufacturing_mesh_with_receipt(quality()).unwrap();
+            assert!(mesh.edge_pairs > 0 && mesh.vertex_links > 0);
+            assert_eq!(stock.volume_mm3().unwrap(), before);
+            let error = stock
+                .rust_cut_rounded_internal_thread(
+                    Spec {
+                        length_mm: 6.,
+                        ..spec(left)
+                    },
+                    0.5,
+                    EntityId::new(),
+                    request,
+                    Default::default(),
+                )
+                .err()
+                .unwrap();
+            assert_eq!(error.kind, multicad_kernel::GeometryErrorKind::Unsupported);
+            assert!(
+                stock
+                    .rust_cut_rounded_internal_thread(
+                        spec(left),
+                        4.,
+                        EntityId::new(),
+                        request,
+                        Default::default()
+                    )
+                    .is_err()
+            );
+            assert_eq!(stock.volume_mm3().unwrap(), before);
+        }
+    }
+}

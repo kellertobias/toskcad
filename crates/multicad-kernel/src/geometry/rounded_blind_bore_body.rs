@@ -12,6 +12,7 @@ use multicad_rust_kernel::{
 };
 use std::collections::BTreeSet;
 mod mesh;
+mod stock;
 mod topology;
 pub use mesh::{RoundedBlindMeshBudget, RoundedBlindMeshReceipt};
 type Point = [f64; 3];
@@ -50,8 +51,10 @@ impl Solid {
                 format!("Actual blind source refused: {e:?}"),
             )
         })?;
-        policy
-            .length(geometry.stock_radius_bounds_mm()[0] - geometry.cutter_radial_bounds_mm()[1])?;
+        policy.length(
+            (geometry.stock_radius_bounds_mm()[0] - geometry.cutter_radial_bounds_mm()[1])
+                .next_down(),
+        )?;
         policy.length(geometry.floor_thickness_bounds_mm()[0])?;
         let body = RoundedBlindBoreBody {
             geometry,

@@ -151,6 +151,11 @@ impl Solid {
     ) -> Result<Self, GeometryError> {
         policy.validate()?;
         frame.checked(policy)?;
+        if let SolidBody::AxialCylinder(cylinder, ..) = &self.body
+            && spec.length_mm < cylinder.height().as_f64()
+        {
+            return self.cut_rounded_blind_stock(spec, minimum_wall_mm, feature, frame, policy);
+        }
         // Validate the complete literal requested profile before changing chart.
         let tool = Self::rust_rounded_thread(spec, feature, frame, policy)?;
         let SolidBody::AxialCylinder(cylinder, stock, _) = &self.body else {
@@ -164,7 +169,7 @@ impl Solid {
         if self.policy != policy || policy.boolean_fuzzy_mm != 0. || spec.length_mm != height {
             return Err(failure(
                 GeometryErrorKind::Unsupported,
-                "Rounded receiving threads currently require the literal full stock height; partial-depth and overrun closures are not certified",
+                "Rounded receiving threads currently require the literal full stock height; overrun closures are not certified",
             ));
         }
         if feature.uuid_bits() == cylinder.feature()
