@@ -619,6 +619,21 @@ fn validate_source(
                 Ok(_) | Err(ReadError::Unsupported) => {}
                 Err(error) => return Err(error),
             }
+            match precision::cone_polynomial_certificate(
+                source,
+                binding.curve,
+                &definition,
+                &surface,
+                &edge,
+                tol,
+                budget,
+            ) {
+                Ok(Some(proof @ (Proof::Certified(_) | Proof::Disagreement(_)))) => {
+                    return Ok((proof, definition.surface, surface_kind(&surface), 0.));
+                }
+                Ok(None | Some(Proof::Unsupported)) | Err(ReadError::Unsupported) => {}
+                Err(error) => return Err(error),
+            }
             if let Some(proof) = finite_analytic::certify(
                 source,
                 binding.curve,

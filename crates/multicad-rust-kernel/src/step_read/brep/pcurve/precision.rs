@@ -11,6 +11,7 @@ use num_traits::{ToPrimitive, Zero};
 mod analytic;
 mod bezier;
 mod bilinear;
+mod cone_polynomial;
 mod cone_separation;
 mod conic;
 mod cylinder_ellipse;
@@ -21,6 +22,19 @@ mod polynomial_trace;
 mod sense_line;
 mod spline_window;
 type V = [I; 3];
+pub(super) fn cone_polynomial_certificate(
+    source: &Source<'_>,
+    curve_id: u32,
+    definition: &super::uv::Definition,
+    surface: &Surface,
+    edge: &Edge,
+    tolerance: f64,
+    budget: &mut Budget<'_>,
+) -> Result<Option<super::Proof>> {
+    cone_polynomial::certify(
+        source, curve_id, definition, surface, edge, tolerance, budget,
+    )
+}
 /// This distinct certificate owns the Original-REAL bounded target trace,
 /// including its parameter map and whole-curve tangent orientation.
 pub(super) fn cylinder_trace_certificate(
