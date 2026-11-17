@@ -124,6 +124,94 @@ pub(super) fn equal(a: &str, b: &str, budget: &mut Budget<'_>) -> Result<bool> {
     let b = normalized(b, budget)?;
     Ok(a.negative == b.negative && a.exponent == b.exponent && a.digits == b.digits)
 }
+// Exact decimal addition in the original plane chart. No binary64 cache or
+// interval overlap can authorize a changed PCURVE. Extreme exponent spreads
+// refuse within the existing arena rather than allocating an unbounded integer.
+pub(super) fn translated_equal(
+    uv: Scalar<'_>,
+    anchor: Scalar<'_>,
+    physical: Scalar<'_>,
+    budget: &mut Budget<'_>,
+) -> Result<bool> {
+    if anchor.bounds == [0., 0.] {
+        return equal(uv.spelling, physical.spelling, budget);
+    }
+    let values = [
+        normalized(uv.spelling, budget)?,
+        normalized(anchor.spelling, budget)?,
+        normalized(physical.spelling, budget)?,
+    ];
+    let Some(lower) = values
+        .iter()
+        .filter(|v| !v.digits.is_empty())
+        .map(|v| v.exponent)
+        .min()
+    else {
+        return Ok(true);
+    };
+    let upper =
+        values
+            .iter()
+            .filter(|v| !v.digits.is_empty())
+            .try_fold(lower, |upper, value| {
+                value
+                    .exponent
+                    .checked_add(value.digits.len() as i64)
+                    .map(|end| upper.max(end))
+                    .ok_or(Error::Limit)
+            })?;
+    let width = upper
+        .checked_sub(lower)
+        .and_then(|n| n.checked_add(1))
+        .and_then(|n| usize::try_from(n).ok())
+        .filter(|n| *n <= 8192)
+        .ok_or(Error::Limit)?;
+    let mut positive = budget.allocate::<u8>(width)?;
+    let mut negative = budget.allocate::<u8>(width)?;
+    budget.step(width.checked_mul(2).ok_or(Error::Limit)?)?;
+    positive.resize(width, 0);
+    negative.resize(width, 0);
+    for (index, value) in values.iter().enumerate() {
+        if value.digits.is_empty() {
+            continue;
+        }
+        let offset = usize::try_from(value.exponent.checked_sub(lower).ok_or(Error::Limit)?)
+            .map_err(|_| Error::Limit)?;
+        let target = if value.negative ^ (index == 2) {
+            &mut negative
+        } else {
+            &mut positive
+        };
+        // Each source digit, possible propagated carry and destination access
+        // is charged before arithmetic. At most width carry positions exist.
+        budget.step(
+            value
+                .digits
+                .len()
+                .checked_mul(3)
+                .and_then(|n| n.checked_add(width))
+                .ok_or(Error::Limit)?,
+        )?;
+        let mut carry = 0;
+        for (i, digit) in value.digits.iter().rev().enumerate() {
+            let sum = target[offset + i] + (digit - b'0') + carry;
+            target[offset + i] = sum % 10;
+            carry = sum / 10;
+        }
+        let mut i = offset + value.digits.len();
+        while carry != 0 {
+            let sum = target[i] + carry;
+            target[i] = sum % 10;
+            carry = sum / 10;
+            i += 1;
+        }
+    }
+    budget.step(width)?;
+    let same = positive == negative;
+    budget.release(&positive);
+    budget.release(&negative);
+    Ok(same)
+}
 pub(super) fn expected(s: Scalar<'_>, value: f64, budget: &mut Budget<'_>) -> Result<bool> {
     equal(s.spelling, &format!("{value:.16E}"), budget)
 }
@@ -138,3 +226,6 @@ pub(super) fn retained_scalar(value: f64, bounds: [f64; 2], spelling: &str) -> S
         spelling,
     }
 }
+
+#[cfg(test)]
+mod tests;

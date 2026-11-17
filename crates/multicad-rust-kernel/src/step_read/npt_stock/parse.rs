@@ -158,11 +158,6 @@ fn plane<'input>(
         numbers.finish()?;
     }
     let height = point_index(points, reference(origin)?, budget)?;
-    for scalar in &points[height].coordinates[..2] {
-        if !numeric::expected(*scalar, 0., budget)? {
-            return Err(Error::Unsupported);
-        }
-    }
     Ok(Support::Plane { height })
 }
 pub(super) fn body<'document, 'input>(

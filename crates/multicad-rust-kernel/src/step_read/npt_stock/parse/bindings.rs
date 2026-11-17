@@ -164,8 +164,13 @@ fn cap_curve<'input>(
             2,
             budget,
         )?;
-        for (a, b) in p.iter().zip(points[*index].coordinates) {
-            if !numeric::equal(a.spelling(), b.spelling(), budget)? {
+        for (axis, a) in p.iter().enumerate() {
+            if !numeric::translated_equal(
+                *a,
+                points[height].coordinates[axis],
+                points[*index].coordinates[axis],
+                budget,
+            )? {
                 return Err(Error::Unsupported);
             }
         }
