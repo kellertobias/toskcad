@@ -10,6 +10,7 @@ use num_rational::BigRational;
 use num_traits::{ToPrimitive, Zero};
 mod analytic;
 mod bezier;
+mod bilinear;
 mod conic;
 mod cylinder_ellipse;
 mod cylinder_trace;
@@ -40,6 +41,19 @@ pub(super) fn cylinder_ellipse_certificate(
     budget: &mut Budget<'_>,
 ) -> Result<Option<super::Proof>> {
     cylinder_ellipse::certify(
+        source, curve_id, definition, surface, edge, tolerance, budget,
+    )
+}
+pub(super) fn bilinear_certificate(
+    source: &Source<'_>,
+    curve_id: u32,
+    definition: &super::uv::Definition,
+    surface: &Surface,
+    edge: &Edge,
+    tolerance: f64,
+    budget: &mut Budget<'_>,
+) -> Result<Option<super::Proof>> {
+    bilinear::certify(
         source, curve_id, definition, surface, edge, tolerance, budget,
     )
 }

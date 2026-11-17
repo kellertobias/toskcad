@@ -72,7 +72,7 @@ fn basis(i: usize, p: usize, t: &BigRational, u: &[BigRational]) -> BigRational 
     };
     left + right
 }
-fn original(t: &BigRational, rational_weights: bool) -> [BigRational; 2] {
+fn original(t: &BigRational, rational_weights: bool, normalized: bool) -> [BigRational; 2] {
     let u = [
         vec![decimal("0"); 5],
         vec![decimal("0.5"); 3],
@@ -87,8 +87,12 @@ fn original(t: &BigRational, rational_weights: bool) -> [BigRational; 2] {
             basis(i, 4, t, &u)
         };
         let w = BigRational::from_integer(if rational_weights { WEIGHTS[i] } else { 1 }.into());
-        let x = decimal(XY[i].0);
-        let y = decimal(XY[i].1);
+        let mut x = decimal(XY[i].0);
+        let mut y = decimal(XY[i].1);
+        if normalized {
+            x = (x - decimal("10")) / decimal("4");
+            y = (y - decimal("20")) / decimal("4");
+        }
         h[0] += &n * &w * x;
         h[1] += &n * &w * y;
         h[2] += n * w;
@@ -120,7 +124,16 @@ fn polynomial_and_rational_quartics_with_internal_multiplicity_three_match_exact
         let Curve::Nurbs { curve, .. } = &definition.geometry else {
             panic!()
         };
-        let chart = Coordinates::Raw(2);
+        let min = [decimal("10"), decimal("20")];
+        let max = [decimal("14"), decimal("24")];
+        let chart = if rational_weights {
+            Coordinates::UnitBox2 {
+                min: &min,
+                max: &max,
+            }
+        } else {
+            Coordinates::Raw(2)
+        };
         let result = original_curve(
             &source,
             900001,
@@ -136,7 +149,10 @@ fn polynomial_and_rational_quartics_with_internal_multiplicity_three_match_exact
         assert_eq!(result.cells().len(), 2);
         assert!(result.retained_bytes() <= result.peak_bytes());
         assert!(result.peak_bytes() <= MAX_BYTES);
-        assert!(matches!(result.coordinates(), Coordinates::Raw(2)));
+        assert_eq!(
+            matches!(result.coordinates(), Coordinates::UnitBox2 { .. }),
+            rational_weights
+        );
         for cell in result.cells() {
             let [a, b] = cell.knot_indices();
             let knots = [decimal("0"), decimal("0.5"), decimal("1")];
@@ -145,7 +161,7 @@ fn polynomial_and_rational_quartics_with_internal_multiplicity_three_match_exact
             for s in [0., 0.125, 0.5, 0.875, 1.] {
                 let q = BigRational::from_float(s).unwrap();
                 let t = &knots[a] + (&knots[b] - &knots[a]) * q;
-                let expected = original(&t, rational_weights);
+                let expected = original(&t, rational_weights, rational_weights);
                 let actual = evaluate(cell, s);
                 for i in 0..2 {
                     assert_exact_contains(actual[i], &expected[i]);
@@ -194,6 +210,21 @@ fn original_decimal_integer_alias_weight_and_knot_failures_do_not_trust_decoded_
             .is_err()
         );
     }
+    let min = [decimal("10"), decimal("20")];
+    let max = [decimal("13"), decimal("24")];
+    assert!(
+        original_curve(
+            &source,
+            900001,
+            curve,
+            Coordinates::UnitBox2 {
+                min: &min,
+                max: &max
+            },
+            &mut Budget::new(512_000_000, None)
+        )
+        .is_err()
+    );
 }
 #[test]
 fn extraction_exact_work_frontier_late_cancel_and_retry_keep_actual_source() {
@@ -268,8 +299,20 @@ fn actual_quartic_101_pole_source_extracts_every_original_span_with_shared_end_c
     let Curve::Nurbs { curve, .. } = &definition.geometry else {
         panic!()
     };
+    let min = [decimal("0"), decimal("0")];
+    let max = [decimal("100"), decimal("6")];
     let mut work = Budget::new(512_000_000, None);
-    let cells = original_curve(&source, 900001, curve, Coordinates::Raw(2), &mut work).unwrap();
+    let cells = original_curve(
+        &source,
+        900001,
+        curve,
+        Coordinates::UnitBox2 {
+            min: &min,
+            max: &max,
+        },
+        &mut work,
+    )
+    .unwrap();
     assert_eq!(cells.cells().len(), 33);
     assert!(work.used() < 512_000_000);
     assert!(cells.peak_bytes() < MAX_BYTES);
@@ -301,8 +344,8 @@ fn actual_quartic_101_pole_source_extracts_every_original_span_with_shared_end_c
                     basis(i, 4, &t, &original_knots)
                 };
                 let w = BigRational::from_integer((1 + i % 5).into());
-                h[0] += &n * &w * BigRational::from_integer(i.into());
-                h[1] += &n * &w * BigRational::from_integer((i % 7).into());
+                h[0] += &n * &w * BigRational::new(i.into(), 100.into());
+                h[1] += &n * &w * BigRational::new((i % 7).into(), 6.into());
                 h[2] += n * w;
             }
             let actual = evaluate(&cells.cells()[index as usize], s);
@@ -469,6 +512,127 @@ fn actual_degree_eleven_309_and_540_pole_sources_and_lower_multiplicity_keep_raw
             for j in 0..3 {
                 assert_exact_contains(actual[j], &(&h[j] / &h[3]));
             }
+        }
+    }
+}
+
+#[test]
+fn raw_polynomial_and_rational_quartics_still_match_exact_cox_de_boor() {
+    for rational_weights in [false, true] {
+        let text = input(rational_weights);
+        let source = Source::parse(&text, 1e-7).unwrap();
+        let definition = definition(&source);
+        let Curve::Nurbs { curve, .. } = &definition.geometry else {
+            panic!()
+        };
+        let chart = Coordinates::Raw(2);
+        let result = original_curve(
+            &source,
+            900001,
+            curve,
+            chart,
+            &mut Budget::new(512_000_000, None),
+        )
+        .unwrap();
+        assert!(result.matches(&source, 900001));
+        assert!(!result.matches(&Source::parse(&text, 1e-7).unwrap(), 900001));
+        assert!(!result.matches(&source, 900002));
+        assert_eq!(result.degree(), 4);
+        assert_eq!(result.cells().len(), 2);
+        assert!(result.retained_bytes() <= result.peak_bytes());
+        assert!(result.peak_bytes() <= MAX_BYTES);
+        assert!(matches!(result.coordinates(), Coordinates::Raw(2)));
+        for cell in result.cells() {
+            let [a, b] = cell.knot_indices();
+            let knots = [decimal("0"), decimal("0.5"), decimal("1")];
+            assert_exact_contains(cell.domain()[0], &knots[a]);
+            assert_exact_contains(cell.domain()[1], &knots[b]);
+            for s in [0., 0.125, 0.5, 0.875, 1.] {
+                let q = BigRational::from_float(s).unwrap();
+                let t = &knots[a] + (&knots[b] - &knots[a]) * q;
+                let expected = original(&t, rational_weights, false);
+                let actual = evaluate(cell, s);
+                for i in 0..2 {
+                    assert_exact_contains(actual[i], &expected[i]);
+                }
+                assert_exact_contains(actual[2], &decimal("0"));
+            }
+        }
+    }
+}
+
+#[test]
+fn raw_quartic_101_pole_source_retains_every_original_span() {
+    let references = (0..101)
+        .map(|i| format!("#{}", 910000 + i))
+        .collect::<Vec<_>>()
+        .join(",");
+    let points = (0..101)
+        .map(|i| format!("#{}=CARTESIAN_POINT('',({i}.,{}.));", 910000 + i, i % 7))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let weights = (0..101)
+        .map(|i| format!("{}.", 1 + i % 5))
+        .collect::<Vec<_>>()
+        .join(",");
+    let mult = (0..34)
+        .map(|i| if i == 0 || i == 33 { "5" } else { "3" })
+        .collect::<Vec<_>>()
+        .join(",");
+    let knots = (0..34)
+        .map(|i| format!("{i}."))
+        .collect::<Vec<_>>()
+        .join(",");
+    let records = format!(
+        "\n#900001=(BOUNDED_CURVE() B_SPLINE_CURVE(4,({references}),.UNSPECIFIED.,.F.,.F.) B_SPLINE_CURVE_WITH_KNOTS(({mult}),({knots}),.UNSPECIFIED.) CURVE() GEOMETRIC_REPRESENTATION_ITEM() RATIONAL_B_SPLINE_CURVE(({weights})) REPRESENTATION_ITEM(''));\n{points}\n#900100=PCURVE('',#31,#900101);\n#900101=DEFINITIONAL_REPRESENTATION('',(#900001),#900102);\n#900102=(GEOMETRIC_REPRESENTATION_CONTEXT(2) PARAMETRIC_REPRESENTATION_CONTEXT() REPRESENTATION_CONTEXT('',''));\n"
+    );
+    let at = BASE.rfind("ENDSEC;").unwrap();
+    let text = format!("{}{}{}", &BASE[..at], records, &BASE[at..]);
+    let source = Source::parse(&text, 1e-7).unwrap();
+    let definition = definition(&source);
+    let Curve::Nurbs { curve, .. } = &definition.geometry else {
+        panic!()
+    };
+    let mut work = Budget::new(512_000_000, None);
+    let cells = original_curve(&source, 900001, curve, Coordinates::Raw(2), &mut work).unwrap();
+    assert_eq!(cells.cells().len(), 33);
+    assert!(work.used() < 512_000_000);
+    assert!(cells.peak_bytes() < MAX_BYTES);
+    for (i, cell) in cells.cells().iter().enumerate() {
+        assert_eq!(cell.knot_indices(), [i, i + 1]);
+    }
+    for pair in cells.cells().windows(2) {
+        for i in 0..4 {
+            let (a, b) = (
+                pair[0].controls().last().unwrap()[i],
+                pair[1].controls()[0][i],
+            );
+            assert_eq!((a.lo, a.hi), (b.lo, b.hi));
+        }
+    }
+    let mut original_knots = vec![decimal("0"); 5];
+    for i in 1..33 {
+        original_knots.extend(std::iter::repeat_n(BigRational::from_integer(i.into()), 3));
+    }
+    original_knots.extend(std::iter::repeat_n(decimal("33"), 5));
+    for index in [0, 16, 32] {
+        for s in [0., 0.25, 0.5, 0.75, 1.] {
+            let t = BigRational::from_integer(index.into()) + BigRational::from_float(s).unwrap();
+            let mut h: [BigRational; 3] = std::array::from_fn(|_| decimal("0"));
+            for i in 0..101 {
+                let n = if t == decimal("33") {
+                    BigRational::from_integer(if i == 100 { 1.into() } else { 0.into() })
+                } else {
+                    basis(i, 4, &t, &original_knots)
+                };
+                let w = BigRational::from_integer((1 + i % 5).into());
+                h[0] += &n * &w * BigRational::from_integer(i.into());
+                h[1] += &n * &w * BigRational::from_integer((i % 7).into());
+                h[2] += n * w;
+            }
+            let actual = evaluate(&cells.cells()[index as usize], s);
+            assert_exact_contains(actual[0], &(&h[0] / &h[2]));
+            assert_exact_contains(actual[1], &(&h[1] / &h[2]));
         }
     }
 }

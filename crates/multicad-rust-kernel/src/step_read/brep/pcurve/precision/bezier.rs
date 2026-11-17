@@ -9,8 +9,12 @@ const MAX_SPANS: usize = 128;
 const SCRATCH: usize = 128 * 1024;
 const MAX_BYTES: usize = 8 * 1024 * 1024;
 #[derive(Clone, Copy)]
-pub(super) enum Coordinates {
+pub(super) enum Coordinates<'a> {
     Raw(usize),
+    UnitBox2 {
+        min: &'a [BigRational; 2],
+        max: &'a [BigRational; 2],
+    },
 }
 pub(super) struct Cell {
     domain: [I; 2],
@@ -28,22 +32,22 @@ impl Cell {
         &self.controls
     }
 }
-pub(super) struct CurveCells<'s, 'i> {
+pub(super) struct CurveCells<'s, 'i, 'a> {
     source: &'s Source<'i>,
     source_id: u32,
-    coordinates: Coordinates,
+    coordinates: Coordinates<'a>,
     degree: usize,
     cells: Vec<Cell>,
     peak_bytes: usize,
     retained_bytes: usize,
 }
-impl CurveCells<'_, '_> {
+impl CurveCells<'_, '_, '_> {
     /// Source/record association ONLY. A consumer must also inspect the
     /// retained coordinates() chart before interpreting any coefficient.
     pub(super) fn matches(&self, source: &Source<'_>, id: u32) -> bool {
         std::ptr::eq(self.source, source) && id == self.source_id
     }
-    pub(super) fn coordinates(&self) -> Coordinates {
+    pub(super) fn coordinates(&self) -> Coordinates<'_> {
         self.coordinates
     }
     pub(super) fn degree(&self) -> usize {
@@ -106,17 +110,81 @@ fn reserve<T>(count: usize, storage: &mut Storage, budget: &mut Budget<'_>) -> R
     )?;
     Ok(v)
 }
+fn bits(q: &BigRational) -> Result<usize> {
+    let n = q.numer().bits().max(q.denom().bits());
+    if n > 4096 {
+        Err(ReadError::Unsupported)
+    } else {
+        Ok(n as usize)
+    }
+}
+fn exact_op(
+    a: &BigRational,
+    b: &BigRational,
+    divide: bool,
+    budget: &mut Budget<'_>,
+) -> Result<BigRational> {
+    let size = bits(a)?.saturating_add(bits(b)?).saturating_add(2);
+    budget.charge(bigint_work(size))?;
+    if divide && b.is_zero() {
+        return Err(ReadError::Unsupported);
+    }
+    let value = if divide { a / b } else { a - b };
+    bits(&value)?;
+    Ok(value)
+}
+fn comparison(
+    a: &BigRational,
+    b: &BigRational,
+    budget: &mut Budget<'_>,
+) -> Result<std::cmp::Ordering> {
+    budget.charge(bigint_work(
+        bits(a)?.saturating_add(bits(b)?).saturating_add(2),
+    ))?;
+    Ok(a.cmp(b))
+}
 fn coordinate(
     source: &Source<'_>,
     id: u32,
-    chart: Coordinates,
+    chart: Coordinates<'_>,
+    spans: Option<&[BigRational; 2]>,
     budget: &mut Budget<'_>,
 ) -> Result<V> {
-    let Coordinates::Raw(dim) = chart;
-    if dim != 2 && dim != 3 {
-        return Err(ReadError::Unsupported);
+    match chart {
+        Coordinates::Raw(dim) if dim == 2 || dim == 3 => point(source, id, dim, budget),
+        Coordinates::Raw(_) => Err(ReadError::Unsupported),
+        Coordinates::UnitBox2 { min, .. } => {
+            let [_, values] = source.args(id, "CARTESIAN_POINT")? else {
+                return Err(ReadError::Invalid);
+            };
+            let values = list(values)?;
+            if values.len() != 2 {
+                return Err(ReadError::Unsupported);
+            }
+            let spans = spans.ok_or(ReadError::Invalid)?;
+            let mut out = [I::point(0.); 3];
+            for i in 0..2 {
+                let q = rational(source, id, &values[i], budget)?;
+                let delta = exact_op(&q, &min[i], false, budget)?;
+                let normalized = exact_op(&delta, &spans[i], true, budget)?;
+                if comparison(&normalized, &BigRational::from_integer(0.into()), budget)?.is_lt()
+                    || comparison(&normalized, &BigRational::from_integer(1.into()), budget)?
+                        .is_gt()
+                {
+                    return Err(ReadError::Unsupported);
+                }
+                let enclosed = enclose(&normalized, budget)?;
+                // The exact rational comparison just earned membership.
+                // Preserve it in the enclosure (not a coordinate repair).
+                budget.charge(32)?;
+                out[i] = I::new(enclosed.lo.max(0.), enclosed.hi.min(1.));
+                if !out[i].valid() {
+                    return Err(ReadError::Unsupported);
+                }
+            }
+            Ok(out)
+        }
     }
-    point(source, id, dim, budget)
 }
 fn alpha(t: usize, a: usize, b: usize, knots: &[I]) -> Result<I> {
     if t == a {
@@ -211,16 +279,16 @@ fn insert(
     *tags = new_tags;
     Ok(())
 }
-/// Original knot ordinals survive every insertion and the resulting Bezier
-/// cells keep their original scalar parameter domains. Every coordinate is
-/// enclosed from the original raw record; no f64 geometry is substituted.
-pub(super) fn original_curve<'s, 'i>(
+/// Exact source-domain normalization precedes coefficient enclosure. Original
+/// knot ordinals survive every insertion and the resulting Bezier cells keep
+/// their original scalar parameter domains. No f64 geometry is substituted.
+pub(super) fn original_curve<'s, 'i, 'a>(
     source: &'s Source<'i>,
     id: u32,
     decoded: &NurbsCurve,
-    coordinates: Coordinates,
+    coordinates: Coordinates<'a>,
     budget: &mut Budget<'_>,
-) -> Result<CurveCells<'s, 'i>> {
+) -> Result<CurveCells<'s, 'i, 'a>> {
     budget.charge(4096)?;
     let degree = decoded.degree();
     let count = decoded.points().len();
@@ -244,6 +312,18 @@ pub(super) fn original_curve<'s, 'i>(
     if controls.len() != count {
         return Err(ReadError::Unsupported);
     }
+    let spans = if let Coordinates::UnitBox2 { min, max } = coordinates {
+        let a = exact_op(&max[0], &min[0], false, budget)?;
+        let b = exact_op(&max[1], &min[1], false, budget)?;
+        if !comparison(&a, &BigRational::from_integer(0.into()), budget)?.is_gt()
+            || !comparison(&b, &BigRational::from_integer(0.into()), budget)?.is_gt()
+        {
+            return Err(ReadError::Unsupported);
+        }
+        Some([a, b])
+    } else {
+        None
+    };
     let mut storage = Storage {
         current: SCRATCH,
         peak: SCRATCH,
@@ -311,7 +391,13 @@ pub(super) fn original_curve<'s, 'i>(
     }
     for (i, control) in controls.iter().enumerate() {
         budget.charge(256)?;
-        let p = coordinate(source, reference(control)?, coordinates, budget)?;
+        let p = coordinate(
+            source,
+            reference(control)?,
+            coordinates,
+            spans.as_ref(),
+            budget,
+        )?;
         let w = if let Some(values) = raw_weights {
             scalar(source, id, &values[i], budget)?
         } else {
@@ -369,7 +455,7 @@ pub(super) fn original_curve<'s, 'i>(
         return Err(ReadError::Unsupported);
     }
     budget.charge(cells.len().saturating_mul(4).saturating_add(64))?;
-    let retained = std::mem::size_of::<CurveCells<'_, '_>>()
+    let retained = std::mem::size_of::<CurveCells<'_, '_, '_>>()
         + cells.capacity() * std::mem::size_of::<Cell>()
         + cells
             .iter()
