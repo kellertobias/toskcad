@@ -149,6 +149,7 @@ use rust_compound::RustCompound;
 use sphere_body::SphereBody;
 use spline_cap_relief_body::SplineCapReliefBody;
 use spline_sweep_body::SplineSweepBody;
+pub use spur_gear_body::GearFlankWitness;
 use spur_gear_body::SpurGearBody;
 use torus_body::TorusBody;
 use warped_union_body::WarpedUnionBody;

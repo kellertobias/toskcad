@@ -552,6 +552,73 @@ fn shifted_engagement(document: &Document, features: [EntityId; 2]) -> bool {
     })
 }
 
+/// Process-local signature of every actual constructor input. Debug is
+/// derived on these closed structs and never persisted as a file format.
+/// Drive is excluded only from the periodic cycle proof; its actual current
+/// pose is checked independently on every compile. Each backend has its own
+/// prefix, so one backend's proof never stands in for the other's.
+fn cycle_key(
+    prefix: &str,
+    inputs: &ValidationInputs<'_>,
+    pair: EntityId,
+    source: &GearPairDefinition,
+    resolved: &model::ResolvedGearPair,
+) -> Result<String, ModelError> {
+    let document = inputs.document;
+    let specifications = [
+        crate::gears::specification(source.parameters.gears[0], &resolved.gears[0])?,
+        crate::gears::specification(source.parameters.gears[1], &resolved.gears[1])?,
+    ];
+    let base = source
+        .parameters
+        .frame
+        .resolve(inputs.evaluated)
+        .map_err(|e| error(Some(pair), e))?;
+    let shifted_engagement = shifted_engagement(document, source.parameters.gears);
+    let key = format!(
+        "{prefix}/{SAMPLES}|{:?}|{pair:?}|{:?}|{:?}|{specifications:?}|{:?}|{base:?}|{:?}|shifted-engagement:{shifted_engagement}",
+        document.id(),
+        source.parameters.gears,
+        source.outputs,
+        resolved.gears.each_ref().map(|g| g.frame()),
+        inputs.policy,
+    );
+    Ok(if let Some(worm) = &resolved.worm {
+        format!("{key}|{worm:?}")
+    } else if let Some(travel) = &resolved.rack_travel {
+        format!(
+            "{key}|{:?}|{:?}|{}|{}|{}",
+            travel.rack_member,
+            travel.pinion_member,
+            travel.min_drive_angle_rad,
+            travel.max_drive_angle_rad,
+            travel.pinion_period_rad
+        )
+    } else {
+        key
+    })
+}
+
+/// Nine phases over one tooth (or worm) period; a finite rack adds both
+/// conservative travel endpoints.
+fn cycle_phases(resolved: &model::ResolvedGearPair) -> Vec<f64> {
+    if let Some(travel) = &resolved.rack_travel {
+        let mut phases = (0..SAMPLES)
+            .map(|i| travel.pinion_period_rad * (i as f64 / (SAMPLES - 1) as f64 - 0.5))
+            .collect::<Vec<_>>();
+        phases.extend([travel.min_drive_angle_rad, travel.max_drive_angle_rad]);
+        phases
+    } else if let Some(worm) = &resolved.worm {
+        (0..SAMPLES)
+            .map(|i| worm.worm_period_rad * i as f64 / (SAMPLES - 1) as f64)
+            .collect()
+    } else {
+        (0..SAMPLES)
+            .map(|i| TAU / f64::from(resolved.gears[0].teeth()) * i as f64 / (SAMPLES - 1) as f64)
+            .collect()
+    }
+}
+
 pub(crate) struct ValidationInputs<'a> {
     pub document: &'a Document,
     pub evaluated: &'a EvaluatedParameters,
@@ -661,19 +728,6 @@ pub(crate) fn validate(
         let b = solids
             .get(&source.parameters.gears[1])
             .ok_or_else(|| error(Some(pair), "Second paired native gear is unavailable"))?;
-        let specifications = [
-            crate::gears::specification(source.parameters.gears[0], &resolved.gears[0])?,
-            crate::gears::specification(source.parameters.gears[1], &resolved.gears[1])?,
-        ];
-        let base = source
-            .parameters
-            .frame
-            .resolve(evaluated)
-            .map_err(|e| error(Some(pair), e))?;
-        // Process-local signature of every actual constructor input. Debug is
-        // derived on these closed structs and never persisted as a file format.
-        // Drive is excluded only from the periodic cycle proof; its actual
-        // current pose is checked independently below on every compile.
         let shifted_engagement = shifted_engagement(document, source.parameters.gears);
         let checker = PoseCheck {
             pair,
@@ -682,50 +736,14 @@ pub(crate) fn validate(
             shifted: shifted_engagement,
             interrupt,
         };
-        let key = format!(
-            "gear-pair-cycle/6/{SAMPLES}|{:?}|{pair:?}|{:?}|{:?}|{specifications:?}|{:?}|{base:?}|{policy:?}|shifted-engagement:{shifted_engagement}",
-            document.id(),
-            source.parameters.gears,
-            source.outputs,
-            resolved.gears.each_ref().map(|g| g.frame())
-        );
-        let key = if let Some(worm) = &resolved.worm {
-            format!("{key}|{worm:?}")
-        } else if let Some(travel) = &resolved.rack_travel {
-            format!(
-                "{key}|{:?}|{:?}|{}|{}|{}",
-                travel.rack_member,
-                travel.pinion_member,
-                travel.min_drive_angle_rad,
-                travel.max_drive_angle_rad,
-                travel.pinion_period_rad
-            )
-        } else {
-            key
-        };
+        let key = cycle_key("gear-pair-cycle/6", &inputs, pair, &source, &resolved)?;
         let previous = cache.as_deref().and_then(|c| c.lookup(&key));
         let reused = previous.is_some();
         let cycle_started = std::time::Instant::now();
         let phases = if let Some(phases) = previous {
             phases
         } else {
-            let phases = if let Some(travel) = &resolved.rack_travel {
-                let mut phases = (0..SAMPLES)
-                    .map(|i| travel.pinion_period_rad * (i as f64 / (SAMPLES - 1) as f64 - 0.5))
-                    .collect::<Vec<_>>();
-                phases.extend([travel.min_drive_angle_rad, travel.max_drive_angle_rad]);
-                phases
-            } else if let Some(worm) = &resolved.worm {
-                (0..SAMPLES)
-                    .map(|i| worm.worm_period_rad * i as f64 / (SAMPLES - 1) as f64)
-                    .collect::<Vec<_>>()
-            } else {
-                (0..SAMPLES)
-                    .map(|i| {
-                        TAU / f64::from(resolved.gears[0].teeth()) * i as f64 / (SAMPLES - 1) as f64
-                    })
-                    .collect::<Vec<_>>()
-            };
+            let phases = cycle_phases(&resolved);
             for drive in &phases {
                 checkpoint(interrupt)?;
                 let sample = sample_document(document, pair, &source, *drive)?;

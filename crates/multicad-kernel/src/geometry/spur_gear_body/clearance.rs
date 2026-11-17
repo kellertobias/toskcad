@@ -29,21 +29,19 @@ impl Solid {
                 "Rust spur interference requires actual external spur solids",
             ));
         };
+        // A hub lies strictly inside its gear's root disk, which belongs to
+        // the projected outer tooth region. Enclosing the projected drift
+        // over the whole hub extent therefore lets a Clear tooth-band proof
+        // separate the hubs at every height, including outside the band.
         let profiles = [&a.profile, &b.profile];
-        if profiles.iter().any(|profile| profile.hub().is_some()) {
-            return Err(unsupported(
-                "Rust spur interference currently requires simple tooth bands without hubs",
-            ));
-        }
-        let placements = coaxial_placements(
+        let (placements, _) = coaxial_chart(
             (OPERATION, "Rust spur interference"),
             policy,
             [af, bf],
-            profiles.map(|profile| {
-                (
-                    profile.height_mm(),
-                    Box::new(|direction| profile.support(direction)) as Support<'_>,
-                )
+            profiles.map(|profile| Band {
+                height_mm: profile.height_mm(),
+                extent_mm: profile.axial_bounds(),
+                support: Box::new(|direction| profile.support(direction)),
             }),
         )?;
         clearance::certify(profiles, placements, policy.linear_tolerance_mm, interrupt).map_err(
@@ -65,14 +63,39 @@ impl Solid {
 
 pub(in crate::geometry) type Support<'a> = Box<dyn Fn([f64; 3]) -> f64 + 'a>;
 
+/// One straight band for a common transverse chart: its tooth height, the
+/// complete local material extent along its axis and its 3D support.
+pub(in crate::geometry) struct Band<'a> {
+    pub height_mm: f64,
+    pub extent_mm: [f64; 2],
+    pub support: Support<'a>,
+}
+
 /// Project two placed straight tooth bands onto the first band's transverse
 /// plane, enclosing any axial drift within the policy tolerance.
 pub(in crate::geometry) fn coaxial_placements(
+    labels: (&'static str, &str),
+    policy: GeometryPolicy,
+    frames: [PlaneFrame; 2],
+    bands: [(f64, Support<'_>); 2],
+) -> Result<[Placement; 2], GeometryError> {
+    let bands = bands.map(|(height_mm, support)| Band {
+        height_mm,
+        extent_mm: [0., height_mm],
+        support,
+    });
+    coaxial_chart(labels, policy, frames, bands).map(|(placements, _)| placements)
+}
+
+/// As [`coaxial_placements`], also enclosing drift over each band's full
+/// material extent and returning the common tooth band as heights along
+/// the first frame's normal, measured from its origin.
+pub(in crate::geometry) fn coaxial_chart(
     (operation, label): (&'static str, &str),
     policy: GeometryPolicy,
     [af, bf]: [PlaneFrame; 2],
-    bands: [(f64, Support<'_>); 2],
-) -> Result<[Placement; 2], GeometryError> {
+    bands: [Band<'_>; 2],
+) -> Result<([Placement; 2], [f64; 2]), GeometryError> {
     let unsupported = |message: &str| {
         error(
             operation,
@@ -85,7 +108,12 @@ pub(in crate::geometry) fn coaxial_placements(
     let project = |v| [dot(v, af.u), dot(v, af.v)];
     let mut shared = [f64::NEG_INFINITY, f64::INFINITY];
     let mut placements = [Placement::default(); 2];
-    for (i, ((height, support), frame)) in bands.into_iter().zip([af, bf]).enumerate() {
+    for (i, (band, frame)) in bands.into_iter().zip([af, bf]).enumerate() {
+        let Band {
+            height_mm: height,
+            extent_mm: [low, high],
+            support,
+        } = band;
         let rise = frame.normal();
         let vertical = dot(rise, normal);
         if (vertical - 1.).abs() > 1e-12 {
@@ -99,10 +127,10 @@ pub(in crate::geometry) fn coaxial_placements(
             .into_iter()
             .chain(af.origin)
             .map(f64::abs)
-            .fold(height.max(1.), f64::max);
+            .fold(height.max(high).max(-low).max(1.), f64::max);
         let roundoff = 1024. * f64::EPSILON * world_scale;
         let [dx, dy] = project(rise);
-        let uncertainty_mm = dx.hypot(dy) * height + roundoff;
+        let uncertainty_mm = dx.hypot(dy) * height.max(high).max(-low) + roundoff;
         if uncertainty_mm > policy.linear_tolerance_mm {
             return Err(unsupported(
                 "cannot enclose this axial placement within policy",
@@ -122,5 +150,5 @@ pub(in crate::geometry) fn coaxial_placements(
     if shared[1] - shared[0] <= policy.linear_tolerance_mm {
         return Err(unsupported("requires a positive common axial band"));
     }
-    Ok(placements)
+    Ok((placements, shared))
 }

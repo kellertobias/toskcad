@@ -358,6 +358,31 @@ impl NormalSweepBody {
             .unwrap_or_else(|| self.sweep.volume_mm3())
     }
 
+    /// The single outer ring and height of an unmodified forward sweep,
+    /// with each edge's authored role. Openings, stock edits, holes and
+    /// reversed sweeps are excluded, so the ring is the whole cross-section.
+    pub(crate) fn plain_prism<'a>(
+        &'a self,
+    ) -> Option<(&'a [Edge], f64, impl Fn(usize) -> &'a str + 'a)> {
+        let rings = self.sweep.rings();
+        (!self.reverse
+            && self.openings.is_none()
+            && self.stock_history.is_none()
+            && rings.len() == 1
+            && self.sides.len() == rings[0].len())
+        .then(|| {
+            (
+                &rings[0][..],
+                self.sweep.height_mm(),
+                move |index: usize| self.sides[index].origin.role.as_str(),
+            )
+        })
+    }
+
+    pub(crate) fn sweep_support(&self, direction: [f64; 3]) -> f64 {
+        self.sweep.support(direction)
+    }
+
     pub(super) fn bounds(&self, frame: PlaneFrame) -> Bounds {
         let normal = frame.normal();
         let support = |i: usize, sign: f64| {

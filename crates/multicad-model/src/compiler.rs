@@ -568,12 +568,10 @@ impl Compiler {
             });
         // An injected application store takes precedence over worker-local
         // receipts, including after clear or a change of application owner.
-        let store = native_backend
-            .then(|| {
-                crate::current_pair_cycle_proofs()
-                    .or_else(|| cache.as_deref().map(|cache| cache.gear_pairs.clone()))
-            })
-            .flatten();
+        // Both backends use it; their cycle keys carry distinct prefixes, so
+        // one backend's proof never stands in for the other's.
+        let store = crate::current_pair_cycle_proofs()
+            .or_else(|| cache.as_deref().map(|cache| cache.gear_pairs.clone()));
         let mut pair_proofs = crate::pair_cycle_proofs::CycleTransaction::new(store);
         if let Some(cache) = cache.as_deref_mut() {
             cache.reset_compile_stats();
@@ -605,9 +603,15 @@ impl Compiler {
             cache.pipe_threads.finish_compile(result.is_ok());
         }
         native_publication.finish(result.is_ok() && full_evaluation);
-        publication.finish(result.is_ok() && full_evaluation);
+        publication.finish(result.is_ok() && (full_evaluation || full_rust));
         if let Ok(model) = &mut result {
-            if full_rust && let Some(cache) = cache {
+            // A gear-pair model re-certifies its current pose on every full
+            // compile, reusing only member geometry and the completed cycle
+            // proof, so its completed report is never replayed wholesale.
+            if full_rust
+                && model.gear_pair_checks().is_empty()
+                && let Some(cache) = cache
+            {
                 cache.store_full_rust(self, model);
             }
             self.report_timings(model, started);
@@ -1863,7 +1867,9 @@ impl Compiler {
                 GeometryBackend::OpenCascade => {
                     crate::gear_pairs::validate(inputs, Some(pair_proofs))?
                 }
-                GeometryBackend::Rust => crate::gear_pairs::validate_rust(inputs)?,
+                GeometryBackend::Rust => {
+                    crate::gear_pairs::validate_rust(inputs, Some(pair_proofs))?
+                }
             }
         } else {
             BTreeMap::new()

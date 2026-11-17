@@ -47,7 +47,13 @@ pub fn certify_internal(
         (pinion.root_radius_mm.min(ring.tip_radius_mm()) * 2e-4).clamp(tolerance_mm, 0.01);
     for _ in 0..MAX_REFINEMENTS {
         checkpoint(interrupt)?;
-        let cavity = Rim::from_outline(ring.cavity(), 0., placements[0], deflection, interrupt)?;
+        let cavity = Rim::from_outline(
+            ring.cavity().iter().map(|item| item.edge),
+            0.,
+            placements[0],
+            deflection,
+            interrupt,
+        )?;
         let teeth = Rim::build(pinion, placements[1], deflection, interrupt)?;
         if nested_clear(&cavity, &teeth, ring.outer_radius_mm(), interrupt)? {
             return Ok(ResultKind::Clear);
