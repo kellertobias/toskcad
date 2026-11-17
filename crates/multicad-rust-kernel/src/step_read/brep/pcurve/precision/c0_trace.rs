@@ -1,28 +1,29 @@
-//! ORIGINAL polynomial UV traces on a polynomial tensor surface whose
-//! interior knots may be only C0 (multiplicity equal to the degree), against
-//! an original polynomial 3D curve on the SAME parameter.
+//! Straight ISO UV traces on an ORIGINAL polynomial tensor surface whose
+//! interior knots may be only C0 (multiplicity equal to the degree), which
+//! the C1 tensor-trace proof refuses by contract.
 //!
-//! Each exact common cell of the two curves is bounded by a second-order
-//! interval model of `r(s) = S(uv(s)) - C(s)`: the value and first
-//! derivative at the cell centre plus a whole-cell second-derivative hull.
-//! Every surface patch whose CLOSED domain meets the UV hull box is bounded
-//! with its own polynomial extended over that box, so a trace crossing a
-//! joint is covered on both sides without any C1 assumption. A cell that
-//! cannot earn both the position and the tangent bound is bisected exactly.
-//! A centre value already beyond `tol` refuses the pair; nothing is repaired.
+//! An iso line at a clamped end or at a knot of multiplicity equal to the
+//! degree is EXACTLY one control row of the original net: a 1D polynomial
+//! B-spline in the other parameter. Each cell between exact rational breaks
+//! (target knots, the trace's knot-line crossings) lies in one span of that
+//! row; blossoming gives its exact Bezier controls, and the Bernstein
+//! residual against the restricted target bounds position and tangent
+//! directly. The target is an original polynomial B-spline on the SAME
+//! parameter, or a CIRCLE whose angle is the trace parameter (proved with
+//! the analytic support proof). Nothing is sampled or repaired.
 use super::super::Proof;
 use super::analytic_polynomial::{self, Support};
 use super::bezier::{self, Coordinates, CurveCells};
 use super::cylinder_polynomial::{CellProof, compare, operation};
 use super::polynomial_trace::Polynomial as P;
-use super::surface_bezier::{self, SurfaceCells};
 use super::*;
 use crate::step_read::brep::check;
 const MAX_DEGREE: usize = 11;
 const MAX_KNOTS: usize = 1025;
 const MAX_DEPTH: usize = 40;
-const NET_BYTES: usize = 16 * 1024 * 1024;
+const MAX_ROW: usize = 1024;
 type V3 = [I; 3];
+type Q2 = [BigRational; 2];
 
 /// Distinct, strictly increasing original knot rationals of one axis.
 fn distinct_knots(
@@ -93,63 +94,11 @@ fn merge(a: &[BigRational], c: &[BigRational], b: &mut Budget<'_>) -> Result<Vec
                 j += 1;
                 y
             }
-            (None, None) => unreachable!("loop condition"),
+            (None, None) => break,
         };
         out.push(next.clone());
     }
     Ok(out)
-}
-/// A tensor Bezier net in patch-local coordinates, row-major in u.
-#[derive(Clone)]
-struct Net {
-    shape: [usize; 2],
-    values: Vec<V3>,
-}
-impl Net {
-    fn at(&self, i: usize, j: usize) -> V3 {
-        self.values[i * self.shape[1] + j]
-    }
-    /// Exact hodograph net along `axis` (degree times forward difference).
-    fn derivative(&self, axis: usize, b: &mut Budget<'_>) -> Result<Self> {
-        let mut shape = self.shape;
-        check(shape[axis] >= 2, ReadError::Unsupported)?;
-        shape[axis] -= 1;
-        let degree = I::point((self.shape[axis] - 1) as f64);
-        b.charge(shape[0] * shape[1] * 48 + 256)?;
-        let mut values = Vec::new();
-        values
-            .try_reserve_exact(shape[0] * shape[1])
-            .map_err(|_| ReadError::Limit)?;
-        for i in 0..shape[0] {
-            for j in 0..shape[1] {
-                let (a, c) = if axis == 0 {
-                    (self.at(i + 1, j), self.at(i, j))
-                } else {
-                    (self.at(i, j + 1), self.at(i, j))
-                };
-                values.push(std::array::from_fn(|k| degree * (a[k] - c[k])));
-            }
-        }
-        Ok(Self { shape, values })
-    }
-    /// Directed de Casteljau at (possibly interval) local coordinates. An
-    /// interval argument yields an enclosure of the range over that box,
-    /// including boxes extending beyond `[0,1]^2` (polynomial extension).
-    fn evaluate(&self, x: I, y: I, b: &mut Budget<'_>) -> Result<V3> {
-        let [n, m] = self.shape;
-        b.charge(n * m * 3 * 24 + 512)?;
-        let mut column = [[I::point(0.); 3]; MAX_DEGREE + 1];
-        let mut row = [[I::point(0.); 3]; MAX_DEGREE + 1];
-        for (i, slot) in column.iter_mut().enumerate().take(n) {
-            for (j, r) in row.iter_mut().enumerate().take(m) {
-                *r = self.at(i, j);
-            }
-            *slot = casteljau(&mut row[..m], y);
-        }
-        let value = casteljau(&mut column[..n], x);
-        check(value.iter().all(|v| v.valid()), ReadError::Unsupported)?;
-        Ok(value)
-    }
 }
 fn casteljau(points: &mut [V3], t: I) -> V3 {
     let n = points.len();
@@ -163,71 +112,6 @@ fn casteljau(points: &mut [V3], t: I) -> V3 {
     }
     points[0]
 }
-/// The value, first and second partial nets of one patch.
-struct Nets {
-    domain: [[I; 2]; 2],
-    s: Net,
-    su: Net,
-    sv: Net,
-}
-fn nets(patch: &surface_bezier::Patch, domain: [[I; 2]; 2], b: &mut Budget<'_>) -> Result<Nets> {
-    let shape = patch.shape();
-    check(
-        shape.iter().all(|&n| (2..=MAX_DEGREE + 1).contains(&n))
-            && patch
-                .controls()
-                .iter()
-                .all(|h| h[3].lo == 1. && h[3].hi == 1.),
-        ReadError::Unsupported,
-    )?;
-    let mut values = Vec::new();
-    values
-        .try_reserve_exact(patch.controls().len())
-        .map_err(|_| ReadError::Limit)?;
-    values.extend(patch.controls().iter().map(|h| [h[0], h[1], h[2]]));
-    let s = Net { shape, values };
-    let su = s.derivative(0, b)?;
-    let sv = s.derivative(1, b)?;
-    Ok(Nets { domain, s, su, sv })
-}
-fn value(p: &P, t: I, b: &mut Budget<'_>) -> Result<I> {
-    b.charge(512)?;
-    let [left, _] = p.split(t, b)?;
-    let v = *left.controls().last().ok_or(ReadError::Unsupported)?;
-    check(v.valid(), ReadError::Unsupported)?;
-    Ok(v)
-}
-fn norm_hi(v: V3) -> f64 {
-    norm(v).hi
-}
-struct Surface2<'o, 's, 'i> {
-    knots: [Vec<I>; 2],
-    cells: Vec<Option<usize>>,
-    original: &'o SurfaceCells<'s, 'i>,
-    cache: Vec<Option<Nets>>,
-    bytes: usize,
-}
-impl Surface2<'_, '_, '_> {
-    fn patch(&mut self, iu: usize, iv: usize, b: &mut Budget<'_>) -> Result<&Nets> {
-        let index = iu * (self.knots[1].len() - 1) + iv;
-        let patch = self.cells[index].ok_or(ReadError::Unsupported)?;
-        if self.cache[patch].is_none() {
-            let domain = [
-                [self.knots[0][iu], self.knots[0][iu + 1]],
-                [self.knots[1][iv], self.knots[1][iv + 1]],
-            ];
-            let made = nets(&self.original.patches()[patch], domain, b)?;
-            let size = [&made.s, &made.su, &made.sv]
-                .iter()
-                .map(|n| n.values.len() * std::mem::size_of::<V3>())
-                .sum::<usize>();
-            self.bytes = self.bytes.checked_add(size).ok_or(ReadError::Limit)?;
-            check(self.bytes <= NET_BYTES, ReadError::Limit)?;
-            self.cache[patch] = Some(made);
-        }
-        self.cache[patch].as_ref().ok_or(ReadError::Unsupported)
-    }
-}
 /// Controls of a Bezier curve restricted to `[t0, t1]` (blossoms): exact
 /// polynomial reparameterisation, valid for any interval endpoints.
 fn restrict_bezier(points: &[V3], t0: I, t1: I, b: &mut Budget<'_>) -> Result<Vec<V3>> {
@@ -240,7 +124,7 @@ fn restrict_bezier(points: &[V3], t0: I, t1: I, b: &mut Budget<'_>) -> Result<Ve
     for k in 0..n {
         work[..n].copy_from_slice(points);
         for level in 1..n {
-            let t = if level <= n - 1 - k { t0 } else { t1 };
+            let t = if level < n - k { t0 } else { t1 };
             for i in 0..n - level {
                 let next = work[i + 1];
                 for (x, y) in work[i].iter_mut().zip(next) {
@@ -253,42 +137,32 @@ fn restrict_bezier(points: &[V3], t0: I, t1: I, b: &mut Budget<'_>) -> Result<Ve
     }
     Ok(out)
 }
-/// Exact composition of a straight ISO trace (one UV coordinate constant,
-/// the other affine) with one patch: the patch row or column at the fixed
-/// coordinate, restricted to the trace's exact range.
-fn iso_image(
-    n: &Nets,
-    constant: usize,
-    x: [I; 2],
-    y: [I; 2],
-    b: &mut Budget<'_>,
-) -> Result<Option<Vec<V3>>> {
-    let [nu, nv] = n.s.shape;
-    let (along_v, at) = match constant {
-        0 => (true, x[0]),
-        _ => (false, y[0]),
-    };
-    let (count, other) = if along_v { (nv, nu) } else { (nu, nv) };
-    b.charge(count * other * 3 * 24 + 512)?;
-    let mut curve = [[I::point(0.); 3]; MAX_DEGREE + 1];
-    let mut column = [[I::point(0.); 3]; MAX_DEGREE + 1];
-    for (j, slot) in curve.iter_mut().enumerate().take(count) {
-        for (i, c) in column.iter_mut().enumerate().take(other) {
-            *c = if along_v { n.s.at(i, j) } else { n.s.at(j, i) };
-        }
-        *slot = casteljau(&mut column[..other], at);
+fn value(p: &P, t: I, b: &mut Budget<'_>) -> Result<I> {
+    b.charge(512)?;
+    let [left, _] = p.split(t, b)?;
+    let v = *left.controls().last().ok_or(ReadError::Unsupported)?;
+    check(v.valid(), ReadError::Unsupported)?;
+    Ok(v)
+}
+fn norm_hi(v: V3) -> f64 {
+    norm(v).hi
+}
+fn polys(points: &[V3], b: &mut Budget<'_>) -> Result<[P; 3]> {
+    let mut out = [P::constant(I::point(0.), b)?; 3];
+    for (k, slot) in out.iter_mut().enumerate() {
+        let values: Vec<I> = points.iter().map(|v| v[k]).collect();
+        *slot = P::new(&values, b)?;
     }
-    let ends = if along_v { y } else { x };
-    Ok(Some(restrict_bezier(&curve[..count], ends[0], ends[1], b)?))
+    Ok(out)
 }
 /// Position and tangent bounds of an exact composite image against the
 /// target on the whole cell, from Bernstein coefficient hulls.
 fn exact_bounds(image: &[V3], target: &[P; 3], b: &mut Budget<'_>) -> Result<(f64, f64, f64)> {
     let degree = (image.len() - 1).max(target[0].degree());
+    let image = polys(image, b)?;
     let mut difference = [P::constant(I::point(0.), b)?; 3];
     for (k, d) in difference.iter_mut().enumerate() {
-        let values: Vec<I> = image.iter().map(|v| v[k]).collect();
-        let a = P::new(&values, b)?.elevate(degree, b)?;
+        let a = image[k].elevate(degree, b)?;
         let c = target[k].elevate(degree, b)?;
         *d = a.add(&c.scale(I::point(-1.), b)?, b)?;
     }
@@ -322,34 +196,188 @@ fn exact_bounds(image: &[V3], target: &[P; 3], b: &mut Budget<'_>) -> Result<(f6
     let speed = norm(dc_m).lo - 0.5 * norm_hi([ddc[0].hull(), ddc[1].hull(), ddc[2].hull()]);
     Ok((position, derivative, speed))
 }
-/// One straight ISO cell inside ONE closed patch, from interval enclosures
-/// of its exact ends. Both images are blossom restrictions, so they enclose
-/// the exact restricted controls on the same exact parameter range.
+/// One exact control row of the original net: a polynomial B-spline in the
+/// other surface parameter, with its expanded knot enclosures.
+struct Row {
+    degree: usize,
+    knots: Vec<I>,
+    controls: Vec<V3>,
+    /// Expanded index of the last copy of each distinct knot.
+    ends: Vec<usize>,
+}
+impl Row {
+    /// De Boor blossom of the span ending at expanded knot `s` (so
+    /// `knots[s] <= t < knots[s+1]`), with `degree` arguments. Equal point
+    /// arguments evaluate; mixed ends give the Bezier controls of a
+    /// sub-interval of that span; interval arguments enclose.
+    fn blossom(&self, s: usize, args: &[I], b: &mut Budget<'_>) -> Result<V3> {
+        let p = self.degree;
+        check(
+            args.len() == p && s >= p && s < self.controls.len() && s + p < self.knots.len(),
+            ReadError::Unsupported,
+        )?;
+        b.charge((p + 1) * (p + 1) * 48 + 256)?;
+        let mut d = [[I::point(0.); 3]; MAX_DEGREE + 1];
+        d[..=p].copy_from_slice(&self.controls[s - p..=s]);
+        for (r, &t) in (1..=p).zip(args) {
+            for i in (r..=p).rev() {
+                let lo = self.knots[s - p + i];
+                let hi = self.knots[s + 1 + i - r];
+                let alpha = (t - lo) / (hi - lo);
+                let previous = d[i - 1];
+                for (x, y) in d[i].iter_mut().zip(previous) {
+                    *x = (I::point(1.) - alpha) * y + alpha * *x;
+                }
+            }
+        }
+        check(d[p].iter().all(|v| v.valid()), ReadError::Unsupported)?;
+        Ok(d[p])
+    }
+    /// Bezier controls of span `s` restricted to `[a, z]`.
+    fn bezier(&self, s: usize, a: I, z: I, b: &mut Budget<'_>) -> Result<Vec<V3>> {
+        let p = self.degree;
+        let mut out = Vec::new();
+        out.try_reserve_exact(p + 1).map_err(|_| ReadError::Limit)?;
+        let mut args = [I::point(0.); MAX_DEGREE];
+        for k in 0..=p {
+            for (i, slot) in args.iter_mut().enumerate().take(p) {
+                *slot = if i < p - k { a } else { z };
+            }
+            out.push(self.blossom(s, &args[..p], b)?);
+        }
+        Ok(out)
+    }
+    /// The exact hodograph row (degree minus one); span `s` becomes `s-1`.
+    fn derivative(&self, b: &mut Budget<'_>) -> Result<Self> {
+        let p = self.degree;
+        check(p >= 1, ReadError::Unsupported)?;
+        b.charge(self.controls.len() * 64 + 256)?;
+        let mut controls = Vec::new();
+        controls
+            .try_reserve_exact(self.controls.len() - 1)
+            .map_err(|_| ReadError::Limit)?;
+        for i in 0..self.controls.len() - 1 {
+            let width = self.knots[i + p + 1] - self.knots[i + 1];
+            check(width.valid() && width.lo > 0., ReadError::Unsupported)?;
+            let scale = I::point(p as f64) / width;
+            controls.push(std::array::from_fn(|k| {
+                scale * (self.controls[i + 1][k] - self.controls[i][k])
+            }));
+        }
+        Ok(Self {
+            degree: p - 1,
+            knots: self.knots[1..self.knots.len() - 1].to_vec(),
+            controls,
+            ends: Vec::new(),
+        })
+    }
+}
+/// The original control row of the iso line `axis = constant`, if that
+/// constant is a clamped end or an interior knot of multiplicity equal to
+/// the degree (where the net interpolates a whole row exactly).
+fn row(
+    source: &Source<'_>,
+    surface: u32,
+    net: &crate::brep::NurbsSurface,
+    axis: usize,
+    constant: &BigRational,
+    knots: &[Vec<BigRational>; 2],
+    b: &mut Budget<'_>,
+) -> Result<Option<Row>> {
+    let field = fields(source, surface, 2, b)?;
+    check(field.weights.is_none(), ReadError::Unsupported)?;
+    let (_, multiplicities) = net.knots(axis);
+    check(
+        multiplicities.len() == knots[axis].len(),
+        ReadError::Unsupported,
+    )?;
+    let p = net.degrees()[axis];
+    let mut hit = None;
+    for (k, q) in knots[axis].iter().enumerate() {
+        b.charge(128)?;
+        if compare(constant, q, b)?.is_eq() {
+            hit = Some(k);
+            break;
+        }
+    }
+    let Some(k) = hit else {
+        return Ok(None);
+    };
+    let last = knots[axis].len() - 1;
+    let counts = net.counts();
+    let first: usize = multiplicities[..k].iter().sum();
+    let index = match (k, multiplicities[k]) {
+        (0, m) if m == p + 1 => 0,
+        (k, m) if k == last && m == p + 1 => counts[axis] - 1,
+        (k, m) if k != 0 && k != last && m == p => first - 1,
+        _ => return Ok(None),
+    };
+    let other = 1 - axis;
+    let rows = list(field.controls)?;
+    check(
+        rows.len() == counts[0] && counts[other] <= MAX_ROW,
+        ReadError::Unsupported,
+    )?;
+    let mut controls = Vec::new();
+    controls
+        .try_reserve_exact(counts[other])
+        .map_err(|_| ReadError::Limit)?;
+    for j in 0..counts[other] {
+        b.charge(128)?;
+        let (r, c) = if axis == 0 { (index, j) } else { (j, index) };
+        let row = list(&rows[r])?;
+        check(row.len() == counts[1], ReadError::Unsupported)?;
+        controls.push(point(source, reference(&row[c])?, 3, b)?);
+    }
+    let (_, other_multiplicities) = net.knots(other);
+    check(
+        other_multiplicities.len() == knots[other].len(),
+        ReadError::Unsupported,
+    )?;
+    let mut expanded = Vec::new();
+    let mut ends = Vec::new();
+    for (q, &m) in knots[other].iter().zip(other_multiplicities) {
+        let value = enclose(q, b)?;
+        for _ in 0..m {
+            expanded.push(value);
+        }
+        ends.push(expanded.len() - 1);
+    }
+    check(
+        expanded.len() == controls.len() + net.degrees()[other] + 1,
+        ReadError::Unsupported,
+    )?;
+    Ok(Some(Row {
+        degree: net.degrees()[other],
+        knots: expanded,
+        controls,
+        ends,
+    }))
+}
+enum Piece {
+    Proved(f64),
+    Refused,
+    Exceeds,
+}
+/// One cell of row span `s` over the moving range `[ya, yb]` against the
+/// target cell controls, bisected exactly when the bound is loose.
 #[allow(
     clippy::too_many_arguments,
-    reason = "Patch, fixed axis, both local ends, the target cell and the limits are independent proof inputs."
+    reason = "Row, span, both ends, the target cell, the limit and the depth are independent proof inputs."
 )]
-fn prove_iso(
-    n: &Nets,
-    axis: usize,
-    x: [I; 2],
-    y: [I; 2],
+fn prove_row(
+    row: &Row,
+    s: usize,
+    ya: I,
+    yb: I,
     target: &[V3],
     tol: f64,
     depth: usize,
     b: &mut Budget<'_>,
 ) -> Result<Piece> {
     b.charge(1024)?;
-    let image = iso_image(n, axis, x, y, b)?.ok_or(ReadError::Unsupported)?;
-    let polys: [P; 3] = {
-        let mut out = [P::constant(I::point(0.), b)?; 3];
-        for (k, slot) in out.iter_mut().enumerate() {
-            let values: Vec<I> = target.iter().map(|v| v[k]).collect();
-            *slot = P::new(&values, b)?;
-        }
-        out
-    };
-    let (position, derivative, speed) = exact_bounds(&image, &polys, b)?;
+    let image = row.bezier(s, ya, yb, b)?;
+    let (position, derivative, speed) = exact_bounds(&image, &polys(target, b)?, b)?;
     if position.is_finite() && position <= tol && derivative < speed {
         return Ok(Piece::Proved(position));
     }
@@ -365,36 +393,28 @@ fn prove_iso(
     if depth == MAX_DEPTH {
         return Ok(Piece::Refused);
     }
-    let half = |e: [I; 2]| [e[0], (e[0] + e[1]) * I::point(0.5), e[1]];
-    let (hx, hy) = (half(x), half(y));
+    let middle = (ya + yb) * I::point(0.5);
     let halves = [
-        restrict_bezier(target, I::point(0.), I::point(0.5), b)?,
-        restrict_bezier(target, I::point(0.5), I::point(1.), b)?,
+        (
+            ya,
+            middle,
+            restrict_bezier(target, I::point(0.), I::point(0.5), b)?,
+        ),
+        (
+            middle,
+            yb,
+            restrict_bezier(target, I::point(0.5), I::point(1.), b)?,
+        ),
     ];
     let mut worst = 0_f64;
-    for (k, piece) in halves.iter().enumerate() {
-        match prove_iso(
-            n,
-            axis,
-            [hx[k], hx[k + 1]],
-            [hy[k], hy[k + 1]],
-            piece,
-            tol,
-            depth + 1,
-            b,
-        )? {
+    for (a, z, piece) in &halves {
+        match prove_row(row, s, *a, *z, piece, tol, depth + 1, b)? {
             Piece::Proved(e) => worst = worst.max(e),
             other => return Ok(other),
         }
     }
     Ok(Piece::Proved(worst))
 }
-enum Piece {
-    Proved(f64),
-    Refused,
-    Exceeds,
-}
-type Q2 = [BigRational; 2];
 /// ORIGINAL UV control rationals. Every one must lie in the exact surface
 /// domain, so the whole trace does (convex hull of the B-spline controls).
 fn uv_controls(
@@ -416,100 +436,24 @@ fn uv_controls(
         };
         let values = list(values)?;
         check(values.len() == 2, ReadError::Unsupported)?;
-        let q = [
+        out.push([
             rational(source, id, &values[0], b)?,
             rational(source, id, &values[1], b)?,
-        ];
-        out.push(q);
+        ]);
     }
-    let ends = [0, 1].map(|axis| (&knots[axis][0], &knots[axis][knots[axis].len() - 1]));
     for q in &out {
-        for axis in 0..2 {
+        for (axis, k) in knots.iter().enumerate() {
             check(
-                compare(&q[axis], ends[axis].0, b)?.is_ge()
-                    && compare(&q[axis], ends[axis].1, b)?.is_le(),
+                compare(&q[axis], &k[0], b)?.is_ge()
+                    && compare(&q[axis], &k[k.len() - 1], b)?.is_le(),
                 ReadError::Unsupported,
             )?;
         }
     }
     Ok(out)
 }
-/// The patch whose CLOSED domain exactly contains every given UV point, if
-/// one does. Exact rational comparison: a point on a joint belongs to both.
-fn locate(
-    points: &[Q2],
-    knots: &[Vec<BigRational>; 2],
-    b: &mut Budget<'_>,
-) -> Result<Option<(usize, usize)>> {
-    let mut found = [0_usize; 2];
-    for axis in 0..2 {
-        let k = &knots[axis];
-        let mut hit = None;
-        for i in 0..k.len() - 1 {
-            b.charge(128)?;
-            let mut all = true;
-            for q in points {
-                if compare(&q[axis], &k[i], b)?.is_lt() || compare(&q[axis], &k[i + 1], b)?.is_gt()
-                {
-                    all = false;
-                    break;
-                }
-            }
-            if all {
-                hit = Some(i);
-                break;
-            }
-        }
-        let Some(i) = hit else {
-            return Ok(None);
-        };
-        found[axis] = i;
-    }
-    Ok(Some((found[0], found[1])))
-}
-fn polynomial_surface(surface: &crate::brep::NurbsSurface) -> bool {
-    surface.weights().is_none_or(|w| w.iter().all(|&x| x == 1.))
-}
 fn polynomial_curve(curve: &crate::brep::NurbsCurve) -> bool {
     curve.weights().is_none_or(|w| w.iter().all(|&x| x == 1.))
-}
-type PatchIndex = ([Vec<I>; 2], Vec<Option<usize>>, Vec<Option<Nets>>);
-/// Enclosed distinct surface knots and the patch of every knot cell.
-fn index_patches(
-    original: &SurfaceCells<'_, '_>,
-    surface_knots: &[Vec<BigRational>; 2],
-    b: &mut Budget<'_>,
-) -> Result<PatchIndex> {
-    let mut knots = [Vec::new(), Vec::new()];
-    for (axis, out) in knots.iter_mut().enumerate() {
-        out.try_reserve_exact(surface_knots[axis].len())
-            .map_err(|_| ReadError::Limit)?;
-        for q in &surface_knots[axis] {
-            out.push(enclose(q, b)?);
-        }
-    }
-    let spans = [knots[0].len() - 1, knots[1].len() - 1];
-    let mut cells = Vec::new();
-    cells
-        .try_reserve_exact(spans[0] * spans[1])
-        .map_err(|_| ReadError::Limit)?;
-    cells.resize(spans[0] * spans[1], None);
-    for (index, patch) in original.patches().iter().enumerate() {
-        b.charge(64)?;
-        let [[u0, u1], [v0, v1]] = patch.knot_indices();
-        check(u1 == u0 + 1 && v1 == v0 + 1, ReadError::Unsupported)?;
-        let slot = cells
-            .get_mut(u0 * spans[1] + v0)
-            .ok_or(ReadError::Unsupported)?;
-        check(slot.is_none(), ReadError::Invalid)?;
-        *slot = Some(index);
-    }
-    let mut cache = Vec::new();
-    cache
-        .try_reserve_exact(original.patches().len())
-        .map_err(|_| ReadError::Limit)?;
-    cache.resize_with(original.patches().len(), || None);
-    Ok((knots, cells, cache))
 }
 fn has_c0_joint(net: &crate::brep::NurbsSurface) -> bool {
     (0..2).any(|axis| {
@@ -517,11 +461,128 @@ fn has_c0_joint(net: &crate::brep::NurbsSurface) -> bool {
         m.len() > 2 && m[1..m.len() - 1].contains(&net.degrees()[axis])
     })
 }
-/// A straight ISO UV trace on a C0 tensor surface against an original 3D
-/// CIRCLE whose angle is the trace parameter. Each cell between exact
-/// breaks lies in one closed patch; its exact composite image is proved
-/// against the circle with the analytic support proof (circle = cylinder
-/// slice at axial coordinate zero).
+/// The shared straight-ISO setup: the constant axis's original row, the
+/// trace's exact breaks, and the row span each cell lies in.
+struct Iso {
+    row: Row,
+    breaks: Vec<BigRational>,
+    spans: Vec<usize>,
+    /// The moving surface coordinate at the trace ends, as enclosures.
+    moving: [I; 2],
+    domain: [I; 2],
+}
+impl Iso {
+    fn at(&self, t: I) -> I {
+        self.moving[0]
+            + (t - self.domain[0]) / (self.domain[1] - self.domain[0])
+                * (self.moving[1] - self.moving[0])
+    }
+}
+fn iso_setup(
+    source: &Source<'_>,
+    d: &super::super::uv::Definition,
+    net: &crate::brep::NurbsSurface,
+    uv: &crate::brep::NurbsCurve,
+    extra: Option<&[BigRational]>,
+    b: &mut Budget<'_>,
+) -> Result<Option<Iso>> {
+    if !has_c0_joint(net)
+        || uv.degree() != 1
+        || uv.points().len() != 2
+        || !polynomial_curve(uv)
+        || net.degrees().iter().any(|&p| p > MAX_DEGREE)
+        || net.weights().is_some_and(|w| w.iter().any(|&x| x != 1.))
+    {
+        return Ok(None);
+    }
+    let knots = [
+        distinct_knots(source, d.surface, 2, 0, b)?,
+        distinct_knots(source, d.surface, 2, 1, b)?,
+    ];
+    let controls = uv_controls(source, d.curve_id, &knots, b)?;
+    let ka = distinct_knots(source, d.curve_id, 1, 0, b)?;
+    check(controls.len() == 2 && ka.len() == 2, ReadError::Unsupported)?;
+    let mut axis = None;
+    for (k, (first, last)) in controls[0].iter().zip(&controls[1]).enumerate() {
+        if compare(first, last, b)?.is_eq() {
+            axis = Some(k);
+        }
+    }
+    let Some(axis) = axis else {
+        return Ok(None);
+    };
+    let Some(row) = row(source, d.surface, net, axis, &controls[0][axis], &knots, b)? else {
+        return Ok(None);
+    };
+    let moving = 1 - axis;
+    let delta = operation(&controls[1][moving], &controls[0][moving], false, b)?;
+    check(!delta.is_zero(), ReadError::Unsupported)?;
+    let span = operation(&ka[1], &ka[0], false, b)?;
+    // Exact trace parameter of every interior moving-axis knot it crosses.
+    let mut crossings = Vec::new();
+    for k in &knots[moving] {
+        b.charge(256)?;
+        let f = operation(
+            &operation(k, &controls[0][moving], false, b)?,
+            &delta,
+            true,
+            b,
+        )?;
+        if f > BigRational::from_integer(0.into()) && f < BigRational::from_integer(1.into()) {
+            crossings.try_reserve(1).map_err(|_| ReadError::Limit)?;
+            crossings.push(&ka[0] + &span * &f);
+        }
+    }
+    crossings.sort();
+    let mut all = vec![ka[0].clone()];
+    all.extend(crossings);
+    all.push(ka[1].clone());
+    let breaks = match extra {
+        Some(extra) => merge(&all, extra, b)?,
+        None => all,
+    };
+    check(breaks.len() <= 2 * MAX_KNOTS, ReadError::Unsupported)?;
+    // Each cell's row span, from the moving coordinate at both exact ends.
+    let increasing = delta > BigRational::from_integer(0.into());
+    let mk = &knots[moving];
+    let mut spans = Vec::new();
+    spans
+        .try_reserve_exact(breaks.len())
+        .map_err(|_| ReadError::Limit)?;
+    let at = |t: &BigRational, b: &mut Budget<'_>| -> Result<BigRational> {
+        let f = operation(&operation(t, &ka[0], false, b)?, &span, true, b)?;
+        let step = &delta * &f;
+        b.charge(256)?;
+        Ok(&controls[0][moving] + step)
+    };
+    // Cells come in trace order, so the span index moves monotonically in
+    // the direction of travel; each search continues from the last span.
+    let mut i = if increasing { 0 } else { mk.len() - 2 };
+    for pair in breaks.windows(2) {
+        b.charge(512)?;
+        let [a, z] = [at(&pair[0], b)?, at(&pair[1], b)?];
+        let (lo, hi) = if increasing { (&a, &z) } else { (&z, &a) };
+        loop {
+            if compare(lo, &mk[i], b)?.is_ge() && compare(hi, &mk[i + 1], b)?.is_le() {
+                break;
+            }
+            let next = if increasing { i + 1 } else { i.wrapping_sub(1) };
+            check(next + 1 < mk.len(), ReadError::Unsupported)?;
+            i = next;
+        }
+        spans.push(row.ends[i]);
+    }
+    Ok(Some(Iso {
+        row,
+        breaks,
+        spans,
+        moving: [
+            enclose(&controls[0][moving], b)?,
+            enclose(&controls[1][moving], b)?,
+        ],
+        domain: [enclose(&ka[0], b)?, enclose(&ka[1], b)?],
+    }))
+}
 #[allow(
     clippy::too_many_arguments,
     reason = "Original owners, decoded curves, the finite edge and the limits are independent proof inputs."
@@ -536,17 +597,11 @@ fn circle(
     tol: f64,
     b: &mut Budget<'_>,
 ) -> Result<Option<Proof>> {
-    if !has_c0_joint(net)
-        || net.degrees().iter().any(|&p| p > MAX_DEGREE)
-        || uv.degree() != 1
-        || uv.points().len() != 2
-        || !polynomial_surface(net)
-        || !polynomial_curve(uv)
-    {
-        return Ok(None);
-    }
     b.charge(8192)?;
     check(tol.is_finite() && tol > 0., ReadError::Invalid)?;
+    let Some(iso) = iso_setup(source, d, net, uv, None, b)? else {
+        return Ok(None);
+    };
     check(super::super::si_radians(source, b)?, ReadError::Unsupported)?;
     let id = unwrapped(source, curve_id, b)?;
     let [_, placement, radius] = source.args(id, "CIRCLE")? else {
@@ -559,115 +614,19 @@ fn circle(
         radius,
         slope: I::point(0.),
     };
-    let surface_knots = [
-        distinct_knots(source, d.surface, 2, 0, b)?,
-        distinct_knots(source, d.surface, 2, 1, b)?,
-    ];
-    let controls = uv_controls(source, d.curve_id, &surface_knots, b)?;
-    let ka = distinct_knots(source, d.curve_id, 1, 0, b)?;
-    check(controls.len() == 2 && ka.len() == 2, ReadError::Unsupported)?;
-    let mut axis = None;
-    for (k, (first, last)) in controls[0].iter().zip(&controls[1]).enumerate() {
-        if compare(first, last, b)?.is_eq() {
-            axis = Some(k);
-        }
-    }
-    let axis = axis.ok_or(ReadError::Unsupported)?;
-    let moving = 1 - axis;
-    // The trace parameter is the circle angle: the finite edge must lie in
-    // the trace's exact domain.
-    let (t0, t1) = (enclose(&ka[0], b)?, enclose(&ka[1], b)?);
-    // A vertex-derived edge range may overshoot the exact domain by a few
-    // ulps. Arc points beyond it lie within `R * overshoot` of the proved
-    // end point, which is added to the certified deviation below.
+    // The trace parameter is the circle angle. A vertex-derived edge range
+    // may overshoot the exact domain by a few ulps; arc points beyond it lie
+    // within `R * overshoot` of the proved end, added below.
+    let [t0, t1] = iso.domain;
     check(edge.range[0] < edge.range[1], ReadError::Unsupported)?;
     let overshoot = (t0.lo - edge.range[0]).max(edge.range[1] - t1.hi).max(0.);
     check(overshoot <= 1e-9, ReadError::Unsupported)?;
-    let delta = operation(&controls[1][moving], &controls[0][moving], false, b)?;
-    check(!delta.is_zero(), ReadError::Unsupported)?;
-    let increasing = delta > BigRational::from_integer(0.into());
-    let span = operation(&ka[1], &ka[0], false, b)?;
-    let mut breaks = vec![ka[0].clone()];
-    let mut crossed = std::collections::BTreeMap::new();
-    for (index, k) in surface_knots[moving].iter().enumerate() {
-        b.charge(256)?;
-        let f = operation(
-            &operation(k, &controls[0][moving], false, b)?,
-            &delta,
-            true,
-            b,
-        )?;
-        if f > BigRational::from_integer(0.into()) && f < BigRational::from_integer(1.into()) {
-            let t = &ka[0] + &span * &f;
-            crossed.insert(t.clone(), index);
-            breaks.push(t);
-        }
-    }
-    breaks.sort();
-    breaks.push(ka[1].clone());
-    check(breaks.len() <= MAX_KNOTS, ReadError::Unsupported)?;
-    let original = surface_bezier::original_surface(source, d.surface, net, b)?;
-    check(original.matches(source, d.surface), ReadError::Invalid)?;
-    check(original.peak_bytes() <= 32 * 1024 * 1024, ReadError::Limit)?;
-    let (knots, cells, cache) = index_patches(&original, &surface_knots, b)?;
-    let mut s2 = Surface2 {
-        knots,
-        cells,
-        original: &original,
-        cache,
-        bytes: 0,
-    };
-    let constant = enclose(&controls[0][axis], b)?;
-    let ends = [
-        [enclose(&controls[0][0], b)?, enclose(&controls[1][0], b)?],
-        [enclose(&controls[0][1], b)?, enclose(&controls[1][1], b)?],
-    ];
-    let at = |t: I, k: usize| ends[k][0] + (t - t0) / (t1 - t0) * (ends[k][1] - ends[k][0]);
-    let first = {
-        let f = operation(&operation(&breaks[1], &ka[0], false, b)?, &span, true, b)?;
-        let mut second = controls[0].clone();
-        second[moving] = &controls[0][moving] + &delta * &f;
-        [controls[0].clone(), second]
-    };
-    let (mut su, mut sv) = locate(&first, &surface_knots, b)?.ok_or(ReadError::Unsupported)?;
     let mut maximum = 0_f64;
-    for (index, pair) in breaks.windows(2).enumerate() {
+    for (pair, &s) in iso.breaks.windows(2).zip(&iso.spans) {
         b.charge(2048)?;
-        if index > 0
-            && let Some(&knot) = crossed.get(&pair[0])
-        {
-            let next = if increasing {
-                knot
-            } else {
-                knot.checked_sub(1).ok_or(ReadError::Unsupported)?
-            };
-            if moving == 0 {
-                su = next;
-            } else {
-                sv = next;
-            }
-        }
         let (ta, tb) = (enclose(&pair[0], b)?, enclose(&pair[1], b)?);
-        let n = s2.patch(su, sv, b)?;
-        let [[u0, u1], [v0, v1]] = n.domain;
-        let local = |x: I, origin: I, width: I| (x - origin) / width;
-        let (x, y) = if axis == 0 {
-            (
-                [local(constant, u0, u1 - u0); 2],
-                [local(at(ta, 1), v0, v1 - v0), local(at(tb, 1), v0, v1 - v0)],
-            )
-        } else {
-            (
-                [local(at(ta, 0), u0, u1 - u0), local(at(tb, 0), u0, u1 - u0)],
-                [local(constant, v0, v1 - v0); 2],
-            )
-        };
-        let image = iso_image(n, axis, x, y, b)?.ok_or(ReadError::Unsupported)?;
-        let mut target = [P::constant(I::point(0.), b)?; 3];
-        for (k, slot) in target.iter_mut().enumerate() {
-            let values: Vec<I> = image.iter().map(|v| v[k]).collect();
-            *slot = P::new(&values, b)?;
-        }
+        let image = iso.row.bezier(s, iso.at(ta), iso.at(tb), b)?;
+        let target = polys(&image, b)?;
         let theta = P::new(&[ta, tb], b)?;
         let zero = P::new(&[I::point(0.), I::point(0.)], b)?;
         let mut accept = |p: &CellProof, _: &mut Budget<'_>| -> Result<bool> {
@@ -698,73 +657,33 @@ pub(super) fn certify(
     tol: f64,
     b: &mut Budget<'_>,
 ) -> Result<Option<Proof>> {
-    if let (
-        Surface::Nurbs { surface: net, .. },
-        Curve::Nurbs {
-            curve: uv,
-            closed: false,
-        },
-        Curve::Circle { .. },
-    ) = (surface, &d.geometry, &edge.curve)
-    {
-        return circle(source, curve_id, d, net, uv, edge, tol, b);
-    }
     let (
         Surface::Nurbs { surface: net, .. },
         Curve::Nurbs {
             curve: uv,
             closed: false,
         },
-        Curve::Nurbs {
-            curve: target,
-            closed: false,
-        },
-    ) = (surface, &d.geometry, &edge.curve)
+    ) = (surface, &d.geometry)
     else {
         return Ok(None);
     };
-    // This route owns tensor surfaces with a C0 interior joint, which the
-    // C1 tensor-trace proof refuses by contract.
-    let c0 = (0..2).any(|axis| {
-        let (_, m) = net.knots(axis);
-        m.len() > 2 && m[1..m.len() - 1].contains(&net.degrees()[axis])
-    });
-    // Only straight UV traces are proved here: their knot-line crossings
-    // are exact, so every cell has one exact patch and an exact composite.
-    if !c0
-        || uv.degree() != 1
-        || uv.points().len() != 2
-        || net.degrees().iter().any(|&p| p > MAX_DEGREE)
-        || target.degree() > MAX_DEGREE
-        || !polynomial_surface(net)
-        || !polynomial_curve(uv)
-        || !polynomial_curve(target)
-    {
+    if !has_c0_joint(net) || uv.degree() != 1 || uv.points().len() != 2 {
         return Ok(None);
     }
+    let target = match &edge.curve {
+        Curve::Circle { .. } => return circle(source, curve_id, d, net, uv, edge, tol, b),
+        Curve::Nurbs {
+            curve: target,
+            closed: false,
+        } if target.degree() <= MAX_DEGREE && polynomial_curve(target) => target,
+        _ => return Ok(None),
+    };
     b.charge(8192)?;
     check(tol.is_finite() && tol > 0., ReadError::Invalid)?;
     let id = unwrapped(source, curve_id, b)?;
-    // Cheap exact obligations first: the trace stays in the surface domain
-    // and both curves share one exact parameter domain.
-    let surface_knots = [
-        distinct_knots(source, d.surface, 2, 0, b)?,
-        distinct_knots(source, d.surface, 2, 1, b)?,
-    ];
-    let controls = uv_controls(source, d.curve_id, &surface_knots, b)?;
-    let ka = distinct_knots(source, d.curve_id, 1, 0, b)?;
     let kc = distinct_knots(source, id, 1, 0, b)?;
-    let mut points = merge(&ka, &kc, b)?;
-    let original = surface_bezier::original_surface(source, d.surface, net, b)?;
-    check(original.matches(source, d.surface), ReadError::Invalid)?;
-    check(original.peak_bytes() <= 32 * 1024 * 1024, ReadError::Limit)?;
-    let (knots, cells, cache) = index_patches(&original, &surface_knots, b)?;
-    let mut s2 = Surface2 {
-        knots,
-        cells,
-        original: &original,
-        cache,
-        bytes: 0,
+    let Some(iso) = iso_setup(source, d, net, uv, Some(&kc), b)? else {
+        return Ok(None);
     };
     let c: CurveCells<'_, '_, '_> =
         bezier::original_curve(source, id, target, Coordinates::Raw(3), b)?;
@@ -772,213 +691,84 @@ pub(super) fn certify(
         c.matches(source, id) && matches!(c.coordinates(), Coordinates::Raw(3)),
         ReadError::Invalid,
     )?;
-    // A straight UV trace crosses each surface knot line at an exact
-    // rational parameter; those become cell breaks so every cell lies in
-    // one closed patch.
-    let line = uv.degree() == 1 && controls.len() == 2 && ka.len() == 2;
-    let mut iso = None;
-    if line {
-        for (axis, (first, last)) in controls[0].iter().zip(&controls[1]).enumerate() {
-            if compare(first, last, b)?.is_eq() {
-                iso = Some((axis, enclose(first, b)?));
-            }
-        }
+    let mut knots_c = Vec::new();
+    knots_c
+        .try_reserve_exact(kc.len())
+        .map_err(|_| ReadError::Limit)?;
+    for q in &kc {
+        knots_c.push(enclose(q, b)?);
     }
-    let along = |t: &BigRational, b: &mut Budget<'_>| -> Result<Q2> {
-        let span = operation(&ka[1], &ka[0], false, b)?;
-        let f = operation(&operation(t, &ka[0], false, b)?, &span, true, b)?;
-        let mut out = [controls[0][0].clone(), controls[0][1].clone()];
-        for (axis, slot) in out.iter_mut().enumerate() {
-            let delta = operation(&controls[1][axis], &controls[0][axis], false, b)?;
-            let scaled = &delta * &f;
-            *slot = &controls[0][axis] + scaled;
+    let derivative = iso.row.derivative(b)?;
+    let span_t = iso.domain[1] - iso.domain[0];
+    check(span_t.valid() && span_t.lo > 0., ReadError::Unsupported)?;
+    let mut maximum = 0_f64;
+    let mut cursor = 0usize;
+    for (pair, &s) in iso.breaks.windows(2).zip(&iso.spans) {
+        b.charge(2048)?;
+        let (ta, tb) = (enclose(&pair[0], b)?, enclose(&pair[1], b)?);
+        while cursor + 1 < c.cells().len()
+            && tb.lo > knots_c[c.cells()[cursor].knot_indices()[1]].hi
+        {
+            cursor += 1;
         }
-        Ok(out)
-    };
-    let mut crossed = std::collections::BTreeMap::new();
-    if line {
-        let mut crossings = Vec::new();
-        for axis in 0..2 {
-            let delta = operation(&controls[1][axis], &controls[0][axis], false, b)?;
-            if delta.is_zero() {
+        let cell = &c.cells()[cursor];
+        let [k0, k1] = cell.knot_indices();
+        check(
+            ta.lo >= knots_c[k0].lo && tb.hi <= knots_c[k1].hi,
+            ReadError::Unsupported,
+        )?;
+        check(
+            cell.controls()
+                .iter()
+                .all(|h| h[3].lo == 1. && h[3].hi == 1.),
+            ReadError::Unsupported,
+        )?;
+        let width = knots_c[k1] - knots_c[k0];
+        let f = [(ta - knots_c[k0]) / width, (tb - knots_c[k0]) / width];
+        let controls_c: Vec<V3> = cell.controls().iter().map(|h| [h[0], h[1], h[2]]).collect();
+        let (ya, yb) = (iso.at(ta), iso.at(tb));
+        // A cell shorter than its own end uncertainty: bound it directly
+        // by enclosures over the whole cell in GLOBAL parameter units.
+        if (tb - ta).hi <= 1e-9 * span_t.lo {
+            let ybox = I::new(ya.lo.min(yb.lo), ya.hi.max(yb.hi));
+            let fbox = I::new(f[0].lo.min(f[1].lo), f[0].hi.max(f[1].hi));
+            let args = [ybox; MAX_DEGREE];
+            let point = iso.row.blossom(s, &args[..iso.row.degree], b)?;
+            let partial = derivative.blossom(s - 1, &args[..derivative.degree], b)?;
+            let rate = (iso.moving[1] - iso.moving[0]) / span_t;
+            let mut row = controls_c.clone();
+            let target_point = casteljau(&mut row, fbox);
+            let degree = I::point((controls_c.len() - 1) as f64);
+            let mut hodograph: Vec<V3> = controls_c
+                .windows(2)
+                .map(|w| std::array::from_fn(|k| degree * (w[1][k] - w[0][k]) / width))
+                .collect();
+            b.charge(controls_c.len() * controls_c.len() * 48 + 512)?;
+            let target_tangent = casteljau(&mut hodograph, fbox);
+            let position = norm(std::array::from_fn(|k| point[k] - target_point[k]));
+            let tangent = norm(std::array::from_fn(|k| {
+                partial[k] * rate - target_tangent[k]
+            }));
+            let speed = norm(target_tangent);
+            if position.valid()
+                && tangent.valid()
+                && speed.valid()
+                && position.hi <= tol
+                && tangent.hi < speed.lo
+            {
+                maximum = maximum.max(position.hi);
                 continue;
             }
-            for (index, k) in surface_knots[axis].iter().enumerate() {
-                b.charge(256)?;
-                let f = operation(
-                    &operation(k, &controls[0][axis], false, b)?,
-                    &delta,
-                    true,
-                    b,
-                )?;
-                let zero = BigRational::from_integer(0.into());
-                let one = BigRational::from_integer(1.into());
-                if compare(&f, &zero, b)?.is_gt() && compare(&f, &one, b)?.is_lt() {
-                    let span = operation(&ka[1], &ka[0], false, b)?;
-                    crossings.try_reserve(1).map_err(|_| ReadError::Limit)?;
-                    let t = &ka[0] + &span * &f;
-                    crossed.insert(
-                        t.clone(),
-                        (axis, index, delta > BigRational::from_integer(0.into())),
-                    );
-                    crossings.push(t);
-                }
-            }
+            return Ok(Some(Proof::Unsupported));
         }
-        crossings.sort();
-        crossings.dedup();
-        check(crossings.len() < MAX_KNOTS, ReadError::Unsupported)?;
-        let mut all = vec![ka[0].clone()];
-        all.extend(crossings);
-        all.push(ka[1].clone());
-        points = merge(&points, &all, b)?;
+        let piece = restrict_bezier(&controls_c, f[0], f[1], b)?;
+        match prove_row(&iso.row, s, ya, yb, &piece, tol, 0, b)? {
+            Piece::Proved(e) => maximum = maximum.max(e),
+            Piece::Refused | Piece::Exceeds => return Ok(Some(Proof::Unsupported)),
+        }
     }
-    let mut maximum = 0_f64;
-    if let (true, Some((axis, constant))) = (line, iso) {
-        // Every cell lies between two consecutive EXACT breaks (knots and
-        // knot-line crossings), so it lies in one closed patch.
-        let t0 = enclose(&ka[0], b)?;
-        let t1 = enclose(&ka[1], b)?;
-        let ends = [0, 1].map(|axis| controls.iter().map(|q| q[axis].clone()).collect::<Vec<_>>());
-        let mut uv_ends = [[I::point(0.); 2]; 2];
-        for (axis, slot) in uv_ends.iter_mut().enumerate() {
-            *slot = [enclose(&ends[axis][0], b)?, enclose(&ends[axis][1], b)?];
-        }
-        let span = t1 - t0;
-        check(span.valid() && span.lo > 0., ReadError::Unsupported)?;
-        let at = |t: I, axis: usize| {
-            uv_ends[axis][0] + (t - t0) / span * (uv_ends[axis][1] - uv_ends[axis][0])
-        };
-        let mut knots_c = Vec::new();
-        knots_c
-            .try_reserve_exact(kc.len())
-            .map_err(|_| ReadError::Limit)?;
-        for q in &kc {
-            knots_c.push(enclose(q, b)?);
-        }
-        let mut cursor = 0usize;
-        // Exact patch of the first cell; every later change of patch happens
-        // at an exact knot-line crossing break.
-        let first = [along(&points[0], b)?, along(&points[1], b)?];
-        let (mut su, mut sv) = locate(&first, &surface_knots, b)?.ok_or(ReadError::Unsupported)?;
-        for (index, pair) in points.windows(2).enumerate() {
-            b.charge(2048)?;
-            if index > 0
-                && let Some(&(axis, knot, increasing)) = crossed.get(&pair[0])
-            {
-                let next = if increasing {
-                    knot
-                } else {
-                    knot.checked_sub(1).ok_or(ReadError::Unsupported)?
-                };
-                if axis == 0 {
-                    su = next;
-                } else {
-                    sv = next;
-                }
-            }
-            let (ta, tb) = (enclose(&pair[0], b)?, enclose(&pair[1], b)?);
-            while cursor + 1 < c.cells().len()
-                && tb.lo > knots_c[c.cells()[cursor].knot_indices()[1]].hi
-            {
-                cursor += 1;
-            }
-            let cell = &c.cells()[cursor];
-            let [k0, k1] = cell.knot_indices();
-            check(
-                ta.lo >= knots_c[k0].lo && tb.hi <= knots_c[k1].hi,
-                ReadError::Unsupported,
-            )?;
-            let width = knots_c[k1] - knots_c[k0];
-            let f = [(ta - knots_c[k0]) / width, (tb - knots_c[k0]) / width];
-            let controls_c: Vec<V3> = cell.controls().iter().map(|h| [h[0], h[1], h[2]]).collect();
-            check(
-                cell.controls()
-                    .iter()
-                    .all(|h| h[3].lo == 1. && h[3].hi == 1.),
-                ReadError::Unsupported,
-            )?;
-            let piece = restrict_bezier(&controls_c, f[0], f[1], b)?;
-            check(
-                su < s2.knots[0].len() - 1 && sv < s2.knots[1].len() - 1,
-                ReadError::Unsupported,
-            )?;
-            let n = s2.patch(su, sv, b)?;
-            let [[u0, u1], [v0, v1]] = n.domain;
-            let local = |x: I, origin: I, width: I| (x - origin) / width;
-            let x = [local(at(ta, 0), u0, u1 - u0), local(at(tb, 0), u0, u1 - u0)];
-            let y = [local(at(ta, 1), v0, v1 - v0), local(at(tb, 1), v0, v1 - v0)];
-            let (x, y) = if axis == 0 {
-                ([local(constant, u0, u1 - u0); 2], y)
-            } else {
-                (x, [local(constant, v0, v1 - v0); 2])
-            };
-            // A cell shorter than its own end uncertainty: bound it directly
-            // by enclosures over the whole cell in GLOBAL parameter units.
-            if (tb - ta).hi <= 1e-9 * span.lo {
-                let moving = 1 - axis;
-                let (fixed_local, moving_box, moving_width) = if axis == 0 {
-                    (
-                        x[0],
-                        I::new(y[0].lo.min(y[1].lo), y[0].hi.max(y[1].hi)),
-                        v1 - v0,
-                    )
-                } else {
-                    (
-                        y[0],
-                        I::new(x[0].lo.min(x[1].lo), x[0].hi.max(x[1].hi)),
-                        u1 - u0,
-                    )
-                };
-                let rate = (uv_ends[moving][1] - uv_ends[moving][0]) / span / moving_width;
-                let (point, partial) = if axis == 0 {
-                    (
-                        n.s.evaluate(fixed_local, moving_box, b)?,
-                        n.sv.evaluate(fixed_local, moving_box, b)?,
-                    )
-                } else {
-                    (
-                        n.s.evaluate(moving_box, fixed_local, b)?,
-                        n.su.evaluate(moving_box, fixed_local, b)?,
-                    )
-                };
-                let fbox = I::new(f[0].lo.min(f[1].lo), f[0].hi.max(f[1].hi));
-                let mut row = controls_c.clone();
-                let target_point = casteljau(&mut row, fbox);
-                let degree = I::point((controls_c.len() - 1) as f64);
-                let mut hodograph: Vec<V3> = controls_c
-                    .windows(2)
-                    .map(|w| std::array::from_fn(|k| degree * (w[1][k] - w[0][k]) / width))
-                    .collect();
-                b.charge(controls_c.len() * controls_c.len() * 48 + 512)?;
-                let target_tangent = casteljau(&mut hodograph, fbox);
-                let image_tangent: V3 = std::array::from_fn(|k| partial[k] * rate);
-                let position = norm(std::array::from_fn(|k| point[k] - target_point[k]));
-                let tangent = norm(std::array::from_fn(|k| {
-                    image_tangent[k] - target_tangent[k]
-                }));
-                let speed = norm(target_tangent);
-                if position.valid()
-                    && tangent.valid()
-                    && speed.valid()
-                    && position.hi <= tol
-                    && tangent.hi < speed.lo
-                {
-                    maximum = maximum.max(position.hi);
-                    continue;
-                }
-                return Ok(Some(Proof::Unsupported));
-            }
-            match prove_iso(n, axis, x, y, &piece, tol, 0, b)? {
-                Piece::Proved(e) => maximum = maximum.max(e),
-                Piece::Refused | Piece::Exceeds => return Ok(Some(Proof::Unsupported)),
-            }
-        }
-        b.charge(64)?;
-        return Ok(Some(Proof::Certified(maximum)));
-    }
-    // A straight trace that is not an iso line is not proved here.
-    Ok(Some(Proof::Unsupported))
+    b.charge(64)?;
+    Ok(Some(Proof::Certified(maximum)))
 }
 
 #[cfg(test)]
