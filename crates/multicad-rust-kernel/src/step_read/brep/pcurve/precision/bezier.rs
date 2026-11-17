@@ -190,6 +190,7 @@ fn coordinate(
     id: u32,
     chart: Coordinates<'_>,
     spans: Option<&[BigRational; 2]>,
+    interval_chart: Option<&[[I; 2]; 2]>,
     budget: &mut Budget<'_>,
 ) -> Result<V> {
     match chart {
@@ -206,6 +207,27 @@ fn coordinate(
             let spans = spans.ok_or(ReadError::Invalid)?;
             let mut out = [I::point(0.); 3];
             for i in 0..2 {
+                if let Some(chart) = interval_chart {
+                    budget.charge(512)?;
+                    match scalar(source, id, &values[i], budget) {
+                        Ok(value) => {
+                            let normalized = (value - chart[i][0]) / chart[i][1];
+                            if normalized.valid()
+                                && normalized.lo >= 0.
+                                && normalized.hi <= 1.
+                                && (normalized.hi - normalized.lo) <= 64. * f64::EPSILON
+                            {
+                                // Whole ORIGINAL scalar/domain boxes prove
+                                // membership. The narrowness test selects an
+                                // enclosure algorithm, never a tolerance.
+                                out[i] = normalized;
+                                continue;
+                            }
+                        }
+                        Err(ReadError::Unsupported) => {}
+                        Err(e) => return Err(e),
+                    }
+                }
                 let q = rational(source, id, &values[i], budget)?;
                 let delta = exact_op(&q, &min[i], false, budget)?;
                 let normalized = exact_op(&delta, &spans[i], true, budget)?;
@@ -321,9 +343,9 @@ fn insert(
     *tags = new_tags;
     Ok(())
 }
-/// Exact source-domain normalization precedes coefficient enclosure. Original
-/// knot ordinals survive every insertion and the resulting Bezier cells keep
-/// their original scalar parameter domains. No f64 geometry is substituted.
+/// Original scalar/domain intervals or bounded exact rational cancellation
+/// establish normalized coefficients. Original knot ordinals survive every
+/// insertion; the cells retain their original scalar parameter domains.
 pub(super) fn original_curve<'s, 'i, 'a>(
     source: &'s Source<'i>,
     id: u32,
@@ -364,6 +386,15 @@ pub(super) fn original_curve<'s, 'i, 'a>(
             return Err(ReadError::Unsupported);
         }
         Some([a, b])
+    } else {
+        None
+    };
+    let interval_chart = if let Coordinates::UnitBox2 { min, .. } = coordinates {
+        let spans = spans.as_ref().ok_or(ReadError::Invalid)?;
+        Some([
+            [enclose(&min[0], budget)?, enclose(&spans[0], budget)?],
+            [enclose(&min[1], budget)?, enclose(&spans[1], budget)?],
+        ])
     } else {
         None
     };
@@ -439,6 +470,7 @@ pub(super) fn original_curve<'s, 'i, 'a>(
             reference(control)?,
             coordinates,
             spans.as_ref(),
+            interval_chart.as_ref(),
             budget,
         )?;
         let w = if let Some(values) = raw_weights {

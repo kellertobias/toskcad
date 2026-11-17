@@ -23,6 +23,19 @@ mod polynomial_axis;
 mod polynomial_trace;
 mod sense_line;
 mod spline_window;
+mod surface_bezier;
+mod tensor_trace;
+pub(super) fn tensor_trace_certificate(
+    source: &Source<'_>,
+    id: u32,
+    definition: &super::uv::Definition,
+    surface: &Surface,
+    edge: &Edge,
+    tolerance: f64,
+    budget: &mut Budget<'_>,
+) -> Result<Option<super::Proof>> {
+    tensor_trace::certify(source, id, definition, surface, edge, tolerance, budget)
+}
 type V = [I; 3];
 /// Original finite tensor-boundary proof, including the complete numeric
 /// and finite-window transfer. Its result must not be reserved a second time.

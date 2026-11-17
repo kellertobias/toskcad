@@ -750,35 +750,68 @@ fn validate_source(
             )? {
                 return Ok((proof, definition.surface, surface_kind(&surface), 0.));
             }
-            let reserve = precision::reserve(
-                source,
-                binding.curve,
-                &definition,
-                &surface,
-                &edge,
-                budget,
-                &mut precision_cache,
-            )?;
-            budget.charge(8)?;
-            check(
-                precision_cache.retained_bytes() <= 256 * 1024
-                    && precision_cache.peak_bytes() <= 256 * 1024,
-                ReadError::Limit,
-            )?;
-            if !reserve.is_finite() || reserve < 0. {
-                return Err(ReadError::Unsupported);
+            let ordinary = (|| -> Result<(Proof, f64)> {
+                let reserve = precision::reserve(
+                    source,
+                    binding.curve,
+                    &definition,
+                    &surface,
+                    &edge,
+                    budget,
+                    &mut precision_cache,
+                )?;
+                budget.charge(8)?;
+                check(
+                    precision_cache.retained_bytes() <= 256 * 1024
+                        && precision_cache.peak_bytes() <= 256 * 1024,
+                    ReadError::Limit,
+                )?;
+                if !reserve.is_finite() || reserve < 0. {
+                    return Err(ReadError::Unsupported);
+                }
+                let mut proof =
+                    affine::certify(&surface, &definition.geometry, &edge, tol, budget)?;
+                if matches!(proof, Proof::Unsupported) {
+                    proof = analytic::certify(&surface, &definition.geometry, &edge, tol, budget)?;
+                }
+                if matches!(proof, Proof::Unsupported) {
+                    proof = sweep::certify(&surface, &definition.geometry, &edge, tol, budget)?;
+                }
+                if matches!(proof, Proof::Certified(_)) {
+                    precision::sense(source, binding.curve, &definition, &surface, &edge, budget)?;
+                }
+                Ok((proof, reserve))
+            })();
+            match ordinary {
+                Ok((proof, reserve))
+                    if match proof {
+                        Proof::Unsupported => false,
+                        Proof::Certified(e) => (I::point(e) + I::point(reserve)).hi <= tol,
+                        Proof::Disagreement(_) => true,
+                    } =>
+                {
+                    Ok((proof, definition.surface, surface_kind(&surface), reserve))
+                }
+                Ok(_) | Err(ReadError::Unsupported) => {
+                    match precision::tensor_trace_certificate(
+                        source,
+                        binding.curve,
+                        &definition,
+                        &surface,
+                        &edge,
+                        tol,
+                        budget,
+                    ) {
+                        Ok(Some(proof @ (Proof::Certified(_) | Proof::Disagreement(_)))) => {
+                            return Ok((proof, definition.surface, surface_kind(&surface), 0.));
+                        }
+                        Ok(_) | Err(ReadError::Unsupported) => {}
+                        Err(error) => return Err(error),
+                    }
+                    Err(ReadError::Unsupported)
+                }
+                Err(error) => Err(error),
             }
-            let mut proof = affine::certify(&surface, &definition.geometry, &edge, tol, budget)?;
-            if matches!(proof, Proof::Unsupported) {
-                proof = analytic::certify(&surface, &definition.geometry, &edge, tol, budget)?;
-            }
-            if matches!(proof, Proof::Unsupported) {
-                proof = sweep::certify(&surface, &definition.geometry, &edge, tol, budget)?;
-            }
-            if matches!(proof, Proof::Certified(_)) {
-                precision::sense(source, binding.curve, &definition, &surface, &edge, budget)?;
-            }
-            Ok((proof, definition.surface, surface_kind(&surface), reserve))
         })();
         match attempt {
             Ok((Proof::Certified(upper), _, _, reserve))

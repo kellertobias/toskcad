@@ -13,7 +13,6 @@ pub(super) struct Poly {
     pub(super) degree: usize,
 }
 impl Poly {
-    #[cfg(test)]
     pub(super) fn constant(degree: usize, value: I, budget: &mut Budget<'_>) -> Result<Self> {
         budget.charge((degree + 1).saturating_mul(8).saturating_add(512))?;
         let mut p = Self::zero(degree)?;
@@ -24,7 +23,6 @@ impl Poly {
             Err(ReadError::Unsupported)
         }
     }
-    #[cfg(test)]
     pub(super) fn elevate(self, degree: usize, budget: &mut Budget<'_>) -> Result<Self> {
         if degree < self.degree {
             return Err(ReadError::Unsupported);

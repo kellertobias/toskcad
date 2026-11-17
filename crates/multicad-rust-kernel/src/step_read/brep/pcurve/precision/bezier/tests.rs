@@ -36,6 +36,176 @@ fn definition(source: &Source<'_>) -> super::super::super::uv::Definition {
     super::super::super::uv::definition(source, 900100, &mut Budget::new(512_000_000, None))
         .unwrap()
 }
+#[test]
+fn narrow_original_interval_normalization_saves_real_work_and_keeps_exact_fallbacks() {
+    let text = input(false);
+    let source = Source::parse(&text, 1e-7).unwrap();
+    let min = [decimal("10."), decimal("20.")];
+    let max = [decimal("14."), decimal("24.")];
+    let spans = [decimal("4."), decimal("4.")];
+    let chart = [[I::point(10.), I::point(4.)], [I::point(20.), I::point(4.)]];
+    let mut fast = Budget::new(512_000_000, None);
+    let mut exact = Budget::new(512_000_000, None);
+    let a = coordinate(
+        &source,
+        900011,
+        Coordinates::UnitBox2 {
+            min: &min,
+            max: &max,
+        },
+        Some(&spans),
+        Some(&chart),
+        &mut fast,
+    )
+    .unwrap();
+    let b = coordinate(
+        &source,
+        900011,
+        Coordinates::UnitBox2 {
+            min: &min,
+            max: &max,
+        },
+        Some(&spans),
+        None,
+        &mut exact,
+    )
+    .unwrap();
+    for (i, q) in [
+        BigRational::new(1.into(), 8.into()),
+        BigRational::new(1.into(), 4.into()),
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert!(
+            BigRational::from_float(a[i].lo).unwrap() <= *q
+                && *q <= BigRational::from_float(a[i].hi).unwrap()
+        );
+        assert!(
+            BigRational::from_float(b[i].lo).unwrap() <= *q
+                && *q <= BigRational::from_float(b[i].hi).unwrap()
+        );
+    }
+    assert!(fast.used() * 4 < exact.used());
+    let used = fast.used();
+    assert_eq!(
+        coordinate(
+            &source,
+            900011,
+            Coordinates::UnitBox2 {
+                min: &min,
+                max: &max
+            },
+            Some(&spans),
+            Some(&chart),
+            &mut Budget::new(used - 1, None)
+        )
+        .unwrap_err(),
+        ReadError::Limit
+    );
+    let retry = coordinate(
+        &source,
+        900011,
+        Coordinates::UnitBox2 {
+            min: &min,
+            max: &max,
+        },
+        Some(&spans),
+        Some(&chart),
+        &mut Budget::new(used, None),
+    )
+    .unwrap();
+    for (i, j) in a.into_iter().zip(retry) {
+        assert_eq!(
+            (i.lo.to_bits(), i.hi.to_bits()),
+            (j.lo.to_bits(), j.hi.to_bits())
+        );
+    }
+    let gauge = text.replace("(10.5,21.)", "(1000000000010.5,1000000000021.)");
+    let source = Source::parse(&gauge, 1e-7).unwrap();
+    let min = [decimal("1000000000010."), decimal("1000000000020.")];
+    let max = [decimal("1000000000014."), decimal("1000000000024.")];
+    let chart = [
+        [
+            I::new(1000000000010_f64.next_down(), 1000000000010_f64.next_up()),
+            I::point(4.),
+        ],
+        [
+            I::new(1000000000020_f64.next_down(), 1000000000020_f64.next_up()),
+            I::point(4.),
+        ],
+    ];
+    let fast = coordinate(
+        &source,
+        900011,
+        Coordinates::UnitBox2 {
+            min: &min,
+            max: &max,
+        },
+        Some(&spans),
+        Some(&chart),
+        &mut Budget::new(512_000_000, None),
+    )
+    .unwrap();
+    let exact = coordinate(
+        &source,
+        900011,
+        Coordinates::UnitBox2 {
+            min: &min,
+            max: &max,
+        },
+        Some(&spans),
+        None,
+        &mut Budget::new(512_000_000, None),
+    )
+    .unwrap();
+    for (a, b) in fast.into_iter().zip(exact) {
+        assert_eq!(
+            (a.lo.to_bits(), a.hi.to_bits()),
+            (b.lo.to_bits(), b.hi.to_bits())
+        );
+    }
+    let outside = gauge.replace("1000000000010.5", "1000000000014.00000001");
+    let source = Source::parse(&outside, 1e-7).unwrap();
+    assert_eq!(
+        coordinate(
+            &source,
+            900011,
+            Coordinates::UnitBox2 {
+                min: &min,
+                max: &max
+            },
+            Some(&spans),
+            Some(&chart),
+            &mut Budget::new(512_000_000, None)
+        )
+        .unwrap_err(),
+        ReadError::Unsupported
+    );
+}
+#[test]
+fn point_numeric_owner_is_preflighted_before_either_normalization_path() {
+    let values = std::iter::repeat_n("1.", 2049)
+        .collect::<Vec<_>>()
+        .join(",");
+    let text = input(false).replace(
+        "#900011=CARTESIAN_POINT('',(10.5,21.));",
+        &format!("#900011=CARTESIAN_POINT(UNKNOWN(({values})),(10.5,21.));"),
+    );
+    let source = Source::parse(&text, 1e-7).unwrap();
+    assert_eq!(
+        coordinate(
+            &source,
+            900011,
+            Coordinates::Raw(2),
+            None,
+            None,
+            &mut Budget::new(512_000_000, None)
+        )
+        .unwrap_err(),
+        ReadError::Limit
+    );
+}
 fn decimal(text: &str) -> BigRational {
     let (whole, fraction) = text
         .trim_end_matches('.')
