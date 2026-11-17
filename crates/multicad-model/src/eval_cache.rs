@@ -317,6 +317,8 @@ struct FullRustModel {
     compiler: Compiler,
     model: crate::Model,
     features: BTreeSet<EntityId>,
+    /// Audited literal symbol nodes contained in the retained model.
+    symbols: BTreeSet<EntityId>,
     bytes: usize,
 }
 
@@ -426,6 +428,7 @@ impl EvaluationCache {
         }
         let model = full.model.share_completed();
         self.last.reused.clone_from(&full.features);
+        self.last.symbol_reused.clone_from(&full.symbols);
         self.last.reused_full_model = true;
         Some(model)
     }
@@ -459,6 +462,12 @@ impl EvaluationCache {
                 .last
                 .evaluated
                 .union(&self.last.reused)
+                .copied()
+                .collect(),
+            symbols: self
+                .last
+                .symbol_evaluated
+                .union(&self.last.symbol_reused)
                 .copied()
                 .collect(),
             bytes,
@@ -642,11 +651,7 @@ impl<'a> Session<'a> {
             edges: BTreeMap::new(),
             volatile_sketches,
             stats: CompileStats::default(),
-            literal_symbols: if backend == GeometryBackend::OpenCascade {
-                literal_symbols(document)
-            } else {
-                BTreeMap::new()
-            },
+            literal_symbols: literal_symbols(document),
         }
     }
     pub(crate) fn pipe_thread_factory(&mut self) -> &mut multicad_kernel::PipeThreadFactory {

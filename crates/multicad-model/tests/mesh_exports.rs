@@ -1553,8 +1553,19 @@ fn project_and_tag_scopes_keep_glb_membership_and_part_appearances() {
     let all = glb_for(&mut f, None);
     let names: std::collections::BTreeSet<_> = all.drawn.iter().map(|(n, ..)| n.clone()).collect();
     assert_eq!(names.len(), 4, "{names:?}");
-    let total: f64 = names.iter().map(|n| volume(&drawn_by(&all, n))).sum();
-    near(total, 3. * 6000. + PI * 25. * 10., 2.);
+    // Planar boxes tessellate exactly up to GLB's f32 metre positions. The
+    // pin is inscribed in its cylinder and, at the recipe's 10 degree angular
+    // deviation, has at least 36 facets around, bounding its deficit below.
+    let storage = 6000. * f64::from(f32::EPSILON) * 8.;
+    let pin_floor = 10. * 0.5 * 36. * 25. * (2. * PI / 36.).sin();
+    for name in &names {
+        let v = volume(&drawn_by(&all, name));
+        if name == "Pin" {
+            assert!(v < PI * 25. * 10. && v >= pin_floor - storage, "{v}");
+        } else {
+            near(v, 6000., storage);
+        }
+    }
     // Two appearances: the default and steel red.
     let materials = all.json["materials"].as_array().unwrap();
     assert_eq!(materials.len(), 2);

@@ -63,8 +63,14 @@ pub fn validate_references(document: &Document, model: &crate::Model) -> Result<
     ))
 }
 
-/// Read a STEP file into importable solids with their signatures.
+/// Read a STEP file into importable solids with the default geometry
+/// provider, matching [`read_kicad_file`].
 pub fn read_step_file(path: &Path) -> Result<StepFile, ModelError> {
+    read_step_file_with_backend(path, GeometryBackend::default())
+}
+
+/// Read a STEP file into importable OpenCascade solids with their signatures.
+fn read_step_file_open_cascade(path: &Path) -> Result<StepFile, ModelError> {
     let bytes = std::fs::read(path)
         .map_err(|e| error(None, format!("Cannot read {}: {e}", path.display())))?;
     let policy = GeometryPolicy::default();
@@ -92,7 +98,7 @@ pub fn read_step_file_with_backend(
     backend: GeometryBackend,
 ) -> Result<StepFile, ModelError> {
     if backend == GeometryBackend::OpenCascade {
-        return read_step_file(path);
+        return read_step_file_open_cascade(path);
     }
     let read_error = |cause| error(None, format!("Cannot read {}: {cause}", path.display()));
     let mut bytes = Vec::new();

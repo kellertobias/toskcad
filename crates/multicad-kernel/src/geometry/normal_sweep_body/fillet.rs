@@ -181,7 +181,15 @@ impl Solid {
             // Adjacent rounds must leave a positive straight face. Opposite
             // corner removals lie inside disjoint corner triangles since
             // each radius is smaller than both rectangle side lengths.
-            policy.length(side - clip[i] - clip[next])?;
+            policy
+                .length(side - clip[i] - clip[next])
+                .map_err(|cause| {
+                    error(
+                        "fillet",
+                        cause.kind,
+                        "Edge treatment failed: the fillet radius leaves a straight box face below the minimum feature size",
+                    )
+                })?;
             let a = shift(corners[i], directions[i], clip[i]);
             let b = shift(corners[next], directions[i], -clip[next]);
             outer.push(CurvedEdge2d::Line { a, b });

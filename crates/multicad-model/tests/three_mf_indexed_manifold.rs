@@ -203,10 +203,21 @@ fn write(objects: &[MeshObject], items: &[BuildItem]) -> Vec<u8> {
 #[test]
 fn native_faceted_box_exports_an_indexed_shell_and_exact_world_build_transforms() {
     let native = Solid::box_solid([10., 20., 30.], Default::default()).unwrap();
-    let source = mesh::tessellate(&native, &MeshQuality::default(), "Native faceted box").unwrap();
+    let shared = mesh::tessellate(&native, &MeshQuality::default(), "Native faceted box").unwrap();
+    // The owned kernel already shares box corners. Give every triangle its own
+    // vertex copies so the writer must still recover the indexed shell.
+    let mut source = shared.clone();
+    source.vertices = shared
+        .triangles
+        .iter()
+        .flat_map(|t| t.map(|i| shared.vertices[i as usize]))
+        .collect();
+    source.triangles = (0..shared.triangles.len() as u32)
+        .map(|t| [3 * t, 3 * t + 1, 3 * t + 2])
+        .collect();
     assert!(
         source.vertices.len() > 8,
-        "fixture must contain native per-face vertex copies"
+        "fixture must contain per-face vertex copies"
     );
     let pose = BuildItem {
         object: 0,
@@ -590,21 +601,21 @@ fn transformed_fused_plate_and_blind_cross_holes_use_proven_native_seams_without
         maximum_triangles: 2_000_000,
     };
     let raw = mesh::tessellate(&body, &quality, "Raw face-seam fixture").unwrap();
-    assert!(
-        mesh::three_mf(
-            std::slice::from_ref(&raw),
-            &[BuildItem::identity(0)],
-            LengthUnit::Millimeter
-        )
-        .is_err(),
-        "fixture must reproduce the exact-coordinate-only writer refusal"
-    );
+    // The owned kernel shares exact seam vertices between faces, so even the
+    // raw display tessellation is already a closed indexed shell that the
+    // exact-coordinate-only writer accepts without any spatial weld.
+    let direct = parse(&write(
+        std::slice::from_ref(&raw),
+        &[BuildItem::identity(0)],
+    ));
+    assert_eq!(manifold(&direct.objects[0]), 1);
+    assert_preserved(&raw, &direct.objects[0]);
     let native = body.manufacturing_mesh_with_receipt(options).unwrap();
     assert!(native.edge_pairs > 0);
     assert!(native.vertex_links > 0);
-    assert!(
-        native.maximum_displacement_mm > 0.,
-        "fixture must contain non-exact native face seams"
+    assert_eq!(
+        native.maximum_displacement_mm, 0.,
+        "exact native face seams need no correction"
     );
     assert!(
         native.maximum_displacement_mm
