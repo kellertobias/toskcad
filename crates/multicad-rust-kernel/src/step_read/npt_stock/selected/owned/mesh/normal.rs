@@ -128,7 +128,44 @@ pub(super) fn point_values(
     uv: [f64; 2],
     budget: &mut Budget<'_>,
 ) -> Result<[I; 3]> {
-    budget.step(12_288)?;
+    budget.step(8)?;
+    let endpoint = uv.map(|t| {
+        if t == 0. {
+            Some(0usize)
+        } else if t == 1. {
+            Some(21)
+        } else {
+            None
+        }
+    });
+    if let [Some(u), Some(v)] = endpoint {
+        budget.step(24)?;
+        return Ok(coefficients[u * 22 + v]);
+    }
+    if endpoint.iter().any(Option::is_some) {
+        // Exact local-cell Bernstein endpoint restriction. The other axis
+        // retains its ORIGINAL degree21 polynomial and original coefficient
+        // intervals. No near-endpoint predicate or global-parameter remap.
+        budget.step(2040)?;
+        let varying = usize::from(endpoint[0].is_some());
+        let weights = basis::<22>(uv[varying]);
+        let at = |i| {
+            if let Some(u) = endpoint[0] {
+                u * 22 + i
+            } else {
+                i * 22 + endpoint[1].expect("one exact endpoint")
+            }
+        };
+        let anchor = coefficients[at(0)];
+        let mut point = anchor;
+        for (i, weight) in weights.into_iter().enumerate() {
+            for k in 0..3 {
+                point[k] = point[k] + weight * (coefficients[at(i)][k] - anchor[k]);
+            }
+        }
+        return Ok(point);
+    }
+    budget.step(12_280)?;
     let weights = uv.map(basis::<22>);
     // Partition of unity retains the source anchor once, reducing
     // independent weight-rounding inflation around a large normal.

@@ -251,16 +251,19 @@ pub(crate) fn build_rust(
         .as_ref()
         .filter(|ends| ends.start_chamfer_radial_depth_mm != 0. || ends.end_relief_length_mm != 0.);
     if let Some(ends) = terminal {
-        // This combination was refused before entering the legacy receiving
-        // route. Preserve existing plain/single-treatment/exportable providers.
+        // Terminal cylinders retain their original station and shared exact
+        // end. Entry-only cuts author a true canonical finite periodic source;
+        // neither route silently extends an older binary-domain material.
         if source.mode == ThreadMode::CutInternal
             && source.parameters.family == ThreadFamily::IsoMetric
-            && ends.start_chamfer_radial_depth_mm > 0.
-            && ends.end_relief_length_mm > 0.
+            && (ends.start_chamfer_radial_depth_mm > 0. || ends.end_relief_length_mm > 0.)
         {
             let target = receiving_target(feature, source, solids)?
-                .ok_or_else(|| fail("Combined internal treatments have no target predecessor"))?;
-            return internal_treatments::build(feature, &thread, target, policy, interrupt);
+                .ok_or_else(|| fail("Internal authored treatments have no target predecessor"))?;
+            let extent =
+                multicad_core::parameters::exact_length_mm(&source.parameters.length, parameters)
+                    .map_err(|e| error(Some(feature), format!("Canonical receiving extent: {e}")))?;
+            return internal_treatments::build(feature, &thread, extent, target, policy, interrupt);
         }
         if !matches!(
             source.mode,

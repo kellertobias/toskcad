@@ -251,6 +251,9 @@ impl Solid {
     }
 }
 impl EntryChamferBody {
+    pub(super) fn external_material(&self) -> Option<&Chamfer> {
+        self.receiving.is_none().then_some(&self.geometry)
+    }
     fn origin(&self, role: impl Into<String>) -> Origin {
         Origin {
             source: self.feature,

@@ -53,6 +53,14 @@ impl Grid {
         }
         Ok(())
     }
+    pub fn refine_angular(&mut self) -> Result<(), Error> {
+        if self.base_rows >= MAX_ROWS {
+            return Err(Error::Limit);
+        }
+        self.base_rows *= 2;
+        self.alternative = false;
+        Ok(())
+    }
 }
 /// A nominal short literal edge relative to its endpoint evaluation radii
 /// proposes another partition. This does NOT classify source separation, erase

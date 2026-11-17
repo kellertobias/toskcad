@@ -33,6 +33,17 @@ fn norm(v: [I; 2]) -> Result<f64, RepairedHeadError> {
     Ok(n.hi)
 }
 impl ArcSource {
+    /// Whole normalized-ray parameter speed and smoothstep repair bounds.
+    /// The base ray is q(t)=((1-t)a+tb)/|...|, not uniform angle.
+    pub(super) fn raw_support_envelope(self) -> [f64; 3] {
+        let n2 = (I::point(1.) + I::point(self.dot.lo)) / I::point(2.);
+        let speed = I::point(self.det.magnitude()) / I::point(n2.lo);
+        let correction = norm(self.delta[0])
+            .unwrap()
+            .max(norm(self.delta[1]).unwrap());
+        let change = norm(std::array::from_fn(|i| self.delta[1][i] - self.delta[0][i])).unwrap();
+        [speed.hi, correction, (I::point(1.5) * I::point(change)).hi]
+    }
     pub(super) fn proposal_transfer(self) -> Result<[f64; 3], RepairedHeadError> {
         // The proposal's cached atan2 is a defining binary64 constant, not an
         // estimate of the repaired source angle. Enclose its actual circle rays.

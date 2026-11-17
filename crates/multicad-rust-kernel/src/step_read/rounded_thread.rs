@@ -58,7 +58,7 @@ pub(super) fn verify_member(
     [origin, u, v]: [Point; 3],
     error: Option<f64>,
 ) -> Result<f64> {
-    verify_material(shell, id, thread, [origin, u, v], error, None)
+    verify_material(shell, id, thread, [origin, u, v], error, None, None)
 }
 pub(super) fn verify_bore_member(
     shell: &mut Shell<'_, '_>,
@@ -77,6 +77,40 @@ pub(super) fn verify_bore_member(
         frame,
         error,
         Some(bore.radius_mm()),
+        None,
+    )
+}
+pub(super) fn verify_blind_member(
+    shell: &mut Shell<'_, '_>,
+    id: u32,
+    bore: &crate::rounded_thread::BlindBore,
+    frame: [Point; 3],
+) -> Result<f64> {
+    verify_material(
+        shell,
+        id,
+        bore.cutter(),
+        frame,
+        None,
+        Some(bore.stock_radius_mm().as_f64()),
+        Some(bore.stock_height_mm().as_f64()),
+    )
+}
+pub(super) fn verify_repaired_blind_member(
+    shell: &mut Shell<'_, '_>,
+    id: u32,
+    bore: &crate::rounded_thread::BlindBore,
+    frame: [Point; 3],
+    error: f64,
+) -> Result<f64> {
+    verify_material(
+        shell,
+        id,
+        bore.cutter(),
+        frame,
+        Some(error),
+        Some(bore.stock_radius_mm().as_f64()),
+        Some(bore.stock_height_mm().as_f64()),
     )
 }
 fn verify_material(
@@ -86,6 +120,7 @@ fn verify_material(
     [origin, u, v]: [Point; 3],
     error: Option<f64>,
     stock: Option<f64>,
+    blind_height: Option<f64>,
 ) -> Result<f64> {
     require(
         origin.into_iter().chain(u).chain(v).all(f64::is_finite)
@@ -100,13 +135,13 @@ fn verify_material(
         error,
         extent: stock
             .unwrap_or(thread.spec().major_radius_mm)
-            .max(thread.spec().length_mm),
+            .max(blind_height.unwrap_or(thread.spec().length_mm)),
     };
     let world = |[x, y]: Point2, z: f64| {
         std::array::from_fn(|i| origin[i] + u[i] * x + v[i] * y + normal[i] * z)
     };
     let ids = shell.member_faces(id)?;
-    let count = 7 + usize::from(stock.is_some());
+    let count = 7 + usize::from(stock.is_some()) + usize::from(blind_height.is_some());
     require(ids.len() == count)?;
     let mut available = ids.into_iter().collect::<BTreeSet<_>>();
     require(available.len() == count)?;
@@ -161,6 +196,29 @@ fn verify_material(
         selected.push(id);
         cap_axes.push(axis);
     }
+    let top_cap = if let Some(height) = blind_height {
+        let expected = world([0.; 2], height);
+        let mut candidates = Vec::new();
+        for &id in &available {
+            let (surface, _, _) = face(shell, id)?;
+            if shell.simple(surface)?.name != "PLANE" {
+                continue;
+            }
+            let [Value::String(_), a] = shell.args(surface, "PLANE")? else {
+                return Err(ReadError::Invalid);
+            };
+            if proof.equal(shell.placement(reference(a)?)?.origin, expected) {
+                candidates.push((id, reference(a)?));
+            }
+        }
+        let [(id, axis)] = candidates[..] else {
+            return Err(ReadError::Invalid);
+        };
+        available.remove(&id);
+        Some((id, axis))
+    } else {
+        None
+    };
     let cylinder = if stock.is_some() {
         Some(remaining_cylinder(&mut available)?)
     } else {
@@ -272,7 +330,8 @@ fn verify_material(
         let (surface, outward, bounds) = face(shell, selected[5 + end])?;
         require(outward)?;
         let _ = surface;
-        let (bound, outer) = if stock.is_some() {
+        let floor = blind_height.is_some() && end == 1;
+        let (bound, outer) = if stock.is_some() && !floor {
             let [a, b] = bounds[..] else {
                 return Err(ReadError::Invalid);
             };
@@ -291,18 +350,18 @@ fn verify_material(
             shell,
             &Value::Reference(cap_axes[end]),
             world([0.; 2], [0., length][end]),
-            normal.map(|n| if end == 1 { n } else { -n }),
+            normal.map(|n| if end == 1 && !floor { n } else { -n }),
             u,
         )?;
         cap_origins[end] = cap.origin;
         super::rounded_thread_bore::verify_direction(
             shell,
             cap.normal,
-            axis.map(|n| if end == 1 { n } else { -n }),
+            axis.map(|n| if end == 1 && !floor { n } else { -n }),
             stock.unwrap_or(thread.spec().major_radius_mm),
         )?;
         let actual = orient(
-            &ring(shell, bound, stock.is_none())?,
+            &ring(shell, bound, stock.is_none() || floor)?,
             (end == 1) == wall_forward,
         );
         require(actual == rims[end].map(|edge| (edge, true)))?;
@@ -327,6 +386,45 @@ fn verify_material(
             cylinder_rims[end] = edge;
         }
     }
+    if let Some((id, cap_axis)) = top_cap {
+        let height = blind_height.expect("selected actual stock top");
+        let (surface, outward, bounds) = face(shell, id)?;
+        let _ = surface;
+        require(outward)?;
+        let [bound] = bounds[..] else {
+            return Err(ReadError::Invalid);
+        };
+        let cap = proof.axis(
+            shell,
+            &Value::Reference(cap_axis),
+            world([0.; 2], height),
+            normal,
+            u,
+        )?;
+        super::rounded_thread_bore::verify_direction(
+            shell,
+            cap.normal,
+            axis,
+            stock.expect("blind radius"),
+        )?;
+        let ring = ring(shell, bound, true)?;
+        let [(edge, true)] = ring[..] else {
+            return Err(ReadError::Invalid);
+        };
+        let circle = outer_circle(shell, edge)?;
+        require(
+            proof.equal(circle.center_mm, world([0.; 2], height))
+                && Some(circle.radius_mm) == stock,
+        )?;
+        super::rounded_thread_bore::verify_direction(
+            shell,
+            circle.normal,
+            axis,
+            stock.expect("blind radius"),
+        )?;
+        cylinder_rims[1] = edge;
+        cap_origins[1] = cap.origin;
+    }
     let tool_volume = if forward { flux } else { -flux };
     require(tool_volume.is_finite() && tool_volume > 0.)?;
     let volume = if let Some(radius) = stock {
@@ -345,7 +443,7 @@ fn verify_material(
             cap_origins,
             [origin, u, v],
             r,
-            length,
+            blind_height.unwrap_or(length),
         )?;
         std::f64::consts::PI * r * r * dot(sub(cap_origins[1], cap_origins[0]), axis) - tool_volume
     } else {

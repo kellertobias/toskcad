@@ -118,17 +118,12 @@ impl Extrusion<'_> {
                 let solid = self.solids.get(&link.target).ok_or_else(|| {
                     self.failure("Termination face producer has no current solid")
                 })?;
-                let face = solid
-                    .faces()
+                let (origin, normal) = solid
+                    .face_plane(key.ordinal)
                     .map_err(|e| self.failure(e))?
-                    .into_iter()
-                    .find(|face| face.index == key.ordinal)
                     .ok_or_else(|| {
-                        self.failure("Termination face is missing from the current solid")
+                        self.failure("Select a planar termination face; this face is curved")
                     })?;
-                let (origin, normal) = face.plane.ok_or_else(|| {
-                    self.failure("Select a planar termination face; this face is curved")
-                })?;
                 // Signed face offsets follow the current native OUTWARD
                 // normal. Multiple inherited semantic frames must never choose
                 // the offset side through UUID/insertion ordering.

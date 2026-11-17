@@ -1056,13 +1056,19 @@ impl Solid {
             let mut snapshot = if let Some(body) = self.pipe_hardware_body() {
                 body.topology(owner, revision, self.geometry_policy())?
             } else if let Some((body, frame)) = self.repaired_phillips_body() {
-                body.periodic_topology(frame, owner, revision)?
+                if body.has_degree11_source() {
+                    body.degree11_topology(frame, owner, revision)?
+                } else {
+                    body.periodic_topology(frame, owner, revision)?
+                }
             } else if let Some((body, frame)) = self.hanger_body() {
                 body.topology(frame, owner, revision, self.geometry_policy())?
             } else if let Some((body, frame)) = self.wood_insert_body() {
                 body.topology(frame, owner, revision, self.geometry_policy())?
             } else if let Some((body, frame)) = self.internal_thread_treatment_body() {
                 body.source_topology(frame, owner, revision, self.geometry_policy())?
+            } else if let Some((body, frame)) = self.rounded_blind_bore_body() {
+                body.topology(frame, owner, revision)?
             } else if let Some((body, frame)) = self.rounded_thread_bore_body() {
                 body.topology(frame, owner, revision)?
             } else if let Some((body, frame)) = self.rounded_thread_body() {
@@ -1079,6 +1085,8 @@ impl Solid {
                 body.topology(owner, revision)
             } else if let Some(body) = self.external_npt_stock_body() {
                 body.topology(owner, revision)
+            } else if let Some(body) = self.actual_clipped_head_body() {
+                body.topology(owner, revision)?
             } else if let Some(body) = self.literal_npt_body() {
                 body.topology(owner, revision)
             } else if let Some(body) = self.clipped_npt_body() {

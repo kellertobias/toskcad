@@ -1,5 +1,7 @@
 //! Flat exchange members retain their actual kind of qualification evidence.
 use super::*;
+mod actual_head;
+pub use actual_head::read_actual_mapped_head_source;
 mod literal_npt;
 mod periodic;
 #[cfg(test)]
@@ -12,6 +14,7 @@ pub enum SourceImport {
     Analytic(Box<(Readback, ImportSolid)>),
     Radial(Box<crate::radial_tensor::BoundaryOwnership>),
     LiteralNpt(Box<super::npt_stock::OwnedMaterial>),
+    ActualMappedHead(std::sync::Arc<super::npt_stock::full_head::transport::MappedActualHead>),
 }
 
 /// Decode bounded flat mixed representations without inferring a construction

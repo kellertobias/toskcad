@@ -38,7 +38,15 @@ fn field_at(body: &Cavity, edge: Edge, station: f64, mode: Surface, t: Jet) -> s
     let bound = span(edge);
     let v = Jet::constant(I::point(bound.lo))
         .add(Jet::variable(0).scale(I::point(bound.hi) - I::point(bound.lo)));
-    let z = Jet::constant(I::point(station));
+    let z = Jet::constant(
+        if matches!(mode, Surface::OuterCap)
+            || (matches!(mode, Surface::InnerCap) && station != 0. && body.tail.is_none())
+        {
+            body.end_interval()
+        } else {
+            I::point(station)
+        },
+    );
     let rho = if matches!(edge.kind, Kind::Cone) {
         Jet::constant(I::point(body.entry.unwrap().radius))
     } else {
@@ -64,8 +72,7 @@ fn field_at(body: &Cavity, edge: Edge, station: f64, mode: Surface, t: Jet) -> s
         }
         Surface::Terminal => {
             let r = Jet::constant(I::point(body.tail.unwrap().radius));
-            let z =
-                z.add(Jet::variable(1).scale(I::point(body.full_length_mm()) - I::point(station)));
+            let z = z.add(Jet::variable(1).scale(body.end_interval() - I::point(station)));
             (
                 r,
                 z,
@@ -88,7 +95,7 @@ fn field_at(body: &Cavity, edge: Edge, station: f64, mode: Surface, t: Jet) -> s
         normal,
     }
 }
-pub(super) fn source_point(body: &Cavity, v: I, r: f64, z: f64) -> [I; 3] {
+pub(super) fn source_point(body: &Cavity, v: I, r: f64, z: I) -> [I; 3] {
     // A true complete turn is the SAME authored endpoint; evaluate its one
     // shared vertex at zero while retaining this exact periodic identity.
     let v = if v.lo == 1. && v.hi == 1. {
@@ -105,11 +112,7 @@ pub(super) fn source_point(body: &Cavity, v: I, r: f64, z: f64) -> [I; 3] {
         } else {
             1.
         });
-    [
-        I::point(r) * theta.cos(),
-        I::point(r) * theta.sin(),
-        I::point(z),
-    ]
+    [I::point(r) * theta.cos(), I::point(r) * theta.sin(), z]
 }
 pub(super) fn error(mesh: &DisplayMesh, id: usize, p: [I; 3]) -> f64 {
     p.into_iter()
@@ -122,7 +125,7 @@ pub(super) fn error(mesh: &DisplayMesh, id: usize, p: [I; 3]) -> f64 {
 fn outer(
     body: &Cavity,
     edge: Edge,
-    z: f64,
+    z: I,
     map: &mut [usize],
     mesh: &mut DisplayMesh,
     w: &mut Work<'_>,
@@ -199,7 +202,20 @@ fn cap(
     // The exact disk is a radial fan of its actual boundary; at any radial
     // fraction the boundary chord discrepancy scales by <=1. Its plane normal
     // is exact throughout. No curved boundary is replaced by a source polygon.
-    let chord = certificate::chord(&field, [errors[0], errors[1], 0.]);
+    let center_error = error(
+        &shell.mesh,
+        center,
+        [
+            I::point(0.),
+            I::point(0.),
+            if end == 0 {
+                I::point(0.)
+            } else {
+                body.end_interval()
+            },
+        ],
+    );
+    let chord = certificate::chord(&field, [errors[0], errors[1], center_error]);
     if !chord.is_finite() || chord > options.deflection {
         return Ok(false);
     }
@@ -310,11 +326,18 @@ fn prepare_once(
     let verdict = (|| -> Result<shoulder::Verdict, Error> {
         for &edge in &source_top {
             let (ids, errors, mode) = if let Some(tail) = body.tail {
-                let (low, le) = outer(body, edge, tail.station, &mut bottom, &mut shell.mesh, w)?;
+                let (low, le) = outer(
+                    body,
+                    edge,
+                    I::point(tail.station),
+                    &mut bottom,
+                    &mut shell.mesh,
+                    w,
+                )?;
                 let (high, he) = outer(
                     body,
                     edge,
-                    body.full_length_mm(),
+                    body.end_interval(),
                     &mut top,
                     &mut shell.mesh,
                     w,
@@ -414,7 +437,7 @@ mod tests {
         let (low, le) = outer(
             &body,
             edge,
-            tail.station,
+            I::point(tail.station),
             &mut map,
             &mut candidate.mesh,
             &mut work(),

@@ -440,11 +440,12 @@ impl Graph {
             return Err(Error::Unresolved);
         }
         let starts = source.thread.spec().starts;
-        let periods = source.tail.map_or(source.full_length_mm(), |t| t.station)
-            / source.thread.spec().pitch_mm;
-        // AuthoredThread construction qualifies its immutable legacy Spec with
-        // length/pitch + 2*starts <=128. The retained prefix is no longer than
-        // that source, so this cast and the <=137*5*2 count product are bounded.
+        let chart = source.chart();
+        let top = chart.exact_top.map_or(chart.top, |q| q.as_f64().next_up());
+        let periods = top / source.thread.spec().pitch_mm;
+        // AuthoredThread construction qualifies the actual finite domain with
+        // length/pitch + 2*starts <=128. A rounded upper proposal may add one
+        // empty period; this cast and the <=137*5*2 product remain bounded.
         let count = periods.ceil() as usize + starts as usize + 1;
         if count * 5 * (1 + usize::from(source.entry.is_some())) > limits.cells {
             return Err(Error::Limit);

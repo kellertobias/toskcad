@@ -48,6 +48,21 @@ fn member_signature(readback: &Readback, imported: &ImportSolid) -> ContentHash 
             },
         );
     }
+    if let ImportProfile::RepairedRoundedBlind { candidate } = &imported.profile {
+        let b = candidate.canonical_bore();
+        let frame = PlaneFrame {
+            origin: imported.origin_mm,
+            u: imported.u,
+            v: imported.v,
+        };
+        let mut bytes = b"repaired-rounded-blind.v1".to_vec();
+        for x in super::super::rounded_thread_body::identity_values(b.cutter().spec(), frame)
+            .chain([b.stock_radius_mm().as_f64(), b.stock_height_mm().as_f64()])
+        {
+            bytes.extend(if x == 0. { 0. } else { x }.to_le_bytes());
+        }
+        return ContentHash::of(&bytes);
+    }
     let lines = readback.edges_mm.iter().map(|&points| {
         let mut points = points;
         points.sort_unstable_by(compare_points);
@@ -506,6 +521,7 @@ pub(super) fn rebuild(
     let mut literal_resident = members.iter().try_fold(0usize, |sum, member| {
         let size = match member {
             step_read::SourceImport::LiteralNpt(source) => source.retained_budget_bytes(),
+            step_read::SourceImport::ActualMappedHead(source) => source.receipt().retained_bytes,
             step_read::SourceImport::PeriodicPhillips(source) => source.retained_budget_bytes(),
             _ => 0,
         };
@@ -527,6 +543,13 @@ pub(super) fn rebuild(
     }
     for member in members {
         let (signature, member) = match member {
+            step_read::SourceImport::ActualMappedHead(_) => {
+                return Err(error(
+                    IMPORT,
+                    GeometryErrorKind::Unsupported,
+                    "Mixed actual mapped head STEP files require independent selected-member/global ownership qualification",
+                ));
+            }
             step_read::SourceImport::PeriodicPhillips(source) => {
                 if literal_resident > LITERAL_PACKET_BYTES - 64 * 1024 * 1024 {
                     return Err(error(
@@ -1098,7 +1121,8 @@ impl Solid {
                         use step_read::ImportProfile;
                         let needs_source = matches!(
                             &imported.profile,
-                            ImportProfile::RoundedThreadBore { .. }
+                            ImportProfile::RepairedRoundedBlind { .. }
+                                | ImportProfile::RoundedThreadBore { .. }
                                 | ImportProfile::RoundedThread { .. }
                                 | ImportProfile::ThreadEndRelief { .. }
                                 | ImportProfile::NormalRelief { .. }
@@ -1196,6 +1220,9 @@ fn match_leaf(leaf: &Solid, members: &[(Readback, Option<ImportSolid>)], toleran
                 [frame.origin, frame.u, frame.v],
                 tolerance,
             );
+        }
+        if leaf.rounded_blind_bore_body().is_some() {
+            return leaf.matches_repaired_rounded_blind(profile, tolerance);
         }
         return leaf.matches_imported_helical_thread(profile, tolerance)
             || leaf.matches_helical_cut_profile(profile);

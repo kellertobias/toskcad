@@ -2,11 +2,25 @@
 //! independently occupied material. No head/cavity/mass admission is inferred.
 use super::*;
 use crate::phillips_drive::PhillipsScrew;
+/// The COMPLETE original entry curve in each retained U-band. World C0/Du
+/// use its actual angle knots and actual end-B coefficient, never another V.
+#[derive(Clone, Copy, Debug)]
+pub struct SuppliedThreadRimTransfer {
+    pub face_entity: u32,
+    pub surface_entity: u32,
+    pub original_rail_entities: [u32; 2],
+    pub original_v_start_cell: usize,
+    pub original_u_cells: usize,
+    pub distance_mm: f64,
+    /// Derivative in each original normalized U-cell of this whole rim.
+    pub derivative_mm: f64,
+}
 pub struct SuppliedThreadCorrespondence<'source, 'a, 'input> {
     source: &'source PhillipsScrew,
     body: &'a Body<'input>,
     frame: [Point; 3],
     transfers: Vec<AnalyticThreadTransfer>,
+    rims: Vec<SuppliedThreadRimTransfer>,
     new_work: usize,
     inherited_work: usize,
     retained: usize,
@@ -29,6 +43,9 @@ impl<'source, 'a, 'input> SuppliedThreadCorrespondence<'source, 'a, 'input> {
     }
     pub fn transfers(&self) -> &[AnalyticThreadTransfer] {
         &self.transfers
+    }
+    pub fn entry_rim_transfers(&self) -> &[SuppliedThreadRimTransfer] {
+        &self.rims
     }
     pub fn new_work_used(&self) -> usize {
         self.new_work
@@ -106,6 +123,7 @@ impl<'h, 'q, 'r, 'a, 'input> ClosedRepairedHead<'h, 'q, 'r, 'a, 'input> {
             body: value.body,
             frame: value.frame,
             transfers: value.transfers,
+            rims: value.rims,
             new_work: value.new_work,
             inherited_work: value.inherited_work,
             retained: value.retained,

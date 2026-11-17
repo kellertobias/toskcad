@@ -35,6 +35,9 @@ pub(super) fn read_import_member(
     if let Some(thread) = rounded_thread::recognize_member(shell, id, &face_ids)? {
         return Ok(thread);
     }
+    if let Some(bore) = rounded_thread_blind::recognize_member(shell, id, &face_ids)? {
+        return Ok(bore);
+    }
     if let Some(bore) = rounded_thread_bore::recognize_member(shell, id, &face_ids)? {
         return Ok(bore);
     }
@@ -111,6 +114,9 @@ pub(super) fn read_analytic_member(
     }
     if let Some((proof, thread)) = rounded_thread::recognize_member(shell, id, &faces)? {
         return Ok((proof, Some(thread)));
+    }
+    if let Some((proof, bore)) = rounded_thread_blind::recognize_member(shell, id, &faces)? {
+        return Ok((proof, Some(bore)));
     }
     if let Some((proof, bore)) = rounded_thread_bore::recognize_member(shell, id, &faces)? {
         return Ok((proof, Some(bore)));

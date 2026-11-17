@@ -1,10 +1,15 @@
 //! Actual repaired meridian/source-ring proofs, independent of display normals.
 use super::*;
+mod prepared;
+pub(super) use prepared::PreparedHeadAngular;
+#[cfg(test)]
+pub(super) use prepared::head_attempt_curve_cached;
 pub(super) type P = [f64; 3];
 pub(super) type B = [I; 3];
 pub(super) type R<T> = std::result::Result<T, PhillipsReadError>;
+pub(super) type Angular<'a> = AngularCurve<'a, 10>;
 #[derive(Clone, Copy)]
-pub(super) struct Angular<'a> {
+pub(super) struct AngularCurve<'a, const N: usize> {
     pub(super) poles: &'a [P],
     pub(super) spans: usize,
     pub(super) reverse: bool,
@@ -23,21 +28,22 @@ pub(super) fn cross(a: B, b: B) -> B {
 pub(super) fn hull(a: I, b: I) -> I {
     I::new(a.lo.min(b.lo), a.hi.max(b.hi))
 }
-fn curve_split(mut p: [[I; 3]; 10], t: I) -> ([[I; 3]; 10], [[I; 3]; 10]) {
-    let mut left = [[I::point(0.); 3]; 10];
+fn curve_split<const N: usize>(mut p: [[I; 3]; N], t: I) -> ([[I; 3]; N], [[I; 3]; N]) {
+    let mut left = [[I::point(0.); 3]; N];
     let mut right = left;
     left[0] = p[0];
-    right[9] = p[9];
-    for level in 1..10 {
-        for i in 0..10 - level {
-            p[i] = std::array::from_fn(|k| (I::point(1.) - t) * p[i][k] + t * p[i + 1][k]);
+    right[N - 1] = p[N - 1];
+    let complement = I::point(1.) - t;
+    for level in 1..N {
+        for i in 0..N - level {
+            p[i] = std::array::from_fn(|k| complement * p[i][k] + t * p[i + 1][k]);
         }
         left[level] = p[0];
-        right[9 - level] = p[9 - level];
+        right[N - 1 - level] = p[N - 1 - level];
     }
     (left, right)
 }
-impl Angular<'_> {
+impl<const N: usize> AngularCurve<'_, N> {
     pub(super) fn gamma(&self, r: [f64; 2], work: &mut Work<'_>) -> R<B> {
         let mut out = [I::new(f64::INFINITY, f64::NEG_INFINITY); 3];
         for span in 0..self.spans {
@@ -52,9 +58,12 @@ impl Angular<'_> {
             if lo > hi {
                 continue;
             }
-            work.charge(1024)?;
-            let controls = std::array::from_fn::<_, 10, _>(|j| {
-                let i = 9 * span + j;
+            // Two de Casteljau restrictions perform at most 3*N*(N-1)
+            // directed coordinate blends. Preserve the established N=10
+            // charge; N=12 has a separate conservative full-operation bound.
+            work.charge(if N == 10 { 1024 } else { 16 * N * N })?;
+            let controls = std::array::from_fn::<_, N, _>(|j| {
+                let i = (N - 1) * span + j;
                 self.poles[if self.reverse {
                     self.poles.len() - 1 - i
                 } else {
@@ -141,11 +150,11 @@ fn meridian(
         b.derivative_mm.map(|p| I::new(p[0], p[1])),
     ]
 }
-fn position(
+fn position<const N: usize>(
     h: &crate::head_profile::RepairedHeadMeridian<'_>,
     part: usize,
     t: f64,
-    a: Angular<'_>,
+    a: AngularCurve<'_, N>,
     work: &mut Work<'_>,
 ) -> R<B> {
     let rz = meridian(h, part, [t; 2])[0];
@@ -202,7 +211,33 @@ pub(super) fn head_attempt(
     options: Tessellation,
     work: &mut Work<'_>,
 ) -> R<std::result::Result<Head, Split>> {
-    let h = source.head().view();
+    head_attempt_curve(source.head(), angular, counts, options, work)
+}
+// The actual head is independent of the degree of the retained entry curve.
+// Both callers retain their distinct sealed material/source authority.
+pub(super) fn head_attempt_curve<const N: usize>(
+    head: &crate::head_profile::OwnedRepairedHead,
+    angular: &[AngularCurve<'_, N>],
+    counts: &[usize],
+    options: Tessellation,
+    work: &mut Work<'_>,
+) -> R<std::result::Result<Head, Split>> {
+    head_attempt_curve_impl(
+        head,
+        prepared::AngularInput::Original(angular),
+        counts,
+        options,
+        work,
+    )
+}
+fn head_attempt_curve_impl<const N: usize>(
+    head: &crate::head_profile::OwnedRepairedHead,
+    angular: prepared::AngularInput<'_, '_, N>,
+    counts: &[usize],
+    options: Tessellation,
+    work: &mut Work<'_>,
+) -> R<std::result::Result<Head, Split>> {
+    let h = &head.view();
     let n = angular.len();
     let vertices = (1 + counts.iter().sum::<usize>()) * n;
     if vertices * 2 > options.triangle_limit {
@@ -215,8 +250,8 @@ pub(super) fn head_attempt(
         face_indices: Vec::with_capacity((vertices - n) * 2),
     };
     let mut row = Vec::with_capacity(n);
-    for &a in angular {
-        let p = position(&h, 0, 0., a, work)?;
+    for i in 0..n {
+        let p = angular.position(h, 0, 0., i, false, work)?;
         row.push((mesh.vertices.len() / 3) as u32);
         mesh.vertices.extend(p.map(I::midpoint));
     }
@@ -231,34 +266,32 @@ pub(super) fn head_attempt(
             work.storage(
                 mesh_bytes(&mesh) + (top.capacity() + row.capacity() + next.capacity()) * 4,
             )?;
-            for &a in angular {
-                let p = position(&h, part, ts[1], a, work)?;
+            for i in 0..n {
+                let p = angular.position(h, part, ts[1], i, false, work)?;
                 next.push((mesh.vertices.len() / 3) as u32);
                 mesh.vertices.extend(p.map(I::midpoint));
             }
-            let ends = ts.map(|t| meridian(&h, part, [t; 2])[0]);
+            let ends = ts.map(|t| meridian(h, part, [t; 2])[0]);
             let tmid = (ts[0] + ts[1]) / 2.;
-            let center = meridian(&h, part, [tmid; 2])[0];
-            let field = meridian(&h, part, ts);
+            let center = meridian(h, part, [tmid; 2])[0];
+            let field = meridian(h, part, ts);
             let width = I::point(ts[1]) - I::point(ts[0]);
             let em = (0..2).fold(I::point(0.), |s, j| {
                 s + I::point((center[j] - (ends[0][j] + ends[1][j]) / I::point(2.)).magnitude())
                     + width / I::point(2.)
                         * I::point((field[1][j] - (ends[1][j] - ends[0][j]) / width).magnitude())
             });
-            for (i, &a) in angular.iter().enumerate() {
+            for i in 0..n {
                 work.charge(4096)?;
-                let (sag, d) = match a.sag(work) {
+                let (sag, d) = match angular.sag(i, work) {
                     Ok(v) => v,
                     Err(error) => return angular_rejection(error),
                 };
-                let mut last = a;
-                last.range = [a.range[1]; 2];
                 let ideal = [
-                    position(&h, part, ts[0], a, work)?,
-                    position(&h, part, ts[0], last, work)?,
-                    position(&h, part, ts[1], last, work)?,
-                    position(&h, part, ts[1], a, work)?,
+                    angular.position(h, part, ts[0], i, false, work)?,
+                    angular.position(h, part, ts[0], i, true, work)?,
+                    angular.position(h, part, ts[1], i, true, work)?,
+                    angular.position(h, part, ts[1], i, false, work)?,
                 ];
                 let ids = [row[i], row[(i + 1) % n], next[(i + 1) % n], next[i]];
                 let points = ids.map(|id| {
@@ -284,9 +317,8 @@ pub(super) fn head_attempt(
                 let nf = normal(d, field[1]);
                 for tri in [[0, 1, 2], [0, 2, 3]] {
                     if !normal_match(tri.map(|j| points[j]), nf, options.angle) {
-                        let du =
-                            a.direction([a.range[0] + (a.range[1] - a.range[0]) / 2.; 2], work)?;
-                        let nu = normal(d, meridian(&h, part, [tmid; 2])[1]);
+                        let du = angular.middle(i, work)?;
+                        let nu = normal(d, meridian(h, part, [tmid; 2])[1]);
                         let nt = normal(du, field[1]);
                         let wu = nu.iter().map(|i| i.hi - i.lo).sum::<f64>();
                         let wt = nt.iter().map(|i| i.hi - i.lo).sum::<f64>();
@@ -348,3 +380,6 @@ pub(super) fn translation_transfer(
     }
     Ok(displacement)
 }
+
+#[cfg(test)]
+mod curve_tests;

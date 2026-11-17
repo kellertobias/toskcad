@@ -115,7 +115,16 @@ fn restricted(body: &Cavity, disk: &Disk, radius: I, low: f64, high: f64) -> sou
     };
     // Prepared cap fields are InnerCap/OuterCap: independent of radial t.
     let inner = close::field(body, disk.edge, z, disk.mode);
-    let outer = curve(body, span(disk.edge), radius, z);
+    let outer = curve(
+        body,
+        span(disk.edge),
+        radius,
+        if disk.end == 0 {
+            I::point(0.)
+        } else {
+            body.end_interval()
+        },
+    );
     let t =
         Jet::constant(I::point(low)).add(Jet::variable(1).scale(I::point(high) - I::point(low)));
     source::Field {

@@ -99,6 +99,26 @@ fn actual_owned_d11_sources_remain_identical_after_all_original_owners_drop() {
                         (b.parameter, b.position_mm, b.derivative_mm)
                     );
                 }
+                let mut cache_index = 0;
+                for (face, f) in owned.thread_faces().iter().enumerate() {
+                    let [nu, nv] = f.source().spans();
+                    for u in 0..nu {
+                        for v in 0..nv {
+                            assert!(Arc::ptr_eq(
+                                owned.thread_normal(face, [u, v]).unwrap(),
+                                &volume.normals[cache_index]
+                            ));
+                            cache_index += 1;
+                        }
+                    }
+                    assert!(owned.thread_normal(face, [nu, 0]).is_none());
+                }
+                assert_eq!(cache_index, volume.thread_cells());
+                assert!(
+                    owned
+                        .thread_normal(owned.thread_faces().len(), [0, 0])
+                        .is_none()
+                );
                 let mut enclosure = occupied.local_enclosure_bounds_mm();
                 for i in 0..head.source().segment_count() {
                     let p = head
@@ -224,6 +244,15 @@ fn actual_owned_d11_sources_remain_identical_after_all_original_owners_drop() {
             assert_eq!(owned.join_inner_uses(), inner);
             for (i, f) in owned.thread_faces().iter().enumerate() {
                 assert_eq!(f.source().poles(), points[i]);
+                let field = owned.thread_normal(i, [0, 0]).unwrap();
+                assert!(
+                    field
+                        .bounds([[0., 1.]; 2])
+                        .unwrap()
+                        .iter()
+                        .flatten()
+                        .all(|x| x.is_finite())
+                );
                 assert_eq!(f.original_control_entities(), ids[i]);
                 assert_eq!(
                     owned.entry_rim_poles(i).unwrap().collect::<Vec<_>>(),
@@ -294,11 +323,10 @@ fn actual_owned_snapshot_limits_every_cancel_boundary_and_same_receipt_retry() {
             .unwrap();
         // Publish real ready geometry against its actual measured capacities,
         // independent of the constructor's deliberately larger reservation.
-        let prefix = volume.source().retained_budget_bytes()
-            + std::mem::size_of_val(&volume)
-            + std::mem::size_of::<OwnedDegree11Material>()
-            + SCRATCH;
-        let actual_bytes = prefix + good.retained_budget_bytes();
+        let prefix =
+            volume.retained_budget_bytes() + std::mem::size_of::<OwnedDegree11Material>() + SCRATCH;
+        let shared = cached_payload(&volume.normals);
+        let actual_bytes = prefix + good.retained_budget_bytes() - shared;
         for exact in [false, true] {
             let ready = volume.owned_snapshot(options, None).unwrap();
             let prior_work = ready.work_used();
@@ -310,6 +338,7 @@ fn actual_owned_snapshot_limits_every_cancel_boundary_and_same_receipt_retry() {
             let result = publish(
                 ready,
                 prefix,
+                shared,
                 Degree11OwnedMaterialOptions {
                     maximum_bytes: actual_bytes - usize::from(!exact),
                     ..options

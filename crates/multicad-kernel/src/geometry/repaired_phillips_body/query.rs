@@ -143,7 +143,10 @@ impl RepairedPhillipsBody {
             let b = I::point(v) + I::new(-tolerance, tolerance);
             [b.lo, b.hi]
         });
-        let location = if self.source.periodic().is_some() {
+        let location = if self.source.degree11().is_some() {
+            self.classify_degree11(frame, world, Default::default(), None)?
+                .location()
+        } else if self.source.periodic().is_some() {
             self.classify_periodic(frame, world, Default::default(), None)?
                 .location()
         } else {

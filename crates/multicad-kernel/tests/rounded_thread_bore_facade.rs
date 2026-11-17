@@ -172,7 +172,7 @@ fn unsupported_depth_tilt_wall_and_numeric_failures_leave_source_unchanged() {
     let source = stock(Default::default(), EntityId::new());
     let before = source.volume_mm3().unwrap();
     let policy = GeometryPolicy::default();
-    for length in [4., 5.] {
+    for length in [5., 6.] {
         let error = source
             .rust_cut_rounded_internal_thread(
                 Spec {

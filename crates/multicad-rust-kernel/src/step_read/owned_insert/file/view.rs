@@ -25,6 +25,17 @@ impl<'a, 'input> MemberDocument<'a, 'input> {
         self.bytes
     }
 }
+// Owned output only. No mapped MemberDocument is ever constructed.
+pub(super) struct ViewData {
+    pub(super) member: Member,
+    pub(super) text: String,
+    pub(super) work: usize,
+    pub(super) bytes: usize,
+}
+enum ViewMode {
+    Ordinary,
+    LocalSource,
+}
 #[derive(Clone, Copy)]
 pub(super) struct Roots {
     top: u32,
@@ -113,6 +124,51 @@ impl<'input> File<'input> {
         initial_work: usize,
         source_bytes: usize,
     ) -> Result<MemberDocument<'a, 'input>> {
+        let data = self.view_data_scoped(
+            item,
+            options,
+            interrupt,
+            initial_work,
+            source_bytes,
+            ViewMode::Ordinary,
+            size_of::<MemberDocument<'_, '_>>(),
+        )?;
+        Ok(MemberDocument {
+            source: self,
+            member: data.member,
+            text: data.text,
+            work: data.work,
+            bytes: data.bytes,
+        })
+    }
+    pub(super) fn source_document_data_scoped(
+        &self,
+        item: u32,
+        options: Options,
+        interrupt: Option<&dyn Fn() -> bool>,
+        output_header_bytes: usize,
+    ) -> Result<ViewData> {
+        self.view_data_scoped(
+            item,
+            options,
+            interrupt,
+            0,
+            0,
+            ViewMode::LocalSource,
+            output_header_bytes,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn view_data_scoped(
+        &self,
+        item: u32,
+        options: Options,
+        interrupt: Option<&dyn Fn() -> bool>,
+        initial_work: usize,
+        source_bytes: usize,
+        mode: ViewMode,
+        output_header_bytes: usize,
+    ) -> Result<ViewData> {
         valid(options)?;
         let mut w = Ledger {
             used: 0,
@@ -120,13 +176,16 @@ impl<'input> File<'input> {
             interrupt,
         };
         w.step(initial_work)?;
+        // Additional typed-wrapper/payload bookkeeping, including all moves
+        // and mode/header checks. Original closure/encoding charges remain.
+        w.step(128)?;
         w.step(self.members.len())?;
         let member = *self
             .members
             .iter()
             .find(|m| m.item_entity() == item)
             .ok_or(Error::Unsupported)?;
-        if member.mapping_link().is_some() {
+        if matches!(mode, ViewMode::Ordinary) && member.mapping_link().is_some() {
             return Err(Error::Unsupported);
         }
         let Roots {
@@ -138,7 +197,19 @@ impl<'input> File<'input> {
         let set_bytes = (1 + self.entities.len() / 5)
             .saturating_mul(20 * size_of::<usize>() + 11 * size_of::<u32>());
         let pending_bytes = self.entities.len().saturating_mul(size_of::<u32>());
-        let fixed = source_bytes.saturating_add(size_of::<MemberDocument<'_, '_>>());
+        // Both return header and temporary payload exist during publication;
+        // account every owned container header and bounded scalar bookkeeping.
+        let fixed = source_bytes
+            .saturating_add(output_header_bytes)
+            .saturating_add(
+                size_of::<ViewData>()
+                    + size_of::<Ledger<'_>>()
+                    + size_of::<BTreeSet<u32>>()
+                    + size_of::<Vec<u32>>()
+                    + size_of::<String>()
+                    + size_of::<Roots>()
+                    + 16 * size_of::<usize>(),
+            );
         if fixed
             .saturating_add(set_bytes)
             .saturating_add(pending_bytes)
@@ -151,6 +222,14 @@ impl<'input> File<'input> {
         pending
             .try_reserve_exact(self.entities.len())
             .map_err(|_| Error::Limit)?;
+        let pending_bytes = pending.capacity().saturating_mul(size_of::<u32>());
+        if fixed
+            .saturating_add(set_bytes)
+            .saturating_add(pending_bytes)
+            > options.retained_budget_bytes
+        {
+            return Err(Error::Limit);
+        }
         for id in [member.local_solid_entity(), context, shape] {
             if selected.insert(id) {
                 pending.push(id);
@@ -244,8 +323,7 @@ impl<'input> File<'input> {
         .expect("String write");
         text.push_str("ENDSEC;\nEND-ISO-10303-21;\n");
         w.step(1)?;
-        Ok(MemberDocument {
-            source: self,
+        Ok(ViewData {
             member,
             text,
             work: w.used,

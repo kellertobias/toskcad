@@ -9,6 +9,7 @@ pub(super) struct ThreadChart<'a> {
     pub thread: &'a AuthoredThread,
     pub entry: Option<Entry>,
     pub top: f64,
+    pub exact_top: Option<crate::Rational>,
 }
 impl<'a> ThreadChart<'a> {
     pub fn treated(body: &'a Cavity) -> Self {
@@ -16,6 +17,12 @@ impl<'a> ThreadChart<'a> {
             thread: &body.thread,
             entry: body.entry,
             top: body.tail.map_or(body.full_length_mm(), |t| t.station),
+            exact_top: if body.tail.is_none() {
+                body.exact_receiving_extent()
+                    .or(body.thread.exact_axial_extent())
+            } else {
+                None
+            },
         }
     }
     fn bare(thread: &'a AuthoredThread) -> Self {
@@ -23,6 +30,7 @@ impl<'a> ThreadChart<'a> {
             thread,
             entry: None,
             top: thread.full_length_mm(),
+            exact_top: thread.exact_axial_extent(),
         }
     }
 }
@@ -65,6 +73,7 @@ impl AuthoredThread {
         shell(
             self,
             self.full_length_mm(),
+            self.exact_axial_extent(),
             false,
             options,
             maximum_work,
@@ -86,13 +95,14 @@ impl AuthoredThread {
     ) -> Result<ThreadShell, SourceError> {
         if !end_station_mm.is_finite()
             || end_station_mm < self.spec().pitch_mm
-            || end_station_mm > self.full_length_mm()
+            || !self.contains_axial_parameter(end_station_mm)
         {
             return Err(SourceError::Invalid);
         }
         shell(
             self,
             end_station_mm,
+            None,
             false,
             options,
             maximum_work,
@@ -113,11 +123,20 @@ impl AuthoredThread {
     ) -> Result<ThreadShell, SourceError> {
         if !end_station_mm.is_finite()
             || end_station_mm < self.spec().pitch_mm
-            || end_station_mm > self.full_length_mm()
+            || !self.contains_axial_parameter(end_station_mm)
         {
             return Err(SourceError::Invalid);
         }
-        shell(self, end_station_mm, true, options, maximum_work, interrupt).map_err(failure)
+        shell(
+            self,
+            end_station_mm,
+            None,
+            true,
+            options,
+            maximum_work,
+            interrupt,
+        )
+        .map_err(failure)
     }
 }
 fn failure(e: Error) -> SourceError {
@@ -131,6 +150,7 @@ fn failure(e: Error) -> SourceError {
 fn shell(
     thread: &AuthoredThread,
     end_station_mm: f64,
+    exact_top: Option<crate::Rational>,
     shifted: bool,
     options: Tessellation,
     maximum_work: usize,
@@ -145,6 +165,7 @@ fn shell(
     w.step()?;
     let chart = ThreadChart {
         top: end_station_mm,
+        exact_top,
         ..ThreadChart::bare(thread)
     };
     let mut grid = Grid::new();

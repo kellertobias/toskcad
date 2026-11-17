@@ -121,14 +121,9 @@ impl Sources<'_> {
             .get(&link.target)
             .ok_or_else(|| failure("Supporting face has no native topology".into()))?;
         let frame = self.frame(sketch, report)?;
-        let face = solid
-            .faces()
+        let (origin, normal) = solid
+            .face_plane(key.ordinal)
             .map_err(|e| failure(e.to_string()))?
-            .into_iter()
-            .find(|f| f.index == key.ordinal)
-            .ok_or_else(|| failure("Supporting native face is missing".into()))?;
-        let (origin, normal) = face
-            .plane
             .ok_or_else(|| failure("Sketch region support must be planar".into()))?;
         let dot = |a: [f64; 3], b: [f64; 3]| a.into_iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
         if dot(normal, frame.n).abs() < 1. - 1e-8 {

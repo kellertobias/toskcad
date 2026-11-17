@@ -118,6 +118,15 @@ pub(in crate::step_read) fn candidate(
     shell: &Shell<'_, '_>,
     faces: &[u32],
 ) -> Result<ImportedRoundedThread> {
+    candidate_with_tip_orientation(shell, faces, false)
+}
+// Blind material has an inward cutter-tip floor, not the shaft's outward cap.
+// This only proposes geometry; the complete original graph must still verify.
+pub(in crate::step_read) fn candidate_with_tip_orientation(
+    shell: &Shell<'_, '_>,
+    faces: &[u32],
+    inward_tip: bool,
+) -> Result<ImportedRoundedThread> {
     let mut grids = Vec::with_capacity(5);
     let mut caps = Vec::with_capacity(2);
     for &face_id in faces {
@@ -156,7 +165,7 @@ pub(in crate::step_read) fn candidate(
                 far.origin,
                 std::array::from_fn(|i| origin[i] + n[i] * length),
             ) <= error
-            && length_diff(far.normal, n) <= 1e-10,
+            && length_diff(far.normal, n.map(|v| if inward_tip { -v } else { v })) <= 1e-10,
     )?;
     let radius = |g: &Grid| crate::step_read::length(sub(g.start, origin));
     grids.sort_by(|a, b| radius(b).total_cmp(&radius(a)));

@@ -289,6 +289,34 @@ fn verify(nominal: f64, pitch: f64, left: bool) {
     let volume = material
         .volume_bounds(Default::default(), None)
         .expect("independent original D11 signed flux mass");
+    let matched = volume
+        .match_supplied_author(source, actual_frame, Default::default(), None)
+        .expect("complete original author to independently closed D11 material correspondence");
+    assert!(std::ptr::eq(matched.author(), source));
+    assert!(std::ptr::eq(matched.decoded_volume(), &volume));
+    assert!(matched.maximum_world_distance_mm() <= 1e-7);
+    assert!(matched.maximum_world_chart_derivative_mm() <= 1e-7);
+    assert!(
+        matched
+            .independent_volume_difference_mm3()
+            .into_iter()
+            .all(|v| v.abs() <= 1e-5)
+    );
+    assert!(matched.total_work_used() <= 512_000_000);
+    assert!(matched.accounted_peak_bytes() <= 64 * 1024 * 1024);
+    assert_eq!(matched.supplied_thread().entry_rim_transfers().len(), 4);
+    eprintln!(
+        "MODEL_SUPPLIED_MATERIAL nominal={nominal} left={left} c0={} d1={} mass={:?} total_work={} fresh_work={} cavity_cells={} retained_bytes={} peak_bytes={} cavity_accuracy={:?}",
+        matched.maximum_world_distance_mm(),
+        matched.maximum_world_chart_derivative_mm(),
+        matched.independent_volume_difference_mm3(),
+        matched.total_work_used(),
+        matched.new_work_used(),
+        matched.cavity_cells_used(),
+        matched.retained_budget_bytes(),
+        matched.accounted_peak_bytes(),
+        matched.cavity_accuracy_mm()
+    );
     let author_receipt = source.source_volume_bounds().unwrap();
     let author_volume = author_receipt.volume_mm3();
     let decoded_volume = volume.world_volume_mm3();
@@ -320,7 +348,7 @@ fn verify(nominal: f64, pitch: f64, left: bool) {
         .unwrap()
         .volume_mm3();
     eprintln!(
-        "MODEL_COMPONENTS nominal={nominal} left={left} source_head_repaired={original_head_mass:?} source_head_nominal_debug={} source_thread_nominal_debug={} source_cavity={:?} decoded_components={:?} source_precision={} source_phase_error={} source_cavity_width={} world_difference={difference:?} whole_material_match=UNEARNED source_spec={:?} decoded_spec={:?}",
+        "MODEL_COMPONENTS nominal={nominal} left={left} source_head_repaired={original_head_mass:?} source_head_nominal_debug={} source_thread_nominal_debug={} source_cavity={:?} decoded_components={:?} source_precision={} source_phase_error={} source_cavity_width={} world_difference={difference:?} whole_material_match=EARNED_UNDER_POLICY source_spec={:?} decoded_spec={:?}",
         source.profile().volume_mm3(),
         source.thread().volume_mm3(),
         source.cavity().volume().volume_mm3,
@@ -333,6 +361,57 @@ fn verify(nominal: f64, pitch: f64, left: bool) {
     );
     let owned = volume.owned_snapshot(Default::default(), None).unwrap();
     assert_eq!(owned.original_input(), raw);
+    let facets = owned
+        .joined_mesh_candidate(Default::default(), None)
+        .expect("actual canonical fitted D11 source must meet default mesh quality and budgets");
+    assert!(std::ptr::eq(facets.source(), &owned));
+    assert!(facets.new_surface_error_mm() <= 0.1);
+    assert_eq!(facets.certified_tessellation().angle, 0.3);
+    assert!(facets.work_used() <= 512_000_000);
+    assert!(facets.accounted_peak_bytes() <= 64 * 1024 * 1024);
+    assert_eq!(
+        multicad_kernel::rust_kernel::manufacturing::certify(facets.mesh()).unwrap(),
+        facets.connectivity()
+    );
+    eprintln!(
+        "MODEL_D11_DEFAULT nominal={nominal} left={left} facets={} work={} remaining={} peak={} combined={} c0={}",
+        facets.mesh().face_indices.len(),
+        facets.work_used(),
+        facets.remaining_work(),
+        facets.accounted_peak_bytes(),
+        facets.combined_live_upper_bound_bytes(),
+        facets.new_surface_error_mm()
+    );
+    let local_quality = multicad_kernel::rust_kernel::display::Tessellation {
+        deflection: 0.04999999999999995,
+        angle: 0.2969999999999993,
+        triangle_limit: 1_000_000,
+    };
+    let local = owned
+        .joined_mesh_candidate(
+            PhillipsJoinedMeshOptions {
+                tessellation: local_quality,
+                ..Default::default()
+            },
+            None,
+        )
+        .expect("actual Native effective local request must retain original source and budgets");
+    assert!(local.new_surface_error_mm() <= local_quality.deflection);
+    assert_eq!(local.certified_tessellation().angle, local_quality.angle);
+    assert!(local.work_used() <= 512_000_000);
+    assert!(local.accounted_peak_bytes() <= 64 * 1024 * 1024);
+    assert_eq!(
+        multicad_kernel::rust_kernel::manufacturing::certify(local.mesh()).unwrap(),
+        local.connectivity()
+    );
+    eprintln!(
+        "MODEL_D11_NATIVE_LOCAL nominal={nominal} left={left} facets={} work={} remaining={} peak={} c0={}",
+        local.mesh().face_indices.len(),
+        local.work_used(),
+        local.remaining_work(),
+        local.accounted_peak_bytes(),
+        local.new_surface_error_mm()
+    );
     eprintln!(
         "MODEL_SUPPLIED nominal={nominal} left={left} actual_thread={:?} nominal_shank={shank_radius_mm} bytes={} cells={cells} c0_du_dv={bounds:?} source_work={} author_mass={author_volume:?} decoded_mass={decoded_volume:?} material_work={} owned_bytes={}",
         source.thread().spec(),
@@ -340,6 +419,169 @@ fn verify(nominal: f64, pitch: f64, left: bool) {
         correspondence.total_work_used(),
         volume.work_used(),
         owned.retained_budget_bytes()
+    );
+    // Explicit actual-owner Native handoff. Cheap plane selection must not
+    // request the unrelated complete curved-surface measurement inventory.
+    let owned = std::rc::Rc::new(owned);
+    let native = multicad_kernel::Solid::rust_degree11_repaired_phillips_material(
+        owned.clone(),
+        request.feature,
+        Default::default(),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let (retained, occurrence) = native.rust_degree11_repaired_phillips_source().unwrap();
+    assert!(std::ptr::eq(retained, owned.as_ref()));
+    assert_eq!(occurrence, multicad_kernel::PlaneFrame::default());
+    let mut planes = 0;
+    for index in 0..owned.face_count() {
+        if native.face_plane(index as u32).unwrap().is_some() {
+            planes += 1;
+        }
+    }
+    let topology = native.topology_snapshot(request.feature, 0).unwrap();
+    use multicad_core::references::TopologyKind;
+    let faces = topology
+        .elements
+        .iter()
+        .filter(|e| e.key.kind == TopologyKind::Face)
+        .collect::<Vec<_>>();
+    let edges = topology
+        .elements
+        .iter()
+        .filter(|e| e.key.kind == TopologyKind::Edge)
+        .collect::<Vec<_>>();
+    let vertices = topology
+        .elements
+        .iter()
+        .filter(|e| e.key.kind == TopologyKind::Vertex)
+        .collect::<Vec<_>>();
+    let n = owned.thread_faces().len();
+    let h = owned.head().view().segment_count();
+    let cavity = owned.cavity().boundary_topology().unwrap();
+    assert_eq!(faces.len(), owned.face_count());
+    assert_eq!(edges.len(), 3 * n + h + 1 + cavity.edges().len());
+    assert_eq!(vertices.len(), 2 * n + cavity.vertices().len());
+    for edge in &edges {
+        assert_eq!(
+            faces
+                .iter()
+                .filter(|face| face.origins.iter().any(|o| edge.boundary.contains(o)))
+                .count(),
+            2
+        );
+    }
+    for index in 0..n {
+        let role = format!("thread/source/{index}");
+        let face = faces
+            .iter()
+            .find(|f| f.origins.iter().any(|o| o.role == role))
+            .unwrap();
+        assert_eq!(face.boundary.len(), 4);
+        let entry = format!("thread/cap/0/rim/{index}");
+        let edge = edges
+            .iter()
+            .find(|e| e.origins.iter().any(|o| o.role == entry))
+            .unwrap();
+        assert!(edge.boundary.iter().any(|o| o.role == "screw.thread/start"));
+    }
+    assert!(edges.iter().any(|e| {
+        e.origins
+            .iter()
+            .any(|o| o.role == "screw.head/thread.junction")
+    }));
+    let curves = native.display_edges(0.05).unwrap();
+    assert_eq!(curves.len(), edges.len());
+    for curve in &curves {
+        assert!(curve.points_mm.len() >= 2);
+        assert!(curve.points_mm.iter().flatten().all(|v| v.is_finite()));
+        assert!(edges.iter().any(|e| e.key.ordinal == curve.index));
+    }
+    for vertex in &vertices {
+        let Some(multicad_core::references::AnalyticGeometry::Point { position_mm }) =
+            vertex.geometry
+        else {
+            panic!("Source vertex has no point");
+        };
+        for edge in edges
+            .iter()
+            .filter(|e| e.origins.iter().any(|o| vertex.boundary.contains(o)))
+        {
+            let curve = curves.iter().find(|c| c.index == edge.key.ordinal).unwrap();
+            assert!(
+                curve.points_mm.first() == Some(&position_mm)
+                    || curve.points_mm.last() == Some(&position_mm)
+            );
+        }
+    }
+    let overlays = native
+        .topology_with_display(request.feature, 1, Some(0.05))
+        .unwrap();
+    assert_eq!(overlays.edges.len(), curves.len());
+    assert_eq!(overlays.vertices.len(), vertices.len());
+    assert!(native.display_edges(f64::from_bits(1)).is_err());
+    assert_eq!(native.display_edges(0.05).unwrap().len(), curves.len());
+    assert!(planes >= 3);
+    let far = [1e6, 1e6, 1e6];
+    assert!(!native.rust_thread_contains(far).unwrap());
+    let query = native
+        .rust_degree11_repaired_phillips_classify_world_box(
+            far.map(|v| [v, v]),
+            Default::default(),
+            None,
+        )
+        .unwrap();
+    assert!(std::ptr::eq(query.source(), owned.as_ref()));
+    assert_eq!(
+        query.location(),
+        multicad_kernel::rust_kernel::phillips_drive::Classification::Outside
+    );
+    assert!(query.accounted_peak_bytes() <= 64 * 1024 * 1024);
+
+    assert!(native.face_plane(owned.face_count() as u32).is_err());
+    let curved = (0..owned.face_count())
+        .find(|&i| {
+            matches!(
+                owned.face_source(i),
+                Some(PhillipsDegree11MaterialFace::ThreadSide { .. })
+            )
+        })
+        .unwrap();
+    assert!(native.face_plane(curved as u32).unwrap().is_none());
+    let tip = (0..owned.face_count())
+        .find(|&i| {
+            matches!(
+                owned.face_source(i),
+                Some(PhillipsDegree11MaterialFace::ThreadTip { .. })
+            )
+        })
+        .unwrap();
+    let selected = native.face(tip as u32).unwrap();
+    assert_eq!(selected.index, tip as u32);
+    let repeated = native.face(tip as u32).unwrap();
+    assert_eq!(repeated.center_mm, selected.center_mm);
+    assert_eq!(repeated.area_mm2.to_bits(), selected.area_mm2.to_bits());
+    let translated = native
+        .transformed(RigidTransform {
+            translation_mm: [3., -2., 5.],
+            ..Default::default()
+        })
+        .unwrap();
+    let moved = translated.face(tip as u32).unwrap();
+    for k in 0..3 {
+        assert!((moved.center_mm[k] - selected.center_mm[k] - [3., -2., 5.][k]).abs() <= 1e-7);
+    }
+    assert_eq!(moved.area_mm2.to_bits(), selected.area_mm2.to_bits());
+
+    assert!(selected.area_mm2 > 0. && selected.center_mm.into_iter().all(f64::is_finite));
+    assert_eq!(
+        native
+            .rust_degree11_repaired_phillips_source()
+            .unwrap()
+            .0
+            .original_input(),
+        raw
     );
     // Saved/cold canonical reconstruction must retain the actual fit and source.
     let mut bytes = Vec::new();
@@ -407,4 +649,166 @@ fn core_m6_right_actual_supplied_source_bridge() {
 #[test]
 fn core_m6_left_posed_actual_supplied_source_bridge() {
     verify(6., 1., true)
+}
+
+#[test]
+fn actual_core_m3_owned_native_coarse_candidate_earns_fresh_world_embedding() {
+    native_actual_candidate(
+        multicad_kernel::MeshOptions {
+            // Preserve the separately qualified coarse integration request.
+            linear_deflection_mm: 1.1,
+            angular_deflection_rad: 0.72,
+            maximum_triangles: 1_000_000,
+        },
+        3.,
+        0.5,
+        false,
+        false,
+    );
+}
+
+#[test]
+fn actual_core_metric_owned_native_default_and_cached_candidates_earn_fresh_world_embedding() {
+    for (nominal, pitch, left) in [
+        (3., 0.5, false),
+        (3., 0.5, true),
+        (6., 1., false),
+        (6., 1., true),
+    ] {
+        native_actual_candidate(Default::default(), nominal, pitch, left, true);
+    }
+}
+
+fn native_actual_candidate(
+    options: multicad_kernel::MeshOptions,
+    nominal: f64,
+    pitch: f64,
+    left: bool,
+    exercise_cache: bool,
+) {
+    let mut session = Session::new(Document::new("Native actual metric mesh").unwrap()).unwrap();
+    let request = MechanicalPartRequest::new("Actual metric", parameters(nominal, pitch, left));
+    let prepared = model::prepare_mechanical_part(
+        &session,
+        session.revision(),
+        Actor::local(Channel::Mcp),
+        &request,
+    )
+    .unwrap()
+    .prepared;
+    session.commit(prepared).unwrap();
+    let compiled = compiler()
+        .compile_with_backend(
+            session.document(),
+            session.revision(),
+            GeometryBackend::Rust,
+            None,
+        )
+        .unwrap();
+    let (author, frame) = compiled
+        .solid(request.feature)
+        .unwrap()
+        .rust_phillips_screw_geometry()
+        .unwrap();
+    let text = step::write_phillips_screw(author, frame.origin, frame.u, frame.v, 1e-7).unwrap();
+    let owned = std::rc::Rc::new(
+        read_degree11_phillips_material(&text, Default::default(), None)
+            .unwrap()
+            .into_material(),
+    );
+    let native = multicad_kernel::Solid::rust_degree11_repaired_phillips_material(
+        owned.clone(),
+        request.feature,
+        Default::default(),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let (mesh, receipt) = native
+        .rust_degree11_repaired_phillips_mesh_with_receipt(options, Default::default(), None)
+        .unwrap();
+    assert!(std::ptr::eq(receipt.source(), owned.as_ref()));
+    assert!(!mesh.indices.is_empty());
+    assert!(receipt.literal_signed_volume_mm3() > 0.);
+    assert!(receipt.embedding_pairs() > 0);
+    assert!(receipt.query_work_used() <= 512_000_000);
+    assert_eq!(
+        receipt.query_work_used() + receipt.remaining_work(),
+        512_000_000
+    );
+    assert!(receipt.consumer_accounted_peak_bytes() <= 64 * 1024 * 1024);
+    assert!(receipt.local_source_surface_error_mm() <= options.linear_deflection_mm);
+    assert!(!receipt.reused_display_receipt());
+    if !exercise_cache {
+        return;
+    }
+    let used = receipt.query_work_used();
+    if nominal == 3. && !left {
+        assert_eq!(
+            native
+                .rust_degree11_repaired_phillips_mesh_with_receipt(
+                    options,
+                    multicad_kernel::RepairedPhillipsMeshBudget {
+                        maximum_work: used - 1,
+                        ..Default::default()
+                    },
+                    None
+                )
+                .err()
+                .unwrap()
+                .kind,
+            multicad_kernel::GeometryErrorKind::Limit
+        );
+        let (retry, _) = native
+            .rust_degree11_repaired_phillips_mesh_with_receipt(
+                options,
+                multicad_kernel::RepairedPhillipsMeshBudget {
+                    maximum_work: used,
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        assert_eq!(retry, mesh);
+    }
+    let cold_start = std::time::Instant::now();
+    let (cold, cold_receipt) = native
+        .rust_degree11_repaired_phillips_display_mesh_with_receipt(
+            options,
+            Default::default(),
+            None,
+        )
+        .unwrap();
+    let cold_elapsed = cold_start.elapsed();
+    assert!(!cold_receipt.reused_display_receipt());
+    assert_eq!(cold, mesh);
+    let warm_start = std::time::Instant::now();
+    let (warm, warm_receipt) = native
+        .rust_degree11_repaired_phillips_display_mesh_with_receipt(
+            options,
+            Default::default(),
+            None,
+        )
+        .unwrap();
+    let warm_elapsed = warm_start.elapsed();
+    assert!(warm_receipt.reused_display_receipt());
+    assert!(std::ptr::eq(warm_receipt.source(), owned.as_ref()));
+    assert_eq!(warm, mesh);
+    assert!(warm_receipt.query_work_used() < used);
+    assert_eq!(
+        warm_receipt.query_work_used() + warm_receipt.remaining_work(),
+        512_000_000
+    );
+    // Exercise the ordinary compiler/renderer and manufacturing entry points,
+    // in addition to the source-specific diagnostic receipt API.
+    let public_start = std::time::Instant::now();
+    let public_display = native.mesh(options).unwrap();
+    let public_elapsed = public_start.elapsed();
+    assert_eq!(public_display, mesh);
+    assert_eq!(native.manufacturing_mesh(options).unwrap(), mesh);
+    eprintln!(
+        "ACTUAL_NATIVE_METRIC nominal={nominal} left={left} facets={} fresh_work={used} warm_work={} display_cold={cold_elapsed:?} display_warm={warm_elapsed:?} public_display_warm={public_elapsed:?}",
+        mesh.indices.len() / 3,
+        warm_receipt.query_work_used()
+    );
 }

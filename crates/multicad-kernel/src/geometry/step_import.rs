@@ -266,6 +266,9 @@ impl Solid {
                     let (readback, imported) = *value;
                     Self::verified_step_member(&readback, imported, feature, policy)
                 }
+                step_read::SourceImport::ActualMappedHead(source) => {
+                    Self::from_actual_clipped_head_source(source, feature, policy, None)
+                }
                 step_read::SourceImport::LiteralNpt(source) => {
                     Self::from_literal_npt_source(*source, feature, policy, None)
                 }
@@ -348,6 +351,9 @@ impl Solid {
                     return Err(invalid("Profiled screw mass uncertainty is invalid"));
                 }
                 Self::rust_profiled_screw_from_source(*screw, feature, frame, policy)
+            }
+            ImportProfile::RepairedRoundedBlind { candidate } => {
+                Self::import_repaired_rounded_blind(*candidate, frame, feature, policy)
             }
             ImportProfile::RoundedThreadBore {
                 spec,
@@ -1156,7 +1162,8 @@ fn verify(
     orthogonal: bool,
 ) -> Result<(), GeometryError> {
     verify_step_metrics(solid, readback, tolerance)?;
-    if solid.rounded_thread_bore_body().is_some()
+    if solid.rounded_blind_bore_body().is_some()
+        || solid.rounded_thread_bore_body().is_some()
         || solid.rounded_thread_body().is_some()
         || solid.helical_body().is_some()
         || solid.helical_tube_cut_body().is_some()

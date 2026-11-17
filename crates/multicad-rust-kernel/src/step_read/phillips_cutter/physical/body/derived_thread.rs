@@ -9,6 +9,8 @@ use crate::{
 mod analytic;
 mod chart;
 mod degree11;
+#[cfg(test)]
+pub(in crate::step_read::phillips_cutter::physical::body) use degree11::tests::actual_m3;
 mod graph;
 mod join;
 mod reduce;
@@ -22,14 +24,17 @@ pub use analytic::{
     PeriodicMaterialProvenance, PeriodicMaterialVolume, PeriodicOwnedMaterialQuery,
     PeriodicOwnedOptions, PeriodicProposalOrigin, PeriodicShoulderOptions, PeriodicShoulderRepair,
     PeriodicThreadBounds, PeriodicThreadCorrespondence, PeriodicThreadRepair, PeriodicThreadSource,
-    PeriodicVolumeOptions, SuppliedThreadCorrespondence,
+    PeriodicVolumeOptions, SuppliedThreadCorrespondence, SuppliedThreadRimTransfer,
 };
 pub use degree11::{
-    CoherentDegree11ThreadCarrier, Degree11ClosedMaterial, Degree11JoinCollar,
-    Degree11MaterialFace, Degree11MaterialOptions, Degree11MaterialVolume,
-    Degree11MaterialVolumeOptions, Degree11OccupiedOptions, Degree11OwnedMaterialOptions,
-    Degree11RimUse, Degree11ThreadFace, Degree11ThreadOptions, OccupiedDegree11Thread,
-    OwnedDegree11Material,
+    CoherentDegree11ThreadCarrier, Degree11ClosedMaterial, Degree11EndDiskOptions,
+    Degree11EndDiskProperties, Degree11EndDisks, Degree11FaceMeasurement,
+    Degree11FacePropertyOptions, Degree11JoinCollar, Degree11MaterialFace, Degree11MaterialOptions,
+    Degree11MaterialQuery, Degree11MaterialQueryError, Degree11MaterialQueryOptions,
+    Degree11MaterialVolume, Degree11MaterialVolumeOptions, Degree11OccupiedOptions,
+    Degree11OwnedMaterialOptions, Degree11ReplayMatch, Degree11ReplayMatchOptions, Degree11RimUse,
+    Degree11ThreadFace, Degree11ThreadOptions, OccupiedDegree11Thread, OwnedDegree11Material,
+    SuppliedDegree11MaterialMatch, SuppliedDegree11MaterialOptions,
 };
 pub use join::{
     ContactThreadCarrier, Degree11ContactOptions, Degree11DomainEnd, Degree11RimContact,

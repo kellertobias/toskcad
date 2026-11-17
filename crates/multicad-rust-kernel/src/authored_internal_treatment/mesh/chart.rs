@@ -139,8 +139,8 @@ fn build(
     {
         return Err(Error::Limit);
     }
-    let f = body.top;
-    // Immutable Thread construction proves L/p + 2*starts <=128. This
+    let f = body.exact_top.map_or(body.top, |q| q.as_f64().next_up());
+    // Actual finite-domain construction proves L/p + 2*starts <=128. This
     // bounds the physical phase span. The shifted sampling chart adds one
     // negative period below; all cells and allocations remain work charged.
     let periods = (f / body.thread.spec().pitch_mm).ceil();

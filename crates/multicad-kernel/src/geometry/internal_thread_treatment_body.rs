@@ -1,9 +1,11 @@
 //! Actual cylindrical stock minus an explicitly authored shared-boundary MAX
 //! cavity. No display mesh, legacy thread approximation or recipe is material.
+mod containment;
 mod display;
 mod faces;
 pub(super) mod interval;
 mod properties;
+mod separation;
 mod topology;
 use super::arithmetic::{dot_error, sum_error};
 use super::*;
@@ -136,6 +138,28 @@ impl Solid {
         policy: GeometryPolicy,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Self, GeometryError> {
+        self.cut_internal_treatment(cut, None, feature, policy, interrupt)
+    }
+    /// Canonical shared receiving end. Exact stock equality is mandatory;
+    /// floating profile length never supplies this topological identity.
+    pub fn rust_cut_authored_internal_thread_treatments_with_exact_extent_and_interrupt(
+        &self,
+        cut: InternalThreadTreatmentCut,
+        extent: Rational,
+        feature: EntityId,
+        policy: GeometryPolicy,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Self, GeometryError> {
+        self.cut_internal_treatment(cut, Some(extent), feature, policy, interrupt)
+    }
+    fn cut_internal_treatment(
+        &self,
+        cut: InternalThreadTreatmentCut,
+        extent: Option<Rational>,
+        feature: EntityId,
+        policy: GeometryPolicy,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Self, GeometryError> {
         checkpoint(interrupt)?;
         policy.validate()?;
         if self.policy != policy || policy.boolean_fuzzy_mm != 0. {
@@ -174,6 +198,9 @@ impl Solid {
                 ));
             }
         }
+        if extent.is_some_and(|end| end != stock.height()) {
+            return Err(failure(source::Error::Unresolved));
+        }
         policy.length(cut.minimum_wall_mm)?;
         if let Some(depth) = cut.intent.entry_depth_mm {
             policy.length(depth)?;
@@ -183,27 +210,34 @@ impl Solid {
             policy.length(tail.radial_depth_mm)?;
         }
         let legacy = helical_body::checked_thread(cut.profile, None, policy)?;
-        let thread = AuthoredThread::new_with_interrupt(
-            legacy.spec(),
-            SourceOptions {
-                position_limit_mm: policy.linear_tolerance_mm / 16.,
-                normal_angle_limit_rad: policy.linear_tolerance_mm
-                    / (16. * cut.profile.major_radius_mm.max(1.)),
-            },
-            interrupt,
-        )
+        let options = SourceOptions {
+            position_limit_mm: policy.linear_tolerance_mm / 16.,
+            normal_angle_limit_rad: policy.linear_tolerance_mm
+                / (16. * cut.profile.major_radius_mm.max(1.)),
+        };
+        let thread = if let Some(end) = extent.filter(|_| cut.intent.terminal.is_none()) {
+            // Entry-only walls need an actual canonical finite source. The
+            // older binary endpoint is never extended by a stock tolerance.
+            AuthoredThread::new_with_exact_axial_domain(legacy.spec(), end, options, interrupt)
+        } else {
+            AuthoredThread::new_with_interrupt(legacy.spec(), options, interrupt)
+        }
         // The identical Spec already passed checked_thread. Root isNone,
         // and both caller-derived SourceOptions are positive finite under the
-        // admitted policy/radius bounds. Authored construction can now only
-        // cancel or conservatively fail its independent transfer proof.
+        // admitted policy/radius bounds. The explicit canonical domain, when
+        // present, still earns its finite extent/cardinality and transfer proof.
         .map_err(|cause| {
             if cause == multicad_rust_kernel::authored_flat_thread::Error::Cancelled {
                 failure(source::Error::Cancelled)
             } else {
-                unsupported("Authored flat-thread transfer cannot be certified")
+                unsupported("Authored flat-thread finite source cannot be certified")
             }
         })?;
-        let cavity = Cavity::new(thread, cut.intent).map_err(failure)?;
+        let cavity = match extent {
+            Some(end) => Cavity::new_with_exact_receiving_extent(thread, cut.intent, end),
+            None => Cavity::new(thread, cut.intent),
+        }
+        .map_err(failure)?;
         let (_, scale) = metric(frame)?;
         let local_wall = (cut.minimum_wall_mm / scale).next_up();
         let material =
@@ -272,7 +306,7 @@ impl InternalThreadTreatmentBody {
             [
                 radius_upper(&self.material),
                 radius_upper(&self.material),
-                self.material.cavity().full_length_mm(),
+                self.material.cavity().full_length_bounds_mm().upper,
             ],
             policy,
         )?;
@@ -288,7 +322,7 @@ impl InternalThreadTreatmentBody {
     }
     pub(super) fn bounds(&self, frame: PlaneFrame) -> Bounds {
         let radius = radius_upper(&self.material);
-        let length = self.material.cavity().full_length_mm();
+        let length = self.material.cavity().full_length_bounds_mm().upper;
         let n = frame.normal();
         let reach: [f64; 3] =
             std::array::from_fn(|i| product(radius, up(frame.u[i].abs(), frame.v[i].abs())));

@@ -1,6 +1,10 @@
 //! Literal cubic carriers certified against whole finite authored trim curves.
 use super::*;
 use crate::tapered_thread::Series;
+mod correspondence;
+pub use correspondence::{
+    TRIM_SPAN_COMPARE_WORK, TRIM_SPAN_SOURCE_WORK, TrimSpanComparison, TrimSpanCorrespondence,
+};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CubicTrimSpan {
     /// Normalized parameters on the selected finite source trim, inside[0,1].

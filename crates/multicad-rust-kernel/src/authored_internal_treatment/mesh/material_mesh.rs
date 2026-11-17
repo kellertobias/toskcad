@@ -32,17 +32,13 @@ fn tau(body: &Cavity) -> I {
         1.
     })
 }
-fn curve(body: &Cavity, v: I, radius: I, z: f64) -> source::Field {
+fn curve(body: &Cavity, v: I, radius: I, z: I) -> source::Field {
     let v =
         Jet::constant(I::point(v.lo)).add(Jet::variable(0).scale(I::point(v.hi) - I::point(v.lo)));
     let theta = v.scale(tau(body));
     let r = Jet::constant(radius);
     source::Field {
-        point: [
-            r.mul(theta.cos()),
-            r.mul(theta.sin()),
-            Jet::constant(I::point(z)),
-        ],
+        point: [r.mul(theta.cos()), r.mul(theta.sin()), Jet::constant(z)],
         normal: source::Normal::Radial {
             angle: theta.value,
             beta: I::point(0.),
@@ -50,9 +46,9 @@ fn curve(body: &Cavity, v: I, radius: I, z: f64) -> source::Field {
         },
     }
 }
-fn point(body: &Cavity, v: I, radius: I, z: f64) -> [I; 3] {
+fn point(body: &Cavity, v: I, radius: I, z: I) -> [I; 3] {
     let theta = v * tau(body);
-    [radius * theta.cos(), radius * theta.sin(), I::point(z)]
+    [radius * theta.cos(), radius * theta.sin(), z]
 }
 fn span(edge: chart::Edge) -> I {
     I::new(
@@ -67,7 +63,16 @@ fn annulus(body: &Cavity, disk: &Disk, radius: I) -> source::Field {
         body.full_length_mm()
     };
     let inner = close::field(body, disk.edge, z, disk.mode);
-    let outer = curve(body, span(disk.edge), radius, z);
+    let outer = curve(
+        body,
+        span(disk.edge),
+        radius,
+        if disk.end == 0 {
+            I::point(0.)
+        } else {
+            body.end_interval()
+        },
+    );
     let t = Jet::variable(1);
     source::Field {
         point: std::array::from_fn(|i| {
@@ -188,12 +193,16 @@ fn boundary_point(
     } = source;
     w.step()?;
     let inner = disk.ids[i];
-    let z = if disk.end == 0 {
-        0.
-    } else {
-        body.full_length_mm()
-    };
-    let exact = point(body, trace.bounds(disk.edge.vertices[i], w)?, radius, z);
+    let exact = point(
+        body,
+        trace.bounds(disk.edge.vertices[i], w)?,
+        radius,
+        if disk.end == 0 {
+            I::point(0.)
+        } else {
+            body.end_interval()
+        },
+    );
     if map[inner] == usize::MAX {
         let id = mesh.vertices.len() / 3;
         mesh.vertices.extend(exact.map(|p| p.lo.midpoint(p.hi)));
@@ -260,8 +269,8 @@ fn outer_wall(
                     .map(|v| v.hi)
                     .fold(f64::NEG_INFINITY, f64::max),
             );
-            let mut field = curve(body, domain, radius, 0.);
-            field.point[2] = Jet::variable(1).scale(I::point(body.full_length_mm()));
+            let mut field = curve(body, domain, radius, I::point(0.));
+            field.point[2] = Jet::variable(1).scale(body.end_interval());
             let ids = nodes.iter().map(|n| n.vertex).collect::<Vec<_>>();
             let points = ids
                 .iter()
@@ -503,20 +512,52 @@ pub(super) fn tessellate(
         return Err(Error::Unresolved);
     }
     let mut grid = Grid::new();
+    // A terminal station can lie arbitrarily close to a periodic knot at the
+    // angular seam. Start with the existing exact shifted chart so that this
+    // coincidence does not force a tiny literal seam edge. This changes only
+    // the sampling chart: every cell still certifies the original source.
+    grid.shifted = body.tail.is_some_and(|tail| {
+        let phase = tail.station / body.thread.spec().pitch_mm;
+        let knot = phase.round();
+        // A conservative conditioning band only proposes another sampling
+        // chart; it never proves geometric equality or separation. Keep the
+        // existing exactly integral and ordinary fractional proposals.
+        let distance = (phase - knot).abs();
+        distance > 0. && distance <= 16. * f64::EPSILON * phase.abs().max(1.)
+    });
+    let mut angular_trial = body.tail.is_some() || body.thread.exact_axial_extent().is_some();
     loop {
         let repartition = match chart::traced_grid_attempt(body, options, &grid, &mut w)? {
             Attempt::Complete((shell, trace)) => {
-                if let Some(prepared) = close::prepare(shell, body, options, &mut w)?
-                    && let Some(candidate) = assemble(material, prepared, trace, options, &mut w)?
-                {
-                    return Ok(candidate);
+                if let Some(prepared) = close::prepare(shell, body, options, &mut w)? {
+                    if let Some(candidate) = assemble(material, prepared, trace, options, &mut w)? {
+                        return Ok(candidate);
+                    }
+                    if body.tail.is_some() && !grid.shifted {
+                        // The two actual cap traces can produce distinct knots
+                        // arbitrarily close to a dyadic angular grid vertex.
+                        // Doubling that grid retains the ill-conditioned stock
+                        // wall facet. Propose the existing exact shifted chart
+                        // first; all failed work stays on this same ledger and
+                        // every new source/closure/stock facet is re-certified.
+                        grid.shifted = true;
+                        continue;
+                    }
                 }
                 false
             }
             Attempt::Refine => false,
             Attempt::Repartition => true,
         };
-        grid.advance(repartition)?;
+        if !repartition && angular_trial {
+            // Angular curvature can require more rows while the same complete
+            // axial phase band already suffices. Try that partition first;
+            // failed work remains charged to this request's original ledger.
+            angular_trial = false;
+            grid.refine_angular()?;
+        } else {
+            grid.advance(repartition)?;
+        }
     }
 }
 
@@ -958,7 +999,7 @@ mod tests {
                         body,
                         I::point(v),
                         radius,
-                        end as f64 * body.full_length_mm(),
+                        I::point(end as f64 * body.full_length_mm()),
                     );
                     shell
                         .mesh
@@ -1380,3 +1421,6 @@ mod partition_closure_tests {
         assert_eq!(actual.stock().circle().radius(), radius);
     }
 }
+
+#[cfg(test)]
+mod conditioning_tests;

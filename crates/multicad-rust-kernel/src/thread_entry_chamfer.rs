@@ -11,6 +11,7 @@ use crate::{
 mod interval;
 mod mesh;
 pub use mesh::{tessellate, tessellate_with_interrupt};
+mod classify;
 mod phase;
 mod profile;
 mod properties;

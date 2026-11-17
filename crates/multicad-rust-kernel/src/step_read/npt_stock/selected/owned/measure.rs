@@ -103,104 +103,156 @@ impl LiteralGeometryPlan {
             }
             Support::Tensor(tensor) => tensor,
         };
-        let bytes = self
-            .retained_budget_bytes()
-            .checked_add(2 * 1024 * 1024)
-            .ok_or(Error::Limit)?;
-        if bytes > options.maximum_bytes {
-            return Err(Error::Limit);
-        }
-        let mut work = Work {
-            left: options.maximum_work,
-            used: 0,
-            bytes,
-            interrupt,
-        };
-        work.step(1)?;
-        let t = &source.0.tensors[tensor];
-        let roots = t.spans[0] * t.spans[1];
-        let height = 11 * t.spans[1] + 1;
-        let box_mm = source.world_enclosure_mm();
-        let anchor = box_mm.map(|b| b[0].midpoint(b[1]));
-        // The STEP origin and mapped local center are common to every point.
-        // Keep that shared translation outside adaptive integration: splitting
-        // UV cells cannot refine its fixed uncertainty. Only A*(P-c) varies.
-        // Retain the world center as origin plus a small mapped offset, rather
-        // than rounding three separate additions at a far world coordinate.
-        let local_center = source.local_enclosure_mm().map(|b| b[0].midpoint(b[1]));
-        work.step(64)?;
-        let mapped_center_offset: [I; 3] = std::array::from_fn(|a| {
-            source
-                .0
-                .linear
-                .iter()
-                .zip(local_center)
-                .fold(p(0.), |sum, (column, c)| sum + column[a] * p(c))
-        });
-        let extent = box_mm.iter().map(|b| b[1] - b[0]).fold(1., f64::max);
-        let mut values = [p(0.); 4];
-        for u in 0..t.spans[0] {
-            for v in 0..t.spans[1] {
-                work.step(32 * 144 + 64)?;
-                let position = std::array::from_fn(|i| {
-                    let point =
-                        &source.0.points[t.poles[(11 * u + i / 12) * height + 11 * v + i % 12]];
-                    let local: [I; 3] = std::array::from_fn(|a| {
-                        interval(point.coordinates[a].bounds) - p(local_center[a])
-                    });
-                    std::array::from_fn(|a| {
-                        source
-                            .0
-                            .linear
-                            .iter()
-                            .zip(local)
-                            .fold(p(0.), |sum, (c, x)| sum + c[a] * x)
-                    })
-                });
-                let normal = self.original_normal_coefficients(tensor, [u, v])?;
-                let value = surface::integrate(
-                    position,
-                    normal,
-                    options.area_width_mm2 / (2. * roots as f64),
-                    options.centroid_width_mm,
-                    extent,
-                    &mut work,
-                )?;
-                for (sum, value) in values.iter_mut().zip(value) {
-                    *sum = *sum + value;
-                }
-            }
-        }
-        let area = values[0];
-        let centroid: [I; 3] = std::array::from_fn(|i| {
-            let c = source.0.origin[i] + (mapped_center_offset[i] + values[i + 1] / area);
-            I::new(c.lo.max(box_mm[i][0]), c.hi.min(box_mm[i][1]))
-        });
-        if !area.valid()
-            || area.lo <= 0.
-            || area.width() > options.area_width_mm2
-            || centroid
-                .iter()
-                .any(|c| !c.valid() || c.width() > options.centroid_width_mm)
-        {
-            return Err(Error::Unsupported);
-        }
-        work.step(1)?;
-        Ok(FaceMeasure {
-            source: source.clone(),
+        measure_tensor(
+            source,
             face,
-            area,
-            centroid,
-            centered_moments: std::array::from_fn(|i| {
-                values[i + 1]
-                    + ((source.0.origin[i] - p(anchor[i])) + mapped_center_offset[i]) * area
-            }),
-            anchor,
-            work: work.used,
-            bytes: work.bytes,
-        })
+            tensor,
+            self.retained_budget_bytes(),
+            options,
+            interrupt,
+            |index| self.original_normal_coefficients(tensor, index),
+        )
     }
 }
+impl LiteralFaceGeometryPlan {
+    pub fn face_measure(
+        &self,
+        options: FaceMeasureOptions,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<FaceMeasure> {
+        if !options.area_width_mm2.is_finite()
+            || options.area_width_mm2 <= 0.
+            || !options.centroid_width_mm.is_finite()
+            || options.centroid_width_mm <= 0.
+            || options.maximum_work == 0
+            || options.maximum_work > 512_000_000
+            || options.maximum_bytes == 0
+            || options.maximum_bytes > 64 * 1024 * 1024
+        {
+            return Err(Error::Invalid);
+        }
+        let source = self.source();
+        let Support::Tensor(tensor) = source.faces()[self.face_index()].support() else {
+            return Err(Error::Unsupported);
+        };
+        measure_tensor(
+            source,
+            self.face_index(),
+            tensor,
+            self.retained_budget_bytes(),
+            options,
+            interrupt,
+            |index| self.original_normal_coefficients(index),
+        )
+    }
+}
+// Both complete and selected plans bind their accessor to the SAME immutable
+// source owner and original tensor. All position/normal intervals, common
+// translation, quadrature, remainder, validation and charged loops stay shared.
+fn measure_tensor<'normal>(
+    source: &OwnedMaterial,
+    face: usize,
+    tensor: usize,
+    retained_bytes: usize,
+    options: FaceMeasureOptions,
+    interrupt: Option<&dyn Fn() -> bool>,
+    normal: impl Fn([usize; 2]) -> Result<&'normal [[I; 3]]>,
+) -> Result<FaceMeasure> {
+    let bytes = retained_bytes
+        .checked_add(2 * 1024 * 1024)
+        .ok_or(Error::Limit)?;
+    if bytes > options.maximum_bytes {
+        return Err(Error::Limit);
+    }
+    let mut work = Work {
+        left: options.maximum_work,
+        used: 0,
+        bytes,
+        interrupt,
+    };
+    work.step(1)?;
+    let t = &source.0.tensors[tensor];
+    let roots = t.spans[0] * t.spans[1];
+    let height = 11 * t.spans[1] + 1;
+    let box_mm = source.world_enclosure_mm();
+    let anchor = box_mm.map(|b| b[0].midpoint(b[1]));
+    // The STEP origin and mapped local center are common to every point.
+    // Keep that shared translation outside adaptive integration: splitting
+    // UV cells cannot refine its fixed uncertainty. Only A*(P-c) varies.
+    // Retain the world center as origin plus a small mapped offset, rather
+    // than rounding three separate additions at a far world coordinate.
+    let local_center = source.local_enclosure_mm().map(|b| b[0].midpoint(b[1]));
+    work.step(64)?;
+    let mapped_center_offset: [I; 3] = std::array::from_fn(|a| {
+        source
+            .0
+            .linear
+            .iter()
+            .zip(local_center)
+            .fold(p(0.), |sum, (column, c)| sum + column[a] * p(c))
+    });
+    let extent = box_mm.iter().map(|b| b[1] - b[0]).fold(1., f64::max);
+    let mut values = [p(0.); 4];
+    for u in 0..t.spans[0] {
+        for v in 0..t.spans[1] {
+            work.step(32 * 144 + 64)?;
+            let position = std::array::from_fn(|i| {
+                let point = &source.0.points[t.poles[(11 * u + i / 12) * height + 11 * v + i % 12]];
+                let local: [I; 3] = std::array::from_fn(|a| {
+                    interval(point.coordinates[a].bounds) - p(local_center[a])
+                });
+                std::array::from_fn(|a| {
+                    source
+                        .0
+                        .linear
+                        .iter()
+                        .zip(local)
+                        .fold(p(0.), |sum, (c, x)| sum + c[a] * x)
+                })
+            });
+            let normal = normal([u, v])?;
+            let value = surface::integrate(
+                position,
+                normal,
+                options.area_width_mm2 / (2. * roots as f64),
+                options.centroid_width_mm,
+                extent,
+                &mut work,
+            )?;
+            for (sum, value) in values.iter_mut().zip(value) {
+                *sum = *sum + value;
+            }
+        }
+    }
+    let area = values[0];
+    let centroid: [I; 3] = std::array::from_fn(|i| {
+        let c = source.0.origin[i] + (mapped_center_offset[i] + values[i + 1] / area);
+        I::new(c.lo.max(box_mm[i][0]), c.hi.min(box_mm[i][1]))
+    });
+    if !area.valid()
+        || area.lo <= 0.
+        || area.width() > options.area_width_mm2
+        || centroid
+            .iter()
+            .any(|c| !c.valid() || c.width() > options.centroid_width_mm)
+    {
+        return Err(Error::Unsupported);
+    }
+    work.step(1)?;
+    Ok(FaceMeasure {
+        source: source.clone(),
+        face,
+        area,
+        centroid,
+        centered_moments: std::array::from_fn(|i| {
+            values[i + 1] + ((source.0.origin[i] - p(anchor[i])) + mapped_center_offset[i]) * area
+        }),
+        anchor,
+        work: work.used,
+        bytes: work.bytes,
+    })
+}
+
 struct Work<'a> {
     left: usize,
     used: usize,

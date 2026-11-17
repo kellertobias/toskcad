@@ -305,6 +305,9 @@ pub(crate) fn planar_loops(solid: &Solid, face: u32) -> Vec<Vec<(u32, bool)>> {
     if let Some(body) = solid.external_npt_stock_body() {
         return body.planar_loops(face);
     }
+    if let Some(body) = solid.actual_clipped_head_body() {
+        return body.planar_loops(face);
+    }
     if let Some(body) = solid.literal_npt_body() {
         return body.planar_loops(face);
     }
@@ -379,13 +382,8 @@ pub(crate) fn planar_contours(
             message,
         )
     };
-    let Some((origin, normal)) = solid
-        .faces()?
-        .into_iter()
-        .find(|candidate| candidate.index == face)
-        .and_then(|selected| selected.plane)
-    else {
-        return Err(input("Select a planar Rust solid face"));
+    let Some((origin, normal)) = solid.face_plane(face)? else {
+        return Err(input("Select a planar face on a Rust solid"));
     };
     let query_normal = frame.normal();
     if dot(normal, query_normal).abs() < 1. - 1e-9

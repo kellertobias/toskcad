@@ -56,6 +56,7 @@ fn real_resolved_roots_and_native_cancellation_keep_refusal_precedence() {
         build(
             EntityId::from_uuid_bits(2),
             &external,
+            q(4, 1),
             &stock,
             GeometryPolicy::default(),
             None
@@ -102,6 +103,7 @@ fn real_resolved_roots_and_native_cancellation_keep_refusal_precedence() {
         build(
             EntityId::from_uuid_bits(2),
             &internal,
+            q(4, 1),
             &stock,
             GeometryPolicy::default(),
             Some(&|| true)
@@ -114,6 +116,7 @@ fn real_resolved_roots_and_native_cancellation_keep_refusal_precedence() {
     let success = build(
         EntityId::from_uuid_bits(2),
         &internal,
+        q(4, 1),
         &stock,
         GeometryPolicy::default(),
         None,
@@ -125,6 +128,7 @@ fn real_resolved_roots_and_native_cancellation_keep_refusal_precedence() {
         build(
             EntityId::from_uuid_bits(2),
             &internal,
+            q(4, 1),
             &unsupported_stock,
             GeometryPolicy::default(),
             None
@@ -144,6 +148,7 @@ fn real_resolved_roots_and_native_cancellation_keep_refusal_precedence() {
         build(
             EntityId::from_uuid_bits(2),
             &cosmetic,
+            q(4, 1),
             &stock,
             GeometryPolicy::default(),
             None

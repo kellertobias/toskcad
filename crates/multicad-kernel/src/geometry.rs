@@ -22,6 +22,9 @@ mod pipe_hardware_body;
 pub use multicad_rust_kernel::axial_pipe_thread::authored::hardware::Kind as PipeHardwareKind;
 use pipe_hardware_body::PipeHardwareBody;
 pub use pipe_hardware_body::{PipeThreadFactory, PipeThreadFactoryStats};
+mod actual_clipped_head_body;
+use actual_clipped_head_body::ActualClippedHeadBody;
+pub use actual_clipped_head_body::{ActualClippedHeadRuntimeEvidence, ActualHeadStepVerification};
 mod literal_npt_body;
 use literal_npt_body::LiteralNptBody;
 pub use literal_npt_body::LiteralNptRuntimeEvidence;
@@ -67,11 +70,14 @@ mod radial_boundary_body;
 mod repaired_phillips_body;
 use repaired_phillips_body::RepairedPhillipsBody;
 pub use repaired_phillips_body::{
-    DecodedPeriodicPhillipsStepVerification, PeriodicPhillipsStepCandidateResources,
-    PeriodicRepairedPhillipsMeshReceipt, PeriodicRepairedPhillipsQuery, RepairedPhillipsMeshBudget,
-    RepairedPhillipsMeshReceipt, RepairedPhillipsQuery, RepairedPhillipsQueryOptions,
+    DecodedPeriodicPhillipsStepVerification, Degree11RepairedPhillipsMeshReceipt,
+    Degree11RepairedPhillipsQuery, Degree11RepairedPhillipsQueryOptions,
+    PeriodicPhillipsStepCandidateResources, PeriodicRepairedPhillipsMeshReceipt,
+    PeriodicRepairedPhillipsQuery, RepairedPhillipsMeshBudget, RepairedPhillipsMeshReceipt,
+    RepairedPhillipsQuery, RepairedPhillipsQueryOptions,
 };
 mod revolution_body;
+mod rounded_blind_bore_body;
 mod rounded_cylinder_body;
 mod rounded_slot_body;
 mod rounded_thread_body;
@@ -131,6 +137,10 @@ use imported_brep_body::ImportedBrepBody;
 use internal_thread_treatment_body::InternalThreadTreatmentBody;
 pub use internal_thread_treatment_body::{
     InternalThreadFaceProperties, InternalThreadTreatmentCut, InternalThreadTreatmentData,
+};
+use rounded_blind_bore_body::RoundedBlindBoreBody;
+pub use rounded_blind_bore_body::{
+    RoundedBlindBoreData, RoundedBlindMeshBudget, RoundedBlindMeshReceipt,
 };
 use rounded_thread_bore_body::RoundedThreadBoreBody;
 pub use rounded_thread_bore_body::RoundedThreadBoreData;
@@ -632,6 +642,8 @@ pub struct Bounds {
 
 /// STEP solid count, decoded volume in mm³ and world bounds in mm.
 pub type StepCompoundMetrics = (u32, f64, [[f64; 3]; 2]);
+/// Earned planar support as origin and outward normal.
+pub type FacePlane = ([f64; 3], [f64; 3]);
 #[derive(Clone, Debug, PartialEq)]
 pub struct Face {
     /// Evaluation-local ordinal, never a persistent topology reference.
@@ -748,12 +760,14 @@ enum SolidBody {
     ClippedNpt(Rc<ClippedNptBody>),
     PipeHardware(Rc<PipeHardwareBody>),
     LiteralNpt(Rc<LiteralNptBody>),
+    ActualClippedHead(Rc<ActualClippedHeadBody>),
     ExternalNptStock(Rc<ExternalNptStockBody>),
     Line8Nut(Rc<Line8NutBody>),
     Helical(Rc<HelicalBody>, PlaneFrame),
     RoundedThread(Rc<RoundedThreadBody>, PlaneFrame),
     EntryChamfer(Rc<EntryChamferBody>, PlaneFrame),
     RoundedThreadBore(Rc<RoundedThreadBoreBody>, PlaneFrame),
+    RoundedBlindBore(Rc<RoundedBlindBoreBody>, PlaneFrame),
     InternalThreadTreatment(Rc<InternalThreadTreatmentBody>, PlaneFrame),
     RepairedPhillips(Rc<RepairedPhillipsBody>, PlaneFrame),
     WoodInsert(Rc<WoodInsertBody>, PlaneFrame),
@@ -1208,6 +1222,7 @@ impl Solid {
             SolidBody::ClippedNpt(body) => SolidBody::ClippedNpt(Rc::clone(body)),
             SolidBody::PipeHardware(body) => SolidBody::PipeHardware(Rc::clone(body)),
             SolidBody::LiteralNpt(body) => SolidBody::LiteralNpt(Rc::clone(body)),
+            SolidBody::ActualClippedHead(body) => SolidBody::ActualClippedHead(Rc::clone(body)),
             SolidBody::ExternalNptStock(body) => SolidBody::ExternalNptStock(Rc::clone(body)),
             SolidBody::Line8Nut(body) => SolidBody::Line8Nut(Rc::clone(body)),
             SolidBody::Prism(prism, frame) => SolidBody::Prism(Rc::clone(prism), *frame),
@@ -1228,6 +1243,9 @@ impl Solid {
             SolidBody::Helical(body, frame) => SolidBody::Helical(Rc::clone(body), *frame),
             SolidBody::RoundedThreadBore(body, frame) => {
                 SolidBody::RoundedThreadBore(Rc::clone(body), *frame)
+            }
+            SolidBody::RoundedBlindBore(body, frame) => {
+                SolidBody::RoundedBlindBore(Rc::clone(body), *frame)
             }
             SolidBody::InternalThreadTreatment(body, frame) => {
                 SolidBody::InternalThreadTreatment(Rc::clone(body), *frame)
@@ -1460,6 +1478,12 @@ impl Solid {
             }
         }
         if self.uses_rust_geometry() && other.uses_rust_geometry() {
+            if let Some(result) = self.separated_treatment_intersection(other, operation, policy) {
+                return result;
+            }
+            if let Some(result) = self.contained_treatment_box_boolean(other, operation, policy) {
+                return result;
+            }
             if let Some(result) = self.contained_thread_boolean(other, operation, policy) {
                 return result;
             }
@@ -1576,6 +1600,9 @@ impl Solid {
                 SolidBody::LiteralNpt(body) => {
                     SolidBody::LiteralNpt(Rc::new(body.transformed(transform, self.policy)?))
                 }
+                SolidBody::ActualClippedHead(body) => {
+                    SolidBody::ActualClippedHead(Rc::new(body.transformed(transform, self.policy)?))
+                }
                 SolidBody::ClippedNpt(body) => {
                     SolidBody::ClippedNpt(Rc::new(body.transformed(transform, self.policy)?))
                 }
@@ -1641,6 +1668,11 @@ impl Solid {
                     let frame = transform.frame(*frame);
                     body.validate_frame(frame, self.policy)?;
                     SolidBody::InternalThreadTreatment(Rc::clone(body), frame)
+                }
+                SolidBody::RoundedBlindBore(body, frame) => {
+                    let frame = transform.frame(*frame);
+                    body.validate_frame(frame, self.policy)?;
+                    SolidBody::RoundedBlindBore(Rc::clone(body), frame)
                 }
                 SolidBody::RoundedThreadBore(body, frame) => {
                     let frame = transform.frame(*frame);
@@ -1939,6 +1971,9 @@ impl Solid {
         if let Some(body) = self.literal_npt_body() {
             return Ok(body.volume_mm3());
         }
+        if let Some(body) = self.actual_clipped_head_body() {
+            return Ok(body.volume_mm3());
+        }
         if let Some(body) = self.clipped_npt_body() {
             return Ok(body.volume_mm3());
         }
@@ -1959,6 +1994,9 @@ impl Solid {
         }
         if let Some((body, _)) = self.annulus_body() {
             return Ok(body.geometry.volume_mm3());
+        }
+        if let Some((body, frame)) = self.rounded_blind_bore_body() {
+            return Ok(body.volume(frame));
         }
         if let Some((body, _)) = self.rounded_thread_bore_body() {
             return Ok(body.geometry.volume_mm3());
@@ -2101,6 +2139,9 @@ impl Solid {
         if let Some(body) = self.literal_npt_body() {
             return Ok(body.bounds());
         }
+        if let Some(body) = self.actual_clipped_head_body() {
+            return body.bounds();
+        }
         if let Some(body) = self.clipped_npt_body() {
             return Ok(body.bounds());
         }
@@ -2121,6 +2162,9 @@ impl Solid {
         }
         if let Some((body, frame)) = self.annulus_body() {
             return Ok(body.bounds(frame));
+        }
+        if let Some((body, frame)) = self.rounded_blind_bore_body() {
+            return body.bounds(frame);
         }
         if let Some((body, frame)) = self.rounded_thread_bore_body() {
             return body.bounds(frame);
@@ -2226,7 +2270,11 @@ impl Solid {
             return body.faces(self.policy);
         }
         if let Some((body, frame)) = self.repaired_phillips_body() {
-            return body.periodic_faces(frame);
+            return if body.has_degree11_source() {
+                body.degree11_faces(frame)
+            } else {
+                body.periodic_faces(frame)
+            };
         }
         if let Some((body, frame)) = self.hanger_body() {
             return body.material(frame, self.policy)?.faces(self.policy, None);
@@ -2314,6 +2362,9 @@ impl Solid {
         if let Some(body) = self.literal_npt_body() {
             return body.faces();
         }
+        if let Some(body) = self.actual_clipped_head_body() {
+            return body.faces();
+        }
         if let Some(body) = self.clipped_npt_body() {
             return Ok(body.faces());
         }
@@ -2334,6 +2385,9 @@ impl Solid {
         }
         if let Some((body, frame)) = self.annulus_body() {
             return Ok(body.faces(frame));
+        }
+        if let Some((body, frame)) = self.rounded_blind_bore_body() {
+            return body.faces(frame);
         }
         if let Some((body, frame)) = self.rounded_thread_bore_body() {
             return body.faces(frame);
@@ -2470,6 +2524,7 @@ impl Solid {
             ),
             SolidBody::Helical(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::RoundedThreadBore(body, frame) => body.mesh(*frame, rust_options),
+            SolidBody::RoundedBlindBore(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::RoundedThread(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::HelicalTubeCut(body, frame) => {
                 crate::rust_display::placed_mesh(body.cut.mesh(rust_options), *frame, false)
@@ -2477,6 +2532,7 @@ impl Solid {
             SolidBody::ClippedNpt(body) => body.mesh(rust_options),
             SolidBody::PipeHardware(body) => body.mesh(rust_options),
             SolidBody::LiteralNpt(body) => body.mesh(rust_options),
+            SolidBody::ActualClippedHead(body) => body.mesh(rust_options),
             SolidBody::ExternalNptStock(body) => body.mesh(rust_options),
             SolidBody::Line8Nut(body) => body.mesh(rust_options),
             SolidBody::OrthogonalSeats(body, frame) => body.mesh(*frame, rust_options),
@@ -2605,6 +2661,7 @@ impl Solid {
             || self.clipped_npt_body().is_some()
             || self.pipe_hardware_body().is_some()
             || self.literal_npt_body().is_some()
+            || self.actual_clipped_head_body().is_some()
             || self.external_npt_stock_body().is_some()
             || self.line8_nut_body().is_some()
             || self.wood_insert_body().is_some()
@@ -2622,6 +2679,9 @@ impl Solid {
             manufacturing,
         };
         const OPERATION: &str = "manufacturing mesh";
+        if let Some((body, frame)) = self.rounded_blind_bore_body() {
+            return body.manufacturing(frame, options);
+        }
         if let Some(body) = self.pipe_hardware_body() {
             return body.manufacturing(Self::rust_mesh_options(options));
         }
@@ -2632,6 +2692,9 @@ impl Solid {
             return body.manufacturing(Self::rust_mesh_options(options));
         }
         if let Some(body) = self.literal_npt_body() {
+            return body.manufacturing(Self::rust_mesh_options(options));
+        }
+        if let Some(body) = self.actual_clipped_head_body() {
             return body.manufacturing(Self::rust_mesh_options(options));
         }
         if let Some(body) = self.clipped_npt_body() {
@@ -2805,13 +2868,19 @@ impl Solid {
                 let edges = if let Some(body) = self.pipe_hardware_body() {
                     body.display_edges(deflection, self.policy)?
                 } else if let Some((body, frame)) = self.repaired_phillips_body() {
-                    body.periodic_display_edges(frame, deflection)?
+                    if body.has_degree11_source() {
+                        body.degree11_display_edges(frame, deflection)?
+                    } else {
+                        body.periodic_display_edges(frame, deflection)?
+                    }
                 } else if let Some((body, frame)) = self.hanger_body() {
                     body.display_edges(frame, deflection, self.policy)?
                 } else if let Some((body, frame)) = self.wood_insert_body() {
                     body.display_edges(frame, deflection, self.policy)?
                 } else if let Some((body, frame)) = self.internal_thread_treatment_body() {
                     body.display_edges(frame, deflection, self.policy)?
+                } else if let Some((body, frame)) = self.rounded_blind_bore_body() {
+                    body.display_edges(frame, deflection)?
                 } else if let Some((body, frame)) = self.rounded_thread_bore_body() {
                     body.display_edges(frame, deflection)?
                 } else if let Some((body, frame)) = self.rounded_thread_body() {
@@ -2852,7 +2921,11 @@ impl Solid {
             return body.display_edges(deflection_mm, self.policy);
         }
         if let Some((body, frame)) = self.repaired_phillips_body() {
-            return body.periodic_display_edges(frame, deflection_mm);
+            return if body.has_degree11_source() {
+                body.degree11_display_edges(frame, deflection_mm)
+            } else {
+                body.periodic_display_edges(frame, deflection_mm)
+            };
         }
         if let Some((body, frame)) = self.hanger_body() {
             return body.display_edges(frame, deflection_mm, self.policy);
@@ -2862,6 +2935,9 @@ impl Solid {
         }
         if let Some((body, frame)) = self.internal_thread_treatment_body() {
             return body.display_edges(frame, deflection_mm, self.policy);
+        }
+        if let Some((body, frame)) = self.rounded_blind_bore_body() {
+            return body.display_edges(frame, deflection_mm);
         }
         if let Some((body, frame)) = self.rounded_thread_bore_body() {
             return body.display_edges(frame, deflection_mm);
@@ -2920,6 +2996,9 @@ impl Solid {
         if let Some(body) = self.literal_npt_body() {
             return body.sample_edge(ordinal, options);
         }
+        if let Some(body) = self.actual_clipped_head_body() {
+            return body.sample_edge(ordinal, options);
+        }
         if let Some(body) = self.clipped_npt_body() {
             return body.sample_edge(ordinal, options);
         }
@@ -2954,6 +3033,35 @@ impl Solid {
         member.sample_non_analytic_edge(local, options)
     }
 
+    /// Query one physical face without asking an explicit provider to measure
+    /// every other face. Other providers retain their existing bulk fallback.
+    pub fn face(&self, index: u32) -> Result<Face, GeometryError> {
+        if let Some(body) = self.actual_clipped_head_body() {
+            return body.face(index);
+        }
+        if let Some((body, frame)) = self.repaired_phillips_body()
+            && body.has_degree11_source()
+        {
+            return body.degree11_face(frame, index);
+        }
+        self.faces()?
+            .into_iter()
+            .find(|f| f.index == index)
+            .ok_or_else(|| input("Face index is out of range"))
+    }
+    /// Cheap earned planar support; None denotes an actual curved face.
+    pub fn face_plane(&self, index: u32) -> Result<Option<FacePlane>, GeometryError> {
+        if let Some(body) = self.actual_clipped_head_body() {
+            return Ok(body.plane(index)?.map(|f| (f.origin_mm, f.normal())));
+        }
+        if let Some((body, frame)) = self.repaired_phillips_body()
+            && body.has_degree11_source()
+        {
+            return body.degree11_face_plane(frame, index);
+        }
+        Ok(self.face(index)?.plane)
+    }
+
     pub fn display_vertices(&self) -> Result<Vec<DisplayVertex>, GeometryError> {
         if let Some(topology) = self.rust_topology() {
             return Ok(crate::rust_display::vertices(&topology?));
@@ -2986,6 +3094,7 @@ impl Solid {
             SolidBody::Hanger(body, _) => body.feature,
             SolidBody::Helical(body, _) => body.feature,
             SolidBody::RoundedThreadBore(body, _) => body.feature,
+            SolidBody::RoundedBlindBore(body, _) => body.feature,
             SolidBody::RoundedThread(body, _) => body.feature,
             SolidBody::HelicalTubeCut(body, _) => body.feature,
             SolidBody::CosmeticFastener(body, _) => body.feature,
@@ -2993,6 +3102,7 @@ impl Solid {
             SolidBody::ClippedNpt(body) => body.feature,
             SolidBody::PipeHardware(body) => body.feature,
             SolidBody::LiteralNpt(body) => body.feature,
+            SolidBody::ActualClippedHead(body) => body.feature,
             SolidBody::ExternalNptStock(body) => body.feature,
             SolidBody::Line8Nut(body) => body.feature,
             SolidBody::Linear(body, _) => body.feature,
@@ -3035,7 +3145,8 @@ impl Solid {
             | SolidBody::SplineCapRelief(..)
             | SolidBody::RadialBoundary(..)
             | SolidBody::RoundedThread(..)
-            | SolidBody::RoundedThreadBore(..) => true,
+            | SolidBody::RoundedThreadBore(..)
+            | SolidBody::RoundedBlindBore(..) => true,
             SolidBody::Occt(_)
             | SolidBody::PolygonPrism(_)
             | SolidBody::AxialCylinder(..)
@@ -3075,6 +3186,7 @@ impl Solid {
             SolidBody::Hanger(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::OrthogonalSeats(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::LiteralNpt(body) => body.supports_step(),
+            SolidBody::ActualClippedHead(_) => standalone,
             SolidBody::RepairedPhillips(..) => {
                 self.rust_periodic_repaired_phillips_source().is_some()
             }
@@ -3118,6 +3230,11 @@ impl Solid {
         let path_text = crate::step_path(path).map_err(|e| input(e.to_string()))?;
         if let SolidBody::Occt(shape) = &self.body {
             return ffi::write_step(&shape.0, path_text).map_err(|e| native("write STEP", e));
+        }
+        if let Some(result) =
+            self.write_actual_clipped_head_step_with_verification(path, Default::default(), None)
+        {
+            return result.map(|_| ());
         }
         if let Some(result) = self.write_periodic_phillips_step_with_verification(
             path,
@@ -3283,6 +3400,9 @@ impl Solid {
             SolidBody::RoundedThreadBore(body, frame) => {
                 body.append_step(writer, *frame, self.policy)
             }
+            SolidBody::RoundedBlindBore(body, frame) => {
+                body.append_step(writer, *frame, self.policy)
+            }
             SolidBody::RoundedThread(body, frame) => body.append_step(writer, *frame, self.policy),
             SolidBody::Sphere(body, frame) => {
                 writer.append_sphere(body.geometry, frame.origin, frame.u, frame.v)
@@ -3312,6 +3432,7 @@ impl Solid {
                 body.append_step(writer, *frame, self.policy)
             }
             SolidBody::LiteralNpt(body) => body.append_step(writer),
+            SolidBody::ActualClippedHead(_) => Err(step::StepError::Unsupported),
             SolidBody::RepairedPhillips(..) => self
                 .append_periodic_phillips_step(writer, None)
                 .ok_or(step::StepError::Unsupported)?

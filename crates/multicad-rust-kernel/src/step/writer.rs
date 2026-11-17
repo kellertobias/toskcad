@@ -212,6 +212,19 @@ impl Writer {
         self.append(|file| rounded_thread_bore::encode(file, bore, placement, tolerance))
     }
 
+    /// Append the independently checked actual finite blind closure.
+    pub fn append_rounded_thread_blind_bore(
+        &mut self,
+        bore: &crate::rounded_thread::BlindBore,
+        origin: Point,
+        u: Point,
+        v: Point,
+        tolerance: f64,
+    ) -> Result<(), StepError> {
+        let placement = Placement::new(origin, u, v)?;
+        self.append(|file| rounded_thread_blind::encode(file, bore, placement, tolerance))
+    }
+
     pub fn append_helical_thread(
         &mut self,
         thread: &crate::helical_thread::Thread,

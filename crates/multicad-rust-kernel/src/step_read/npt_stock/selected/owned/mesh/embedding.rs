@@ -8,6 +8,7 @@ pub(super) struct Cap {
     pub apex: u32,
     /// Actual outward fan winding (bottom clockwise, top counter-clockwise).
     pub rim: Vec<u32>,
+    pub edges: Vec<LiteralCapEdge>,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LiteralEmbeddingProof {

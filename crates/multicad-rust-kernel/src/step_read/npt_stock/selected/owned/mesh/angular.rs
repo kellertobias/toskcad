@@ -5,7 +5,7 @@ use spade::{
     ConstrainedDelaunayTriangulation, HasPosition, Point2, Triangulation,
     handles::FixedVertexHandle,
 };
-mod registry;
+pub(super) mod registry;
 use registry::{Registry, SegmentKey, VertexKey};
 const ROOT_NODES: usize = 4096;
 #[derive(Clone, Copy)]
@@ -458,8 +458,6 @@ pub(super) fn build(
                         "NPT angular root error t={t} root={u},{v}: {error:?} work={} bytes={}",
                         budget.used, budget.peak
                     );
-                    #[cfg(test)]
-                    eprintln!("NPT completed roots {root_triangles:?}");
                     #[cfg(not(test))]
                     let _ = error;
                 })?;
@@ -489,6 +487,7 @@ pub(super) fn build(
         let anchor = registry.vertex(source, VertexKey::Cap(face_index), axis, budget)?;
         let actual = source.map_box_mm(original_axis.map(bounds))?.map(interval);
         let mut rim = Vec::new();
+        let mut cap_edges = Vec::new();
         let a = registry.vertices[anchor as usize].point;
         position = position.max(cells::l1(std::array::from_fn(|k| {
             actual[k] - I::point(a[k])
@@ -503,16 +502,30 @@ pub(super) fn build(
                 };
                 let key = SegmentKey::External(coedge.edge, span);
                 registry.ensure(source, key, budget)?;
-                let samples = registry.segments[&key].points.clone();
-                for index in 0..samples.len() - 1 {
-                    let [a, b] = if coedge.forward {
-                        [samples[index].vertex, samples[index + 1].vertex]
-                    } else {
-                        [
-                            samples[samples.len() - index - 1].vertex,
-                            samples[samples.len() - index - 2].vertex,
-                        ]
+                let sample_count = registry.segments[&key].points.len();
+                for index in 0..sample_count - 1 {
+                    // Copy only two fixed samples. Do not allocate a duplicate
+                    // span buffer while extending the retained cap trace.
+                    budget.step(64)?;
+                    let pair = {
+                        let samples = &registry.segments[&key].points;
+                        if coedge.forward {
+                            [samples[index], samples[index + 1]]
+                        } else {
+                            [
+                                samples[sample_count - index - 1],
+                                samples[sample_count - index - 2],
+                            ]
+                        }
                     };
+                    let [a, b] = pair.map(|s| s.vertex);
+                    registry::reserve(&mut cap_edges, 1, budget)?;
+                    cap_edges.push(LiteralCapEdge {
+                        edge: coedge.edge,
+                        span,
+                        parameters: pair.map(|s| s.t),
+                        vertices: [a, b],
+                    });
                     registry::reserve(&mut rim, 1, budget)?;
                     rim.push(a);
                     let triangle = [anchor, a, b];
@@ -536,6 +549,7 @@ pub(super) fn build(
             face: face_index,
             apex: anchor,
             rim,
+            edges: cap_edges,
         });
     }
     if position
@@ -544,14 +558,22 @@ pub(super) fn build(
     {
         return Err(Error::Unsupported);
     }
-    let triangles = registry.mesh.face_indices.len();
-    let scratch = triangles * 52 + registry.vertices.len() * 4;
-    hold(budget, scratch)?;
-    let comparisons = (registry.mesh.indices.len().max(1).ilog2() as usize + 1) * 32;
-    budget.step(registry.mesh.indices.len() * (128 + comparisons))?;
-    let connectivity =
-        crate::manufacturing::certify(&registry.mesh).map_err(|_| Error::Unsupported)?;
-    budget.bytes -= scratch;
+    let certification_base = budget.bytes;
+    let connectivity = crate::manufacturing::certify_counted(&registry.mesh, &mut |n, scratch| {
+        budget.step(n)?;
+        if let Some(bytes) = scratch {
+            let total = certification_base.checked_add(bytes).ok_or(Error::Limit)?;
+            if total > budget.limit {
+                return Err(Error::Limit);
+            }
+            budget.peak = budget.peak.max(total);
+        }
+        Ok(())
+    })
+    .map_err(|e| match e {
+        crate::manufacturing::CountedError::Mesh(_) => Error::Unsupported,
+        crate::manufacturing::CountedError::Interrupted(e) => e,
+    })?;
     budget.step(1)?;
     Ok(Output {
         mesh: registry.mesh,

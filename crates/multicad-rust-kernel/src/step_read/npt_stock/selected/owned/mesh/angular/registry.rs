@@ -93,16 +93,51 @@ fn curve(
     }
     Ok(point)
 }
-pub(super) fn root_point(
+pub(in super::super) fn root_point(
     source: &OwnedMaterial,
     t: usize,
     root: [usize; 2],
     uv: [f64; 2],
     budget: &mut Budget<'_>,
 ) -> Result<[I; 3]> {
-    budget.step(4096)?;
+    budget.step(8)?;
     let tensor = &source.tensors()[t];
     let height = 11 * tensor.spans[1] + 1;
+    let endpoint = uv.map(|t| {
+        if t == 0. {
+            Some(0usize)
+        } else if t == 1. {
+            Some(11)
+        } else {
+            None
+        }
+    });
+    if let [Some(u), Some(v)] = endpoint {
+        budget.step(24)?;
+        return Ok(interval_point(
+            source,
+            tensor.poles[(11 * root[0] + u) * height + 11 * root[1] + v],
+        ));
+    }
+    if endpoint.iter().any(Option::is_some) {
+        budget.step(24)?;
+        let controls = std::array::from_fn(|i| {
+            if let Some(u) = endpoint[0] {
+                tensor.poles[(11 * root[0] + u) * height + 11 * root[1] + i]
+            } else {
+                tensor.poles[(11 * root[0] + i) * height
+                    + 11 * root[1]
+                    + endpoint[1].expect("one exact endpoint")]
+            }
+        });
+        return curve(
+            source,
+            controls,
+            uv[usize::from(endpoint[0].is_some())],
+            budget,
+        );
+    }
+    budget.step(4088)?;
     let weights = uv.map(basis::<12>);
     let anchor = interval_point(source, tensor.poles[11 * root[0] * height + 11 * root[1]]);
     let mut point = anchor;

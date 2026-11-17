@@ -8,7 +8,7 @@ use super::{
 enum Kind {
     Wall,
     Cone,
-    Disk { z: f64, outer: Option<I> },
+    Disk { z: I, outer: Option<I> },
 }
 #[derive(Clone, Copy)]
 pub(super) struct Part {
@@ -36,17 +36,23 @@ fn constant(v: f64) -> S {
     S::constant(I::point(v))
 }
 pub(super) fn circle(radius: I, outer: Option<I>, z: f64) -> [I; 4] {
+    circle_interval(radius, outer, I::point(z))
+}
+fn circle_interval(radius: I, outer: Option<I>, z: I) -> [I; 4] {
     let squared = outer.map_or_else(|| radius.square(), |r| (r - radius) * (r + radius));
     let area = pi() * squared;
-    [area, I::point(0.), I::point(0.), area * I::point(z)]
+    [area, I::point(0.), I::point(0.), area * z]
 }
 pub(super) fn cylinder(radius: I, z0: f64, z1: f64) -> [I; 4] {
-    let area = I::point(2.) * pi() * radius * (I::point(z1) - I::point(z0));
+    cylinder_interval(radius, I::point(z0), I::point(z1))
+}
+fn cylinder_interval(radius: I, z0: I, z1: I) -> [I; 4] {
+    let area = I::point(2.) * pi() * radius * (z1 - z0);
     [
         area,
         I::point(0.),
         I::point(0.),
-        area * (I::point(z0) + I::point(z1)) / I::point(2.),
+        area * (z0 + z1) / I::point(2.),
     ]
 }
 /// Borrowed actual material domain; bare threads have neither treatment.
@@ -55,7 +61,7 @@ pub(super) struct Domain<'a> {
     thread: &'a AuthoredThread,
     entry: Option<Entry>,
     tail: Option<Tail>,
-    end_station_mm: f64,
+    end_interval: I,
 }
 impl<'a> Domain<'a> {
     pub fn treated(body: &'a Cavity) -> Self {
@@ -63,12 +69,12 @@ impl<'a> Domain<'a> {
             thread: &body.thread,
             entry: body.entry,
             tail: body.tail,
-            end_station_mm: body.full_length_mm(),
+            end_interval: body.end_interval(),
         }
     }
     pub fn prefix(thread: &'a AuthoredThread, end_station_mm: f64) -> Self {
         Self {
-            end_station_mm,
+            end_interval: I::point(end_station_mm),
             ..Self::bare(thread)
         }
     }
@@ -77,7 +83,7 @@ impl<'a> Domain<'a> {
             thread,
             entry: None,
             tail: None,
-            end_station_mm: thread.full_length_mm(),
+            end_interval: thread.axial_end_interval(),
         }
     }
 }
@@ -88,31 +94,42 @@ pub(super) fn evaluate(
     options: FacePropertyOptions,
     work: &mut integrate::Work<'_>,
 ) -> Result<[I; 4], Error> {
-    let length = body.end_station_mm;
     let kind = match face {
         FaceKey::MaterialOuterWall => {
-            return Ok(cylinder(stock.ok_or(Error::Invalid)?, 0., length));
+            return Ok(cylinder_interval(
+                stock.ok_or(Error::Invalid)?,
+                I::point(0.),
+                body.end_interval,
+            ));
         }
         FaceKey::TerminalCylinder => {
             let t = body.tail.ok_or(Error::Invalid)?;
-            return Ok(cylinder(I::point(t.radius), t.station, length));
+            return Ok(cylinder_interval(
+                I::point(t.radius),
+                I::point(t.station),
+                body.end_interval,
+            ));
         }
         FaceKey::StartCap => {
             if let Some(e) = body.entry {
                 return Ok(circle(I::point(e.radius), stock, 0.));
             } else {
                 Kind::Disk {
-                    z: 0.,
+                    z: I::point(0.),
                     outer: stock,
                 }
             }
         }
         FaceKey::EndCap => {
             if let Some(t) = body.tail {
-                return Ok(circle(I::point(t.radius), stock, length));
+                return Ok(circle_interval(
+                    I::point(t.radius),
+                    stock,
+                    body.end_interval,
+                ));
             } else {
                 Kind::Disk {
-                    z: length,
+                    z: body.end_interval,
                     outer: stock,
                 }
             }
@@ -125,7 +142,7 @@ pub(super) fn evaluate(
         FaceKey::TerminalShoulder => {
             let t = body.tail.ok_or(Error::Invalid)?;
             Kind::Disk {
-                z: t.station,
+                z: I::point(t.station),
                 outer: Some(I::point(t.radius)),
             }
         }
@@ -140,7 +157,7 @@ pub(super) fn evaluate(
     let (a, k) = body.entry.map_or((I::point(0.), I::point(1.)), |e| {
         (I::point(e.radius), I::new(e.slope[0], e.slope[1]))
     });
-    let f = I::point(body.tail.map_or(length, |t| t.station));
+    let f = body.tail.map_or(body.end_interval, |t| I::point(t.station));
     let mut parts = Vec::with_capacity(5 * spec.starts as usize);
     for period in 0..spec.starts {
         for (band, b) in body.thread.bands().into_iter().enumerate() {
@@ -187,7 +204,7 @@ pub(super) fn evaluate(
                 .max(body.tail.map_or(0., |t| t.radius)),
             |r| r.hi,
         )
-        .max(length)
+        .max(body.end_interval.hi)
         .max(1.);
     let densities: Vec<&dyn integrate::Density> =
         parts.iter().map(|p| p as &dyn integrate::Density).collect();
@@ -247,7 +264,7 @@ impl Part {
                 [area, x.scale(factor), y.scale(factor), z]
             }
             Kind::Disk { z, outer } => {
-                let (sine, cosine) = angle(I::point(z), I::point(0.));
+                let (sine, cosine) = angle(z, I::point(0.));
                 let squared = outer.map_or_else(
                     || r.square(),
                     |v| S::constant(v).sub(r).mul(S::constant(v).add(r)),
@@ -259,12 +276,7 @@ impl Part {
                     self.dq / (I::point(3.) * self.abs_s)
                         * I::point(if outer.is_some() { -1. } else { 1. }),
                 );
-                [
-                    area,
-                    radial.mul(cosine),
-                    radial.mul(sine),
-                    area.scale(I::point(z)),
-                ]
+                [area, radial.mul(cosine), radial.mul(sine), area.scale(z)]
             }
         };
         let mut checked = [constant(0.); 4];

@@ -330,14 +330,20 @@ pub use body::{
     CommonMouthChart, CommonMouthHeadEnvelope, CommonMouthOptions, CommonTensorTransfer,
 };
 
-pub use body::{ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHeadSupportKind};
+pub use body::{
+    ClosedHeadOptions, ClosedRepairedHead, HeadSupportTransfer, RawHeadCorrespondence,
+    RawHeadFaceCorrespondence, RawHeadSupportKind,
+};
 
 pub use body::{
     AnalyticThreadOptions, AnalyticThreadRepair, AnalyticThreadTransfer, AuthoredPeriodicOptions,
     CoherentDegree11ThreadCarrier, CommonChartPeriodicThreadRepair, ContactThreadCarrier,
-    Degree11ClosedMaterial, Degree11ContactOptions, Degree11DomainEnd, Degree11JoinCollar,
-    Degree11MaterialFace, Degree11MaterialOptions, Degree11MaterialVolume,
-    Degree11MaterialVolumeOptions, Degree11OccupiedOptions, Degree11OwnedMaterialOptions,
+    Degree11ClosedMaterial, Degree11ContactOptions, Degree11DomainEnd, Degree11EndDiskOptions,
+    Degree11EndDiskProperties, Degree11EndDisks, Degree11FaceMeasurement,
+    Degree11FacePropertyOptions, Degree11JoinCollar, Degree11MaterialFace, Degree11MaterialOptions,
+    Degree11MaterialQuery, Degree11MaterialQueryError, Degree11MaterialQueryOptions,
+    Degree11MaterialVolume, Degree11MaterialVolumeOptions, Degree11OccupiedOptions,
+    Degree11OwnedMaterialOptions, Degree11ReplayMatch, Degree11ReplayMatchOptions,
     Degree11RimContact, Degree11RimContactId, Degree11RimKnot, Degree11RimUse, Degree11SignDomain,
     Degree11ThreadContacts, Degree11ThreadFace, Degree11ThreadOptions, DerivedThreadCarrier,
     DerivedThreadOptions, DyadicParameter, OccupiedDegree11Thread, OccupiedDerivedThread,
@@ -350,7 +356,9 @@ pub use body::{
     PeriodicOwnedOptions, PeriodicProposalOrigin, PeriodicShoulderOptions, PeriodicShoulderRepair,
     PeriodicThreadBounds, PeriodicThreadCorrespondence, PeriodicThreadRepair, PeriodicThreadSource,
     PeriodicVolumeOptions, RimContact, RimContactId, RimDomainEnd, RimDomainRole, RimKnot,
-    RimSignDomain, SuppliedThreadCorrespondence, ThreadCarrierTransfer, ThreadContactOptions,
+    RimSignDomain, SuppliedDegree11MaterialMatch, SuppliedDegree11MaterialOptions,
+    SuppliedThreadCorrespondence, SuppliedThreadRimTransfer, ThreadCarrierTransfer,
+    ThreadContactOptions,
 };
 
 pub use body::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSource};
@@ -358,11 +366,17 @@ pub use body::{ClosedMaterialOptions, DerivedClosedMaterial, MaterialFaceSource}
 pub use body::{MaterialVolume, MaterialVolumeOptions};
 
 pub use body::{
-    DelegatedWorkspaceBounds, JoinedMaterialCandidate, JoinedMeshOptions, OwnedDerivedMaterial,
-    OwnedMaterialOptions, OwnedMaterialQuery, OwnedMaterialQueryError, OwnedMaterialQueryOptions,
+    DelegatedWorkspaceBounds, JoinedDegree11MaterialCandidate, JoinedMaterialCandidate,
+    JoinedMeshOptions, OwnedDerivedMaterial, OwnedMaterialOptions, OwnedMaterialQuery,
+    OwnedMaterialQueryError, OwnedMaterialQueryOptions,
 };
 
 pub use body::{
     PeriodicMaterialRead, PeriodicReadError, PeriodicReadOptions, PeriodicReadStage,
     read_periodic_phillips_material, read_periodic_phillips_material_with_progress,
+};
+
+pub use body::{
+    Degree11MaterialRead, Degree11ReadError, Degree11ReadOptions, Degree11ReadStage,
+    read_degree11_phillips_material, read_degree11_phillips_material_with_progress,
 };

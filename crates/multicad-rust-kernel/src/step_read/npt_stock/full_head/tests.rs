@@ -1,5 +1,5 @@
 use super::*;
-fn candidate(quarter: bool) -> String {
+pub(super) fn candidate(quarter: bool) -> String {
     let source = super::super::tests::fixture(quarter);
     let doc = CompoundDocument::parse(&source, DocumentOptions::default(), None).unwrap();
     let parsed = Parsed::parse(
@@ -63,6 +63,15 @@ fn actual_full_clipped_d11_file_earns_independent_occupied_head_with_derived_cap
         );
         let actual_doc =
             CompoundDocument::parse(&actual, DocumentOptions::default(), None).unwrap();
+        assert_eq!(proof.actual_file(), actual);
+        assert_eq!(
+            proof.cap_chart().z_displacement_bounds_mm,
+            packet.cap_chart().z_displacement_bounds_mm
+        );
+        for binding in packet.component_bindings() {
+            let component = &actual_doc.records()[&binding.entity()][binding.component()];
+            assert_eq!(component.source.unwrap(), &actual[binding.actual_range()]);
+        }
         assert!(
             !actual_doc
                 .records()
@@ -77,6 +86,85 @@ fn actual_full_clipped_d11_file_earns_independent_occupied_head_with_derived_cap
             packet.cap_chart()
         );
     }
+}
+
+#[test]
+fn actual_cold_reader_errors_and_real_parser_transport_preserve_original_retry() {
+    let actual = candidate(false);
+    for options in [
+        Options {
+            maximum_work: 0,
+            ..Default::default()
+        },
+        Options {
+            maximum_work: 272_000_001,
+            ..Default::default()
+        },
+        Options {
+            maximum_bytes: 0,
+            ..Default::default()
+        },
+        Options {
+            maximum_bytes: 64 * 1024 * 1024 + 1,
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            DecodedFile::parse(&actual, options, None),
+            Err(Error::Invalid)
+        ));
+    }
+    assert!(matches!(
+        DecodedFile::parse("not a STEP physical file", Default::default(), None),
+        Err(Error::Invalid)
+    ));
+    assert!(matches!(
+        DecodedFile::parse(
+            &actual,
+            Options {
+                maximum_work: 1,
+                ..Default::default()
+            },
+            None
+        ),
+        Err(Error::Limit)
+    ));
+    assert!(matches!(
+        DecodedFile::parse(&actual, Default::default(), Some(&|| true)),
+        Err(Error::Cancelled)
+    ));
+    let mut unsupported = actual.clone();
+    let position = unsupported.rfind("ENDSEC;").unwrap();
+    unsupported.insert_str(position, "#999999999=UNSUPPORTED_BINARY(\"0F\");\n");
+    assert!(matches!(
+        DecodedFile::parse(&unsupported, Default::default(), None),
+        Err(Error::Unsupported)
+    ));
+    // The parser-error adapter also has its own contract. Obtain actual public
+    // parser failures; no synthetic error or private arena stands in for them.
+    let invalid =
+        CompoundDocument::parse("not a STEP physical file", DocumentOptions::default(), None)
+            .err()
+            .unwrap();
+    assert!(matches!(neutral_error(invalid), Error::Invalid));
+    let limited = CompoundDocument::parse(
+        &actual,
+        DocumentOptions {
+            maximum_work: 1,
+            ..Default::default()
+        },
+        None,
+    )
+    .err()
+    .unwrap();
+    assert!(matches!(neutral_error(limited), Error::Limit));
+    let cancelled = CompoundDocument::parse(&actual, DocumentOptions::default(), Some(&|| true))
+        .err()
+        .unwrap();
+    assert!(matches!(neutral_error(cancelled), Error::Cancelled));
+    let retry = DecodedFile::parse(&actual, Default::default(), None).unwrap();
+    assert_eq!(retry.actual_file(), actual);
+    assert!(!retry.component_bindings().is_empty());
 }
 
 fn occupied(

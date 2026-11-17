@@ -26,14 +26,11 @@ impl Graph {
         let zero = Q::integer(0, w)?;
         let one = Q::integer(1, w)?;
         for end in 0..2u8 {
-            let z = Q::float(
-                if end == 0 {
-                    0.
-                } else {
-                    self.source.full_length_mm()
-                },
-                w,
-            )?;
+            let z = if end == 0 {
+                Q::integer(0, w)?
+            } else {
+                self.source.exact_end(w)?
+            };
             let token = Q::encode(&[&zero, &r, &z], w)?;
             let key = Key([Constraint::Station(6 + end, 0), Constraint::Row(0)]);
             let rzv = [r.enclosure(w)?.1, z.enclosure(w)?.1, I::point(0.)];

@@ -225,7 +225,7 @@ fn encode_shell(
     placement: &Placement,
     tolerance: f64,
 ) -> Result<Entity, StepError> {
-    encode_material(file, thread, placement, tolerance, None)
+    encode_material(file, thread, placement, tolerance, None, None)
 }
 pub(super) fn encode_bore_shell(
     file: &mut StepFile,
@@ -245,6 +245,23 @@ pub(super) fn encode_bore_shell(
         placement,
         tolerance,
         Some(bore.radius_mm()),
+        None,
+    )
+}
+pub(super) fn encode_blind_shell(
+    file: &mut StepFile,
+    bore: &crate::rounded_thread::BlindBore,
+    placement: &Placement,
+    tolerance: f64,
+) -> Result<Entity, StepError> {
+    super::rounded_thread_blind::dimensions(bore, tolerance)?;
+    encode_material(
+        file,
+        bore.cutter(),
+        placement,
+        tolerance,
+        Some(bore.stock_radius_mm().as_f64()),
+        Some(bore.stock_height_mm().as_f64()),
     )
 }
 fn encode_material(
@@ -253,6 +270,7 @@ fn encode_material(
     placement: &Placement,
     tolerance: f64,
     stock: Option<f64>,
+    blind_height: Option<f64>,
 ) -> Result<Entity, StepError> {
     let ThreadSplines {
         bands,
@@ -286,7 +304,8 @@ fn encode_material(
         .collect::<Vec<_>>();
     let forward = thread.spec().left_hand ^ stock.is_some();
     let mut caps: [Vec<Entity>; 2] = std::array::from_fn(|_| Vec::with_capacity(5));
-    let mut faces = Vec::with_capacity(7 + usize::from(stock.is_some()));
+    let mut faces =
+        Vec::with_capacity(7 + usize::from(stock.is_some()) + usize::from(blind_height.is_some()));
     for (i, b) in bands.iter().enumerate() {
         let next = (i + 1) % 5;
         let rims = [0, 1].map(|end| {
@@ -318,7 +337,7 @@ fn encode_material(
         .map(|radius| {
             CylindricalTrim::new(
                 file,
-                [0., length].map(|z| placement.point_f64([0.; 2], z)),
+                [0., blind_height.unwrap_or(length)].map(|z| placement.point_f64([0.; 2], z)),
                 placement.normal,
                 placement.u,
                 radius,
@@ -337,15 +356,24 @@ fn encode_material(
                 .map(|&e| file.oriented_edge(e, false))
                 .collect()
         };
-        let bound = file.bound(&edges, stock.is_none());
+        let floor = blind_height.is_some() && top;
+        let bound = file.bound(&edges, stock.is_none() || floor);
         let mut bounds = Vec::with_capacity(1 + usize::from(stock.is_some()));
-        if let Some(cylinder) = &cylinder {
+        if let Some(cylinder) = &cylinder
+            && !floor
+        {
             bounds.push(cylinder.cap_bound(file, top, true));
         }
         bounds.push(bound);
         let center = file.point(placement.point_f64([0.; 2], [0., length][end]));
-        let normal = placement.normal.map(|n| if top { n } else { -n });
+        let normal = placement.normal.map(|n| if top && !floor { n } else { -n });
         faces.push(file.face(&bounds, center, normal, placement.u));
+    }
+    if let Some(height) = blind_height {
+        let cylinder = cylinder.as_ref().expect("blind stock cylinder");
+        let bound = cylinder.cap_bound(file, true, true);
+        let center = file.point(placement.point_f64([0.; 2], height));
+        faces.push(file.face(&[bound], center, placement.normal, placement.u));
     }
     if let Some(cylinder) = cylinder {
         faces.push(cylinder.wall(file, true));

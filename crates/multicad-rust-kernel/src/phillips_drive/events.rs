@@ -6,7 +6,10 @@ use crate::tapered_thread::interval::J;
 mod carrier;
 mod evaluate;
 pub(super) mod patches;
-pub use carrier::{CubicTrimSpan, TrimErrorBound};
+pub use carrier::{
+    CubicTrimSpan, TRIM_SPAN_COMPARE_WORK, TRIM_SPAN_SOURCE_WORK, TrimErrorBound,
+    TrimSpanComparison, TrimSpanCorrespondence,
+};
 pub use patches::{
     BoundaryMesh, FaceProperties, FacePropertyOptions, PatchAtlas, PatchBounds,
     PatchCorrespondence, PatchCorrespondenceOptions, PatchKey, QuadErrorBound, SurfacePatch,

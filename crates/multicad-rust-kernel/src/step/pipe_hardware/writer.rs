@@ -518,3 +518,6 @@ impl Encoder<'_, '_> {
         self.entity(format_args!("MANIFOLD_SOLID_BREP('',{shell})"))
     }
 }
+
+#[cfg(test)]
+mod tests;

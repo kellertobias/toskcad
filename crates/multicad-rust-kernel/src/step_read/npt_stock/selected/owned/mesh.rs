@@ -6,10 +6,14 @@ mod angular;
 mod cells;
 mod embedding;
 pub use embedding::LiteralEmbeddingProof;
+#[cfg(test)]
+mod endpoint_tests;
 mod hessian;
 mod normal;
 mod occurrence;
 pub use occurrence::PlacedLiteralMesh;
+mod face_plan;
+pub use face_plan::LiteralFaceGeometryPlan;
 mod plan;
 pub use plan::{LiteralGeometryOptions, LiteralGeometryPlan};
 mod sheared;
@@ -51,6 +55,21 @@ impl LiteralMeshOptions {
         Ok(())
     }
 }
+/// Sealed original edge/span parameters of one emitted cap chord. This is
+/// query metadata, not an occupied/embedding certificate or a new constructor.
+#[derive(Clone, Copy)]
+pub(crate) struct LiteralCapEdge {
+    pub(crate) edge: usize,
+    pub(crate) span: usize,
+    pub(crate) parameters: [f64; 2],
+    pub(crate) vertices: [u32; 2],
+}
+pub(crate) struct LiteralCapTrace<'a> {
+    pub(crate) face: usize,
+    pub(crate) apex: u32,
+    pub(crate) rim: &'a [u32],
+    pub(crate) edges: &'a [LiteralCapEdge],
+}
 pub struct LiteralMeshCandidate {
     source: OwnedMaterial,
     mesh: DisplayMesh,
@@ -88,6 +107,32 @@ impl LiteralMesh {
     }
 }
 impl LiteralMeshCandidate {
+    pub(crate) fn cap_traces(&self) -> [LiteralCapTrace<'_>; 2] {
+        self.caps.each_ref().map(|c| LiteralCapTrace {
+            face: c.face,
+            apex: c.apex,
+            rim: &c.rim,
+            edges: &c.edges,
+        })
+    }
+    /// Actual buffers still retained after the construction plan/registry
+    /// drop. SAME source Data allocation is shared with the caller's owner.
+    pub(crate) fn retained_facet_bytes(&self) -> usize {
+        size_of::<Self>()
+            + self.mesh.vertices.capacity() * 8
+            + (self.mesh.indices.capacity() + self.mesh.face_indices.capacity()) * 4
+            + self.root_triangles.capacity() * size_of::<Vec<usize>>()
+            + self
+                .root_triangles
+                .iter()
+                .map(|r| r.capacity() * size_of::<usize>())
+                .sum::<usize>()
+            + self
+                .caps
+                .iter()
+                .map(|c| c.rim.capacity() * 4 + c.edges.capacity() * size_of::<LiteralCapEdge>())
+                .sum::<usize>()
+    }
     /// Independently earns embedding of these exact rounded vertices. It
     /// continues the original aggregate work/storage ledger, without repair.
     pub fn certify_embedding(

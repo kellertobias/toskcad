@@ -891,9 +891,15 @@ fn full_common_chart_keeps_symbolic_station_and_independent_fourth_column() {
     assert!(mapped.point_within(p, measured).is_ok());
     assert!(mapped.point_within(p, 0.).is_err());
     assert!(mapped.point_within(p, f64::NAN).is_err());
-    assert!(mapped.require_normal(triangle, world, 0.001).is_ok());
     assert!(
         mapped
+            .prepare_normals()
+            .require_normal(triangle, world, 0.001)
+            .is_ok()
+    );
+    assert!(
+        mapped
+            .prepare_normals()
             .require_normal(triangle, [world[0], world[2], world[1]], 0.001)
             .is_err()
     );

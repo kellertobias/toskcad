@@ -2,8 +2,10 @@
 //! separate consumer gate, not inferred from indexed manifold connectivity.
 use super::*;
 use crate::display::{DisplayMesh, Tessellation};
+mod degree11;
 mod delegated;
 mod geometry;
+pub use degree11::JoinedDegree11MaterialCandidate;
 pub use delegated::DelegatedWorkspaceBounds;
 #[cfg(test)]
 pub(super) mod tests;
@@ -234,7 +236,9 @@ fn plane(
         let b = outer.len() + (i + 1) % inner.len();
         edges.push(if inner_forward { [a, b] } else { [b, a] });
     }
-    let region = crate::display::triangulate_region(points, &edges, 1).map_err(unresolved_mesh)?;
+    let holes = usize::from(!inner.is_empty());
+    let region =
+        crate::display::triangulate_region(points, &edges, holes).map_err(unresolved_mesh)?;
     let old = mesh_bytes(target);
     work.storage(
         old + n * 64

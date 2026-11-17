@@ -137,6 +137,13 @@ fn real_alternate_failure_returns_to_original_refinement_and_never_retries_error
         (MAX_SUBDIVISIONS, MAX_ROWS)
     );
     assert!(matches!(refine.advance(true), Err(Error::Limit)));
+    let mut angular = Grid::new();
+    while angular.rows() < MAX_ROWS {
+        angular.refine_angular().unwrap();
+    }
+    assert_eq!(angular.subdivisions, 1);
+    assert!(matches!(angular.refine_angular(), Err(Error::Limit)));
+    assert_eq!(angular.rows(), MAX_ROWS);
 }
 #[test]
 fn cancellation_at_failed_partition_and_new_allocation_never_publishes_a_partial_candidate() {

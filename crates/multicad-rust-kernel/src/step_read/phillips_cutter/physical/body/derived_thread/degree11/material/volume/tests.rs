@@ -51,6 +51,14 @@ fn full_d11_flux_matches_independent_polynomial_and_both_axis_subdivision_invari
     let q = tensor::Quadrature::new();
     let p = polynomial();
     let whole = tensor::cell(p, &q);
+    let cell = crate::tapered_thread::calculation_cell11(p).unwrap();
+    let normal = NormalPolynomial11::new(&cell).unwrap();
+    let cached = tensor::cached_cell(p, &q, &normal);
+    assert_eq!(
+        (cached.lo.to_bits(), cached.hi.to_bits()),
+        (whole.lo.to_bits(), whole.hi.to_bits())
+    );
+    assert!(normal.retained_budget_bytes() <= NormalPolynomial11::retained_capacity_bound_bytes());
     assert!(whole.lo <= 2. && whole.hi >= 2.);
     assert!(whole.hi - whole.lo < 1e-10);
     let mut sum = I::point(0.);
@@ -119,6 +127,22 @@ fn actual_original_flat_and_fitted_m3_volume_both_hands_and_pose() {
                     material.work_used() + volume.new_work_used()
                 );
                 assert_eq!(volume.thread_cells(), if fitted { 315 } else { 270 });
+                assert_eq!(volume.normals.len(), volume.thread_cells());
+                let original = material.thread().carrier().faces()[0]
+                    .source()
+                    .cell([0, 0])
+                    .unwrap();
+                let independent = NormalPolynomial11::new(&original).unwrap();
+                let bits = |field: &NormalPolynomial11| {
+                    field
+                        .coefficients()
+                        .iter()
+                        .flatten()
+                        .map(|p| p.map(|x| (x.lo.to_bits(), x.hi.to_bits())))
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(bits(&volume.normals[0]), bits(&independent));
+                assert!(volume.retained_budget_bytes() < volume.accounted_peak_bytes());
             });
         }
     }
@@ -372,5 +396,64 @@ fn actual_volume_invalid_resource_stage_cancel_and_exact_retry() {
             ),
             Err(PhillipsReadError::Unsupported)
         ));
+    });
+}
+
+#[test]
+fn actual_two_start_volume_and_owned_normal_cache_preserve_original_roots_within_caps() {
+    let (single, frame) = super::super::super::tests::actual_m3_parts(true, false);
+    let mut spec = single.thread().spec();
+    spec.starts = 2;
+    let multi = crate::phillips_drive::PhillipsScrew::new(
+        crate::helical_thread::Thread::new(spec).unwrap(),
+        *single.profile(),
+        single.spec(),
+        single.cavity().clone(),
+        100_000,
+        &|| false,
+    )
+    .unwrap();
+    let text =
+        crate::step::write_phillips_screw(&multi, frame[0], frame[1], frame[2], 1e-7).unwrap();
+    with_head(&text, &mut |head| {
+        let occupied = head
+            .degree11_thread_carrier(Default::default(), None)
+            .unwrap()
+            .certify_occupied(Default::default(), None)
+            .unwrap();
+        let material = head
+            .closed_degree11_material(&occupied, Default::default(), None)
+            .unwrap();
+        let volume = material.volume_bounds(Default::default(), None).unwrap();
+        let owned = volume.owned_snapshot(Default::default(), None).unwrap();
+        assert_eq!(owned.thread_faces().len(), 8);
+        assert_eq!(volume.normals.len(), volume.thread_cells());
+        assert!(volume.work_used() <= WORK_LIMIT && owned.work_used() <= WORK_LIMIT);
+        assert!(
+            volume.accounted_peak_bytes() <= MAX_BYTES && owned.accounted_peak_bytes() <= MAX_BYTES
+        );
+        let mut index = 0;
+        for (face, f) in owned.thread_faces().iter().enumerate() {
+            let [nu, nv] = f.source().spans();
+            for u in 0..nu {
+                for v in 0..nv {
+                    assert!(Arc::ptr_eq(
+                        owned.thread_normal(face, [u, v]).unwrap(),
+                        &volume.normals[index]
+                    ));
+                    index += 1;
+                }
+            }
+        }
+        assert_eq!(index, volume.thread_cells());
+        eprintln!(
+            "D11_CACHE_2START cells={index} volumework={} ownedwork={} cachebytes={} resident={} volumepeak={} ownedpeak={}",
+            volume.work_used(),
+            owned.work_used(),
+            cached_bytes(&volume.normals, volume.normals.capacity()),
+            owned.retained_budget_bytes(),
+            volume.accounted_peak_bytes(),
+            owned.accounted_peak_bytes()
+        );
     });
 }

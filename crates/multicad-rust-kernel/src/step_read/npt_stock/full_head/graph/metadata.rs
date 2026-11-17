@@ -371,3 +371,6 @@ pub(super) fn check(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

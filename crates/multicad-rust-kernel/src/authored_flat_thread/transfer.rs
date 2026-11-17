@@ -15,6 +15,7 @@ pub(super) fn certify(
     phases: [f64; 6],
     radii: [f64; 6],
     legacy: &Thread,
+    axial_end: I,
     options: SourceOptions,
     interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<TransferBounds, Error> {
@@ -22,8 +23,7 @@ pub(super) fn certify(
     let old_rate = I::point(legacy.helical_rate());
     let true_rate = I::point(1.) / true_gain;
     let gain_error = abs(true_gain - I::point(1.) / old_rate);
-    let span =
-        I::point(spec.length_mm) + I::point(spec.pitch_mm) * I::point(f64::from(spec.starts));
+    let span = axial_end + I::point(spec.pitch_mm) * I::point(f64::from(spec.starts));
     let angular_error = gain_error * span;
     let mut bands = [BandTransfer {
         position_error_mm: 0.,

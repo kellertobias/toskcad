@@ -3,7 +3,7 @@ use crate::step::{
     Writer,
     insert::{CurveOptions, DomainOptions, DomainPlan, SurfacePlan, TopologyPlan},
 };
-fn mixed(left: bool) -> String {
+pub(super) fn mixed(left: bool) -> String {
     let body = crate::step_read::owned_insert::tests::graph(left, 4.);
     let d = DomainPlan::prepare(&body, DomainOptions::default(), None).unwrap();
     let s = SurfacePlan::prepare(&d, CurveOptions::default(), None).unwrap();

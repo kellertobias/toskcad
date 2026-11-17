@@ -120,6 +120,47 @@ fn physical_malformed_geometry_and_unsupported_curve_families_cannot_earn_materi
         let inner_name = record_range(inner, &actual).start
             ..record_range(inner, &actual).start + inner.name.len();
         let face = fields(face_record, &actual);
+        // Genuine distinct face/edge records retain their original incidence;
+        // substituting another actual support must not grant occupied material.
+        let tensor_faces: Vec<_> = arena
+            .values()
+            .flatten()
+            .filter(|e| {
+                e.name == "ADVANCED_FACE"
+                    && arena[&reference(&e.args[2]).unwrap()][0].name
+                        == "B_SPLINE_SURFACE_WITH_KNOTS"
+            })
+            .collect();
+        assert!(tensor_faces.len() > 1);
+        let support0 = reference(&tensor_faces[0].args[2]).unwrap();
+        let support1 = reference(&tensor_faces[1].args[2]).unwrap();
+        assert_ne!(support0, support1);
+        let aliased_face = fields(tensor_faces[1], &actual)[2].clone();
+        let spline_edges: Vec<_> = arena
+            .values()
+            .flatten()
+            .filter(|e| {
+                e.name == "EDGE_CURVE"
+                    && arena[&reference(&e.args[3]).unwrap()][0].name == "B_SPLINE_CURVE_WITH_KNOTS"
+            })
+            .collect();
+        assert!(spline_edges.len() > 1);
+        let curve0 = reference(&spline_edges[0].args[3]).unwrap();
+        let other_edge = spline_edges
+            .iter()
+            .find(|e| reference(&e.args[3]).unwrap() != curve0)
+            .unwrap();
+        assert_ne!(
+            [
+                reference(&spline_edges[0].args[1]).unwrap(),
+                reference(&spline_edges[0].args[2]).unwrap()
+            ],
+            [
+                reference(&other_edge.args[1]).unwrap(),
+                reference(&other_edge.args[2]).unwrap()
+            ]
+        );
+        let aliased_edge = fields(other_edge, &actual)[3].clone();
         let mut out = Vec::new();
         let mut add = |label, range, replacement: &str, expected| {
             out.push(Damage {
@@ -268,6 +309,18 @@ fn physical_malformed_geometry_and_unsupported_curve_families_cannot_earn_materi
             insert..insert,
             "#999999=CARTESIAN_POINT('',(LENGTH_MEASURE(1.0000000000000000000001),0.,0.));\n",
             GeometryError::Unsupported,
+        );
+        add(
+            "distinct tensor face borrows another actual support ID",
+            aliased_face,
+            &format!("#{support0}"),
+            GeometryError::Unresolved,
+        );
+        add(
+            "distinct spline edge borrows another actual curve ID",
+            aliased_edge,
+            &format!("#{curve0}"),
+            GeometryError::Invalid,
         );
         out
     }; // The genuine original neutral arena and all range scaffolding die here.
@@ -439,5 +492,409 @@ pub(crate) fn exclusive_interior_nextup(input: &str) -> InteriorChange {
         pole_index,
         old_value,
         new_value,
+    }
+}
+// Copy actual physical records under fresh IDs. The resulting graphs are
+// deliberately over the finite decoder frontier, not earned material objects.
+fn physical_incidence_frontier(actual: &str, unique_vertices: bool) -> String {
+    use std::fmt::Write as _;
+    let arena = part21::parse(actual).unwrap();
+    let loops: Vec<_> = arena
+        .values()
+        .flatten()
+        .filter(|e| e.name == "EDGE_LOOP" && refs(&e.args[1]).unwrap().len() == 4)
+        .take(if unique_vertices { 1 } else { 2 })
+        .collect();
+    assert_eq!(loops.len(), if unique_vertices { 1 } else { 2 });
+    let mut next = *arena.keys().next_back().unwrap() + 1;
+    let mut records = String::new();
+    let mut replacements = Vec::new();
+    let mut copied_edges = 0;
+    let mut copied_vertices = 0;
+    for (index, loop_record) in loops.into_iter().enumerate() {
+        let original = refs(&loop_record.args[1]).unwrap();
+        let length = if unique_vertices {
+            52
+        } else if index == 0 {
+            80
+        } else {
+            52
+        };
+        assert!(length <= 80 && length % original.len() == 0);
+        let mut oriented_ids = Vec::new();
+        for offset in 0..length {
+            let oriented = &arena[&original[offset % original.len()]][0];
+            assert_eq!(oriented.name, "ORIENTED_EDGE");
+            let edge = &arena[&reference(&oriented.args[3]).unwrap()][0];
+            assert_eq!(edge.name, "EDGE_CURVE");
+            let mut body = edge.source.unwrap().to_owned();
+            let args = arguments(&body);
+            if unique_vertices {
+                for k in [2, 1] {
+                    let vertex = &arena[&reference(&edge.args[k]).unwrap()][0];
+                    assert_eq!(vertex.name, "VERTEX_POINT");
+                    let point = reference(&vertex.args[1]).unwrap();
+                    assert_eq!(arena[&point][0].name, "CARTESIAN_POINT");
+                    writeln!(records, "#{next}=VERTEX_POINT('',#{point});").unwrap();
+                    body.replace_range(args[k].clone(), &format!("#{next}"));
+                    next += 1;
+                    copied_vertices += 1;
+                }
+            }
+            let edge_id = next;
+            next += 1;
+            writeln!(records, "#{edge_id}={body};").unwrap();
+            copied_edges += 1;
+            let mut body = oriented.source.unwrap().to_owned();
+            body.replace_range(arguments(&body)[3].clone(), &format!("#{edge_id}"));
+            writeln!(records, "#{next}={body};").unwrap();
+            oriented_ids.push(format!("#{next}"));
+            next += 1;
+        }
+        replacements.push((
+            fields(loop_record, actual)[1].clone(),
+            format!("({})", oriented_ids.join(",")),
+        ));
+    }
+    assert_eq!(copied_edges, if unique_vertices { 52 } else { 132 });
+    assert_eq!(copied_vertices, if unique_vertices { 104 } else { 0 });
+    let mut changed = actual.to_owned();
+    changed.insert_str(actual.rfind("ENDSEC;").unwrap(), &records);
+    replacements.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
+    for (range, value) in replacements {
+        changed.replace_range(range, &value);
+    }
+    // Independently parse the actual resulting file and prove the added IDs
+    // really own the advertised distinct vertex/edge records.
+    let parsed = part21::parse(&changed).unwrap();
+    for (kind, added) in [
+        ("EDGE_CURVE", copied_edges),
+        ("VERTEX_POINT", copied_vertices),
+    ] {
+        let count = |map: &BTreeMap<u32, Vec<part21::Entity<'_>>>| {
+            map.values().flatten().filter(|e| e.name == kind).count()
+        };
+        assert_eq!(count(&parsed), count(&arena) + added);
+    }
+    changed
+}
+
+#[test]
+fn physical_graph_vertex_and_edge_frontiers_refuse_before_material_and_retry() {
+    let source = engineering();
+    let candidate = writer::propose(&source, writer::Options::default(), None).unwrap();
+    let path = std::env::temp_dir().join(format!(
+        "codec-incidence-frontier-{}.step",
+        std::process::id()
+    ));
+    std::fs::write(&path, candidate.as_str()).unwrap();
+    drop(candidate);
+    drop(source);
+    let actual = std::fs::read_to_string(&path).unwrap();
+    for unique_vertices in [false, true] {
+        let changed = physical_incidence_frontier(&actual, unique_vertices);
+        assert_ne!(changed, actual);
+        std::fs::write(&path, &changed).unwrap();
+        drop(changed); // All construction arenas and buffers die before read.
+        let damaged = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            read(
+                &damaged,
+                1e-7,
+                1e-6,
+                Options {
+                    additional_resident_bytes: actual.capacity() + damaged.capacity()
+                        - damaged.len()
+                        + 4096,
+                    ..Default::default()
+                },
+                None
+            )
+            .err(),
+            Some(GeometryError::Limit),
+            "unique vertices={unique_vertices}"
+        );
+    }
+    std::fs::write(&path, &actual).unwrap();
+    let restored = std::fs::read_to_string(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let retry = read(
+        &restored,
+        1e-7,
+        1e-6,
+        Options {
+            additional_resident_bytes: actual.capacity() + restored.capacity() - restored.len()
+                + 4096,
+            ..Default::default()
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(retry.original_input(), actual);
+    assert_eq!(
+        retry
+            .material()
+            .capped_thread()
+            .classify([0., 0., 3.], None)
+            .unwrap(),
+        radial::Location::Inside
+    );
+}
+
+// Physical preparation only: clone a real point under a fresh ID so changing
+// its curve use cannot silently change interned tensor/vertex/seam owners.
+pub(crate) fn exclusive_curve_interior_nextup(input: &str) -> String {
+    let arena = part21::parse(input).unwrap();
+    let (&curve_id, components) = arena
+        .iter()
+        .find(|(_, components)| {
+            components.len() == 1 && components[0].name == "B_SPLINE_CURVE_WITH_KNOTS"
+        })
+        .unwrap();
+    let curve = &components[0];
+    assert_eq!(curve.args[1], Value::Number(9.));
+    let poles = refs(&curve.args[2]).unwrap();
+    let pole_index = 2;
+    assert!(poles.len() >= 10 && (2..=7).contains(&(pole_index % 9)));
+    let old_point_id = poles[pole_index];
+    let point = &arena[&old_point_id][0];
+    assert_eq!(point.name, "CARTESIAN_POINT");
+    let coords = fields(point, input)[1].clone();
+    let values = arguments(&input[coords.clone()]);
+    let scalar = coords.start + values[0].start..coords.start + values[0].end;
+    let old_value = input[scalar.clone()].parse::<f64>().unwrap();
+    let new_value = old_value.next_up();
+    assert!(old_value.is_finite() && new_value.is_finite() && new_value > old_value);
+    let new_id = *arena.keys().next_back().unwrap() + 1;
+    assert!(!arena.contains_key(&new_id));
+    let body_range = record_range(point, input);
+    let mut new_body = input[body_range.clone()].to_owned();
+    new_body.replace_range(
+        scalar.start - body_range.start..scalar.end - body_range.start,
+        &writer::numbers::literal(new_value).unwrap(),
+    );
+    let pole_list = fields(curve, input)[2].clone();
+    let pole_fields = arguments(&input[pole_list.clone()]);
+    assert_eq!(pole_fields.len(), poles.len());
+    let reference_range = pole_list.start + pole_fields[pole_index].start
+        ..pole_list.start + pole_fields[pole_index].end;
+    assert_eq!(input[reference_range.clone()], format!("#{old_point_id}"));
+    let mut text = input.to_owned();
+    text.insert_str(
+        input.rfind("ENDSEC;").unwrap(),
+        &format!("#{new_id}={new_body};\n"),
+    );
+    text.replace_range(reference_range, &format!("#{new_id}"));
+    let changed = part21::parse(&text).unwrap();
+    assert_eq!(changed.len(), arena.len() + 1);
+    for (&id, original) in &arena {
+        if id != curve_id {
+            assert_eq!(
+                original.iter().map(|e| e.source).collect::<Vec<_>>(),
+                changed[&id].iter().map(|e| e.source).collect::<Vec<_>>()
+            );
+        }
+    }
+    let actual_curve = &changed[&curve_id][0];
+    assert_eq!(curve.name, actual_curve.name);
+    for (k, (a, b)) in curve.args.iter().zip(&actual_curve.args).enumerate() {
+        if k != 2 {
+            assert_eq!(a, b);
+        }
+    }
+    let after = refs(&actual_curve.args[2]).unwrap();
+    assert_eq!(after.len(), poles.len());
+    for (i, (a, b)) in poles.iter().zip(&after).enumerate() {
+        assert_eq!(*b, if i == pole_index { new_id } else { *a });
+    }
+    eprintln!(
+        "EXCLUSIVE_CURVE_INTERIOR curve{curve_id} originalpoint{old_point_id} freshpoint{new_id} pole{pole_index} oldbits{} newbits{} actual_curve_ref_changes1 all_other_records_unchangedtrue",
+        old_value.to_bits(),
+        new_value.to_bits()
+    );
+    text
+}
+
+#[test]
+fn physical_exclusive_curve_control_refusal_keeps_original_source_usable() {
+    let source = engineering();
+    let before = source.shell().input().clone();
+    let snapshot_budget = source.receipt().retained_result_bytes_upper_bound;
+    let candidate = writer::propose(
+        &source,
+        writer::Options {
+            additional_resident_bytes: snapshot_budget,
+            ..Default::default()
+        },
+        None,
+    )
+    .unwrap();
+    let path =
+        std::env::temp_dir().join(format!("codec-curve-control-{}.step", std::process::id()));
+    std::fs::write(&path, candidate.as_str()).unwrap();
+    drop(candidate);
+    let original = std::fs::read_to_string(&path).unwrap();
+    let changed = exclusive_curve_interior_nextup(&original);
+    std::fs::write(&path, &changed).unwrap();
+    drop(changed);
+    let changed = std::fs::read_to_string(&path).unwrap();
+    // This actual changed curve is refused before material admission. Never
+    // pass it to the independent correspondence helper as an earned source.
+    assert_eq!(
+        read(
+            &changed,
+            1e-7,
+            1e-6,
+            Options {
+                additional_resident_bytes: source.receipt().retained_result_bytes_upper_bound
+                    + snapshot_budget
+                    + original.capacity()
+                    + changed.capacity()
+                    - changed.len()
+                    + 4096,
+                ..Default::default()
+            },
+            None
+        )
+        .err(),
+        Some(GeometryError::Unresolved)
+    );
+    assert_eq!(source.shell().input(), &before);
+    drop(before);
+    drop(changed);
+    std::fs::write(&path, &original).unwrap();
+    let restored = std::fs::read_to_string(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let retry = writer::qualify_actual_file(
+        &source,
+        &restored,
+        1e-7,
+        1e-6,
+        writer::QualificationOptions {
+            additional_resident_bytes: original.capacity() + restored.capacity() - restored.len()
+                + 4096,
+            ..Default::default()
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(retry.as_str(), original);
+    assert_eq!(
+        retry
+            .material()
+            .material()
+            .capped_thread()
+            .classify([0., 0., 3.], None)
+            .unwrap(),
+        radial::Location::Inside
+    );
+}
+
+pub(crate) fn actual_cone_first_face_order(input: &str) -> String {
+    let arena = part21::parse(input).unwrap();
+    let (&shell_id, shell) = arena
+        .iter()
+        .find(|(_, c)| c.len() == 1 && c[0].name == "CLOSED_SHELL")
+        .unwrap();
+    let shell = &shell[0];
+    let original = refs(&shell.args[1]).unwrap();
+    assert_eq!(original.len(), 13);
+    let cone_indices: Vec<_> = original
+        .iter()
+        .enumerate()
+        .filter_map(|(i, id)| {
+            let face = &arena[id][0];
+            assert_eq!(face.name, "ADVANCED_FACE");
+            (arena[&reference(&face.args[2]).unwrap()][0].name == "CONICAL_SURFACE").then_some(i)
+        })
+        .collect();
+    let [index] = cone_indices.as_slice() else {
+        panic!("one actual cone face");
+    };
+    assert!(*index > 0);
+    let mut ordered = original.clone();
+    let cone = ordered.remove(*index);
+    ordered.insert(0, cone);
+    assert_eq!(
+        ordered.iter().collect::<std::collections::BTreeSet<_>>(),
+        original.iter().collect::<std::collections::BTreeSet<_>>()
+    );
+    let mut text = input.to_owned();
+    text.replace_range(
+        fields(shell, input)[1].clone(),
+        &format!(
+            "({})",
+            ordered
+                .iter()
+                .map(|id| format!("#{id}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    );
+    assert_ne!(text, input);
+    let changed = part21::parse(&text).unwrap();
+    assert_eq!(changed.len(), arena.len());
+    for (&id, original) in &arena {
+        if id != shell_id {
+            assert_eq!(
+                original.iter().map(|e| e.source).collect::<Vec<_>>(),
+                changed[&id].iter().map(|e| e.source).collect::<Vec<_>>()
+            );
+        }
+    }
+    assert_eq!(refs(&changed[&shell_id][0].args[1]).unwrap(), ordered);
+    eprintln!(
+        "ACTUAL_CONE_FIRST shell{shell_id} cone_face{cone} moved_from{index} faces13 all_other_records_unchangedtrue"
+    );
+    text
+}
+
+pub(crate) struct CircleChange {
+    pub text: String,
+    pub entity: u32,
+    pub old_radius: f64,
+    pub new_radius: f64,
+}
+// Only actual physical bytes change. This value carries no geometry admission.
+pub(crate) fn actual_circle_radius_nextup(input: &str) -> CircleChange {
+    let arena = part21::parse(input).unwrap();
+    let (&id, components) = arena
+        .iter()
+        .find(|(_, c)| c.len() == 1 && c[0].name == "CIRCLE")
+        .unwrap();
+    let circle = &components[0];
+    let Value::Number(old_radius) = circle.args[2] else {
+        panic!("actual radius literal");
+    };
+    let new_radius = old_radius.next_up();
+    assert!(old_radius > 0. && new_radius.is_finite() && new_radius > old_radius);
+    let mut text = input.to_owned();
+    text.replace_range(
+        fields(circle, input)[2].clone(),
+        &writer::numbers::literal(new_radius).unwrap(),
+    );
+    assert_ne!(text, input);
+    let changed = part21::parse(&text).unwrap();
+    assert_eq!(arena.len(), changed.len());
+    for (&other, before) in &arena {
+        if other != id {
+            assert_eq!(
+                before.iter().map(|e| e.source).collect::<Vec<_>>(),
+                changed[&other].iter().map(|e| e.source).collect::<Vec<_>>()
+            );
+        }
+    }
+    assert_eq!(circle.args[0..2], changed[&id][0].args[0..2]);
+    assert_eq!(changed[&id][0].args[2], Value::Number(new_radius));
+    eprintln!(
+        "ACTUAL_CIRCLE_RADIUS entity{id} oldbits{} newbits{} all_other_records_unchangedtrue",
+        old_radius.to_bits(),
+        new_radius.to_bits()
+    );
+    CircleChange {
+        text,
+        entity: id,
+        old_radius,
+        new_radius,
     }
 }

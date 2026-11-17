@@ -166,7 +166,7 @@ fn analytic_span(curve: AnalyticCurve) -> Span {
         source_error: 0.,
     }
 }
-pub(super) fn edges(
+pub(in crate::geometry::repaired_phillips_body) fn edges(
     cutter: &BoundaryTopology<'_>,
     ordinals: &[u32],
     endpoints: &[[Point; 2]],

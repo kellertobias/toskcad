@@ -1,4 +1,18 @@
 use crate::{Error, GridCoordinate, Quantum, Rational, parse_length_mm};
+
+#[test]
+fn unary_negation_preserves_exact_normalization_and_cancels() {
+    let zero = Rational::new(0, 1).unwrap();
+    for (numerator, denominator) in [(0, 7), (1, 3), (-7, 2), (25, 10)] {
+        let value = Rational::new(numerator, denominator).unwrap();
+        let negated = -value;
+        let (n, d) = value.ratio();
+        assert_eq!(negated.ratio(), (-n, d));
+        assert_eq!(-negated, value);
+        assert_eq!(negated.checked_add(value).unwrap(), zero);
+    }
+    assert_eq!((-zero).ratio(), (0, 1));
+}
 fn q(n: i64, d: i64) -> Rational {
     Rational::new(n, d).unwrap()
 }

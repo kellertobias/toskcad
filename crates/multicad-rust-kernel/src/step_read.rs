@@ -67,11 +67,17 @@ pub use phillips_cutter::{
 mod round;
 mod rounded_cylinder;
 mod rounded_thread;
+mod rounded_thread_blind;
 mod rounded_thread_bore;
 mod same_domain;
 pub use rounded_thread::{
     ImportedRoundedThread, read_rounded_thread, read_rounded_thread_compound,
     rounded_thread_import_matches, verify_rounded_thread,
+};
+pub use rounded_thread_blind::{
+    RepairedRoundedBlindCandidate, RoundedBlindCorrespondence, read_repaired_rounded_blind_bore,
+    repaired_rounded_blind_import_matches, verify_rounded_blind_correspondence,
+    verify_rounded_thread_blind_bore,
 };
 pub use rounded_thread_bore::{
     ImportedRoundedThreadBore, read_rounded_thread_bore, read_rounded_thread_bore_compound,
@@ -100,7 +106,7 @@ pub use compound::ownership::{
     DocumentOwnership, DocumentOwnershipError, DocumentOwnershipOptions,
     validate_document_topology_ownership,
 };
-pub use source::{SourceImport, read_source_compound};
+pub use source::{SourceImport, read_actual_mapped_head_source, read_source_compound};
 mod stadium;
 mod warped;
 
@@ -1104,6 +1110,8 @@ pub use phillips_cutter::{
     ClosedHeadOptions as PhillipsClosedHeadOptions,
     ClosedRepairedHead as PhillipsClosedRepairedHead,
     HeadSupportTransfer as PhillipsHeadSupportTransfer,
+    RawHeadCorrespondence as PhillipsRawHeadCorrespondence,
+    RawHeadFaceCorrespondence as PhillipsRawHeadFaceCorrespondence,
     RawHeadSupportKind as PhillipsRawHeadSupportKind,
 };
 
@@ -1117,13 +1125,23 @@ pub use phillips_cutter::{
     Degree11ClosedMaterial as PhillipsDegree11ClosedMaterial,
     Degree11ContactOptions as PhillipsDegree11ContactOptions,
     Degree11DomainEnd as PhillipsDegree11DomainEnd,
+    Degree11EndDiskOptions as PhillipsDegree11EndDiskOptions,
+    Degree11EndDiskProperties as PhillipsDegree11EndDiskProperties,
+    Degree11EndDisks as PhillipsDegree11EndDisks,
+    Degree11FaceMeasurement as PhillipsDegree11FaceMeasurement,
+    Degree11FacePropertyOptions as PhillipsDegree11FacePropertyOptions,
     Degree11JoinCollar as PhillipsDegree11JoinCollar,
     Degree11MaterialFace as PhillipsDegree11MaterialFace,
     Degree11MaterialOptions as PhillipsDegree11MaterialOptions,
+    Degree11MaterialQuery as PhillipsDegree11MaterialQuery,
+    Degree11MaterialQueryError as PhillipsDegree11MaterialQueryError,
+    Degree11MaterialQueryOptions as PhillipsDegree11MaterialQueryOptions,
     Degree11MaterialVolume as PhillipsDegree11MaterialVolume,
     Degree11MaterialVolumeOptions as PhillipsDegree11MaterialVolumeOptions,
     Degree11OccupiedOptions as PhillipsDegree11OccupiedOptions,
     Degree11OwnedMaterialOptions as PhillipsDegree11OwnedMaterialOptions,
+    Degree11ReplayMatch as PhillipsDegree11ReplayMatch,
+    Degree11ReplayMatchOptions as PhillipsDegree11ReplayMatchOptions,
     Degree11RimContact as PhillipsDegree11RimContact,
     Degree11RimContactId as PhillipsDegree11RimContactId,
     Degree11RimKnot as PhillipsDegree11RimKnot, Degree11RimUse as PhillipsDegree11RimUse,
@@ -1164,7 +1182,10 @@ pub use phillips_cutter::{
     PeriodicThreadRepair as PhillipsPeriodicThreadRepair,
     PeriodicThreadSource as PhillipsPeriodicThreadSource,
     PeriodicVolumeOptions as PhillipsPeriodicVolumeOptions,
+    SuppliedDegree11MaterialMatch as PhillipsSuppliedDegree11MaterialMatch,
+    SuppliedDegree11MaterialOptions as PhillipsSuppliedDegree11MaterialOptions,
     SuppliedThreadCorrespondence as PhillipsSuppliedThreadCorrespondence,
+    SuppliedThreadRimTransfer as PhillipsSuppliedThreadRimTransfer,
     ThreadCarrierTransfer as PhillipsThreadCarrierTransfer,
 };
 
@@ -1181,6 +1202,7 @@ pub use phillips_cutter::{
 
 pub use phillips_cutter::{
     DelegatedWorkspaceBounds as PhillipsDelegatedWorkspaceBounds,
+    JoinedDegree11MaterialCandidate as PhillipsJoinedDegree11MaterialCandidate,
     JoinedMaterialCandidate as PhillipsJoinedMaterialCandidate,
     JoinedMeshOptions as PhillipsJoinedMeshOptions,
     OwnedDerivedMaterial as PhillipsOwnedDerivedMaterial,
@@ -1204,4 +1226,12 @@ pub use phillips_cutter::{
     PeriodicReadOptions as PhillipsPeriodicReadOptions,
     PeriodicReadStage as PhillipsPeriodicReadStage, read_periodic_phillips_material,
     read_periodic_phillips_material_with_progress,
+};
+
+pub use phillips_cutter::{
+    Degree11MaterialRead as PhillipsDegree11MaterialRead,
+    Degree11ReadError as PhillipsDegree11ReadError,
+    Degree11ReadOptions as PhillipsDegree11ReadOptions,
+    Degree11ReadStage as PhillipsDegree11ReadStage, read_degree11_phillips_material,
+    read_degree11_phillips_material_with_progress,
 };

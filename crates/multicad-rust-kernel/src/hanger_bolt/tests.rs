@@ -395,3 +395,24 @@ fn tiny_but_real_rounded_root_never_bypasses_the_derivative_precision_floor() {
     ));
     assert_eq!(*hanger.metric(), thread);
 }
+
+#[test]
+fn exact_periodic_wood_domain_does_not_reuse_binary_connected_end_caps() {
+    let original = fixture(false, false);
+    assert!(Hanger::new(original, None).is_ok());
+    let wood = AuthoredThread::new_with_exact_axial_domain(
+        original.wood.spec(),
+        crate::Rational::new(123, 10).unwrap(),
+        SourceOptions {
+            position_limit_mm: 1e-7,
+            normal_angle_limit_rad: 1e-6,
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        Hanger::new(Spec { wood, ..original }, None),
+        Err(Error::Unsupported)
+    );
+    assert!(Hanger::new(original, None).is_ok());
+}

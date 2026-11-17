@@ -65,6 +65,11 @@ pub struct Volume {
 impl Hanger {
     pub fn new(spec: Spec, interrupt: Option<&dyn Fn() -> bool>) -> Result<Self, Error> {
         checkpoint(interrupt)?;
+        // This connected graph still owns binary finite end stations. An
+        // explicit canonical domain needs its own shoulder/cap qualification.
+        if spec.wood.exact_axial_extent().is_some() {
+            return Err(Error::Unsupported);
+        }
         if [spec.plain_length_mm, spec.plain_radius_mm]
             .into_iter()
             .any(|v| !v.is_finite() || v <= 0. || v > 1e7)

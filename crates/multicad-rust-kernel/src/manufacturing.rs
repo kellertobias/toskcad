@@ -6,6 +6,8 @@
 //! chord tolerance before certification.
 
 use crate::display::{DisplayMesh, MeshError};
+mod counting_sort;
+mod fan_cycles;
 
 const MAX_TRIANGLES: usize = 5_000_000;
 const MAX_VERTICES: usize = MAX_TRIANGLES * 3;
@@ -97,17 +99,19 @@ pub fn certify(mesh: &DisplayMesh) -> Result<MeshProof, MeshError> {
     }
 }
 
-/// Private budgeted form of the same exact indexed-connectivity algorithm.
-/// The callback charges work, or checks total live certification scratch bytes,
-/// before the corresponding operation/allocation. It never authorizes geometry.
-pub(crate) fn certify_counted<E>(
+/// Budgeted indexed connectivity, preserving the input coordinates/topology.
+/// The callback receives incremental logical work and/or current certification
+/// scratch bytes before the operation/allocation. Scratch excludes the input
+/// mesh and caller-owned data. Returning an error aborts without a proof.
+/// Connectivity alone supplies no source correspondence or literal embedding.
+pub fn certify_counted<E>(
     mesh: &DisplayMesh,
     callback: &mut dyn FnMut(usize, Option<usize>) -> Result<(), E>,
 ) -> Result<MeshProof, CountedError<E>> {
     certify_impl::<_, true>(mesh, &mut Budget(callback))
 }
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum CountedError<E> {
+pub enum CountedError<E> {
     Mesh(MeshError),
     Interrupted(E),
 }
@@ -138,8 +142,15 @@ impl<E, const COUNTED: bool> Budget<'_, E, COUNTED> {
 }
 fn sort_counted<E, const COUNTED: bool>(
     edges: &mut Vec<[u32; 3]>,
+    vertices: usize,
     budget: &mut Budget<E, COUNTED>,
 ) -> Result<(), CountedError<E>> {
+    // certify_impl has validated every endpoint and generated strictly
+    // increasing coedge ordinals. Stable b/a passes therefore also retain
+    // the full third-key ordering. Avoid vertex-sized storage for sparse data.
+    if vertices <= edges.len() {
+        return counting_sort::sort(edges, vertices, budget);
+    }
     // Both buffers have exactly the original edge count. Every comparison and
     // literal edge-record copy is charged; cancellation returns normally.
     budget.storage(
@@ -248,7 +259,7 @@ fn certify_impl<E, const COUNTED: bool>(
         }
     }
     if COUNTED {
-        sort_counted(&mut edges, budget)?;
+        sort_counted(&mut edges, vertices.len(), budget)?;
     } else {
         edges.sort_unstable();
     }
@@ -278,33 +289,55 @@ fn certify_impl<E, const COUNTED: bool>(
         {
             return Err(INVALID.into());
         }
-        fans.join(start, next(opposite), budget)?;
-        fans.join(next(start), opposite, budget)?;
+        if COUNTED {
+            // Pairing is an involution and next() permutes triangle corners.
+            // Their composition permutes ALL corners, preserving the vertex
+            // by the opposite-winding test above. Its cycles are precisely
+            // the components of the original fan-union graph.
+            budget.work(2)?;
+            fans.0[start as usize] = next(opposite);
+            fans.0[opposite as usize] = next(start);
+        } else {
+            fans.join(start, next(opposite), budget)?;
+            fans.join(next(start), opposite, budget)?;
+        }
         shells.join(start / 3, opposite / 3, budget)?;
     }
     let edge_pairs = (edges.len() / 2) as u32;
     drop(edges);
 
-    budget.storage(
-        (mesh.indices.len() + triangles.len() + vertices.len())
-            .checked_mul(4)
-            .ok_or(MeshError::BudgetExceeded)?,
-    )?;
-    budget.work(vertices.len())?;
-    let mut links = vec![u32::MAX; vertices.len()];
-    budget.storage((fans.0.capacity() + shells.0.capacity() + links.capacity()) * 4)?;
-    let mut vertex_links = 0;
-    for (corner, &vertex) in mesh.indices.iter().enumerate() {
-        budget.work(1)?;
-        let root = fans.root(corner as u32, budget)?;
-        let link = &mut links[vertex as usize];
-        if *link == u32::MAX {
-            *link = root;
-            vertex_links += 1;
-        } else if *link != root {
-            return Err(INVALID.into());
+    let vertex_links = if COUNTED {
+        fan_cycles::validate(
+            &mut fans.0,
+            &mesh.indices,
+            vertices.len(),
+            shells.0.capacity(),
+            budget,
+        )?
+    } else {
+        budget.storage(
+            (mesh.indices.len() + triangles.len() + vertices.len())
+                .checked_mul(4)
+                .ok_or(MeshError::BudgetExceeded)?,
+        )?;
+        budget.work(vertices.len())?;
+        let mut links = vec![u32::MAX; vertices.len()];
+        budget.storage((fans.0.capacity() + shells.0.capacity() + links.capacity()) * 4)?;
+        let mut vertex_links = 0;
+        for (corner, &vertex) in mesh.indices.iter().enumerate() {
+            budget.work(1)?;
+            let root = fans.root(corner as u32, budget)?;
+            let link = &mut links[vertex as usize];
+            if *link == u32::MAX {
+                *link = root;
+                vertex_links += 1;
+            } else if *link != root {
+                return Err(INVALID.into());
+            }
         }
-    }
+        vertex_links
+    };
+    drop(fans);
 
     // Recenter each shell before integration so distant placements do not
     // turn volume into a subtraction of large world-coordinate products.

@@ -52,6 +52,49 @@ fn independent_operator_comparison_checks_two_earned_physical_sources_and_real_l
     .unwrap();
     let used = MAX_WORK - work.remaining;
     assert!(used > 0);
+    // Helper-only ambiguity contract: duplicate an actual earned plain map
+    // value, never its fields or the sealed decoded material. The public
+    // decoder emits unique maps and does not expose this ambiguity route.
+    let mut ambiguous = decoded.parameter_maps().to_vec();
+    for earned in decoded.parameter_maps() {
+        ambiguous.push(earned.clone());
+        let mut ambiguity = Work {
+            remaining: MAX_WORK,
+            interrupt: None,
+        };
+        assert!(matches!(
+            compare(
+                actual_source.shell().input(),
+                decoded.material().shell().input(),
+                &ambiguous,
+                &mut ambiguity
+            ),
+            Err(Error::Unsupported)
+        ));
+        let removed = ambiguous.pop().unwrap();
+        assert_eq!(removed.target(), earned.target());
+        assert_eq!(removed.actual_entity(), earned.actual_entity());
+        assert_eq!(removed.mapping(), earned.mapping());
+    }
+    drop(ambiguous);
+    // The geometry inputs below are genuine and identical; their intended
+    // head is3mm high. This immutable ledger belongs to the independently
+    // decoded4mm physical file and must not substitute for its operator maps.
+    // Public dense binding refuses that owner mismatch earlier; this checks
+    // the independent helper contract without fabricating map fields.
+    let mut wrong_owner = Work {
+        remaining: MAX_WORK,
+        interrupt: None,
+    };
+    assert!(matches!(
+        compare(
+            expected.shell().input(),
+            expected.shell().input(),
+            decoded.parameter_maps(),
+            &mut wrong_owner
+        ),
+        Err(Error::Unsupported)
+    ));
     // The ledger is a small independent helper contract, not an admitted
     // Source. Every proposed index below comes from these two genuinely earned
     // and successfully compared physical source/operator tables.
@@ -152,6 +195,141 @@ fn independent_operator_comparison_checks_two_earned_physical_sources_and_real_l
     assert_eq!(expected.head_height_mm(), [6., 9.]);
     assert_eq!(actual_source.head_height_mm(), [6., 10.]);
     assert_eq!(decoded.original_input(), actual);
+    // A second independently decoded physical file aligns the actual target
+    // numbering while changing only the earned head-height operator law.
+    // Keep the peer receipt values intact, and release its other owners before
+    // the next bounded operation rather than hiding them from the byte ledger.
+    let wrong_maps = decoded.parameter_maps().to_vec();
+    let caller_bytes = wrong_maps.capacity() * std::mem::size_of::<reader::ParameterMap>() + 16384;
+    drop(decoded);
+    drop(actual_source);
+    drop(actual);
+    let file = propose(
+        &expected,
+        Options {
+            additional_resident_bytes: caller_bytes,
+            ..Default::default()
+        },
+        None,
+    )
+    .unwrap();
+    std::fs::write(&path, file.as_str()).unwrap();
+    drop(file);
+    let own_text = std::fs::read_to_string(&path).unwrap();
+    let own = reader::read(
+        &own_text,
+        1e-7,
+        1e-6,
+        reader::Options {
+            additional_resident_bytes: expected.receipt().retained_result_bytes_upper_bound
+                + caller_bytes
+                + own_text.capacity()
+                - own_text.len(),
+            ..Default::default()
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(own.material().head_height_mm(), [6., 9.]);
+    let mut wrong_owner = Work {
+        remaining: MAX_WORK,
+        interrupt: None,
+    };
+    assert!(matches!(
+        compare(
+            expected.shell().input(),
+            own.material().shell().input(),
+            &wrong_maps,
+            &mut wrong_owner
+        ),
+        Err(Error::Unsupported)
+    ));
+    let mut own_retry = Work {
+        remaining: MAX_WORK,
+        interrupt: None,
+    };
+    compare(
+        expected.shell().input(),
+        own.material().shell().input(),
+        own.parameter_maps(),
+        &mut own_retry,
+    )
+    .unwrap();
+    assert_eq!(own.original_input(), own_text);
+    assert_eq!(expected.head_height_mm(), [6., 9.]);
+    // A clone keeps only genuine independently admitted operator values; the
+    // earned source-storage reservation bounds its Vec/Arc allocations.
+    let original_geometry = own.material().shell().input().clone();
+    let snapshot_bytes = own.material().receipt().retained_source_bytes;
+    let original_maps = own.parameter_maps().to_vec();
+    drop(wrong_maps);
+    assert!(original_maps.capacity() * std::mem::size_of::<reader::ParameterMap>() < caller_bytes);
+    drop(own);
+    let reordered = crate::step_read::pipe_hardware::tests::actual_cone_first_face_order(&own_text);
+    std::fs::write(&path, &reordered).unwrap();
+    drop(reordered);
+    let reordered = std::fs::read_to_string(&path).unwrap();
+    let peer = reader::read(
+        &reordered,
+        1e-7,
+        1e-6,
+        reader::Options {
+            additional_resident_bytes: expected.receipt().retained_result_bytes_upper_bound
+                + snapshot_bytes
+                + own_text.capacity()
+                + caller_bytes
+                + reordered.capacity()
+                - reordered.len(),
+            ..Default::default()
+        },
+        None,
+    )
+    .expect("same actual operators with cone-first face order must independently earn material");
+    assert_eq!(peer.material().head_height_mm(), [6., 9.]);
+    assert_eq!(
+        peer.material()
+            .capped_thread()
+            .classify([0., 0., 3.], None)
+            .unwrap(),
+        radial::Location::Inside
+    );
+    let mut wrong_family = Work {
+        remaining: MAX_WORK,
+        interrupt: None,
+    };
+    assert!(matches!(
+        compare(
+            expected.shell().input(),
+            &original_geometry,
+            peer.parameter_maps(),
+            &mut wrong_family
+        ),
+        Err(Error::Unsupported)
+    ));
+    let mut original_retry = Work {
+        remaining: MAX_WORK,
+        interrupt: None,
+    };
+    compare(
+        expected.shell().input(),
+        &original_geometry,
+        &original_maps,
+        &mut original_retry,
+    )
+    .unwrap();
+    let mut peer_retry = Work {
+        remaining: MAX_WORK,
+        interrupt: None,
+    };
+    compare(
+        peer.material().shell().input(),
+        peer.material().shell().input(),
+        peer.parameter_maps(),
+        &mut peer_retry,
+    )
+    .unwrap();
+    assert_eq!(peer.original_input(), reordered);
+    std::fs::remove_file(&path).unwrap();
 }
 
 #[test]
@@ -314,6 +492,208 @@ fn actual_exclusive_interior_change_must_reearn_material_before_operator_refusal
     )
     .unwrap();
     assert_eq!(retry.as_str(), healthy);
+    assert_eq!(source.head_height_mm(), [6., 9.]);
+    std::fs::remove_file(&original_path).unwrap();
+    std::fs::remove_file(&changed_path).unwrap();
+}
+
+// The real public qualifier selects members from earned decoder ownership.
+// This independently checks its error adapter using a genuine public binder
+// refusal and valid actual-document retry, without constructing error values.
+#[test]
+fn real_literal_binding_invalid_selection_keeps_typed_error_and_valid_retry() {
+    use crate::{Rational, step::Writer, step_read::owned_insert::CompoundDocument};
+    let mut writer = Writer::new();
+    writer
+        .append_box(
+            [Rational::new(4, 1).unwrap(); 3],
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+        )
+        .unwrap();
+    let produced = writer.finish().unwrap();
+    let path =
+        std::env::temp_dir().join(format!("codec-binding-adapter-{}.step", std::process::id()));
+    std::fs::write(&path, &produced).unwrap();
+    drop(produced);
+    let expected = std::fs::read_to_string(&path).unwrap();
+    let actual = std::fs::read_to_string(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let a = CompoundDocument::parse(&expected, Default::default(), None).unwrap();
+    let b = CompoundDocument::parse(&actual, Default::default(), None).unwrap();
+    assert_eq!(a.represented_members().len(), 1);
+    assert_eq!(b.represented_members().len(), 1);
+    let first = a.represented_members()[0].item_entity();
+    let second = b.represented_members()[0].item_entity();
+    assert!(first > 0 && second > 0);
+    let refused = binding::bind_local_members(&a, first, &b, 0, binding::Options::default(), None)
+        .err()
+        .unwrap();
+    assert_eq!(refused, binding::Error::Invalid);
+    assert_eq!(binding_error(refused), Error::Invalid);
+    let retry =
+        binding::bind_local_members(&a, first, &b, second, binding::Options::default(), None)
+            .unwrap();
+    assert!(retry.matched_entities() > 50);
+    assert!(retry.work_used() > retry.matched_entities());
+    assert_eq!(a.literal_input(), expected);
+    assert_eq!(b.literal_input(), actual);
+}
+
+#[test]
+fn actual_circle_radius_change_must_earn_material_before_curve_correspondence() {
+    use crate::step_read::pipe_hardware::tests::{CircleChange, actual_circle_radius_nextup};
+    use num_rational::BigRational;
+    let source = engineering_height(3.);
+    let candidate = propose(&source, Options::default(), None).unwrap();
+    let original_path =
+        std::env::temp_dir().join(format!("circle-original-{}.step", std::process::id()));
+    let changed_path =
+        std::env::temp_dir().join(format!("circle-nextup-{}.step", std::process::id()));
+    std::fs::write(&original_path, candidate.as_str()).unwrap();
+    drop(candidate);
+    let original = std::fs::read_to_string(&original_path).unwrap();
+    let normal = reader::read(
+        &original,
+        1e-7,
+        1e-6,
+        reader::Options {
+            additional_resident_bytes: source.receipt().retained_result_bytes_upper_bound
+                + original.capacity()
+                - original.len()
+                + 4096,
+            ..Default::default()
+        },
+        None,
+    )
+    .unwrap();
+    let snapshot_bytes = normal.material().receipt().retained_source_bytes;
+    let before = normal.material().shell().input().clone();
+    drop(normal);
+    let CircleChange {
+        text,
+        entity,
+        old_radius,
+        new_radius,
+    } = actual_circle_radius_nextup(&original);
+    assert!(
+        BigRational::from_float(new_radius).unwrap() > BigRational::from_float(old_radius).unwrap()
+    );
+    std::fs::write(&changed_path, &text).unwrap();
+    drop(text);
+    drop(original);
+    let changed = std::fs::read_to_string(&changed_path).unwrap();
+    // No helper/source mismatch is claimed until this changed physical file
+    // independently earns real occupied material under the unchanged guards.
+    let admitted = reader::read(
+        &changed,
+        1e-7,
+        1e-6,
+        reader::Options {
+            additional_resident_bytes: source.receipt().retained_result_bytes_upper_bound
+                + snapshot_bytes
+                + changed.capacity()
+                - changed.len()
+                + 4096,
+            ..Default::default()
+        },
+        None,
+    )
+    .expect("actual radius nextup must independently earn occupied material first");
+    assert_eq!(admitted.material().head_height_mm(), [6., 9.]);
+    assert_eq!(
+        admitted
+            .material()
+            .capped_thread()
+            .classify([0., 0., 3.], None)
+            .unwrap(),
+        radial::Location::Inside
+    );
+    let after = admitted.material().shell().input();
+    assert_eq!(before.vertices, after.vertices);
+    assert_eq!(before.edges, after.edges);
+    assert_eq!(before.faces, after.faces);
+    assert_eq!(before.surfaces, after.surfaces);
+    assert_eq!(before.curves.len(), after.curves.len());
+    let target = admitted
+        .parameter_maps()
+        .iter()
+        .find(|m| m.actual_entity() == entity)
+        .unwrap()
+        .target();
+    let Target::Curve(index) = target else {
+        panic!("actual circle map");
+    };
+    for (i, (a, b)) in before.curves.iter().zip(&after.curves).enumerate() {
+        if i != index {
+            assert_eq!(a, b);
+            continue;
+        }
+        let (
+            shell::Curve::Original(radial::Curve::Circle {
+                axis: a,
+                radius_mm: ar,
+            }),
+            shell::Curve::Original(radial::Curve::Circle {
+                axis: b,
+                radius_mm: br,
+            }),
+        ) = (a, b)
+        else {
+            panic!("actual decoded circle operators");
+        };
+        assert_eq!(a, b);
+        assert_eq!(ar.to_bits(), old_radius.to_bits());
+        assert_eq!(br.to_bits(), new_radius.to_bits());
+    }
+    eprintln!(
+        "EARNED_CHANGED_CIRCLE entity{entity} one_radius_scalar_changedtrue all_other_operators_unchangedtrue"
+    );
+    let mut work = Work {
+        remaining: MAX_WORK,
+        interrupt: None,
+    };
+    assert!(matches!(
+        compare(
+            source.shell().input(),
+            after,
+            admitted.parameter_maps(),
+            &mut work
+        ),
+        Err(Error::Unsupported)
+    ));
+    drop(admitted);
+    drop(before);
+    assert!(matches!(
+        qualify_actual_file(
+            &source,
+            &changed,
+            1e-7,
+            1e-6,
+            QualificationOptions {
+                additional_resident_bytes: changed.capacity() - changed.len() + 4096,
+                ..Default::default()
+            },
+            None
+        ),
+        Err(Error::Unsupported)
+    ));
+    drop(changed);
+    let original = std::fs::read_to_string(&original_path).unwrap();
+    let retry = qualify_actual_file(
+        &source,
+        &original,
+        1e-7,
+        1e-6,
+        QualificationOptions {
+            additional_resident_bytes: original.capacity() - original.len() + 4096,
+            ..Default::default()
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(retry.as_str(), original);
     assert_eq!(source.head_height_mm(), [6., 9.]);
     std::fs::remove_file(&original_path).unwrap();
     std::fs::remove_file(&changed_path).unwrap();

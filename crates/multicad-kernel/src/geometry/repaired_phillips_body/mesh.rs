@@ -7,6 +7,12 @@ use multicad_rust_kernel::{
 };
 pub(super) const SCRATCH: usize = 65536;
 const CACHE_BYTES: usize = 32 * 1024 * 1024;
+// Per triangle: 26 interval primitives, 27 scalar indexing operations,
+// 19 point constructions, <=24 loads/copies and <=20 control actions.
+// Round 116 up to 128, plus 16 fixed setup/finalization actions. As elsewhere
+// in this ledger, an interval primitive is one action, not one CPU instruction.
+const LITERAL_VOLUME_TRIANGLE_WORK: usize = 128;
+const LITERAL_VOLUME_FIXED_WORK: usize = 16;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RepairedPhillipsMeshBudget {
     pub maximum_work: usize,
@@ -100,14 +106,16 @@ pub struct RepairedPhillipsMeshReceipt<'s> {
     source: &'s OwnedDerivedMaterial,
     metadata: Metadata,
 }
-/// Fresh or exact-key cached proof attached to the distinct owned periodic
-/// material. Its source getter cannot return a retained polynomial receipt.
-pub struct PeriodicRepairedPhillipsMeshReceipt<'s> {
-    source: &'s OwnedPeriodicMaterial,
+/// Fresh or exact-key cached proof attached to its immutable typed source.
+/// The default source is periodic; the degree-eleven alias remains distinct.
+pub struct PeriodicRepairedPhillipsMeshReceipt<'s, S = OwnedPeriodicMaterial> {
+    source: &'s S,
     metadata: Metadata,
 }
-impl PeriodicRepairedPhillipsMeshReceipt<'_> {
-    pub fn source(&self) -> &OwnedPeriodicMaterial {
+pub type Degree11RepairedPhillipsMeshReceipt<'s> =
+    PeriodicRepairedPhillipsMeshReceipt<'s, OwnedDegree11Material>;
+impl<S> PeriodicRepairedPhillipsMeshReceipt<'_, S> {
+    pub fn source(&self) -> &S {
         self.source
     }
     pub fn occurrence(&self) -> PlaneFrame {
@@ -262,12 +270,43 @@ fn buffers(v: usize, i: usize, f: usize) -> usize {
 }
 // This validation layer accepts literal mesh data; it grants no source
 // correspondence. Production reaches it only after full affine transport.
+#[cfg(test)]
 pub(super) fn placed_connectivity(target: &DisplayMesh) -> Result<MeshProof, GeometryError> {
     manufacturing::certify(target).map_err(|e| {
         failure(
             GeometryErrorKind::InvalidResult,
             format!("Placed repaired manifold refused: {e:?}"),
         )
+    })
+}
+fn placed_connectivity_counted(
+    target: &DisplayMesh,
+    resident_buffers: usize,
+    work: &mut Work<'_>,
+) -> Result<MeshProof, GeometryError> {
+    manufacturing::certify_counted(target, &mut |n, scratch| {
+        work.charge(n)?;
+        if let Some(scratch) = scratch {
+            let extra = resident_buffers.checked_add(scratch).ok_or_else(|| {
+                failure(
+                    GeometryErrorKind::Limit,
+                    "Placed connectivity storage overflow",
+                )
+            })?;
+            work.storage(extra)?;
+        }
+        Ok(())
+    })
+    .map_err(|error| match error {
+        manufacturing::CountedError::Interrupted(error) => error,
+        manufacturing::CountedError::Mesh(error) => failure(
+            if error == multicad_rust_kernel::display::MeshError::BudgetExceeded {
+                GeometryErrorKind::Limit
+            } else {
+                GeometryErrorKind::InvalidResult
+            },
+            format!("Placed repaired manifold refused: {error:?}"),
+        ),
     })
 }
 struct Work<'a> {
@@ -323,6 +362,12 @@ impl RepairedPhillipsBody {
             .retained_budget_bytes()
             .saturating_add(std::mem::size_of::<Self>() + 8 * std::mem::size_of::<usize>())
             .saturating_add(self.display.borrow().as_ref().map_or(0, |c| bytes(&c.mesh)))
+            .saturating_add(
+                self.degree11_properties
+                    .borrow()
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Option<Degree11LocalFace>>()),
+            )
             .saturating_add(self.periodic_properties.borrow().as_ref().map_or(0, |p| {
                 p.capacity()
                     * std::mem::size_of::<
@@ -552,6 +597,12 @@ impl RepairedPhillipsBody {
                     .saturating_add(target_bound),
             )?;
             let mut world = Vec::with_capacity(vertices);
+            work.charge(
+                original
+                    .indices
+                    .len()
+                    .saturating_add(original.face_indices.len()),
+            )?;
             let mut target = DisplayMesh {
                 vertices: Vec::with_capacity(original.vertices.len()),
                 indices: original.indices.clone(),
@@ -575,30 +626,31 @@ impl RepairedPhillipsBody {
                 world.push(mapped);
             }
             let normal_reserve = (I::point(options.angle) / I::point(200.)).lo;
+            work.charge(affine::NORMAL_PREPARATION_WORK)?;
+            let normals = placement.prepare_normals();
             for ids in original.indices.as_chunks::<3>().0 {
-                work.charge(256)?;
+                work.charge(affine::NORMAL_TRIANGLE_WORK)?;
                 let local =
                     ids.map(|i| std::array::from_fn(|k| original.vertices[3 * i as usize + k]));
                 let actual = ids.map(|i| world[i as usize].0);
-                placement.require_normal(local, actual, normal_reserve)?;
+                normals.require_normal(local, actual, normal_reserve)?;
             }
+            // One bounded three-coordinate record copy per mapped vertex.
+            work.charge(vertices)?;
             for (p, _) in world {
                 target.vertices.extend(p);
             }
-            work.charge(
-                target
-                    .face_indices
-                    .len()
-                    .saturating_mul(52)
-                    .saturating_add(vertices),
-            )?;
             #[cfg(test)]
             {
                 placement_time = start.elapsed();
             }
             #[cfg(test)]
             let start = std::time::Instant::now();
-            let proof = placed_connectivity(&target)?;
+            let proof = placed_connectivity_counted(
+                &target,
+                display_bytes(original).saturating_add(display_bytes(&target)),
+                work,
+            )?;
             #[cfg(test)]
             {
                 manifold_time = start.elapsed();
@@ -622,8 +674,12 @@ impl RepairedPhillipsBody {
         work.charge(used)?;
         let volume = self.volume(frame)?;
         let (periodic_literal_volume, periodic_mass_difference) =
-            if self.source.periodic().is_some() {
-                work.charge(mesh.indices.len().saturating_mul(128))?;
+            if self.source.periodic().is_some() || self.source.degree11().is_some() {
+                work.charge(
+                    (mesh.indices.len() / 3)
+                        .saturating_mul(LITERAL_VOLUME_TRIANGLE_WORK)
+                        .saturating_add(LITERAL_VOLUME_FIXED_WORK),
+                )?;
                 let literal = periodic::candidate::literal_volume(&mesh)?;
                 let difference = I::new(literal[0], literal[1]) - I::new(volume[0], volume[1]);
                 (Some(literal), Some(difference.magnitude()))
@@ -733,6 +789,47 @@ impl Solid {
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<(Mesh, PeriodicRepairedPhillipsMeshReceipt<'_>), GeometryError> {
         self.periodic_repaired_mesh_query(options, budget, MeshUse::Display, interrupt)
+    }
+    fn degree11_repaired_mesh_query(
+        &self,
+        options: MeshOptions,
+        budget: RepairedPhillipsMeshBudget,
+        usage: MeshUse,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<(Mesh, Degree11RepairedPhillipsMeshReceipt<'_>), GeometryError> {
+        let (body, frame) = self
+            .repaired_phillips_body()
+            .ok_or_else(|| unsupported("Solid has no degree-eleven repaired source"))?;
+        let source = body
+            .source
+            .degree11()
+            .ok_or_else(|| unsupported("Use the matching source mesh API"))?;
+        let q = Tessellation {
+            deflection: options.linear_deflection_mm,
+            angle: options.angular_deflection_rad,
+            triangle_limit: options.maximum_triangles as usize,
+        };
+        let (mesh, metadata) = body.controlled(frame, q, usage, budget, interrupt)?;
+        Ok((
+            mesh,
+            PeriodicRepairedPhillipsMeshReceipt { source, metadata },
+        ))
+    }
+    pub fn rust_degree11_repaired_phillips_mesh_with_receipt(
+        &self,
+        options: MeshOptions,
+        budget: RepairedPhillipsMeshBudget,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<(Mesh, Degree11RepairedPhillipsMeshReceipt<'_>), GeometryError> {
+        self.degree11_repaired_mesh_query(options, budget, MeshUse::Manufacturing, interrupt)
+    }
+    pub fn rust_degree11_repaired_phillips_display_mesh_with_receipt(
+        &self,
+        options: MeshOptions,
+        budget: RepairedPhillipsMeshBudget,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<(Mesh, Degree11RepairedPhillipsMeshReceipt<'_>), GeometryError> {
+        self.degree11_repaired_mesh_query(options, budget, MeshUse::Display, interrupt)
     }
     fn repaired_mesh_query(
         &self,

@@ -33,11 +33,12 @@ fn plane(
     policy: GeometryPolicy,
 ) -> Result<Option<PlaneSupport>, GeometryError> {
     let z = match face {
-        FaceKey::StartCap => 0.,
-        FaceKey::EndCap => material.cavity().full_length_mm(),
+        FaceKey::StartCap => B::ZERO,
+        FaceKey::EndCap => B::from(material.cavity().full_length_bounds_mm()),
         FaceKey::TerminalShoulder => material
             .cavity()
             .terminal_station_mm()
+            .map(B::point)
             .ok_or_else(refused)?,
         _ => return Ok(None),
     };
@@ -54,9 +55,8 @@ fn plane(
     let orientation = if face == FaceKey::StartCap { -1. } else { 1. };
     let unit = cross.map(|v| B::point(orientation) * v / length);
     let (normal, normal_error) = midpoint(unit)?;
-    let point = std::array::from_fn(|i| {
-        B::point(frame.origin[i]) + B::point(frame.normal()[i]) * B::point(z)
-    });
+    let point =
+        std::array::from_fn(|i| B::point(frame.origin[i]) + B::point(frame.normal()[i]) * z);
     let (point, point_error) = midpoint(point)?;
     // The support plane spans the literal U,V columns. The rounded axial
     // column only locates its station; it is never substituted for its normal.
@@ -85,10 +85,11 @@ impl InternalThreadTreatmentBody {
         self.validate_frame(frame, policy)?;
         let boundary = self.qualified_boundary()?;
         let scale = radius_upper(&self.material)
-            .max(self.material.cavity().full_length_mm())
+            .max(self.material.cavity().full_length_bounds_mm().upper)
             .max(1.);
         let extent = frame.origin.into_iter().map(f64::abs).fold(1., f64::max)
-            + 2. * (2. * radius_upper(&self.material) + self.material.cavity().full_length_mm());
+            + 2. * (2. * radius_upper(&self.material)
+                + self.material.cavity().full_length_bounds_mm().upper);
         // Units: linear error times a source length is an area budget; the
         // first-moment budget also includes translation times area uncertainty.
         let area_tolerance_mm2 = policy.linear_tolerance_mm * scale / 8.;

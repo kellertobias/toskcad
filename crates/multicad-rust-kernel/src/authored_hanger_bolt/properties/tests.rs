@@ -109,6 +109,40 @@ fn actual_default_hanger_faces_have_bounded_areas_moments_and_non_axis_caps() {
         }
     }
 }
+
+#[test]
+fn actual_plain_wall_adapter_retains_independent_cylinder_area_moments_and_length_edits() {
+    for (left, nonbinary) in [(false, false), (true, true)] {
+        let original = source(left, 1, nonbinary);
+        for scale in [1., 2.] {
+            let mut spec = original.spec();
+            spec.plain_length_mm *= scale;
+            let actual = Hanger::new(spec, None).unwrap();
+            let properties = actual
+                .local_face_properties(FaceKey::PlainWall, FacePropertyOptions::default(), None)
+                .unwrap();
+            let area = 2. * std::f64::consts::PI * spec.plain_radius_mm * spec.plain_length_mm;
+            let z = -spec.plain_length_mm / 2.;
+            assert!(properties.area_mm2.lower <= area && area <= properties.area_mm2.upper);
+            assert!(properties.centroid_mm[2].lower <= z && z <= properties.centroid_mm[2].upper);
+            let moment = area * z;
+            assert!(
+                properties.first_moment_mm3[2].lower <= moment
+                    && moment <= properties.first_moment_mm3[2].upper
+            );
+            for axis in 0..2 {
+                assert!(
+                    properties.centroid_mm[axis].lower <= 0.
+                        && properties.centroid_mm[axis].upper >= 0.
+                );
+                assert!(
+                    properties.first_moment_mm3[axis].lower <= 0.
+                        && properties.first_moment_mm3[axis].upper >= 0.
+                );
+            }
+        }
+    }
+}
 #[test]
 fn crest_area_and_cap_volume_are_independent_source_oracles() {
     for left in [false, true] {

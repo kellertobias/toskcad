@@ -23,6 +23,8 @@ pub enum StepVerificationMethod {
     MixedMemberBoundary,
     DecodedSupportHealing,
     DecodedPeriodicRepair,
+    ActualMappedHeadReference,
+    RegeneratedRoundedBlindCanonical,
 }
 /// Independently decoded periodic material after the bounded source repair.
 /// Volume belongs to that material, not the exact occupied raw STEP surfaces.
@@ -121,11 +123,38 @@ pub struct StepDocumentOwnershipReceipt {
     pub work_used: usize,
     pub query_peak_bytes: usize,
 }
+/// Exact imported local records plus separately checked output-operator C0.
+/// Both volumes name the published sewn reference, never occupied raw-file
+/// mass. No head/sewn UV-D1 or chart-derivative claim is implied.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StepActualHeadReceipt {
+    pub original_imported_sewn_volume_bounds_mm3: [f64; 2],
+    pub output_sewn_volume_bounds_mm3: [f64; 2],
+    pub maximum_world_position_error_mm: f64,
+    pub aggregate_work: usize,
+    pub accounted_peak_bytes: usize,
+}
+/// A regenerated, closed canonical rounded blind body. Source-known complete
+/// boundary C0 and raw-member ownership are verified separately from mass.
+/// The raw file has no independently sealed physical mass or chart-D1 proof.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StepRoundedBlindRepairReceipt {
+    pub canonical_volume_mm3: f64,
+    pub maximum_raw_to_canonical_position_error_mm: f64,
+    pub raw_physical_volume_bounds_mm3: Option<[f64; 2]>,
+    pub raw_chart_derivative_error_mm: Option<f64>,
+    pub verified_output_member_entity: u32,
+    pub verified_output_geometry_record_count: usize,
+}
 /// Distinguishes decoded file mass from certified authored-source mass.
 /// Missing decoded mass is explicit; source support tolerance is not a
 /// substitute for an independently integrated file-volume error bound.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StepVerificationReceipt {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rounded_blind_repair: Option<StepRoundedBlindRepairReceipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual_head: Option<StepActualHeadReceipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub document_ownership: Option<StepDocumentOwnershipReceipt>,
     pub method: StepVerificationMethod,
@@ -155,6 +184,8 @@ pub struct StepVerificationReceipt {
 impl StepVerificationReceipt {
     pub fn decoded(volume: f64) -> Self {
         Self {
+            actual_head: None,
+            rounded_blind_repair: None,
             document_ownership: None,
             method: StepVerificationMethod::DecodedBoundary,
             decoded_volume_mm3: Some(volume),
@@ -256,6 +287,19 @@ fn verify(
             .ok_or_else(|| io("Missing source model"))?;
         let topology = rust_step_topology(model, artifact)?;
         let solid = artifact_solid(model, artifact)?;
+        if let Some(proof) = verify_actual_head_step(
+            path,
+            solid,
+            (
+                artifact.solid_count,
+                artifact.volume_mm3,
+                artifact.bounds_mm,
+            ),
+            artifact.producer,
+            tolerance,
+        ) {
+            return proof.map(|_| ());
+        }
         if let Some(proof) = verify_periodic_step(
             path,
             solid,
@@ -365,7 +409,8 @@ pub fn verify_rust_step_shape(
     shape: &crate::ShapeSnapshot,
     tolerance: f64,
 ) -> Result<f64, ExportError> {
-    if solid.rust_thread_entry_chamfer_data().is_some()
+    if solid.rust_actual_clipped_head_source().is_some()
+        || solid.rust_thread_entry_chamfer_data().is_some()
         || solid.has_retained_radial_source()
         || solid.has_partitioned_step_source()
         || solid.has_literal_npt_source()
@@ -404,6 +449,32 @@ pub fn verify_rust_step_shape_receipt(
             Some(shape.producer),
             "STEP verification needs a finite positive tolerance",
         ));
+    }
+    if let Some(proof) = verify_rounded_blind_canonical_step(
+        path,
+        solid,
+        (
+            shape.solid_count,
+            shape.volume_mm3,
+            [shape.bounds.min, shape.bounds.max],
+        ),
+        shape.producer,
+        tolerance,
+    ) {
+        return proof;
+    }
+    if let Some(proof) = verify_actual_head_step(
+        path,
+        solid,
+        (
+            shape.solid_count,
+            shape.volume_mm3,
+            [shape.bounds.min, shape.bounds.max],
+        ),
+        shape.producer,
+        tolerance,
+    ) {
+        return proof;
     }
     if let Some(proof) = verify_periodic_step(
         path,
@@ -459,6 +530,135 @@ pub fn verify_rust_step_shape_receipt(
     }
     verify_rust_step_shape(path, solid, shape, tolerance).map(StepVerificationReceipt::decoded)
 }
+fn verify_actual_head_step(
+    path: &Path,
+    solid: &Solid,
+    expected: StepMetrics,
+    producer: EntityId,
+    tolerance: f64,
+) -> Option<Result<StepVerificationReceipt, ExportError>> {
+    solid.rust_actual_clipped_head_source()?;
+    Some((|| {
+        if !tolerance.is_finite() || tolerance <= 0. {
+            return Err(failure(
+                ErrorKind::Invalid,
+                Some(producer),
+                "Actual-head reference needs a finite positive verification tolerance",
+            ));
+        }
+        let b = solid.bounds().map_err(io)?;
+        verify_step_dimensions(
+            producer,
+            expected,
+            (
+                solid.solid_count().map_err(io)?,
+                solid.volume_mm3().map_err(io)?,
+                [b.min, b.max],
+            ),
+            tolerance,
+        )?;
+        let input = read_step_source(path, producer)?;
+        // The still-live readback String is additional to the explicit Arc
+        // owned by the Native actual-file proof; copying has its own I/O scope.
+        let extra = input.capacity();
+        let copied = input.len();
+        let resident = solid
+            .rust_actual_clipped_head_runtime_evidence()
+            .expect("typed actual head")
+            .resident_budget_bytes;
+        let copy_peak = resident
+            .checked_add(extra)
+            .and_then(|n| n.checked_add(copied))
+            .and_then(|n| n.checked_add(4096))
+            .filter(|n| *n <= 64 * 1024 * 1024)
+            .ok_or_else(|| {
+                failure(
+                    ErrorKind::Budget,
+                    Some(producer),
+                    "Actual readback Arc copy exceeds complete resident budget",
+                )
+            })?;
+        let proof = solid
+            .verify_actual_clipped_head_step(
+                std::sync::Arc::from(input.as_str()),
+                step_read::npt_stock::full_head::transport::replay::ReplayOptions {
+                    resources: step_read::npt_stock::full_head::Options {
+                        maximum_work: 272_000_000 - copied,
+                        additional_resident_bytes: extra,
+                        ..Default::default()
+                    },
+                    maximum_position_error_mm: tolerance,
+                },
+                None,
+            )
+            .expect("typed actual mapped head")
+            .map_err(|e| {
+                failure(
+                    if e.kind == multicad_kernel::GeometryErrorKind::Limit {
+                        ErrorKind::Budget
+                    } else {
+                        ErrorKind::Invalid
+                    },
+                    Some(producer),
+                    format!("Actual imported head source/operator verification failed: {e}"),
+                )
+            })?;
+        if expected.0 != 1 {
+            return Err(failure(
+                ErrorKind::Unsupported,
+                Some(producer),
+                "Actual mapped head export requires one represented member",
+            ));
+        }
+        // B then A may have accumulated axis-aligned enclosure inflation.
+        // A freshly decoded AB box can be tighter without changing geometry.
+        // Original snapshot consistency was checked above. The actual-file
+        // authority is complete local identity + typed invertible output map
+        // + whole-domain C0, not a symmetric comparison of two outer boxes.
+        if proof
+            .output_sewn_bounds_mm
+            .iter()
+            .enumerate()
+            .any(|(i, v)| {
+                v[0] < expected.2[0][i] - 2. * tolerance || v[1] > expected.2[1][i] + 2. * tolerance
+            })
+        {
+            return Err(failure(
+                ErrorKind::Invalid,
+                Some(producer),
+                "Actual head output enclosure leaves the current source enclosure",
+            ));
+        }
+        let mut receipt = StepVerificationReceipt {
+            actual_head: None,
+            rounded_blind_repair: None,
+            document_ownership: None,
+            method: StepVerificationMethod::ActualMappedHeadReference,
+            decoded_volume_mm3: None,
+            retained_members: vec![],
+            decoded_scalar_members: vec![],
+            source_correspondence: vec![],
+            source_known_members: vec![],
+            healed_members: vec![],
+            periodic_members: vec![],
+            source_volume_bounds_mm3: None,
+            verified_tolerance_mm: None,
+            maximum_polynomial_trim_error_mm: None,
+            analytic_closure_tolerance_mm: None,
+        };
+        receipt.source_volume_bounds_mm3 = Some(proof.original_imported_sewn_volume_bounds_mm3);
+        receipt.verified_tolerance_mm = Some(tolerance);
+        receipt.actual_head = Some(StepActualHeadReceipt {
+            original_imported_sewn_volume_bounds_mm3: proof
+                .original_imported_sewn_volume_bounds_mm3,
+            output_sewn_volume_bounds_mm3: proof.output_sewn_volume_bounds_mm3,
+            maximum_world_position_error_mm: proof.maximum_world_position_error_mm,
+            aggregate_work: proof.aggregate_work + copied,
+            accounted_peak_bytes: proof.accounted_peak_bytes.max(copy_peak),
+        });
+        Ok(receipt)
+    })())
+}
 fn verify_partitioned_step(
     path: &Path,
     solid: &Solid,
@@ -509,6 +709,8 @@ fn verify_partitioned_step(
                 )
             })?;
         Ok(StepVerificationReceipt {
+            actual_head: None,
+            rounded_blind_repair: None,
             document_ownership: Some(StepDocumentOwnershipReceipt {
                 topology_entity_count: proof.topology_entity_count,
                 work_used: proof.document_ownership_work,
@@ -656,6 +858,8 @@ fn verify_periodic_step(
         }
         let verified_tolerance = proof.verified_tolerance_mm;
         Ok(StepVerificationReceipt {
+            actual_head: None,
+            rounded_blind_repair: None,
             document_ownership: None,
             method: StepVerificationMethod::DecodedPeriodicRepair,
             decoded_volume_mm3: None,
@@ -743,6 +947,8 @@ fn verify_retained_step(
             ));
         }
         Ok(StepVerificationReceipt {
+            actual_head: None,
+            rounded_blind_repair: None,
             document_ownership: None,
             method: StepVerificationMethod::DecodedBoundaryEnclosure,
             decoded_volume_mm3: None,
@@ -827,6 +1033,8 @@ fn verify_source_known_step(
             ));
         }
         Ok(StepVerificationReceipt {
+            actual_head: None,
+            rounded_blind_repair: None,
             document_ownership: None,
             method: StepVerificationMethod::SourceKnownBoundary,
             decoded_volume_mm3: None,
@@ -844,6 +1052,83 @@ fn verify_source_known_step(
     })())
 }
 
+fn verify_rounded_blind_canonical_step(
+    path: &Path,
+    solid: &Solid,
+    expected: StepMetrics,
+    producer: EntityId,
+    tolerance: f64,
+) -> Option<Result<StepVerificationReceipt, ExportError>> {
+    let data = solid.rust_rounded_blind_bore_data()?;
+    Some((|| {
+        let invalid = |message: String| failure(ErrorKind::Invalid, Some(producer), message);
+        let bounds = solid.bounds().map_err(io)?;
+        let canonical_volume = solid.volume_mm3().map_err(io)?;
+        verify_step_dimensions(
+            producer,
+            expected,
+            (1, canonical_volume, [bounds.min, bounds.max]),
+            tolerance,
+        )?;
+        let input = read_step_source(path, producer)?;
+        // This full source-known nine-face check binds the actual output to
+        // the current closed body. Its numerical decoded flux is diagnostic;
+        // it is NEVER published as independently decoded raw physical mass.
+        let total = solid
+            .verify_source_known_rounded_blind_position_bound(&input, tolerance)
+            .map_err(|e| {
+                failure(
+                    if e.kind == multicad_kernel::GeometryErrorKind::Limit {
+                        ErrorKind::Budget
+                    } else {
+                        ErrorKind::Invalid
+                    },
+                    Some(producer),
+                    format!("Canonical rounded blind source proof failed: {e}"),
+                )
+            })?;
+        let (readback, candidate) = step_read::read_repaired_rounded_blind_bore(&input, tolerance)
+            .map_err(|e| invalid(format!("Actual rounded blind repair failed: {e:?}")))?;
+        if readback.solid_count != 1
+            || readback.face_count != 9
+            || !step_read::repaired_rounded_blind_import_matches(
+                &candidate,
+                &data.bore,
+                [data.frame.origin, data.frame.u, data.frame.v],
+                tolerance * 2.,
+            )
+        {
+            return Err(invalid(
+                "Regenerated rounded blind geometry differs from its canonical body".into(),
+            ));
+        }
+        let verified = tolerance.min(1e-7);
+        Ok(StepVerificationReceipt {
+            rounded_blind_repair: Some(StepRoundedBlindRepairReceipt {
+                canonical_volume_mm3: canonical_volume,
+                maximum_raw_to_canonical_position_error_mm: total,
+                raw_physical_volume_bounds_mm3: None,
+                raw_chart_derivative_error_mm: None,
+                verified_output_member_entity: candidate.source_member_entity(),
+                verified_output_geometry_record_count: candidate.source_records().count(),
+            }),
+            actual_head: None,
+            document_ownership: None,
+            method: StepVerificationMethod::RegeneratedRoundedBlindCanonical,
+            decoded_volume_mm3: None,
+            retained_members: vec![],
+            decoded_scalar_members: vec![],
+            source_correspondence: vec![],
+            source_known_members: vec![],
+            healed_members: vec![],
+            periodic_members: vec![],
+            source_volume_bounds_mm3: None,
+            verified_tolerance_mm: Some(verified),
+            maximum_polynomial_trim_error_mm: None,
+            analytic_closure_tolerance_mm: None,
+        })
+    })())
+}
 fn read_step_source(path: &Path, producer: EntityId) -> Result<String, ExportError> {
     let mut bytes = Vec::new();
     fs::File::open(path)

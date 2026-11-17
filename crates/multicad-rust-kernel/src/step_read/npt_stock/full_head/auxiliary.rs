@@ -62,6 +62,7 @@ pub(super) struct Derived {
     pub head: HeadInput,
     pub bindings: Vec<ComponentBinding>,
     pub chart: CapChart,
+    pub roles: PhysicalRoles,
     pub retained_without_derived: usize,
 }
 fn span(input: &str, s: &str) -> Result<Range<usize>> {
@@ -255,6 +256,7 @@ pub(super) fn derive(
         head,
         bindings,
         chart,
+        roles: plan.roles,
         retained_without_derived,
     })
 }
