@@ -4,6 +4,7 @@ use super::*;
 use crate::tapered_thread::interval::I;
 mod affine;
 mod analytic;
+mod finite_analytic;
 mod precision;
 mod sweep;
 mod units;
@@ -475,7 +476,15 @@ fn edge(source: &Source<'_>, binding: Binding, budget: &mut Budget<'_>) -> Resul
         let [_, p] = source.args(v, "VERTEX_POINT")? else {
             return Err(ReadError::Invalid);
         };
-        source.point(reference(p)?)
+        let point_id = reference(p)?;
+        match source.point(point_id) {
+            Ok(point) => Ok(point),
+            Err(ReadError::Unsupported) => {
+                finite_analytic::equivalent_vertex(source, point_id, budget)?
+                    .ok_or(ReadError::Unsupported)
+            }
+            Err(error) => Err(error),
+        }
     });
     let [a, b] = points;
     geometry_preflight(source, binding.curve, budget)?;
@@ -592,6 +601,17 @@ fn validate_source(
                         .any(|(i, yes)| yes && !zero_axis(&definition.geometry, i)))
             {
                 return Err(ReadError::Unsupported);
+            }
+            if let Some(proof) = finite_analytic::certify(
+                source,
+                binding.curve,
+                &definition,
+                &surface,
+                &edge,
+                tol,
+                budget,
+            )? {
+                return Ok((proof, definition.surface, surface_kind(&surface), 0.));
             }
             if let Some(proof) = precision::plane_nurbs_certificate(
                 source,

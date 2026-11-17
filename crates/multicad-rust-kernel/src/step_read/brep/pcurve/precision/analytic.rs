@@ -280,19 +280,29 @@ pub(super) fn actual_image(
             }
         }
         (Surface::Sphere { .. }, "SPHERICAL_SURFACE", [_, axis, r]) => {
-            if moving != 0
-                || origin[1].lo < -std::f64::consts::FRAC_PI_2
-                || origin[1].hi > std::f64::consts::FRAC_PI_2
-            {
-                return Err(ReadError::Unsupported);
-            }
             let f = frame(source, reference(axis)?, 3, budget)?;
             let r = scalar(source, id, r, budget)?;
-            let rho = r * trig(origin[1], true)?;
-            Image::Periodic {
-                center: add(f.origin, scale(f.axes[2], r * trig(origin[1], false)?)),
-                cosine: scale(f.axes[0], rho),
-                sine: scale(f.axes[1], rho),
+            if moving == 0 {
+                if origin[1].lo < -std::f64::consts::FRAC_PI_2
+                    || origin[1].hi > std::f64::consts::FRAC_PI_2
+                {
+                    return Err(ReadError::Unsupported);
+                }
+                let rho = r * trig(origin[1], true)?;
+                Image::Periodic {
+                    center: add(f.origin, scale(f.axes[2], r * trig(origin[1], false)?)),
+                    cosine: scale(f.axes[0], rho),
+                    sine: scale(f.axes[1], rho),
+                }
+            } else {
+                // Coefficients of the analytic continuation ONLY. Sphere V
+                // actually covers a half-meridian. A finite-domain caller
+                // must separately earn every queried V inside [-pi/2,pi/2].
+                Image::Periodic {
+                    center: f.origin,
+                    cosine: scale(radial(f, origin[0])?, r),
+                    sine: scale(f.axes[2], r),
+                }
             }
         }
         (Surface::Torus { .. }, "TOROIDAL_SURFACE", [_, axis, major, minor]) => {

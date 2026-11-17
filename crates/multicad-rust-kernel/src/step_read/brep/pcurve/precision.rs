@@ -9,6 +9,7 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{ToPrimitive, Zero};
 mod analytic;
+mod conic;
 type V = [I; 3];
 const MAX_NUMBERS: usize = 262_144;
 const TOKEN_WORKSPACE: usize = 8 * 1024 * 1024;
@@ -1381,6 +1382,15 @@ pub(super) fn plane_nurbs_certificate(
     tol: f64,
     budget: &mut Budget<'_>,
 ) -> Result<Option<super::Proof>> {
+    // An undecided new upper must preserve the existing whole-control
+    // separating witness. Unsupported is not evidence of disagreement.
+    match conic::certify(source, curve3d_id, definition, surface, edge, tol, budget) {
+        Ok(Some(proof @ (super::Proof::Certified(_) | super::Proof::Disagreement(_)))) => {
+            return Ok(Some(proof));
+        }
+        Ok(_) | Err(ReadError::Unsupported) => {}
+        Err(error) => return Err(error),
+    }
     let (
         Surface::Plane(_),
         Curve::Nurbs {
@@ -1549,4 +1559,21 @@ pub(super) fn plane_analytic_certificate(
     };
     budget.charge(64)?;
     Ok(Some(proof))
+}
+
+pub(super) fn analytic_image(
+    source: &Source<'_>,
+    definition: &super::uv::Definition,
+    surface: &Surface,
+    budget: &mut Budget<'_>,
+) -> Result<super::analytic::Image> {
+    analytic::actual_image(source, definition, surface, budget)
+}
+pub(super) fn analytic_curve_reserve(
+    source: &Source<'_>,
+    curve3d_id: u32,
+    edge: &Edge,
+    budget: &mut Budget<'_>,
+) -> Result<f64> {
+    analytic::curve_reserve(source, curve3d_id, edge, budget)
 }

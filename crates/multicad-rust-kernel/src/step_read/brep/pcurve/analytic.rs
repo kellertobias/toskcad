@@ -310,7 +310,17 @@ fn line_upper(image: Image, edge: &Edge, budget: &mut Budget<'_>) -> Result<Opti
     }
     Ok(Some(upper))
 }
-fn periodic_upper(image: Image, edge: &Edge, budget: &mut Budget<'_>) -> Result<Option<f64>> {
+pub(super) struct PeriodicMap {
+    pub phase: f64,
+    pub error: f64,
+    pub speed: f64,
+}
+pub(super) fn periodic_map(
+    image: Image,
+    edge: &Edge,
+    phase_shift: f64,
+    budget: &mut Budget<'_>,
+) -> Result<Option<PeriodicMap>> {
     budget.charge(2048)?;
     let Image::Periodic {
         center: b,
@@ -346,7 +356,7 @@ fn periodic_upper(image: Image, edge: &Edge, budget: &mut Budget<'_>) -> Result<
     let (xu, xv) = (d(xm, um), d(xm, vm));
     let c = (xu * vv - xv * uv) / determinant;
     let s = (xv * uu - xu * uv) / determinant;
-    let phi = s.atan2(c);
+    let phi = s.atan2(c) + phase_shift;
     if !phi.is_finite() {
         return Ok(None);
     }
@@ -358,8 +368,17 @@ fn periodic_upper(image: Image, edge: &Edge, budget: &mut Budget<'_>) -> Result<
     // theta_source = theta_target+phi is increasing and surjective on the
     // full periodic supports. A reflected map is NEVER an IP2 certificate.
     // The bound uses |sin theta|,|cos theta|<=1 over the WHOLE support.
-    Ok(error.valid().then_some(error.hi))
+    let speed = (norm(u) + norm(v)).hi;
+    Ok((error.valid() && speed.is_finite()).then_some(PeriodicMap {
+        phase: phi,
+        error: error.hi,
+        speed,
+    }))
 }
+fn periodic_upper(image: Image, edge: &Edge, budget: &mut Budget<'_>) -> Result<Option<f64>> {
+    Ok(periodic_map(image, edge, 0., budget)?.map(|map| map.error))
+}
+
 fn physical_point(edge: &Edge, t: f64) -> Option<V> {
     match &edge.curve {
         Curve::Line { origin, direction } => {

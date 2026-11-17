@@ -94,6 +94,22 @@ fn curve(source: &Source<'_>, id: u32, budget: &mut Budget<'_>) -> Result<Curve>
                 direction: direction(source, reference(d)?, budget)?.map(|x| x * magnitude),
             })
         }
+        ("POLYLINE", [_, points]) => {
+            check(list(points)?.len() == 2, ReadError::Unsupported)?;
+            let points = bounded_refs(points, 2, budget)?;
+            let [a, b] = points.as_slice() else {
+                return Err(ReadError::Unsupported);
+            };
+            let points = vec![
+                pair(source, *a, "CARTESIAN_POINT", budget)?,
+                pair(source, *b, "CARTESIAN_POINT", budget)?,
+            ];
+            let curve = NurbsCurve::new(1, points, None, vec![0., 1.], vec![2, 2])?;
+            Ok(Curve::Nurbs {
+                curve,
+                closed: false,
+            })
+        }
         ("CIRCLE", [_, axis, r]) => Ok(Curve::Circle {
             frame: frame(source, reference(axis)?, budget)?,
             radius: positive(r)?,
