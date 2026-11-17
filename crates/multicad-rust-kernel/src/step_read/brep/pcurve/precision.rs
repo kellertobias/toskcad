@@ -9,9 +9,26 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{ToPrimitive, Zero};
 mod analytic;
+mod bezier;
 mod conic;
+mod cylinder_trace;
 mod sense_line;
 type V = [I; 3];
+/// This distinct certificate owns the Original-REAL bounded target trace,
+/// including its parameter map and whole-curve tangent orientation.
+pub(super) fn cylinder_trace_certificate(
+    source: &Source<'_>,
+    curve_id: u32,
+    definition: &super::uv::Definition,
+    surface: &Surface,
+    edge: &Edge,
+    tolerance: f64,
+    budget: &mut Budget<'_>,
+) -> Result<Option<super::Proof>> {
+    cylinder_trace::certify(
+        source, curve_id, definition, surface, edge, tolerance, budget,
+    )
+}
 const MAX_NUMBERS: usize = 262_144;
 const TOKEN_WORKSPACE: usize = 8 * 1024 * 1024;
 

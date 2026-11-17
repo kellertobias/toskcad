@@ -615,6 +615,17 @@ fn validate_source(
             )? {
                 return Ok((proof, definition.surface, surface_kind(&surface), 0.));
             }
+            if let Some(proof) = precision::cylinder_trace_certificate(
+                source,
+                binding.curve,
+                &definition,
+                &surface,
+                &edge,
+                tol,
+                budget,
+            )? {
+                return Ok((proof, definition.surface, surface_kind(&surface), 0.));
+            }
             if let Some(proof) = finite_axis::certify(
                 source,
                 binding.curve,
