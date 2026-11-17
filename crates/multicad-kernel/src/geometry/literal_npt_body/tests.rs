@@ -455,9 +455,8 @@ fn actual_original_scaled_mapping_keeps_usable_cap_frames_and_exact_identity() {
     assert_eq!(a.origin_mm(), b.origin_mm());
     assert_ne!(a.original_mapping_identity(), b.original_mapping_identity());
     assert_ne!(source_signature(&a).unwrap(), source_signature(&b).unwrap());
-    // This reader deliberately admits cap anchors only on local X=Y=0.
-    // Preserve an authentic translated-origin refusal rather than fabricating
-    // a retained source outside that sealed original-file contract.
+    // Moving only a support origin leaves its cap PCURVEs inconsistent with
+    // the original 3D curves; it is not a valid gauge reparameterization.
     let original = text(false);
     let material = source(&original);
     let cap = material
@@ -479,13 +478,15 @@ fn actual_original_scaled_mapping_keeps_usable_cap_frames_and_exact_identity() {
         point.coordinates()[2].spelling()
     );
     let changed = original.replacen(line, &replacement, 1);
-    assert_eq!(
-        Solid::import_rust_step(&changed, EntityId::new(), Default::default())
-            .err()
-            .unwrap()
-            .kind,
-        GeometryErrorKind::Unsupported
-    );
+    let failure = Solid::import_rust_step(&changed, EntityId::new(), Default::default())
+        .err()
+        .unwrap();
+    assert_eq!(failure.kind, GeometryErrorKind::Input);
+    assert!(failure.message.contains("STEP trim disagreement"));
+    assert!(failure.message.contains("plane #26247"));
+    assert!(failure.message.contains("edge #26595"));
+    assert!(failure.message.contains("deviation_mm="));
+    assert!(failure.message.contains("tolerance_mm="));
 }
 #[test]
 fn actual_warm_display_survives_failed_quality_and_fresh_manufacturing_queries() {
@@ -813,4 +814,312 @@ fn actual_normal_literal_step_reexport_keeps_geometry_pose_and_mixed_members_map
     actual_normal_literal_step_reexport_keeps_geometry_pose_and_mixed_members_case(
         false, true, true,
     );
+}
+
+fn record_refs(line: &str) -> Vec<u32> {
+    line.split_once('=')
+        .map_or(line, |(_, body)| body)
+        .split('#')
+        .skip(1)
+        .map(|s| {
+            s.chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>()
+                .parse()
+                .unwrap()
+        })
+        .collect()
+}
+fn add_decimal(text: &str, delta: &str) -> String {
+    // Independent exact finite-decimal fixture arithmetic. The actual writer
+    // emits at most 17 significant digits and ordinary millimetre exponents.
+    let parse = |text: &str| {
+        let (mantissa, exponent) = text.split_once('E').unwrap_or((text, "0"));
+        let fraction = mantissa.split_once('.').map_or(0, |(_, f)| f.len());
+        let power = exponent.parse::<i32>().unwrap() - fraction as i32;
+        assert!((-30..=0).contains(&power));
+        (mantissa.replace('.', "").parse::<i128>().unwrap(), power)
+    };
+    let (a, pa) = parse(text);
+    let (b, pb) = parse(delta);
+    let p = pa.min(pb);
+    let shifted = a * 10i128.pow((pa - p) as u32) + b * 10i128.pow((pb - p) as u32);
+    format!("{shifted}E{p}")
+}
+fn shift_decimal(text: &str, delta: i128) -> String {
+    add_decimal(text, &delta.to_string())
+}
+fn negate_decimal(s: &str) -> String {
+    s.strip_prefix('-')
+        .map_or_else(|| format!("-{s}"), str::to_owned)
+}
+fn reanchor_cap(original: &str, anchor: u32, delta: [&str; 2]) -> String {
+    let records: std::collections::BTreeMap<_, _> = original
+        .lines()
+        .filter_map(|line| {
+            line.strip_prefix('#')
+                .and_then(|s| s.split_once('='))
+                .map(|(id, _)| (id.parse::<u32>().unwrap(), line))
+        })
+        .collect();
+    let axis = *records
+        .iter()
+        .find(|(_, line)| {
+            line.contains("=AXIS2_PLACEMENT_3D(") && record_refs(line).first() == Some(&anchor)
+        })
+        .unwrap()
+        .0;
+    let plane = *records
+        .iter()
+        .find(|(_, line)| line.contains("=PLANE(") && record_refs(line) == [axis])
+        .unwrap()
+        .0;
+    let mut uv_points = std::collections::BTreeSet::new();
+    for line in records
+        .values()
+        .filter(|line| line.contains("=PCURVE(") && record_refs(line).first() == Some(&plane))
+    {
+        let rep = record_refs(line)[1];
+        let curve = record_refs(records[&rep])[0];
+        uv_points.extend(record_refs(records[&curve]));
+    }
+    assert!(!uv_points.is_empty());
+    let mut changed = original.to_owned();
+    for id in uv_points {
+        let old = records[&id];
+        let coords = old
+            .split("('',(")
+            .nth(1)
+            .unwrap()
+            .split(")")
+            .next()
+            .unwrap()
+            .split(',')
+            .collect::<Vec<_>>();
+        assert_eq!(coords.len(), 2);
+        let new = format!(
+            "#{id}=CARTESIAN_POINT('',({},{}));",
+            add_decimal(coords[0], &negate_decimal(delta[0])),
+            add_decimal(coords[1], &negate_decimal(delta[1]))
+        );
+        changed = changed.replacen(old, &new, 1);
+    }
+    let old = records[&anchor];
+    let coords = old
+        .split("('',(")
+        .nth(1)
+        .unwrap()
+        .split(')')
+        .next()
+        .unwrap()
+        .split(',')
+        .collect::<Vec<_>>();
+    let new = format!(
+        "#{anchor}=CARTESIAN_POINT('',({},{},{}));",
+        add_decimal(coords[0], delta[0]),
+        add_decimal(coords[1], delta[1]),
+        coords[2]
+    );
+    changed.replacen(old, &new, 1)
+}
+#[test]
+fn proper_cap_chart_reanchor_preserves_literal_geometry_and_semantic_identity() {
+    for original in [text(false), mapped(&text(true))] {
+        let before = source(&original);
+        let mut changed = original.clone();
+        for (i, face) in before.faces().iter().enumerate() {
+            if let read::Support::Plane { height } = face.support() {
+                changed = reanchor_cap(
+                    &changed,
+                    before.point(height).unwrap().entity(),
+                    [&(i + 1).to_string(), "-2"],
+                );
+            }
+        }
+        assert_ne!(original, changed);
+        let after = source(&changed);
+        assert_eq!(
+            source_signature(&before).unwrap(),
+            source_signature(&after).unwrap()
+        );
+        assert_eq!(before.world_volume_mm3(), after.world_volume_mm3());
+        assert_eq!(before.world_enclosure_mm(), after.world_enclosure_mm());
+        let a = Solid::from_literal_npt_source(
+            before.clone(),
+            EntityId::new(),
+            Default::default(),
+            None,
+        )
+        .unwrap();
+        let b = Solid::import_rust_step(&changed, EntityId::new(), Default::default()).unwrap();
+        let body = b
+            .literal_npt_body()
+            .expect("proper chart remains LiteralNpt, not generic fallback");
+        assert_eq!(a.volume_mm3().unwrap(), b.volume_mm3().unwrap());
+        assert_eq!(before.faces().len(), after.faces().len());
+        let options = MeshOptions {
+            linear_deflection_mm: 0.1,
+            angular_deflection_rad: 0.3,
+            maximum_triangles: 100_000,
+        };
+        let am = a.manufacturing_mesh_with_receipt(options).unwrap();
+        let bm = b.manufacturing_mesh_with_receipt(options).unwrap();
+        assert_eq!(am.mesh.vertices, bm.mesh.vertices);
+        assert_eq!(am.mesh.indices, bm.mesh.indices);
+        assert_eq!(am.mesh.face_indices, bm.mesh.face_indices);
+        assert_eq!(am.edge_pairs, bm.edge_pairs);
+        assert_eq!(am.vertex_links, bm.vertex_links);
+        for (i, face) in before.faces().iter().enumerate() {
+            if let read::Support::Plane { height } = face.support() {
+                let frame = body.plane(i).unwrap();
+                let expected = before
+                    .map_box_mm([
+                        [0., 0.],
+                        [0., 0.],
+                        before.point(height).unwrap().coordinates()[2].bounds(),
+                    ])
+                    .unwrap();
+                for (actual, bound) in frame.origin_mm.into_iter().zip(expected) {
+                    assert!(actual >= bound[0].next_down() && actual <= bound[1].next_up());
+                }
+                assert_eq!(
+                    a.face_plane(i as u32).unwrap(),
+                    b.face_plane(i as u32).unwrap()
+                );
+            }
+        }
+        assert_eq!(
+            a.face_plane(u32::MAX).unwrap_err().kind,
+            GeometryErrorKind::Input
+        );
+        assert_eq!(
+            b.face_plane(u32::MAX).unwrap_err().kind,
+            GeometryErrorKind::Input
+        );
+        for (i, face) in before.faces().iter().enumerate() {
+            if matches!(face.support(), read::Support::Tensor(_)) {
+                assert!(a.face_plane(i as u32).unwrap().is_none());
+                assert!(b.face_plane(i as u32).unwrap().is_none());
+            }
+        }
+        // A chart translation cannot hide an actual off-support cap plane.
+        let height = after
+            .faces()
+            .iter()
+            .find_map(|f| match f.support() {
+                read::Support::Plane { height } => Some(height),
+                _ => None,
+            })
+            .unwrap();
+        let anchor = after.point(height).unwrap();
+        let old = changed
+            .lines()
+            .find(|line| line.starts_with(&format!("#{}=", anchor.entity())))
+            .unwrap();
+        let coords = anchor.coordinates();
+        let new = format!(
+            "#{}=CARTESIAN_POINT('',({},{},{}));",
+            anchor.entity(),
+            coords[0].spelling(),
+            coords[1].spelling(),
+            shift_decimal(coords[2].spelling(), 1)
+        );
+        let off = changed.replacen(old, &new, 1);
+        let document = multicad_rust_kernel::step_read::owned_insert::CompoundDocument::parse(
+            &off,
+            Default::default(),
+            None,
+        )
+        .unwrap();
+        assert!(matches!(
+            read::Selected::parse(
+                &document,
+                document.represented_members()[0].item_entity(),
+                Default::default(),
+                None
+            ),
+            Err(read::Error::Unsupported)
+        ));
+        // The exact original bytes and point records remain distinct despite
+        // identical geometry; no input data or provenance was overwritten.
+        for face in before.faces() {
+            if let read::Support::Plane { height } = face.support() {
+                let id = before.point(height).unwrap().entity();
+                assert_ne!(
+                    before.original_component(id, 0),
+                    after.original_component(id, 0)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn actual_physical_cap_vertex_can_anchor_the_plane_without_losing_identity() {
+    let original = text(false);
+    let before = source(&original);
+    let height = before
+        .faces()
+        .iter()
+        .find_map(|f| match f.support() {
+            read::Support::Plane { height } => Some(height),
+            _ => None,
+        })
+        .unwrap();
+    let anchor = before.point(height).unwrap();
+    assert_eq!(anchor.coordinates()[0].bounds(), [0., 0.]);
+    assert_eq!(anchor.coordinates()[1].bounds(), [0., 0.]);
+    let alias_index = before
+        .vertices()
+        .iter()
+        .map(|v| v.point_index())
+        .find(|i| {
+            before.point(*i).unwrap().coordinates()[2].bounds() == anchor.coordinates()[2].bounds()
+        })
+        .unwrap();
+    let alias = before.point(alias_index).unwrap();
+    let coords = alias.coordinates();
+    let mut changed = reanchor_cap(
+        &original,
+        anchor.entity(),
+        [coords[0].spelling(), coords[1].spelling()],
+    );
+    let axis = changed
+        .lines()
+        .find(|line| {
+            line.contains("=AXIS2_PLACEMENT_3D(")
+                && record_refs(line).first() == Some(&anchor.entity())
+        })
+        .unwrap();
+    let new = axis.replacen(
+        &format!(",#{}", anchor.entity()),
+        &format!(",#{}", alias.entity()),
+        1,
+    );
+    changed = changed.replacen(axis, &new, 1);
+    let after = source(&changed);
+    let new_alias = after
+        .vertices()
+        .iter()
+        .map(|v| v.point_index())
+        .find(|i| after.point(*i).unwrap().entity() == alias.entity())
+        .unwrap();
+    let (map, _) = identity_physical_points(&after).unwrap();
+    assert_ne!(
+        map[new_alias],
+        usize::MAX,
+        "an actual curve/vertex anchor retains ALL physical coordinates"
+    );
+    assert_eq!(
+        source_signature(&before).unwrap(),
+        source_signature(&after).unwrap()
+    );
+    assert_eq!(before.world_volume_mm3(), after.world_volume_mm3());
+    let solid = Solid::import_rust_step(&changed, EntityId::new(), Default::default()).unwrap();
+    assert!(solid.literal_npt_body().is_some());
+    for (i, f) in after.faces().iter().enumerate() {
+        if matches!(f.support(), read::Support::Plane { .. }) {
+            assert!(solid.face_plane(i as u32).unwrap().is_some());
+        }
+    }
 }

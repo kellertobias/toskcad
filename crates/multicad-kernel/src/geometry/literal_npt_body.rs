@@ -75,9 +75,14 @@ pub(in crate::geometry) fn source_signature(
     // Original numeric leaves and their actual incidence identify geometry.
     // Different control assignments do not become the same part merely
     // because their point tables coincide. Original record IDs are excluded.
+    // This pre-existing identity stage has its own 64 MiB arena, separate
+    // from manufacturing/query work. Mark physical point ownership once;
+    // support-chart anchors do not become physical just by being in the file.
+    let (physical, physical_count) = identity_physical_points(source)?;
     let mut bytes = Vec::new();
     let limit = BYTES
         .checked_sub(source.retained_budget_bytes())
+        .and_then(|n| n.checked_sub(physical.capacity() * std::mem::size_of::<usize>()))
         .ok_or_else(|| failure(read::Error::Limit))?;
     let mut append = |value: &[u8]| -> Result<(), GeometryError> {
         let end = bytes
@@ -97,12 +102,15 @@ pub(in crate::geometry) fn source_signature(
         bytes.extend_from_slice(value);
         Ok(())
     };
-    append(b"multicad.literal-npt.identity/2")?;
-    append(&(source.point_count() as u64).to_le_bytes())?;
-    for index in 0..source.point_count() {
+    append(b"multicad.literal-npt.identity/3")?;
+    append(&(physical_count as u64).to_le_bytes())?;
+    for (index, ordinal) in physical.iter().enumerate() {
+        if *ordinal == usize::MAX {
+            continue;
+        }
         let coordinates = source
             .point(index)
-            .expect("retained point owner")
+            .expect("retained physical point owner")
             .coordinates();
         append(&(coordinates.len() as u64).to_le_bytes())?;
         for scalar in coordinates {
@@ -113,7 +121,7 @@ pub(in crate::geometry) fn source_signature(
     append(b"vertices")?;
     append(&(source.vertices().len() as u64).to_le_bytes())?;
     for vertex in source.vertices() {
-        append(&(vertex.point_index() as u64).to_le_bytes())?;
+        append(&(physical[vertex.point_index()] as u64).to_le_bytes())?;
     }
     append(b"curves/degree11")?;
     append(&(source.curves().len() as u64).to_le_bytes())?;
@@ -121,7 +129,7 @@ pub(in crate::geometry) fn source_signature(
         append(&(curve.spans() as u64).to_le_bytes())?;
         append(&(curve.point_indices().len() as u64).to_le_bytes())?;
         for &p in curve.point_indices() {
-            append(&(p as u64).to_le_bytes())?;
+            append(&(physical[p] as u64).to_le_bytes())?;
         }
     }
     append(b"tensors/degree11/11")?;
@@ -132,7 +140,7 @@ pub(in crate::geometry) fn source_signature(
         }
         append(&(tensor.point_indices().len() as u64).to_le_bytes())?;
         for &p in tensor.point_indices() {
-            append(&(p as u64).to_le_bytes())?;
+            append(&(physical[p] as u64).to_le_bytes())?;
         }
     }
     append(b"edges")?;
@@ -146,12 +154,26 @@ pub(in crate::geometry) fn source_signature(
     append(b"faces")?;
     append(&(source.faces().len() as u64).to_le_bytes())?;
     for face in source.faces() {
-        let (tag, support) = match face.support() {
-            read::Support::Tensor(index) => (0, index),
-            read::Support::Plane { height } => (1, height),
-        };
-        append(&[tag, u8::from(face.forward())])?;
-        append(&(support as u64).to_le_bytes())?;
+        match face.support() {
+            read::Support::Tensor(index) => {
+                append(&[0, u8::from(face.forward())])?;
+                append(&(index as u64).to_le_bytes())?;
+            }
+            read::Support::Plane { height } => {
+                append(&[1, u8::from(face.forward())])?;
+                let z = source
+                    .point(height)
+                    .expect("retained plane owner")
+                    .coordinates()[2];
+                let spelling = if z.bounds() == [0., 0.] {
+                    "0"
+                } else {
+                    z.spelling()
+                };
+                append(&(spelling.len() as u64).to_le_bytes())?;
+                append(spelling.as_bytes())?;
+            }
+        }
         append(&(face.coedges().len() as u64).to_le_bytes())?;
         for coedge in face.coedges() {
             append(&(coedge.edge_index() as u64).to_le_bytes())?;
@@ -162,6 +184,70 @@ pub(in crate::geometry) fn source_signature(
     append(&(source.original_mapping_identity().len() as u64).to_le_bytes())?;
     append(source.original_mapping_identity())?;
     Ok(multicad_core::project_file::ContentHash::of(&bytes))
+}
+
+fn identity_physical_points(
+    source: &read::OwnedMaterial,
+) -> Result<(Vec<usize>, usize), GeometryError> {
+    // Count logical visits before each bounded pass, not unbounded rescans per
+    // point. Identity has no caller query ledger or cancellation API.
+    let mut remaining = 16_000_000usize;
+    let mut charge = |n: usize| -> Result<(), GeometryError> {
+        remaining = remaining
+            .checked_sub(n)
+            .ok_or_else(|| failure(read::Error::Limit))?;
+        Ok(())
+    };
+    charge(source.point_count())?;
+    let available = BYTES
+        .checked_sub(source.retained_budget_bytes())
+        .ok_or_else(|| failure(read::Error::Limit))?;
+    let requested = source
+        .point_count()
+        .checked_mul(std::mem::size_of::<usize>())
+        .ok_or_else(|| failure(read::Error::Limit))?;
+    if requested > available {
+        return Err(failure(read::Error::Limit));
+    }
+    let mut physical = Vec::new();
+    physical
+        .try_reserve_exact(source.point_count())
+        .map_err(|_| failure(read::Error::Limit))?;
+    if physical
+        .capacity()
+        .checked_mul(std::mem::size_of::<usize>())
+        .is_none_or(|n| n > available)
+    {
+        return Err(failure(read::Error::Limit));
+    }
+    physical.resize(source.point_count(), usize::MAX);
+    charge(source.vertices().len())?;
+    for vertex in source.vertices() {
+        physical[vertex.point_index()] = 0;
+    }
+    charge(source.curves().len())?;
+    for curve in source.curves() {
+        charge(curve.point_indices().len())?;
+        for index in curve.point_indices() {
+            physical[*index] = 0;
+        }
+    }
+    charge(source.tensors().len())?;
+    for tensor in source.tensors() {
+        charge(tensor.point_indices().len())?;
+        for index in tensor.point_indices() {
+            physical[*index] = 0;
+        }
+    }
+    charge(physical.len())?;
+    let mut count = 0;
+    for ordinal in &mut physical {
+        if *ordinal != usize::MAX {
+            *ordinal = count;
+            count += 1;
+        }
+    }
+    Ok((physical, count))
 }
 
 fn failure(cause: read::Error) -> GeometryError {
@@ -359,7 +445,10 @@ impl LiteralNptBody {
         let read::Support::Plane { height } = owner.support() else {
             return None;
         };
-        let local = self.source.point(height)?.coordinates().map(|v| v.bounds());
+        // A plane's arbitrary in-plane chart origin is not a physical cap
+        // anchor. Intersect the actual support with the earned thread axis.
+        let z = self.source.point(height)?.coordinates()[2].bounds();
+        let local = [[0., 0.], [0., 0.], z];
         let mut origin = self.source.map_box_mm(local).ok()?;
         let mut columns = self.source.linear_columns_bounds();
         if let Some(pose) = &self.occurrence {
@@ -387,9 +476,9 @@ impl LiteralNptBody {
             })
         };
         let local_box = self.source.local_enclosure_mm();
-        // Bound displacement from the actual literal plane anchor, not
-        // from an assumed coordinate origin. Directed subtraction includes
-        // anchor uncertainty before the column approximation is multiplied.
+        // Bound displacement from the actual plane/thread-axis intersection.
+        // Directed subtraction includes its axial uncertainty before the
+        // column approximation is multiplied.
         let radius = |axis: usize| {
             (local_box[axis][0] - local[axis][1])
                 .next_down()
@@ -419,6 +508,20 @@ impl LiteralNptBody {
             return None;
         }
         Some(ReferenceFrame { origin_mm: o, u, v })
+    }
+    pub(super) fn face_plane(&self, index: u32) -> Result<Option<super::FacePlane>, GeometryError> {
+        let index = index as usize;
+        let face = self
+            .source
+            .faces()
+            .get(index)
+            .ok_or_else(|| input("Face index is out of range"))?;
+        if matches!(face.support(), read::Support::Tensor(_)) {
+            return Ok(None);
+        }
+        self.plane(index)
+            .map(|frame| Some((frame.origin_mm, frame.normal())))
+            .ok_or_else(|| failure(read::Error::Unsupported))
     }
     fn mesh_bytes(mesh: &Mesh) -> usize {
         mesh.vertices.capacity() * 8 + (mesh.indices.capacity() + mesh.face_indices.capacity()) * 4

@@ -3051,6 +3051,9 @@ impl Solid {
     }
     /// Cheap earned planar support; None denotes an actual curved face.
     pub fn face_plane(&self, index: u32) -> Result<Option<FacePlane>, GeometryError> {
+        if let Some(body) = self.literal_npt_body() {
+            return body.face_plane(index);
+        }
         if let Some(body) = self.actual_clipped_head_body() {
             return Ok(body.plane(index)?.map(|f| (f.origin_mm, f.normal())));
         }
