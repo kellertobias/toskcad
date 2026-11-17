@@ -12,7 +12,11 @@ use multicad_rust_kernel::{
 use std::f64::consts::{PI, TAU};
 
 mod clearance;
-pub(super) use clearance::{Support, coaxial_placements};
+mod rack;
+mod witness;
+pub(super) use clearance::{Band, Support, coaxial_chart, coaxial_placements};
+use rack::RackPair;
+pub use witness::GearFlankWitness;
 
 pub(crate) struct SpurGearBody {
     pub(super) profile: Profile,
