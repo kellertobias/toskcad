@@ -75,7 +75,7 @@ fn native_worm_has_axial_trapezoid_centered_phase_bore_and_independent_volume() 
         let length = spec.threaded_length_mm;
         let m = spec.axial_module_mm;
         let id = EntityId::new();
-        let native = Solid::za_worm_named(spec, id, policy).unwrap();
+        let native = Solid::rust_za_worm_named(spec, id, policy).unwrap();
         assert_eq!(native.solid_count().unwrap(), 1);
         let bounds = native.bounds().unwrap();
         close(bounds.min[2], -length / 2., 2e-6);
@@ -195,7 +195,8 @@ fn witness(solid: &Solid, owner: EntityId, role: &str, point: [f64; 3], outward:
 #[test]
 fn generated_wheel_has_measured_throat_flanks_root_caps_bore_and_native_step() {
     let id = EntityId::new();
-    let native = Solid::generated_za_worm_wheel_named(wheel(32), id, Default::default()).unwrap();
+    let native =
+        Solid::rust_generated_za_worm_wheel_named(wheel(32), id, Default::default()).unwrap();
     assert_eq!(native.solid_count().unwrap(), 1);
     // Independent Green-integral oracle, not a stored native result. Its
     // explicit radius-2/diameter-4 recipe and numerical refinement receipts
@@ -261,7 +262,8 @@ fn generated_wheel_upper_domain_has_independent_volume_and_step_readback() {
         ..wheel(64)
     };
     let native =
-        Solid::generated_za_worm_wheel_named(spec, EntityId::new(), Default::default()).unwrap();
+        Solid::rust_generated_za_worm_wheel_named(spec, EntityId::new(), Default::default())
+            .unwrap();
     let expected = 8. * 6393.570566838108;
     let area: f64 = native.faces().unwrap().iter().map(|f| f.area_mm2).sum();
     close(
@@ -287,8 +289,8 @@ fn conjugate_pair_phase_clears_and_half_tooth_wrong_phase_interferes() {
     let policy = GeometryPolicy::default();
     let worm_id = EntityId::new();
     let wheel_id = EntityId::new();
-    let worm = Solid::za_worm_named(worm(), worm_id, policy).unwrap();
-    let wheel = Solid::generated_za_worm_wheel_named(wheel(32), wheel_id, policy).unwrap();
+    let worm = Solid::rust_za_worm_named(worm(), worm_id, policy).unwrap();
+    let wheel = Solid::rust_generated_za_worm_wheel_named(wheel(32), wheel_id, policy).unwrap();
     for drive in [0., TAU * 0.37] {
         let (s, c) = drive.sin_cos();
         let driven = worm
@@ -362,14 +364,15 @@ fn parallel_intersection_keeps_independent_native_owners_on_their_threads() {
         .map(|_| {
             std::thread::spawn(|| {
                 let policy = GeometryPolicy::default();
-                let a = Solid::za_worm_named(worm(), EntityId::new(), policy).unwrap();
-                let b = Solid::generated_za_worm_wheel_named(wheel(32), EntityId::new(), policy)
-                    .unwrap()
-                    .transformed(RigidTransform {
-                        rotation: [[1., 0., 0.], [0., 0., 1.], [0., -1., 0.]],
-                        translation_mm: [-21., 0., 0.],
-                    })
-                    .unwrap();
+                let a = Solid::rust_za_worm_named(worm(), EntityId::new(), policy).unwrap();
+                let b =
+                    Solid::rust_generated_za_worm_wheel_named(wheel(32), EntityId::new(), policy)
+                        .unwrap()
+                        .transformed(RigidTransform {
+                            rotation: [[1., 0., 0.], [0., 0., 1.], [0., -1., 0.]],
+                            translation_mm: [-21., 0., 0.],
+                        })
+                        .unwrap();
                 for _ in 0..2 {
                     assert!(a.intersect_parallel(&b, policy).unwrap().is_none());
                 }
@@ -401,7 +404,7 @@ fn unsupported_worm_native_domains_are_refused_before_construction() {
             ..worm()
         },
     ] {
-        assert!(Solid::za_worm_named(bad, EntityId::new(), p).is_err());
+        assert!(Solid::rust_za_worm_named(bad, EntityId::new(), p).is_err());
     }
     for bad in [
         GeneratedZaWormWheel {
@@ -421,6 +424,6 @@ fn unsupported_worm_native_domains_are_refused_before_construction() {
             ..wheel(32)
         },
     ] {
-        assert!(Solid::generated_za_worm_wheel_named(bad, EntityId::new(), p).is_err());
+        assert!(Solid::rust_generated_za_worm_wheel_named(bad, EntityId::new(), p).is_err());
     }
 }
