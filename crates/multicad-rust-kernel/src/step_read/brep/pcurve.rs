@@ -661,6 +661,21 @@ fn validate_source(
                 Ok(None | Some(Proof::Unsupported)) | Err(ReadError::Unsupported) => {}
                 Err(error) => return Err(error),
             }
+            match precision::cylinder_polynomial_certificate(
+                source,
+                binding.curve,
+                &definition,
+                &surface,
+                &edge,
+                tol,
+                budget,
+            ) {
+                Ok(Some(proof @ Proof::Certified(_))) => {
+                    return Ok((proof, definition.surface, surface_kind(&surface), 0.));
+                }
+                Ok(_) | Err(ReadError::Unsupported) => {}
+                Err(error) => return Err(error),
+            }
             match precision::bilinear_certificate(
                 source,
                 binding.curve,
