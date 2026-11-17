@@ -14,7 +14,8 @@ mod finite_section;
 pub use events::{
     BoundaryEvents, BoundaryMesh, CubicTrimSpan, EventRole, FaceProperties, FacePropertyOptions,
     FiniteTrim, PatchAtlas, PatchBounds, PatchCorrespondence, PatchCorrespondenceOptions, PatchKey,
-    QuadErrorBound, SourceEvent, SurfacePatch, TrimErrorBound, WallKind,
+    QuadErrorBound, SourceEvent, SurfacePatch, TRIM_SPAN_COMPARE_WORK, TRIM_SPAN_SOURCE_WORK,
+    TrimErrorBound, TrimSpanComparison, TrimSpanCorrespondence, WallKind,
 };
 pub use finite_section::{
     EdgeRole, SectionBoundary, SectionCurve, SectionEdge, SectionVertex, VertexRole,
