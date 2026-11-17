@@ -525,7 +525,7 @@ pub(super) fn tessellate(
         let distance = (phase - knot).abs();
         distance > 0. && distance <= 16. * f64::EPSILON * phase.abs().max(1.)
     });
-    let mut angular_trial = body.tail.is_some();
+    let mut angular_trial = body.tail.is_some() || body.thread.exact_axial_extent().is_some();
     loop {
         let repartition = match chart::traced_grid_attempt(body, options, &grid, &mut w)? {
             Attempt::Complete((shell, trace)) => {
