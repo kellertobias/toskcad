@@ -11,6 +11,7 @@ use num_traits::{ToPrimitive, Zero};
 mod analytic;
 mod bezier;
 mod conic;
+mod cylinder_ellipse;
 mod cylinder_trace;
 mod sense_line;
 type V = [I; 3];
@@ -26,6 +27,19 @@ pub(super) fn cylinder_trace_certificate(
     budget: &mut Budget<'_>,
 ) -> Result<Option<super::Proof>> {
     cylinder_trace::certify(
+        source, curve_id, definition, surface, edge, tolerance, budget,
+    )
+}
+pub(super) fn cylinder_ellipse_certificate(
+    source: &Source<'_>,
+    curve_id: u32,
+    definition: &super::uv::Definition,
+    surface: &Surface,
+    edge: &Edge,
+    tolerance: f64,
+    budget: &mut Budget<'_>,
+) -> Result<Option<super::Proof>> {
+    cylinder_ellipse::certify(
         source, curve_id, definition, surface, edge, tolerance, budget,
     )
 }

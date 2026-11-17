@@ -615,6 +615,22 @@ fn validate_source(
             )? {
                 return Ok((proof, definition.surface, surface_kind(&surface), 0.));
             }
+            let ellipse = precision::cylinder_ellipse_certificate(
+                source,
+                binding.curve,
+                &definition,
+                &surface,
+                &edge,
+                tol,
+                budget,
+            );
+            match ellipse {
+                Ok(Some(proof @ Proof::Certified(_))) => {
+                    return Ok((proof, definition.surface, surface_kind(&surface), 0.));
+                }
+                Ok(_) | Err(ReadError::Unsupported) => {}
+                Err(error) => return Err(error),
+            }
             if let Some(proof) = precision::cylinder_trace_certificate(
                 source,
                 binding.curve,

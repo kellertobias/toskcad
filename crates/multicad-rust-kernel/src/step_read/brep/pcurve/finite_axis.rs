@@ -5,6 +5,11 @@ use super::*;
 use crate::tapered_thread::interval::I;
 mod endpoints;
 /// Complete original finite-endpoint transfer, separate from curve coefficients.
+/// For circles/ellipses the result also bounds `(a+b)*delta`, where delta is
+/// each original endpoint's angular error from the retained parameter window.
+/// The cylinder/ellipse certificate relies on this stronger contract when
+/// transferring tangent bounds; a tighter physical-only reserve must expose
+/// the angular bound separately before replacing this formula.
 pub(super) fn endpoint_reserve(
     source: &Source<'_>,
     curve_id: u32,
