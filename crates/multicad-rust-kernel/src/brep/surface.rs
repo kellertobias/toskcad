@@ -77,20 +77,11 @@ pub enum Surface {
 
 impl Surface {
     pub fn nurbs(surface: NurbsSurface, tolerance: f64) -> Self {
-        let ranges = [surface.range(0), surface.range(1)];
+        // Closure must hold along the WHOLE boundary, never at samples.
         let closed = [0, 1].map(|axis| {
-            (0..=4).all(|k| {
-                let other = ranges[1 - axis][0]
-                    + (ranges[1 - axis][1] - ranges[1 - axis][0]) * f64::from(k) / 4.;
-                let at = |t: f64| {
-                    if axis == 0 {
-                        surface.evaluate(t, other).0
-                    } else {
-                        surface.evaluate(other, t).0
-                    }
-                };
-                distance(at(ranges[axis][0]), at(ranges[axis][1])) <= tolerance
-            })
+            surface
+                .boundary_gap(axis)
+                .is_some_and(|gap| gap <= tolerance)
         });
         Self::Nurbs { surface, closed }
     }

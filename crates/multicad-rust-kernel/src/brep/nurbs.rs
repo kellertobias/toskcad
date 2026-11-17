@@ -299,6 +299,65 @@ impl NurbsSurface {
         breaks(&self.knots[axis], self.degrees[axis], period, a, b)
     }
 
+    /// An upper bound of the distance between the two boundary curves at
+    /// the ends of `axis`, over the WHOLE other parameter range.
+    ///
+    /// Each boundary is an exact rational curve in the other parameter whose
+    /// homogeneous controls are the end-basis combinations of the net rows.
+    /// Both share one basis, so with positive weights each boundary point is
+    /// a convex combination of its controls. For weight ratios
+    /// `r_j = w_b,j / w_a,j` in `[r_min, r_max]` the two convex weightings
+    /// differ by at most `(r_max - r_min) / r_min` in total, giving
+    /// `max_j |a_j - b_j| + (r_max - r_min) / r_min * max_j |b_j - b_0|`.
+    /// A floating-point allowance covers the end-basis and division
+    /// roundings. `None` means no bound was established (not closed).
+    pub(crate) fn boundary_gap(&self, axis: usize) -> Option<f64> {
+        let other = 1 - axis;
+        let [low, high] = self.range(axis);
+        let ends = [low, high].map(|t| basis(&self.knots[axis], self.degrees[axis], t));
+        let count = self.counts[other];
+        let control = |i: usize, j: usize| {
+            if axis == 0 {
+                self.control[i * self.counts[1] + j]
+            } else {
+                self.control[j * self.counts[1] + i]
+            }
+        };
+        let row = |end: usize, j: usize| -> Homogeneous {
+            let (span, values, _) = &ends[end];
+            let mut sum = [0.; 4];
+            for (k, &value) in values.iter().enumerate() {
+                accumulate(&mut sum, control(span + k - self.degrees[axis], j), value);
+            }
+            sum
+        };
+        let (mut gap, mut spread, mut ratio, mut scale) =
+            (0_f64, 0_f64, [f64::INFINITY, 0_f64], 0_f64);
+        let mut first = None;
+        for j in 0..count {
+            let [a, b] = [row(0, j), row(1, j)];
+            if !(a[3] > 0. && b[3] > 0. && a.iter().chain(&b).all(|x| x.is_finite())) {
+                return None;
+            }
+            let pa = [a[0] / a[3], a[1] / a[3], a[2] / a[3]];
+            let pb = [b[0] / b[3], b[1] / b[3], b[2] / b[3]];
+            gap = gap.max(super::distance(pa, pb));
+            let origin = *first.get_or_insert(pb);
+            spread = spread.max(super::distance(pb, origin));
+            let r = b[3] / a[3];
+            ratio = [ratio[0].min(r), ratio[1].max(r)];
+            scale = pa.iter().chain(&pb).fold(scale, |m, x| m.max(x.abs()));
+        }
+        let weights = if ratio[1] == ratio[0] {
+            0.
+        } else {
+            (ratio[1] - ratio[0]) / ratio[0]
+        };
+        let rounding = 64. * f64::EPSILON * (self.degrees[axis] + 2) as f64 * scale;
+        let bound = gap + weights * spread + rounding;
+        bound.is_finite().then_some(bound)
+    }
+
     pub(crate) fn mapped(&self, map: &dyn Fn(Point) -> Point) -> Self {
         let points: Vec<_> = self.points.iter().map(|&p| map(p)).collect();
         let control = homogeneous(&points, self.weights.as_deref()).unwrap_or_default();

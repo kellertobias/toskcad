@@ -2936,3 +2936,137 @@ fn horn_torus_faces_close_at_the_point_on_their_axis() {
     );
     assert_eq!(solids(&spindle).unwrap_err(), Error::Unsupported);
 }
+
+/// CAD-370: a bump that vanishes at all five old sample lines of the
+/// boundary but opens it to 3.2e-3 at v=1/8 must not make a period.
+#[test]
+fn closure_is_certified_along_the_whole_boundary_not_at_samples() {
+    let xy = [[1., 0.], [1., 1.], [-1., 1.], [1., 0.]];
+    // Bernstein-5 coefficients of v(v-1/4)(v-1/2)(v-3/4)(v-1).
+    let bump = [0., 0.01875, -0.040625, 0.040625, -0.01875, 0.];
+    let net = |bumped: bool| {
+        let points = (0..4)
+            .flat_map(|u| {
+                (0..6).map(move |v| {
+                    let lift = if u == 3 && bumped { bump[v] } else { 0. };
+                    [xy[u][0], xy[u][1], v as f64 / 5. + lift]
+                })
+            })
+            .collect();
+        NurbsSurface::new(
+            [3, 5],
+            [4, 6],
+            points,
+            None,
+            [vec![0., 1.], vec![0., 1.]],
+            [vec![4, 4], vec![6, 6]],
+        )
+        .unwrap()
+    };
+    let open = net(true);
+    let samples = (0..=4)
+        .map(|i| {
+            distance(
+                open.evaluate(0., i as f64 / 4.).0,
+                open.evaluate(1., i as f64 / 4.).0,
+            )
+        })
+        .fold(0_f64, f64::max);
+    let real = distance(open.evaluate(0., 0.125).0, open.evaluate(1., 0.125).0);
+    assert!(samples < 1e-12 && real > 3e-3);
+    assert!(open.boundary_gap(0).unwrap() >= real);
+    assert_eq!(Surface::nurbs(open, TOLERANCE).periods(), [None, None]);
+    // The same net without the bump closes exactly.
+    let closed = net(false);
+    assert!(closed.boundary_gap(0).unwrap() <= 1e-12);
+    assert_eq!(Surface::nurbs(closed, TOLERANCE).periods()[0], Some(1.));
+}
+
+/// Genuine rational closures (equal or proportional end-row weights) and
+/// closures of unclamped knot vectors are kept.
+#[test]
+fn rational_and_unclamped_closures_are_retained_with_whole_boundary_bounds() {
+    // Quarter-weighted full circle in u (9 controls, degree 2), extruded in v.
+    let h = std::f64::consts::FRAC_1_SQRT_2;
+    let ring = [
+        ([1., 0.], 1.),
+        ([1., 1.], h),
+        ([0., 1.], 1.),
+        ([-1., 1.], h),
+        ([-1., 0.], 1.),
+        ([-1., -1.], h),
+        ([0., -1.], 1.),
+        ([1., -1.], h),
+        ([1., 0.], 1.),
+    ];
+    let make = |end_weight_scale: f64| {
+        let mut points = Vec::new();
+        let mut weights = Vec::new();
+        for (i, (p, w)) in ring.iter().enumerate() {
+            for z in [0., 2.] {
+                points.push([p[0], p[1], z]);
+                weights.push(if i == 8 { w * end_weight_scale } else { *w });
+            }
+        }
+        NurbsSurface::new(
+            [2, 1],
+            [9, 2],
+            points,
+            Some(weights),
+            [vec![0., 1., 2., 3., 4.], vec![0., 1.]],
+            [vec![3, 2, 2, 2, 3], vec![2, 2]],
+        )
+        .unwrap()
+    };
+    let circle = make(1.);
+    assert!(circle.boundary_gap(0).unwrap() <= 1e-12);
+    assert_eq!(Surface::nurbs(circle, TOLERANCE).periods()[0], Some(4.));
+    // Scaling one END row's weights moves no boundary point, and the
+    // proportional-weight bound proves it exactly.
+    let scaled = make(3.);
+    assert!(scaled.boundary_gap(0).unwrap() <= 1e-12);
+    assert_eq!(Surface::nurbs(scaled, TOLERANCE).periods()[0], Some(4.));
+    // Unclamped uniform knots: the boundary rows are basis combinations
+    // of several net rows; a translated copy of the first rows closes it.
+    let rows = [
+        [0., 0.],
+        [1., 0.],
+        [1., 1.],
+        [0., 1.],
+        [0., 0.],
+        [1., 0.],
+        [1., 1.],
+    ];
+    let points = rows
+        .iter()
+        .flat_map(|p| [0., 1.].map(|z| [p[0], p[1], z]))
+        .collect();
+    let periodic = NurbsSurface::new(
+        [3, 1],
+        [7, 2],
+        points,
+        None,
+        [(0..11).map(f64::from).collect(), vec![0., 1.]],
+        [vec![1; 11], vec![2, 2]],
+    )
+    .unwrap();
+    assert!(periodic.boundary_gap(0).unwrap() <= 1e-12);
+    assert_eq!(Surface::nurbs(periodic, TOLERANCE).periods()[0], Some(4.));
+    // Breaking the repetition opens it.
+    let mut broken: Vec<_> = rows
+        .iter()
+        .flat_map(|p| [0., 1.].map(|z| [p[0], p[1], z]))
+        .collect();
+    broken[13][0] += 1e-3;
+    let broken = NurbsSurface::new(
+        [3, 1],
+        [7, 2],
+        broken,
+        None,
+        [(0..11).map(f64::from).collect(), vec![0., 1.]],
+        [vec![1; 11], vec![2, 2]],
+    )
+    .unwrap();
+    assert!(broken.boundary_gap(0).unwrap() > 1e-4);
+    assert_eq!(Surface::nurbs(broken, TOLERANCE).periods()[0], None);
+}
