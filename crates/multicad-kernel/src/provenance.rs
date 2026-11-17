@@ -1067,6 +1067,8 @@ impl Solid {
                 body.topology(frame, owner, revision, self.geometry_policy())?
             } else if let Some((body, frame)) = self.internal_thread_treatment_body() {
                 body.source_topology(frame, owner, revision, self.geometry_policy())?
+            } else if let Some((body, frame)) = self.rounded_blind_bore_body() {
+                body.topology(frame, owner, revision)?
             } else if let Some((body, frame)) = self.rounded_thread_bore_body() {
                 body.topology(frame, owner, revision)?
             } else if let Some((body, frame)) = self.rounded_thread_body() {
