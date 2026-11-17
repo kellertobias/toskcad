@@ -38,12 +38,36 @@ pub(crate) fn dimensions(bore: &BlindBore, tolerance: f64) -> Result<(), StepErr
     Ok(())
 }
 
+pub(crate) fn precision(bore: &BlindBore, origin: Point, tolerance: f64) -> Result<(), StepError> {
+    dimensions(bore, tolerance)?;
+    if origin.iter().any(|v| !v.is_finite()) {
+        return Err(StepError::InvalidGeometry);
+    }
+    // The neutral reader caches REAL leaves as binary64. Cache equality is
+    // not exact decimal equality. Reserve whole-stock/world conversion and
+    // analytic-axis arithmetic, separately from the original thread fitting
+    // floor. A large exact dyadic stock radius must not bypass this floor
+    // merely because its authored transfer is zero. Unsupported sub-ULP
+    // requests conservatively refuse, even for particular exact input leaves.
+    let origin = origin.into_iter().map(f64::abs).fold(0., f64::max);
+    let scale = I::point(bore.stock_radius_bounds_mm()[1])
+        + I::point(bore.stock_height_bounds_mm()[1])
+        + I::point(origin)
+        + I::point(1.);
+    let conversion = I::point(256. * f64::EPSILON) * scale;
+    if !conversion.valid() || conversion.hi > tolerance.min(1e-7) / 32. {
+        return Err(StepError::Limit);
+    }
+    Ok(())
+}
+
 pub(super) fn encode(
     file: &mut StepFile,
     bore: &BlindBore,
     placement: Placement,
     tolerance: f64,
 ) -> Result<Entity, StepError> {
+    precision(bore, placement.origin, tolerance)?;
     let mut candidate = StepFile::new();
     let solid = rounded_thread::encode_blind_shell(&mut candidate, bore, &placement, tolerance)?;
     candidate.finish(vec![solid]);
