@@ -151,3 +151,106 @@ fn invalid_and_overflowing_annular_queries_remain_unresolved() {
         );
     }
 }
+
+#[test]
+fn concentric_rings_that_only_touch_have_no_common_interior() {
+    let policy = GeometryPolicy::default();
+    let frame = PlaneFrame {
+        origin: [25., 50., 75.],
+        u: [0., 1., 0.],
+        v: [0., 0., 1.],
+    };
+    let owner = EntityId::new();
+    let annulus = |radii: [f64; 2], height: f64| {
+        Solid::rust_annulus_from_sketch(
+            radii,
+            height,
+            owner,
+            frame,
+            [0., 0.],
+            ["inner", "outer"].map(|role| Origin {
+                source: owner,
+                role: role.into(),
+            }),
+            policy,
+        )
+        .unwrap()
+    };
+    let axial = PlaneFrame {
+        origin: frame.origin,
+        u: frame.u,
+        v: frame.v,
+    };
+    let disc = Solid::cylinder(axial, 3., 4., policy).unwrap();
+    let middle = annulus([3., 10.], 4.);
+    let outer = annulus([10., 20.], 4.);
+    for (a, b) in [
+        (&middle, &disc),
+        (&disc, &middle),
+        (&outer, &middle),
+        (&outer, &disc),
+    ] {
+        assert!(
+            a.boolean(b, BooleanOperation::Intersect, policy)
+                .unwrap()
+                .is_none()
+        );
+        let kept = a
+            .boolean(b, BooleanOperation::Subtract, policy)
+            .unwrap()
+            .unwrap();
+        assert!((kept.volume_mm3().unwrap() - a.volume_mm3().unwrap()).abs() < 1e-9);
+        assert!(
+            a.concentric_ring_boolean(b, BooleanOperation::Union, policy)
+                .is_none()
+        );
+    }
+    // A reversed annulus extends the other way and is axially disjoint.
+    let below = annulus([3., 10.], -4.);
+    assert!(
+        below
+            .concentric_ring_boolean(&middle, BooleanOperation::Intersect, policy)
+            .is_some()
+    );
+    // Radial overlap, an off-axis or tilted disc, and fuzzy policies are not proved.
+    let wide = Solid::cylinder(axial, 3.5, 4., policy).unwrap();
+    assert!(
+        middle
+            .concentric_ring_boolean(&wide, BooleanOperation::Intersect, policy)
+            .is_none()
+    );
+    let shifted = Solid::cylinder(
+        PlaneFrame {
+            origin: [25., 50.001, 75.],
+            ..axial
+        },
+        3.,
+        4.,
+        policy,
+    )
+    .unwrap();
+    assert!(
+        middle
+            .concentric_ring_boolean(&shifted, BooleanOperation::Intersect, policy)
+            .is_none()
+    );
+    let tilted = Solid::cylinder(PlaneFrame::default(), 1., 1., policy).unwrap();
+    assert!(
+        middle
+            .concentric_ring_boolean(&tilted, BooleanOperation::Intersect, policy)
+            .is_none()
+    );
+    let fuzzy = GeometryPolicy {
+        boolean_fuzzy_mm: 1e-6,
+        ..policy
+    };
+    assert!(
+        middle
+            .concentric_ring_boolean(&disc, BooleanOperation::Intersect, fuzzy)
+            .is_none()
+    );
+    assert!(
+        disc.concentric_ring_boolean(&disc.share().unwrap(), BooleanOperation::Intersect, policy)
+            .is_none()
+    );
+}

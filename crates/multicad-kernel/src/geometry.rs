@@ -1507,6 +1507,9 @@ impl Solid {
             if let Some(result) = self.contained_sweep_boolean(other, operation, policy) {
                 return result;
             }
+            if let Some(result) = self.concentric_ring_boolean(other, operation, policy) {
+                return result;
+            }
             return match self.orthogonal_boolean(other, operation, policy) {
                 Err(error) if error.kind == GeometryErrorKind::Unsupported => self
                     .separated_boolean(other, operation, policy)
