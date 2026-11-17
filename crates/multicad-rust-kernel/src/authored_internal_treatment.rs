@@ -101,7 +101,10 @@ impl Cavity {
         end: crate::Rational,
     ) -> Result<Self, Error> {
         let mut body = Self::new(thread, intent)?;
-        if body.entry.is_none() || body.tail.is_none() {
+        // Only the terminal cylinder may extend to this exact receiving end;
+        // no finite authored helical source is extrapolated. Its entry MAX
+        // cone is optional and has no bearing on this endpoint ownership.
+        if body.tail.is_none() {
             return Err(Error::Invalid);
         }
         let (n, d) = end.ratio();

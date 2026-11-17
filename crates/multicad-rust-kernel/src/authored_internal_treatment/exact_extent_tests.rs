@@ -299,3 +299,140 @@ fn positive_ulp_terminal_band_keeps_original_source_and_bounded_literal_mesh() {
         }
     }
 }
+
+#[test]
+fn tail_only_exact_domain_has_original_visible_law_real_cap_owners_and_independent_measures() {
+    fn f(value: f64) -> Q {
+        Q::from_float(value).unwrap()
+    }
+    fn pi_oracle(value: Enclosure, coefficient: &Q) {
+        let lower = Q::from_float(std::f64::consts::PI.next_down()).unwrap() * coefficient;
+        let upper = Q::from_float(std::f64::consts::PI.next_up()).unwrap() * coefficient;
+        assert!(
+            Q::from_float(value.lower).unwrap() <= lower
+                && upper <= Q::from_float(value.upper).unwrap(),
+            "{value:?}"
+        );
+    }
+    let only_tail = Intent {
+        entry_depth_mm: None,
+        ..intent()
+    };
+    for left in [false, true] {
+        for (visible, end) in [
+            (4., Rational::new(4, 1).unwrap()),
+            (3.3, Rational::new(33, 10).unwrap()),
+            (
+                3.3000000000000003,
+                Rational::new(33_000_000_000_000_003, 10_000_000_000_000_000).unwrap(),
+            ),
+            (4., Rational::new(41, 10).unwrap()),
+            (4., Rational::new(39, 10).unwrap()),
+        ] {
+            let original = Cavity::new(thread(left, visible), only_tail).unwrap();
+            let body =
+                Cavity::new_with_exact_receiving_extent(*original.source_thread(), only_tail, end)
+                    .unwrap();
+            assert_eq!(body.source_thread(), original.source_thread());
+            assert_eq!(body.tail, original.tail);
+            assert_eq!(body.intent(), original.intent());
+            assert_eq!(body.entry_radius_mm(), None);
+            let tail = body.tail.unwrap();
+            let material = Material::new(stock(end), body, 1.).unwrap();
+            // Exact independent integral of the ACTUAL five shared affine
+            // bands, integrated over one true angular turn at each station.
+            let mut mean = Q::from_integer(0.into());
+            for band in body.source_thread().bands() {
+                let width = f(band.phase_mm[1]) - f(band.phase_mm[0]);
+                let a = f(band.radius_mm[0]);
+                let b = f(band.radius_mm[1]);
+                mean += width * (&a * &a + &a * &b + &b * &b) / Q::from_integer(3.into());
+            }
+            mean /= f(body.source_thread().spec().pitch_mm);
+            let station = f(tail.station);
+            let terminal_radius = f(tail.radius);
+            let terminal_squared = &terminal_radius * &terminal_radius;
+            let terminal_height = q(end) - &station;
+            let cavity_coefficient = &mean * &station + &terminal_squared * &terminal_height;
+            pi_oracle(
+                body.removed_volume_mm3(Default::default()).unwrap(),
+                &cavity_coefficient,
+            );
+            let radius = q(material.stock().circle().radius());
+            let stock_squared = &radius * &radius;
+            pi_oracle(
+                material.volume_bounds(Default::default()).unwrap(),
+                &(&stock_squared * q(end) - &cavity_coefficient),
+            );
+            pi_oracle(
+                material
+                    .local_face_properties(FaceKey::StartCap, Default::default())
+                    .unwrap()
+                    .area_mm2,
+                &(&stock_squared - &mean),
+            );
+            let endcap = material
+                .local_face_properties(FaceKey::EndCap, Default::default())
+                .unwrap();
+            pi_oracle(endcap.area_mm2, &(&stock_squared - &terminal_squared));
+            assert!(
+                f(endcap.centroid_mm[2].lower) <= q(end)
+                    && q(end) <= f(endcap.centroid_mm[2].upper)
+            );
+            let terminal = material
+                .local_face_properties(FaceKey::TerminalCylinder, Default::default())
+                .unwrap();
+            pi_oracle(
+                terminal.area_mm2,
+                &(Q::from_integer(2.into()) * &terminal_radius * &terminal_height),
+            );
+            let middle = (q(end) + &station) / Q::from_integer(2.into());
+            assert!(
+                f(terminal.centroid_mm[2].lower) <= middle
+                    && middle <= f(terminal.centroid_mm[2].upper)
+            );
+            let boundary = material
+                .boundary_with_interrupt(Default::default(), None)
+                .unwrap();
+            let mut cap_edges = 0;
+            for (id, curve) in boundary.curves() {
+                if curve.faces().contains(&1) {
+                    let data = boundary
+                        .exact_curve_coefficients(id, 1_000_000, 0, None)
+                        .unwrap();
+                    assert_eq!(exact(data.coordinate(0, 1).unwrap()), q(end));
+                    assert_eq!(
+                        exact(data.coordinate(1, 1).unwrap()),
+                        Q::from_integer(0.into())
+                    );
+                    cap_edges += 1;
+                }
+            }
+            assert!(cap_edges >= 2);
+            let mesh = material
+                .tessellate_candidate(
+                    crate::display::Tessellation {
+                        deflection: 0.02,
+                        angle: 0.3,
+                        triangle_limit: 500_000,
+                    },
+                    None,
+                )
+                .unwrap();
+            assert!(
+                mesh.source_chord_bound_mm <= 0.02 && mesh.source_normal_angle_bound_rad <= 0.3
+            );
+            assert!(mesh.work_used <= 16_000_000);
+            assert!(
+                crate::manufacturing::certify(&mesh.mesh)
+                    .unwrap()
+                    .signed_volume_mm3
+                    > 0.
+            );
+            if end == Rational::new(41, 10).unwrap() {
+                assert!(body.source_thread().point_in_band(0, 0, 0., 4.05).is_err());
+                assert!(body.contains_void([1., 0., 4.05], 0.));
+            }
+        }
+    }
+}
