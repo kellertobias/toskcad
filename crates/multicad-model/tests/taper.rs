@@ -416,3 +416,138 @@ fn taper_with_plane_or_face_termination_fails_explicitly_before_native_sweep() {
         assert_eq!(f.session.document(), &original);
     }
 }
+/// Closed, consistently oriented manufacturing triangles whose enclosed volume
+/// matches the exact solid within the requested chordal accuracy.
+fn assert_closed_accurate_mesh(solid: &multicad_kernel::Solid, exact: f64, surface: f64) {
+    let deflection = 0.01;
+    let receipt = solid
+        .manufacturing_mesh_with_receipt(multicad_kernel::MeshOptions {
+            linear_deflection_mm: deflection,
+            ..Default::default()
+        })
+        .unwrap();
+    let mesh = &receipt.mesh;
+    let point = |i: u32| -> [f64; 3] { std::array::from_fn(|k| mesh.vertices[3 * i as usize + k]) };
+    let mut directed = std::collections::BTreeMap::<(u32, u32), i32>::new();
+    let mut volume = 0.;
+    for t in mesh.indices.chunks(3) {
+        for k in 0..3 {
+            let (a, b) = (t[k], t[(k + 1) % 3]);
+            *directed.entry((a.min(b), a.max(b))).or_default() += if a < b { 1 } else { -1 };
+        }
+        let [a, b, c] = [point(t[0]), point(t[1]), point(t[2])];
+        volume += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+            + a[2] * (b[0] * c[1] - b[1] * c[0]))
+            / 6.;
+    }
+    // Every edge has one use in each direction: closed and oriented.
+    assert!(directed.values().all(|&uses| uses == 0));
+    assert!(receipt.maximum_displacement_mm <= deflection);
+    assert!(
+        (volume - exact).abs() <= deflection * surface,
+        "{volume} != {exact}"
+    );
+}
+#[test]
+fn curved_oblique_taper_keeps_identity_through_edits_undo_redo_and_cold_reopen() {
+    let mut f = Fixture::new(|s| {
+        circle(s, 5.);
+        circle(s, 2.);
+    });
+    let tilted = |delta: f64| ExtrudeParameters {
+        direction: Direction {
+            elevation: angle(0.8_f64.asin().to_degrees()),
+            azimuth: angle(0.),
+            reverse: false,
+        },
+        ..Fixture::parameters(delta)
+    };
+    // Oblique frustum with a circular hole, normal height eight.
+    let expected = |delta: f64| {
+        let (outer, hole) = (5. + delta, 2. - delta);
+        8. * PI / 3. * ((25. + 5. * outer + outer * outer) - (4. + 2. * hole + hole * hole))
+    };
+    f.commit(tilted(1.));
+    let feature = f.request.outputs[0].feature;
+    let check = |document: &Document, revision: u64, delta: f64| {
+        let model = Compiler::default().compile(document, revision).unwrap();
+        let shape = &model.snapshot().shapes[&feature];
+        assert_eq!(shape.producer, feature);
+        assert_eq!(shape.solid_count, 1);
+        near(shape.volume_mm3, expected(delta));
+        let end = cap(shape, "cap.end");
+        cap(shape, "cap.start");
+        let solid = model.solid(feature).unwrap();
+        let faces = solid.faces().unwrap();
+        let cap_face = faces.iter().find(|face| face.index == end).unwrap();
+        near(
+            cap_face.area_mm2,
+            PI * ((5. + delta).powi(2) - (2. - delta).powi(2)),
+        );
+        // The end section sits on the sloped generator: center (6, 0, 8).
+        for (axis, value) in [6., 0., 8.].into_iter().enumerate() {
+            near(cap_face.center_mm[axis], value);
+        }
+        let (inner, outer) = radii_at(shape, [6., 0., 8.]);
+        near(inner, 2. - delta);
+        near(outer, 5. + delta);
+        shape.topology.validate().unwrap();
+        let area: f64 = faces.iter().map(|face| face.area_mm2).sum();
+        assert_closed_accurate_mesh(solid, expected(delta), area);
+        shape.topology.elements.clone()
+    };
+    let first = check(f.session.document(), f.session.revision(), 1.);
+
+    // A collapsing hole is refused by the compiler without publishing.
+    let revision = f.session.revision();
+    let invalid =
+        model::prepare_extrude_edit(&f.session, revision, actor(), feature, &tilted(3.)).unwrap();
+    f.session.commit(invalid.prepared).unwrap();
+    let error = Compiler::default()
+        .compile(f.session.document(), f.session.revision())
+        .err()
+        .expect("A collapsed hole must not produce geometry");
+    assert_eq!(error.entity, Some(feature));
+    f.session.undo(f.session.revision(), actor()).unwrap();
+    assert_eq!(check(f.session.document(), f.session.revision(), 1.), first);
+
+    let revision = f.session.revision();
+    let edit =
+        model::prepare_extrude_edit(&f.session, revision, actor(), feature, &tilted(-1.)).unwrap();
+    f.session.commit(edit.prepared).unwrap();
+    let narrowed = check(f.session.document(), f.session.revision(), -1.);
+    let keys = |elements: &[multicad_core::references::TopologyElement]| {
+        elements
+            .iter()
+            .filter(|e| e.key.kind == TopologyKind::Face)
+            .map(|e| (e.key, e.origins.clone()))
+            .collect::<Vec<_>>()
+    };
+    // Face identities survive the dimension change.
+    assert_eq!(keys(&narrowed), keys(&first));
+    f.session.undo(f.session.revision(), actor()).unwrap();
+    assert_eq!(check(f.session.document(), f.session.revision(), 1.), first);
+    f.session.redo(f.session.revision(), actor()).unwrap();
+    assert_eq!(
+        check(f.session.document(), f.session.revision(), -1.),
+        narrowed
+    );
+
+    let project =
+        multicad_core::project_file::ProjectFile::new(f.session.document().clone()).unwrap();
+    let mut bytes = vec![];
+    multicad_core::project_file::write(&project, &mut bytes, Default::default()).unwrap();
+    let supported = multicad_core::project_file::supported_capabilities();
+    let opened =
+        multicad_core::project_file::read(&mut bytes.as_slice(), Default::default(), &supported)
+            .unwrap()
+            .project;
+    assert_eq!(opened.document, project.document);
+    assert_eq!(
+        model::read_extrude(&opened.document, feature)
+            .unwrap()
+            .parameters,
+        tilted(-1.)
+    );
+    assert_eq!(check(&opened.document, 0, -1.), narrowed);
+}
