@@ -114,6 +114,30 @@ impl BlindBore {
         let h = exact(self.height) - I::point(self.cutter.spec().length_mm);
         [h.lo, h.hi]
     }
+    /// Directed support of the actual finite stock. Every outer cylindrical
+    /// support point remains occupied: the cutter's complete radial support
+    /// is strictly smaller, and the whole stock top lies above its finite tip.
+    /// Thus this is a material support proof, not just a containing box.
+    pub fn support_bounds(&self, direction: [f64; 3], tolerance: f64) -> Result<[f64; 2], Error> {
+        if direction.iter().any(|v| !v.is_finite()) || !tolerance.is_finite() || tolerance <= 0. {
+            return Err(Error::Invalid);
+        }
+        if direction == [0.; 3] {
+            return Ok([0.; 2]);
+        }
+        let [x, y, z] = direction.map(I::point);
+        let radial = (x.square() + y.square()).sqrt() * exact(self.radius);
+        let axial = if direction[2] > 0. {
+            z * exact(self.height)
+        } else {
+            I::point(0.)
+        };
+        let support = radial + axial;
+        if !support.valid() || support.width() > tolerance {
+            return Err(Error::Unresolved);
+        }
+        Ok([support.lo, support.hi])
+    }
     /// Whole-box classification only where stock or the solid floor decides
     /// membership. The original helical region and every touching boundary
     /// stay unresolved; these shortcuts never replace its finite rim proof.

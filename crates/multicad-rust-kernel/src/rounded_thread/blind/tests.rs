@@ -152,3 +152,47 @@ fn whole_meridian_support_encloses_both_exact_affine_endpoint_laws() {
         assert!(blind.stock_radius_bounds_mm()[0] > blind.cutter_radial_bounds_mm()[1]);
     }
 }
+
+#[test]
+fn finite_material_support_encloses_independent_exact_rational_cylinder_extrema() {
+    let q = |v| BigRational::from_float(v).unwrap();
+    for hand in [false, true] {
+        let b = BlindBore::new(
+            cutter(hand),
+            Rational::new(127, 20).unwrap(),
+            Rational::new(127, 25).unwrap(),
+        )
+        .unwrap();
+        for direction in [
+            [1., 0., 0.],
+            [0., 0., 1.],
+            [0., 0., -1.],
+            [0.4, -0.2, 0.7],
+            [-2., 3., -1.],
+            [0.; 3],
+        ] {
+            let [lo, hi] = b.support_bounds(direction, 1e-10).unwrap().map(q);
+            let radial_squared = BigRational::new(127.into(), 20.into()).pow(2)
+                * (q(direction[0]).pow(2) + q(direction[1]).pow(2));
+            let axial = BigRational::new(127.into(), 25.into()) * q(direction[2].max(0.));
+            let low = lo - axial.clone();
+            let high = hi - axial;
+            assert!(high >= BigRational::from_integer(0.into()));
+            if low > BigRational::from_integer(0.into()) {
+                assert!(low.pow(2) <= radial_squared);
+            }
+            assert!(radial_squared <= high.pow(2));
+        }
+        assert_eq!(
+            b.support_bounds([f64::NAN, 0., 0.], 1e-10),
+            Err(Error::Invalid)
+        );
+        assert_eq!(b.support_bounds([1., 0., 0.], 0.), Err(Error::Invalid));
+        assert_eq!(
+            b.support_bounds([1e308, 1e308, 1e308], 1e-10),
+            Err(Error::Unresolved)
+        );
+        assert!(b.support_bounds([1., 0., 0.], 1e-300).is_err());
+        assert!(b.support_bounds([1., 0., 0.], 1e-10).is_ok());
+    }
+}
