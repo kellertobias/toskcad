@@ -164,3 +164,6 @@ fn installed_dip_original_truncated_targets_earn_finite_windows_separately() {
     }
     assert_eq!(checked, 2);
 }
+
+#[path = "coverage_tests.rs"]
+mod coverage_contracts;

@@ -203,3 +203,6 @@ fn opposite_original_uv_sense_is_not_a_finite_boundary_permission() {
             .is_none()
     );
 }
+
+#[path = "coverage_tests.rs"]
+mod coverage_contracts;
