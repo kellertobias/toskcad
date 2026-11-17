@@ -382,9 +382,24 @@ pub(crate) fn planar_contours(
             message,
         )
     };
+    let unsupported = |message| {
+        error(
+            "planar face contours",
+            GeometryErrorKind::Unsupported,
+            message,
+        )
+    };
     let Some((origin, normal)) = solid.face_plane(face)? else {
         return Err(input("Select a planar face on a Rust solid"));
     };
+    // Oblique bores trim planar faces with ellipse/spline boundaries and have
+    // no planar loop decomposition here. Refuse them explicitly rather than
+    // reading a face ordinal as an edge ordinal.
+    if solid.oblique_bore_body().is_some() {
+        return Err(unsupported(
+            "Exact planar contours of oblique-bore faces with ellipse/spline boundaries are not yet supported",
+        ));
+    }
     let query_normal = frame.normal();
     if dot(normal, query_normal).abs() < 1. - 1e-9
         || dot(normal, subtract(frame.origin, origin)).abs() > policy.linear_tolerance_mm
@@ -443,7 +458,12 @@ pub(crate) fn planar_contours(
                         sweep_rad: sweep_rad * dot(support.normal(), query_normal).signum(),
                     }
                 }
-                _ => return Err(bad_result("Rust face boundary edge is missing".into())),
+                Some(_) => {
+                    return Err(unsupported(
+                        "Exact planar contours support line and circular-arc boundaries, not ellipse/spline edges",
+                    ));
+                }
+                None => return Err(bad_result("Rust face boundary edge is missing".into())),
             };
             edges.push(if reversed { edge.reversed() } else { edge });
             keys.push(TopologyKey {
