@@ -136,6 +136,17 @@ impl Solid {
     }
 }
 
+impl Solid {
+    /// One axial cylinder as the equivalent stepped revolution, keeping its
+    /// cap and wall origins, for providers that cut revolutions.
+    pub(crate) fn cylinder_as_revolution(&self) -> Option<Result<Self, GeometryError>> {
+        let (cylinder, frame) = self.axial_cylinder_frame()?;
+        let operand = Operand::new(self, frame, self.policy)?;
+        let feature = EntityId::from_uuid_bits(cylinder.feature());
+        Some(build(frame, &[operand], feature, self.policy))
+    }
+}
+
 fn build(
     frame: PlaneFrame,
     operands: &[Operand],

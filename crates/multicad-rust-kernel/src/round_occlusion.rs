@@ -1,13 +1,16 @@
 //! Exact visibility intervals for drawing edges behind round stock.
 
 use crate::{
-    curved_projection::{self, Cylinder, Detail, Rim, SpatialEdge},
+    curved_projection::{self, Cylinder, Detail, Rim, SpatialCurve, SpatialEdge},
     drawing_events::{self, Harmonic},
     planar_projection::ProjectionError,
 };
 
 type Point = [f64; 3];
 type Span = [f64; 2];
+
+mod cross;
+pub use cross::CrossVoid;
 
 /// A bounded axial cylinder in drawing (u, v, depth) coordinates.
 /// An optional coaxial bore removes material all the way through both caps.
@@ -22,6 +25,8 @@ pub struct RoundOccluder {
     bore: Option<f64>,
     contour_owner: Option<usize>,
     quarter: Option<[f64; 2]>,
+    /// A perpendicular cross-bore removed from the band.
+    cross: Option<CrossVoid>,
     bounds: [Point; 2],
 }
 
@@ -72,6 +77,7 @@ impl RoundOccluder {
             bore,
             contour_owner: None,
             quarter: None,
+            cross: None,
             bounds,
         })
     }
@@ -131,7 +137,10 @@ impl RoundOccluder {
     }
 
     pub(crate) fn closes_contour_of(&self, candidate: Option<&Self>) -> bool {
-        self.axis[2] == 0. && self.bore.is_none() && self.distinct_contour_owner(candidate)
+        self.axis[2] == 0.
+            && self.bore.is_none()
+            && self.cross.is_none()
+            && self.distinct_contour_owner(candidate)
     }
 
     pub(crate) fn distinct_contour_owner(&self, candidate: Option<&Self>) -> bool {
@@ -147,11 +156,14 @@ impl RoundOccluder {
     }
 
     pub(crate) fn covers_coincident_rim(&self, rim: Rim, tolerance: f64) -> bool {
-        self.bore.is_none() && self.covers_axial_contour(rim, f64::INFINITY, tolerance)
+        self.bore.is_none()
+            && self.cross.is_none()
+            && self.covers_axial_contour(rim, f64::INFINITY, tolerance)
     }
 
     pub(crate) fn covers_axial_contour(&self, rim: Rim, ceiling: f64, tolerance: f64) -> bool {
-        if self.projected > curved_projection::ANGULAR_ROUNDOFF
+        if self.cross.is_some()
+            || self.projected > curved_projection::ANGULAR_ROUNDOFF
             || rim.depth_cosine.hypot(rim.depth_sine)
                 > curved_projection::ANGULAR_ROUNDOFF * rim.ellipse.major
         {
@@ -192,6 +204,10 @@ impl RoundOccluder {
         if front <= 0. || !self.may_hide([point; 2], tolerance) {
             return false;
         }
+        if let Some(void) = &self.cross {
+            let start = [point[0], point[1], point[2] + tolerance];
+            return self.cross_ray_hits(start, front, void);
+        }
         let [x, y, z]: Point = std::array::from_fn(|i| point[i] - self.base[i]);
         let [u, v] = self.screen_axis;
         let along = u.mul_add(x, v * y);
@@ -216,7 +232,7 @@ impl RoundOccluder {
         if self.quarter.is_some() {
             return Err(ProjectionError::Invalid);
         }
-        curved_projection::project_in_depth(
+        let edges = curved_projection::project_in_depth(
             Cylinder {
                 base: [self.base[0], self.base[1]],
                 axis: self.axis,
@@ -228,7 +244,25 @@ impl RoundOccluder {
             hidden_lines,
             detail,
         )
-        .map_err(|_| ProjectionError::Invalid)
+        .map_err(|_| ProjectionError::Invalid)?;
+        let Some(void) = &self.cross else {
+            return Ok(edges);
+        };
+        // Outline generators lose their chords across the bore.
+        Ok(edges
+            .into_iter()
+            .flat_map(|edge| match edge.curve {
+                SpatialCurve::Line(line) => void
+                    .trim_line(line)
+                    .into_iter()
+                    .map(|piece| SpatialEdge {
+                        hidden: edge.hidden,
+                        curve: SpatialCurve::Line(piece),
+                    })
+                    .collect(),
+                SpatialCurve::Rim(_) => vec![edge],
+            })
+            .collect())
     }
 
     /// Find hidden intervals of a straight edge as normalized parameters in
@@ -330,6 +364,29 @@ impl RoundOccluder {
                 }
             }
         }
+        if let Some(void) = &self.cross {
+            let lifted = edge.map(|[x, y, z]| [x, y, z + depth_gap]);
+            let mut cuts = events.sorted().to_vec();
+            void.line_events(lifted, &mut cuts);
+            cuts.sort_unstable_by(f64::total_cmp);
+            cuts.dedup();
+            let at = |t: f64| -> Point {
+                std::array::from_fn(|i| (lifted[1][i] - lifted[0][i]).mul_add(t, lifted[0][i]))
+            };
+            let mut hidden: Option<Span> = None;
+            for pair in cuts.windows(2) {
+                let [start, end] = [pair[0], pair[1]];
+                if self.cross_ray_hits(at(start.midpoint(end)), f64::INFINITY, void) {
+                    hidden = Some([hidden.map_or(start, |span| span[0]), end]);
+                } else if let Some(previous) = hidden.take() {
+                    emit(previous);
+                }
+            }
+            if let Some(last) = hidden {
+                emit(last);
+            }
+            return;
+        }
         let ray = |t| {
             self.occludes(
                 axial.at(t),
@@ -418,6 +475,21 @@ impl RoundOccluder {
                     );
                 }
             }
+        }
+        if let Some(void) = &self.cross {
+            let lifted = [origin[0], origin[1], origin[2] + depth_gap];
+            void.rim_events([lifted, cosine, sine], trim, cuts);
+            let at = |t: f64| -> Point {
+                let (s, c) = t.sin_cos();
+                std::array::from_fn(|i| c.mul_add(cosine[i], s.mul_add(sine[i], lifted[i])))
+            };
+            drawing_events::spans(
+                cuts,
+                trim,
+                |t| self.cross_ray_hits(at(t), f64::INFINITY, void),
+                emit,
+            );
+            return;
         }
         drawing_events::spans(
             cuts,

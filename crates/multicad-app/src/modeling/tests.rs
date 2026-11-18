@@ -2645,11 +2645,11 @@ fn rust_model_worker_publishes_all_bundled_project_scenes() {
     let mut store = crate::files::ProjectStore::new(scratch.path().join("recovery"));
     let mut worker = Backend::factory(GeometryBackend::Rust).unwrap()();
     for (index, (name, expected_leaves)) in [
-        ("apartment.tcd", 95),
+        ("apartment.tcd", 107),
         ("cabinet.tcd", 64),
         ("front-panel.tcd", 13),
         ("toolcase.tcd", 169),
-        ("welded-workbench.tcd", 20),
+        ("welded-workbench.tcd", 32),
     ]
     .into_iter()
     .enumerate()

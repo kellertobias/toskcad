@@ -1125,6 +1125,8 @@ impl Solid {
                 body.topology(frame, owner, revision)
             } else if let Some((body, frame)) = self.oblique_bore_body() {
                 body.topology(frame, owner, revision).map_err(failure)?
+            } else if let Some((body, frame)) = self.cross_bore_body() {
+                body.topology(frame, owner, revision).map_err(failure)?
             } else if let Some((body, frame)) = self.herringbone_body() {
                 body.topology(frame, owner, revision)
             } else if let Some((body, frame)) = self.bevel_body() {
