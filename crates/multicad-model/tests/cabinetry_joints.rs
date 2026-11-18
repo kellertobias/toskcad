@@ -385,3 +385,208 @@ fn impossible_corners_and_finger_counts_are_refused() {
     // Nothing was staged by any refusal.
     assert!(model::panel_joints(f.s.document()).next().is_none());
 }
+
+/// CAD-393: panels butted face to edge, the way they are usually drawn,
+/// are refused with the exact length each one lacks, and applying that
+/// change with the ordinary panel edit forms the joint.
+#[test]
+fn a_butted_corner_names_the_missing_length_and_the_fix_joins_it() {
+    let mut f = fixture();
+    let a = f.side.body;
+    // The bottom sits between the sides instead of under them.
+    let butted = panel(
+        f.stock,
+        "Butted bottom",
+        PanelPlane::Xy,
+        [18., 0., 0.],
+        564.,
+        400.,
+    );
+    let p = model::prepare_panel(&f.s, f.s.revision(), actor(), &butted).unwrap();
+    checked(&mut f.s, p.prepared);
+    let pair = PanelJointPair { a, b: butted.body };
+    let parameters = multicad_core::parameters::evaluate(f.s.document()).unwrap();
+    let guide = model::diagnose_panel_corner(f.s.document(), &parameters, &pair)
+        .unwrap()
+        .expect("a butted corner is refused");
+    assert_eq!(guide.problem, model::CornerProblem::NoOverlap);
+    assert_eq!(guide.extensions.len(), 1);
+    let ext = &guide.extensions[0];
+    assert_eq!(ext.panel, butted.body);
+    assert_eq!(ext.role, model::PairRole::B);
+    assert_eq!(ext.dimension(), "length");
+    near(ext.amount_mm, 18.);
+    near(ext.required_mm(), 582.);
+    assert!(ext.at_start && ext.editable);
+    near(ext.new_origin_mm[0], 0.);
+    // The missing material is exactly the 18 × 400 × 18 corner block.
+    let block = guide.block.as_ref().unwrap();
+    assert_eq!(block, &ext.region);
+    let size: Vec<f64> = block
+        .edges
+        .iter()
+        .map(|e| e.iter().map(|c| c * c).sum::<f64>().sqrt())
+        .collect();
+    let mut sorted = size.clone();
+    sorted.sort_by(f64::total_cmp);
+    near(sorted[0], 18.);
+    near(sorted[1], 18.);
+    near(sorted[2], 400.);
+    for text in [
+        "Left side (A) and Butted bottom (B) do not overlap at a corner",
+        "lengthen Butted bottom (B) by 18 mm at its start (length 564 → 582 mm)",
+        "move its origin X 18 → 0 mm",
+        "outside face of Left side",
+        "Nothing is changed",
+    ] {
+        assert!(guide.message.contains(text), "{text}: {}", guide.message);
+    }
+    // The section diagram shows the bottom's missing end in the corner.
+    assert_eq!(guide.section.add.len(), 1);
+    // Preparing the joint refuses atomically with the same explanation.
+    let before = f.s.document().clone();
+    let e = model::prepare_panel_joint(
+        &f.s,
+        f.s.revision(),
+        actor(),
+        "Corner",
+        &PanelJointDefinition {
+            generated_by: None,
+            kind: PanelJointKind::Miter,
+            pairs: vec![pair],
+        },
+    )
+    .unwrap_err()
+    .message;
+    assert_eq!(e, guide.message);
+    assert_eq!(f.s.document(), &before);
+    // Follow the guidance with the normal panel edit.
+    let feature = model::panel_feature(f.s.document(), butted.body).unwrap();
+    let mut def = model::read_panel(f.s.document(), feature).unwrap();
+    def.source = PanelSource::Rectangle {
+        stock: f.stock,
+        plane: PanelPlane::Xy,
+        origin: ext.new_origin_mm.map(length),
+        length: length(ext.required_mm()),
+        width: length(400.),
+    };
+    let p = model::prepare_panel_edit(&f.s, f.s.revision(), actor(), feature, &def).unwrap();
+    checked(&mut f.s, p.prepared);
+    let parameters = multicad_core::parameters::evaluate(f.s.document()).unwrap();
+    assert!(
+        model::diagnose_panel_corner(f.s.document(), &parameters, &pair)
+            .unwrap()
+            .is_none()
+    );
+    joint(
+        &mut f,
+        "Corner",
+        PanelJointKind::ButtAThrough,
+        &[(a, butted.body)],
+    );
+    let m = compile(&f.s);
+    near(volume(&m, a), SIDE);
+    near(volume(&m, butted.body), 582. * 400. * 18. - BLOCK);
+}
+
+/// Both panels can fall short: a side that stops above the bottom and a
+/// bottom that stops beside it each get their own extension, and a pair
+/// that never runs side by side is refused without a made-up fix.
+#[test]
+fn every_short_panel_and_a_corner_without_shared_length_are_explained() {
+    let mut f = fixture();
+    let short_side = panel(
+        f.stock,
+        "Short side",
+        PanelPlane::Yz,
+        [0., 0., 18.],
+        400.,
+        282.,
+    );
+    let short_bottom = panel(
+        f.stock,
+        "Short bottom",
+        PanelPlane::Xy,
+        [18., 0., 0.],
+        582.,
+        400.,
+    );
+    for p in [&short_side, &short_bottom] {
+        let prepared = model::prepare_panel(&f.s, f.s.revision(), actor(), p).unwrap();
+        checked(&mut f.s, prepared.prepared);
+    }
+    let parameters = multicad_core::parameters::evaluate(f.s.document()).unwrap();
+    let guide = model::diagnose_panel_corner(
+        f.s.document(),
+        &parameters,
+        &PanelJointPair {
+            a: short_side.body,
+            b: short_bottom.body,
+        },
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(guide.problem, model::CornerProblem::NoOverlap);
+    let roles: Vec<_> = guide.extensions.iter().map(|e| e.role).collect();
+    assert_eq!(roles, [model::PairRole::A, model::PairRole::B]);
+    for e in &guide.extensions {
+        near(e.amount_mm, 18.);
+        assert!(e.at_start);
+    }
+    assert_eq!(guide.extensions[0].dimension(), "width");
+    near(guide.extensions[0].new_origin_mm[2], 0.);
+    assert!(
+        guide.message.contains("widen Short side (A) by 18 mm"),
+        "{}",
+        guide.message
+    );
+    assert!(
+        guide.message.contains("lengthen Short bottom (B) by 18 mm"),
+        "{}",
+        guide.message
+    );
+    // A bottom beyond the end of the side shares no length along the corner.
+    let beyond = panel(
+        f.stock,
+        "Beyond",
+        PanelPlane::Xy,
+        [0., 450., 0.],
+        600.,
+        400.,
+    );
+    let p = model::prepare_panel(&f.s, f.s.revision(), actor(), &beyond).unwrap();
+    checked(&mut f.s, p.prepared);
+    let parameters = multicad_core::parameters::evaluate(f.s.document()).unwrap();
+    let guide = model::diagnose_panel_corner(
+        f.s.document(),
+        &parameters,
+        &PanelJointPair {
+            a: f.side.body,
+            b: beyond.body,
+        },
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        guide.problem,
+        model::CornerProblem::NoSharedLength { gap_mm: 50. }
+    );
+    assert!(guide.extensions.is_empty() && guide.block.is_none());
+    assert!(guide.message.contains("50 mm apart"), "{}", guide.message);
+    // A valid corner has nothing to diagnose; parallel panels cannot form one.
+    let ok = PanelJointPair {
+        a: f.side.body,
+        b: f.bottom.body,
+    };
+    assert!(
+        model::diagnose_panel_corner(f.s.document(), &parameters, &ok)
+            .unwrap()
+            .is_none()
+    );
+    let parallel = PanelJointPair {
+        a: f.side.body,
+        b: f.other.body,
+    };
+    let e = model::diagnose_panel_corner(f.s.document(), &parameters, &parallel).unwrap_err();
+    assert!(e.to_string().contains("parallel"), "{e}");
+}
