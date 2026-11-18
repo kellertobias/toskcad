@@ -901,7 +901,12 @@ impl Plane {
                 }
             }
         }
-        work.charge((work.crossings.len() + 1).saturating_mul(self.boundary.len()))?;
+        // Each inside test casts a ray along u from one sample, which can
+        // cross or touch only pieces spanning that sample's row. Bucket the
+        // pieces by the rows of the path so a test scans its own bucket.
+        let rows = Rows::new(&self.boundary, reach[1], margin, work.crossings.len() + 1);
+        work.charge(rows.assigned)?;
+        work.charge((work.crossings.len() + 1).saturating_mul(rows.widest.max(1)))?;
         drawing_events::spans(
             &mut work.crossings,
             span,
@@ -915,7 +920,7 @@ impl Plane {
                 }
                 let point = [u.at(t), v.at(t)];
                 let mut inside = false;
-                for &boundary in &self.boundary {
+                for &boundary in rows.at(point[1]) {
                     match boundary.ray(point, self.roundoff) {
                         Ray::Boundary => return true,
                         Ray::Crossing => inside = !inside,
@@ -927,6 +932,67 @@ impl Plane {
             |interval| work.hidden.push(interval),
         );
         Ok(())
+    }
+}
+
+/// Boundary pieces grouped by equal-height bands over the rows of a path.
+/// A piece belongs to every band its row range reaches within `margin`, so
+/// a band holds every piece whose inside ray result can differ from none.
+struct Rows {
+    start: f64,
+    height: f64,
+    bands: Vec<Vec<Boundary>>,
+    assigned: usize,
+    widest: usize,
+}
+
+impl Rows {
+    const MAX_BANDS: usize = 4096;
+
+    fn new(boundary: &[Boundary], reach: Span, margin: f64, samples: usize) -> Self {
+        let [start, end] = [reach[0] - margin, reach[1] + margin];
+        let count = samples.clamp(1, Self::MAX_BANDS);
+        let height = (end - start) / count as f64;
+        let count = if height > 0. { count } else { 1 };
+        let mut rows = Self {
+            start,
+            height,
+            bands: vec![Vec::new(); count],
+            assigned: 0,
+            widest: 0,
+        };
+        for &piece in boundary {
+            let [a, b] = piece.ends();
+            let [low, high] = [a[1].min(b[1]) - margin, a[1].max(b[1]) + margin];
+            if high < start || low > end {
+                continue;
+            }
+            let [first, last] = [low, high].map(|row| rows.band(row));
+            for band in &mut rows.bands[first..=last] {
+                band.push(piece);
+            }
+            rows.assigned += last - first + 1;
+        }
+        rows.widest = rows.bands.iter().map(Vec::len).max().unwrap_or(0);
+        rows
+    }
+
+    fn band(&self, row: f64) -> usize {
+        if self.bands.len() == 1 {
+            return 0;
+        }
+        // Subtraction and division by a positive height are monotone, so a
+        // sample row never maps below the band of a piece that reaches it.
+        let band = ((row - self.start) / self.height).floor();
+        if band <= 0. {
+            0
+        } else {
+            (band as usize).min(self.bands.len() - 1)
+        }
+    }
+
+    fn at(&self, row: f64) -> &[Boundary] {
+        &self.bands[self.band(row)]
     }
 }
 

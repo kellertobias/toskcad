@@ -733,7 +733,7 @@ fn perforated_sheet_work_scales_with_the_boundary_pieces_a_path_reaches() {
         .unwrap();
     let faces = [face];
     let project = |extras: SceneExtras<'_>| {
-        project_with_extras(&[], &[], extras, &faces, options(), 1_000_000)
+        project_with_extras(&[], &[], extras, &faces, options(), 100_000)
             .map(|(_, _, supplied)| supplied)
             .unwrap()
     };
