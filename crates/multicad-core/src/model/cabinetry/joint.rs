@@ -317,35 +317,16 @@ pub fn resolve_panel_joint_pair(
     }
     let a = panel_box(document, parameters, p.a)?;
     let b = panel_box(document, parameters, p.b)?;
+    // Refuse a missing or partial corner block with the exact fix.
+    if let Some(guide) = super::corner_guide::diagnose_panel_corner(document, parameters, p)? {
+        return Err(invalid(guide.message));
+    }
     let axes = [a.u, a.v, a.normal()];
-    // B's box in A's frame; its edges must run along A's axes.
-    let to_a = |w: [f64; 3]| {
-        let d = [w[0] - a.origin[0], w[1] - a.origin[1], w[2] - a.origin[2]];
-        [dot(d, axes[0]), dot(d, axes[1]), dot(d, axes[2])]
-    };
-    let mut b_axis = [usize::MAX; 3];
-    for (k, dir) in [b.u, b.v, b.normal()].into_iter().enumerate() {
-        let i = (0..3)
-            .find(|&i| dot(dir, axes[i]).abs() > 1. - 1e-9)
-            .ok_or_else(|| invalid("Joint panels must be square to each other"))?;
-        b_axis[k] = i;
-    }
-    let b_sizes = [b.length_mm, b.width_mm, b.thickness_mm];
-    let b_min_corner = to_a(b.origin);
-    let mut b_lo = [0.; 3];
-    let mut b_hi = [0.; 3];
-    for k in 0..3 {
-        let i = b_axis[k];
-        let dir = [b.u, b.v, b.normal()][k];
-        let extent = b_sizes[k] * dot(dir, axes[i]).signum();
-        let (lo, hi) = if extent >= 0. {
-            (b_min_corner[i], b_min_corner[i] + extent)
-        } else {
-            (b_min_corner[i] + extent, b_min_corner[i])
-        };
-        b_lo[i] = lo;
-        b_hi[i] = hi;
-    }
+    let super::corner_guide::BInA {
+        axis: b_axis,
+        lo: b_lo,
+        hi: b_hi,
+    } = super::corner_guide::b_in_a(&a, &b)?;
     let a_hi = [a.length_mm, a.width_mm, a.thickness_mm];
     let lo: [f64; 3] = std::array::from_fn(|i| b_lo[i].max(0.));
     let hi: [f64; 3] = std::array::from_fn(|i| b_hi[i].min(a_hi[i]));

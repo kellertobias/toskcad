@@ -1,8 +1,13 @@
 //! Visual pairing for the joint form: click panel A, then panel B, on their
-//! visible faces. For loose tenons the viewport draws both receiving
-//! panels, the insertion direction, every rounded mortise and the tenons
-//! resolved from the current values, or the reason they are refused.
-use super::{JointPanel, Kind};
+//! visible faces. The form keeps one waiting operand: a click fills it and
+//! moves on to the next empty one, Pick in the Inspector chooses the
+//! operand to replace, and once every pair is complete further clicks are
+//! explained instead of silently starting another pair. Both chosen panels
+//! stay outlined in their role colors. For corner joints the viewport shows
+//! the missing material of a refused corner; for loose tenons it draws both
+//! receiving panels, the insertion direction, every rounded mortise and the
+//! tenons resolved from the current values, or the reason they are refused.
+use super::{JointPanel, Kind, guide};
 use crate::{
     egui,
     modeling::{TerminationViewport, panel_face},
@@ -12,6 +17,8 @@ use multicad_core::{
     model::{self, MachiningFace},
     parameters::EvaluatedParameters,
 };
+
+const ROLES: [&str; 2] = ["A", "B"];
 
 impl JointPanel {
     pub fn picking(&self) -> bool {
@@ -33,22 +40,49 @@ impl JointPanel {
             return false;
         }
         let Some(hit) = panel_face::hover(document, revision, &view) else {
+            // Explain an object that is not a rectangular panel.
+            if let Some(part) = panel_face::hovered_part(document, revision, &view) {
+                let reason = refusal(document, part);
+                if let Some(p) = view.pointer {
+                    panel_face::label(&view, p + egui::vec2(8., -8.), &reason, panel_face::INVALID);
+                }
+                if view.clicked {
+                    self.pick_note = Some(reason);
+                }
+            }
             return false;
         };
-        let slot = self.next_slot();
-        panel_face::outline(&view, &hit.frame, panel_face::HOVER);
         let name = document.get(hit.part).map_or("", |e| e.name.as_str());
         let p = panel_face::on_screen(&view, &hit.frame, hit.at);
-        panel_face::label(
-            &view,
-            p + egui::vec2(8., -8.),
-            &format!(
-                "Panel {} · {name} · {}",
-                if slot.1 == 0 { "A" } else { "B" },
-                panel_face::face_label(hit.face)
+        let waiting = if self.pairs.is_empty() {
+            Some((0, 0))
+        } else {
+            self.active
+        };
+        let (text, color) = match waiting {
+            _ if self.existing.is_some() => (
+                "An applied joint keeps its panel pairs".to_owned(),
+                panel_face::INVALID,
             ),
-            panel_face::HOVER,
-        );
+            None => (
+                format!("{name} · every pair is chosen; use Pick in the Inspector to replace one"),
+                panel_face::INVALID,
+            ),
+            Some((i, k)) => match self.duplicate(i, k, hit.part) {
+                Some(note) => (note, panel_face::INVALID),
+                None => (
+                    format!(
+                        "Set pair {} panel {} · {name} · {}",
+                        i + 1,
+                        ROLES[k],
+                        panel_face::face_label(hit.face)
+                    ),
+                    panel_face::HOVER,
+                ),
+            },
+        };
+        panel_face::outline(&view, &hit.frame, color);
+        panel_face::label(&view, p + egui::vec2(8., -8.), &text, color);
         if !view.clicked {
             return false;
         }
@@ -59,16 +93,46 @@ impl JointPanel {
         }
         changed
     }
-    /// The (pair, side) a click fills next.
-    fn next_slot(&self) -> (usize, usize) {
-        for (i, pair) in self.pairs.iter().enumerate() {
-            if let Some(k) = pair.iter().position(Option::is_none) {
-                return (i, k);
-            }
-        }
-        (self.pairs.len(), 0)
+    /// The first operand without a panel.
+    pub(super) fn first_open_slot(&self) -> Option<(usize, usize)> {
+        self.next_open_slot(0)
     }
-    /// Put a clicked panel into the next open pair slot.
+    /// The first operand without a panel, starting at pair `from` and
+    /// wrapping around.
+    pub(super) fn next_open_slot(&self, from: usize) -> Option<(usize, usize)> {
+        let n = self.pairs.len();
+        (0..n).map(|d| (from + d) % n).find_map(|i| {
+            self.pairs[i]
+                .iter()
+                .position(Option::is_none)
+                .map(|k| (i, k))
+        })
+    }
+    /// Remove pair `i`; the waiting operand stays on its pair, or moves to
+    /// the first empty one when its own pair is removed.
+    pub(super) fn remove_pair(&mut self, i: usize) {
+        self.pairs.remove(i);
+        self.active = match self.active {
+            Some((j, _)) if j == i => self.first_open_slot(),
+            Some((j, k)) if j > i => Some((j - 1, k)),
+            other => other,
+        };
+    }
+    /// Why `part` cannot fill operand (i, k), if it cannot.
+    fn duplicate(&self, i: usize, k: usize, part: EntityId) -> Option<String> {
+        let pair = self.pairs.get(i)?;
+        if pair[1 - k] == Some(part) {
+            return Some(format!(
+                "Already panel {} of pair {}; choose a different panel for {}",
+                ROLES[1 - k],
+                i + 1,
+                ROLES[k]
+            ));
+        }
+        (pair[k] == Some(part)).then(|| format!("Already panel {} of pair {}", ROLES[k], i + 1))
+    }
+    /// Put a clicked panel into the waiting operand and wait for the next
+    /// empty one.
     pub(super) fn pick(&mut self, document: &Document, part: EntityId) -> bool {
         self.pick_note = None;
         let name = document.get(part).map_or(String::new(), |e| e.name.clone());
@@ -84,16 +148,22 @@ impl JointPanel {
             self.pick_note = refused.into_iter().next();
             return false;
         }
-        let (i, k) = self.next_slot();
-        if i == self.pairs.len() {
+        if self.pairs.is_empty() {
             self.pairs.push([None, None]);
+            self.active = Some((0, 0));
         }
-        if self.pairs[i][1 - k] == Some(part) {
-            let other = if k == 0 { "B" } else { "A" };
-            self.pick_note = Some(format!("{name} is already panel {other} of this pair"));
+        let Some((i, k)) = self.active.filter(|(i, _)| *i < self.pairs.len()) else {
+            self.pick_note = Some(format!(
+                "{name} was not used: every pair is chosen. Use Pick beside A or B to replace one, or Add pair for another corner"
+            ));
+            return false;
+        };
+        if let Some(note) = self.duplicate(i, k, part) {
+            self.pick_note = Some(format!("{name}: {note}"));
             return false;
         }
         self.pairs[i][k] = Some(part);
+        self.active = self.next_open_slot(i);
         true
     }
     fn paint(
@@ -106,23 +176,32 @@ impl JointPanel {
             (Kind::LooseTenon, Ok(spec)) => Some(spec),
             _ => None,
         };
-        for pair in &self.pairs {
+        let corner = !matches!(self.kind, Kind::LooseTenon | Kind::Dowels);
+        for (i, pair) in self.pairs.iter().enumerate() {
             for (k, part) in pair.iter().enumerate() {
                 let Some(part) = part else { continue };
-                if let Some(frame) =
-                    panel_face::frame(document, parameters, *part, MachiningFace::Top)
-                {
+                if let Ok(b) = model::machining_panel_box(document, parameters, *part) {
                     let name = document
                         .get(*part)
                         .map_or(String::new(), |e| e.name.clone());
-                    panel_face::outline(view, &frame, panel_face::TARGET);
+                    let color = [panel_face::TARGET, panel_face::ROLE_B][k];
+                    let top = panel_face::box_edges(view, &panel_face::panel_box(&b), 2.5, color);
+                    let at = top + egui::vec2(6., -6. - 14. * k as f32);
                     panel_face::label(
                         view,
-                        panel_face::on_screen(view, &frame, [0., frame.size[1]]),
-                        &format!("{} · {name}", if k == 0 { "A" } else { "B" }),
-                        panel_face::TARGET,
+                        at,
+                        &format!("Pair {} · {} · {name}", i + 1, ROLES[k]),
+                        color,
                     );
                 }
+            }
+            if corner && let [Some(a), Some(b)] = pair {
+                guide::paint(
+                    document,
+                    parameters,
+                    view,
+                    &model::PanelJointPair { a: *a, b: *b },
+                );
             }
             let (Some(spec), [Some(a), Some(b)]) = (&spec, pair) else {
                 continue;
@@ -168,4 +247,13 @@ impl JointPanel {
             }
         }
     }
+}
+
+/// Why a clicked Part cannot be a joint panel.
+fn refusal(document: &Document, part: EntityId) -> String {
+    let (_, refused) = panel_face::selected_panels(document, [part]);
+    refused
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "Choose a rectangular panel".into())
 }

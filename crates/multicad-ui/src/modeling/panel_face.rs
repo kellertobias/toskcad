@@ -37,6 +37,8 @@ pub(super) const TARGET: egui::Color32 = egui::Color32::from_rgb(255, 176, 64);
 pub(super) const HOVER: egui::Color32 = egui::Color32::from_rgb(255, 230, 90);
 pub(super) const CUT: egui::Color32 = egui::Color32::from_rgb(80, 220, 140);
 pub(super) const INVALID: egui::Color32 = egui::Color32::from_rgb(255, 90, 90);
+/// Panel B of a joint pair; panel A uses `TARGET`.
+pub(super) const ROLE_B: egui::Color32 = egui::Color32::from_rgb(90, 190, 255);
 pub(super) const AXIS_U: egui::Color32 = egui::Color32::from_rgb(235, 80, 80);
 pub(super) const AXIS_V: egui::Color32 = egui::Color32::from_rgb(90, 200, 90);
 /// Cosine between view ray and face normal below which a face is edge-on.
@@ -246,6 +248,62 @@ pub(super) fn hover(
     )?;
     let parameters = multicad_core::parameters::evaluate(document).ok()?;
     locate(document, &parameters, hit.instance, hit.point_mm)
+}
+
+/// The Part under the pointer, panel or not, if the scene is current. Tools
+/// that only take panels use it to explain why another object is refused.
+pub(super) fn hovered_part(
+    document: &Document,
+    revision: u64,
+    view: &TerminationViewport<'_>,
+) -> Option<EntityId> {
+    let scene = view.scene?;
+    if scene.stamp().document != document.id() || scene.stamp().revision != revision {
+        return None;
+    }
+    let pointer = view.pointer.filter(|p| view.rect.contains(*p))?;
+    scene
+        .pick_screen_with(
+            view.camera,
+            view.rect,
+            pointer,
+            PickOptions {
+                filter: PickFilter::Faces,
+                include_hidden: false,
+                section: view.section,
+            },
+        )
+        .map(|hit| hit.instance)
+}
+
+/// A panel's whole box as a guide box.
+pub(super) fn panel_box(b: &model::PanelBox) -> model::GuideBox {
+    let n = b.normal();
+    model::GuideBox {
+        origin: b.origin,
+        edges: [
+            b.u.map(|c| c * b.length_mm),
+            b.v.map(|c| c * b.width_mm),
+            n.map(|c| c * b.thickness_mm),
+        ],
+    }
+}
+/// Draw the twelve edges of a box; returns its highest on-screen corner for
+/// a label.
+pub(super) fn box_edges(
+    view: &TerminationViewport<'_>,
+    b: &model::GuideBox,
+    width: f32,
+    color: egui::Color32,
+) -> egui::Pos2 {
+    let p = b.corners().map(|c| screen(view, c));
+    for (i, j) in model::GuideBox::EDGES {
+        view.painter
+            .line_segment([p[i], p[j]], egui::Stroke::new(width, color));
+    }
+    p.into_iter()
+        .min_by(|a, b| a.y.total_cmp(&b.y))
+        .unwrap_or_default()
 }
 
 fn screen(view: &TerminationViewport<'_>, p: [f64; 3]) -> egui::Pos2 {
