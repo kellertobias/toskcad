@@ -386,6 +386,9 @@ impl Solid {
             return Ok(body.geometry.signed_distance_mm(local(frame, point_mm))
                 <= self.policy.linear_tolerance_mm);
         }
+        if let Some((body, frame)) = self.cross_bore_body() {
+            return Ok(body.contains(frame, point_mm, self.policy.linear_tolerance_mm));
+        }
         let (body, frame) = self.revolution_body().ok_or_else(|| {
             error(
                 OPERATION,

@@ -293,6 +293,9 @@ pub(crate) fn planar_loops(solid: &Solid, face: u32) -> Vec<Vec<(u32, bool)>> {
     if solid.annulus_body().is_some() {
         return vec![vec![(face, false)], vec![(face + 2, true)]];
     }
+    if let Some((body, _)) = solid.cross_bore_body() {
+        return body.planar_loops(face);
+    }
     if let Some((body, _)) = solid.revolution_body() {
         return body.planar_loops(face);
     }

@@ -55,6 +55,7 @@ mod hanger_body;
 mod source_face_measure;
 use hanger_body::HangerBody;
 pub use hanger_body::{HangerData, HealedHangerStepVerification, HealedSupportStepVerification};
+mod cross_bore_body;
 mod helical_body;
 mod helical_tube_body;
 mod herringbone_body;
@@ -116,6 +117,7 @@ use linear_body::LinearBody;
 use nonplanar_loft_body::NonplanarLoftBody;
 use normal_relief_body::NormalReliefBody;
 mod spline_cap_relief_body;
+use cross_bore_body::CrossBoreBody;
 pub use normal_relief_body::NormalReliefMotif;
 use normal_sweep_body::NormalSweepBody;
 pub use normal_sweep_body::SweepOpening;
@@ -794,6 +796,7 @@ enum SolidBody {
     Sphere(Rc<SphereBody>, PlaneFrame),
     Torus(Rc<TorusBody>, PlaneFrame),
     ObliqueBore(Rc<ObliqueBoreBody>, PlaneFrame),
+    CrossBore(Rc<CrossBoreBody>, PlaneFrame),
     RoundedCylinder(Rc<RoundedCylinderBody>, PlaneFrame),
     AxialStack(Rc<AxialStackBody>, PlaneFrame),
     RustCompound(Rc<RustCompound>),
@@ -1290,6 +1293,7 @@ impl Solid {
             SolidBody::ImportedBrep(body) => SolidBody::ImportedBrep(Rc::clone(body)),
             SolidBody::Torus(body, frame) => SolidBody::Torus(Rc::clone(body), *frame),
             SolidBody::ObliqueBore(body, frame) => SolidBody::ObliqueBore(Rc::clone(body), *frame),
+            SolidBody::CrossBore(body, frame) => SolidBody::CrossBore(Rc::clone(body), *frame),
             SolidBody::RoundedCylinder(body, frame) => {
                 SolidBody::RoundedCylinder(Rc::clone(body), *frame)
             }
@@ -1460,6 +1464,10 @@ impl Solid {
             // A cylinder oblique to plain box stock in the stock's own chart,
             // whatever the world placement of either operand.
             if let Some(result) = self.oblique_cylinder_cut(other, None) {
+                return result;
+            }
+            // A cylinder perpendicular to a stepped shaft or plain cylinder.
+            if let Some(result) = self.cross_bore_cut(other, None) {
                 return result;
             }
             if let Some(tool) = other.axial_cylinder() {
@@ -1824,6 +1832,11 @@ impl Solid {
                     frame.checked_metric_extent(body.geometry.size_mm(), self.policy)?;
                     SolidBody::ObliqueBore(Rc::clone(body), frame)
                 }
+                SolidBody::CrossBore(body, frame) => {
+                    let frame = transform.frame(*frame);
+                    frame.checked_metric_bounds(body.bounds(PlaneFrame::default()), self.policy)?;
+                    SolidBody::CrossBore(Rc::clone(body), frame)
+                }
                 SolidBody::RoundedCylinder(body, frame) => {
                     let frame = transform.frame(*frame);
                     frame.checked_metric_bounds(body.bounds(PlaneFrame::default()), self.policy)?;
@@ -1936,6 +1949,9 @@ impl Solid {
             return Ok(body.geometry.volume_mm3());
         }
         if let Some((body, _)) = self.oblique_bore_body() {
+            return Ok(body.geometry.volume_mm3());
+        }
+        if let Some((body, _)) = self.cross_bore_body() {
             return Ok(body.geometry.volume_mm3());
         }
         if let Some((body, _)) = self.sphere_body() {
@@ -2104,6 +2120,9 @@ impl Solid {
             return Ok(body.bounds(frame));
         }
         if let Some((body, frame)) = self.oblique_bore_body() {
+            return Ok(body.bounds(frame));
+        }
+        if let Some((body, frame)) = self.cross_bore_body() {
             return Ok(body.bounds(frame));
         }
         if let Some((body, frame)) = self.sphere_body() {
@@ -2327,6 +2346,9 @@ impl Solid {
             return Ok(vec![body.face(frame)]);
         }
         if let Some((body, frame)) = self.oblique_bore_body() {
+            return Ok(body.faces(frame));
+        }
+        if let Some((body, frame)) = self.cross_bore_body() {
             return Ok(body.faces(frame));
         }
         if let Some((body, frame)) = self.sphere_body() {
@@ -2611,6 +2633,7 @@ impl Solid {
             SolidBody::ObliqueBore(body, frame) => {
                 crate::rust_display::placed_mesh(body.geometry.mesh(rust_options), *frame, false)
             }
+            SolidBody::CrossBore(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::AxialStack(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::PlanarBoolean(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::NonplanarLoft(body, frame) => {
@@ -2820,6 +2843,8 @@ impl Solid {
         } else if let Some((body, _)) = self.rounded_thread_body() {
             body.volume_error_bound(Self::rust_mesh_options(options))?
         } else if let Some((body, _)) = self.helical_body() {
+            body.volume_error_bound(Self::rust_mesh_options(options))
+        } else if let Some((body, _)) = self.cross_bore_body() {
             body.volume_error_bound(Self::rust_mesh_options(options))
         } else if let Some((body, _)) = self.revolution_body() {
             multicad_rust_kernel::revolution_mesh::volume_error_bound(
@@ -3053,6 +3078,9 @@ impl Solid {
         if let Some((body, frame)) = self.radial_boundary_body() {
             return body.sample_edge(frame, ordinal, options);
         }
+        if let Some((body, frame)) = self.cross_bore_body() {
+            return body.sample_edge(frame, ordinal, options);
+        }
         if let Some(body) = self.imported_brep_body() {
             return body.sample_edge(ordinal, options);
         }
@@ -3152,6 +3180,7 @@ impl Solid {
             SolidBody::ImportedBrep(body) => body.feature,
             SolidBody::Torus(body, _) => body.feature,
             SolidBody::ObliqueBore(body, _) => body.feature,
+            SolidBody::CrossBore(body, _) => body.feature,
             SolidBody::RoundedCylinder(body, _) => body.feature,
             SolidBody::AxialStack(body, _) => body.feature,
             SolidBody::PlanarBoolean(body, _) => body.feature,
@@ -3226,7 +3255,8 @@ impl Solid {
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
             | SolidBody::InternalThreadTreatment(..)
-            | SolidBody::ObliqueBore(..) => false,
+            | SolidBody::ObliqueBore(..)
+            | SolidBody::CrossBore(..) => false,
             SolidBody::WarpedUnion(body, _) => {
                 multicad_rust_kernel::step::supports_warped_union(&body.geometry)
             }
@@ -3478,7 +3508,8 @@ impl Solid {
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
             | SolidBody::InternalThreadTreatment(..)
-            | SolidBody::ObliqueBore(..) => Err(step::StepError::Unsupported),
+            | SolidBody::ObliqueBore(..)
+            | SolidBody::CrossBore(..) => Err(step::StepError::Unsupported),
             SolidBody::Orthogonal(body, frame) => body.append_step(writer, *frame),
             SolidBody::Occt(_) => unreachable!("native STEP dispatched above"),
         }
@@ -3607,6 +3638,7 @@ impl Solid {
             SolidBody::Sphere(..) => "Sphere",
             SolidBody::Torus(..) => "Torus",
             SolidBody::ObliqueBore(..) => "ObliqueBore",
+            SolidBody::CrossBore(..) => "CrossBore",
             SolidBody::RoundedCylinder(..) => "RoundedCylinder",
             SolidBody::AxialStack(..) => "AxialStack",
             SolidBody::RustCompound(..) => "RustCompound",
