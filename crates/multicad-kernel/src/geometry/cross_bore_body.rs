@@ -225,6 +225,10 @@ impl Solid {
 }
 
 impl CrossBoreBody {
+    pub(crate) fn geometry(&self) -> &CrossBore {
+        &self.geometry
+    }
+
     pub(super) fn bounds(&self, frame: PlaneFrame) -> Bounds {
         self.shaft.bounds(frame)
     }

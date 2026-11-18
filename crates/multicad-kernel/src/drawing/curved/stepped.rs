@@ -38,7 +38,7 @@ pub(super) fn rounds(
     Ok(Some(rounds))
 }
 
-fn axial_bands(ring: &[[f64; 2]], tangent_edges: bool) -> Option<Vec<[f64; 3]>> {
+pub(super) fn axial_bands(ring: &[[f64; 2]], tangent_edges: bool) -> Option<Vec<[f64; 3]>> {
     let mut bands = Vec::new();
     let mut axial_wall = None;
     for (&[r0, z0], &[r1, z1]) in ring.iter().zip(ring.iter().cycle().skip(1)) {

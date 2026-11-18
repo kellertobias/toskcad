@@ -265,6 +265,13 @@ impl CrossBore {
         self.ends
     }
 
+    /// The bore chart: unit travel `x'` and offset direction `y'` in the
+    /// shaft chart, the axis offset along `y'`, the axial level and the
+    /// tool start and end along `x'`.
+    pub fn bore_chart(&self) -> ([V; 2], f64, f64, [f64; 2]) {
+        (self.across, self.offset, self.level, self.stations)
+    }
+
     /// Tool base, unit travel, radius and height in the shaft chart.
     pub fn tool(&self) -> (V, V, f64, f64) {
         (

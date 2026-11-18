@@ -213,3 +213,83 @@ fn misses_contacts_and_tangency() {
     };
     assert_eq!(error.kind, GeometryErrorKind::Unsupported);
 }
+
+#[test]
+fn drawings_see_through_the_bore_and_publish_its_rims() {
+    use multicad_core::drawings::{VectorCurve, VectorRole};
+    use multicad_kernel::{DrawingProjection, DrawingSolid, project_drawing};
+    let screw = screw();
+    let bored = cut(&screw, &bore([0., 15., -50.], 100).0).unwrap().unwrap();
+    // A plate under the hub whose top edges at y = 13 and 17 run beneath
+    // the bore.
+    let size = |n| Rational::new(n, 1).unwrap();
+    let plate = Solid::rust_box(
+        7,
+        [size(40), size(4), size(2)],
+        PlaneFrame {
+            origin: [-20., 13., -20.],
+            ..PlaneFrame::default()
+        },
+        GeometryPolicy::default(),
+    )
+    .unwrap();
+    let solids = [
+        DrawingSolid {
+            solid: &bored,
+            hatch: None,
+        },
+        DrawingSolid {
+            solid: &plate,
+            hatch: None,
+        },
+    ];
+    let top = DrawingProjection {
+        hidden_lines: true,
+        ..Default::default()
+    };
+    let vectors = project_drawing(&solids, top).unwrap();
+    let window = (2.75f64 * 2.75 - 4.).sqrt();
+    let plate_edge = |role: VectorRole, from: f64, to: f64| {
+        vectors.iter().any(|vector| {
+            vector.source_index == 1
+                && vector.role == role
+                && matches!(vector.curve, VectorCurve::Line { a, b }
+                    if (a[1] - 13.).abs() < 1e-6 && (b[1] - 13.).abs() < 1e-6
+                        && (a[0].min(b[0]) - from).abs() < 1e-6
+                        && (a[0].max(b[0]) - to).abs() < 1e-6)
+        })
+    };
+    // Seen through the bore, hidden by the hub around it.
+    assert!(
+        plate_edge(VectorRole::Visible, -window, window),
+        "{vectors:#?}"
+    );
+    assert!(plate_edge(VectorRole::Hidden, window, 9.));
+    assert!(plate_edge(VectorRole::Hidden, -9., -window));
+    // The near rim projects onto the tool circle, as visible chords.
+    let rim = vectors
+        .iter()
+        .filter(|vector| vector.source_index == 0 && vector.role == VectorRole::Visible)
+        .filter(|vector| match vector.curve {
+            VectorCurve::Line { a, b } => [a, b]
+                .iter()
+                .all(|p| (p[0].hypot(p[1] - 15.) - 2.75).abs() < 1e-9),
+            _ => false,
+        })
+        .count();
+    assert!(rim >= 16, "{rim}");
+    // An isometric view of the bored shaft alone also evaluates exactly.
+    let (s, c) = (0.5f64.sqrt(), (1. / 3f64).sqrt());
+    let iso = DrawingProjection {
+        frame: PlaneFrame {
+            origin: [0.; 3],
+            u: [s, -s, 0.],
+            v: [-c * s, -c * s, (2. / 3f64).sqrt()],
+        },
+        hidden_lines: true,
+        ..Default::default()
+    };
+    let vectors = project_drawing(&solids[..1], iso).unwrap();
+    assert!(vectors.iter().any(|v| v.role == VectorRole::Hidden));
+    assert!(vectors.iter().any(|v| v.role == VectorRole::Visible));
+}

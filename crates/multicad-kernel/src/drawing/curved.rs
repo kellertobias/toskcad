@@ -8,6 +8,7 @@ use multicad_rust_kernel::{
 
 mod apertures;
 mod channel;
+mod cross;
 mod machined;
 mod opaque;
 mod pockets;
@@ -72,6 +73,7 @@ pub(super) fn needs_curved_scene(solid: &Solid) -> bool {
         || apertures::has_through_bores(solid)
         || solid.rounded_slot_body().is_some()
         || solid.revolution_body().is_some()
+        || solid.cross_bore_body().is_some()
         || solid.normal_sweep_body().is_some()
         || solid.drawing_warped_shell().is_some()
         || solid.cosmetic_fastener_body().is_some()
@@ -251,6 +253,11 @@ fn project_members(
         if let Some(round) = round_occluder(solid, options.frame)? {
             round_sources.push(source);
             rounds.push(round);
+        } else if let Some(bored) = cross::scene(solid, index, source, options)? {
+            round_sources.extend(std::iter::repeat_n(source, bored.rounds.len()));
+            rounds.extend(bored.rounds);
+            rounded.lines.extend(bored.lines);
+            spatial_ellipses.extend(bored.bottoms);
         } else if let Some(bands) = stepped::rounds(solid, index, options)? {
             round_sources.extend(std::iter::repeat_n(source, bands.len()));
             rounds.extend(bands);
