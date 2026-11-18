@@ -220,15 +220,23 @@ impl MachiningPanel {
             let name = document.get(part).map_or(String::new(), |e| e.name.clone());
             match resolved {
                 Ok(r) => {
-                    panel_face::outline(view, &r.frame, panel_face::TARGET);
-                    if k == 0 && self.hover.is_none() {
+                    // The overlay is drawn above the model; a cut face seen
+                    // from behind is faded and named so, not shown as visible.
+                    let front = panel_face::faces_viewer(view, &r.frame);
+                    let tone = |c| if front { c } else { panel_face::far_side(c) };
+                    panel_face::outline(view, &r.frame, tone(panel_face::TARGET));
+                    if k == 0 && self.hover.is_none() && front {
                         panel_face::axes(view, &r.frame);
                     }
                     panel_face::label(
                         view,
                         panel_face::on_screen(view, &r.frame, [0., r.frame.size[1]]),
-                        &format!("{name} · {}", panel_face::face_label(r.face)),
-                        panel_face::TARGET,
+                        &format!(
+                            "{name} · {}{}",
+                            panel_face::face_label(r.face),
+                            if front { "" } else { " (far side)" }
+                        ),
+                        tone(panel_face::TARGET),
                     );
                     for (i, h) in r.holes.iter().enumerate() {
                         let color = if self.kind == Kind::Drill && self.selected_hole == Some(i) {
@@ -236,10 +244,10 @@ impl MachiningPanel {
                         } else {
                             panel_face::CUT
                         };
-                        panel_face::circle(view, &r.frame, h.at, h.diameter_mm, color);
+                        panel_face::circle(view, &r.frame, h.at, h.diameter_mm, tone(color));
                     }
                     for x in &r.recesses {
-                        panel_face::polygon(view, &r.frame, &x.outline, panel_face::CUT);
+                        panel_face::polygon(view, &r.frame, &x.outline, tone(panel_face::CUT));
                     }
                 }
                 Err(error) => {
