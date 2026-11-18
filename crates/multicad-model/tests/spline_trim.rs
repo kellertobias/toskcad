@@ -124,7 +124,6 @@ fn genuine_both_end_tangent_continuations_require_explicit_contacts_and_keep_ori
         .unwrap();
         assert_eq!(edit.report.replacements[&f.target], vec![f.target]);
         f.session.commit(edit.edit.preview.unwrap()).unwrap();
-        let result = NativeRegionQueries::curve(&review::current_curve(&f).unwrap());
         for i in 0..=50 {
             let p = original_native
                 .evaluate(a + (b - a) * i as f64 / 50., policy)
@@ -139,7 +138,16 @@ fn genuine_both_end_tangent_continuations_require_explicit_contacts_and_keep_ori
             .unwrap();
             assert!(hits.iter().any(|h| h.distance_mm <= 1e-7));
         }
-        assert!(result.self_intersections(policy).unwrap().points.is_empty());
+        assert!(
+            multicad_core::sketch_regions::RegionQueries::self_intersections(
+                &NativeRegionQueries::analytic(policy).unwrap(),
+                &review::current_curve(&f).unwrap(),
+                policy.linear_tolerance_mm,
+            )
+            .unwrap()
+            .points
+            .is_empty()
+        );
         let saved = review::archive(f.session.document()).unwrap();
         assert_eq!(
             review::reopen(&saved).unwrap().document(),

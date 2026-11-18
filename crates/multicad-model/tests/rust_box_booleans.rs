@@ -104,15 +104,14 @@ fn check_solid(solid: &Solid, volume: f64, bounds: [Point; 2]) {
     }
 }
 
-fn compare_backends(
+fn rebuild_and_check(
     session: &Session,
     feature: EntityId,
     volume: f64,
     bounds: [Point; 2],
 ) -> Model {
-    let native = compile(session, GeometryBackend::OpenCascade);
     let rust = compile(session, GeometryBackend::Rust);
-    check_solid(native.solid(feature).unwrap(), volume, bounds);
+    assert!(rust.solid(feature).unwrap().uses_rust_geometry());
     check_solid(rust.solid(feature).unwrap(), volume, bounds);
     rust
 }
@@ -128,7 +127,7 @@ fn box_literal_roundoff_keeps_the_authored_size_and_can_cut_other_stock() {
         [1., 1., 1.],
     );
     let result = combine(&mut session, Operation::Cut, stock, tool.clone());
-    let rebuilt = compare_backends(
+    let rebuilt = rebuild_and_check(
         &session,
         result.producer,
         3000. - 5.2 * 3.3 * 27.9,
@@ -335,9 +334,9 @@ fn rust_box_join_cut_and_intersect_keep_exact_stock_and_reopen_with_verified_ste
 
     let joined = combine(&mut session, Operation::Join, base, wing);
     let stock_bounds = [[0.25, -1.5, 2.], [10.25, 4.5, 6.]];
-    compare_backends(&session, joined.producer, 216., stock_bounds);
+    rebuild_and_check(&session, joined.producer, 216., stock_bounds);
     let cut = combine(&mut session, Operation::Cut, joined, punch);
-    let rust = compare_backends(&session, cut.producer, 200., stock_bounds);
+    let rust = rebuild_and_check(&session, cut.producer, 200., stock_bounds);
     check_contours(&rust, cut.producer, xy_face(6.), 54.);
     let topology = &rust.snapshot().shapes[&cut.producer].topology;
     assert!(matches!(
@@ -371,7 +370,7 @@ fn rust_box_join_cut_and_intersect_keep_exact_stock_and_reopen_with_verified_ste
     let corner_intersection = GeometryIntent::capture(topology, pocket_corner_key).unwrap();
 
     let mut session = reopen(&session);
-    let rebuilt = compare_backends(&session, cut.producer, 200., stock_bounds);
+    let rebuilt = rebuild_and_check(&session, cut.producer, 200., stock_bounds);
     let rebuilt_topology = &rebuilt.snapshot().shapes[&cut.producer].topology;
     assert!(matches!(
         references::resolve(&pocket_intent, rebuilt_topology, session.revision()),
@@ -387,7 +386,7 @@ fn rust_box_join_cut_and_intersect_keep_exact_stock_and_reopen_with_verified_ste
     let limiter = box_at(&mut session, "Limiter", [6., 7., 2.], [1.25, -2., 3.]);
     let clipped = combine(&mut session, Operation::Intersect, cut, limiter);
     let clipped_bounds = [[1.25, -1.5, 3.], [7.25, 4.5, 5.]];
-    let result = compare_backends(&session, clipped.producer, 64., clipped_bounds);
+    let result = rebuild_and_check(&session, clipped.producer, 64., clipped_bounds);
     check_contours(&result, clipped.producer, xy_face(5.), 36.);
 }
 
@@ -402,7 +401,7 @@ fn rust_boolean_notches_an_xz_sketch_extrusion_and_keeps_its_rectangular_hole() 
         producer: feature,
     };
     let bounds = [[0., -8., 0.], [12., -2., 10.]];
-    compare_backends(&session, stock.producer, 552., bounds);
+    rebuild_and_check(&session, stock.producer, 552., bounds);
     let cutter = box_at(
         &mut session,
         "Open side notch",
@@ -410,7 +409,7 @@ fn rust_boolean_notches_an_xz_sketch_extrusion_and_keeps_its_rectangular_hole() 
         [10., -9., 1.],
     );
     let cut = combine(&mut session, Operation::Cut, stock, cutter);
-    let rust = compare_backends(&session, cut.producer, 528., bounds);
+    let rust = rebuild_and_check(&session, cut.producer, 528., bounds);
     check_contours(
         &rust,
         cut.producer,
@@ -429,7 +428,7 @@ fn rust_box_cut_keeps_an_enclosed_void_inside_one_solid() {
     let base = box_at(&mut session, "Stock", [6.; 3], [0.; 3]);
     let tool = box_at(&mut session, "Void", [2.; 3], [2.; 3]);
     let cut = combine(&mut session, Operation::Cut, base, tool);
-    let rust = compare_backends(&session, cut.producer, 208., [[0.; 3], [6.; 3]]);
+    let rust = rebuild_and_check(&session, cut.producer, 208., [[0.; 3], [6.; 3]]);
     let shape = &rust.snapshot().shapes[&cut.producer];
     let pocket_floor = planar_key(&shape.topology, 2, 2.);
     let contours = rust

@@ -19,17 +19,12 @@ fn compile(session: &Session, backend: GeometryBackend) -> multicad_model::Model
         .unwrap()
 }
 #[test]
-fn exact_part_rotation_keeps_upstream_source_and_real_frames_step_and_reopen() {
-    exact_part_rotation(GeometryBackend::OpenCascade);
-}
-
-#[test]
 fn rust_part_rotation_keeps_upstream_source_and_real_frames_step_and_reopen() {
     exact_part_rotation(GeometryBackend::Rust);
 }
 
 fn exact_part_rotation(backend: GeometryBackend) {
-    let mut session = Session::new(Document::new("Native exact placement").unwrap()).unwrap();
+    let mut session = Session::new(Document::new("Exact placement").unwrap()).unwrap();
     let box_ = PrimitiveRequest::new(
         "Original box",
         PrimitiveParameters::Box {
@@ -54,16 +49,16 @@ fn exact_part_rotation(backend: GeometryBackend) {
     );
     let revision = session.revision();
     let prepared = model::prepare_transform(&session, revision, actor(), &request).unwrap();
-    let native = Compiler::default()
+    let evaluated = Compiler::default()
         .compile_with_backend(prepared.prepared.document(), revision + 1, backend, None)
         .unwrap();
     assert_eq!(session.document(), &original);
-    let shape = &native.snapshot().shapes[&request.feature];
+    let shape = &evaluated.snapshot().shapes[&request.feature];
     assert_eq!(shape.bounds.min, [10., 1., 5.]);
     assert_eq!(shape.bounds.max, [13., 3., 9.]);
     assert!((shape.volume_mm3 - 24.).abs() < 1e-9);
     assert_eq!(shape.solid_count, 1);
-    assert_eq!(native.snapshot().bodies[&box_.body], request.feature);
+    assert_eq!(evaluated.snapshot().bodies[&box_.body], request.feature);
     assert!(shape.topology.elements.iter().any(|element| {
         element
             .frames
@@ -74,7 +69,7 @@ fn exact_part_rotation(backend: GeometryBackend) {
         "multicad-transform-{}.step",
         multicad_core::document::EntityId::new()
     ));
-    native
+    evaluated
         .solid(request.feature)
         .unwrap()
         .write_step(&path)

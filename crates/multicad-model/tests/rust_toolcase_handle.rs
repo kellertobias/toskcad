@@ -1,6 +1,14 @@
+use multicad_core::model;
 use multicad_core::{document::EntityId, project_file, references::AnalyticGeometry};
 use multicad_kernel::{PlaneFrame, Solid};
 use multicad_model::{Compiler, GeometryBackend};
+
+#[path = "support/axis_solids.rs"]
+mod axis_solids;
+#[path = "support/saved_prism.rs"]
+mod saved_prism;
+
+use axis_solids::{Grid, Tool, operand};
 
 #[test]
 fn saved_toolcase_handle_joins_tangent_posts_into_one_manufacturable_solid() {
@@ -18,23 +26,45 @@ fn saved_toolcase_handle_joins_tangent_posts_into_one_manufacturable_solid() {
         omit_display: true,
         ..Default::default()
     };
-    let [rust, native] = [GeometryBackend::Rust, GeometryBackend::OpenCascade].map(|backend| {
-        compiler
-            .compile_sources_with_backend(&document, 0, &[feature], backend, None)
-            .unwrap()
-    });
-    let [solid, reference] = [&rust, &native].map(|model| model.solid(feature).unwrap());
+    let rust = compiler
+        .compile_sources_with_backend(&document, 0, &[feature], GeometryBackend::Rust, None)
+        .unwrap();
+    let solid = rust.solid(feature).unwrap();
     assert!(solid.uses_rust_geometry());
     assert_eq!(solid.solid_count().unwrap(), 1);
     let near = |a: f64, b: f64| assert!((a - b).abs() < 1e-7 * b.abs().max(1.), "{a} != {b}");
-    near(solid.volume_mm3().unwrap(), reference.volume_mm3().unwrap());
-    let [rust_faces, native_faces] = [solid, reference].map(|body| body.faces().unwrap());
-    let area = |faces: &[multicad_kernel::Face]| faces.iter().map(|face| face.area_mm2).sum();
-    near(area(&rust_faces), area(&native_faces));
-    let [bounds, reference] = [solid, reference].map(|body| body.bounds().unwrap());
+    // Independent expectation from the saved join: the box posts evaluated
+    // exactly, with the saved grip cylinder joined in closed form.
+    let source = model::read_boolean(&document, feature).unwrap();
+    assert_eq!(source.operation, model::Operation::Join);
+    let (mut posts, mut grips) = (vec![], vec![]);
+    for id in std::iter::once(source.target.producer).chain(source.tools.iter().map(|t| t.producer))
+    {
+        match operand(&document, id) {
+            Tool::Box(b) => posts.push(b),
+            Tool::Cylinder(c) => grips.push(c),
+            Tool::Prism(_) => panic!("unexpected prism"),
+        }
+    }
+    assert_eq!([posts.len(), grips.len()], [2, 1]);
+    let grid = Grid::new(&posts, &[], None);
+    let (dv, da) = grips[0].join(&grid);
+    let expected_volume = grid.volume_mm3() + dv;
+    let expected_area = grid.area_mm2() + da;
+    let [mut expected_min, mut expected_max] = grid.bounds();
+    let grip = grips[0].bounds();
     for i in 0..3 {
-        near(bounds.min[i], reference.min[i]);
-        near(bounds.max[i], reference.max[i]);
+        expected_min[i] = expected_min[i].min(grip[0][i]);
+        expected_max[i] = expected_max[i].max(grip[1][i]);
+    }
+    near(solid.volume_mm3().unwrap(), expected_volume);
+    let rust_faces = solid.faces().unwrap();
+    let area = |faces: &[multicad_kernel::Face]| faces.iter().map(|face| face.area_mm2).sum();
+    near(area(&rust_faces), expected_area);
+    let bounds = solid.bounds().unwrap();
+    for i in 0..3 {
+        near(bounds.min[i], expected_min[i]);
+        near(bounds.max[i], expected_max[i]);
     }
     assert!(
         solid
@@ -87,7 +117,7 @@ fn saved_toolcase_handle_joins_tangent_posts_into_one_manufacturable_solid() {
     for imported in readers {
         assert_eq!(imported.solid_count().unwrap(), 1);
         near(imported.volume_mm3().unwrap(), solid.volume_mm3().unwrap());
-        near(area(&imported.faces().unwrap()), area(&native_faces));
+        near(area(&imported.faces().unwrap()), expected_area);
         let imported_bounds = imported.bounds().unwrap();
         for i in 0..3 {
             near(imported_bounds.min[i], bounds.min[i]);

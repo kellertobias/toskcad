@@ -60,6 +60,93 @@ fn face_has_role(model: &Model, feature: EntityId, role: &str) -> bool {
         .any(|origin| origin.source == feature && origin.role == role)
 }
 
+/// Independent prism expectation for an axis-aligned, center-justified wall
+/// without junctions: footprint times height, less every full-depth opening.
+fn expected_wall(session: &Session, feature: EntityId) -> (f64, [[f64; 3]; 2]) {
+    let source = model::read_wall(session.document(), feature).unwrap();
+    let wall = model::resolve_wall(session.document(), session.parameters(), &source).unwrap();
+    assert!(wall.junctions.is_empty() && wall.cutouts.is_empty());
+    assert_eq!(wall.justification, model::Justification::Center);
+    let (t, h) = (wall.thickness_mm, wall.height_mm);
+    let n = wall.points.len();
+    let segments = if wall.closed { n } else { n - 1 };
+    let mut min = [f64::INFINITY; 2];
+    let mut max = [f64::NEG_INFINITY; 2];
+    let mut centerline = 0.;
+    for i in 0..segments {
+        let [a, b] = [wall.points[i], wall.points[(i + 1) % n]];
+        assert!(a[0] == b[0] || a[1] == b[1], "axis-aligned segment");
+        centerline += (b[0] - a[0]).abs() + (b[1] - a[1]).abs();
+        for p in [a, b] {
+            for axis in 0..2 {
+                min[axis] = min[axis].min(p[axis] - t / 2.);
+                max[axis] = max[axis].max(p[axis] + t / 2.);
+            }
+        }
+    }
+    if !wall.closed {
+        assert_eq!(n, 2, "one straight open segment");
+        // Square ends: the open path is not widened along its own axis.
+        let [a, b] = [wall.points[0], wall.points[n - 1]];
+        for axis in 0..2 {
+            if a[1 - axis] == b[1 - axis] {
+                min[axis] = a[axis].min(b[axis]);
+                max[axis] = a[axis].max(b[axis]);
+            }
+        }
+    }
+    // Mitered closed corners and square open ends both enclose exactly the
+    // centerline length times the thickness.
+    let openings: f64 = wall
+        .openings
+        .iter()
+        .map(|opening| opening.width_mm * opening.height_mm)
+        .sum();
+    (
+        (centerline * h - openings) * t,
+        [
+            [min[0], min[1], wall.base_z_mm],
+            [max[0], max[1], wall.base_z_mm + h],
+        ],
+    )
+}
+
+fn expected_slab(session: &Session, feature: EntityId) -> (f64, [[f64; 3]; 2]) {
+    let source = model::read_slab(session.document(), feature).unwrap();
+    let slab = model::resolve_slab(session.document(), session.parameters(), &source).unwrap();
+    let n = slab.outline.len();
+    let area = (0..n)
+        .map(|i| {
+            let [a, b] = [slab.outline[i], slab.outline[(i + 1) % n]];
+            a[0] * b[1] - b[0] * a[1]
+        })
+        .sum::<f64>()
+        .abs()
+        / 2.;
+    let holes: f64 = slab
+        .holes
+        .iter()
+        .map(|hole| {
+            let c = hole.corners;
+            (0..4)
+                .map(|i| c[i][0] * c[(i + 1) % 4][1] - c[(i + 1) % 4][0] * c[i][1])
+                .sum::<f64>()
+                .abs()
+                / 2.
+        })
+        .sum();
+    let fold = |pick: fn(f64, f64) -> f64, axis: usize| {
+        slab.outline.iter().map(|p| p[axis]).reduce(pick).unwrap()
+    };
+    (
+        (area - holes) * (slab.top_mm - slab.bottom_mm),
+        [
+            [fold(f64::min, 0), fold(f64::min, 1), slab.bottom_mm],
+            [fold(f64::max, 0), fold(f64::max, 1), slab.top_mm],
+        ],
+    )
+}
+
 #[test]
 fn shipped_apartment_walls_and_slab_rebuild_with_openings() {
     let session = apartment();
@@ -69,16 +156,19 @@ fn shipped_apartment_walls_and_slab_rebuild_with_openings() {
     assert_eq!(slabs.len(), 1);
     let sources: Vec<_> = walls.iter().chain(&slabs).copied().collect();
     let rust = compile(&session, &sources, GeometryBackend::Rust);
-    let native = compile(&session, &sources, GeometryBackend::OpenCascade);
     for feature in sources {
         assert!(rust.solid(feature).unwrap().uses_rust_geometry());
         let shape = &rust.snapshot().shapes[&feature];
-        let reference = &native.snapshot().shapes[&feature];
+        let (volume, [min, max]) = if slabs.contains(&feature) {
+            expected_slab(&session, feature)
+        } else {
+            expected_wall(&session, feature)
+        };
         assert_eq!(shape.solid_count, 1);
-        near(shape.volume_mm3, reference.volume_mm3, 1e-3);
+        near(shape.volume_mm3, volume, 1e-3);
         for axis in 0..3 {
-            near(shape.bounds.min[axis], reference.bounds.min[axis], 1e-6);
-            near(shape.bounds.max[axis], reference.bounds.max[axis], 1e-6);
+            near(shape.bounds.min[axis], min[axis], 1e-6);
+            near(shape.bounds.max[axis], max[axis], 1e-6);
         }
         assert!(!shape.mesh.indices.is_empty());
     }
@@ -126,14 +216,9 @@ fn slab_shaft_edit_removes_material_and_keeps_the_four_sides_named() {
     .unwrap();
     session.commit(edit.prepared).unwrap();
     let updated = compile(&session, &[feature], GeometryBackend::Rust);
-    let native = compile(&session, &[feature], GeometryBackend::OpenCascade);
     let old = &baseline.snapshot().shapes[&feature];
     let new = &updated.snapshot().shapes[&feature];
-    near(
-        new.volume_mm3,
-        native.snapshot().shapes[&feature].volume_mm3,
-        1e-3,
-    );
+    near(new.volume_mm3, expected_slab(&session, feature).0, 1e-3);
     assert_eq!(old.bounds, new.bounds);
     let height = old.bounds.max[2] - old.bounds.min[2];
     near(old.volume_mm3 - new.volume_mm3, 500. * 800. * height, 1e-3);
@@ -216,7 +301,7 @@ fn uncut_partition(session: &Session) -> (EntityId, model::WallDefinition) {
 }
 
 #[test]
-fn edited_diagonal_wall_matches_the_native_volume_and_boundary() {
+fn edited_diagonal_wall_matches_the_analytic_volume_and_boundary() {
     let mut session = apartment();
     let (feature, mut wall) = uncut_partition(&session);
     wall.path[1][0] = length(4700.);
@@ -230,15 +315,38 @@ fn edited_diagonal_wall_matches_the_native_volume_and_boundary() {
     .unwrap();
     session.commit(edit.prepared).unwrap();
     let rust = compile(&session, &[feature], GeometryBackend::Rust);
-    let native = compile(&session, &[feature], GeometryBackend::OpenCascade);
     let actual = &rust.snapshot().shapes[&feature];
-    let expected = &native.snapshot().shapes[&feature];
+    // A square-ended straight wall is a rectangle swept vertically: its
+    // corners are the path ends offset by half the thickness along the normal.
+    let resolved = model::resolve_wall(session.document(), session.parameters(), &wall).unwrap();
+    assert!(resolved.junctions.is_empty());
+    assert_eq!(resolved.justification, model::Justification::Center);
+    let [a, b] = [resolved.points[0], resolved.points[1]];
+    let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+    let normal = [(a[1] - b[1]) / length, (b[0] - a[0]) / length];
+    let half = resolved.thickness_mm / 2.;
+    let corners = [a, b].into_iter().flat_map(|p| {
+        [-half, half].map(|offset| [p[0] + offset * normal[0], p[1] + offset * normal[1]])
+    });
+    let mut min = [f64::INFINITY; 3];
+    let mut max = [f64::NEG_INFINITY; 3];
+    for corner in corners {
+        for axis in 0..2 {
+            min[axis] = min[axis].min(corner[axis]);
+            max[axis] = max[axis].max(corner[axis]);
+        }
+    }
+    [min[2], max[2]] = [resolved.base_z_mm, resolved.base_z_mm + resolved.height_mm];
     assert_eq!(actual.solid_count, 1);
     assert!(rust.solid(feature).unwrap().uses_rust_geometry());
-    near(actual.volume_mm3, expected.volume_mm3, 1e-3);
+    near(
+        actual.volume_mm3,
+        length * resolved.thickness_mm * resolved.height_mm,
+        1e-3,
+    );
     for axis in 0..3 {
-        near(actual.bounds.min[axis], expected.bounds.min[axis], 1e-6);
-        near(actual.bounds.max[axis], expected.bounds.max[axis], 1e-6);
+        near(actual.bounds.min[axis], min[axis], 1e-6);
+        near(actual.bounds.max[axis], max[axis], 1e-6);
     }
     assert!(face_has_role(&rust, feature, "wall.seg.0.left"));
 }

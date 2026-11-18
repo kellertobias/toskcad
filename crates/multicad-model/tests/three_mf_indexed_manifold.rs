@@ -411,7 +411,7 @@ fn shifted_gear_with_intrinsic_hub_and_dp_source_exports_one_closed_bored_print_
 #[test]
 fn actual_za_worm_and_generated_wheel_keep_all_native_triangles_and_indexed_closure() {
     let policy = Default::default();
-    let worm = Solid::za_worm_named(
+    let worm = Solid::rust_za_worm_named(
         ZaWorm {
             axial_module_mm: 1.,
             threaded_length_mm: 16.,
@@ -422,7 +422,7 @@ fn actual_za_worm_and_generated_wheel_keep_all_native_triangles_and_indexed_clos
         policy,
     )
     .unwrap();
-    let wheel = Solid::generated_za_worm_wheel_named(
+    let wheel = Solid::rust_generated_za_worm_wheel_named(
         GeneratedZaWormWheel {
             teeth: 32,
             axial_module_mm: 1.,
