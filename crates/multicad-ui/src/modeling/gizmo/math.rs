@@ -187,6 +187,27 @@ pub(crate) fn rotated(
     result.validate().map_err(|e| e.to_string())?;
     Ok(result)
 }
+/// Round a signed drag quantity to the nearest whole step. A missing,
+/// nonpositive or nonfinite step leaves the value free.
+pub(crate) fn snap_step(value: f64, step: Option<f64>) -> f64 {
+    match step {
+        Some(step) if step.is_finite() && step > 0. && value.is_finite() => {
+            let snapped = (value / step).round() * step;
+            // Avoid a signed zero so a snapped-back drag equals its source.
+            if snapped == 0. { 0. } else { snapped }
+        }
+        _ => value,
+    }
+}
+/// Snap an in-plane displacement independently along the two orthonormal
+/// frame directions spanning that plane, so the grid follows the active
+/// transform coordinates rather than world axes.
+pub(crate) fn snap_planar(delta: Point, u: Point, v: Point, step: Option<f64>) -> Point {
+    add(
+        mul(u, snap_step(dot(delta, u), step)),
+        mul(v, snap_step(dot(delta, v), step)),
+    )
+}
 pub(crate) fn axis_parameter(ray: crate::viewport::Ray, origin: Point, axis: Point) -> Option<f64> {
     let direction = ray.direction();
     let w = sub(ray.origin(), origin);
@@ -284,6 +305,44 @@ mod tests {
                     .unwrap(),
                 );
             }
+        }
+    }
+    #[test]
+    fn grid_and_angle_steps_round_to_the_nearest_increment_and_ignore_invalid_steps() {
+        assert_eq!(snap_step(17., Some(10.)), 20.);
+        assert_eq!(snap_step(14.9, Some(10.)), 10.);
+        assert_eq!(snap_step(-16., Some(10.)), -20.);
+        assert_eq!(snap_step(-4., Some(10.)), 0.);
+        assert!(snap_step(-4., Some(10.)).is_sign_positive());
+        assert_eq!(snap_step(3.7, Some(2.5)), 2.5);
+        assert_eq!(snap_step(67., Some(45.)), 45.);
+        assert_eq!(snap_step(68., Some(45.)), 90.);
+        assert_eq!(snap_step(-200., Some(45.)), -180.);
+        for step in [
+            None,
+            Some(0.),
+            Some(-10.),
+            Some(f64::NAN),
+            Some(f64::INFINITY),
+        ] {
+            assert_eq!(snap_step(17.3, step), 17.3);
+        }
+        assert!(snap_step(f64::NAN, Some(10.)).is_nan());
+    }
+    #[test]
+    fn planar_snapping_follows_a_rotated_frame_and_keeps_the_plane() {
+        let s = std::f64::consts::FRAC_1_SQRT_2;
+        let (u, v) = ([s, s, 0.], [-s, s, 0.]);
+        // 17 along u and 4 along v → 20 along u and 0 along v.
+        let delta = add(mul(u, 17.), mul(v, 4.));
+        let snapped = snap_planar(delta, u, v, Some(10.));
+        let expected = mul(u, 20.);
+        for i in 0..3 {
+            assert!((snapped[i] - expected[i]).abs() < 1e-12);
+        }
+        let free = snap_planar(delta, u, v, None);
+        for i in 0..3 {
+            assert!((free[i] - delta[i]).abs() < 1e-12);
         }
     }
     #[test]

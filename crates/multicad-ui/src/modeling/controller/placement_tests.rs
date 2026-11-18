@@ -10,6 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 mod gizmo;
+mod points;
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
 }

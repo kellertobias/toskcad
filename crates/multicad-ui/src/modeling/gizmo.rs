@@ -30,6 +30,35 @@ impl GizmoBasis {
         Ok(())
     }
 }
+/// Default Move/Rotate increments. Shift held during a gesture releases them
+/// temporarily; the gesture keeps its handle, frame and pivot either way.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TransformSnap {
+    /// Active grid spacing, applied to the drag displacement along the
+    /// dragged axis or plane directions of the transform coordinate frame.
+    pub grid_mm: Option<f64>,
+    /// Angular increment about the dragged rotation axis.
+    pub angle_deg: Option<f64>,
+}
+impl TransformSnap {
+    pub const DEFAULT_ANGLE_DEG: f64 = 45.;
+    pub const OFF: Self = Self {
+        grid_mm: None,
+        angle_deg: None,
+    };
+    /// Grid steps at the active spacing and 45-degree rotation steps.
+    pub fn grid(spacing_mm: f64) -> Self {
+        Self {
+            grid_mm: (spacing_mm.is_finite() && spacing_mm > 0.).then_some(spacing_mm),
+            angle_deg: Some(Self::DEFAULT_ANGLE_DEG),
+        }
+    }
+}
+impl Default for TransformSnap {
+    fn default() -> Self {
+        Self::grid(10.)
+    }
+}
 pub struct PlacementViewport<'a> {
     /// Complete canonical source scene, never the noninteractive candidate.
     pub scene: Option<&'a Scene>,
@@ -39,6 +68,8 @@ pub struct PlacementViewport<'a> {
     /// The canvas owns the pointer rather than a popup, orientation widget or
     /// camera control. This gates new gestures; captured gestures still finish.
     pub start_allowed: bool,
+    /// Increments for new gestures; a running gesture keeps its own.
+    pub snap: TransformSnap,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Handle {
@@ -200,9 +231,14 @@ struct Drag {
     basis: GizmoBasis,
     start: Point,
     last_angle: f64,
+    /// Unsnapped accumulated rotation; the staged angle is derived from it.
     angle: f64,
     last: NumericTransform,
     changed: bool,
+    snap: TransformSnap,
+    /// Shift held: increments are released until Shift is let go.
+    free: bool,
+    readout: Option<String>,
 }
 impl Drag {
     fn new(
@@ -247,6 +283,9 @@ impl Drag {
             last_angle: 0.,
             angle: 0.,
             changed: false,
+            snap: input.snap,
+            free: false,
+            readout: None,
         })
     }
     fn update(
@@ -263,16 +302,34 @@ impl Drag {
             Handle::Axis(i) => {
                 let end =
                     axis_parameter(ray, origin, self.basis.axes[i]).ok_or("Axis became edge-on")?;
-                translated(
-                    &self.source,
-                    self.values,
-                    mul(self.basis.axes[i], end - self.start[0]),
-                )?
+                let distance = snap_step(end - self.start[0], self.grid());
+                self.readout = Some(format!(
+                    "{} {} · {}",
+                    self.handle.label(),
+                    crate::preferences::format_mm(distance),
+                    self.grid_label()
+                ));
+                translated(&self.source, self.values, mul(self.basis.axes[i], distance))?
             }
             Handle::Plane(i) => {
                 let end =
                     plane_point(ray, origin, self.basis.axes[i]).ok_or("Plane became edge-on")?;
-                translated(&self.source, self.values, sub(end, self.start))?
+                let (a, b) = ((i + 1) % 3, (i + 2) % 3);
+                let delta = snap_planar(
+                    sub(end, self.start),
+                    self.basis.axes[a],
+                    self.basis.axes[b],
+                    self.grid(),
+                );
+                self.readout = Some(format!(
+                    "{} {}, {} {} · {}",
+                    ["X", "Y", "Z"][a],
+                    crate::preferences::format_mm(dot(delta, self.basis.axes[a])),
+                    ["X", "Y", "Z"][b],
+                    crate::preferences::format_mm(dot(delta, self.basis.axes[b])),
+                    self.grid_label()
+                ));
+                translated(&self.source, self.values, delta)?
             }
             Handle::Rotate(i) => {
                 let end = plane_point(ray, origin, self.basis.axes[i])
@@ -292,11 +349,23 @@ impl Drag {
                 }
                 self.angle += delta;
                 self.last_angle = angle;
+                let step = (!self.free).then_some(self.snap.angle_deg).flatten();
+                let degrees = snap_step(self.angle.to_degrees(), step);
+                self.readout = Some(format!(
+                    "{} {:.1}° · {}",
+                    self.handle.label(),
+                    degrees,
+                    match step {
+                        Some(step) => format!("{step:.0}° steps · Shift for free"),
+                        None if self.snap.angle_deg.is_some() => "free (Shift)".into(),
+                        None => "free".into(),
+                    }
+                ));
                 rotated(
                     &self.source,
                     self.values,
                     self.basis.axes[i],
-                    self.angle.to_degrees(),
+                    degrees,
                     parameters,
                 )?
             }
@@ -307,6 +376,21 @@ impl Drag {
         self.changed = true;
         self.last = next.clone();
         Ok(Some(next))
+    }
+}
+impl Drag {
+    fn grid(&self) -> Option<f64> {
+        (!self.free).then_some(self.snap.grid_mm).flatten()
+    }
+    fn grid_label(&self) -> String {
+        match self.grid() {
+            Some(step) => format!(
+                "grid {} · Shift for free",
+                crate::preferences::format_mm(step)
+            ),
+            None if self.snap.grid_mm.is_some() => "free (Shift)".into(),
+            None => "free".into(),
+        }
     }
 }
 #[derive(Default)]
@@ -337,7 +421,7 @@ impl Interaction {
             input,
             source,
             parameters,
-            "drag to stage, Enter to apply, Escape to cancel. Option / Alt copies.",
+            "drag to stage, Enter to apply, Escape to cancel. Moves step by the grid and rotations by 45°; hold Shift while dragging for free placement. Option / Alt copies.",
         )
     }
     pub fn show_with_help(
@@ -357,7 +441,7 @@ impl Interaction {
                     .into(),
             );
         }
-        let (pointer, press, pressed, released, down, alt, motion) = ui.input(|i| {
+        let (pointer, press, pressed, released, down, alt, shift, motion) = ui.input(|i| {
             // Mouse-up may precede an Option/Alt key-up in the same frame.
             // The copy intent belongs to the gesture's pointer event.
             let alt = i
@@ -411,6 +495,7 @@ impl Interaction {
                 i.pointer.primary_released(),
                 i.pointer.primary_down(),
                 alt,
+                i.modifiers.shift,
                 motion,
             )
         });
@@ -501,6 +586,9 @@ impl Interaction {
         if let Some(drag) = &mut self.drag
             && (down || released)
         {
+            // Shift only releases increments inside this captured gesture.
+            // Toggling it re-solves the current pointer without ending it.
+            drag.free = shift;
             let points = if motion.is_empty() {
                 pointer.into_iter().collect()
             } else {
@@ -511,6 +599,17 @@ impl Interaction {
                     changed = Some(next);
                 }
             }
+        }
+        if let Some(drag) = &self.drag
+            && drag.changed
+            && let Some(text) = &drag.readout
+            && let Some(anchor) = projected(
+                input.camera,
+                input.rect,
+                values_origin(changed.as_ref().unwrap_or(source), parameters),
+            )
+        {
+            paint_readout(&painter, input.rect, anchor + egui::vec2(18., 18.), text);
         }
         let moved = self.drag.as_ref().is_some_and(|d| d.changed);
         let owned = self.drag.is_some();
@@ -527,6 +626,27 @@ impl Interaction {
             copy_modifier: alt,
         })
     }
+}
+
+fn values_origin(source: &NumericTransform, parameters: &EvaluatedParameters) -> Point {
+    Values::read(source, parameters).map_or([0.; 3], |values| values.origin())
+}
+/// Staged-value label beside the gizmo. It reports the value the preview uses.
+/// It stays inside the viewport so a narrow canvas never clips the value.
+fn paint_readout(painter: &egui::Painter, viewport: Rect, at: Pos2, text: &str) {
+    let galley = painter.layout_no_wrap(
+        text.to_owned(),
+        egui::FontId::proportional(12.),
+        Color32::from_gray(235),
+    );
+    let inner = viewport.shrink(6.);
+    let at = Pos2::new(
+        at.x.min(inner.right() - galley.size().x).max(inner.left()),
+        at.y.min(inner.bottom() - galley.size().y).max(inner.top()),
+    );
+    let rect = Rect::from_min_size(at, galley.size()).expand(4.);
+    painter.rect_filled(rect, 3., Color32::from_black_alpha(190));
+    painter.galley(at, galley, Color32::from_gray(235));
 }
 
 #[cfg(test)]

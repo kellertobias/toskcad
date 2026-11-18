@@ -70,7 +70,7 @@ pub use edge_treatment::EdgeTreatmentCommand;
 pub use extrude::{ExtrudeCapabilities, ExtrudeEvent, ExtrudePanel};
 pub use form::ModelRequest;
 pub use gear::GearPairCommand;
-pub use gizmo::{GizmoBasis, PlacementViewport};
+pub use gizmo::{GizmoBasis, PlacementViewport, TransformSnap};
 use multicad_core::document::EntityId;
 pub use object_basis::{ObjectGizmoBasis, object_gizmo_basis};
 pub use operation_guide::{GuideLine, ProfileGuide, anchor as profile_anchor};
