@@ -1,14 +1,14 @@
-//! A failed first native union is never the retained geometry. Only the fully
-//! guarded retry may enter the owner-local factory; each hit gets fresh names.
+//! A root-rounded metric thread built for one owner is the same validated
+//! geometry for every other owner; only the topology names are rebound.
+//! The former OCCT owner-thread factory and its bounded root retry have no
+//! Rust counterpart, so its work counters are not part of this proof.
 use multicad_core::{
     commands::Session,
     document::{Document, EntityId},
     model::{ThreadFit, ThreadHand, ThreadMode, ThreadParameters, length},
     references::Origin,
 };
-use multicad_kernel::{
-    GeometryPolicy, HelicalThread, RootRoundedHelicalThread, Solid, thread_factory_stats,
-};
+use multicad_kernel::{GeometryPolicy, HelicalThread, PlaneFrame, Solid};
 
 #[test]
 fn symmetric_root_retry_retains_only_the_validated_result_and_rebinds_cache_owners() {
@@ -23,45 +23,41 @@ fn symmetric_root_retry_retains_only_the_validated_result_and_rebinds_cache_owne
     }
     .resolve(session.parameters(), ThreadMode::NewExternal)
     .unwrap();
-    let spec = RootRoundedHelicalThread {
-        profile: HelicalThread {
-            major_radius_mm: resolved.major_radius_mm,
-            pitch_mm: resolved.pitch_mm,
-            length_mm: resolved.length_mm,
-            depth_mm: resolved.profile.depth_mm,
-            crest_width_mm: resolved.profile.crest_width_mm,
-            lower_flank_deg: resolved.profile.lower_flank_deg,
-            upper_flank_deg: resolved.profile.upper_flank_deg,
-            radial_taper: resolved.profile.radial_taper,
-            starts: resolved.starts,
-            left_hand: true,
-        },
-        root_radius_mm: resolved
-            .metric_fit
-            .as_ref()
-            .unwrap()
-            .external_root_radius_mm
-            .unwrap(),
+    let spec = HelicalThread {
+        major_radius_mm: resolved.major_radius_mm,
+        pitch_mm: resolved.pitch_mm,
+        length_mm: resolved.length_mm,
+        depth_mm: resolved.profile.depth_mm,
+        crest_width_mm: resolved.profile.crest_width_mm,
+        lower_flank_deg: resolved.profile.lower_flank_deg,
+        upper_flank_deg: resolved.profile.upper_flank_deg,
+        radial_taper: resolved.profile.radial_taper,
+        starts: resolved.starts,
+        left_hand: true,
     };
-    let before = thread_factory_stats().unwrap();
-    assert_eq!(before.entries, 0);
+    let root_radius_mm = resolved
+        .metric_fit
+        .as_ref()
+        .unwrap()
+        .external_root_radius_mm
+        .unwrap();
+    let build = |owner| {
+        Solid::rust_helical_thread(
+            spec,
+            Some(root_radius_mm),
+            owner,
+            PlaneFrame::default(),
+            GeometryPolicy::default(),
+        )
+        .unwrap()
+    };
     let a = EntityId::new();
     let b = EntityId::new();
-    let first =
-        Solid::root_rounded_helical_thread_named(spec, a, GeometryPolicy::default()).unwrap();
+    let first = build(a);
+    assert!(first.uses_rust_geometry());
     assert_eq!(first.solid_count().unwrap(), 1);
-    let cold = thread_factory_stats().unwrap();
-    assert_eq!(cold.constructions - before.constructions, 1);
-    assert_eq!(cold.bounded_attempts - before.bounded_attempts, 2);
-    assert_eq!(cold.continuous_attempts - before.continuous_attempts, 0);
-    assert_eq!(cold.entries, 1);
-    let second =
-        Solid::root_rounded_helical_thread_named(spec, b, GeometryPolicy::default()).unwrap();
-    let warm = thread_factory_stats().unwrap();
-    assert_eq!(warm.hits - cold.hits, 1);
-    assert_eq!(warm.constructions, cold.constructions);
-    assert_eq!(warm.bounded_attempts, cold.bounded_attempts);
-    assert_eq!(warm.entries, 1);
+    let second = build(b);
+    assert_eq!(second.solid_count().unwrap(), 1);
     assert_eq!(first.volume_mm3().unwrap(), second.volume_mm3().unwrap());
     assert_eq!(first.bounds().unwrap(), second.bounds().unwrap());
     let mut expected = first.topology_snapshot(a, 0).unwrap();

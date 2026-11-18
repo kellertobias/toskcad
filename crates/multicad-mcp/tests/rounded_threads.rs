@@ -519,6 +519,15 @@ impl multicad_mcp::Host for ReviewedThreadHost {
     }
 }
 
+/// The candidate compiles on the Rust backend into a closed thread solid.
+fn assert_rust_thread_solid(document: &Document, feature: EntityId) {
+    let model = multicad_model::Compiler::default()
+        .compile_with_backend(document, 1, multicad_model::GeometryBackend::Rust, None)
+        .unwrap();
+    let volume = model.solid(feature).unwrap().volume_mm3().unwrap();
+    assert!(volume.is_finite() && volume > 0., "{volume}");
+}
+
 fn reviewed_native_thread(family: model::ThreadFamily, mut request: Value) -> Value {
     let expected_fit = request["fit"].clone();
     use multicad_core::{
@@ -532,11 +541,7 @@ fn reviewed_native_thread(family: model::ThreadFamily, mut request: Value) -> Va
     }));
     let original = host.0.lock().unwrap().session.document().clone();
     request["expected_revision"] = json!(0);
-    let before_native = multicad_kernel::thread_factory_stats().unwrap();
     let preview = dispatch(&host, &call(false), "set_thread", request.clone()).unwrap();
-    // set_thread exposes no native model receipt. Observe the actual native
-    // constructor path instead; this in-process reviewed host is not an OS UI.
-    assert!(multicad_kernel::thread_factory_stats().unwrap().requests > before_native.requests);
     assert_eq!(preview["status"], "pending_review");
     assert_eq!(preview["revision"], 0);
     let rejected = preview["review"].as_u64().unwrap();
@@ -553,6 +558,10 @@ fn reviewed_native_thread(family: model::ThreadFamily, mut request: Value) -> Va
         assert_eq!(pending[0].actor, call(false).actor);
         assert_eq!(pending[0].tool, "set_thread");
         let candidate = pending[0].candidate().unwrap();
+        // set_thread exposes no model receipt. The pending candidate must
+        // build an actual Rust thread solid; this in-process reviewed host
+        // is not an OS UI.
+        assert_rust_thread_solid(candidate.document(), rejected_feature);
         let source = model::read_thread(candidate.document(), rejected_feature).unwrap();
         assert_eq!(source.parameters.family, family);
         assert_eq!(
@@ -570,9 +579,7 @@ fn reviewed_native_thread(family: model::ThreadFamily, mut request: Value) -> Va
         assert!(!owner.session.can_undo());
         assert!(!owner.session.can_redo());
     }
-    let before_native = multicad_kernel::thread_factory_stats().unwrap();
     let preview = dispatch(&host, &call(false), "set_thread", request).unwrap();
-    assert!(multicad_kernel::thread_factory_stats().unwrap().requests > before_native.requests);
     assert_eq!(preview["status"], "pending_review");
     assert_eq!(preview["revision"], 0);
     let review = preview["review"].as_u64().unwrap();
@@ -581,6 +588,10 @@ fn reviewed_native_thread(family: model::ThreadFamily, mut request: Value) -> Va
     assert_ne!(feature, rejected_feature);
     {
         let owner = &mut *host.0.lock().unwrap();
+        assert_rust_thread_solid(
+            owner.ledger.pending()[0].candidate().unwrap().document(),
+            feature,
+        );
         assert_eq!(owner.session.document(), &original);
         assert_eq!(owner.session.activity().count(), 0);
         assert!(!owner.session.can_undo());

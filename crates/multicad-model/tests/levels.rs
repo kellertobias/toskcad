@@ -105,28 +105,64 @@ fn rust_stairs_preserve_rotated_flights_landings_and_manufacturing_geometry() {
         session.commit(prepared.prepared).unwrap();
     }
     let compiler = Compiler::default();
-    let [rust, native] = [GeometryBackend::Rust, GeometryBackend::OpenCascade].map(|backend| {
-        compiler
-            .compile_sources_with_backend(
-                session.document(),
-                session.revision(),
-                &features,
-                backend,
-                None,
-            )
-            .unwrap_or_else(|cause| panic!("{backend:?}: {cause}"))
-    });
+    let rust = compiler
+        .compile_sources_with_backend(
+            session.document(),
+            session.revision(),
+            &features,
+            GeometryBackend::Rust,
+            None,
+        )
+        .unwrap_or_else(|cause| panic!("Rust: {cause}"));
     let scratch = tempfile::tempdir().unwrap();
     for feature in features {
-        let [actual, expected] = [&rust, &native].map(|m| m.solid(feature).unwrap());
+        let actual = rust.solid(feature).unwrap();
         assert!(actual.uses_rust_geometry());
         assert_eq!(actual.solid_count().unwrap(), 1);
-        let volume = expected.volume_mm3().unwrap();
+        // Independent expectation from the resolved stair pieces: each piece
+        // is its side profile swept one stair width to its left, and flights
+        // and landings only share whole faces, so volumes add and the bounds
+        // are the hull of every placed profile vertex.
+        let resolved = model::resolve_stair(
+            session.document(),
+            session.parameters(),
+            &model::read_stair(session.document(), feature).unwrap(),
+        )
+        .unwrap();
+        let mut volume = 0.;
+        let mut min = [f64::INFINITY; 3];
+        let mut max = [f64::NEG_INFINITY; 3];
+        for piece in &resolved.pieces {
+            let profile = &piece.profile;
+            let area = (0..profile.len())
+                .map(|i| {
+                    let [a, b] = [profile[i], profile[(i + 1) % profile.len()]];
+                    a[0] * b[1] - b[0] * a[1]
+                })
+                .sum::<f64>()
+                .abs()
+                / 2.;
+            volume += area * piece.width_mm;
+            let left = [-piece.along[1], piece.along[0]];
+            for [x, z] in profile.iter().copied() {
+                for w in [0., piece.width_mm] {
+                    let p = [
+                        piece.origin[0] + piece.along[0] * x + left[0] * w,
+                        piece.origin[1] + piece.along[1] * x + left[1] * w,
+                        piece.base_z_mm + z,
+                    ];
+                    for i in 0..3 {
+                        min[i] = min[i].min(p[i]);
+                        max[i] = max[i].max(p[i]);
+                    }
+                }
+            }
+        }
         near(actual.volume_mm3().unwrap(), volume, 1e-8 * volume);
-        let [a, b] = [actual, expected].map(|solid| solid.bounds().unwrap());
+        let a = actual.bounds().unwrap();
         for i in 0..3 {
-            near(a.min[i], b.min[i], 1e-7);
-            near(a.max[i], b.max[i], 1e-7);
+            near(a.min[i], min[i], 1e-7);
+            near(a.max[i], max[i], 1e-7);
         }
         assert!(
             !actual
@@ -398,9 +434,7 @@ fn levels_host_slabs_pedestals_stairs_and_walls_that_follow_level_edits() {
 
 #[test]
 fn service_envelopes_report_model_clearance_and_show_in_plan() {
-    for backend in [GeometryBackend::OpenCascade, GeometryBackend::Rust] {
-        service_envelope_workflow(backend);
-    }
+    service_envelope_workflow(GeometryBackend::Rust);
 }
 
 fn service_envelope_workflow(backend: GeometryBackend) {

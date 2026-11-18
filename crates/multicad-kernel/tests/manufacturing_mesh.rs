@@ -3,6 +3,15 @@ use multicad_kernel::{
     BooleanOperation, GeometryPolicy, MeshOptions, PlaneFrame, RigidTransform, Solid,
 };
 use std::collections::BTreeMap;
+/// Exact STEP serialization of the owned solid; the Rust analogue of the
+/// former OCCT BRep text used to prove that meshing never mutates geometry.
+fn step_bytes(solid: &Solid) -> Vec<u8> {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("snapshot.step");
+    solid.write_step(&path).unwrap();
+    std::fs::read(path).unwrap()
+}
+
 fn closed(mesh: &multicad_kernel::Mesh) {
     let mut edges = BTreeMap::new();
     for t in mesh.indices.as_chunks::<3>().0 {
@@ -159,7 +168,7 @@ fn manufacturing_sphere_poles_and_torus_double_periodic_seams_are_closed() {
                 role: "profile/second".into(),
             },
         ];
-        let shape = Solid::revolve_curved_profile_named(
+        let shape = Solid::rust_revolve_curved_profile_named(
             &profile,
             RevolutionAxis {
                 origin_mm: [0.; 3],
@@ -181,11 +190,11 @@ fn manufacturing_sphere_poles_and_torus_double_periodic_seams_are_closed() {
                 + receipt.removed_native_pole_triangles as usize
                 + receipt.removed_exact_zero_triangles as usize
         );
-        if torus {
-            assert_eq!(receipt.removed_native_pole_triangles, 0);
-        } else {
-            assert!(receipt.removed_native_pole_triangles > 0);
-        }
+        // OCCT emitted degenerate sphere-pole triangles that the receipt had
+        // to remove. The owned revolution mesher closes poles and both
+        // periodic torus seams directly, so nothing may be removed at all.
+        assert_eq!(receipt.removed_native_pole_triangles, 0);
+        assert_eq!(receipt.removed_exact_zero_triangles, 0);
         eprintln!(
             "manufacturing torus={torus} removed_native_pole_triangles={}",
             receipt.removed_native_pole_triangles
@@ -215,36 +224,39 @@ fn native_buttress_internal_constraints_are_not_cross_face_mesh_seams() {
             .unwrap();
         let profile = r.profile;
         let id = EntityId::new();
-        let shape = Solid::root_rounded_helical_thread_named(
-            RootRoundedHelicalThread {
-                profile: HelicalThread {
-                    major_radius_mm: r.major_radius_mm,
-                    pitch_mm: r.pitch_mm,
-                    length_mm: r.length_mm,
-                    depth_mm: profile.depth_mm,
-                    crest_width_mm: profile.crest_width_mm,
-                    lower_flank_deg: profile.lower_flank_deg,
-                    upper_flank_deg: profile.upper_flank_deg,
-                    radial_taper: 0.,
-                    starts: 1,
-                    left_hand: hand == model::ThreadHand::Left,
-                },
-                root_radius_mm: r
-                    .buttress
-                    .as_ref()
-                    .unwrap()
-                    .root_circle
-                    .as_ref()
-                    .unwrap()
-                    .radius_mm,
+        let spec = RootRoundedHelicalThread {
+            profile: HelicalThread {
+                major_radius_mm: r.major_radius_mm,
+                pitch_mm: r.pitch_mm,
+                length_mm: r.length_mm,
+                depth_mm: profile.depth_mm,
+                crest_width_mm: profile.crest_width_mm,
+                lower_flank_deg: profile.lower_flank_deg,
+                upper_flank_deg: profile.upper_flank_deg,
+                radial_taper: 0.,
+                starts: 1,
+                left_hand: hand == model::ThreadHand::Left,
             },
+            root_radius_mm: r
+                .buttress
+                .as_ref()
+                .unwrap()
+                .root_circle
+                .as_ref()
+                .unwrap()
+                .radius_mm,
+        };
+        let shape = Solid::rust_helical_thread(
+            spec.profile,
+            Some(spec.root_radius_mm),
             id,
+            PlaneFrame::default(),
             Default::default(),
         )
         .unwrap()
         .transformed(Default::default())
         .unwrap();
-        let source_brep = shape.to_brep().unwrap();
+        let source_brep = step_bytes(&shape);
         let before = shape.topology_snapshot(id, 3).unwrap();
         let options = MeshOptions {
             linear_deflection_mm: 0.003,
@@ -254,10 +266,13 @@ fn native_buttress_internal_constraints_are_not_cross_face_mesh_seams() {
         let raw = shape.mesh(options).unwrap();
         let receipt = shape.manufacturing_mesh_with_receipt(options).unwrap();
         closed(&receipt.mesh);
-        assert!(
-            receipt.internal_constraint_edges > 0 || receipt.removed_meshing_internal_edges > 0,
-            "fixture must exercise native INTERNAL constraints"
-        );
+        // OCCT meshed the buttress root circle with INTERNAL constraint edges
+        // that the receipt had to drop. The owned thread mesher emits only
+        // real face boundaries, so no internal constraint may appear at all;
+        // `closed` above proves no cross-face seam remains.
+        assert_eq!(receipt.internal_constraint_edges, 0);
+        assert_eq!(receipt.removed_meshing_internal_edges, 0);
+        assert!(!receipt.remeshed_without_internal_constraints);
         assert!(receipt.maximum_displacement_mm <= 1e-7);
         if receipt.remeshed_without_internal_constraints {
             assert!(receipt.removed_meshing_internal_edges > 0);
@@ -270,7 +285,7 @@ fn native_buttress_internal_constraints_are_not_cross_face_mesh_seams() {
                     + receipt.removed_exact_zero_triangles as usize
             );
         }
-        assert_eq!(source_brep, shape.to_brep().unwrap());
+        assert_eq!(source_brep, step_bytes(&shape));
         assert_eq!(before, shape.topology_snapshot(id, 3).unwrap());
         assert_eq!(raw, shape.mesh(options).unwrap());
         eprintln!(

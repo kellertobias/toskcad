@@ -3,12 +3,10 @@ use multicad_core::{
     document::{Document, EntityId},
     model::*,
 };
-use multicad_kernel::{
-    BooleanOperation, GeometryPolicy, PlaneFrame, RigidTransform, Solid, rust_kernel::Rational,
-};
+use multicad_kernel::{GeometryPolicy, PlaneFrame, RigidTransform, Solid, rust_kernel::Rational};
 use multicad_model::{Compiler, GeometryBackend};
 
-const BACKENDS: [GeometryBackend; 2] = [GeometryBackend::OpenCascade, GeometryBackend::Rust];
+const BACKEND: GeometryBackend = GeometryBackend::Rust;
 
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
@@ -157,19 +155,19 @@ fn wall_only_slab_only_and_combined_cut_exactly_the_explicit_parts() {
         }
         let prepared = prepared(&session, &request);
         session.commit(prepared.prepared).unwrap();
-        for backend in BACKENDS {
+        {
             let model = Compiler::default()
-                .compile_with_backend(session.document(), session.revision(), backend, None)
-                .unwrap_or_else(|e| panic!("{backend:?}: {e}"));
+                .compile_with_backend(session.document(), session.revision(), BACKEND, None)
+                .unwrap_or_else(|e| panic!("{BACKEND:?}: {e}"));
             let solid = model.solid(wall.target.body).unwrap();
-            assert_eq!(solid.uses_rust_geometry(), backend == GeometryBackend::Rust);
+            assert!(solid.uses_rust_geometry());
             near(
                 solid.volume_mm3().unwrap(),
                 4000. * 200. * 2500. - if walls { 1000. * 50. * 2500. } else { 0. },
             );
             for floor in &floors {
                 let solid = model.solid(floor.target.body).unwrap();
-                assert_eq!(solid.uses_rust_geometry(), backend == GeometryBackend::Rust);
+                assert!(solid.uses_rust_geometry());
                 near(
                     solid.volume_mm3().unwrap(),
                     6000. * 4000. * 200.
@@ -302,7 +300,8 @@ fn even_scoped_first_slab_preview_refuses_another_receivers_wall_split() {
     request.definition.receivers.push(wall);
     let original = session.document().clone();
     let prepared = prepared(&session, &request);
-    for backend in BACKENDS {
+    {
+        let backend = BACKEND;
         let result = Compiler::default().compile_sources_with_backend(
             prepared.prepared.document(),
             session.revision() + 1,
@@ -351,46 +350,59 @@ fn saved_compound_boxes_drive_linked_plan_and_section_after_edit_and_reopen() {
         guide: None,
         equipment_categories: None,
     };
-    let vectors = |session: &Session, view: &DrawingView| {
-        let [native, rust] = BACKENDS.map(|backend| {
-            let model = Compiler::default()
-                .compile_with_backend(session.document(), session.revision(), backend, None)
-                .unwrap_or_else(|e| panic!("{backend:?}: {e}"));
-            let ViewEvaluation::Ready { vectors, .. } = model
-                .drawing_view(
-                    session.document(),
-                    session.revision(),
-                    view,
-                    &Default::default(),
-                )
-                .unwrap()
-            else {
-                panic!("{backend:?} linked drawing must resolve");
-            };
-            vectors
-        });
+    // Independent section expectation: the y = 2300 cut of the ground slab
+    // (z -200..0) is one closed rectangle per material span along X.
+    let rectangles = |spans: &[[f64; 2]]| {
+        let mut edges: Vec<_> = spans
+            .iter()
+            .flat_map(|&[a, b]| {
+                let corners = [[a, -200.], [b, -200.], [b, 0.], [a, 0.]];
+                (0..4).map(move |i| {
+                    let mut ends = [corners[i], corners[(i + 1) % 4]]
+                        .map(|p| p.map(|c| (c * 1_000.).round() as i64));
+                    ends.sort_unstable();
+                    ends
+                })
+            })
+            .collect();
+        edges.sort_unstable();
+        edges
+    };
+    let vectors = |session: &Session, view: &DrawingView, spans: &[[f64; 2]]| {
+        let model = Compiler::default()
+            .compile_with_backend(session.document(), session.revision(), BACKEND, None)
+            .unwrap_or_else(|e| panic!("{BACKEND:?}: {e}"));
+        let ViewEvaluation::Ready { vectors, .. } = model
+            .drawing_view(
+                session.document(),
+                session.revision(),
+                view,
+                &Default::default(),
+            )
+            .unwrap()
+        else {
+            panic!("{BACKEND:?} linked drawing must resolve");
+        };
         if matches!(view.kind, ViewKind::Section { .. }) {
-            let sections = |vectors: &[DrawingVector]| {
-                let mut sections: Vec<_> = vectors
-                    .iter()
-                    .filter(|vector| vector.role == VectorRole::Section)
-                    .map(|vector| {
-                        let VectorCurve::Line { a, b } = vector.curve else {
-                            panic!("This cut section has only straight edges");
-                        };
-                        let mut ends = [a, b].map(|p| p.map(|c| (c * 1_000.).round() as i64));
-                        ends.sort_unstable();
-                        (vector.source, vector.material_part, ends)
-                    })
-                    .collect();
-                sections.sort_unstable();
-                sections
-            };
-            let expected = sections(&native);
+            let mut sections: Vec<_> = vectors
+                .iter()
+                .filter(|vector| vector.role == VectorRole::Section)
+                .map(|vector| {
+                    let VectorCurve::Line { a, b } = vector.curve else {
+                        panic!("This cut section has only straight edges");
+                    };
+                    assert_eq!(vector.material_part, body);
+                    let mut ends = [a, b].map(|p| p.map(|c| (c * 1_000.).round() as i64));
+                    ends.sort_unstable();
+                    ends
+                })
+                .collect();
+            sections.sort_unstable();
+            let expected = rectangles(spans);
             assert!(!expected.is_empty());
-            assert_eq!(sections(&rust), expected);
+            assert_eq!(sections, expected);
         }
-        native
+        vectors
     };
     let has_corner = |vectors: &[DrawingVector], point: [f64; 2]| {
         vectors.iter().any(|vector| {
@@ -400,7 +412,7 @@ fn saved_compound_boxes_drive_linked_plan_and_section_after_edit_and_reopen() {
                 .any(|p| (p[0] - point[0]).hypot(p[1] - point[1]) < 1e-3)
         })
     };
-    assert!(has_corner(&vectors(&session, &view), [1900., 2800.]));
+    assert!(has_corner(&vectors(&session, &view, &[]), [1900., 2800.]));
     let plan = view.clone();
     view.id = EntityId::new();
     view.name = "Linked section".into();
@@ -415,7 +427,7 @@ fn saved_compound_boxes_drive_linked_plan_and_section_after_edit_and_reopen() {
         range: SectionRange::SectionOnly,
         window: Default::default(),
     };
-    let section = vectors(&session, &view);
+    let section = vectors(&session, &view, &[[0., 1500.], [1900., 6000.]]);
     assert!(has_corner(&section, [1500., -200.]));
     assert!(has_corner(&section, [1900., 0.]));
     let mut page = Page::new("A-101");
@@ -454,10 +466,10 @@ fn saved_compound_boxes_drive_linked_plan_and_section_after_edit_and_reopen() {
     let book = multicad_core::drawings::read(reopened.document(), book).unwrap();
     assert_eq!(book.pages[0].views.len(), 2);
     assert!(!has_corner(
-        &vectors(&reopened, &book.pages[0].views[0]),
+        &vectors(&reopened, &book.pages[0].views[0], &[]),
         [1900., 2800.]
     ));
-    assert!(!vectors(&reopened, &book.pages[0].views[1]).is_empty());
+    assert!(!vectors(&reopened, &book.pages[0].views[1], &[[0., 6000.]]).is_empty());
     let mut reopened = reopened;
     let level = read_slab(
         reopened.document(),
@@ -573,7 +585,8 @@ fn disconnected_off_target_and_partial_slab_cuts_fail_native_preview_without_sou
     ] {
         let before = session.document().clone();
         let change = prepared(&session, &request);
-        for backend in BACKENDS {
+        {
+            let backend = BACKEND;
             let Err(error) = Compiler::default().compile_with_backend(
                 change.prepared.document(),
                 session.revision() + 1,
@@ -588,6 +601,91 @@ fn disconnected_off_target_and_partial_slab_cuts_fail_native_preview_without_sou
     }
 }
 
+/// Plan corners of a counter-clockwise rotated rectangle, counter-clockwise.
+fn plan_corners(center: [f64; 2], width: f64, depth: f64, rotation_deg: f64) -> Vec<[f64; 2]> {
+    let (s, c) = rotation_deg.to_radians().sin_cos();
+    [[-1., -1.], [1., -1.], [1., 1.], [-1., 1.]]
+        .into_iter()
+        .map(|[x, y]| {
+            let (x, y) = (x * width / 2., y * depth / 2.);
+            [center[0] + c * x - s * y, center[1] + s * x + c * y]
+        })
+        .collect()
+}
+fn polygon_area(polygon: &[[f64; 2]]) -> f64 {
+    (0..polygon.len())
+        .map(|i| {
+            let [a, b] = [polygon[i], polygon[(i + 1) % polygon.len()]];
+            a[0] * b[1] - b[0] * a[1]
+        })
+        .sum::<f64>()
+        .abs()
+        / 2.
+}
+/// Signed side of `p` relative to the directed edge `a -> b`.
+fn side(a: [f64; 2], b: [f64; 2], p: [f64; 2]) -> f64 {
+    (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
+}
+/// Sutherland-Hodgman intersection of a polygon with a convex CCW polygon.
+fn clip(subject: &[[f64; 2]], convex: &[[f64; 2]]) -> Vec<[f64; 2]> {
+    let mut output = subject.to_vec();
+    for i in 0..convex.len() {
+        let [a, b] = [convex[i], convex[(i + 1) % convex.len()]];
+        let input = std::mem::take(&mut output);
+        for j in 0..input.len() {
+            let [p, q] = [input[j], input[(j + 1) % input.len()]];
+            let [sp, sq] = [side(a, b, p), side(a, b, q)];
+            if sp >= 0. {
+                output.push(p);
+            }
+            if (sp >= 0.) != (sq >= 0.) {
+                let t = sp / (sp - sq);
+                output.push([p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])]);
+            }
+        }
+    }
+    output
+}
+/// Length of segment `a -> b` strictly inside a convex CCW polygon.
+fn inside_length(a: [f64; 2], b: [f64; 2], convex: &[[f64; 2]]) -> f64 {
+    let (mut low, mut high) = (0_f64, 1_f64);
+    for i in 0..convex.len() {
+        let [p, q] = [convex[i], convex[(i + 1) % convex.len()]];
+        let [sa, sb] = [side(p, q, a), side(p, q, b)];
+        if sa < 0. && sb < 0. {
+            return 0.;
+        }
+        if sa < 0. || sb < 0. {
+            let t = sa / (sa - sb);
+            if sa < 0. {
+                low = low.max(t);
+            } else {
+                high = high.min(t);
+            }
+        }
+    }
+    (high - low).max(0.) * (b[0] - a[0]).hypot(b[1] - a[1])
+}
+/// Area and boundary length of the union of plan rectangles in which only
+/// the first two may overlap (and never along a shared edge).
+fn union_area_and_perimeter(rectangles: &[Vec<[f64; 2]>]) -> (f64, f64) {
+    let overlap = polygon_area(&clip(&rectangles[0], &rectangles[1]));
+    let area = rectangles.iter().map(|r| polygon_area(r)).sum::<f64>() - overlap;
+    let mut perimeter = 0.;
+    for (k, rectangle) in rectangles.iter().enumerate() {
+        for i in 0..rectangle.len() {
+            let [a, b] = [rectangle[i], rectangle[(i + 1) % rectangle.len()]];
+            let hidden = match k {
+                0 => inside_length(a, b, &rectangles[1]),
+                1 => inside_length(a, b, &rectangles[0]),
+                _ => 0.,
+            };
+            perimeter += (b[0] - a[0]).hypot(b[1] - a[1]) - hidden;
+        }
+    }
+    (area, perimeter)
+}
+
 #[test]
 fn rotated_compound_cutouts_match_native_and_rebuild_chained_receivers() {
     let (mut session, mut request) =
@@ -596,36 +694,39 @@ fn rotated_compound_cutouts_match_native_and_rebuild_chained_receivers() {
     let first = prepared(&session, &request);
     session.commit(first.prepared).unwrap();
     let compiler = Compiler::default();
-    let [native, rust] = BACKENDS.map(|backend| {
-        compiler
-            .compile_with_backend(session.document(), session.revision(), backend, None)
-            .unwrap_or_else(|e| panic!("{backend:?}: {e}"))
-    });
+    let rust = compiler
+        .compile_with_backend(session.document(), session.revision(), BACKEND, None)
+        .unwrap_or_else(|e| panic!("{BACKEND:?}: {e}"));
     let policy = compiler.policy;
     let ground = &request.definition.receivers[0];
     let base = ground.target.producer;
     let cutter = request.feature;
-    let expected = native
-        .solid(base)
-        .unwrap()
-        .boolean(
-            native.solid(cutter).unwrap(),
-            BooleanOperation::Intersect,
-            policy,
-        )
-        .unwrap()
-        .unwrap();
+    // Independent plan expectation: the L shaft is the union of the
+    // 1000 x 400 box at (2000, 2000) and the 400 x 1000 box at (1700, 2300)
+    // turned 10 degrees counter-clockwise, through the 200 mm ground slab.
+    let mut shaft = vec![
+        plan_corners([2000., 2000.], 1000., 400., 0.),
+        plan_corners([1700., 2300.], 400., 1000., 10.),
+    ];
+    let (shaft_area, _) = union_area_and_perimeter(&shaft);
+    let mut expected_min = [f64::INFINITY, f64::INFINITY, -200.];
+    let mut expected_max = [f64::NEG_INFINITY, f64::NEG_INFINITY, 0.];
+    for p in shaft.iter().flatten() {
+        for i in 0..2 {
+            expected_min[i] = expected_min[i].min(p[i]);
+            expected_max[i] = expected_max[i].max(p[i]);
+        }
+    }
     let (volume, bounds) = rust
         .solid(base)
         .unwrap()
         .rust_planar_intersection_metrics(rust.solid(cutter).unwrap(), policy)
         .unwrap()
         .unwrap();
-    near(volume, expected.volume_mm3().unwrap());
-    let expected_bounds = expected.bounds().unwrap();
+    near(volume, shaft_area * 200.);
     for i in 0..3 {
-        near(bounds.min[i], expected_bounds.min[i]);
-        near(bounds.max[i], expected_bounds.max[i]);
+        near(bounds.min[i], expected_min[i]);
+        near(bounds.max[i], expected_max[i]);
     }
     let pose = RigidTransform {
         rotation: [[0.8, -0.6, 0.], [0.6, 0.8, 0.], [0., 0., 1.]],
@@ -654,41 +755,47 @@ fn rotated_compound_cutouts_match_native_and_rebuild_chained_receivers() {
                     .any(|origin| origin.source == cutter && origin.role == role)
         }));
     }
-    let measure = |session: &Session, receivers: &[CompoundCutoutReceiver]| {
-        let [native, rust] = BACKENDS.map(|backend| {
-            compiler
-                .compile_with_backend(session.document(), session.revision(), backend, None)
-                .unwrap_or_else(|e| panic!("{backend:?}: {e}"))
-        });
-        let temp = tempfile::tempdir().unwrap();
-        receivers
-            .iter()
-            .enumerate()
-            .map(|(i, receiver)| {
-                let actual = rust.solid(receiver.target.body).unwrap();
-                let expected = native.solid(receiver.target.body).unwrap();
-                assert!(actual.uses_rust_geometry());
-                assert_eq!(actual.solid_count().unwrap(), 1);
-                let volume = actual.volume_mm3().unwrap();
-                near(volume, expected.volume_mm3().unwrap());
-                let area = |solid: &Solid| {
-                    solid
+    // Each receiving slab is the trapezoid outline minus the shaft openings,
+    // 200 mm thick: its faces are both pierced caps plus the outline and
+    // opening walls.
+    let outline = [[0., 0.], [6000., 0.], [6200., 4000.], [0., 4000.]];
+    let outline_perimeter = 6000. + 200_f64.hypot(4000.) + 6200. + 4000.;
+    let measure =
+        |session: &Session, receivers: &[CompoundCutoutReceiver], openings: &[Vec<[f64; 2]>]| {
+            let rust = compiler
+                .compile_with_backend(session.document(), session.revision(), BACKEND, None)
+                .unwrap_or_else(|e| panic!("{BACKEND:?}: {e}"));
+            let (open_area, open_perimeter) = union_area_and_perimeter(openings);
+            let plan = polygon_area(&outline) - open_area;
+            let temp = tempfile::tempdir().unwrap();
+            receivers
+                .iter()
+                .enumerate()
+                .map(|(i, receiver)| {
+                    let actual = rust.solid(receiver.target.body).unwrap();
+                    assert!(actual.uses_rust_geometry());
+                    assert_eq!(actual.solid_count().unwrap(), 1);
+                    let volume = actual.volume_mm3().unwrap();
+                    near(volume, plan * 200.);
+                    let area = actual
                         .faces()
                         .unwrap()
                         .iter()
                         .map(|face| face.area_mm2)
-                        .sum::<f64>()
-                };
-                near(area(actual), area(expected));
-                let path = temp.path().join(format!("rotated-{i}.step"));
-                actual.write_step(&path).unwrap();
-                let readback = Solid::read_step(&path, GeometryPolicy::default()).unwrap();
-                near(readback.volume_mm3().unwrap(), volume);
-                volume
-            })
-            .collect::<Vec<_>>()
-    };
-    let first = measure(&session, &request.definition.receivers);
+                        .sum::<f64>();
+                    near(
+                        area,
+                        2. * plan + 200. * (outline_perimeter + open_perimeter),
+                    );
+                    let path = temp.path().join(format!("rotated-{i}.step"));
+                    actual.write_step(&path).unwrap();
+                    let readback = Solid::read_step(&path, GeometryPolicy::default()).unwrap();
+                    near(readback.volume_mm3().unwrap(), volume);
+                    volume
+                })
+                .collect::<Vec<_>>()
+        };
+    let first = measure(&session, &request.definition.receivers, &shaft);
     let second = CompoundCutoutRequest::new(
         "Second penetration",
         CompoundCutoutDefinition {
@@ -710,7 +817,8 @@ fn rotated_compound_cutouts_match_native_and_rebuild_chained_receivers() {
     );
     let prepared = prepared(&session, &second);
     session.commit(prepared.prepared).unwrap();
-    let second = measure(&session, &second.definition.receivers);
+    shaft.push(plan_corners([4300., 2000.], 500., 500., 0.));
+    let second = measure(&session, &second.definition.receivers, &shaft);
     for (before, after) in first.into_iter().zip(second) {
         near(before - after, 500. * 500. * 200.);
     }

@@ -28,11 +28,6 @@ fn mm(v: f64) -> Value {
 }
 
 #[test]
-fn mcp_engraving_sketch_attaches_to_a_planar_face_only() {
-    engraving_sketch(GeometryBackend::OpenCascade);
-}
-
-#[test]
 fn rust_mcp_engraving_sketch_uses_rust_face_topology_and_support() {
     engraving_sketch(GeometryBackend::Rust);
 }

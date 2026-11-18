@@ -2,6 +2,13 @@ use multicad_core::{model, project_file, references::TopologyKind};
 use multicad_kernel::Solid;
 use multicad_model::{Compiler, GeometryBackend};
 
+#[path = "support/axis_solids.rs"]
+mod axis_solids;
+#[path = "support/saved_prism.rs"]
+mod saved_prism;
+
+use axis_solids::{Tool, operand};
+
 #[test]
 fn toolcase_magnet_stops_keep_exact_rims_and_round_trip_through_step() {
     let document = project_file::read(
@@ -34,17 +41,39 @@ fn toolcase_magnet_stops_keep_exact_rims_and_round_trip_through_step() {
             .compile_sources_with_backend(&document, 0, &roots, backend, None)
             .unwrap()
     };
-    let [rust, native] = [GeometryBackend::Rust, GeometryBackend::OpenCascade].map(evaluate);
+    let rust = evaluate(GeometryBackend::Rust);
     let temp = tempfile::tempdir().unwrap();
     let expected = std::f64::consts::PI * 3. * (9_f64.powi(2) - 5.1_f64.powi(2));
     let near = |a: f64, b: f64| assert!((a - b).abs() < 1e-6, "{a} != {b}");
     for (id, source) in features {
-        let [solid, reference] = [&rust, &native].map(|m| m.solid(id).unwrap());
+        let solid = rust.solid(id).unwrap();
         assert!(solid.uses_rust_geometry());
         assert_eq!(solid.solid_count().unwrap(), 1);
         near(solid.volume_mm3().unwrap(), expected);
-        near(reference.volume_mm3().unwrap(), expected);
-        let [a, b] = [solid.bounds().unwrap(), reference.bounds().unwrap()];
+        // The saved stop and seat cylinders: the seat is coaxial, narrower and
+        // passes through the stop, so the cut is an annulus inside the stop's
+        // own envelope.
+        let [Tool::Cylinder(stop), Tool::Cylinder(seat)] =
+            [source.target.producer, source.tools[0].producer].map(|id| operand(&document, id))
+        else {
+            panic!("the stop and seat must be cylinders");
+        };
+        assert_eq!((seat.axis, seat.center), (stop.axis, stop.center));
+        assert!(seat.radius < stop.radius);
+        assert!(seat.span[0] <= stop.span[0] && stop.span[1] <= seat.span[1]);
+        let height = stop.span[1] - stop.span[0];
+        near(
+            solid.volume_mm3().unwrap(),
+            std::f64::consts::PI * height * (stop.radius.powi(2) - seat.radius.powi(2)),
+        );
+        let [min, max] = stop.bounds();
+        let b = multicad_kernel::Bounds { min, max };
+        let mut extents: Vec<f64> = (0..3).map(|i| b.max[i] - b.min[i]).collect();
+        extents.sort_by(f64::total_cmp);
+        for (extent, expected) in extents.into_iter().zip([3., 18., 18.]) {
+            near(extent, expected);
+        }
+        let a = solid.bounds().unwrap();
         for (x, y) in a
             .min
             .into_iter()

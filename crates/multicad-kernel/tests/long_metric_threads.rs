@@ -1,6 +1,7 @@
 use multicad_core::{document::EntityId, references::TopologyKind};
 use multicad_kernel::{
-    BooleanOperation, GeometryErrorKind, GeometryPolicy, HelicalThread, RigidTransform, Solid,
+    BooleanOperation, GeometryErrorKind, GeometryPolicy, HelicalThread, PlaneFrame, RigidTransform,
+    Solid,
 };
 use std::f64::consts::{PI, TAU};
 
@@ -123,8 +124,14 @@ fn fresh_m8_long_and_fractional_threads_preserve_profile_volume_and_step() {
         let feature = EntityId::new();
         // Bypass both trusted assets and completed-thread caches. This catches
         // the original long continuous PipeShell failure on each cold build.
-        let solid = Solid::helical_thread_named_fresh(spec, feature, Default::default())
-            .unwrap_or_else(|error| panic!("fresh M8x1.25 L{length}: {error}"));
+        let solid = Solid::rust_helical_thread(
+            spec,
+            None,
+            feature,
+            PlaneFrame::default(),
+            Default::default(),
+        )
+        .unwrap_or_else(|error| panic!("fresh M8x1.25 L{length}: {error}"));
         assert_extent_and_profile(&solid, spec);
         let expected = analytic_volume(spec);
         let (native_volume, native_budget) = volume_and_uncertainty(&solid);

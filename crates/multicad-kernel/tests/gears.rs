@@ -31,8 +31,23 @@ fn normal(teeth: u32, beta: f64, sweep: GearSweep) -> InvoluteGear {
         sweep,
     }
 }
+/// The Rust constructor the model selects for each authored sweep
+/// (`multicad_model::gears::build_rust`).
+fn rust_gear(
+    spec: InvoluteGear,
+    feature: EntityId,
+) -> Result<Solid, multicad_kernel::GeometryError> {
+    let policy = GeometryPolicy::default();
+    match spec.sweep {
+        GearSweep::Spur => Solid::rust_spur_gear_named(spec, feature, policy),
+        GearSweep::Helical => Solid::rust_helical_gear_named(spec, feature, policy),
+        GearSweep::Chevron => Solid::rust_herringbone_named(spec, feature, policy),
+        GearSweep::GappedChevron { .. } => Solid::rust_double_helical_named(spec, feature, policy),
+        GearSweep::InternalSpur { .. } => Solid::rust_internal_ring_named(spec, feature, policy),
+    }
+}
 fn build(spec: InvoluteGear) -> Solid {
-    Solid::involute_gear_named(spec, EntityId::new(), GeometryPolicy::default()).unwrap()
+    rust_gear(spec, EntityId::new()).unwrap()
 }
 
 #[test]
@@ -322,7 +337,7 @@ fn intrinsic_hubs_extend_one_solid_and_one_continuous_bore_with_exact_face_ances
             }),
             ..base
         };
-        let solid = Solid::involute_gear_named(spec, feature, GeometryPolicy::default()).unwrap();
+        let solid = rust_gear(spec, feature).unwrap();
         assert_eq!(solid.solid_count().unwrap(), 1);
         let added = 6. * PI * (100. - base.bore_radius_mm.powi(2));
         assert!((solid.volume_mm3().unwrap() - plain.volume_mm3().unwrap() - added).abs() < 0.005);
@@ -422,13 +437,12 @@ fn detached_thin_root_erasing_and_nonfinite_hubs_are_rejected() {
         },
     ] {
         assert!(
-            Solid::involute_gear_named(
+            rust_gear(
                 InvoluteGear {
                     hub: Some(hub),
                     ..base
                 },
                 EntityId::new(),
-                GeometryPolicy::default()
             )
             .is_err(),
             "{hub:?}"
@@ -442,7 +456,7 @@ fn coincident_or_hidden_hub_caps_preserve_every_surviving_face_and_gear_end() {
     let plain = build(base).volume_mm3().unwrap();
     for (start, end, extension) in [(-3., 8., 3.), (0., 11., 3.), (0., 8., 0.)] {
         let feature = EntityId::new();
-        let solid = Solid::involute_gear_named(
+        let solid = rust_gear(
             InvoluteGear {
                 hub: Some(GearHub {
                     radius_mm: 10.,
@@ -452,7 +466,6 @@ fn coincident_or_hidden_hub_caps_preserve_every_surviving_face_and_gear_end() {
                 ..base
             },
             feature,
-            GeometryPolicy::default(),
         )
         .unwrap();
         assert_eq!(solid.solid_count().unwrap(), 1);
@@ -529,7 +542,7 @@ fn rotated(s: &Solid, angle: f64, x: f64) -> Solid {
 fn spur_has_measured_involute_width_native_circular_fillets_and_complete_provenance() {
     let spec = normal(20, 0., GearSweep::Spur);
     let feature = EntityId::new();
-    let solid = Solid::involute_gear_named(spec, feature, GeometryPolicy::default()).unwrap();
+    let solid = rust_gear(spec, feature).unwrap();
     assert_eq!(solid.solid_count().unwrap(), 1);
     let bounds = solid.bounds().unwrap();
     for axis in 0..2 {
@@ -725,9 +738,7 @@ fn invalid_inputs_and_excessive_twist_are_refused_without_a_solid() {
             ..base
         },
     ] {
-        assert!(
-            Solid::involute_gear_named(spec, EntityId::new(), GeometryPolicy::default()).is_err()
-        );
+        assert!(rust_gear(spec, EntityId::new()).is_err());
     }
-    assert!(Solid::involute_gear_named(base, EntityId::nil(), GeometryPolicy::default()).is_err());
+    assert!(rust_gear(base, EntityId::nil()).is_err());
 }

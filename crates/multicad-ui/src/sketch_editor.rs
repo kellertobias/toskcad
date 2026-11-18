@@ -5918,7 +5918,7 @@ mod tests {
                     .parameters
                     .resolve(&parameters::evaluate(document).unwrap())
                     .unwrap();
-                let solid = Solid::revolve_curved_profile_named(
+                let solid = Solid::rust_revolve_curved_profile_named(
                     &CurvedProfile {
                         frame: PlaneFrame {
                             origin: frame.origin,

@@ -278,7 +278,7 @@ mod tests {
         let drawing = drawings::read(document, book).unwrap();
         let page = &drawing.pages[0];
         assert_eq!(page.number, "WK-101");
-        let mut backend = Backend::with_cache(None);
+        let mut backend = Backend::with_cache_and_backend(None, GeometryBackend::Rust);
         let start = Instant::now();
         let evaluation = preview(&mut backend, &session, page.id);
         let elapsed = start.elapsed();
@@ -426,7 +426,7 @@ mod tests {
         let drawing = drawings::read(document, book).unwrap();
         let mut page = drawing.pages[0].clone();
         assert!(multicad_model::drawing_preview_sources(document, page.id).is_some());
-        let mut backend = Backend::with_cache(None);
+        let mut backend = Backend::with_cache_and_backend(None, GeometryBackend::Rust);
         let start = Instant::now();
         let evaluation = preview(&mut backend, &session, page.id);
         eprintln!(
@@ -577,7 +577,7 @@ mod tests {
         .unwrap();
         session.commit(prepared).unwrap();
 
-        let mut backend = Backend::with_cache(None);
+        let mut backend = Backend::with_cache_and_backend(None, GeometryBackend::Rust);
         let started = Instant::now();
         let result = preview(&mut backend, &session, page.id);
         let elapsed = started.elapsed();
@@ -641,7 +641,7 @@ mod tests {
         )
         .unwrap();
         session.commit(prepared).unwrap();
-        let mut first = Backend::with_cache(Some(cache.clone()));
+        let mut first = Backend::with_cache_and_backend(Some(cache.clone()), GeometryBackend::Rust);
         let original = preview(&mut first, &session, page.id);
         assert!(
             original
@@ -650,7 +650,8 @@ mod tests {
                 .all(|v| matches!(v, drawings::ViewEvaluation::Ready { .. }))
         );
         drop(first);
-        let mut reopened = Backend::with_cache(Some(cache.clone()));
+        let mut reopened =
+            Backend::with_cache_and_backend(Some(cache.clone()), GeometryBackend::Rust);
         assert_eq!(original, preview(&mut reopened, &session, page.id));
         let entry = std::fs::read_dir(directory.path())
             .unwrap()
@@ -659,7 +660,8 @@ mod tests {
             .unwrap()
             .path();
         std::fs::write(entry, b"corrupt optional cache").unwrap();
-        let mut rebuilt = Backend::with_cache(Some(cache.clone()));
+        let mut rebuilt =
+            Backend::with_cache_and_backend(Some(cache.clone()), GeometryBackend::Rust);
         assert_eq!(original, preview(&mut rebuilt, &session, page.id));
         page.views[0].hidden_lines = true;
         let prepared = drawings::prepare(

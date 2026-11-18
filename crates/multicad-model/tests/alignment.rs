@@ -58,11 +58,6 @@ fn snapshots(
         .collect()
 }
 #[test]
-fn native_face_alignment_uses_outward_normals_named_uv_and_upstream_geometry() {
-    face_alignment(GeometryBackend::OpenCascade);
-}
-
-#[test]
 fn rust_face_alignment_uses_outward_normals_named_uv_and_upstream_geometry() {
     face_alignment(GeometryBackend::Rust);
 }

@@ -599,9 +599,9 @@ fn rotated_box_and_cylinder_primitives_compile_named_exact_solids_in_their_frame
         session.commit(prepared.prepared).unwrap();
     }
     let original = session.document().clone();
-    for backend in [GeometryBackend::OpenCascade, GeometryBackend::Rust] {
+    {
         let model = Compiler::default()
-            .compile_with_backend(&original, session.revision(), backend, None)
+            .compile_with_backend(&original, session.revision(), GeometryBackend::Rust, None)
             .unwrap();
         assert_eq!(model.snapshot().bodies.len(), 2);
         let box_shape = shape(&model, box_request.body);
@@ -613,10 +613,7 @@ fn rotated_box_and_cylinder_primitives_compile_named_exact_solids_in_their_frame
         point_near(cylinder_shape.bounds.min, [-23., 15., 5.]);
         point_near(cylinder_shape.bounds.max, [-17., 27., 11.]);
         for request in [&box_request, &cylinder] {
-            assert_eq!(
-                model.solid(request.feature).unwrap().uses_rust_geometry(),
-                backend == GeometryBackend::Rust
-            );
+            assert!(model.solid(request.feature).unwrap().uses_rust_geometry());
             let shape = shape(&model, request.body);
             assert_eq!(shape.solid_count, 1);
             for role in ["cap.start", "cap.end"] {

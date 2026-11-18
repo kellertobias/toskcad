@@ -42,6 +42,251 @@ fn compile(session: &Session, backend: GeometryBackend) -> Model {
         .unwrap()
 }
 
+type Point = [f64; 3];
+fn sub(a: Point, b: Point) -> Point {
+    std::array::from_fn(|i| a[i] - b[i])
+}
+fn add(a: Point, b: Point) -> Point {
+    std::array::from_fn(|i| a[i] + b[i])
+}
+fn scale(a: Point, k: f64) -> Point {
+    a.map(|x| x * k)
+}
+fn dot(a: Point, b: Point) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+fn cross(a: Point, b: Point) -> Point {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+fn unit(a: Point) -> Point {
+    scale(a, 1. / dot(a, a).sqrt())
+}
+
+/// Analytic expectation of one B-rep face: area, area centroid, planarity
+/// and, where checked, its outward normal.
+#[derive(Debug)]
+struct ExpectedFace {
+    area: f64,
+    center: Point,
+    planar: bool,
+    normal: Option<Point>,
+}
+/// Signed area about `axis` and area centroid of a planar polygon.
+fn ring_measure(ring: &[Point], axis: Point) -> (f64, Point) {
+    let mut area = 0.;
+    let mut moment = [0.; 3];
+    for i in 1..ring.len() - 1 {
+        let [a, b, c] = [ring[0], ring[i], ring[i + 1]];
+        let signed = dot(cross(sub(b, a), sub(c, a)), axis) / 2.;
+        area += signed;
+        moment = add(moment, scale(add(add(a, b), c), signed / 3.));
+    }
+    (area, scale(moment, 1. / area))
+}
+/// A planar face bounded by polygon rings (first outer) and circular holes
+/// (center, radius) with the given outward normal.
+fn planar_face(rings: &[Vec<Point>], circles: &[(Point, f64)], outward: Point) -> ExpectedFace {
+    let mut area = 0.;
+    let mut moment = [0.; 3];
+    for (i, ring) in rings.iter().enumerate() {
+        let (a, c) = ring_measure(ring, outward);
+        let a = if i == 0 { a.abs() } else { -a.abs() };
+        area += a;
+        moment = add(moment, scale(c, a));
+    }
+    for &(center, radius) in circles {
+        let a = PI * radius * radius;
+        area -= a;
+        moment = sub(moment, scale(center, a));
+    }
+    ExpectedFace {
+        area,
+        center: scale(moment, 1. / area),
+        planar: true,
+        normal: Some(unit(outward)),
+    }
+}
+/// Faces of a section swept from `start` rings to `end` rings (same vertex
+/// order; first ring outer), with straight circular holes. `travel` points
+/// from the start cap to the end cap.
+fn swept_faces(
+    start: &[Vec<Point>],
+    end: &[Vec<Point>],
+    circles: &[(Point, f64)],
+    travel: Point,
+) -> Vec<ExpectedFace> {
+    let axis = unit(travel);
+    let section_normal = unit(cross(
+        sub(start[0][1], start[0][0]),
+        sub(start[0][2], start[0][0]),
+    ));
+    let cap_normal = scale(section_normal, dot(section_normal, axis).signum());
+    let mut faces = vec![
+        planar_face(start, circles, scale(cap_normal, -1.)),
+        planar_face(
+            end,
+            &circles
+                .iter()
+                .map(|&(center, radius)| (add(center, travel), radius))
+                .collect::<Vec<_>>(),
+            cap_normal,
+        ),
+    ];
+    for (k, (a_ring, b_ring)) in start.iter().zip(end).enumerate() {
+        let (signed, _) = ring_measure(a_ring, axis);
+        // A ring counter-clockwise about the travel has edge x travel
+        // pointing out of the ring; holes face into their ring.
+        let side = signed.signum() * if k == 0 { 1. } else { -1. };
+        for i in 0..a_ring.len() {
+            let j = (i + 1) % a_ring.len();
+            let quad = vec![a_ring[i], a_ring[j], b_ring[j], b_ring[i]];
+            let edge = sub(a_ring[j], a_ring[i]);
+            let hint = scale(cross(edge, axis), side);
+            let mut normal = unit(cross(sub(quad[2], quad[0]), sub(quad[3], quad[1])));
+            if dot(normal, hint) < 0. {
+                normal = scale(normal, -1.);
+            }
+            faces.push(planar_face(&[quad], &[], normal));
+        }
+    }
+    for &(center, radius) in circles {
+        faces.push(ExpectedFace {
+            area: 2. * PI * radius * dot(travel, travel).sqrt(),
+            center: add(center, scale(travel, 0.5)),
+            planar: false,
+            normal: None,
+        });
+    }
+    faces
+}
+/// Match every actual face to exactly one analytic face; returns, for each
+/// actual face index, the expected face index.
+fn match_faces(faces: &[multicad_kernel::Face], expected: &[ExpectedFace]) -> Vec<usize> {
+    assert_eq!(faces.len(), expected.len(), "{faces:?} vs {expected:?}");
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-7;
+    let mut used = vec![false; expected.len()];
+    faces
+        .iter()
+        .map(|face| {
+            let found = expected.iter().enumerate().position(|(i, e)| {
+                !used[i]
+                    && close(face.area_mm2, e.area)
+                    && (0..3).all(|k| close(face.center_mm[k], e.center[k]))
+                    && face.plane.is_some() == e.planar
+                    && match (face.plane, e.normal) {
+                        (Some((_, n)), Some(m)) => (0..3).all(|k| close(n[k], m[k])),
+                        _ => true,
+                    }
+            });
+            let index =
+                found.unwrap_or_else(|| panic!("No analytic face matches {face:?}: {expected:?}"));
+            used[index] = true;
+            index
+        })
+        .collect()
+}
+/// Check the saved frames of a straight sweep's faces against the authored
+/// section: each cap keeps the sketch frame on its own plane, and each planar
+/// wall keeps a frame at the start of its authored sketch edge on the start
+/// cap, with U along that edge and V along the travel. `matched` maps the
+/// face to its [`swept_faces`] index.
+fn check_sweep_frames(
+    element: &multicad_core::references::TopologyElement,
+    matched: usize,
+    sketch: PlaneFrame,
+    caps: [Point; 2],
+    start: &[Vec<Point>],
+    travel: Point,
+) {
+    check_frames(
+        element,
+        matched,
+        caps.map(|origin| [origin, sketch.u, sketch.v]),
+        start,
+        travel,
+    );
+}
+/// As [`check_sweep_frames`], with explicit cap frames (origin, U, V).
+fn check_frames(
+    element: &multicad_core::references::TopologyElement,
+    matched: usize,
+    caps: [[Point; 3]; 2],
+    start: &[Vec<Point>],
+    travel: Point,
+) {
+    let expected: Vec<[Point; 3]> = if matched < 2 {
+        vec![caps[matched]]
+    } else {
+        let mut index = matched - 2;
+        let ring = start.iter().find(|ring| {
+            let found = index < ring.len();
+            if !found {
+                index -= ring.len();
+            }
+            found
+        });
+        match ring {
+            Some(ring) => {
+                let [a, b] = [ring[index], ring[(index + 1) % ring.len()]];
+                vec![[a, unit(sub(b, a)), unit(travel)]]
+            }
+            None => vec![],
+        }
+    };
+    assert_eq!(
+        element.frames.len(),
+        expected.len(),
+        "{:?}",
+        element.origins
+    );
+    for (anchored, [origin, u, v]) in element.frames.iter().zip(expected) {
+        let frame = anchored.frame;
+        for (a, b) in frame
+            .origin_mm
+            .into_iter()
+            .chain(frame.u)
+            .chain(frame.v)
+            .zip(origin.into_iter().chain(u).chain(v))
+        {
+            near(a, b);
+        }
+    }
+}
+/// The `rust_polygon` fixture section: a concave outline with a square hole.
+const OUTLINE: [[f64; 2]; 6] = [
+    [0., 0.],
+    [12., 0.],
+    [12., 6.],
+    [6., 6.],
+    [6., 10.],
+    [0., 10.],
+];
+const SQUARE: [[f64; 2]; 4] = [[2., 2.], [4., 2.], [4., 4.], [2., 4.]];
+/// The XZ datum frame; its sketch normal U x V is -Y.
+const XZ: PlaneFrame = PlaneFrame {
+    origin: [0.; 3],
+    u: [1., 0., 0.],
+    v: [0., 0., 1.],
+};
+/// Embed sketch coordinates of a datum frame at a normal offset.
+fn on_sketch(frame: PlaneFrame, offset: f64) -> impl Fn(&[[f64; 2]]) -> Vec<Point> {
+    let normal = cross(frame.u, frame.v);
+    move |ring| {
+        ring.iter()
+            .map(|&[x, y]| {
+                add(
+                    add(add(frame.origin, scale(frame.u, x)), scale(frame.v, y)),
+                    scale(normal, offset),
+                )
+            })
+            .collect()
+    }
+}
+
 fn reopen(session: &Session) -> Session {
     let project = ProjectFile::new(session.document().clone()).unwrap();
     let mut bytes = vec![];
@@ -81,21 +326,56 @@ fn saved_front_panel_primitives_use_their_bound_placement_and_size_formulas() {
         })
         .collect::<Vec<_>>();
     assert_eq!(features.len(), 2);
-    let build = |backend| {
-        compiler()
-            .compile_sources_with_backend(&document, 0, &features, backend, None)
-            .unwrap()
-    };
-    let native = build(GeometryBackend::OpenCascade);
-    let rust = build(GeometryBackend::Rust);
+    let rust = compiler()
+        .compile_sources_with_backend(&document, 0, &features, GeometryBackend::Rust, None)
+        .unwrap();
+    let parameters = multicad_core::parameters::evaluate(&document).unwrap();
     for feature in features {
+        // Independent expectation from the bound formulas: the resolved
+        // primitive size and placement frame.
+        let resolved = model::read_primitive(&document, feature)
+            .unwrap()
+            .parameters
+            .resolve(&parameters)
+            .unwrap();
+        let (volume, min, max) = match resolved {
+            model::ResolvedPrimitive::Box { size_mm, frame } => {
+                let mut min = [f64::INFINITY; 3];
+                let mut max = [f64::NEG_INFINITY; 3];
+                for corner in 0..8 {
+                    let [a, b, c] = [0, 1, 2].map(|k| f64::from((corner >> k) & 1) * size_mm[k]);
+                    for i in 0..3 {
+                        let p = frame.origin[i] + a * frame.u[i] + b * frame.v[i] + c * frame.n[i];
+                        min[i] = min[i].min(p);
+                        max[i] = max[i].max(p);
+                    }
+                }
+                (size_mm.iter().product::<f64>(), min, max)
+            }
+            model::ResolvedPrimitive::Cylinder {
+                radius_mm,
+                height_mm,
+                frame,
+            } => {
+                let mut min = [0.; 3];
+                let mut max = [0.; 3];
+                for i in 0..3 {
+                    let ends = [frame.origin[i], frame.origin[i] + height_mm * frame.n[i]];
+                    let rim = radius_mm * frame.u[i].hypot(frame.v[i]);
+                    min[i] = ends[0].min(ends[1]) - rim;
+                    max[i] = ends[0].max(ends[1]) + rim;
+                }
+                (PI * radius_mm * radius_mm * height_mm, min, max)
+            }
+            other => panic!("Unexpected front panel primitive {other:?}"),
+        };
         let a = rust.solid(feature).unwrap();
-        let b = native.solid(feature).unwrap();
-        near(a.volume_mm3().unwrap(), b.volume_mm3().unwrap());
-        let (a, b) = (a.bounds().unwrap(), b.bounds().unwrap());
+        assert!(a.uses_rust_geometry());
+        near(a.volume_mm3().unwrap(), volume);
+        let a = a.bounds().unwrap();
         for axis in 0..3 {
-            near(a.min[axis], b.min[axis]);
-            near(a.max[axis], b.max[axis]);
+            near(a.min[axis], min[axis]);
+            near(a.max[axis], max[axis]);
         }
     }
 }
@@ -260,6 +540,7 @@ fn rust_revolve_rebuilds_signed_and_full_sketch_sweeps_with_holes_and_native_fac
     assert!(session.document().get(feature).is_none());
     session.commit(draft.prepared).unwrap();
     let mut end_intent = None;
+    let mut face_intents = Vec::new();
     for degrees in [90_f64, -90., 360., -360.] {
         if degrees != 90. {
             parameters.angle = model::angle(degrees);
@@ -273,16 +554,12 @@ fn rust_revolve_rebuilds_signed_and_full_sketch_sweeps_with_holes_and_native_fac
             .unwrap();
             session.commit(edit.prepared).unwrap();
         }
-        let native_model = compile(&session, GeometryBackend::OpenCascade);
         let rust = compile(&session, GeometryBackend::Rust);
-        let native_solid = native_model.solid(feature).unwrap();
-        let native = &native_model.snapshot().shapes[&feature];
         let actual = &rust.snapshot().shapes[&feature];
         let solid = rust.solid(feature).unwrap();
         assert!(solid.uses_rust_geometry());
         assert_eq!(solid.solid_count().unwrap(), 1);
         near(actual.volume_mm3, 56. * degrees.to_radians().abs());
-        near(actual.volume_mm3, native.volume_mm3);
         let (sin, cos) = (degrees.signum() * std::f64::consts::FRAC_PI_4).sin_cos();
         let occupied = |r, z| {
             solid
@@ -311,32 +588,71 @@ fn rust_revolve_rebuilds_signed_and_full_sketch_sweeps_with_holes_and_native_fac
         {
             near(actual, expected);
         }
-        let faces = solid.faces().unwrap();
-        let native_faces = native_solid.faces().unwrap();
-        assert_eq!(faces.len(), native_faces.len());
-        for face in native
-            .topology
-            .elements
-            .iter()
-            .filter(|e| e.key.kind == TopologyKind::Face)
-        {
-            let intent = GeometryIntent::capture(&native.topology, face.key).unwrap();
-            let Resolution::Resolved { key, .. } =
-                references::resolve(&intent, &actual.topology, session.revision())
-            else {
-                panic!("Lost a native revolved face intent at {degrees}°: {intent:?}");
-            };
-            let face_at = |faces: &[multicad_kernel::Face], ordinal| {
-                let face = faces.iter().find(|face| face.index == ordinal).unwrap();
-                (face.area_mm2, face.plane.is_some())
-            };
-            let (area, planar) = face_at(&faces, key.ordinal);
-            let (expected, native_planar) = face_at(&native_faces, face.key.ordinal);
-            near(area, expected);
-            assert_eq!(planar, native_planar);
+        // Independent face expectation. About the axis x = 1 the section is
+        // r 2..5, z 2..8 with an r 3..4, z 4..6 cavity. A sweep of `theta`
+        // has four cylinders (r 5 and 2 over 6 mm, r 4 and 3 over 2 mm), four
+        // planar annuli (z 2 and 8 between r 2..5, z 4 and 6 between r 3..4)
+        // and, unless it is a full turn, two planar 18 - 2 mm2 meridian caps.
+        let theta = degrees.to_radians().abs();
+        let mut expected_faces = vec![
+            (30. * theta, false),
+            (12. * theta, false),
+            (8. * theta, false),
+            (6. * theta, false),
+            (10.5 * theta, true),
+            (10.5 * theta, true),
+            (3.5 * theta, true),
+            (3.5 * theta, true),
+        ];
+        if degrees.abs() != 360. {
+            expected_faces.extend([(16., true), (16., true)]);
         }
+        let faces = solid.faces().unwrap();
+        let mut measured: Vec<_> = faces
+            .iter()
+            .map(|face| (face.area_mm2, face.plane.is_some()))
+            .collect();
+        let order = |a: &(f64, bool), b: &(f64, bool)| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1));
+        measured.sort_by(order);
+        expected_faces.sort_by(order);
+        assert_eq!(measured.len(), expected_faces.len());
+        for ((area, planar), (expected, expected_planar)) in
+            measured.into_iter().zip(expected_faces)
+        {
+            near(area, expected);
+            assert_eq!(planar, expected_planar);
+        }
+        let area_at = |ordinal| {
+            faces
+                .iter()
+                .find(|face| face.index == ordinal)
+                .unwrap()
+                .area_mm2
+        };
+        let is_cap = |element: &multicad_core::references::TopologyElement| {
+            element
+                .origins
+                .iter()
+                .any(|o| o.role == "cap.start" || o.role == "cap.end")
+        };
         if degrees == 90. {
-            let cap = native
+            // Saved face intents of the first sweep must keep resolving to
+            // the same logical faces after every signed-angle edit.
+            face_intents = actual
+                .topology
+                .elements
+                .iter()
+                .filter(|e| e.key.kind == TopologyKind::Face)
+                .map(|face| {
+                    (
+                        GeometryIntent::capture(&actual.topology, face.key).unwrap(),
+                        area_at(face.key.ordinal),
+                        is_cap(face),
+                    )
+                })
+                .collect();
+            assert_eq!(face_intents.len(), 10);
+            let cap = actual
                 .topology
                 .elements
                 .iter()
@@ -345,7 +661,7 @@ fn rust_revolve_rebuilds_signed_and_full_sketch_sweeps_with_holes_and_native_fac
                         && e.origins.iter().any(|o| o.role == "cap.end")
                 })
                 .unwrap();
-            let mut intent = GeometryIntent::capture(&native.topology, cap.key).unwrap();
+            let mut intent = GeometryIntent::capture(&actual.topology, cap.key).unwrap();
             intent.attachment = Some(references::Attachment {
                 anchor: cap
                     .origins
@@ -357,6 +673,22 @@ fn rust_revolve_rebuilds_signed_and_full_sketch_sweeps_with_holes_and_native_fac
                 angle_rad: 0.,
             });
             end_intent = Some(intent);
+        }
+        for (intent, area90, cap) in &face_intents {
+            let resolution = references::resolve(intent, &actual.topology, session.revision());
+            if *cap && degrees.abs() == 360. {
+                assert_eq!(resolution, Resolution::Missing);
+                continue;
+            }
+            let Resolution::Resolved { key, .. } = resolution else {
+                panic!("Lost a saved revolved face intent at {degrees}°: {intent:?}");
+            };
+            let expected = if *cap {
+                *area90
+            } else {
+                area90 * theta / std::f64::consts::FRAC_PI_2
+            };
+            near(area_at(key.ordinal), expected);
         }
         let resolved = references::resolve(
             end_intent.as_ref().unwrap(),
@@ -372,30 +704,20 @@ fn rust_revolve_rebuilds_signed_and_full_sketch_sweeps_with_holes_and_native_fac
             else {
                 panic!("End cap attachment did not survive a signed-angle edit: {resolved:?}");
             };
-            let expected = references::resolve(
-                end_intent.as_ref().unwrap(),
-                &native.topology,
-                session.revision(),
-            );
-            let Resolution::Resolved {
-                frame: Some(expected),
-                ..
-            } = expected
-            else {
-                panic!("The OpenCascade control did not resolve its own end cap");
-            };
+            // The XZ sketch frame turned by the signed angle about the axis
+            // x = 1, then offset 2 mm along its turned U.
+            let (sin, cos) = degrees.to_radians().sin_cos();
+            let expected = [
+                [1. + 2. * cos - cos, 2. * sin - sin, 0.],
+                [cos, sin, 0.],
+                [0., 0., 1.],
+            ];
             for (a, b) in frame
                 .origin_mm
                 .into_iter()
                 .chain(frame.u)
                 .chain(frame.v)
-                .zip(
-                    expected
-                        .origin_mm
-                        .into_iter()
-                        .chain(expected.u)
-                        .chain(expected.v),
-                )
+                .zip(expected.into_iter().flatten())
             {
                 near(a, b);
             }
@@ -1315,28 +1637,33 @@ fn rust_annular_sketch_extrusion_preserves_both_circles_and_reverse_cap_frames()
     session.commit(prepared.prepared).unwrap();
     let feature = request.outputs[0].feature;
     let reopened = reopen(&session);
-    let native = compile(&reopened, GeometryBackend::OpenCascade);
     let rust = compile(&reopened, GeometryBackend::Rust);
     let actual = &rust.snapshot().shapes[&feature];
-    let expected = &native.snapshot().shapes[&feature];
     near(actual.volume_mm3, PI * (16. - 2.25) * 6.);
-    near(actual.volume_mm3, expected.volume_mm3);
+    // Independent expectation. The XZ sketch normal is u x v = -Y, so the
+    // 2 mm start offset puts the start cap at y = -2 and the reversed 6 mm
+    // sweep ends at y = 4 around the (7, 9) center of the 4 mm circle.
     for (a, b) in actual
         .bounds
         .min
         .into_iter()
         .chain(actual.bounds.max)
-        .zip(expected.bounds.min.into_iter().chain(expected.bounds.max))
+        .zip([3., -2., 5., 11., 4., 13.])
     {
         near(a, b);
     }
-    for face in expected
+    // Each cap keeps the sketch frame translated to its plane; the two
+    // cylindrical walls carry no planar frame.
+    let original = compile(&session, GeometryBackend::Rust);
+    let saved = &original.snapshot().shapes[&feature];
+    let mut caps = 0;
+    for face in saved
         .topology
         .elements
         .iter()
         .filter(|element| element.key.kind == TopologyKind::Face)
     {
-        let intent = GeometryIntent::capture(&expected.topology, face.key).unwrap();
+        let intent = GeometryIntent::capture(&saved.topology, face.key).unwrap();
         let Resolution::Resolved { key, .. } =
             references::resolve(&intent, &actual.topology, reopened.revision())
         else {
@@ -1349,7 +1676,28 @@ fn rust_annular_sketch_extrusion_preserves_both_circles_and_reverse_cap_frames()
             .find(|element| element.key == key)
             .unwrap();
         assert_eq!(exact.frames, face.frames);
+        let cap = [("cap.start", -2.), ("cap.end", 4.)]
+            .into_iter()
+            .find(|(role, _)| exact.origins.iter().any(|origin| origin.role == *role));
+        let Some((role, y)) = cap else {
+            assert!(exact.frames.is_empty(), "{:?}", exact.origins);
+            continue;
+        };
+        caps += 1;
+        assert_eq!(exact.frames.len(), 1);
+        assert_eq!(exact.frames[0].origin.role, role);
+        let frame = exact.frames[0].frame;
+        for (a, b) in frame
+            .origin_mm
+            .into_iter()
+            .chain(frame.u)
+            .chain(frame.v)
+            .zip([0., y, 0., 1., 0., 0., 0., 0., 1.])
+        {
+            near(a, b);
+        }
     }
+    assert_eq!(caps, 2);
     for id in circles {
         assert!(actual.topology.elements.iter().any(|element| {
             element.key.kind == TopologyKind::Face
@@ -1392,33 +1740,29 @@ fn an_owner_cache_keeps_native_and_rust_solids_and_topology_separate() {
     let mut cache = EvaluationCache::default();
     let producers = [extrusion, cutter, cut].into_iter().collect();
     let mut builds = Vec::new();
-    for (offset, backend) in [
-        GeometryBackend::OpenCascade,
-        GeometryBackend::Rust,
-        GeometryBackend::OpenCascade,
-        GeometryBackend::Rust,
-    ]
-    .into_iter()
-    .enumerate()
-    {
+    // OpenCascade is gone, so the owner cache holds only Rust entries: a
+    // later revision reuses every completed producer and its topology.
+    for offset in 0..2 {
         let revision = revision + offset as u64;
         let model = compiler
-            .compile_cached_with_backend(&mut cache, session.document(), revision, backend, None)
+            .compile_cached_with_backend(
+                &mut cache,
+                session.document(),
+                revision,
+                GeometryBackend::Rust,
+                None,
+            )
             .unwrap();
         let stats = cache.last_compile();
-        if offset < 2 {
+        if offset == 0 {
             assert_eq!(stats.evaluated, producers);
             assert!(stats.reused.is_empty());
         } else {
             assert_eq!(stats.reused, producers);
             assert!(stats.evaluated.is_empty());
         }
-        let rust = backend == GeometryBackend::Rust;
-        assert_eq!(
-            model.solid(cutter).unwrap().axial_cylinder().is_some(),
-            rust
-        );
-        assert_eq!(model.solid(cut).unwrap().rust_prism().is_some(), rust);
+        assert!(model.solid(cutter).unwrap().axial_cylinder().is_some());
+        assert!(model.solid(cut).unwrap().rust_prism().is_some());
         assert_eq!(model.snapshot().stamp.revision, revision);
         for shape in model.snapshot().shapes.values() {
             assert_eq!(shape.topology.revision, revision);
@@ -1427,19 +1771,12 @@ fn an_owner_cache_keeps_native_and_rust_solids_and_topology_separate() {
     }
 
     let topology = |i: usize| &builds[i].snapshot().shapes[&cutter].topology.elements;
-    assert_ne!(topology(0), topology(1));
-    assert_eq!(topology(0), topology(2));
-    assert_eq!(topology(1), topology(3));
+    assert_eq!(topology(0), topology(1));
     let cutter_shape = |i: usize| &builds[i].snapshot().shapes[&cutter];
-    assert!(!Arc::ptr_eq(&cutter_shape(0).mesh, &cutter_shape(1).mesh));
-    for (first, reused) in [
-        (cutter_shape(0), cutter_shape(2)),
-        (cutter_shape(1), cutter_shape(3)),
-    ] {
-        assert!(Arc::ptr_eq(&first.mesh, &reused.mesh));
-        assert!(Arc::ptr_eq(&first.edges, &reused.edges));
-        assert!(Arc::ptr_eq(&first.vertices, &reused.vertices));
-    }
+    let (first, reused) = (cutter_shape(0), cutter_shape(1));
+    assert!(Arc::ptr_eq(&first.mesh, &reused.mesh));
+    assert!(Arc::ptr_eq(&first.edges, &reused.edges));
+    assert!(Arc::ptr_eq(&first.vertices, &reused.vertices));
     assert_eq!(
         builds[0].snapshot().shapes[&cutter].topology.revision,
         revision
@@ -1792,9 +2129,7 @@ fn directed_draft_rebuilds_a_polygonal_hole_and_retains_cap_attachments() {
 
         let reopened = reopen(&session);
         let rust = compile(&reopened, GeometryBackend::Rust);
-        let native = compile(&reopened, GeometryBackend::OpenCascade);
         let actual = &rust.snapshot().shapes[&feature];
-        let expected = &native.snapshot().shapes[&feature];
         let path_mm = (end - start).abs();
         let normal_component = std::f64::consts::FRAC_1_SQRT_2;
         // Offsetting the 12×10 outline by d and the 4×4 hole by -d gives area 104 + 60d.
@@ -1803,38 +2138,53 @@ fn directed_draft_rebuilds_a_polygonal_hole_and_retains_cap_attachments() {
             actual.volume_mm3,
             path_mm * normal_component * 104_f64.midpoint(end_area),
         );
-        near(actual.volume_mm3, expected.volume_mm3);
+        // Independent section geometry: the z = 2 section travels along
+        // (1, 0, 1)/sqrt(2); the far section is offset by d (outline out,
+        // hole in) and the near one is the sketch section.
+        let d = path_mm * taper.to_radians().tan();
+        let section = |travel: f64, d: f64| {
+            let shift = [
+                normal_component * travel,
+                0.,
+                2. + normal_component * travel,
+            ];
+            let rect = |[x0, y0, x1, y1]: [f64; 4]| {
+                [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+                    .map(|[x, y]| add(shift, [x, y, 0.]))
+                    .to_vec()
+            };
+            vec![
+                rect([-d, -d, 12. + d, 10. + d]),
+                rect([4. + d, 3. + d, 8. - d, 7. - d]),
+            ]
+        };
+        let (near_travel, far_travel) = if taper == 0. { (start, end) } else { (0., end) };
+        let (low, high) = if near_travel < far_travel {
+            (section(near_travel, 0.), section(far_travel, d))
+        } else {
+            (section(far_travel, d), section(near_travel, 0.))
+        };
+        let travel = [path_mm * normal_component, 0., path_mm * normal_component];
+        let mut min = [f64::INFINITY; 3];
+        let mut max = [f64::NEG_INFINITY; 3];
+        for point in low.iter().chain(&high).flatten() {
+            for i in 0..3 {
+                min[i] = min[i].min(point[i]);
+                max[i] = max[i].max(point[i]);
+            }
+        }
         for (a, b) in actual
             .bounds
             .min
             .into_iter()
             .chain(actual.bounds.max)
-            .zip(expected.bounds.min.into_iter().chain(expected.bounds.max))
+            .zip(min.into_iter().chain(max))
         {
             near(a, b);
         }
         let rust_faces = rust.solid(feature).unwrap().faces().unwrap();
-        let native_faces = native.solid(feature).unwrap().faces().unwrap();
         assert_eq!(rust_faces.len(), 10);
-        for element in actual
-            .topology
-            .elements
-            .iter()
-            .filter(|element| element.key.kind == TopologyKind::Face)
-        {
-            let counterpart = expected
-                .topology
-                .elements
-                .iter()
-                .find(|e| e.key.kind == TopologyKind::Face && e.origins == element.origins)
-                .unwrap_or_else(|| panic!("native face missing for {:?}", element.origins));
-            let a = &rust_faces[element.key.ordinal as usize];
-            let b = &native_faces[counterpart.key.ordinal as usize];
-            near(a.area_mm2, b.area_mm2);
-            for (a, b) in a.center_mm.into_iter().zip(b.center_mm) {
-                near(a, b);
-            }
-        }
+        match_faces(&rust_faces, &swept_faces(&low, &high, &[], travel));
         let cap = sketch::inspect_plane(
             reopened.document(),
             plane,
@@ -1847,21 +2197,28 @@ fn directed_draft_rebuilds_a_polygonal_hole_and_retains_cap_attachments() {
         near(cap.origin[2], 2. + normal_component * end);
     }
 
+    // A two-sided draft is now built as two drafted halves that grow away
+    // from the shared sketch section (7 mm forward, 3 mm backward).
     parameters.taper = model::angle(5.);
     let candidate =
         model::prepare_extrude_edit(&session, session.revision(), actor(), feature, &parameters)
             .unwrap();
-    let failure = compiler()
+    let drafted = compiler()
         .compile_with_backend(
             candidate.prepared.document(),
             session.revision() + 1,
             GeometryBackend::Rust,
             None,
         )
-        .err()
-        .expect("A single-section sweep cannot build two-sided draft");
-    assert_eq!(failure.entity, Some(feature));
-    assert!(failure.message.contains("intermediate sweep section"));
+        .unwrap();
+    let half = |path: f64| {
+        let end_area = 104. + 60. * path * 5_f64.to_radians().tan();
+        path * std::f64::consts::FRAC_1_SQRT_2 * 104_f64.midpoint(end_area)
+    };
+    let solid = drafted.solid(feature).unwrap();
+    assert!(solid.uses_rust_geometry());
+    assert_eq!(solid.solid_count().unwrap(), 1);
+    near(solid.volume_mm3().unwrap(), half(7.) + half(3.));
 }
 
 #[test]
@@ -1919,21 +2276,15 @@ fn straight_sketch_reopens_and_matches_native_faces_with_a_polygonal_hole() {
             edits: vec![Mutation::Replace(edit)],
         })
         .unwrap();
+    let xz = XZ;
     for (session, height) in [(saved, 6.), (reopen(&session), 10. / 3.)] {
         let rust = compile(&session, GeometryBackend::Rust);
-        let native = compile(&session, GeometryBackend::OpenCascade);
         let rust_solid = rust.solid(feature).unwrap();
-        let native_solid = native.solid(feature).unwrap();
         near(rust_solid.volume_mm3().unwrap(), 92. * height);
-        near(
-            rust_solid.volume_mm3().unwrap(),
-            native_solid.volume_mm3().unwrap(),
-        );
         let bounds = rust_solid.bounds().unwrap();
         near(bounds.min[1], -2. - height);
         assert_eq!(bounds.max, [12., -2., 10.]);
         let actual = &rust.snapshot().shapes[&feature];
-        let expected = &native.snapshot().shapes[&feature];
         assert_eq!(actual.edges.len(), 30);
         assert_eq!(actual.vertices.len(), 20);
         assert_eq!(
@@ -1946,34 +2297,42 @@ fn straight_sketch_reopens_and_matches_native_faces_with_a_polygonal_hole() {
                 .len(),
             12
         );
+        // Independent expectation: the XZ section (normal -Y) at y = -2
+        // swept `height` along -Y.
+        let rings = |offset| {
+            let at = on_sketch(xz, offset);
+            vec![at(&OUTLINE), at(&SQUARE)]
+        };
         let rust_faces = rust_solid.faces().unwrap();
-        let native_faces = native_solid.faces().unwrap();
+        let matched = match_faces(
+            &rust_faces,
+            &swept_faces(&rings(2.), &rings(2. + height), &[], [0., -height, 0.]),
+        );
+        let mut faces = 0;
         for element in actual
             .topology
             .elements
             .iter()
             .filter(|element| element.key.kind == TopologyKind::Face)
         {
-            let corresponding = expected
-                .topology
-                .elements
+            let face = rust_faces
                 .iter()
-                .find(|candidate| {
-                    candidate.key.kind == TopologyKind::Face && candidate.origins == element.origins
-                })
+                .position(|face| face.index == element.key.ordinal)
                 .unwrap();
-            assert_eq!(
-                element.frames, corresponding.frames,
-                "{:?}",
-                element.origins
+            let role = |role: &str| element.origins.iter().any(|origin| origin.role == role);
+            assert_eq!(role("cap.start"), matched[face] == 0);
+            assert_eq!(role("cap.end"), matched[face] == 1);
+            check_sweep_frames(
+                element,
+                matched[face],
+                xz,
+                [[0., -2., 0.], [0., -2. - height, 0.]],
+                &rings(2.),
+                [0., -height, 0.],
             );
-            let a = &rust_faces[element.key.ordinal as usize];
-            let b = &native_faces[corresponding.key.ordinal as usize];
-            near(a.area_mm2, b.area_mm2);
-            for (a, b) in a.center_mm.into_iter().zip(b.center_mm) {
-                near(a, b);
-            }
+            faces += 1;
         }
+        assert_eq!(faces, 12);
         if session.document().get(planes[0]).is_some() {
             let inspect = |plane| {
                 sketch::inspect_plane(
@@ -1993,8 +2352,8 @@ fn straight_sketch_reopens_and_matches_native_faces_with_a_polygonal_hole() {
 #[test]
 fn a_saved_straight_face_extrusion_resolves_across_both_backends() {
     let (mut session, height, parent, _) = rust_polygon::fixture();
-    let native = compile(&session, GeometryBackend::OpenCascade);
-    let topology = &native.snapshot().shapes[&parent].topology;
+    let source = compile(&session, GeometryBackend::Rust);
+    let topology = &source.snapshot().shapes[&parent].topology;
     let cap = Origin {
         source: parent,
         role: "cap.end".into(),
@@ -2035,13 +2394,11 @@ fn a_saved_straight_face_extrusion_resolves_across_both_backends() {
         })
         .unwrap();
 
+    let mut saved_faces = None;
     for (project, source_y) in [(original, -8.), (reopen(&session), -9.)] {
-        let native = compile(&project, GeometryBackend::OpenCascade);
         let rust = compile(&project, GeometryBackend::Rust);
         let actual = &rust.snapshot().shapes[&feature];
-        let expected = &native.snapshot().shapes[&feature];
         near(actual.volume_mm3, 92. * 4.);
-        near(actual.volume_mm3, expected.volume_mm3);
         assert_eq!(actual.bounds.min, [0., source_y - 4., 0.]);
         assert_eq!(actual.bounds.max, [12., source_y, 10.]);
         let faces = |topology: &TopologySnapshot| {
@@ -2054,15 +2411,42 @@ fn a_saved_straight_face_extrusion_resolves_across_both_backends() {
         };
         let actual_faces = faces(&actual.topology);
         assert_eq!(actual_faces.len(), 12);
-        assert_eq!(actual_faces, faces(&expected.topology));
+        // Two named caps of the face extrusion and ten walls named after the
+        // source cap's boundary; the names survive the source edit and reopen.
+        for role in ["cap.start", "cap.end"] {
+            let cap = Origin {
+                source: feature,
+                role: role.into(),
+            };
+            assert_eq!(
+                actual_faces
+                    .iter()
+                    .filter(|origins| origins.contains(&cap))
+                    .count(),
+                1
+            );
+        }
+        assert_eq!(
+            actual_faces
+                .iter()
+                .filter(|origins| origins
+                    .iter()
+                    .any(|o| o.source == feature && o.role.starts_with("side/")))
+                .count(),
+            10
+        );
+        assert_eq!(
+            saved_faces.get_or_insert(actual_faces.clone()),
+            &actual_faces
+        );
     }
 }
 
 #[test]
 fn mixed_holes_keep_circular_caps_and_wall_ancestry_through_saved_edits() {
     let (mut session, height, parent, hole) = rust_polygon::fixture_with_circle();
-    let native = compile(&session, GeometryBackend::OpenCascade);
-    let source_topology = &native.snapshot().shapes[&parent].topology;
+    let source = compile(&session, GeometryBackend::Rust);
+    let source_topology = &source.snapshot().shapes[&parent].topology;
     let cap = Origin {
         source: parent,
         role: "cap.end".into(),
@@ -2134,16 +2518,11 @@ fn mixed_holes_keep_circular_caps_and_wall_ancestry_through_saved_edits() {
     for (project, height, radius) in [(original, 6., 1.25_f64), (reopen(&session), 10. / 3., 0.75)]
     {
         let area = 92. - PI * radius.powi(2);
-        let native = compile(&project, GeometryBackend::OpenCascade);
         let rust = compile(&project, GeometryBackend::Rust);
         let top_y = -2. - height;
         for (feature, height, end_y) in [(parent, height, top_y), (child, 4., top_y - 4.)] {
             let rust_solid = rust.solid(feature).unwrap();
             near(rust_solid.volume_mm3().unwrap(), area * height);
-            near(
-                rust_solid.volume_mm3().unwrap(),
-                native.solid(feature).unwrap().volume_mm3().unwrap(),
-            );
             let topology = &rust.snapshot().shapes[&feature].topology;
             let key = find_face(
                 topology,
@@ -2196,15 +2575,15 @@ fn mixed_holes_keep_circular_caps_and_wall_ancestry_through_saved_edits() {
         let resolved = references::resolve(&wall_intent, rust_topology, project.revision());
         assert!(matches!(resolved, Resolution::Resolved { key, .. } if key == rust_wall));
         let rust_faces = rust.solid(parent).unwrap().faces().unwrap();
-        let native_topology = &native.snapshot().shapes[&parent].topology;
-        let native_wall = find_face(native_topology, &wall);
-        let native_faces = native.solid(parent).unwrap().faces().unwrap();
         let wall_face = &rust_faces[rust_wall.ordinal as usize];
-        let expected = &native_faces[native_wall.ordinal as usize];
         assert_eq!(wall_face.plane, None);
         near(wall_face.area_mm2, 2. * PI * radius * height);
-        near(wall_face.area_mm2, expected.area_mm2);
-        for (actual, expected) in wall_face.center_mm.into_iter().zip(expected.center_mm) {
+        // The XZ sketch circle at (9, 3) swept from y = -2 along -Y.
+        for (actual, expected) in wall_face
+            .center_mm
+            .into_iter()
+            .zip([9., -2. - height / 2., 3.])
+        {
             near(actual, expected);
         }
     }
@@ -2246,14 +2625,12 @@ fn straight_xy_sketch_through_cut_keeps_body_head_and_cutter_provenance() {
     session.commit(prepared.prepared).unwrap();
 
     let reopened = reopen(&session);
-    let native = compile(&reopened, GeometryBackend::OpenCascade);
     let rust = compile(&reopened, GeometryBackend::Rust);
-    assert_eq!(rust.snapshot().bodies, native.snapshot().bodies);
     assert_eq!(rust.snapshot().bodies.get(&body), Some(&cut.feature));
     assert_eq!(rust.snapshot().bodies.len(), 1);
     let actual = rust.solid(cut.feature).unwrap();
-    let expected = native.solid(cut.feature).unwrap();
-    near(actual.volume_mm3().unwrap(), expected.volume_mm3().unwrap());
+    assert!(actual.uses_rust_geometry());
+    assert_eq!(actual.solid_count().unwrap(), 1);
     near(
         actual.volume_mm3().unwrap(),
         (92. - PI * (1.25_f64.powi(2) + 0.5_f64.powi(2))) * 6.,
@@ -2283,8 +2660,8 @@ fn signed_symmetric_and_two_sided_extrusions_preserve_saved_cap_and_side_frames(
 
     let (mut session, height, feature, _) = rust_polygon::fixture_with_circle();
     let planes = ["cap.start", "cap.end"].map(|role| {
-        let native = compile(&session, GeometryBackend::OpenCascade);
-        let topology = &native.snapshot().shapes[&feature].topology;
+        let source = compile(&session, GeometryBackend::Rust);
+        let topology = &source.snapshot().shapes[&feature].topology;
         let anchor = Origin {
             source: feature,
             role: role.into(),
@@ -2351,6 +2728,7 @@ fn signed_symmetric_and_two_sided_extrusions_preserve_saved_cap_and_side_frames(
         (two_sided.clone(), false, 1., -9.),
         (two_sided, true, -5., 5.),
     ];
+    let xz = XZ;
     for (extent, reverse, start, end) in cases {
         let parameters = ExtrudeParameters {
             direction: Direction {
@@ -2372,67 +2750,55 @@ fn signed_symmetric_and_two_sided_extrusions_preserve_saved_cap_and_side_frames(
         session.commit(edit.prepared).unwrap();
         let reopened = reopen(&session);
         let rust = compile(&reopened, GeometryBackend::Rust);
-        let native = compile(&reopened, GeometryBackend::OpenCascade);
         let actual = &rust.snapshot().shapes[&feature];
-        let expected = &native.snapshot().shapes[&feature];
         near(
             actual.volume_mm3,
             (92. - 1.25_f64.powi(2) * PI) * (end - start).abs(),
         );
-        near(actual.volume_mm3, expected.volume_mm3);
         near(actual.bounds.min[1], start.min(end));
         near(actual.bounds.max[1], start.max(end));
+        // Independent expectation: the XZ section (sketch normal -Y, circle
+        // hole at (9, 3)) at y = start swept to y = end.
+        let section = |y: f64| {
+            let at = on_sketch(xz, -y);
+            vec![at(&OUTLINE), at(&SQUARE)]
+        };
+        let travel = [0., end - start, 0.];
         let rust_faces = rust.solid(feature).unwrap().faces().unwrap();
-        let native_faces = native.solid(feature).unwrap().faces().unwrap();
-        assert_eq!(rust_faces.len(), native_faces.len());
+        let matched = match_faces(
+            &rust_faces,
+            &swept_faces(
+                &section(start),
+                &section(end),
+                &[([9., start, 3.], 1.25)],
+                travel,
+            ),
+        );
+        let mut faces = 0;
         for element in actual
             .topology
             .elements
             .iter()
             .filter(|e| e.key.kind == TopologyKind::Face)
         {
-            let counterpart = expected
-                .topology
-                .elements
+            let face = rust_faces
                 .iter()
-                .find(|e| e.key.kind == TopologyKind::Face && e.origins == element.origins)
+                .position(|face| face.index == element.key.ordinal)
                 .unwrap();
-            assert_eq!(element.frames.len(), counterpart.frames.len());
-            for (a, b) in element.frames.iter().zip(&counterpart.frames) {
-                assert_eq!(a.origin, b.origin);
-                for (x, y) in a
-                    .frame
-                    .origin_mm
-                    .into_iter()
-                    .chain(a.frame.u)
-                    .chain(a.frame.v)
-                    .zip(
-                        b.frame
-                            .origin_mm
-                            .into_iter()
-                            .chain(b.frame.u)
-                            .chain(b.frame.v),
-                    )
-                {
-                    near(x, y);
-                }
-            }
-            let a = &rust_faces[element.key.ordinal as usize];
-            let b = &native_faces[counterpart.key.ordinal as usize];
-            near(a.area_mm2, b.area_mm2);
-            for (x, y) in a.center_mm.into_iter().zip(b.center_mm) {
-                near(x, y);
-            }
-            match (a.plane, b.plane) {
-                (Some((_, a)), Some((_, b))) => {
-                    for (x, y) in a.into_iter().zip(b) {
-                        near(x, y);
-                    }
-                }
-                (None, None) => {}
-                _ => panic!("face planarity differs for {:?}", element.origins),
-            }
+            let role = |role: &str| element.origins.iter().any(|origin| origin.role == role);
+            assert_eq!(role("cap.start"), matched[face] == 0);
+            assert_eq!(role("cap.end"), matched[face] == 1);
+            check_sweep_frames(
+                element,
+                matched[face],
+                xz,
+                [[0., start, 0.], [0., end, 0.]],
+                &section(start),
+                travel,
+            );
+            faces += 1;
         }
+        assert_eq!(faces, 13);
         for (plane, y) in planes.into_iter().zip([start, end]) {
             let attached = sketch::inspect_plane(
                 reopened.document(),
@@ -2451,27 +2817,26 @@ fn saved_rounded_panel_rebuilds_and_moves_a_downstream_face_attachment() {
     for quarter_turn in [false, true] {
         let (mut session, height, extrusion, body, cutter, cut) = fixture(quarter_turn, 28.);
         let first = compile(&session, GeometryBackend::Rust);
-        let native = compile(&session, GeometryBackend::OpenCascade);
         let exact = first.solid(cut).unwrap().rust_prism().unwrap();
         assert_eq!(exact.dimensions()[2].ratio(), (8, 1));
         let rust_cutter = first.solid(cutter).unwrap();
-        let native_cutter = native.solid(cutter).unwrap();
         assert!(rust_cutter.axial_cylinder().is_some());
-        near(
-            rust_cutter.volume_mm3().unwrap(),
-            native_cutter.volume_mm3().unwrap(),
-        );
+        // The r 4, 10 mm tool stands on (28, 10, -1) along +Z in both frames.
+        near(rust_cutter.volume_mm3().unwrap(), 160. * PI);
         let mut rust_faces = rust_cutter.faces().unwrap();
-        let mut native_faces = native_cutter.faces().unwrap();
         let by_height = |a: &multicad_kernel::Face, b: &multicad_kernel::Face| {
             a.center_mm[2].total_cmp(&b.center_mm[2])
         };
         rust_faces.sort_by(by_height);
-        native_faces.sort_by(by_height);
-        assert_eq!(rust_faces.len(), native_faces.len());
-        for (actual, expected) in rust_faces.into_iter().zip(native_faces) {
-            near(actual.area_mm2, expected.area_mm2);
-            for (a, b) in actual.center_mm.into_iter().zip(expected.center_mm) {
+        let expected_faces = [
+            (16. * PI, [28., 10., -1.]),
+            (80. * PI, [28., 10., 4.]),
+            (16. * PI, [28., 10., 9.]),
+        ];
+        assert_eq!(rust_faces.len(), expected_faces.len());
+        for (actual, (area, center)) in rust_faces.into_iter().zip(expected_faces) {
+            near(actual.area_mm2, area);
+            for (a, b) in actual.center_mm.into_iter().zip(center) {
                 near(a, b);
             }
         }
@@ -2485,12 +2850,27 @@ fn saved_rounded_panel_rebuilds_and_moves_a_downstream_face_attachment() {
                 .unwrap()
                 .frame
         };
-        assert_eq!(cylinder_cap(&first), cylinder_cap(&native));
+        // The end cap keeps the authored primitive frame on its plane.
+        let (u, v) = if quarter_turn {
+            ([0., 1., 0.], [-1., 0., 0.])
+        } else {
+            ([1., 0., 0.], [0., 1., 0.])
+        };
+        assert_eq!(
+            cylinder_cap(&first),
+            multicad_core::references::ReferenceFrame {
+                origin_mm: [28., 10., 9.],
+                u,
+                v,
+            }
+        );
         assert_eq!(first.snapshot().bodies.get(&body), Some(&cut));
         assert_eq!(first.snapshot().bodies.len(), 1);
+        // 40 x 20 panel with a 10 mm half-disk end, less the 3 mm sketch hole
+        // and the 4 mm tool, 8 mm thick.
         near(
             first.solid(cut).unwrap().volume_mm3().unwrap(),
-            native.solid(cut).unwrap().volume_mm3().unwrap(),
+            (800. + 25. * PI) * 8.,
         );
         let topology = &first.snapshot().shapes[&cut].topology;
         let cap = Origin {
@@ -2537,15 +2917,10 @@ fn saved_rounded_panel_rebuilds_and_moves_a_downstream_face_attachment() {
             .unwrap();
         session = reopen(&session);
         let second = compile(&session, GeometryBackend::Rust);
-        let native = compile(&session, GeometryBackend::OpenCascade);
         let solid = second.solid(cut).unwrap();
         let exact = solid.rust_prism().unwrap();
         assert_eq!(exact.dimensions()[2], parse_length_mm("10/3 mm").unwrap());
         near(solid.volume_mm3().unwrap(), (800. + 25. * PI) * 10. / 3.);
-        near(
-            solid.volume_mm3().unwrap(),
-            native.solid(cut).unwrap().volume_mm3().unwrap(),
-        );
         let probe = [28, 10, 2].map(|value| Rational::new(value, 1).unwrap());
         assert_eq!(exact.classify(probe), Ok(Location::Exterior));
         let attached = sketch::inspect_plane(
@@ -2734,7 +3109,6 @@ fn saved_placed_box_keeps_native_face_ancestry_and_rebuilds_after_edit() {
     session.commit(edit.prepared).unwrap();
     for (document, height) in [(original, 8.), (reopen(&session), 9.)] {
         let rust = compile(&document, GeometryBackend::Rust);
-        let native = compile(&document, GeometryBackend::OpenCascade);
         let solid = rust.solid(stock.feature).unwrap();
         let exact = solid.rust_prism().unwrap();
         assert_eq!(
@@ -2745,31 +3119,40 @@ fn saved_placed_box_keeps_native_face_ancestry_and_rebuilds_after_edit() {
         assert_eq!(solid.bounds().unwrap().max, [7. + height, 9., 7.]);
         near(solid.volume_mm3().unwrap(), 60. * height);
         let rust_shape = &rust.snapshot().shapes[&stock.feature];
-        let native_shape = &native.snapshot().shapes[&stock.feature];
         assert_eq!(rust_shape.mesh.indices.len(), 36);
         assert_eq!(rust_shape.edges.len(), 12);
         assert_eq!(rust_shape.vertices.len(), 8);
+        // Independent expectation: the 12 x 5 rectangle on the placed (U, V)
+        // plane swept `height` along U x V = +X.
+        let (origin, u, v) = ([7., -3., 2.], [0., 1., 0.], [0., 0., 1.]);
+        let travel = [height, 0., 0.];
+        let section = vec![
+            [[0., 0.], [12., 0.], [12., 5.], [0., 5.]]
+                .map(|[a, b]| add(add(origin, scale(u, a)), scale(v, b)))
+                .to_vec(),
+        ];
+        let end = section
+            .iter()
+            .map(|ring| ring.iter().map(|&p| add(p, travel)).collect())
+            .collect::<Vec<_>>();
         let rust_faces = solid.faces().unwrap();
-        let native_faces = native.solid(stock.feature).unwrap().faces().unwrap();
+        let matched = match_faces(&rust_faces, &swept_faces(&section, &end, &[], travel));
+        // Both caps keep the authored placement frame on their planes.
+        let caps = [[origin, u, v], [add(origin, travel), u, v]];
         for actual in rust_shape
             .topology
             .elements
             .iter()
             .filter(|e| e.key.kind == TopologyKind::Face)
         {
-            let expected = native_shape
-                .topology
-                .elements
+            let face = rust_faces
                 .iter()
-                .find(|e| e.key.kind == TopologyKind::Face && e.origins == actual.origins)
+                .position(|face| face.index == actual.key.ordinal)
                 .unwrap();
-            assert_eq!(actual.frames, expected.frames);
-            let a = &rust_faces[actual.key.ordinal as usize];
-            let b = &native_faces[expected.key.ordinal as usize];
-            near(a.area_mm2, b.area_mm2);
-            for (a, b) in a.center_mm.into_iter().zip(b.center_mm) {
-                near(a, b);
-            }
+            let role = |role: &str| actual.origins.iter().any(|origin| origin.role == role);
+            assert_eq!(role("cap.start"), matched[face] == 0);
+            assert_eq!(role("cap.end"), matched[face] == 1);
+            check_frames(actual, matched[face], caps, &section, travel);
         }
     }
 }

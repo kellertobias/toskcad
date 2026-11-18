@@ -53,7 +53,8 @@ fn inward_involutes_connected_rim_root_circles_and_step_are_actual_native_geomet
     for teeth in [48, 60] {
         let spec = ring(teeth, 0.05);
         let feature = EntityId::new();
-        let solid = Solid::involute_gear_named(spec, feature, GeometryPolicy::default()).unwrap();
+        let solid =
+            Solid::rust_internal_ring_named(spec, feature, GeometryPolicy::default()).unwrap();
         assert_eq!(solid.solid_count().unwrap(), 1);
         // Independent radial integration of the material-width equation,
         // split at the circular-fillet foot (64/128-point quadrature agreed).
@@ -196,7 +197,8 @@ fn invalid_internal_radii_fillets_rim_and_nonfinite_inputs_are_refused() {
         },
     ] {
         assert!(
-            Solid::involute_gear_named(bad, EntityId::new(), GeometryPolicy::default()).is_err()
+            Solid::rust_internal_ring_named(bad, EntityId::new(), GeometryPolicy::default())
+                .is_err()
         );
     }
 }

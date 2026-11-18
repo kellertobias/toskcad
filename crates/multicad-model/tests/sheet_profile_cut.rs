@@ -10,8 +10,11 @@ use multicad_core::{
     sketch_regions,
 };
 use multicad_model::{
-    Compiler, EvaluationCache, Model,
-    export::{Exporter, sheet_dxf::SheetDxfLayers},
+    Compiler, EvaluationCache, GeometryBackend, Model,
+    export::{
+        Exporter,
+        sheet_dxf::{SheetDxfLayers, SheetDxfOptions},
+    },
 };
 
 fn actor() -> Actor {
@@ -424,12 +427,15 @@ fn developed_c_channel_flange_cut_matches_folded_geometry_and_millimeter_dxf() {
         (part, forming, face)
     );
     let export = Exporter { compiler }
-        .developed_sheet_dxf(
+        .developed_sheet_dxf_with_backend(
             &reopened.document,
             0,
             part,
-            LengthUnit::Millimeter,
-            &SheetDxfLayers::default(),
+            SheetDxfOptions {
+                backend: GeometryBackend::Rust,
+                units: LengthUnit::Millimeter,
+                layers: &SheetDxfLayers::default(),
+            },
             None,
         )
         .unwrap();

@@ -66,7 +66,7 @@ fn straight_sweep_and_right_corner_polyline_are_real_named_solids() {
     let before = profile.clone();
     let feature = EntityId::new();
     let curves = origins(4);
-    let result = Solid::sweep_polyline_named(
+    let result = Solid::rust_sweep_polyline_named(
         &profile,
         &[[0.; 3], [0., 0., 30.]],
         feature,
@@ -86,7 +86,7 @@ fn straight_sweep_and_right_corner_polyline_are_real_named_solids() {
         }],
         holes: vec![],
     };
-    let elbow = Solid::sweep_polyline_named(
+    let elbow = Solid::rust_sweep_polyline_named(
         &circle,
         &[[0.; 3], [0., 0., 20.], [20., 0., 20.]],
         feature,
@@ -105,7 +105,8 @@ fn loft_authored_sections_preserve_correspondence_named_references_and_step() {
     let before = sections.clone();
     let names = vec![origins(4), origins(4)];
     for ruled in [true, false] {
-        let result = Solid::loft_profiles_named(&sections, feature, &names, ruled, p()).unwrap();
+        let result =
+            Solid::rust_loft_profiles_named(&sections, feature, &names, ruled, p()).unwrap();
         near(result.volume_mm3().unwrap(), 3500.);
         verify(&result, feature);
         let snapshot = result.topology_snapshot(feature, 0).unwrap();
@@ -116,7 +117,7 @@ fn loft_authored_sections_preserve_correspondence_named_references_and_step() {
             .unwrap();
         let intent = GeometryIntent::capture(&snapshot, selected.key).unwrap();
         let edited = vec![sections[0].clone(), rect(12., 6., [4., 2., 35.])];
-        let next = Solid::loft_profiles_named(&edited, feature, &names, ruled, p()).unwrap();
+        let next = Solid::rust_loft_profiles_named(&edited, feature, &names, ruled, p()).unwrap();
         assert!(matches!(
             resolve(&intent, &next.topology_snapshot(feature, 1).unwrap(), 1),
             Resolution::Resolved { .. }
@@ -129,10 +130,10 @@ fn loft_authored_sections_preserve_correspondence_named_references_and_step() {
         rect(10., 6., [0., 0., 30.]),
     ];
     let names = vec![origins(4), origins(4), origins(4)];
-    let ruled = Solid::loft_profiles_named(&three, feature, &names, true, p()).unwrap();
+    let ruled = Solid::rust_loft_profiles_named(&three, feature, &names, true, p()).unwrap();
     near(ruled.volume_mm3().unwrap(), 2540.);
     verify(&ruled, feature);
-    let smooth = Solid::loft_profiles_named(&three, feature, &names, false, p()).unwrap();
+    let smooth = Solid::rust_loft_profiles_named(&three, feature, &names, false, p()).unwrap();
     assert!(smooth.volume_mm3().unwrap() > 1800.);
     verify(&smooth, feature);
 }

@@ -163,22 +163,66 @@ fn check(pattern: &DevelopedPattern, r: &Read, scale: f64) {
     }
 }
 
-fn check_rust_bracket(session: &Session, body: EntityId, native_flat: &SheetDxf) {
+/// Check the folded Rust bracket and its developed DXF against closed-form
+/// sheet expectations: a 100 × 60 base of 1.5 mm stock with 1.5 mm inside
+/// radii, a 20 mm flange up on edge 0, a 12 mm side flange up on edge 1 inset
+/// 4 mm at both ends behind 3 × 4 reliefs, and a 15 mm flange on edge 2;
+/// openings are Ø8 and a 10 × 6 window in the base and Ø5 in flange 0.
+fn check_rust_bracket(session: &Session, body: EntityId, flat: &SheetDxf, k: f64, last_down: bool) {
     let compiler = Compiler {
         omit_display: true,
         ..Default::default()
     };
-    let compile = |backend| {
-        compiler
-            .compile_with_backend(session.document(), session.revision(), backend, None)
-            .unwrap()
-    };
-    let native = compile(GeometryBackend::OpenCascade);
-    let rust = compile(GeometryBackend::Rust);
-    let [expected, actual] = [&native, &rust].map(|model| model.solid(body).unwrap());
+    let rust = compiler
+        .compile_with_backend(
+            session.document(),
+            session.revision(),
+            GeometryBackend::Rust,
+            None,
+        )
+        .unwrap();
+    let actual = rust.solid(body).unwrap();
+    let (t, r) = (1.5, 1.5);
+    let allowance = std::f64::consts::FRAC_PI_2 * (r + k * t);
+    let widths = [100., 52., 100.];
+    let blank =
+        100. * 60. + 100. * (20. + allowance) + 52. * (12. + allowance) + 100. * (15. + allowance)
+            - 2. * 12.;
+    let holes = [
+        -60.,
+        -std::f64::consts::PI * 16.,
+        -std::f64::consts::PI * 6.25,
+    ];
+    let flat_area = blank + holes.iter().sum::<f64>();
+    let perimeter = 2. * (20. + allowance)
+        + 2. * (15. + allowance)
+        + 2. * (12. + allowance)
+        + 2. * 100.
+        + 60.
+        + 52.
+        + 2. * 1.
+        + 4. * 4.
+        + 2. * 3.
+        + std::f64::consts::PI * (8. + 5.)
+        + 32.;
+    // Folding moves the neutral layer from r + k t to the mid-surface r + t/2,
+    // so each 90° bend of width w gains θ t² (1/2 - k) w of volume and its
+    // faces and two side sectors change area by θ t (w (1 - 2k) + 2 t (1/2 - k)).
+    let theta = std::f64::consts::FRAC_PI_2;
+    let volume = t * flat_area
+        + widths
+            .iter()
+            .map(|w| theta * t * t * (0.5 - k) * w)
+            .sum::<f64>();
+    let surface = 2. * flat_area
+        + t * perimeter
+        + widths
+            .iter()
+            .map(|w| theta * t * (w * (1. - 2. * k) + 2. * t * (0.5 - k)))
+            .sum::<f64>();
     assert!(actual.uses_rust_geometry());
     assert_eq!(actual.solid_count().unwrap(), 1);
-    near(actual.volume_mm3().unwrap(), expected.volume_mm3().unwrap());
+    near(actual.volume_mm3().unwrap(), volume);
     let directory = tempfile::tempdir().unwrap();
     let step = directory.path().join("three-flange-bracket.step");
     actual.write_step(&step).unwrap();
@@ -190,14 +234,11 @@ fn check_rust_bracket(session: &Session, body: EntityId, native_flat: &SheetDxf)
         compiler.policy.linear_tolerance_mm,
     )
     .unwrap();
-    near(verified_volume, expected.volume_mm3().unwrap());
-    let native_import = multicad_kernel::Solid::read_step(&step, compiler.policy).unwrap();
-    assert_eq!(native_import.solid_count().unwrap(), 1);
-    near(
-        native_import.volume_mm3().unwrap(),
-        expected.volume_mm3().unwrap(),
-    );
-    let surface = |solid: &multicad_kernel::Solid| {
+    near(verified_volume, volume);
+    let imported = multicad_kernel::Solid::read_step(&step, compiler.policy).unwrap();
+    assert_eq!(imported.solid_count().unwrap(), 1);
+    near(imported.volume_mm3().unwrap(), volume);
+    let surface_of = |solid: &multicad_kernel::Solid| {
         solid
             .faces()
             .unwrap()
@@ -205,12 +246,19 @@ fn check_rust_bracket(session: &Session, body: EntityId, native_flat: &SheetDxf)
             .map(|face| face.area_mm2)
             .sum()
     };
-    near(surface(actual), surface(expected));
-    near(surface(&native_import), surface(expected));
-    let [expected, actual_bounds] = [expected, actual].map(|solid| solid.bounds().unwrap());
+    near(surface_of(actual), surface);
+    near(surface_of(&imported), surface);
+    // Up flanges rise r + leg above the top face, a down flange drops r + leg
+    // below the bottom face, and edge bends add r + t beyond the base.
+    let bottom = if last_down { -(r + 15.) } else { 0. };
+    let [min, max] = [
+        [0., -(r + t), bottom],
+        [100. + r + t, 60. + r + t, t + r + 20.],
+    ];
+    let actual_bounds = actual.bounds().unwrap();
     for i in 0..3 {
-        near(actual_bounds.min[i], expected.min[i]);
-        near(actual_bounds.max[i], expected.max[i]);
+        near(actual_bounds.min[i], min[i]);
+        near(actual_bounds.max[i], max[i]);
     }
     assert!(
         actual
@@ -236,26 +284,24 @@ fn check_rust_bracket(session: &Session, body: EntityId, native_flat: &SheetDxf)
     dxf.check_current(session.document(), session.revision())
         .unwrap();
     let parsed = read(&dxf.bytes);
-    let expected = read(&native_flat.bytes);
+    let previous = read(&flat.bytes);
     check(&dxf.pattern, &parsed, 1.);
-    assert_eq!(parsed.units, expected.units);
-    assert_eq!(parsed.labels, expected.labels);
-    near(dxf.pattern.area_mm2, native_flat.pattern.area_mm2);
+    assert_eq!(parsed.units, Some(Units::Millimeters));
+    assert_eq!(parsed.labels, previous.labels);
+    near(dxf.pattern.area_mm2, flat_area);
+    near(flat.pattern.area_mm2, flat_area);
     for (a, b) in dxf
         .pattern
         .size_mm
         .into_iter()
-        .zip(native_flat.pattern.size_mm)
+        .zip([100. + 12. + allowance, 60. + 35. + 2. * allowance])
     {
         near(a, b);
     }
-    let mut areas = [parsed.inner, expected.inner];
-    areas
-        .iter_mut()
-        .for_each(|areas| areas.sort_by(f64::total_cmp));
-    let [actual, expected] = areas;
-    assert_eq!(actual.len(), expected.len());
-    for (a, b) in actual.into_iter().zip(expected) {
+    let mut inner = parsed.inner;
+    inner.sort_by(f64::total_cmp);
+    assert_eq!(inner.len(), holes.len());
+    for (a, b) in inner.into_iter().zip(holes) {
         near(a, b);
     }
 }
@@ -348,12 +394,15 @@ fn developed_sheet_dxf_reopens_with_cut_bend_and_drill_layers() {
     let exporter = Exporter::default();
     let layers = SheetDxfLayers::default();
     let file = exporter
-        .developed_sheet_dxf(
+        .developed_sheet_dxf_with_backend(
             s.document(),
             s.revision(),
             request.body,
-            LengthUnit::Millimeter,
-            &layers,
+            SheetDxfOptions {
+                backend: GeometryBackend::Rust,
+                units: LengthUnit::Millimeter,
+                layers: &layers,
+            },
             None,
         )
         .unwrap();
@@ -375,16 +424,19 @@ fn developed_sheet_dxf_reopens_with_cut_bend_and_drill_layers() {
         r.outer[0],
         100. * 60. + 100. * (20. + ba) + 52. * (12. + ba) + 100. * (15. + ba) - 2. * 12.,
     );
-    check_rust_bracket(&s, request.body, &file);
+    check_rust_bracket(&s, request.body, &file, k, true);
 
     // The same blank in inches is scaled, not re-developed.
     let inches = exporter
-        .developed_sheet_dxf(
+        .developed_sheet_dxf_with_backend(
             s.document(),
             s.revision(),
             request.body,
-            LengthUnit::Inch,
-            &layers,
+            SheetDxfOptions {
+                backend: GeometryBackend::Rust,
+                units: LengthUnit::Inch,
+                layers: &layers,
+            },
             None,
         )
         .unwrap();
@@ -405,12 +457,15 @@ fn developed_sheet_dxf_reopens_with_cut_bend_and_drill_layers() {
     let stale = file.check_current(s.document(), s.revision()).unwrap_err();
     assert_eq!(stale.kind, ErrorKind::Stale);
     let edited = exporter
-        .developed_sheet_dxf(
+        .developed_sheet_dxf_with_backend(
             s.document(),
             s.revision(),
             request.body,
-            LengthUnit::Millimeter,
-            &layers,
+            SheetDxfOptions {
+                backend: GeometryBackend::Rust,
+                units: LengthUnit::Millimeter,
+                layers: &layers,
+            },
             None,
         )
         .unwrap();
@@ -420,7 +475,7 @@ fn developed_sheet_dxf_reopens_with_cut_bend_and_drill_layers() {
     let ba2 = std::f64::consts::FRAC_PI_2 * (rad + 0.33 * t);
     near(re.bend_up[0][0][1], -ba2 / 2.);
     assert!(edited.pattern.size_mm[1] < file.pattern.size_mm[1]);
-    check_rust_bracket(&s, request.body, &edited);
+    check_rust_bracket(&s, request.body, &edited, 0.33, false);
 
     // The developed-contour provider returns the same stamped cut loops.
     let stamped = exporter
@@ -473,23 +528,29 @@ fn developed_sheet_dxf_reopens_with_cut_bend_and_drill_layers() {
     let p =
         model::prepare_sheet_edit(&s, s.revision(), actor(), request.feature, &touching).unwrap();
     let e = exporter
-        .developed_sheet_dxf(
+        .developed_sheet_dxf_with_backend(
             p.prepared.document(),
             s.revision() + 1,
             request.body,
-            LengthUnit::Millimeter,
-            &layers,
+            SheetDxfOptions {
+                backend: GeometryBackend::Rust,
+                units: LengthUnit::Millimeter,
+                layers: &layers,
+            },
             None,
         )
         .unwrap_err();
     assert!(e.message.contains("touch"), "{}", e.message);
     let e = exporter
-        .developed_sheet_dxf(
+        .developed_sheet_dxf_with_backend(
             s.document(),
             s.revision(),
             stock_id,
-            LengthUnit::Millimeter,
-            &layers,
+            SheetDxfOptions {
+                backend: GeometryBackend::Rust,
+                units: LengthUnit::Millimeter,
+                layers: &layers,
+            },
             None,
         )
         .unwrap_err();
@@ -500,12 +561,15 @@ fn developed_sheet_dxf_reopens_with_cut_bend_and_drill_layers() {
     };
     assert!(
         exporter
-            .developed_sheet_dxf(
+            .developed_sheet_dxf_with_backend(
                 s.document(),
                 s.revision(),
                 request.body,
-                LengthUnit::Millimeter,
-                &clash,
+                SheetDxfOptions {
+                    backend: GeometryBackend::Rust,
+                    units: LengthUnit::Millimeter,
+                    layers: &clash
+                },
                 None
             )
             .is_err()
