@@ -466,6 +466,10 @@ fn cross(a: Point, b: Point) -> Point {
     std::array::from_fn(|i| a[(i + 1) % 3] * b[(i + 2) % 3] - a[(i + 2) % 3] * b[(i + 1) % 3])
 }
 
+fn overlaps([low, high]: Span, [start, end]: Span, margin: f64) -> bool {
+    low - margin <= end && high + margin >= start
+}
+
 fn cross2(a: Point2, b: Point2) -> f64 {
     a[0].mul_add(b[1], -a[1] * b[0])
 }
@@ -577,6 +581,25 @@ fn ellipse_pieces(
 }
 
 impl Boundary {
+    /// Whether this piece's screen box comes within `margin` of the
+    /// per-axis `reach` of a path.
+    fn may_meet(self, reach: [Span; 2], margin: f64) -> bool {
+        // Pieces are monotone in v, so their ends bound that axis. Arcs and
+        // ellipses may bulge in u up to their half width.
+        let (low, high) = match self {
+            Self::Line([a, b]) => (a[0].min(b[0]), a[0].max(b[0])),
+            Self::Arc { center, radius, .. } => (center[0] - radius, center[0] + radius),
+            Self::Ellipse { trim, .. } => {
+                let [p, q] = trim.horizontal;
+                let half = p.abs() + q.abs();
+                (trim.center[0] - half, trim.center[0] + half)
+            }
+        };
+        let [a, b] = self.ends();
+        overlaps([low, high], reach[0], margin)
+            && overlaps([a[1].min(b[1]), a[1].max(b[1])], reach[1], margin)
+    }
+
     fn ends(&self) -> [Point2; 2] {
         match *self {
             Self::Line(ends) | Self::Arc { ends, .. } | Self::Ellipse { ends, .. } => ends,
@@ -715,6 +738,18 @@ impl Trace {
         }
     }
 
+    /// A closed range containing every value on `span`.
+    fn range(self, span: Span) -> Span {
+        let [constant, cosine, sine] = self.coefficients;
+        if self.harmonic {
+            let amplitude = cosine.hypot(sine);
+            [constant - amplitude, constant + amplitude]
+        } else {
+            let [a, b] = span.map(|t| self.at(t));
+            [a.min(b), a.max(b)]
+        }
+    }
+
     fn offset(mut self, offset: f64) -> Self {
         self.coefficients[0] += offset;
         self
@@ -810,7 +845,17 @@ impl Plane {
                 limits[0].unwrap_or(f64::NEG_INFINITY)..=limits[1].unwrap_or(f64::INFINITY),
             )
         });
+        // Only a boundary piece the path can reach can change the inside
+        // test. Roots on the extension of any other piece merely split a
+        // window that the test decides uniformly, yet each cost the inside
+        // test a full boundary scan.
+        let margin = 4. * gap.max(self.roundoff);
+        let reach = [u, v].map(|trace| trace.range(span));
         for &boundary in &self.boundary {
+            if !boundary.may_meet(reach, margin) {
+                work.charge(1)?;
+                continue;
+            }
             match boundary {
                 Boundary::Line([a, b]) => {
                     work.charge(1)?;
