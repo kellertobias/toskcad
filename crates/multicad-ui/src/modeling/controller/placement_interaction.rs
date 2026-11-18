@@ -1,4 +1,5 @@
 use super::*;
+use crate::modeling::placement::points::{self, PointPick};
 use std::collections::BTreeSet;
 
 #[derive(Default)]
@@ -19,6 +20,110 @@ impl ModelToolController {
         match &self.form {
             Some(ModelForm::Placement(panel)) => Some(panel.selected()),
             _ => None,
+        }
+    }
+
+    /// Move is waiting for a point-to-point source or target click.
+    pub fn placement_point_picking(&self) -> bool {
+        matches!(&self.form, Some(ModelForm::Placement(panel)) if panel.point_pick().is_some())
+    }
+
+    /// Acquire point-to-point snap points in the viewport. The source must be
+    /// on the moving targets (shown at their staged pose); the target on other
+    /// canonical geometry or the world origin. Clicks never change selection.
+    /// Returns a status message after a successful click.
+    pub fn placement_point_viewport(
+        &mut self,
+        session: &mut Session,
+        resources: &ProjectResources,
+        view: super::super::TerminationViewport<'_>,
+    ) -> Result<Option<String>, String> {
+        let Some(ModelForm::Placement(panel)) = &self.form else {
+            return Ok(None);
+        };
+        let Some(pick) = panel.point_pick() else {
+            return Ok(None);
+        };
+        let Some(scene) = view.scene.filter(|scene| {
+            scene.is_full_model()
+                && scene.stamp().document == session.document().id()
+                && scene.stamp().revision == session.revision()
+        }) else {
+            return if view.clicked {
+                Err("Wait for the current model before choosing points".into())
+            } else {
+                Ok(None)
+            };
+        };
+        let evaluated = session.parameters();
+        let pose = panel
+            .parameters(session.document())?
+            .resolve(evaluated)
+            .map_err(|error| error.to_string())?;
+        let moving = points::moving_instances(session.document(), scene, panel.selected());
+        let (candidates, source) = match pick {
+            PointPick::Source => (
+                points::snap_points(scene, |id| moving.contains(&id), |p| pose.point(p)),
+                None,
+            ),
+            PointPick::Target { source, label } => {
+                let mut candidates = points::snap_points(scene, |id| !moving.contains(&id), |p| p);
+                candidates.push(points::SnapPoint {
+                    owner: None,
+                    canonical: [0.; 3],
+                    shown: [0.; 3],
+                    label: "World origin",
+                });
+                (candidates, Some((pose.point(source), label)))
+            }
+        };
+        let hovered = view
+            .pointer
+            .and_then(|pointer| points::nearest(view.camera, view.rect, pointer, &candidates))
+            .filter(|(point, _)| {
+                view.section
+                    .is_none_or(|section| section.contains(point.shown))
+            });
+        let hover = hovered.map(|(point, _)| (point.shown, point.label));
+        match pick {
+            PointPick::Source => {
+                points::paint_markers(view.painter, view.camera, view.rect, hover, None)
+            }
+            PointPick::Target { .. } => {
+                points::paint_markers(view.painter, view.camera, view.rect, source, hover)
+            }
+        }
+        if !view.clicked {
+            return Ok(None);
+        }
+        let Some((point, _)) = hovered else {
+            return Err(match pick {
+                PointPick::Source => "Click a highlighted vertex or edge midpoint on the moving part",
+                PointPick::Target { .. } => "Click a highlighted vertex or edge midpoint on other geometry, or the world origin",
+            }
+            .into());
+        };
+        self.verify_context(session, resources, scene)?;
+        let Some(ModelForm::Placement(panel)) = &mut self.form else {
+            return Ok(None);
+        };
+        match pick {
+            PointPick::Source => {
+                panel.pick_source(point.canonical, point.label);
+                Ok(Some(format!(
+                    "Move source: {} · now click a target point",
+                    point.label.to_lowercase()
+                )))
+            }
+            PointPick::Target { .. } => {
+                panel.pick_target(session.document(), evaluated, point.canonical, point.label)?;
+                self.invalidate();
+                self.preview(session, resources, Channel::Ui)?;
+                Ok(Some(format!(
+                    "Move staged to {} · Enter applies, Escape cancels",
+                    point.label.to_lowercase()
+                )))
+            }
         }
     }
 
@@ -135,6 +240,21 @@ impl ModelToolController {
                 input.rect,
                 panel.selected(),
                 |point| pose.point(point),
+            );
+        }
+        if let Some(ModelForm::Placement(panel)) = &self.form
+            && let Some(alignment) = panel.alignment()
+        {
+            let pose = panel
+                .parameters(session.document())?
+                .resolve(evaluated)
+                .map_err(|error| error.to_string())?;
+            points::paint_markers(
+                &ui.painter_at(input.rect),
+                input.camera,
+                input.rect,
+                Some((pose.point(alignment.source), alignment.source_label)),
+                Some((alignment.target, alignment.target_label)),
             );
         }
         if gesture.started {

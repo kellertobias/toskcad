@@ -4772,6 +4772,40 @@ impl SketchEditor {
                     Ok(None) => {}
                     Err(error) => self.message = error,
                 }
+            } else if self.model.placement_point_picking() {
+                // Point clicks never acquire or replace the Move targets.
+                owned = true;
+                let canonical_scene = context
+                    .feed
+                    .visible()
+                    .filter(|_| {
+                        context
+                            .feed
+                            .is_current(session.document().id(), session.revision())
+                    })
+                    .map(|s| s.as_ref());
+                match self.model.placement_point_viewport(
+                    session,
+                    context.resources,
+                    crate::modeling::TerminationViewport {
+                        scene: canonical_scene,
+                        report: None,
+                        camera: self.camera,
+                        rect,
+                        pointer: response.hover_pos(),
+                        clicked: response.clicked(),
+                        painter: &painter,
+                        section: self.modeling_section(),
+                    },
+                ) {
+                    Ok(Some(message)) => self.message = message,
+                    Ok(None) => {}
+                    Err(error) => self.message = error,
+                }
+                if self.model.pending() {
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_millis(16));
+                }
             } else if self.model.placement_active() || self.model.scaling_active() {
                 let scaling = self.model.scaling_active();
                 let canonical_scene = context

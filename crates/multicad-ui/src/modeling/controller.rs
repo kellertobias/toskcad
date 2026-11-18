@@ -2247,6 +2247,11 @@ impl ModelToolController {
             if self.scale_origin_picking() {
                 return Err("Place the scale origin or cancel the pick before applying".into());
             }
+            if self.placement_point_picking() {
+                return Err(
+                    "Choose the Move target point or cancel point-to-point before applying".into(),
+                );
+            }
             self.current(session, resources, true)?;
             if let Some(blocked) = self.candidate.as_ref().and_then(|c| c.blocked.clone()) {
                 return Err(blocked);
@@ -2377,6 +2382,7 @@ impl ModelToolController {
         };
         if self.preview_waits_for_input()
             || self.transform_dragging()
+            || self.placement_point_picking()
             || !(self.can_apply(session, resources)
                 || self.current(session, resources, false).is_ok()
                     && (self
@@ -2729,7 +2735,7 @@ impl ModelToolController {
             .as_mut()
             .ok_or("Start a modeling tool first")?
             .show(ui, session.document(), capabilities, preview);
-        if self.scale_origin_picking() {
+        if self.scale_origin_picking() || self.placement_point_picking() {
             self.keyboard_confirm = None;
         }
         let result = match event {
