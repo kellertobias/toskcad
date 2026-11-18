@@ -717,3 +717,72 @@ fn separate_branches_of_the_analytic_index_contribute_to_one_candidate() {
         Err(ProjectionError::Limit)
     ));
 }
+
+#[test]
+fn perforated_sheet_work_scales_with_the_boundary_pieces_a_path_reaches() {
+    // 361 round holes split into 1,444 arc pieces. Solving and testing
+    // every piece for every event cost over six million units per line.
+    let mut rings = vec![rectangle([-10., 10.], [-10., 10.], 2.)];
+    for i in -9..=9 {
+        for j in -9..=9 {
+            rings.push(circle([f64::from(i), f64::from(j), 2.], 0.25, true));
+        }
+    }
+    let face = AnalyticFace::plane([0., 0., 2.], Z, rings, TOL)
+        .unwrap()
+        .unwrap();
+    let faces = [face];
+    let project = |extras: SceneExtras<'_>| {
+        project_with_extras(&[], &[], extras, &faces, options(), 100_000)
+            .map(|(_, _, supplied)| supplied)
+            .unwrap()
+    };
+    let line = |points| {
+        project(SceneExtras {
+            lines: &[LineCandidate { source: 3, points }],
+            ..Default::default()
+        })
+    };
+
+    let mut expected = vec![(false, [-11., -10.])];
+    let mut covered = -10.;
+    for i in -9..=9 {
+        let x = f64::from(i);
+        expected.push((true, [covered, x - 0.25]));
+        expected.push((false, [x - 0.25, x + 0.25]));
+        covered = x + 0.25;
+    }
+    expected.extend([(true, [covered, 10.]), (false, [10., 11.])]);
+    assert_spans(&line([[-11., 0., 0.], [11., 0., 0.]]), 0, &expected);
+    assert_spans(&line([[0., -11., 0.], [0., 11., 0.]]), 1, &expected);
+
+    // The row of hole tops only touches this line, so no length shows.
+    assert_spans(
+        &line([[-11., 0.25, 0.], [11., 0.25, 0.]]),
+        0,
+        &[
+            (false, [-11., -10.]),
+            (true, [-10., 10.]),
+            (false, [10., 11.]),
+        ],
+    );
+
+    // A rim between four holes reaches none of their pieces.
+    let rims = [RimCandidate {
+        source: 4,
+        center: [0.5, 0.5],
+        depth: 0.,
+        radius: 0.2,
+        trim: [0., TAU],
+    }];
+    let rim = project(SceneExtras {
+        rims: &rims,
+        ..Default::default()
+    });
+    assert_eq!(rim.len(), 1);
+    assert!(rim[0].edge.hidden);
+    let Curve::Ellipse(ellipse) = rim[0].edge.curve else {
+        panic!("Expected circular rim")
+    };
+    assert_eq!(ellipse.trim, [0., TAU]);
+}

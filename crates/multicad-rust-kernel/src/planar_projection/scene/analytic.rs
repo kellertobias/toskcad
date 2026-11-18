@@ -466,6 +466,10 @@ fn cross(a: Point, b: Point) -> Point {
     std::array::from_fn(|i| a[(i + 1) % 3] * b[(i + 2) % 3] - a[(i + 2) % 3] * b[(i + 1) % 3])
 }
 
+fn overlaps([low, high]: Span, [start, end]: Span, margin: f64) -> bool {
+    low - margin <= end && high + margin >= start
+}
+
 fn cross2(a: Point2, b: Point2) -> f64 {
     a[0].mul_add(b[1], -a[1] * b[0])
 }
@@ -577,6 +581,25 @@ fn ellipse_pieces(
 }
 
 impl Boundary {
+    /// Whether this piece's screen box comes within `margin` of the
+    /// per-axis `reach` of a path.
+    fn may_meet(self, reach: [Span; 2], margin: f64) -> bool {
+        // Pieces are monotone in v, so their ends bound that axis. Arcs and
+        // ellipses may bulge in u up to their half width.
+        let (low, high) = match self {
+            Self::Line([a, b]) => (a[0].min(b[0]), a[0].max(b[0])),
+            Self::Arc { center, radius, .. } => (center[0] - radius, center[0] + radius),
+            Self::Ellipse { trim, .. } => {
+                let [p, q] = trim.horizontal;
+                let half = p.abs() + q.abs();
+                (trim.center[0] - half, trim.center[0] + half)
+            }
+        };
+        let [a, b] = self.ends();
+        overlaps([low, high], reach[0], margin)
+            && overlaps([a[1].min(b[1]), a[1].max(b[1])], reach[1], margin)
+    }
+
     fn ends(&self) -> [Point2; 2] {
         match *self {
             Self::Line(ends) | Self::Arc { ends, .. } | Self::Ellipse { ends, .. } => ends,
@@ -715,6 +738,18 @@ impl Trace {
         }
     }
 
+    /// A closed range containing every value on `span`.
+    fn range(self, span: Span) -> Span {
+        let [constant, cosine, sine] = self.coefficients;
+        if self.harmonic {
+            let amplitude = cosine.hypot(sine);
+            [constant - amplitude, constant + amplitude]
+        } else {
+            let [a, b] = span.map(|t| self.at(t));
+            [a.min(b), a.max(b)]
+        }
+    }
+
     fn offset(mut self, offset: f64) -> Self {
         self.coefficients[0] += offset;
         self
@@ -810,7 +845,17 @@ impl Plane {
                 limits[0].unwrap_or(f64::NEG_INFINITY)..=limits[1].unwrap_or(f64::INFINITY),
             )
         });
+        // Only a boundary piece the path can reach can change the inside
+        // test. Roots on the extension of any other piece merely split a
+        // window that the test decides uniformly, yet each cost the inside
+        // test a full boundary scan.
+        let margin = 4. * gap.max(self.roundoff);
+        let reach = [u, v].map(|trace| trace.range(span));
         for &boundary in &self.boundary {
+            if !boundary.may_meet(reach, margin) {
+                work.charge(1)?;
+                continue;
+            }
             match boundary {
                 Boundary::Line([a, b]) => {
                     work.charge(1)?;
@@ -856,7 +901,12 @@ impl Plane {
                 }
             }
         }
-        work.charge((work.crossings.len() + 1).saturating_mul(self.boundary.len()))?;
+        // Each inside test casts a ray along u from one sample, which can
+        // cross or touch only pieces spanning that sample's row. Bucket the
+        // pieces by the rows of the path so a test scans its own bucket.
+        let rows = Rows::new(&self.boundary, reach[1], margin, work.crossings.len() + 1);
+        work.charge(rows.assigned)?;
+        work.charge((work.crossings.len() + 1).saturating_mul(rows.widest.max(1)))?;
         drawing_events::spans(
             &mut work.crossings,
             span,
@@ -870,7 +920,7 @@ impl Plane {
                 }
                 let point = [u.at(t), v.at(t)];
                 let mut inside = false;
-                for &boundary in &self.boundary {
+                for &boundary in rows.at(point[1]) {
                     match boundary.ray(point, self.roundoff) {
                         Ray::Boundary => return true,
                         Ray::Crossing => inside = !inside,
@@ -882,6 +932,67 @@ impl Plane {
             |interval| work.hidden.push(interval),
         );
         Ok(())
+    }
+}
+
+/// Boundary pieces grouped by equal-height bands over the rows of a path.
+/// A piece belongs to every band its row range reaches within `margin`, so
+/// a band holds every piece whose inside ray result can differ from none.
+struct Rows {
+    start: f64,
+    height: f64,
+    bands: Vec<Vec<Boundary>>,
+    assigned: usize,
+    widest: usize,
+}
+
+impl Rows {
+    const MAX_BANDS: usize = 4096;
+
+    fn new(boundary: &[Boundary], reach: Span, margin: f64, samples: usize) -> Self {
+        let [start, end] = [reach[0] - margin, reach[1] + margin];
+        let count = samples.clamp(1, Self::MAX_BANDS);
+        let height = (end - start) / count as f64;
+        let count = if height > 0. { count } else { 1 };
+        let mut rows = Self {
+            start,
+            height,
+            bands: vec![Vec::new(); count],
+            assigned: 0,
+            widest: 0,
+        };
+        for &piece in boundary {
+            let [a, b] = piece.ends();
+            let [low, high] = [a[1].min(b[1]) - margin, a[1].max(b[1]) + margin];
+            if high < start || low > end {
+                continue;
+            }
+            let [first, last] = [low, high].map(|row| rows.band(row));
+            for band in &mut rows.bands[first..=last] {
+                band.push(piece);
+            }
+            rows.assigned += last - first + 1;
+        }
+        rows.widest = rows.bands.iter().map(Vec::len).max().unwrap_or(0);
+        rows
+    }
+
+    fn band(&self, row: f64) -> usize {
+        if self.bands.len() == 1 {
+            return 0;
+        }
+        // Subtraction and division by a positive height are monotone, so a
+        // sample row never maps below the band of a piece that reaches it.
+        let band = ((row - self.start) / self.height).floor();
+        if band <= 0. {
+            0
+        } else {
+            (band as usize).min(self.bands.len() - 1)
+        }
+    }
+
+    fn at(&self, row: f64) -> &[Boundary] {
+        &self.bands[self.band(row)]
     }
 }
 
