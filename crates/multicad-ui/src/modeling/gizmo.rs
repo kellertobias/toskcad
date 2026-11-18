@@ -609,7 +609,7 @@ impl Interaction {
                 values_origin(changed.as_ref().unwrap_or(source), parameters),
             )
         {
-            paint_readout(&painter, anchor + egui::vec2(18., 18.), text);
+            paint_readout(&painter, input.rect, anchor + egui::vec2(18., 18.), text);
         }
         let moved = self.drag.as_ref().is_some_and(|d| d.changed);
         let owned = self.drag.is_some();
@@ -632,11 +632,17 @@ fn values_origin(source: &NumericTransform, parameters: &EvaluatedParameters) ->
     Values::read(source, parameters).map_or([0.; 3], |values| values.origin())
 }
 /// Staged-value label beside the gizmo. It reports the value the preview uses.
-fn paint_readout(painter: &egui::Painter, at: Pos2, text: &str) {
+/// It stays inside the viewport so a narrow canvas never clips the value.
+fn paint_readout(painter: &egui::Painter, viewport: Rect, at: Pos2, text: &str) {
     let galley = painter.layout_no_wrap(
         text.to_owned(),
         egui::FontId::proportional(12.),
         Color32::from_gray(235),
+    );
+    let inner = viewport.shrink(6.);
+    let at = Pos2::new(
+        at.x.min(inner.right() - galley.size().x).max(inner.left()),
+        at.y.min(inner.bottom() - galley.size().y).max(inner.top()),
     );
     let rect = Rect::from_min_size(at, galley.size()).expand(4.);
     painter.rect_filled(rect, 3., Color32::from_black_alpha(190));

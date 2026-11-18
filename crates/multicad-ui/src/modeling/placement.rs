@@ -474,7 +474,7 @@ impl PlacementPanel {
                 None => {
                     if let Some(alignment) = self.alignment {
                         ui.small(format!(
-                            "Staged: source {} → target {}",
+                            "Staged: source {} to target {}",
                             alignment.source_label.to_lowercase(),
                             alignment.target_label.to_lowercase()
                         ));
