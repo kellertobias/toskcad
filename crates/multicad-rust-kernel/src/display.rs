@@ -194,6 +194,17 @@ pub(crate) fn triangulate_region(
     edges: &[[usize; 2]],
     holes: usize,
 ) -> Result<RegionTriangulation, MeshError> {
+    triangulate_region_with_interior(points, edges, holes, 0)
+}
+
+/// As [`triangulate_region`], where the last `interior` points are Steiner
+/// points strictly inside the material region and on no constraint.
+pub(crate) fn triangulate_region_with_interior(
+    points: Vec<Point2<f64>>,
+    edges: &[[usize; 2]],
+    holes: usize,
+    interior: usize,
+) -> Result<RegionTriangulation, MeshError> {
     let count = points.len();
     let mut conflicts = false;
     let cdt = ConstrainedDelaunayTriangulation::<Point2<f64>>::try_bulk_load_cdt(
@@ -243,7 +254,7 @@ pub(crate) fn triangulate_region(
             included[edge.face().index()] && !included[edge.rev().face().index()]
         })
     });
-    if !separates_material || caps.len() != count + 2 * holes - 2 {
+    if !separates_material || caps.len() != count + interior + 2 * holes - 2 {
         return Err(MeshError::UnresolvedBoundary);
     }
 
