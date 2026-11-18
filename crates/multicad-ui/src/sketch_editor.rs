@@ -4808,6 +4808,7 @@ impl SketchEditor {
                             basis,
                             start_allowed: response.hovered()
                                 || response.dragged_by(egui::PointerButton::Primary),
+                            snap: crate::modeling::TransformSnap::grid(self.spacing),
                         },
                     ),
                     Err(error) => {
@@ -4839,6 +4840,7 @@ impl SketchEditor {
                         basis: Default::default(),
                         start_allowed: response.hovered()
                             || response.dragged_by(egui::PointerButton::Primary),
+                        snap: crate::modeling::TransformSnap::OFF,
                     },
                 ) {
                     Ok(input_owned) => owned |= input_owned,

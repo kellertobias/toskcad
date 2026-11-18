@@ -3,7 +3,7 @@ use super::*;
 use crate::{
     camera::Camera,
     egui::{self, Context, Event, Modifiers, PointerButton, Pos2, Rect},
-    modeling::{GizmoBasis, PlacementViewport},
+    modeling::{GizmoBasis, PlacementViewport, TransformSnap},
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -47,6 +47,8 @@ struct Harness {
     basis: GizmoBasis,
     scene: Arc<Scene>,
     start_allowed: bool,
+    /// Pointer-math tests drag freely; snapping tests opt into increments.
+    snap: TransformSnap,
 }
 impl Harness {
     fn new(scene: Arc<Scene>) -> Self {
@@ -62,6 +64,7 @@ impl Harness {
             basis: Default::default(),
             scene,
             start_allowed: true,
+            snap: TransformSnap::OFF,
         }
     }
     fn rect() -> Rect {
@@ -99,6 +102,7 @@ impl Harness {
                             rect: Self::rect(),
                             basis: self.basis,
                             start_allowed: self.start_allowed,
+                            snap: self.snap,
                         },
                     ));
                 },
@@ -745,6 +749,7 @@ fn top_view_host_drag(basis: GizmoBasis, coalesced: bool) {
                         rect,
                         basis,
                         start_allowed: hovered || dragged,
+                        snap: TransformSnap::OFF,
                     },
                 ));
             },
@@ -926,4 +931,91 @@ fn coalesced_rotation_samples_preserve_winding_and_commit_once() {
     );
     s.undo(s.revision(), actor()).unwrap();
     assert_eq!(s.document(), &original);
+}
+
+#[test]
+fn grid_snapped_move_with_shift_toggle_stays_staged_then_commits_undoes_and_reopens() {
+    use multicad_core::project_file::{self, ProjectFile};
+    let (mut s, a, _, _) = fixture();
+    let original = s.document().clone();
+    let revision = s.revision();
+    let scene = canonical(&s);
+    let mut h = Harness::new(scene.clone());
+    h.snap = TransformSnap::grid(10.);
+    let (mut c, gate) = begin(&s, &scene, BTreeSet::from([a.body]), false);
+    let staged = |c: &ModelToolController, s: &Session| {
+        let Some(ModelForm::Placement(panel)) = &c.form else {
+            panic!()
+        };
+        panel.parameters(s.document()).unwrap()
+    };
+    let shift = Modifiers {
+        shift: true,
+        ..Modifiers::NONE
+    };
+    let start = h.point([18., 0., 0.]);
+    let end = h.point([26.3, 0., 0.]);
+    h.start(&mut c, &mut s, start, Modifiers::NONE);
+    h.frame(
+        &mut c,
+        &mut s,
+        vec![Event::PointerMoved(end)],
+        Modifiers::NONE,
+    )
+    .unwrap();
+    let snapped = staged(&c, &s).resolve(s.parameters()).unwrap();
+    close(snapped.translation_mm, [10., 0., 0.]);
+    // Shift without pointer motion frees the step; the gesture stays captured.
+    assert!(h.frame(&mut c, &mut s, vec![], shift).unwrap().input_owned);
+    let free = staged(&c, &s).resolve(s.parameters()).unwrap();
+    assert!((free.translation_mm[0] - 8.3).abs() < 1e-3, "{free:?}");
+    assert!(c.placement_interaction.active());
+    // Releasing Shift restores the grid step, still uncommitted.
+    assert!(
+        h.frame(&mut c, &mut s, vec![], Modifiers::NONE)
+            .unwrap()
+            .input_owned
+    );
+    let restored = staged(&c, &s);
+    close(
+        restored.resolve(s.parameters()).unwrap().translation_mm,
+        [10., 0., 0.],
+    );
+    assert_eq!(restored.pivot, NumericTransform::default().pivot);
+    assert_eq!(s.document(), &original);
+    assert_eq!(s.revision(), revision);
+    assert!(h.release(&mut c, &mut s, end, Modifiers::NONE).input_owned);
+    assert_eq!(s.revision(), revision, "release only stages");
+    gate.store(false, Ordering::SeqCst);
+    let ModelToolOutcome::Applied(parts) = h.finish(&mut c, &mut s) else {
+        panic!()
+    };
+    assert_eq!(s.revision(), revision + 1);
+    let check = |document: &Document, revision| {
+        let native = Compiler::default().compile(document, revision).unwrap();
+        close(
+            native.snapshot().shapes[&parts[0].feature].bounds.min,
+            [10., 0., 0.],
+        );
+    };
+    check(s.document(), s.revision());
+    let applied = s.document().clone();
+    s.undo(s.revision(), actor()).unwrap();
+    assert_eq!(s.document(), &original);
+    s.redo(s.revision(), actor()).unwrap();
+    assert_eq!(s.document(), &applied);
+    let mut bytes = vec![];
+    project_file::write(
+        &ProjectFile::new(applied).unwrap(),
+        &mut bytes,
+        Default::default(),
+    )
+    .unwrap();
+    let opened = project_file::read(
+        &mut bytes.as_slice(),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap();
+    check(&opened.project.document, 0);
 }

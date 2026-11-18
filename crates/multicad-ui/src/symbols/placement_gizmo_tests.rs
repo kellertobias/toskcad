@@ -33,6 +33,7 @@ fn canvas(
                         },
                         basis: Default::default(),
                         start_allowed: true,
+                        snap: crate::modeling::TransformSnap::OFF,
                     },
                 )
                 .unwrap();

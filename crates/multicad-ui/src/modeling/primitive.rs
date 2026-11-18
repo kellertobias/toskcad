@@ -264,6 +264,7 @@ impl PrimitivePanel {
                 rect,
                 basis: Default::default(),
                 start_allowed: start_allowed && !resize.input_owned,
+                snap: super::TransformSnap::OFF,
             };
             match self.frame(document).and_then(|frame| {
                 self.pose

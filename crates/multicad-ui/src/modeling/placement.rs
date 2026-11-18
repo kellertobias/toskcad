@@ -377,6 +377,7 @@ impl PlacementPanel {
         controls::inspector_layout(ui);
         ui.strong(self.label());
         ui.small("Release the handle to stage. Press Enter to apply or Escape to cancel.");
+        ui.small("Dragging steps by the grid spacing and 45°; hold Shift while dragging for free placement.");
         ui.small(format!("{} selected object(s)", self.targets.len()));
         egui::ScrollArea::vertical()
             .id_salt("placement-targets")
