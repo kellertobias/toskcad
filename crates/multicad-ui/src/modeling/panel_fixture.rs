@@ -76,6 +76,48 @@ pub(crate) fn flat_panel() -> (Session, EntityId) {
     s.commit(p.prepared).unwrap();
     (s, request.body)
 }
+/// A 400 × 300 side standing on the end of a 600 × 400 bottom, both 18 mm.
+/// Overlapping, both reach the outside corner; butted, the bottom starts
+/// at the side's inner face as panels are usually drawn. Returns the
+/// session, the side and the bottom.
+pub(crate) fn corner(butted: bool) -> (Session, EntityId, EntityId) {
+    let (mut s, stock) = stocked();
+    let mut parts = vec![];
+    let start = if butted { 18. } else { 0. };
+    for (name, plane, origin, l, w) in [
+        ("Side", PanelPlane::Yz, [0., 0., 0.], 400., 300.),
+        (
+            "Bottom",
+            PanelPlane::Xy,
+            [start, 0., 0.],
+            600. - start,
+            400.,
+        ),
+    ] {
+        let request = PanelRequest::new(
+            name,
+            PanelDefinition {
+                output: BodyOutput {
+                    body: EntityId::new(),
+                },
+                source: PanelSource::Rectangle {
+                    stock,
+                    plane,
+                    origin: origin.map(length),
+                    length: length(l),
+                    width: length(w),
+                },
+                grain: GrainAxis::U,
+                edges: PanelEdges::default(),
+                oversize: None,
+            },
+        );
+        let p = model::prepare_panel(&s, s.revision(), actor(), &request).unwrap();
+        s.commit(p.prepared).unwrap();
+        parts.push(request.body);
+    }
+    (s, parts[0], parts[1])
+}
 /// A 600 × 720 × 400 carcass; returns its left and right sides.
 pub(crate) fn carcass() -> (Session, EntityId, EntityId) {
     carcass_with(false)
