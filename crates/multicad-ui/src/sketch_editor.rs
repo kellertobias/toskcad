@@ -4319,6 +4319,9 @@ impl SketchEditor {
             self.architecture.constrain(&mut self.camera);
         }
         let painter = ui.painter().with_clip_rect(rect);
+        // Placement labels and leaders read above the shaded model, which is
+        // added to the viewport layer after them.
+        let overlay = crate::viewport::overlay_painter(ui, rect);
         if self.sketch_evaluation.hash_pending() {
             painter.text(
                 rect.left_top() + Vec2::new(12., 12.),
@@ -4395,7 +4398,7 @@ impl SketchEditor {
                     rect,
                     pointer: response.hover_pos(),
                     clicked: response.clicked(),
-                    painter: &painter,
+                    painter: &overlay,
                     section: self.modeling_section(),
                 },
             );
@@ -4416,7 +4419,7 @@ impl SketchEditor {
                     rect,
                     pointer: response.hover_pos(),
                     clicked: response.clicked(),
-                    painter: &painter,
+                    painter: &overlay,
                     section: self.modeling_section(),
                 },
             ) {
@@ -4438,7 +4441,7 @@ impl SketchEditor {
                     rect,
                     pointer: response.hover_pos(),
                     clicked: response.clicked(),
-                    painter: &painter,
+                    painter: &overlay,
                     section: self.modeling_section(),
                 },
             )
@@ -4457,7 +4460,7 @@ impl SketchEditor {
                     rect,
                     pointer: response.hover_pos(),
                     clicked: response.clicked(),
-                    painter: &painter,
+                    painter: &overlay,
                     section: self.modeling_section(),
                 },
             )
@@ -4477,7 +4480,7 @@ impl SketchEditor {
                     rect,
                     pointer: response.hover_pos(),
                     clicked: response.clicked(),
-                    painter: &painter,
+                    painter: &overlay,
                     section: self.modeling_section(),
                 },
             )
