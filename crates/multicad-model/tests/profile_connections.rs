@@ -228,28 +228,53 @@ fn joining_plate_uses_exact_rust_bores_and_countersinks_on_rotated_profile_stock
             None,
         )
     };
-    let [native, rust] = [GeometryBackend::OpenCascade, GeometryBackend::Rust]
-        .map(|backend| scoped(connector, backend).unwrap_or_else(|e| panic!("{backend:?}: {e}")));
+    let rust = scoped(connector, GeometryBackend::Rust).unwrap_or_else(|e| panic!("Rust: {e}"));
     let actual = rust.solid(connector).unwrap();
-    let expected = native.solid(connector).unwrap();
     assert!(actual.uses_rust_geometry());
     assert_eq!(actual.solid_count().unwrap(), 1);
     let near = |a: f64, b: f64| assert!((a - b).abs() < 1e-6, "{a} differs from {b}");
+    // Independent expectation. Both MaxY grooves are the members' +Z support
+    // planes (centered 40 mm Line 8 sections, world-up reference) at z = 20,
+    // so before the plan rotation the 80 x 40 x 5 mm plate spans
+    // x 20..60 (station 40 +- 20), y -20..60 (from the first groove across
+    // the second) and z 20..25. Each of its two 4.9 mm bores carries a 45
+    // degree countersink whose mouth on the top face has radius 8.02 mm.
+    let (sheet, r, mouth) = (5., 4.9, 8.02);
+    let chamfer = mouth - r;
+    let pi = std::f64::consts::PI;
+    let expected_volume = 80. * 40. * sheet
+        - 2. * (pi * r * r * (sheet - chamfer)
+            + pi * chamfer / 3. * (mouth * mouth + mouth * r + r * r));
+    let expected_area = 2. * 80. * 40. - 2. * pi * (mouth * mouth + r * r)
+        + 2. * (80. + 40.) * sheet
+        + 2. * (2. * pi * r * (sheet - chamfer)
+            + pi * (mouth + r) * chamfer * std::f64::consts::SQRT_2);
+    let mut expected_min = [f64::INFINITY; 3];
+    let mut expected_max = [f64::NEG_INFINITY; 3];
+    for x in [20., 60.] {
+        for y in [-20., 60.] {
+            for z in [20., 25.] {
+                let p = rotate([x, y, z]);
+                for i in 0..3 {
+                    expected_min[i] = expected_min[i].min(p[i]);
+                    expected_max[i] = expected_max[i].max(p[i]);
+                }
+            }
+        }
+    }
     let compare = |actual: &Solid| {
-        near(actual.volume_mm3().unwrap(), expected.volume_mm3().unwrap());
-        let area = |solid: &Solid| {
-            solid
-                .faces()
-                .unwrap()
-                .iter()
-                .map(|face| face.area_mm2)
-                .sum::<f64>()
-        };
-        near(area(actual), area(expected));
-        let (actual, expected) = (actual.bounds().unwrap(), expected.bounds().unwrap());
+        near(actual.volume_mm3().unwrap(), expected_volume);
+        let area = actual
+            .faces()
+            .unwrap()
+            .iter()
+            .map(|face| face.area_mm2)
+            .sum::<f64>();
+        near(area, expected_area);
+        let actual = actual.bounds().unwrap();
         for i in 0..3 {
-            near(actual.min[i], expected.min[i]);
-            near(actual.max[i], expected.max[i]);
+            near(actual.min[i], expected_min[i]);
+            near(actual.max[i], expected_max[i]);
         }
     };
     compare(actual);
@@ -281,13 +306,20 @@ fn joining_plate_uses_exact_rust_bores_and_countersinks_on_rotated_profile_stock
             .count(),
         2
     );
+    // The plate never machines the members: each keeps its full 100 mm
+    // Line 8 section.
+    let section = model::ProfileSection {
+        designation: "item 0.0.026.03".into(),
+        shape: ProfileShape::ItemLine8_40x40,
+        width_mm: 40.,
+        height_mm: 40.,
+        wall_mm: None,
+        stock_length_mm: 6000.,
+    };
     for member in members {
         let stock = rust.solid(member.feature).unwrap();
         assert!(stock.uses_rust_geometry());
-        near(
-            stock.volume_mm3().unwrap(),
-            native.solid(member.feature).unwrap().volume_mm3().unwrap(),
-        );
+        near(stock.volume_mm3().unwrap(), section.area_mm2() * 100.);
     }
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("joining-plate.step");

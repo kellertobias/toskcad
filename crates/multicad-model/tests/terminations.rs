@@ -104,8 +104,7 @@ impl Fixture {
         self.session.commit(prepared.prepared).unwrap();
     }
     fn compile(&self) -> Model {
-        self.compile_with_backend(GeometryBackend::OpenCascade)
-            .unwrap()
+        self.compile_rust().unwrap()
     }
     fn compile_rust(&self) -> Result<Model, ModelError> {
         self.compile_with_backend(GeometryBackend::Rust)
@@ -118,32 +117,41 @@ impl Fixture {
             None,
         )
     }
-    fn compare_rust(&self, native: &Model) -> Model {
-        let rust = self.compile_rust().unwrap();
+    /// Check one Rust result against an analytic expectation of its whole
+    /// box, its volume and the first (support) frame of each logical cap.
+    fn verify(&self, model: &Model, expected: &Expected) {
         let feature = self.request.outputs[0].feature;
-        let rust_solid = rust.solid(feature).unwrap();
-        assert!(rust_solid.uses_rust_geometry());
-        assert_eq!(rust_solid.solid_count().unwrap(), 1);
-        assert_eq!(rust.snapshot().bodies, native.snapshot().bodies);
-        let expected = self.shape(native);
-        let actual = self.shape(&rust);
-        near(actual.volume_mm3, expected.volume_mm3);
+        let solid = model.solid(feature).unwrap();
+        assert!(solid.uses_rust_geometry());
+        assert_eq!(solid.solid_count().unwrap(), 1);
+        assert_eq!(
+            model.snapshot().bodies.get(&self.request.outputs[0].body),
+            Some(&feature)
+        );
+        let actual = self.shape(model);
+        near(actual.volume_mm3, expected.volume);
         for i in 0..3 {
-            near(actual.bounds.min[i], expected.bounds.min[i]);
-            near(actual.bounds.max[i], expected.bounds.max[i]);
+            near(actual.bounds.min[i], expected.min[i]);
+            near(actual.bounds.max[i], expected.max[i]);
         }
-        for role in ["cap.start", "cap.end"] {
-            let source = cap(expected, role);
-            let destination = cap(actual, role);
-            let source_frame = source.frames[0].frame;
-            let destination_frame = destination.frames[0].frame;
-            for i in 0..3 {
-                near(destination_frame.origin_mm[i], source_frame.origin_mm[i]);
-                near(destination_frame.u[i], source_frame.u[i]);
-                near(destination_frame.v[i], source_frame.v[i]);
+        for (role, cap_expected) in ["cap.start", "cap.end"].into_iter().zip(&expected.caps) {
+            let frame = cap(actual, role).frames[0].frame;
+            for (a, b) in frame
+                .origin_mm
+                .into_iter()
+                .chain(frame.u)
+                .chain(frame.normal())
+                .zip(
+                    cap_expected
+                        .origin
+                        .into_iter()
+                        .chain(cap_expected.u)
+                        .chain(cap_expected.normal),
+                )
+            {
+                near(a, b);
             }
         }
-        rust
     }
     fn shape<'a>(&self, model: &'a Model) -> &'a ShapeSnapshot {
         &model.snapshot().shapes[&self.request.outputs[0].feature]
@@ -155,6 +163,63 @@ impl Fixture {
                 .unwrap();
         self.session.commit(prepared.prepared).unwrap();
         request
+    }
+}
+
+/// Analytic first frame of one logical cap: its origin, in-plane U and
+/// normal. A cap keeps the frame of its generator, so a sketch-side cap has
+/// the working sketch frame and a plane cap has the target plane's own frame,
+/// whichever way the material lies.
+struct CapFrame {
+    origin: [f64; 3],
+    u: [f64; 3],
+    normal: [f64; 3],
+}
+struct Expected {
+    volume: f64,
+    min: [f64; 3],
+    max: [f64; 3],
+    caps: [CapFrame; 2],
+}
+fn unit(v: [f64; 3]) -> [f64; 3] {
+    let length = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    v.map(|x| x / length)
+}
+/// The fixture's target-plane normal, as authored in [`Fixture::plane`].
+fn plane_normal(slope: f64, reverse: bool) -> [f64; 3] {
+    let sign = if reverse { -1. } else { 1. };
+    unit([-slope * sign, 0., sign])
+}
+/// A construction plane has no intrinsic roll: its documented U is the
+/// horizontal (-ny, nx, 0) direction, or projected +X for a horizontal plane.
+fn plane_u(normal: [f64; 3]) -> [f64; 3] {
+    if normal[0].hypot(normal[1]) > 1e-7 {
+        unit([-normal[1], normal[0], 0.])
+    } else {
+        unit([
+            1. - normal[0] * normal[0],
+            -normal[0] * normal[1],
+            -normal[0] * normal[2],
+        ])
+    }
+}
+/// A cap from the XY working sketch (start offset or distance end) keeps the
+/// sketch frame translated along +Z.
+fn sketch_cap(z: f64) -> CapFrame {
+    CapFrame {
+        origin: [0., 0., z],
+        u: [1., 0., 0.],
+        normal: [0., 0., 1.],
+    }
+}
+/// A cap on a fixture target plane through (0, 0, height), offset along its
+/// own normal.
+fn plane_cap(height: f64, slope: f64, reverse: bool, offset: f64) -> CapFrame {
+    let normal = plane_normal(slope, reverse);
+    CapFrame {
+        origin: [normal[0] * offset, 0., height + normal[2] * offset],
+        u: plane_u(normal),
+        normal,
     }
 }
 
@@ -420,7 +485,16 @@ fn nonparallel_plane_offset_and_later_plane_move_rebuild_real_geometry() {
             intercept,
         );
     }
-    f.compare_rust(&first);
+    let sloped = |height: f64| {
+        let intercept = height + 2. * 1_f64.hypot(0.5);
+        Expected {
+            volume: 60. * (intercept + 2.5 - 3.),
+            min: [0., 0., 3.],
+            max: [10., 6., intercept + 5.],
+            caps: [sketch_cap(3.), plane_cap(height, 0.5, false, 2.)],
+        }
+    };
+    f.verify(&first, &sloped(12.));
     assert_eq!(f.session.document(), &original);
     let mut entity = original.get(plane).unwrap().clone();
     let EntityData::Plane { origin_mm, .. } = &mut entity.data else {
@@ -434,7 +508,7 @@ fn nonparallel_plane_offset_and_later_plane_move_rebuild_real_geometry() {
         f.shape(&second).volume_mm3,
         60. * (20. + 2. * 1_f64.hypot(0.5) + 2.5 - 3.),
     );
-    f.compare_rust(&second);
+    f.verify(&second, &sloped(20.));
     assert_eq!(
         model::read_extrude(f.session.document(), f.request.outputs[0].feature).unwrap(),
         source
@@ -454,7 +528,15 @@ fn target_normal_offset_and_tilt_are_independent_of_start_plane_offset() {
     let model = f.compile();
     near(f.shape(&model).volume_mm3, 60. * 18.);
     near(f.shape(&model).bounds.max[2], 18.);
-    f.compare_rust(&model);
+    f.verify(
+        &model,
+        &Expected {
+            volume: 60. * 18.,
+            min: [0.; 3],
+            max: [10., 6., 18.],
+            caps: [sketch_cap(0.), plane_cap(20., 0., true, 2.)],
+        },
+    );
     let mut f = Fixture::new();
     let plane = f.plane(20., 0., false);
     f.request.parameters = ExtrudeParameters {
@@ -479,7 +561,15 @@ fn target_normal_offset_and_tilt_are_independent_of_start_plane_offset() {
     near(f.shape(&model).bounds.max[0], 27.);
     near(f.shape(&model).bounds.min[2], 3.);
     near(f.shape(&model).bounds.max[2], 20.);
-    f.compare_rust(&model);
+    f.verify(
+        &model,
+        &Expected {
+            volume: 60. * 17.,
+            min: [0., 0., 3.],
+            max: [27., 6., 20.],
+            caps: [sketch_cap(3.), plane_cap(20., 0., false, 0.)],
+        },
+    );
 }
 #[test]
 fn behind_parallel_crossing_and_zero_height_targets_fail_instead_of_guessing_distance() {
@@ -527,7 +617,7 @@ fn independent_plane_and_distance_ends_have_one_truthful_logical_cap_per_side() 
         let forward = f.plane(15., 0., false);
         let backward = f.plane(-5., 0., false);
         f.request.parameters.start_offset = length(2.);
-        let (a, b, min, max) = match case {
+        let (a, b, min, max, caps) = match case {
             0 => (
                 Termination::ToPlane {
                     plane: forward,
@@ -539,6 +629,7 @@ fn independent_plane_and_distance_ends_have_one_truthful_logical_cap_per_side() 
                 },
                 -5.,
                 15.,
+                [plane_cap(-5., 0., false, 0.), plane_cap(15., 0., false, 0.)],
             ),
             1 => (
                 Termination::Distance {
@@ -550,6 +641,7 @@ fn independent_plane_and_distance_ends_have_one_truthful_logical_cap_per_side() 
                 },
                 -5.,
                 9.,
+                [plane_cap(-5., 0., false, 0.), sketch_cap(9.)],
             ),
             _ => (
                 Termination::ToPlane {
@@ -561,6 +653,7 @@ fn independent_plane_and_distance_ends_have_one_truthful_logical_cap_per_side() 
                 },
                 -2.,
                 15.,
+                [sketch_cap(-2.), plane_cap(15., 0., false, 0.)],
             ),
         };
         f.request.parameters.extent = Extent::TwoSided {
@@ -580,7 +673,15 @@ fn independent_plane_and_distance_ends_have_one_truthful_logical_cap_per_side() 
                 near(frame.frame.origin_mm[2], z);
             }
         }
-        f.compare_rust(&model);
+        f.verify(
+            &model,
+            &Expected {
+                volume: 60. * (max - min),
+                min: [0., 0., min],
+                max: [10., 6., max],
+                caps,
+            },
+        );
     }
 }
 
@@ -606,14 +707,38 @@ fn oblique_two_sided_plane_sweep_preserves_the_hole_on_both_sloped_caps() {
         },
     };
     f.commit();
-    let native = f.compile();
-    let rust = f.compare_rust(&native);
+    let rust = f.compile();
     let shape = f.shape(&rust);
     // Integrate the affine travel gap over the source face. Its centroid
     // stays at (5, 3) because the inner rectangle is concentric.
     let front_height = (15. + 0.2 * 5. - 2.) / (1. - 0.2);
     let back_height = (-8. - 0.1 * 5. - 2.) / (1. + 0.1);
     near(shape.volume_mm3, 52. * (front_height - back_height));
+    // Generators leave the z = 2 section along (1, 0, 1)/sqrt(2); the rise
+    // to z - 0.2 x = 15 and the fall to z + 0.1 x = -8 are affine in x, so the
+    // outer corners at x = 0 and x = 10 bound the sheared prism.
+    let mut min = [f64::INFINITY, 0., f64::INFINITY];
+    let mut max = [f64::NEG_INFINITY, 6., f64::NEG_INFINITY];
+    for x in [0., 10.] {
+        for rise in [(13. + 0.2 * x) / 0.8, -(10. + 0.1 * x) / 1.1] {
+            for (i, value) in [(0, x + rise), (2, 2. + rise)] {
+                min[i] = min[i].min(value);
+                max[i] = max[i].max(value);
+            }
+        }
+    }
+    f.verify(
+        &rust,
+        &Expected {
+            volume: 52. * (front_height - back_height),
+            min,
+            max,
+            caps: [
+                plane_cap(-8., -0.1, true, 0.),
+                plane_cap(15., 0.2, false, 0.),
+            ],
+        },
+    );
     let solid = rust.solid(shape.producer).unwrap();
     for role in ["cap.start", "cap.end"] {
         let face = cap(shape, role);
@@ -680,7 +805,20 @@ fn face_termination_follows_a_real_primitive_cap_height_and_rejects_missing_refe
     let first = f.compile();
     near(f.shape(&first).volume_mm3, 1200.);
     near(f.shape(&first).bounds.max[2], 20.);
-    f.compare_rust(&first);
+    let face_end = |height: f64| Expected {
+        volume: 60. * height,
+        min: [0.; 3],
+        max: [10., 6., height],
+        caps: [
+            sketch_cap(0.),
+            CapFrame {
+                origin: [0., 0., height],
+                u: [1., 0., 0.],
+                normal: [0., 0., 1.],
+            },
+        ],
+    };
+    f.verify(&first, &face_end(20.));
     assert_eq!(f.session.document(), &original);
     let parameters = PrimitiveParameters::Box {
         size: [length(30.), length(30.), length(35.)],
@@ -698,7 +836,7 @@ fn face_termination_follows_a_real_primitive_cap_height_and_rejects_missing_refe
     let updated = f.compile();
     near(f.shape(&updated).volume_mm3, 2100.);
     near(f.shape(&updated).bounds.max[2], 35.);
-    f.compare_rust(&updated);
+    f.verify(&updated, &face_end(35.));
     assert_eq!(updated.snapshot().bodies, first.snapshot().bodies);
     assert_eq!(
         f.session.document().get(f.request.sketch),
@@ -736,7 +874,8 @@ fn face_termination_follows_a_real_primitive_cap_height_and_rejects_missing_refe
 }
 #[test]
 fn genuine_curved_face_is_rejected_as_a_planar_termination_target() {
-    for backend in [GeometryBackend::OpenCascade, GeometryBackend::Rust] {
+    {
+        let backend = GeometryBackend::Rust;
         let mut f = Fixture::new();
         let target = f.primitive(PrimitiveParameters::Cylinder {
             radius: length(20.),
@@ -856,6 +995,7 @@ fn signed_face_offset_uses_native_outward_normal_with_opposing_inherited_frames(
             .iter()
             .find(|frame| frame.frame.normal()[2] < -0.99)
             .expect("Coincident Boolean inherited the opposite generator frame");
+        assert_eq!(opposite.origin.source, negative.feature);
         assert_eq!(
             element.frames[0].frame.normal()[2] < 0.,
             negative_first,

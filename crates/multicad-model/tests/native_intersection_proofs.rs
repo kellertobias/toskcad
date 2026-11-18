@@ -1,5 +1,5 @@
-//! Full native connection validation must stay live around cached exact None
-//! predicates. These controls do not assert an operator-latency target.
+//! Full connection validation must stay live around cached Rust geometry.
+//! These controls do not assert an operator-latency target.
 #[path = "../../multicad-mcp/tests/support/screw_connection.rs"]
 mod fixture;
 use multicad_core::{
@@ -19,14 +19,8 @@ fn compiler() -> Compiler {
 }
 
 #[test]
-fn warm_metric_connections_reuse_none_but_recheck_engagement_and_new_foreign_geometry() {
-    check_warm_connections(GeometryBackend::OpenCascade);
-}
-#[test]
 fn rust_warm_connections_reuse_sources_but_recheck_engagement_and_foreign_geometry() {
-    check_warm_connections(GeometryBackend::Rust);
-}
-fn check_warm_connections(backend: GeometryBackend) {
+    let backend = GeometryBackend::Rust;
     for (document, request, _) in [fixture::fixture(), fixture::tapped_fixture()] {
         let mut session = Session::new(document).unwrap();
         session
@@ -48,40 +42,27 @@ fn check_warm_connections(backend: GeometryBackend) {
         let cold = cold.elapsed();
         let initially_evaluated = cache.last_compile().evaluated.clone();
         let initially_uncacheable = cache.last_compile().uncacheable.clone();
-        let first_stats = cache.native_intersection_proof_stats();
-        if backend == GeometryBackend::OpenCascade {
-            assert!(
-                first_stats.published > 0 && first_stats.native_queries > 0,
-                "The OCCT connection must publish actual native None queries: {first_stats:?}"
-            );
-        } else {
-            assert!(!cache.last_compile().evaluated.is_empty());
-            assert!(!first.snapshot().screw_connection_checks.is_empty());
-            assert!(
-                first
-                    .snapshot()
-                    .screw_connection_checks
-                    .iter()
-                    .all(|c| c.native_component_collision_checked)
-            );
-            let unchanged = compile(&mut cache, session.document(), 0).unwrap();
-            assert!(cache.last_compile().reused_full_model);
-            assert!(cache.last_compile().evaluated.is_empty());
-            assert_eq!(
-                unchanged.snapshot().screw_connection_checks,
-                first.snapshot().screw_connection_checks
-            );
-        }
+        assert!(!cache.last_compile().evaluated.is_empty());
+        assert!(!first.snapshot().screw_connection_checks.is_empty());
+        assert!(
+            first
+                .snapshot()
+                .screw_connection_checks
+                .iter()
+                .all(|c| c.native_component_collision_checked)
+        );
+        let unchanged = compile(&mut cache, session.document(), 0).unwrap();
+        assert!(cache.last_compile().reused_full_model);
+        assert!(cache.last_compile().evaluated.is_empty());
+        assert_eq!(
+            unchanged.snapshot().screw_connection_checks,
+            first.snapshot().screw_connection_checks
+        );
         let warm = Instant::now();
         let second = compile(&mut cache, session.document(), 1).unwrap();
         let warm = warm.elapsed();
         let warm_stats = cache.native_intersection_proof_stats();
-        if backend == GeometryBackend::OpenCascade {
-            assert!(
-                warm_stats.hits > first_stats.hits,
-                "Unchanged exact geometry should reuse completed None evidence: {warm_stats:?}"
-            );
-        } else {
+        {
             let warm = cache.last_compile();
             assert!(
                 warm.reused_full_model
@@ -178,23 +159,12 @@ fn check_warm_connections(backend: GeometryBackend) {
             "A newly intersecting foreign component must invalidate full connection readiness",
         );
         let after = cache.native_intersection_proof_stats();
-        if backend == GeometryBackend::OpenCascade {
-            assert!(
-                error.message.contains("unintended component interference"),
-                "{error}"
-            );
-            assert!(
-                after.native_queries > before.native_queries,
-                "The changed actual foreign solid must reach a new native query"
-            );
-        } else {
-            assert!(
-                error
-                    .message
-                    .contains("clearance to another nearby physical component"),
-                "{error}"
-            );
-        }
+        assert!(
+            error
+                .message
+                .contains("clearance to another nearby physical component"),
+            "{error}"
+        );
         assert_eq!(
             after.published, before.published,
             "A later failed query cannot publish earlier staged results"

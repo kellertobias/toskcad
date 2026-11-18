@@ -5,7 +5,9 @@ use multicad_core::{
     project_file::{self, ProjectFile},
     references::TopologyKind,
 };
-use multicad_kernel::{BooleanOperation, GeometryPolicy, HelicalThread, RigidTransform, Solid};
+use multicad_kernel::{
+    BooleanOperation, GeometryPolicy, HelicalThread, PlaneFrame, RigidTransform, Solid,
+};
 use multicad_model::Compiler;
 use std::f64::consts::PI;
 fn actor() -> Actor {
@@ -63,6 +65,14 @@ fn material(shape: &Solid, p: [f64; 3]) -> f64 {
         .unwrap()
         .map_or(0., |s| s.volume_mm3().unwrap())
         / e.powi(3)
+}
+/// Lossless exchange text of a completed solid. Rust solids have no native
+/// BRep, so the written STEP file is the byte-exact serialization compared
+/// before and after later owners are evaluated.
+fn step_text(shape: &Solid, dir: &std::path::Path, name: &str) -> String {
+    let path = dir.join(format!("{name}.step"));
+    shape.write_step(&path).unwrap();
+    std::fs::read_to_string(path).unwrap()
 }
 fn defaults() -> [MechanicalPartParameters; 3] {
     [
@@ -209,7 +219,8 @@ fn independent_owners_and_wood_tip_material_preserve_completed_source_geometry()
     let raw = default_custom_wood_thread()
         .resolve(s.parameters(), ThreadMode::NewExternal)
         .unwrap();
-    let cached_thread = Solid::helical_thread_named(
+    let dir = tempfile::tempdir().unwrap();
+    let cached_thread = Solid::rust_helical_thread(
         HelicalThread {
             major_radius_mm: raw.major_radius_mm,
             pitch_mm: raw.pitch_mm,
@@ -222,11 +233,13 @@ fn independent_owners_and_wood_tip_material_preserve_completed_source_geometry()
             starts: 1,
             left_hand: false,
         },
+        None,
         EntityId::new(),
+        PlaneFrame::default(),
         GeometryPolicy::default(),
     )
     .unwrap();
-    let thread_before = cached_thread.to_brep().unwrap();
+    let thread_before = step_text(&cached_thread, dir.path(), "thread-before");
     let r = MechanicalPartRequest::new("First custom", default_custom_connection_wood_screw());
     s.commit(
         prepare_mechanical_part(&s, 0, actor(), &r)
@@ -236,7 +249,7 @@ fn independent_owners_and_wood_tip_material_preserve_completed_source_geometry()
     .unwrap();
     let first = compiler().compile(s.document(), s.revision()).unwrap();
     let shape = first.solid(r.feature).unwrap();
-    let brep = shape.to_brep().unwrap();
+    let brep = step_text(shape, dir.path(), "first-before");
     let topology = shape.topology_snapshot(r.feature, 0).unwrap();
     let near_flat = [0.5, 0., 11.98];
     assert!(material(shape, near_flat) > 0.999);
@@ -248,8 +261,11 @@ fn independent_owners_and_wood_tip_material_preserve_completed_source_geometry()
     )
     .unwrap();
     let second = compiler().compile(s.document(), s.revision()).unwrap();
-    assert_eq!(shape.to_brep().unwrap(), brep);
-    assert_eq!(cached_thread.to_brep().unwrap(), thread_before);
+    assert_eq!(step_text(shape, dir.path(), "first-after"), brep);
+    assert_eq!(
+        step_text(&cached_thread, dir.path(), "thread-after"),
+        thread_before
+    );
     assert_eq!(shape.topology_snapshot(r.feature, 0).unwrap(), topology);
     let othertopology = second
         .solid(other.feature)
