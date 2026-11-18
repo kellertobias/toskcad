@@ -1453,6 +1453,7 @@ impl Solid {
         policy: GeometryPolicy,
     ) -> Result<Option<Self>, GeometryError> {
         policy.validate()?;
+        let mut cross_refusal = None;
         if operation == BooleanOperation::Subtract
             && policy.boolean_fuzzy_mm == 0.
             && policy == self.policy
@@ -1467,8 +1468,13 @@ impl Solid {
                 return result;
             }
             // A cylinder perpendicular to a stepped shaft or plain cylinder.
-            if let Some(result) = self.cross_bore_cut(other, None) {
-                return result;
+            // Its refusal stands only when no later provider qualifies.
+            match self.cross_bore_cut(other, None) {
+                Some(Err(error)) if error.kind == GeometryErrorKind::Unsupported => {
+                    cross_refusal = Some(error);
+                }
+                Some(result) => return result,
+                None => {}
             }
             if let Some(tool) = other.axial_cylinder() {
                 if let Some(target) = self.polygon_prism() {
@@ -1532,7 +1538,10 @@ impl Solid {
             return match self.orthogonal_boolean(other, operation, policy) {
                 Err(error) if error.kind == GeometryErrorKind::Unsupported => self
                     .separated_boolean(other, operation, policy)
-                    .unwrap_or_else(|| Err(self.no_exact_boolean(other, operation, error))),
+                    .unwrap_or_else(|| {
+                        Err(cross_refusal
+                            .unwrap_or_else(|| self.no_exact_boolean(other, operation, error)))
+                    }),
                 result => result,
             };
         }
