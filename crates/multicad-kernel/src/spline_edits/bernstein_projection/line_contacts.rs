@@ -75,10 +75,13 @@ struct Search<'a> {
     steps: usize,
     checkpoint: QueryCheckpoint<'a>,
     points: Vec<[f64; 2]>,
+    /// +1 where the curve crosses from the right to the left of the
+    /// directed line, -1 for the opposite, 0 at a shared span end.
+    sides: Vec<i8>,
 }
 
 impl Search<'_> {
-    fn record(&mut self, hull: Hull, parameter: f64) -> Result<(), GeometryError> {
+    fn record(&mut self, hull: Hull, parameter: f64, side: i8) -> Result<(), GeometryError> {
         if let Some(checkpoint) = self.checkpoint {
             checkpoint()?;
         }
@@ -99,6 +102,7 @@ impl Search<'_> {
             ));
         }
         self.points.push(point);
+        self.sides.push(side);
         Ok(())
     }
 
@@ -113,7 +117,7 @@ impl Search<'_> {
                 if !matches!(span.derivative[next].sign(), Some(Less | Greater)) {
                     return Err(unresolved_contact());
                 }
-                self.record(hull, span.knots[usize::from(at_end)])
+                self.record(hull, span.knots[usize::from(at_end)], 0)
             }
         }
     }
@@ -157,7 +161,8 @@ impl Search<'_> {
                     if !(span.knots[0] < parameter && parameter < span.knots[1]) {
                         return Err(unresolved_contact());
                     }
-                    self.record(hull, parameter)?;
+                    let side = if first == Some(Less) { 1 } else { -1 };
+                    self.record(hull, parameter, side)?;
                     continue;
                 }
             }
@@ -226,6 +231,19 @@ pub(crate) fn contacts_controlled(
     policy: GeometryPolicy,
     checkpoint: QueryCheckpoint<'_>,
 ) -> Result<Vec<[f64; 2]>, GeometryError> {
+    Ok(crossings_controlled(spline, line, policy, checkpoint)?
+        .into_iter()
+        .map(|(point, _)| point)
+        .collect())
+}
+/// Certified contacts with the side change proven by the same Bernstein
+/// sign certificate; joins and curve ends report side zero.
+pub(crate) fn crossings_controlled(
+    spline: &BSpline2d,
+    line: [[f64; 2]; 2],
+    policy: GeometryPolicy,
+    checkpoint: QueryCheckpoint<'_>,
+) -> Result<Vec<([f64; 2], i8)>, GeometryError> {
     let degree = validate(spline, policy)?;
     let boundary = Boundary::new(line, policy)?;
     let mut search = Search {
@@ -235,6 +253,7 @@ pub(crate) fn contacts_controlled(
         steps: MAX_STEPS,
         checkpoint,
         points: Vec::new(),
+        sides: Vec::new(),
     };
     let knots = expanded_knots(spline);
     let mut spans = spans(spline, &knots, boundary.start)
@@ -258,7 +277,7 @@ pub(crate) fn contacts_controlled(
     if current.derivative[degree].sign() == Some(Equal) {
         search.endpoint(&current, true, degree)?;
     }
-    Ok(search.points)
+    Ok(search.points.into_iter().zip(search.sides).collect())
 }
 
 pub(crate) fn certify_simple(
@@ -434,6 +453,7 @@ mod tests {
             boundary,
             steps: MAX_STEPS,
             points: Vec::new(),
+            sides: Vec::new(),
             checkpoint: None,
         };
         let coordinate = Interval {
@@ -469,16 +489,17 @@ mod tests {
             boundary,
             steps: MAX_STEPS,
             points: vec![[0., 0.]],
+            sides: vec![0],
             checkpoint: None,
         };
         let first = Hull([Interval::ZERO; 2]);
         assert_eq!(
-            search.record(first, 2.).unwrap_err().kind,
+            search.record(first, 2., 0).unwrap_err().kind,
             GeometryErrorKind::InvalidResult
         );
         search.points = vec![[1., 1.]; MAX_CONTACTS];
         assert_eq!(
-            search.record(first, 2.).unwrap_err().kind,
+            search.record(first, 2., 0).unwrap_err().kind,
             GeometryErrorKind::Limit
         );
 

@@ -29,15 +29,28 @@ pub(super) fn endpoint_separation(a: &Piece, ai: usize, b: &Piece, bi: usize) ->
         lo: pa[i].lo.min(pb[i].lo),
         hi: pa[i].hi.max(pb[i].hi),
     });
-    let adjacent =
-        |piece: &Piece, i| normalized(piece.controls[if i == 0 { 1 } else { piece.degree - 1 }]);
     let vector = |p: [Interval; 2]| {
         std::array::from_fn::<_, 2, _>(|i| {
             (p[i].lo + p[i].hi) * 0.5 - (endpoint[i].lo + endpoint[i].hi) * 0.5
         })
     };
-    let [x, y] = [vector(adjacent(a, ai)), vector(adjacent(b, bi))];
     let length = |p: [f64; 2]| p[0].hypot(p[1]);
+    // A repeated end control is a stationary end derivative; the first
+    // distinct control gives the actual leaving direction. The strict
+    // control-side test below certifies whichever direction is chosen.
+    let adjacent = |piece: &Piece, i: usize| {
+        let order: Vec<usize> = if i == 0 {
+            (1..=piece.degree).collect()
+        } else {
+            (0..piece.degree).rev().collect()
+        };
+        order
+            .into_iter()
+            .map(|k| vector(normalized(piece.controls[k])))
+            .find(|v| length(*v) > 0.)
+            .unwrap_or([0.; 2])
+    };
+    let [x, y] = [adjacent(a, ai), adjacent(b, bi)];
     let [lx, ly] = [length(x), length(y)];
     if lx == 0. || ly == 0. {
         return false;
@@ -64,11 +77,49 @@ pub(super) fn endpoint_separation(a: &Piece, ai: usize, b: &Piece, bi: usize) ->
     side(a, ai, true) && side(b, bi, false)
 }
 
+/// Both pieces lie exactly on one supporting line and share a finite run
+/// longer than the modeling tolerance. Exact zero cross products certify
+/// collinearity; a rounded or merely close pair is never reported.
+pub(super) fn collinear_overlap(a: &Piece, b: &Piece, tolerance: f64) -> bool {
+    let normalized = |p: [Interval; 3]| [p[0] / p[2], p[1] / p[2]];
+    let start = normalized(a.controls[0]);
+    let end = normalized(a.controls[a.degree]);
+    let d = [end[0] - start[0], end[1] - start[1]];
+    let middle = |v: Interval| (v.lo + v.hi) * 0.5;
+    let length = middle(d[0]).hypot(middle(d[1]));
+    if !length.is_finite() || length <= tolerance {
+        return false;
+    }
+    let mut runs = [[0.; 2]; 2];
+    for (run, piece) in runs.iter_mut().zip([a, b]) {
+        for control in &piece.controls[..=piece.degree] {
+            let q = normalized(*control);
+            let r = [q[0] - start[0], q[1] - start[1]];
+            if (r[0] * d[1] - r[1] * d[0]).sign() != Some(Equal) {
+                return false;
+            }
+        }
+        // Collinear Bernstein controls keep the curve on the line; its end
+        // controls are actual curve points, so their span is a covered run.
+        let along = |control: [Interval; 3]| {
+            let q = normalized(control);
+            middle((q[0] - start[0]) * d[0] + (q[1] - start[1]) * d[1]) / length
+        };
+        let [x, y] = [
+            along(piece.controls[0]),
+            along(piece.controls[piece.degree]),
+        ];
+        *run = [x.min(y), x.max(y)];
+    }
+    runs[0][1].min(runs[1][1]) - runs[0][0].max(runs[1][0]) > tolerance * 2.
+}
+
+/// Transverse self contacts and whether an exact collinear retrace exists.
 pub(crate) fn self_contacts(
     spline: &BSpline2d,
     policy: GeometryPolicy,
     interrupt: QueryCheckpoint<'_>,
-) -> Result<Vec<[f64; 2]>, GeometryError> {
+) -> Result<(Vec<[f64; 2]>, bool), GeometryError> {
     let mut budget = Budget {
         remaining: WORK,
         checkpoint: interrupt,
@@ -114,6 +165,9 @@ pub(crate) fn self_contacts(
                 if adjacent || seam {
                     continue;
                 }
+                if collinear_overlap(&a, &b, policy.linear_tolerance_mm) {
+                    return Ok((contacts, true));
+                }
                 if let Some(point) = super::contact::transverse(
                     a.clone(),
                     b.clone(),
@@ -142,5 +196,5 @@ pub(crate) fn self_contacts(
             }
         }
     }
-    Ok(contacts)
+    Ok((contacts, false))
 }

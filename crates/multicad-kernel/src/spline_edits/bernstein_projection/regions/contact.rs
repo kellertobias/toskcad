@@ -122,14 +122,27 @@ pub(super) fn transverse(
     policy: GeometryPolicy,
     budget: &mut Budget<'_>,
 ) -> Result<Option<[f64; 2]>, GeometryError> {
+    // Once one inclusion succeeds, the unique root stays inside every
+    // restriction. A later rounding-limited Krawczyk step cannot disprove it.
+    let mut proven = false;
     for _ in 0..DEPTH {
         budget.step()?;
-        let Some(ranges) = krawczyk(&a, &b) else {
-            return Ok(None);
+        let located = |a: &Piece| {
+            let h = a.hull();
+            let point: [f64; 2] =
+                std::array::from_fn(|i| origin[i] + (h.0[i].lo + h.0[i].hi) * 0.5);
+            (h.sample_error(point, origin) <= policy.linear_tolerance_mm * 0.125).then_some(point)
         };
+        let Some(ranges) = krawczyk(&a, &b) else {
+            return match (proven, located(&a)) {
+                (false, _) => Ok(None),
+                (true, Some(point)) => Ok(Some(point)),
+                (true, None) => Err(uncertain()),
+            };
+        };
+        proven = true;
         let h = a.hull();
-        let point = std::array::from_fn(|i| origin[i] + (h.0[i].lo + h.0[i].hi) * 0.5);
-        if h.sample_error(point, origin) <= policy.linear_tolerance_mm * 0.125 {
+        if let Some(point) = located(&a) {
             return Ok(Some(point));
         }
         let old = h.diameter() + b.hull().diameter();

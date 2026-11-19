@@ -252,3 +252,71 @@ fn candidate_selection_rejects_overlapping_parameters_and_uncertain_tie_threshol
     let error = inconsistent.sample(&curve, query, policy).unwrap_err();
     assert_eq!(error.kind, GeometryErrorKind::InvalidResult);
 }
+
+fn c0_polygon(points: &[[f64; 2]], repeat_first: bool) -> BSpline2d {
+    let n = points.len();
+    let mut poles = vec![points[0]];
+    for i in 0..n {
+        let (a, b) = (points[i], points[(i + 1) % n]);
+        poles.push(if i == 0 && repeat_first {
+            a
+        } else {
+            [(a[0] + b[0]) / 2., (a[1] + b[1]) / 2.]
+        });
+        poles.push(b);
+    }
+    let mut multiplicities = vec![2; n + 1];
+    multiplicities[0] = 3;
+    multiplicities[n] = 3;
+    BSpline2d {
+        degree: 2,
+        poles,
+        knots: (0..=n).map(|k| k as f64).collect(),
+        multiplicities,
+        weights: None,
+    }
+}
+
+#[test]
+fn crossing_on_both_span_midpoints_is_found_once() {
+    let policy = GeometryPolicy::default();
+    let bow_tie = c0_polygon(&[[0., 0.], [4., 4.], [4., 0.], [0., 4.]], false);
+    let (points, overlap) = super::regions::self_contacts(&bow_tie, policy, None).unwrap();
+    assert!(!overlap);
+    assert_eq!(points.len(), 1);
+    assert_near(points[0][0], 2., 1e-9);
+    assert_near(points[0][1], 2., 1e-9);
+}
+
+#[test]
+fn exact_collinear_retrace_is_overlap_but_a_simple_polygon_is_clean() {
+    let policy = GeometryPolicy::default();
+    let retrace = c0_polygon(&[[0., 0.], [4., 0.], [4., 2.], [4., 1.]], false);
+    let (_, overlap) = super::regions::self_contacts(&retrace, policy, None).unwrap();
+    assert!(overlap);
+    // A stationary first derivative (repeated pole) at the closing seam
+    // still separates by the first distinct control.
+    let square = c0_polygon(&[[0., 0.], [4., 0.], [4., 4.], [0., 4.]], true);
+    assert_eq!(
+        super::regions::self_contacts(&square, policy, None).unwrap(),
+        (vec![], false)
+    );
+}
+
+#[test]
+fn line_crossings_report_the_certified_side_change() {
+    let policy = GeometryPolicy::default();
+    let square = c0_polygon(&[[0., 0.], [4., 0.], [4., 4.], [0., 4.]], false);
+    let crossings =
+        super::line_contacts::crossings_controlled(&square, [[2., 2.], [10., 3.]], policy, None)
+            .unwrap();
+    assert_eq!(crossings.len(), 1);
+    assert_near(crossings[0].0[0], 4., 1e-9);
+    // Counter-clockwise boundary crosses the outgoing ray right to left.
+    assert_eq!(crossings[0].1, 1);
+    let through_corner =
+        super::line_contacts::crossings_controlled(&square, [[2., 2.], [6., 6.]], policy, None)
+            .unwrap();
+    assert_eq!(through_corner.len(), 1);
+    assert_eq!(through_corner[0].1, 0);
+}

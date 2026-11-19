@@ -341,11 +341,10 @@ impl NativeRegionQueries {
             if line_contacts::certify_simple(&spline, policy).is_ok() {
                 return Ok(CurveHits::default());
             }
-            return Ok(CurveHits {
-                points: crate::spline_edits::regions::self_contacts(&spline, policy, checkpoint)
-                    .map_err(error)?,
-                overlap: false,
-            });
+            let (points, overlap) =
+                crate::spline_edits::regions::self_contacts(&spline, policy, checkpoint)
+                    .map_err(error)?;
+            return Ok(CurveHits { points, overlap });
         }
         let curve = Self::curve(curve);
         let policy = self.policy(tolerance_mm)?;
