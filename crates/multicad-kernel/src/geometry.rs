@@ -62,6 +62,7 @@ mod herringbone_body;
 pub(crate) mod imported_brep_body;
 mod internal_ring_body;
 mod linear_body;
+mod machining_boolean;
 mod nonplanar_loft_body;
 mod normal_relief_body;
 mod normal_sweep_body;
@@ -1492,7 +1493,14 @@ impl Solid {
                 }
             }
             if let Some(result) = self.subtract_orthogonal_cylinder(other, policy) {
-                return result.map(Some);
+                // A profile with curved holes is outside the rectilinear grid;
+                // the exact polygon pocket provider may still own the cut.
+                return match result {
+                    Err(error) if error.kind == GeometryErrorKind::Unsupported => self
+                        .subtract_machining_tool(other, operation, policy)
+                        .unwrap_or(Err(error)),
+                    result => result.map(Some),
+                };
             }
         }
         if self.uses_rust_geometry() && other.uses_rust_geometry() {
@@ -1538,6 +1546,7 @@ impl Solid {
             return match self.orthogonal_boolean(other, operation, policy) {
                 Err(error) if error.kind == GeometryErrorKind::Unsupported => self
                     .separated_boolean(other, operation, policy)
+                    .or_else(|| self.subtract_machining_tool(other, operation, policy))
                     .unwrap_or_else(|| {
                         Err(cross_refusal
                             .unwrap_or_else(|| self.no_exact_boolean(other, operation, error)))
