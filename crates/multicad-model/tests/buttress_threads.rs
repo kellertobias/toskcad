@@ -127,7 +127,7 @@ fn named_buttress_native_pairs_preserve_load_flank_phase_root_and_flat_cutter_fo
         let mut stepped = vec![];
         for (i, (shape, request)) in solids.iter().zip([&male, &female]).enumerate() {
             assert_eq!(shape.solid_count().unwrap(), 1);
-            let before_mesh = shape.to_brep().unwrap();
+            let before_mesh = shape.exact_text().unwrap();
             let coarse = shape
                 .mesh(Default::default())
                 .unwrap_or_else(|e| panic!("default mesh {index}/{i}: {e}"));
@@ -156,7 +156,7 @@ fn named_buttress_native_pairs_preserve_load_flank_phase_root_and_flat_cutter_fo
                     ..Default::default()
                 })
                 .unwrap_or_else(|e| panic!("mesh {index}/{i}: {e}"));
-            assert_eq!(shape.to_brep().unwrap(), before_mesh);
+            assert_eq!(shape.exact_text().unwrap(), before_mesh);
             let path = dir.path().join(format!("{index}-{i}.step"));
             shape.write_step(&path).unwrap();
             let back = Solid::read_step(&path, Default::default()).unwrap();

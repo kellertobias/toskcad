@@ -687,7 +687,7 @@ fn actual_positive_load_right_hand_buttress_omits_only_exact_duplicate_native_xy
     .compile(session.document(), session.revision())
     .unwrap();
     let shape = compiled.solid(request.feature).unwrap();
-    let native_before = shape.to_brep().unwrap();
+    let native_before = shape.exact_text().unwrap();
     let topology = shape
         .topology_snapshot(request.feature, session.revision())
         .unwrap();
@@ -787,7 +787,7 @@ fn actual_positive_load_right_hand_buttress_omits_only_exact_duplicate_native_xy
         raw,
         "the ordinary native/display mesh must retain its original triangles"
     );
-    assert_eq!(shape.to_brep().unwrap(), native_before);
+    assert_eq!(shape.exact_text().unwrap(), native_before);
     assert_eq!(
         shape
             .topology_snapshot(request.feature, session.revision())
@@ -831,7 +831,7 @@ fn actual_positive_load_left_hand_buttress_retriangulates_detached_internal_cons
     };
     let raw = shape.mesh(options).unwrap();
     let source = session.document().clone();
-    let before = shape.to_brep().unwrap();
+    let before = shape.exact_text().unwrap();
     let topology = shape
         .topology_snapshot(request.feature, session.revision())
         .unwrap();
@@ -849,7 +849,7 @@ fn actual_positive_load_left_hand_buttress_retriangulates_detached_internal_cons
     );
     let native = shape.manufacturing_mesh_with_receipt(options).unwrap();
     assert!(
-        shape.to_brep().unwrap() == before,
+        shape.exact_text().unwrap() == before,
         "direct manufacturing tessellation must preserve source BRep bytes"
     );
     eprintln!(
@@ -897,7 +897,7 @@ fn actual_positive_load_left_hand_buttress_retriangulates_detached_internal_cons
         mesh::tessellate_manufacturing(shape, &quality, "Detached retriangulated buttress")
             .unwrap();
     assert!(
-        shape.to_brep().unwrap() == before,
+        shape.exact_text().unwrap() == before,
         "model manufacturing helper must preserve source BRep bytes"
     );
     let actual = manufacturing
@@ -954,7 +954,7 @@ fn actual_positive_load_left_hand_buttress_retriangulates_detached_internal_cons
     // so they would not isolate Boolean bookkeeping flags for this oracle.
     let oracle = Solid::from_brep(&before, Default::default()).unwrap();
     assert!(
-        shape.to_brep().unwrap() == before,
+        shape.exact_text().unwrap() == before,
         "independent oracle creation must preserve source bytes"
     );
     for point in [
@@ -991,7 +991,7 @@ fn actual_positive_load_left_hand_buttress_retriangulates_detached_internal_cons
     }
     assert_eq!(shape.mesh(options).unwrap(), raw);
     assert!(
-        shape.to_brep().unwrap() == before,
+        shape.exact_text().unwrap() == before,
         "source BRep bytes must remain unchanged after independent Boolean oracles"
     );
     assert_eq!(

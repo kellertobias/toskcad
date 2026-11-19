@@ -1630,6 +1630,11 @@ impl Solid {
         policy: GeometryPolicy,
     ) -> Result<Option<Self>, GeometryError> {
         policy.validate()?;
+        if self.uses_rust_geometry() || other.uses_rust_geometry() {
+            // The exact Rust intersection has no parallel variant; its serial
+            // result is the same certified material.
+            return self.boolean(other, BooleanOperation::Intersect, policy);
+        }
         let handle = ffi::intersect_parallel(self.occt()?, other.occt()?, policy.boolean_fuzzy_mm)
             .map_err(|e| native("parallel intersection", e))?;
         if handle.is_null() {
@@ -3305,8 +3310,6 @@ impl Solid {
     }
 
     pub fn write_step(&self, path: &Path) -> Result<(), GeometryError> {
-        use multicad_rust_kernel::step;
-
         let path_text = crate::step_path(path).map_err(|e| input(e.to_string()))?;
         if let SolidBody::Occt(shape) = &self.body {
             return ffi::write_step(&shape.0, path_text).map_err(|e| native("write STEP", e));
@@ -3324,6 +3327,37 @@ impl Solid {
             return result.map(|_| ());
         }
         let operation = "write STEP";
+        let encoded = self.rust_step_text(operation)?;
+        std::fs::write(path, encoded)
+            .map_err(|e| error(operation, GeometryErrorKind::InvalidResult, e.to_string()))
+    }
+
+    /// Exact, deterministic text of this shape for lossless equality checks:
+    /// OCCT BRep text for an OCCT shape, otherwise the Rust kernel's STEP
+    /// encoding (round-trip f64 coordinates, fixed header). Shapes the Rust
+    /// STEP writer cannot encode are refused rather than approximated.
+    pub fn exact_text(&self) -> Result<String, GeometryError> {
+        if matches!(self.body, SolidBody::Occt(_)) {
+            return self.to_brep();
+        }
+        self.rust_step_text("exact text")
+    }
+
+    /// Rebuild an independent shape from [`Solid::exact_text`]: Rust STEP
+    /// text goes through the strict Rust reader with fresh identity, and
+    /// anything else is read as OCCT BRep text.
+    pub fn from_exact_text(text: &str, policy: GeometryPolicy) -> Result<Self, GeometryError> {
+        if text.starts_with("ISO-10303-21;") {
+            policy.validate()?;
+            return Self::import_rust_step(text, EntityId::new(), policy)?
+                .without_authored_provenance();
+        }
+        Self::from_brep(text, policy)
+    }
+
+    fn rust_step_text(&self, operation: &'static str) -> Result<String, GeometryError> {
+        use multicad_rust_kernel::step;
+
         if !self.supports_step_export() {
             return Err(error(
                 operation,
@@ -3331,8 +3365,7 @@ impl Solid {
                 "Rust STEP export requires supported geometry with one closed exterior shell per solid",
             ));
         }
-        let encoded = self
-            .imported_assembly_step()
+        self.imported_assembly_step()
             .unwrap_or_else(|| {
                 let mut writer = step::Writer::new();
                 self.append_step(&mut writer).and_then(|()| writer.finish())
@@ -3344,9 +3377,7 @@ impl Solid {
                     _ => GeometryErrorKind::InvalidResult,
                 };
                 error(operation, kind, format!("{e:?}"))
-            })?;
-        std::fs::write(path, encoded)
-            .map_err(|e| error(operation, GeometryErrorKind::InvalidResult, e.to_string()))
+            })
     }
 
     pub(crate) fn append_step(

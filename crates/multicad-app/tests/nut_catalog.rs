@@ -375,7 +375,9 @@ fn one_retained_nut_pin_allows_independent_typed_representations_and_dimension_o
 fn nut_probe_fraction(solid: &Solid, center: [f64; 3], pitch: f64) -> f64 {
     use multicad_kernel::{BooleanOperation, RigidTransform};
     let policy = GeometryPolicy::default();
-    let size = 0.002 * pitch;
+    // Any small probe works; keep its edge a short decimal so exact
+    // construction does not inherit the product's binary round-off.
+    let size = (2e3 * pitch).round() / 1e6;
     let probe = Solid::box_solid([size; 3], policy)
         .unwrap()
         .transformed(RigidTransform {
@@ -550,8 +552,8 @@ fn all_shipped_nuts_have_checked_typed_sources_and_independent_native_profile_wi
         .compile(&project.document, 0)
         .unwrap();
         let original = built.solid(cards[0].feature).unwrap();
-        let original_brep = original.to_brep().unwrap();
-        let independent = Solid::from_brep(&original_brep, policy).unwrap();
+        let original_brep = original.exact_text().unwrap();
+        let independent = Solid::from_exact_text(&original_brep, policy).unwrap();
         assert_eq!(independent.solid_count().unwrap(), 1);
         let bounds = independent.bounds().unwrap();
         assert!(bounds.min[2].abs() < 1e-6);
@@ -615,7 +617,7 @@ fn all_shipped_nuts_have_checked_typed_sources_and_independent_native_profile_wi
             );
         }
         assert_eq!(
-            original.to_brep().unwrap(),
+            original.exact_text().unwrap(),
             original_brep,
             "metrology mutated {}",
             entry.id
