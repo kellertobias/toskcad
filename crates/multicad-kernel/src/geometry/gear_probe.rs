@@ -7,7 +7,8 @@
 //! rotated by a Lipschitz phase (helical and chevron bands). The probe's
 //! enclosing chart box becomes one transverse disc per slab, settled against
 //! the exact section by the chord-tube proof of `classify_*_disc`. A probe
-//! reaching any cap, shoulder, flank, bore or rim stays unresolved.
+//! reaching any cap, shoulder, flank, bore or rim stays unresolved. A ZA
+//! worm uses its thread's interval box proof and its exact bore.
 use super::*;
 use crate::geometry::helical_body::contained_boolean::{
     chart_bounds, probe_bounds, whole_operand_result,
@@ -145,6 +146,26 @@ fn section_side(
     }
 }
 
+/// A whole probe against an actual Rust ZA worm, by the thread's own
+/// interval box proof in the worm's local chart.
+fn worm_boolean(
+    lhs: &Solid,
+    rhs: &Solid,
+    operation: BooleanOperation,
+) -> Option<Result<Option<Solid>, GeometryError>> {
+    let (probe, source_is_left, (worm, frame)) = if let Some(worm) = lhs.rust_worm() {
+        (rhs, true, worm)
+    } else {
+        (lhs, false, rhs.rust_worm()?)
+    };
+    let bounds = chart_bounds(
+        probe_bounds(probe)?,
+        frame.origin,
+        [frame.u, frame.v, frame.normal()],
+    );
+    whole_operand_result(lhs, rhs, source_is_left, worm.classify_box(bounds), operation)
+}
+
 /// Classify the local probe chart box against every axial slab.
 fn classify(
     slabs: &[Slab<'_>],
@@ -202,6 +223,9 @@ impl Solid {
         if policy.boolean_fuzzy_mm != 0. || self.policy != policy || other.policy != policy {
             return None;
         }
+        if let Some(result) = worm_boolean(self, other, operation) {
+            return Some(result);
+        }
         let (probe, source_is_left, (slabs, frame)) = if let Some(gear) = slabs(self) {
             (other, true, gear)
         } else {
@@ -214,8 +238,7 @@ impl Solid {
         );
         let relation = match classify(&slabs, bounds, policy.linear_tolerance_mm) {
             Ok(relation) => relation,
-            Err(clearance::Error::Cancelled) => return None,
-            Err(clearance::Error::Invalid) => return None,
+            Err(clearance::Error::Cancelled | clearance::Error::Invalid) => return None,
             Err(clearance::Error::Limit) => {
                 return Some(Err(error(
                     "Boolean",

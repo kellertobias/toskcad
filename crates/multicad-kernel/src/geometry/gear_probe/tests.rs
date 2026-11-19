@@ -234,3 +234,28 @@ fn certified_gear_pairs_settle_disjoint_poses_and_refuse_interference() {
     // The serial and native-parallel entry points agree for Rust solids.
     assert!(one.intersect_parallel(&meshing, p()).unwrap().is_none());
 }
+
+#[test]
+fn worm_probes_follow_the_placed_thread() {
+    let worm = Solid::rust_za_worm_named(
+        crate::ZaWorm {
+            axial_module_mm: 1.,
+            threaded_length_mm: 16.,
+            bore_radius_mm: 1.,
+            axial_thinning_mm: 0.05,
+        },
+        EntityId::new(),
+        p(),
+    )
+    .unwrap()
+    .transformed(RigidTransform {
+        translation_mm: [10., 0., 0.],
+        ..Default::default()
+    })
+    .unwrap();
+    let at = |x, y, z| intersect(&worm, &cube([10. + x, y, z], 0.01));
+    assert!(at(2., 1., 3.).unwrap().unwrap().unwrap().volume_mm3().unwrap() > 0.);
+    assert!(at(0., 0., 0.).unwrap().unwrap().is_none());
+    assert!(at(7., 0., 0.).unwrap().unwrap().is_none());
+    assert!(at(1., 0., 0.).is_none());
+}
