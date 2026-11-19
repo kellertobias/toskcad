@@ -89,6 +89,7 @@ mod rounded_thread_bore_body;
 mod rust_compound;
 mod separated_boolean;
 mod sphere_body;
+mod stacked_prism_boolean;
 mod spline_sweep_body;
 mod spur_gear_body;
 mod step_import;
@@ -1547,6 +1548,7 @@ impl Solid {
                 Err(error) if error.kind == GeometryErrorKind::Unsupported => self
                     .separated_boolean(other, operation, policy)
                     .or_else(|| self.subtract_machining_tool(other, operation, policy))
+                    .or_else(|| self.stacked_prism_boolean(other, operation, policy))
                     .unwrap_or_else(|| {
                         Err(cross_refusal
                             .unwrap_or_else(|| self.no_exact_boolean(other, operation, error)))
