@@ -182,6 +182,11 @@ impl Solid {
         origins: &[Origin],
         policy: GeometryPolicy,
     ) -> Result<Self, GeometryError> {
+        if !crate::OCCT_LINKED {
+            return Self::rust_revolve_curved_profile_named(
+                profile, axis, angle_rad, feature, origins, policy,
+            );
+        }
         let edges: Vec<_> = profile
             .outer
             .iter()
