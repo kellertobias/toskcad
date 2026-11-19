@@ -58,6 +58,8 @@ pub use hanger_body::{HangerData, HealedHangerStepVerification, HealedSupportSte
 mod cross_bore_body;
 mod helical_body;
 mod helical_tube_body;
+mod gear_pair_boolean;
+mod gear_probe;
 mod herringbone_body;
 pub(crate) mod imported_brep_body;
 mod internal_ring_body;
@@ -1535,6 +1537,12 @@ impl Solid {
             if let Some(result) = self.contained_rounded_thread_boolean(other, operation, policy) {
                 return result;
             }
+            if let Some(result) = self.contained_gear_boolean(other, operation, policy) {
+                return result;
+            }
+            if let Some(result) = self.gear_pair_boolean(other, operation, policy) {
+                return result;
+            }
             return match self.orthogonal_boolean(other, operation, policy) {
                 Err(error) if error.kind == GeometryErrorKind::Unsupported => self
                     .separated_boolean(other, operation, policy)
@@ -1619,6 +1627,11 @@ impl Solid {
         policy: GeometryPolicy,
     ) -> Result<Option<Self>, GeometryError> {
         policy.validate()?;
+        if self.uses_rust_geometry() && other.uses_rust_geometry() {
+            // Rust solids never reach the native worker pool: the owned
+            // providers answer the same regularized COMMON on this thread.
+            return self.boolean(other, BooleanOperation::Intersect, policy);
+        }
         let handle = ffi::intersect_parallel(self.occt()?, other.occt()?, policy.boolean_fuzzy_mm)
             .map_err(|e| native("parallel intersection", e))?;
         if handle.is_null() {
