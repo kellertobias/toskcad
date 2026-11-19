@@ -68,7 +68,7 @@ fn apartment_floor_plan_publishes_the_real_worktop_apertures() {
             .iter()
             .filter(|v| v.role == VectorRole::Visible)
             .count(),
-        235
+        257
     );
     assert_eq!(
         vectors
@@ -86,7 +86,7 @@ fn apartment_floor_plan_publishes_the_real_worktop_apertures() {
         .find(|&id| document.get(id).unwrap().name == "Workbench")
         .unwrap();
     let worktop: Vec<_> = vectors.iter().filter(|v| v.source == workbench).collect();
-    assert_eq!(worktop.len(), 104);
+    assert_eq!(worktop.len(), 126);
     assert!(worktop.iter().all(|v| v.role == VectorRole::Visible));
     let mut centers = worktop
         .iter()
@@ -109,8 +109,10 @@ fn apartment_floor_plan_publishes_the_real_worktop_apertures() {
         })
         .collect::<Vec<_>>();
     centers.sort_unstable();
-    let expected: Vec<_> = (0..10)
-        .flat_map(|x| (0..10).map(move |y| [540 + 80 * x, 2940 + 80 * y]))
+    // The 100 dog holes, plus the under-bench vise's upper handle knob
+    // (radius 10 mm, vertical, in front of the worktop edge).
+    let expected: Vec<_> = std::iter::once([450, 2610])
+        .chain((0..10).flat_map(|x| (0..10).map(move |y| [540 + 80 * x, 2940 + 80 * y])))
         .collect();
     assert_eq!(centers, expected);
 }
@@ -182,7 +184,7 @@ fn apartment_isometric_projects_workbench_apertures_with_room_occlusion() {
 fn apartment_workshop_references_publish_both_saved_views() {
     let (document, page) = fixture("AP-103");
     let views = preview_views(&document, &page, GeometryBackend::Rust);
-    assert_eq!(views.iter().map(Vec::len).collect::<Vec<_>>(), [119, 44]);
+    assert_eq!(views.iter().map(Vec::len).collect::<Vec<_>>(), [141, 71]);
     assert!(
         views
             .iter()
@@ -198,6 +200,7 @@ fn apartment_workshop_references_publish_both_saved_views() {
                     if (end_rad - start_rad - TAU).abs() < 1e-10
             ))
             .count(),
-        100
+        // 100 dog holes and the vise's upper handle knob.
+        101
     );
 }
