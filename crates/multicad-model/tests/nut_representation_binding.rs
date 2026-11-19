@@ -180,9 +180,9 @@ fn material_fraction(solid: &Solid, center: [f64; 3], pitch: f64) -> f64 {
 }
 fn modeled_geometry(solid: &Solid, diameter: f64, pitch: f64, flats: f64) {
     let policy = GeometryPolicy::default();
-    let source_brep = solid.to_brep().unwrap();
+    let source_brep = solid.exact_text().unwrap();
     // Boolean probe oracles operate on an independent BRep, preserving the source.
-    let independent = Solid::from_brep(&source_brep, policy).unwrap();
+    let independent = Solid::from_exact_text(&source_brep, policy).unwrap();
     assert_eq!(independent.solid_count().unwrap(), 1);
     let height = 3.25 * pitch;
     let bounds = independent.bounds().unwrap();
@@ -228,7 +228,7 @@ fn modeled_geometry(solid: &Solid, diameter: f64, pitch: f64, flats: f64) {
         );
     }
     assert!(
-        solid.to_brep().unwrap() == source_brep,
+        solid.exact_text().unwrap() == source_brep,
         "metrology mutated source BRep"
     );
 }
