@@ -12,6 +12,7 @@ use std::{
     cell::{OnceCell, RefCell},
     collections::BTreeSet,
 };
+mod axial_clip;
 mod contained_boolean;
 mod display;
 mod metrics;
