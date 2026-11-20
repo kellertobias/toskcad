@@ -67,7 +67,9 @@ impl FullHeightStock {
             element.origins.retain(|o| o.source != feature);
             element.frames.retain(|a| a.origin.source != feature);
             for anchor in &mut element.frames {
-                anchor.frame = anchors[&anchor.origin];
+                anchor.frame = anchors
+                    .resolve(&anchor.origin, placed, anchor.frame, policy)
+                    .expect("every snapshot chart was stored");
             }
             element
         });

@@ -183,15 +183,61 @@ pub(in crate::geometry) fn store(
     Ok(stored)
 }
 
+/// Authored attachment charts in the retained thread chart. One origin may
+/// anchor several faces: a body-level identity (pattern member, assembly or
+/// component) decorates every planar face with that face's own chart. Each
+/// stored chart is therefore matched to its face by placement, never by the
+/// origin alone.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(in crate::geometry) struct AuthoredAnchors(
+    std::collections::BTreeMap<Origin, Vec<ReferenceFrame>>,
+);
+
+fn frame_distance(a: ReferenceFrame, b: ReferenceFrame) -> f64 {
+    [(a.origin_mm, b.origin_mm), (a.u, b.u), (a.v, b.v)]
+        .into_iter()
+        .map(|(a, b)| difference_bound(a, b))
+        .fold(0_f64, f64::max)
+}
+
+impl AuthoredAnchors {
+    /// The stored chart for `origin` whose placement in `frame` reproduces
+    /// the face's current `world` chart. Store certified that distinct
+    /// charts of one origin are farther apart than twice this acceptance.
+    pub(in crate::geometry) fn resolve(
+        &self,
+        origin: &Origin,
+        frame: PlaneFrame,
+        world: ReferenceFrame,
+        policy: GeometryPolicy,
+    ) -> Option<ReferenceFrame> {
+        let candidates = self.0.get(origin)?;
+        if let [only] = candidates.as_slice() {
+            return Some(*only);
+        }
+        candidates.iter().copied().find(|stored| {
+            let placed = boundary::placed_frame(frame, stored.origin_mm, stored.u, stored.v);
+            frame_distance(placed, world) <= policy.linear_tolerance_mm
+        })
+    }
+}
+
 /// Preserve authored attachment coordinates independently of stock promotion's
 /// choice of outward geometric plane charts.
 pub(in crate::geometry) fn store_anchors(
     thread: PlaneFrame,
     snapshot: TopologySnapshot,
     policy: GeometryPolicy,
-) -> Result<std::collections::BTreeMap<Origin, ReferenceFrame>, GeometryError> {
+) -> Result<AuthoredAnchors, GeometryError> {
     let chart = Chart::new(thread);
-    let mut result = std::collections::BTreeMap::new();
+    let ambiguous = || {
+        error(
+            OPERATION,
+            GeometryErrorKind::Unsupported,
+            "Receiving stock cannot preserve an unambiguous authored attachment chart",
+        )
+    };
+    let mut result = AuthoredAnchors::default();
     for anchor in snapshot.elements.into_iter().flat_map(|e| e.frames) {
         let original = anchor.frame;
         let stored = ReferenceFrame {
@@ -200,26 +246,23 @@ pub(in crate::geometry) fn store_anchors(
             v: chart.vector(original.v),
         };
         let recovered = boundary::placed_frame(thread, stored.origin_mm, stored.u, stored.v);
-        let residual = [
-            (original.origin_mm, recovered.origin_mm),
-            (original.u, recovered.u),
-            (original.v, recovered.v),
-        ]
-        .into_iter()
-        .map(|(a, b)| difference_bound(a, b))
-        .fold(0_f64, f64::max);
-        if !residual.is_finite()
-            || residual > policy.linear_tolerance_mm / 16.
-            || result
-                .insert(anchor.origin, stored)
-                .is_some_and(|previous| previous != stored)
-        {
-            return Err(error(
-                OPERATION,
-                GeometryErrorKind::Unsupported,
-                "Receiving stock cannot preserve an unambiguous authored attachment chart",
-            ));
+        let residual = frame_distance(original, recovered);
+        if !residual.is_finite() || residual > policy.linear_tolerance_mm / 16. {
+            return Err(ambiguous());
         }
+        let charts = result.0.entry(anchor.origin).or_default();
+        if charts.contains(&stored) {
+            continue;
+        }
+        // Distinct charts of one origin must stay separable on placement:
+        // nearly coincident but unequal charts cannot be told apart.
+        if charts
+            .iter()
+            .any(|other| frame_distance(*other, stored) <= 4. * policy.linear_tolerance_mm)
+        {
+            return Err(ambiguous());
+        }
+        charts.push(stored);
     }
     Ok(result)
 }

@@ -33,7 +33,8 @@ pub struct BlindThreadMating {
 pub(super) struct BlindStock {
     body: Rc<super::super::orthogonal_body::OrthogonalBody>,
     stock_in_thread: stock_frame::StoredFrame,
-    authored_frames: std::collections::BTreeMap<Origin, ReferenceFrame>,
+    authored_frames: stock_frame::AuthoredAnchors,
+    anchor_policy: GeometryPolicy,
     pocket: OrthogonalPocket,
     thread_axes: [Point; 2],
     protected_radius_mm: f64,
@@ -175,6 +176,7 @@ impl Solid {
             body: Rc::clone(body),
             stock_in_thread,
             authored_frames: stock_frame::store_anchors(placed, authored, policy)?,
+            anchor_policy: policy,
             pocket: OrthogonalPocket {
                 radius_mm: cut.profile.major_radius_mm,
                 depth_mm: cut.profile.length_mm,
@@ -355,7 +357,12 @@ impl BlindStock {
             .topology(self.stock_frame(frame), owner, revision)
             .map_err(|cause| error(OPERATION, GeometryErrorKind::InvalidResult, cause))?;
         for anchor in topology.elements.iter_mut().flat_map(|e| &mut e.frames) {
-            if let Some(authored) = self.authored_frames.get(&anchor.origin) {
+            if let Some(authored) = self.authored_frames.resolve(
+                &anchor.origin,
+                frame,
+                anchor.frame,
+                self.anchor_policy,
+            ) {
                 anchor.frame =
                     boundary::placed_frame(frame, authored.origin_mm, authored.u, authored.v);
             }
