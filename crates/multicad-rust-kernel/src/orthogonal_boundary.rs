@@ -4,6 +4,7 @@ use crate::orthogonal::BoundaryQuad;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) mod box_void;
+pub(crate) mod separated;
 
 const MAX_QUADS: usize = 200_000;
 type Point = [f64; 3];
@@ -24,7 +25,8 @@ pub struct Boundary {
 }
 
 impl Boundary {
-    /// The STEP profile supports one shell or proved separated rectangular cavities.
+    /// The STEP profile supports one shell, proved separated rectangular
+    /// cavities, or proved separate outward solids.
     pub fn supports_step(&self) -> bool {
         self.step_admission().unwrap_or(false)
     }
@@ -38,7 +40,11 @@ impl Boundary {
             match box_void::boundary_certificate(self) {
                 Ok(_) => {}
                 Err(BooleanError::Limit) => return Err(BooleanError::Limit),
-                Err(_) => return Ok(false),
+                Err(_) => match separated::separated_solids(self) {
+                    Ok(_) => {}
+                    Err(BooleanError::Limit) => return Err(BooleanError::Limit),
+                    Err(_) => return Ok(false),
+                },
             }
         }
         Ok(self.faces.len() >= 4

@@ -416,7 +416,7 @@ impl Writer {
         if !orthogonal_admission(boundary)? {
             return Err(StepError::Unsupported);
         }
-        self.append(|file| encode_orthogonal(file, boundary, &[], &[], &[], &transform))
+        self.append_orthogonal_solids(boundary, &[], &[], &[], &transform)
     }
 
     pub fn append_pocketed_orthogonal(
@@ -444,7 +444,7 @@ impl Writer {
         }
         orthogonal_slots::validate(geometry, boundary, slots, pockets, 1e-7, 1e-7)
             .map_err(|_| StepError::InvalidGeometry)?;
-        self.append(|file| encode_orthogonal(file, boundary, pockets, slots, &[], transform))
+        self.append_orthogonal_solids(boundary, pockets, slots, &[], transform)
     }
 
     pub fn append_drilled_orthogonal(
@@ -467,7 +467,52 @@ impl Writer {
             geometry, boundary, pockets, through, 1e-7, 1e-7,
         )
         .map_err(|_| StepError::InvalidGeometry)?;
-        self.append(|file| encode_orthogonal(file, boundary, pockets, &[], through, transform))
+        self.append_orthogonal_solids(boundary, pockets, &[], through, transform)
+    }
+
+    /// Append one solid, or one solid per shell of a boundary proved to be
+    /// separate outward solids. A failed member rolls every member back.
+    fn append_orthogonal_solids(
+        &mut self,
+        boundary: &Boundary,
+        pockets: &[OrthogonalPocket],
+        slots: &[OrthogonalSlot],
+        through: &[OrthogonalThroughBore],
+        transform: &dyn Fn(Point) -> Point,
+    ) -> Result<(), StepError> {
+        let separated = boundary.shell_count != 1
+            && crate::orthogonal_boundary::box_void::boundary_certificate(boundary).is_err();
+        if !separated {
+            return self.append(|file| {
+                encode_orthogonal(file, boundary, pockets, slots, through, transform)
+            });
+        }
+        if !pockets.is_empty() || !slots.is_empty() || !through.is_empty() {
+            return Err(StepError::Unsupported);
+        }
+        let groups =
+            crate::orthogonal_boundary::separated::separated_solids(boundary).map_err(|error| {
+                match error {
+                    crate::orthogonal::BooleanError::Limit => StepError::Limit,
+                    _ => StepError::Unsupported,
+                }
+            })?;
+        if self.solids.len() + groups.len() > MAX_COMPOUND_SOLIDS {
+            return Err(StepError::Limit);
+        }
+        let previous = (self.solids.len(), self.file.data.len(), self.file.next);
+        for group in &groups {
+            let shell = boundary.shell(group);
+            if let Err(error) =
+                self.append(|file| encode_orthogonal(file, &shell, &[], &[], &[], transform))
+            {
+                self.solids.truncate(previous.0);
+                self.file.data.truncate(previous.1);
+                self.file.next = previous.2;
+                return Err(error);
+            }
+        }
+        Ok(())
     }
 
     pub fn append_polygon_prism(

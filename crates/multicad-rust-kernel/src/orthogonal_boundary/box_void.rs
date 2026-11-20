@@ -58,7 +58,7 @@ struct Prepared {
     voids: Vec<[Point; 2]>,
 }
 
-fn components<'a>(
+pub(super) fn components<'a>(
     faces: impl ExactSizeIterator<Item = (u32, &'a [Vec<Point>])>,
 ) -> Option<Vec<Vec<usize>>> {
     let count = faces.len();
@@ -173,7 +173,7 @@ pub(crate) fn recognize(faces: &[OrientedFace], tolerance: f64) -> Option<Certif
     certify(faces, tolerance).ok()
 }
 
-fn budget(faces: usize, mut counts: impl Iterator<Item = usize>) -> ProofResult<usize> {
+pub(super) fn budget(faces: usize, mut counts: impl Iterator<Item = usize>) -> ProofResult<usize> {
     if faces > MAX_QUADS {
         return Err(BooleanError::Limit);
     }
