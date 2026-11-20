@@ -33,7 +33,7 @@ pub struct Placement {
 }
 
 impl Placement {
-    fn world(&self, local: Point) -> Point {
+    pub(super) fn world(&self, local: Point) -> Point {
         std::array::from_fn(|i| {
             self.origin_mm[i]
                 + self.axes[0][i] * local[0]
@@ -42,12 +42,12 @@ impl Placement {
         })
     }
 
-    fn local(&self, world: Point) -> Point {
+    pub(super) fn local(&self, world: Point) -> Point {
         let d = sub(world, self.origin_mm);
         self.axes.map(|axis| dot(axis, d))
     }
 
-    fn valid(&self) -> bool {
+    pub(super) fn valid(&self) -> bool {
         let [x, y, z] = self.axes;
         self.origin_mm.iter().all(|v| v.is_finite())
             && self.axes.iter().all(|a| (norm(*a) - 1.).abs() <= 1e-9)

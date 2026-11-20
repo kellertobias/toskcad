@@ -504,7 +504,7 @@ impl Wheel {
 
     /// Radial material margin of a local point in module units, from the
     /// space boundary at its own section.
-    fn space_margin(&self, x: f64, y: f64, v: f64) -> f64 {
+    pub(super) fn space_margin(&self, x: f64, y: f64, v: f64) -> f64 {
         let theta = y.atan2(x);
         let pitch = 2. * self.span;
         let local = theta - (theta / pitch).round() * pitch;

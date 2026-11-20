@@ -12,6 +12,7 @@
 pub mod clearance;
 mod interval;
 mod jet;
+pub mod pair_distance;
 mod section;
 mod visibility;
 pub mod wheel;
