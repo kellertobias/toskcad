@@ -320,3 +320,43 @@ fn line_crossings_report_the_certified_side_change() {
     assert_eq!(through_corner.len(), 1);
     assert_eq!(through_corner[0].1, 0);
 }
+
+#[test]
+fn exact_shared_vertex_with_a_closing_line_is_a_certified_contact() {
+    let policy = GeometryPolicy::default();
+    let arch = BSpline2d {
+        degree: 3,
+        poles: vec![[0., 0.], [5., 10.], [15., 10.], [20., 0.]],
+        knots: vec![0., 1.],
+        multiplicities: vec![4, 4],
+        weights: None,
+    };
+    // Both curve ends are the closing line's end points.
+    let crossings =
+        super::line_contacts::crossings_controlled(&arch, [[20., 0.], [0., 0.]], policy, None)
+            .unwrap();
+    assert_eq!(crossings.len(), 2);
+    assert!(crossings.iter().all(|(_, side)| *side == 0));
+}
+
+#[test]
+fn spline_crossing_at_both_span_midpoints_is_isolated() {
+    let policy = GeometryPolicy::default();
+    let arch = BSpline2d {
+        degree: 3,
+        poles: vec![[0., 0.], [5., 10.], [15., 10.], [20., 0.]],
+        knots: vec![0., 1.],
+        multiplicities: vec![4, 4],
+        weights: None,
+    };
+    let straight = BSpline2d {
+        degree: 3,
+        poles: vec![[10., -20.], [10., -5.], [10., 5.], [10., 20.]],
+        ..arch.clone()
+    };
+    let (points, overlap) = super::regions::contacts(&arch, &straight, policy, None).unwrap();
+    assert!(!overlap);
+    assert_eq!(points.len(), 1);
+    assert_near(points[0][0], 10., 1e-8);
+    assert_near(points[0][1], 7.5, 1e-8);
+}

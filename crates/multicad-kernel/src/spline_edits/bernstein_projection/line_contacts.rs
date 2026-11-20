@@ -14,6 +14,7 @@ fn unresolved_contact() -> GeometryError {
 #[derive(Clone, Copy)]
 struct Boundary {
     start: [f64; 2],
+    end: [f64; 2],
     delta: [Interval; 2],
     length_squared: Interval,
 }
@@ -34,6 +35,7 @@ impl Boundary {
         let [dx, dy] = std::array::from_fn(|i| Interval::point(end[i]) - Interval::point(start[i]));
         Ok(Self {
             start,
+            end,
             delta: [dx, dy],
             length_squared: dx * dx + dy * dy,
         })
@@ -109,7 +111,26 @@ impl Search<'_> {
     fn endpoint(&mut self, span: &Span, at_end: bool, degree: usize) -> Result<(), GeometryError> {
         let i = if at_end { degree } else { 0 };
         let hull = Hull::new(&span.curve[i..=i]);
-        match self.boundary.extent(hull) {
+        // A finite curve end that is bitwise one of the line's end points
+        // is an exact shared vertex; rounding of its local coordinates
+        // must not make that membership ambiguous.
+        let domain = [
+            self.spline.knots[0],
+            *self.spline.knots.last().expect("validated knots"),
+        ];
+        let curve_end = if at_end {
+            (span.knots[1] == domain[1]).then(|| self.spline.poles.last().copied())
+        } else {
+            (span.knots[0] == domain[0]).then(|| self.spline.poles.first().copied())
+        }
+        .flatten();
+        let shared = curve_end.is_some_and(|p| p == self.boundary.start || p == self.boundary.end);
+        let extent = if shared {
+            Extent::Inside
+        } else {
+            self.boundary.extent(hull)
+        };
+        match extent {
             Extent::Outside => Ok(()),
             Extent::Ambiguous => Err(unresolved_contact()),
             Extent::Inside => {
@@ -258,7 +279,14 @@ pub(crate) fn crossings_controlled(
     let knots = expanded_knots(spline);
     let mut spans = spans(spline, &knots, boundary.start)
         .map(|(knots, curve)| boundary.span(knots, curve, degree));
+    let shared =
+        |p: Option<&[f64; 2]>| p.is_some_and(|p| *p == boundary.start || *p == boundary.end);
     let mut current = spans.next().expect("validated spline has a span");
+    // An exact shared vertex lies on the line; its rounded oriented
+    // distance is replaced by the exact zero, as at an authored join.
+    if shared(spline.poles.first()) {
+        current.derivative[0] = Interval::ZERO;
+    }
     if current.derivative[0].sign() == Some(Equal) {
         search.endpoint(&current, false, degree)?;
     }
@@ -272,6 +300,9 @@ pub(crate) fn crossings_controlled(
             search.endpoint(&next, false, degree)?;
         }
         current = next;
+    }
+    if shared(spline.poles.last()) {
+        current.derivative[degree] = Interval::ZERO;
     }
     search.interior(&current, degree)?;
     if current.derivative[degree].sign() == Some(Equal) {
