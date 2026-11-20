@@ -17,6 +17,7 @@ mod visibility;
 pub mod wheel;
 pub(crate) mod wheel_bounds;
 mod wheel_chart;
+pub mod wheel_distance;
 pub(crate) mod wheel_fit;
 mod wheel_mesh;
 mod wheel_topology;
