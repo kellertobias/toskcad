@@ -4,8 +4,8 @@ use super::*;
 use crate::{
     display::{DisplayMesh, MeshError, Tessellation, triangulate_region},
     helical_thread::{BoxClassification, Spec, Thread},
-    tapered_thread::interval::I,
     helical_thread_mesh,
+    tapered_thread::interval::I,
 };
 use spade::Point2;
 use std::f64::consts::{PI, TAU};

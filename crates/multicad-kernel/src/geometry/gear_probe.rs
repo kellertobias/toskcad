@@ -8,7 +8,9 @@
 //! enclosing chart box becomes one transverse disc per slab, settled against
 //! the exact section by the chord-tube proof of `classify_*_disc`. A probe
 //! reaching any cap, shoulder, flank, bore or rim stays unresolved. A ZA
-//! worm uses its thread's interval box proof and its exact bore.
+//! worm uses its thread's interval box proof and its exact bore; a generated
+//! wheel the certified distance field of its pair clearance proof.
+use super::worm_body::WormGeometry;
 use super::*;
 use crate::geometry::helical_body::contained_boolean::{
     chart_bounds, probe_bounds, whole_operand_result,
@@ -147,23 +149,50 @@ fn section_side(
 }
 
 /// A whole probe against an actual Rust ZA worm, by the thread's own
-/// interval box proof in the worm's local chart.
+/// interval box proof, or a generated wheel, by the certified wheel distance
+/// field, in the member's local chart.
 fn worm_boolean(
     lhs: &Solid,
     rhs: &Solid,
     operation: BooleanOperation,
 ) -> Option<Result<Option<Solid>, GeometryError>> {
-    let (probe, source_is_left, (worm, frame)) = if let Some(worm) = lhs.rust_worm() {
-        (rhs, true, worm)
+    let (probe, source_is_left, body) = if let Some((body, _)) = lhs.worm_body() {
+        (rhs, true, body)
     } else {
-        (lhs, false, rhs.rust_worm()?)
+        (lhs, false, rhs.worm_body()?.0)
     };
+    let frame = if source_is_left { lhs } else { rhs }.worm_body()?.1;
     let bounds = chart_bounds(
         probe_bounds(probe)?,
         frame.origin,
         [frame.u, frame.v, frame.normal()],
     );
-    whole_operand_result(lhs, rhs, source_is_left, worm.classify_box(bounds), operation)
+    let relation = match &body.geometry {
+        WormGeometry::Worm(worm) => worm.classify_box(bounds),
+        WormGeometry::Wheel(wheel) => {
+            // The ball about the chart box center encloses the whole box.
+            let center = bounds.map(|[lo, hi]| (lo + hi) / 2.);
+            let radius = bounds
+                .map(|[lo, hi]| (hi - lo) / 2.)
+                .into_iter()
+                .fold(0., f64::hypot)
+                * (1. + 1e-12);
+            match multicad_rust_kernel::worm_gear::clearance::classify_wheel_ball(
+                wheel, center, radius,
+            ) {
+                Ok(relation) => relation,
+                Err(multicad_rust_kernel::worm_gear::clearance::Error::Limit) => {
+                    return Some(Err(error(
+                        "Boolean",
+                        GeometryErrorKind::Limit,
+                        "Rust worm-wheel containment exceeded its budget",
+                    )));
+                }
+                Err(_) => return None,
+            }
+        }
+    };
+    whole_operand_result(lhs, rhs, source_is_left, relation, operation)
 }
 
 /// Classify the local probe chart box against every axial slab.

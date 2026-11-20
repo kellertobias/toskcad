@@ -47,7 +47,8 @@ fn intersect(a: &Solid, b: &Solid) -> Option<Result<Option<Solid>, GeometryError
 
 #[test]
 fn spur_probes_reuse_an_operand_only_when_wholly_inside_or_outside() {
-    let gear = Solid::rust_spur_gear_named(spec(0., GearSweep::Spur), EntityId::new(), p()).unwrap();
+    let gear =
+        Solid::rust_spur_gear_named(spec(0., GearSweep::Spur), EntityId::new(), p()).unwrap();
     let inside = cube(polar(20., 0., 4.), 0.01);
     let kept = intersect(&gear, &inside).unwrap().unwrap().unwrap();
     assert!((kept.volume_mm3().unwrap() - 1e-6).abs() < 1e-15);
@@ -60,10 +61,7 @@ fn spur_probes_reuse_an_operand_only_when_wholly_inside_or_outside() {
         .unwrap()
         .unwrap()
         .unwrap();
-    assert_eq!(
-        difference.volume_mm3().unwrap(),
-        gear.volume_mm3().unwrap()
-    );
+    assert_eq!(difference.volume_mm3().unwrap(), gear.volume_mm3().unwrap());
     let bore = cube([0., 0., 4.], 0.5);
     assert!(intersect(&gear, &bore).unwrap().unwrap().is_none());
     // A probe across a flank, a cap or the bore wall is never settled.
@@ -193,7 +191,8 @@ fn certified_gear_pairs_settle_disjoint_poses_and_refuse_interference() {
         base_radius_mm: 30. * 20_f64.to_radians().cos(),
         tip_radius_mm: 32.,
         root_radius_mm: 27.5,
-        half_base_angle_rad: PI / 60. + 20_f64.to_radians().tan() - 20_f64.to_radians()
+        half_base_angle_rad: PI / 60. + 20_f64.to_radians().tan()
+            - 20_f64.to_radians()
             - 0.05 / 60.,
         ..a
     };
@@ -254,8 +253,46 @@ fn worm_probes_follow_the_placed_thread() {
     })
     .unwrap();
     let at = |x, y, z| intersect(&worm, &cube([10. + x, y, z], 0.01));
-    assert!(at(2., 1., 3.).unwrap().unwrap().unwrap().volume_mm3().unwrap() > 0.);
+    assert!(
+        at(2., 1., 3.)
+            .unwrap()
+            .unwrap()
+            .unwrap()
+            .volume_mm3()
+            .unwrap()
+            > 0.
+    );
     assert!(at(0., 0., 0.).unwrap().unwrap().is_none());
     assert!(at(7., 0., 0.).unwrap().unwrap().is_none());
     assert!(at(1., 0., 0.).is_none());
+}
+
+#[test]
+fn generated_wheel_probes_use_the_certified_distance_field() {
+    let wheel = Solid::rust_generated_za_worm_wheel_named(
+        crate::GeneratedZaWormWheel {
+            teeth: 32,
+            axial_module_mm: 1.,
+            face_width_mm: 2.,
+            bore_radius_mm: 2.,
+            pitch_thinning_mm: 0.05,
+        },
+        EntityId::new(),
+        p(),
+    )
+    .unwrap();
+    let tooth = PI / 32.;
+    assert!(
+        intersect(&wheel, &cube(polar(16., tooth, 0.), 0.005))
+            .unwrap()
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        intersect(&wheel, &cube(polar(16., 0., 0.), 0.005))
+            .unwrap()
+            .unwrap()
+            .is_none()
+    );
+    assert!(intersect(&wheel, &cube(polar(16., tooth / 2., 0.), 0.5)).is_none());
 }

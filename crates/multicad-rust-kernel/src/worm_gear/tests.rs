@@ -258,9 +258,18 @@ fn worm_boxes_use_the_thread_interval_proof_and_the_exact_bore() {
     assert_eq!(bored.classify_box(cube([0., 0., 0.], 0.01)), Outside);
     assert_eq!(bored.classify_box(cube([2., 1., 3.], 0.01)), Inside);
     // Boxes on the bore wall, an end cap or across a flank stay open.
-    assert_eq!(bored.classify_box(cube([1., 0., 0.], 0.01)), UnresolvedBoundary);
-    assert_eq!(solid.classify_box(cube([1., 0., 8.], 0.01)), UnresolvedBoundary);
-    assert_eq!(solid.classify_box(cube([5., 0., 0.], 2.)), UnresolvedBoundary);
+    assert_eq!(
+        bored.classify_box(cube([1., 0., 0.], 0.01)),
+        UnresolvedBoundary
+    );
+    assert_eq!(
+        solid.classify_box(cube([1., 0., 8.], 0.01)),
+        UnresolvedBoundary
+    );
+    assert_eq!(
+        solid.classify_box(cube([5., 0., 0.], 2.)),
+        UnresolvedBoundary
+    );
     assert_eq!(
         solid.classify_box([[f64::NAN, 0.], [0., 0.], [0., 0.]]),
         UnresolvedBoundary

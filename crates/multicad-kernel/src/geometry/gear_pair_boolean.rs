@@ -55,7 +55,9 @@ impl Solid {
     ) -> Option<Result<Pair, GeometryError>> {
         use SolidBody::*;
         Some(match (&self.body, &other.body) {
-            (SpurGear(..), SpurGear(..)) => self.certify_rust_spur_pair(other, policy, None).map(Pair::from),
+            (SpurGear(..), SpurGear(..)) => self
+                .certify_rust_spur_pair(other, policy, None)
+                .map(Pair::from),
             (Herringbone(..), Herringbone(..)) => self
                 .certify_rust_herringbone_pair(other, policy, None)
                 .map(Pair::from),

@@ -187,6 +187,44 @@ impl<'a> Field<'a> {
         )
     }
 
+    /// Lower bound in module units on the distance from a local point to the
+    /// space boundary of one sector, or `None` when the point lies in that
+    /// sector's tooth space. Uses the same nodes, chord sagitta and station
+    /// motion bound as `probe`.
+    fn space_gap(&self, [x, y, v]: Point, sector: f64) -> Option<f64> {
+        let h = self.wheel.half_width();
+        let local = rotate_z([x, y, 0.], -sector * 2. * self.wheel.span());
+        let j = (((v + h) / (2. * h)) * STATIONS as f64)
+            .round()
+            .clamp(0., STATIONS as f64) as usize;
+        let chain = &self.nodes[j];
+        let angles = |p: &[f64; 2]| p[1].atan2(p[0]);
+        let angle = local[1].atan2(local[0]);
+        let radius = x.hypot(y);
+        let mut nearest = f64::INFINITY;
+        for pair in chain.windows(2) {
+            let e = [pair[1][0] - pair[0][0], pair[1][1] - pair[0][1]];
+            let w = [local[0] - pair[0][0], local[1] - pair[0][1]];
+            let t = ((w[0] * e[0] + w[1] * e[1]) / (e[0] * e[0] + e[1] * e[1])).clamp(0., 1.);
+            nearest = nearest.min((w[0] - t * e[0]).hypot(w[1] - t * e[1]));
+        }
+        let gap = nearest - self.chord - self.lipschitz * (v - self.stations[j]).abs();
+        if angle > angles(&chain[0]) && angle < angles(chain.last().expect("chain")) {
+            let k = chain
+                .partition_point(|p| angles(p) < angle)
+                .clamp(1, chain.len() - 1);
+            let [a, b] = [chain[k - 1], chain[k]];
+            let (s, c) = angle.sin_cos();
+            let d = [b[0] - a[0], b[1] - a[1]];
+            let along = (a[0] * d[1] - a[1] * d[0]) / (c * d[1] - s * d[0]);
+            // Beyond the chord with a positive gap the point is in the space.
+            if radius > along && gap > 0. {
+                return None;
+            }
+        }
+        Some(gap / self.lipschitz.hypot(1.))
+    }
+
     /// Exact boundary point of a node in mm, and its surface parameters.
     fn node_point(&self, j: usize, node: usize, sector: u32) -> Point {
         let m = self.wheel.module_mm();
@@ -313,6 +351,53 @@ impl WormSide<'_> {
 /// Decide positive clearance or a strict common interior point for a placed
 /// worm and wheel. The nearest witness uses actual flank points within
 /// `reach_mm`.
+/// Classify a closed ball of `radius_mm` about a local wheel point: wholly
+/// in material, wholly outside, or unresolved. Outside uses the certified
+/// distance lower bound of `probe`; inside requires blank, face and bore
+/// margins and a certified gap to the space boundary of the ball's sector
+/// and both neighbours, each beyond the radius.
+pub fn classify_wheel_ball(
+    wheel: &Wheel,
+    center_mm: Point,
+    radius_mm: f64,
+) -> Result<crate::helical_thread::BoxClassification, Error> {
+    use crate::helical_thread::BoxClassification::*;
+    if !center_mm.iter().all(|v| v.is_finite()) || !(radius_mm.is_finite() && radius_mm >= 0.) {
+        return Err(Error::Invalid);
+    }
+    let field = Field::new(wheel)?;
+    let m = wheel.module_mm();
+    let guard = 1e-9 * (norm(center_mm) + radius_mm).max(1.);
+    let reach = radius_mm + guard;
+    if let Probe::Clear(distance, _) = field.probe(center_mm) {
+        return Ok(if distance > reach {
+            Outside
+        } else {
+            UnresolvedBoundary
+        });
+    }
+    let [x, y, z] = center_mm.map(|v| v / m);
+    let (r, h, reach) = (x.hypot(y), wheel.half_width(), reach / m);
+    let bore = wheel.bore_radius_mm().map_or(0., |b| b / m);
+    let pitch = 2. * wheel.span();
+    // The ball stays within the three nearest sectors.
+    if wheel.blank() - r <= reach
+        || h - z.abs() <= reach
+        || (bore > 0. && r - bore <= reach)
+        || reach >= r * (pitch / 2.).sin()
+    {
+        return Ok(UnresolvedBoundary);
+    }
+    let index = (y.atan2(x) / pitch).round();
+    for offset in [-1., 0., 1.] {
+        match field.space_gap([x, y, z], index + offset) {
+            Some(gap) if gap > reach => {}
+            _ => return Ok(UnresolvedBoundary),
+        }
+    }
+    Ok(Inside)
+}
+
 pub fn certify(
     worm: &Worm,
     worm_at: Placement,
@@ -525,6 +610,30 @@ mod tests {
         let worm = Worm::new(worm_spec(1., 20., bore[0], thinning), 1e-3).unwrap();
         let wheel = Wheel::new(wheel_spec(1., teeth, 1.5, bore[1], thinning), 1e-3, 1e7).unwrap();
         (worm, wheel)
+    }
+
+    #[test]
+    fn wheel_balls_are_settled_only_clear_of_every_nearby_space_boundary() {
+        use crate::helical_thread::BoxClassification::*;
+        let (_, wheel) = members(32, [0., 2.], 0.05);
+        let at = |r: f64, a: f64, z: f64, radius| {
+            classify_wheel_ball(&wheel, [r * a.cos(), r * a.sin(), z], radius).unwrap()
+        };
+        let pitch = std::f64::consts::PI / 32.;
+        // A tooth spans each sector boundary; a space is centred on +x.
+        assert_eq!(at(16., pitch, 0., 0.005), Inside);
+        assert_eq!(at(16., 0., 0., 0.005), Outside);
+        assert_eq!(at(14., 0.3, 0.2, 0.005), Inside);
+        assert_eq!(at(1., 0.3, 0., 0.005), Outside);
+        assert_eq!(at(30., 0.3, 0., 0.5), Outside);
+        // Balls across a flank, a face or the bore wall stay open.
+        assert_eq!(at(16., pitch / 2., 0., 0.5), UnresolvedBoundary);
+        assert_eq!(at(14., 0.3, 0.75, 0.005), UnresolvedBoundary);
+        assert_eq!(at(2., 0.3, 0., 0.005), UnresolvedBoundary);
+        assert_eq!(
+            classify_wheel_ball(&wheel, [f64::NAN, 0., 0.], 0.1),
+            Err(Error::Invalid)
+        );
     }
 
     fn run(teeth: u32, drive: f64, extra: f64) -> Certificate {
