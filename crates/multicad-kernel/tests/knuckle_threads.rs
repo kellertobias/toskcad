@@ -276,10 +276,17 @@ fn small_knuckle_fixed_meridian_keeps_its_actual_crest_circle_with_radial_offset
     let dz = -0.65 * radius * a.cos();
     let boundary = p.major_radius_mm - radius + (radius * radius - dz * dz).sqrt();
     let before = step_bytes(&shape);
+    // The 1 um linear deflection (chords certified within half of it) is what
+    // resolves the +/-1 um crest-circle probes below. The former 0.04 rad was
+    // OCCT's angle between consecutive edge chords; the owned tessellator
+    // instead certifies every triangle normal within half the angular
+    // deflection of the exact surface, which at 0.04 rad needs about 3.1M
+    // triangles on the two 150-degree knuckle arcs. 0.1 rad keeps a fine,
+    // certified shading bound inside the same triangle budget.
     let mesh = shape
         .mesh(multicad_kernel::MeshOptions {
             linear_deflection_mm: 0.001,
-            angular_deflection_rad: 0.04,
+            angular_deflection_rad: 0.1,
             maximum_triangles: 2_000_000,
         })
         .unwrap();
