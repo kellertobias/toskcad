@@ -8,6 +8,7 @@
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 pub mod clearance;
+pub mod distance;
 mod mesh;
 mod topology;
 pub mod view;

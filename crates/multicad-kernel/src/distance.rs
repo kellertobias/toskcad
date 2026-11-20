@@ -94,6 +94,12 @@ pub(crate) fn measure(
         }
         if selection_a == BRepSelection::Whole
             && selection_b == BRepSelection::Whole
+            && let Some(result) = a.rust_bevel_pair_distance(b)
+        {
+            return result;
+        }
+        if selection_a == BRepSelection::Whole
+            && selection_b == BRepSelection::Whole
             && let Some(result) = a.rust_gear_section_distance(b, tolerance)
         {
             return result;
