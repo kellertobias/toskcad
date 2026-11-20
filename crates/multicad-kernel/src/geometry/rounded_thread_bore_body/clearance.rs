@@ -59,7 +59,8 @@ impl Solid {
         // receiver chart. It may end on a blind floor (rounding-level
         // contact shares no interior) but never reach past it.
         if let Some(floor) = receiver.floor_mm
-            && !(length - placement.axial_mm <= floor + placement.error_mm)
+            && (length - placement.axial_mm > floor + placement.error_mm
+                || (length - placement.axial_mm).is_nan())
         {
             return None;
         }

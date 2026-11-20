@@ -66,7 +66,8 @@ impl Thread {
         if !shift_mm.is_finite()
             || !external_length_mm.is_finite()
             || external_length_mm < 0.
-            || !(delta <= MAXIMUM_PITCH_DRIFT * a.pitch_mm)
+            || delta.is_nan()
+            || delta > MAXIMUM_PITCH_DRIFT * a.pitch_mm
             || a.starts != b.starts
             || a.left_hand != b.left_hand
         {

@@ -89,9 +89,19 @@ impl Solid {
         let margin = policy.linear_tolerance_mm;
         // Inside any source settles it; otherwise every source must be
         // proved outside, and any unresolved source leaves the probe alone.
-        for piece in &chart.pieces {
-            match piece.classify_box(bounds, margin)? {
-                true => {
+        let relations = chart
+            .pieces
+            .iter()
+            .map(|piece| piece.classify_box(bounds, margin))
+            .chain(
+                chart
+                    .bosses
+                    .iter()
+                    .map(|boss| boss_relation(boss, local, margin)),
+            );
+        for relation in relations {
+            match relation {
+                Some(true) => {
                     return whole_operand_result(
                         self,
                         other,
@@ -100,21 +110,8 @@ impl Solid {
                         operation,
                     );
                 }
-                false => {}
-            }
-        }
-        for boss in &chart.bosses {
-            match boss_relation(boss, local, margin)? {
-                true => {
-                    return whole_operand_result(
-                        self,
-                        other,
-                        source_is_left,
-                        BoxClassification::Inside,
-                        operation,
-                    );
-                }
-                false => {}
+                Some(false) => {}
+                None => return None,
             }
         }
         whole_operand_result(
