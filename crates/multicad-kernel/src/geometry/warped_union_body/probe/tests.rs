@@ -82,6 +82,21 @@ fn probes_clear_of_every_support_take_the_section_winding() {
         assert_eq!(relation(&shell, &place([7.01, 5., 6.5])), Some(None));
         // Outside everything.
         assert_eq!(relation(&shell, &place([20., 5., 2.])), Some(None));
+        // Level with the block top but beside it: the top plane crosses the
+        // probe, the top face itself does not.
+        assert_eq!(relation(&shell, &place([20., 5., 5.])), Some(None));
+        // Where the boss meets the block, the top face's hole loop keeps the
+        // straddling probe clear: material on both sides.
+        near(
+            relation(&shell, &place([5., 5., 5.])).unwrap().unwrap(),
+            volume,
+        );
+        // Inside the block on the boss's infinite cylinder, far below the
+        // boss wall itself.
+        near(
+            relation(&shell, &place([7., 5., 2.])).unwrap().unwrap(),
+            volume,
+        );
         // A probe on the block top or the boss wall is unresolved.
         assert_eq!(relation(&shell, &place([1., 1., 5.])), None);
         assert_eq!(relation(&shell, &place([7., 5., 6.5])), None);
