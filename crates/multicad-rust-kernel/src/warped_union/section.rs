@@ -101,6 +101,13 @@ impl Shell {
             .enumerate()
             .map(|(index, edge)| {
                 let endpoints = vertices.as_ref().and_then(|v| v.endpoints(shell, index));
+                if vertices
+                    .as_ref()
+                    .is_some_and(|v| v.in_plane().contains(&index))
+                {
+                    // Lies in the plane; closed later between vertex crossings.
+                    return Ok(Vec::new());
+                }
                 let points = match (edge.curve, endpoints) {
                     (Curve::Line, Some(_)) => Vec::new(),
                     (Curve::Ellipse(arc), Some(endpoints)) => {
@@ -154,6 +161,7 @@ impl Shell {
                 )?,
             }
         }
+        section.close_in_plane_edges(shell)?;
         section.loops()
     }
 }
@@ -412,6 +420,43 @@ impl Section {
         };
         if self.edges.insert(a.port, (b.port, edge)).is_some() {
             return Err(Error::Unsupported);
+        }
+        Ok(())
+    }
+
+    /// A straight shell edge lying in the cutting plane is part of the
+    /// section exactly where the faces on its two sides leave the plane to
+    /// opposite sides: a face section then ends at one of its vertices and
+    /// another starts at the other. Insert the edge in that direction, so it
+    /// keeps the material side of the loop it closes. An edge that only
+    /// touches the material, with neither vertex used, bounds no section
+    /// area and is omitted; any other use is not certified.
+    fn close_in_plane_edges(&mut self, shell: &Shell) -> Result<(), Error> {
+        let Some(contacts) = &self.vertices else {
+            return Ok(());
+        };
+        let seams = contacts.in_plane().to_vec();
+        let count = shell.edges.len();
+        for index in seams {
+            let ports = shell.edges[index].vertices.map(|vertex| [count, vertex]);
+            let ends: Vec<_> = self.edges.values().map(|(end, _)| *end).collect();
+            let [starts, finishes] = [
+                ports.map(|port| self.edges.contains_key(&port)),
+                ports.map(|port| ends.contains(&port)),
+            ];
+            let points = shell.edges[index]
+                .vertices
+                .map(|vertex| shell.vertices[vertex]);
+            let hit = |end: usize| Hit {
+                port: ports[end],
+                point: points[end],
+            };
+            match (starts, finishes) {
+                ([false, false], [false, false]) => {}
+                ([false, true], [true, false]) => self.add([hit(0), hit(1)], Curve::Line)?,
+                ([true, false], [false, true]) => self.add([hit(1), hit(0)], Curve::Line)?,
+                _ => return Err(Error::Unsupported),
+            }
         }
         Ok(())
     }
