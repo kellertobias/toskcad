@@ -4,9 +4,10 @@
 use super::super::{analytic as retained, uv};
 use super::{
     Budget, I, RawFrame, ReadError, Result, Source, V, cached, difference, frame, list, norm,
-    point, reference, scalar, translated_point, unwrapped, vector as raw_vector,
+    point, reference, scalar, translated_from, translation_origin, unwrapped, vector as raw_vector,
 };
 use crate::brep::{Curve, Edge, Surface};
+use num_rational::BigRational;
 use retained::Image;
 
 fn add(a: V, b: V) -> V {
@@ -136,9 +137,9 @@ pub(super) fn plane_point(
 /// points: exactly what [`plane_point`] reads and lifts for each point.
 pub(super) struct PlaneLift {
     frame: RawFrame,
-    /// The placement origin of a cardinal frame, whose points are lifted by
-    /// an exact translation instead.
-    cardinal_origin: Option<u32>,
+    /// The exact placement origin of a cardinal frame, whose points are
+    /// lifted by an exact translation instead.
+    cardinal_origin: Option<[BigRational; 3]>,
 }
 pub(super) fn plane_lift(
     source: &Source<'_>,
@@ -160,7 +161,7 @@ pub(super) fn plane_lift(
         let [_, origin, _, _] = source.args(axis, "AXIS2_PLACEMENT_3D")? else {
             return Err(ReadError::Invalid);
         };
-        Some(reference(origin)?)
+        Some(translation_origin(source, reference(origin)?, budget)?)
     } else {
         None
     };
@@ -177,8 +178,8 @@ impl PlaneLift {
         budget: &mut Budget<'_>,
     ) -> Result<V> {
         budget.charge(64)?;
-        if let Some(origin) = self.cardinal_origin {
-            return translated_point(source, origin, uv_point_id, self.frame.axes, budget);
+        if let Some(origin) = &self.cardinal_origin {
+            return translated_from(source, origin, uv_point_id, self.frame.axes, budget);
         }
         Ok(lift(self.frame, point(source, uv_point_id, 2, budget)?))
     }
