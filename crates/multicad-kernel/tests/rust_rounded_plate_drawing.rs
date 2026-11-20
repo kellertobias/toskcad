@@ -383,3 +383,47 @@ fn a_through_slot_reveals_what_lies_behind_its_whole_stadium() {
         );
     }
 }
+
+#[test]
+fn bracket_sections_cut_the_exact_sweep_shell() {
+    let bracket = bracket();
+    let section = |offset: f64, depth: Option<f64>| {
+        project_drawing(
+            &[DrawingSolid {
+                solid: &bracket,
+                hatch: None,
+            }],
+            DrawingProjection {
+                section_offset_mm: Some(offset),
+                section_only: depth.is_none(),
+                section_depth_mm: depth,
+                ..front()
+            },
+        )
+    };
+    // At y = 31 the cut crosses the r10 hole at x = 25 ± sqrt(99) and the
+    // slot's semicircular ends at x = 60 - sqrt(24) and 75 + sqrt(24).
+    let walls = [
+        25. - 99_f64.sqrt(),
+        25. + 99_f64.sqrt(),
+        60. - 24_f64.sqrt(),
+        75. + 24_f64.sqrt(),
+    ];
+    for depth in [None, Some(20.)] {
+        let vectors = section(-31., depth).unwrap();
+        for x in walls {
+            assert!(
+                vectors.iter().any(|v| v.role == VectorRole::Section
+                    && matches!(v.curve, VectorCurve::Line { a, b }
+                        if (a[0] - x).abs() < TOL && (b[0] - x).abs() < TOL
+                            && (a[1] - b[1]).abs() > 10. - TOL)),
+                "x = {x}, depth {depth:?}"
+            );
+        }
+    }
+    // At y = 30 the plane holds the hole's seam edge. The exact shell
+    // section refuses a coplanar edge, so the retained view stays a typed
+    // refusal rather than a guessed drawing.
+    let error = section(-30., Some(20.)).unwrap_err();
+    assert_eq!(error.kind, GeometryErrorKind::Unsupported);
+}

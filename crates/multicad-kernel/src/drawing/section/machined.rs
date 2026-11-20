@@ -19,6 +19,7 @@ pub(super) fn needs_analytic_section(solid: &Solid) -> bool {
             .is_some_and(|body| !body.pockets.is_empty())
         || solid.rounded_slot_body().is_some()
         || solid.warped_union_body().is_some()
+        || curved::warped::is_curved_sweep(solid)
         || solid.nonplanar_loft_body().is_some()
         || solid.sphere_body().is_some()
         || solid.torus_body().is_some()
@@ -218,7 +219,18 @@ impl SectionOutput {
             return self.publish(source, hatch, policy, &loops, frame, false);
         }
 
-        if let Some((shell, placement)) = solid.drawing_warped_shell() {
+        let built;
+        let shell = match solid.drawing_warped_shell() {
+            Some(found) => Some(found),
+            None => match curved::warped::curved_sweep_shell(solid).transpose()? {
+                Some((shell, placement)) => {
+                    built = shell;
+                    Some((&built, placement))
+                }
+                None => None,
+            },
+        };
+        if let Some((shell, placement)) = shell {
             let hatch = hatch.filter(|h| h.pattern != HatchPattern::None);
             let (vectors, boundary) = warped::project(
                 shell,
