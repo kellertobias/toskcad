@@ -531,3 +531,17 @@ fn public_planar_ring_constructor_retains_concave_faces_and_checks_its_inputs() 
     );
     assert!(Union::from_planar_rings(&rings, TOL).is_ok());
 }
+
+#[test]
+fn disk_excess_measures_the_farthest_disk_point_beyond_any_plane() {
+    let piece = block([0., 0., 0.], [8., 8., 3.]);
+    let up = [0., 0., 1.];
+    // A radius-3 disk about (4, 4) on the top face touches that plane and
+    // clears the side walls by one millimetre.
+    assert!(piece.disk_excess([4., 4., 3.], up, 3.).abs() < 1e-12);
+    assert!((piece.disk_excess([4., 4., 1.5], up, 3.) + 1.).abs() < 1e-12);
+    // Past a wall, or tilted so its rim leaves the top.
+    assert!((piece.disk_excess([6., 4., 1.5], up, 3.) - 1.).abs() < 1e-12);
+    let tilted = [0., 0.6, 0.8];
+    assert!((piece.disk_excess([4., 4., 2.], tilted, 2.) - 0.2).abs() < 1e-12);
+}

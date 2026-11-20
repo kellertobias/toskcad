@@ -39,6 +39,46 @@ impl Chart {
     }
 }
 
+/// Move a boss end that is flush with, or inside, one convex stock piece to
+/// a disk strictly inside that piece. Both disks then lie in the convex
+/// piece, so the cylinder between them adds no material and the union is
+/// unchanged; only the attachment proof sees an embedded start. Warped
+/// charts keep their authored ends.
+fn bury_flush_end(chart: &mut Chart, tolerance: f64) {
+    if chart.band.is_some() {
+        return;
+    }
+    let Some(boss) = chart.bosses.last() else {
+        return;
+    };
+    let [a, b] = boss.ends;
+    let axis = subtract(b, a);
+    let length = norm(axis);
+    if !length.is_finite() || length <= 0. {
+        return;
+    }
+    let unit = axis.map(|c| c / length);
+    let radius = boss.radius;
+    for (end, point, inward) in [(0, a, unit), (1, b, unit.map(|c| -c))] {
+        for piece in &chart.pieces[..chart.stock_count] {
+            if piece.disk_excess(point, unit, radius) > tolerance {
+                continue;
+            }
+            let mut depth = length / 2.;
+            for _ in 0..32 {
+                let moved = std::array::from_fn(|i| point[i] + depth * inward[i]);
+                if piece.disk_excess(moved, unit, radius) < -4. * tolerance {
+                    if let Some(boss) = chart.bosses.last_mut() {
+                        boss.ends[end] = moved;
+                    }
+                    return;
+                }
+                depth /= 2.;
+            }
+        }
+    }
+}
+
 fn removed_all(error: &GeometryError) -> bool {
     error.kind == GeometryErrorKind::InvalidResult && error.message.contains("removed all material")
 }
@@ -151,6 +191,9 @@ impl Solid {
                 chart.append(&local, None, policy)
             };
             appended.ok_or_else(|| input("The joined operand is not chart material"))??;
+            if boss {
+                bury_flush_end(&mut chart, tolerance);
+            }
             chart.stock_count = chart.pieces.len();
             let union = Union::new(&chart.pieces, tolerance).map_err(source_error)?;
             let joined = chart.finish(union, feature, policy)?;

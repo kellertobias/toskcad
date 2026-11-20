@@ -132,6 +132,19 @@ impl ConvexPiece {
         })
     }
 
+    /// The largest signed distance of a disk beyond this piece's supporting
+    /// planes: negative when the closed disk is inside every one of them.
+    /// `axis` is the unit disk normal. Callers add their own rounding margin.
+    pub fn disk_excess(&self, center: Point, axis: Point, radius_mm: f64) -> f64 {
+        self.planes
+            .iter()
+            .map(|plane| {
+                let along = dot(plane.normal, axis);
+                plane.distance(center) + radius_mm * (1. - along * along).max(0.).sqrt()
+            })
+            .fold(f64::NEG_INFINITY, f64::max)
+    }
+
     /// Whole-box relation to this piece's supporting planes, which lie within
     /// the construction tolerance of its faces: `Some(true)` when every box
     /// corner is deeper than `margin` inside every plane, `Some(false)` when

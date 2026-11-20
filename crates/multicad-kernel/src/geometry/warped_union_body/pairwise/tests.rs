@@ -232,3 +232,54 @@ fn open_fillet_recognition_keeps_the_strict_reader_strict() {
     // A plain box is no fillet.
     assert!(QuarterFillet::recognize_open(&block([1., 1., 1.], [0.; 3]), tolerance).is_none());
 }
+
+#[test]
+fn a_shaft_flush_with_its_captured_head_attaches_from_either_end() {
+    // An 8 x 8 x 3 head over z 10..13 and a radius-3 shaft ending flush
+    // with its top, authored upwards or downwards.
+    let head = block([8., 8., 3.], [8., 8., 10.]);
+    let up = Solid::cylinder(
+        PlaneFrame {
+            origin: [12., 12., -1.],
+            ..Default::default()
+        },
+        3.,
+        14.,
+        policy(),
+    )
+    .unwrap();
+    let down = Solid::cylinder(
+        PlaneFrame {
+            origin: [12., 12., 13.],
+            u: [1., 0., 0.],
+            v: [0., -1., 0.],
+        },
+        3.,
+        14.,
+        policy(),
+    )
+    .unwrap();
+    let expected = 192. + PI * 9. * 11.;
+    for shaft in [&up, &down] {
+        let joined = apply(shaft, &head, BooleanOperation::Union).unwrap();
+        near(joined.volume_mm3().unwrap(), expected);
+        let bounds = joined.bounds().unwrap();
+        near(bounds.min[2], -1.);
+        near(bounds.max[2], 13.);
+    }
+    // A shaft as wide as the head has no buried disk to move to.
+    let wide = Solid::cylinder(
+        PlaneFrame {
+            origin: [12., 12., -1.],
+            ..Default::default()
+        },
+        4.,
+        14.,
+        policy(),
+    )
+    .unwrap();
+    assert!(
+        wide.pairwise_warped_boolean(&head, BooleanOperation::Union, policy())
+            .is_none()
+    );
+}
