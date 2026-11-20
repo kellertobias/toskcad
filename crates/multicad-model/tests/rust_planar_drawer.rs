@@ -7,6 +7,9 @@ use multicad_core::{
 };
 use multicad_kernel::Solid;
 use multicad_model::{Compiler, GeometryBackend, export::verify_rust_step_shape};
+#[path = "support/drawer_oracle.rs"]
+mod drawer_oracle;
+use drawer_oracle::{area, mesh_volume, near};
 
 #[test]
 fn saved_toolcase_drawer_reinforcements_join_when_all_operands_are_planar() {
@@ -45,30 +48,19 @@ fn saved_toolcase_drawer_reinforcements_join_when_all_operands_are_planar() {
         omit_display: true,
         ..Compiler::default()
     };
-    let [rust, native] = [GeometryBackend::Rust, GeometryBackend::OpenCascade].map(|backend| {
-        compiler
-            .compile_sources_with_backend(document, 1, &[feature], backend, None)
-            .unwrap_or_else(|error| panic!("{backend:?}: {error}"))
-    });
-    let [actual, expected] = [&rust, &native].map(|m| m.solid(feature).unwrap());
+    let rust = compiler
+        .compile_sources_with_backend(document, 1, &[feature], GeometryBackend::Rust, None)
+        .unwrap();
+    let actual = rust.solid(feature).unwrap();
     assert!(actual.uses_rust_geometry());
     assert_eq!(actual.solid_count().unwrap(), 1);
-    let area = |solid: &Solid| {
-        solid
-            .faces()
-            .unwrap()
-            .iter()
-            .map(|face| face.area_mm2)
-            .sum::<f64>()
-    };
-    let near = |a: f64, b: f64| assert!((a - b).abs() < 1e-7 * b.abs().max(1.), "{a} != {b}");
-    near(actual.volume_mm3().unwrap(), expected.volume_mm3().unwrap());
-    near(area(actual), area(expected));
-    let [a, b] = [actual, expected].map(|solid| solid.bounds().unwrap());
-    for i in 0..3 {
-        near(a.min[i], b.min[i]);
-        near(a.max[i], b.max[i]);
-    }
+    drawer_oracle::check_against_operands(document, 1, feature, &compiler, actual);
+    // Every face is planar, so the independent tessellation encloses
+    // exactly the B-rep volume.
+    near(
+        mesh_volume(actual, Default::default()),
+        actual.volume_mm3().unwrap(),
+    );
     let topology = actual.topology_snapshot(feature, 1).unwrap();
     let rib = tools
         .iter()
@@ -99,9 +91,14 @@ fn saved_toolcase_drawer_reinforcements_join_when_all_operands_are_planar() {
         assert_eq!(independent.solid_count().unwrap(), 1);
         near(
             independent.volume_mm3().unwrap(),
-            expected.volume_mm3().unwrap(),
+            actual.volume_mm3().unwrap(),
         );
-        near(area(&independent), area(expected));
+        near(area(&independent), area(actual));
+        let [a, b] = [&independent, actual].map(|solid| solid.bounds().unwrap());
+        for i in 0..3 {
+            near(a.min[i], b.min[i]);
+            near(a.max[i], b.max[i]);
+        }
     }
     near(
         verify_rust_step_shape(
@@ -111,6 +108,6 @@ fn saved_toolcase_drawer_reinforcements_join_when_all_operands_are_planar() {
             compiler.policy.linear_tolerance_mm,
         )
         .unwrap(),
-        expected.volume_mm3().unwrap(),
+        actual.volume_mm3().unwrap(),
     );
 }

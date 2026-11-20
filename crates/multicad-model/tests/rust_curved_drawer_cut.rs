@@ -1,6 +1,9 @@
 use multicad_core::{document::EntityId, project_file, references::AnalyticGeometry};
 use multicad_kernel::Solid;
 use multicad_model::{Compiler, GeometryBackend, export::verify_rust_step_shape};
+#[path = "support/drawer_oracle.rs"]
+mod drawer_oracle;
+use drawer_oracle::{area, near};
 
 #[test]
 fn saved_toolcase_drawer_cuts_front_pull_and_lead_ins_without_losing_fillet_geometry() {
@@ -17,30 +20,13 @@ fn saved_toolcase_drawer_cuts_front_pull_and_lead_ins_without_losing_fillet_geom
         omit_display: true,
         ..Compiler::default()
     };
-    let [rust, native] = [GeometryBackend::Rust, GeometryBackend::OpenCascade].map(|backend| {
-        compiler
-            .compile_sources_with_backend(&document, 0, &[feature], backend, None)
-            .unwrap_or_else(|error| panic!("{backend:?}: {error}"))
-    });
-    let [actual, expected] = [&rust, &native].map(|model| model.solid(feature).unwrap());
-    let area = |solid: &Solid| {
-        solid
-            .faces()
-            .unwrap()
-            .iter()
-            .map(|f| f.area_mm2)
-            .sum::<f64>()
-    };
-    let near = |a: f64, b: f64| assert!((a - b).abs() < 1e-7 * b.abs().max(1.), "{a} != {b}");
+    let rust = compiler
+        .compile_sources_with_backend(&document, 0, &[feature], GeometryBackend::Rust, None)
+        .unwrap();
+    let actual = rust.solid(feature).unwrap();
     assert!(actual.uses_rust_geometry());
     assert_eq!(actual.solid_count().unwrap(), 1);
-    near(actual.volume_mm3().unwrap(), expected.volume_mm3().unwrap());
-    near(area(actual), area(expected));
-    let [a, b] = [actual, expected].map(|solid| solid.bounds().unwrap());
-    for i in 0..3 {
-        near(a.min[i], b.min[i]);
-        near(a.max[i], b.max[i]);
-    }
+    drawer_oracle::check_against_operands(&document, 0, feature, &compiler, actual);
     let snapshot = actual.topology_snapshot(feature, 0).unwrap();
     assert!(
         snapshot
@@ -65,11 +51,13 @@ fn saved_toolcase_drawer_cuts_front_pull_and_lead_ins_without_losing_fillet_geom
         Solid::import_rust_step(&content, feature, compiler.policy).unwrap(),
     ] {
         assert_eq!(imported.solid_count().unwrap(), 1);
-        near(
-            imported.volume_mm3().unwrap(),
-            expected.volume_mm3().unwrap(),
-        );
-        near(area(&imported), area(expected));
+        near(imported.volume_mm3().unwrap(), actual.volume_mm3().unwrap());
+        near(area(&imported), area(actual));
+        let [a, b] = [&imported, actual].map(|solid| solid.bounds().unwrap());
+        for i in 0..3 {
+            near(a.min[i], b.min[i]);
+            near(a.max[i], b.max[i]);
+        }
     }
     near(
         verify_rust_step_shape(
@@ -79,6 +67,6 @@ fn saved_toolcase_drawer_cuts_front_pull_and_lead_ins_without_losing_fillet_geom
             compiler.policy.linear_tolerance_mm,
         )
         .unwrap(),
-        expected.volume_mm3().unwrap(),
+        actual.volume_mm3().unwrap(),
     );
 }

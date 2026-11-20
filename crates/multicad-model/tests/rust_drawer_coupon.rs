@@ -1,6 +1,9 @@
 use multicad_core::{document::EntityId, project_file};
 use multicad_kernel::Solid;
 use multicad_model::{Compiler, GeometryBackend, export::verify_rust_step_shape};
+#[path = "support/drawer_oracle.rs"]
+mod drawer_oracle;
+use drawer_oracle::{area, near};
 
 #[test]
 fn saved_toolcase_crops_the_exact_finished_drawer_to_its_front_coupon() {
@@ -14,28 +17,46 @@ fn saved_toolcase_crops_the_exact_finished_drawer_to_its_front_coupon() {
     .document;
     let feature = EntityId::parse("771b0fdf-af00-48ca-81c1-04416f269879").unwrap();
     let crop_tool = EntityId::parse("58a01de2-71dc-4147-9b6c-8d35185600d4").unwrap();
+    let drawer = EntityId::parse("737d2801-98a7-47dc-8bb8-b544e7055f51").unwrap();
     let compiler = Compiler {
         omit_display: true,
         ..Compiler::default()
     };
-    let [rust, native] = [GeometryBackend::Rust, GeometryBackend::OpenCascade].map(|backend| {
-        compiler
-            .compile_sources_with_backend(&document, 0, &[feature], backend, None)
-            .unwrap_or_else(|error| panic!("{backend:?}: {error}"))
-    });
-    let [actual, expected] = [&rust, &native].map(|model| model.solid(feature).unwrap());
+    let rust = compiler
+        .compile_sources_with_backend(
+            &document,
+            0,
+            &[feature, drawer],
+            GeometryBackend::Rust,
+            None,
+        )
+        .unwrap();
+    let actual = rust.solid(feature).unwrap();
     assert!(actual.uses_rust_geometry());
-    let near = |a: f64, b: f64| assert!((a - b).abs() < 1e-7 * b.abs().max(1.), "{a} != {b}");
-    let area = |solid: &Solid| {
-        solid
-            .faces()
-            .unwrap()
-            .iter()
-            .map(|face| face.area_mm2)
-            .sum()
-    };
-    let expected_bounds = expected.bounds().unwrap();
+    drawer_oracle::check_against_operands(&document, 0, feature, &compiler, actual);
+    let expected_bounds = actual.bounds().unwrap();
     near(expected_bounds.max[1], 30.);
+    // The coupon and the rest of the drawer beyond y = 30 partition the
+    // finished drawer, so their exact volumes add up to its volume.
+    let whole = rust.solid(drawer).unwrap();
+    let whole_bounds = whole.bounds().unwrap();
+    assert!(whole_bounds.max[1] > 30. && whole_bounds.min[1] < 30.);
+    let policy = compiler.policy;
+    let beyond = Solid::box_solid([200., 200., 200.], policy)
+        .unwrap()
+        .transformed(multicad_kernel::RigidTransform {
+            translation_mm: [whole_bounds.min[0] - 50., 30., whole_bounds.min[2] - 50.],
+            ..Default::default()
+        })
+        .unwrap();
+    let rest = Solid::intersect_warped_box(&[whole, &beyond], EntityId::new(), policy)
+        .unwrap()
+        .unwrap();
+    near(rest.bounds().unwrap().min[1], 30.);
+    near(
+        actual.volume_mm3().unwrap() + rest.volume_mm3().unwrap(),
+        whole.volume_mm3().unwrap(),
+    );
     assert!(
         actual
             .topology_snapshot(feature, 0)
@@ -61,8 +82,8 @@ fn saved_toolcase_crops_the_exact_finished_drawer_to_its_front_coupon() {
     let independent = Solid::read_step(&path, compiler.policy).unwrap();
     for solid in [actual, &independent] {
         assert_eq!(solid.solid_count().unwrap(), 1);
-        near(solid.volume_mm3().unwrap(), expected.volume_mm3().unwrap());
-        near(area(solid), area(expected));
+        near(solid.volume_mm3().unwrap(), actual.volume_mm3().unwrap());
+        near(area(solid), area(actual));
         let bounds = solid.bounds().unwrap();
         for i in 0..3 {
             near(bounds.min[i], expected_bounds.min[i]);

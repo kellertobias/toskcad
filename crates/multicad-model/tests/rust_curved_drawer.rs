@@ -1,6 +1,9 @@
 use multicad_core::{document::EntityId, project_file, references::AnalyticGeometry};
 use multicad_kernel::Solid;
 use multicad_model::{Compiler, GeometryBackend, export::verify_rust_step_shape};
+#[path = "support/drawer_oracle.rs"]
+mod drawer_oracle;
+use drawer_oracle::{area, near};
 
 #[test]
 fn saved_toolcase_drawer_keeps_exact_floor_fillet_intersections() {
@@ -20,32 +23,16 @@ fn saved_toolcase_drawer_keeps_exact_floor_fillet_intersections() {
         omit_display: true,
         ..Compiler::default()
     };
-    let [rust, native] = [GeometryBackend::Rust, GeometryBackend::OpenCascade].map(|backend| {
-        compiler
-            .compile_sources_with_backend(&document, 0, &features, backend, None)
-            .unwrap_or_else(|error| panic!("{backend:?}: {error}"))
-    });
-    let near = |a: f64, b: f64| assert!((a - b).abs() < 1e-7 * b.abs().max(1.), "{a} != {b}");
-    let area = |solid: &Solid| {
-        solid
-            .faces()
-            .unwrap()
-            .iter()
-            .map(|face| face.area_mm2)
-            .sum()
-    };
+    let rust = compiler
+        .compile_sources_with_backend(&document, 0, &features, GeometryBackend::Rust, None)
+        .unwrap();
     let scratch = tempfile::tempdir().unwrap();
     for feature in features {
-        let [actual, expected] = [&rust, &native].map(|model| model.solid(feature).unwrap());
+        let actual = rust.solid(feature).unwrap();
         assert!(actual.uses_rust_geometry());
         assert_eq!(actual.solid_count().unwrap(), 1);
-        near(actual.volume_mm3().unwrap(), expected.volume_mm3().unwrap());
-        near(area(actual), area(expected));
-        let [a, b] = [actual, expected].map(|solid| solid.bounds().unwrap());
-        for i in 0..3 {
-            near(a.min[i], b.min[i]);
-            near(a.max[i], b.max[i]);
-        }
+        drawer_oracle::check_against_operands(&document, 0, feature, &compiler, actual);
+        let b = actual.bounds().unwrap();
         let topology = actual.topology_snapshot(feature, 0).unwrap();
         assert!(
             topology.elements.iter().any(|element| matches!(
@@ -65,9 +52,9 @@ fn saved_toolcase_drawer_keeps_exact_floor_fillet_intersections() {
             assert_eq!(independent.solid_count().unwrap(), 1);
             near(
                 independent.volume_mm3().unwrap(),
-                expected.volume_mm3().unwrap(),
+                actual.volume_mm3().unwrap(),
             );
-            near(area(&independent), area(expected));
+            near(area(&independent), area(actual));
             let exported = independent.bounds().unwrap();
             for i in 0..3 {
                 near(exported.min[i], b.min[i]);
