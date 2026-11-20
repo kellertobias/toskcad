@@ -18,6 +18,7 @@ mod bevel_body;
 pub(crate) mod bore_treatment;
 mod bored_prism_boolean;
 mod coaxial;
+mod coaxial_counterbore;
 pub use bore_treatment::ConicalSeatGeometry;
 pub(crate) mod circular_pocket_body;
 mod clipped_npt_body;
@@ -1484,7 +1485,13 @@ impl Solid {
             }
             if let Some(tool) = other.axial_cylinder() {
                 if let Some(target) = self.polygon_prism() {
-                    return Self::subtract_polygon_cylinder(target, tool, policy).map(Some);
+                    return match Self::subtract_polygon_cylinder(target, tool, policy) {
+                        Err(error) if error.kind == GeometryErrorKind::Unsupported => self
+                            .subtract_machining_tool(other, operation, policy)
+                            .or_else(|| self.coaxial_counterbore_cut(other, operation, policy))
+                            .unwrap_or(Err(error)),
+                        result => result.map(Some),
+                    };
                 }
                 if self.rust_prism().is_some()
                     && let Some(result) = self.try_subtract_rust_prism_through_cylinder(
@@ -1503,6 +1510,7 @@ impl Solid {
                 return match result {
                     Err(error) if error.kind == GeometryErrorKind::Unsupported => self
                         .subtract_machining_tool(other, operation, policy)
+                        .or_else(|| self.coaxial_counterbore_cut(other, operation, policy))
                         .unwrap_or(Err(error)),
                     result => result.map(Some),
                 };
@@ -1552,6 +1560,7 @@ impl Solid {
                 Err(error) if error.kind == GeometryErrorKind::Unsupported => self
                     .separated_boolean(other, operation, policy)
                     .or_else(|| self.subtract_machining_tool(other, operation, policy))
+                    .or_else(|| self.coaxial_counterbore_cut(other, operation, policy))
                     .or_else(|| self.through_profile_cut(other, operation, policy))
                     .or_else(|| self.bored_prism_subtract(other, operation, policy))
                     .or_else(|| self.stacked_prism_boolean(other, operation, policy))
