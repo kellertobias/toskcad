@@ -16,6 +16,7 @@ mod authored_sweep;
 mod axial_stack_body;
 mod bevel_body;
 pub(crate) mod bore_treatment;
+mod bored_prism_boolean;
 mod coaxial;
 pub use bore_treatment::ConicalSeatGeometry;
 pub(crate) mod circular_pocket_body;
@@ -1549,6 +1550,7 @@ impl Solid {
                 Err(error) if error.kind == GeometryErrorKind::Unsupported => self
                     .separated_boolean(other, operation, policy)
                     .or_else(|| self.subtract_machining_tool(other, operation, policy))
+                    .or_else(|| self.bored_prism_subtract(other, operation, policy))
                     .or_else(|| self.stacked_prism_boolean(other, operation, policy))
                     .or_else(|| self.parallel_extrusion_intersection(other, operation, policy))
                     .unwrap_or_else(|| {
