@@ -43,6 +43,7 @@ pub(crate) mod herringbone;
 pub mod insert;
 pub mod literal_npt;
 pub mod npt_stock;
+mod partial_revolution;
 pub mod periodic_phillips;
 pub mod pipe_hardware;
 mod retained_replay;

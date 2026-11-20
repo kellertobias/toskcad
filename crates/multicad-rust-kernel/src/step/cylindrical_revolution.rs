@@ -5,8 +5,10 @@ use crate::revolution::Revolution;
 
 /// Whether a full revolution has one connected shell of cylinders and
 /// annular shoulders, with no enclosed cavity requiring another shell.
+/// A partial sweep of a rectilinear meridian off the axis, holes included,
+/// is supported too.
 pub fn supports_cylindrical_revolution(revolution: &Revolution) -> bool {
-    meridian(revolution).is_some()
+    meridian(revolution).is_some() || super::partial_revolution::supports(revolution)
 }
 
 /// Write a full cylindrical revolution about the positive normal of `u, v`.

@@ -865,8 +865,11 @@ impl Writer {
         u: Point,
         v: Point,
     ) -> Result<(), StepError> {
-        let ring = cylindrical_revolution::meridian(revolution).ok_or(StepError::Unsupported)?;
         let placement = Placement::new(origin, u, v)?;
+        if partial_revolution::supports(revolution) {
+            return self.append(|file| partial_revolution::encode(file, placement, revolution));
+        }
+        let ring = cylindrical_revolution::meridian(revolution).ok_or(StepError::Unsupported)?;
         self.append(|file| cylindrical_revolution::encode(file, placement, ring))
     }
 
