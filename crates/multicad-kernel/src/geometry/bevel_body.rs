@@ -15,6 +15,8 @@ use multicad_rust_kernel::{
 use std::collections::BTreeSet;
 
 const OPERATION: &str = "spherical bevel gear";
+/// Declared certified uncertainty of the Rust bevel pair distance.
+const BEVEL_DISTANCE_GAP_MM: f64 = 1e-5;
 
 pub(crate) struct BevelBody {
     pub(crate) geometry: Bevel,
@@ -171,6 +173,69 @@ impl Solid {
                 format!("Rust bevel interference certificate: {cause:?}"),
             )
         })
+    }
+}
+
+impl Solid {
+    /// Certified minimum distance between two placed Rust bevels sharing a
+    /// pitch apex, once their positive clearance is certified. The result is
+    /// an actual material pair; its proven lower bound lies within the
+    /// declared `BEVEL_DISTANCE_GAP_MM` below it. `None` leaves other pairs
+    /// to other measures.
+    pub(crate) fn rust_bevel_pair_distance(
+        &self,
+        other: &Self,
+    ) -> Option<Result<crate::MinimumDistance, GeometryError>> {
+        const DISTANCE: &str = "minimum distance";
+        let ((a, af), (b, bf)) = (self.bevel_body()?, other.bevel_body()?);
+        Some((|| {
+            let unsupported =
+                |message: &str| error(DISTANCE, GeometryErrorKind::Unsupported, message);
+            let policy = self.policy;
+            let (clear, _) = self.certify_rust_bevel_pair(other, policy, 0., None)?;
+            if clear != ResultKind::Clear {
+                return Err(unsupported(
+                    "Rust bevel distance requires a certified clear pair",
+                ));
+            }
+            let placement = |frame: PlaneFrame| Placement {
+                apex_mm: frame.origin,
+                axes: [frame.u, frame.v, frame.normal()],
+            };
+            // The cell bound is first order in the cell size, so the search
+            // certifies the declared 1e-5 mm gap rather than the model
+            // tolerance; the reported distance is an actual material pair.
+            let found = multicad_rust_kernel::bevel_gear::distance::minimum(
+                [&a.geometry, &b.geometry],
+                [placement(af), placement(bf)],
+                policy.linear_tolerance_mm,
+                BEVEL_DISTANCE_GAP_MM,
+                None,
+            )
+            .map_err(|cause| {
+                use multicad_rust_kernel::bevel_gear::distance::Error;
+                let kind = match cause {
+                    Error::Limit => GeometryErrorKind::Limit,
+                    Error::Cancelled => GeometryErrorKind::Cancelled,
+                    Error::Invalid | Error::Unresolved => GeometryErrorKind::Unsupported,
+                };
+                error(
+                    DISTANCE,
+                    kind,
+                    format!("Rust bevel distance could not be certified: {cause:?}"),
+                )
+            })?;
+            Ok(crate::MinimumDistance {
+                distance_mm: found.distance_mm,
+                witnesses: vec![crate::DistanceWitness {
+                    a_mm: found.points_mm[0],
+                    b_mm: found.points_mm[1],
+                }],
+                witnesses_complete: false,
+                total_solutions: None,
+                inner_solution: false,
+            })
+        })())
     }
 }
 

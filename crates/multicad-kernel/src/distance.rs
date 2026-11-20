@@ -3,10 +3,13 @@
 use crate::{GeometryError, GeometryErrorKind, Solid, ffi};
 mod circular;
 mod machined;
+mod parallel_faces;
+mod parallel_rings;
 mod planar;
 mod rings;
 mod rounded;
 mod sphere;
+mod worm_wheel;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BRepSelection {
     Whole,
@@ -74,11 +77,36 @@ pub(crate) fn measure(
         if let Some(result) = circular::measure(a, selection_a, b, selection_b, tolerance) {
             return result;
         }
+        if let Some(result) = worm_wheel::measure(a, selection_a, b, selection_b, tolerance) {
+            return result;
+        }
+        if let Some(result) = parallel_rings::measure(a, selection_a, b, selection_b, tolerance) {
+            return result;
+        }
+        if let Some(result) = parallel_faces::measure(a, selection_a, b, selection_b, tolerance) {
+            return result;
+        }
         if selection_a == BRepSelection::Whole
             && selection_b == BRepSelection::Whole
             && let Some(result) = a.rust_parallel_cylinder_pair(b)
         {
             return result.map(|(distance, _)| distance);
+        }
+        if selection_a == BRepSelection::Whole
+            && selection_b == BRepSelection::Whole
+            && let Some(result) = a.rust_bevel_pair_distance(b)
+        {
+            return result;
+        }
+        if selection_a == BRepSelection::Whole
+            && selection_b == BRepSelection::Whole
+            && ((a.rust_worm().is_some() && b.rust_worm_wheel().is_some())
+                || (a.rust_worm_wheel().is_some() && b.rust_worm().is_some()))
+        {
+            return Err(error(
+                GeometryErrorKind::Unsupported,
+                "Rust whole-solid distance between a ZA worm and its generated wheel has no certified crossed-axis surface-pair bound",
+            ));
         }
         if selection_a == BRepSelection::Whole
             && selection_b == BRepSelection::Whole

@@ -15,7 +15,7 @@ pub struct Placement {
 }
 
 impl Placement {
-    fn world(&self, local: Point) -> Point {
+    pub(crate) fn world(&self, local: Point) -> Point {
         std::array::from_fn(|i| {
             self.axes[0][i] * local[0] + self.axes[1][i] * local[1] + self.axes[2][i] * local[2]
         })
@@ -25,7 +25,7 @@ impl Placement {
         self.axes.map(|axis| dot(axis, world))
     }
 
-    fn valid(&self) -> bool {
+    pub(crate) fn valid(&self) -> bool {
         let [x, y, z] = self.axes;
         self.apex_mm.iter().all(|v| v.is_finite())
             && self.axes.iter().all(|a| (norm(*a) - 1.).abs() <= 1e-9)

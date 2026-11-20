@@ -155,6 +155,24 @@ impl Solid {
         }
     }
 
+    /// The wheel, its placement and the sector piece of one generated face.
+    pub(crate) fn rust_wheel_patch(
+        &self,
+        face: u32,
+    ) -> Option<(
+        &Wheel,
+        PlaneFrame,
+        u32,
+        multicad_rust_kernel::worm_gear::wheel::Piece,
+    )> {
+        let (body, frame) = self.worm_body()?;
+        let WormGeometry::Wheel(wheel) = &body.geometry else {
+            return None;
+        };
+        let (sector, piece) = body.wheel_piece(face)?;
+        Some((wheel, frame, sector, piece))
+    }
+
     pub(crate) fn worm_body(&self) -> Option<(&WormBody, PlaneFrame)> {
         match &self.body {
             SolidBody::Worm(body, frame) => Some((body, *frame)),
@@ -224,6 +242,20 @@ impl Solid {
 }
 
 impl WormBody {
+    /// Sector and generated piece of one wheel face, from its native role.
+    pub(crate) fn wheel_piece(
+        &self,
+        face: u32,
+    ) -> Option<(u32, multicad_rust_kernel::worm_gear::wheel::Piece)> {
+        let role = &self.topology.faces.get(face as usize)?.role;
+        let rest = role.strip_prefix("worm_wheel/sector/")?;
+        let (sector, name) = rest.split_once('/')?;
+        let piece = multicad_rust_kernel::worm_gear::wheel::PIECES
+            .into_iter()
+            .find(|piece| piece.role() == name)?;
+        Some((sector.parse().ok()?, piece))
+    }
+
     pub(super) fn volume_mm3(&self) -> f64 {
         match &self.geometry {
             WormGeometry::Worm(worm) => worm.volume_mm3(),

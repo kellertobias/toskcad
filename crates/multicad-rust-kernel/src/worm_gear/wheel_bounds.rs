@@ -44,7 +44,7 @@ const MONOTONE_CELLS: usize = 16;
 const MONOTONE_DEPTH: u32 = 6;
 
 /// Taylor coefficients in `u` (outer) and `v` (inner).
-type Pair<const NU: usize, const NV: usize> = Series<Series<Interval, NV>, NU>;
+pub(super) type Pair<const NU: usize, const NV: usize> = Series<Series<Interval, NV>, NU>;
 
 pub(crate) fn cells(from: f64, to: f64, count: usize) -> impl Iterator<Item = Interval> {
     let at = move |i: usize| from + (to - from) * i as f64 / count as f64;
@@ -135,7 +135,7 @@ impl Wheel {
 
     /// Patch coefficients over a cell, rotated back by the fixed angle `base`.
     /// `exit` encloses the exit-radius series over the cell's heights.
-    fn coefficients<const NU: usize, const NV: usize>(
+    pub(super) fn coefficients<const NU: usize, const NV: usize>(
         &self,
         piece: Piece,
         [u, v]: [Interval; 2],
@@ -153,7 +153,11 @@ impl Wheel {
 
     /// Exit-radius series over a height cell, or zero for pieces that do
     /// not depend on it.
-    fn exit<const N: usize>(&self, piece: Piece, v: Interval) -> Option<Series<Interval, N>> {
+    pub(super) fn exit<const N: usize>(
+        &self,
+        piece: Piece,
+        v: Interval,
+    ) -> Option<Series<Interval, N>> {
         if piece.flank_side().is_some() {
             self.crossing_enclosure(v, side(piece))
         } else {
