@@ -12,7 +12,10 @@ use multicad_rust_kernel::step_read;
 use std::collections::BTreeMap;
 
 mod affine;
+mod coped_tube;
 mod rounded_box;
+
+pub use coped_tube::{CopedTube, CopedTubeNames};
 
 const OPERATION: &str = "imported boundary";
 
@@ -25,6 +28,8 @@ pub(crate) struct ImportedBrepBody {
     names: Names,
     /// Parity tessellations of this boundary, finest last.
     parity: std::cell::RefCell<Vec<(f64, Rc<brep::mesh::Mesh>)>>,
+    /// A proved outside cylinder: the material lies outside it.
+    excluded: Option<coped_tube::ExcludedCylinder>,
 }
 
 /// How a retained boundary names its topology.
@@ -293,6 +298,7 @@ impl Solid {
                 feature,
                 names,
                 parity: Default::default(),
+                excluded: None,
             })),
             policy,
             provenance: vec![],
@@ -413,6 +419,12 @@ impl ImportedBrepBody {
                 Names::Authored(naming) => Names::Authored(Rc::new(naming.moved(transform))),
             },
             parity: Default::default(),
+            // A rigid motion carries the outside cylinder with the material.
+            excluded: self.excluded.map(|cylinder| coped_tube::ExcludedCylinder {
+                point_mm: map(cylinder.point_mm),
+                axis: linear(cylinder.axis),
+                radius_mm: cylinder.radius_mm,
+            }),
         })
     }
 

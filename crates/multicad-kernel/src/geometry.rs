@@ -150,8 +150,8 @@ use rounded_slot_body::RoundedSlotBody;
 use rounded_thread_body::RoundedThreadBody;
 pub use rounded_thread_body::{RoundedThreadData, RoundedThreadMassProperties};
 mod internal_thread_treatment_body;
-pub use imported_brep_body::AssemblyOccurrence;
 use imported_brep_body::ImportedBrepBody;
+pub use imported_brep_body::{AssemblyOccurrence, CopedTube, CopedTubeNames};
 use internal_thread_treatment_body::InternalThreadTreatmentBody;
 pub use internal_thread_treatment_body::{
     InternalThreadFaceProperties, InternalThreadTreatmentCut, InternalThreadTreatmentData,
@@ -1617,6 +1617,7 @@ impl Solid {
                     .or_else(|| self.contained_void_cut(other, operation, policy))
                     .or_else(|| self.parallel_disk_union(other, operation, policy))
                     .or_else(|| self.compound_intersection(other, operation, policy))
+                    .or_else(|| self.cope_contact_intersection(other, operation, policy))
                     .unwrap_or_else(|| {
                         Err(cross_refusal
                             .unwrap_or_else(|| self.no_exact_boolean(other, operation, error)))
