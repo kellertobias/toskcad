@@ -269,59 +269,111 @@ fn locate(
     }
     Ok(())
 }
+/// Records with at most this many numbers keep their spellings cached.
+const CACHED_NUMBERS: usize = 1 << 16;
+/// How many records keep their spellings at once.
+const CACHED_RECORDS: usize = 2;
 fn spelling<'i>(
     source: &Source<'i>,
     id: u32,
     value: &Value<'_>,
     budget: &mut Budget<'_>,
 ) -> Result<&'i str> {
+    let Value::Number(cached) = value else {
+        return Err(ReadError::Invalid);
+    };
+    let leaf = std::ptr::from_ref(value) as usize;
     for entity in source.components(id)? {
         budget.charge(16)?;
-        let (mut count, mut found) = (0, None);
-        locate(&entity.args, value, &mut count, &mut found, budget)?;
-        let Some(index) = found else { continue };
         let text = entity.source.ok_or(ReadError::Unsupported)?;
-        budget.charge(text.len().saturating_add(count))?;
-        // Small geometric records may hide Typed numeric children in their
-        // ignored labels. Their schema arity does not bound the token Vec.
-        // Reserve at most half of the 128KiB small-helper scratch for tokens;
-        // large spline coefficient/knot owners retain their separate bound.
-        let token_workspace = if matches!(
-            entity.name,
-            "CARTESIAN_POINT"
-                | "DIRECTION"
-                | "VECTOR"
-                | "CIRCLE"
-                | "ELLIPSE"
-                | "CYLINDRICAL_SURFACE"
-                | "CONICAL_SURFACE"
-                | "SPHERICAL_SURFACE"
-                | "TOROIDAL_SURFACE"
-        ) {
-            64 * 1024
-        } else {
-            TOKEN_WORKSPACE
+        let key = (text.as_ptr() as usize, text.len());
+        // A record tokenized before answers from its token table; the
+        // numeric leaf is matched by identity as before.
+        let caching = source.spellings.borrow().is_some();
+        let hit = source.spellings.borrow().as_ref().and_then(|cache| {
+            cache
+                .iter()
+                .find(|spelled| spelled.text == key)
+                .map(|spelled| spelled.leaves.get(&leaf).map(|&i| spelled.tokens[i]))
+        });
+        let range = match hit {
+            Some(None) => continue,
+            Some(Some(range)) => {
+                budget.charge(32)?;
+                range
+            }
+            None => {
+                let (mut count, mut found) = (0, None);
+                locate(&entity.args, value, &mut count, &mut found, budget)?;
+                let Some(index) = found else { continue };
+                budget.charge(text.len().saturating_add(count))?;
+                // Small geometric records may hide Typed numeric children in
+                // their ignored labels. Their schema arity does not bound the
+                // token Vec. Reserve at most half of the 128KiB small-helper
+                // scratch for tokens; large spline coefficient/knot owners
+                // retain their separate bound.
+                let token_workspace = if matches!(
+                    entity.name,
+                    "CARTESIAN_POINT"
+                        | "DIRECTION"
+                        | "VECTOR"
+                        | "CIRCLE"
+                        | "ELLIPSE"
+                        | "CYLINDRICAL_SURFACE"
+                        | "CONICAL_SURFACE"
+                        | "SPHERICAL_SURFACE"
+                        | "TOROIDAL_SURFACE"
+                ) {
+                    64 * 1024
+                } else {
+                    TOKEN_WORKSPACE
+                };
+                // numeric_spellings grows a Vec geometrically. Two capacities
+                // of borrowed str fat pointers fit the helper scratch envelope.
+                if count.saturating_mul(2 * std::mem::size_of::<&str>()) > token_workspace {
+                    return Err(ReadError::Limit);
+                }
+                let tokens = part21::numeric_spellings(entity).ok_or(ReadError::Unsupported)?;
+                if tokens.len() != count {
+                    return Err(ReadError::Unsupported);
+                }
+                if tokens
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<&str>())
+                    > token_workspace
+                {
+                    return Err(ReadError::Limit);
+                }
+                let offset = |token: &str| token.as_ptr() as usize - text.as_ptr() as usize;
+                let range = tokens
+                    .get(index)
+                    .map(|token| (offset(token), token.len()))
+                    .ok_or(ReadError::Unsupported)?;
+                if caching && count <= CACHED_NUMBERS {
+                    // The table costs one more pass over the leaves and
+                    // tokens already visited.
+                    budget.charge(count.saturating_mul(8).saturating_add(64))?;
+                    let mut leaves = std::collections::HashMap::new();
+                    leaves.try_reserve(count).map_err(|_| ReadError::Limit)?;
+                    record(&entity.args, &mut leaves);
+                    let mut cache = source.spellings.borrow_mut();
+                    if let (true, Some(cache)) = (leaves.len() == count, cache.as_mut()) {
+                        if cache.len() == CACHED_RECORDS {
+                            cache.remove(0);
+                        }
+                        cache.push(crate::step_read::brep::Spelled {
+                            text: key,
+                            leaves,
+                            tokens: tokens.iter().map(|t| (offset(t), t.len())).collect(),
+                        });
+                    }
+                }
+                range
+            }
         };
-        // numeric_spellings grows a Vec geometrically. Two capacities of
-        // borrowed str fat pointers fit the explicit helper scratch envelope.
-        if count.saturating_mul(2 * std::mem::size_of::<&str>()) > token_workspace {
-            return Err(ReadError::Limit);
-        }
-        let tokens = part21::numeric_spellings(entity).ok_or(ReadError::Unsupported)?;
-        if tokens.len() != count {
-            return Err(ReadError::Unsupported);
-        }
-        if tokens
-            .capacity()
-            .saturating_mul(std::mem::size_of::<&str>())
-            > token_workspace
-        {
-            return Err(ReadError::Limit);
-        }
-        let token = *tokens.get(index).ok_or(ReadError::Unsupported)?;
-        let Value::Number(cached) = value else {
-            return Err(ReadError::Invalid);
-        };
+        let token = text
+            .get(range.0..range.0 + range.1)
+            .ok_or(ReadError::Unsupported)?;
         budget.charge(token.len().saturating_add(64))?;
         if token.parse::<f64>().ok().map(f64::to_bits) != Some(cached.to_bits()) {
             return Err(ReadError::Unsupported);
@@ -330,6 +382,20 @@ fn spelling<'i>(
     }
     // A numerically identical leaf from another arena is not this source leaf.
     Err(ReadError::Invalid)
+}
+/// The address of every numeric leaf, numbered in traversal order.
+fn record(items: &[Value<'_>], leaves: &mut std::collections::HashMap<usize, usize>) {
+    for value in items {
+        match value {
+            Value::Number(_) => {
+                let index = leaves.len();
+                leaves.insert(std::ptr::from_ref(value) as usize, index);
+            }
+            Value::List(items) => record(items, leaves),
+            Value::Typed(entity) => record(&entity.args, leaves),
+            _ => {}
+        }
+    }
 }
 fn exact_binary(text: &str, value: f64, budget: &mut Budget<'_>) -> Result<bool> {
     budget.charge(text.len().saturating_add(1024))?;
