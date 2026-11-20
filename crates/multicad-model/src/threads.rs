@@ -238,6 +238,17 @@ pub(crate) fn build_rust(
             .ok_or_else(|| fail("External pipe thread has no target predecessor"))?;
         return pipe::cut_external_stock(feature, &thread, target, policy, interrupt);
     }
+    if source.mode == ThreadMode::CutInternal
+        && thread.representation == ThreadRepresentation::Modeled
+        && matches!(
+            source.parameters.family,
+            ThreadFamily::Npt | ThreadFamily::Bspt
+        )
+    {
+        let target = receiving_target(feature, source, solids)?
+            .ok_or_else(|| fail("Internal pipe thread has no target predecessor"))?;
+        return pipe::internal_receiver(feature, &thread, target, policy);
+    }
     validate_rust_family(feature, source.parameters.family)?;
     if thread.representation == ThreadRepresentation::CosmeticEnvelope
         && source.mode == ThreadMode::CutExternal

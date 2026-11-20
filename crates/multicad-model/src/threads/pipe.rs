@@ -44,6 +44,60 @@ pub(super) fn cut_external_stock(
         .map_err(|e| pipe_error(feature, e))
 }
 
+/// Tapered internal pipe threads (NPT, BSPT Rc) cut into a coaxial
+/// cylindrical blank. The receiving wall is checked first, at the entrance
+/// and along the full tapered depth: the cavity reaches the thread's major
+/// radius `major + taper * z` at every station `z` of its length. The exact
+/// receiving body is not yet built, which stays a typed refusal.
+pub(super) fn internal_receiver(
+    feature: EntityId,
+    thread: &ResolvedThread,
+    target: &Solid,
+    policy: GeometryPolicy,
+) -> Result<Solid, ModelError> {
+    let fail = |message: &str| error(Some(feature), message);
+    let (base, axis, radius, height) = target
+        .rust_cylinder_axis()
+        .ok_or_else(|| fail("Rust internal pipe threads require a cylindrical receiving blank"))?;
+    let u = thread.frame.u;
+    let v = thread.frame.v;
+    let normal = [
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+    ];
+    let dot = |a: [f64; 3], b: [f64; 3]| (0..3).map(|i| a[i] * b[i]).sum::<f64>();
+    let tolerance = policy.linear_tolerance_mm;
+    let offset: [f64; 3] = std::array::from_fn(|i| thread.frame.origin[i] - base[i]);
+    let station = dot(offset, axis);
+    let radial: [f64; 3] = std::array::from_fn(|i| offset[i] - axis[i] * station);
+    let parallel = dot(normal, axis);
+    let length = thread.length_mm;
+    if (parallel.abs() - 1.).abs() > 1e-12 || dot(radial, radial).sqrt() > tolerance {
+        return Err(fail(
+            "Rust internal pipe threads require a blank coaxial with the thread",
+        ));
+    }
+    // The thread's axial interval in the blank's own axial coordinate.
+    let end = station + parallel.signum() * length;
+    let [lo, hi] = [station.min(end), station.max(end)];
+    if lo < -tolerance || hi > height + tolerance {
+        return Err(fail(
+            "The tapered internal thread extends beyond its receiving blank",
+        ));
+    }
+    let k = thread.profile.radial_taper;
+    let widest = thread.major_radius_mm + (k * length).max(0.);
+    if radius - widest < thread.minimum_wall_mm - tolerance {
+        return Err(fail(
+            "Internal receiving body has insufficient minimum wall at the tapered thread entrance or along its full depth",
+        ));
+    }
+    Err(fail(
+        "Rust internal tapered pipe threads (NPT, BSPT Rc) have no exact receiving body yet",
+    ))
+}
+
 fn pipe_error(feature: EntityId, cause: multicad_kernel::GeometryError) -> ModelError {
     if cause.kind == multicad_kernel::GeometryErrorKind::Cancelled {
         error(Some(feature), "Model evaluation superseded")
