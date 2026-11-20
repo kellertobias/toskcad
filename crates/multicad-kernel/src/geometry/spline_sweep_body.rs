@@ -28,12 +28,32 @@ pub(crate) struct SplineSweepBody {
     wall_origins: Vec<Vec<Origin>>,
     authored: Option<AuthoredFrames>,
     opaque_caps: Option<[Origin; 2]>,
+    /// Per wall, the exact authored Bézier span the wall lies in. Rim
+    /// references use it, so manufacturing patches never become sketch
+    /// geometry. Empty for imported or unauthored sweeps.
+    wall_sources: Vec<Option<std::rc::Rc<SourceSpan>>>,
+}
+
+/// One exact authored Bézier span in the sweep frame, with its source
+/// weights and its knot interval in the authored parameter.
+pub(super) struct SourceSpan {
+    pub(super) poles: Vec<[f64; 2]>,
+    pub(super) weights: Vec<f64>,
+    pub(super) interval: [f64; 2],
 }
 
 struct AuthoredFrames {
     reverse: bool,
     walls: Vec<Option<ReferenceFrame>>,
     source_error_mm: f64,
+}
+
+/// One exact world Bézier span for a rim reference.
+pub(crate) struct RimSpan {
+    pub(crate) poles: Vec<[f64; 3]>,
+    pub(crate) weights: Vec<f64>,
+    /// The span's knot interval in the authored source parameter.
+    pub(crate) interval: [f64; 2],
 }
 
 impl Solid {
@@ -51,9 +71,10 @@ impl Solid {
     }
 
     /// The exact world Bézier span of a spline sweep rim edge, in authored
-    /// source order with its source weights, when the edge is one source
+    /// source order with its source weights and knot interval: the
+    /// authored span the edge lies in, or the edge itself when it is one
     /// span. References report source parameters, not ring traversal.
-    pub(crate) fn spline_rim_bezier(&self, ordinal: u32) -> Option<(Vec<[f64; 3]>, Vec<f64>)> {
+    pub(crate) fn spline_rim_bezier(&self, ordinal: u32) -> Option<RimSpan> {
         let (body, frame) = self.spline_sweep_body()?;
         body.rim_bezier(frame, ordinal)
     }
@@ -120,6 +141,7 @@ impl SplineSweepBody {
             wall_origins,
             authored: None,
             opaque_caps,
+            wall_sources: Vec::new(),
         })
     }
 
@@ -518,20 +540,31 @@ impl SplineSweepBody {
         Some((edge, height))
     }
 
-    fn rim_bezier(&self, frame: PlaneFrame, ordinal: u32) -> Option<(Vec<[f64; 3]>, Vec<f64>)> {
+    fn rim_bezier(&self, frame: PlaneFrame, ordinal: u32) -> Option<RimSpan> {
         let (edge, height) = self.rim_edge(ordinal)?;
-        let (poles, weights) = match edge {
-            Edge::Rational(curve) => (curve.poles().to_vec(), curve.weights().to_vec()),
-            Edge::Cubic(cubic) if cubic.knots().len() == 2 => (cubic.poles().to_vec(), vec![1.; 4]),
-            Edge::Cubic(_) | Edge::Analytic(_) => return None,
+        let wall = ordinal as usize % self.wall_areas.len();
+        let (poles, weights, interval) = match (self.wall_sources.get(wall), edge) {
+            (Some(Some(source)), _) => (
+                source.poles.clone(),
+                source.weights.clone(),
+                source.interval,
+            ),
+            (_, Edge::Rational(curve)) => {
+                (curve.poles().to_vec(), curve.weights().to_vec(), [0., 1.])
+            }
+            (_, Edge::Cubic(cubic)) if cubic.knots().len() == 2 => {
+                (cubic.poles().to_vec(), vec![1.; 4], [0., 1.])
+            }
+            (_, Edge::Cubic(_) | Edge::Analytic(_)) => return None,
         };
-        Some((
-            poles
+        Some(RimSpan {
+            poles: poles
                 .into_iter()
                 .map(|[x, y]| position(frame, [x, y, height]))
                 .collect(),
             weights,
-        ))
+            interval,
+        })
     }
 
     pub(super) fn sample_rim(

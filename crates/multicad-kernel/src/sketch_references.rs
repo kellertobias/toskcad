@@ -201,9 +201,9 @@ impl Solid {
             .ok_or_else(|| error("Selected Rust reference topology is missing"))?;
         if kind == TopologyKind::Edge
             && element.geometry.is_none()
-            && let Some((poles, weights)) = self.spline_rim_bezier(ordinal)
+            && let Some(span) = self.spline_rim_bezier(ordinal)
         {
-            return spline_reference(&poles, weights, frame, method, key, policy);
+            return spline_reference(span, frame, method, key, policy);
         }
         rust_element_reference(element, frame, method, policy)
     }
@@ -417,9 +417,9 @@ fn conic_reference(
 
 /// An exact source Bézier rim span: the consumer frame maps its poles
 /// affinely and keeps its weights, so the projection is the same basis.
+/// Parameters are mapped into the span's authored knot interval.
 fn spline_reference(
-    poles: &[[f64; 3]],
-    weights: Vec<f64>,
+    span: crate::geometry::RimSpan,
     frame: PlaneFrame,
     method: SketchReferenceMethod,
     key: TopologyKey,
@@ -434,10 +434,16 @@ fn spline_reference(
                 .sum::<f64>()
         })
     };
+    let crate::geometry::RimSpan {
+        poles,
+        weights,
+        interval,
+    } = span;
     let curve = Bezier {
-        poles: poles.iter().copied().map(local).collect(),
+        poles: poles.into_iter().map(local).collect(),
         weights,
     };
+    let authored = |t: f64| interval[0] + t * (interval[1] - interval[0]);
     let outcome = curve
         .query(method, policy.linear_tolerance_mm)
         .map_err(|cause| {
@@ -454,8 +460,8 @@ fn spline_reference(
     let result = |geometry, contact: Option<sketch_reference::Contact>| SketchReferenceResult {
         geometry,
         support: vec![key],
-        source_parameter: contact.map(|c| c.parameter),
-        source_interval: Some([0., 1.]),
+        source_parameter: contact.map(|c| authored(c.parameter)),
+        source_interval: Some(interval),
         tangent: contact.is_some_and(|c| c.crossing.is_none()),
         crossing: contact.and_then(|c| c.crossing),
     };
@@ -476,7 +482,7 @@ fn spline_reference(
             let curve = CurvedEdge2d::BSpline(BSpline2d {
                 degree,
                 poles,
-                knots: vec![0., 1.],
+                knots: interval.to_vec(),
                 multiplicities: vec![degree + 1; 2],
                 weights: weights
                     .windows(2)

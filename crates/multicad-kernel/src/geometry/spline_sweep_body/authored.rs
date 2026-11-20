@@ -38,14 +38,37 @@ fn rational(spline: &crate::BSpline2d) -> bool {
             .as_ref()
             .is_some_and(|weights| weights.windows(2).any(|pair| pair[0] != pair[1]))
 }
+/// Source poles and weights of one Bézier span.
+type RationalSpan = (Vec<[f64; 2]>, Vec<f64>);
 /// The exact rational Bézier spans of a clamped spline whose interior knots
 /// all have multiplicity `degree`; the poles and weights are the source
 /// values, so no basis conversion rounds them.
-/// Source poles and weights of one rational Bézier span.
-type RationalSpan = (Vec<[f64; 2]>, Vec<f64>);
 fn rational_spans(spline: &crate::BSpline2d) -> Option<Vec<RationalSpan>> {
+    bezier_spans(spline, spline.weights.as_ref()?)
+}
+/// The exact Bézier spans of a polynomial spline in Bézier form, with unit
+/// weights: the source poles and degree, without any basis conversion.
+fn polynomial_spans(spline: &crate::BSpline2d) -> Option<Vec<RationalSpan>> {
+    if rational(spline) {
+        return None;
+    }
+    bezier_spans(spline, &vec![1.; spline.poles.len()])
+}
+/// The authored source span of a wall, in the sweep frame.
+fn source_span(
+    spline: &crate::BSpline2d,
+    span: usize,
+    (poles, weights): RationalSpan,
+    reflect: impl Fn([f64; 2]) -> [f64; 2],
+) -> Rc<SourceSpan> {
+    Rc::new(SourceSpan {
+        poles: poles.into_iter().map(reflect).collect(),
+        weights,
+        interval: [spline.knots[span], spline.knots[span + 1]],
+    })
+}
+fn bezier_spans(spline: &crate::BSpline2d, weights: &[f64]) -> Option<Vec<RationalSpan>> {
     let degree = spline.degree as usize;
-    let weights = spline.weights.as_ref()?;
     let last = spline.multiplicities.len().checked_sub(1)?;
     let clamped = last >= 1
         && spline.multiplicities[0] as usize == degree + 1
@@ -98,6 +121,7 @@ struct AuthoredEdge {
     origins: Vec<Origin>,
     anchor: Option<ReferenceFrame>,
     fragment: bool,
+    source: Option<Rc<SourceSpan>>,
 }
 fn aliases(feature: EntityId, origin: &Origin) -> Vec<Origin> {
     vec![
@@ -299,7 +323,13 @@ impl Solid {
                         CurvedEdge2d::BSpline(spline) if rational(spline) => {
                             let spans = rational_spans(spline).expect("admitted Bézier form");
                             let fragment = spans.len() > 1;
-                            for (poles, weights) in spans {
+                            for (index, (poles, weights)) in spans.into_iter().enumerate() {
+                                let source = source_span(
+                                    spline,
+                                    index,
+                                    (poles.clone(), weights.clone()),
+                                    reflect,
+                                );
                                 let curve = Rational::new(
                                     poles.into_iter().map(reflect).collect(),
                                     weights,
@@ -318,16 +348,35 @@ impl Solid {
                                     origins: aliases(feature, origin),
                                     anchor: None,
                                     fragment,
+                                    source: Some(source),
                                 });
                             }
                         }
                         CurvedEdge2d::BSpline(spline) if spline.degree > 1 => {
-                            for patch in crate::spline_edits::regions::polynomial_patches(
+                            let patches = crate::spline_edits::regions::polynomial_patches(
                                 spline,
                                 depth,
                                 policy,
                                 Some(&checkpoint),
-                            )? {
+                            )?;
+                            // Patches halve each source span `depth` times, in
+                            // order. In Bézier form every patch keeps its span.
+                            let sources: Vec<_> = polynomial_spans(spline)
+                                .filter(|spans| {
+                                    spans.len().checked_shl(depth) == Some(patches.len())
+                                })
+                                .map(|spans| {
+                                    spans
+                                        .into_iter()
+                                        .enumerate()
+                                        .map(|(index, span)| {
+                                            source_span(spline, index, span, reflect)
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            let per_span = patches.len() / sources.len().max(1);
+                            for (index, patch) in patches.into_iter().enumerate() {
                                 let cubic = Cubic::new(
                                     patch.poles.into_iter().map(reflect).collect(),
                                     vec![0., 1.],
@@ -344,6 +393,7 @@ impl Solid {
                                     origins: aliases(feature, origin),
                                     anchor: None,
                                     fragment: true,
+                                    source: sources.get(index / per_span).cloned(),
                                 });
                             }
                         }
@@ -356,6 +406,7 @@ impl Solid {
                                 ring_edges.push(AuthoredEdge {
                                     edge: Edge::Analytic(AnalyticEdge::Line { a, b }),
                                     fragment: spline.poles.len() > 2,
+                                    source: None,
                                     origins: aliases(feature, origin),
                                     anchor: Some(ReferenceFrame {
                                         origin_mm: [a[0], a[1], 0.],
@@ -374,6 +425,7 @@ impl Solid {
                                 edge: Edge::Analytic(AnalyticEdge::Line { a, b }),
                                 origins: aliases(feature, origin),
                                 fragment: false,
+                                source: None,
                                 anchor: Some(ReferenceFrame {
                                     origin_mm: [a[0], a[1], 0.],
                                     u: [delta[0] / length, delta[1] / length, 0.],
@@ -396,6 +448,7 @@ impl Solid {
                             origins: aliases(feature, origin),
                             fragment: false,
                             anchor: None,
+                            source: None,
                         }),
                         CurvedEdge2d::Circle { center, radius_mm } => {
                             if ring_index == 0 || rings[ring_index].len() != 1 {
@@ -413,6 +466,7 @@ impl Solid {
                                 origins: aliases(feature, origin),
                                 anchor: None,
                                 fragment: false,
+                                source: None,
                             });
                         }
                     }
@@ -512,6 +566,7 @@ impl Solid {
             )?;
             body.opaque_caps = None;
             body.wall_origins = edges.iter().map(|edge| edge.origins.clone()).collect();
+            body.wall_sources = edges.iter().map(|edge| edge.source.clone()).collect();
             body.authored = Some(AuthoredFrames {
                 reverse: negative,
                 // The local L1 conversion enclosure is tolerance/128.

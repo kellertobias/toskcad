@@ -803,3 +803,52 @@ fn rust_face_sections_refuse_clipped_oblique_cylinders_and_face_projection() {
     };
     near((a[0] - b[0]).abs(), 8.);
 }
+
+#[test]
+fn spline_fragment_rims_reference_their_whole_authored_span_in_source_parameters() {
+    // The sweep keeps finite manufacturing patches, but every rim patch
+    // refers to the one authored span with its own knot domain.
+    let mut authored = arch(None);
+    authored.knots = vec![2., 5.];
+    let s = spline_solid(authored.clone());
+    let snapshot = s.topology_snapshot(EntityId::new(), 0).unwrap();
+    let mut rims = 0;
+    for key in snapshot
+        .elements
+        .iter()
+        .filter(|e| e.key.kind == TopologyKind::Edge)
+        .map(|e| e.key)
+    {
+        let Ok(coplanar) = s.sketch_reference_geometry(
+            BRepSelection::Edge(key.ordinal),
+            xy(0.),
+            SketchReferenceMethod::Coplanar,
+            p(),
+        ) else {
+            continue;
+        };
+        let SketchReferenceGeometry::Curve(CurvedEdge2d::BSpline(curve)) =
+            &coplanar.results[0].geometry
+        else {
+            continue;
+        };
+        rims += 1;
+        assert_eq!(curve.poles, authored.poles);
+        assert_eq!(curve.knots, authored.knots);
+        let hit = query(
+            &s,
+            BRepSelection::Edge(key.ordinal),
+            vertical_y(3.),
+            SketchReferenceMethod::Intersect,
+        );
+        assert_eq!(hit.results.len(), 2);
+        for r in &hit.results {
+            assert_eq!(r.source_interval, Some([2., 5.]));
+            let u = r.source_parameter.unwrap();
+            assert!((2. ..=5.).contains(&u));
+            near(authored.evaluate(u, p()).unwrap().point[1], 3.);
+        }
+    }
+    // The arch is retained as several patches, each naming the whole span.
+    assert!(rims >= 2, "{rims}");
+}
