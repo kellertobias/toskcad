@@ -33,6 +33,24 @@ fn check(
                     )
                 });
         }
+        // Without authored thinning the conjugate flanks touch: no common
+        // interior, with an actual contact pair as the engagement witness.
+        ResultKind::Contact if clearance_mm == 0. => {
+            return witness
+                .map(|w| GearEngagementWitness {
+                    distance_mm: w.distance_mm,
+                    kind: "rust_worm_flank_contact",
+                    faces: None,
+                    points_mm: w.points_mm,
+                })
+                .ok_or_else(|| {
+                    error(
+                        Some(pair),
+                        format!("Worm members touch without a Rust contact witness at tested drive {at:.6} degrees"),
+                    )
+                });
+        }
+        ResultKind::Contact => "touches without the authored thinning",
         ResultKind::CommonInterior => "overlaps with a certified common-interior point",
         ResultKind::Unresolved => "does not have certified positive clearance",
     };
@@ -120,6 +138,6 @@ pub(super) fn validate(
         current_drive_angle_rad: current,
         current_pose_checked: true,
         maximum_overlap_volume_mm3: 0.,
-        scope: "Rust crossed-axis positive-clearance certificates for the current pose and nine sampled phases over one full ZA worm turn, each with an actual flank witness within the authored total thinning. Continuous motion, strength and manufacturing fit are outside this check.",
+        scope: "Rust crossed-axis no-overlap certificates for the current pose and nine sampled phases over one full ZA worm turn: positive clearance with an actual flank witness within the authored total thinning, or, without thinning, proved flank contact with an actual contact pair. Continuous motion, strength and manufacturing fit are outside this check.",
     })
 }
