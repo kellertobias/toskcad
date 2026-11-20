@@ -313,8 +313,12 @@ fn emit_boundary(
     if boundary.faces.is_empty() {
         // A nonzero classification snapped to contact cannot prove that no
         // material remains. Refuse sub-resolution slivers instead of turning
-        // a potentially positive result into a successful empty Boolean.
-        if work.uncertain.get() {
+        // a potentially positive result into a successful empty Boolean,
+        // unless every intersected cell pair is separated or certified to
+        // meet only within a contact slab of declared thickness.
+        if work.uncertain.get()
+            && !(op == Operation::Intersect && separation::contact(operands, tolerance, work)?)
+        {
             return Err(Error::Unresolved);
         }
         return Ok(None);
