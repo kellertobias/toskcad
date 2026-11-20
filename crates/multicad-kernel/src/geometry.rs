@@ -19,6 +19,9 @@ pub(crate) mod bore_treatment;
 mod bored_prism_boolean;
 mod coaxial;
 mod coaxial_counterbore;
+mod compound_intersection;
+mod contained_void_cut;
+mod disk_union;
 pub use bore_treatment::ConicalSeatGeometry;
 pub(crate) mod circular_pocket_body;
 mod clipped_npt_body;
@@ -1605,6 +1608,11 @@ impl Solid {
                     .or_else(|| self.stacked_prism_boolean(other, operation, policy))
                     .or_else(|| self.parallel_extrusion_intersection(other, operation, policy))
                     .or_else(|| self.stacked_cylinder_union(other, operation, policy))
+                    .or_else(|| self.pairwise_warped_boolean(other, operation, policy))
+                    .or_else(|| self.warped_shell_probe_boolean(other, operation, policy))
+                    .or_else(|| self.contained_void_cut(other, operation, policy))
+                    .or_else(|| self.parallel_disk_union(other, operation, policy))
+                    .or_else(|| self.compound_intersection(other, operation, policy))
                     .unwrap_or_else(|| {
                         Err(cross_refusal
                             .unwrap_or_else(|| self.no_exact_boolean(other, operation, error)))
@@ -3221,7 +3229,13 @@ impl Solid {
     pub(crate) fn rust_topology(
         &self,
     ) -> Option<Result<multicad_core::references::TopologySnapshot, GeometryError>> {
-        let feature = match &self.body {
+        let feature = self.rust_feature()?;
+        Some(self.topology_snapshot(feature, 0))
+    }
+
+    /// The source feature a Rust body names its topology after.
+    pub(crate) fn rust_feature(&self) -> Option<EntityId> {
+        Some(match &self.body {
             SolidBody::PolygonPrism(placed) => placed.feature,
             SolidBody::Prism(prism, _) => EntityId::from_uuid_bits(prism.feature()),
             SolidBody::AxialCylinder(cylinder, ..) => EntityId::from_uuid_bits(cylinder.feature()),
@@ -3271,8 +3285,7 @@ impl Solid {
             SolidBody::Orthogonal(body, _) => body.feature,
             SolidBody::OrthogonalSeats(body, _) => body.feature,
             SolidBody::Occt(_) => return None,
-        };
-        Some(self.topology_snapshot(feature, 0))
+        })
     }
     /// Whether the active backend can encode this exact solid in STEP.
     pub fn supports_step_export(&self) -> bool {

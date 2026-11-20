@@ -640,3 +640,50 @@ fn cancellation_and_mesh_budgets_refuse_without_a_partial_result() {
     // The retained body is still exact after every refusal.
     certify(&cut, None);
 }
+
+#[test]
+fn a_cap_plane_through_a_distant_stock_edge_is_still_resolved() {
+    // A blind pocket tilted in XZ: its start-cap plane contains the stock
+    // edge x = 0, z = 6, five millimetres from the disk, and its end cap
+    // dips back into the top face.
+    let pocket = Tool {
+        base_mm: [4., 4., 3.],
+        axes: [[0.8, 0., -0.6], [0., 1., 0.], [0.6, 0., 0.8]],
+        radius_mm: 2.,
+        height_mm: 5.,
+        literal: true,
+    };
+    let cut = body(SIZE, pocket);
+    assert_eq!(cut.euler_characteristic(), 2);
+    let stock = SIZE[0] * SIZE[1] * SIZE[2];
+    let removed = removed_volume(SIZE, pocket);
+    assert!((stock - cut.volume_mm3() - removed).abs() < 4e-5 * removed);
+    // The end cap keeps the circular segment below the top face: the chord
+    // lies 5/3 mm from the cap centre of the radius-2 disk.
+    let segment = 4. * (5f64 / 6.).acos() - 5. / 3. * (11f64 / 9.).sqrt();
+    let floor = cut
+        .faces()
+        .iter()
+        .find(|face| face.support == Support::ToolEnd)
+        .unwrap();
+    assert!(
+        (floor.area_mm2 - segment).abs() < 1e-9,
+        "{}",
+        floor.area_mm2
+    );
+    let start = cut
+        .faces()
+        .iter()
+        .find(|face| face.support == Support::ToolStart)
+        .unwrap();
+    assert!((start.area_mm2 - 4. * PI).abs() < 1e-9);
+    // The same coincidence with the edge crossing the disk stays refused.
+    let crossing = Tool {
+        base_mm: [0.8, 4., 5.4],
+        ..pocket
+    };
+    assert_eq!(
+        subtract(SIZE, crossing, None).err(),
+        Some(Error::Unresolved)
+    );
+}
