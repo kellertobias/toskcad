@@ -72,7 +72,8 @@ pub struct FaceOpening {
     pub end: CircularOpeningEnd,
 }
 
-/// A certified blind rounded-slot cavity aligned with the viewing direction.
+/// A certified rounded-slot cavity aligned with the viewing direction: a
+/// blind pocket with a floor or a through slot to an opposite face.
 #[derive(Clone, Copy, Debug)]
 pub struct StadiumOpening {
     /// Index in the drawing bodies followed by the blocker-only bodies.
@@ -81,7 +82,7 @@ pub struct StadiumOpening {
     pub face: usize,
     pub centers: [Point2; 2],
     pub radius: f64,
-    pub floor_depth: f64,
+    pub end: CircularOpeningEnd,
 }
 
 /// Extra geometry for occlusion or explicit edge publication.
@@ -227,7 +228,7 @@ pub(super) fn apply_openings(
         Ok((
             opening.body,
             opening.face,
-            CircularOpeningEnd::Floor(opening.floor_depth),
+            opening.end,
             ProfileTrim::Stadium(profile),
         ))
     });

@@ -20,9 +20,9 @@ pub(in crate::drawing::section) fn project(
         .iter()
         .any(|(_, solid)| solid.torus_body().is_some());
     if !has_torus
-        && members
-            .iter()
-            .any(|(_, solid)| solid.drawing_warped_shell().is_none())
+        && members.iter().any(|(_, solid)| {
+            solid.drawing_warped_shell().is_none() && !curved::warped::is_curved_sweep(solid)
+        })
     {
         return None;
     }
@@ -77,9 +77,19 @@ pub(in crate::drawing::section) fn project(
                 }
                 continue;
             }
-            let Some((shell, placement)) = solid.drawing_warped_shell() else {
-                planar.push((source, DrawingSolid { solid, hatch }));
-                continue;
+            let built;
+            let (shell, placement) = match solid.drawing_warped_shell() {
+                Some(found) => found,
+                None => match curved::warped::curved_sweep_shell(solid).transpose()? {
+                    Some((shell, placement)) => {
+                        built = shell;
+                        (&built, placement)
+                    }
+                    None => {
+                        planar.push((source, DrawingSolid { solid, hatch }));
+                        continue;
+                    }
+                },
             };
             let frame = Frame::new(placement, options.frame);
             let Some(sides) = window_sides(shell, &frame, windows, near, far) else {

@@ -57,6 +57,29 @@ pub(in crate::drawing) fn elevation(
         .map_err(drawing_error)
 }
 
+/// The exact trimmed shell of a normal sweep whose section has a round
+/// edge. Straight polygonal sweeps keep their planar providers.
+pub(in crate::drawing) fn curved_sweep_shell(
+    solid: &Solid,
+) -> Option<Result<(Shell, PlaneFrame), GeometryError>> {
+    let (body, placement) = solid.normal_sweep_body()?;
+    is_curved_sweep(solid).then(|| {
+        body.drawing_shell(solid.geometry_policy().linear_tolerance_mm)
+            .map(|shell| (shell, placement))
+            .map_err(drawing_error)
+    })
+}
+
+pub(in crate::drawing) fn is_curved_sweep(solid: &Solid) -> bool {
+    solid.normal_sweep_body().is_some_and(|(body, _)| {
+        body.drawing_section()
+            .0
+            .iter()
+            .flatten()
+            .any(|edge| !matches!(edge, multicad_rust_kernel::normal_sweep::Edge::Line { .. }))
+    })
+}
+
 fn drawing_error(cause: Error) -> GeometryError {
     match cause {
         Error::Invalid => planar::projection_error(planar_projection::ProjectionError::Invalid),
