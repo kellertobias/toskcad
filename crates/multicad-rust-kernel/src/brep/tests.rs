@@ -3070,3 +3070,96 @@ fn rational_and_unclamped_closures_are_retained_with_whole_boundary_bounds() {
     assert!(broken.boundary_gap(0).unwrap() > 1e-4);
     assert_eq!(Surface::nurbs(broken, TOLERANCE).periods()[0], None);
 }
+
+/// A cubic-by-linear patch over the square [0, 2] x [0, 1] whose u rows end
+/// in a repeated control point: the parametrization stalls along u = 1.
+fn stalled_patch(collapse_first_row: bool) -> Surface {
+    let points = (0..4)
+        .flat_map(|i| {
+            (0..2).map(move |j| {
+                let x = [0., 1., 2., 2.][i];
+                if collapse_first_row && j == 0 {
+                    [0., 0., 0.]
+                } else {
+                    [x, j as f64, 0.]
+                }
+            })
+        })
+        .collect();
+    let patch = NurbsSurface::new(
+        [3, 1],
+        [4, 2],
+        points,
+        None,
+        [vec![0., 1.], vec![0., 1.]],
+        [vec![4, 4], vec![2, 2]],
+    )
+    .unwrap();
+    Surface::nurbs(patch, TOLERANCE)
+}
+
+#[test]
+fn a_stalled_spline_edge_is_no_pole_and_still_bounds_an_exact_area() {
+    let stalled = stalled_patch(false);
+    let (corner, [su, _]) = stalled.evaluate([1., 0.5]);
+    assert!(distance(corner, [2., 0.5, 0.]) < 1e-12);
+    assert_eq!(norm(su), 0.);
+    // The derivative vanishes, but the row through it spans 2 mm.
+    assert!(!stalled.is_pole([1., 0.5], TOLERANCE));
+    // A row that collapses to one point is a pole.
+    assert!(stalled_patch(true).is_pole([0.5, 0.], TOLERANCE));
+    // Green's integral along the stalled edge u = 1 uses the v rate alone.
+    let corners = [[0., 0., 0.], [2., 0., 0.], [2., 1., 0.], [0., 1., 0.]];
+    let edges: Vec<_> = (0..4)
+        .map(|k| {
+            let [a, b] = [corners[k], corners[(k + 1) % 4]];
+            let line = Curve::Line {
+                origin: a,
+                direction: [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
+            };
+            Edge::new(line, [k, (k + 1) % 4], [a, b], TOLERANCE).unwrap()
+        })
+        .collect();
+    let uv = [[0., 0.], [1., 0.], [1., 1.], [0., 1.]];
+    let domain = Domain::Trimmed {
+        loops: vec![UvLoop {
+            points: (0..4)
+                .map(|k| LoopPoint {
+                    uv: uv[k],
+                    pole: false,
+                    key: Key::Vertex(k),
+                })
+                .collect(),
+            segments: edges
+                .iter()
+                .enumerate()
+                .map(|(k, edge)| {
+                    Some(domain::Segment {
+                        edge: k,
+                        t: edge.range,
+                    })
+                })
+                .collect(),
+            winding: [0, 0],
+        }],
+        pole: None,
+    };
+    let boundary = Boundary {
+        vertices: corners.to_vec(),
+        edges,
+        faces: vec![],
+        shells: vec![],
+    };
+    let face = Face {
+        surface: stalled,
+        same_sense: true,
+        loops: vec![],
+    };
+    for refine in [1, 2] {
+        let [flux, area, ..] =
+            mass::integrate(&boundary, &face, &domain, [0., 0., -1.], refine, TOLERANCE).unwrap();
+        assert!((area - 2.).abs() < 1e-9, "{area}");
+        // The flux moment is a third of (p - anchor).n over the area.
+        assert!((flux - 2. / 3.).abs() < 1e-9, "{flux}");
+    }
+}
