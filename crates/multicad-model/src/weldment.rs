@@ -14,8 +14,8 @@ use multicad_core::{
     sketch::{Frame, Geometry},
 };
 use multicad_kernel::{
-    BooleanOperation, CurvedEdge2d, CurvedProfile, GeometryErrorKind, GeometryPolicy, PlaneFrame,
-    RigidTransform, Solid,
+    BooleanOperation, CopedTube, CopedTubeNames, CurvedEdge2d, CurvedProfile, GeometryErrorKind,
+    GeometryPolicy, PlaneFrame, RigidTransform, Solid,
 };
 use multicad_solver::SketchEvaluationContext;
 use std::collections::BTreeMap;
@@ -431,12 +431,116 @@ fn cut_stock_extent(member: &ResolvedMember, joints: &[Joint]) -> (f64, f64, f64
     (from, to, 2. * size + 100.)
 }
 
+/// The center and radius of a profile loop that is one full circle.
+fn circle(profile: &CurvedProfile, edges: &[CurvedEdge2d]) -> Option<([f64; 3], f64)> {
+    let [CurvedEdge2d::Circle { center, radius_mm }] = edges else {
+        return None;
+    };
+    let f = &profile.frame;
+    let world = std::array::from_fn(|i| f.origin[i] + center[0] * f.u[i] + center[1] * f.v[i]);
+    Some((world, *radius_mm))
+}
+
+/// A round hollow branch with one cope onto a round receiving member and a
+/// square far end: the exact fish-mouth boundary. `None` leaves every other
+/// case to the clipped stock.
+fn rust_round_cope(
+    member: &ResolvedMember,
+    joints: &[Joint],
+    id: EntityId,
+    policy: GeometryPolicy,
+) -> Option<Result<Solid, ModelError>> {
+    let [joint] = joints else {
+        return None;
+    };
+    let EndCut::Cope { grow_mm, .. } = joint.treatment.cut else {
+        return None;
+    };
+    let partner = &joint.partner_member;
+    let from = member.start_offset_mm();
+    let to = from + member.length_mm();
+    let profile = section_profile(member, from, None);
+    let (center, outer) = circle(&profile, &profile.outer)?;
+    let [hole] = profile.holes.as_slice() else {
+        return None;
+    };
+    let (hole_center, inner) = circle(&profile, hole)?;
+    let envelope = section_profile(partner, partner.start_offset_mm(), Some(grow_mm));
+    let (point, radius) = circle(&envelope, &envelope.outer)?;
+    let magnitude = center
+        .into_iter()
+        .chain(point)
+        .map(f64::abs)
+        .fold(outer.max(radius), f64::max);
+    let rounding = 64. * f64::EPSILON * magnitude;
+    if distance(center, hole_center) > rounding {
+        return None;
+    }
+    // Where the branch axis meets the receiving axis.
+    let (a, b) = (member.frame.axis, partner.frame.axis);
+    let w = sub(point, center);
+    let (ab, aw, bw) = (dot(a, b), dot(a, w), dot(b, w));
+    let denominator = 1. - ab * ab;
+    if denominator <= 1e-6 {
+        return None;
+    }
+    let s = (aw - ab * bw) / denominator;
+    let u = (ab * aw - bw) / denominator;
+    let on_branch = add(center, scale(a, s));
+    if distance(on_branch, add(point, scale(b, u))) > rounding {
+        return None;
+    }
+    // The finite envelope must span all the material the cope removes:
+    // between the plane through the receiving axis and the saddle, that
+    // material projects onto the receiving axis within
+    // (R + |cos| Rc) / sin of the axes' meeting point.
+    let sin = denominator.sqrt();
+    let reach = (outer + ab.abs() * radius) / sin + policy.linear_tolerance_mm;
+    let along = partner.axial(on_branch);
+    let span = partner.start_offset_mm();
+    if along - reach < span || along + reach > span + partner.length_mm() {
+        return None;
+    }
+    let (axis, length) = match joint.treatment.end {
+        MemberEnd::Start => (a, to - from - s),
+        MemberEnd::End => (scale(a, -1.), s - (to - from)),
+    };
+    let tube = CopedTube {
+        origin_mm: on_branch,
+        axis,
+        outer_radius_mm: outer,
+        inner_radius_mm: inner,
+        length_mm: length,
+        envelope_axis: b,
+        envelope_radius_mm: radius,
+    };
+    let roles = origins(id, member, &profile, "member");
+    let [outer_role, inner_role] = [&roles[0], &roles[1]];
+    let role = |role: String| Origin { source: id, role };
+    let names = CopedTubeNames {
+        outer: outer_role.clone(),
+        inner: inner_role.clone(),
+        end: role(match joint.treatment.end {
+            MemberEnd::Start => "member.end".into(),
+            MemberEnd::End => "member.start".into(),
+        }),
+        saddle: role(format!("connection.{}.cope", joint.connection)),
+    };
+    Some(
+        Solid::rust_coped_round_tube(&tube, &names, id, policy)
+            .map_err(|cause| error(Some(joint.connection), cause)),
+    )
+}
+
 fn rust_clipped_member(
     member: &ResolvedMember,
     joints: &[Joint],
     id: EntityId,
     policy: GeometryPolicy,
 ) -> Result<Solid, ModelError> {
+    if let Some(coped) = rust_round_cope(member, joints, id, policy) {
+        return coped;
+    }
     let (from, to, size) = cut_stock_extent(member, joints);
     let profile = section_profile(member, from, None);
     let straight = |profile: &CurvedProfile| {
@@ -843,4 +947,21 @@ impl Model {
         }
         Ok(out)
     }
+}
+
+fn add(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    std::array::from_fn(|i| a[i] + b[i])
+}
+fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    std::array::from_fn(|i| a[i] - b[i])
+}
+fn scale(a: [f64; 3], s: f64) -> [f64; 3] {
+    a.map(|x| x * s)
+}
+fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+    (0..3).map(|i| a[i] * b[i]).sum()
+}
+fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
+    let d = sub(a, b);
+    dot(d, d).sqrt()
 }
