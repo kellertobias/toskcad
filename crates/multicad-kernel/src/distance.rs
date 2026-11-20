@@ -7,6 +7,7 @@ mod planar;
 mod rings;
 mod rounded;
 mod sphere;
+mod worm_wheel;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BRepSelection {
     Whole,
@@ -72,6 +73,9 @@ pub(crate) fn measure(
             return result;
         }
         if let Some(result) = circular::measure(a, selection_a, b, selection_b, tolerance) {
+            return result;
+        }
+        if let Some(result) = worm_wheel::measure(a, selection_a, b, selection_b, tolerance) {
             return result;
         }
         if selection_a == BRepSelection::Whole
