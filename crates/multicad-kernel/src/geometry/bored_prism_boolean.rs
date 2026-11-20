@@ -27,9 +27,9 @@ fn bore_bounds(frame: PlaneFrame, circle: Circle, height: f64) -> Bounds {
         max: [f64::NEG_INFINITY; 3],
     };
     for corner in corners {
-        for i in 0..3 {
-            bounds.min[i] = bounds.min[i].min(corner[i]);
-            bounds.max[i] = bounds.max[i].max(corner[i]);
+        for ((lo, hi), value) in bounds.min.iter_mut().zip(&mut bounds.max).zip(corner) {
+            *lo = lo.min(value);
+            *hi = hi.max(value);
         }
     }
     bounds

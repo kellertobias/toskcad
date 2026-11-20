@@ -147,13 +147,16 @@ impl Solid {
     }
 }
 
+/// The placement frame, signed height, feature and section rings (each edge
+/// with its authored origin) of a plain normal sweep.
+pub(in crate::geometry) type SweepSection =
+    (PlaneFrame, f64, EntityId, Vec<Vec<(CurvedEdge2d, Origin)>>);
+
 impl Solid {
     /// The section rings, with each edge's authored origin, of a plain
     /// normal sweep: the outer ring first and then the holes, in the sweep's
     /// normalized orientation. Also the frame, signed height and feature.
-    pub(in crate::geometry) fn normal_sweep_section(
-        &self,
-    ) -> Option<(PlaneFrame, f64, EntityId, Vec<Vec<(CurvedEdge2d, Origin)>>)> {
+    pub(in crate::geometry) fn normal_sweep_section(&self) -> Option<SweepSection> {
         let (body, frame) = self.normal_sweep_body()?;
         if !body.plain() {
             return None;

@@ -11,9 +11,11 @@ use super::*;
 use multicad_core::references::AnalyticGeometry;
 
 type Point = [f64; 3];
+/// A face plane as a point on it and its unit normal.
+type Plane = (Point, Point);
 
 /// Vertices and face planes of a straight-edged planar body.
-fn planar_hull(solid: &Solid) -> Option<(Vec<Point>, Vec<(Point, Point)>)> {
+fn planar_hull(solid: &Solid) -> Option<(Vec<Point>, Vec<Plane>)> {
     let topology = solid.rust_topology()?.ok()?;
     let mut vertices = Vec::new();
     for element in &topology.elements {
@@ -37,7 +39,7 @@ fn rounding(points: &[Point]) -> f64 {
 }
 
 /// Whether `plane` puts `a` on one closed side and `b` on the other.
-fn splits((origin, normal): (Point, Point), a: &[Point], b: &[Point], margin: f64) -> bool {
+fn splits((origin, normal): Plane, a: &[Point], b: &[Point], margin: f64) -> bool {
     let side = |p: &Point| dot(std::array::from_fn(|i| p[i] - origin[i]), normal);
     let range = |points: &[Point]| {
         points

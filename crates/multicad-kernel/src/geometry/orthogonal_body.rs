@@ -223,6 +223,9 @@ fn operation_error(cause: BooleanError) -> GeometryError {
     }
 }
 
+/// World cells and the world axis segments of rod-holding through bores.
+pub(super) type CellsNear = (Vec<Box3>, Vec<[Point; 2]>);
+
 impl Solid {
     pub(crate) fn has_circular_drawing_stock(&self) -> bool {
         self.orthogonal_body().is_some_and(|(body, _)| {
@@ -579,7 +582,7 @@ impl Solid {
         radius: f64,
         height: f64,
         tolerance: f64,
-    ) -> Result<Option<(Vec<Box3>, Vec<[Point; 2]>)>, GeometryError> {
+    ) -> Result<Option<CellsNear>, GeometryError> {
         let Some((body, placement)) = self.orthogonal_body() else {
             return Ok(self.orthogonal_cells()?.map(|cells| (cells, vec![])));
         };
