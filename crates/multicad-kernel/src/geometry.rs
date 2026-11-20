@@ -56,6 +56,8 @@ mod source_face_measure;
 use hanger_body::HangerBody;
 pub use hanger_body::{HangerData, HealedHangerStepVerification, HealedSupportStepVerification};
 mod cross_bore_body;
+mod gear_pair_boolean;
+mod gear_probe;
 mod helical_body;
 mod helical_tube_body;
 mod herringbone_body;
@@ -1533,6 +1535,12 @@ impl Solid {
                 return result;
             }
             if let Some(result) = self.contained_rounded_thread_boolean(other, operation, policy) {
+                return result;
+            }
+            if let Some(result) = self.contained_gear_boolean(other, operation, policy) {
+                return result;
+            }
+            if let Some(result) = self.gear_pair_boolean(other, operation, policy) {
                 return result;
             }
             return match self.orthogonal_boolean(other, operation, policy) {

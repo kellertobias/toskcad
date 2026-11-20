@@ -236,3 +236,42 @@ fn wheel_rejects_out_of_envelope_inputs() {
     // A minimum feature larger than the tip land rejects the profile.
     assert_eq!(Wheel::new(base, 2., 1e7), Err(Error::InvalidProfile));
 }
+
+#[test]
+fn worm_boxes_use_the_thread_interval_proof_and_the_exact_bore() {
+    use crate::helical_thread::BoxClassification::*;
+    let spec = |bore| WormSpec {
+        axial_module_mm: 1.,
+        threaded_length_mm: 16.,
+        bore_radius_mm: bore,
+        axial_thinning_mm: 0.05,
+    };
+    let solid = Worm::new(spec(0.), 1e-3).unwrap();
+    let cube = |[x, y, z]: [f64; 3], h: f64| [[x - h, x + h], [y - h, y + h], [z - h, z + h]];
+    // The root core and the axis are material without a bore.
+    assert_eq!(solid.classify_box(cube([0., 0., 0.], 0.01)), Inside);
+    assert_eq!(solid.classify_box(cube([2., 1., 3.], 0.01)), Inside);
+    // Beyond the major radius, past either end, or in the bore: no material.
+    assert_eq!(solid.classify_box(cube([6.5, 0., 0.], 0.01)), Outside);
+    assert_eq!(solid.classify_box(cube([1., 0., 8.5], 0.01)), Outside);
+    let bored = Worm::new(spec(1.), 1e-3).unwrap();
+    assert_eq!(bored.classify_box(cube([0., 0., 0.], 0.01)), Outside);
+    assert_eq!(bored.classify_box(cube([2., 1., 3.], 0.01)), Inside);
+    // Boxes on the bore wall, an end cap or across a flank stay open.
+    assert_eq!(
+        bored.classify_box(cube([1., 0., 0.], 0.01)),
+        UnresolvedBoundary
+    );
+    assert_eq!(
+        solid.classify_box(cube([1., 0., 8.], 0.01)),
+        UnresolvedBoundary
+    );
+    assert_eq!(
+        solid.classify_box(cube([5., 0., 0.], 2.)),
+        UnresolvedBoundary
+    );
+    assert_eq!(
+        solid.classify_box([[f64::NAN, 0.], [0., 0.], [0., 0.]]),
+        UnresolvedBoundary
+    );
+}

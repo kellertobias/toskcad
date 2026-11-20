@@ -3,8 +3,9 @@
 use super::*;
 use crate::{
     display::{DisplayMesh, MeshError, Tessellation, triangulate_region},
-    helical_thread::{Spec, Thread},
+    helical_thread::{BoxClassification, Spec, Thread},
     helical_thread_mesh,
+    tapered_thread::interval::I,
 };
 use spade::Point2;
 use std::f64::consts::{PI, TAU};
@@ -236,6 +237,42 @@ impl Worm {
             margin = margin.min(radius - bore);
         }
         margin
+    }
+
+    /// Classify every point of a closed local coordinate box with the
+    /// thread's own interval proof. The rotated box is enclosed by interval
+    /// rotation into the thread frame; the bore is an exact circle.
+    pub fn classify_box(&self, [x, y, z]: [[f64; 2]; 3]) -> BoxClassification {
+        use BoxClassification::*;
+        let [x, y, z] = [x, y, z].map(|[lo, hi]| I::new(lo, hi));
+        if ![x, y, z].into_iter().all(I::valid) {
+            return UnresolvedBoundary;
+        }
+        let (sin, cos) = (-self.phase).sin_cos();
+        let (s, c) = (I::point(sin), I::point(cos));
+        let tx = c * x - s * y;
+        let ty = s * x + c * y;
+        let tz = z + I::point(self.length_mm() / 2.);
+        let thread = self
+            .thread
+            .classify_box([tx, ty, tz].map(|i| [i.lo, i.hi]))
+            .unwrap_or(UnresolvedBoundary);
+        let Some(bore) = self.bore_radius_mm() else {
+            return thread;
+        };
+        let rho = (x.square() + y.square()).sqrt();
+        let bore = I::point(bore);
+        if !rho.valid() {
+            UnresolvedBoundary
+        } else if rho.hi < bore.lo {
+            Outside
+        } else if thread == Inside && rho.lo > bore.hi {
+            Inside
+        } else if thread == Outside {
+            Outside
+        } else {
+            UnresolvedBoundary
+        }
     }
 
     pub fn classify(&self, local: Point, tolerance_mm: f64) -> Containment {
