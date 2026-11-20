@@ -98,17 +98,7 @@ pub fn hatch_with_budget(
                 .iter()
                 .map(|edge| edge.map(|point| axes.map(|axis| dot(sub(point, center), axis))))
                 .collect::<Vec<_>>();
-            let mut clipper = Clipper {
-                boundary: &local,
-                center,
-                axes,
-                tolerance: options.tolerance_mm,
-                stroke_limit: options.stroke_limit,
-                crossings: Vec::new(),
-                spans: Vec::new(),
-                output: &mut output,
-                budget,
-            };
+            let mut clipper = Clipper::new(&local, center, axes, options, &mut output, budget);
             pattern_lines(&mut clipper, pattern, options)?;
         }
     }
@@ -342,19 +332,155 @@ impl Budget {
     }
 }
 
+/// Boundary edges binned by their range along one local axis, so a stroke
+/// at a constant coordinate on that axis tests only the edges that can
+/// reach it instead of the whole boundary.
+struct AxisIndex {
+    origin: f64,
+    width: f64,
+    bins: Vec<Vec<u32>>,
+    /// Edges spanning more than `SPREAD` bins, tested by every query.
+    long: Vec<u32>,
+}
+
+impl AxisIndex {
+    const BINS: usize = 1 << 16;
+    const SPREAD: usize = 8;
+
+    fn new(
+        boundary: &[Segment],
+        axis: usize,
+        spacing: f64,
+        margin: f64,
+        budget: &mut Budget,
+    ) -> Result<Self, HatchError> {
+        let (lo, hi) = boundary
+            .iter()
+            .flatten()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+                (lo.min(p[axis]), hi.max(p[axis]))
+            });
+        let count = ((hi - lo) / spacing).ceil().clamp(1., Self::BINS as f64) as usize;
+        let width = ((hi - lo) / count as f64).max(f64::MIN_POSITIVE);
+        let mut index = Self {
+            origin: lo,
+            width,
+            bins: vec![Vec::new(); count],
+            long: Vec::new(),
+        };
+        let mut inserted = 0;
+        for (i, edge) in boundary.iter().enumerate() {
+            let [a, b] = edge.map(|p| p[axis]);
+            let [first, last] = [a.min(b) - margin, a.max(b) + margin].map(|x| index.bin(x));
+            let id = u32::try_from(i).map_err(|_| HatchError::Limit)?;
+            if last - first >= Self::SPREAD {
+                index.long.push(id);
+                inserted += 1;
+            } else {
+                for bin in &mut index.bins[first..=last] {
+                    bin.push(id);
+                }
+                inserted += last - first + 1;
+            }
+        }
+        budget.charge(boundary.len() + inserted)?;
+        Ok(index)
+    }
+
+    fn bin(&self, coordinate: f64) -> usize {
+        let bin = ((coordinate - self.origin) / self.width).floor();
+        if bin.is_nan() || bin <= 0. {
+            0
+        } else {
+            (bin as usize).min(self.bins.len() - 1)
+        }
+    }
+
+    /// Every edge whose range, widened by the build margin, contains
+    /// `coordinate`, possibly with others.
+    fn candidates(&self, coordinate: f64) -> impl Iterator<Item = usize> + '_ {
+        self.bins[self.bin(coordinate)]
+            .iter()
+            .chain(&self.long)
+            .map(|&id| id as usize)
+    }
+
+    fn len(&self, coordinate: f64) -> usize {
+        self.bins[self.bin(coordinate)].len() + self.long.len()
+    }
+}
+
 struct Clipper<'a> {
     boundary: &'a [Segment],
     center: Point,
     axes: [Point; 2],
     tolerance: f64,
+    spacing: f64,
     stroke_limit: usize,
     crossings: Vec<f64>,
     spans: Vec<[f64; 2]>,
     output: &'a mut Vec<Stroke>,
     budget: &'a mut Budget,
+    /// Edge indices along local x and y, built on first use. With
+    /// `indexed` false every stroke tests the whole boundary.
+    index: [Option<AxisIndex>; 2],
+    indexed: bool,
 }
 
-impl Clipper<'_> {
+impl<'a> Clipper<'a> {
+    fn new(
+        boundary: &'a [Segment],
+        center: Point,
+        axes: [Point; 2],
+        options: Options,
+        output: &'a mut Vec<Stroke>,
+        budget: &'a mut Budget,
+    ) -> Self {
+        Self {
+            boundary,
+            center,
+            axes,
+            tolerance: options.tolerance_mm,
+            spacing: options.spacing_mm,
+            stroke_limit: options.stroke_limit,
+            crossings: Vec::new(),
+            spans: Vec::new(),
+            output,
+            budget,
+            index: [None, None],
+            indexed: true,
+        }
+    }
+
+    /// The boundary edges that can meet the supporting line of `[a, b]`:
+    /// all of them unless the stroke is parallel to a local axis.
+    ///
+    /// An edge contributes a crossing or an overlap only when its offsets
+    /// from the line, snapped to zero within the tolerance, differ in sign
+    /// or are both zero, so only edges whose range along the line normal
+    /// meets [-tolerance, tolerance] matter. The index widens each range by
+    /// twice the tolerance. That covers the rounding of the offsets: the
+    /// boundary is finite within 1e8, so one subtraction errs by under
+    /// 1e-7, the smallest admitted tolerance.
+    fn candidates(&mut self, [a, b]: Segment) -> Result<Option<(usize, f64)>, HatchError> {
+        let axis = match () {
+            () if !self.indexed => return Ok(None),
+            () if a[1] == b[1] => 1,
+            () if a[0] == b[0] => 0,
+            () => return Ok(None),
+        };
+        if self.index[axis].is_none() {
+            self.index[axis] = Some(AxisIndex::new(
+                self.boundary,
+                axis,
+                self.spacing,
+                2. * self.tolerance,
+                self.budget,
+            )?);
+        }
+        Ok(Some((axis, a[axis])))
+    }
+
     fn line(&mut self, [a, b]: Segment) -> Result<(), HatchError> {
         self.budget.candidates = self
             .budget
@@ -366,7 +492,12 @@ impl Clipper<'_> {
         if length <= self.tolerance {
             return Ok(());
         }
-        self.budget.charge(self.boundary.len())?;
+        let query = self.candidates([a, b])?;
+        let index = query.and_then(|(axis, at)| Some((self.index[axis].as_ref()?, at)));
+        self.budget.charge(match index {
+            Some((index, at)) => index.len(at),
+            None => self.boundary.len(),
+        })?;
         let along = delta.map(|x| x / length);
         let normal = [-along[1], along[0]];
         let coords = |point| {
@@ -383,7 +514,12 @@ impl Clipper<'_> {
         };
         self.crossings.clear();
         self.spans.clear();
-        for edge in self.boundary {
+        let boundary = self.boundary;
+        let edges: Box<dyn Iterator<Item = &Segment>> = match index {
+            Some((index, at)) => Box::new(index.candidates(at).map(|i| &boundary[i])),
+            None => Box::new(boundary.iter()),
+        };
+        for edge in edges {
             let [[x0, y0], [x1, y1]] = edge.map(coords);
             if (y0 > 0.) != (y1 > 0.) {
                 let t = -y0 / (y1 - y0);

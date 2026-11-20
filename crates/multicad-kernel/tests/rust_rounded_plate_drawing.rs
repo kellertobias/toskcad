@@ -3,10 +3,11 @@
 use multicad_core::{
     document::EntityId,
     drawings::{VectorCurve, VectorRole},
+    materials::HatchPattern,
     references::Origin,
 };
 use multicad_kernel::{
-    CurvedEdge2d, CurvedProfile, DrawingProjection, DrawingSolid, GeometryErrorKind,
+    CurvedEdge2d, CurvedProfile, DrawingHatch, DrawingProjection, DrawingSolid, GeometryErrorKind,
     GeometryPolicy, PlaneFrame, ProjectedVector, Solid, project_drawing, rust_kernel::Rational,
 };
 use std::f64::consts::FRAC_1_SQRT_2;
@@ -426,4 +427,53 @@ fn bracket_sections_cut_the_exact_sweep_shell() {
     // refusal rather than a guessed drawing.
     let error = section(-30., Some(20.)).unwrap_err();
     assert_eq!(error.kind, GeometryErrorKind::Unsupported);
+}
+
+#[test]
+fn a_finely_hatched_plate_section_stays_within_the_hatch_budget() {
+    // The hatch boundary samples the small holes and corners at a quarter of
+    // the minimum feature size, about 23000 segments. Each of the 3677
+    // hatch lines tests only the boundary edges near it; a full scan per
+    // line overran the shared hatch budget.
+    let board = plate(0.);
+    let vectors = project_drawing(
+        &[DrawingSolid {
+            solid: &board,
+            hatch: Some(DrawingHatch {
+                angle_rad: std::f64::consts::FRAC_PI_4,
+                spacing_mm: 0.05,
+                line_width_mm: 0.025,
+                pattern: HatchPattern::Lines,
+            }),
+        }],
+        DrawingProjection {
+            section_offset_mm: Some(0.8),
+            section_only: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let hatch: Vec<_> = vectors
+        .iter()
+        .filter(|v| v.role == VectorRole::Hatch)
+        .collect();
+    // 45 degree lines 0.05 mm apart cross a 160 x 100 mm plate about
+    // (160 + 100) / sqrt(2) / 0.05 = 3677 times; holes split a few more.
+    assert!(hatch.len() > 3_600, "{}", hatch.len());
+    // Holes are sampled by tangent segments, so no stroke enters a hole.
+    for vector in hatch {
+        let VectorCurve::Line { a, b } = vector.curve else {
+            panic!("hatch {:?}", vector.curve);
+        };
+        for t in [0., 0.25, 0.5, 0.75, 1.] {
+            let point: [f64; 2] = std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t);
+            for center in HOLES {
+                let distance = (point[0] - center[0]).hypot(point[1] - center[1]);
+                assert!(
+                    distance > 1.6 - TOL,
+                    "{point:?} inside the hole at {center:?}"
+                );
+            }
+        }
+    }
 }
