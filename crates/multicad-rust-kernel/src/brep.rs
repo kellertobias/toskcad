@@ -6,6 +6,7 @@
 //! evaluators; tessellation, sections and bounds read the same boundary.
 
 pub mod affine;
+mod containment;
 pub mod curve;
 mod domain;
 mod extent;
@@ -19,6 +20,7 @@ pub mod surface;
 pub mod vertex;
 
 pub use affine::Affine;
+pub use containment::BoxSide;
 pub use curve::Curve;
 pub use nurbs::{NurbsCurve, NurbsSurface};
 pub use solid::{Boundary, Edge, Face, FaceProperties, Loop, Shell, Solid};

@@ -23,6 +23,8 @@ pub(crate) struct ImportedBrepBody {
     pub(super) solid: brep::Solid,
     pub(super) feature: EntityId,
     names: Names,
+    /// Parity tessellations of this boundary, finest last.
+    parity: std::cell::RefCell<Vec<(f64, Rc<brep::mesh::Mesh>)>>,
 }
 
 /// How a retained boundary names its topology.
@@ -290,6 +292,7 @@ impl Solid {
                 solid,
                 feature,
                 names,
+                parity: Default::default(),
             })),
             policy,
             provenance: vec![],
@@ -409,7 +412,69 @@ impl ImportedBrepBody {
                 Names::Imported(roles) => Names::Imported(Rc::clone(roles)),
                 Names::Authored(naming) => Names::Authored(Rc::new(naming.moved(transform))),
             },
+            parity: Default::default(),
         })
+    }
+
+    /// Classify a whole world box against this boundary: exact clearance
+    /// from every face support, then tessellation parity at a deflection
+    /// below that clearance.
+    /// `deviation_mm` widens the margin by how far this boundary may lie
+    /// from the exact source it stands for.
+    pub(super) fn classify_box(
+        &self,
+        bounds: [[f64; 3]; 2],
+        deviation_mm: f64,
+    ) -> Result<brep::BoxSide, brep::Error> {
+        let margin = self.solid.tolerance() + deviation_mm;
+        let [low, high] = self.solid.bounds_mm();
+        let [lo, hi] = bounds;
+        if (0..3).any(|i| hi[i] < low[i] - margin || lo[i] > high[i] + margin) {
+            return Ok(brep::BoxSide::Outside);
+        }
+        let Some(clearance) = self.solid.box_clearance(bounds, margin, None)? else {
+            return Ok(brep::BoxSide::Unresolved);
+        };
+        // The coarsest cached or new tessellation whose deflection is a
+        // quarter of the clearance or less.
+        let diagonal = (0..3).map(|i| high[i] - low[i]).fold(0., f64::hypot);
+        let floor = (diagonal * 1e-6).max(10. * margin);
+        let wanted = clearance / 4.;
+        if wanted < floor {
+            return Ok(brep::BoxSide::Unresolved);
+        }
+        let cached = self
+            .parity
+            .borrow()
+            .iter()
+            .find(|(deflection, _)| *deflection <= wanted)
+            .cloned();
+        let (deflection, mesh) = match cached {
+            Some(found) => found,
+            None => {
+                // Halve from a hundredth of the diagonal so that probes of
+                // similar clearance share one tessellation.
+                let mut deflection = diagonal * 1e-2;
+                while deflection > wanted {
+                    deflection *= 0.5;
+                }
+                let mesh = brep::mesh::tessellate(
+                    &self.solid,
+                    brep::mesh::Options {
+                        deflection_mm: deflection,
+                        angle_rad: 0.5,
+                        triangle_limit: 4_000_000,
+                    },
+                    None,
+                )?;
+                let entry = (deflection, Rc::new(mesh));
+                let mut cache = self.parity.borrow_mut();
+                cache.push(entry.clone());
+                cache.sort_by(|a, b| b.0.total_cmp(&a.0));
+                entry
+            }
+        };
+        Ok(self.solid.box_parity(bounds, clearance, &mesh, deflection))
     }
 
     /// Authored face names, when this kernel constructed the boundary.
@@ -655,6 +720,44 @@ impl ImportedBrepBody {
             revision,
             elements,
         }
+    }
+}
+
+impl Solid {
+    /// A finite rectangular or polygon prism wholly inside or wholly outside
+    /// a retained imported boundary reuses one unchanged operand.
+    pub(in crate::geometry) fn contained_imported_boolean(
+        &self,
+        other: &Self,
+        operation: BooleanOperation,
+        policy: GeometryPolicy,
+    ) -> Option<Result<Option<Self>, GeometryError>> {
+        use super::helical_body::contained_boolean::{probe_bounds, whole_operand_result};
+        use multicad_rust_kernel::helical_thread::BoxClassification;
+        if policy.boolean_fuzzy_mm != 0. || self.policy != policy || other.policy != policy {
+            return None;
+        }
+        let (probe, source_is_left, body) = match (&self.body, &other.body) {
+            (SolidBody::ImportedBrep(body), _) => (other, true, body),
+            (_, SolidBody::ImportedBrep(body)) => (self, false, body),
+            _ => return None,
+        };
+        let world = probe_bounds(probe)?;
+        let bounds = [world.map(|b| b.lo), world.map(|b| b.hi)];
+        let relation = match body.classify_box(bounds, 0.) {
+            Ok(brep::BoxSide::Inside) => BoxClassification::Inside,
+            Ok(brep::BoxSide::Outside) => BoxClassification::Outside,
+            Ok(brep::BoxSide::Unresolved) => return None,
+            Err(brep::Error::Limit) => {
+                return Some(Err(error(
+                    "Boolean",
+                    GeometryErrorKind::Limit,
+                    "Rust imported-boundary containment exceeded its budget",
+                )));
+            }
+            Err(_) => return None,
+        };
+        whole_operand_result(self, other, source_is_left, relation, operation)
     }
 }
 

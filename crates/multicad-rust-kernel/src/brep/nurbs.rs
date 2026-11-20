@@ -368,3 +368,115 @@ impl NurbsSurface {
         }
     }
 }
+
+/// One homogeneous Bézier patch of a surface: `rows` controls along u by
+/// `columns` along v, row-major.
+#[derive(Clone, Debug)]
+pub(crate) struct Patch {
+    pub rows: usize,
+    pub columns: usize,
+    pub control: Vec<[f64; 4]>,
+}
+
+fn lerp(a: Homogeneous, b: Homogeneous, alpha: f64) -> Homogeneous {
+    std::array::from_fn(|i| a[i] + (b[i] - a[i]) * alpha)
+}
+
+/// Boehm insertion of one knot `t` into a clamped sequence.
+fn insert(knots: &mut Vec<f64>, control: &mut Vec<Homogeneous>, degree: usize, t: f64) {
+    let k = knots
+        .iter()
+        .rposition(|&x| x <= t)
+        .expect("t lies in the clamped range");
+    let mut next = Vec::with_capacity(control.len() + 1);
+    for i in 0..=control.len() {
+        if i + degree <= k {
+            next.push(control[i]);
+        } else if i > k {
+            next.push(control[i - 1]);
+        } else {
+            let alpha = (t - knots[i]) / (knots[i + degree] - knots[i]);
+            next.push(lerp(control[i - 1], control[i], alpha));
+        }
+    }
+    knots.insert(k + 1, t);
+    *control = next;
+}
+
+/// The Bézier segments of a clamped B-spline sequence: every interior knot
+/// is raised to multiplicity `degree`, which leaves the curve unchanged.
+/// `None` for unclamped ends.
+pub(crate) fn bezier_segments(
+    knots: &[f64],
+    degree: usize,
+    control: &[Homogeneous],
+) -> Option<Vec<Vec<Homogeneous>>> {
+    let n = control.len();
+    if degree == 0 || knots.len() != n + degree + 1 {
+        return None;
+    }
+    let (a, b) = (knots[degree], knots[n]);
+    if knots[..=degree].iter().any(|&k| k != a) || knots[n..].iter().any(|&k| k != b) {
+        return None;
+    }
+    let mut knots = knots.to_vec();
+    let mut control = control.to_vec();
+    let mut i = degree + 1;
+    while i + degree + 1 < knots.len() {
+        let t = knots[i];
+        let multiplicity = knots.iter().filter(|&&k| k == t).count();
+        for _ in multiplicity..degree {
+            insert(&mut knots, &mut control, degree, t);
+        }
+        while i < knots.len() && knots[i] == t {
+            i += 1;
+        }
+    }
+    let segments = (control.len() - 1) / degree;
+    Some(
+        (0..segments)
+            .map(|s| control[s * degree..=s * degree + degree].to_vec())
+            .collect(),
+    )
+}
+
+impl NurbsCurve {
+    /// Homogeneous Bézier segments of the whole curve.
+    pub(crate) fn bezier(&self) -> Option<Vec<Vec<Homogeneous>>> {
+        bezier_segments(&self.knots, self.degree, &self.control)
+    }
+}
+
+impl NurbsSurface {
+    /// Homogeneous Bézier patches of the whole surface.
+    pub(crate) fn bezier(&self) -> Option<Vec<Patch>> {
+        let [p, q] = self.degrees;
+        let [nu, nv] = self.counts;
+        // Along u for every column of the net.
+        let columns: Vec<Vec<Vec<Homogeneous>>> = (0..nv)
+            .map(|j| {
+                let column: Vec<_> = (0..nu).map(|i| self.control[i * nv + j]).collect();
+                bezier_segments(&self.knots[0], p, &column)
+            })
+            .collect::<Option<_>>()?;
+        let strips = columns.first()?.len();
+        let mut patches = Vec::new();
+        for s in 0..strips {
+            // Each of the p + 1 rows of this strip, along v.
+            let rows: Vec<Vec<Vec<Homogeneous>>> = (0..=p)
+                .map(|r| {
+                    let row: Vec<_> = columns.iter().map(|column| column[s][r]).collect();
+                    bezier_segments(&self.knots[1], q, &row)
+                })
+                .collect::<Option<_>>()?;
+            for t in 0..rows[0].len() {
+                patches.push(Patch {
+                    rows: p + 1,
+                    columns: q + 1,
+                    control: rows.iter().flat_map(|row| row[t].clone()).collect(),
+                });
+            }
+        }
+        Some(patches)
+    }
+}

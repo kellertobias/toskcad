@@ -1596,6 +1596,9 @@ impl Solid {
             if let Some(result) = self.gear_pair_boolean(other, operation, policy) {
                 return result;
             }
+            if let Some(result) = self.contained_imported_boolean(other, operation, policy) {
+                return result;
+            }
             if let Some(result) = self.rounded_thread_axial_clip(other, operation, policy) {
                 return result;
             }
