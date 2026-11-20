@@ -18,6 +18,7 @@ mod cut;
 mod flat_stock;
 mod mixed_miter;
 mod operands;
+mod pairwise;
 use super::planar_boolean_body::winding;
 use operands::QuarterFillet;
 

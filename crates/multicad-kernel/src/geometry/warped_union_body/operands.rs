@@ -17,10 +17,20 @@ pub(super) struct QuarterFillet {
 
 impl QuarterFillet {
     pub(super) fn recognize(solid: &Solid, tolerance: f64) -> Option<Self> {
+        Self::read(solid, tolerance, false)
+    }
+
+    /// Also accept a bare fillet whose base or back wall has zero thickness:
+    /// the arc ends then meet the remaining straight sides directly.
+    pub(super) fn recognize_open(solid: &Solid, tolerance: f64) -> Option<Self> {
+        Self::read(solid, tolerance, true)
+    }
+
+    fn read(solid: &Solid, tolerance: f64, open: bool) -> Option<Self> {
         let (body, frame) = solid.normal_sweep_body()?;
         let (rings, height) = body.unpierced_profile()?;
         let [ring] = rings else { return None };
-        if ring.len() != 5 {
+        if ring.len() != 5 && !(open && (3..5).contains(&ring.len())) {
             return None;
         }
         let normal = frame.normal();
@@ -63,11 +73,11 @@ impl QuarterFillet {
                 _ => None,
             })
             .collect();
-        if lines.len() != 4 {
+        if lines.len() + 1 != ring.len() {
             return None;
         }
-        let bottom = lines.iter().flatten().map(|p| p[2]).reduce(f64::min)?;
-        let back = if direction > 0. {
+        let mut bottom = lines.iter().flatten().map(|p| p[2]).reduce(f64::min)?;
+        let mut back = if direction > 0. {
             lines
                 .iter()
                 .flatten()
@@ -80,10 +90,20 @@ impl QuarterFillet {
                 .map(|p| p[transverse])
                 .reduce(f64::min)?
         };
-        if expected_low[2] - bottom <= tolerance
-            || (back - expected_high[transverse]) * direction <= tolerance
+        let base = expected_low[2] - bottom;
+        let wall = (back - expected_high[transverse]) * direction;
+        if !open && (base <= tolerance || wall <= tolerance)
+            || base < -tolerance
+            || wall < -tolerance
         {
             return None;
+        }
+        // A side within the tolerance of the arc end has no thickness.
+        if base <= tolerance {
+            bottom = expected_low[2];
+        }
+        if wall <= tolerance {
+            back = expected_high[transverse];
         }
         let mut at_bottom = center;
         at_bottom[2] = bottom;
@@ -97,11 +117,14 @@ impl QuarterFillet {
             [outer_bottom, outer_top],
             [outer_top, expected_high],
         ];
-        if !expected.into_iter().all(|[a, b]| {
-            lines
-                .iter()
-                .any(|&[c, d]| near(a, c) && near(b, d) || near(a, d) && near(b, c))
-        }) {
+        let expected: Vec<_> = expected.into_iter().filter(|&[a, b]| a != b).collect();
+        if expected.len() != lines.len()
+            || !expected.iter().all(|&[a, b]| {
+                lines
+                    .iter()
+                    .any(|&[c, d]| near(a, c) && near(b, d) || near(a, d) && near(b, c))
+            })
+        {
             return None;
         }
         let a = center[axis];
@@ -122,7 +145,7 @@ impl QuarterFillet {
         center_z: f64,
         radius: f64,
         tolerance: f64,
-    ) -> Result<[ConvexPiece; 2], planar_boolean::Error> {
+    ) -> Result<Vec<ConvexPiece>, planar_boolean::Error> {
         let axis = self.axis;
         let transverse = 1 - axis;
         let center = self.center[transverse];
@@ -133,13 +156,15 @@ impl QuarterFillet {
         min[transverse] = center.min(self.back);
         max[transverse] = center.max(self.back);
         min[2] = self.bottom - floor;
-        let base = ConvexPiece::from_box(min, max, tolerance)?;
-        let mut section = [
-            [center, 0.],
-            [self.back, 0.],
-            [self.back, radius],
-            [center + self.direction * radius, radius],
-        ];
+        let mut pieces = Vec::with_capacity(2);
+        if min[2] < 0. {
+            pieces.push(ConvexPiece::from_box(min, max, tolerance)?);
+        }
+        let mut section = vec![[center, 0.], [self.back, 0.], [self.back, radius]];
+        let rim = center + self.direction * radius;
+        if rim != self.back {
+            section.push([rim, radius]);
+        }
         let unit = std::array::from_fn(|i| f64::from(i == axis));
         let at = |axis_value, [other, z]: [f64; 2]| {
             let mut point = [0., 0., z];
@@ -147,16 +172,20 @@ impl QuarterFillet {
             point[transverse] = other;
             point
         };
-        if winding(&section.map(|p| at(self.span[0], p)), unit) < 0. {
+        let place = |section: &[[f64; 2]], axis_value| -> Vec<Point> {
+            section.iter().map(|&p| at(axis_value, p)).collect()
+        };
+        if winding(&place(&section, self.span[0]), unit) < 0. {
             section.reverse();
         }
-        let lower = section.map(|p| at(self.span[0], p));
-        let upper = section.map(|p| at(self.span[1], p));
-        let mut faces = vec![lower.into_iter().rev().collect(), upper.to_vec()];
+        let lower = place(&section, self.span[0]);
+        let upper = place(&section, self.span[1]);
+        let mut faces = vec![lower.iter().rev().copied().collect(), upper.clone()];
         for i in 0..section.len() {
             let next = (i + 1) % section.len();
             faces.push(vec![lower[i], lower[next], upper[next], upper[i]]);
         }
-        Ok([base, ConvexPiece::new(faces, tolerance)?])
+        pieces.push(ConvexPiece::new(faces, tolerance)?);
+        Ok(pieces)
     }
 }
