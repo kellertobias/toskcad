@@ -73,7 +73,6 @@ mod orthogonal_body;
 mod parallel_cylinder;
 mod parallel_extrusion_intersection;
 mod planar_boolean_body;
-mod plane_separated_boolean;
 mod radial_boundary_body;
 mod repaired_phillips_body;
 use repaired_phillips_body::RepairedPhillipsBody;
@@ -1537,9 +1536,6 @@ impl Solid {
                 return result;
             }
             if let Some(result) = self.contained_hanger_boolean(other, operation, policy) {
-                return result;
-            }
-            if let Some(result) = self.plane_separated_boolean(other, operation, policy) {
                 return result;
             }
             if let Some(result) = self.default_certified_boolean(other, operation, policy) {
