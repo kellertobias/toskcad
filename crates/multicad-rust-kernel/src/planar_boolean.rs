@@ -230,6 +230,13 @@ impl Union {
         Self::verify_boundary(rings, tolerance_mm)
     }
 
+    /// Certify one solid bounded by a closed outward shell and any number of
+    /// closed inward void shells, retaining each supplied face ring. Shells
+    /// may not touch or cross, and every void must lie inside the outer shell.
+    pub fn from_planar_shells(rings: &[Vec<Point>], tolerance_mm: f64) -> Result<Self, Error> {
+        Self::verify_boundary_shells(rings, tolerance_mm, true)
+    }
+
     pub fn new(pieces: &[ConvexPiece], tolerance_mm: f64) -> Result<Self, Error> {
         Self::new_with_interrupt(pieces, tolerance_mm, None)
     }
