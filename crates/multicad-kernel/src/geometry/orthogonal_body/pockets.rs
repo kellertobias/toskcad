@@ -5,6 +5,7 @@ use crate::geometry::circular_pocket_body;
 use multicad_rust_kernel::{orthogonal_pockets, step};
 use std::f64::consts::TAU;
 mod blind;
+mod bore_clearance;
 mod clear_cut;
 mod counterbore;
 

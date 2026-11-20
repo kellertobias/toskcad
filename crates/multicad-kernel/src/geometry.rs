@@ -89,6 +89,7 @@ pub use repaired_phillips_body::{
     PeriodicRepairedPhillipsQuery, RepairedPhillipsMeshBudget, RepairedPhillipsMeshReceipt,
     RepairedPhillipsQuery, RepairedPhillipsQueryOptions,
 };
+mod enclosed_clearance;
 mod revolution_body;
 mod rounded_blind_bore_body;
 mod rounded_cylinder_body;
@@ -1605,6 +1606,9 @@ impl Solid {
             return match self.orthogonal_boolean(other, operation, policy) {
                 Err(error) if error.kind == GeometryErrorKind::Unsupported => self
                     .separated_boolean(other, operation, policy)
+                    .or_else(|| self.through_bore_clearance(other, operation, policy))
+                    .or_else(|| self.cellwise_separated_boolean(other, operation, policy))
+                    .or_else(|| self.enclosed_clearance_boolean(other, operation, policy))
                     .or_else(|| self.subtract_machining_tool(other, operation, policy))
                     .or_else(|| self.coaxial_counterbore_cut(other, operation, policy))
                     .or_else(|| self.through_profile_cut(other, operation, policy))
