@@ -39,7 +39,8 @@ impl Placement {
             && (0. ..=maximum_uncertainty).contains(&self.uncertainty_mm)
     }
 
-    fn point(self, [u, v]: Point) -> Point {
+    /// The common-chart point of a local section point.
+    pub fn point(self, [u, v]: Point) -> Point {
         add(
             self.center_mm,
             add(scale(self.axes[0], u), scale(self.axes[1], v)),
@@ -253,10 +254,9 @@ impl Rim {
     }
 }
 
-fn segment_count(edge: Edge, tolerance: f64) -> Result<usize, Error> {
-    // Error in linear interpolation is at most max|f''| / (8 n²)
-    // for n uniform spans. Parameterize each exact curve on [0,1].
-    let second = match edge {
+/// A bound on |f''| of the exact edge parameterized on [0, 1].
+fn curvature_bound(edge: Edge) -> Result<f64, Error> {
+    Ok(match edge {
         Edge::Planar(normal_sweep::Edge::Line { .. }) => 0.,
         Edge::Planar(edge) => {
             edge.radius_mm().ok_or(Error::Invalid)?
@@ -266,7 +266,13 @@ fn segment_count(edge: Edge, tolerance: f64) -> Result<usize, Error> {
             let [a, b] = edge.interval();
             edge.base_radius_mm() * a.max(b).hypot(1.) * (b - a).powi(2)
         }
-    };
+    })
+}
+
+fn segment_count(edge: Edge, tolerance: f64) -> Result<usize, Error> {
+    // Error in linear interpolation is at most max|f''| / (8 n²)
+    // for n uniform spans. Parameterize each exact curve on [0,1].
+    let second = curvature_bound(edge)?;
     // Reserve half the tube for evaluating and placing the analytic edge.
     let needed = (second / (4. * tolerance)).sqrt().ceil();
     if !needed.is_finite() || needed > MAX_CHORDS as f64 {
@@ -397,12 +403,14 @@ fn certify_with_uncertainty(
 mod chevron;
 mod distance;
 mod internal;
+mod overlap;
 mod probe;
 mod rack;
 mod witness;
 pub use chevron::certify_herringbone;
 pub use distance::certify_boundary_distance;
 pub use internal::certify_internal;
+pub use overlap::{Piece, Region, Section, intersect_sections};
 pub use probe::{DiscSide, classify_annulus_disc, classify_ring_disc, classify_spur_disc};
 pub use rack::certify_rack;
 pub use witness::{Witness, nearest_boundary};

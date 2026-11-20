@@ -61,6 +61,7 @@ mod source_face_measure;
 use hanger_body::HangerBody;
 pub use hanger_body::{HangerData, HealedHangerStepVerification, HealedSupportStepVerification};
 mod cross_bore_body;
+mod gear_interference;
 mod gear_pair_boolean;
 mod gear_probe;
 mod helical_body;

@@ -62,6 +62,14 @@ impl Involute {
         Ok(Self { angle_rad, ..self })
     }
 
+    /// The same directed flank between two fractions of this one.
+    pub fn trimmed(self, [from, to]: [f64; 2]) -> Self {
+        Self {
+            interval: [self.parameter(from), self.parameter(to)],
+            ..self
+        }
+    }
+
     pub fn interval(self) -> [f64; 2] {
         self.interval
     }
