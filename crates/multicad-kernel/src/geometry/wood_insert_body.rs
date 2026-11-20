@@ -140,17 +140,18 @@ fn origin(feature: EntityId, role: String) -> Origin {
         role: format!("wood-insert/{role}"),
     }
 }
-/// Every bounded helical band also carries the shared `thread/` role that
-/// every other modeled thread publishes, qualified by its insert side.
-fn face_origins(feature: EntityId, key: FaceKey) -> BTreeSet<Origin> {
-    let mut origins = BTreeSet::from([origin(feature, face_tag(key))]);
-    if !matches!(key, FaceKey::StartCap | FaceKey::EndCap) {
-        origins.insert(Origin {
+/// The face's one identity. A bounded helical band carries the shared
+/// `thread/` role every modeled thread publishes, qualified by its insert
+/// side; the caps keep their insert roles.
+fn face_origin(feature: EntityId, key: FaceKey) -> Origin {
+    if matches!(key, FaceKey::StartCap | FaceKey::EndCap) {
+        origin(feature, face_tag(key))
+    } else {
+        Origin {
             source: feature,
             role: format!("thread/{}", face_tag(key)),
-        });
+        }
     }
-    origins
 }
 fn world_point(
     frame: PlaneFrame,
@@ -253,7 +254,7 @@ impl WoodInsertBody {
                 .source
                 .face_key(index as u32)
                 .expect("source face role");
-            let id = origin(self.feature, face_tag(face));
+            let id = face_origin(self.feature, face);
             let mut boundary = BTreeSet::new();
             for edge in b
                 .face_loops(face)
@@ -288,7 +289,7 @@ impl WoodInsertBody {
                     kind: TopologyKind::Face,
                     ordinal: index as u32,
                 },
-                origins: face_origins(self.feature, face),
+                origins: BTreeSet::from([id.clone()]),
                 boundary,
                 frames: plane
                     .map(|p| AnchoredFrame {
@@ -309,7 +310,7 @@ impl WoodInsertBody {
             let boundary = b
                 .curve_faces(key)
                 .expect("source face incidence")
-                .map(|k| origin(self.feature, face_tag(k)))
+                .map(|k| face_origin(self.feature, k))
                 .into_iter()
                 .collect();
             elements.push(TopologyElement {

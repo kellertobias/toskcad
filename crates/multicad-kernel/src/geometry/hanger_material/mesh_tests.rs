@@ -117,8 +117,13 @@ fn hanger_step_rejects_invalid_cancelled_and_unqualified_placement_atomically() 
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("existing.step");
     std::fs::write(&path, b"retained previous file").unwrap();
-    assert!(solid.write_step(&path).is_err());
-    assert_eq!(std::fs::read(&path).unwrap(), b"retained previous file");
+    // A placed hanger now exports its qualified local records through one
+    // declared map, replacing the previous file. Refused exports keep the old
+    // file (see the strict-tolerance case in the hanger STEP tests).
+    solid.write_step(&path).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.starts_with("ISO-10303-21;"));
+    assert_eq!(text.matches("MAPPED_ITEM(").count(), 1);
 }
 
 #[test]
