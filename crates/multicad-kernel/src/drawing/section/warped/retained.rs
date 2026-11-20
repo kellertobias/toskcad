@@ -644,12 +644,7 @@ impl Retained {
         let vectors = frame.vectors(loops, self.options, source)?;
         self.extend(vectors)?;
         if let Some(hatch) = hatch.filter(|h| h.pattern != HatchPattern::None) {
-            let boundary = frame.hatch(
-                loops,
-                self.options
-                    .chord_tolerance_mm
-                    .min(policy.minimum_feature_mm / 4.),
-            )?;
+            let boundary = frame.hatch(loops, self.options.chord_tolerance_mm)?;
             let mut curves = self.options.maximum_curves as usize;
             let mut points = self.options.maximum_points as usize;
             let hatch = publish_hatch(
