@@ -567,6 +567,92 @@ impl Solid {
             })
     }
 
+    /// The world cells of a cardinal orthogonal body around a rod: the
+    /// cylinder of `radius` from `frame`'s origin along its normal for
+    /// `height`. Through bores that contain the rod's whole disk are returned
+    /// as world axis segments of empty space. Every other curved cut must
+    /// have a conservative bound separated from the rod's bounding box by
+    /// more than `tolerance`, so cells and voids describe the material there.
+    pub(super) fn orthogonal_cells_near(
+        &self,
+        frame: PlaneFrame,
+        radius: f64,
+        height: f64,
+        tolerance: f64,
+    ) -> Result<Option<(Vec<Box3>, Vec<[Point; 2]>)>, GeometryError> {
+        let Some((body, placement)) = self.orthogonal_body() else {
+            return Ok(self.orthogonal_cells()?.map(|cells| (cells, vec![])));
+        };
+        if !body.has_curved_cuts() {
+            return Ok(self.orthogonal_cells()?.map(|cells| (cells, vec![])));
+        }
+        if !cardinal(placement) {
+            return Ok(None);
+        }
+        let normal = frame.normal();
+        let end: Point = std::array::from_fn(|i| frame.origin[i] + height * normal[i]);
+        let reach = |i: usize| radius * (1. - normal[i] * normal[i]).max(0.).sqrt();
+        let region = Box3 {
+            min: std::array::from_fn(|i| frame.origin[i].min(end[i]) - reach(i)),
+            max: std::array::from_fn(|i| frame.origin[i].max(end[i]) + reach(i)),
+        };
+        let around = |points: &[Point], reach: f64| {
+            let mut bounds = extent(points.iter().map(|&p| transform_point(placement, p)));
+            for i in 0..3 {
+                bounds.min[i] -= reach;
+                bounds.max[i] += reach;
+            }
+            bounds
+        };
+        let clear = |cut: Box3| {
+            (0..3).any(|i| {
+                cut.max[i] + tolerance < region.min[i] || region.max[i] + tolerance < cut.min[i]
+            })
+        };
+        let mut voids = Vec::new();
+        for bore in body.through_bores.iter() {
+            let [a, b] = bore.centers_mm.map(|p| transform_point(placement, p));
+            let axis = subtract(b, a);
+            let along = dot(axis, axis).sqrt();
+            let side = cross(axis, normal);
+            // A parallel bore whose circle holds the rod's disk with margin.
+            let offset = dot(
+                cross(subtract(frame.origin, a), normal),
+                cross(subtract(frame.origin, a), normal),
+            )
+            .sqrt();
+            if along > 0.
+                && dot(side, side).sqrt() <= 64. * f64::EPSILON * along
+                && offset + radius < bore.radius_mm - tolerance
+            {
+                voids.push([a, b]);
+            } else if !clear(around(&bore.centers_mm, bore.radius_mm)) {
+                return Ok(None);
+            }
+        }
+        let others = body
+            .pockets
+            .iter()
+            .map(|p| around(&[p.center_mm], p.radius_mm.max(p.depth_mm)))
+            .chain(
+                body.slots
+                    .iter()
+                    .map(|s| around(&s.centers_mm, s.radius_mm.max(s.depth_mm))),
+            )
+            .collect::<Vec<_>>();
+        if !others.into_iter().all(clear) {
+            return Ok(None);
+        }
+        Ok(Some((
+            body.geometry
+                .cells()
+                .iter()
+                .map(|&cell| transform_box(placement, cell))
+                .collect(),
+            voids,
+        )))
+    }
+
     pub(super) fn orthogonal_cells(&self) -> Result<Option<Vec<Box3>>, GeometryError> {
         if let Some(cell) = self.scaled_orthogonal_cell() {
             return Ok(Some(vec![cell]));

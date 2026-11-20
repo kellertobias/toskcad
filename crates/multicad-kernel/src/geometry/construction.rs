@@ -4,7 +4,7 @@ use super::*;
 use crate::{CurvedEdge2d, CurvedProfile};
 use std::collections::BTreeSet;
 
-fn exact(value: f64) -> Result<Rational, GeometryError> {
+pub(crate) fn exact(value: f64) -> Result<Rational, GeometryError> {
     if !value.is_finite() {
         return Err(input("Construction length must be finite"));
     }
@@ -16,7 +16,7 @@ fn exact(value: f64) -> Result<Rational, GeometryError> {
         )
     })
 }
-fn cylinder_coordinates(frame: PlaneFrame) -> [Rational; 3] {
+pub(crate) fn cylinder_coordinates(frame: PlaneFrame) -> [Rational; 3] {
     let zero = Rational::new(0, 1).expect("zero");
     if frame.u[2] == 0.
         && frame.v[2] == 0.

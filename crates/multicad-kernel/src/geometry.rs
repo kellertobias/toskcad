@@ -69,6 +69,7 @@ mod normal_sweep_body;
 mod oblique_bore_body;
 mod orthogonal_body;
 mod parallel_cylinder;
+mod parallel_extrusion_intersection;
 mod planar_boolean_body;
 mod radial_boundary_body;
 mod repaired_phillips_body;
@@ -1549,6 +1550,7 @@ impl Solid {
                     .separated_boolean(other, operation, policy)
                     .or_else(|| self.subtract_machining_tool(other, operation, policy))
                     .or_else(|| self.stacked_prism_boolean(other, operation, policy))
+                    .or_else(|| self.parallel_extrusion_intersection(other, operation, policy))
                     .unwrap_or_else(|| {
                         Err(cross_refusal
                             .unwrap_or_else(|| self.no_exact_boolean(other, operation, error)))
