@@ -232,6 +232,35 @@ fn certified_gear_pairs_settle_disjoint_poses_and_refuse_interference() {
     assert!(error.message.contains("interfere"), "{}", error.message);
     // The serial and native-parallel entry points agree for Rust solids.
     assert!(one.intersect_parallel(&meshing, p()).unwrap().is_none());
+    // The clear pose has a certified gap below the total thinning; its
+    // witness points are actual material points.
+    let gap = one
+        .minimum_distance(
+            crate::BRepSelection::Whole,
+            &meshing,
+            crate::BRepSelection::Whole,
+        )
+        .unwrap();
+    assert!(
+        gap.distance_mm > 0. && gap.distance_mm < 0.2,
+        "{}",
+        gap.distance_mm
+    );
+    let w = gap.witnesses[0];
+    let span = (0..3)
+        .map(|i| (w.a_mm[i] - w.b_mm[i]).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    assert!((span - gap.distance_mm).abs() < 1e-12);
+    // An interfering pose has no distance certificate.
+    assert!(
+        one.minimum_distance(
+            crate::BRepSelection::Whole,
+            &place(PI),
+            crate::BRepSelection::Whole
+        )
+        .is_err()
+    );
 }
 
 #[test]

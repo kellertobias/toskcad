@@ -234,3 +234,114 @@ fn within(
         faces,
     })
 }
+
+/// The exact section boundary of a spur: tooth outline, then any bore.
+fn section(profile: &multicad_rust_kernel::spur_gear::Profile) -> Vec<(usize, ToothCurve)> {
+    profile
+        .outline()
+        .iter()
+        .map(|item| item.edge)
+        .chain(profile.bore().map(ToothCurve::Planar))
+        .enumerate()
+        .collect()
+}
+
+impl Solid {
+    /// Certified minimum distance between a clear Rust spur pair or a spur
+    /// and a rack sweep sharing an axial direction. Both solids project
+    /// into their exact sections, so the section gap bounds the spatial gap
+    /// from below; the witness is a pair of actual points in the common band
+    /// and bounds it from above. `None` leaves other pairs to other measures.
+    pub(crate) fn rust_gear_section_distance(
+        &self,
+        other: &Self,
+        tolerance_mm: f64,
+    ) -> Option<Result<crate::MinimumDistance, GeometryError>> {
+        const DISTANCE: &str = "gear minimum distance";
+        let policy = self.policy;
+        let measured = || -> Result<crate::MinimumDistance, GeometryError> {
+            let unsupported =
+                |message: &str| error(DISTANCE, GeometryErrorKind::Unsupported, message);
+            let (placements, shared, edges, frames, swapped, clear) =
+                if let (Some(a), Some(b)) = (self.spur_gear_body(), other.spur_gear_body()) {
+                    let profiles = [&a.0.profile, &b.0.profile];
+                    let (placements, shared) = coaxial_chart(
+                        (DISTANCE, "Rust gear distance"),
+                        policy,
+                        [a.1, b.1],
+                        profiles.map(|profile| Band {
+                            height_mm: profile.height_mm(),
+                            extent_mm: profile.axial_bounds(),
+                            support: Box::new(|direction| profile.support(direction)),
+                        }),
+                    )?;
+                    let clear = self.certify_rust_spur_pair(other, policy, None)?;
+                    (
+                        placements,
+                        shared,
+                        profiles.map(section),
+                        [a.1, b.1],
+                        false,
+                        clear,
+                    )
+                } else {
+                    let pair = self
+                        .rack_pair(other)
+                        .ok_or_else(|| unsupported("Rust gear distance requires a spur pair"))?;
+                    let (placements, shared) = pair.chart(policy)?;
+                    let rack = pair
+                        .rack
+                        .0
+                        .iter()
+                        .map(|&edge| ToothCurve::Planar(edge))
+                        .enumerate()
+                        .collect();
+                    let clear = self.certify_rust_rack_pair(other, policy, None)?;
+                    (
+                        placements,
+                        shared,
+                        [section(&pair.pinion.0.profile), rack],
+                        [pair.pinion.1, pair.rack.2],
+                        pair.swapped,
+                        clear,
+                    )
+                };
+            if clear != clearance::ResultKind::Clear {
+                return Err(unsupported(
+                    "Rust gear distance requires a certified clear pair",
+                ));
+            }
+            let found = clearance::certify_boundary_distance(
+                [&edges[0], &edges[1]],
+                placements,
+                tolerance_mm.clamp(1e-7, 1e-3),
+                None,
+            )
+            .map_err(failure)?
+            .ok_or_else(|| unsupported("Rust gear distance bounds did not meet"))?;
+            let middle = (shared[0] + shared[1]) / 2.;
+            let base = frames[0];
+            let mut points = [
+                (frames[0], found.local_mm[0]),
+                (frames[1], found.local_mm[1]),
+            ]
+            .map(|(frame, [x, y])| position(frame, [x, y, local_height(base, frame, middle)]));
+            if swapped {
+                points.reverse();
+            }
+            Ok(crate::MinimumDistance {
+                distance_mm: distance(points),
+                witnesses: vec![crate::DistanceWitness {
+                    a_mm: points[0],
+                    b_mm: points[1],
+                }],
+                witnesses_complete: false,
+                total_solutions: None,
+                inner_solution: false,
+            })
+        };
+        let gear_pair = (self.spur_gear_body().is_some() && other.spur_gear_body().is_some())
+            || self.rack_pair(other).is_some();
+        gear_pair.then(measured)
+    }
+}

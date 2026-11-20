@@ -82,6 +82,12 @@ pub(crate) fn measure(
         }
         if selection_a == BRepSelection::Whole
             && selection_b == BRepSelection::Whole
+            && let Some(result) = a.rust_gear_section_distance(b, tolerance)
+        {
+            return result;
+        }
+        if selection_a == BRepSelection::Whole
+            && selection_b == BRepSelection::Whole
             && let Some(result) = machined::measure(a, b, tolerance)
         {
             return result;

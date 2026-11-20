@@ -395,11 +395,13 @@ fn certify_with_uncertainty(
 }
 
 mod chevron;
+mod distance;
 mod internal;
 mod probe;
 mod rack;
 mod witness;
 pub use chevron::certify_herringbone;
+pub use distance::certify_boundary_distance;
 pub use internal::certify_internal;
 pub use probe::{DiscSide, classify_annulus_disc, classify_ring_disc, classify_spur_disc};
 pub use rack::certify_rack;

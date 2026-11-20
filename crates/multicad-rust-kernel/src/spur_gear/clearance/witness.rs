@@ -69,7 +69,7 @@ fn point_segment(point: Point, [a, b]: [Point; 2]) -> f64 {
     length(sub(point, add(a, scale(direction, t))))
 }
 
-fn segment_distance(a: [Point; 2], b: [Point; 2]) -> f64 {
+pub(super) fn segment_distance(a: [Point; 2], b: [Point; 2]) -> f64 {
     // Crossing chords only steer the search; their exact edge points are
     // refined below, so zero is a valid lower estimate here.
     let side = |p: Point, [q, r]: [Point; 2]| {
