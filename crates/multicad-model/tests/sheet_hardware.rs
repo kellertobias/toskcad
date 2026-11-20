@@ -174,6 +174,43 @@ fn mounting_patterns_cut_holes_and_place_separate_hardware_parts() {
         "{:?}",
         ins.findings
     );
+    // The formed sheet's clearance is proven exactly for every piece clear of
+    // the bend, including the insert seated on the flange leg.
+    for record in &list {
+        assert!(
+            !record
+                .findings
+                .iter()
+                .any(|f| f.contains("cannot be certified")),
+            "{record:?}"
+        );
+    }
+    // A washer reaching over the bend cannot be proven clear: a typed finding.
+    let mut near_bend = patterns.clone();
+    near_bend[0] = screws(&[[20., 2.], [80., 30.]], Thread::M3, 8., true);
+    let p = model::prepare_sheet_fasteners(&s, s.revision(), actor(), request.feature, &near_bend)
+        .unwrap();
+    let candidate = p.model.prepared.document();
+    let placed = Compiler::default()
+        .compile(candidate, s.revision() + 1)
+        .unwrap()
+        .sheet_hardware(candidate)
+        .unwrap();
+    let washer = record(&placed, HardwareItem::Washer);
+    assert!(
+        washer
+            .findings
+            .iter()
+            .any(|f| f.contains("formed Rust sheet cannot be certified")),
+        "{:?}",
+        washer.findings
+    );
+    assert!(
+        record(&placed, HardwareItem::Insert)
+            .findings
+            .iter()
+            .all(|f| !f.contains("cannot be certified"))
+    );
     // Hardware Parts are separate from the sheet and from each other.
     assert!(ids.iter().all(|id| *id != request.body));
     assert!(ids.iter().all(|id| {
