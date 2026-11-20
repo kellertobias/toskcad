@@ -202,6 +202,10 @@ fn cached_screw(key: &ScrewKey, feature: EntityId) -> Option<Solid> {
 fn remember_screw(key: ScrewKey, feature: EntityId, solid: &Solid) {
     // Retain only an already completed, fully owned native result. Optional
     // bookkeeping errors cannot turn successful geometry into a model error.
+    // Rust solids rebuild exactly and are not retained as native text.
+    if solid.uses_rust_geometry() {
+        return;
+    }
     let Ok(owned) = solid.rebind_exclusive_owner(feature, feature) else {
         return;
     };

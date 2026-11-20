@@ -269,8 +269,9 @@ pub struct SheetDxfOptions<'a> {
 
 impl Exporter {
     /// Unfold one sheet Part from a fresh evaluation of `document` at
-    /// `revision` and encode its DXF. A failed evaluation or unfolding
-    /// produces no file.
+    /// `revision` and encode its DXF. OpenCascade evaluates it when it is
+    /// linked, otherwise the Rust kernel does. A failed evaluation or
+    /// unfolding produces no file.
     pub fn developed_sheet_dxf(
         &self,
         document: &Document,
@@ -285,7 +286,11 @@ impl Exporter {
             revision,
             part,
             SheetDxfOptions {
-                backend: GeometryBackend::OpenCascade,
+                backend: if multicad_kernel::OCCT_LINKED {
+                    GeometryBackend::OpenCascade
+                } else {
+                    GeometryBackend::Rust
+                },
                 units,
                 layers,
             },
