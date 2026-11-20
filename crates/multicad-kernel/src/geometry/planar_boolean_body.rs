@@ -511,8 +511,15 @@ impl Solid {
         } else {
             let mut left = Vec::new();
             let mut right = Vec::new();
-            self.append_planar_material(&mut left, policy)?;
-            other.append_planar_material(&mut right, policy)?;
+            // The common material lies inside both operands' bounds. Circular
+            // cuts clear of the other operand leave that material unchanged.
+            let tolerance = policy.linear_tolerance_mm;
+            let left_stock = self.stock_clear_of_round_cuts(b, tolerance);
+            let right_stock = other.stock_clear_of_round_cuts(a, tolerance);
+            let left_operand = left_stock.as_ref().unwrap_or(self);
+            let right_operand = right_stock.as_ref().unwrap_or(other);
+            left_operand.append_planar_material(&mut left, policy)?;
+            right_operand.append_planar_material(&mut right, policy)?;
             Union::intersect(&left, &right, policy.linear_tolerance_mm)
                 .map_err(planar_error)?
                 .map(|union| {

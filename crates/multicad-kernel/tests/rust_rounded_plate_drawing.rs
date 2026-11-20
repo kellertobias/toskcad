@@ -422,11 +422,42 @@ fn bracket_sections_cut_the_exact_sweep_shell() {
             );
         }
     }
-    // At y = 30 the plane holds the hole's seam edge. The exact shell
-    // section refuses a coplanar edge, so the retained view stays a typed
-    // refusal rather than a guessed drawing.
-    let error = section(-30., Some(20.)).unwrap_err();
-    assert_eq!(error.kind, GeometryErrorKind::Unsupported);
+    // At y = 30 the plane holds the seam edges where the quarter patches of
+    // the r10 hole (x = 15, 35) and of the slot's r5 ends (x = 55, 80) meet.
+    // Each in-plane seam closes its section loop between the cap crossings,
+    // leaving exactly the three 10 mm high material bands between them.
+    for depth in [None, Some(20.)] {
+        let vectors = section(-30., depth).unwrap();
+        let lines: Vec<_> = vectors
+            .iter()
+            .filter(|v| v.role == VectorRole::Section)
+            .map(|v| match v.curve {
+                VectorCurve::Line { a, b } => [a, b],
+                ref other => panic!("unexpected section curve {other:?}"),
+            })
+            .collect();
+        for x in [0., 15., 35., 55., 80., 100.] {
+            assert!(
+                lines.iter().any(|[a, b]| (a[0] - x).abs() < TOL
+                    && (b[0] - x).abs() < TOL
+                    && (a[1] - b[1]).abs() > 10. - TOL),
+                "x = {x}, depth {depth:?}"
+            );
+        }
+        let gaps = [(15., 35.), (55., 80.)];
+        assert!(lines.iter().flatten().all(|p| {
+            gaps.iter()
+                .all(|&(lo, hi)| p[0] <= lo + TOL || p[0] >= hi - TOL)
+        }));
+        let area: f64 = lines
+            .iter()
+            .map(|[a, b]| (a[0] * b[1] - a[1] * b[0]) / 2.)
+            .sum();
+        assert!(
+            (area.abs() - 10. * (15. + 20. + 20.)).abs() < 1e-9,
+            "{area}"
+        );
+    }
 }
 
 #[test]

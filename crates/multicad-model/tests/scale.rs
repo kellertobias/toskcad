@@ -650,7 +650,7 @@ fn saved_rotated_axis_scale_preserves_every_authored_boundary_intent() {
 }
 
 #[test]
-fn rust_scale_refuses_curved_stock_without_changing_the_source() {
+fn rust_scale_maps_curved_stock_exactly_without_changing_the_source() {
     let mut session = Session::new(Document::new("Curved Scale refusal").unwrap()).unwrap();
     let cylinder = PrimitiveRequest::new(
         "Round stock",
@@ -679,21 +679,28 @@ fn rust_scale_refuses_curved_stock_without_changing_the_source() {
     )
     .unwrap();
     let prepared = prepare_scale_batch(&session, session.revision(), actor(), &request).unwrap();
-    let error = Compiler::default()
+    // The preview maps the cylinder through its exact boundary: an elliptic
+    // cylinder with semi-axes 10 and 5 and height 30, never a circle.
+    let model = Compiler::default()
         .compile_with_backend(
             prepared.prepared.document(),
             session.revision() + 1,
             GeometryBackend::Rust,
             None,
         )
-        .err()
-        .expect("unsupported geometry must fail preview");
-    assert_eq!(error.entity, Some(prepared.outputs[0].feature));
-    assert!(
-        error.message.contains("straight planar"),
-        "{}",
-        error.message
-    );
+        .unwrap();
+    let scaled = model.solid(prepared.outputs[0].feature).unwrap();
+    let expected = std::f64::consts::PI * 10. * 5. * 30.;
+    assert!((scaled.volume_mm3().unwrap() - expected).abs() < 1e-6 * expected);
+    let bounds = scaled.bounds().unwrap();
+    for (actual, wanted) in bounds
+        .min
+        .into_iter()
+        .chain(bounds.max)
+        .zip([-10., -5., 0., 10., 5., 30.])
+    {
+        assert!((actual - wanted).abs() < 1e-6, "{actual} != {wanted}");
+    }
     assert_eq!(session.document(), &original);
 }
 

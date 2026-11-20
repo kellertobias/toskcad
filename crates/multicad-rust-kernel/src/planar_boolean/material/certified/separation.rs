@@ -23,7 +23,76 @@ pub(super) fn empty(
     Ok(false)
 }
 
-fn pair(
+/// Every cell pair of operand 0 and some other operand is either strictly
+/// separated or meets along a supporting plane of one cell: along that unit
+/// normal the closed hulls overlap by no more than the rounding scale of
+/// their own world coordinates (and never more than `tolerance / 8`). Such a
+/// depth is below what the floating input can represent as material, so the
+/// regularized intersection is a contact within that declared uncertainty.
+/// An exactly representable sliver, however thin, is never a contact.
+pub(super) fn contact(
+    operands: &[Operand<'_>],
+    tolerance: f64,
+    work: &mut Work<'_>,
+) -> Result<bool, Error> {
+    for other in &operands[1..] {
+        let mut meets = true;
+        'pairs: for a in operands[0].pieces {
+            for b in other.pieces {
+                if !pair(a, b, tolerance, work)? && !touching(a, b, tolerance, work)? {
+                    meets = false;
+                    break 'pairs;
+                }
+            }
+        }
+        if meets {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Input rounding scale of two cells: the slack `classify_box` grants to
+/// plane evaluation at the same world magnitude.
+pub(super) fn contact_allowance(a: &ConvexPiece, b: &ConvexPiece, tolerance: f64) -> f64 {
+    let magnitude = a
+        .bounds
+        .iter()
+        .chain(&b.bounds)
+        .flatten()
+        .map(|v| v.abs())
+        .fold(1_f64, f64::max);
+    (64. * f64::EPSILON * magnitude).min(tolerance / 8.)
+}
+
+pub(super) fn touching(
+    a: &ConvexPiece,
+    b: &ConvexPiece,
+    tolerance: f64,
+    work: &mut Work<'_>,
+) -> Result<bool, Error> {
+    let allowance = contact_allowance(a, b, tolerance);
+    for plane in a.planes.iter().chain(&b.planes) {
+        let axis = plane.normal;
+        // The overlap depth scales with |axis|; bound it from below so a
+        // rounded unit normal can only make the certificate stricter.
+        let length = dot(axis, axis).sqrt();
+        if !(length.is_finite() && length > 0.5) {
+            continue;
+        }
+        let left = project(a, axis, work)?;
+        let right = project(b, axis, work)?;
+        let depth = (left[1] - right[0])
+            .next_up()
+            .min((right[1] - left[0]).next_up());
+        if depth <= allowance * length.next_down() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+pub(super) fn pair(
     a: &ConvexPiece,
     b: &ConvexPiece,
     tolerance: f64,

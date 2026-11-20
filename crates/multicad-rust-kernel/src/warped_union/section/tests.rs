@@ -789,3 +789,41 @@ fn oblique_section_refuses_inconsistent_trim_ports() {
         );
     }
 }
+
+/// A rounded plate end whose two quarter arcs meet on the cutting plane: the
+/// straight seam between their cylinder patches lies in the plane and closes
+/// the section between the two cap crossings at its ends.
+#[test]
+fn an_in_plane_seam_between_quarter_patches_closes_the_section() {
+    let arc = |center, a, b| Edge::Arc {
+        center,
+        a,
+        b,
+        clockwise: false,
+    };
+    let line = |a, b| Edge::Line { a, b };
+    let profile = vec![
+        line([0., 0.], [70., 0.]),
+        arc([70., 30.], [70., 0.], [100., 30.]),
+        arc([70., 30.], [100., 30.], [70., 60.]),
+        line([70., 60.], [0., 60.]),
+        line([0., 60.], [0., 0.]),
+    ];
+    let sweep = crate::normal_sweep::Sweep::new(vec![profile], 10., TOL, 1e-5).unwrap();
+    let shell = normal_sweep_shell(&sweep, false, TOL).unwrap();
+    let normal = [0., -1., 0.];
+    let loops = shell.section([0., 30., 0.], normal, TOL, 100).unwrap();
+    assert_eq!(loops.len(), 1);
+    assert_eq!(loops[0].len(), 4);
+    let seam = [[100., 30., 0.], [100., 30., 10.]];
+    assert!(loops[0].iter().any(|edge| {
+        edge.curve == Curve::Line && (edge.ends_mm == seam || edge.ends_mm == [seam[1], seam[0]])
+    }));
+    assert!((area(&loops, normal) - 1000.).abs() < 1e-9);
+    // A plane tangent to both arcs along that seam stays an unresolved
+    // tangency rather than an in-plane crossing.
+    assert_eq!(
+        shell.section([100., 30., 0.], X, TOL, 100),
+        Err(Error::Unsupported)
+    );
+}

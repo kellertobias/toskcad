@@ -842,6 +842,9 @@ impl Solid {
         policy: GeometryPolicy,
     ) -> Result<Option<Self>, GeometryError> {
         policy.validate()?;
+        if let Some(result) = self.subtract_clear_of_round_cuts(tools, policy) {
+            return result;
+        }
         self.orthogonal_boolean_with_tools(tools, BooleanOperation::Subtract, policy)
     }
 
@@ -1023,11 +1026,11 @@ fn support_origins(
         if found {
             matched = true;
             origins.extend(support.face.origins.iter().cloned());
+            // Inherited anchors keep their authored orientation. A coincident
+            // patch of an oppositely framed generator retains its opposing
+            // frame; signed offsets use the native outward face normal.
             for anchor in &support.face.frames {
-                let mut frame = anchor.frame;
-                if dot(frame.normal(), normal) < 0. {
-                    frame.v = frame.v.map(|value| -value);
-                }
+                let frame = anchor.frame;
                 frames
                     .entry(anchor.origin.clone())
                     .and_modify(|current| {

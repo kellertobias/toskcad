@@ -557,3 +557,38 @@ fn partially_exposed_coplanar_patch_does_not_own_an_internal_section() {
             .is_none()
     );
 }
+
+/// Rotated boxes that share a face meet only at rounding level. Their
+/// intersection is a certified contact, while a real overlap of a micron is
+/// still published as positive material.
+#[test]
+fn rotated_shared_face_is_a_certified_contact_but_real_overlap_is_material() {
+    let (sin, cos) = 30_f64.to_radians().sin_cos();
+    let rotate = |[x, y, z]: Point| [cos * x - sin * y + 400., sin * x + cos * y + 40., z];
+    let placed = |min: Point, max: Point| block(min, max).transformed(rotate, TOL).unwrap();
+    let left = placed([0., 0., 0.], [215.6, 18., 300.]);
+    let right = placed([215.6, 0., 0.], [233.6, 300., 300.]);
+    assert_eq!(
+        Union::intersect(
+            std::slice::from_ref(&left),
+            std::slice::from_ref(&right),
+            TOL
+        ),
+        Ok(None)
+    );
+    let deep = placed([215.6 - 1e-3, 0., 0.], [233.6, 300., 300.]);
+    let common = Union::intersect(std::slice::from_ref(&left), &[deep], TOL)
+        .unwrap()
+        .unwrap();
+    let expected = 1e-3 * 18. * 300.;
+    assert!((common.volume_mm3() - expected).abs() < 1e-6 * expected);
+    // A clearance is still separated, and an overlap thicker than the
+    // declared contact slab is never certified as contact.
+    let mut work = Work::new(None);
+    let gap = placed([215.6 + 1e-3, 0., 0.], [233.6, 300., 300.]);
+    assert!(separation::pair(&left, &gap, TOL, &mut work).unwrap());
+    let shallow = placed([215.6 - 1e-9, 0., 0.], [233.6, 300., 300.]);
+    assert!(separation::contact_allowance(&left, &shallow, TOL) < 1e-10);
+    assert!(!separation::touching(&left, &shallow, TOL, &mut work).unwrap());
+    assert!(separation::touching(&left, &right, TOL, &mut work).unwrap());
+}

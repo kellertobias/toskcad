@@ -196,7 +196,13 @@ impl Solid {
                 result.rust_origins = self.rust_origins.clone();
                 return Ok(result);
             }
-            return self.rust_scale_planar(transform, feature, policy);
+            // Curved solids map through their exact retained boundary.
+            return match self.rust_scale_planar(transform, feature, policy) {
+                Err(cause) if cause.kind == GeometryErrorKind::Unsupported => self
+                    .rust_scale_brep(transform, feature, policy)
+                    .unwrap_or(Err(cause)),
+                result => result,
+            };
         }
         let matrix: Vec<_> = transform.matrix.into_iter().flatten().collect();
         let mut result = Self::adopt(

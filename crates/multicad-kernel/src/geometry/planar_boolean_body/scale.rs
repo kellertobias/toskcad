@@ -168,6 +168,9 @@ impl Solid {
         if let Some(result) = self.rust_scale_simple_concave(transform, feature, policy)? {
             return Ok(result);
         }
+        if let Some(result) = self.rust_scale_orthogonal_cells(transform, feature, policy)? {
+            return Ok(result);
+        }
         let mut topology = self.rust_topology().ok_or_else(unsupported)??;
         let (faces, ancestry) = convex_faces(self, &topology, policy).ok_or_else(unsupported)?;
         let mut boundary = BTreeMap::new();

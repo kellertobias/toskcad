@@ -77,7 +77,12 @@ impl Solid {
         policy: GeometryPolicy,
         topology: &TopologySnapshot,
     ) -> Result<Self, GeometryError> {
-        if self.policy != policy || policy.boolean_fuzzy_mm != 0. || edges.len() > 4 {
+        // Four parallel edges sweep one rounded section; all twelve edges
+        // also need the spherical blends at the eight vertices.
+        if self.policy != policy
+            || policy.boolean_fuzzy_mm != 0.
+            || (edges.len() > 4 && edges.len() != 12)
+        {
             return Err(unsupported());
         }
         if let Some((source, placement)) = self.local_box_treatment_source()? {
@@ -85,6 +90,11 @@ impl Solid {
             return source
                 .rust_fillet_box_edges(edges, radius, feature, policy, &local)?
                 .transformed(placement);
+        }
+        if let Some(result) =
+            self.rust_fillet_all_box_edges(edges, radius, feature, policy, topology)
+        {
+            return result;
         }
         let cells = self.orthogonal_cells()?.ok_or_else(unsupported)?;
         let [stock] = cells.as_slice() else {

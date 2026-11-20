@@ -210,3 +210,43 @@ fn touching_at_an_unshared_vertex_is_not_a_conformal_boundary() {
         Err(Error::Invalid)
     );
 }
+
+/// Outward rings of an axis-aligned box, or inward rings for a void.
+fn box_rings(min: Point, max: Point, inward: bool) -> Vec<Vec<Point>> {
+    let mut rings = ConvexPiece::from_box(min, max, 1e-7).unwrap().faces;
+    if inward {
+        rings.iter_mut().for_each(|ring| ring.reverse());
+    }
+    rings
+}
+
+#[test]
+fn void_shells_are_admitted_only_inside_the_outward_shell() {
+    let mut rings = box_rings([0.; 3], [20., 16., 12.], false);
+    rings.extend(box_rings([2., 3., 4.], [5., 7., 9.], true));
+    // The single-shell contract still refuses a cavity.
+    assert_eq!(Union::from_planar_rings(&rings, 1e-7), Err(Error::Invalid));
+    let cavity = Union::from_planar_shells(&rings, 1e-7).unwrap();
+    assert_eq!(cavity.solid_count(), 1);
+    assert_eq!(cavity.shell_count(), 2);
+    assert!((cavity.volume_mm3() - (20. * 16. * 12. - 3. * 4. * 5.)).abs() < 1e-9);
+    assert_eq!(cavity.faces().len(), 12);
+    // An inward shell outside the material is not a cavity.
+    let mut outside = box_rings([0.; 3], [20., 16., 12.], false);
+    outside.extend(box_rings([30., 3., 4.], [33., 7., 9.], true));
+    assert_eq!(
+        Union::from_planar_shells(&outside, 1e-7),
+        Err(Error::Invalid)
+    );
+    // Two outward shells are two solids, not a body with a void.
+    let mut separate = box_rings([0.; 3], [20., 16., 12.], false);
+    separate.extend(box_rings([30., 3., 4.], [33., 7., 9.], false));
+    assert_eq!(
+        Union::from_planar_shells(&separate, 1e-7),
+        Err(Error::Invalid)
+    );
+    // A void touching the outer wall is refused by the embedding proof.
+    let mut touching = box_rings([0.; 3], [20., 16., 12.], false);
+    touching.extend(box_rings([0., 3., 4.], [5., 7., 9.], true));
+    assert!(Union::from_planar_shells(&touching, 1e-7).is_err());
+}

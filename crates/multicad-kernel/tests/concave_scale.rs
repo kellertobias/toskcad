@@ -279,22 +279,31 @@ fn concave_scale_refuses_multiloop_sources_and_unresolved_placement_without_sour
         policy,
     )
     .unwrap();
+    // A face with a hole is not admitted as indexed planar material. The
+    // exact retained boundary maps it instead: eight times the holed volume,
+    // every source face name carried onto its image, the source untouched.
     let original = holed.topology_snapshot(owner, 0).unwrap();
-    assert_eq!(
-        holed
-            .affine_transformed_named(
-                AffineTransform {
-                    matrix: [[2., 0., 0.], [0., 2., 0.], [0., 0., 2.]],
-                    ..Default::default()
-                },
-                EntityId::new(),
-                policy
-            )
-            .err()
-            .unwrap()
-            .kind,
-        GeometryErrorKind::Unsupported
-    );
+    let doubled = holed
+        .affine_transformed_named(
+            AffineTransform {
+                matrix: [[2., 0., 0.], [0., 2., 0.], [0., 0., 2.]],
+                ..Default::default()
+            },
+            EntityId::new(),
+            policy,
+        )
+        .unwrap();
+    assert!((doubled.volume_mm3().unwrap() - 8. * (100. - 4.) * 4.).abs() < 1e-6);
+    let scaled = doubled.topology_snapshot(owner, 1).unwrap();
+    for face in original
+        .elements
+        .iter()
+        .filter(|element| element.key.kind == TopologyKind::Face)
+    {
+        assert!(scaled.elements.iter().any(
+            |element| element.key.kind == TopologyKind::Face && element.origins == face.origins
+        ));
+    }
     assert_eq!(holed.topology_snapshot(owner, 0).unwrap(), original);
     let source = source(false, false);
     let original = source.topology_snapshot(owner, 0).unwrap();

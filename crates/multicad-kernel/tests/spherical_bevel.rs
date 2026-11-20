@@ -561,9 +561,12 @@ fn centered_basis_flux_preserves_offcenter_void_shells_and_compound_multiplicity
     let path = directory.join("offcenter-void.step");
     cavity.write_step(&path).unwrap();
     assert_eq!(
+        // Count CLOSED_SHELL entity records regardless of writer spacing;
+        // the leading `=` excludes ORIENTED_CLOSED_SHELL references.
         std::fs::read_to_string(&path)
             .unwrap()
-            .matches("= CLOSED_SHELL(")
+            .replace(" = ", "=")
+            .matches("=CLOSED_SHELL(")
             .count(),
         2,
         "raw STEP must retain outer and inward void shells"

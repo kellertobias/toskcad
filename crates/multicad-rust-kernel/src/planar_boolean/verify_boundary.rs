@@ -2,6 +2,15 @@ use super::*;
 
 impl Union {
     pub(crate) fn verify_boundary(rings: &[Vec<Point>], tolerance: f64) -> Result<Self, Error> {
+        Self::verify_boundary_shells(rings, tolerance, false)
+    }
+
+    /// `voids` admits inward closed shells inside the one outward shell.
+    pub(crate) fn verify_boundary_shells(
+        rings: &[Vec<Point>],
+        tolerance: f64,
+        voids: bool,
+    ) -> Result<Self, Error> {
         validate_tolerance(tolerance)?;
         let mut boundary = shell::Boundary::new(tolerance);
         let mut budget = MAX_WORK;
@@ -27,7 +36,15 @@ impl Union {
             charts.push((bounds(ring.iter().copied()), plane, triangles));
         }
         let proof = boundary.prove()?;
-        if proof.solid_count != 1 || proof.shells.len() != 1 {
+        if proof.solid_count != 1
+            || (!voids && proof.shells.len() != 1)
+            || proof
+                .shells
+                .iter()
+                .filter(|shell| shell.signed_volume_mm3 > 0.)
+                .count()
+                != 1
+        {
             return Err(Error::Invalid);
         }
         // Check intersections on convex charts while retaining the original
@@ -40,6 +57,9 @@ impl Union {
             tolerance,
             &mut budget,
         )?;
+        if proof.shells.len() > 1 {
+            voids_inside(&boundary, &proof.shells, &charts, &mut budget)?;
+        }
         let bounds_mm = bounds(boundary.vertices.iter().copied());
         Ok(Self {
             vertices: boundary.vertices,
@@ -53,6 +73,47 @@ impl Union {
 }
 
 type Chart = ([Point; 2], Plane, Vec<[usize; 3]>);
+
+/// Each inward shell must bound a cavity of the outward shell. The embedding
+/// proof already excludes touching or crossing faces, so a void vertex lies
+/// strictly inside or strictly outside the outward shell; its generalized
+/// winding number is then 1 or 0 up to rounding of the solid-angle sum.
+fn voids_inside(
+    boundary: &shell::Boundary,
+    shells: &[Shell],
+    charts: &[Chart],
+    budget: &mut usize,
+) -> Result<(), Error> {
+    let vertices = &boundary.vertices;
+    let outer = shells
+        .iter()
+        .find(|shell| shell.signed_volume_mm3 > 0.)
+        .ok_or(Error::Invalid)?;
+    for void in shells.iter().filter(|shell| shell.signed_volume_mm3 < 0.) {
+        let face = &boundary.faces[void.faces[0]];
+        let point = vertices[face.vertices[0]];
+        let mut angle = 0.;
+        for &index in &outer.faces {
+            let face = &boundary.faces[index];
+            for chart in convex_charts(face, &charts[index].2) {
+                charge(budget, chart.len())?;
+                for pair in chart[1..].windows(2) {
+                    let [a, b, c] = [chart[0], pair[0], pair[1]].map(|i| sub(vertices[i], point));
+                    let [la, lb, lc] = [a, b, c].map(norm);
+                    let numerator = dot(a, cross(b, c));
+                    let denominator =
+                        la * lb * lc + dot(a, b) * lc + dot(a, c) * lb + dot(b, c) * la;
+                    angle += 2. * numerator.atan2(denominator);
+                }
+            }
+        }
+        let winding = angle / (4. * std::f64::consts::PI);
+        if !winding.is_finite() || (winding - 1.).abs() > 0.25 {
+            return Err(Error::Invalid);
+        }
+    }
+    Ok(())
+}
 
 /// Check geometric embedding while retaining every supplied vertex index.
 pub(super) fn verify_indexed_embedding(

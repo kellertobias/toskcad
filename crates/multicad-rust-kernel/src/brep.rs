@@ -5,6 +5,7 @@
 //! integrated over the trimmed parameter domains with the exact surface
 //! evaluators; tessellation, sections and bounds read the same boundary.
 
+pub mod affine;
 pub mod curve;
 mod domain;
 mod extent;
@@ -17,6 +18,7 @@ pub mod solid;
 pub mod surface;
 pub mod vertex;
 
+pub use affine::Affine;
 pub use curve::Curve;
 pub use nurbs::{NurbsCurve, NurbsSurface};
 pub use solid::{Boundary, Edge, Face, FaceProperties, Loop, Shell, Solid};

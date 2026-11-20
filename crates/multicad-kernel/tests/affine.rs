@@ -214,11 +214,16 @@ fn nonuniform_cylinder_is_exact_brep_and_never_retains_false_circular_metadata()
             .iter()
             .any(|e| matches!(e.geometry, Some(AnalyticGeometry::CircularArc { .. })))
     );
-    assert!(
+    // Both rims carry their exact elliptic image, never a circle.
+    assert_eq!(
         snapshot
             .elements
             .iter()
-            .any(|e| e.key.kind == TopologyKind::Edge && e.geometry.is_none())
+            .filter(|e| e.key.kind == TopologyKind::Edge
+                && matches!(e.geometry, Some(AnalyticGeometry::EllipticArc { semiaxes_mm, .. })
+                    if (semiaxes_mm[0] - 10.).abs() < 1e-9 && (semiaxes_mm[1] - 5.).abs() < 1e-9))
+            .count(),
+        2
     );
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("elliptic-cylinder.step");
@@ -903,15 +908,30 @@ fn indexed_affine_composes_a_source_pose_and_refuses_uncertified_multiloop_stock
         .boolean(&tool, BooleanOperation::Subtract, policy)
         .unwrap()
         .unwrap();
+    // Multi-loop planar stock is not admitted as indexed planar material; it
+    // maps through its exact retained boundary instead, which revalidates
+    // the image and integrates its volume independently of the source.
     let before = pocket.topology_snapshot(feature, 0).unwrap();
-    assert_eq!(
-        pocket
-            .affine_transformed_named(transform, EntityId::new(), policy)
-            .err()
-            .unwrap()
-            .kind,
-        GeometryErrorKind::Unsupported
+    let scaled = pocket
+        .affine_transformed_named(transform, EntityId::new(), policy)
+        .unwrap();
+    near(
+        scaled.volume_mm3().unwrap(),
+        // The 3 mm tool from z = 6 leaves a 2 mm deep pocket in 8 mm stock.
+        (12. * 10. * 8. - 3. * 3. * 2.) * 3.,
     );
+    let after = scaled.topology_snapshot(feature, 1).unwrap();
+    for element in before
+        .elements
+        .iter()
+        .filter(|element| element.key.kind == TopologyKind::Face)
+    {
+        let intent = GeometryIntent::capture(&before, element.key).unwrap();
+        assert!(matches!(
+            resolve(&intent, &after, 1),
+            Resolution::Resolved { .. }
+        ));
+    }
     assert_eq!(pocket.topology_snapshot(feature, 0).unwrap(), before);
 }
 

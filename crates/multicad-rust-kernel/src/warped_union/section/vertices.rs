@@ -4,6 +4,10 @@ use super::*;
 pub(super) struct VertexContacts {
     /// Signed side on leaving each endpoint that lies on the section plane.
     sides: Vec<[Option<bool>; 2]>,
+    /// Straight edges with both ends on the section plane. They lie in it,
+    /// have no leaving side, and may close a section loop between two
+    /// transverse vertex crossings.
+    in_plane: Vec<usize>,
 }
 
 impl VertexContacts {
@@ -27,11 +31,25 @@ impl VertexContacts {
                 return Err(Error::Unsupported);
             }
         }
+        let on_plane = |vertex: usize| distances[vertex].abs() <= tolerance;
+        let in_plane: Vec<_> = shell
+            .edges
+            .iter()
+            .enumerate()
+            .filter(|(_, edge)| {
+                edge.curve == Curve::Line && edge.vertices.into_iter().all(on_plane)
+            })
+            .map(|(index, _)| index)
+            .collect();
         let sides = shell
             .edges
             .iter()
-            .map(|edge| {
+            .enumerate()
+            .map(|(index, edge)| {
                 let mut sides = [None; 2];
+                if in_plane.contains(&index) {
+                    return Ok(sides);
+                }
                 for (end, side) in sides.iter_mut().enumerate() {
                     if distances[edge.vertices[end]].abs() > tolerance {
                         continue;
@@ -56,7 +74,11 @@ impl VertexContacts {
                 Ok(sides)
             })
             .collect::<Result<_, _>>()?;
-        Ok(Self { sides })
+        Ok(Self { sides, in_plane })
+    }
+
+    pub(super) fn in_plane(&self) -> &[usize] {
+        &self.in_plane
     }
 
     pub(super) fn endpoints(&self, shell: &Shell, index: usize) -> Option<[Option<Point>; 2]> {

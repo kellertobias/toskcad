@@ -3206,3 +3206,91 @@ fn an_extruded_stalled_spline_is_no_pole_and_a_seeded_inversion_never_loses_grou
         }
     }
 }
+
+fn affine(matrix: [[f64; 3]; 3], translation: Point) -> Affine {
+    Affine {
+        matrix,
+        translation,
+    }
+}
+
+#[test]
+fn affine_images_keep_exact_volume_and_turn_circles_into_ellipses() {
+    let cylinder = solid(CYLINDER);
+    let expected = PI * 36. * 15.;
+    for (matrix, determinant) in [
+        ([[2., 0., 0.], [0., 1., 0.], [0., 0., 3.]], 6.),
+        // A shear tilts the extrusion and turns the rims off their axes.
+        ([[1., 0.5, 0.], [0., 1., 0.25], [0., 0., 2.]], 2.),
+    ] {
+        let image = cylinder
+            .boundary()
+            .affine_image(affine(matrix, [10., -20., 5.]))
+            .unwrap();
+        assert!(
+            image
+                .edges
+                .iter()
+                .all(|edge| !matches!(edge.curve, Curve::Circle { .. }))
+        );
+        assert!(
+            image
+                .faces
+                .iter()
+                .any(|face| matches!(face.surface, Surface::Extrusion { .. }))
+        );
+        let scaled = Solid::new(image, TOLERANCE, None).unwrap();
+        assert!(
+            close(scaled.volume_mm3(), expected * determinant, 1e-9),
+            "{}",
+            scaled.volume_mm3()
+        );
+        certified(&scaled, 0.05);
+    }
+    // A uniform scale with a rotation keeps every analytic family.
+    let (sin, cos) = 0.3_f64.sin_cos();
+    let similar = affine(
+        [
+            [1.5 * cos, -1.5 * sin, 0.],
+            [1.5 * sin, 1.5 * cos, 0.],
+            [0., 0., 1.5],
+        ],
+        [1., 2., 3.],
+    );
+    let frustum = solid(FRUSTUM);
+    let image = frustum.boundary().affine_image(similar).unwrap();
+    assert!(
+        image
+            .faces
+            .iter()
+            .any(|f| matches!(f.surface, Surface::Cone { .. }))
+    );
+    let scaled = Solid::new(image, TOLERANCE, None).unwrap();
+    assert!(close(
+        scaled.volume_mm3(),
+        frustum.volume_mm3() * 3.375,
+        1e-9
+    ));
+    // A nonuniform cone image is not a circular cone and is refused.
+    let stretched = affine([[2., 0., 0.], [0., 1., 0.], [0., 0., 1.]], [0.; 3]);
+    assert_eq!(
+        frustum.boundary().affine_image(stretched),
+        Err(Error::Unsupported)
+    );
+    // Voids map with their shell.
+    let hollow = solid(VOID);
+    let image = hollow.boundary().affine_image(stretched).unwrap();
+    let scaled = Solid::new(image, TOLERANCE, None).unwrap();
+    assert!(close(scaled.volume_mm3(), 2. * 5760., 1e-12));
+    assert_eq!(scaled.boundary().shells.len(), 2);
+    // Reflections and collapse are invalid.
+    for matrix in [
+        [[-1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+        [[1., 0., 0.], [0., 0., 0.], [0., 0., 1.]],
+    ] {
+        assert_eq!(
+            cylinder.boundary().affine_image(affine(matrix, [0.; 3])),
+            Err(Error::Invalid)
+        );
+    }
+}

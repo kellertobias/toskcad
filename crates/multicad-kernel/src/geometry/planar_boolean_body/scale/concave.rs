@@ -41,55 +41,122 @@ impl Solid {
             return Err(ancestry_error());
         }
         let material = straight_profile_material(&rings, tolerance)?;
-        let face_origins = ancestry
-            .iter()
-            .map(|&index| BoundaryOrigin {
-                origins: topology.elements[index].origins.clone(),
-                boundary: topology.elements[index].boundary.clone(),
-            })
-            .collect();
-        let mut boundary = BTreeMap::new();
-        for element in &topology.elements {
-            let key = match element.geometry {
-                Some(AnalyticGeometry::Point { position_mm }) => BoundaryKey::vertex(position_mm),
-                Some(AnalyticGeometry::Line { a_mm, b_mm }) => BoundaryKey::edge([a_mm, b_mm]),
-                Some(AnalyticGeometry::Plane { .. }) => continue,
-                _ => return Err(unsupported()),
-            };
-            if boundary
-                .insert(
-                    key,
-                    BoundaryOrigin {
-                        origins: element.origins.clone(),
-                        boundary: element.boundary.clone(),
-                    },
-                )
-                .is_some()
-            {
-                return Err(ancestry_error());
-            }
-        }
-        let mut admitted = PlanarBooleanBody::build(
-            geometry,
-            vec![SourcePart {
-                operand: 0,
-                faces: ancestry.iter().copied().map(Some).collect(),
-                normal_sign: 1.,
-            }],
-            &[topology],
-            feature,
-            policy,
-            Some(material),
-        )?;
-        let SolidBody::PlanarBoolean(body, _) = &mut admitted.body else {
-            unreachable!("admitted planar boundary")
-        };
-        let body = Rc::get_mut(body).expect("new admitted planar boundary");
-        body.scaled_ancestry = Some(Ancestry::match_boundary(body, boundary, face_origins)?);
+        let admitted = admit_rings(geometry, material, &ancestry, topology, feature, policy)?;
         let result = admitted
             .transformed(placement)?
             .affine_transformed_named(transform, feature, policy)?;
         let expected = self.volume_mm3()? * transform.determinant();
+        if (result.volume_mm3()? - expected).abs() > expected * 1e-8 {
+            return Err(ancestry_error());
+        }
+        Ok(Some(result))
+    }
+}
+
+/// Publish an admitted planar boundary with one-to-one source ancestry. Ring
+/// ordinals of `geometry` index `ancestry`, the topology element of each face.
+fn admit_rings(
+    geometry: Union,
+    material: Material,
+    ancestry: &[usize],
+    topology: TopologySnapshot,
+    feature: EntityId,
+    policy: GeometryPolicy,
+) -> Result<Solid, GeometryError> {
+    let face_origins = ancestry
+        .iter()
+        .map(|&index| BoundaryOrigin {
+            origins: topology.elements[index].origins.clone(),
+            boundary: topology.elements[index].boundary.clone(),
+        })
+        .collect();
+    let mut boundary = BTreeMap::new();
+    for element in &topology.elements {
+        let key = match element.geometry {
+            Some(AnalyticGeometry::Point { position_mm }) => BoundaryKey::vertex(position_mm),
+            Some(AnalyticGeometry::Line { a_mm, b_mm }) => BoundaryKey::edge([a_mm, b_mm]),
+            Some(AnalyticGeometry::Plane { .. }) => continue,
+            _ => return Err(unsupported()),
+        };
+        if boundary
+            .insert(
+                key,
+                BoundaryOrigin {
+                    origins: element.origins.clone(),
+                    boundary: element.boundary.clone(),
+                },
+            )
+            .is_some()
+        {
+            return Err(ancestry_error());
+        }
+    }
+    let mut admitted = PlanarBooleanBody::build(
+        geometry,
+        vec![SourcePart {
+            operand: 0,
+            faces: ancestry.iter().copied().map(Some).collect(),
+            normal_sign: 1.,
+        }],
+        &[topology],
+        feature,
+        policy,
+        Some(material),
+    )?;
+    let SolidBody::PlanarBoolean(body, _) = &mut admitted.body else {
+        unreachable!("admitted planar boundary")
+    };
+    let body = Rc::get_mut(body).expect("new admitted planar boundary");
+    body.scaled_ancestry = Some(Ancestry::match_boundary(body, boundary, face_origins)?);
+    Ok(admitted)
+}
+
+impl Solid {
+    /// Rectilinear stock of several cells, possibly with closed internal
+    /// voids, is admitted with its exact face rings. Its grid cells are the
+    /// certified occupied material, so the indexed affine map applies.
+    pub(in crate::geometry::planar_boolean_body) fn rust_scale_orthogonal_cells(
+        &self,
+        transform: AffineTransform,
+        feature: EntityId,
+        policy: GeometryPolicy,
+    ) -> Result<Option<Self>, GeometryError> {
+        let Some((body, frame)) = self.orthogonal_body() else {
+            return Ok(None);
+        };
+        if body.has_curved_cuts() || body.geometry.cells().len() < 2 {
+            return Ok(None);
+        }
+        let topology = self.rust_topology().ok_or_else(unsupported)??;
+        let Some((rings, ancestry)) = convex_faces(self, &topology, policy) else {
+            // A face with holes needs a logical multi-wire representation.
+            return Ok(None);
+        };
+        let tolerance = policy.linear_tolerance_mm;
+        let geometry = Union::from_planar_shells(&rings, tolerance).map_err(planar_error)?;
+        let volume = self.volume_mm3()?;
+        if (geometry.volume_mm3() - volume).abs() > volume * 1e-8 {
+            return Err(ancestry_error());
+        }
+        let pieces = body
+            .geometry
+            .cells()
+            .iter()
+            .map(|&cell| ConvexPiece::new(cell_faces(cell, frame), tolerance))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(planar_error)?;
+        let material =
+            CutMaterial::certify_existing(&geometry, &pieces, tolerance).map_err(planar_error)?;
+        let admitted = admit_rings(
+            geometry,
+            Material::Certified(Box::new(material)),
+            &ancestry,
+            topology,
+            feature,
+            policy,
+        )?;
+        let result = admitted.affine_transformed_named(transform, feature, policy)?;
+        let expected = volume * transform.determinant();
         if (result.volume_mm3()? - expected).abs() > expected * 1e-8 {
             return Err(ancestry_error());
         }
