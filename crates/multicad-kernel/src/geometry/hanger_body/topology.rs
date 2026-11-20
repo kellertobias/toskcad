@@ -80,6 +80,21 @@ fn origin(feature: EntityId, role: String) -> Origin {
         role: format!("hanger/{role}"),
     }
 }
+/// Every bounded helical band also carries the shared `thread/` role that
+/// every other modeled thread publishes, qualified by its component.
+fn face_origins(feature: EntityId, key: FaceKey) -> BTreeSet<Origin> {
+    let mut origins = BTreeSet::from([origin(feature, face_tag(key))]);
+    if matches!(
+        key,
+        FaceKey::MetricThread { .. } | FaceKey::WoodThread { .. }
+    ) {
+        origins.insert(Origin {
+            source: feature,
+            role: format!("thread/{}", face_tag(key)),
+        });
+    }
+    origins
+}
 pub(super) fn refuse(message: impl Into<String>) -> GeometryError {
     error(
         "Rust hanger references",
@@ -192,7 +207,7 @@ impl HangerBody {
                     kind: TopologyKind::Face,
                     ordinal: index as u32,
                 },
-                origins: BTreeSet::from([id.clone()]),
+                origins: face_origins(self.feature, key),
                 boundary,
                 frames: plane
                     .map(|frame| AnchoredFrame { origin: id, frame })

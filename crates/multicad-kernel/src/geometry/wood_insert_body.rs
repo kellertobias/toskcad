@@ -140,6 +140,18 @@ fn origin(feature: EntityId, role: String) -> Origin {
         role: format!("wood-insert/{role}"),
     }
 }
+/// Every bounded helical band also carries the shared `thread/` role that
+/// every other modeled thread publishes, qualified by its insert side.
+fn face_origins(feature: EntityId, key: FaceKey) -> BTreeSet<Origin> {
+    let mut origins = BTreeSet::from([origin(feature, face_tag(key))]);
+    if !matches!(key, FaceKey::StartCap | FaceKey::EndCap) {
+        origins.insert(Origin {
+            source: feature,
+            role: format!("thread/{}", face_tag(key)),
+        });
+    }
+    origins
+}
 fn world_point(
     frame: PlaneFrame,
     point: [B; 3],
@@ -276,7 +288,7 @@ impl WoodInsertBody {
                     kind: TopologyKind::Face,
                     ordinal: index as u32,
                 },
-                origins: BTreeSet::from([id.clone()]),
+                origins: face_origins(self.feature, face),
                 boundary,
                 frames: plane
                     .map(|p| AnchoredFrame {
