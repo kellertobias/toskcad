@@ -233,8 +233,13 @@ impl Surface {
         if norm(su) > tolerance {
             return false;
         }
-        let Self::Nurbs { surface, .. } = self else {
-            return true;
+        let surface = match self {
+            Self::Nurbs { surface, .. } => surface,
+            // Every u isoline of an extrusion is the whole translated
+            // curve: a stalled parametrization, as at a spline end that
+            // repeats its control point, never collapses it to a point.
+            Self::Extrusion { .. } => return false,
+            _ => return true,
         };
         let [a, b] = surface.range(0);
         [a, 0.5 * (a + b), b]
@@ -377,11 +382,19 @@ impl Surface {
         }
     }
 
+    /// The best iterate of a Newton descent. Where a derivative stalls, as
+    /// at a spline end, a full step can overshoot along the flat direction;
+    /// the search never returns a point farther than one it already found.
     fn newton(&self, point: Point, start: [f64; 2]) -> [f64; 2] {
         let mut uv = start;
+        let mut best = (f64::INFINITY, start);
         for _ in 0..60 {
             let (s, [su, sv]) = self.evaluate(uv);
             let r = sub(point, s);
+            let d = norm(r);
+            if d < best.0 {
+                best = (d, uv);
+            }
             let (a, b, c) = (dot(su, su), dot(su, sv), dot(sv, sv));
             let (ru, rv) = (dot(r, su), dot(r, sv));
             let determinant = a * c - b * b;
@@ -409,7 +422,11 @@ impl Surface {
                 break;
             }
         }
-        uv
+        if distance(self.evaluate(uv).0, point) < best.0 {
+            uv
+        } else {
+            best.1
+        }
     }
 
     /// The v parameter where the surface closes to a point above or below

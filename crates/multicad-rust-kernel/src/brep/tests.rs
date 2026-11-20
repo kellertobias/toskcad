@@ -3163,3 +3163,46 @@ fn a_stalled_spline_edge_is_no_pole_and_still_bounds_an_exact_area() {
         assert!((flux - 2. / 3.).abs() < 1e-9, "{flux}");
     }
 }
+
+#[test]
+fn an_extruded_stalled_spline_is_no_pole_and_a_seeded_inversion_never_loses_ground() {
+    // A cubic whose last control point repeats: its parametrization stalls
+    // at u = 1, as at the flank end of an exchanged gear outline.
+    let cubic = NurbsCurve::new(
+        3,
+        vec![[0., 0., 0.], [1., 0.3, 0.], [2., 0., 0.], [2., 0., 0.]],
+        None,
+        vec![0., 1.],
+        vec![4, 4],
+    )
+    .unwrap();
+    let extrusion = Surface::Extrusion {
+        curve: Curve::nurbs(cubic, TOLERANCE),
+        direction: [0., 0., 8.],
+    };
+    let (end, [su, _]) = extrusion.evaluate([1., 0.5]);
+    assert!(distance(end, [2., 0., 4.]) < 1e-12);
+    assert!(norm(su) <= TOLERANCE);
+    // The u isoline is the whole translated cubic, never one point.
+    assert!(!extrusion.is_pole([1., 0.5], TOLERANCE));
+    assert!(!extrusion.is_pole([1., 0.], TOLERANCE));
+    // Seeds just inside the stalled ends: the inversion returns a foot no
+    // farther than the seed, whatever a full Newton step along the flat
+    // direction would do.
+    for surface in [extrusion, stalled_patch(false)] {
+        for (target, seed) in [
+            ([1., 0.5], [1. - 3e-8, 0.5]),
+            ([1., 0.25], [1. - 1e-6, 0.25]),
+            ([0.999, 0.75], [0.9995, 0.75]),
+        ] {
+            let point = surface.evaluate(target).0;
+            let found = surface.invert(point, Some(seed));
+            let gap = distance(surface.evaluate(found).0, point);
+            assert!(
+                gap <= distance(surface.evaluate(seed).0, point),
+                "{target:?}: {gap}"
+            );
+            assert!(gap <= TOLERANCE, "{target:?}: {gap}");
+        }
+    }
+}
