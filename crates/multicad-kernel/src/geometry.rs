@@ -43,8 +43,10 @@ use line8_nut_body::Line8NutBody;
 pub use line8_nut_body::{Line8NutCut, Line8NutTransfer};
 pub(crate) mod construction;
 mod cosmetic_fastener_body;
+mod cosmetic_phillips_body;
 mod cosmetic_profiled_body;
 use clipped_npt_body::ClippedNptBody;
+use cosmetic_phillips_body::CosmeticPhillipsBody;
 use cosmetic_profiled_body::CosmeticProfiledBody;
 mod entry_chamfer_body;
 mod wood_insert_body;
@@ -776,6 +778,7 @@ enum SolidBody {
     Annulus(Rc<AnnulusBody>, PlaneFrame),
     CosmeticFastener(Rc<CosmeticFastenerBody>, PlaneFrame),
     CosmeticProfiled(Rc<CosmeticProfiledBody>, PlaneFrame),
+    CosmeticPhillips(Rc<CosmeticPhillipsBody>),
     ClippedNpt(Rc<ClippedNptBody>),
     PipeHardware(Rc<PipeHardwareBody>),
     LiteralNpt(Rc<LiteralNptBody>),
@@ -1274,6 +1277,7 @@ impl Solid {
             SolidBody::CosmeticProfiled(body, frame) => {
                 SolidBody::CosmeticProfiled(Rc::clone(body), *frame)
             }
+            SolidBody::CosmeticPhillips(body) => SolidBody::CosmeticPhillips(Rc::clone(body)),
             SolidBody::EntryChamfer(body, frame) => {
                 SolidBody::EntryChamfer(Rc::clone(body), *frame)
             }
@@ -1848,6 +1852,9 @@ impl Solid {
                     frame.checked_metric_bounds(body.bounds(PlaneFrame::default()), self.policy)?;
                     SolidBody::CosmeticProfiled(Rc::clone(body), frame)
                 }
+                SolidBody::CosmeticPhillips(body) => {
+                    SolidBody::CosmeticPhillips(Rc::new(body.transformed(transform)?))
+                }
                 SolidBody::Linear(body, frame) => {
                     let frame = transform.frame(*frame);
                     frame.checked_metric_bounds(body.bounds(PlaneFrame::default()), self.policy)?;
@@ -2116,6 +2123,9 @@ impl Solid {
         if let Some((body, _)) = self.cosmetic_profiled_body_ref() {
             return Ok(body.volume_mm3());
         }
+        if let Some(body) = self.cosmetic_phillips_body() {
+            return Ok(body.volume_mm3());
+        }
         if let Some((body, _)) = self.cosmetic_fastener_body() {
             return Ok(body.geometry.volume_mm3());
         }
@@ -2286,6 +2296,9 @@ impl Solid {
         }
         if let Some((body, frame)) = self.cosmetic_profiled_body_ref() {
             return Ok(body.bounds(frame));
+        }
+        if let Some(body) = self.cosmetic_phillips_body() {
+            return Ok(body.bounds());
         }
         if let Some((body, frame)) = self.cosmetic_fastener_body() {
             return Ok(body.bounds(frame));
@@ -2513,6 +2526,9 @@ impl Solid {
         if let Some((body, frame)) = self.cosmetic_profiled_body_ref() {
             return Ok(body.faces(frame));
         }
+        if let Some(body) = self.cosmetic_phillips_body() {
+            return body.faces();
+        }
         if let Some((body, frame)) = self.cosmetic_fastener_body() {
             return Ok(body.faces(frame));
         }
@@ -2680,6 +2696,14 @@ impl Solid {
             SolidBody::OrthogonalSeats(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::CosmeticProfiled(body, frame) => match usage {
                 MeshUse::Display => body.mesh(*frame, rust_options),
+                MeshUse::Manufacturing => Err(error(
+                    "manufacturing mesh",
+                    GeometryErrorKind::Unsupported,
+                    "Cosmetic thread envelopes require modeled thread geometry for manufacturing",
+                )),
+            },
+            SolidBody::CosmeticPhillips(body) => match usage {
+                MeshUse::Display => body.mesh(rust_options),
                 MeshUse::Manufacturing => Err(error(
                     "manufacturing mesh",
                     GeometryErrorKind::Unsupported,
@@ -3256,6 +3280,7 @@ impl Solid {
             SolidBody::HelicalTubeCut(body, _) => body.feature,
             SolidBody::CosmeticFastener(body, _) => body.feature,
             SolidBody::CosmeticProfiled(body, _) => body.feature,
+            SolidBody::CosmeticPhillips(body) => body.feature,
             SolidBody::ClippedNpt(body) => body.feature,
             SolidBody::PipeHardware(body) => body.feature,
             SolidBody::LiteralNpt(body) => body.feature,
@@ -3352,6 +3377,7 @@ impl Solid {
             | SolidBody::ExternalNptStock(..)
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
+            | SolidBody::CosmeticPhillips(..)
             | SolidBody::InternalThreadTreatment(..)
             | SolidBody::ObliqueBore(..)
             | SolidBody::CrossBore(..) => false,
@@ -3626,6 +3652,7 @@ impl Solid {
             | SolidBody::ExternalNptStock(..)
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
+            | SolidBody::CosmeticPhillips(..)
             | SolidBody::InternalThreadTreatment(..)
             | SolidBody::ObliqueBore(..)
             | SolidBody::CrossBore(..) => Err(step::StepError::Unsupported),
@@ -3754,6 +3781,7 @@ impl Solid {
             SolidBody::Annulus(..) => "Annulus",
             SolidBody::CosmeticFastener(..) => "CosmeticFastener",
             SolidBody::CosmeticProfiled(..) => "CosmeticProfiled",
+            SolidBody::CosmeticPhillips(..) => "CosmeticPhillips",
             SolidBody::ClippedNpt(..) => "ClippedNpt",
             SolidBody::PipeHardware(..) => "PipeHardware",
             SolidBody::LiteralNpt(..) => "LiteralNpt",

@@ -55,7 +55,7 @@ fn named_phillips_face_frames_follow_rigid_occurrences_without_axis_flips() {
         }
     }
 }
-pub(super) fn fixture(index: usize, plain: f64, left: bool) -> PhillipsScrew {
+pub(in crate::geometry) fn fixture(index: usize, plain: f64, left: bool) -> PhillipsScrew {
     let (m, r, b, g, inner, beta, rs, pitch, head) = match index {
         0 => (
             1.9,

@@ -94,3 +94,79 @@ impl Envelope {
         Ok(mesh)
     }
 }
+
+/// The same smooth-shaft envelope over an actual Phillips source.
+#[derive(Clone, Debug)]
+pub struct PhillipsEnvelope {
+    source: crate::phillips_drive::PhillipsScrew,
+    faces: Vec<crate::phillips_drive::ScrewFace>,
+}
+impl PhillipsEnvelope {
+    pub fn new(source: crate::phillips_drive::PhillipsScrew) -> Self {
+        use crate::phillips_drive::ScrewFace as Face;
+        let shoulder = source.profile().end()[0] != source.thread().spec().major_radius_mm;
+        let faces = source
+            .faces()
+            .into_iter()
+            .filter(|f| match f {
+                Face::ThreadWall(index) => *index == 0,
+                Face::ThreadShoulder => shoulder,
+                _ => true,
+            })
+            .collect();
+        Self { source, faces }
+    }
+    /// The immutable physical source; its helical wall is not this geometry.
+    pub fn head_source(&self) -> &crate::phillips_drive::PhillipsScrew {
+        &self.source
+    }
+    pub fn faces(&self) -> &[crate::phillips_drive::ScrewFace] {
+        &self.faces
+    }
+    pub fn shaft_radius_mm(&self) -> f64 {
+        self.source.thread().spec().major_radius_mm
+    }
+    pub fn shaft_interval_mm(&self) -> [f64; 2] {
+        self.source.visible_thread_interval_mm()
+    }
+    /// Nominal display volume: retained head and smooth shaft minus the
+    /// certified cavity volume interval midpoint.
+    pub fn volume_mm3(&self) -> f64 {
+        let [a, b] = self.shaft_interval_mm();
+        let [lo, hi] = self.source.cavity().volume().volume_mm3;
+        self.source.profile().volume_mm3() + PI * self.shaft_radius_mm().powi(2) * (b - a)
+            - lo.midpoint(hi)
+    }
+    pub fn support(&self, direction: [f64; 3]) -> f64 {
+        if !direction.into_iter().all(f64::is_finite) {
+            return f64::NAN;
+        }
+        let [a, b] = self.shaft_interval_mm();
+        let cylinder = self.shaft_radius_mm() * direction[0].hypot(direction[1])
+            + direction[2] * if direction[2] < 0. { a } else { b };
+        cylinder.max(
+            self.source.profile().support(direction)
+                - direction[2] * self.source.spec().shank_length_mm,
+        )
+    }
+    pub fn mesh(
+        &self,
+        options: Tessellation,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<DisplayMesh, crate::helical_thread_mesh::PhillipsMeshError> {
+        let mut mesh = crate::helical_thread_mesh::tessellate_cosmetic_phillips_screw(
+            &self.source,
+            options,
+            cancelled,
+        )?;
+        let old = self.source.faces();
+        for id in &mut mesh.face_indices {
+            *id = self
+                .faces
+                .iter()
+                .position(|f| *f == old[*id as usize])
+                .expect("cosmetic mesh emits only its retained faces") as u32;
+        }
+        Ok(mesh)
+    }
+}

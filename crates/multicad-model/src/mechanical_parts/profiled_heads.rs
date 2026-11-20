@@ -4,6 +4,30 @@ use multicad_kernel::rust_kernel::{head_profile::Head, profiled_screw::Spec};
 mod hexalobular;
 mod phillips;
 
+/// A cosmetic Phillips screw: the actual physical head and recess source on
+/// the nominal smooth envelope of its thread interval. `physical` is the same
+/// thread resolved as modeled material.
+pub(super) fn build_cosmetic_phillips(
+    feature: EntityId,
+    underhead_length_mm: f64,
+    shank_radius_mm: f64,
+    head: &ResolvedScrewHead,
+    drive: &ResolvedScrewDrive,
+    physical: &ResolvedThread,
+    policy: GeometryPolicy,
+) -> Result<Option<Solid>, ModelError> {
+    phillips::build(
+        feature,
+        underhead_length_mm,
+        shank_radius_mm,
+        head,
+        drive,
+        physical,
+        policy,
+        true,
+    )
+}
+
 pub(super) fn build(
     feature: EntityId,
     underhead_length_mm: f64,
@@ -22,6 +46,7 @@ pub(super) fn build(
             drive,
             thread,
             policy,
+            false,
         );
     }
     if matches!(drive, ResolvedScrewDrive::Hexalobular { .. }) {

@@ -30,7 +30,7 @@ use external::ExternalStock;
 pub use internal_data::InternalThreadData;
 mod boundary;
 mod nut;
-mod phillips;
+pub(super) mod phillips;
 pub use phillips::PhillipsMeshVolumePair;
 pub(super) mod profiled_screw;
 mod screw;

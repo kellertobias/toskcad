@@ -350,11 +350,33 @@ pub fn tessellate_phillips_screw_with_work(
     if maximum_work > 512_000_000 {
         return Err(MeshError::InvalidOptions.into());
     }
-    let result = phillips_counted(screw, options, cancelled, &work, maximum_work);
+    let result = phillips_counted(screw, options, cancelled, &work, maximum_work, false);
     if work.cancelled.get() {
         Err(PhillipsMeshError::Cancelled)
     } else {
         result
+    }
+}
+/// Explicit display envelope of an actual Phillips source: the physical head,
+/// recess and shoulder junction are retained, while the visible thread
+/// interval has its nominal smooth cylinder. Face ids index `screw.faces()`.
+/// This is never a manufacturing or file-mass candidate.
+pub fn tessellate_cosmetic_phillips_screw(
+    screw: &PhillipsScrew,
+    options: Tessellation,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<DisplayMesh, PhillipsMeshError> {
+    let maximum_work = 512_000_000;
+    let work = super::super::Counted {
+        remaining: std::cell::Cell::new(maximum_work),
+        cancelled: std::cell::Cell::new(false),
+        interrupt: cancelled,
+    };
+    let result = phillips_counted(screw, options, cancelled, &work, maximum_work, true);
+    if work.cancelled.get() {
+        Err(PhillipsMeshError::Cancelled)
+    } else {
+        result.map(|mesh| mesh.mesh)
     }
 }
 fn phillips_counted(
@@ -363,6 +385,7 @@ fn phillips_counted(
     cancelled: &dyn Fn() -> bool,
     work: &super::super::Counted<'_>,
     maximum_work: usize,
+    cosmetic: bool,
 ) -> Result<PhillipsScrewMesh, PhillipsMeshError> {
     check_options(options)?;
     work.step(32768)?;
@@ -428,18 +451,6 @@ fn phillips_counted(
         .position(|f| f.source_identity() == FaceKey::Mouth)
         .expect("qualified source mouth") as u32;
     let ring = mouth_ring(cavity.mesh(), cap, witness)?;
-    let strips =
-        super::super::phase_strips_counted(screw.thread(), TAU / count, working, Some(work))?;
-    let mut builder = Builder::new(screw.thread(), count as usize, strips, working);
-    builder.work = Some(work);
-    builder.lower = screw.visible_thread_interval_mm()[0];
-    builder.insert_cap_stations()?;
-    builder.build_wall()?;
-    cancel(cancelled)?;
-    let [mut shoulder, tip] = std::mem::take(&mut builder.caps);
-    builder.add_cap(1, tip)?;
-    Builder::sort_ring(&mut shoulder)?;
-    work.step(shoulder.len().saturating_mul(32))?;
     let faces = screw.faces();
     let face = |key| {
         faces
@@ -447,6 +458,47 @@ fn phillips_counted(
             .position(|&f| f == key)
             .expect("sealed Phillips face") as u32
     };
+    let strips = if cosmetic {
+        vec![]
+    } else {
+        super::super::phase_strips_counted(screw.thread(), TAU / count, working, Some(work))?
+    };
+    let mut builder = Builder::new(screw.thread(), count as usize, strips, working);
+    builder.work = Some(work);
+    let [lower_z, tip_z] = screw.visible_thread_interval_mm();
+    builder.lower = lower_z;
+    let shoulder = if cosmetic {
+        // The nominal smooth envelope of the same visible thread interval;
+        // the head, recess and junction below remain the physical source.
+        let angles = (0..builder.steps)
+            .map(|i| TAU * builder.fraction(i))
+            .collect();
+        let mut shell = HeadMesh {
+            builder: &mut builder,
+            angles,
+        };
+        let radius = screw.thread().spec().major_radius_mm;
+        let lower = shell.ring(lower_z, |_| radius);
+        let tip = shell.ring(tip_z, |_| radius);
+        shell.wall(&lower, &tip, |_| Ok(face(ScrewFace::ThreadWall(0))), false)?;
+        let center = shell.push([0., 0., tip_z]);
+        for (&a, &b) in tip.iter().zip(tip.iter().cycle().skip(1)) {
+            shell
+                .builder
+                .triangle([center, a, b], face(ScrewFace::ThreadTip))?;
+        }
+        shell.angles.into_iter().zip(lower).collect()
+    } else {
+        builder.insert_cap_stations()?;
+        builder.build_wall()?;
+        cancel(cancelled)?;
+        let [mut shoulder, tip] = std::mem::take(&mut builder.caps);
+        builder.add_cap(1, tip)?;
+        Builder::sort_ring(&mut shoulder)?;
+        shoulder
+    };
+    cancel(cancelled)?;
+    work.step(shoulder.len().saturating_mul(32))?;
     let mut shell = HeadMesh {
         builder: &mut builder,
         angles: shoulder.iter().map(|&(angle, _)| angle).collect(),
@@ -535,7 +587,7 @@ fn phillips_counted(
             + head_vertices.len().saturating_mul(32)
             + cavity_vertices.len().saturating_mul(32),
     )?;
-    for (&key, &vertex) in &builder.vertex_ids {
+    for (&key, &vertex) in builder.vertex_ids.iter().filter(|_| !cosmetic) {
         let kind = match key {
             super::super::VertexKey::Grid(column, rail) => PhillipsThreadVertexKind::Grid {
                 fraction: builder.fraction(column),

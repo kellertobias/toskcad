@@ -599,6 +599,25 @@ fn rust_machine_screw(
                 .cosmetic_profiled_screw_envelope()
                 .map_err(|cause| error(Some(feature), cause));
         }
+        if matches!(drive, ResolvedScrewDrive::PhillipsH { .. }) {
+            let mut physical = thread.clone();
+            physical.representation = ThreadRepresentation::Modeled;
+            return profiled_heads::build_cosmetic_phillips(
+                feature,
+                underhead_length_mm,
+                shank_radius_mm,
+                &head,
+                &drive,
+                &physical,
+                policy,
+            )?
+            .ok_or_else(|| {
+                error(
+                    Some(feature),
+                    "Rust cosmetic Phillips screws support countersunk and pan heads",
+                )
+            });
+        }
         let (
             ResolvedScrewHead::Countersunk {
                 radius_mm,
@@ -615,7 +634,7 @@ fn rust_machine_screw(
         else {
             return Err(error(
                 Some(feature),
-                "Rust cosmetic screws support external hex heads or socket-cap and straight countersunk heads with flat hex sockets",
+                "Rust cosmetic screws support external hex heads, socket-cap and straight countersunk heads with flat hex sockets, hexalobular and Phillips drives",
             ));
         };
         return Solid::rust_cosmetic_countersunk_screw(
