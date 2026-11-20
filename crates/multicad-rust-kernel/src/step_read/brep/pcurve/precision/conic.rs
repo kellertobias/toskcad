@@ -202,12 +202,12 @@ pub(super) fn certify(
         return Err(ReadError::Unsupported);
     }
     let mut homogeneous = [[I::point(0.); 4]; MAX_CONTROLS];
+    let plane = super::analytic::plane_lift(source, definition.surface, budget)?;
     for (i, control) in controls.iter().enumerate() {
         // Fixed-size frame projection, normalized homogeneous coefficients,
         // positive-weight checks/copies: <160 interval/control actions.
         budget.charge(512)?;
-        let world =
-            super::analytic::plane_point(source, definition.surface, reference(control)?, budget)?;
+        let world = plane.point(source, reference(control)?, budget)?;
         let delta = difference(world, target.origin);
         let w = weights[i] / I::point(maximum);
         homogeneous[i] = [

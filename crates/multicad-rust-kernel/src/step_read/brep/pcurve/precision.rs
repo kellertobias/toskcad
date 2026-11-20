@@ -1386,11 +1386,7 @@ pub(super) fn reserve(
 ) -> Result<f64> {
     budget.charge(256)?;
     let curve3d_id = unwrapped(source, curve3d_id, budget)?;
-    let edge_error = if matches!(edge.curve, Curve::Nurbs { .. }) {
-        curve_nurbs(source, curve3d_id, &edge.curve, 3, budget)?.error
-    } else {
-        analytic::curve_reserve(source, curve3d_id, edge, budget)?
-    };
+    let edge_error = edge_curve_error(source, curve3d_id, edge, budget)?;
     let image_error = match (surface, &definition.geometry) {
         (Surface::Plane(_), Curve::Nurbs { .. }) => {
             plane_nurbs(source, definition, surface, budget)?
@@ -1408,6 +1404,41 @@ pub(super) fn reserve(
     }
     budget.charge(64)?;
     Ok(total.hi)
+}
+
+/// Most NURBS edge-curve transfer bounds one pass keeps.
+const MAX_CURVE_CACHE: usize = 4096;
+/// The numeric transfer bound of the edge's own 3D curve. Each edge is
+/// bound to two pcurves; a NURBS curve's whole-control bound depends only on
+/// the immutable source and the curve entity, so it is computed once per
+/// pass that turned the cache on. Every trim/domain/sense check still runs.
+fn edge_curve_error(
+    source: &Source<'_>,
+    curve3d_id: u32,
+    edge: &Edge,
+    budget: &mut Budget<'_>,
+) -> Result<f64> {
+    if !matches!(edge.curve, Curve::Nurbs { .. }) {
+        return analytic::curve_reserve(source, curve3d_id, edge, budget);
+    }
+    if let Some(cache) = source.curve_errors.borrow().as_ref() {
+        budget.charge(cache.len().saturating_mul(8).saturating_add(64))?;
+        if let Some(&(_, error)) = cache.iter().find(|&&(id, _)| id == curve3d_id) {
+            return Ok(error);
+        }
+    }
+    let error = curve_nurbs(source, curve3d_id, &edge.curve, 3, budget)?.error;
+    if !error.is_finite() || error < 0. {
+        return Err(ReadError::Unsupported);
+    }
+    if let Some(cache) = source.curve_errors.borrow_mut().as_mut()
+        && cache.len() < MAX_CURVE_CACHE
+    {
+        budget.charge(cache.len().saturating_mul(8).saturating_add(128))?;
+        cache.try_reserve(1).map_err(|_| ReadError::Limit)?;
+        cache.push((curve3d_id, error));
+    }
+    Ok(error)
 }
 
 #[cfg(test)]
@@ -1732,9 +1763,10 @@ pub(super) fn plane_nurbs_certificate(
     {
         return Err(ReadError::Limit);
     }
+    let plane = analytic::plane_lift(source, definition.surface, budget)?;
     for control in controls {
         budget.charge(256)?;
-        let p = analytic::plane_point(source, definition.surface, reference(control)?, budget)?;
+        let p = plane.point(source, reference(control)?, budget)?;
         if !p.into_iter().all(I::valid) {
             return Err(ReadError::Unsupported);
         }
@@ -1755,11 +1787,7 @@ pub(super) fn plane_nurbs_certificate(
     )?
     .error;
     let curve3d_id = unwrapped(source, curve3d_id, budget)?;
-    let target = if matches!(edge.curve, Curve::Nurbs { .. }) {
-        curve_nurbs(source, curve3d_id, &edge.curve, 3, budget)?.error
-    } else {
-        analytic::curve_reserve(source, curve3d_id, edge, budget)?
-    };
+    let target = edge_curve_error(source, curve3d_id, edge, budget)?;
     let floor = I::point(numerical) + I::point(target);
     if !floor.valid() {
         return Err(ReadError::Unsupported);
