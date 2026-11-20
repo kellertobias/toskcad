@@ -686,3 +686,75 @@ fn invalid_sizes_kinds_keys_duplicates_origins_and_disconnected_inputs_are_rejec
         0
     );
 }
+
+#[test]
+fn all_box_edge_fillet_is_the_exact_minkowski_rounded_box_and_round_trips_step() {
+    let r: f64 = 2.;
+    let inner = [56., 36., 26.];
+    let expected = inner[0] * inner[1] * inner[2]
+        + 2. * r * (inner[0] * inner[1] + inner[1] * inner[2] + inner[0] * inner[2])
+        + std::f64::consts::PI * r * r * (inner[0] + inner[1] + inner[2])
+        + 4. / 3. * std::f64::consts::PI * r.powi(3);
+    let owner = EntityId::new();
+    let feature = EntityId::new();
+    for placement in [
+        RigidTransform::default(),
+        RigidTransform {
+            rotation: [[0., -1., 0.], [1., 0., 0.], [0., 0., 1.]],
+            translation_mm: [5., -7., 11.],
+        },
+    ] {
+        let source = Solid::box_named([60., 40., 30.], owner, policy())
+            .unwrap()
+            .transformed(placement)
+            .unwrap();
+        let edges: Vec<_> = source
+            .topology_snapshot(owner, 0)
+            .unwrap()
+            .elements
+            .iter()
+            .filter(|e| e.key.kind == TopologyKind::Edge)
+            .map(|e| selected(e.key, feature))
+            .collect();
+        let rounded = source
+            .treat_edges_named(
+                &edges,
+                EdgeTreatment::Fillet { radius_mm: r },
+                feature,
+                policy(),
+            )
+            .unwrap();
+        assert!((rounded.volume_mm3().unwrap() - expected).abs() < 1e-6 * expected);
+        assert_eq!(rounded.faces().unwrap().len(), 26);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("rounded-box.step");
+        rounded.write_step(&path).unwrap();
+        let loaded = Solid::read_step(&path, policy()).unwrap();
+        assert!((loaded.volume_mm3().unwrap() - expected).abs() < 1e-6 * expected);
+        let [a, b] = [rounded.bounds().unwrap(), loaded.bounds().unwrap()];
+        for i in 0..3 {
+            near(a.min[i], b.min[i]);
+            near(a.max[i], b.max[i]);
+        }
+    }
+    // A radius leaving no straight face is refused.
+    let source = Solid::box_named([60., 40., 30.], owner, policy()).unwrap();
+    let edges: Vec<_> = source
+        .topology_snapshot(owner, 0)
+        .unwrap()
+        .elements
+        .iter()
+        .filter(|e| e.key.kind == TopologyKind::Edge)
+        .map(|e| selected(e.key, feature))
+        .collect();
+    assert!(
+        source
+            .treat_edges_named(
+                &edges,
+                EdgeTreatment::Fillet { radius_mm: 15. },
+                feature,
+                policy()
+            )
+            .is_err()
+    );
+}
