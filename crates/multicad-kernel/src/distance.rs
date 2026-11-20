@@ -3,6 +3,7 @@
 use crate::{GeometryError, GeometryErrorKind, Solid, ffi};
 mod circular;
 mod machined;
+mod parallel_rings;
 mod planar;
 mod rings;
 mod rounded;
@@ -76,6 +77,9 @@ pub(crate) fn measure(
             return result;
         }
         if let Some(result) = worm_wheel::measure(a, selection_a, b, selection_b, tolerance) {
+            return result;
+        }
+        if let Some(result) = parallel_rings::measure(a, selection_a, b, selection_b, tolerance) {
             return result;
         }
         if selection_a == BRepSelection::Whole
