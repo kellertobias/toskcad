@@ -189,6 +189,7 @@ mod tests {
         let external = thread(5., d, 0.137, 0.137);
         let mut decoded = spec(5.05, d, 0.137, 0.137);
         decoded.pitch_mm = 1_f64.next_down();
+        decoded.depth_mm = d.next_down();
         let decoded = Thread::new(decoded).unwrap();
         // Unequal leads are never compared by the equal-pitch proof.
         assert_eq!(external.prove_clearance(&decoded, 0.), Err(Error::Invalid));
@@ -209,7 +210,11 @@ mod tests {
             Err(Error::Unresolved)
         );
         // A real pitch difference is a different thread, not roundoff.
-        let mut other = spec(5.05, d, 0.137, 0.137);
+        let closed = |pitch: f64| {
+            let angle = 27.5_f64.to_radians();
+            pitch / (2. * angle.tan()) - 0.274 * (1. / angle.sin() - 1.)
+        };
+        let mut other = spec(5.05, closed(1.0001), 0.137, 0.137);
         other.pitch_mm = 1.0001;
         let other = Thread::new(other).unwrap();
         assert_eq!(
@@ -217,7 +222,7 @@ mod tests {
             Err(Error::Invalid)
         );
         // Over a huge length the charged drift consumes the clearance.
-        let mut coarse = spec(5.05, d, 0.137, 0.137);
+        let mut coarse = spec(5.05, closed(1. + 5e-10), 0.137, 0.137);
         coarse.pitch_mm = 1. + 5e-10;
         let coarse = Thread::new(coarse).unwrap();
         assert_eq!(
