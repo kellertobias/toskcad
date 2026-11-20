@@ -287,6 +287,8 @@ fn spur_sections_repeat_the_exact_cap_rims_and_hatch_only_material() {
     }
 }
 
+const LIMIT_SPACING: f64 = 0.001;
+
 #[test]
 fn ring_sections_hatch_between_the_cavity_and_the_outside_rim() {
     let policy = GeometryPolicy::default();
@@ -301,17 +303,29 @@ fn ring_sections_hatch_between_the_cavity_and_the_outside_rim() {
             ..Default::default()
         },
     );
-    // A finer spacing over the 48-tooth cavity exhausts the hatch work
-    // budget and refuses with Limit rather than publishing a partial hatch.
     let options = DrawingProjection {
         frame,
         section_offset_mm: Some(0.),
         ..Default::default()
     };
-    let error = project_drawing(
+    // Clipping each hatch line against only the boundary edges it meets fits
+    // a 0.1 mm spacing over the 48-tooth cavity into the work budget.
+    let fine = project_drawing(
         &[DrawingSolid {
             solid: &solid,
             hatch: hatch_spaced(0.1),
+        }],
+        options,
+    )
+    .unwrap();
+    let hatched = hatch_area(&fine, 0.1);
+    assert!((hatched - area).abs() < 0.02 * area, "{hatched} vs {area}");
+    // A far finer spacing still exhausts the hatch work budget and refuses
+    // with Limit rather than publishing a partial hatch.
+    let error = project_drawing(
+        &[DrawingSolid {
+            solid: &solid,
+            hatch: hatch_spaced(LIMIT_SPACING),
         }],
         options,
     )

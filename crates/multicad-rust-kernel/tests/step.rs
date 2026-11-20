@@ -235,10 +235,11 @@ fn planar_pocket_import_retains_orthogonal_recognition() {
     .unwrap()
     .unwrap();
     let separate_boundary = orthogonal_boundary::build(separate.quads()).unwrap();
-    assert_eq!(
-        write_orthogonal(&separate_boundary, |p| p),
-        Err(StepError::Unsupported)
-    );
+    // Strictly separated unit cubes write one manifold solid each.
+    let text = write_orthogonal(&separate_boundary, |p| p).unwrap();
+    assert_eq!(text.matches("=MANIFOLD_SOLID_BREP(").count(), 2);
+    assert_eq!(text.matches("=BREP_WITH_VOIDS(").count(), 0);
+    assert_eq!(text.matches("=CLOSED_SHELL(").count(), 2);
 }
 
 #[test]

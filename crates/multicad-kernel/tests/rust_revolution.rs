@@ -55,7 +55,12 @@ fn full_cone_has_exact_occupied_volume_axis_poles_and_planar_rim() {
     };
     for sweep in [-TAU, TAU] {
         let cone = make(sweep);
-        assert!(!cone.supports_step_export());
+        // A pointed cone writes its apex as a vertex loop and reads back as
+        // the same exact material.
+        assert!(cone.supports_step_export());
+        let readback = Solid::from_exact_text(&cone.exact_text().unwrap(), policy).unwrap();
+        assert!((readback.volume_mm3().unwrap() - 21. * PI).abs() < 1e-9);
+        assert_eq!(readback.bounds().unwrap(), cone.bounds().unwrap());
         let bounds = cone.bounds().unwrap();
         assert_eq!(bounds.min, [1., 3., 8.]);
         assert_eq!(bounds.max, [7., 9., 15.]);
@@ -113,7 +118,20 @@ fn full_circular_revolutions_reuse_exact_step_and_drawing_with_authored_walls() 
         };
         let round = build(-TAU);
         assert!(round.supports_step_export());
-        assert!(!build(-FRAC_PI_2).supports_step_export());
+        // A quarter revolution of a rectilinear meridian clear of the axis
+        // writes exact STEP whose readback keeps a quarter of the full
+        // volume; a meridian on the axis has no partial-revolution writer yet.
+        let quarter = build(-FRAC_PI_2);
+        let expected = PI * (25. - inner * inner) * 3. / 4.;
+        assert!((quarter.volume_mm3().unwrap() - expected).abs() < 1e-7);
+        if inner > 0. {
+            assert!(quarter.supports_step_export());
+            let text = quarter.exact_text().unwrap();
+            let readback = Solid::from_exact_text(&text, policy).unwrap();
+            assert!((readback.volume_mm3().unwrap() - expected).abs() < 1e-7);
+        } else {
+            assert!(!quarter.supports_step_export());
+        }
         let path = scratch.path().join(format!("ring-{inner}.step"));
         round.write_step(&path).unwrap();
         let occt = Solid::read_step(&path, policy).unwrap();
