@@ -64,13 +64,13 @@ pub struct PairDistance {
     pub points_mm: [Point; 2],
 }
 
-type V3 = [Interval; 3];
+pub(super) type V3 = [Interval; 3];
 
-fn k(value: f64) -> Interval {
+pub(super) fn k(value: f64) -> Interval {
     Interval::point(value)
 }
 
-fn mid(i: Interval) -> f64 {
+pub(super) fn mid(i: Interval) -> f64 {
     (i.lo + i.hi) / 2.
 }
 
@@ -83,7 +83,7 @@ fn gap(a: Interval, b: Interval) -> f64 {
     (b.lo - a.hi).max(a.lo - b.hi).max(0.)
 }
 
-fn square(i: Interval) -> Interval {
+pub(super) fn square(i: Interval) -> Interval {
     let m = i.lo.abs().min(i.hi.abs());
     let lo = if i.lo <= 0. && i.hi >= 0. { 0. } else { m * m };
     let top = i.lo.abs().max(i.hi.abs());
@@ -97,7 +97,7 @@ fn meet(a: Interval, b: Interval) -> Interval {
 
 /// Centered form `f(c) + f_p (p - c_p) + f_q (q - c_q)` met with a direct
 /// enclosure of the same function over the box.
-fn centered(direct: V3, center: V3, d: [V3; 2], x: [Interval; 2]) -> V3 {
+pub(super) fn centered(direct: V3, center: V3, d: [V3; 2], x: [Interval; 2]) -> V3 {
     let offset = x.map(|i| i - k(mid(i)));
     std::array::from_fn(|i| {
         meet(
@@ -113,7 +113,7 @@ fn dot3(a: V3, b: V3) -> Interval {
 
 /// Worm boundary patches in the thread frame (mm).
 #[derive(Clone, Copy, Debug)]
-enum Patch {
+pub(super) enum Patch {
     /// Profile band with radius `r0 + slope (s - s0)` over `(s, z)`.
     Band { r0: f64, s0: f64, slope: f64 },
     /// End cap at height `z` over `(p, q)`, outer radius `a + b q`.
@@ -122,17 +122,42 @@ enum Patch {
     Bore,
 }
 
-struct WormMap<'a> {
-    worm: &'a Worm,
+pub(super) struct WormMap<'a> {
+    pub(super) worm: &'a Worm,
     rate: f64,
     bore: f64,
     /// Thread frame to wheel local module units: `M t + c`.
     matrix: [[f64; 3]; 3],
     offset: Point,
-    to_world: (Placement, Placement),
+    pub(super) to_world: (Placement, Placement),
 }
 
-impl WormMap<'_> {
+impl<'a> WormMap<'a> {
+    pub(super) fn new(
+        worm: &'a Worm,
+        worm_at: Placement,
+        wheel: &Wheel,
+        wheel_at: Placement,
+    ) -> Self {
+        let m = wheel.module_mm();
+        // Compose thread → worm local → world → wheel local, in module units.
+        let image = |t: Point| {
+            wheel_at
+                .local(worm_at.world(worm.to_local(t)))
+                .map(|v| v / m)
+        };
+        let offset = image([0.; 3]);
+        let columns = [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]].map(|e| sub(image(e), offset));
+        Self {
+            worm,
+            rate: worm.thread().helical_rate(),
+            bore: worm.bore_radius_mm().unwrap_or(0.),
+            matrix: std::array::from_fn(|i| [columns[0][i], columns[1][i], columns[2][i]]),
+            offset,
+            to_world: (worm_at, wheel_at),
+        }
+    }
+
     /// Thread point and its two parameter derivatives over a box.
     fn thread(&self, patch: Patch, [p, q]: [Interval; 2]) -> [V3; 3] {
         match patch {
@@ -184,7 +209,7 @@ impl WormMap<'_> {
     }
 
     /// Wheel-local value and derivatives over a box, in module units.
-    fn local(&self, patch: Patch, x: [Interval; 2]) -> [V3; 3] {
+    pub(super) fn local(&self, patch: Patch, x: [Interval; 2]) -> [V3; 3] {
         let [t, tp, tq] = self.thread(patch, x);
         [
             self.apply(t, true),
@@ -193,7 +218,11 @@ impl WormMap<'_> {
         ]
     }
 
-    fn point(&self, patch: Patch, x: [f64; 2]) -> (Point, Point) {
+    pub(super) fn thread_point(&self, patch: Patch, x: [f64; 2]) -> Point {
+        self.thread(patch, x.map(k))[0].map(mid)
+    }
+
+    pub(super) fn point(&self, patch: Patch, x: [f64; 2]) -> (Point, Point) {
         let [t, ..] = self.thread(patch, x.map(k));
         let t = t.map(mid);
         let local = self.apply(t.map(k), true).map(mid);
@@ -725,7 +754,7 @@ impl Search<'_> {
 }
 
 /// Worm boundary patches and their parameter boxes.
-fn worm_patches(worm: &Worm) -> Vec<(Patch, [Interval; 2])> {
+pub(super) fn worm_patches(worm: &Worm) -> Vec<(Patch, [Interval; 2])> {
     let thread = worm.thread();
     let length = worm.length_mm();
     let phases = worm.rail_phases();
@@ -792,25 +821,10 @@ pub fn minimum_distance(
         return Err(Error::Invalid);
     }
     let m = wheel.module_mm();
-    // Compose thread → worm local → world → wheel local, in module units.
-    let image = |t: Point| {
-        wheel_at
-            .local(worm_at.world(worm.to_local(t)))
-            .map(|v| v / m)
-    };
-    let offset = image([0.; 3]);
-    let columns = [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]].map(|e| sub(image(e), offset));
-    let matrix = std::array::from_fn(|i| [columns[0][i], columns[1][i], columns[2][i]]);
-    let scale = norm(offset) + wheel.blank() + worm.length_mm() / m;
+    let map = WormMap::new(worm, worm_at, wheel, wheel_at);
+    let scale = norm(map.offset) + wheel.blank() + worm.length_mm() / m;
     let mut search = Search {
-        map: WormMap {
-            worm,
-            rate: worm.thread().helical_rate(),
-            bore: worm.bore_radius_mm().unwrap_or(0.),
-            matrix,
-            offset,
-            to_world: (worm_at, wheel_at),
-        },
+        map,
         cells: Cells { wheel, all: vec![] },
         wheel,
         blank: wheel.blank(),

@@ -29,7 +29,8 @@ impl From<multicad_rust_kernel::bevel_gear::clearance::ResultKind> for Pair {
     fn from(kind: multicad_rust_kernel::bevel_gear::clearance::ResultKind) -> Self {
         use multicad_rust_kernel::bevel_gear::clearance::ResultKind::*;
         match kind {
-            Clear => Self::Clear,
+            // Touching flanks share no interior, like a clear pair.
+            Clear | Contact => Self::Clear,
             CommonInterior => Self::Interferes,
             Unresolved => Self::Unresolved,
         }

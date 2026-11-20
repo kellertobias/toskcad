@@ -46,7 +46,9 @@ fn check(
                 });
         }
         ResultKind::CommonInterior => "overlaps with a certified common-interior point",
-        ResultKind::Unresolved => "does not have certified positive clearance",
+        ResultKind::Unresolved | ResultKind::Contact => {
+            "does not have certified positive clearance"
+        }
     };
     Err(error(
         Some(pair),

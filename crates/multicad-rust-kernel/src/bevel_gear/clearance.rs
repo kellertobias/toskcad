@@ -41,6 +41,9 @@ pub enum ResultKind {
     Clear,
     CommonInterior,
     Unresolved,
+    /// No common interior, with boundaries proved to touch at most:
+    /// conjugate flanks without thinning.
+    Contact,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -10,6 +10,7 @@
 //! sections.
 
 pub mod clearance;
+mod contact;
 mod interval;
 mod jet;
 pub mod pair_distance;
