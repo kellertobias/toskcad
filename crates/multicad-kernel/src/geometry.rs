@@ -19,6 +19,7 @@ pub(crate) mod bore_treatment;
 mod bored_prism_boolean;
 mod coaxial;
 mod coaxial_counterbore;
+mod compound_intersection;
 mod contained_void_cut;
 mod disk_union;
 pub use bore_treatment::ConicalSeatGeometry;
@@ -1611,6 +1612,7 @@ impl Solid {
                     .or_else(|| self.warped_shell_probe_boolean(other, operation, policy))
                     .or_else(|| self.contained_void_cut(other, operation, policy))
                     .or_else(|| self.parallel_disk_union(other, operation, policy))
+                    .or_else(|| self.compound_intersection(other, operation, policy))
                     .unwrap_or_else(|| {
                         Err(cross_refusal
                             .unwrap_or_else(|| self.no_exact_boolean(other, operation, error)))
