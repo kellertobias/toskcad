@@ -1870,6 +1870,7 @@ mod tests {
                     .unwrap()
                     .recv_timeout(Duration::from_secs(5))
                     .map_err(|e| multicad_core::sketch_regions::QueryError {
+                        kind: Default::default(),
                         message: e.to_string(),
                     })?;
                 self.0.active.fetch_sub(1, Ordering::SeqCst);

@@ -5,6 +5,7 @@ const MAX_SEGMENTS: usize = 8192;
 
 fn fail(message: &str) -> QueryError {
     QueryError {
+        kind: Default::default(),
         message: message.into(),
     }
 }
@@ -189,6 +190,7 @@ pub(super) fn extract_cells_with_control(
             let bytes =
                 serde_json::to_vec(&(span, &junctions[*a], &junctions[*b])).map_err(|e| {
                     QueryError {
+                        kind: Default::default(),
                         message: e.to_string(),
                     }
                 })?;
@@ -442,6 +444,7 @@ fn merge_arc_seams(wire: &mut Vec<Edge>, tolerance: f64) -> Result<(), QueryErro
                 .collect();
             let fragment = Some(crate::project_file::ContentHash::of(
                 &serde_json::to_vec(&labels).map_err(|e| QueryError {
+                    kind: Default::default(),
                     message: e.to_string(),
                 })?,
             ));

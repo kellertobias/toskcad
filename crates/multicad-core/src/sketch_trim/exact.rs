@@ -11,7 +11,15 @@ fn query<T>(
     result: Result<T, crate::sketch_regions::QueryError>,
     id: EntityId,
 ) -> Result<T, TrimError> {
-    result.map_err(|e| fail(TrimErrorKind::InvalidGeometry, e.to_string(), [id]))
+    result.map_err(|e| {
+        let kind = match e.kind {
+            crate::sketch_regions::QueryErrorKind::AmbiguousContact => {
+                TrimErrorKind::AmbiguousIntersection
+            }
+            crate::sketch_regions::QueryErrorKind::Failure => TrimErrorKind::InvalidGeometry,
+        };
+        fail(kind, e.to_string(), [id])
+    })
 }
 fn exact(sketch: &Sketch, curve: &Curve) -> ExactCurve {
     match &curve.kind {

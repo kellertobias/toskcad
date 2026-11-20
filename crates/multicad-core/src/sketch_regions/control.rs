@@ -68,6 +68,7 @@ impl<'a> QueryControl<'a> {
     pub(super) fn finish(&self) -> Result<(), QueryError> {
         self.failure.get().map_or(Ok(()), |error| {
             Err(QueryError {
+                kind: Default::default(),
                 message: error.to_string(),
             })
         })
@@ -75,6 +76,7 @@ impl<'a> QueryControl<'a> {
 }
 pub(super) fn check_control(control: &QueryControl<'_>) -> Result<(), QueryError> {
     control.step().map_err(|error| QueryError {
+        kind: Default::default(),
         message: error.to_string(),
     })
 }

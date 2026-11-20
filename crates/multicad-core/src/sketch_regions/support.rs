@@ -27,9 +27,13 @@ impl SketchSupport {
         let tolerance = queries.tolerance_mm();
         self.contours
             .validate(tolerance)
-            .map_err(|message| QueryError { message })?;
+            .map_err(|message| QueryError {
+                kind: Default::default(),
+                message,
+            })?;
         if self.edges.len() != self.contours.loops.len() {
             return Err(QueryError {
+                kind: Default::default(),
                 message: "Supporting face edge receipt differs from its wires".into(),
             });
         }
@@ -37,6 +41,7 @@ impl SketchSupport {
         for (wire, ids) in self.contours.loops.iter().zip(&self.edges) {
             if ids.len() != wire.edges.len() {
                 return Err(QueryError {
+                    kind: Default::default(),
                     message: "Supporting wire edge identities are incomplete".into(),
                 });
             }
@@ -107,6 +112,7 @@ impl SketchSupport {
                 },
                 Geometry::Rectangle { .. } => {
                     return Err(QueryError {
+                        kind: Default::default(),
                         message: "Region evaluation requires individual exact sketch curves".into(),
                     });
                 }
@@ -156,6 +162,7 @@ impl SketchSupport {
         let mut intents = BTreeSet::new();
         if result.regions.iter().any(|r| !intents.insert(r.intent())) {
             return Err(QueryError {
+                kind: Default::default(),
                 message:
                     "Several material cells share a boundary identity; repair the ambiguous profile"
                         .into(),

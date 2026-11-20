@@ -6328,6 +6328,7 @@ mod tests {
                     .unwrap()
                     .recv_timeout(std::time::Duration::from_secs(3))
                     .map_err(|e| QueryError {
+                        kind: Default::default(),
                         message: e.to_string(),
                     })?;
             }

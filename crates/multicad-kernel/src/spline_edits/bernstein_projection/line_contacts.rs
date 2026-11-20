@@ -4,11 +4,17 @@ use super::*;
 
 const MAX_CONTACTS: usize = 512;
 
+pub(crate) const UNRESOLVED_CONTACT: &str = "Rust spline and line contact could not be separated from a tangent, overlap or finite endpoint";
+
 fn unresolved_contact() -> GeometryError {
-    failure(
-        GeometryErrorKind::InvalidResult,
-        "Rust spline and line contact could not be separated from a tangent, overlap or finite endpoint",
-    )
+    failure(GeometryErrorKind::InvalidResult, UNRESOLVED_CONTACT)
+}
+
+/// Whether a contact query failed only because the contact is ambiguous.
+pub(crate) fn is_unresolved_contact(error: &GeometryError) -> bool {
+    error.operation == "exact spline edit"
+        && error.kind == GeometryErrorKind::InvalidResult
+        && error.message == UNRESOLVED_CONTACT
 }
 
 #[derive(Clone, Copy)]

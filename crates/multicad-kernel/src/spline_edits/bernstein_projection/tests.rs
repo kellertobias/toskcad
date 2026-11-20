@@ -360,3 +360,31 @@ fn spline_crossing_at_both_span_midpoints_is_isolated() {
     assert_near(points[0][0], 10., 1e-8);
     assert_near(points[0][1], 7.5, 1e-8);
 }
+
+#[test]
+fn tangent_line_contact_is_typed_ambiguous_not_a_guessed_point() {
+    use multicad_core::sketch_regions::{ExactCurve, QueryErrorKind, RegionQueries};
+    let arch = ExactCurve::BSpline {
+        poles: vec![[0., 0.], [5., 10.], [15., 10.], [20., 0.]],
+        basis: multicad_core::constraint_sketch::SplineBasis::open_uniform(3, 4).unwrap(),
+    };
+    let tangent = ExactCurve::Line {
+        a: [-10., 7.5],
+        b: [30., 7.5],
+    };
+    let queries = crate::NativeRegionQueries::default();
+    let error = queries.intersections(&arch, &tangent, 1e-7).unwrap_err();
+    assert_eq!(error.kind, QueryErrorKind::AmbiguousContact);
+    let crossing = ExactCurve::Line {
+        a: [-10., 5.],
+        b: [30., 5.],
+    };
+    assert_eq!(
+        queries
+            .intersections(&arch, &crossing, 1e-7)
+            .unwrap()
+            .points
+            .len(),
+        2
+    );
+}
