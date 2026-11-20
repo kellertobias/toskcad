@@ -49,6 +49,14 @@ impl Solid {
             None
         }
     }
+
+    /// The exact world Bézier span of a spline sweep rim edge, in authored
+    /// source order with its source weights, when the edge is one source
+    /// span. References report source parameters, not ring traversal.
+    pub(crate) fn spline_rim_bezier(&self, ordinal: u32) -> Option<(Vec<[f64; 3]>, Vec<f64>)> {
+        let (body, frame) = self.spline_sweep_body()?;
+        body.rim_bezier(frame, ordinal)
+    }
 }
 
 impl SplineSweepBody {
@@ -486,6 +494,44 @@ impl SplineSweepBody {
             }
         }
         count == readback.len()
+    }
+
+    fn rim_edge(&self, ordinal: u32) -> Option<(&Edge, f64)> {
+        let stride = self.wall_areas.len();
+        let index = ordinal as usize;
+        if index >= 2 * stride {
+            return None;
+        }
+        let wall = index % stride;
+        let ring = self.wall_offsets.partition_point(|&offset| offset <= wall) - 1;
+        let edges = if ring == 0 {
+            self.sweep.outline()
+        } else {
+            &self.sweep.holes()[ring - 1]
+        };
+        let edge = edges.get(wall - self.wall_offsets[ring])?;
+        let height = if index >= stride {
+            self.sweep.height_mm()
+        } else {
+            0.
+        };
+        Some((edge, height))
+    }
+
+    fn rim_bezier(&self, frame: PlaneFrame, ordinal: u32) -> Option<(Vec<[f64; 3]>, Vec<f64>)> {
+        let (edge, height) = self.rim_edge(ordinal)?;
+        let (poles, weights) = match edge {
+            Edge::Rational(curve) => (curve.poles().to_vec(), curve.weights().to_vec()),
+            Edge::Cubic(cubic) if cubic.knots().len() == 2 => (cubic.poles().to_vec(), vec![1.; 4]),
+            Edge::Cubic(_) | Edge::Analytic(_) => return None,
+        };
+        Some((
+            poles
+                .into_iter()
+                .map(|[x, y]| position(frame, [x, y, height]))
+                .collect(),
+            weights,
+        ))
     }
 
     pub(super) fn sample_rim(
