@@ -20,6 +20,7 @@ mod bored_prism_boolean;
 mod coaxial;
 mod coaxial_counterbore;
 mod contained_void_cut;
+mod disk_union;
 pub use bore_treatment::ConicalSeatGeometry;
 pub(crate) mod circular_pocket_body;
 mod clipped_npt_body;
@@ -1609,6 +1610,7 @@ impl Solid {
                     .or_else(|| self.pairwise_warped_boolean(other, operation, policy))
                     .or_else(|| self.warped_shell_probe_boolean(other, operation, policy))
                     .or_else(|| self.contained_void_cut(other, operation, policy))
+                    .or_else(|| self.parallel_disk_union(other, operation, policy))
                     .unwrap_or_else(|| {
                         Err(cross_refusal
                             .unwrap_or_else(|| self.no_exact_boolean(other, operation, error)))
