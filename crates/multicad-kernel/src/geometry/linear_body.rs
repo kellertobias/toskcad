@@ -594,6 +594,17 @@ impl LinearBody {
         sweep.exact_cap_halfspaces(frame.origin, frame.u, frame.v)
     }
 
+    /// Exact start and end cap halfspaces in unbounded arithmetic.
+    pub(super) fn exact_caps(
+        &self,
+        frame: PlaneFrame,
+    ) -> Option<[multicad_rust_kernel::planar_boolean::TravelCap; 2]> {
+        let Geometry::Trimmed { sweep, .. } = &self.geometry else {
+            return None;
+        };
+        sweep.exact_caps(frame.origin, frame.u, frame.v)
+    }
+
     pub(super) fn volume_mm3(&self) -> f64 {
         match &self.geometry {
             Geometry::Ruled(sweep) => sweep.volume_mm3(),

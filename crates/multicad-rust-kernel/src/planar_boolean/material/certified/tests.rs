@@ -191,6 +191,7 @@ fn certified_operators_bound_inputs_recovery_growth_and_shared_work_with_retry()
             remaining: 20,
             interrupt: None,
             uncertain: Cell::new(false),
+            contact: true,
         };
         assert_eq!(
             operation(&[&a, &b], TOL, op, &mut low).unwrap_err(),
@@ -591,4 +592,30 @@ fn rotated_shared_face_is_a_certified_contact_but_real_overlap_is_material() {
     assert!(separation::contact_allowance(&left, &shallow, TOL) < 1e-10);
     assert!(!separation::touching(&left, &shallow, TOL, &mut work).unwrap());
     assert!(separation::touching(&left, &right, TOL, &mut work).unwrap());
+}
+
+/// Cells that only round an exact source elsewhere cannot use the contact
+/// slab: their rounding-scale overlap may be real source material.
+#[test]
+fn rounded_sources_refuse_a_face_contact_but_keep_separation_and_material() {
+    let (sin, cos) = 30_f64.to_radians().sin_cos();
+    let rotate = |[x, y, z]: Point| [cos * x - sin * y + 400., sin * x + cos * y + 40., z];
+    let placed =
+        |min: Point, max: Point| material(&[block(min, max).transformed(rotate, TOL).unwrap()]);
+    let rounded = |operands: &[&CutMaterial]| {
+        CutMaterial::intersect_certified_rounded_sources_with_interrupt(operands, TOL, None)
+    };
+    let left = placed([0., 0., 0.], [215.6, 18., 300.]);
+    let right = placed([215.6, 0., 0.], [233.6, 300., 300.]);
+    assert!(matches!(
+        CutMaterial::intersect_certified(&[&left, &right], TOL),
+        Ok(None)
+    ));
+    assert!(matches!(rounded(&[&left, &right]), Err(Error::Unresolved)));
+    let gap = placed([215.6 + 1e-3, 0., 0.], [233.6, 300., 300.]);
+    assert!(matches!(rounded(&[&left, &gap]), Ok(None)));
+    // Positive common material is still published.
+    let stock = cube([0.; 3], [2., 1., 1.]);
+    let tool = cube([1., 0., 0.], [3., 1., 1.]);
+    volume(&rounded(&[&stock, &tool]).unwrap().unwrap(), 1.);
 }
