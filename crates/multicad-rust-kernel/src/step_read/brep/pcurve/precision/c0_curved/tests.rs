@@ -90,3 +90,41 @@ fn jets_and_restriction_agree_with_exact_polynomials() {
         Some(ReadError::Unsupported)
     );
 }
+
+#[test]
+fn one_casteljau_run_gives_every_low_derivative_and_zero_above_the_degree() {
+    let mut b = Budget::new(10_000_000, None);
+    // A degree-11 curve: compare with re-differenced control nets.
+    let points: Vec<[I; 2]> = (0..12)
+        .map(|i| {
+            let x = f64::from(i);
+            [I::point((0.3 * x).sin() + 0.1 * x * x), I::point(x.sqrt())]
+        })
+        .collect();
+    for t in [0., 0.25, 0.5, 0.875, 1.] {
+        let t = I::point(t);
+        let fast = derivatives(&points, t, 4, &mut b).unwrap();
+        let mut net = points.clone();
+        for value in &fast {
+            let slow = evaluate(&net, t, &mut b).unwrap();
+            for axis in 0..2 {
+                let (a, c) = (value[axis], slow[axis]);
+                let scale = 1. + a.magnitude().max(c.magnitude());
+                assert!(a.valid() && (a.midpoint() - c.midpoint()).abs() <= 1e-9 * scale);
+                // Both are enclosures of the same exact value.
+                assert!(a.lo <= c.hi + 1e-9 * scale && c.lo <= a.hi + 1e-9 * scale);
+            }
+            net = derivative(&net);
+        }
+    }
+    // A quadratic has no third derivative.
+    let quadratic = [[I::point(1.)], [I::point(3.)], [I::point(2.)]];
+    let all = derivatives(&quadratic, I::point(0.5), 4, &mut b).unwrap();
+    for (got, want) in all.iter().zip([2.25, 1., -6., 0.]) {
+        assert!(got[0].lo <= want && want <= got[0].hi, "{got:?} {want}");
+    }
+    assert_eq!(
+        derivatives::<1>(&[], I::point(0.5), 4, &mut b).err(),
+        Some(ReadError::Unsupported)
+    );
+}
