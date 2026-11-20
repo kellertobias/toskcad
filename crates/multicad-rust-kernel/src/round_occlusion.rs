@@ -92,7 +92,31 @@ impl RoundOccluder {
         inner: f64,
         height: f64,
     ) -> Result<Self, ProjectionError> {
-        let original = Self::new(base, axis, outer, height, Some(inner))?;
+        Self::quarter(base, axis, spokes, outer, Some(inner), height)
+    }
+
+    /// An exact solid quarter-cylinder sweep used only as a blocker, such
+    /// as the convex corner round of a plate. The spokes obey the same
+    /// cardinal chart requirement as [`Self::quarter_annulus`].
+    pub fn quarter_disc(
+        base: Point,
+        axis: Point,
+        spokes: [Point; 2],
+        radius: f64,
+        height: f64,
+    ) -> Result<Self, ProjectionError> {
+        Self::quarter(base, axis, spokes, radius, None, height)
+    }
+
+    fn quarter(
+        base: Point,
+        axis: Point,
+        spokes: [Point; 2],
+        outer: f64,
+        inner: Option<f64>,
+        height: f64,
+    ) -> Result<Self, ProjectionError> {
+        let original = Self::new(base, axis, outer, height, inner)?;
         let guard = curved_projection::ANGULAR_ROUNDOFF;
         let axis = if original.projected <= guard {
             [0., 0., axis[2].signum()]
@@ -101,7 +125,7 @@ impl RoundOccluder {
         } else {
             return Err(ProjectionError::Invalid);
         };
-        let mut round = Self::new(base, axis, outer, height, Some(inner))?;
+        let mut round = Self::new(base, axis, outer, height, inner)?;
         let [u, v] = round.screen_axis;
         let mut sides = [0.; 2];
         for [x, y, z] in spokes {

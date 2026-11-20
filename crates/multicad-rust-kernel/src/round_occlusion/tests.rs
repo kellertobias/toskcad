@@ -362,3 +362,52 @@ fn quarter_annulus_clips_exact_lines_and_rims_in_cardinal_views() {
         ));
     }
 }
+
+#[test]
+fn quarter_disc_blocks_its_whole_sector_down_to_the_axis() {
+    let axis = [0., 0., 1.];
+    let spokes = [[1., 0., 0.], [0., 1., 0.]];
+    let disc = RoundOccluder::quarter_disc([0.; 3], axis, spokes, 3., 2.).unwrap();
+    let annulus = RoundOccluder::quarter_annulus([0.; 3], axis, spokes, 3., 1., 2.).unwrap();
+    let behind = |offset| [[-4., offset, -1.], [4., offset, -1.]];
+    let outer = (4. + 8.75_f64.sqrt()) / 8.;
+    // Near the axis the annulus has a void that the disc fills.
+    intervals(
+        disc.hidden_intervals(behind(0.5), TOLERANCE).unwrap(),
+        &[[0.5, outer]],
+    );
+    intervals(
+        annulus.hidden_intervals(behind(0.5), TOLERANCE).unwrap(),
+        &[[(4. + 0.75_f64.sqrt()) / 8., outer]],
+    );
+    // Outside the quarter and in front of the caps nothing is hidden.
+    assert!(
+        disc.hidden_intervals(behind(-0.5), TOLERANCE)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        disc.hidden_intervals([[-4., 0.5, 3.], [4., 0.5, 3.]], TOLERANCE)
+            .unwrap()
+            .is_empty()
+    );
+    // Side-on, the disc hides the full chord band on its own side.
+    let side =
+        RoundOccluder::quarter_disc([0.; 3], [1., 0., 0.], [[0., 1., 0.], [0., 0., 1.]], 3., 5.)
+            .unwrap();
+    intervals(
+        side.hidden_intervals([[-1., 0.5, -4.], [6., 0.5, -4.]], TOLERANCE)
+            .unwrap(),
+        &[[1. / 7., 6. / 7.]],
+    );
+    for (axis, spokes) in [
+        ([0.6, 0., 0.8], spokes),
+        (axis, [spokes[0]; 2]),
+        (axis, [[0.6, 0.8, 0.], spokes[1]]),
+    ] {
+        assert!(matches!(
+            RoundOccluder::quarter_disc([0.; 3], axis, spokes, 3., 2.),
+            Err(ProjectionError::Invalid)
+        ));
+    }
+}
