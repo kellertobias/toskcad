@@ -93,6 +93,7 @@ mod separated_boolean;
 mod sphere_body;
 mod spline_sweep_body;
 mod spur_gear_body;
+mod stack_union_boolean;
 mod stacked_prism_boolean;
 mod step_import;
 mod torus_body;
@@ -1553,6 +1554,7 @@ impl Solid {
                     .or_else(|| self.bored_prism_subtract(other, operation, policy))
                     .or_else(|| self.stacked_prism_boolean(other, operation, policy))
                     .or_else(|| self.parallel_extrusion_intersection(other, operation, policy))
+                    .or_else(|| self.stacked_cylinder_union(other, operation, policy))
                     .unwrap_or_else(|| {
                         Err(cross_refusal
                             .unwrap_or_else(|| self.no_exact_boolean(other, operation, error)))
