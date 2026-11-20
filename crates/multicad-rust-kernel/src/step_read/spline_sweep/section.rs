@@ -101,6 +101,10 @@ fn convex_pair(section: &[Boundary], tolerance: f64) -> Result<()> {
         match *piece {
             Piece::Line([start, _]) => polygon.push(start),
             Piece::Bezier([start, first, second, _]) => polygon.extend([start, first, second]),
+            Piece::Rational(span) => {
+                let points = span.points();
+                polygon.extend(&points[..points.len() - 1]);
+            }
             Piece::Arc(_) => return Err(ReadError::Unsupported),
         }
     }
@@ -150,6 +154,7 @@ fn verify_ring(
         Piece::Line(points) => points.map(distance).into_iter().fold(0., f64::max),
         Piece::Arc(arc) => distance(arc.center) + arc.radius,
         Piece::Bezier(points) => points.map(distance).into_iter().fold(0., f64::max),
+        Piece::Rational(span) => span.points().into_iter().map(distance).fold(0., f64::max),
     };
     let cavity = hole
         .iter()
@@ -234,6 +239,25 @@ fn boundary(
                 sweep: directed_sweep(round, plane, edge.forward),
             };
             vec![Piece::Arc(arc)]
+        }
+        Geometry::Cubic { curve, .. } if curve.weights().is_some() => {
+            if !curve.poles_mm().iter().copied().all(on_plane) {
+                return Err(ReadError::Invalid);
+            }
+            let poles = curve
+                .poles_mm()
+                .iter()
+                .map(|&p| project(plane, p))
+                .collect();
+            let weights = curve.weights().unwrap_or_default().to_vec();
+            let rational = crate::spline_sweep::Rational::new(poles, weights, !edge.forward)
+                .map_err(|_| ReadError::Invalid)?;
+            let piece = Piece::Rational(rational.span());
+            let chord = unit2(sub2(b, a)).ok_or(ReadError::Invalid)?;
+            if !piece.forward_along(chord) {
+                return Err(ReadError::Unsupported);
+            }
+            vec![piece]
         }
         Geometry::Cubic { curve, .. } => {
             if !curve.poles_mm().iter().copied().all(on_plane) {

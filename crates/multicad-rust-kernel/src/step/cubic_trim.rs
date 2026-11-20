@@ -1,7 +1,8 @@
-//! Shared STEP encoding for clamped cubic edges in a normal sweep.
+//! Shared STEP encoding for clamped cubic edges, and single-span rational
+//! Bézier edges, in a normal sweep.
 use super::*;
 use crate::{
-    spline_sweep::Cubic,
+    spline_sweep::{Cubic, Rational},
     spur_gear::{Error, Involute},
 };
 use std::borrow::Cow;
@@ -12,6 +13,8 @@ pub(super) struct CubicTrim<'a> {
     flank_error_mm: Option<f64>,
     tolerance_mm: f64,
     reversed: bool,
+    /// Positive weights of one rational Bézier span of degree `points - 1`.
+    weights: Option<Cow<'a, [f64]>>,
 }
 
 impl CubicTrim<'static> {
@@ -29,6 +32,7 @@ impl CubicTrim<'static> {
             flank_error_mm: Some(curve.error_bound_mm),
             tolerance_mm,
             reversed: false,
+            weights: None,
         })
     }
 }
@@ -41,6 +45,19 @@ impl<'a> CubicTrim<'a> {
             flank_error_mm: None,
             tolerance_mm,
             reversed: curve.reversed(),
+            weights: None,
+        }
+    }
+
+    /// The exact authored rational span, written with its source weights.
+    pub(super) fn rational(curve: &'a Rational, tolerance_mm: f64) -> Self {
+        Self {
+            points: Cow::Borrowed(curve.poles()),
+            knots: Cow::Owned(vec![0., 1.]),
+            flank_error_mm: None,
+            tolerance_mm,
+            reversed: curve.reversed(),
+            weights: Some(Cow::Borrowed(curve.weights())),
         }
     }
 
@@ -135,10 +152,25 @@ impl<'a> CubicTrim<'a> {
             .map(|knot| format!("{knot:.16E}"))
             .collect::<Vec<_>>()
             .join(",");
-        let curve = file.entity(format_args!(
-            "B_SPLINE_CURVE_WITH_KNOTS('',3,{},.UNSPECIFIED.,.F.,.F.,({multiplicities}),({knots}),.UNSPECIFIED.)",
-            Entities(&poles)
-        ));
+        let curve = match &self.weights {
+            Some(weights) => {
+                let degree = self.points.len() - 1;
+                let order = degree + 1;
+                let weights = weights
+                    .iter()
+                    .map(|weight| format!("{weight:.16E}"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                file.entity(format_args!(
+                    "(BOUNDED_CURVE() B_SPLINE_CURVE({degree},{},.UNSPECIFIED.,.F.,.F.) B_SPLINE_CURVE_WITH_KNOTS(({order},{order}),({knots}),.UNSPECIFIED.) CURVE() GEOMETRIC_REPRESENTATION_ITEM() RATIONAL_B_SPLINE_CURVE(({weights})) REPRESENTATION_ITEM(''))",
+                    Entities(&poles)
+                ))
+            }
+            None => file.entity(format_args!(
+                "B_SPLINE_CURVE_WITH_KNOTS('',3,{},.UNSPECIFIED.,.F.,.F.,({multiplicities}),({knots}),.UNSPECIFIED.)",
+                Entities(&poles)
+            )),
+        };
         let (start, end) = (from.vertex, to.vertex);
         let edge = file.entity(format_args!("EDGE_CURVE('',{start},{end},{curve},.T.)"));
         Ok((edge, curve))

@@ -79,6 +79,15 @@ impl Relief {
         {
             return Err(Error::Invalid);
         }
+        // Rational rims are not yet carried through the relief boundary
+        // graph and its STEP proof; refuse them instead of approximating.
+        if std::iter::once(&base)
+            .chain(&motifs)
+            .flat_map(Sweep::edges)
+            .any(|edge| matches!(edge, Edge::Rational(_)))
+        {
+            return Err(Error::Unresolved);
+        }
         if motifs.len() > MAX_MOTIFS
             || base
                 .edges()

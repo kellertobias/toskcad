@@ -199,6 +199,12 @@ impl Solid {
             .iter()
             .find(|element| element.key == key)
             .ok_or_else(|| error("Selected Rust reference topology is missing"))?;
+        if kind == TopologyKind::Edge
+            && element.geometry.is_none()
+            && let Some((poles, weights)) = self.spline_rim_bezier(ordinal)
+        {
+            return spline_reference(&poles, weights, frame, method, key, policy);
+        }
         rust_element_reference(element, frame, method, policy)
     }
 }
@@ -396,6 +402,87 @@ fn conic_reference(
                     })
                 }
             };
+            curve.data(policy, 0)?;
+            (
+                vec![result(SketchReferenceGeometry::Curve(curve), None)],
+                false,
+            )
+        }
+    };
+    Ok(SketchReferenceCatalog {
+        results,
+        coincident,
+    })
+}
+
+/// An exact source Bézier rim span: the consumer frame maps its poles
+/// affinely and keeps its weights, so the projection is the same basis.
+fn spline_reference(
+    poles: &[[f64; 3]],
+    weights: Vec<f64>,
+    frame: PlaneFrame,
+    method: SketchReferenceMethod,
+    key: TopologyKey,
+    policy: GeometryPolicy,
+) -> Result<SketchReferenceCatalog, GeometryError> {
+    use multicad_rust_kernel::sketch_reference::rational::{Bezier, Error, Outcome};
+    let axes = [frame.u, frame.v, frame.normal()];
+    let local = |point: [f64; 3]| {
+        axes.map(|axis| {
+            (0..3)
+                .map(|i| (point[i] - frame.origin[i]) * axis[i])
+                .sum::<f64>()
+        })
+    };
+    let curve = Bezier {
+        poles: poles.iter().copied().map(local).collect(),
+        weights,
+    };
+    let outcome = curve
+        .query(method, policy.linear_tolerance_mm)
+        .map_err(|cause| {
+            error(match cause {
+                Error::Invalid => "Invalid finite Rust spline reference",
+                Error::OffPlane => {
+                    "Selected finite Rust spline is not coplanar with the sketch plane"
+                }
+                Error::Collapsed => "The spline projection collapses into a point",
+                Error::Retraced => "The spline projection retraces itself",
+                Error::Unresolved => "Rust spline contact is not resolved within sketch precision",
+            })
+        })?;
+    let result = |geometry, contact: Option<sketch_reference::Contact>| SketchReferenceResult {
+        geometry,
+        support: vec![key],
+        source_parameter: contact.map(|c| c.parameter),
+        source_interval: Some([0., 1.]),
+        tangent: contact.is_some_and(|c| c.crossing.is_none()),
+        crossing: contact.and_then(|c| c.crossing),
+    };
+    let (results, coincident) = match outcome {
+        Outcome::Coincident => (vec![], true),
+        Outcome::Contacts(contacts) => (
+            contacts
+                .into_iter()
+                .map(|(point, contact)| {
+                    policy.point([point[0], point[1], 0.])?;
+                    Ok(result(SketchReferenceGeometry::Point(point), Some(contact)))
+                })
+                .collect::<Result<_, GeometryError>>()?,
+            false,
+        ),
+        Outcome::Projection { poles, weights } => {
+            let degree = poles.len() as u32 - 1;
+            let curve = CurvedEdge2d::BSpline(BSpline2d {
+                degree,
+                poles,
+                knots: vec![0., 1.],
+                multiplicities: vec![degree + 1; 2],
+                weights: weights
+                    .windows(2)
+                    .any(|pair| pair[0] != pair[1])
+                    .then_some(weights),
+            });
             curve.data(policy, 0)?;
             (
                 vec![result(SketchReferenceGeometry::Curve(curve), None)],

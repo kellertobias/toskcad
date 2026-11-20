@@ -49,6 +49,14 @@ impl Solid {
             None
         }
     }
+
+    /// The exact world Bézier span of a spline sweep rim edge, in authored
+    /// source order with its source weights, when the edge is one source
+    /// span. References report source parameters, not ring traversal.
+    pub(crate) fn spline_rim_bezier(&self, ordinal: u32) -> Option<(Vec<[f64; 3]>, Vec<f64>)> {
+        let (body, frame) = self.spline_sweep_body()?;
+        body.rim_bezier(frame, ordinal)
+    }
 }
 
 impl SplineSweepBody {
@@ -152,7 +160,7 @@ impl SplineSweepBody {
             .iter()
             .filter_map(|edge| match edge {
                 Edge::Analytic(edge) => Some(*edge),
-                Edge::Cubic(_) => None,
+                Edge::Cubic(_) | Edge::Rational(_) => None,
             })
             .chain(self.sweep.hole())
             .map(move |edge| normal_sweep_body::rim_in_frame(edge, cap));
@@ -205,7 +213,7 @@ impl SplineSweepBody {
         caps.chain(self.sweep.edges().enumerate().map(|(i, edge)| {
             let center = match edge {
                 Edge::Analytic(edge) => edge.centroid(),
-                Edge::Cubic(_) => edge.point(0.5),
+                Edge::Cubic(_) | Edge::Rational(_) => edge.point(0.5),
             };
             wall(i, center, Self::side_plane(frame, edge))
         }))
@@ -313,7 +321,7 @@ impl SplineSweepBody {
                             };
                             build.non_face(rim, &incident);
                         }
-                        Edge::Cubic(_) => build.non_analytic_edge(&incident),
+                        Edge::Cubic(_) | Edge::Rational(_) => build.non_analytic_edge(&incident),
                     }
                     if !circle {
                         let [x, y] = edge.point(0.);
@@ -389,7 +397,7 @@ impl SplineSweepBody {
         let mut count = 0;
         for cubic in self.sweep.edges().filter_map(|edge| match edge {
             Edge::Cubic(cubic) => Some(cubic),
-            Edge::Analytic(_) => None,
+            Edge::Analytic(_) | Edge::Rational(_) => None,
         }) {
             for z in [0., self.sweep.height_mm()] {
                 let place = |[x, y]: [f64; 2]| position(frame, [x, y, z]);
@@ -399,10 +407,12 @@ impl SplineSweepBody {
                     .iter()
                     .take_while(|entry| entry.0 <= start + tolerance * 2.)
                     .find(|&&(_, i, reversed)| {
+                        if used[i] || readback[i].weights().is_some() {
+                            return false;
+                        }
                         let mut actual = readback[i].bezier_spans();
                         let mut expected = cubic.bezier_spans();
-                        !used[i]
-                            && actual.len() == expected.len()
+                        actual.len() == expected.len()
                             && expected.all(|span| {
                                 let actual = if reversed {
                                     let mut span =
@@ -428,7 +438,100 @@ impl SplineSweepBody {
                 count += 1;
             }
         }
+        for curve in self.sweep.edges().filter_map(|edge| match edge {
+            Edge::Rational(curve) => Some(curve),
+            Edge::Cubic(_) | Edge::Analytic(_) => None,
+        }) {
+            let mut poles = curve.poles().to_vec();
+            let mut weights = curve.weights().to_vec();
+            if curve.reversed() {
+                poles.reverse();
+                weights.reverse();
+            }
+            // Positive weights keep both curves in their control hulls. A
+            // relative weight change δ moves a point by at most 2δ times
+            // the hull diameter, so bound it by a quarter of the tolerance.
+            let diameter = poles
+                .iter()
+                .flat_map(|a| poles.iter().map(move |b| (a[0] - b[0]).hypot(a[1] - b[1])))
+                .fold(0., f64::max);
+            let weight_tolerance = tolerance / (8. * (diameter + 1.));
+            for z in [0., self.sweep.height_mm()] {
+                let place = |[x, y]: [f64; 2]| position(frame, [x, y, z]);
+                let start = project(place(poles[0]));
+                let index = starts.partition_point(|entry| entry.0 < start - tolerance * 2.);
+                let Some((_, found, _)) = starts[index..]
+                    .iter()
+                    .take_while(|entry| entry.0 <= start + tolerance * 2.)
+                    .find(|&&(_, i, reversed)| {
+                        let Some(actual_weights) = readback[i].weights() else {
+                            return false;
+                        };
+                        let mut actual_poles = readback[i].poles_mm().to_vec();
+                        let mut actual_weights = actual_weights.to_vec();
+                        if reversed {
+                            actual_poles.reverse();
+                            actual_weights.reverse();
+                        }
+                        !used[i]
+                            && actual_poles.len() == poles.len()
+                            && poles.iter().zip(&actual_poles).all(|(&a, b)| {
+                                place(a)
+                                    .into_iter()
+                                    .zip(b)
+                                    .all(|(a, b)| (a - b).abs() <= tolerance)
+                            })
+                            && weights.iter().zip(&actual_weights).all(|(a, b)| {
+                                (a / weights[0] - b / actual_weights[0]).abs()
+                                    <= weight_tolerance * (a / weights[0])
+                            })
+                    })
+                else {
+                    return false;
+                };
+                used[*found] = true;
+                count += 1;
+            }
+        }
         count == readback.len()
+    }
+
+    fn rim_edge(&self, ordinal: u32) -> Option<(&Edge, f64)> {
+        let stride = self.wall_areas.len();
+        let index = ordinal as usize;
+        if index >= 2 * stride {
+            return None;
+        }
+        let wall = index % stride;
+        let ring = self.wall_offsets.partition_point(|&offset| offset <= wall) - 1;
+        let edges = if ring == 0 {
+            self.sweep.outline()
+        } else {
+            &self.sweep.holes()[ring - 1]
+        };
+        let edge = edges.get(wall - self.wall_offsets[ring])?;
+        let height = if index >= stride {
+            self.sweep.height_mm()
+        } else {
+            0.
+        };
+        Some((edge, height))
+    }
+
+    fn rim_bezier(&self, frame: PlaneFrame, ordinal: u32) -> Option<(Vec<[f64; 3]>, Vec<f64>)> {
+        let (edge, height) = self.rim_edge(ordinal)?;
+        let (poles, weights) = match edge {
+            Edge::Rational(curve) => (curve.poles().to_vec(), curve.weights().to_vec()),
+            Edge::Cubic(cubic) if cubic.knots().len() == 2 => (cubic.poles().to_vec(), vec![1.; 4]),
+            Edge::Cubic(_) | Edge::Analytic(_) => return None,
+        };
+        Some((
+            poles
+                .into_iter()
+                .map(|[x, y]| position(frame, [x, y, height]))
+                .collect(),
+            weights,
+        ))
     }
 
     pub(super) fn sample_rim(
@@ -447,7 +550,7 @@ impl SplineSweepBody {
             &self.sweep.holes()[ring - 1]
         };
         let edge = edges.get(wall - self.wall_offsets[ring])?;
-        if index >= 2 * stride || !matches!(edge, Edge::Cubic(_)) {
+        if index >= 2 * stride || !matches!(edge, Edge::Cubic(_) | Edge::Rational(_)) {
             return None;
         }
         let height = if index >= stride {

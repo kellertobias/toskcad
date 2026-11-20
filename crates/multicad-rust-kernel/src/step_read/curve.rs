@@ -15,6 +15,10 @@ struct LinePcurve {
 
 impl Shell<'_, '_> {
     pub(super) fn edge_geometry(&mut self, id: u32, vertices: [u32; 2]) -> Result<u32> {
+        // A complex instance is a bounded curve, never a surface curve.
+        if self.components(id)?.len() > 1 {
+            return Ok(id);
+        }
         let curve = self.simple(id)?;
         let seam = curve.name == "SEAM_CURVE";
         if !seam && curve.name != "SURFACE_CURVE" {

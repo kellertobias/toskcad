@@ -60,6 +60,7 @@ fn double_knot_join_uses_adjacent_span_lengths() {
             .to_vec(),
         knots: vec![0., 1., 3.],
         multiplicities: vec![4, 2, 4],
+        weights: None,
     };
     let spans: Vec<_> = spline.bezier_spans().collect();
     assert_eq!(spans[0][3], [1., 0., 0.]);
@@ -99,4 +100,46 @@ fn decoder_refuses_unsupported_shapes_and_bad_parameters() {
         let shell = Shell::new(&entities, 1e-7, true);
         assert_eq!(shell.spline_extrusion(8), Err(ReadError::Invalid));
     }
+}
+
+#[test]
+fn rational_conic_span_reads_exact_weights_bounds_and_area() {
+    let input = format!(
+        "{START}{}{END}",
+        concat!(
+            "#1=CARTESIAN_POINT('',(10.,0.,0.));",
+            "#2=CARTESIAN_POINT('',(10.,10.,0.));",
+            "#3=CARTESIAN_POINT('',(0.,10.,0.));",
+            "#4=(BOUNDED_CURVE() B_SPLINE_CURVE(2,(#1,#2,#3),.UNSPECIFIED.,.F.,.F.) ",
+            "B_SPLINE_CURVE_WITH_KNOTS((3,3),(0.,1.),.UNSPECIFIED.) CURVE() ",
+            "GEOMETRIC_REPRESENTATION_ITEM() ",
+            "RATIONAL_B_SPLINE_CURVE((1.,0.70710678118654757,1.)) REPRESENTATION_ITEM(''));",
+            "#5=(BOUNDED_CURVE() B_SPLINE_CURVE(2,(#1,#2,#3),.UNSPECIFIED.,.F.,.F.) ",
+            "B_SPLINE_CURVE_WITH_KNOTS((3,3),(0.,1.),.UNSPECIFIED.) CURVE() ",
+            "GEOMETRIC_REPRESENTATION_ITEM() ",
+            "RATIONAL_B_SPLINE_CURVE((1.,-0.5,1.)) REPRESENTATION_ITEM(''));",
+            "#6=(BOUNDED_CURVE() B_SPLINE_CURVE(2,(#1,#2,#3),.UNSPECIFIED.,.F.,.F.) ",
+            "B_SPLINE_CURVE_WITH_KNOTS((2,1,2),(0.,0.5,1.),.UNSPECIFIED.) CURVE() ",
+            "GEOMETRIC_REPRESENTATION_ITEM() ",
+            "RATIONAL_B_SPLINE_CURVE((1.,1.,1.)) REPRESENTATION_ITEM(''));",
+        )
+    );
+    let entities = parse_entities(&input, 1e-7).unwrap();
+    let shell = Shell::new(&entities, 1e-7, true);
+    let arc = shell.rational_curve(4).unwrap();
+    assert_eq!(
+        arc.weights(),
+        Some(&[1., std::f64::consts::FRAC_1_SQRT_2, 1.][..])
+    );
+    // The quarter circle reaches radius 10 on the diagonal but its axis
+    // extents are the exact end points, not the control-hull corner.
+    let [low, high] = arc.bounds();
+    assert_eq!(low, [0., 0., 0.]);
+    assert!((high[0] - 10.).abs() < 1e-12 && (high[1] - 10.).abs() < 1e-12);
+    // Sector area between the arc and the origin is a quarter disk.
+    let area = arc.signed_area([0.; 3], [0., 0., 1.]);
+    assert!((area - 25. * std::f64::consts::PI).abs() < 1e-11, "{area}");
+    assert_eq!(shell.rational_curve(5), Err(ReadError::Invalid));
+    assert_eq!(shell.rational_curve(6), Err(ReadError::Unsupported));
+    assert_eq!(shell.rational_curve(1), Err(ReadError::Unsupported));
 }

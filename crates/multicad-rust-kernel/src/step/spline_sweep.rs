@@ -28,6 +28,7 @@ pub(super) fn encode(
             .map(|edge| match edge {
                 Edge::Analytic(edge) => ProfileEdge::Analytic(*edge),
                 Edge::Cubic(cubic) => ProfileEdge::Cubic(CubicTrim::decoded(cubic, tolerance)),
+                Edge::Rational(curve) => ProfileEdge::Cubic(CubicTrim::rational(curve, tolerance)),
             })
             .collect()
     });

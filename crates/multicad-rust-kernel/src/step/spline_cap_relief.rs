@@ -97,6 +97,10 @@ fn encode_shell(
                 z_mm,
             } => encode_arc(file, ends, placement, *edge, *z_mm)?,
             Curve::Profile {
+                edge: Edge::Rational(_),
+                ..
+            } => return Err(StepError::Unsupported),
+            Curve::Profile {
                 edge: Edge::Cubic(curve),
                 z_mm,
             } => {
@@ -183,6 +187,7 @@ fn encode_shell(
                     ));
                     file.face_on(&bounds, surface, (!curve_reversed(edge)) != *inward)
                 }
+                Edge::Rational(_) => return Err(StepError::Unsupported),
             },
         };
         faces.push(entity);
@@ -311,6 +316,10 @@ fn precision(relief: &Relief, placement: &Placement) -> Result<(), StepError> {
             Curve::Line { .. } => vec![],
             Curve::Profile {
                 edge: Edge::Cubic(c),
+                z_mm,
+            } => c.poles().iter().map(|p| [p[0], p[1], *z_mm]).collect(),
+            Curve::Profile {
+                edge: Edge::Rational(c),
                 z_mm,
             } => c.poles().iter().map(|p| [p[0], p[1], *z_mm]).collect(),
             Curve::Profile {

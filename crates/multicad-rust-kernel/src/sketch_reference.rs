@@ -1,6 +1,7 @@
 //! Analytic references to finite geometry in a sketch frame.
 
 pub mod conic;
+pub mod rational;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Method {

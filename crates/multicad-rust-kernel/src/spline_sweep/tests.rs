@@ -735,3 +735,51 @@ fn adjacent_edges_that_cross_away_from_their_joint_stay_refused() {
     ];
     assert!(Sweep::new_rings(outline, vec![], 3., 1e-7).is_err());
 }
+
+#[test]
+fn two_edge_rational_arch_and_chord_is_certified_at_both_shared_vertices() {
+    let arch = Rational::new(
+        vec![[0., 0.], [5., 10.], [10., 0.]],
+        vec![1., 0.7, 1.],
+        false,
+    )
+    .unwrap();
+    let outline = vec![
+        Edge::Analytic(normal_sweep::Edge::Line {
+            a: [0., 0.],
+            b: [10., 0.],
+        }),
+        Edge::Rational(arch.reverse()),
+    ];
+    let sweep = Sweep::new(outline, None, 3., 1e-6).unwrap();
+    // Independent trapezoid area under the exact conic arch.
+    let samples: Vec<_> = (0..=20_000)
+        .map(|i| arch.point(f64::from(i) / 20_000.))
+        .collect();
+    let area: f64 = samples
+        .windows(2)
+        .map(|pair| (pair[1][0] - pair[0][0]) * (pair[1][1] + pair[0][1]) * 0.5)
+        .sum();
+    assert!(
+        (sweep.area_mm2() - area).abs() < 1e-5,
+        "{}",
+        sweep.area_mm2()
+    );
+    assert!((sweep.volume_mm3() - 3. * area).abs() < 3e-5);
+    // The same arch traversed clockwise does not bound a positive region.
+    assert!(
+        Sweep::new(
+            vec![
+                Edge::Analytic(normal_sweep::Edge::Line {
+                    a: [10., 0.],
+                    b: [0., 0.],
+                }),
+                Edge::Rational(arch),
+            ],
+            None,
+            3.,
+            1e-6,
+        )
+        .is_err()
+    );
+}

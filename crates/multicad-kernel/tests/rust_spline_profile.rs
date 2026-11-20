@@ -282,12 +282,43 @@ fn cancelled_and_unproved_spline_extrusions_leave_source_and_existing_solid_inta
         panic!()
     };
     spline.weights = Some(vec![1., 2., 1.]);
-    assert_eq!(
-        Solid::rust_extrude_spline_profile_named(&rational, 3., feature, &ids, policy)
-            .err()
-            .unwrap()
-            .kind,
-        GeometryErrorKind::Unsupported
+    let spline = spline.clone();
+    // An exact rational Bézier span is retained with its source weights;
+    // compare the volume with an independent trapezoid area of the source.
+    let conic =
+        Solid::rust_extrude_spline_profile_named(&rational, 3., feature, &ids, policy).unwrap();
+    let samples: Vec<_> = (0..=20_000)
+        .map(|i| {
+            spline
+                .evaluate(f64::from(i) / 20_000., policy)
+                .unwrap()
+                .point
+        })
+        .collect();
+    let area: f64 = samples
+        .windows(2)
+        .map(|pair| (pair[1][0] - pair[0][0]) * (pair[1][1] + pair[0][1]) * 0.5)
+        .sum::<f64>()
+        .abs();
+    near(conic.volume_mm3().unwrap(), 3. * area);
+    // A rational basis whose interior knot is below full multiplicity has
+    // no exact Bézier spans in its source values and stays refused.
+    let mut reduced = source.clone();
+    reduced.outer[0] = CurvedEdge2d::BSpline(BSpline2d {
+        degree: 2,
+        poles: vec![[0., 0.], [3., 8.], [7., 8.], [10., 0.]],
+        knots: vec![0., 0.5, 1.],
+        multiplicities: vec![3, 1, 3],
+        weights: Some(vec![1., 0.8, 0.8, 1.]),
+    });
+    let refused = Solid::rust_extrude_spline_profile_named(&reduced, 3., feature, &ids, policy)
+        .err()
+        .unwrap();
+    assert_eq!(refused.kind, GeometryErrorKind::Unsupported);
+    assert!(
+        refused.message.contains("Bézier spans"),
+        "{}",
+        refused.message
     );
     assert_eq!(source, before);
     assert_eq!(stable.topology_snapshot(feature, 0).unwrap(), topology);

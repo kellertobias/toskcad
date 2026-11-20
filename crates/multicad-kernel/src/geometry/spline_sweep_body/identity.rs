@@ -44,6 +44,20 @@ fn curve(edge: &Edge, frame: PlaneFrame, z: f64) -> Vec<u8> {
                 bytes.extend(word.to_le_bytes());
             }
         }
+        Edge::Rational(curve) => {
+            // Traversal order: the same directed curve has one identity
+            // whichever source direction authored it.
+            bytes.push(4);
+            let mut controls: Vec<_> = curve.poles().iter().zip(curve.weights()).collect();
+            if curve.reversed() {
+                controls.reverse();
+            }
+            for (&pole, &weight) in controls {
+                point(&mut bytes, [pole[0], pole[1], 0.]);
+                point(&mut bytes, place(pole));
+                scalar(&mut bytes, weight);
+            }
+        }
         Edge::Analytic(edge) => {
             bytes.push(match edge {
                 AnalyticEdge::Line { .. } => 0,
