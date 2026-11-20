@@ -227,19 +227,107 @@ fn candidate_and_boundary_work_are_independently_bounded() {
         work: 3,
     };
     let mut output = Vec::new();
-    let mut clipper = Clipper {
-        boundary: &boundary,
-        center: [0., 0.],
-        axes: [[1., 0.], [0., 1.]],
-        tolerance: OPTIONS.tolerance_mm,
-        stroke_limit: OPTIONS.stroke_limit,
-        crossings: Vec::new(),
-        spans: Vec::new(),
-        output: &mut output,
-        budget: &mut budget,
-    };
+    let mut clipper = Clipper::new(
+        &boundary,
+        [0., 0.],
+        [[1., 0.], [0., 1.]],
+        OPTIONS,
+        &mut output,
+        &mut budget,
+    );
     assert_eq!(clipper.line([[1., 1.]; 2]), Ok(()));
     assert_eq!(clipper.line(boundary[0]), Err(HatchError::Limit));
     assert_eq!(clipper.line(boundary[1]), Err(HatchError::Limit));
     assert!(output.is_empty());
+}
+
+/// A ring of `count` chords on a circle, counterclockwise unless `hole`.
+fn polygon(center: Point, radius: f64, count: usize, hole: bool) -> Vec<Segment> {
+    let point = |i: usize| {
+        let angle = std::f64::consts::TAU * (i % count) as f64 / count as f64;
+        let (sin, cos) = angle.sin_cos();
+        [center[0] + radius * cos, center[1] + radius * sin]
+    };
+    (0..count)
+        .map(|i| {
+            let edge = [point(i), point(i + 1)];
+            if hole { [edge[1], edge[0]] } else { edge }
+        })
+        .collect()
+}
+
+/// Every stroke of every pattern, clipped through the edge index, is the
+/// stroke the full boundary scan clips, including strokes through shared
+/// vertices, along boundary edges and at tangent points.
+#[test]
+fn indexed_clipping_matches_the_full_boundary_scan() {
+    let mut boundary = ring([0., 0.], [20., 12.]).to_vec();
+    boundary.extend(ring([6., 3.], [14., 9.]).iter().map(|&[a, b]| [b, a]));
+    boundary.extend(polygon([3., 6.], 2., 400, true));
+    boundary.extend(polygon([17., 6.], 1.5, 7, true));
+    for angle_rad in [
+        0.,
+        std::f64::consts::FRAC_PI_4,
+        0.3,
+        std::f64::consts::FRAC_PI_2,
+    ] {
+        for pattern in [
+            Pattern::Lines,
+            Pattern::Cross,
+            Pattern::Alternating,
+            Pattern::Dots,
+            Pattern::SmallCrosses,
+            Pattern::Brick,
+            Pattern::Concrete,
+            Pattern::Grass,
+        ] {
+            let options = Options {
+                angle_rad,
+                spacing_mm: 0.5,
+                ..OPTIONS
+            };
+            let clip = |indexed: bool| {
+                let (min, max) = bounds(boundary.iter().flatten().copied());
+                let center = std::array::from_fn(|i| min[i] + (max[i] - min[i]) * 0.5);
+                let (sin, cos) = angle_rad.sin_cos();
+                let mut output = Vec::new();
+                let mut budget = Budget::default();
+                for axes in [[[cos, sin], [-sin, cos]], [[-sin, cos], [-cos, -sin]]] {
+                    let local = boundary
+                        .iter()
+                        .map(|edge| {
+                            edge.map(|point| axes.map(|axis| dot(sub(point, center), axis)))
+                        })
+                        .collect::<Vec<_>>();
+                    let mut clipper =
+                        Clipper::new(&local, center, axes, options, &mut output, &mut budget);
+                    clipper.indexed = indexed;
+                    pattern_lines(&mut clipper, pattern, options).unwrap();
+                }
+                (output, budget.work)
+            };
+            let (indexed, remaining) = clip(true);
+            let (scanned, scanned_remaining) = clip(false);
+            assert!(!indexed.is_empty(), "{pattern:?} {angle_rad}");
+            assert_eq!(indexed, scanned, "{pattern:?} {angle_rad}");
+            assert!(remaining >= scanned_remaining, "{pattern:?} {angle_rad}");
+        }
+    }
+}
+
+/// A fine boundary no longer multiplies the work of every hatch line: a
+/// circle of 40000 chords takes 4000 lines within the shared budget, where
+/// a full scan of each line would need 160 million edge tests.
+#[test]
+fn hatch_lines_test_only_the_boundary_edges_they_can_meet() {
+    let mut boundary = ring([-100., -100.], [100., 100.]).to_vec();
+    boundary.extend(polygon([0., 0.], 50., 40_000, true));
+    let options = Options {
+        spacing_mm: 0.05,
+        ..OPTIONS
+    };
+    let mut budget = Budget::default();
+    let strokes = hatch_with_budget(&boundary, Pattern::Lines, options, &mut budget).unwrap();
+    assert!(strokes.len() > 4_000, "{}", strokes.len());
+    assert!(budget.work > MAX_WORK / 2, "{}", MAX_WORK - budget.work);
 }

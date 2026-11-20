@@ -28,7 +28,12 @@ pub(super) fn project(
     let loops = frame.clip(loops, options, policy)?;
     let output = frame.vectors(&loops, options, source)?;
     let boundary = if hatch {
-        frame.hatch(&loops, options.chord_tolerance_mm)?
+        frame.hatch(
+            &loops,
+            options
+                .chord_tolerance_mm
+                .min(policy.minimum_feature_mm / 4.),
+        )?
     } else {
         Vec::new()
     };
@@ -234,11 +239,6 @@ impl Frame {
         })
     }
 
-    /// Sample the section boundary for its hatch within `deflection`, the
-    /// drawing chord tolerance. Convex arcs use chords and concave arcs use
-    /// tangent segments, so the fill never leaves the material; a finer
-    /// sampling only multiplies the hatch work, which exceeded the budget on
-    /// the 125x35x50 mm KiCad heatsink.
     fn hatch(
         &self,
         loops: &[Vec<SectionEdge>],

@@ -431,10 +431,10 @@ fn bracket_sections_cut_the_exact_sweep_shell() {
 
 #[test]
 fn a_finely_hatched_plate_section_stays_within_the_hatch_budget() {
-    // The hatch boundary follows the exact section within the drawing chord
-    // tolerance. Sampling the small holes at a quarter of the minimum
-    // feature size gave each one thousands of segments and overran the
-    // shared hatch budget for a 0.05 mm hatch across the whole plate.
+    // The hatch boundary samples the small holes and corners at a quarter of
+    // the minimum feature size, about 23000 segments. Each of the 3677
+    // hatch lines tests only the boundary edges near it; a full scan per
+    // line overran the shared hatch budget.
     let board = plate(0.);
     let vectors = project_drawing(
         &[DrawingSolid {
