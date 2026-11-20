@@ -20,6 +20,7 @@ pub(in crate::drawing) struct Shapes {
     pub lines: Vec<LineCandidate>,
     pub rims: Vec<SpatialRimCandidate>,
     pub openings: Vec<FaceOpening>,
+    pub stadium_openings: Vec<planar_projection::StadiumOpening>,
     pub hidden: Vec<HiddenCandidate>,
 }
 

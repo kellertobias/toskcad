@@ -1,10 +1,15 @@
-//! Certified blocker volumes and physical edges of a bent normal sweep.
+//! Certified blocker volumes and physical edges of a straight normal sweep
+//! whose section is rectangles joined by cardinal quarter rounds: bent
+//! channels (paired concentric bends) and rounded-corner plates (convex
+//! corner quarters), optionally with axial circular through-holes.
 use super::{machined::Cut, *};
 use multicad_core::references::{AnalyticGeometry, ReferenceFrame};
 use multicad_rust_kernel::{
     normal_sweep::Edge as ProfileEdge,
     orthogonal::Box3,
-    planar_projection::{Body, Face, HiddenCandidate, LineCandidate},
+    planar_projection::{
+        Body, CircularOpeningEnd, Face, HiddenCandidate, LineCandidate, StadiumOpening,
+    },
 };
 use std::collections::BTreeMap;
 
@@ -23,9 +28,20 @@ pub(super) fn add(
         return Ok(false);
     };
     let (rings, height) = body.drawing_section();
-    let profile = profile::Profile::new(rings).ok_or_else(|| {
+    // A straight polygonal section has only planar faces and draws through
+    // the planar scene.
+    if rings
+        .iter()
+        .flatten()
+        .all(|edge| matches!(edge, ProfileEdge::Line { .. }))
+    {
+        return Ok(false);
+    }
+    let tolerance = solid.geometry_policy().linear_tolerance_mm;
+    let profile = profile::Profile::new(rings, tolerance).ok_or_else(|| {
         unsupported(
-            "Rust mixed drawing requires rectangular walls and paired concentric quarter bends",
+            "Rust mixed drawing requires rectangular walls joined by cardinal quarter rounds, \
+             with each axial hole inside one wall",
         )
     })?;
     let view = View::new(options.frame);
@@ -39,24 +55,29 @@ pub(super) fn add(
     }
     let levels = [height.min(0.), height.max(0.)];
     let point = |p| view.point(crate::rust_prism_topology::position(frame, p));
+    // Corner quarters snapped within the linear tolerance, by authored
+    // centre: their rims are drawn on the same exact quarter as their
+    // blockers, so a rim never dips inside its own occluder.
+    let corners: Vec<_> = profile
+        .bends
+        .iter()
+        .filter(|bend| bend.inner.is_none())
+        .map(|bend| (bend.authored, bend.center, bend.outer, bend.spokes[0]))
+        .collect();
     for bend in profile.bends {
-        let [inner, outer] = bend.radii;
         let spokes = bend
             .spokes
             .map(|[u, v]| view.vector(std::array::from_fn(|i| frame.u[i] * u + frame.v[i] * v)));
-        scene.rounds.push(
-            RoundOccluder::quarter_annulus(
-                point([bend.center[0], bend.center[1], 0.]),
-                axis,
-                spokes,
-                outer,
-                inner,
-                height.abs(),
-            )
-            .map_err(|_| {
-                unsupported("Rust mixed bent-sweep drawing requires cardinal quarter bend spokes")
-            })?,
-        );
+        let base = point([bend.center[0], bend.center[1], 0.]);
+        let round = match bend.inner {
+            Some(inner) => {
+                RoundOccluder::quarter_annulus(base, axis, spokes, bend.outer, inner, height.abs())
+            }
+            None => RoundOccluder::quarter_disc(base, axis, spokes, bend.outer, height.abs()),
+        };
+        scene.rounds.push(round.map_err(|_| {
+            unsupported("Rust mixed bent-sweep drawing requires cardinal quarter round spokes")
+        })?);
     }
 
     let blocker_offset = scene.bodies.len();
@@ -71,10 +92,59 @@ pub(super) fn add(
     let mut blockers: Vec<_> = rectangles
         .iter()
         .map(|&region| box_body(region, point))
+        .chain(
+            profile
+                .polygons
+                .iter()
+                .map(|polygon| prism_body(polygon, levels, point)),
+        )
         .collect();
-    let mut cut_candidates = machined::stock_with_cuts((), 0);
+    let mut cut_candidates = machined::stock_with_cuts((), profile.holes.len());
+    // Axial holes open both caps of their host blocker, so blockers never
+    // occlude through them.
+    for hole in &profile.holes {
+        let body = blocker_offset + hole.host;
+        // Low and high caps of a box, then of a prism.
+        let caps = if hole.host < rectangles.len() {
+            [4, 5]
+        } else {
+            [0, 1]
+        };
+        let [first, second] = hole.centers;
+        if first == second {
+            let centers = levels.map(|level| point([first[0], first[1], level]));
+            Cut {
+                faces: caps.map(Some),
+                centers,
+                outward: unit(sub(centers[0], centers[1])),
+                radius: hole.radius,
+            }
+            .append(&mut cut_candidates, source, body)?;
+        } else if axial {
+            // The slot's own cap rims are published with the other rims.
+            let [mouth, rear] = if blockers[hole.host].faces[caps[1]].normal[2] > 0. {
+                [caps[1], caps[0]]
+            } else {
+                caps
+            };
+            scene.stadium_openings.push(StadiumOpening {
+                body,
+                face: mouth,
+                centers: hole.centers.map(|[x, y]| {
+                    let [u, v, _] = point([x, y, levels[0]]);
+                    [u, v]
+                }),
+                radius: hole.radius,
+                end: CircularOpeningEnd::OppositeFace(rear),
+            });
+        } else {
+            for points in slot_walls(hole, frame, &view, levels, options.tangent_edges) {
+                publish_line(scene, source, points, true);
+            }
+        }
+    }
     for (faces, outline) in body.drawing_piercings(frame) {
-        let (index, cap_faces) = host(&rectangles, frame, faces, outline, solid.geometry_policy().linear_tolerance_mm)
+        let (index, cap_faces) = host(&rectangles, frame, faces, outline, tolerance)
             .ok_or_else(|| unsupported("Rust bent-sweep drawing could not pair a piercing with one complete rectangular wall"))?;
         if let [
             ProfileEdge::Circle {
@@ -144,15 +214,33 @@ pub(super) fn add(
                 AnalyticGeometry::Line { a_mm, b_mm } => {
                     publish_line(scene, source, [a_mm, b_mm].map(|p| view.point(p)), hidden);
                 }
+                // Hole walls were published with their cuts.
+                AnalyticGeometry::CircularArc { sweep_rad, .. }
+                    if sweep_rad.abs() == std::f64::consts::TAU => {}
                 AnalyticGeometry::CircularArc {
-                    frame,
-                    radius_mm,
-                    start_rad,
-                    sweep_rad,
+                    frame: mut rim_frame,
+                    mut radius_mm,
+                    mut start_rad,
+                    mut sweep_rad,
                 } => {
+                    let offset = sub(rim_frame.origin_mm, frame.origin);
+                    let local = [dot(offset, frame.u), dot(offset, frame.v)];
+                    if let Some(&(_, center, radius, [x, y])) =
+                        corners.iter().find(|(authored, ..)| {
+                            (0..2).all(|i| (authored[i] - local[i]).abs() <= tolerance)
+                        })
+                    {
+                        let shift = [center[0] - local[0], center[1] - local[1]];
+                        rim_frame.origin_mm = std::array::from_fn(|i| {
+                            rim_frame.origin_mm[i] + shift[0] * frame.u[i] + shift[1] * frame.v[i]
+                        });
+                        radius_mm = radius;
+                        start_rad = y.atan2(x);
+                        sweep_rad = std::f64::consts::FRAC_PI_2.copysign(sweep_rad);
+                    }
                     for mut rim in stadium::spatial_rims(
                         source,
-                        frame,
+                        rim_frame,
                         radius_mm,
                         start_rad,
                         sweep_rad,
@@ -183,6 +271,61 @@ pub(super) fn add(
         }
     }
     Ok(true)
+}
+
+/// Hidden walls of an axial slot in a transverse view: its two silhouettes,
+/// the cap chords between them and, when requested, the tangent seams
+/// between its flat walls and its semicircular ends.
+fn slot_walls(
+    hole: &profile::Hole,
+    frame: PlaneFrame,
+    view: &View,
+    levels: [f64; 2],
+    tangent_edges: bool,
+) -> Vec<[Point; 2]> {
+    let depth = |axis: Point| view.vector(axis)[2];
+    let [du, dv] = [depth(frame.u), depth(frame.v)];
+    let length = du.hypot(dv);
+    // The section direction that stays in the drawing plane.
+    let across = [dv / length, -du / length];
+    let reach = |[x, y]: [f64; 2]| x * across[0] + y * across[1];
+    let [c0, c1] = hole.centers;
+    let spine = [c1[0] - c0[0], c1[1] - c0[1]];
+    let normal = {
+        let n = spine[0].hypot(spine[1]);
+        [-spine[1] / n, spine[0] / n]
+    };
+    let at = |[x, y]: [f64; 2], offset: f64, level: f64| {
+        point_at(
+            frame,
+            view,
+            [x + offset * across[0], y + offset * across[1], level],
+        )
+    };
+    let [near, far] = if reach(c0) <= reach(c1) {
+        [c0, c1]
+    } else {
+        [c1, c0]
+    };
+    let ends = [(near, -hole.radius), (far, hole.radius)];
+    let mut walls: Vec<_> = ends
+        .iter()
+        .map(|&(c, offset)| levels.map(|level| at(c, offset, level)))
+        .collect();
+    walls.extend(levels.map(|level| ends.map(|(c, offset)| at(c, offset, level))));
+    let seam = hole.radius * reach(normal).abs();
+    if tangent_edges && hole.radius - seam > 1e-9 * hole.radius.max(1.) {
+        for (c, _) in ends {
+            for offset in [-seam, seam] {
+                walls.push(levels.map(|level| at(c, offset, level)));
+            }
+        }
+    }
+    walls
+}
+
+fn point_at(frame: PlaneFrame, view: &View, p: Point) -> Point {
+    view.point(crate::rust_prism_topology::position(frame, p))
 }
 
 fn host(
@@ -276,6 +419,45 @@ fn box_body(bounds: Box3, point: impl Fn(Point) -> Point) -> Body {
         })
         .collect();
     Body { edges, faces }
+}
+
+/// A right prism over a simple counterclockwise polygon. Faces 0 and 1 are
+/// its low and high caps, followed by one side per polygon edge.
+fn prism_body(polygon: &[[f64; 2]], levels: [f64; 2], point: impl Fn(Point) -> Point) -> Body {
+    let n = polygon.len();
+    let at = |[x, y]: [f64; 2], level| point([x, y, level]);
+    let mut edges = Vec::with_capacity(3 * n);
+    for i in 0..n {
+        let [p, q] = [polygon[i], polygon[(i + 1) % n]];
+        edges.extend(levels.map(|level| [at(p, level), at(q, level)]));
+        edges.push(levels.map(|level| at(p, level)));
+    }
+    let rise = unit(sub(at(polygon[0], levels[1]), at(polygon[0], levels[0])));
+    let mut faces: Vec<_> = (0..2)
+        .map(|high| Face {
+            point: at(polygon[0], levels[high]),
+            normal: rise.map(|value| if high == 0 { -value } else { value }),
+            edges: (0..n).map(|i| 3 * i + high).collect(),
+        })
+        .collect();
+    faces.extend((0..n).map(|i| {
+        let [p, q] = edges[3 * i];
+        Face {
+            point: p,
+            // Outward for a counterclockwise section about the rise.
+            normal: unit(cross(sub(q, p), rise)),
+            edges: vec![3 * i, 3 * i + 1, 3 * i + 2, 3 * ((i + 1) % n) + 2],
+        }
+    }));
+    Body { edges, faces }
+}
+
+fn cross(a: Point, b: Point) -> Point {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
 }
 
 fn add_rectangular_cut(body: &mut Body, [a, b]: [[Point; 4]; 2], faces: [usize; 2]) {

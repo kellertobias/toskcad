@@ -329,6 +329,9 @@ fn project_members(
         opening.body += bodies.len();
     }
     openings.extend(rounded.openings);
+    for opening in &mut rounded.stadium_openings {
+        opening.body += bodies.len();
+    }
     intrinsic_hidden.extend(rounded.hidden);
     let projection = planar_projection::project_scene_with_analytic_faces(
         &bodies,
@@ -336,6 +339,7 @@ fn project_members(
         planar_projection::SceneExtras {
             rims: &rims,
             openings: &openings,
+            stadium_openings: &rounded.stadium_openings,
             blocker_bodies: &rounded.bodies,
             blocker_rounds: &rounded.rounds,
             lines: &rounded.lines,
@@ -343,7 +347,6 @@ fn project_members(
             spatial_rims: &rounded.rims,
             spatial_ellipses: &spatial_ellipses,
             intrinsic_hidden: &intrinsic_hidden,
-            ..Default::default()
         },
         &shell_faces,
         planar_projection::Options {
