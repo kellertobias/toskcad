@@ -1525,6 +1525,9 @@ impl Solid {
             if let Some(result) = self.contained_clipped_npt_boolean(other, operation, policy) {
                 return result;
             }
+            if let Some(result) = self.contained_warped_union_boolean(other, operation, policy) {
+                return result;
+            }
             if let Some(result) = self.default_certified_boolean(other, operation, policy) {
                 return result;
             }

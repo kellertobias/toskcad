@@ -132,6 +132,49 @@ impl ConvexPiece {
         })
     }
 
+    /// Whole-box relation to this piece's supporting planes, which lie within
+    /// the construction tolerance of its faces: `Some(true)` when every box
+    /// corner is deeper than `margin` inside every plane, `Some(false)` when
+    /// all corners are beyond `margin` outside one plane, otherwise `None`.
+    /// Callers pass at least that tolerance; evaluation rounding is added.
+    pub fn classify_box(&self, bounds: [[f64; 2]; 3], margin: f64) -> Option<bool> {
+        if !margin.is_finite()
+            || margin < 0.
+            || bounds
+                .iter()
+                .any(|[lo, hi]| !lo.is_finite() || !hi.is_finite() || lo > hi)
+        {
+            return None;
+        }
+        let corners = (0..8).map(|c| std::array::from_fn(|k| bounds[k][c >> k & 1]));
+        let corners: Vec<Point> = corners.collect();
+        let mut inside = true;
+        for plane in &self.planes {
+            let magnitude = corners
+                .iter()
+                .flatten()
+                .chain(&plane.point)
+                .map(|v| v.abs())
+                .fold(1_f64, f64::max);
+            let slack = margin + 64. * f64::EPSILON * magnitude;
+            let (lo, hi) =
+                corners
+                    .iter()
+                    .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), c| {
+                        let d = plane.distance(*c);
+                        (lo.min(d), hi.max(d))
+                    });
+            if !lo.is_finite() || !hi.is_finite() {
+                return None;
+            }
+            if lo > slack {
+                return Some(false);
+            }
+            inside &= hi < -slack;
+        }
+        inside.then_some(true)
+    }
+
     pub fn from_box(min: Point, max: Point, tolerance_mm: f64) -> Result<Self, Error> {
         if min.into_iter().zip(max).any(|(lo, hi)| lo >= hi) {
             return Err(Error::Invalid);
@@ -362,3 +405,33 @@ fn checkpoint(interrupt: Option<&dyn Fn() -> bool>) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod classify_box_tests {
+    use super::*;
+
+    #[test]
+    fn boxes_inside_outside_and_across_a_piece() {
+        let piece = ConvexPiece::from_box([0., 0., 0.], [2., 3., 4.], 1e-6).unwrap();
+        let cube = |c: Point, h: f64| c.map(|v| [v - h, v + h]);
+        assert_eq!(
+            piece.classify_box(cube([1., 1., 1.], 0.1), 1e-6),
+            Some(true)
+        );
+        assert_eq!(
+            piece.classify_box(cube([2.01, 1., 1.], 0.001), 1e-6),
+            Some(false)
+        );
+        assert_eq!(
+            piece.classify_box(cube([1.999, 1., 1.], 0.0005), 1e-6),
+            Some(true)
+        );
+        // Straddling a face, or within the margin of it, is not claimed.
+        assert_eq!(piece.classify_box(cube([2., 1., 1.], 0.1), 1e-6), None);
+        assert_eq!(
+            piece.classify_box(cube([2. + 5e-7, 1., 1.], 1e-8), 1e-6),
+            None
+        );
+        assert_eq!(piece.classify_box(cube([1., 1., 1.], 0.1), f64::NAN), None);
+    }
+}

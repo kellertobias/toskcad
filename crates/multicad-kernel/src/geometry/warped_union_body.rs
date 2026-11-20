@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod axial_cut;
 mod circular_miter;
+mod contained_boolean;
 mod crop;
 mod cut;
 mod flat_stock;
