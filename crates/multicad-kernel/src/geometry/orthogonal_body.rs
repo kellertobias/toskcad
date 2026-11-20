@@ -842,6 +842,9 @@ impl Solid {
         policy: GeometryPolicy,
     ) -> Result<Option<Self>, GeometryError> {
         policy.validate()?;
+        if let Some(result) = self.subtract_clear_of_round_cuts(tools, policy) {
+            return result;
+        }
         self.orthogonal_boolean_with_tools(tools, BooleanOperation::Subtract, policy)
     }
 
