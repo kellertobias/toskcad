@@ -1,4 +1,5 @@
-//! Authored polynomial spline sections retain source curves and exact basis spans.
+//! Authored polynomial and rational spline sections retain source curves and
+//! exact basis spans; rational Bézier spans keep their source weights.
 use super::*;
 use crate::{CurvedEdge2d, CurvedProfile, GeometryPolicy, NativeRegionQueries};
 use multicad_core::{
@@ -6,7 +7,7 @@ use multicad_core::{
     references::ReferenceFrame,
     sketch_regions::{Edge as RegionEdge, ExactCurve, RegionQueries},
 };
-use multicad_rust_kernel::spline_sweep::{ConstructionError, Cubic};
+use multicad_rust_kernel::spline_sweep::{ConstructionError, Cubic, Rational};
 use std::rc::Rc;
 
 fn failure(kind: GeometryErrorKind, message: impl std::fmt::Display) -> GeometryError {
@@ -29,6 +30,44 @@ fn cancelled(interrupt: Option<&dyn Fn() -> bool>) -> Result<(), GeometryError> 
     } else {
         Ok(())
     }
+}
+fn rational(spline: &crate::BSpline2d) -> bool {
+    spline.degree > 1
+        && spline
+            .weights
+            .as_ref()
+            .is_some_and(|weights| weights.windows(2).any(|pair| pair[0] != pair[1]))
+}
+/// The exact rational Bézier spans of a clamped spline whose interior knots
+/// all have multiplicity `degree`; the poles and weights are the source
+/// values, so no basis conversion rounds them.
+/// Source poles and weights of one rational Bézier span.
+type RationalSpan = (Vec<[f64; 2]>, Vec<f64>);
+fn rational_spans(spline: &crate::BSpline2d) -> Option<Vec<RationalSpan>> {
+    let degree = spline.degree as usize;
+    let weights = spline.weights.as_ref()?;
+    let last = spline.multiplicities.len().checked_sub(1)?;
+    let clamped = last >= 1
+        && spline.multiplicities[0] as usize == degree + 1
+        && spline.multiplicities[last] as usize == degree + 1
+        && spline.multiplicities[1..last]
+            .iter()
+            .all(|&m| m as usize == degree);
+    let spans = last;
+    if !clamped || spline.poles.len() != spans * degree + 1 || weights.len() != spline.poles.len() {
+        return None;
+    }
+    Some(
+        (0..spans)
+            .map(|span| {
+                let range = span * degree..=(span + 1) * degree;
+                (
+                    spline.poles[range.clone()].to_vec(),
+                    weights[range].to_vec(),
+                )
+            })
+            .collect(),
+    )
 }
 fn exact_curve(edge: &CurvedEdge2d) -> ExactCurve {
     match edge {
@@ -137,15 +176,11 @@ impl Solid {
                         "Spline extrusion currently supports degree one through three",
                     ));
                 }
-                if spline.degree > 1
-                    && spline
-                        .weights
-                        .as_ref()
-                        .is_some_and(|weights| weights.windows(2).any(|pair| pair[0] != pair[1]))
-                {
+                if rational(spline) && rational_spans(spline).is_none() {
                     return Err(failure(
                         GeometryErrorKind::Unsupported,
-                        "This rational spline profile cannot yet be extruded",
+                        "A rational spline profile is extruded exactly only from its \
+                         Bézier spans; this basis has interior knots below full multiplicity",
                     ));
                 }
             }
@@ -261,6 +296,31 @@ impl Solid {
                 for (curve, origin) in rings[ring_index].iter().zip(&origins[range.clone()]) {
                     cancelled(interrupt)?;
                     match curve {
+                        CurvedEdge2d::BSpline(spline) if rational(spline) => {
+                            let spans = rational_spans(spline).expect("admitted Bézier form");
+                            let fragment = spans.len() > 1;
+                            for (poles, weights) in spans {
+                                let curve = Rational::new(
+                                    poles.into_iter().map(reflect).collect(),
+                                    weights,
+                                    false,
+                                )
+                                .map_err(|cause| {
+                                    failure(
+                                        GeometryErrorKind::Unsupported,
+                                        format!(
+                                            "Cannot retain an authored rational span: {cause:?}"
+                                        ),
+                                    )
+                                })?;
+                                ring_edges.push(AuthoredEdge {
+                                    edge: Edge::Rational(curve),
+                                    origins: aliases(feature, origin),
+                                    anchor: None,
+                                    fragment,
+                                });
+                            }
+                        }
                         CurvedEdge2d::BSpline(spline) if spline.degree > 1 => {
                             for patch in crate::spline_edits::regions::polynomial_patches(
                                 spline,
@@ -376,6 +436,7 @@ impl Solid {
                                 )
                                 .expect("retained source cubic"),
                             ),
+                            Edge::Rational(curve) => Edge::Rational(curve.reverse()),
                         };
                     }
                 }
@@ -385,6 +446,13 @@ impl Solid {
                             Edge::Cubic(cubic) => {
                                 let mut points = cubic.poles().to_vec();
                                 if cubic.reversed() {
+                                    points.reverse();
+                                }
+                                points.into_iter().map(reflect).collect::<Vec<_>>()
+                            }
+                            Edge::Rational(curve) => {
+                                let mut points = curve.poles().to_vec();
+                                if curve.reversed() {
                                     points.reverse();
                                 }
                                 points.into_iter().map(reflect).collect::<Vec<_>>()

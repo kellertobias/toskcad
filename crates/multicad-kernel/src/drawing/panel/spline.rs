@@ -46,9 +46,11 @@ pub(in crate::drawing) fn project_spline_sweep(
                 })
             })
             .collect::<Result<Vec<_>, GeometryError>>()?;
-        let splines = outline.iter().filter_map(|edge| match edge {
-            spline_sweep::Edge::Cubic(cubic) => Some((edge, cubic)),
-            spline_sweep::Edge::Analytic(_) => None,
+        let splines = outline.iter().filter(|edge| {
+            matches!(
+                edge,
+                spline_sweep::Edge::Cubic(_) | spline_sweep::Edge::Rational(_)
+            )
         });
         let curve_budget = || {
             err(
@@ -65,10 +67,9 @@ pub(in crate::drawing) fn project_spline_sweep(
         let mut vectors = Vec::new();
         // Both caps have the same section. The rear rims coincide in
         // projection and axial edges project to points, including the bore seam.
-        for (edge, cubic) in splines {
-            vectors.push(cubic_vector(
+        for edge in splines {
+            vectors.push(curve_vector(
                 edge,
-                cubic,
                 &project,
                 options,
                 &mut remaining.maximum_points,
@@ -79,9 +80,10 @@ pub(in crate::drawing) fn project_spline_sweep(
     })())
 }
 
-fn cubic_vector(
+/// A source spline rim as a projected B-spline. Parallel projection is
+/// affine, so the projected poles keep the source knots and weights.
+fn curve_vector(
     edge: &spline_sweep::Edge,
-    cubic: &spline_sweep::Cubic,
     project: &dyn Fn(Point) -> Point,
     options: DrawingProjection,
     remaining_points: &mut u32,
@@ -92,7 +94,40 @@ fn cubic_vector(
             "Spline sweep drawing exceeds its point or preview budget",
         )
     };
-    if *remaining_points < 2 || cubic.poles().len() > options.maximum_points as usize {
+    let (degree, poles, weights, knots, multiplicities, reversed) = match edge {
+        spline_sweep::Edge::Cubic(cubic) => {
+            let knots = cubic.knots().to_vec();
+            let mut multiplicities = vec![2; knots.len()];
+            multiplicities[0] = 4;
+            multiplicities[knots.len() - 1] = 4;
+            (
+                3,
+                cubic.poles(),
+                vec![1.; cubic.poles().len()],
+                knots,
+                multiplicities,
+                cubic.reversed(),
+            )
+        }
+        spline_sweep::Edge::Rational(curve) => {
+            let order = curve.degree() as u32 + 1;
+            (
+                curve.degree() as u32,
+                curve.poles(),
+                curve.weights().to_vec(),
+                vec![0., 1.],
+                vec![order; 2],
+                curve.reversed(),
+            )
+        }
+        spline_sweep::Edge::Analytic(_) => {
+            return Err(err(
+                GeometryErrorKind::InvalidResult,
+                "An analytic rim is not a spline drawing curve",
+            ));
+        }
+    };
+    if *remaining_points < 2 || poles.len() > options.maximum_points as usize {
         return Err(point_budget());
     }
     let mut preview_mm: Vec<_> = edge
@@ -106,25 +141,21 @@ fn cubic_vector(
         .map(project)
         .collect();
     *remaining_points -= preview_mm.len() as u32;
-    if cubic.reversed() {
+    if reversed {
         preview_mm.reverse();
     }
-    let knots = cubic.knots();
-    let mut multiplicities = vec![2; knots.len()];
-    multiplicities[0] = 4;
-    multiplicities[knots.len() - 1] = 4;
     Ok(ProjectedVector {
         source_index: 0,
         role: VectorRole::Visible,
         curve: VectorCurve::BSpline {
-            degree: 3,
+            degree,
             periodic: false,
-            poles: cubic.poles().iter().copied().map(project).collect(),
-            weights: vec![1.; cubic.poles().len()],
-            knots: knots.to_vec(),
-            multiplicities,
+            poles: poles.iter().copied().map(project).collect(),
+            weights,
             first: knots[0],
             last: knots[knots.len() - 1],
+            knots,
+            multiplicities,
         },
         preview_mm,
     })
@@ -149,20 +180,19 @@ mod tests {
             ..Default::default()
         };
         let mut remaining = 1_000;
-        let vector = cubic_vector(&edge, &cubic, &project, options, &mut remaining).unwrap();
+        let vector = curve_vector(&edge, &project, options, &mut remaining).unwrap();
         assert_eq!(vector.preview_mm[0], [6., -1.]);
         assert_eq!(vector.preview_mm.last(), Some(&[3., 0.]));
         assert_eq!(remaining, 1_000 - vector.preview_mm.len() as u32);
         assert_eq!(
-            cubic_vector(&edge, &cubic, &project, options, &mut 2)
+            curve_vector(&edge, &project, options, &mut 2)
                 .unwrap_err()
                 .kind,
             GeometryErrorKind::Limit
         );
         assert_eq!(
-            cubic_vector(
+            curve_vector(
                 &edge,
-                &cubic,
                 &project,
                 DrawingProjection {
                     maximum_points: 3,

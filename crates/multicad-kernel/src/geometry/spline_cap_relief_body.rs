@@ -217,7 +217,7 @@ impl SplineCapReliefBody {
                         };
                         let p = match edge {
                             Edge::Analytic(a) => a.centroid(),
-                            Edge::Cubic(_) => edge.point(0.5),
+                            Edge::Cubic(_) | Edge::Rational(_) => edge.point(0.5),
                         };
                         [p[0], p[1], span_mm[0].midpoint(span_mm[1])]
                     });
@@ -336,7 +336,7 @@ impl SplineCapReliefBody {
             if matches!(
                 &edge.curve,
                 Curve::Profile {
-                    edge: Edge::Cubic(_),
+                    edge: Edge::Cubic(_) | Edge::Rational(_),
                     ..
                 }
             ) {
@@ -360,9 +360,9 @@ impl SplineCapReliefBody {
                     },
                 ),
                 Curve::Profile {
-                    edge: Edge::Cubic(_),
+                    edge: Edge::Cubic(_) | Edge::Rational(_),
                     ..
-                } => unreachable!("handled cubic"),
+                } => unreachable!("handled spline"),
             };
             builder.non_face(
                 geometry,

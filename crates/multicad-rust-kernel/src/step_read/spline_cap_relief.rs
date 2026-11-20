@@ -329,6 +329,7 @@ fn support(
                             )) <= tol,
                     )
                 }
+                Edge::Rational(_) => Err(ReadError::Unsupported),
                 Edge::Cubic(curve) => {
                     let (support, axis) = shell.spline_extrusion(face.surface)?;
                     require(

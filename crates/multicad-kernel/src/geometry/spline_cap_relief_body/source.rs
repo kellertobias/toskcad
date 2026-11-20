@@ -388,6 +388,12 @@ fn mapped(
             radius_mm: *radius_mm,
             clockwise: *clockwise != reflected,
         }),
+        Edge::Rational(_) => {
+            return Err(fail(
+                GeometryErrorKind::Unsupported,
+                "A cap relief cannot yet map a rational spline source",
+            ));
+        }
         Edge::Cubic(c) => Edge::Cubic(
             Cubic::new(
                 c.poles()
@@ -582,6 +588,7 @@ pub(super) fn build(
                     .map(|e| {
                         work.charge(match e {
                             Edge::Cubic(c) => (c.knots().len() - 1) * 64,
+                            Edge::Rational(_) => 64,
                             Edge::Analytic(_) => 32,
                         })?;
                         mapped(

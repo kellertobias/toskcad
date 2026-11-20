@@ -7,8 +7,10 @@ use crate::{
 };
 
 mod cubic;
+pub(crate) mod rational;
 pub(crate) mod validation;
 pub use cubic::Cubic;
+pub use rational::Rational;
 
 type Point = [f64; 2];
 
@@ -30,6 +32,8 @@ pub enum ConstructionError {
 pub enum Edge {
     Analytic(normal_sweep::Edge),
     Cubic(Cubic),
+    /// One exact rational Bézier span (conic or rational cubic).
+    Rational(Rational),
 }
 
 impl Edge {
@@ -44,6 +48,7 @@ impl Edge {
                 )
                 .expect("reversing a validated curve"),
             ),
+            Self::Rational(curve) => Self::Rational(curve.reverse()),
         }
     }
 
@@ -51,6 +56,7 @@ impl Edge {
         match self {
             Self::Analytic(edge) => edge.point(fraction),
             Self::Cubic(edge) => edge.point(fraction),
+            Self::Rational(edge) => edge.point(fraction),
         }
     }
 
@@ -58,6 +64,7 @@ impl Edge {
         match self {
             Self::Analytic(edge) => edge.support(direction),
             Self::Cubic(edge) => edge.support(direction),
+            Self::Rational(edge) => edge.support(direction),
         }
     }
 
@@ -68,6 +75,7 @@ impl Edge {
         match self {
             Self::Analytic(edge) => Ok([edge.length_mm(); 2]),
             Self::Cubic(edge) => edge.length_bounds_mm(error_mm),
+            Self::Rational(edge) => edge.length_bounds_mm(error_mm),
         }
     }
 
@@ -96,6 +104,7 @@ impl Edge {
                     .collect())
             }
             Self::Cubic(edge) => edge.sample(options.deflection, options.angle, limit),
+            Self::Rational(edge) => edge.sample(options.deflection, options.angle, limit),
         }
     }
 
@@ -103,6 +112,7 @@ impl Edge {
         match self {
             Self::Analytic(edge) => edge.moments(origin),
             Self::Cubic(edge) => edge.moments(origin),
+            Self::Rational(edge) => edge.moments(origin),
         }
     }
 }
@@ -185,7 +195,7 @@ impl Sweep {
             }
             spans += match edge {
                 Edge::Cubic(curve) => curve.knots().len() - 1,
-                Edge::Analytic(_) => 1,
+                Edge::Analytic(_) | Edge::Rational(_) => 1,
             };
             if spans > crate::polygon::MAX_VERTICES {
                 return Err(ConstructionError::Limit);
@@ -355,6 +365,7 @@ impl Sweep {
             let bounds = match edge {
                 Edge::Analytic(edge) => [edge.length_mm(); 2],
                 Edge::Cubic(edge) => edge.length_bounds_with_budget(allowance, &mut budget)?,
+                Edge::Rational(edge) => edge.length_bounds_with_budget(allowance, &mut budget)?,
             };
             for (sum, term) in sum.iter_mut().zip(bounds) {
                 sum.add(term);

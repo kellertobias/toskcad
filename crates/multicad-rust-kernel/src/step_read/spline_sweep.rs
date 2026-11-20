@@ -256,11 +256,16 @@ fn read_edge(reader: &mut Shell<'_, '_>, id: u32) -> Result<EdgeData> {
     let forward = sense(forward)?;
     // A surface curve is admitted only after its master agrees with this 3D geometry.
     let id = reader.edge_geometry(reference(curve)?, vertices)?;
-    let geometry = match reader.simple(id)?.name {
+    let name = if reader.components(id)?.len() > 1 {
+        "RATIONAL_B_SPLINE_CURVE"
+    } else {
+        reader.simple(id)?.name
+    };
+    let geometry = match name {
         "LINE" => Geometry::Analytic(reader.line_curve(id, vertices, forward)?),
         "CIRCLE" => Geometry::Analytic(reader.circle_curve(id, vertices, forward)?),
-        "B_SPLINE_CURVE_WITH_KNOTS" if forward => {
-            let curve = reader.spline_curve(id)?;
+        "B_SPLINE_CURVE_WITH_KNOTS" | "RATIONAL_B_SPLINE_CURVE" if forward => {
+            let curve = reader.sweep_curve(id)?;
             let [a, b] = [reader.vertex(vertices[0])?, reader.vertex(vertices[1])?];
             if length(sub(a, b)) <= reader.tolerance
                 || length(sub(a, curve.poles_mm()[0])) > reader.tolerance
@@ -382,7 +387,7 @@ fn verify_wall(
             let (support, axis) = reader.spline_extrusion(wall.surface)?;
             // The swept curve is the lower rim or a copy displaced along the axis.
             let swept = support == *id
-                || reader.spline_curve(support).is_ok_and(|basis| {
+                || reader.sweep_curve(support).is_ok_and(|basis| {
                     let travel = sub(curve.poles_mm()[0], basis.poles_mm()[0]);
                     length(cross(travel, axis)) <= reader.tolerance
                         && basis.translated(curve, travel, reader.tolerance)

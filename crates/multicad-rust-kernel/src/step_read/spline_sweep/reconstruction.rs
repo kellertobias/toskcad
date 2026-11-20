@@ -111,6 +111,16 @@ pub(in crate::step_read) fn section_edges(
                         }
                     })
                 }
+                Geometry::Cubic { curve, .. } if curve.weights().is_some() => {
+                    spline_sweep::Edge::Rational(
+                        spline_sweep::Rational::new(
+                            curve.poles_mm().iter().copied().map(project).collect(),
+                            curve.weights().unwrap_or_default().to_vec(),
+                            !direction,
+                        )
+                        .map_err(body_error)?,
+                    )
+                }
                 Geometry::Cubic { curve, .. } => spline_sweep::Edge::Cubic(
                     spline_sweep::Cubic::new(
                         curve.poles_mm().iter().copied().map(project).collect(),

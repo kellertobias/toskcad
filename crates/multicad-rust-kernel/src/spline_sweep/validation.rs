@@ -167,6 +167,10 @@ pub(crate) enum Piece {
     Line([Point2; 2]),
     Arc(Arc),
     Bezier([Point2; 4]),
+    /// A rational Bézier span with positive weights. Its projected control
+    /// polygon has the convex-hull and variation-diminishing properties the
+    /// polynomial proofs use, and homogeneous splits are corner cuts.
+    Rational(super::rational::Span),
 }
 
 #[derive(Clone, Copy)]
@@ -183,6 +187,7 @@ impl Piece {
             Self::Line(points) => points,
             Self::Arc(arc) => [arc.point(arc.start), arc.point(arc.start + arc.sweep)],
             Self::Bezier([a, _, _, b]) => [a, b],
+            Self::Rational(span) => span.endpoints(),
         }
     }
 
@@ -200,6 +205,11 @@ impl Piece {
             }
             Self::Bezier([_, b, c, _]) => {
                 bounds = merge(merge(bounds, [b; 2]), [c; 2]);
+            }
+            Self::Rational(span) => {
+                for point in span.points() {
+                    bounds = merge(bounds, [point; 2]);
+                }
             }
         }
         bounds
@@ -227,6 +237,7 @@ impl Piece {
                 let m = midpoint(x, y);
                 [Self::Bezier([a, ab, x, m]), Self::Bezier([m, y, cd, d])]
             }
+            Self::Rational(span) => span.split(0.5).map(Self::Rational),
         }
     }
 
@@ -235,6 +246,17 @@ impl Piece {
             Self::Line([a, b]) => unit2(sub2(b, a)).unwrap_or([0.; 2]),
             Self::Arc(arc) => arc.tangent(arc.start + if end { arc.sweep } else { 0. }),
             Self::Bezier(mut p) => {
+                if end {
+                    p.reverse();
+                }
+                let tangent = p[1..]
+                    .iter()
+                    .find_map(|&b| unit2(sub2(b, p[0])))
+                    .unwrap_or([0.; 2]);
+                if end { tangent.map(|v| -v) } else { tangent }
+            }
+            Self::Rational(span) => {
+                let mut p = span.points();
                 if end {
                     p.reverse();
                 }
@@ -254,6 +276,10 @@ impl Piece {
         match self {
             Self::Line([a, b]) => roundoff::nonnegative_difference(b, a, axis),
             Self::Bezier(p) => p
+                .windows(2)
+                .all(|pair| roundoff::nonnegative_difference(pair[1], pair[0], axis)),
+            Self::Rational(span) => span
+                .points()
                 .windows(2)
                 .all(|pair| roundoff::nonnegative_difference(pair[1], pair[0], axis)),
             Self::Arc(arc) => {
@@ -287,6 +313,10 @@ impl Piece {
                         .all(|angle| dot2(arc.tangent(angle), axis) * arc.radius >= 0.)
             }
             Self::Bezier(p) => p
+                .windows(2)
+                .all(|pair| dot2(sub2(pair[1], pair[0]), axis) >= 0.),
+            Self::Rational(span) => span
+                .points()
                 .windows(2)
                 .all(|pair| dot2(sub2(pair[1], pair[0]), axis) >= 0.),
         }
@@ -400,6 +430,12 @@ fn boundaries_with_refinement(
         consume(budget)?;
         let pieces = match edge {
             Edge::Cubic(cubic) => cubic.bezier_spans().map(Piece::Bezier).collect::<Vec<_>>(),
+            Edge::Rational(curve) => {
+                for &point in curve.poles() {
+                    check(point)?;
+                }
+                vec![Piece::Rational(curve.span())]
+            }
             Edge::Analytic(normal_sweep::Edge::Line { a, b }) => {
                 check(*a)?;
                 check(*b)?;
@@ -487,7 +523,10 @@ fn boundaries_with_refinement(
         }
         section.push(Boundary { pieces, bounds });
     }
-    if refined {
+    // Two edges share both vertices, so neither joint can be isolated from
+    // the other edge as a whole. Quarter proof charts make each shared
+    // vertex a local joint; the retained source edges are unchanged.
+    if refined || section.len() == 2 {
         let mut parts = Vec::new();
         for boundary in section {
             for piece in boundary.pieces {

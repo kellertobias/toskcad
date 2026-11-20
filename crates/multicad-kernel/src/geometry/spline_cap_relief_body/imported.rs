@@ -40,6 +40,13 @@ fn curve_key(curve: &Curve, forward: bool, frame: PlaneFrame) -> Vec<u64> {
                     key.push(u64::from(*clockwise));
                     key.extend(numbers(a.iter().chain(b).chain(center).copied()));
                 }
+                Edge::Rational(c) => {
+                    key.push(4);
+                    key.push(u64::from(c.reversed()));
+                    key.push(c.poles().len() as u64);
+                    key.extend(numbers(c.poles().iter().flatten().copied()));
+                    key.extend(numbers(c.weights().iter().copied()));
+                }
                 Edge::Cubic(c) => {
                     key.push(3);
                     key.push(u64::from(c.reversed()));
