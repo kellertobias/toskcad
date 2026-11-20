@@ -1606,6 +1606,7 @@ impl Solid {
                     .or_else(|| self.parallel_extrusion_intersection(other, operation, policy))
                     .or_else(|| self.stacked_cylinder_union(other, operation, policy))
                     .or_else(|| self.pairwise_warped_boolean(other, operation, policy))
+                    .or_else(|| self.warped_shell_probe_boolean(other, operation, policy))
                     .unwrap_or_else(|| {
                         Err(cross_refusal
                             .unwrap_or_else(|| self.no_exact_boolean(other, operation, error)))
