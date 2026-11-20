@@ -769,7 +769,7 @@ fn slot_opening() -> StadiumOpening {
         face: 5,
         centers: [[-2., 0.], [2., 0.]],
         radius: 1.,
-        floor_depth: 2.,
+        end: CircularOpeningEnd::Floor(2.),
     }
 }
 
@@ -1657,4 +1657,70 @@ fn an_oblique_cap_splits_the_inner_silhouette_at_the_other_lobes_depth() {
         (((cap + z).powi(2) + 100. * c * c) * normal - 20. * c).abs() < 1e-8
     }));
     assert!(AnalyticFace::oblique_torus_cap_crossings([5., 1.], [s, c], 30.).is_empty());
+}
+
+#[test]
+fn through_slot_reveals_rear_geometry_across_its_whole_stadium() {
+    let stock = rect([-5., -5., 5., 5.], 0., 5.);
+    let through = StadiumOpening {
+        end: CircularOpeningEnd::OppositeFace(4),
+        ..slot_opening()
+    };
+    // Rear lines along the spine and across one semicircular end.
+    let lines = [
+        supplied_line(10, -1., 0.),
+        LineCandidate {
+            source: 11,
+            points: [[2.5, -4., -1.], [2.5, 4., -1.]],
+        },
+    ];
+    let project = |slot: StadiumOpening| {
+        project_scene_with_candidates(
+            &[],
+            &[],
+            SceneExtras {
+                lines: &lines,
+                blocker_bodies: std::slice::from_ref(&stock),
+                stadium_openings: &[slot],
+                ..SceneExtras::default()
+            },
+            options(),
+        )
+        .unwrap()
+        .2
+    };
+    let shown = project(through);
+    assert_eq!(supplied_lines(&shown, 10, false), [[-3., 3.]]);
+    let across: Vec<_> = shown
+        .iter()
+        .filter_map(|edge| match edge.edge.curve {
+            Curve::Line(points) if edge.source == 11 && !edge.edge.hidden => {
+                Some(points.map(|point| point[1]))
+            }
+            _ => None,
+        })
+        .collect();
+    let half = 0.75_f64.sqrt();
+    assert_eq!(across.len(), 1);
+    close(across[0][0].min(across[0][1]), -half);
+    close(across[0][0].max(across[0][1]), half);
+    // A blind slot keeps its floor between the mouth and the rear lines.
+    assert!(supplied_lines(&project(slot_opening()), 10, false).is_empty());
+    // The opposite face must face away from the viewer.
+    assert_eq!(
+        project_scene_with_candidates(
+            &[],
+            &[],
+            SceneExtras {
+                blocker_bodies: std::slice::from_ref(&stock),
+                stadium_openings: &[StadiumOpening {
+                    end: CircularOpeningEnd::OppositeFace(5),
+                    ..through
+                }],
+                ..SceneExtras::default()
+            },
+            options(),
+        ),
+        Err(ProjectionError::Invalid)
+    );
 }

@@ -474,7 +474,7 @@ impl<'a> Scene<'a> {
                         face,
                         centers,
                         radius,
-                        floor_depth,
+                        end: planar_projection::CircularOpeningEnd::Floor(floor_depth),
                     });
                     let corners = stadium.corners();
                     for i in [0, 2] {
