@@ -124,8 +124,9 @@ pub(crate) fn build_profile_cut(
         });
         let cut = if layout.flanges.is_empty() {
             rebuild_rust_flat(&mut layout, feature, policy)?
-        } else if layout.has_inset_flanges() {
-            inset::build(&mut layout, policy).map_err(|cause| {
+        } else if !channel::fits(&layout) {
+            let origins = layout.rust_base_origins.clone().unwrap_or_default();
+            inset::build(&mut layout, &origins, policy).map_err(|cause| {
                 failure(format!("Keep the cut inside one flat sheet face, clear of its edges, bends and other openings. {cause}"))
             })?
         } else {

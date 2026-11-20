@@ -238,16 +238,29 @@ fn invalid_rings_heights_winding_and_envelopes_are_refused() {
         sweep(vec![vec![line(a, b); MAX_VERTICES + 1]], 2.),
         Err(Error::Limit)
     );
-    for holes in [
-        vec![circle([5., 5.], 2., false)],
-        vec![circle([20., 5.], 2., true)],
-        vec![circle([2., 2.], 2., true)],
-        vec![circle([5., 5.], 3., true), circle([5., 5.], 1., true)],
-        vec![circle([4., 5.], 2., true), circle([7., 5.], 2., true)],
+    // A wrongly wound hole is an invalid profile; a hole outside the outer
+    // ring, touching it, nested in or crossing another hole, or a duplicate
+    // hole, is an overlap between distinct loops.
+    for (holes, expected) in [
+        (vec![circle([5., 5.], 2., false)], Error::InvalidProfile),
+        (vec![circle([20., 5.], 2., true)], Error::OverlappingRings),
+        (vec![circle([2., 2.], 2., true)], Error::OverlappingRings),
+        (
+            vec![circle([5., 5.], 3., true), circle([5., 5.], 1., true)],
+            Error::OverlappingRings,
+        ),
+        (
+            vec![circle([4., 5.], 2., true), circle([7., 5.], 2., true)],
+            Error::OverlappingRings,
+        ),
+        (
+            vec![circle([5., 5.], 2., true), circle([5., 5.], 2., true)],
+            Error::OverlappingRings,
+        ),
     ] {
         let mut rings = vec![square(10.)];
         rings.extend(holes.into_iter().map(|hole| vec![hole]));
-        assert_eq!(sweep(rings, 2.), Err(Error::InvalidProfile));
+        assert_eq!(sweep(rings, 2.), Err(expected));
     }
     let tiny = polygon(&[
         [4e-7, 4e-7],

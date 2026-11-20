@@ -138,7 +138,7 @@ impl Shell {
                     let mut ring = boundary_samples(&face.boundary, &paths);
                     mesh_cylinder(&mut mesh, &mut ring, &angle_levels, axis_direction, index)?;
                 }
-                Support::Cylinder { .. } => mesh_boss(&mut mesh, face, &paths, index)?,
+                Support::Cylinder { .. } => mesh_boss(&mut mesh, face, &self.edges, &paths, index)?,
             }
         }
         if mesh.face_indices.len() != triangles {
@@ -180,24 +180,81 @@ fn boundary_samples(boundary: &[OrientedEdge], paths: &[Vec<usize>]) -> Vec<usiz
 fn mesh_boss(
     mesh: &mut DisplayMesh,
     face: &Face,
+    edges: &[Edge],
     paths: &[Vec<usize>],
     index: u32,
 ) -> Result<(), MeshError> {
-    let [base, _, end, _] = *face.boundary.as_slice() else {
+    // Two rims joined by straight rails. A rail may be split where a flange
+    // root's weld to the web begins or ends.
+    let curved = |edge: &OrientedEdge| matches!(edges[edge.edge].curve, Curve::Ellipse(_));
+    let boundary = face.boundary.as_slice();
+    let Some(&base) = boundary.first().filter(|edge| curved(edge)) else {
         return Err(MeshError::UnresolvedBoundary);
     };
+    let rims: Vec<_> = (1..boundary.len())
+        .filter(|&i| curved(&boundary[i]))
+        .collect();
+    let &[at] = rims.as_slice() else {
+        return Err(MeshError::UnresolvedBoundary);
+    };
+    let end = boundary[at];
     let [a, b] = [base, end].map(|edge| &paths[edge.edge]);
-    if base.forward == end.forward || a.len() != b.len() {
+    if base.forward == end.forward
+        || a.len() != b.len()
+        || at == 1
+        || at + 1 == boundary.len()
+        || boundary[1..at]
+            .iter()
+            .chain(&boundary[at + 1..])
+            .any(|edge| paths[edge.edge].len() != 2)
+    {
         return Err(MeshError::UnresolvedBoundary);
     }
-    for (a, b) in a.windows(2).zip(b.windows(2)) {
-        let triangles = [[a[0], a[1], b[1]], [a[0], b[1], b[0]]];
-        for mut triangle in triangles {
-            if !base.forward {
-                triangle.swap(1, 2);
-            }
-            mesh.triangle(triangle, index);
+    let chain = |rails: &[OrientedEdge]| {
+        let mut ids = boundary_samples(rails, paths);
+        let last = rails.last().expect("nonempty rail");
+        ids.push(paths[last.edge][if last.forward { 1 } else { 0 }]);
+        ids
+    };
+    let (after, before) = (chain(&boundary[1..at]), chain(&boundary[at + 1..]));
+    // Rails in the raw rim direction: `left` joins a[0] to b[0] and
+    // `right` joins the last samples.
+    let (left, right) = if base.forward {
+        (before.into_iter().rev().collect::<Vec<_>>(), after)
+    } else {
+        (after, before.into_iter().rev().collect())
+    };
+    let n = a.len() - 1;
+    if [left[0], *left.last().unwrap()] != [a[0], b[0]]
+        || [right[0], *right.last().unwrap()] != [a[n], b[n]]
+    {
+        return Err(MeshError::UnresolvedBoundary);
+    }
+    let mut triangle = |mut ids: [usize; 3]| {
+        if !base.forward {
+            ids.swap(1, 2);
         }
+        mesh.triangle(ids, index);
+    };
+    // Triangulate between two straight chains on opposite sides of a column.
+    // Every triangle uses both sides, so none is degenerate.
+    let mut ladder = |p: &[usize], q: &[usize]| {
+        for pair in p.windows(2) {
+            triangle([pair[0], q[0], pair[1]]);
+        }
+        for pair in q.windows(2) {
+            triangle([p[p.len() - 1], pair[0], pair[1]]);
+        }
+    };
+    for i in 0..n {
+        let column = |i: usize| vec![a[i], b[i]];
+        let p = if i == 0 { left.clone() } else { column(i) };
+        let q = if i + 1 == n {
+            right.clone()
+        } else {
+            column(i + 1)
+        };
+        ladder(&p, &q);
     }
     Ok(())
 }
@@ -387,6 +444,10 @@ mod tests {
 
     #[test]
     fn a_boss_patch_requires_paired_outward_rims() {
+        let line = Edge {
+            vertices: [0, 1],
+            curve: Curve::Line,
+        };
         let face = Face {
             boundary: vec![
                 OrientedEdge {
@@ -413,7 +474,7 @@ mod tests {
             face_indices: Vec::new(),
         };
         assert_eq!(
-            mesh_boss(&mut mesh, &face, &[], 0),
+            mesh_boss(&mut mesh, &face, &[line], &[vec![0, 1]], 0),
             Err(MeshError::UnresolvedBoundary)
         );
         let mut face = face;
@@ -422,7 +483,7 @@ mod tests {
             forward: true,
         });
         assert_eq!(
-            mesh_boss(&mut mesh, &face, &[vec![0, 1]], 0),
+            mesh_boss(&mut mesh, &face, &[line], &[vec![0, 1]], 0),
             Err(MeshError::UnresolvedBoundary)
         );
     }

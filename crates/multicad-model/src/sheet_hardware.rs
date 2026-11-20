@@ -13,6 +13,7 @@ use multicad_kernel::{
 };
 use std::collections::BTreeMap;
 
+mod clearance;
 mod rust;
 #[cfg(test)]
 mod tests;
@@ -352,7 +353,32 @@ impl Model {
                 && let Some(sheet_solid) = self.solid(*sheet_head)
             {
                 let intersects = if solid.uses_rust_geometry() {
-                    if sheet_solid.uses_rust_geometry()
+                    let formed = self
+                        .snapshot()
+                        .sheet_layouts
+                        .get(sheet_head)
+                        .filter(|head| head.forming_feature == h.sheet && !head.flanges.is_empty());
+                    if let Some(head) = formed.filter(|_| sheet_solid.uses_rust_geometry()) {
+                        let pattern = &head.patterns[h.pattern as usize];
+                        match clearance::formed_clearance(
+                            head,
+                            pattern,
+                            h.item,
+                            self.policy.linear_tolerance_mm,
+                        )
+                        .map_err(|e| error(Some(id), e))?
+                        {
+                            Some(intersects) => intersects,
+                            None => {
+                                findings.push(
+                                    "Exact hardware clearance on this formed Rust sheet cannot be \
+                                     certified; keep the hardware clear of bends and other flanges"
+                                        .into(),
+                                );
+                                false
+                            }
+                        }
+                    } else if sheet_solid.uses_rust_geometry()
                         && self
                             .snapshot()
                             .sheet_layouts
