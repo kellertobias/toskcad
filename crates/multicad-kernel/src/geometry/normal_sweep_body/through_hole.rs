@@ -96,7 +96,9 @@ impl Solid {
         Some(Ok(Some(Self {
             body: SolidBody::NormalSweep(Rc::new(drilled), placement),
             policy,
-            provenance: self.provenance.clone(),
+            // Authored metadata describes the undrilled body. The Boolean
+            // derives the drilled body's metadata from both operands.
+            provenance: vec![],
             rust_origins: self.rust_origins.clone(),
             retained_placement: None,
         })))

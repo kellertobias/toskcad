@@ -13,6 +13,7 @@ use std::{collections::BTreeSet, f64::consts::TAU};
 mod contained_boolean;
 mod fillet;
 mod piercing;
+mod polygon_stock;
 mod profile_depth;
 mod through_hole;
 pub use piercing::SweepOpening;

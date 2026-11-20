@@ -16,7 +16,9 @@ mod authored_sweep;
 mod axial_stack_body;
 mod bevel_body;
 pub(crate) mod bore_treatment;
+mod bored_prism_boolean;
 mod coaxial;
+mod coaxial_counterbore;
 pub use bore_treatment::ConicalSeatGeometry;
 pub(crate) mod circular_pocket_body;
 mod clipped_npt_body;
@@ -64,12 +66,14 @@ mod herringbone_body;
 pub(crate) mod imported_brep_body;
 mod internal_ring_body;
 mod linear_body;
+mod machining_boolean;
 mod nonplanar_loft_body;
 mod normal_relief_body;
 mod normal_sweep_body;
 mod oblique_bore_body;
 mod orthogonal_body;
 mod parallel_cylinder;
+mod parallel_extrusion_intersection;
 mod planar_boolean_body;
 mod radial_boundary_body;
 mod repaired_phillips_body;
@@ -92,7 +96,10 @@ mod separated_boolean;
 mod sphere_body;
 mod spline_sweep_body;
 mod spur_gear_body;
+mod stack_union_boolean;
+mod stacked_prism_boolean;
 mod step_import;
+mod through_profile_cut;
 mod torus_body;
 mod warped_union_body;
 mod wood_contact;
@@ -1480,7 +1487,13 @@ impl Solid {
             }
             if let Some(tool) = other.axial_cylinder() {
                 if let Some(target) = self.polygon_prism() {
-                    return Self::subtract_polygon_cylinder(target, tool, policy).map(Some);
+                    return match Self::subtract_polygon_cylinder(target, tool, policy) {
+                        Err(error) if error.kind == GeometryErrorKind::Unsupported => self
+                            .subtract_machining_tool(other, operation, policy)
+                            .or_else(|| self.coaxial_counterbore_cut(other, operation, policy))
+                            .unwrap_or(Err(error)),
+                        result => result.map(Some),
+                    };
                 }
                 if self.rust_prism().is_some()
                     && let Some(result) = self.try_subtract_rust_prism_through_cylinder(
@@ -1494,7 +1507,15 @@ impl Solid {
                 }
             }
             if let Some(result) = self.subtract_orthogonal_cylinder(other, policy) {
-                return result.map(Some);
+                // A profile with curved holes is outside the rectilinear grid;
+                // the exact polygon pocket provider may still own the cut.
+                return match result {
+                    Err(error) if error.kind == GeometryErrorKind::Unsupported => self
+                        .subtract_machining_tool(other, operation, policy)
+                        .or_else(|| self.coaxial_counterbore_cut(other, operation, policy))
+                        .unwrap_or(Err(error)),
+                    result => result.map(Some),
+                };
             }
         }
         if self.uses_rust_geometry() && other.uses_rust_geometry() {
@@ -1546,6 +1567,13 @@ impl Solid {
             return match self.orthogonal_boolean(other, operation, policy) {
                 Err(error) if error.kind == GeometryErrorKind::Unsupported => self
                     .separated_boolean(other, operation, policy)
+                    .or_else(|| self.subtract_machining_tool(other, operation, policy))
+                    .or_else(|| self.coaxial_counterbore_cut(other, operation, policy))
+                    .or_else(|| self.through_profile_cut(other, operation, policy))
+                    .or_else(|| self.bored_prism_subtract(other, operation, policy))
+                    .or_else(|| self.stacked_prism_boolean(other, operation, policy))
+                    .or_else(|| self.parallel_extrusion_intersection(other, operation, policy))
+                    .or_else(|| self.stacked_cylinder_union(other, operation, policy))
                     .unwrap_or_else(|| {
                         Err(cross_refusal
                             .unwrap_or_else(|| self.no_exact_boolean(other, operation, error)))

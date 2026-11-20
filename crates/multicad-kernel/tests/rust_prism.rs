@@ -764,10 +764,14 @@ fn exact_polygon_boolean_subtracts_cylinders_reaching_both_caps() {
         origin: [0., 0., 2.],
         ..PlaneFrame::default()
     });
-    assert_eq!(
-        subtract(&placed, &tool).err().unwrap().kind,
-        GeometryErrorKind::Unsupported,
+    // On stock raised to z in [2, 6] the same tool stops 1 mm below the top
+    // cap: an exact 3 mm blind pocket, never a through hole.
+    let pocketed = subtract(&placed, &tool).unwrap().unwrap();
+    near(
+        pocketed.volume_mm3().unwrap(),
+        240. - 3. * std::f64::consts::PI,
     );
+    assert_eq!(pocketed.bounds().unwrap(), placed.bounds().unwrap());
     near(target.volume_mm3().unwrap(), 240.);
 }
 
