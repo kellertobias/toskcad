@@ -178,7 +178,11 @@ impl Solid {
                 } else {
                     GeometryErrorKind::Input
                 },
-                format!("Invalid analytic normal extrusion: {cause:?}"),
+                if matches!(cause, normal_sweep::Error::OverlappingRings) {
+                    "Overlapping profile loops: holes cross, touch or nest in each other, or leave the outer boundary".to_string()
+                } else {
+                    format!("Invalid analytic normal extrusion: {cause:?}")
+                },
             )
         })?;
         let body = NormalSweepBody {

@@ -42,6 +42,8 @@ pub enum Edge {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
     InvalidProfile,
+    /// Two distinct loops cross, touch or nest, such as duplicate holes.
+    OverlappingRings,
     InvalidHeight,
     Limit,
 }

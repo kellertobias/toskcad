@@ -368,7 +368,11 @@ pub(super) fn validate(rings: &mut [Vec<Edge>], tolerance: f64, minimum: f64) ->
                         count += 1;
                     }
                     if !clear_pair(edge, other, &joins[..count], slack, roundoff) {
-                        return Err(Error::InvalidProfile);
+                        return Err(if p == i {
+                            Error::InvalidProfile
+                        } else {
+                            Error::OverlappingRings
+                        });
                     }
                 }
             }
@@ -379,7 +383,7 @@ pub(super) fn validate(rings: &mut [Vec<Edge>], tolerance: f64, minimum: f64) ->
                     .iter()
                     .any(|other| inside(other, ring[0].start()) || inside(ring, other[0].start())))
         {
-            return Err(Error::InvalidProfile);
+            return Err(Error::OverlappingRings);
         }
     }
     Ok(())
