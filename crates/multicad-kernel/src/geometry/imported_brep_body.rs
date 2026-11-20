@@ -240,6 +240,17 @@ impl Solid {
         Self::retained(solid, feature, Names::Imported(roles), policy)
     }
 
+    /// Retain a boundary this kernel assembled from exact exchange
+    /// boundaries, naming its elements from their geometry alone.
+    pub(super) fn from_assembled_brep(
+        solid: brep::Solid,
+        feature: EntityId,
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        let roles = Rc::new(roles(&solid));
+        Self::from_imported_brep(solid, feature, roles, policy)
+    }
+
     /// Retain a boundary this kernel constructed, with authored face names.
     pub(super) fn from_retained_brep(
         solid: brep::Solid,
