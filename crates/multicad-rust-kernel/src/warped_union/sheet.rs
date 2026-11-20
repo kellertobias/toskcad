@@ -72,7 +72,42 @@ pub fn formed_sheet_with_openings(
     tolerance: f64,
     minimum: f64,
 ) -> Result<Shell, Error> {
-    if !openings.is_empty() && openings.len() != flanges.len() {
+    formed_sheet_with_overhangs(
+        web,
+        holes,
+        caps,
+        flanges,
+        openings,
+        &[],
+        signed_thickness,
+        tolerance,
+        minimum,
+    )
+}
+
+/// As [`formed_sheet_with_openings`], where a flange root may continue past
+/// its welded web edge. A nonempty `overhangs` slice gives, per flange, the
+/// root length before the start and after the end of that edge; the web
+/// must leave that part of the root free, as a corner relief does.
+#[allow(clippy::too_many_arguments)]
+pub fn formed_sheet_with_overhangs(
+    web: &[SheetWebEdge],
+    holes: &[Vec<(ProfileEdge, usize)>],
+    caps: [usize; 2],
+    flanges: &[SheetFlange<'_>],
+    openings: &[&[SheetFlangeOpening<'_>]],
+    overhangs: &[[f64; 2]],
+    signed_thickness: f64,
+    tolerance: f64,
+    minimum: f64,
+) -> Result<Shell, Error> {
+    if (!openings.is_empty() && openings.len() != flanges.len())
+        || (!overhangs.is_empty() && overhangs.len() != flanges.len())
+        || overhangs
+            .iter()
+            .flatten()
+            .any(|length| !length.is_finite() || *length < 0.)
+    {
         return Err(Error::Invalid);
     }
     if flanges.is_empty() || flanges.len() > 4 || web.len() > 36 {
@@ -100,7 +135,7 @@ pub fn formed_sheet_with_openings(
     let mut builder = Builder::new(tolerance);
     let mut volume = base.volume_mm3();
     let mut bounds = web_frame.bounds(&base);
-    let mut prior_flanges = Vec::<(SweepFrame, Sweep)>::with_capacity(flanges.len());
+    let mut prior_flanges = Vec::<PlacedFlange>::with_capacity(flanges.len());
     for (index, flange) in flanges.iter().enumerate() {
         let mut matches = web.iter().filter(|edge| edge.flange == Some(index));
         let hinge = matches.next().ok_or(Error::Invalid)?;
@@ -109,32 +144,45 @@ pub fn formed_sheet_with_openings(
         }
         let [a, b] = hinge.ends.map(|[x, y]| [x, y, 0.]);
         let along = sub(b, a);
-        let width = dot(along, along).sqrt();
-        let along = scale(along, width.recip());
+        let welded = dot(along, along).sqrt();
+        let along = scale(along, welded.recip());
         let outward = [along[1], -along[0], 0.];
-        if web.iter().any(|edge| {
-            edge.ends
-                .iter()
-                .any(|&[x, y]| dot(sub([x, y, 0.], a), outward) > tolerance)
-        }) {
-            return Err(Error::Unsupported);
-        }
+        let [before, after] = overhangs.get(index).copied().unwrap_or([0., 0.]);
+        let a = sub(a, scale(along, before));
+        let width = before + welded + after;
         let section = checked_sweep(&[flange.section], width, tolerance, minimum)?;
         let (&root, walls) = section.rings()[0].split_last().ok_or(Error::Invalid)?;
-        let (root_a, root_b) = ([0., thickness], [0., 0.]);
         if root
             != (ProfileEdge::Line {
-                a: root_a,
-                b: root_b,
-            })
-            || walls.iter().any(|&edge| {
-                let on_root = [edge.start(), edge.end()].map(|p| p == root_a || p == root_b);
-                let extent = edge.support([-1., 0.]);
-                extent > tolerance
-                    || (!on_root[0] && !on_root[1] && extent > -minimum)
-                    || (on_root[0] && on_root[1])
+                a: [0., thickness],
+                b: [0., 0.],
             })
         {
+            return Err(Error::Unsupported);
+        }
+        let back = back_slab(walls, thickness, tolerance, minimum)?;
+        let wall_count = walls.len();
+        let reach = section.support([1., 0., 0.]);
+        let free = |box_: [[f64; 2]; 2]| {
+            web.iter()
+                .all(|edge| !web_enters(edge.ends, a, along, outward, box_, tolerance))
+        };
+        // The front material and any exposed root face stay clear of the web.
+        let mut clear = free([[tolerance, reach + minimum], [-minimum, width + minimum]]);
+        let welded_span = [before, before + welded];
+        if before > 0. {
+            clear &= free([
+                [-minimum, tolerance],
+                [-minimum, welded_span[0] - tolerance],
+            ]);
+        }
+        if after > 0. {
+            clear &= free([
+                [-minimum, tolerance],
+                [welded_span[1] + tolerance, width + minimum],
+            ]);
+        }
+        if !clear {
             return Err(Error::Unsupported);
         }
         let frame = SweepFrame {
@@ -143,31 +191,40 @@ pub fn formed_sheet_with_openings(
             v: up,
             direction: along,
         };
-        // Each flange lies on its own outward side. If either entire sweep
-        // clears the other's hinge plane, that plane separates the material.
-        // Adjacent rectangular edges then need clearance at the shared corner
-        // on only one side, while opposite roots keep their existing clearance.
-        if prior_flanges.iter().any(|(other, sweep)| {
-            !frame.clears_hinge(&section, *other, minimum)
-                && !other.clears_hinge(sweep, frame, minimum)
-        }) {
+        let placed = PlacedFlange {
+            frame,
+            section,
+            width,
+            back,
+        };
+        if prior_flanges
+            .iter()
+            .any(|other| !placed.separated_from(other, minimum))
+        {
             return Err(Error::Unsupported);
         }
-        let omit = (0..flange.section.len()).map(|i| i == walls.len());
+        let section = &placed.section;
+        let omit = (0..flange.section.len()).map(|i| i == wall_count);
         let first_wall = builder.faces.len();
-        builder.sweep(&[flange.section], &section, frame, flange.ends, omit)?;
+        builder.root_split = (before > 0. || after > 0.).then_some(RootSplit {
+            points: [[0., thickness], [0., 0.]],
+            welded: welded_span,
+        });
+        let swept = builder.sweep(&[flange.section], section, frame, flange.ends, omit);
+        builder.root_split = None;
+        swept?;
         volume += match openings.get(index).copied() {
             Some(openings) if !openings.is_empty() => {
-                builder.pierce_flange(&section, openings, frame, first_wall, thickness, minimum)?
+                builder.pierce_flange(section, openings, frame, first_wall, thickness, minimum)?
             }
             _ => section.volume_mm3(),
         };
-        let flange_bounds = frame.bounds(&section);
+        let flange_bounds = frame.bounds(section);
         for i in 0..3 {
             bounds[0][i] = bounds[0][i].min(flange_bounds[0][i]);
             bounds[1][i] = bounds[1][i].max(flange_bounds[1][i]);
         }
-        prior_flanges.push((frame, section));
+        prior_flanges.push(placed);
     }
     if web
         .iter()
@@ -185,6 +242,133 @@ pub fn formed_sheet_with_openings(
             web.iter().map(|e| e.flange.is_some()),
         )
         .and_then(|()| builder.finish(bounds, volume))
+}
+
+/// The section walls behind the hinge plane, if any, as one height range
+/// that lies wholly beyond one web face. Walls in front of the plane may
+/// touch it only where they meet the root.
+///
+/// The section's material behind the plane is bounded by those walls and a
+/// chord on the plane between their crossings. When every such wall lies
+/// strictly below the web, or every one strictly above it, the material
+/// does too, so a hem folded under or over the web cannot reach it.
+fn back_slab(
+    walls: &[ProfileEdge],
+    thickness: f64,
+    tolerance: f64,
+    minimum: f64,
+) -> Result<Option<[f64; 2]>, Error> {
+    let (root_a, root_b) = ([0., thickness], [0., 0.]);
+    let (mut below, mut above, mut range) = (true, true, None::<[f64; 2]>);
+    for &edge in walls {
+        let on_root = [edge.start(), edge.end()].map(|p| p == root_a || p == root_b);
+        if on_root[0] && on_root[1] {
+            return Err(Error::Unsupported);
+        }
+        let extent = edge.support([-1., 0.]);
+        if extent <= tolerance {
+            if !on_root[0] && !on_root[1] && extent > -minimum {
+                return Err(Error::Unsupported);
+            }
+            continue;
+        }
+        let [low, high] = [-edge.support([0., -1.]), edge.support([0., 1.])];
+        below &= high < -minimum;
+        above &= low > thickness + minimum;
+        range = Some(range.map_or([low, high], |[l, h]| [l.min(low), h.max(high)]));
+    }
+    match range {
+        Some(_) if !below && !above => Err(Error::Unsupported),
+        range => Ok(range),
+    }
+}
+
+/// Whether a web boundary edge reaches a box in a hinge's outward/along
+/// coordinates. A box in front of the hinge that no edge reaches lies
+/// outside the web, as the web lies behind its own hinge edge there.
+fn web_enters(
+    ends: [[f64; 2]; 2],
+    origin: Point,
+    along: Point,
+    outward: Point,
+    [[out_low, out_high], [along_low, along_high]]: [[f64; 2]; 2],
+    tolerance: f64,
+) -> bool {
+    let local = |[x, y]: [f64; 2]| {
+        let offset = sub([x, y, 0.], origin);
+        [dot(offset, outward), dot(offset, along)]
+    };
+    let [p, q] = ends.map(local);
+    let lower = [out_low, along_low];
+    let upper = [out_high, along_high];
+    let (mut enter, mut exit) = (0f64, 1f64);
+    for i in 0..2 {
+        let delta = q[i] - p[i];
+        if delta == 0. {
+            if p[i] < lower[i] || p[i] > upper[i] {
+                return false;
+            }
+            continue;
+        }
+        let [s, t] = [(lower[i] - p[i]) / delta, (upper[i] - p[i]) / delta];
+        enter = enter.max(s.min(t));
+        exit = exit.min(s.max(t));
+    }
+    if enter > exit {
+        return false;
+    }
+    // A box straddling the hinge plane guards an exposed root face, where any
+    // contact counts. In front of the hinge, contact only on the box's
+    // hinge-side face stays at the tolerance already granted to the weld.
+    out_low < 0. || p[0] + (q[0] - p[0]) * 0.5 * (enter + exit) > tolerance
+}
+
+/// A flange sweep placed in the web frame, with its height range behind
+/// the hinge plane when it folds back over or under the web.
+struct PlacedFlange {
+    frame: SweepFrame,
+    section: Sweep,
+    width: f64,
+    back: Option<[f64; 2]>,
+}
+
+impl PlacedFlange {
+    /// Frame-aligned boxes that cover the flange material: the part in front
+    /// of the hinge plane and, for a hem, the slab behind it.
+    fn parts(&self) -> Vec<[[f64; 2]; 3]> {
+        let s = |d| self.section.support(d);
+        let height = [-s([0., -1., 0.]), s([0., 1., 0.])];
+        let mut parts = vec![[[0., s([1., 0., 0.])], height, [0., self.width]]];
+        if let Some(range) = self.back {
+            parts.push([[-s([-1., 0., 0.]), 0.], range, [0., self.width]]);
+        }
+        parts
+    }
+
+    fn support(&self, part: [[f64; 2]; 3], direction: Point) -> f64 {
+        let local = self.frame.coordinates(direction);
+        let boxed: f64 = (0..3)
+            .map(|i| (local[i] * part[i][0]).max(local[i] * part[i][1]))
+            .sum();
+        dot(self.frame.origin, direction) + boxed.min(self.section.support(local))
+    }
+
+    /// Whether a plane normal to an outward, along or thickness axis of either
+    /// flange separates every pair of their material parts.
+    fn separated_from(&self, other: &Self, minimum: f64) -> bool {
+        let axes = [self.frame, other.frame]
+            .into_iter()
+            .flat_map(|frame| [frame.u, frame.direction])
+            .chain([self.frame.v]);
+        let directions: Vec<Point> = axes.flat_map(|axis| [axis, scale(axis, -1.)]).collect();
+        self.parts().into_iter().all(|mine| {
+            other.parts().into_iter().all(|theirs| {
+                directions.iter().any(|&d| {
+                    self.support(mine, d) + other.support(theirs, scale(d, -1.)) < -minimum
+                })
+            })
+        })
+    }
 }
 
 fn checked_sweep(
@@ -234,13 +418,6 @@ impl SweepFrame {
         [self.u, self.v, self.direction].map(|axis| dot(axis, vector))
     }
 
-    fn clears_hinge(self, sweep: &Sweep, hinge: Self, minimum: f64) -> bool {
-        let outward = hinge.u;
-        let furthest =
-            dot(sub(self.origin, hinge.origin), outward) + sweep.support(self.coordinates(outward));
-        furthest < -minimum
-    }
-
     fn bounds(self, sweep: &Sweep) -> [Point; 2] {
         [-1., 1.].map(|sign| {
             std::array::from_fn(|i| {
@@ -263,6 +440,24 @@ struct Builder {
     faces: Vec<Face>,
     tolerance: f64,
     split_long_arcs: bool,
+    /// While a flange sweeps: its root ends and the welded level range.
+    root_split: Option<RootSplit>,
+}
+
+/// A flange root welded to the web over part of its span. The rest of the
+/// root stays an exposed planar face, for example beside a corner relief.
+struct RootSplit {
+    points: [[f64; 2]; 2],
+    welded: [f64; 2],
+}
+
+impl RootSplit {
+    fn exposed(&self, height: f64, tolerance: f64) -> Vec<[f64; 2]> {
+        [[0., self.welded[0]], [self.welded[1], height]]
+            .into_iter()
+            .filter(|[low, high]| high - low > tolerance)
+            .collect()
+    }
 }
 
 impl Builder {
@@ -274,6 +469,7 @@ impl Builder {
             faces: Vec::new(),
             tolerance,
             split_long_arcs: false,
+            root_split: None,
         }
     }
 
@@ -380,31 +576,80 @@ impl Builder {
                     let (bottom, top) = (bottom?, top?);
                     end_loops[0].push(bottom);
                     end_loops[1].push(top);
-                    if omit {
-                        continue;
+                    let split = self
+                        .root_split
+                        .as_ref()
+                        .filter(|split| split.points.contains(&a) && split.points.contains(&b));
+                    let spans = match (omit, split) {
+                        (false, _) => vec![[0., height]],
+                        (true, None) => vec![],
+                        (true, Some(split)) => split.exposed(height, self.tolerance),
+                    };
+                    for [low, high] in spans {
+                        let mut level = |level: f64, lift: OrientedEdge| {
+                            if level == 0. || level == height {
+                                return Ok(lift);
+                            }
+                            let points = [a, b].map(|p| frame.point(p, level));
+                            self.edge(points, curve(arc, fraction, frame, level)?)
+                        };
+                        let (bottom, top) = (level(low, bottom)?, level(high, top)?);
+                        let end = self.rail(frame, b, [low, high])?;
+                        let start = self.rail(frame, a, [low, high])?;
+                        let mut boundary = vec![bottom];
+                        boundary.extend(end);
+                        boundary.push(reverse(top));
+                        boundary.extend(start.into_iter().rev().map(reverse));
+                        if reversed {
+                            reverse_loop(&mut boundary);
+                            boundary.rotate_right(1);
+                        }
+                        self.faces.push(Face {
+                            boundary,
+                            holes: vec![],
+                            support: side_support(arc, frame, reversed),
+                            point_mm: frame.point(a, low),
+                            area_mm2: arc.length_mm() * (high - low) / parts as f64,
+                            source: 0,
+                            source_face: source,
+                        });
                     }
-                    let rail = |p| [0., height].map(|level| frame.point(p, level));
-                    let end = self.edge(rail(b), Curve::Line)?;
-                    let start = self.edge(rail(a), Curve::Line)?;
-                    let mut boundary = vec![bottom, end, reverse(top), reverse(start)];
-                    if reversed {
-                        reverse_loop(&mut boundary);
-                        boundary.rotate_right(1);
-                    }
-                    self.faces.push(Face {
-                        boundary,
-                        holes: vec![],
-                        support: side_support(arc, frame, reversed),
-                        point_mm: frame.point(a, 0.),
-                        area_mm2: arc.length_mm() * height / parts as f64,
-                        source: 0,
-                        source_face: source,
-                    });
                 }
             }
         }
         reverse_loop(&mut end_loops[usize::from(reversed)]);
         Ok(end_loops)
+    }
+
+    /// The straight rail through one section point between two levels, split
+    /// where a flange root's weld to the web begins or ends.
+    fn rail(
+        &mut self,
+        frame: SweepFrame,
+        point: [f64; 2],
+        [low, high]: [f64; 2],
+    ) -> Result<Vec<OrientedEdge>, Error> {
+        let mut levels = vec![low];
+        if let Some(split) = &self.root_split
+            && split.points.contains(&point)
+        {
+            levels.extend(
+                split
+                    .welded
+                    .into_iter()
+                    .filter(|&level| level > low + self.tolerance && level < high - self.tolerance),
+            );
+        }
+        levels.push(high);
+        levels
+            .windows(2)
+            .map(|pair| {
+                self.edge(
+                    [pair[0], pair[1]].map(|level| frame.point(point, level)),
+                    Curve::Line,
+                )
+            })
+            .collect()
     }
 
     fn pierce_flange(
@@ -1135,6 +1380,227 @@ mod tests {
         assert_eq!(
             formed_sheet(&eroded, &[], [80, 81], &flanges, 1., TOL, MIN),
             Err(Error::Invalid),
+        );
+    }
+
+    fn hem(slanted: bool) -> Vec<(ProfileEdge, usize)> {
+        let arc = |a, b, clockwise| ProfileEdge::Arc {
+            center: [0., -0.5],
+            a,
+            b,
+            clockwise,
+        };
+        // A 180° hem with a 1 mm gap folds its 3 mm leg back under the web.
+        // The slanted variant lifts the leg's far end into the web slab.
+        let tip = if slanted { [-3., 0.5] } else { [-3., -1.] };
+        [
+            arc([0., 0.], [0., -1.], true),
+            line([0., -1.], tip),
+            line(tip, [-3., -2.]),
+            line([-3., -2.], [0., -2.]),
+            arc([0., -2.], [0., 1.], false),
+            line([0., 1.], [0., 0.]),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, edge)| (edge, i + 70))
+        .collect()
+    }
+
+    fn section_area(section: &[(ProfileEdge, usize)]) -> f64 {
+        checked_sweep(&[section], 1., TOL, MIN).unwrap().area_mm2()
+    }
+
+    fn certified_volume(shell: &Shell) -> f64 {
+        let mesh = shell
+            .mesh(Tessellation {
+                deflection: 0.001,
+                angle: 0.07,
+                triangle_limit: 20_000,
+            })
+            .unwrap();
+        crate::manufacturing::certify(&mesh)
+            .unwrap()
+            .signed_volume_mm3
+    }
+
+    #[test]
+    fn a_hem_folded_under_the_web_is_separated_by_its_gap() {
+        let section = hem(false);
+        let flanges = [SheetFlange {
+            section: &section,
+            ends: [60, 61],
+        }];
+        let web = web_from_corners(&[[0., 0.], [10., 0.], [10., 8.], [0., 8.]], &[(0, 0)]);
+        let shell = formed_sheet(&web, &[], [80, 81], &flanges, 1., TOL, MIN).unwrap();
+        let volume = 80. + 10. * (std::f64::consts::PI + 3.);
+        assert!((section_area(&section) - (std::f64::consts::PI + 3.)).abs() < 1e-9);
+        assert!((shell.volume_mm3() - volume).abs() < 1e-9);
+        assert_eq!(shell.bounds_mm(), [[0., -1.5, -2.], [10., 8., 1.]]);
+        assert!((certified_volume(&shell) - volume).abs() < 0.05);
+        // A leg rising back into the web slab is refused, not fused.
+        let slanted = hem(true);
+        let flanges = [SheetFlange {
+            section: &slanted,
+            ends: [60, 61],
+        }];
+        assert_eq!(
+            formed_sheet(&web, &[], [80, 81], &flanges, 1., TOL, MIN),
+            Err(Error::Unsupported)
+        );
+    }
+
+    #[test]
+    fn flanges_bend_into_a_notch_only_when_they_clear_its_walls_and_each_other() {
+        let section = section();
+        let flanges = [[60, 61], [62, 63]].map(|ends| SheetFlange {
+            section: &section,
+            ends,
+        });
+        // A 6 mm notch: each 2 mm-deep bend leaves 2 mm between the legs.
+        // The roots stop 1 mm short of the notch floor.
+        let wide = web_from_corners(
+            &[
+                [0., 0.],
+                [12., 0.],
+                [12., 10.],
+                [9., 10.],
+                [9., 4.],
+                [9., 3.],
+                [3., 3.],
+                [3., 4.],
+                [3., 10.],
+                [0., 10.],
+            ],
+            &[(3, 0), (7, 1)],
+        );
+        let shell = formed_sheet(&wide, &[], [80, 81], &flanges, 1., TOL, MIN).unwrap();
+        let volume = 78. + 2. * 6. * section_area(&section);
+        assert!((shell.volume_mm3() - volume).abs() < 1e-9);
+        assert!((certified_volume(&shell) - volume).abs() < 0.05);
+        // Legs that meet in a 4 mm notch, or a root running into the notch
+        // floor, are refused.
+        let narrow = web_from_corners(
+            &[
+                [0., 0.],
+                [12., 0.],
+                [12., 10.],
+                [8., 10.],
+                [8., 4.],
+                [8., 3.],
+                [4., 3.],
+                [4., 4.],
+                [4., 10.],
+                [0., 10.],
+            ],
+            &[(3, 0), (7, 1)],
+        );
+        let floor = web_from_corners(
+            &[
+                [0., 0.],
+                [12., 0.],
+                [12., 10.],
+                [9., 10.],
+                [9., 3.],
+                [3., 3.],
+                [3., 4.],
+                [3., 10.],
+                [0., 10.],
+            ],
+            &[(3, 0), (6, 1)],
+        );
+        for web in [narrow, floor] {
+            assert_eq!(
+                formed_sheet(&web, &[], [80, 81], &flanges, 1., TOL, MIN),
+                Err(Error::Unsupported)
+            );
+        }
+    }
+
+    #[test]
+    fn a_root_past_a_flush_relief_keeps_an_exposed_face() {
+        let section = section();
+        let flanges = [[60, 61], [62, 63]].map(|ends| SheetFlange {
+            section: &section,
+            ends,
+        });
+        // The relief of the flange on x = 10 runs 1 mm along the edge-0 root.
+        let web = web_from_corners(
+            &[
+                [0., 0.],
+                [9., 0.],
+                [9., 1.5],
+                [10., 1.5],
+                [10., 8.],
+                [0., 8.],
+            ],
+            &[(0, 0), (3, 1)],
+        );
+        let overhangs = [[0., 1.], [0., 0.]];
+        let shell = formed_sheet_with_overhangs(
+            &web,
+            &[],
+            [80, 81],
+            &flanges,
+            &[],
+            &overhangs,
+            1.,
+            TOL,
+            MIN,
+        )
+        .unwrap();
+        let volume = 78.5 + 16.5 * section_area(&section);
+        assert!((shell.volume_mm3() - volume).abs() < 1e-9);
+        assert_eq!(shell.bounds_mm()[1][0], 12.);
+        assert_eq!(shell.bounds_mm()[0][0], 0.);
+        let exposed: Vec<_> = shell
+            .faces()
+            .iter()
+            .filter(|face| face.source_face == 15)
+            .collect();
+        assert_eq!(exposed.len(), 1);
+        assert!((exposed[0].area_mm2 - 1.).abs() < 1e-12);
+        assert!(matches!(exposed[0].support, Support::Plane { normal } if normal == [0., 1., 0.]));
+        assert!((certified_volume(&shell) - volume).abs() < 0.05);
+        // Without the relief the web still covers that root: refused.
+        let covered = web_from_corners(
+            &[
+                [0., 0.],
+                [9., 0.],
+                [10., 0.],
+                [10., 1.5],
+                [10., 8.],
+                [0., 8.],
+            ],
+            &[(0, 0), (3, 1)],
+        );
+        assert_eq!(
+            formed_sheet_with_overhangs(
+                &covered,
+                &[],
+                [80, 81],
+                &flanges,
+                &[],
+                &overhangs,
+                1.,
+                TOL,
+                MIN
+            ),
+            Err(Error::Unsupported)
+        );
+        assert_eq!(
+            formed_sheet_with_overhangs(
+                &web,
+                &[],
+                [80, 81],
+                &flanges,
+                &[],
+                &[[0., -1.], [0., 0.]],
+                1.,
+                TOL,
+                MIN
+            ),
+            Err(Error::Invalid)
         );
     }
 

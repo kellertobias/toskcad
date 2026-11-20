@@ -25,7 +25,7 @@ pub use mixed_miter::{mixed_miter, mixed_miter_with_end_frame};
 pub use section::{SectionClipPlane, SectionEdge, clip_section_loops};
 pub use sheet::{
     SheetFlange, SheetFlangeOpening, SheetWebEdge, formed_sheet, formed_sheet_with_openings,
-    normal_sweep_shell, pierced_sweep_shell,
+    formed_sheet_with_overhangs, normal_sweep_shell, pierced_sweep_shell,
 };
 
 type Point = [f64; 3];
