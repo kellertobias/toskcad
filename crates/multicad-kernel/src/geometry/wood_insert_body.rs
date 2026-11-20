@@ -140,6 +140,19 @@ fn origin(feature: EntityId, role: String) -> Origin {
         role: format!("wood-insert/{role}"),
     }
 }
+/// The face's one identity. A bounded helical band carries the shared
+/// `thread/` role every modeled thread publishes, qualified by its insert
+/// side; the caps keep their insert roles.
+fn face_origin(feature: EntityId, key: FaceKey) -> Origin {
+    if matches!(key, FaceKey::StartCap | FaceKey::EndCap) {
+        origin(feature, face_tag(key))
+    } else {
+        Origin {
+            source: feature,
+            role: format!("thread/{}", face_tag(key)),
+        }
+    }
+}
 fn world_point(
     frame: PlaneFrame,
     point: [B; 3],
@@ -241,7 +254,7 @@ impl WoodInsertBody {
                 .source
                 .face_key(index as u32)
                 .expect("source face role");
-            let id = origin(self.feature, face_tag(face));
+            let id = face_origin(self.feature, face);
             let mut boundary = BTreeSet::new();
             for edge in b
                 .face_loops(face)
@@ -297,7 +310,7 @@ impl WoodInsertBody {
             let boundary = b
                 .curve_faces(key)
                 .expect("source face incidence")
-                .map(|k| origin(self.feature, face_tag(k)))
+                .map(|k| face_origin(self.feature, k))
                 .into_iter()
                 .collect();
             elements.push(TopologyElement {

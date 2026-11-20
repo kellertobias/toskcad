@@ -587,6 +587,10 @@ fn validate_source(
     // finite trim/domain/orientation checks run on EVERY actual association.
     budget.charge(64)?;
     let mut precision_cache = precision::Cache::new(source);
+    // Surfaces whose reference graph already passed the structural preflight
+    // in this pass. The walk reads only immutable source records, so its
+    // outcome for one surface entity cannot differ between its bindings.
+    let mut preflighted = BTreeSet::new();
     let mut unqualified = false;
     for binding in pairs {
         budget.charge(256)?;
@@ -594,7 +598,11 @@ fn validate_source(
         let attempt = (|| -> Result<(Proof, u32, &'static str, f64)> {
             let edge = edge(source, binding, budget)?;
             let definition = uv::definition(source, binding.pcurve, budget)?;
-            geometry_preflight(source, definition.surface, budget)?;
+            budget.charge(64)?;
+            if !preflighted.contains(&definition.surface) {
+                geometry_preflight(source, definition.surface, budget)?;
+                preflighted.insert(definition.surface);
+            }
             let surface = trim_surface::read(source, &definition, budget)?;
             if !radians
                 && let Some(proof) = units::certify(

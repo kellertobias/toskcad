@@ -290,5 +290,6 @@ pub use encoded::{CapLiteral, FileOptions, StepCandidate, encode_candidate};
 
 mod qualified;
 pub use qualified::{
-    QualifiedAppendReceipt, QualifiedExportOptions, QualifiedHangerStep, export_qualified_hanger,
+    QualifiedAppendReceipt, QualifiedExportOptions, QualifiedHangerStep, QualifiedPlacement,
+    export_qualified_hanger,
 };

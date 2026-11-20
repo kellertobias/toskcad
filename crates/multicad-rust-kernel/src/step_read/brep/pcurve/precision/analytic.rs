@@ -4,9 +4,10 @@
 use super::super::{analytic as retained, uv};
 use super::{
     Budget, I, RawFrame, ReadError, Result, Source, V, cached, difference, frame, list, norm,
-    point, reference, scalar, translated_point, unwrapped, vector as raw_vector,
+    point, reference, scalar, translated_from, translation_origin, unwrapped, vector as raw_vector,
 };
 use crate::brep::{Curve, Edge, Surface};
+use num_rational::BigRational;
 use retained::Image;
 
 fn add(a: V, b: V) -> V {
@@ -130,6 +131,21 @@ pub(super) fn plane_point(
     uv_point_id: u32,
     budget: &mut Budget<'_>,
 ) -> Result<V> {
+    plane_lift(source, plane_id, budget)?.point(source, uv_point_id, budget)
+}
+/// The raw REAL frame of one `PLANE`, read once and applied to many UV
+/// points: exactly what [`plane_point`] reads and lifts for each point.
+pub(super) struct PlaneLift {
+    frame: RawFrame,
+    /// The exact placement origin of a cardinal frame, whose points are
+    /// lifted by an exact translation instead.
+    cardinal_origin: Option<[BigRational; 3]>,
+}
+pub(super) fn plane_lift(
+    source: &Source<'_>,
+    plane_id: u32,
+    budget: &mut Budget<'_>,
+) -> Result<PlaneLift> {
     budget.charge(1024)?;
     let [_, axis] = source.args(plane_id, "PLANE")? else {
         return Err(ReadError::Invalid);
@@ -141,13 +157,32 @@ pub(super) fn plane_point(
         .into_iter()
         .flatten()
         .all(|c| c.lo == c.hi && [-1., 0., 1.].contains(&c.lo));
-    if cardinal {
+    let cardinal_origin = if cardinal {
         let [_, origin, _, _] = source.args(axis, "AXIS2_PLACEMENT_3D")? else {
             return Err(ReadError::Invalid);
         };
-        return translated_point(source, reference(origin)?, uv_point_id, f.axes, budget);
+        Some(translation_origin(source, reference(origin)?, budget)?)
+    } else {
+        None
+    };
+    Ok(PlaneLift {
+        frame: f,
+        cardinal_origin,
+    })
+}
+impl PlaneLift {
+    pub(super) fn point(
+        &self,
+        source: &Source<'_>,
+        uv_point_id: u32,
+        budget: &mut Budget<'_>,
+    ) -> Result<V> {
+        budget.charge(64)?;
+        if let Some(origin) = &self.cardinal_origin {
+            return translated_from(source, origin, uv_point_id, self.frame.axes, budget);
+        }
+        Ok(lift(self.frame, point(source, uv_point_id, 2, budget)?))
     }
-    Ok(lift(f, point(source, uv_point_id, 2, budget)?))
 }
 fn curve_origin_id(source: &Source<'_>, curve_id: u32) -> Result<u32> {
     let entity = source.simple(curve_id)?;

@@ -6,7 +6,7 @@ use crate::{
     authored_hanger_bolt::{BoundaryOptions, Hanger},
     step_read::owned_hanger as read,
 };
-pub use replay::QualifiedAppendReceipt;
+pub use replay::{QualifiedAppendReceipt, QualifiedPlacement};
 #[derive(Clone, Copy)]
 pub struct QualifiedExportOptions {
     pub maximum_work: usize,

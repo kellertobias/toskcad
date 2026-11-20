@@ -279,12 +279,28 @@ fn spelling<'i>(
     value: &Value<'_>,
     budget: &mut Budget<'_>,
 ) -> Result<&'i str> {
+    spelling_in(source, id, None, value, budget)
+}
+/// [`spelling`] searching only the named component of a complex record. A
+/// leaf taken from that component is found there exactly as before; its
+/// siblings, which may hold thousands of values but none of its numbers,
+/// are not rescanned for every coefficient.
+fn spelling_in<'i>(
+    source: &Source<'i>,
+    id: u32,
+    component: Option<&str>,
+    value: &Value<'_>,
+    budget: &mut Budget<'_>,
+) -> Result<&'i str> {
     let Value::Number(cached) = value else {
         return Err(ReadError::Invalid);
     };
     let leaf = std::ptr::from_ref(value) as usize;
     for entity in source.components(id)? {
         budget.charge(16)?;
+        if component.is_some_and(|name| entity.name != name) {
+            continue;
+        }
         let text = entity.source.ok_or(ReadError::Unsupported)?;
         let key = (text.as_ptr() as usize, text.len());
         // A record tokenized before answers from its token table; the
@@ -416,13 +432,23 @@ pub(super) fn scalar(
     value: &Value<'_>,
     budget: &mut Budget<'_>,
 ) -> Result<I> {
+    scalar_in(source, id, None, value, budget)
+}
+/// [`scalar`] for a leaf of one named component of a complex record.
+fn scalar_in(
+    source: &Source<'_>,
+    id: u32,
+    component: Option<&str>,
+    value: &Value<'_>,
+    budget: &mut Budget<'_>,
+) -> Result<I> {
     let Value::Number(cached) = value else {
         return Err(ReadError::Invalid);
     };
     if !cached.is_finite() {
         return Err(ReadError::Unsupported);
     }
-    let token = spelling(source, id, value, budget)?;
+    let token = spelling_in(source, id, component, value, budget)?;
     if *cached == 0. {
         // Only original decimal ZERO can establish a true isocurve. A
         // nonzero underflow such as 1E-1000 must never become a zero direction.
@@ -829,8 +855,14 @@ fn nurbs_error(
         wmin = f64::INFINITY;
         wmax = 0.;
         index = 0;
+        // Fields reads weights only from this complex-record component.
+        let component = if degrees.len() == 1 {
+            "RATIONAL_B_SPLINE_CURVE"
+        } else {
+            "RATIONAL_B_SPLINE_SURFACE"
+        };
         visit(raw_weights, degrees.len(), &mut |value| {
-            let raw = scalar(source, id, value, budget)?;
+            let raw = scalar_in(source, id, Some(component), value, budget)?;
             let decoded = *decoded.get(index).ok_or(ReadError::Unsupported)?;
             let difference = raw - I::point(decoded);
             if !raw.valid()
@@ -1386,11 +1418,7 @@ pub(super) fn reserve(
 ) -> Result<f64> {
     budget.charge(256)?;
     let curve3d_id = unwrapped(source, curve3d_id, budget)?;
-    let edge_error = if matches!(edge.curve, Curve::Nurbs { .. }) {
-        curve_nurbs(source, curve3d_id, &edge.curve, 3, budget)?.error
-    } else {
-        analytic::curve_reserve(source, curve3d_id, edge, budget)?
-    };
+    let edge_error = edge_curve_error(source, curve3d_id, edge, budget)?;
     let image_error = match (surface, &definition.geometry) {
         (Surface::Plane(_), Curve::Nurbs { .. }) => {
             plane_nurbs(source, definition, surface, budget)?
@@ -1408,6 +1436,41 @@ pub(super) fn reserve(
     }
     budget.charge(64)?;
     Ok(total.hi)
+}
+
+/// Most NURBS edge-curve transfer bounds one pass keeps.
+const MAX_CURVE_CACHE: usize = 4096;
+/// The numeric transfer bound of the edge's own 3D curve. Each edge is
+/// bound to two pcurves; a NURBS curve's whole-control bound depends only on
+/// the immutable source and the curve entity, so it is computed once per
+/// pass that turned the cache on. Every trim/domain/sense check still runs.
+fn edge_curve_error(
+    source: &Source<'_>,
+    curve3d_id: u32,
+    edge: &Edge,
+    budget: &mut Budget<'_>,
+) -> Result<f64> {
+    if !matches!(edge.curve, Curve::Nurbs { .. }) {
+        return analytic::curve_reserve(source, curve3d_id, edge, budget);
+    }
+    if let Some(cache) = source.curve_errors.borrow().as_ref() {
+        budget.charge(cache.len().saturating_mul(8).saturating_add(64))?;
+        if let Some(&(_, error)) = cache.iter().find(|&&(id, _)| id == curve3d_id) {
+            return Ok(error);
+        }
+    }
+    let error = curve_nurbs(source, curve3d_id, &edge.curve, 3, budget)?.error;
+    if !error.is_finite() || error < 0. {
+        return Err(ReadError::Unsupported);
+    }
+    if let Some(cache) = source.curve_errors.borrow_mut().as_mut()
+        && cache.len() < MAX_CURVE_CACHE
+    {
+        budget.charge(cache.len().saturating_mul(8).saturating_add(128))?;
+        cache.try_reserve(1).map_err(|_| ReadError::Limit)?;
+        cache.push((curve3d_id, error));
+    }
+    Ok(error)
 }
 
 #[cfg(test)]
@@ -1546,9 +1609,40 @@ pub(super) fn enclose(q: &BigRational, budget: &mut Budget<'_>) -> Result<I> {
 }
 /// Exact original decimal plane origin plus UV coordinates for a separately
 /// earned cardinal frame. Round only after cancellation, retaining the gauge.
+#[cfg(test)]
 pub(super) fn translated_point(
     source: &Source<'_>,
     origin_id: u32,
+    uv_id: u32,
+    axes: [V; 3],
+    budget: &mut Budget<'_>,
+) -> Result<V> {
+    let origin = translation_origin(source, origin_id, budget)?;
+    translated_from(source, &origin, uv_id, axes, budget)
+}
+/// The exact REAL coordinates of a translated frame's origin point.
+pub(super) fn translation_origin(
+    source: &Source<'_>,
+    origin_id: u32,
+    budget: &mut Budget<'_>,
+) -> Result<[BigRational; 3]> {
+    let [_, origin] = source.args(origin_id, "CARTESIAN_POINT")? else {
+        return Err(ReadError::Invalid);
+    };
+    let origin = list(origin)?;
+    if origin.len() != 3 {
+        return Err(ReadError::Unsupported);
+    }
+    Ok([
+        rational(source, origin_id, &origin[0], budget)?,
+        rational(source, origin_id, &origin[1], budget)?,
+        rational(source, origin_id, &origin[2], budget)?,
+    ])
+}
+/// [`translated_point`] with its origin's exact coordinates already read.
+pub(super) fn translated_from(
+    source: &Source<'_>,
+    origin: &[BigRational; 3],
     uv_id: u32,
     axes: [V; 3],
     budget: &mut Budget<'_>,
@@ -1563,14 +1657,11 @@ pub(super) fn translated_point(
             coefficients[axis][i] = c.lo as i32;
         }
     }
-    let [_, origin] = source.args(origin_id, "CARTESIAN_POINT")? else {
-        return Err(ReadError::Invalid);
-    };
     let [_, uv] = source.args(uv_id, "CARTESIAN_POINT")? else {
         return Err(ReadError::Invalid);
     };
-    let (origin, uv) = (list(origin)?, list(uv)?);
-    if origin.len() != 3 || uv.len() != 2 {
+    let uv = list(uv)?;
+    if uv.len() != 2 {
         return Err(ReadError::Unsupported);
     }
     let q = [
@@ -1579,7 +1670,8 @@ pub(super) fn translated_point(
     ];
     let mut result = [I::point(0.); 3];
     for i in 0..3 {
-        let mut sum = rational(source, origin_id, &origin[i], budget)?;
+        budget.charge(64)?;
+        let mut sum = origin[i].clone();
         for axis in 0..2 {
             if coefficients[axis][i] == 0 || q[axis].is_zero() {
                 continue;
@@ -1732,9 +1824,10 @@ pub(super) fn plane_nurbs_certificate(
     {
         return Err(ReadError::Limit);
     }
+    let plane = analytic::plane_lift(source, definition.surface, budget)?;
     for control in controls {
         budget.charge(256)?;
-        let p = analytic::plane_point(source, definition.surface, reference(control)?, budget)?;
+        let p = plane.point(source, reference(control)?, budget)?;
         if !p.into_iter().all(I::valid) {
             return Err(ReadError::Unsupported);
         }
@@ -1755,11 +1848,7 @@ pub(super) fn plane_nurbs_certificate(
     )?
     .error;
     let curve3d_id = unwrapped(source, curve3d_id, budget)?;
-    let target = if matches!(edge.curve, Curve::Nurbs { .. }) {
-        curve_nurbs(source, curve3d_id, &edge.curve, 3, budget)?.error
-    } else {
-        analytic::curve_reserve(source, curve3d_id, edge, budget)?
-    };
+    let target = edge_curve_error(source, curve3d_id, edge, budget)?;
     let floor = I::point(numerical) + I::point(target);
     if !floor.valid() {
         return Err(ReadError::Unsupported);

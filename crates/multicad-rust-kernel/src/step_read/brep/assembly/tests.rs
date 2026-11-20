@@ -404,6 +404,65 @@ fn transformation_operators_are_rigid_and_refuse_mirrors_and_scales() {
 }
 
 #[test]
+fn complex_instance_operators_read_as_their_simple_form() {
+    // ISO 10303-21 external mapping splits the operator's attributes over its
+    // supertypes, as the Rust writer and OpenCascade emit it.
+    let placed = |operator: &str| {
+        let text = swap(
+            TWO,
+            "REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#491)",
+            "REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#20030)",
+        );
+        let directions = "#20031=DIRECTION('',(0.,1.,0.));#20032=DIRECTION('',(-1.,0.,0.));\
+            #20033=DIRECTION('',(0.,0.,1.));#20034=CARTESIAN_POINT('',(100.,0.,0.));\
+            #20035=DIRECTION('',(1.,0.,0.));";
+        let text = with(&text, &format!("{directions}#20030={operator};"));
+        read_assembly(&text, TOLERANCE, None).map(|a| a.occurrences()[1].placement)
+    };
+    let complex = |operator: &str, axis3: &str| {
+        format!(
+            "(CARTESIAN_TRANSFORMATION_OPERATOR({operator})\
+             CARTESIAN_TRANSFORMATION_OPERATOR_3D({axis3})\
+             FUNCTIONALLY_DEFINED_TRANSFORMATION('','')\
+             GEOMETRIC_REPRESENTATION_ITEM()REPRESENTATION_ITEM(''))"
+        )
+    };
+    let turned = placed(&complex("#20031,#20032,#20034,1.", "#20033")).unwrap();
+    assert!(same(&turned, &TURNED));
+    assert!(same(
+        &placed(&complex("#20031,$,#20034,$", "$")).unwrap(),
+        &TURNED
+    ));
+    // The same rigid-only reading: mirrors and scales stay refused.
+    assert_eq!(
+        placed(&complex("#20031,#20035,#20034,1.", "#20033")).unwrap_err(),
+        Error::Unsupported
+    );
+    assert_eq!(
+        placed(&complex("#20031,#20032,#20034,2.", "#20033")).unwrap_err(),
+        Error::Unsupported
+    );
+    // Misplaced attributes are malformed, and any other supertype set is
+    // not this operator.
+    assert_eq!(
+        placed(&complex("#20031,#20032,#20034", "1.,#20033")).unwrap_err(),
+        Error::Invalid
+    );
+    let partial = "(CARTESIAN_TRANSFORMATION_OPERATOR(#20031,#20032,#20034,1.)\
+        CARTESIAN_TRANSFORMATION_OPERATOR_3D(#20033)REPRESENTATION_ITEM(''))";
+    assert_eq!(placed(partial).unwrap_err(), Error::Unsupported);
+    // A mapped item may also target the complex form.
+    let operator = format!(
+        "#20040=CARTESIAN_POINT('',(0.,0.,9.));#20041={};\
+         #20042=SHAPE_REPRESENTATION('',(#11),#23);#20043=REPRESENTATION_MAP(#11,#20042);\
+         #20044=MAPPED_ITEM('',#20043,#20041);",
+        complex("$,$,#20040,1.", "$")
+    );
+    let assembly = read(&rooted(&with(TWO, &operator), "#20044"));
+    assert_eq!(assembly.nodes[0].children[2].placement.origin, [0., 0., 9.]);
+}
+
+#[test]
 fn item_placements_must_agree_and_belong_to_their_representations() {
     let items = |first: u32, second: u32, extra: &str| {
         let text = swap(

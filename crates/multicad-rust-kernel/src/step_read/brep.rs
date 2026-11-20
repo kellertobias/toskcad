@@ -163,6 +163,9 @@ pub struct Source<'i> {
     /// of lookups into one record tokenizes it once. Off (`None`) unless a
     /// whole-file pass that owns this source turns it on.
     spellings: std::cell::RefCell<Option<Vec<Spelled>>>,
+    /// Whole-curve numeric transfer bounds of NURBS edge curves already
+    /// proved by this pass, keyed by curve entity. Off with `spellings`.
+    pub(crate) curve_errors: std::cell::RefCell<Option<Vec<(u32, f64)>>>,
 }
 
 /// The numeric tokens of one record: the address of each numeric leaf in
@@ -249,6 +252,7 @@ impl<'i> Source<'i> {
             solids,
             declared,
             spellings: std::cell::RefCell::new(None),
+            curve_errors: std::cell::RefCell::new(None),
         })
     }
 
@@ -257,6 +261,7 @@ impl<'i> Source<'i> {
     /// run over the same source.
     pub(crate) fn cache_spellings(&self) {
         *self.spellings.borrow_mut() = Some(Vec::new());
+        *self.curve_errors.borrow_mut() = Some(Vec::new());
     }
 
     /// The smallest length uncertainty the file declares, in millimetres.

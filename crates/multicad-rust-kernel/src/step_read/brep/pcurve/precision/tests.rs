@@ -809,3 +809,59 @@ fn cached_spellings_are_the_same_tokens_cheaper_and_restart_cold() {
     source.cache_spellings();
     assert_eq!(cost(&source).1, building);
 }
+/// A rational degree-1 curve of `n` controls, appended to the fixture.
+fn with_rational_curve(n: usize) -> (String, u32) {
+    let first = 900_000_u32;
+    let mut records = String::new();
+    for i in 0..n {
+        records += &format!(
+            "#{}=CARTESIAN_POINT('',({}.,{}.,0.));\n",
+            first + i as u32,
+            i,
+            i % 3
+        );
+    }
+    let poles = (0..n)
+        .map(|i| format!("#{}", first + i as u32))
+        .collect::<Vec<_>>()
+        .join(",");
+    let mults = std::iter::once("2".to_owned())
+        .chain(std::iter::repeat_n("1".to_owned(), n - 2))
+        .chain(std::iter::once("2".to_owned()))
+        .collect::<Vec<_>>()
+        .join(",");
+    let knots = (0..n)
+        .map(|i| format!("{i}."))
+        .collect::<Vec<_>>()
+        .join(",");
+    let weights = vec!["1."; n].join(",");
+    let id = first + n as u32;
+    records += &format!(
+        "#{id}=(BOUNDED_CURVE()B_SPLINE_CURVE(1,({poles}),.UNSPECIFIED.,.F.,.F.)\
+         B_SPLINE_CURVE_WITH_KNOTS(({mults}),({knots}),.UNSPECIFIED.)CURVE()\
+         GEOMETRIC_REPRESENTATION_ITEM()RATIONAL_B_SPLINE_CURVE(({weights}))\
+         REPRESENTATION_ITEM(''));\n"
+    );
+    let at = INPUT.rfind("ENDSEC;").unwrap();
+    (format!("{}{records}{}", &INPUT[..at], &INPUT[at..]), id)
+}
+#[test]
+fn rational_weights_are_read_in_linear_work() {
+    let work = |n: usize| {
+        let (text, id) = with_rational_curve(n);
+        let source = Source::parse(&text, TOL).unwrap();
+        source.cache_spellings();
+        let curve = source.curve(id, 0).unwrap();
+        let mut budget = budget();
+        let bound = curve_nurbs(&source, id, &curve, 3, &mut budget).unwrap();
+        assert!(bound.error.is_finite() && bound.error >= 0.);
+        budget.used()
+    };
+    let [small, large] = [200, 800].map(work);
+    // Four times the controls costs about four times the work. Rescanning the
+    // sibling control list for every weight made this ratio about sixteen.
+    assert!(
+        large < 6 * small,
+        "weight work is superlinear: {small} -> {large}"
+    );
+}

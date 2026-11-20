@@ -49,6 +49,13 @@ fn checkpoint(interrupt: Option<&dyn Fn() -> bool>) -> Result<(), GeometryError>
         Ok(())
     }
 }
+fn placement(frame: PlaneFrame) -> writer::QualifiedPlacement {
+    writer::QualifiedPlacement {
+        origin: frame.origin,
+        u: frame.u,
+        v: frame.v,
+    }
+}
 impl HangerBody {
     fn qualified_step(
         &self,
@@ -56,14 +63,23 @@ impl HangerBody {
         policy: GeometryPolicy,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Rc<writer::QualifiedHangerStep>, GeometryError> {
-        checkpoint(interrupt)?;
-        policy.validate()?;
         if frame != PlaneFrame::default() {
             return Err(failure(
                 GeometryErrorKind::Unsupported,
                 "Placed hanger STEP correspondence is not yet qualified",
             ));
         }
+        self.local_qualified_step(policy, interrupt)
+    }
+    /// The qualified local file, independent of the occurrence frame. A
+    /// placed export holds these same records through one declared map.
+    fn local_qualified_step(
+        &self,
+        policy: GeometryPolicy,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Rc<writer::QualifiedHangerStep>, GeometryError> {
+        checkpoint(interrupt)?;
+        policy.validate()?;
         let cached = self.qualified_step.borrow().as_ref().cloned();
         let qualified = match cached {
             Some(file) => file,
@@ -90,7 +106,8 @@ impl HangerBody {
         frame: PlaneFrame,
         policy: GeometryPolicy,
     ) -> bool {
-        self.qualified_step(frame, policy, None).is_ok()
+        self.local_qualified_step(policy, None).is_ok()
+            && (frame == PlaneFrame::default() || placement(frame).normal_is_proper())
     }
     pub(in crate::geometry) fn append_step(
         &self,
@@ -105,11 +122,14 @@ impl HangerBody {
             }
             _ => step::StepError::InvalidGeometry,
         };
-        let file = self.qualified_step(frame, policy, None).map_err(convert)?;
-        target
-            .append_qualified_hanger(&file, Default::default(), None)
-            .map(|_| ())
-            .map_err(|e| convert(writer_error(e)))
+        let file = self.local_qualified_step(policy, None).map_err(convert)?;
+        if frame == PlaneFrame::default() {
+            target.append_qualified_hanger(&file, Default::default(), None)
+        } else {
+            target.append_placed_qualified_hanger(&file, Default::default(), placement(frame), None)
+        }
+        .map(|_| ())
+        .map_err(|e| convert(writer_error(e)))
     }
     pub(in crate::geometry) fn verify_step_member(
         &self,

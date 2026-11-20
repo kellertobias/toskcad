@@ -103,9 +103,15 @@ fn actual_local_hanger_step_exports_cache_qualification_and_keep_healed_mass_dis
                 ..Default::default()
             })
             .unwrap();
-        assert!(!placed.supports_step_export());
-        assert!(placed.write_step(&path).is_err());
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        // A placed copy now writes the same local records through one map.
+        assert!(placed.supports_step_export());
+        placed.write_step(&path).unwrap();
+        let moved = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(moved.matches("MAPPED_ITEM(").count(), 1);
+        assert_eq!(
+            moved.matches("ADVANCED_FACE(").count(),
+            text.matches("ADVANCED_FACE(").count()
+        );
     }
 }
 #[test]
@@ -163,4 +169,52 @@ fn actual_mixed_hanger_exports_keep_member_categories_and_reject_wrong_source() 
         })
     ));
     assert_eq!(std::fs::read_to_string(file.path()).unwrap(), text);
+}
+#[test]
+fn placed_hanger_step_holds_the_local_qualified_records_through_one_map() {
+    let local = solid(false, false);
+    let frame = PlaneFrame {
+        origin: [20., -7., 9.],
+        u: [0., 1., 0.],
+        v: [0., 0., 1.],
+    };
+    let placed = Solid::rust_hanger(
+        crate::geometry::hanger_material::source_tests::source(false, false),
+        EntityId::new(),
+        frame,
+        GeometryPolicy::default(),
+        None,
+    )
+    .unwrap();
+    assert!(placed.supports_step_export());
+    let dir = tempfile::tempdir().unwrap();
+    let [local_text, placed_text] = [(&local, "local"), (&placed, "placed")].map(|(s, n)| {
+        let path = dir.path().join(format!("{n}.step"));
+        s.write_step(&path).unwrap();
+        std::fs::read_to_string(path).unwrap()
+    });
+    assert!(!local_text.contains("MAPPED_ITEM"));
+    assert_eq!(placed_text.matches("MAPPED_ITEM(").count(), 1);
+    // The placed file's local body is the same qualified records: equal
+    // geometry entity counts, and the operator states the frame exactly.
+    let count = |t: &str, name: &str| t.matches(name).count();
+    for name in ["ADVANCED_FACE(", "EDGE_CURVE(", "VERTEX_POINT(", "PCURVE("] {
+        assert_eq!(
+            count(&local_text, name),
+            count(&placed_text, name),
+            "{name}"
+        );
+    }
+    assert!(placed_text.contains("CARTESIAN_TRANSFORMATION_OPERATOR_3D("));
+    let document = read::CompoundDocument::parse(&placed_text, Default::default(), None).unwrap();
+    let [member] = document.represented_members() else {
+        panic!("one placed member")
+    };
+    assert!(member.mapping_link().is_some());
+    // Source/healing verification of a mapped member stays a typed refusal.
+    let (body, frame) = placed.hanger_body().unwrap();
+    let refusal = body
+        .verify_step_member(&document, *member, frame, placed.policy, None)
+        .unwrap_err();
+    assert_eq!(refusal.kind, GeometryErrorKind::Unsupported);
 }

@@ -3,6 +3,41 @@
 use super::*;
 use crate::step::{Entity, Writer};
 use std::fmt::Write;
+/// A proper orthonormal placement of a qualified local hanger.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct QualifiedPlacement {
+    pub origin: [f64; 3],
+    pub u: [f64; 3],
+    pub v: [f64; 3],
+}
+impl QualifiedPlacement {
+    /// Whether [`Writer::append_placed_qualified_hanger`] admits this frame.
+    pub fn normal_is_proper(self) -> bool {
+        self.normal().is_ok()
+    }
+    /// `u×v`, after proving `u` and `v` are finite unit vectors at a right
+    /// angle to within a few rounding units, so the STEP operator's
+    /// projected basis is the stated one and right-handed.
+    fn normal(self) -> Result<[f64; 3], Error> {
+        let Self { origin, u, v } = self;
+        if origin.into_iter().chain(u).chain(v).any(|x| !x.is_finite()) {
+            return Err(Error::Invalid);
+        }
+        let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        const EPSILON: f64 = 1e-12;
+        if (dot(u, u) - 1.).abs() > EPSILON
+            || (dot(v, v) - 1.).abs() > EPSILON
+            || dot(u, v).abs() > EPSILON
+        {
+            return Err(Error::Unresolved);
+        }
+        Ok([
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ])
+    }
+}
 pub struct QualifiedAppendReceipt {
     work: usize,
     append: usize,
@@ -70,6 +105,29 @@ impl Writer {
         options: QualifiedExportOptions,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<QualifiedAppendReceipt, Error> {
+        self.append_qualified_hanger_with(candidate, options, None, interrupt)
+    }
+    /// The same literal local records, held by one declared STEP map onto a
+    /// proper orthonormal placement. No replayed coordinate is rewritten:
+    /// the local body keeps the exact qualified bytes and the placement is
+    /// one `MAPPED_ITEM` whose operator states `origin`, `u`, `v` and `u×v`.
+    pub fn append_placed_qualified_hanger(
+        &mut self,
+        candidate: &QualifiedHangerStep,
+        options: QualifiedExportOptions,
+        placement: QualifiedPlacement,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<QualifiedAppendReceipt, Error> {
+        self.append_qualified_hanger_with(candidate, options, Some(placement), interrupt)
+    }
+    fn append_qualified_hanger_with(
+        &mut self,
+        candidate: &QualifiedHangerStep,
+        options: QualifiedExportOptions,
+        placement: Option<QualifiedPlacement>,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<QualifiedAppendReceipt, Error> {
+        let normal = placement.map(QualifiedPlacement::normal).transpose()?;
         if options.maximum_work == 0
             || options.maximum_work > 1_000_000_000
             || options.maximum_bytes == 0
@@ -180,9 +238,36 @@ impl Writer {
                 file.data.push_str(&body[copied..]);
             }
             file.next = maximum.checked_add(1).ok_or(Error::Limit)?;
+            let item = match (placement, normal) {
+                (Some(p), Some(n)) => {
+                    l.charge(4096)?;
+                    let local_origin = file.point([0.; 3]);
+                    let source_axis = file.axis(local_origin, [0., 0., 1.], [1., 0., 0.]);
+                    let length = file.entity(format_args!(
+                        "(LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.))"
+                    ));
+                    let angle = file.entity(format_args!(
+                        "(NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.))"
+                    ));
+                    let solid_angle = file.entity(format_args!(
+                        "(NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT())"
+                    ));
+                    let context = file.entity(format_args!("(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNIT_ASSIGNED_CONTEXT(({length},{angle},{solid_angle})) REPRESENTATION_CONTEXT('',''))"));
+                    let body = Entity(maximum);
+                    let local = file.entity(format_args!(
+                        "SHAPE_REPRESENTATION('',({body},{source_axis}),{context})"
+                    ));
+                    let map = file.entity(format_args!("REPRESENTATION_MAP({source_axis},{local})"));
+                    let target_origin = file.point(p.origin);
+                    let [axis1, axis2, axis3] = [p.u, p.v, n].map(|d| file.direction(d));
+                    let target = file.entity(format_args!("(CARTESIAN_TRANSFORMATION_OPERATOR({axis1},{axis2},{target_origin},1.)CARTESIAN_TRANSFORMATION_OPERATOR_3D({axis3})FUNCTIONALLY_DEFINED_TRANSFORMATION('','')GEOMETRIC_REPRESENTATION_ITEM()REPRESENTATION_ITEM(''))"));
+                    file.entity(format_args!("MAPPED_ITEM('',{map},{target})"))
+                }
+                _ => Entity(maximum),
+            };
             // Last callback/work charge occurs inside the atomic transaction.
             l.charge(1)?;
-            Ok::<_, Error>(Entity(maximum))
+            Ok::<_, Error>(item)
         })?;
         Ok(QualifiedAppendReceipt {
             work: l.used,

@@ -237,6 +237,9 @@ impl Source<'_> {
     /// The placement an item or operator states, as a map from its own
     /// coordinates to its representation's.
     fn placement(&self, id: u32) -> Result<Placement> {
+        if let Some(placement) = self.complex_operator(id)? {
+            return Ok(placement);
+        }
         let entity = self.simple(id)?;
         match entity.name {
             "AXIS2_PLACEMENT_3D" => {
@@ -256,6 +259,46 @@ impl Source<'_> {
     /// and scaling are refused.
     fn operator(&self, args: &[Value<'_>]) -> Result<Placement> {
         let [_, _, _, axis1, axis2, origin, scale, axis3] = arity(args)?;
+        self.operator_attributes([axis1, axis2, origin, scale, axis3])
+    }
+
+    /// The same operator as an ISO 10303-21 complex instance, its attributes
+    /// split over its supertypes in alphabetical order:
+    /// `(CARTESIAN_TRANSFORMATION_OPERATOR(axis1, axis2, origin, scale)
+    /// CARTESIAN_TRANSFORMATION_OPERATOR_3D(axis3)
+    /// FUNCTIONALLY_DEFINED_TRANSFORMATION(name, description)
+    /// GEOMETRIC_REPRESENTATION_ITEM() REPRESENTATION_ITEM(name))`.
+    /// `None` when `id` is not exactly that instance.
+    fn complex_operator(&self, id: u32) -> Result<Option<Placement>> {
+        let components = self.components(id)?;
+        let names = [
+            "CARTESIAN_TRANSFORMATION_OPERATOR",
+            "CARTESIAN_TRANSFORMATION_OPERATOR_3D",
+            "FUNCTIONALLY_DEFINED_TRANSFORMATION",
+            "GEOMETRIC_REPRESENTATION_ITEM",
+            "REPRESENTATION_ITEM",
+        ];
+        if components.len() != names.len()
+            || components
+                .iter()
+                .zip(names)
+                .any(|(entity, name)| entity.name != name)
+        {
+            return Ok(None);
+        }
+        let [axis1, axis2, origin, scale] = arity(&components[0].args)?;
+        let [axis3] = arity(&components[1].args)?;
+        let [_, _] = arity(&components[2].args)?;
+        let [] = arity(&components[3].args)?;
+        let [_] = arity(&components[4].args)?;
+        self.operator_attributes([axis1, axis2, origin, scale, axis3])
+            .map(Some)
+    }
+
+    fn operator_attributes(
+        &self,
+        [axis1, axis2, origin, scale, axis3]: [&Value<'_>; 5],
+    ) -> Result<Placement> {
         let optional = |value: &Value<'_>| match value {
             Value::Omitted => Ok(None),
             value => self.direction(reference(value)?).map(Some),
@@ -597,6 +640,9 @@ fn relate(
     reps: [u32; 2],
     transformation: u32,
 ) -> Result<Placement> {
+    if let Some(placement) = source.complex_operator(transformation)? {
+        return Ok(placement);
+    }
     let entity = source.simple(transformation)?;
     match (entity.name, entity.args.as_slice()) {
         ("ITEM_DEFINED_TRANSFORMATION", [_, _, first, second]) => {
