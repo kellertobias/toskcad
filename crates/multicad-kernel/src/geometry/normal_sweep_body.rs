@@ -12,6 +12,7 @@ use std::{collections::BTreeSet, f64::consts::TAU};
 
 mod contained_boolean;
 mod fillet;
+mod opening_clearance;
 mod piercing;
 mod polygon_stock;
 mod profile_depth;
