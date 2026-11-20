@@ -16,6 +16,7 @@ use multicad_rust_kernel::{
     display::{MeshError, Tessellation},
 };
 use std::collections::BTreeSet;
+mod contained_boolean;
 mod mesh;
 mod placement;
 mod step;

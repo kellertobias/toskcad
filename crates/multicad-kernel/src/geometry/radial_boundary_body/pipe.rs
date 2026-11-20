@@ -22,7 +22,7 @@ pub struct RetainedAxialPipeThreadSource {
     pub retained_radius_upper_bound_mm: Option<f64>,
 }
 pub(super) struct AuthoredPipe {
-    source: RetainedAxialPipeThreadSource,
+    pub(super) source: RetainedAxialPipeThreadSource,
     faces: Vec<String>,
     edges: Vec<String>,
     vertices: Vec<String>,

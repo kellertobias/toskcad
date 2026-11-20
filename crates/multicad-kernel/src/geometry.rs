@@ -1517,6 +1517,14 @@ impl Solid {
             if let Some(result) = self.contained_hanger_boolean(other, operation, policy) {
                 return result;
             }
+            // Cheap whole-probe predicates of retained thread sources come
+            // before the planar provider, which would integrate their faces.
+            if let Some(result) = self.contained_radial_boundary_boolean(other, operation, policy) {
+                return result;
+            }
+            if let Some(result) = self.contained_clipped_npt_boolean(other, operation, policy) {
+                return result;
+            }
             if let Some(result) = self.default_certified_boolean(other, operation, policy) {
                 return result;
             }
