@@ -11,6 +11,8 @@ use multicad_rust_kernel::display::{MeshError, Tessellation};
 use multicad_rust_kernel::step_read;
 use std::collections::BTreeMap;
 
+mod affine;
+
 const OPERATION: &str = "imported boundary";
 
 /// The most topology elements one retained solid may publish.
