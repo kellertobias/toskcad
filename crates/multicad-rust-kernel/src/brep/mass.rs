@@ -7,7 +7,8 @@
 //! that closes at a pole contributes it up to the pole.
 use super::domain::{Domain, UvLoop};
 use super::{
-    Boundary, Error, Face, GAUSS, Point, Result, Surface, cross, distance, dot, ensure, norm, sub,
+    Boundary, Error, Face, GAUSS, Point, Result, Surface, cross, distance, dot, ensure, norm,
+    scale, sub,
 };
 
 /// Volume flux, area and the three first moments of area.
@@ -112,9 +113,23 @@ impl Integral<'_> {
                 let (a, b, c) = (dot(su, su), dot(su, sv), dot(sv, sv));
                 let (ru, rv) = (dot(tangent, su), dot(tangent, sv));
                 let determinant = a * c - b * b;
-                // Along parallel derivatives the parameter rate is undefined.
-                ensure(determinant > 1e-12 * a * c, Error::Unsupported)?;
-                let rate = (a * rv - b * ru) / determinant;
+                let rate = if determinant > 1e-12 * a * c {
+                    (a * rv - b * ru) / determinant
+                } else {
+                    // Where the u derivative stalls, as at a spline end whose
+                    // parametrization has zero speed, any motion along u
+                    // moves the point by less than the tolerance the volume
+                    // error already counts, and a tangent along the v
+                    // derivative moves at the rate T.Sv/|Sv|^2. Parallel
+                    // derivatives that do not stall leave it undefined.
+                    let rate = rv / c;
+                    let residual = norm(sub(tangent, scale(sv, rate)));
+                    ensure(
+                        a.sqrt() <= tolerance && c > 0. && residual <= 1e-9 * norm(tangent),
+                        Error::Unsupported,
+                    )?;
+                    rate
+                };
                 Ok(self.strip(uv).map(|g| g * rate))
             })?;
             accumulate(&mut total, piece, 1.);

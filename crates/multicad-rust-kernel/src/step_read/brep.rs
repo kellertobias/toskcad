@@ -159,6 +159,18 @@ pub struct Source<'i> {
     angle: f64,
     solids: Vec<u32>,
     declared: Option<f64>,
+    /// The numeric spellings of the most recently read records, so a run
+    /// of lookups into one record tokenizes it once. Off (`None`) unless a
+    /// whole-file pass that owns this source turns it on.
+    spellings: std::cell::RefCell<Option<Vec<Spelled>>>,
+}
+
+/// The numeric tokens of one record: the address of each numeric leaf in
+/// traversal order and the byte range of its spelling in the record text.
+pub(crate) struct Spelled {
+    pub(crate) text: (usize, usize),
+    pub(crate) leaves: std::collections::HashMap<usize, usize>,
+    pub(crate) tokens: Vec<(usize, usize)>,
 }
 
 impl<'i> Source<'i> {
@@ -236,7 +248,15 @@ impl<'i> Source<'i> {
             angle,
             solids,
             declared,
+            spellings: std::cell::RefCell::new(None),
         })
+    }
+
+    /// Start an empty cache of the numeric spellings of recently read
+    /// records. A pass that calls this first does the same work on every
+    /// run over the same source.
+    pub(crate) fn cache_spellings(&self) {
+        *self.spellings.borrow_mut() = Some(Vec::new());
     }
 
     /// The smallest length uncertainty the file declares, in millimetres.

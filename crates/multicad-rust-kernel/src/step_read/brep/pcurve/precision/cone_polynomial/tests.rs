@@ -230,3 +230,52 @@ fn actual_cubic_source_work_frontier_late_cancel_and_retry_preserve_operands() {
     assert!(matches!(run(&mut retry).unwrap(),Some(Proof::Certified(error))if error==first));
     assert_eq!(retry.used(), used);
 }
+
+#[test]
+fn hull_tangent_proof_accepts_agreeing_cells_and_never_reversed_ones() {
+    let mut b = Budget::new(10_000_000, None);
+    let poly = |values: &[f64], b: &mut Budget<'_>| {
+        let values: Vec<I> = values.iter().map(|&x| I::point(x)).collect();
+        P::new(&values, b).unwrap()
+    };
+    // A radius-2 band at z = 0 swept by 0.1 rad, and the cubic Bernstein
+    // controls of its exact circular arc's Taylor cubic.
+    let rho = poly(&[2.], &mut b);
+    let theta = poly(&[0., 0.1 / 3., 0.2 / 3., 0.1], &mut b);
+    let z = poly(&[0.], &mut b);
+    let arc = |reverse: bool, b: &mut Budget<'_>| -> VecP {
+        let point = |t: f64| {
+            let a = 0.1 * if reverse { 1. - t } else { t };
+            [2. * a.cos(), 2. * a.sin(), 0.]
+        };
+        // Interpolating cubic through four arc points, in Bernstein form.
+        let p: Vec<[f64; 3]> = [0., 1. / 3., 2. / 3., 1.].map(point).to_vec();
+        let control = |k: usize| -> [f64; 3] {
+            std::array::from_fn(|i| match k {
+                0 => p[0][i],
+                3 => p[3][i],
+                1 => (-5. * p[0][i] + 18. * p[1][i] - 9. * p[2][i] + 2. * p[3][i]) / 6.,
+                _ => (2. * p[0][i] - 9. * p[1][i] + 18. * p[2][i] - 5. * p[3][i]) / 6.,
+            })
+        };
+        std::array::from_fn(|i| {
+            poly(
+                &[control(0)[i], control(1)[i], control(2)[i], control(3)[i]],
+                b,
+            )
+        })
+    };
+    let forward = arc(false, &mut b);
+    assert!(tangent_by_hulls(&rho, &theta, &z, &forward, &mut b).unwrap());
+    assert!(tangent_agrees(&rho, &theta, &z, &forward, 1, &mut b).unwrap());
+    // The same image run backwards has the opposite tangent everywhere.
+    let backward = arc(true, &mut b);
+    assert!(!tangent_by_hulls(&rho, &theta, &z, &backward, &mut b).unwrap());
+    assert!(!tangent_agrees(&rho, &theta, &z, &backward, 3, &mut b).unwrap());
+    // The position bound holds for the agreeing cell and not a shifted one.
+    let bound = position_error(&rho, &theta, &z, &forward, 4, &mut b).unwrap();
+    assert!(bound < 1e-5, "{bound}");
+    let mut shifted = forward;
+    shifted[2] = poly(&[1e-3; 4], &mut b);
+    assert!(position_error(&rho, &theta, &z, &shifted, 4, &mut b).unwrap() >= 1e-3);
+}

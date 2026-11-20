@@ -43,6 +43,7 @@ pub(crate) mod herringbone;
 pub mod insert;
 pub mod literal_npt;
 pub mod npt_stock;
+mod partial_revolution;
 pub mod periodic_phillips;
 pub mod pipe_hardware;
 mod retained_replay;
@@ -234,7 +235,13 @@ fn encode_orthogonal(
         return Err(StepError::Unsupported);
     }
     if boundary.shell_count != 1 {
-        if !pockets.is_empty() || !slots.is_empty() || !through.is_empty() {
+        // Separate outward solids are split into members by the writer;
+        // one solid record only ever holds material with voids.
+        if !pockets.is_empty()
+            || !slots.is_empty()
+            || !through.is_empty()
+            || crate::orthogonal_boundary::box_void::boundary_certificate(boundary).is_err()
+        {
             return Err(StepError::Unsupported);
         }
         let faces = boundary

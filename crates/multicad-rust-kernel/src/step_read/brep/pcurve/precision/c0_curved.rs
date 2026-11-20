@@ -61,6 +61,50 @@ fn evaluate<const N: usize>(points: &[[I; N]], t: I, b: &mut Budget<'_>) -> Resu
     check(v.iter().all(|x| x.valid()), ReadError::Unsupported)?;
     Ok(v)
 }
+/// The value and the first `count - 1` derivatives at `t` from ONE de
+/// Casteljau run: the k-th derivative is `n!/(n-k)!` times the k-th forward
+/// difference of the k + 1 points left after `n - k` levels. Derivatives
+/// above the degree are zero.
+fn derivatives<const N: usize>(
+    points: &[[I; N]],
+    t: I,
+    count: usize,
+    b: &mut Budget<'_>,
+) -> Result<Vec<[I; N]>> {
+    let n = points.len().checked_sub(1).ok_or(ReadError::Unsupported)?;
+    b.charge(points.len() * points.len() * N * 8 + count * count * N * 8 + 64)?;
+    let mut out = vec![[I::point(0.); N]; count];
+    let mut values = points.to_vec();
+    for level in 0..=n {
+        let k = n - level;
+        if k < count {
+            let mut difference = values[..=k].to_vec();
+            for m in 0..k {
+                for i in 0..k - m {
+                    let next = difference[i + 1];
+                    for (value, next) in difference[i].iter_mut().zip(next) {
+                        *value = next - *value;
+                    }
+                }
+            }
+            let scale = I::point(((n - k + 1)..=n).fold(1., |f, i| f * i as f64));
+            out[k] = difference[0].map(|x| x * scale);
+        }
+        if level < n {
+            for i in 0..k {
+                let next = values[i + 1];
+                for (value, next) in values[i].iter_mut().zip(next) {
+                    *value = (I::point(1.) - t) * *value + t * next;
+                }
+            }
+        }
+    }
+    check(
+        out.iter().flatten().all(|x| x.valid()),
+        ReadError::Unsupported,
+    )?;
+    Ok(out)
+}
 /// Normalized Taylor coefficients `f^(n)(t)/n!` at `t`.
 fn jets<const N: usize>(points: &[[I; N]], t: I, b: &mut Budget<'_>) -> Result<[Jet; N]> {
     let mut out = [zero(); N];
@@ -180,29 +224,16 @@ impl Partials {
     /// u-derivatives of those values. `out[i][j]` is `d^(i+j) S / du^i dv^j`.
     fn at(&self, x: I, y: I, b: &mut Budget<'_>) -> Result<[[V3; 4]; 4]> {
         let (w, h, base) = &self.nets[0];
-        let mut rows: Vec<[V3; 4]> = Vec::new();
+        let mut rows: Vec<Vec<V3>> = Vec::new();
         rows.try_reserve_exact(*w).map_err(|_| ReadError::Limit)?;
         for row in base.chunks_exact(*h) {
-            let mut values = [[I::point(0.); 3]; 4];
-            let mut current = row.to_vec();
-            for slot in &mut values {
-                if current.is_empty() {
-                    break;
-                }
-                *slot = evaluate(&current, y, b)?;
-                current = derivative(&current);
-            }
-            rows.push(values);
+            rows.push(derivatives(row, y, 4, b)?);
         }
         let mut out = [[[I::point(0.); 3]; 4]; 4];
         for j in 0..4 {
-            let mut current: Vec<V3> = rows.iter().map(|r| r[j]).collect();
-            for slot in out.iter_mut().take(4 - j) {
-                if current.is_empty() {
-                    break;
-                }
-                slot[j] = evaluate(&current, x, b)?;
-                current = derivative(&current);
+            let column: Vec<V3> = rows.iter().map(|r| r[j]).collect();
+            for (i, value) in derivatives(&column, x, 4 - j, b)?.into_iter().enumerate() {
+                out[i][j] = value;
             }
         }
         Ok(out)
@@ -294,6 +325,7 @@ fn bound(
     target: &[V3],
     allowed: f64,
     tol: f64,
+    contained: bool,
     b: &mut Budget<'_>,
 ) -> Result<Bound> {
     let [[u0, u1], [v0, v1]] = patch.domain;
@@ -309,8 +341,23 @@ fn bound(
     let m = I::point(0.5);
     let mid = jets(&local, m, b)?;
     let range = jet_bounds(&local, b)?;
-    let point = [mid[0][0], mid[1][0]];
-    let box_ = [range[0][0], range[1][0]];
+    // A trace whose original span controls lie exactly in this closed
+    // patch stays in it: every Bezier piece's controls are convex
+    // combinations of those controls. Rounding outside [0, 1] is then cut
+    // off without losing the enclosure.
+    let clamp = |x: I| {
+        if contained {
+            I::new(x.lo.max(0.), x.hi.min(1.))
+        } else {
+            x
+        }
+    };
+    let point = [clamp(mid[0][0]), clamp(mid[1][0])];
+    let box_ = [clamp(range[0][0]), clamp(range[1][0])];
+    check(
+        point.iter().chain(&box_).all(|x| x.valid()),
+        ReadError::Unsupported,
+    )?;
     let expected = composition(patch, mid, point, false, b)?;
     let expected_range = composition(patch, range, box_, true, b)?;
     let actual = jets(target, m, b)?;
@@ -413,7 +460,7 @@ fn prove(
     for iu in us {
         for iv in vs.clone() {
             let patch = patches.get(iu, iv, b)?;
-            match bound(patch, &uv, &target, tol, tol, b)? {
+            match bound(patch, &uv, &target, tol, tol, fixed.is_some(), b)? {
                 Bound::Proved(e) => worst = worst.max(e),
                 Bound::Loose => loose = true,
                 Bound::Exceeds => return Ok(Piece::Refused),

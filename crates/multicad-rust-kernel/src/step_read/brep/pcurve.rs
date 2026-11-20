@@ -574,6 +574,9 @@ fn validate_source(
     tol: f64,
     budget: &mut Budget<'_>,
 ) -> std::result::Result<PcurveValidationReport, PcurveValidationError> {
+    // This pass owns its freshly parsed source: records read by several
+    // proofs are tokenized once.
+    source.cache_spellings();
     let pairs = bindings(source, budget)?;
     let radians = si_radians(source, budget)?;
     let mut edges = BTreeSet::new();

@@ -246,10 +246,10 @@ fn a_forged_single_shell_cannot_hide_cavities_or_independent_outer_components() 
     let separate = solid(&[stock(), box_([8.; 3], [9.; 3])], &[], Operation::Union);
     let mut boundary = build(separate.quads()).unwrap();
     assert!(box_void::validate_boundary_graph(&boundary).is_ok());
-    assert_eq!(
-        write_orthogonal(&boundary, unchanged),
-        Err(StepError::Unsupported)
-    );
+    // Strictly apart outward shells are separate solids, one each.
+    let text = write_orthogonal(&boundary, unchanged).unwrap();
+    assert_eq!(text.matches("=MANIFOLD_SOLID_BREP(").count(), 2);
+    assert_eq!(text.matches("=BREP_WITH_VOIDS(").count(), 0);
     boundary.shell_count = 1;
     assert_eq!(
         write_orthogonal(&boundary, unchanged),

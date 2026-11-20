@@ -224,8 +224,22 @@ impl Surface {
     }
 
     /// True where the u derivative collapses, as at a sphere pole or apex.
+    /// A spline whose parametrization merely stalls at one point, such as an
+    /// end segment with a repeated control point, is no pole: a pole
+    /// collapses the whole u row at its v, so row points apart by more than
+    /// the tolerance prove there is none.
     pub fn is_pole(&self, uv: [f64; 2], tolerance: f64) -> bool {
-        norm(self.evaluate(uv).1[0]) <= tolerance
+        let (point, [su, _]) = self.evaluate(uv);
+        if norm(su) > tolerance {
+            return false;
+        }
+        let Self::Nurbs { surface, .. } = self else {
+            return true;
+        };
+        let [a, b] = surface.range(0);
+        [a, 0.5 * (a + b), b]
+            .into_iter()
+            .all(|u| distance(self.evaluate([u, uv[1]]).0, point) <= tolerance)
     }
 
     /// Parameters of the surface point closest to `point`. A seed selects

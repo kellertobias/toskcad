@@ -40,6 +40,9 @@ fn power(x: I, n: usize) -> I {
 fn factorial(n: usize) -> f64 {
     (1..=n).fold(1., |a, i| a * i as f64)
 }
+/// Taylor polynomials of sin and cos of `theta` about its hull midpoint to
+/// order `n`, with the whole-field tail bound. Each series is evaluated by
+/// Horner's rule in the offset, so no power is raised to the final degree.
 fn taylor(theta: &P, n: usize, b: &mut Budget<'_>) -> Result<(P, P, f64)> {
     b.charge(4096)?;
     let center = theta.hull().midpoint();
@@ -52,78 +55,84 @@ fn taylor(theta: &P, n: usize, b: &mut Budget<'_>) -> Result<(P, P, f64)> {
     check(range.valid(), ReadError::Unsupported)?;
     let (s, c) = (I::point(center).sin(), I::point(center).cos());
     check(s.valid() && c.valid(), ReadError::Unsupported)?;
-    let mut sine = P::constant(I::point(0.), b)?;
-    let mut cosine = sine;
-    let mut term = P::constant(I::point(1.), b)?;
-    for j in 0..=n {
-        b.charge(128)?;
-        let (a, d) = match j % 4 {
-            0 => (s, c),
-            1 => (c, -s),
-            2 => (-s, -c),
-            _ => (-c, s),
+    check(
+        delta.degree().checked_mul(n).is_some_and(|d| d <= 16),
+        ReadError::Unsupported,
+    )?;
+    // The j-th derivatives of sin and cos at the center.
+    let coefficient = |j: usize| match j % 4 {
+        0 => (s, c),
+        1 => (c, -s),
+        2 => (-s, -c),
+        _ => (-c, s),
+    };
+    let series = |sine: bool, b: &mut Budget<'_>| -> Result<P> {
+        let term = |j: usize| {
+            let (a, d) = coefficient(j);
+            (if sine { a } else { d }) / I::point(factorial(j))
         };
-        let divisor = I::point(factorial(j));
-        sine = sine.add(&term.scale(a / divisor, b)?, b)?;
-        cosine = cosine.add(&term.scale(d / divisor, b)?, b)?;
-        if j < n {
-            term = term.multiply(&delta, b)?;
+        let mut value = P::constant(term(n), b)?;
+        for j in (0..n).rev() {
+            b.charge(128)?;
+            value = value
+                .multiply(&delta, b)?
+                .add(&P::constant(term(j), b)?, b)?;
         }
-    }
+        Ok(value)
+    };
+    let sine = series(true, b)?;
+    let cosine = series(false, b)?;
     // Scalar sine/cosine derivatives have absolute value<=1 on ALL real
     // angles; this is an actual whole-field tail, not a declared tolerance.
     let tail = power(I::point(range.magnitude()), n + 1) / I::point(factorial(n + 1));
     check(tail.valid() && tail.lo >= 0., ReadError::Unsupported)?;
     Ok((sine, cosine, tail.hi))
 }
-fn world(local: VecP, frame: RawFrame, position: bool, b: &mut Budget<'_>) -> Result<VecP> {
+/// The cone-frame coordinates R^T (p - o) of a world polynomial curve. The
+/// interval axes enclose the exact orthonormal frame, so distances measured
+/// here are the world distances.
+fn local(world: &VecP, frame: RawFrame, position: bool, b: &mut Budget<'_>) -> Result<VecP> {
     let zero = P::constant(I::point(0.), b)?;
     let mut out = [zero; 3];
-    for (i, world) in out.iter_mut().enumerate() {
+    for (k, local) in out.iter_mut().enumerate() {
         b.charge(256)?;
-        let mut value = None;
-        for (axis, p) in local.iter().enumerate() {
-            let coefficient = frame.axes[axis][i];
+        let mut value: Option<P> = None;
+        let mut offset = I::point(0.);
+        for (i, p) in world.iter().enumerate() {
+            let coefficient = frame.axes[k][i];
             if exact_zero(coefficient) {
                 continue;
             }
+            offset = offset + coefficient * frame.origin[i];
             let term = scaled(p, coefficient, b)?;
-            value = Some(if let Some(v) = value {
-                P::add(&v, &term, b)?
-            } else {
-                term
+            value = Some(match value {
+                Some(v) => v.add(&term, b)?,
+                None => term,
             });
         }
         let mut value = value.ok_or(ReadError::Unsupported)?;
-        if position && !exact_zero(frame.origin[i]) {
-            value = value.add(&P::constant(frame.origin[i], b)?, b)?;
+        if position && !exact_zero(offset) {
+            check(offset.valid(), ReadError::Unsupported)?;
+            value = value.add(&P::constant(-offset, b)?, b)?;
         }
-        *world = value;
+        *local = value;
     }
     Ok(out)
 }
-fn vector_error(a: VecP, c: VecP, b: &mut Budget<'_>) -> Result<f64> {
-    let degree = a
-        .iter()
-        .chain(c.iter())
-        .map(P::degree)
-        .max()
-        .ok_or(ReadError::Invalid)?;
-    let zero = P::constant(I::point(0.), b)?;
-    let mut residual = [zero; 3];
-    for i in 0..3 {
-        residual[i] = a[i]
-            .add(&c[i].scale(I::point(-1.), b)?, b)?
-            .elevate(degree, b)?;
+/// An upper bound on |a - c| over the cell: each component's Bernstein
+/// residual bounds that component, and the components combine in quadrature.
+fn component_error(a: &VecP, c: &VecP, b: &mut Budget<'_>) -> Result<f64> {
+    let mut squares = I::point(0.);
+    for k in 0..3 {
+        let residual = a[k].add(&c[k].scale(I::point(-1.), b)?, b)?;
+        b.charge((residual.degree() + 1) * 64 + 64)?;
+        let bound = residual.hull().magnitude();
+        check(bound.is_finite(), ReadError::Unsupported)?;
+        squares = squares + I::point(bound).square();
     }
-    b.charge((degree + 1) * 128 + 128)?;
-    let mut maximum = 0_f64;
-    for i in 0..=degree {
-        let error = norm(std::array::from_fn(|j| residual[j].controls()[i]));
-        check(error.valid(), ReadError::Unsupported)?;
-        maximum = maximum.max(error.hi);
-    }
-    Ok(maximum)
+    let error = squares.sqrt();
+    check(error.valid(), ReadError::Unsupported)?;
+    Ok(error.hi)
 }
 fn derivative(p: VecP, b: &mut Budget<'_>) -> Result<VecP> {
     Ok([
@@ -136,6 +145,142 @@ struct Cone {
     frame: RawFrame,
     radius: I,
     slope: I,
+}
+/// The position bound at Taylor order `n`, in the cone frame.
+fn position_error(
+    rho: &P,
+    theta: &P,
+    z: &P,
+    actual: &VecP,
+    n: usize,
+    b: &mut Budget<'_>,
+) -> Result<f64> {
+    let (s, c, tail) = taylor(theta, n, b)?;
+    let expected = [rho.multiply(&c, b)?, rho.multiply(&s, b)?, *z];
+    let coefficient = component_error(&expected, actual, b)?;
+    // The two radial scalar errors give this Euclidean bound; no one common
+    // mean-value point is assumed.
+    let radial_tail = I::point(rho.hull().magnitude()) * I::point(tail);
+    let position = I::point(coefficient) + norm([radial_tail, radial_tail, I::point(0.)]);
+    check(position.valid(), ReadError::Unsupported)?;
+    Ok(position.hi)
+}
+/// Whether the analytic first derivative at Taylor order `n` agrees in
+/// direction with the target derivative everywhere on the cell.
+fn tangent_agrees(
+    rho: &P,
+    theta: &P,
+    z: &P,
+    actual: &VecP,
+    n: usize,
+    b: &mut Budget<'_>,
+) -> Result<bool> {
+    let (s, c, dtail) = taylor(theta, n, b)?;
+    let rho_derivative = rho.derivative(b)?;
+    let theta_derivative = theta.derivative(b)?;
+    let radial_angular = rho.multiply(&theta_derivative, b)?;
+    let dx = rho_derivative
+        .multiply(&c, b)?
+        .add(&radial_angular.multiply(&s, b)?.scale(I::point(-1.), b)?, b)?;
+    let dy = rho_derivative
+        .multiply(&s, b)?
+        .add(&radial_angular.multiply(&c, b)?, b)?;
+    let dz = z.derivative(b)?;
+    let actual_derivative = derivative(*actual, b)?;
+    let derivative_coefficient = component_error(&[dx, dy, dz], &actual_derivative, b)?;
+    let amplitude =
+        I::point(rho_derivative.hull().magnitude()) + I::point(radial_angular.hull().magnitude());
+    let radial_tail = amplitude * I::point(dtail);
+    let error = I::point(derivative_coefficient) + norm([radial_tail, radial_tail, I::point(0.)]);
+    // This tail approximates the ANALYTIC FIRST derivative independently.
+    // It is never obtained by differentiating an unknown position remainder.
+    let source_speed =
+        (rho_derivative.hull().square() + radial_angular.hull().square() + dz.hull().square())
+            .sqrt();
+    let target_speed = norm(actual_derivative.map(|p| p.hull()));
+    check(
+        error.valid() && source_speed.valid() && target_speed.valid(),
+        ReadError::Unsupported,
+    )?;
+    // If ||s-t|| is strictly below EITHER proved speed lower, then
+    // s·t>0 by Cauchy-Schwarz. Taking the larger independent lower bound
+    // chooses that sufficient proof; no sampled direction is trusted.
+    let lower = source_speed.lo.max(target_speed.lo);
+    Ok(lower.is_finite() && lower > 0. && error.hi < lower)
+}
+/// The value of a Bernstein polynomial at `t` by de Casteljau.
+fn at(p: &P, t: I, b: &mut Budget<'_>) -> Result<I> {
+    let controls = p.controls();
+    b.charge(controls.len() * controls.len() * 16 + 64)?;
+    let mut values = controls.to_vec();
+    for n in (1..values.len()).rev() {
+        for i in 0..n {
+            values[i] = (I::point(1.) - t) * values[i] + t * values[i + 1];
+        }
+    }
+    check(values[0].valid(), ReadError::Unsupported)?;
+    Ok(values[0])
+}
+/// Direction agreement from the cell midpoint and second-derivative hulls:
+/// with f = E' - A', |f(t)| <= |f(1/2)| + sup|f'| / 2 on [0, 1], and each
+/// speed is at least its midpoint value less half its second-derivative
+/// hull. A cheap sufficient proof; `false` leaves the full expansion to
+/// decide.
+fn tangent_by_hulls(rho: &P, theta: &P, z: &P, actual: &VecP, b: &mut Budget<'_>) -> Result<bool> {
+    b.charge(2048)?;
+    let m = I::point(0.5);
+    let d1 = |p: &P, b: &mut Budget<'_>| p.derivative(b);
+    let (rho1, theta1, z1) = (d1(rho, b)?, d1(theta, b)?, d1(z, b)?);
+    let (rho2, theta2, z2) = (d1(&rho1, b)?, d1(&theta1, b)?, d1(&z1, b)?);
+    let (r, t, r1, t1, dz) = (
+        at(rho, m, b)?,
+        at(theta, m, b)?,
+        at(&rho1, m, b)?,
+        at(&theta1, m, b)?,
+        at(&z1, m, b)?,
+    );
+    let (sin, cos) = (t.sin(), t.cos());
+    let angular = r * t1;
+    let expected = [r1 * cos - angular * sin, r1 * sin + angular * cos, dz];
+    let actual1 = derivative(*actual, b)?;
+    let actual2 = derivative(actual1, b)?;
+    let mut target = [I::point(0.); 3];
+    for (k, value) in target.iter_mut().enumerate() {
+        *value = at(&actual1[k], m, b)?;
+    }
+    let difference = norm(std::array::from_fn(|k| expected[k] - target[k]));
+    // In the rotating frame the radial and angular second-derivative parts
+    // are (rho'' - rho theta'^2, 2 rho' theta' + rho theta'').
+    let h = |p: &P| I::point(p.hull().magnitude());
+    let (hr, ht1) = (h(rho), h(&theta1));
+    let radial = h(&rho2) + hr * ht1 * ht1;
+    let tangential = I::point(2.) * h(&rho1) * ht1 + hr * h(&theta2);
+    let source_second = (radial.square() + tangential.square() + h(&z2).square()).sqrt();
+    let target_second = norm(actual2.map(|p| h(&p)));
+    let half = I::point(0.5);
+    let error = difference + half * (source_second + target_second);
+    let source_speed = norm(expected) - half * source_second;
+    let target_speed = norm(target) - half * target_second;
+    check(
+        error.valid() && source_speed.valid() && target_speed.valid(),
+        ReadError::Unsupported,
+    )?;
+    // As in the full proof, ||s - t|| below either proved speed gives s.t > 0.
+    let lower = source_speed.lo.max(target_speed.lo);
+    Ok(lower.is_finite() && lower > 0. && error.hi < lower)
+}
+/// The lowest Taylor order, up to `order`, whose whole-field tail alone
+/// leaves at least half the tolerance for the coefficient residual.
+fn first_order(theta: &P, rho: &P, order: usize, tol: f64) -> usize {
+    let range = theta.hull();
+    let range = I::point(0.5 * (range.hi - range.lo));
+    let radius = I::point(rho.hull().magnitude());
+    (1..order)
+        .find(|&n| {
+            let tail = radius * power(range, n + 1) / I::point(factorial(n + 1));
+            tail.valid() && tail.hi <= 0.5 * tol
+        })
+        .unwrap_or(order)
 }
 fn cell(
     cone: &Cone,
@@ -158,64 +303,42 @@ fn cell(
         .add(&P::constant(cone.radius, b)?, b)?;
     let rh = rho.hull();
     check(rh.valid() && rh.lo > 0., ReadError::Unsupported)?;
-    let actual = [
+    let world = [
         coordinate_polynomial(target, 0, b)?,
         coordinate_polynomial(target, 1, b)?,
         coordinate_polynomial(target, 2, b)?,
     ];
-    let (s, c, tail) = taylor(&theta, order, b)?;
-    let expected = world(
-        [rho.multiply(&c, b)?, rho.multiply(&s, b)?, z],
-        cone.frame,
-        true,
-        b,
-    )?;
-    let coefficient = vector_error(expected, actual, b)?;
-    // Exact raw orthonormal frame: the two radial scalar errors give this
-    // Euclidean bound; no one common mean-value point is assumed.
-    let radial_tail = I::point(rh.magnitude()) * I::point(tail);
-    let position = I::point(coefficient) + norm([radial_tail, radial_tail, I::point(0.)]);
-    check(position.valid(), ReadError::Unsupported)?;
-    if position.hi > tol {
-        return Ok(Proof::Unsupported);
+    let actual = local(&world, cone.frame, true, b)?;
+    // Lower orders are tried first; the original order remains the last
+    // attempt, so a cell certified before is still certified.
+    let mut position = None;
+    for n in first_order(&theta, &rho, order, tol)..=order {
+        let bound = position_error(&rho, &theta, &z, &actual, n, b)?;
+        if bound <= tol {
+            position = Some(bound);
+            break;
+        }
     }
-    let (s, c, dtail) = taylor(&theta, derivative_order, b)?;
-    let rho_derivative = rho.derivative(b)?;
-    let theta_derivative = theta.derivative(b)?;
-    let radial_angular = rho.multiply(&theta_derivative, b)?;
-    let dx = rho_derivative
-        .multiply(&c, b)?
-        .add(&radial_angular.multiply(&s, b)?.scale(I::point(-1.), b)?, b)?;
-    let dy = rho_derivative
-        .multiply(&s, b)?
-        .add(&radial_angular.multiply(&c, b)?, b)?;
-    let dz = z.derivative(b)?;
-    let expected_derivative = world([dx, dy, dz], cone.frame, false, b)?;
-    let actual_derivative = derivative(actual, b)?;
-    let derivative_coefficient = vector_error(expected_derivative, actual_derivative, b)?;
-    let amplitude =
-        I::point(rho_derivative.hull().magnitude()) + I::point(radial_angular.hull().magnitude());
-    let radial_tail = amplitude * I::point(dtail);
-    let error = I::point(derivative_coefficient) + norm([radial_tail, radial_tail, I::point(0.)]);
-    // This tail approximates the ANALYTIC FIRST derivative independently.
-    // It is never obtained by differentiating an unknown position remainder.
-    let source_speed =
-        (rho_derivative.hull().square() + radial_angular.hull().square() + dz.hull().square())
-            .sqrt();
-    let target_speed = norm(actual_derivative.map(|p| p.hull()));
-    check(
-        error.valid() && source_speed.valid() && target_speed.valid(),
-        ReadError::Unsupported,
-    )?;
-    // If ||s-t|| is strictly below EITHER proved speed lower, then
-    // s·t>0 by Cauchy-Schwarz. Taking the larger independent lower bound
-    // chooses that sufficient proof; no sampled direction is trusted.
-    let lower = source_speed.lo.max(target_speed.lo);
-    if !lower.is_finite() || lower <= 0. || error.hi >= lower {
+    let Some(position) = position else {
+        return Ok(Proof::Unsupported);
+    };
+    // Direction agreement needs only an error below the proved speed: a
+    // first-order expansion usually suffices.
+    let mut agrees = tangent_by_hulls(&rho, &theta, &z, &actual, b)?;
+    for n in [1, derivative_order] {
+        if agrees {
+            break;
+        }
+        if tangent_agrees(&rho, &theta, &z, &actual, n, b)? {
+            agrees = true;
+            break;
+        }
+    }
+    if !agrees {
         return Ok(Proof::Unsupported);
     }
     b.charge(128)?;
-    Ok(Proof::Certified(position.hi))
+    Ok(Proof::Certified(position))
 }
 fn full_target(source: &Source<'_>, id: u32, edge: &Edge, b: &mut Budget<'_>) -> Result<()> {
     b.charge(256)?;

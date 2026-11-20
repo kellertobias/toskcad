@@ -765,3 +765,47 @@ fn bounded_point_and_direction_labels_keep_real_reads_resource_and_cancel_contra
         }
     }
 }
+
+#[test]
+fn cached_spellings_are_the_same_tokens_cheaper_and_restart_cold() {
+    let source = Source::parse(INPUT, TOL).unwrap();
+    // A record with a list of at least two numbers, and its second number.
+    let (id, value) = source
+        .entities
+        .iter()
+        .find_map(|(&id, parts)| {
+            parts[0].args.iter().find_map(|arg| match arg {
+                Value::List(items)
+                    if items.len() >= 2 && items.iter().all(|v| matches!(v, Value::Number(_))) =>
+                {
+                    Some((id, &items[1]))
+                }
+                _ => None,
+            })
+        })
+        .unwrap();
+    let cost = |source: &Source<'_>| {
+        let mut b = Budget::new(1_000_000, None);
+        let token = spelling(source, id, value, &mut b).unwrap().to_owned();
+        (token, b.used())
+    };
+    // Off by default: every lookup costs the same.
+    let (token, first) = cost(&source);
+    assert_eq!(cost(&source), (token.clone(), first));
+    // On: the first lookup builds the table, later ones are cheaper and
+    // return the same original spelling.
+    source.cache_spellings();
+    let (cached, building) = cost(&source);
+    assert_eq!(cached, token);
+    assert!(building >= first);
+    let (again, hit) = cost(&source);
+    assert_eq!(again, token);
+    assert!(hit < first, "{hit} {first}");
+    // A leaf is never answered for a record that does not own it.
+    let other = *source.entities.keys().find(|&&k| k != id).unwrap();
+    let mut b = Budget::new(1_000_000, None);
+    assert!(spelling(&source, other, value, &mut b).is_err());
+    // Restarting the cache repeats the first run's work exactly.
+    source.cache_spellings();
+    assert_eq!(cost(&source).1, building);
+}
