@@ -35,7 +35,16 @@ pub(super) fn meridian(revolution: &Revolution) -> Option<&[[f64; 2]]> {
 
 /// Whether this revolution is a single disk-to-disk conical frustum.
 pub fn supports_conical_frustum(revolution: &Revolution, tolerance: f64) -> bool {
-    conical_meridian(revolution, tolerance).is_some_and(|ring| ring.len() == 4)
+    conical_meridian(revolution, tolerance).is_some_and(|ring| {
+        ring.len() == 4 && ring.iter().filter(|p| p[0] == 0.).count() == 2 && {
+            let bottom = ring
+                .iter()
+                .position(|p| p[0] == 0. && ring.iter().all(|q| q[0] != 0. || q[1] >= p[1]))
+                .expect("an axis point");
+            ring[bottom][1] == ring[(bottom + 1) % 4][1]
+                && ring[(bottom + 3) % 4][1] == ring[(bottom + 2) % 4][1]
+        }
+    })
 }
 
 /// Whether the meridian is a disk-ended sequence of coaxial round sections
@@ -49,7 +58,7 @@ pub(super) fn conical_meridian(revolution: &Revolution, tolerance: f64) -> Optio
         return None;
     };
     if !revolution.is_full()
-        || !(4..=18).contains(&ring.len())
+        || !(3..=18).contains(&ring.len())
         || !tolerance.is_finite()
         || tolerance < 0.
     {
@@ -62,14 +71,20 @@ pub(super) fn conical_meridian(revolution: &Revolution, tolerance: f64) -> Optio
         .min_by(|(_, a), (_, b)| a[1].total_cmp(&b[1]))?;
     let at = |i| ring[(bottom + i) % ring.len()];
     let top = at(ring.len() - 1);
+    // Each axis end is a flat disk or a pointed apex: a conical wall rising
+    // from the bottom point, or rising into the top point, by more than the
+    // tolerance.
+    let bottom_apex = at(1)[1] - at(0)[1] > tolerance;
+    let top_apex = top[1] - at(ring.len() - 2)[1] > tolerance;
     if top[0] != 0.
-        || at(0)[1] != at(1)[1]
-        || top[1] != at(ring.len() - 2)[1]
+        || (at(0)[1] != at(1)[1] && !bottom_apex)
+        || (top[1] != at(ring.len() - 2)[1] && !top_apex)
+        || (ring.len() == 3 && !(bottom_apex || top_apex))
         || (1..ring.len() - 1).any(|i| at(i)[0] <= tolerance)
     {
         return None;
     }
-    let mut has_cone = false;
+    let mut has_cone = bottom_apex || top_apex;
     for i in 1..ring.len() - 2 {
         let [a, low] = at(i);
         let [b, high] = at(i + 1);
@@ -133,6 +148,28 @@ pub(super) fn encode(
                     outward,
                 )?);
             }
+        } else if let (Some(rim), true) = (first.or(last), a[1] != b[1]) {
+            // A conical wall meeting the axis: the rim circle and the apex
+            // as a vertex loop, like a sphere pole. The cone's axis points
+            // from the apex toward the rim.
+            let apex_level = if first.is_none() { a[1] } else { b[1] };
+            let rim_level = if first.is_none() { b[1] } else { a[1] };
+            let toward_rim = if rim_level > apex_level { 1. } else { -1. };
+            let apex_point = placement.point_f64([0.; 2], apex_level);
+            let apex = file.point(apex_point);
+            let axis_entity = file.axis(apex, axis.map(|n| toward_rim * n), reference);
+            let semi_angle = rim.radius.atan2((rim_level - apex_level).abs());
+            let surface = file.entity(format_args!(
+                "CONICAL_SURFACE('',{axis_entity},0.0000000000000000E+00,{semi_angle:.16E})"
+            ));
+            // Material lies inside the meridian ring, so the wall's outward
+            // side runs with the circle when the rim is the upper end.
+            let outward = rim_level > apex_level;
+            let vertex = file.vertex(apex_point).vertex;
+            let loop_id = file.entity(format_args!("VERTEX_LOOP('',{vertex})"));
+            let pole = file.entity(format_args!("FACE_BOUND('',{loop_id},.T.)"));
+            let bounds = [circular_bound(file, rim.edge, !outward, true), pole];
+            faces.push(file.face_on(&bounds, surface, true));
         } else if first.is_some() || last.is_some() {
             let up = a[0] > b[0];
             let (outer, inner) = if up { (first, last) } else { (last, first) };
@@ -366,5 +403,56 @@ mod conical_tests {
             let expected = 20. * PI / 3. * (r0 * r0 + r0 * r1 + r1 * r1);
             assert!((readback.volume_mm3 - expected).abs() < 1e-7);
         }
+    }
+
+    #[test]
+    fn pointed_cones_keep_their_apex_as_a_vertex_loop_and_read_back_exactly() {
+        let [origin, u, v] = [[13., -7., 20.], [1., 0., 0.], [0., 0.6, 0.8]];
+        for (ring, faces, cones, volume) in [
+            // Apex on top, flat base.
+            (vec![[0., 0.], [3., 0.], [0., 5.]], 2, 1, PI * 9. * 5. / 3.),
+            // Apex at the bottom, flat top.
+            (vec![[0., 0.], [3., 5.], [0., 5.]], 2, 1, PI * 9. * 5. / 3.),
+            // A cylinder ending in a point is not a frustum.
+            (
+                vec![[0., 0.], [3., 0.], [3., 2.], [0., 6.]],
+                3,
+                1,
+                PI * 9. * 2. + PI * 9. * 4. / 3.,
+            ),
+            // Two apexes share one rim.
+            (vec![[0., 0.], [2., 3.], [0., 7.]], 2, 2, PI * 4. * 7. / 3.),
+        ] {
+            let geometry = Revolution::new(vec![ring.clone()], TAU).unwrap();
+            assert!(supports_conical_revolution(&geometry, 1e-7));
+            assert!(!supports_conical_frustum(&geometry, 1e-7));
+            assert!(!supports_cylindrical_revolution(&geometry));
+            let mut writer = Writer::new();
+            writer
+                .append_conical_revolution(&geometry, origin, u, v, 1e-7)
+                .unwrap();
+            let text = writer.finish().unwrap();
+            assert_eq!(text.matches("=CONICAL_SURFACE(").count(), cones);
+            assert_eq!(
+                text.matches("=VERTEX_LOOP(").count(),
+                ring.iter().filter(|p| p[0] == 0.).count() + cones - 2
+            );
+            // The analytic families keep flat disk caps; the retained
+            // boundary reads the apex face as stated.
+            assert!(read_import_solid(&text, 1e-7).is_err());
+            let [solid] = crate::step_read::brep::read_solids(&text, 1e-7, None)
+                .unwrap()
+                .try_into()
+                .unwrap();
+            assert_eq!(solid.faces().len(), faces, "{ring:?}");
+            assert!(
+                (solid.volume_mm3() - volume).abs() <= 1e-7 + solid.volume_error_mm3(),
+                "{ring:?} {} {volume}",
+                solid.volume_mm3()
+            );
+        }
+        // An apex rising by no more than the tolerance is refused.
+        let flat = Revolution::new(vec![vec![[0., 0.], [3., 0.], [0., 1e-8]]], TAU).unwrap();
+        assert!(!supports_conical_revolution(&flat, 1e-7));
     }
 }
