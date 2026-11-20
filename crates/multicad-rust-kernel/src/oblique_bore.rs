@@ -437,8 +437,14 @@ impl Arrangement {
                 let along = (c.station(s[2]) - travel) / w[m];
                 found.push((mix(start, along, unit(m)), None));
             } else {
-                // The cap plane is parallel to this stock edge line.
-                self.resolved &= (travel - c.station(s[2])).abs() > c.resolution;
+                // The cap plane is parallel to this stock edge line. Even in
+                // that plane the line meets no point of the finite cap when
+                // its closest approach to the axis clears the cap radius.
+                let lead = e1[m] * e1[m] + e2[m] * e2[m];
+                let near = -(x * e1[m] + y * e2[m]) / lead;
+                let reach = (x + near * e1[m]).hypot(y + near * e2[m]);
+                self.resolved &= (travel - c.station(s[2])).abs() > c.resolution
+                    || reach - c.radius > c.resolution;
             }
         } else if planes == 1 && s[2] == WALL {
             for angle in self.wall_angles(s[0], s[1]) {
