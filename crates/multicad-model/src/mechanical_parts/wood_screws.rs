@@ -72,6 +72,10 @@ fn cached(key: &str, feature: EntityId) -> Option<Solid> {
     })
 }
 fn remember(key: String, feature: EntityId, solid: &Solid) {
+    // Rust solids rebuild exactly and are not retained as native text.
+    if solid.uses_rust_geometry() {
+        return;
+    }
     let Ok(owned) = solid.rebind_exclusive_owner(feature, feature) else {
         return;
     };

@@ -3403,11 +3403,6 @@ impl Solid {
     /// text goes through the strict Rust reader with fresh identity, and
     /// anything else is read as OCCT BRep text.
     pub fn from_exact_text(text: &str, policy: GeometryPolicy) -> Result<Self, GeometryError> {
-        if text.starts_with("ISO-10303-21;") {
-            policy.validate()?;
-            return Self::import_rust_step(text, EntityId::new(), policy)?
-                .without_authored_provenance();
-        }
         Self::from_brep(text, policy)
     }
 
@@ -3622,8 +3617,28 @@ impl Solid {
         }
     }
 
-    /// Every solid in a STEP file as (representation name, exact BRep text).
+    /// Every solid in a STEP file as (representation name, exact shape
+    /// text). With OpenCascade this is OCCT BRep text; the Rust kernel reads
+    /// the file with its strict reader and gives each independent solid as
+    /// its own Rust STEP text at its stated placement.
     pub fn step_solids(path: &Path) -> Result<Vec<(String, String)>, GeometryError> {
+        if !crate::OCCT_LINKED {
+            let solid = Self::read_rust_step_file(path, GeometryPolicy::default())?;
+            let members: Vec<&Self> = match solid.rust_compound() {
+                Some(compound) => compound.members().collect(),
+                None => vec![&solid],
+            };
+            return members
+                .into_iter()
+                .enumerate()
+                .map(|(index, member)| {
+                    Ok((
+                        format!("Solid {}", index + 1),
+                        member.rust_step_text("read STEP")?,
+                    ))
+                })
+                .collect();
+        }
         let path = crate::step_path(path).map_err(|e| input(e.to_string()))?;
         Ok(ffi::step_solids(path)
             .map_err(|e| native("read STEP", e))?
@@ -3631,8 +3646,12 @@ impl Solid {
             .map(|s| (s.name, s.brep))
             .collect())
     }
-    /// The exact shape as OCCT BRep text.
+    /// The exact shape as text [`Solid::from_brep`] reads back: OCCT BRep
+    /// text for an OCCT shape, otherwise the Rust kernel's STEP encoding.
     pub fn to_brep(&self) -> Result<String, GeometryError> {
+        if !matches!(self.body, SolidBody::Occt(_)) {
+            return self.rust_step_text("write BRep");
+        }
         ffi::shape_to_brep(self.occt()?).map_err(|e| native("write BRep", e))
     }
     /// Lossless native BRep representation digest for exact proof-cache keys.
@@ -3651,9 +3670,15 @@ impl Solid {
             .map_err(|e| native("binary geometry digest", e))?;
         Ok(multicad_core::project_file::ContentHash::of(&bytes))
     }
-    /// Rebuild an exact shape from OCCT BRep text.
+    /// Rebuild an exact shape from [`Solid::to_brep`] text: Rust STEP text
+    /// goes through the strict Rust reader with fresh identity, and anything
+    /// else is read as OCCT BRep text.
     pub fn from_brep(text: &str, policy: GeometryPolicy) -> Result<Self, GeometryError> {
         policy.validate()?;
+        if text.starts_with("ISO-10303-21;") {
+            return Self::import_rust_step(text, EntityId::new(), policy)?
+                .without_authored_provenance();
+        }
         Self::adopt(
             ffi::shape_from_brep(text).map_err(|e| native("read BRep", e))?,
             policy,
