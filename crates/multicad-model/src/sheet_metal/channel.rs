@@ -12,6 +12,27 @@ pub(super) const WEB_A: &str = "sheet.web/cap.start";
 pub(super) const WEB_B: &str = "sheet.web/cap.end";
 const UNSUPPORTED: &str = "Rust formed sheet requires one full-length bend or two opposite full-length bends without reliefs";
 
+/// Whether the sheet has one continuous cross-section: one plain bend, or
+/// two on opposite edges, each running the full edge without reliefs.
+pub(super) fn fits(layout: &SheetLayout) -> bool {
+    let plain = layout.flanges.iter().all(|flange| {
+        let f = &flange.flange;
+        f.start_inset_mm == 0.
+            && f.end_inset_mm == 0.
+            && f.relief_mm.is_none()
+            && matches!(
+                f.segments.as_slice(),
+                [StripSegment::Bend { .. }, StripSegment::Straight { .. }]
+            )
+    });
+    plain
+        && match layout.flanges.as_slice() {
+            [_] => true,
+            [first, second] => first.flange.edge.abs_diff(second.flange.edge) == 2,
+            _ => false,
+        }
+}
+
 pub(super) fn build(
     layout: &mut SheetLayout,
     section_width_mm: f64,

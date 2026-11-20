@@ -1,28 +1,29 @@
-//! Inset flanges change the section along their span. Join their exact
-//! root boundaries to one relieved web rather than fusing display solids.
+//! Inset, adjacent, multi-bend and hemmed flanges, and polygon bases, do not
+//! share one cross-section. Join each flange's exact root boundary to one
+//! relieved web rather than fusing display solids.
 use super::*;
 use crate::sheet_forming::{FlatFrame, section, shape_edges};
 use multicad_core::references::{AnchoredFrame, ReferenceFrame};
 use multicad_kernel::rust_kernel::{
     normal_sweep::{Edge, signed_area},
-    warped_union::{SheetFlange, SheetFlangeOpening, SheetWebEdge, formed_sheet_with_openings},
+    warped_union::{SheetFlange, SheetFlangeOpening, SheetWebEdge, formed_sheet_with_overhangs},
 };
 use std::collections::BTreeMap;
 
-pub(super) fn build(layout: &mut SheetLayout, policy: GeometryPolicy) -> Result<Solid, String> {
+pub(super) fn build(
+    layout: &mut SheetLayout,
+    base_origins: &[Origin],
+    policy: GeometryPolicy,
+) -> Result<Solid, String> {
     let thickness = layout.thickness_mm;
     let count = layout.flanges.len();
-    if !(1..=4).contains(&count)
-        || layout.flanges.iter().any(|f| {
-            !matches!(
-                f.flange.segments.as_slice(),
-                [StripSegment::Bend { .. }, StripSegment::Straight { .. }]
-            )
-        })
-    {
-        return Err(
-            "Rust inset formed sheet supports up to four flanges with one bend each".into(),
-        );
+    if !(1..=4).contains(&count) {
+        return Err("Rust formed sheet supports up to four flanges".into());
+    }
+    let edge_count =
+        layout.base.outer.len() + layout.base.holes.iter().map(Vec::len).sum::<usize>();
+    if base_origins.len() != edge_count {
+        return Err("Rust formed sheet needs one authored origin per base edge".into());
     }
     let mut origins = Vec::new();
     let feature = layout.forming_feature;
@@ -36,10 +37,13 @@ pub(super) fn build(layout: &mut SheetLayout, policy: GeometryPolicy) -> Result<
     };
     let mut outer = Vec::new();
     let mut developed = Vec::new();
-    for (index, edge) in layout.base.outer.iter().enumerate() {
+    let web = folded_web(layout)?;
+    let mut overhangs = vec![[0.; 2]; count];
+    for (index, (edge, web)) in layout.base.outer.iter().zip(web).enumerate() {
         let CurvedEdge2d::Line { a, b } = *edge else {
-            return Err("Inset formed sheet needs straight web edges".into());
+            unreachable!("folded_web refuses curved base edges")
         };
+        let base_origin = &base_origins[index];
         let Some((hinge, f)) = layout
             .flanges
             .iter()
@@ -47,20 +51,22 @@ pub(super) fn build(layout: &mut SheetLayout, policy: GeometryPolicy) -> Result<
             .find(|(_, f)| f.flange.edge == index)
         else {
             outer.push(SheetWebEdge {
-                ends: [a, b],
-                source: source(authored(format!("sheet.base.edge.{index}"))),
+                ends: [web.points[0], web.points[1]],
+                source: source(base_origin.clone()),
                 flange: None,
             });
             developed.push(PlanarEdge::Line { a, b });
             continue;
         };
-        let points = edge_points(f, a, b, 0.)?;
-        let root = [point(f, 0., 0.), point(f, f.width, 0.)];
-        for (i, pair) in points.windows(2).enumerate() {
+        overhangs[hinge] = web.overhang;
+        for (i, pair) in web.points.windows(2).enumerate() {
             outer.push(SheetWebEdge {
                 ends: [pair[0], pair[1]],
-                source: source(authored(format!("sheet.base.edge.{index}.segment.{i}"))),
-                flange: (pair == root).then_some(hinge),
+                source: source(Origin {
+                    source: base_origin.source,
+                    role: format!("{}.segment.{i}", base_origin.role),
+                }),
+                flange: (Some(i) == web.hinge).then_some(hinge),
             });
         }
         let extension = f.flange.developed_mm(thickness, layout.k_factor);
@@ -71,11 +77,26 @@ pub(super) fn build(layout: &mut SheetLayout, policy: GeometryPolicy) -> Result<
             }
         }));
     }
+    let refusal = crossing(&developed).then(|| {
+        "The developed flanges overlap each other or the base in the flat pattern".to_string()
+    });
     let mut loops = vec![PlanarLoop {
         outer: true,
         edges: developed,
     }];
     let mut holes = Vec::new();
+    let mut hole_origins = base_origins[layout.base.outer.len()..].iter();
+    for hole in &layout.base.holes {
+        let ring = hole
+            .iter()
+            .map(|edge| {
+                let origin = hole_origins.next().expect("counted base origins").clone();
+                Ok((profile_edge(edge)?, source(origin)))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        holes.push(oriented(ring, false));
+        loops.push(channel::developed_hole(hole)?);
+    }
     let mut flange_cuts: Vec<Vec<Opening>> = (0..count).map(|_| Vec::new()).collect();
     let flange_index = |index| {
         layout
@@ -101,7 +122,13 @@ pub(super) fn build(layout: &mut SheetLayout, policy: GeometryPolicy) -> Result<
             })
             .collect::<Result<Vec<_>, String>>()?;
         match cut.face {
-            CutoutFace::Base => holes.push(oriented(ring, false)),
+            CutoutFace::Base => {
+                let web: Vec<_> = outer.iter().map(|edge| edge.ends).collect();
+                if !inside(&outline, &web, policy.minimum_feature_mm) {
+                    return Err(format!("{name} is not fully inside its face"));
+                }
+                holes.push(oriented(ring, false))
+            }
             CutoutFace::Flange { index } => {
                 flange_cuts[flange_index(index)?].push(Opening::new(layout, cut.face, ring)?)
             }
@@ -208,12 +235,13 @@ pub(super) fn build(layout: &mut SheetLayout, policy: GeometryPolicy) -> Result<
         .map(|(_, _, cuts)| cuts.as_slice())
         .collect();
     let web_caps = [channel::WEB_A, channel::WEB_B].map(|role| source(authored(role.into())));
-    let shell = formed_sheet_with_openings(
+    let shell = formed_sheet_with_overhangs(
         &outer,
         &holes,
         web_caps,
         &flanges,
         &openings,
+        &overhangs,
         thickness.copysign(thickness_side),
         policy.linear_tolerance_mm,
         policy.minimum_feature_mm,
@@ -238,8 +266,266 @@ pub(super) fn build(layout: &mut SheetLayout, policy: GeometryPolicy) -> Result<
         loops,
     };
     contours.validate(policy.linear_tolerance_mm)?;
-    layout.developed = Some(contours);
+    match refusal {
+        Some(refusal) => layout.developed_refusal = Some(refusal),
+        None => layout.developed = Some(contours),
+    }
     Ok(solid)
+}
+
+/// Whether a closed polyline touches or crosses itself away from the shared
+/// ends of consecutive edges. The developed outline of flanges spliced into
+/// their base edges is simple exactly when no developed region overlaps
+/// another or the base.
+fn crossing(outline: &[PlanarEdge]) -> bool {
+    let segments: Vec<_> = outline
+        .iter()
+        .map(|edge| match *edge {
+            PlanarEdge::Line { a, b } => Some([a, b]),
+            PlanarEdge::Arc { .. } => None,
+        })
+        .collect();
+    let Some(segments) = segments.into_iter().collect::<Option<Vec<_>>>() else {
+        return false;
+    };
+    let n = segments.len();
+    (0..n).any(|i| {
+        (i + 1..n).any(|j| {
+            let adjacent = j == i + 1 || (i == 0 && j == n - 1);
+            let [p, q] = segments[i];
+            let [r, s] = segments[j];
+            if adjacent {
+                // Consecutive edges meet at one end; they may not fold back.
+                let shared = if j == i + 1 { (q, p, s) } else { (p, q, r) };
+                let (corner, back, next) = shared;
+                let u = [back[0] - corner[0], back[1] - corner[1]];
+                let v = [next[0] - corner[0], next[1] - corner[1]];
+                return (u[0] * v[1] - u[1] * v[0]).abs()
+                    <= 1e-9 * u[0].hypot(u[1]) * v[0].hypot(v[1])
+                    && u[0] * v[0] + u[1] * v[1] > 0.;
+            }
+            segments_meet(p, q, r, s)
+        })
+    })
+}
+
+/// Whether a line or circle outline lies strictly inside a web polygon,
+/// clear of its boundary by at least `clearance`.
+fn inside(outline: &[CurvedEdge2d], web: &[[[f64; 2]; 2]], clearance: f64) -> bool {
+    let contains = |p: [f64; 2]| {
+        web.iter()
+            .filter(|[a, b]| (a[1] > p[1]) != (b[1] > p[1]))
+            .filter(|[a, b]| p[0] < a[0] + (p[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]))
+            .count()
+            % 2
+            == 1
+    };
+    let distance = |p: [f64; 2], [a, b]: [[f64; 2]; 2]| {
+        let d = [b[0] - a[0], b[1] - a[1]];
+        let t = (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / (d[0] * d[0] + d[1] * d[1]))
+            .clamp(0., 1.);
+        (p[0] - a[0] - t * d[0]).hypot(p[1] - a[1] - t * d[1])
+    };
+    outline.iter().all(|edge| match *edge {
+        CurvedEdge2d::Circle { center, radius_mm } => {
+            contains(center)
+                && web
+                    .iter()
+                    .all(|&side| distance(center, side) > radius_mm + clearance)
+        }
+        CurvedEdge2d::Line { a, b } => {
+            contains(a)
+                && web.iter().all(|&[p, q]| {
+                    !segments_meet(a, b, p, q)
+                        && distance(a, [p, q]) > clearance
+                        && distance(p, [a, b]) > clearance
+                })
+        }
+        // Arcs only come from authored sketch profiles, which the kernel
+        // checks against the web itself.
+        _ => true,
+    })
+}
+
+fn segments_meet(p: [f64; 2], q: [f64; 2], r: [f64; 2], s: [f64; 2]) -> bool {
+    let orient = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| {
+        (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    };
+    let within = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| {
+        c[0] >= a[0].min(b[0]) - 1e-9
+            && c[0] <= a[0].max(b[0]) + 1e-9
+            && c[1] >= a[1].min(b[1]) - 1e-9
+            && c[1] <= a[1].max(b[1]) + 1e-9
+    };
+    let scale = [p, q, r, s]
+        .iter()
+        .flatten()
+        .fold(1f64, |m, v| m.max(v.abs()));
+    let eps = 1e-12 * scale * scale;
+    let [d1, d2, d3, d4] = [
+        orient(r, s, p),
+        orient(r, s, q),
+        orient(p, q, r),
+        orient(p, q, s),
+    ];
+    if ((d1 > eps && d2 < -eps) || (d1 < -eps && d2 > eps))
+        && ((d3 > eps && d4 < -eps) || (d3 < -eps && d4 > eps))
+    {
+        return true;
+    }
+    (d1.abs() <= eps && within(r, s, p))
+        || (d2.abs() <= eps && within(r, s, q))
+        || (d3.abs() <= eps && within(p, q, r))
+        || (d4.abs() <= eps && within(p, q, s))
+}
+
+/// One base edge of the folded web: its points, the segment welded to its
+/// flange root, and how far that root runs past the weld at each end.
+struct WebEdge {
+    points: Vec<[f64; 2]>,
+    hinge: Option<usize>,
+    overhang: [f64; 2],
+}
+
+/// The folded web outline. A relief as wide as its inset reaches the corner;
+/// at a right-angled corner its inward side then runs along the neighboring
+/// edge, which the web loses for the relief depth. A neighboring flange keeps
+/// its full root there, as an exposed face beside the relief.
+fn folded_web(layout: &SheetLayout) -> Result<Vec<WebEdge>, String> {
+    const TOLERANCE: f64 = 1e-6;
+    let edges = layout
+        .base
+        .outer
+        .iter()
+        .map(|edge| match *edge {
+            CurvedEdge2d::Line { a, b } => Ok((a, b)),
+            _ => Err("Rust formed sheet needs straight base edges".to_string()),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let n = edges.len();
+    let flange = |index: usize| layout.flanges.iter().find(|f| f.flange.edge == index);
+    let direction = |index: usize| {
+        let (a, b) = edges[index];
+        let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+        ([(b[0] - a[0]) / length, (b[1] - a[1]) / length], length)
+    };
+    // Depth of a corner-flush relief on `index` at its start or end corner,
+    // when it runs along the neighbor across that corner.
+    let flush = |index: usize, end: bool| -> Option<f64> {
+        let f = flange(index)?;
+        let inset = if end {
+            f.flange.end_inset_mm
+        } else {
+            f.flange.start_inset_mm
+        };
+        let [w, depth] = f.flange.relief_mm?;
+        let neighbor = if end {
+            (index + 1) % n
+        } else {
+            (index + n - 1) % n
+        };
+        let (along, _) = direction(neighbor);
+        let toward = if end { [-along[0], -along[1]] } else { along };
+        let square = (f.outward[0] * toward[0] + f.outward[1] * toward[1] - 1.).abs() < 1e-9;
+        (inset > TOLERANCE && (w - inset).abs() <= TOLERANCE && square && n > 1).then_some(depth)
+    };
+    (0..n)
+        .map(|index| {
+            let (a, _) = edges[index];
+            let (along, length) = direction(index);
+            let clip = [flush((index + n - 1) % n, true), flush((index + 1) % n, false)]
+                .map(|depth| depth.unwrap_or(0.));
+            if clip[0] + clip[1] >= length - TOLERANCE {
+                return Err(format!(
+                    "The inset formed sheet boundary cannot be certified: corner reliefs remove all of base edge {}",
+                    index + 1
+                ));
+            }
+            let at = |s: f64, q: f64| -> [f64; 2] {
+                let outward = [along[1], -along[0]];
+                std::array::from_fn(|i| a[i] + along[i] * s + outward[i] * q)
+            };
+            let Some(f) = flange(index) else {
+                return Ok(WebEdge {
+                    points: vec![at(clip[0], 0.), at(length - clip[1], 0.)],
+                    hinge: None,
+                    overhang: [0.; 2],
+                });
+            };
+            let outward = [along[1], -along[0]];
+            let sign = f.outward[0] * outward[0] + f.outward[1] * outward[1];
+            let at = |s: f64, q: f64| at(s, q * sign);
+            let relief = f.flange.relief_mm;
+            let insets = [f.flange.start_inset_mm, length - f.flange.end_inset_mm];
+            let own_flush = [flush(index, false).is_some(), flush(index, true).is_some()];
+            let mut points = Vec::new();
+            let mut overhang = [0.; 2];
+            if !own_flush[0] {
+                points.push(at(clip[0], 0.));
+            }
+            // Start corner: own relief notch, or a root that begins inside the
+            // neighbor's notch.
+            let root_start = match relief {
+                Some([w, depth]) if f.flange.start_inset_mm > TOLERANCE => {
+                    if clip[0] > 0. && insets[0] - w < clip[0] + TOLERANCE {
+                        return Err(overlap(index));
+                    }
+                    if !own_flush[0] {
+                        points.push(at(insets[0] - w, 0.));
+                    }
+                    points.extend([at(insets[0] - w, -depth), at(insets[0], -depth)]);
+                    insets[0]
+                }
+                _ if insets[0] > clip[0] + TOLERANCE => insets[0],
+                _ => {
+                    overhang[0] = clip[0] - insets[0];
+                    clip[0]
+                }
+            };
+            let limit = length - clip[1];
+            let root_end = match relief {
+                Some(_) if f.flange.end_inset_mm > TOLERANCE => insets[1],
+                _ if insets[1] < limit - TOLERANCE => insets[1],
+                _ => {
+                    overhang[1] = insets[1] - limit;
+                    limit
+                }
+            };
+            if root_end - root_start <= TOLERANCE {
+                return Err(overlap(index));
+            }
+            let root = [at(root_start, 0.), at(root_end, 0.)];
+            points.extend(root);
+            if let Some([w, depth]) = relief
+                && f.flange.end_inset_mm > TOLERANCE
+            {
+                if clip[1] > 0. && insets[1] + w > limit - TOLERANCE {
+                    return Err(overlap(index));
+                }
+                points.extend([at(insets[1], -depth), at(insets[1] + w, -depth)]);
+                if !own_flush[1] {
+                    points.push(at(insets[1] + w, 0.));
+                }
+            }
+            if !own_flush[1] {
+                points.push(at(limit, 0.));
+            }
+            points.dedup_by(|p, q| (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-9);
+            let hinge = points.windows(2).position(|pair| pair == root);
+            Ok(WebEdge {
+                points,
+                hinge,
+                overhang,
+            })
+        })
+        .collect()
+}
+
+fn overlap(index: usize) -> String {
+    format!(
+        "The inset formed sheet boundary cannot be certified: corner reliefs overlap beside base edge {}",
+        index + 1
+    )
 }
 
 type Ring = Vec<(Edge, usize)>;
@@ -361,4 +647,85 @@ pub(super) fn edge_points(
     points.push(b);
     points.dedup_by(|p, q| (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-9);
     Ok(points)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn outline(points: &[[f64; 2]]) -> Vec<PlanarEdge> {
+        (0..points.len())
+            .map(|i| PlanarEdge::Line {
+                a: points[i],
+                b: points[(i + 1) % points.len()],
+            })
+            .collect()
+    }
+
+    #[test]
+    fn developed_outlines_cross_only_where_regions_overlap() {
+        // A relief notch beside a full developed flange stays simple.
+        let notched = [
+            [0., 0.],
+            [0., -5.],
+            [10., -5.],
+            [10., 0.],
+            [9., 0.],
+            [9., 1.5],
+            [10., 1.5],
+            [10., 8.],
+            [0., 8.],
+        ];
+        assert!(!crossing(&outline(&notched)));
+        // Two developed legs folded into a notch reach past each other.
+        let overlapping = [
+            [0., 0.],
+            [12., 0.],
+            [12., 10.],
+            [9., 10.],
+            [9., 4.],
+            [5., 4.],
+            [5., 9.],
+            [7., 9.],
+            [7., 3.],
+            [3., 3.],
+            [3., 10.],
+            [0., 10.],
+        ];
+        assert!(crossing(&outline(&overlapping)));
+        // Consecutive edges folding back onto each other touch.
+        assert!(crossing(&outline(&[
+            [0., 0.],
+            [4., 0.],
+            [2., 0.],
+            [2., 2.]
+        ])));
+    }
+
+    #[test]
+    fn base_openings_must_clear_the_folded_web_boundary() {
+        let web = [[0., 0.], [10., 0.], [10., 8.], [0., 8.]];
+        let web: Vec<_> = (0..4).map(|i| [web[i], web[(i + 1) % 4]]).collect();
+        let circle = |x: f64, r: f64| {
+            vec![CurvedEdge2d::Circle {
+                center: [x, 4.],
+                radius_mm: r,
+            }]
+        };
+        assert!(inside(&circle(5., 2.), &web, 1e-5));
+        assert!(!inside(&circle(1., 2.), &web, 1e-5));
+        assert!(!inside(&circle(12., 1.), &web, 1e-5));
+        let square = |x: f64| {
+            let p = [[x, 3.], [x + 2., 3.], [x + 2., 5.], [x, 5.]];
+            (0..4)
+                .map(|i| CurvedEdge2d::Line {
+                    a: p[i],
+                    b: p[(i + 1) % 4],
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(inside(&square(4.), &web, 1e-5));
+        assert!(!inside(&square(9.), &web, 1e-5));
+        assert!(!inside(&square(8.), &web, 1e-5));
+    }
 }

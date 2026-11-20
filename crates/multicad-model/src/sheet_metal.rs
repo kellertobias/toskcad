@@ -61,18 +61,13 @@ pub struct SheetLayout {
     pub patterns: Vec<model::ResolvedPattern>,
     pub(crate) profile_cuts: Vec<profile_cut::ProfileCut>,
     pub(crate) developed: Option<PlanarContours>,
+    /// Why a certified folded solid has no valid flat pattern.
+    pub(crate) developed_refusal: Option<String>,
     rust_base_origins: Option<Vec<Origin>>,
 }
 impl SheetLayout {
     pub(crate) fn space(&self) -> SheetSpace {
         self.space_inner()
-    }
-    fn has_inset_flanges(&self) -> bool {
-        self.flanges.iter().any(|flange| {
-            flange.flange.start_inset_mm > 0.
-                || flange.flange.end_inset_mm > 0.
-                || flange.flange.relief_mm.is_some()
-        })
     }
     fn space_inner(&self) -> SheetSpace {
         SheetSpace {
@@ -212,27 +207,29 @@ pub(crate) fn build(
         patterns: sheet.patterns.clone(),
         profile_cuts: vec![],
         developed: None,
+        developed_refusal: None,
         rust_base_origins: None,
     };
     if backend == GeometryBackend::Rust {
         if let Some(flange) = layout.flanges.first() {
-            let ResolvedBase::Rectangle {
-                length_mm,
-                width_mm,
-                ..
-            } = sheet.base
-            else {
-                return Err(m("Rust formed sheet requires a rectangular base".into()));
-            };
-            let section_width = if flange.flange.edge % 2 == 0 {
-                width_mm
-            } else {
-                length_mm
-            };
-            let solid = if layout.has_inset_flanges() {
-                inset::build(&mut layout, policy)
-            } else {
-                channel::build(&mut layout, section_width, policy)
+            if let Some(touch) = touching_roots(&layout.flanges) {
+                return Err(m(touch));
+            }
+            layout.rust_base_origins = Some(origins.clone());
+            let solid = match sheet.base {
+                ResolvedBase::Rectangle {
+                    length_mm,
+                    width_mm,
+                    ..
+                } if channel::fits(&layout) => {
+                    let section_width = if flange.flange.edge % 2 == 0 {
+                        width_mm
+                    } else {
+                        length_mm
+                    };
+                    channel::build(&mut layout, section_width, policy)
+                }
+                _ => inset::build(&mut layout, &origins, policy),
             }
             .map_err(m)?;
             return Ok((solid, layout));
@@ -303,6 +300,34 @@ pub(crate) fn build(
         return Err(m("The sheet part falls apart into separate pieces".into()));
     }
     Ok((solid, layout))
+}
+
+/// Two flanges whose roots share an end touch along the web's corner edge.
+fn touching_roots(flanges: &[PlacedFlange]) -> Option<String> {
+    let ends = |f: &PlacedFlange| {
+        [0., f.width].map(|s| std::array::from_fn::<f64, 2, _>(|i| f.start[i] + f.along[i] * s))
+    };
+    flanges.iter().enumerate().find_map(|(i, a)| {
+        flanges[i + 1..].iter().find_map(|b| {
+            let touch = ends(a).into_iter().any(|p| {
+                ends(b)
+                    .into_iter()
+                    .any(|q| (p[0] - q[0]).hypot(p[1] - q[1]) <= TOLERANCE_MM)
+            });
+            let [first, second] = {
+                let mut pair = [a.flange.index, b.flange.index];
+                pair.sort_unstable();
+                pair
+            };
+            touch.then(|| {
+                format!(
+                    "Flanges {} and {} touch at a corner or seam; increase their insets",
+                    first + 1,
+                    second + 1
+                )
+            })
+        })
+    })
 }
 
 fn rebuild_rust_flat(
@@ -534,6 +559,9 @@ pub(crate) fn flat_contours(
     layout: &SheetLayout,
     policy: GeometryPolicy,
 ) -> Result<PlanarContours, String> {
+    if let Some(refusal) = &layout.developed_refusal {
+        return Err(refusal.clone());
+    }
     if let Some(contours) = &layout.developed {
         return Ok(contours.clone());
     }
