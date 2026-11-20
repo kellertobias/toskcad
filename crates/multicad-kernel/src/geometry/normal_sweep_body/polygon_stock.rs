@@ -146,3 +146,47 @@ impl Solid {
         })
     }
 }
+
+impl Solid {
+    /// The section rings, with each edge's authored origin, of a plain
+    /// normal sweep: the outer ring first and then the holes, in the sweep's
+    /// normalized orientation. Also the frame, signed height and feature.
+    pub(in crate::geometry) fn normal_sweep_section(
+        &self,
+    ) -> Option<(PlaneFrame, f64, EntityId, Vec<Vec<(CurvedEdge2d, Origin)>>)> {
+        let (body, frame) = self.normal_sweep_body()?;
+        if !body.plain() {
+            return None;
+        }
+        let rings = body
+            .rings
+            .iter()
+            .map(|range| {
+                body.sides[range.clone()]
+                    .iter()
+                    .map(|side| {
+                        let edge = match side.edge {
+                            Edge::Line { a, b } => CurvedEdge2d::Line { a, b },
+                            Edge::Arc {
+                                center,
+                                a,
+                                b,
+                                clockwise,
+                            } => CurvedEdge2d::Arc {
+                                center,
+                                a,
+                                b,
+                                clockwise,
+                            },
+                            Edge::Circle {
+                                center, radius_mm, ..
+                            } => CurvedEdge2d::Circle { center, radius_mm },
+                        };
+                        (edge, side.origin.clone())
+                    })
+                    .collect()
+            })
+            .collect();
+        Some((frame, body.z(true), body.feature, rings))
+    }
+}

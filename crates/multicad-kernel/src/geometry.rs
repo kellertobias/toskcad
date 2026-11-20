@@ -96,6 +96,7 @@ mod spur_gear_body;
 mod stack_union_boolean;
 mod stacked_prism_boolean;
 mod step_import;
+mod through_profile_cut;
 mod torus_body;
 mod warped_union_body;
 mod wood_contact;
@@ -1551,6 +1552,7 @@ impl Solid {
                 Err(error) if error.kind == GeometryErrorKind::Unsupported => self
                     .separated_boolean(other, operation, policy)
                     .or_else(|| self.subtract_machining_tool(other, operation, policy))
+                    .or_else(|| self.through_profile_cut(other, operation, policy))
                     .or_else(|| self.bored_prism_subtract(other, operation, policy))
                     .or_else(|| self.stacked_prism_boolean(other, operation, policy))
                     .or_else(|| self.parallel_extrusion_intersection(other, operation, policy))
