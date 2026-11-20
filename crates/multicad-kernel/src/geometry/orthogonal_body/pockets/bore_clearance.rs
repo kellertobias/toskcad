@@ -1,11 +1,15 @@
-//! A cylinder inside a certified through bore meets no stock material.
+//! A cylinder in certified holes and clear of the stock meets no material.
 //!
 //! A through bore removes the whole cylindrical column between its two
-//! original stock faces, so a parallel cylinder whose disk lies in the bore
-//! disk and whose axial interval lies between those faces is entirely void.
-//! Its intersection with the stock is empty and cutting it removes nothing.
-//! The interval may overshoot a face only by coordinate rounding, which is
-//! far below the stock's minimum feature, so no material lies there either.
+//! original stock faces, and a blind pocket the column from its entry face
+//! to its floor. Along a parallel cylinder whose disk lies in a hole's disk,
+//! that hole's axial interval is void. Every remaining interval of the
+//! cylinder must lie in a box that is separated from, or only touches,
+//! every stock cell; cuts only remove stock, so the cells enclose the
+//! material. Then the cylinder shares no interior with the stock: the
+//! intersection is empty and cutting it removes nothing. Ends may meet
+//! within coordinate rounding, which is far below the stock's minimum
+//! feature.
 //! A rectangular prism with circular through holes is read as the identical
 //! orthogonal stock with those bores.
 use super::*;
@@ -72,19 +76,59 @@ impl Solid {
         if (0..3).any(|i| i != axis && delta[i].abs() > numeric) {
             return None;
         }
-        let inside = body.through_bores.iter().any(|bore| {
+        let [i, j] = [(axis + 1) % 3, (axis + 2) % 3];
+        let inside = |center: Point, hole_radius: f64| {
+            (start[i] - center[i]).hypot(start[j] - center[j]) + radius + numeric <= hole_radius
+        };
+        // Axial intervals of the tool's own column that a hole leaves void.
+        let mut voids: Vec<[f64; 2]> = Vec::new();
+        for bore in body.through_bores.iter() {
             let [a, b] = bore.centers_mm;
-            let bore_axis =
-                (0..3).max_by(|&i, &j| (b[i] - a[i]).abs().total_cmp(&(b[j] - a[j]).abs()));
-            if bore_axis != Some(axis) || (0..3).any(|i| i != axis && a[i] != b[i]) {
-                return false;
+            if (0..3).all(|k| k == axis || a[k] == b[k])
+                && a[axis] != b[axis]
+                && inside(a, bore.radius_mm)
+            {
+                voids.push([a[axis].min(b[axis]), a[axis].max(b[axis])]);
             }
-            let [i, j] = [(axis + 1) % 3, (axis + 2) % 3];
-            let offset = (start[i] - a[i]).hypot(start[j] - a[j]);
-            let [low, high] = [a[axis].min(b[axis]), a[axis].max(b[axis])];
-            offset + radius + numeric <= bore.radius_mm
-                && start[axis].min(end[axis]) >= low - numeric
-                && start[axis].max(end[axis]) <= high + numeric
+        }
+        for pocket in body.pockets.iter() {
+            let normal = body.boundary.faces.get(pocket.face)?.normal;
+            if normal[axis].abs() == 1. && inside(pocket.center_mm, pocket.radius_mm) {
+                let floor = pocket.floor_center_mm(normal)[axis];
+                let entry = pocket.center_mm[axis];
+                voids.push([entry.min(floor), entry.max(floor)]);
+            }
+        }
+        // What remains of the tool's interval outside every void must clear
+        // every stock cell, contact allowed.
+        voids.sort_by(|a, b| a[0].total_cmp(&b[0]));
+        let mut remaining = Vec::new();
+        let mut low = start[axis].min(end[axis]);
+        let high = start[axis].max(end[axis]);
+        for [a, b] in voids {
+            if b < low - numeric || a > high + numeric {
+                continue;
+            }
+            if a > low + numeric {
+                remaining.push([low, a.min(high)]);
+            }
+            low = low.max(b);
+        }
+        if low < high - numeric {
+            remaining.push([low, high]);
+        }
+        let inside = remaining.iter().all(|&[a, b]| {
+            let mut min = [0.; 3];
+            let mut max = [0.; 3];
+            min[axis] = a;
+            max[axis] = b;
+            for k in [i, j] {
+                min[k] = start[k] - radius;
+                max[k] = start[k] + radius;
+            }
+            body.geometry.cells().iter().all(|cell| {
+                (0..3).any(|k| cell.min[k] >= max[k] - numeric || cell.max[k] <= min[k] + numeric)
+            })
         });
         inside.then(|| match operation {
             BooleanOperation::Intersect => Ok(None),

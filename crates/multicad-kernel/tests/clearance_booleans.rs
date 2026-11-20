@@ -75,3 +75,61 @@ fn a_hex_body_wider_than_the_bore_is_never_reported_clear() {
         ));
     }
 }
+
+/// A 20 × 20 × 5 box with a blind pocket of radius 3 and depth 2 from the top.
+fn pocketed_block() -> Solid {
+    let block = Solid::box_solid([20., 20., 5.], policy()).unwrap();
+    let pocket = Solid::cylinder(
+        PlaneFrame {
+            origin: [10., 10., 3.],
+            ..Default::default()
+        },
+        3.,
+        3.,
+        policy(),
+    )
+    .unwrap();
+    block
+        .boolean(&pocket, BooleanOperation::Subtract, policy())
+        .unwrap()
+        .unwrap()
+}
+
+fn pin(radius: f64, bottom: f64) -> Solid {
+    Solid::cylinder(
+        PlaneFrame {
+            origin: [10., 10., bottom],
+            ..Default::default()
+        },
+        radius,
+        10.,
+        policy(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_pin_in_a_blind_pocket_and_above_the_block_misses_its_material() {
+    let block = pocketed_block();
+    // Down to the floor at z = 3 and up beyond the top face.
+    let resting = pin(2.5, 3.);
+    assert!(
+        block
+            .boolean(&resting, BooleanOperation::Intersect, policy())
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        resting
+            .boolean(&block, BooleanOperation::Intersect, policy())
+            .unwrap()
+            .is_none()
+    );
+    // Below the floor, or wider than the pocket, the pin reaches material.
+    for pin in [pin(2.5, 2.), pin(3.5, 3.)] {
+        assert!(!matches!(
+            block.boolean(&pin, BooleanOperation::Intersect, policy()),
+            Ok(None)
+        ));
+    }
+}

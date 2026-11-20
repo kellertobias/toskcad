@@ -4,7 +4,9 @@
 //! of a wall to the second. A cylinder parallel to the opening's through
 //! direction, whose disk lies inside the outline and whose axial interval
 //! lies between the two sides, is therefore entirely void: its intersection
-//! with the sweep is empty and cutting it removes nothing. The interval may
+//! with the sweep is empty and cutting it removes nothing. A cylinder that
+//! also reaches beyond a side is void within the wall, and each part beyond
+//! it must miss the unpierced profile by the rectangle test below. The interval may
 //! overshoot a side only by coordinate rounding, far below any feature of
 //! the sheet, and the disk keeps a rounding margin from the outline.
 //!
@@ -218,6 +220,54 @@ fn point_inside(outline: &[Edge], p: [f64; 2], margin: f64) -> bool {
     disk_inside(outline, p, 0., margin)
 }
 
+/// Whether the cylinder of `radius` from `base` along unit `axis` for
+/// `height` misses the unpierced profile of the sweep: its axis lies in the
+/// profile plane, no profile edge enters its projected rectangle, shrunk by
+/// a rounding margin, and the rectangle's center lies outside the profile.
+fn cylinder_misses_profile(
+    body: &NormalSweepBody,
+    frame: PlaneFrame,
+    base: [f64; 3],
+    axis: [f64; 3],
+    height: f64,
+    radius: f64,
+) -> bool {
+    if dot(axis, frame.normal()).abs() > 64. * f64::EPSILON {
+        return false;
+    }
+    let in_plane = |w: [f64; 3]| [dot(w, frame.u), dot(w, frame.v)];
+    let direction = in_plane(axis);
+    let norm = direction[0].hypot(direction[1]);
+    let scale = base
+        .into_iter()
+        .chain(frame.origin)
+        .chain([height, radius])
+        .map(f64::abs)
+        .fold(1., f64::max);
+    let margin = 128. * f64::EPSILON * scale;
+    if (norm - 1.).abs() > 64. * f64::EPSILON || height <= 2. * margin || radius <= margin {
+        return false;
+    }
+    let start = in_plane(sub3(base, frame.origin));
+    let rectangle = Rectangle {
+        base: std::array::from_fn(|i| start[i] + margin * direction[i] / norm),
+        axis: direction.map(|value| value / norm),
+        length: height - 2. * margin,
+        half_width: radius - margin,
+    };
+    let sweep = &body.sweep;
+    if sweep
+        .rings()
+        .iter()
+        .flatten()
+        .any(|edge| rectangle.meets(edge))
+    {
+        return false;
+    }
+    let [x, y] = rectangle.center();
+    !sweep.contains([x, y, sweep.height_mm() / 2.], 0.)
+}
+
 impl Solid {
     /// The unpierced profile of a sweep shares no interior with a cylinder
     /// lying across the profile plane.
@@ -241,46 +291,14 @@ impl Solid {
         };
         let (body, frame) = sheet.normal_sweep_body()?;
         let (cylinder, tool_frame) = tool.axial_cylinder_frame()?;
-        let axis = tool_frame.normal();
-        let normal = frame.normal();
-        if dot(axis, normal).abs() > 64. * f64::EPSILON {
-            return None;
-        }
-        let in_plane = |w: [f64; 3]| [dot(w, frame.u), dot(w, frame.v)];
-        let direction = in_plane(axis);
-        let norm = direction[0].hypot(direction[1]);
-        let height = cylinder.height().as_f64();
-        let radius = cylinder.circle().radius().as_f64();
-        let scale = tool_frame
-            .origin
-            .into_iter()
-            .chain(frame.origin)
-            .chain([height, radius])
-            .map(f64::abs)
-            .fold(1., f64::max);
-        let margin = 128. * f64::EPSILON * scale;
-        if (norm - 1.).abs() > 64. * f64::EPSILON || height <= 2. * margin || radius <= margin {
-            return None;
-        }
-        let base = in_plane(sub3(tool_frame.origin, frame.origin));
-        let base: [f64; 2] = std::array::from_fn(|i| base[i] + margin * direction[i] / norm);
-        let rectangle = Rectangle {
-            base,
-            axis: direction.map(|value| value / norm),
-            length: height - 2. * margin,
-            half_width: radius - margin,
-        };
-        let sweep = &body.sweep;
-        if sweep
-            .rings()
-            .iter()
-            .flatten()
-            .any(|edge| rectangle.meets(edge))
-        {
-            return None;
-        }
-        let [x, y] = rectangle.center();
-        if sweep.contains([x, y, sweep.height_mm() / 2.], 0.) {
+        if !cylinder_misses_profile(
+            body,
+            frame,
+            tool_frame.origin,
+            tool_frame.normal(),
+            cylinder.height().as_f64(),
+            cylinder.circle().radius().as_f64(),
+        ) {
             return None;
         }
         Some(match operation {
@@ -444,7 +462,9 @@ impl Solid {
             .chain(frame.origin)
             .map(f64::abs)
             .fold(1., f64::max);
-        let margin = 64. * f64::EPSILON * scale;
+        // Wide enough to absorb the rounding margin of enclosing cylinders,
+        // whose own coordinates may be larger than this pair's.
+        let margin = 256. * f64::EPSILON * scale;
         let clear = openings.geometry.openings().iter().any(|opening| {
             let spec = opening.spec();
             let origin = world(spec.origin);
@@ -470,14 +490,31 @@ impl Solid {
             let slack = margin / depth;
             let [low, high] = [along(base), along(top)];
             let local = sub3(base, origin);
-            low.min(high) >= -slack
-                && low.max(high) <= 1. + slack
-                && disk_inside(
-                    &spec.outline,
-                    [dot(local, u), dot(local, v)],
-                    radius,
-                    margin,
-                )
+            if !disk_inside(
+                &spec.outline,
+                [dot(local, u), dot(local, v)],
+                radius,
+                margin,
+            ) {
+                return false;
+            }
+            // Within the wall the opening is void; each part of the cylinder
+            // beyond either side must miss the unpierced profile.
+            let unit = through.map(|value| value / depth);
+            let point =
+                |t: f64| -> [f64; 3] { std::array::from_fn(|i| base[i] + (t - low) * through[i]) };
+            let [lo, hi] = [low.min(high), low.max(high)];
+            let mut parts = Vec::new();
+            if lo < -slack {
+                parts.push([lo, hi.min(0.)]);
+            }
+            if hi > 1. + slack {
+                parts.push([lo.max(1.), hi]);
+            }
+            parts.into_iter().all(|[a, b]| {
+                b > a
+                    && cylinder_misses_profile(body, frame, point(a), unit, (b - a) * depth, radius)
+            })
         });
         clear.then(|| match operation {
             BooleanOperation::Intersect => Ok(None),
