@@ -167,10 +167,18 @@ fn axial_npt_flanks_and_stock_clipped_crests_preserve_gauge_cones_and_native_rol
             }
             let topology = solid.topology_snapshot(feature, 0).unwrap();
             assert!(topology.elements.iter().all(|e| !e.origins.is_empty()));
+            // The unclipped internal law names its bands on the thread start;
+            // stock-clipped external material is a distinct retained source
+            // whose natural (cone-parallel) crest keeps its own namespace.
+            let crest = if internal {
+                "thread/start/0/crest"
+            } else {
+                "pipe.npt.clipped/face/crest.natural"
+            };
             assert!(topology.elements.iter().any(|e| {
                 e.origins
                     .iter()
-                    .any(|origin| origin.source == feature && origin.role == "thread/start/0/crest")
+                    .any(|origin| origin.source == feature && origin.role == crest)
             }));
         }
     }

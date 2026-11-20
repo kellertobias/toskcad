@@ -256,7 +256,9 @@ impl Solid {
             .map(|mut element| {
                 element.geometry = None;
                 for anchor in &mut element.frames {
-                    anchor.frame = anchors[&anchor.origin];
+                    anchor.frame = anchors
+                        .resolve(&anchor.origin, placed, anchor.frame, policy)
+                        .expect("every snapshot chart was stored");
                 }
                 element
             })

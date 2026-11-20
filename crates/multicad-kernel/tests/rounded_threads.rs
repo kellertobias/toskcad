@@ -617,11 +617,17 @@ fn blind_and_through_rounded_receivers_keep_rigid_geometry_ancestry_and_step_bou
                     .all(|e| !e.origins.is_empty())
             );
             // Owned receivers flip the generating meridian's material side and
-            // publish the cutter root as an inward receiving face.
+            // publish the cutter root as a receiving face: inward through a
+            // through bore, and under the distinct blind prefix above a floor.
+            let root = if blind {
+                "receiving.blind/thread.root"
+            } else {
+                "receiving.inward/thread.root"
+            };
             assert!(names.elements.iter().any(|e| {
                 e.origins
                     .iter()
-                    .any(|o| o.source == feature && o.role == "receiving.inward/thread.root")
+                    .any(|o| o.source == feature && o.role == root)
             }));
             let path = dir.path().join(format!("receiver-{blind}-{index}.step"));
             receiver.write_step(&path).unwrap();

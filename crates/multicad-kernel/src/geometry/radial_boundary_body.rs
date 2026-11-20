@@ -7,6 +7,7 @@ use multicad_rust_kernel::radial_tensor::{
 };
 use std::cell::RefCell;
 use std::collections::BTreeSet;
+mod contained_boolean;
 mod display_cache;
 mod identity;
 mod pipe;

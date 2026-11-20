@@ -416,6 +416,18 @@ pub(crate) fn build_rust_with_pipe_factory(
             multicad_core::model::ThreadFamily::Npt | multicad_core::model::ThreadFamily::Bspt
         )
     {
+        if matches!(
+            thread.family,
+            multicad_core::model::ThreadFamily::Round
+                | multicad_core::model::ThreadFamily::Bsw
+                | multicad_core::model::ThreadFamily::Bsf
+                | multicad_core::model::ThreadFamily::Bspp
+        ) {
+            return Err(error(
+                Some(feature),
+                "Rust machine screws and hex nuts have no double-rounded (Round, BSW, BSF, BSPP) thread body yet",
+            ));
+        }
         crate::threads::validate_rust_family(feature, thread.family)?;
     }
     let resolved = source

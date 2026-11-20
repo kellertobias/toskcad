@@ -1081,6 +1081,23 @@ impl Solid {
             .then_some(cylinder)
     }
 
+    /// World base-rim centre, unit axis, radius and height of a placed Rust
+    /// cylinder whose frame starts at its first rim and points along its
+    /// height. Reverse circular sweeps keep an authored cap basis instead and
+    /// are not described here.
+    pub fn rust_cylinder_axis(&self) -> Option<([f64; 3], [f64; 3], f64, f64)> {
+        let (cylinder, frame) = self.axial_cylinder_frame()?;
+        if self.cylinder_sketch().is_some_and(|sketch| sketch.reverse) {
+            return None;
+        }
+        Some((
+            frame.origin,
+            frame.normal(),
+            cylinder.circle().radius().as_f64(),
+            cylinder.height().as_f64(),
+        ))
+    }
+
     pub(crate) fn axial_cylinder_frame(&self) -> Option<(&AxialCylinder, PlaneFrame)> {
         match &self.body {
             SolidBody::AxialCylinder(cylinder, frame, _) => Some((cylinder, *frame)),
@@ -1540,6 +1557,17 @@ impl Solid {
             if let Some(result) = self.contained_hanger_boolean(other, operation, policy) {
                 return result;
             }
+            // Cheap whole-probe predicates of retained thread sources come
+            // before the planar provider, which would integrate their faces.
+            if let Some(result) = self.contained_radial_boundary_boolean(other, operation, policy) {
+                return result;
+            }
+            if let Some(result) = self.contained_clipped_npt_boolean(other, operation, policy) {
+                return result;
+            }
+            if let Some(result) = self.contained_warped_union_boolean(other, operation, policy) {
+                return result;
+            }
             if let Some(result) = self.default_certified_boolean(other, operation, policy) {
                 return result;
             }
@@ -1562,6 +1590,9 @@ impl Solid {
                 return result;
             }
             if let Some(result) = self.gear_pair_boolean(other, operation, policy) {
+                return result;
+            }
+            if let Some(result) = self.rounded_thread_axial_clip(other, operation, policy) {
                 return result;
             }
             return match self.orthogonal_boolean(other, operation, policy) {

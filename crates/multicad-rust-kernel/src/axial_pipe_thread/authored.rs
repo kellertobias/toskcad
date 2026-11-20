@@ -1,12 +1,14 @@
 //! Authored pipe laws retain shared expressions, not rounded derived supports.
 //! Literal imported/retained sections remain a different source type.
-use super::{Error, I, bounds, ceiling, interval};
+use super::{Error, I, bounds, ceiling, hull, interval};
 use crate::tapered_thread::Series;
 use std::f64::consts::PI;
 mod boundary;
+mod classify;
 pub mod hardware;
 mod stock_clip;
 pub use boundary::RawAuthoredBoundary;
+pub use classify::AuthoredBoxRelation;
 pub use stock_clip::{
     PlacedStockClipMeshCandidate, StockClipAffineCurveTaylor, StockClipBand, StockClipCapTraceEdge,
     StockClipCellPlan, StockClipClassification, StockClipCoedge, StockClipCurve, StockClipCurveLaw,
