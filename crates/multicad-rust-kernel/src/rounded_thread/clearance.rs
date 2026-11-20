@@ -12,6 +12,9 @@ use super::{Error, Thread};
 
 /// Cells admitted before an unresolved (near-touching) clearance is reported.
 const MAXIMUM_CELLS: usize = 1 << 16;
+/// Relative pitch difference admitted as decode roundoff by
+/// `prove_clearance_over`; larger differences are distinct threads.
+const MAXIMUM_PITCH_DRIFT: f64 = 1e-9;
 
 impl Thread {
     /// Upper bound of the meridian's slope magnitude over a whole period.
@@ -35,6 +38,60 @@ impl Thread {
         {
             return Err(Error::Invalid);
         }
+        self.gap_lower_bound(cavity, shift_mm)
+    }
+
+    /// `prove_clearance` for decoded cavities whose pitch differs from this
+    /// thread's by at most `MAXIMUM_PITCH_DRIFT` relative roundoff, over this
+    /// thread's finite `external_length_mm`.
+    ///
+    /// The proof runs in this thread's period. Writing an axial station as
+    /// `z = k * pitch + r` with `0 <= k <= ceil(length / pitch)`, the cavity
+    /// argument differs from the period-reduced one by `(k - m) * delta`,
+    /// where `m` folds the shift, plus at most `starts * delta` from the
+    /// differing helical rates over one revolution. That drift is charged at
+    /// the cavity meridian's certified slope limit; a negative remainder is
+    /// `Unresolved`. Equal pitches reduce to `prove_clearance` exactly.
+    pub fn prove_clearance_over(
+        &self,
+        cavity: &Thread,
+        shift_mm: f64,
+        external_length_mm: f64,
+    ) -> Result<f64, Error> {
+        let (a, b) = (self.spec, cavity.spec);
+        if a.pitch_mm == b.pitch_mm {
+            return self.prove_clearance(cavity, shift_mm);
+        }
+        let delta = (b.pitch_mm - a.pitch_mm).abs();
+        if !shift_mm.is_finite()
+            || !external_length_mm.is_finite()
+            || external_length_mm < 0.
+            || !(delta <= MAXIMUM_PITCH_DRIFT * a.pitch_mm)
+            || a.starts != b.starts
+            || a.left_hand != b.left_hand
+        {
+            return Err(Error::Invalid);
+        }
+        let turns = (external_length_mm / a.pitch_mm).ceil()
+            + (shift_mm / a.pitch_mm).floor().abs()
+            + f64::from(a.starts)
+            + 1.;
+        let drift = (turns * delta * (1. + 16. * f64::EPSILON)).next_up();
+        let slope = cavity.profile_limits().0;
+        if !slope.is_finite() || !drift.is_finite() {
+            return Err(Error::Unresolved);
+        }
+        let lower = self.gap_lower_bound(cavity, shift_mm)?;
+        let remaining = lower - (drift * slope * (1. + 16. * f64::EPSILON)).next_up();
+        if remaining >= 0. {
+            Ok(remaining)
+        } else {
+            Err(Error::Unresolved)
+        }
+    }
+
+    fn gap_lower_bound(&self, cavity: &Thread, shift_mm: f64) -> Result<f64, Error> {
+        let (a, b) = (self.spec, cavity.spec);
         let pitch = a.pitch_mm;
         let lipschitz = self.profile_limits().0 + cavity.profile_limits().0;
         if !lipschitz.is_finite() {
@@ -122,6 +179,49 @@ mod tests {
         // The cavity must be outside, not inside.
         assert_eq!(
             cavity.prove_clearance(&external, 0.),
+            Err(Error::Unresolved)
+        );
+    }
+
+    #[test]
+    fn roundoff_pitch_drift_is_charged_over_the_external_length() {
+        let d = depth(0.137, 0.137);
+        let external = thread(5., d, 0.137, 0.137);
+        let mut decoded = spec(5.05, d, 0.137, 0.137);
+        decoded.pitch_mm = 1_f64.next_down();
+        let decoded = Thread::new(decoded).unwrap();
+        // Unequal leads are never compared by the equal-pitch proof.
+        assert_eq!(external.prove_clearance(&decoded, 0.), Err(Error::Invalid));
+        let exact = external
+            .prove_clearance(&thread(5.05, d, 0.137, 0.137), 0.)
+            .unwrap();
+        let drifted = external.prove_clearance_over(&decoded, 0., 4.).unwrap();
+        assert!(drifted > 0. && drifted < exact, "{drifted} vs {exact}");
+        // Equal pitches take the exact path unchanged.
+        let cavity = thread(5.05, d, 0.137, 0.137);
+        assert_eq!(
+            external.prove_clearance_over(&cavity, 0., 4.),
+            external.prove_clearance(&cavity, 0.)
+        );
+        // A half-period shift still overlaps.
+        assert_eq!(
+            external.prove_clearance_over(&decoded, 0.5, 4.),
+            Err(Error::Unresolved)
+        );
+        // A real pitch difference is a different thread, not roundoff.
+        let mut other = spec(5.05, d, 0.137, 0.137);
+        other.pitch_mm = 1.0001;
+        let other = Thread::new(other).unwrap();
+        assert_eq!(
+            external.prove_clearance_over(&other, 0., 4.),
+            Err(Error::Invalid)
+        );
+        // Over a huge length the charged drift consumes the clearance.
+        let mut coarse = spec(5.05, d, 0.137, 0.137);
+        coarse.pitch_mm = 1. + 5e-10;
+        let coarse = Thread::new(coarse).unwrap();
+        assert_eq!(
+            external.prove_clearance_over(&coarse, 0., 1e9),
             Err(Error::Unresolved)
         );
     }
