@@ -732,3 +732,74 @@ fn finite_cylinder_face_marks_proven_tangent_line_and_distinguishes_two_inside_f
     assert!(empty.results.is_empty());
     near(cylinder.volume_mm3().unwrap(), 250. * std::f64::consts::PI);
 }
+
+#[test]
+fn rust_face_sections_refuse_clipped_oblique_cylinders_and_face_projection() {
+    let cylinder = Solid::cylinder(Default::default(), 5., 10., p()).unwrap();
+    let side = cylinder
+        .faces()
+        .unwrap()
+        .into_iter()
+        .find(|f| f.plane.is_none())
+        .unwrap()
+        .index;
+    let c = std::f64::consts::FRAC_1_SQRT_2;
+    // The 45 degree ellipse spans z = 2..12 and would need a rim trim.
+    let clipped = PlaneFrame {
+        origin: [0., 0., 7.],
+        u: [1., 0., 0.],
+        v: [0., c, c],
+    };
+    let refused = cylinder
+        .sketch_reference_geometry(
+            BRepSelection::Face(side),
+            clipped,
+            SketchReferenceMethod::Intersect,
+            p(),
+        )
+        .unwrap_err();
+    assert_eq!(refused.kind, GeometryErrorKind::Unsupported);
+    let above = PlaneFrame {
+        origin: [0., 0., 20.],
+        ..clipped
+    };
+    assert!(
+        query(
+            &cylinder,
+            BRepSelection::Face(side),
+            above,
+            SketchReferenceMethod::Intersect
+        )
+        .results
+        .is_empty()
+    );
+    let top = cylinder
+        .faces()
+        .unwrap()
+        .into_iter()
+        .find(|f| f.plane.is_some_and(|(o, _)| (o[2] - 10.).abs() < 1e-9))
+        .unwrap()
+        .index;
+    assert!(
+        cylinder
+            .sketch_reference_geometry(
+                BRepSelection::Face(top),
+                xy(0.),
+                SketchReferenceMethod::Project,
+                p()
+            )
+            .is_err()
+    );
+    // An oblique chord through the cap disk is exact.
+    let chord = query(
+        &cylinder,
+        BRepSelection::Face(top),
+        vertical_x(3.),
+        SketchReferenceMethod::Intersect,
+    );
+    let SketchReferenceGeometry::Curve(CurvedEdge2d::Line { a, b }) = chord.results[0].geometry
+    else {
+        panic!()
+    };
+    near((a[0] - b[0]).abs(), 8.);
+}
