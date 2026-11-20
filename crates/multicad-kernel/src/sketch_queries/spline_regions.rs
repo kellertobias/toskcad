@@ -193,6 +193,31 @@ pub(super) fn classify(
             let mut previous: Vec<[f64; 2]> = Vec::new();
             for edge in edges {
                 cancelled(interrupt)?;
+                if let ExactCurve::BSpline { poles, basis } = &edge.curve
+                    && (2..=3).contains(&basis.degree)
+                {
+                    // The contact certificate itself proves each transverse
+                    // side change; no second nearest-point search is needed.
+                    let crossings = line_contacts::crossings_controlled(
+                        &NativeRegionQueries::spline(poles, basis),
+                        [point, far],
+                        policy,
+                        interrupt,
+                    )
+                    .map_err(error)?;
+                    for (hit, side) in crossings {
+                        if side == 0
+                            || previous
+                                .iter()
+                                .any(|p| (p[0] - hit[0]).hypot(p[1] - hit[1]) <= tolerance * 2.)
+                        {
+                            return Err(error("Ray passes through a boundary join"));
+                        }
+                        previous.push(hit);
+                        winding += i32::from(side);
+                    }
+                    continue;
+                }
                 let contacts =
                     queries.intersections_impl(&edge.curve, &ray, tolerance, interrupt)?;
                 if contacts.overlap {

@@ -415,8 +415,31 @@ fn authored_section_refuses_invalid_uncertain_and_cancelled_work_atomically() {
         ),
         Err(ConstructionError::Limit)
     );
+    // The unsplit arch is simple; joint refinement certifies it exactly.
+    close(
+        Sweep::new(profile(), None, 3., TOLERANCE)
+            .unwrap()
+            .area_mm2(),
+        10.,
+        1e-12,
+    );
+    // An arch dipping to touch the opposite edge tangentially at (2, 0)
+    // has no separable clearance and stays an explicit refusal.
+    let touching = vec![
+        line([0., 0.], [4., 0.]),
+        line([4., 0.], [4., 2.]),
+        Edge::Cubic(
+            Cubic::new(
+                vec![[4., 2.], [8. / 3., -2. / 3.], [4. / 3., -2. / 3.], [0., 2.]],
+                vec![0., 1.],
+                false,
+            )
+            .unwrap(),
+        ),
+        line([0., 2.], [0., 0.]),
+    ];
     assert_eq!(
-        Sweep::new(profile(), None, 3., TOLERANCE),
+        Sweep::new(touching, None, 3., TOLERANCE),
         Err(ConstructionError::Unresolved)
     );
     assert_eq!(
@@ -659,4 +682,56 @@ fn multiple_counter_proof_rejects_invalid_material_and_is_cooperatively_bounded(
         Sweep::new_rings(outer, many, 3., TOLERANCE),
         Err(ConstructionError::Limit)
     );
+}
+
+#[test]
+fn quarter_arc_meeting_perpendicular_lines_is_certified_by_joint_refinement() {
+    use crate::normal_sweep::Edge as A;
+    let outline = vec![
+        Edge::Analytic(A::Arc {
+            center: [0., 0.],
+            a: [10., 0.],
+            b: [0., 10.],
+            clockwise: false,
+        }),
+        Edge::Analytic(A::Line {
+            a: [0., 10.],
+            b: [0., 0.],
+        }),
+        Edge::Analytic(A::Line {
+            a: [0., 0.],
+            b: [10., 0.],
+        }),
+    ];
+    let hole = vec![Edge::Analytic(A::Circle {
+        center: [3., 3.],
+        radius_mm: 1.,
+        clockwise: true,
+    })];
+    let sweep = Sweep::new_rings(outline, vec![hole], 3., 1e-7).unwrap();
+    let expected = 25. * std::f64::consts::PI - std::f64::consts::PI;
+    assert!((sweep.area_mm2() - expected).abs() < 1e-9);
+}
+
+#[test]
+fn adjacent_edges_that_cross_away_from_their_joint_stay_refused() {
+    use crate::normal_sweep::Edge as A;
+    // A 270 degree arc ending at (0, 10) whose body crosses the next line.
+    let outline = vec![
+        Edge::Analytic(A::Arc {
+            center: [0., 5.],
+            a: [0., 0.],
+            b: [0., 10.],
+            clockwise: true,
+        }),
+        Edge::Analytic(A::Line {
+            a: [0., 10.],
+            b: [-2., 2.],
+        }),
+        Edge::Analytic(A::Line {
+            a: [-2., 2.],
+            b: [0., 0.],
+        }),
+    ];
+    assert!(Sweep::new_rings(outline, vec![], 3., 1e-7).is_err());
 }

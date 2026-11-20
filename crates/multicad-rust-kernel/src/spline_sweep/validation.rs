@@ -32,7 +32,7 @@ pub(crate) fn simple(section: &[Boundary], tolerance: f64, budget: &mut Budget<'
             .chain(&b.pieces)
             .all(|piece| piece.forward_along(axis))
         {
-            return Err(ConstructionError::Unresolved);
+            adjacent_by_refinement(a, b, axis, Piece::forward_along, tolerance, budget)?;
         }
     }
     // For every non-adjacent pair, use certified interval boxes. Refuse
@@ -49,6 +49,53 @@ pub(crate) fn simple(section: &[Boundary], tolerance: f64, budget: &mut Budget<'
                 }
             }
         }
+    }
+    Ok(())
+}
+
+/// Two consecutive edges whose whole extent is not monotone along the
+/// travel axis (a quarter arc meeting a perpendicular line). Halve the
+/// pieces at the shared vertex until those joint parts are monotone, so
+/// they meet only at the vertex, then clear every remaining part of each
+/// edge against the other edge with certified separated boxes.
+fn adjacent_by_refinement(
+    a: &Boundary,
+    b: &Boundary,
+    axis: Point2,
+    forward: fn(Piece, Point2) -> bool,
+    tolerance: f64,
+    budget: &mut Budget<'_>,
+) -> Result<()> {
+    let near = |mut piece: Piece, at_end: bool, rest: &mut Vec<Piece>, budget: &mut Budget<'_>| {
+        for _ in 0..MAX_DEPTH {
+            if forward(piece, axis) {
+                return Ok(piece);
+            }
+            consume(budget)?;
+            let [first, second] = piece.split();
+            let (keep, other) = if at_end {
+                (second, first)
+            } else {
+                (first, second)
+            };
+            rest.push(other);
+            piece = keep;
+        }
+        Err(ConstructionError::Unresolved)
+    };
+    let (a_last, a_head) = a.pieces.split_last().ok_or(ConstructionError::Invalid)?;
+    let (b_first, b_tail) = b.pieces.split_first().ok_or(ConstructionError::Invalid)?;
+    let mut a_rest = a_head.to_vec();
+    let mut b_rest = b_tail.to_vec();
+    let a_near = near(*a_last, true, &mut a_rest, budget)?;
+    let b_near = near(*b_first, false, &mut b_rest, budget)?;
+    for &x in &a_rest {
+        for &y in b_rest.iter().chain(std::iter::once(&b_near)) {
+            clear_pair(x, y, tolerance, 0, budget)?;
+        }
+    }
+    for &y in &b_rest {
+        clear_pair(a_near, y, tolerance, 0, budget)?;
     }
     Ok(())
 }
@@ -481,7 +528,7 @@ fn boundaries_with_refinement(
             .chain(&b.pieces)
             .any(|piece| !piece.certified_forward(axis))
         {
-            return Err(ConstructionError::Unresolved);
+            adjacent_by_refinement(a, b, axis, Piece::certified_forward, tolerance, budget)?;
         }
     }
     simple(&section, tolerance, budget)?;

@@ -8,6 +8,8 @@ use crate::{
 use multicad_core::references::{AnalyticGeometry, ReferenceFrame, TopologyKey, TopologyKind};
 pub use multicad_rust_kernel::sketch_reference::Method as SketchReferenceMethod;
 use multicad_rust_kernel::sketch_reference::{self, Geometry, Outcome, conic};
+
+mod section;
 #[derive(Clone, Debug, PartialEq)]
 pub enum SketchReferenceGeometry {
     Point([f64; 2]),
@@ -180,18 +182,43 @@ impl Solid {
             message: "Rust sketch references support finite vertices, lines and conics, and can project involute flanks".into(),
         }
         };
+        let topology = self.rust_topology().ok_or_else(unsupported)??;
         let (kind, ordinal) = match selection {
             BRepSelection::Vertex(index) => (TopologyKind::Vertex, index),
             BRepSelection::Edge(index) => (TopologyKind::Edge, index),
-            _ => return Err(unsupported()),
+            BRepSelection::Face(index) => {
+                return section::face(self, &topology, index, frame, method, policy);
+            }
+            BRepSelection::Whole => {
+                return section::whole(self, &topology, frame, method, policy);
+            }
         };
         let key = TopologyKey { kind, ordinal };
-        let topology = self.rust_topology().ok_or_else(unsupported)??;
         let element = topology
             .elements
-            .into_iter()
+            .iter()
             .find(|element| element.key == key)
             .ok_or_else(|| error("Selected Rust reference topology is missing"))?;
+        rust_element_reference(element, frame, method, policy)
+    }
+}
+
+pub(crate) fn rust_element_reference(
+    element: &multicad_core::references::TopologyElement,
+    frame: PlaneFrame,
+    method: SketchReferenceMethod,
+    policy: GeometryPolicy,
+) -> Result<SketchReferenceCatalog, GeometryError> {
+    {
+        let unsupported = || {
+            GeometryError {
+            operation: "sketch reference",
+            kind: GeometryErrorKind::Unsupported,
+            message: "Rust sketch references support finite vertices, lines and conics, and can project involute flanks".into(),
+        }
+        };
+        let key = element.key;
+        let kind = key.kind;
         let axes = [frame.u, frame.v, frame.normal()];
         let direction = |vector: [f64; 3]| {
             axes.map(|axis| vector.into_iter().zip(axis).map(|(a, b)| a * b).sum())

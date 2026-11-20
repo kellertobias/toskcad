@@ -6,7 +6,7 @@ use crate::{
 };
 use multicad_core::sketch_regions::{
     AnalyticQueries, CurveHits, CurveProjection, Edge, ExactCurve, PointLocation, QueryError,
-    Region, RegionQueries, SplineContinuation,
+    QueryErrorKind, Region, RegionQueries, SplineContinuation,
 };
 
 mod linear_spline;
@@ -27,6 +27,7 @@ impl Default for NativeRegionQueries {
 }
 fn error(e: impl std::fmt::Display) -> QueryError {
     QueryError {
+        kind: Default::default(),
         message: e.to_string(),
     }
 }
@@ -244,7 +245,17 @@ impl NativeRegionQueries {
                         policy,
                         checkpoint,
                     )
-                    .map_err(error)?;
+                    .map_err(|cause| {
+                        let ambiguous = line_contacts::is_unresolved_contact(&cause);
+                        QueryError {
+                            kind: if ambiguous {
+                                QueryErrorKind::AmbiguousContact
+                            } else {
+                                QueryErrorKind::Failure
+                            },
+                            ..error(cause)
+                        }
+                    })?;
                     Ok(CurveHits {
                         points,
                         overlap: false,
@@ -341,11 +352,10 @@ impl NativeRegionQueries {
             if line_contacts::certify_simple(&spline, policy).is_ok() {
                 return Ok(CurveHits::default());
             }
-            return Ok(CurveHits {
-                points: crate::spline_edits::regions::self_contacts(&spline, policy, checkpoint)
-                    .map_err(error)?,
-                overlap: false,
-            });
+            let (points, overlap) =
+                crate::spline_edits::regions::self_contacts(&spline, policy, checkpoint)
+                    .map_err(error)?;
+            return Ok(CurveHits { points, overlap });
         }
         let curve = Self::curve(curve);
         let policy = self.policy(tolerance_mm)?;

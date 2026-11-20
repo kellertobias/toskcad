@@ -15,6 +15,8 @@ pub(crate) use simple::self_contacts;
 
 const WORK: usize = 131_072;
 const DEPTH: usize = 48;
+/// Dyadic, so `1 - SPLIT` is exact; deliberately not one half.
+const SPLIT: f64 = 63. / 128.;
 
 struct Budget<'a> {
     remaining: usize,
@@ -53,12 +55,17 @@ impl Piece {
         if self.depth >= DEPTH {
             return Err(uncertain());
         }
-        let middle = (self.range[0] + self.range[1]) * 0.5;
-        if middle == self.range[0] || middle == self.range[1] {
+        // Split slightly off centre: authored symmetric curves often cross at
+        // a span midpoint, and a root on every child boundary can never be
+        // isolated by an interior inclusion. Ranges only label the pieces.
+        let middle = (self.range[1] - self.range[0]).mul_add(SPLIT, self.range[0]);
+        if middle <= self.range[0] || middle >= self.range[1] {
             return Err(uncertain());
         }
         let controls = subdivide(self.controls, self.degree, |a, b| {
-            std::array::from_fn(|i| (a[i] + b[i]) * Interval::point(0.5))
+            std::array::from_fn(|i| {
+                a[i] * Interval::point(1. - SPLIT) + b[i] * Interval::point(SPLIT)
+            })
         });
         Ok(std::array::from_fn(|i| Self {
             controls: controls[i],

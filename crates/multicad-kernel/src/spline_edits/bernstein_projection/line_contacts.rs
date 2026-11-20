@@ -4,16 +4,23 @@ use super::*;
 
 const MAX_CONTACTS: usize = 512;
 
+pub(crate) const UNRESOLVED_CONTACT: &str = "Rust spline and line contact could not be separated from a tangent, overlap or finite endpoint";
+
 fn unresolved_contact() -> GeometryError {
-    failure(
-        GeometryErrorKind::InvalidResult,
-        "Rust spline and line contact could not be separated from a tangent, overlap or finite endpoint",
-    )
+    failure(GeometryErrorKind::InvalidResult, UNRESOLVED_CONTACT)
+}
+
+/// Whether a contact query failed only because the contact is ambiguous.
+pub(crate) fn is_unresolved_contact(error: &GeometryError) -> bool {
+    error.operation == "exact spline edit"
+        && error.kind == GeometryErrorKind::InvalidResult
+        && error.message == UNRESOLVED_CONTACT
 }
 
 #[derive(Clone, Copy)]
 struct Boundary {
     start: [f64; 2],
+    end: [f64; 2],
     delta: [Interval; 2],
     length_squared: Interval,
 }
@@ -34,6 +41,7 @@ impl Boundary {
         let [dx, dy] = std::array::from_fn(|i| Interval::point(end[i]) - Interval::point(start[i]));
         Ok(Self {
             start,
+            end,
             delta: [dx, dy],
             length_squared: dx * dx + dy * dy,
         })
@@ -75,10 +83,13 @@ struct Search<'a> {
     steps: usize,
     checkpoint: QueryCheckpoint<'a>,
     points: Vec<[f64; 2]>,
+    /// +1 where the curve crosses from the right to the left of the
+    /// directed line, -1 for the opposite, 0 at a shared span end.
+    sides: Vec<i8>,
 }
 
 impl Search<'_> {
-    fn record(&mut self, hull: Hull, parameter: f64) -> Result<(), GeometryError> {
+    fn record(&mut self, hull: Hull, parameter: f64, side: i8) -> Result<(), GeometryError> {
         if let Some(checkpoint) = self.checkpoint {
             checkpoint()?;
         }
@@ -99,13 +110,33 @@ impl Search<'_> {
             ));
         }
         self.points.push(point);
+        self.sides.push(side);
         Ok(())
     }
 
     fn endpoint(&mut self, span: &Span, at_end: bool, degree: usize) -> Result<(), GeometryError> {
         let i = if at_end { degree } else { 0 };
         let hull = Hull::new(&span.curve[i..=i]);
-        match self.boundary.extent(hull) {
+        // A finite curve end that is bitwise one of the line's end points
+        // is an exact shared vertex; rounding of its local coordinates
+        // must not make that membership ambiguous.
+        let domain = [
+            self.spline.knots[0],
+            *self.spline.knots.last().expect("validated knots"),
+        ];
+        let curve_end = if at_end {
+            (span.knots[1] == domain[1]).then(|| self.spline.poles.last().copied())
+        } else {
+            (span.knots[0] == domain[0]).then(|| self.spline.poles.first().copied())
+        }
+        .flatten();
+        let shared = curve_end.is_some_and(|p| p == self.boundary.start || p == self.boundary.end);
+        let extent = if shared {
+            Extent::Inside
+        } else {
+            self.boundary.extent(hull)
+        };
+        match extent {
             Extent::Outside => Ok(()),
             Extent::Ambiguous => Err(unresolved_contact()),
             Extent::Inside => {
@@ -113,7 +144,7 @@ impl Search<'_> {
                 if !matches!(span.derivative[next].sign(), Some(Less | Greater)) {
                     return Err(unresolved_contact());
                 }
-                self.record(hull, span.knots[usize::from(at_end)])
+                self.record(hull, span.knots[usize::from(at_end)], 0)
             }
         }
     }
@@ -157,7 +188,8 @@ impl Search<'_> {
                     if !(span.knots[0] < parameter && parameter < span.knots[1]) {
                         return Err(unresolved_contact());
                     }
-                    self.record(hull, parameter)?;
+                    let side = if first == Some(Less) { 1 } else { -1 };
+                    self.record(hull, parameter, side)?;
                     continue;
                 }
             }
@@ -226,6 +258,19 @@ pub(crate) fn contacts_controlled(
     policy: GeometryPolicy,
     checkpoint: QueryCheckpoint<'_>,
 ) -> Result<Vec<[f64; 2]>, GeometryError> {
+    Ok(crossings_controlled(spline, line, policy, checkpoint)?
+        .into_iter()
+        .map(|(point, _)| point)
+        .collect())
+}
+/// Certified contacts with the side change proven by the same Bernstein
+/// sign certificate; joins and curve ends report side zero.
+pub(crate) fn crossings_controlled(
+    spline: &BSpline2d,
+    line: [[f64; 2]; 2],
+    policy: GeometryPolicy,
+    checkpoint: QueryCheckpoint<'_>,
+) -> Result<Vec<([f64; 2], i8)>, GeometryError> {
     let degree = validate(spline, policy)?;
     let boundary = Boundary::new(line, policy)?;
     let mut search = Search {
@@ -235,11 +280,19 @@ pub(crate) fn contacts_controlled(
         steps: MAX_STEPS,
         checkpoint,
         points: Vec::new(),
+        sides: Vec::new(),
     };
     let knots = expanded_knots(spline);
     let mut spans = spans(spline, &knots, boundary.start)
         .map(|(knots, curve)| boundary.span(knots, curve, degree));
+    let shared =
+        |p: Option<&[f64; 2]>| p.is_some_and(|p| *p == boundary.start || *p == boundary.end);
     let mut current = spans.next().expect("validated spline has a span");
+    // An exact shared vertex lies on the line; its rounded oriented
+    // distance is replaced by the exact zero, as at an authored join.
+    if shared(spline.poles.first()) {
+        current.derivative[0] = Interval::ZERO;
+    }
     if current.derivative[0].sign() == Some(Equal) {
         search.endpoint(&current, false, degree)?;
     }
@@ -254,11 +307,14 @@ pub(crate) fn contacts_controlled(
         }
         current = next;
     }
+    if shared(spline.poles.last()) {
+        current.derivative[degree] = Interval::ZERO;
+    }
     search.interior(&current, degree)?;
     if current.derivative[degree].sign() == Some(Equal) {
         search.endpoint(&current, true, degree)?;
     }
-    Ok(search.points)
+    Ok(search.points.into_iter().zip(search.sides).collect())
 }
 
 pub(crate) fn certify_simple(
@@ -434,6 +490,7 @@ mod tests {
             boundary,
             steps: MAX_STEPS,
             points: Vec::new(),
+            sides: Vec::new(),
             checkpoint: None,
         };
         let coordinate = Interval {
@@ -469,16 +526,17 @@ mod tests {
             boundary,
             steps: MAX_STEPS,
             points: vec![[0., 0.]],
+            sides: vec![0],
             checkpoint: None,
         };
         let first = Hull([Interval::ZERO; 2]);
         assert_eq!(
-            search.record(first, 2.).unwrap_err().kind,
+            search.record(first, 2., 0).unwrap_err().kind,
             GeometryErrorKind::InvalidResult
         );
         search.points = vec![[1., 1.]; MAX_CONTACTS];
         assert_eq!(
-            search.record(first, 2.).unwrap_err().kind,
+            search.record(first, 2., 0).unwrap_err().kind,
             GeometryErrorKind::Limit
         );
 

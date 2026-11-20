@@ -112,8 +112,18 @@ pub enum PointLocation {
     Boundary,
     Inside,
 }
+/// Why an exact region query failed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum QueryErrorKind {
+    #[default]
+    Failure,
+    /// A curve contact could not be separated from a tangency, overlap or
+    /// finite endpoint: no unique intersection point exists to report.
+    AmbiguousContact,
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueryError {
+    pub kind: QueryErrorKind,
     pub message: String,
 }
 impl std::fmt::Display for QueryError {
@@ -244,6 +254,7 @@ pub trait RegionQueries: Send + Sync {
         _tolerance_mm: f64,
     ) -> Result<Vec<CurveProjection>, QueryError> {
         Err(QueryError {
+            kind: Default::default(),
             message: "Exact curve projection requires a native curve editing service".into(),
         })
     }
@@ -256,6 +267,7 @@ pub trait RegionQueries: Send + Sync {
         _tolerance_mm: f64,
     ) -> Result<ExactCurve, QueryError> {
         Err(QueryError {
+            kind: Default::default(),
             message: "Exact curve segmentation requires a native curve editing service".into(),
         })
     }
@@ -269,6 +281,7 @@ pub trait RegionQueries: Send + Sync {
         _tolerance_mm: f64,
     ) -> Result<SplineContinuation, QueryError> {
         Err(QueryError {
+            kind: Default::default(),
             message: "Spline tangent continuation requires a native curve editing service".into(),
         })
     }
@@ -285,6 +298,7 @@ pub struct AnalyticQueries;
 fn analytic(curves: impl IntoIterator<Item = bool>) -> Result<(), QueryError> {
     if curves.into_iter().any(|s| s) {
         Err(QueryError {
+            kind: Default::default(),
             message: "Spline profiles require an exact native region query service".into(),
         })
     } else {
@@ -318,6 +332,7 @@ impl RegionQueries for AnalyticQueries {
         let origin = edges
             .first()
             .ok_or_else(|| QueryError {
+                kind: Default::default(),
                 message: "Boundary has no edges".into(),
             })?
             .curve
@@ -334,6 +349,7 @@ impl RegionQueries for AnalyticQueries {
         analytic(edges.iter().map(|e| e.curve.is_spline()))?;
         if point.iter().any(|v| !v.is_finite()) {
             return Err(QueryError {
+                kind: Default::default(),
                 message: "Classification point is nonfinite".into(),
             });
         }
@@ -893,6 +909,7 @@ fn extraction_error(e: QueryError) -> Extraction {
 fn check_interrupt(interrupt: Option<&dyn Fn() -> bool>) -> Result<(), QueryError> {
     if interrupt.is_some_and(|f| f()) {
         Err(QueryError {
+            kind: Default::default(),
             message: "Sketch region extraction was cancelled".into(),
         })
     } else {
