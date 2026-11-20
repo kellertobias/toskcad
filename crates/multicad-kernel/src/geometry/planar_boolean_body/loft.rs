@@ -1,8 +1,9 @@
-//! Ruled lofts with authored correspondence and stable planar attachments.
+//! Ruled and smooth lofts with authored correspondence and stable planar
+//! attachments.
 use super::*;
 use crate::{CurvedEdge2d, CurvedProfile, advanced_profiles::matches_straight_loft_station};
 use multicad_core::references::GeometryIntent;
-use multicad_rust_kernel::planar_boolean::{NonplanarLoft, ruled_loft};
+use multicad_rust_kernel::planar_boolean::{NonplanarLoft, SmoothLoft, ruled_loft};
 
 const OPERATION: &str = "Rust ruled polygon loft";
 const ANGULAR_ROUNDOFF: f64 = 64. * f64::EPSILON;
@@ -189,38 +190,61 @@ impl Solid {
             });
             heights.push(height);
         }
-        let loft = if continuous {
-            let last = sections.len() - 1;
-            if sections[1..last]
-                .iter()
-                .zip(&heights[1..last])
-                .any(|(station, &height)| {
-                    let fraction = height / heights[last];
-                    sections[0]
-                        .iter()
-                        .zip(station)
-                        .zip(&sections[last])
-                        .any(|((&a, &p), &b)| {
-                            (0..2).any(|i| {
-                                !matches_straight_loft_station(
-                                    a[i], p[i], b[i], fraction, tolerance,
-                                )
-                            })
-                        })
-                })
-            {
-                return Err(unsupported(
-                    "Rust smooth polygon loft requires all stations on the same straight transition",
-                ));
-            }
-            ruled_loft(
-                &[sections[0].clone(), sections[last].clone()],
-                &[0., heights[last]],
-                tolerance,
-            )
-        } else {
-            ruled_loft(&sections, &heights, tolerance)
-        };
+        let loft =
+            if continuous {
+                let last = sections.len() - 1;
+                if sections[1..last]
+                    .iter()
+                    .zip(&heights[1..last])
+                    .any(|(station, &height)| {
+                        let fraction = height / heights[last];
+                        sections[0].iter().zip(station).zip(&sections[last]).any(
+                            |((&a, &p), &b)| {
+                                (0..2).any(|i| {
+                                    !matches_straight_loft_station(
+                                        a[i], p[i], b[i], fraction, tolerance,
+                                    )
+                                })
+                            },
+                        )
+                    })
+                {
+                    // Stations off one straight transition get C¹ cubic corner
+                    // rails through every station and exact ruled walls.
+                    let geometry = SmoothLoft::interpolate(&sections, &heights, tolerance)
+                        .map_err(|cause| match cause {
+                            Error::Limit => error(
+                                OPERATION,
+                                GeometryErrorKind::Limit,
+                                "Smooth loft exceeds its convexity certificate budget",
+                            ),
+                            Error::Cancelled => error(
+                                OPERATION,
+                                GeometryErrorKind::Cancelled,
+                                "Model evaluation superseded",
+                            ),
+                            Error::Invalid | Error::Unresolved => unsupported(
+                                "Rust smooth polygon loft requires increasing stations whose \
+                             intermediate sections stay strictly convex",
+                            ),
+                        })?;
+                    return Self::from_smooth_loft(
+                        geometry,
+                        feature,
+                        placement,
+                        section_origins,
+                        [frames[0], frames[last]],
+                        policy,
+                    );
+                }
+                ruled_loft(
+                    &[sections[0].clone(), sections[last].clone()],
+                    &[0., heights[last]],
+                    tolerance,
+                )
+            } else {
+                ruled_loft(&sections, &heights, tolerance)
+            };
         if matches!(loft, Err(Error::Invalid))
             && let [start, end] = sections.as_slice()
             && let Ok(geometry) = NonplanarLoft::new([start, end], heights[1], tolerance)
@@ -322,6 +346,94 @@ impl Solid {
 mod tests {
     use super::*;
     use multicad_core::references::{Attachment, Resolution, resolve};
+
+    #[test]
+    fn curved_smooth_loft_follows_one_parabola_per_corner_with_station_names() {
+        let rect = |w: f64, h: f64, origin: [f64; 3]| {
+            let points = [[0., 0.], [w, 0.], [w, h], [0., h]];
+            CurvedProfile {
+                frame: PlaneFrame {
+                    origin,
+                    ..Default::default()
+                },
+                outer: (0..4)
+                    .map(|i| CurvedEdge2d::Line {
+                        a: points[i],
+                        b: points[(i + 1) % 4],
+                    })
+                    .collect(),
+                holes: vec![],
+            }
+        };
+        let profiles = [
+            rect(10., 6., [0.; 3]),
+            rect(14., 8., [-2., -1., 15.]),
+            rect(10., 6., [0., 0., 30.]),
+        ];
+        let origins: Vec<Vec<_>> = (0..3)
+            .map(|_| {
+                (0..4)
+                    .map(|_| Origin {
+                        source: EntityId::new(),
+                        role: "curve".into(),
+                    })
+                    .collect()
+            })
+            .collect();
+        let feature = EntityId::new();
+        let policy = GeometryPolicy::default();
+        let solid =
+            Solid::rust_loft_profiles_named(&profiles, feature, &origins, false, policy).unwrap();
+        assert!(solid.smooth_loft_body().is_some());
+        // Width 10 + 16q and depth 6 + 8q for q = s(1 - s): the integral
+        // over s of the section area, times the 30 mm height, is 2808.
+        let volume = solid.volume_mm3().unwrap();
+        assert!((volume - 2808.).abs() < 1e-9, "{volume}");
+        let bounds = solid.bounds().unwrap();
+        assert!(bounds.min[0] <= -2. && bounds.max[0] >= 12. && bounds.max[2] == 30.);
+        let faces = solid.faces().unwrap();
+        assert_eq!(faces.len(), 6);
+        assert!(faces.iter().all(|face| face.area_mm2 > 0.));
+        let snapshot = solid.topology_snapshot(feature, 0).unwrap();
+        for (edge, _) in origins[0].iter().enumerate() {
+            let wall = snapshot
+                .elements
+                .iter()
+                .find(|e| e.key.kind == TopologyKind::Face && e.origins.contains(&origins[1][edge]))
+                .unwrap();
+            for station in &origins {
+                assert!(wall.origins.contains(&station[edge]));
+                assert!(wall.origins.contains(&side_origin(feature, &station[edge])));
+            }
+            assert!(wall.geometry.is_none());
+        }
+        let mesh = solid.mesh(Default::default()).unwrap();
+        assert!(!mesh.indices.is_empty());
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("smooth.step");
+        solid.write_step(&path).unwrap();
+        let loaded = Solid::read_step(&path, policy).unwrap();
+        assert!(loaded.smooth_loft_body().is_some());
+        assert!((loaded.volume_mm3().unwrap() - 2808.).abs() < 1e-9);
+        // A middle station that turns its section inside out is refused.
+        let mut flipped = profiles.clone();
+        flipped[1].outer.reverse();
+        for edge in &mut flipped[1].outer {
+            let CurvedEdge2d::Line { a, b } = edge else {
+                unreachable!()
+            };
+            std::mem::swap(a, b);
+        }
+        let refused = Solid::rust_loft_profiles_named(&flipped, feature, &origins, false, policy)
+            .err()
+            .unwrap();
+        assert_eq!(refused.kind, GeometryErrorKind::Unsupported);
+        assert!(
+            refused.message.contains("strictly convex"),
+            "{}",
+            refused.message
+        );
+    }
 
     #[test]
     fn smooth_loft_at_the_input_limit_keeps_caps_and_station_references() {

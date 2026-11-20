@@ -81,6 +81,7 @@ mod parallel_extrusion_intersection;
 mod planar_boolean_body;
 mod radial_boundary_body;
 mod repaired_phillips_body;
+mod smooth_loft_body;
 use repaired_phillips_body::RepairedPhillipsBody;
 pub use repaired_phillips_body::{
     DecodedPeriodicPhillipsStepVerification, Degree11RepairedPhillipsMeshReceipt,
@@ -129,6 +130,7 @@ use internal_ring_body::InternalRingBody;
 use linear_body::LinearBody;
 use nonplanar_loft_body::NonplanarLoftBody;
 use normal_relief_body::NormalReliefBody;
+use smooth_loft_body::SmoothLoftBody;
 mod spline_cap_relief_body;
 use cross_bore_body::CrossBoreBody;
 pub use normal_relief_body::NormalReliefMotif;
@@ -800,6 +802,7 @@ enum SolidBody {
     SplineCapRelief(Rc<SplineCapReliefBody>, PlaneFrame),
     RadialBoundary(Rc<RadialBoundaryBody>, PlaneFrame),
     NonplanarLoft(Rc<NonplanarLoftBody>, PlaneFrame),
+    SmoothLoft(Rc<SmoothLoftBody>, PlaneFrame),
     SplineSweep(Rc<SplineSweepBody>, PlaneFrame),
     SpurGear(Rc<SpurGearBody>, PlaneFrame),
     InternalRing(Rc<InternalRingBody>, PlaneFrame),
@@ -1334,6 +1337,7 @@ impl Solid {
             SolidBody::NonplanarLoft(body, frame) => {
                 SolidBody::NonplanarLoft(Rc::clone(body), *frame)
             }
+            SolidBody::SmoothLoft(body, frame) => SolidBody::SmoothLoft(Rc::clone(body), *frame),
             SolidBody::WarpedUnion(body, frame) => SolidBody::WarpedUnion(Rc::clone(body), *frame),
             SolidBody::RustCompound(compound) => SolidBody::RustCompound(Rc::clone(compound)),
             SolidBody::Orthogonal(body, frame) => SolidBody::Orthogonal(Rc::clone(body), *frame),
@@ -1946,6 +1950,9 @@ impl Solid {
                 SolidBody::NonplanarLoft(body, frame) => {
                     SolidBody::NonplanarLoft(Rc::clone(body), transform.frame(*frame))
                 }
+                SolidBody::SmoothLoft(body, frame) => {
+                    SolidBody::SmoothLoft(Rc::clone(body), transform.frame(*frame))
+                }
                 SolidBody::WarpedUnion(body, frame) => {
                     SolidBody::WarpedUnion(Rc::clone(body), transform.frame(*frame))
                 }
@@ -2075,6 +2082,9 @@ impl Solid {
             return Ok(body.volume_mm3());
         }
         if let Some((body, _)) = self.nonplanar_loft_body() {
+            return Ok(body.geometry.volume_mm3());
+        }
+        if let Some((body, _)) = self.smooth_loft_body() {
             return Ok(body.geometry.volume_mm3());
         }
         if let Some((body, _)) = self.axial_stack_body() {
@@ -2246,6 +2256,9 @@ impl Solid {
             return Ok(body.bounds(frame));
         }
         if let Some((body, frame)) = self.nonplanar_loft_body() {
+            return Ok(body.bounds(frame));
+        }
+        if let Some((body, frame)) = self.smooth_loft_body() {
             return Ok(body.bounds(frame));
         }
         if let Some((body, frame)) = self.axial_stack_body() {
@@ -2472,6 +2485,9 @@ impl Solid {
             return Ok(body.faces(frame));
         }
         if let Some((body, frame)) = self.nonplanar_loft_body() {
+            return body.faces(frame);
+        }
+        if let Some((body, frame)) = self.smooth_loft_body() {
             return body.faces(frame);
         }
         if let Some((body, frame)) = self.axial_stack_body() {
@@ -2730,6 +2746,9 @@ impl Solid {
             SolidBody::AxialStack(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::PlanarBoolean(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::NonplanarLoft(body, frame) => {
+                crate::rust_display::placed_mesh(body.geometry.mesh(rust_options), *frame, false)
+            }
+            SolidBody::SmoothLoft(body, frame) => {
                 crate::rust_display::placed_mesh(body.geometry.mesh(rust_options), *frame, false)
             }
             SolidBody::WarpedUnion(body, frame) => body.mesh(*frame, rust_options),
@@ -3284,6 +3303,7 @@ impl Solid {
             SolidBody::AxialStack(body, _) => body.feature,
             SolidBody::PlanarBoolean(body, _) => body.feature,
             SolidBody::NonplanarLoft(body, _) => body.feature,
+            SolidBody::SmoothLoft(body, _) => body.feature,
             SolidBody::WarpedUnion(body, _) => body.feature,
             SolidBody::RustCompound(compound) => compound.feature,
             SolidBody::Orthogonal(body, _) => body.feature,
@@ -3311,6 +3331,7 @@ impl Solid {
             | SolidBody::Linear(..)
             | SolidBody::NormalSweep(..)
             | SolidBody::NonplanarLoft(..)
+            | SolidBody::SmoothLoft(..)
             | SolidBody::SplineSweep(..)
             | SolidBody::SpurGear(..)
             | SolidBody::InternalRing(..)
@@ -3534,6 +3555,9 @@ impl Solid {
             }
             SolidBody::NonplanarLoft(body, frame) => {
                 writer.append_nonplanar_loft(&body.geometry, frame.origin, frame.u, frame.v)
+            }
+            SolidBody::SmoothLoft(body, frame) => {
+                writer.append_smooth_loft(&body.geometry, frame.origin, frame.u, frame.v)
             }
             SolidBody::WarpedUnion(body, frame) => {
                 writer.append_warped_union(&body.geometry, frame.origin, frame.u, frame.v)
@@ -3778,6 +3802,7 @@ impl Solid {
             SolidBody::SplineCapRelief(..) => "SplineCapRelief",
             SolidBody::RadialBoundary(..) => "RadialBoundary",
             SolidBody::NonplanarLoft(..) => "NonplanarLoft",
+            SolidBody::SmoothLoft(..) => "SmoothLoft",
             SolidBody::SplineSweep(..) => "SplineSweep",
             SolidBody::SpurGear(..) => "SpurGear",
             SolidBody::InternalRing(..) => "InternalRing",

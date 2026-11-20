@@ -466,6 +466,9 @@ impl Solid {
             ImportProfile::NonplanarLoft { geometry } => {
                 Self::from_imported_nonplanar_loft(geometry, feature, frame, policy)
             }
+            ImportProfile::SmoothLoft { geometry } => {
+                Self::from_imported_smooth_loft(geometry, feature, frame, policy)
+            }
             ImportProfile::AxialProfileStack { stack } => {
                 Self::from_imported_axial_stack(stack, frame, feature, policy)
             }
@@ -1190,6 +1193,45 @@ fn verify(
         return Ok(());
     }
     let topology = solid.topology_snapshot(feature, 0)?;
+    if let Some((body, frame)) = solid.smooth_loft_body() {
+        let lines: Vec<_> = topology
+            .elements
+            .iter()
+            .filter_map(|element| match (element.key.kind, element.geometry) {
+                (TopologyKind::Edge, Some(AnalyticGeometry::Line { a_mm, b_mm })) => {
+                    Some([a_mm, b_mm])
+                }
+                _ => None,
+            })
+            .collect();
+        let count = |kind, analytic: bool| {
+            topology
+                .elements
+                .iter()
+                .filter(|e| e.key.kind == kind && (analytic || e.geometry.is_none()))
+                .count()
+        };
+        // Cap edges are straight; every corner rail is matched pole by pole.
+        if count(TopologyKind::Face, true) != readback.face_count
+            || count(TopologyKind::Edge, false) != readback.splines.len()
+            || !readback.circles.is_empty()
+            || !readback.semicircles.is_empty()
+            || !readback.arcs.is_empty()
+            || !readback.ellipses.is_empty()
+            || !same_segments(
+                &readback.edges_mm,
+                &lines,
+                readback.bounds_mm,
+                tolerance * 2.,
+            )
+            || !body.matches_rails(frame, &readback.splines, tolerance * 2.)
+        {
+            return Err(invalid(
+                "Rebuilt STEP loft differs from the imported rails or cap edges",
+            ));
+        }
+        return Ok(());
+    }
     if !compare_topology(
         &topology.elements,
         readback,

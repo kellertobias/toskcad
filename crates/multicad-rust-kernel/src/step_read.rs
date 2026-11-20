@@ -47,6 +47,7 @@ mod import;
 mod mixed;
 mod nonplanar_loft;
 mod normal_relief;
+mod smooth_loft;
 pub use normal_relief::{normal_relief_import_matches, verify_normal_relief};
 pub mod npt_stock;
 mod part21;
@@ -116,6 +117,7 @@ pub use import::{ImportProfile, ImportSolid, read_import_compound, read_import_s
 pub use nonplanar_loft::{ImportedNonplanarLoft, read_nonplanar_loft_solid};
 use part21::{Entity, Value};
 use round::Trim;
+pub use smooth_loft::ImportedSmoothLoft;
 use stadium::{HalfCylinder, StadiumLoop};
 use std::collections::{BTreeMap, BTreeSet};
 pub use warped::{ImportedWarped, read_warped_solid};
