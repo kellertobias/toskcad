@@ -100,6 +100,12 @@ impl Solid {
                 BooleanOperation::Subtract => self.share().map(Some),
                 _ => Ok(None),
             }),
+            Ok(Pair::Interferes)
+                if operation == BooleanOperation::Intersect
+                    && let Some(result) = self.straight_gear_interference(other, policy) =>
+            {
+                Some(result)
+            }
             Ok(Pair::Interferes) => Some(Err(error(
                 "Boolean",
                 GeometryErrorKind::Unsupported,

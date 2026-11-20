@@ -224,8 +224,52 @@ fn certified_gear_pairs_settle_disjoint_poses_and_refuse_interference() {
         .unwrap()
         .unwrap();
     assert_eq!(kept.volume_mm3().unwrap(), one.volume_mm3().unwrap());
+    // Opposed teeth really collide: the common material is the exact common
+    // region of both sections swept over the shared face width.
+    let wrong = place(PI);
+    let common = one
+        .boolean(&wrong, BooleanOperation::Intersect, p())
+        .unwrap()
+        .expect("opposed teeth share material");
+    let sections = match (&one.body, &wrong.body) {
+        (SolidBody::SpurGear(a, af), SolidBody::SpurGear(b, bf)) => {
+            let chart = |f: PlaneFrame| multicad_rust_kernel::spur_gear::clearance::Placement {
+                center_mm: [f.origin[0], f.origin[1]],
+                axes: [[f.u[0], f.u[1]], [f.v[0], f.v[1]]],
+                uncertainty_mm: 0.,
+            };
+            let placements = [chart(*af), chart(*bf)];
+            let regions = clearance::intersect_sections(
+                [
+                    clearance::Section::Spur(&a.profile),
+                    clearance::Section::Spur(&b.profile),
+                ],
+                placements,
+                1e-7,
+                None,
+            )
+            .unwrap()
+            .unwrap();
+            regions.iter().map(|r| r.area_mm2(placements)).sum::<f64>()
+        }
+        _ => unreachable!(),
+    };
+    let volume = common.volume_mm3().unwrap();
+    assert!(volume > 1., "{volume}");
+    assert!((volume - 8. * sections).abs() < 1e-5, "{volume} {sections}");
+    // The intersection lies within both operands' bounds.
+    let (c, a, b) = (
+        common.bounds().unwrap(),
+        one.bounds().unwrap(),
+        wrong.bounds().unwrap(),
+    );
+    for i in 0..3 {
+        assert!(c.min[i] >= a.min[i].max(b.min[i]) - 1e-6);
+        assert!(c.max[i] <= a.max[i].min(b.max[i]) + 1e-6);
+    }
+    // A difference of interfering gears still has no exact provider.
     let error = one
-        .boolean(&place(PI), BooleanOperation::Intersect, p())
+        .boolean(&wrong, BooleanOperation::Subtract, p())
         .err()
         .unwrap();
     assert_eq!(error.kind, GeometryErrorKind::Unsupported);

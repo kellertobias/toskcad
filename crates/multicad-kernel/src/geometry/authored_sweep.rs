@@ -935,6 +935,43 @@ impl Solid {
         .build(feature, origins, policy)
     }
 
+    /// Translate a section whose loops the caller has itself proved simple,
+    /// closed and properly nested, such as the certified common region of
+    /// two exact gear sections, along its normal. Only the generic spline
+    /// self-intersection queries are skipped; the retained boundary still
+    /// proves its own closure, orientation and volume.
+    pub(in crate::geometry) fn rust_certified_region_extrusion(
+        profile: &CurvedProfile,
+        height_mm: f64,
+        feature: EntityId,
+        origins: &[Origin],
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        policy.validate()?;
+        policy.length(height_mm.abs())?;
+        profile.checked(policy)?;
+        super::construction::validate_origins(feature, origins, edges(profile).count())?;
+        let displacement = profile.frame.normal().map(|n| n * height_mm);
+        let map = Affine::translation(displacement);
+        let start: Vec<_> = edges(profile)
+            .map(|e| Path::sketch(profile.frame, e))
+            .collect();
+        let end = start.iter().map(|path| path.mapped(map)).collect();
+        let mut top = profile.frame;
+        top.origin = map.point(top.origin);
+        Sweep {
+            profile,
+            start,
+            end,
+            wall: Wall::Translation(displacement),
+            up: displacement,
+            caps: Caps {
+                anchors: [profile.frame, top],
+            },
+        }
+        .build(feature, origins, policy)
+    }
+
     /// Rule a certified section to its tapered end section.
     pub(crate) fn rust_authored_taper(
         profile: &CurvedProfile,
