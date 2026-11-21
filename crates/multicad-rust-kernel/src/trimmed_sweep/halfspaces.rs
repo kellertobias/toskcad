@@ -1,6 +1,7 @@
 //! Exact implicit cap constraints of the retained affine generator laws.
 use super::*;
 use crate::Rational;
+use crate::planar_boolean::TravelCap;
 
 use crate::exact_binary::binary_fraction;
 
@@ -72,6 +73,20 @@ impl TrimmedSweep {
             planes[end] = [world[0], world[1], world[2], offset];
         }
         Some(planes)
+    }
+
+    /// The same cap constraints in unbounded exact arithmetic, so that two
+    /// caps can always be compared. `None` only for placements other than
+    /// signed axis permutations or a direction not advancing along `u x v`.
+    pub fn exact_caps(&self, origin: Point, u: Point, v: Point) -> Option<[TravelCap; 2]> {
+        let normal = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        let [start, end] = self.travel_coefficients();
+        let cap = |law, end| TravelCap::new(self.direction(), law, [u, v, normal], origin, end);
+        Some([cap(start, false)?, cap(end, true)?])
     }
 }
 

@@ -21,6 +21,9 @@ struct Work<'a> {
     remaining: usize,
     interrupt: Option<&'a dyn Fn() -> bool>,
     uncertain: Cell<bool>,
+    /// Whether a face-contact slab may certify an empty intersection; false
+    /// when the cells only round an exact source defined elsewhere.
+    contact: bool,
 }
 impl<'a> Work<'a> {
     fn new(interrupt: Option<&'a dyn Fn() -> bool>) -> Self {
@@ -28,6 +31,7 @@ impl<'a> Work<'a> {
             remaining: MAX_WORK,
             interrupt,
             uncertain: Cell::new(false),
+            contact: true,
         }
     }
     fn check(&self) -> Result<(), Error> {
@@ -127,6 +131,21 @@ impl CutMaterial {
             Operation::Intersect,
             &mut Work::new(interrupt),
         )
+    }
+
+    /// As [`Self::intersect_certified_with_interrupt`], for operands whose
+    /// cells are rounded images of an exact source defined elsewhere (such as
+    /// plane terminations given by travel laws). Their rounding-scale overlap
+    /// may be real source material, so a face contact never certifies an
+    /// empty result; it is refused unless the cells are strictly separated.
+    pub fn intersect_certified_rounded_sources_with_interrupt(
+        operands: &[&Self],
+        tolerance: f64,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Option<Self>, Error> {
+        let mut work = Work::new(interrupt);
+        work.contact = false;
+        operation(operands, tolerance, Operation::Intersect, &mut work)
     }
 
     /// Union original authoritative boundaries, retaining the earliest operand
@@ -317,7 +336,9 @@ fn emit_boundary(
         // unless every intersected cell pair is separated or certified to
         // meet only within a contact slab of declared thickness.
         if work.uncertain.get()
-            && !(op == Operation::Intersect && separation::contact(operands, tolerance, work)?)
+            && !(op == Operation::Intersect
+                && work.contact
+                && separation::contact(operands, tolerance, work)?)
         {
             return Err(Error::Unresolved);
         }

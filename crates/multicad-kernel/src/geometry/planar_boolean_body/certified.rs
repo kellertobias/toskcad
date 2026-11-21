@@ -143,6 +143,8 @@ fn certified_boolean(
     if solids.len() > MAX_OPERANDS {
         return Err(planar_error(Error::Limit));
     }
+    // Set when exact caps of the sources keep a band of positive width.
+    let mut exact_band = false;
     if operation == BooleanOperation::Intersect && solids.len() == 2 {
         let halfspaces = solids
             .iter()
@@ -166,6 +168,27 @@ fn certified_boolean(
             // material, including hollow profiles and exact miter contact.
             return Ok(None);
         }
+        let caps = solids
+            .iter()
+            .map(|solid| {
+                let (body, frame) = solid.linear_body()?;
+                body.exact_caps(frame)
+            })
+            .collect::<Option<Vec<_>>>();
+        let widths: Vec<_> = caps
+            .iter()
+            .flat_map(|caps| {
+                caps[0]
+                    .iter()
+                    .flat_map(|a| caps[1].iter().filter_map(|b| a.opposed(b)))
+            })
+            .collect();
+        if widths.iter().any(|width| width.is_le()) {
+            // Opposing exact caps that leave a gap or meet exactly separate
+            // the complete sources, whatever their rounded cells overlap.
+            return Ok(None);
+        }
+        exact_band = widths.iter().any(|width| width.is_gt());
     }
     let mut materials = Vec::with_capacity(solids.len());
     let mut sources = Vec::with_capacity(solids.len());
@@ -195,6 +218,14 @@ fn certified_boolean(
     let inputs: Vec<_> = materials.iter().collect();
     let tolerance = policy.linear_tolerance_mm;
     let material = match operation {
+        // Opposing exact caps that share a positive band keep common source
+        // material, however thin: their rounded cells' face contact is not a
+        // certificate of an empty intersection.
+        BooleanOperation::Intersect if exact_band => {
+            CutMaterial::intersect_certified_rounded_sources_with_interrupt(
+                &inputs, tolerance, interrupt,
+            )
+        }
         BooleanOperation::Intersect => {
             CutMaterial::intersect_certified_with_interrupt(&inputs, tolerance, interrupt)
         }
