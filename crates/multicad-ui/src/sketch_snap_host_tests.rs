@@ -57,6 +57,10 @@ impl Harness {
         h
     }
     fn frame(&mut self, events: Vec<egui::Event>, time: f64) {
+        self.frame_cursor(events, time);
+    }
+    /// Runs one frame and returns the pointer shape the canvas requested.
+    fn frame_cursor(&mut self, events: Vec<egui::Event>, time: f64) -> egui::CursorIcon {
         settle(&mut self.editor, &self.session);
         let raw = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1000., 700.))),
@@ -65,10 +69,13 @@ impl Harness {
             ..Default::default()
         };
         let (editor, session) = (&mut self.editor, &mut self.session);
-        self.ctx
-            .run_ui(raw, |ui| editor.canvas(ui, session, true, None, false))
-            .drop_without_applying_deltas();
+        let output = self
+            .ctx
+            .run_ui(raw, |ui| editor.canvas(ui, session, true, None, false));
+        let cursor = output.platform_output.cursor_icon;
+        output.drop_without_applying_deltas();
         settle(&mut self.editor, &self.session);
+        cursor
     }
     fn screen(&self, p: [f64; 2]) -> Pos2 {
         let frame = Datum::Xy.frame();
@@ -389,4 +396,72 @@ fn perpendicular_targets_only_appear_while_a_line_has_a_start() {
     h.click([10., 20.], Vec2::ZERO, 4.);
     h.hover([16., 12.], Vec2::new(3., -2.), 5.);
     assert_eq!(h.shown(), Some(TargetKind::OnCurve), "circles have no foot");
+}
+
+#[test]
+fn corner_edge_and_empty_space_snaps_have_distinct_markers_and_cursors() {
+    use super::snap_host::snap_cursor;
+    use snap::Marker;
+    let mut h = Harness::new(|editor, session| {
+        editor
+            .add(
+                session,
+                DrawTool::Rectangle,
+                [0., 0.],
+                [40., 20.],
+                Channel::Ui,
+            )
+            .unwrap();
+    });
+    h.editor.snap = false;
+    let before = h.session.document().clone();
+    let revision = h.session.revision();
+    let hover = |h: &mut Harness, p: [f64; 2], offset: Vec2, t: f64| {
+        let at = h.screen(p) + offset;
+        h.frame_cursor(vec![egui::Event::PointerMoved(at)], t)
+    };
+    // A rectangle corner: vertex marker and a crosshair cursor.
+    let cursor = hover(&mut h, [40., 20.], Vec2::new(-2., 2.), 1.);
+    let target = h.editor.snap_assist.shown().cloned().unwrap();
+    assert_eq!(target.kind, TargetKind::Endpoint);
+    assert_eq!(target.position, [40., 20.]);
+    assert_eq!(target.kind.marker(), Marker::Vertex);
+    assert_eq!(cursor, egui::CursorIcon::Crosshair);
+    // A point on an edge, away from its ends and midpoint: edge feedback.
+    let cursor = hover(&mut h, [8., 0.], Vec2::new(0., 3.), 1.1);
+    let target = h.editor.snap_assist.shown().cloned().unwrap();
+    assert_eq!(target.kind, TargetKind::OnCurve);
+    assert!(target.position[1].abs() < 1e-9, "{:?}", target.position);
+    assert_eq!(target.kind.marker(), Marker::Edge);
+    assert_eq!(cursor, egui::CursorIcon::Cell);
+    // Empty space: no target and the ordinary cursor.
+    let cursor = hover(&mut h, [20., 45.], Vec2::ZERO, 1.2);
+    assert!(h.editor.snap_assist.shown().is_none());
+    assert_eq!(cursor, egui::CursorIcon::Default);
+    // Clicking the corner commits exactly it, reusing the existing point.
+    let points = h.points().len();
+    h.click([40., 20.], Vec2::new(-2., 2.), 2.);
+    assert_eq!(h.editor.first, Some([40., 20.]));
+    assert!(h.editor.first_anchor.is_some());
+    assert_eq!(h.points().len(), points);
+    // Feedback alone never edits the document.
+    assert_eq!(h.session.document(), &before);
+    assert_eq!(h.session.revision(), revision);
+    // Every point-like kind shows a precise cursor; plain alignment does not.
+    for kind in [
+        TargetKind::Endpoint,
+        TargetKind::Center,
+        TargetKind::LineMidpoint,
+        TargetKind::Reference,
+        TargetKind::GuideIntersection,
+        TargetKind::Perpendicular,
+        TargetKind::Tangent,
+    ] {
+        assert_eq!(
+            snap_cursor(kind),
+            Some(egui::CursorIcon::Crosshair),
+            "{kind:?}"
+        );
+    }
+    assert_eq!(snap_cursor(TargetKind::Guide(snap::Axis::Vertical)), None);
 }
