@@ -5060,8 +5060,17 @@ impl SketchEditor {
             self.plane_picker
                 .paint_preview(&painter, self.camera, rect, context);
             if response.clicked() {
-                let chosen = self.plane_picker.click_hovered(context);
-                match chosen {
+                // CAD-381: a valid planar face is an unambiguous target, so
+                // clicking it creates and enters the sketch at once. Datum and
+                // construction planes keep the explicit Use plane confirmation.
+                match self.plane_picker.click_hovered(context) {
+                    Ok(preview) if matches!(preview.choice, PlaneChoice::Face(_)) => {
+                        if let Err(error) = self.create_on_plane(session, preview, Channel::Ui) {
+                            self.message = format!(
+                                "{error}. The document is unchanged; choose another face or plane."
+                            );
+                        }
+                    }
                     Ok(_) => {
                         self.message =
                             "Plane selected · adjust offset or angle, then Use plane".into()
@@ -7112,25 +7121,10 @@ mod tests {
             .project(pose.point([30., 20., 18.]).map(|v| v as f32), rect);
         let point = Pos2::new(point[0], point[1]);
         let ctx = egui::Context::default();
-        for events in [
-            vec![],
-            vec![],
-            vec![
-                egui::Event::PointerMoved(point),
-                egui::Event::PointerButton {
-                    pos: point,
-                    button: egui::PointerButton::Primary,
-                    pressed: true,
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ],
-            vec![egui::Event::PointerButton {
-                pos: point,
-                button: egui::PointerButton::Primary,
-                pressed: false,
-                modifiers: egui::Modifiers::NONE,
-            }],
-        ] {
+        // CAD-381: a face click now enters its sketch directly, so the
+        // offset/angle variant goes through the Inspector Use plane path:
+        // hovering previews the face without editing the source.
+        for events in [vec![], vec![], vec![egui::Event::PointerMoved(point)]] {
             ctx.run_ui(input(events), |ui| {
                 editor.canvas(ui, &mut session, true, Some(scene(0, 1)), true)
             })
@@ -7140,7 +7134,7 @@ mod tests {
         assert_eq!(
             session.document(),
             &before,
-            "A face click only selects a source-neutral preview"
+            "A face hover only selects a source-neutral preview"
         );
         let get_preview = |editor: &SketchEditor| {
             editor

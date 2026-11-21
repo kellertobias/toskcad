@@ -485,3 +485,57 @@ fn face_sketches_look_at_their_face_from_outside_on_a_moved_and_rotated_part() {
         );
     }
 }
+
+#[test]
+fn clicking_a_face_while_picking_enters_its_sketch_without_use_plane() {
+    let panel = Panel::new();
+    let mut session = Session::new(panel.document.clone()).unwrap();
+    let top = panel.pose.vector([0., 0., 1.]);
+    let mut editor = panel.editor(0, top);
+    editor.begin();
+    assert!(editor.picking && !editor.editing);
+    let point = panel.screen(&editor, [30., 20., 18.]);
+    // Hovering shows the ordinary face highlight before anything is created.
+    let ctx = egui::Context::default();
+    for events in [vec![], vec![egui::Event::PointerMoved(point)], vec![]] {
+        ctx.run_ui(input(events), |ui| {
+            editor.canvas(ui, &mut session, true, Some(panel.scene(0)), true)
+        })
+        .drop_without_applying_deltas();
+    }
+    assert!(
+        matches!(
+            editor.solid.reference_highlight(),
+            Some(crate::viewport::Selection::Face { instance, .. }) if *instance == panel.instance
+        ),
+        "hovered face is highlighted"
+    );
+    assert_eq!(session.document(), &panel.document);
+    click(&mut editor, &mut session, panel.scene(0), true, point);
+    assert!(editor.editing && !editor.picking, "{}", editor.message);
+    assert_eq!(session.revision(), 1);
+    assert_eq!(sketches(session.document()), 1);
+    let id = editor.selected.unwrap();
+    // A repeated click on the same face never adds a second sketch.
+    click(&mut editor, &mut session, panel.scene(0), true, point);
+    click(&mut editor, &mut session, panel.scene(1), true, point);
+    assert_eq!(sketches(session.document()), 1);
+    assert_eq!(editor.selected, Some(id));
+    // The face attachment is canonical and persists through save/reopen.
+    let opened = reopened(session.document());
+    let plane = opened
+        .entities()
+        .find_map(|e| match &e.data {
+            EntityData::Plane {
+                anchor: Some(anchor),
+                ..
+            } => Some(anchor.target),
+            _ => None,
+        })
+        .expect("face attachment saved");
+    assert_eq!(plane, panel.producer);
+    // The cancellation contract still holds for a face-click sketch.
+    editor.abort(&mut session, Channel::Ui).unwrap();
+    assert_eq!(session.document(), &panel.document);
+    assert!(!session.can_undo());
+}
