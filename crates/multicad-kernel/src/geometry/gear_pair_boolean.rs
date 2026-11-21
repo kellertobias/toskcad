@@ -2,9 +2,11 @@
 //!
 //! A `Clear` certificate proves the actual solids share no point, so an
 //! intersection is empty and a difference keeps the unchanged left operand.
-//! A proved common interior point means real interference; its exact volume
-//! needs a curved surface-surface intersection, which no Rust provider builds
-//! yet, so that case is a typed refusal rather than a sampled solid.
+//! A proved common interior point means real interference. Straight gears
+//! intersect into exact extruded regions and a worm with its wheel into a
+//! solid with an exact-section volume; other curved pairs need a
+//! surface-surface intersection that no Rust provider builds yet, so they
+//! are a typed refusal rather than a sampled solid.
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,6 +106,12 @@ impl Solid {
             Ok(Pair::Interferes)
                 if operation == BooleanOperation::Intersect
                     && let Some(result) = self.straight_gear_interference(other, policy) =>
+            {
+                Some(result)
+            }
+            Ok(Pair::Interferes)
+                if operation == BooleanOperation::Intersect
+                    && let Some(result) = self.worm_interference(other, policy) =>
             {
                 Some(result)
             }

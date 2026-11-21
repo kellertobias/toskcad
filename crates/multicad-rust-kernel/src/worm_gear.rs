@@ -11,6 +11,7 @@
 
 pub mod clearance;
 mod contact;
+pub mod interference;
 mod interval;
 mod jet;
 pub mod pair_distance;

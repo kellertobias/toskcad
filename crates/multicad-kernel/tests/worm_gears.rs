@@ -3,8 +3,8 @@ use multicad_core::{
     references::{AnalyticGeometry, TopologyKind},
 };
 use multicad_kernel::{
-    BRepSelection, BooleanOperation, GeneratedZaWormWheel, GeometryPolicy, RigidTransform, Solid,
-    ZaWorm,
+    BRepSelection, BooleanOperation, GeneratedZaWormWheel, GeometryErrorKind, GeometryPolicy,
+    MeshOptions, RigidTransform, Solid, ZaWorm,
 };
 use std::f64::consts::{PI, TAU};
 
@@ -357,6 +357,76 @@ fn conjugate_pair_phase_clears_and_half_tooth_wrong_phase_interferes() {
             );
         }
     }
+}
+#[test]
+fn worm_interference_solid_moves_rigidly_stays_in_both_members_and_refuses_boundary_queries() {
+    let policy = GeometryPolicy::default();
+    let worm = Solid::rust_za_worm_named(worm(), EntityId::new(), policy).unwrap();
+    let (s, c) = (PI / 32.).sin_cos();
+    let wheel = Solid::rust_generated_za_worm_wheel_named(wheel(32), EntityId::new(), policy)
+        .unwrap()
+        .transformed(RigidTransform {
+            rotation: [[c, -s, 0.], [0., 0., 1.], [-s, -c, 0.]],
+            translation_mm: [-21., 0., 0.],
+        })
+        .unwrap();
+    // Either operand order gives the same common material.
+    let common = worm
+        .boolean(&wheel, BooleanOperation::Intersect, policy)
+        .unwrap()
+        .unwrap();
+    let swapped = wheel
+        .boolean(&worm, BooleanOperation::Intersect, policy)
+        .unwrap()
+        .unwrap();
+    let volume = common.volume_mm3().unwrap();
+    assert!(
+        volume > 1. && volume < worm.volume_mm3().unwrap(),
+        "{volume}"
+    );
+    close(swapped.volume_mm3().unwrap(), volume, 1e-9);
+    let bounds = common.bounds().unwrap();
+    for member in [&worm, &wheel] {
+        let b = member.bounds().unwrap();
+        for i in 0..3 {
+            assert!(bounds.min[i] >= b.min[i] && bounds.max[i] <= b.max[i]);
+        }
+    }
+    // A rigid motion keeps the volume and moves the member boxes with it.
+    let moved = common
+        .transformed(RigidTransform {
+            rotation: [[0., -1., 0.], [1., 0., 0.], [0., 0., 1.]],
+            translation_mm: [4., -2., 7.],
+        })
+        .unwrap();
+    close(moved.volume_mm3().unwrap(), volume, 1e-12);
+    let mb = moved.bounds().unwrap();
+    close(mb.min[2], bounds.min[2] + 7., 1e-9);
+    close(mb.max[0], 4. - bounds.min[1], 1e-6);
+    // The common boundary is not built: boundary queries are typed refusals.
+    let kind = |result: Result<(), multicad_kernel::GeometryError>| result.unwrap_err().kind;
+    assert_eq!(
+        kind(common.mesh(MeshOptions::default()).map(drop)),
+        GeometryErrorKind::Unsupported
+    );
+    assert_eq!(
+        kind(common.solid_count().map(drop)),
+        GeometryErrorKind::Unsupported
+    );
+    assert!(!common.supports_step_export());
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(
+        kind(common.write_step(&dir.path().join("common.step"))),
+        GeometryErrorKind::Unsupported
+    );
+    // A difference of interfering curved members stays a typed refusal.
+    assert_eq!(
+        kind(
+            worm.boolean(&wheel, BooleanOperation::Subtract, policy)
+                .map(drop)
+        ),
+        GeometryErrorKind::Unsupported
+    );
 }
 #[test]
 fn parallel_intersection_keeps_independent_native_owners_on_their_threads() {
