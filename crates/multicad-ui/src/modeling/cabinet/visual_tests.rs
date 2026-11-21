@@ -204,7 +204,11 @@ fn essentials_first_advanced_groups_collapsed_with_retained_values() {
                 "{essential} unclipped at {width}"
             );
         }
-        for advanced in ["Edge strip thickness (mm)", "Origin X (mm)", "Shelf setback (mm)"] {
+        for advanced in [
+            "Edge strip thickness (mm)",
+            "Origin X (mm)",
+            "Shelf setback (mm)",
+        ] {
             assert!(
                 find(&painted, advanced).is_none(),
                 "{advanced} starts collapsed"
