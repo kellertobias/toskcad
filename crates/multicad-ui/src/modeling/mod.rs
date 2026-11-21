@@ -19,6 +19,7 @@ mod fdm_aid;
 mod fence;
 mod wood_box;
 pub(crate) use fence::fence_target;
+pub(crate) use outline::OutlineKey;
 mod form;
 mod gear;
 pub(crate) mod gizmo;
