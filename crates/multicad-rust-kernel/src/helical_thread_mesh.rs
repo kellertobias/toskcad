@@ -51,8 +51,8 @@ pub use screw::{
     PhillipsCavityVertex, PhillipsHeadVertex, PhillipsThreadVertex, PhillipsThreadVertexKind,
 };
 pub use screw::{
-    PhillipsMeshError, PhillipsScrewMesh, tessellate_phillips_screw,
-    tessellate_phillips_screw_with_work,
+    PhillipsMeshError, PhillipsScrewMesh, tessellate_cosmetic_phillips_screw,
+    tessellate_phillips_screw, tessellate_phillips_screw_with_work,
 };
 pub use screw::{profiled_screw_volume_error_bound, tessellate_profiled_screw};
 pub use screw::{screw_volume_error_bound, tessellate_screw};

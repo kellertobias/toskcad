@@ -9,6 +9,7 @@ use multicad_kernel::rust_kernel::{
     step_read::PhillipsOwnedPeriodicMaterial,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build(
     feature: EntityId,
     underhead_length_mm: f64,
@@ -17,6 +18,7 @@ pub(super) fn build(
     drive: &ResolvedScrewDrive,
     thread: &ResolvedThread,
     policy: GeometryPolicy,
+    cosmetic: bool,
 ) -> Result<Option<Solid>, ModelError> {
     let ResolvedScrewDrive::PhillipsH { profile: drive } = drive else {
         return Ok(None);
@@ -130,12 +132,14 @@ pub(super) fn build(
         origin: std::array::from_fn(|i| underhead.origin[i] + underhead.normal()[i] * plain),
         ..underhead
     };
-    if PhillipsOwnedPeriodicMaterial::supports_authored_parts(
-        &thread,
-        &profile,
-        &cutter,
-        source_spec,
-    ) {
+    if !cosmetic
+        && PhillipsOwnedPeriodicMaterial::supports_authored_parts(
+            &thread,
+            &profile,
+            &cutter,
+            source_spec,
+        )
+    {
         // Construct the actual retained source directly, before the older
         // cavity/screw qualifiers. Genuine eligible-source failures propagate.
         let source = PhillipsOwnedPeriodicMaterial::from_authored_parts(
@@ -170,6 +174,13 @@ pub(super) fn build(
     .map_err(fail)?;
     let source = PhillipsScrew::new(thread, profile, source_spec, cavity, 100_000, &|| false)
         .map_err(fail)?;
+    if cosmetic {
+        // The same actual head and recess source; only its visible thread
+        // interval is displayed as the nominal smooth envelope.
+        return Solid::rust_cosmetic_phillips_screw(source, feature, frame, policy)
+            .map(Some)
+            .map_err(|cause| error(Some(feature), cause));
+    }
     // Manufacturing uses the qualified retained source. Physical STEP remains
     // explicitly unavailable until its independent import contract is earned.
     Solid::rust_phillips_screw_from_source(source, feature, frame, policy)

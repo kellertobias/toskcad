@@ -293,4 +293,4 @@ impl HelicalBody {
 }
 
 #[cfg(test)]
-mod tests;
+pub(in crate::geometry) mod tests;

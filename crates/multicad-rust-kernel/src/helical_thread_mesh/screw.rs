@@ -10,8 +10,8 @@ mod phillips;
 mod torx;
 pub use phillips::{
     PhillipsCavityVertex, PhillipsHeadVertex, PhillipsMeshError, PhillipsScrewMesh,
-    PhillipsThreadVertex, PhillipsThreadVertexKind, tessellate_phillips_screw,
-    tessellate_phillips_screw_with_work,
+    PhillipsThreadVertex, PhillipsThreadVertexKind, tessellate_cosmetic_phillips_screw,
+    tessellate_phillips_screw, tessellate_phillips_screw_with_work,
 };
 
 fn profiled_options(
