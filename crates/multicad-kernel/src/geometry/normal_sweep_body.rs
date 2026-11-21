@@ -16,6 +16,7 @@ mod opening_clearance;
 mod piercing;
 mod polygon_stock;
 mod profile_depth;
+mod stepped_pocket;
 mod through_hole;
 pub use piercing::SweepOpening;
 

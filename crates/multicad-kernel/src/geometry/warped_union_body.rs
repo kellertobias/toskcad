@@ -15,6 +15,7 @@ mod circular_miter;
 mod contained_boolean;
 mod crop;
 mod cut;
+mod flat_crop;
 mod flat_stock;
 mod mixed_miter;
 mod operands;
