@@ -9,7 +9,10 @@ fn session() -> Session {
 
 fn panel(s: &Session) -> GearPanel {
     GearPanel::new(
-        GearRequest::new("Diagram gear", multicad_core::model::GearParameters::default()),
+        GearRequest::new(
+            "Diagram gear",
+            multicad_core::model::GearParameters::default(),
+        ),
         s.parameters().clone(),
         false,
     )
@@ -33,8 +36,14 @@ fn every_supported_family_draws_its_own_diagram_with_only_visible_callouts() {
         for key in d.keys() {
             assert!(fields.contains(&key));
         }
-        assert!(d.keys().contains(&visual::FIELDS[0]), "{family:?} names its pitch input");
-        assert!(!seen.contains(&d), "{family:?} reuses another family's drawing");
+        assert!(
+            d.keys().contains(&visual::FIELDS[0]),
+            "{family:?} names its pitch input"
+        );
+        assert!(
+            !seen.contains(&d),
+            "{family:?} reuses another family's drawing"
+        );
         seen.push(d);
         // A pair hides the per-member mate inputs, and their callouts.
         let paired = schematic(&p, true);
@@ -45,14 +54,23 @@ fn every_supported_family_draws_its_own_diagram_with_only_visible_callouts() {
     let mut p = panel(&s);
     p.select_family(GearFamily::Helical);
     let right = schematic(&p, false);
-    assert!(right.keys().contains(&visual::FIELDS[4]), "helix angle is dimensioned");
+    assert!(
+        right.keys().contains(&visual::FIELDS[4]),
+        "helix angle is dimensioned"
+    );
     p.hand = GearHand::Left;
     assert_ne!(schematic(&p, false), right, "hand changes the tooth traces");
     p.select_family(GearFamily::DoubleHelical);
-    assert!(schematic(&p, false).keys().contains(&visual::FIELDS[5]), "center gap");
+    assert!(
+        schematic(&p, false).keys().contains(&visual::FIELDS[5]),
+        "center gap"
+    );
     p.select_family(GearFamily::Spur);
     let spur = schematic(&p, false);
-    assert!(!spur.keys().contains(&visual::FIELDS[4]), "spur has no helix");
+    assert!(
+        !spur.keys().contains(&visual::FIELDS[4]),
+        "spur has no helix"
+    );
     p.select_pitch_input(GearPitchInput::DiametralPitch);
     let dp = schematic(&p, false);
     let label = |d: &diagram::Diagram| {
@@ -70,10 +88,19 @@ fn every_supported_family_draws_its_own_diagram_with_only_visible_callouts() {
 struct Painted {
     texts: Vec<(String, egui::Rect)>,
 }
-fn frame(ctx: &egui::Context, p: &mut GearPanel, s: &Session, width: f32, events: Vec<egui::Event>) -> Painted {
+fn frame(
+    ctx: &egui::Context,
+    p: &mut GearPanel,
+    s: &Session,
+    width: f32,
+    events: Vec<egui::Event>,
+) -> Painted {
     let output = ctx.run_ui(
         egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 3600.))),
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(width, 3600.),
+            )),
             focused: true,
             events,
             ..Default::default()
@@ -86,7 +113,10 @@ fn frame(ctx: &egui::Context, p: &mut GearPanel, s: &Session, width: f32, events
         .shapes
         .iter()
         .filter_map(|shape| match &shape.shape {
-            egui::Shape::Text(t) => Some((t.galley.text().to_owned(), egui::Rect::from_min_size(t.pos, t.galley.size()))),
+            egui::Shape::Text(t) => Some((
+                t.galley.text().to_owned(),
+                egui::Rect::from_min_size(t.pos, t.galley.size()),
+            )),
             _ => None,
         })
         .collect();
@@ -110,7 +140,10 @@ fn click(pos: egui::Pos2) -> Vec<egui::Event> {
         .collect()
 }
 fn find(p: &Painted, prefix: &str) -> Option<egui::Rect> {
-    p.texts.iter().find(|(t, _)| t.starts_with(prefix)).map(|(_, r)| *r)
+    p.texts
+        .iter()
+        .find(|(t, _)| t.starts_with(prefix))
+        .map(|(_, r)| *r)
 }
 
 #[test]
@@ -126,9 +159,15 @@ fn family_tiles_and_face_width_callout_edit_the_staged_recipe() {
         assert_eq!(p.family, GearFamily::Helical);
         frame(&ctx, &mut p, &s, width, vec![]);
         let painted = frame(&ctx, &mut p, &s, width, vec![]);
-        assert!(find(&painted, "∠ Helix").is_some(), "diagram follows the family");
+        assert!(
+            find(&painted, "∠ Helix").is_some(),
+            "diagram follows the family"
+        );
         let face = find(&painted, "Face width ").expect("face callout");
-        assert!(face.left() >= 0. && face.right() <= width, "unclipped at {width}");
+        assert!(
+            face.left() >= 0. && face.right() <= width,
+            "unclipped at {width}"
+        );
         frame(&ctx, &mut p, &s, width, click(face.center()));
         frame(&ctx, &mut p, &s, width, vec![]);
         frame(
