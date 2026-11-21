@@ -3,7 +3,8 @@ use super::*;
 use crate::rust_prism_topology::Builder;
 use multicad_core::references::{AnalyticGeometry, TopologySnapshot};
 use multicad_rust_kernel::radial_tensor::{
-    Axis, Curve, Location, MassProperties, RadialBoundary, Surface, VolumeProperties,
+    Axis, Curve, FaceProperties, Location, MassProperties, RadialBoundary, Surface,
+    VolumeProperties,
 };
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -23,6 +24,8 @@ mod tests;
 struct Placement {
     boundary: Rc<RadialBoundary>,
     properties: RefCell<Option<MassProperties>>,
+    /// Area and centroid only; full mass properties are not required.
+    faces: RefCell<Option<Vec<FaceProperties>>>,
     volume: RefCell<Option<VolumeProperties>>,
     bounds: RefCell<Option<Bounds>>,
 }
@@ -203,6 +206,7 @@ impl Solid {
             source: Rc::new(Placement {
                 boundary: Rc::new(boundary),
                 properties: RefCell::new(None),
+                faces: RefCell::new(None),
                 volume: RefCell::new(None),
                 bounds: RefCell::new(None),
             }),
@@ -323,6 +327,7 @@ impl RadialBoundaryBody {
         let placement = Rc::new(Placement {
             boundary: Rc::new(boundary),
             properties: RefCell::new(None),
+            faces: RefCell::new(None),
             volume: RefCell::new(None),
             bounds: RefCell::new(None),
         });
@@ -413,11 +418,34 @@ impl RadialBoundaryBody {
         Ok(bounds)
     }
 
+    /// Face area and centroid enclosures. Completed full mass properties
+    /// are reused; otherwise only the face integrands are evaluated, so a
+    /// face query never pays for volume moments and centroidal inertia.
+    pub(super) fn face_properties(
+        &self,
+        frame: PlaneFrame,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Vec<FaceProperties>, GeometryError> {
+        let placement = self.placement(frame, interrupt)?;
+        if let Some(properties) = placement.properties.borrow().as_ref() {
+            return Ok(properties.faces.clone());
+        }
+        if let Some(faces) = placement.faces.borrow().as_ref() {
+            return Ok(faces.clone());
+        }
+        let faces = placement
+            .boundary
+            .face_properties_with_interrupt(MASS_ACCURACY, interrupt)
+            .map_err(failure)?;
+        checkpoint(interrupt)?;
+        *placement.faces.borrow_mut() = Some(faces.clone());
+        Ok(faces)
+    }
+
     pub(super) fn faces(&self, frame: PlaneFrame) -> Result<Vec<Face>, GeometryError> {
         let placement = self.placement(frame, None)?;
         Ok(self
-            .properties(frame, None)?
-            .faces
+            .face_properties(frame, None)?
             .into_iter()
             .map(|face| Face {
                 index: face.face_index as u32,
