@@ -3329,3 +3329,38 @@ fn an_edge_whose_end_control_repeats_up_to_rounding_samples_within_its_deflectio
         }
     }
 }
+
+#[test]
+fn a_seeded_inversion_decides_alike_for_a_translated_copy() {
+    // A hairpin whose two legs lie 0.03 mm apart, extruded 1 mm along z.
+    // Seeded on the far leg, Newton settles squarely on that leg's foot; only
+    // the global search finds the nearer one. A copy moved tens of metres
+    // away must not keep the far foot merely because its coordinates grew.
+    let hairpin = |t: Point| {
+        let controls = [[0., 0.], [1., 0.], [1., 0.03], [0., 0.03]];
+        let points = controls
+            .iter()
+            .flat_map(|[x, y]| [0., 1.].map(|z| [x + t[0], y + t[1], z + t[2]]))
+            .collect();
+        let net = NurbsSurface::new(
+            [3, 1],
+            [4, 2],
+            points,
+            None,
+            [vec![0., 1.], vec![0., 1.]],
+            [vec![4, 4], vec![2, 2]],
+        )
+        .unwrap();
+        Surface::nurbs(net, TOLERANCE)
+    };
+    for shift in [[0., 0., 0.], [30000., -20000., 10000.]] {
+        let surface = hairpin(shift);
+        let point = [0.3 + shift[0], 0.012 + shift[1], 0.5 + shift[2]];
+        let found = surface.invert(point, Some([0.89, 0.5]));
+        let gap = distance(surface.evaluate(found).0, point);
+        // The near leg lies about 0.011 mm below the point, the far one
+        // about 0.017 mm above it.
+        assert!(gap < 0.0125, "{shift:?}: {gap}");
+        assert!(found[0] < 0.5, "{shift:?}: {found:?}");
+    }
+}
