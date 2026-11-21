@@ -3294,3 +3294,38 @@ fn affine_images_keep_exact_volume_and_turn_circles_into_ellipses() {
         );
     }
 }
+
+#[test]
+fn an_edge_whose_end_control_repeats_up_to_rounding_samples_within_its_deflection() {
+    // The second control point differs from the first only by rounding, so
+    // the end derivative has rounding size and an arbitrary direction, as
+    // in an exchanged spherical bevel flank.
+    let cubic = NurbsCurve::new(
+        3,
+        vec![
+            [9.380588902361167, -0.7816240357049885, 10.586903575959017],
+            [9.380588902361165, -0.7816240357049885, 10.586903575959015],
+            [10., 1., 9.],
+            [12., 0., 8.],
+        ],
+        None,
+        vec![0., 1.],
+        vec![4, 4],
+    )
+    .unwrap();
+    let curve = Curve::nurbs(cubic, TOLERANCE);
+    let (_, start) = curve.evaluate(0.);
+    assert!(norm(start) < 1e-12);
+    for deflection in [0.2, 0.01, 1e-4] {
+        let samples = curve.sample(0., 1., deflection, 0.5).unwrap();
+        // Every chord still lies within the deflection of the curve.
+        for pair in samples.windows(2) {
+            let middle = curve.evaluate(0.5 * (pair[0] + pair[1])).0;
+            let chord = scale(
+                add(curve.evaluate(pair[0]).0, curve.evaluate(pair[1]).0),
+                0.5,
+            );
+            assert!(distance(chord, middle) <= deflection);
+        }
+    }
+}

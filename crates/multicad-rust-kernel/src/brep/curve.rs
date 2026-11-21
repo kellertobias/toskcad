@@ -1,7 +1,7 @@
 //! Edge support curves in their exchange parameterisation.
 use super::surface::Frame;
 use super::{
-    Error, NurbsCurve, Point, Result, add, distance, dot, ensure, nearest, scale, sub, turn,
+    Error, NurbsCurve, Point, Result, add, distance, dot, ensure, nearest, norm, scale, sub, turn,
 };
 use std::f64::consts::{PI, TAU};
 
@@ -200,11 +200,24 @@ impl Curve {
     }
 
     fn flat(&self, a: f64, b: f64, pieces: usize, deflection: f64, angle: f64) -> bool {
+        let width = (b - a) / pieces as f64;
         (0..pieces).all(|k| {
-            let at = |s: f64| self.evaluate(a + (b - a) * (k as f64 + s) / pieces as f64);
+            let at = |s: f64| self.evaluate(a + width * (k as f64 + s));
             let (start, middle, end) = (at(0.), at(0.5), at(1.));
             let chord = scale(add(start.0, end.0), 0.5);
-            distance(chord, middle.0) <= deflection && turn(start.1, end.1) <= angle
+            // A stalled end, such as a spline that repeats its end control
+            // point, has a derivative of rounding size and no direction of
+            // its own; the chord's direction stands in for it.
+            let rate = scale(sub(end.0, start.0), 1. / width);
+            let direction = |tangent: Point| {
+                if norm(tangent) <= 1e-6 * norm(rate) {
+                    rate
+                } else {
+                    tangent
+                }
+            };
+            distance(chord, middle.0) <= deflection
+                && turn(direction(start.1), direction(end.1)) <= angle
         })
     }
 
