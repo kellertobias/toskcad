@@ -615,3 +615,99 @@ fn actual_full_screw_clears_slot_but_long_tip_and_inward_head_do_not() {
         Err(Error::Limit)
     ));
 }
+/// Double-entry access bores across the bottom and top grooves at sweep
+/// station 80, in the member's own coordinates.
+fn access_bands() -> [ToolBand; 3] {
+    [
+        ToolBand {
+            start_mm: -0.02,
+            end_mm: 16.,
+            radius_mm: 10.,
+        },
+        ToolBand {
+            start_mm: 16.,
+            end_mm: 24.,
+            radius_mm: 3.5,
+        },
+        ToolBand {
+            start_mm: 24.,
+            end_mm: 40.02,
+            radius_mm: 10.,
+        },
+    ]
+}
+#[test]
+fn round_hardware_in_access_bores_and_groove_channels_clears_the_bored_member() {
+    let member = profile(1.);
+    let receiver = ReceivingSweep {
+        source: &member,
+        frame: identity(),
+        occurrence: identity(),
+        reverse: false,
+    };
+    let bands = access_bands();
+    let bore = ReceivingBore {
+        origin_mm: [20., 0., 80.],
+        axis: [0., 1., 0.],
+        bands: &bands,
+    };
+    let along = |origin_mm| Frame {
+        origin_mm,
+        ..identity()
+    };
+    // The production work budget of the kernel's receiving proofs.
+    let budget = ReceiverClearanceOptions {
+        maximum_work: 16_000_000,
+        ..options()
+    };
+    let certify = |pieces: &[HardwarePiece], frame, bore| {
+        certify_round_pieces_clearance(pieces, frame, receiver, bore, budget, &|| false)
+    };
+    // A shank down the bottom groove channel from the bore: the channel's
+    // round fit, not its box, keeps it clear.
+    let shank = [HardwarePiece {
+        radius_mm: 4.,
+        span_mm: [0., 15.],
+    }];
+    let frame = along([20., 8., 80.]);
+    let proof = certify(&shank, frame, Some(bore)).unwrap();
+    assert_eq!(proof.overlap_volume_upper_mm3, 0.);
+    assert!(proof.boxes > 1);
+    assert_eq!(
+        certify(&shank, frame, None)
+            .unwrap()
+            .overlap_volume_upper_mm3,
+        0.
+    );
+    // A head wider than the groove stays clear only because the
+    // counterbore removed the lips and flanks around it.
+    let head = [HardwarePiece {
+        radius_mm: 6.5,
+        span_mm: [2., 6.],
+    }];
+    assert_eq!(
+        certify(&head, frame, Some(bore))
+            .unwrap()
+            .overlap_volume_upper_mm3,
+        0.
+    );
+    assert!(certify(&head, frame, None).is_err());
+    // Beyond the counterbore the same head meets the lips.
+    assert!(certify(&head, along([20., 8., 88.]), Some(bore)).is_err());
+    // A barrel coaxial with the counterbore is admitted exactly; one wider
+    // than the counterbore is not.
+    let barrel_frame = Frame {
+        origin_mm: [20., 0.01, 80.],
+        axes: [[1., 0., 0.], [0., 0., -1.], [0., 1., 0.]],
+    };
+    let barrel = |radius_mm| {
+        [HardwarePiece {
+            radius_mm,
+            span_mm: [0., 15.98],
+        }]
+    };
+    let admitted = certify(&barrel(9.98), barrel_frame, Some(bore)).unwrap();
+    assert_eq!(admitted.overlap_volume_upper_mm3, 0.);
+    assert_eq!(admitted.boxes, 0);
+    assert!(certify(&barrel(10.01), barrel_frame, Some(bore)).is_err());
+}

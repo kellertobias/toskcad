@@ -61,10 +61,11 @@ pub use hanger::{
 };
 mod receiver_clearance;
 pub use receiver_clearance::{
-    Line8ReceiverClearance, ProfiledScrewPlacement, ProfiledScrewReceiverClearance,
-    ReceiverClearanceOptions, ReceivingSweep, SeatedStockPlacement, SeatedStockReceiverClearance,
-    certify_line8_receiver_clearance, certify_profiled_screw_receiver_clearance,
-    certify_seated_stock_receiver_clearance,
+    BoredReceiverClearance, HardwarePiece, Line8ReceiverClearance, ProfiledScrewPlacement,
+    ProfiledScrewReceiverClearance, ReceiverClearanceOptions, ReceivingBore, ReceivingSweep,
+    SeatedStockPlacement, SeatedStockReceiverClearance, ToolBand, certify_line8_receiver_clearance,
+    certify_profiled_screw_receiver_clearance, certify_round_pieces_clearance,
+    certify_seated_stock_receiver_clearance, profiled_screw_pieces,
 };
 mod seated;
 mod separation;

@@ -27,7 +27,7 @@ impl Solid {
         let (screw, frame) = self
             .rust_profiled_screw_geometry()
             .ok_or_else(unsupported)?;
-        let (member, placed) = receiver.normal_sweep_body().ok_or_else(unsupported)?;
+        let (member, placed, _) = receiver.receiving_sweep().ok_or_else(unsupported)?;
         let (sweep, reverse) = member.line8_receiving_source().ok_or_else(unsupported)?;
         source::certify_profiled_screw_receiver_clearance(
             source::ProfiledScrewPlacement {
