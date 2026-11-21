@@ -61,7 +61,7 @@ impl InternalThreadTreatmentBody {
         let boundary = self
             .material
             .boundary_with_interrupt(source::BoundaryOptions::default(), None)
-            .map_err(failure)?;
+            .map_err(|cause| self.boundary_failure(cause))?;
         // Only a successful immutable source proof is retained. Placement and
         // per-call reference handoffs remain independently qualified.
         let _ = self.boundary.set(boundary);
@@ -69,6 +69,22 @@ impl InternalThreadTreatmentBody {
             .boundary
             .get()
             .expect("successful immutable boundary initialization"))
+    }
+    /// The finite boundary is sewn only where the entry cone starts outside
+    /// the whole thread cutter. Name that actual geometric reason.
+    fn boundary_failure(&self, cause: source::Error) -> GeometryError {
+        let cavity = self.material.cavity();
+        let cutter = cavity.source_thread().maximum_radius_mm();
+        match cavity.entry_radius_mm() {
+            Some(entry) if cause == source::Error::Unresolved && entry <= cutter => error(
+                "Rust internal thread treatment",
+                GeometryErrorKind::Unsupported,
+                format!(
+                    "The receiving entry chamfer circle (radius {entry} mm) lies inside the thread cutter (maximum radius {cutter} mm); a deeper chamfer must clear the cutter"
+                ),
+            ),
+            _ => failure(cause),
+        }
     }
     pub(crate) fn source_topology(
         &self,
