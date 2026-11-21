@@ -6,10 +6,14 @@
 //! its exact edge by the curvature bound; boxes whose tubes are apart are
 //! discarded and the rest are halved until a Newton step on the exact edges
 //! settles the crossing. Edges are split at the crossings; a piece is kept
-//! when the disc proof places its midpoint strictly inside the other section.
+//! when it lies inside the other section. A piece that starts or ends at a
+//! transversal crossing is inside exactly when it turns into the other
+//! section's material there; the disc proof decides pieces without
+//! crossings and cross-checks every piece whose midpoint it resolves.
 //! Kept pieces must link into closed loops through shared crossings and edge
-//! vertices. Tangential contacts, crossings at vertices, unresolved midpoints
-//! and broken links leave the region unresolved (`Ok(None)`): nothing is
+//! vertices. Tangential contacts, crossings at vertices, unresolved or
+//! conflicting pieces and broken links leave the region unresolved
+//! (`Ok(None)`): nothing is
 //! sampled, approximated or reconstructed.
 use super::{Error, Placement, checkpoint, curvature_bound, witness};
 use crate::{
@@ -373,6 +377,9 @@ pub fn intersect_sections(
     // Fractions of every crossing on each edge, by (section, loop, edge).
     let mut cuts: BTreeMap<(usize, usize, usize), Vec<(f64, usize)>> = BTreeMap::new();
     let mut count = 0usize;
+    // The turn `p × q` from the first edge's direction to the second's at
+    // every crossing, in the common chart.
+    let mut turns: Vec<f64> = Vec::new();
     let mut budget = MAX_BOXES;
     let bound = |side: usize, edge: Edge| {
         // Enclosing box of the placed edge from its chord tube.
@@ -411,6 +418,8 @@ pub fn intersect_sections(
                                     return Err(Error::Limit);
                                 }
                                 let id = count - 1;
+                                let [p, q] = [pa.derivative(t[0]), pb.derivative(t[1])];
+                                turns.push(p[0] * q[1] - p[1] * q[0]);
                                 cuts.entry((0, la, ea)).or_default().push((t[0], id));
                                 cuts.entry((1, lb, eb)).or_default().push((t[1], id));
                             }
@@ -434,14 +443,35 @@ pub fn intersect_sections(
                 let mut stops = vec![(0., Key::Vertex(side, l, e))];
                 stops.extend(marks.iter().map(|&(t, id)| (t, Key::Crossing(id))));
                 stops.push((1., Key::Vertex(next.0, next.1, next.2)));
+                // Material lies left of every directed loop, so at a
+                // transversal crossing an edge enters the other section
+                // when it turns left of the other edge's direction.
+                let enters = |key: Key| match key {
+                    Key::Crossing(id) => Some((turns[id] < 0.) == (side == 0)),
+                    Key::Vertex(..) => None,
+                };
                 for pair in stops.windows(2) {
                     let [(t0, start), (t1, end)] = [pair[0], pair[1]];
                     let middle = placements[side].point(edge.point(t0.midpoint(t1)));
                     let point = local(placements[other], middle);
-                    match strictly_inside(sections[other], point, tolerance_mm)? {
-                        None => return Ok(None),
-                        Some(false) => {}
-                        Some(true) => {
+                    // A piece in a sliver thinner than the disc proof's
+                    // tube still follows from its crossings; every answer
+                    // that resolves must agree.
+                    let answers = [
+                        enters(start),
+                        enters(end).map(|entering| !entering),
+                        strictly_inside(sections[other], point, tolerance_mm)?,
+                    ];
+                    let mut resolved = answers.into_iter().flatten();
+                    let Some(inside) = resolved.next() else {
+                        return Ok(None);
+                    };
+                    if resolved.any(|answer| answer != inside) {
+                        return Ok(None);
+                    }
+                    match inside {
+                        false => {}
+                        true => {
                             if by_start.insert(start, kept.len()).is_some() {
                                 return Ok(None);
                             }

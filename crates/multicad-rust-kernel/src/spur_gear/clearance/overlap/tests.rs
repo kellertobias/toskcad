@@ -205,3 +205,58 @@ fn contacts_and_invalid_requests_fail_closed() {
     );
     let _ = TAU;
 }
+
+#[test]
+fn a_sliver_thinner_than_the_disc_tube_is_classified_by_its_crossings() {
+    // Transverse sections of the 20/30 normal-system helical pair
+    // (beta 20 degrees) set tip against tip and turned to 5.7 mm along the
+    // face, where one flank pair passes contact. The thin overlap of those
+    // flanks lies within the disc proof's chord tube of both boundaries.
+    let beta = 20_f64.to_radians();
+    let normal = |teeth: u32| {
+        let pressure = (20_f64.to_radians().tan() / beta.cos()).atan();
+        let pitch = f64::from(teeth) / beta.cos();
+        let profile = Profile::new(
+            Spec {
+                teeth,
+                pitch_radius_mm: pitch,
+                base_radius_mm: pitch * pressure.cos(),
+                tip_radius_mm: pitch + 2.,
+                root_radius_mm: pitch - 2.5,
+                root_fillet_radius_mm: 0.4,
+                half_base_angle_rad: PI / (2. * f64::from(teeth)) + pressure.tan()
+                    - pressure
+                    - 0.05 / (2. * pitch),
+                face_width_mm: 8.,
+                bore_radius_mm: 2.,
+            },
+            1e-5,
+            1e7,
+        )
+        .unwrap();
+        (profile, beta.tan() / pitch)
+    };
+    let ((a, rate_a), (b, rate_b)) = (normal(20), normal(30));
+    let center = (20. + 30.) / beta.cos();
+    let area = |z: f64| {
+        let placements = [place(0., rate_a * z), place(center, PI - rate_b * z)];
+        let regions = intersect_sections(
+            [Section::Spur(&a), Section::Spur(&b)],
+            placements,
+            TOL,
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        regions.iter().map(|r| r.area_mm2(placements)).sum::<f64>()
+    };
+    // The area changes smoothly through the contact: the sliver sections
+    // lie on the chord between their resolved neighbours.
+    let [before, at, after] = [5.62, 5.70, 5.78].map(area);
+    assert!(before > at && at > after, "{before} {at} {after}");
+    assert!(
+        (at - (before + after) / 2.).abs() < 1e-3,
+        "{before} {at} {after}"
+    );
+    assert!(area(5.71) < at);
+}
