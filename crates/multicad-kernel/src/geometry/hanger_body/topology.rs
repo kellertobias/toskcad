@@ -74,6 +74,24 @@ fn curve_tag(k: CurveKey) -> String {
         } => format!("{}/cap/{}/{period}/{}", component(c), end(e), band(b)),
     }
 }
+/// Threaded faces use the shared fastener `thread/` convention, qualified
+/// by their component; every other element stays under `hanger/`.
+fn face_origin(feature: EntityId, key: FaceKey) -> Origin {
+    match key {
+        FaceKey::MetricThread { start, band: b } | FaceKey::WoodThread { start, band: b } => {
+            let c = if matches!(key, FaceKey::MetricThread { .. }) {
+                Component::Metric
+            } else {
+                Component::Wood
+            };
+            Origin {
+                source: feature,
+                role: format!("thread/{}/start/{start}/{}", component(c), band(b)),
+            }
+        }
+        _ => origin(feature, face_tag(key)),
+    }
+}
 fn origin(feature: EntityId, role: String) -> Origin {
     Origin {
         source: feature,
@@ -150,7 +168,7 @@ impl HangerBody {
                 .source
                 .face_key(index)
                 .expect("actual source face index");
-            let id = origin(self.feature, face_tag(key));
+            let id = face_origin(self.feature, key);
             let boundary = b
                 .face_loops(key)
                 .expect("sealed source face")
@@ -215,7 +233,7 @@ impl HangerBody {
                 origins: BTreeSet::from([id]),
                 boundary: c
                     .faces
-                    .map(|f| origin(self.feature, face_tag(f)))
+                    .map(|f| face_origin(self.feature, f))
                     .into_iter()
                     .collect(),
                 frames: vec![],

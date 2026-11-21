@@ -160,11 +160,27 @@ fn hanger_finite_references_and_overlays_follow_original_sources_and_actual_pose
             .flat_map(|e| e.origins.iter().cloned())
             .collect();
         assert_eq!(origins.len(), 57);
-        assert!(
-            origins
-                .iter()
-                .all(|o| o.source == feature && o.role.starts_with("hanger/"))
-        );
+        assert!(origins.iter().all(|o| o.source == feature
+            && (o.role.starts_with("hanger/") || o.role.starts_with("thread/"))));
+        // Thread roles name exactly the helical faces, never caps, edges or
+        // vertices.
+        let threaded = display
+            .topology
+            .elements
+            .iter()
+            .filter(|e| e.origins.iter().any(|o| o.role.starts_with("thread/")))
+            .collect::<Vec<_>>();
+        assert!(!threaded.is_empty());
+        for element in threaded {
+            assert_eq!(element.key.kind, TopologyKind::Face);
+            assert_eq!(element.origins.len(), 1);
+            assert!(element.geometry.is_none(), "{:?}", element.origins);
+            let role = &element.origins.first().unwrap().role;
+            assert!(
+                role.starts_with("thread/metric/start/") || role.starts_with("thread/wood/start/"),
+                "{role}"
+            );
+        }
         assert_eq!(
             solid
                 .topology_with_display(feature, 9, None)
