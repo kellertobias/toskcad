@@ -263,6 +263,7 @@ impl LibraryEditor {
         );
     }
     fn create_stock_from(&mut self, s: &Session, name: &str, specification: StockKind) {
+        let wood = matches!(specification, StockKind::Panel { .. });
         self.create(s, 1);
         let draft = self.draft.as_mut().expect("created stock");
         let material = stock_material(&draft.entity).expect("stock material");
@@ -275,6 +276,15 @@ impl LibraryEditor {
             *inputs = stock.links();
         }
         draft.entity.name = name.into();
+        // A panel stock's companion material is wood (CAD-372). Existing
+        // materials, and colors already chosen, are never recolored.
+        if wood
+            && let Some(material) = draft.companion.as_mut()
+            && let EntityData::Material { color_rgba, .. } = &mut material.data
+        {
+            material.name = "Wood".into();
+            *color_rgba = WOOD_COLOR;
+        }
         self.reveal_category = Category::for_entity(&draft.entity);
     }
     pub(crate) fn for_model_stock(s: &Session, kind: ToolStock) -> Self {
@@ -1012,6 +1022,10 @@ fn material_color_route(
     }
     open
 }
+/// Default appearance for the wood material drafted with new panel stock:
+/// a light oak tone.
+pub(crate) const WOOD_COLOR: [u8; 4] = [196, 154, 108, 255];
+
 fn new_material(name: &str) -> Entity {
     Entity::new(
         name,
