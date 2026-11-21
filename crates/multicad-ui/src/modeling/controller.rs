@@ -958,6 +958,21 @@ impl ModelToolController {
             _ => false,
         }
     }
+    /// Give Enter, Escape or Backspace to a wall, fence or slab path while it
+    /// is being drawn or a corner is moved. Returns `None` when the key is not
+    /// the path's, so the form keeps its usual Apply and Cancel meaning.
+    pub(crate) fn outline_key(&mut self, key: super::OutlineKey) -> Option<bool> {
+        let changed = match self.form.as_mut() {
+            Some(ModelForm::Wall(panel)) => panel.outline_key(key),
+            Some(ModelForm::Fence(panel)) => panel.outline_key(key),
+            Some(ModelForm::Architecture(panel)) => panel.outline_key(key),
+            _ => None,
+        }?;
+        if changed {
+            self.invalidate();
+        }
+        Some(changed)
+    }
     pub fn outline_viewport(
         &mut self,
         session: &Session,

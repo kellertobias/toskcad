@@ -729,3 +729,141 @@ fn library_browser_highlight_does_not_revive_a_cancelled_equipment_preset() {
     assert_eq!(app.current().session.document(), &before);
     assert_eq!(app.current().session.revision(), 0);
 }
+#[test]
+fn enter_and_escape_finish_or_cancel_the_wall_path_before_they_apply_or_discard_the_form() {
+    let source = Document::new("Wall path keys").unwrap();
+    let mut app = app();
+    *app.current_mut() = Project::new(source.clone()).unwrap();
+    app.set_model_backends(std::sync::Arc::new(|| {
+        Box::new(crate::modeling::native_fixture::NativeBackend::new())
+    }));
+    app.tab = app
+        .registry
+        .workspace(Mode::Model)
+        .tabs
+        .iter()
+        .position(|tab| tab.title == "Architecture")
+        .unwrap();
+    app.current_mut()
+        .sketch
+        .restore_architecture_view(crate::architecture_view::Recall {
+            plan: true,
+            level: None,
+        });
+    let ctx = context(1.);
+    let size = egui::vec2(1400., 2400.);
+    let key = |app: &mut Application, key: egui::Key| {
+        paint(
+            app,
+            &ctx,
+            size,
+            vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        )
+        .drop_without_applying_deltas();
+        paint(app, &ctx, size, vec![])
+    };
+    paint(&mut app, &ctx, size, vec![]).drop_without_applying_deltas();
+    app.invoke(Command::Modeling(ModelingTool::Wall), &[], Channel::Ui)
+        .unwrap();
+    let out = paint(&mut app, &ctx, size, vec![]);
+    let out = click(
+        &mut app,
+        &ctx,
+        size,
+        bounds(&out, "Draw in viewport").center(),
+    );
+    assert!(control_bounds(&out, "Finish").is_some());
+    out.drop_without_applying_deltas();
+    // Two viewport clicks place the corners of a new path.
+    let viewport = app
+        .current()
+        .sketch
+        .viewport_rect
+        .expect("painted viewport");
+    let points = [
+        viewport.center() + egui::vec2(-150., 40.),
+        viewport.center() + egui::vec2(150., 40.),
+    ];
+    for at in points {
+        click(&mut app, &ctx, size, at).drop_without_applying_deltas();
+    }
+    // Enter finishes the path; the form stays open and nothing is applied.
+    let out = key(&mut app, egui::Key::Enter);
+    assert!(app.current().sketch.model_active());
+    assert_eq!(app.current().session.document(), &source);
+    assert!(control_bounds(&out, "Draw in viewport").is_some());
+    assert!(control_bounds(&out, "Finish").is_none());
+    out.drop_without_applying_deltas();
+    app.invoke(Command::Preview, &[], Channel::Ui).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !app
+        .current()
+        .sketch
+        .model_can_apply(&app.current().session, &app.current().resources)
+    {
+        paint(&mut app, &ctx, size, vec![]).drop_without_applying_deltas();
+        assert!(
+            std::time::Instant::now() < deadline,
+            "native wall preview timed out"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    app.invoke(Command::Apply, &[], Channel::Ui).unwrap();
+    let document = app.current().session.document().clone();
+    let wall = multicad_core::model::walls(&document).next().unwrap();
+    let path = multicad_core::model::read_wall(&document, wall.id)
+        .unwrap()
+        .path;
+    assert_eq!(path.len(), 2);
+    assert_ne!(
+        path,
+        vec![
+            [
+                multicad_core::model::length(0.),
+                multicad_core::model::length(0.)
+            ],
+            [
+                multicad_core::model::length(4000.),
+                multicad_core::model::length(0.)
+            ]
+        ],
+        "the clicked corners replaced the seeded path"
+    );
+    // Escape while drawing cancels only the drawing and keeps the form.
+    app.invoke(Command::Modeling(ModelingTool::Wall), &[], Channel::Ui)
+        .unwrap();
+    let out = paint(&mut app, &ctx, size, vec![]);
+    click(
+        &mut app,
+        &ctx,
+        size,
+        bounds(&out, "Draw in viewport").center(),
+    )
+    .drop_without_applying_deltas();
+    out.drop_without_applying_deltas();
+    click(&mut app, &ctx, size, points[0]).drop_without_applying_deltas();
+    let out = key(&mut app, egui::Key::Escape);
+    assert!(
+        app.current().sketch.model_active(),
+        "the wall form stays open"
+    );
+    assert!(control_bounds(&out, "Draw in viewport").is_some());
+    out.drop_without_applying_deltas();
+    // Idle, Escape is no longer the path's; the form's own cancel then
+    // discards the open form without touching the document.
+    assert_eq!(
+        app.current_mut()
+            .sketch
+            .model_outline_key(crate::modeling::OutlineKey::Cancel),
+        None
+    );
+    app.current_mut().sketch.cancel();
+    assert!(!app.current().sketch.model_active());
+    assert_eq!(app.current().session.document(), &document);
+}

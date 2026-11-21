@@ -386,3 +386,90 @@ fn native_candidate_level_filter_uses_prepared_membership_and_keeps_canonical_co
         .unwrap();
     assert_eq!(session.document(), &source);
 }
+
+#[test]
+fn path_keys_belong_to_the_wall_drawing_only_while_it_captures_the_plan() {
+    use crate::egui;
+    let session =
+        multicad_core::commands::Session::new(Document::new("Wall keys").unwrap()).unwrap();
+    let resources = ProjectResources::default();
+    let (mut controller, _) = controller();
+    controller
+        .begin_wall(&session, &resources, Channel::Ui)
+        .unwrap();
+    // Idle: Enter and Escape keep their form meaning (Apply / Cancel).
+    assert_eq!(
+        controller.outline_key(super::super::OutlineKey::Finish),
+        None
+    );
+    assert_eq!(
+        controller.outline_key(super::super::OutlineKey::Cancel),
+        None
+    );
+    let ctx = egui::Context::default();
+    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.));
+    let camera = crate::camera::Camera {
+        yaw: 0.,
+        pitch: 1.5,
+        scale: 0.1,
+        target: [0., 2000., 0.],
+        perspective: false,
+    };
+    let click = |controller: &mut ModelToolController, at: [f32; 2]| {
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            let s = camera.project([at[0], at[1], 0.], rect);
+            controller.outline_viewport(
+                &session,
+                super::super::TerminationViewport {
+                    scene: None,
+                    report: None,
+                    camera,
+                    rect,
+                    pointer: Some(egui::pos2(s[0], s[1])),
+                    clicked: true,
+                    painter: ui.painter(),
+                    section: None,
+                },
+            );
+        });
+        output.textures_delta.clear();
+    };
+    // A click on empty plan space starts a new wall path.
+    click(&mut controller, [-1000., 3000.]);
+    click(&mut controller, [1000., 3000.]);
+    click(&mut controller, [1000., 4000.]);
+    assert_eq!(
+        controller.outline_key(super::super::OutlineKey::RemoveLast),
+        Some(true)
+    );
+    assert_eq!(
+        controller.outline_key(super::super::OutlineKey::Finish),
+        Some(true)
+    );
+    assert!(controller.active(), "Enter finished the path, not the form");
+    let Some(ModelRequest::Wall(command)) = controller.request_for_tests(&session) else {
+        panic!("wall request")
+    };
+    assert_eq!(
+        command.wall.path,
+        vec![
+            [model::length(-1000.), model::length(3000.)],
+            [model::length(1000.), model::length(3000.)]
+        ]
+    );
+    // After the first drawing an empty click selects nothing and Escape is
+    // the form's again.
+    click(&mut controller, [5000., 5000.]);
+    let Some(ModelRequest::Wall(drawn)) = controller.request_for_tests(&session) else {
+        panic!("wall request")
+    };
+    assert_eq!(
+        drawn.wall.path, command.wall.path,
+        "no click lands while idle"
+    );
+    assert_eq!(
+        controller.outline_key(super::super::OutlineKey::Cancel),
+        None
+    );
+    assert!(controller.active());
+}
