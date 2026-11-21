@@ -1051,7 +1051,15 @@ fn panel_stock_on_an_explicit_material_and_old_projects_keep_their_colors() {
     );
     let mut fresh = Session::new(Document::new("Painted").unwrap()).unwrap();
     fresh
-        .commit(prepare_library(&fresh, 0, Actor::local(Channel::Ui), &[painted.clone()]).unwrap())
+        .commit(
+            prepare_library(
+                &fresh,
+                0,
+                Actor::local(Channel::Ui),
+                std::slice::from_ref(&painted),
+            )
+            .unwrap(),
+        )
         .unwrap();
     let mut editor = self::editor(&fresh);
     editor.create_stock(&fresh, 0);
