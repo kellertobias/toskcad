@@ -634,3 +634,87 @@ fn coaxial_cavities_turned_or_moved_along_the_axis_clear_at_their_actual_phase()
         }
     }
 }
+
+#[test]
+fn half_turned_nuts_intersect_in_the_actual_screw_sweep_of_their_profile_lenses() {
+    use std::f64::consts::{PI, TAU};
+    let policy = GeometryPolicy::default();
+    for left in [false, true] {
+        for posed in [false, true] {
+            let frame = frame(posed);
+            let shaft =
+                Solid::rust_helical_thread(spec(left), None, EntityId::new(), frame, policy)
+                    .unwrap();
+            let nut_at = |angle: f64| {
+                Solid::rust_hex_nut(
+                    HelicalThread {
+                        major_radius_mm: 2.2,
+                        length_mm: 2.1,
+                        ..spec(left)
+                    },
+                    8.,
+                    0.5,
+                    EntityId::new(),
+                    turned(frame, angle, 0.7),
+                    policy,
+                )
+                .unwrap()
+            };
+            // The mating nut still clears; half a turn puts its minor crest
+            // over the shaft crest.
+            assert!(
+                shaft
+                    .boolean(&nut_at(0.), BooleanOperation::Intersect, policy)
+                    .unwrap()
+                    .is_none()
+            );
+            let nut = nut_at(PI);
+            let (external, _) = shaft.rust_helical_thread_data().unwrap();
+            let cavity = *nut.rust_hex_nut_geometry().unwrap().0.thread();
+            // Independent oracle: the screw sweep of the radial overlap,
+            // `V = H · 2π/p · ∫ ½ (R_e² - R_c²)₊ dφ` over one period.
+            let pitch = external.spec().pitch_mm;
+            let shift = 0.7 - cavity.helical_rate() * PI;
+            let steps = 200_000;
+            let h = pitch / f64::from(steps);
+            let integral: f64 = (0..steps)
+                .map(|i| {
+                    let phase = (f64::from(i) + 0.5) * h;
+                    let outer = external.radius_at_phase(phase);
+                    let inner = cavity.radius_at_phase(phase - shift);
+                    0.5 * (outer * outer - inner * inner).max(0.) * h
+                })
+                .sum();
+            let expected = 2.1 * TAU / pitch * integral;
+            assert!(expected > 0.5);
+            for (a, b) in [(&shaft, &nut), (&nut, &shaft)] {
+                let common = a
+                    .boolean(b, BooleanOperation::Intersect, policy)
+                    .unwrap()
+                    .expect("overlapping profiles have common material");
+                assert_eq!(common.solid_count().unwrap(), 1);
+                let volume = common.volume_mm3().unwrap();
+                assert!((volume - expected).abs() < 1e-5, "{volume} vs {expected}");
+                assert!(common.faces().unwrap().iter().all(|f| f.area_mm2 > 0.));
+                // Every boundary point lies on the shared span and between
+                // the cavity minor radius and the shaft crest.
+                let mesh = common.mesh(Default::default()).unwrap();
+                for point in mesh.vertices.chunks(3) {
+                    let local: [f64; 3] = std::array::from_fn(|i| {
+                        let axis = [frame.u, frame.v, frame.normal()][i];
+                        (0..3).map(|j| (point[j] - frame.origin[j]) * axis[j]).sum()
+                    });
+                    let radius = local[0].hypot(local[1]);
+                    assert!(local[2] > 0.7 - 1e-4 && local[2] < 2.8 + 1e-4);
+                    assert!(radius > 1.85 - 1e-4 && radius < 2. + 1e-4);
+                }
+            }
+            // A subtraction keeps its typed outcome: nothing is constructed.
+            assert!(
+                shaft
+                    .disjoint_thread_mating(&nut, BooleanOperation::Subtract)
+                    .is_none()
+            );
+        }
+    }
+}
