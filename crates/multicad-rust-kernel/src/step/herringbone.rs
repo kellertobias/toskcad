@@ -41,7 +41,7 @@ pub(crate) struct Chart {
     pub(crate) weights: Option<Vec<f64>>,
 }
 impl Chart {
-    fn from_spin(spline: Spline) -> Self {
+    pub(super) fn from_spin(spline: Spline) -> Self {
         Self {
             degree: DEGREE,
             interior_mult: DEGREE,
@@ -125,7 +125,7 @@ impl Chart {
         }
     }
 
-    fn knot_values(&self) -> String {
+    pub(super) fn knot_values(&self) -> String {
         self.knots
             .iter()
             .map(|knot| format!("{knot:.16E}"))
@@ -133,7 +133,7 @@ impl Chart {
             .join(",")
     }
 
-    fn multiplicities(&self) -> String {
+    pub(super) fn multiplicities(&self) -> String {
         let mut values = vec![self.interior_mult; self.knots.len()];
         values[0] = self.degree + 1;
         values[self.knots.len() - 1] = self.degree + 1;
@@ -144,7 +144,7 @@ impl Chart {
             .join(",")
     }
 
-    fn edge(
+    pub(super) fn edge(
         &self,
         file: &mut StepFile,
         [a, b]: [Vertex; 2],
@@ -187,7 +187,11 @@ impl Chart {
     }
 }
 
-fn axial_rotation(angle: f64, height: f64, error: f64) -> Result<(Chart, Vec<f64>), StepError> {
+pub(super) fn axial_rotation(
+    angle: f64,
+    height: f64,
+    error: f64,
+) -> Result<(Chart, Vec<f64>), StepError> {
     let magnitude = angle.abs();
     // Degree-five two-end Hermite matches value and two derivatives.
     // The remainder is bounded by (h/2)^6 / 6! for a unit complex rotation.
