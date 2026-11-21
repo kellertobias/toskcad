@@ -241,6 +241,77 @@ impl Solid {
     }
 }
 
+impl Solid {
+    /// Certified whole-solid distance of a placed Rust worm and generated
+    /// wheel, in either order, once their clearance certificate is `Clear`.
+    /// The distance is attained by actual boundary points and exceeds the
+    /// proved lower bound by at most the policy linear tolerance.
+    pub(crate) fn rust_worm_pair_distance(
+        &self,
+        other: &Self,
+    ) -> Option<Result<crate::MinimumDistance, GeometryError>> {
+        const DISTANCE: &str = "minimum distance";
+        let (worm, worm_frame, wheel, wheel_frame, worm_first) =
+            match (self.rust_worm(), other.rust_worm_wheel()) {
+                (Some((w, wf)), Some((g, gf))) => (w, wf, g, gf, true),
+                _ => {
+                    let (w, wf) = other.rust_worm()?;
+                    let (g, gf) = self.rust_worm_wheel()?;
+                    (w, wf, g, gf, false)
+                }
+            };
+        Some((|| {
+            let policy = self.policy;
+            let (clear, _) = self.certify_rust_worm_pair(other, policy, 0., None)?;
+            if clear != ResultKind::Clear {
+                return Err(error(
+                    DISTANCE,
+                    GeometryErrorKind::Unsupported,
+                    "Rust worm distance requires a certified clear pair",
+                ));
+            }
+            let placement = |frame: PlaneFrame| Placement {
+                origin_mm: frame.origin,
+                axes: [frame.u, frame.v, frame.normal()],
+            };
+            let found = multicad_rust_kernel::worm_gear::pair_distance::minimum_distance(
+                worm,
+                placement(worm_frame),
+                wheel,
+                placement(wheel_frame),
+                policy.linear_tolerance_mm,
+                None,
+            )
+            .map_err(|cause| {
+                use multicad_rust_kernel::worm_gear::pair_distance::Error;
+                let kind = match cause {
+                    Error::Limit => GeometryErrorKind::Limit,
+                    Error::Cancelled => GeometryErrorKind::Cancelled,
+                    Error::Invalid | Error::Unresolved => GeometryErrorKind::Unsupported,
+                };
+                error(
+                    DISTANCE,
+                    kind,
+                    format!("Rust worm distance could not be certified: {cause:?}"),
+                )
+            })?;
+            let [on_worm, on_wheel] = found.points_mm;
+            let (a_mm, b_mm) = if worm_first {
+                (on_worm, on_wheel)
+            } else {
+                (on_wheel, on_worm)
+            };
+            Ok(crate::MinimumDistance {
+                distance_mm: found.distance_mm,
+                witnesses: vec![crate::DistanceWitness { a_mm, b_mm }],
+                witnesses_complete: false,
+                total_solutions: None,
+                inner_solution: false,
+            })
+        })())
+    }
+}
+
 impl WormBody {
     /// Sector and generated piece of one wheel face, from its native role.
     pub(crate) fn wheel_piece(

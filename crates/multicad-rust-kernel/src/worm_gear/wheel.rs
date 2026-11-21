@@ -12,7 +12,7 @@ use super::{jet::Jet, jet::Real, *};
 use crate::bevel_gear::integrate;
 use std::f64::consts::{PI, TAU};
 
-const LEAD: f64 = 0.5;
+pub(super) const LEAD: f64 = 0.5;
 pub(crate) const CUTTER_TIP: f64 = 6.25;
 pub(crate) const WORM_ROOT: f64 = 3.75;
 const STATIONS: usize = 9;
@@ -205,6 +205,12 @@ impl Wheel {
             }
         }
         Ok(())
+    }
+
+    /// Center distance and pitch radius of the generating cutter, module
+    /// units.
+    pub(crate) fn generating_radii(&self) -> [f64; 2] {
+        [self.center, self.radius]
     }
 
     pub fn spec(&self) -> WheelSpec {
@@ -504,7 +510,7 @@ impl Wheel {
 
     /// Radial material margin of a local point in module units, from the
     /// space boundary at its own section.
-    fn space_margin(&self, x: f64, y: f64, v: f64) -> f64 {
+    pub(super) fn space_margin(&self, x: f64, y: f64, v: f64) -> f64 {
         let theta = y.atan2(x);
         let pitch = 2. * self.span;
         let local = theta - (theta / pitch).round() * pitch;

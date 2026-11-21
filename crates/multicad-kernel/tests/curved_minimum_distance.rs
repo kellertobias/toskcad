@@ -182,3 +182,68 @@ fn parallel_faces_with_hole_arcs_measure_their_separation_or_refuse() {
         );
     }
 }
+
+#[test]
+fn mating_worm_and_generated_wheel_measure_a_certified_flank_gap() {
+    use multicad_kernel::{GeneratedZaWormWheel, RigidTransform, ZaWorm};
+    let worm = Solid::rust_za_worm_named(
+        ZaWorm {
+            axial_module_mm: 1.,
+            threaded_length_mm: 16.,
+            bore_radius_mm: 1.,
+            axial_thinning_mm: 0.05,
+        },
+        EntityId::new(),
+        p(),
+    )
+    .unwrap();
+    let wheel = Solid::rust_generated_za_worm_wheel_named(
+        GeneratedZaWormWheel {
+            teeth: 32,
+            axial_module_mm: 1.,
+            face_width_mm: 2.,
+            bore_radius_mm: 2.,
+            pitch_thinning_mm: 0.05,
+        },
+        EntityId::new(),
+        p(),
+    )
+    .unwrap();
+    let place = |angle: f64| {
+        let (s, c) = angle.sin_cos();
+        wheel
+            .transformed(RigidTransform {
+                rotation: [[c, -s, 0.], [0., 0., 1.], [-s, -c, 0.]],
+                translation_mm: [-21., 0., 0.],
+            })
+            .unwrap()
+    };
+    let placed = place(0.);
+    let (_, witness) = worm
+        .certify_rust_worm_pair(&placed, p(), 0.2, None)
+        .unwrap();
+    let found = worm
+        .minimum_distance(BRepSelection::Whole, &placed, BRepSelection::Whole)
+        .unwrap();
+    check(&found);
+    // The clearance witness is an actual pair, so it is never closer; the
+    // gap lies between the total thinning projected onto the flank normal
+    // and the total thinning.
+    assert!(found.distance_mm <= witness.unwrap().distance_mm + 1e-12);
+    assert!(found.distance_mm > 0.04 && found.distance_mm < 0.1);
+    // Swapped order keeps the witness owners.
+    let swapped = placed
+        .minimum_distance(BRepSelection::Whole, &worm, BRepSelection::Whole)
+        .unwrap();
+    near(swapped.distance_mm, found.distance_mm);
+    near(
+        length(swapped.witnesses[0].a_mm, found.witnesses[0].b_mm),
+        0.,
+    );
+    // Half a tooth out of phase the solids overlap: no distance is claimed.
+    let wrong = place(std::f64::consts::PI / 32.);
+    let refusal = worm
+        .minimum_distance(BRepSelection::Whole, &wrong, BRepSelection::Whole)
+        .unwrap_err();
+    assert_eq!(refusal.kind, GeometryErrorKind::Unsupported);
+}

@@ -100,13 +100,9 @@ pub(crate) fn measure(
         }
         if selection_a == BRepSelection::Whole
             && selection_b == BRepSelection::Whole
-            && ((a.rust_worm().is_some() && b.rust_worm_wheel().is_some())
-                || (a.rust_worm_wheel().is_some() && b.rust_worm().is_some()))
+            && let Some(result) = a.rust_worm_pair_distance(b)
         {
-            return Err(error(
-                GeometryErrorKind::Unsupported,
-                "Rust whole-solid distance between a ZA worm and its generated wheel has no certified crossed-axis surface-pair bound",
-            ));
+            return result;
         }
         if selection_a == BRepSelection::Whole
             && selection_b == BRepSelection::Whole

@@ -33,7 +33,7 @@ pub struct Placement {
 }
 
 impl Placement {
-    fn world(&self, local: Point) -> Point {
+    pub(super) fn world(&self, local: Point) -> Point {
         std::array::from_fn(|i| {
             self.origin_mm[i]
                 + self.axes[0][i] * local[0]
@@ -42,12 +42,12 @@ impl Placement {
         })
     }
 
-    fn local(&self, world: Point) -> Point {
+    pub(super) fn local(&self, world: Point) -> Point {
         let d = sub(world, self.origin_mm);
         self.axes.map(|axis| dot(axis, d))
     }
 
-    fn valid(&self) -> bool {
+    pub(super) fn valid(&self) -> bool {
         let [x, y, z] = self.axes;
         self.origin_mm.iter().all(|v| v.is_finite())
             && self.axes.iter().all(|a| (norm(*a) - 1.).abs() <= 1e-9)
@@ -433,6 +433,11 @@ fn certify_within(
         return Err(Error::Invalid);
     }
     let field = Field::new(wheel)?;
+    // Conjugate flanks without thinning touch; their contact boxes are
+    // settled by the generating-motion certificate instead of a gap.
+    let contact = super::contact::Contact::new(worm, worm_at, wheel, wheel_at);
+    let bands = super::pair_distance::worm_patches(worm);
+    let mut touched = false;
     let spec = worm.thread().spec();
     let rate = worm.thread().helical_rate();
     let major = spec.major_radius_mm;
@@ -523,6 +528,35 @@ fn certify_within(
                 }
             }
         }
+        if let (Some(contact), Patch::Band { face }) = (&contact, rectangle.patch)
+            && let Some(side) = contact.side(face)
+            && radius <= 0.05 * wheel.module_mm()
+        {
+            use super::interval::Interval;
+            use super::pair_distance::{centered, k, mid};
+            let (band, _) = bands[if face == 2 { 0 } else { 2 }];
+            let x = [0, 1].map(|i| Interval::new(rectangle.a[i], rectangle.b[i]));
+            let [value, dp, dq] = contact.map.local(band, x);
+            let [center, ..] = contact.map.local(band, x.map(|i| k(mid(i))));
+            if contact.covers(centered(value, center, [dp, dq], x), side) {
+                touched = true;
+                continue;
+            }
+        }
+        if let (Some(contact), Patch::Band { face: 3 }) = (&contact, rectangle.patch)
+            && radius <= 0.05 * wheel.module_mm()
+        {
+            use super::interval::Interval;
+            use super::pair_distance::{centered, k, mid};
+            let (band, _) = bands[3];
+            let x = [0, 1].map(|i| Interval::new(rectangle.a[i], rectangle.b[i]));
+            let [value, dp, dq] = contact.map.local(band, x);
+            let [center, ..] = contact.map.local(band, x.map(|i| k(mid(i))));
+            if contact.covers_crest(centered(value, center, [dp, dq], x)) {
+                touched = true;
+                continue;
+            }
+        }
         if radius <= minimum {
             unresolved = true;
             minimum = minimum.max(1e-2 * wheel.module_mm());
@@ -573,8 +607,27 @@ fn certify_within(
     let m = wheel.module_mm();
     let probe = [tooth[0] * m * 0.999, tooth[1] * m * 0.999, 0.];
     let enclosed = worm.margin(worm_at.local(wheel_at.world(probe))) >= 0.;
+    if enclosed {
+        return Ok(Certificate {
+            result: ResultKind::Unresolved,
+            nearest: None,
+        });
+    }
+    if touched {
+        let points = contact
+            .as_ref()
+            .and_then(super::contact::Contact::witness)
+            .ok_or(Error::Limit)?;
+        return Ok(Certificate {
+            result: ResultKind::Contact,
+            nearest: Some(Witness {
+                distance_mm: norm(sub(points[0], points[1])),
+                points_mm: points,
+            }),
+        });
+    }
     Ok(Certificate {
-        result: [ResultKind::Clear, ResultKind::Unresolved][usize::from(enclosed)],
+        result: ResultKind::Clear,
         nearest: witness,
     })
 }
@@ -686,12 +739,13 @@ mod tests {
 
     #[test]
     fn touching_enclosed_and_invalid_inputs_stay_conservative() {
-        // Zero thinning: conjugate flanks touch without a strict overlap.
+        // Zero thinning: conjugate flanks touch without a strict overlap,
+        // proved by the generating-motion certificate, with a contact pair.
         let (worm, wheel) = members(40, [0., 0.], 0.);
         let [a, b] = pose(40, 1., 0., 0.);
         let touching = certify(&worm, a, &wheel, b, 1e-7, 0.1, None).unwrap();
-        assert_eq!(touching.result, ResultKind::Unresolved);
-        assert_eq!(touching.nearest, None);
+        assert_eq!(touching.result, ResultKind::Contact);
+        assert!(touching.nearest.unwrap().distance_mm < 1e-9);
         // A small wheel buried in a large worm overlaps its core.
         let small = Wheel::new(wheel_spec(0.5, 32, 0.5, 0., 0.), 1e-3, 1e7).unwrap();
         let big = Worm::new(worm_spec(2., 20., 0., 0.), 1e-3).unwrap();
