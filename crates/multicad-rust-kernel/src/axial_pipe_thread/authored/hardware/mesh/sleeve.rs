@@ -3,6 +3,7 @@
 //! counted connectivity proof as the hex nut; the six exact flats become an
 //! inscribed chord polygon whose sagitta and normal turn meet the request.
 use super::*;
+use std::borrow::Cow;
 
 /// Chord count of the inscribed stock polygon: the sagitta `R(1-cos(pi/n))`
 /// is within the requested deflection and the normal of every wall facet is
@@ -77,7 +78,7 @@ pub fn join_sleeve<'a, 's>(
     };
     work.storage(0)?;
     work.charge(1)?;
-    let mut rings = rims(source, &mut work)?;
+    let rings = rims(source, &mut work)?;
     work.held = work
         .held
         .checked_add(
@@ -95,14 +96,110 @@ pub fn join_sleeve<'a, 's>(
     {
         return Err(Error::Unsupported);
     }
+    let (mesh, connectivity, distance) = join_rims(
+        Cow::Borrowed(source.mesh()),
+        rings,
+        radius_mm,
+        None,
+        &mut work,
+    )?;
+    Ok(JoinedMeshCandidate {
+        source,
+        mesh,
+        connectivity,
+        distance,
+        work: work.used,
+        peak: work.peak,
+    })
+}
+
+/// Join a dedicated authored-law bore surface (no cap fans; rims at the
+/// two cap planes, counterclockwise) to cylindrical stock. `faces` gives
+/// the start cap, end cap and wall face ids; `source_distance_mm` is the
+/// law mesh's proven facet distance. Returns the closed mesh, its
+/// connectivity proof and the complete distance bound.
+pub fn join_sleeve_law(
+    law: crate::axial_pipe_thread::authored::LawMesh,
+    heights: [f64; 2],
+    faces: [u32; 3],
+    radius_mm: f64,
+    options: MeshOptions,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<(DisplayMesh, MeshProof, f64), Error> {
+    options.tessellation.check().map_err(|_| Error::Invalid)?;
+    if options.maximum_work == 0
+        || options.maximum_work > 512_000_000
+        || options.maximum_bytes == 0
+        || options.maximum_bytes > 64 * 1024 * 1024
+        || !radius_mm.is_finite()
+        || radius_mm <= 0.
+        || law.proof.is_some()
+    {
+        return Err(Error::Invalid);
+    }
+    // The law mesh is consumed: it becomes the joined mesh in place.
+    let mut work = Work {
+        used: 0,
+        held: options.additional_resident_bytes,
+        peak: 0,
+        options,
+        interrupt,
+    };
+    work.storage(0)?;
+    work.charge(1)?;
+    let rings = Rims {
+        vertices: law.rims,
+        caps: [faces[0], faces[1]],
+        height: heights,
+        unchanged_source_bound: law.deviation_mm,
+        // Rim chords are edges of law facets: the same proven distance.
+        distance: law.deviation_mm,
+    };
+    join_rims(
+        Cow::Owned(law.mesh),
+        rings,
+        radius_mm,
+        Some(faces[2]),
+        &mut work,
+    )
+}
+
+/// Shared stock join. `wall` is the explicit wall face for a source without
+/// cap fans; otherwise the source's cap fans are replaced and the wall is
+/// face `max source face + 1`.
+fn join_rims(
+    source: Cow<'_, DisplayMesh>,
+    mut rings: Rims,
+    radius_mm: f64,
+    wall: Option<u32>,
+    work: &mut Work<'_>,
+) -> Result<(DisplayMesh, MeshProof, f64), Error> {
+    let options = work.options;
+    let fans = wall.is_none();
+    // An owned fan-free source is extended in place, without a copy or a
+    // compaction pass; a borrowed trace keeps both.
+    let in_place = !fans && matches!(source, Cow::Owned(_));
+    let source_mesh: &DisplayMesh = &source;
+    if !rings.height[0].is_finite()
+        || !rings.height[1].is_finite()
+        || rings.height[0] >= rings.height[1]
+    {
+        return Err(Error::Unsupported);
+    }
     let n = sleeve_segments(radius_mm, options.tessellation)?;
-    let source_mesh = source.mesh();
     // Each cap fan has one triangle per rim coedge; an annulus between a
-    // rim of m and the n-gon has n+m triangles, the wall has 2n.
+    // rim of m and the n-gon has n+m triangles, the wall has 2n. A source
+    // without fans gains the rim counts as well.
+    let rim_triangles = if wall.is_some() {
+        rings.vertices[0].len() + rings.vertices[1].len()
+    } else {
+        0
+    };
     let expected_triangles = source_mesh
         .face_indices
         .len()
         .checked_add(n.checked_mul(4).ok_or(Error::Limit)?)
+        .and_then(|t| t.checked_add(rim_triangles))
         .ok_or(Error::Limit)?;
     if expected_triangles > options.tessellation.triangle_limit {
         return Err(Error::Limit);
@@ -137,32 +234,66 @@ pub fn join_sleeve<'a, 's>(
     let [lower, upper] = rings.height.map(I::point);
     let count = source_mesh.vertices.len() / 3 + 2 * n;
     let extra_triangles = expected_triangles + 8;
-    work.storage(
-        count * 24 + extra_triangles * 16 + count * 4 + 52 * extra_triangles + 1024 * 1024,
-    )?;
-    let mut mesh = DisplayMesh {
-        vertices: Vec::with_capacity(3 * count),
-        indices: Vec::with_capacity(3 * extra_triangles),
-        face_indices: Vec::with_capacity(extra_triangles),
-    };
-    mesh.vertices.extend_from_slice(&source_mesh.vertices);
-    for (triangle, &face) in source_mesh
-        .indices
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .zip(&source_mesh.face_indices)
-    {
-        work.charge(16)?;
-        if face == rings.caps[0] || face == rings.caps[1] {
-            continue;
+    work.storage(if in_place {
+        count * 24 + extra_triangles * 16 + 52 * extra_triangles + 1024 * 1024
+    } else {
+        count * 24 + extra_triangles * 16 + count * 4 + 52 * extra_triangles + 1024 * 1024
+    })?;
+    if in_place {
+        for &face in &source_mesh.face_indices {
+            if face == rings.caps[0] || face == rings.caps[1] || Some(face) == wall {
+                return Err(Error::Invalid);
+            }
         }
-        // The bore is void: the stock's outward normal is the reverse.
-        let mut ids = *triangle;
-        ids.swap(1, 2);
-        mesh.indices.extend(ids);
-        mesh.face_indices.push(face);
     }
+    let wall = wall.unwrap_or_else(|| {
+        source_mesh
+            .face_indices
+            .iter()
+            .copied()
+            .max()
+            .expect("qualified mesh has faces")
+            + 1
+    });
+    let mut mesh = if in_place {
+        let mut mesh = source.into_owned();
+        mesh.vertices.reserve_exact(6 * n);
+        let more = extra_triangles - mesh.face_indices.len();
+        mesh.indices.reserve_exact(3 * more);
+        mesh.face_indices.reserve_exact(more);
+        mesh
+    } else {
+        let mut mesh = DisplayMesh {
+            vertices: Vec::with_capacity(3 * count),
+            indices: Vec::with_capacity(3 * extra_triangles),
+            face_indices: Vec::with_capacity(extra_triangles),
+        };
+        mesh.vertices.extend_from_slice(&source_mesh.vertices);
+        for (triangle, &face) in source_mesh
+            .indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(&source_mesh.face_indices)
+        {
+            work.charge(16)?;
+            if face == rings.caps[0] || face == rings.caps[1] {
+                if fans {
+                    continue;
+                }
+                return Err(Error::Invalid);
+            }
+            // A traced thread is oriented as material; the stock's outward
+            // normal on its void is the reverse. A law bore already faces it.
+            let mut ids = *triangle;
+            if fans {
+                ids.swap(1, 2);
+            }
+            mesh.indices.extend(ids);
+            mesh.face_indices.push(face);
+        }
+        mesh
+    };
     let base = mesh.vertices.len() / 3;
     let mut rounding = 0f64;
     let mut corners = Vec::with_capacity(n);
@@ -208,13 +339,6 @@ pub fn join_sleeve<'a, 's>(
     if distance > options.tessellation.deflection {
         return Err(Error::Unsupported);
     }
-    let wall = source_mesh
-        .face_indices
-        .iter()
-        .copied()
-        .max()
-        .expect("qualified mesh has faces")
-        + 1;
     // The wall facet normal across a chord is the radial direction at its
     // middle; the exact normal turns by at most half a step on either side,
     // which sleeve_segments kept within half the requested angle.
@@ -237,7 +361,7 @@ pub fn join_sleeve<'a, 's>(
         &rings.vertices[0],
         false,
         rings.caps[0],
-        &mut work,
+        work,
     )?;
     plane(
         &mut mesh,
@@ -245,8 +369,26 @@ pub fn join_sleeve<'a, 's>(
         &rings.vertices[1],
         true,
         rings.caps[1],
-        &mut work,
+        work,
     )?;
+    if in_place {
+        // No apex exists: every vertex is used. Certify the mesh as is.
+        if mesh.face_indices.len() != expected_triangles {
+            return Err(Error::Unresolved);
+        }
+        let resident = mesh_bytes(&mesh);
+        let connectivity = manufacturing::certify_counted(&mesh, &mut |n, scratch| {
+            if let Some(scratch) = scratch {
+                work.storage(resident.checked_add(scratch).ok_or(Error::Limit)?)?;
+            }
+            work.charge(n)
+        })
+        .map_err(|error| match error {
+            manufacturing::CountedError::Mesh(_) => Error::Unresolved,
+            manufacturing::CountedError::Interrupted(error) => error,
+        })?;
+        return Ok((mesh, connectivity, distance));
+    }
     // Remove former cap apices only by actual index use; no coordinate weld.
     work.storage(mesh_bytes(&mesh) * 2 + count * 4 + 52 * mesh.face_indices.len())?;
     let mut remap = vec![u32::MAX; count];
@@ -281,12 +423,5 @@ pub fn join_sleeve<'a, 's>(
         manufacturing::CountedError::Mesh(_) => Error::Unresolved,
         manufacturing::CountedError::Interrupted(error) => error,
     })?;
-    Ok(JoinedMeshCandidate {
-        source,
-        mesh: compact,
-        connectivity,
-        distance,
-        work: work.used,
-        peak: work.peak,
-    })
+    Ok((compact, connectivity, distance))
 }

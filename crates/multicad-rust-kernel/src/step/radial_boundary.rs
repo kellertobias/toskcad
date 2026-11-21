@@ -214,8 +214,17 @@ fn verify_sleeve(
             StepError::Unsupported
         }
     })?;
-    // Exact cavity tables and every stock value survive the file.
-    if canonical(imported.cavity.input()) != canonical(expected.input()) || imported.stock != stock
+    // Exact cavity tables and every written stock value survive the file.
+    // The height is re-derived from the two rim centres on the (possibly
+    // tilted) axis, so it is compared to a relative 1e-12, not bitwise.
+    let decoded = imported.stock;
+    let height_ok = (decoded.height_mm - stock.height_mm).abs() <= 1e-12 * (1. + stock.height_mm);
+    if canonical(imported.cavity.input()) != canonical(expected.input())
+        || decoded.origin != stock.origin
+        || decoded.normal != stock.normal
+        || decoded.reference != stock.reference
+        || decoded.radius_mm != stock.radius_mm
+        || !height_ok
     {
         return Err(StepError::Unsupported);
     }
