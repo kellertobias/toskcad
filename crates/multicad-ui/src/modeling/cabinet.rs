@@ -241,7 +241,9 @@ impl CabinetPanel {
             plane: PanelPlane::Xy,
             length: field(800., "mm"),
             panel_width: field(400., "mm"),
-            grain: GrainAxis::U,
+            // New panels default to Grain: Any (CAD-365); reopening keeps
+            // the saved choice.
+            grain: GrainAxis::Free,
             edges: [false; 4],
             oversize: field(0., "mm"),
             error: None,
@@ -830,18 +832,33 @@ impl CabinetPanel {
             "Finished size along the plane's second axis",
         );
         changed |= self.show_origin(ui, "World position of the panel's minimum corner");
-        ui.label("Grain");
-        ui.horizontal(|ui| {
-            changed |= ui
-                .radio_value(&mut self.grain, GrainAxis::U, "Along length")
-                .changed();
-            changed |= ui
-                .radio_value(&mut self.grain, GrainAxis::V, "Along width")
-                .changed();
-            changed |= ui
-                .radio_value(&mut self.grain, GrainAxis::Free, "Any")
-                .changed();
+        ui.label("Grain direction (this panel)");
+        ui.horizontal_wrapped(|ui| {
+            for (axis, label, help) in [
+                (
+                    GrainAxis::U,
+                    "Along length",
+                    "Grain runs along the panel's length (u)",
+                ),
+                (
+                    GrainAxis::V,
+                    "Along width",
+                    "Grain runs along the panel's width (v)",
+                ),
+                (
+                    GrainAxis::Free,
+                    "Any",
+                    "No fixed grain: the cut may be turned either way",
+                ),
+            ] {
+                changed |= ui
+                    .radio_value(&mut self.grain, axis, label)
+                    .on_hover_text(help)
+                    .changed();
+            }
         });
+        ui.small("Saved on this panel; panels sharing a stock keep their own grain.");
+        changed |= panel_face_diagram(ui, &mut self.edges, self.banded, self.grain);
         ui.separator();
         changed |= ui
             .checkbox(&mut self.banded, EDGE_BANDING)
@@ -850,7 +867,6 @@ impl CabinetPanel {
         ui.small(EDGE_BANDING_HELP);
         if self.banded {
             ui.label("Banded edges");
-            changed |= band_edge_diagram(ui, &mut self.edges);
             ui.horizontal_wrapped(|ui| {
                 for (i, (label, help)) in BAND_EDGES.into_iter().enumerate() {
                     changed |= ui
@@ -897,10 +913,16 @@ pub(super) const BAND_EDGES: [(&str, &str); 4] = [
     ),
 ];
 
-/// A clickable top view of the panel face: length runs left to right, width
-/// bottom to top. Banded edges are drawn as thick strips; clicking an edge
-/// toggles it. Returns whether an edge changed.
-fn band_edge_diagram(ui: &mut egui::Ui, edges: &mut [bool; 4]) -> bool {
+/// A top view of the panel face: length runs left to right, width bottom to
+/// top. Faint lines show the grain direction (CAD-365); banded edges are drawn
+/// as thick strips and, while banding is on, clicking an edge toggles it
+/// (CAD-373). Returns whether an edge changed.
+fn panel_face_diagram(
+    ui: &mut egui::Ui,
+    edges: &mut [bool; 4],
+    banding: bool,
+    grain: GrainAxis,
+) -> bool {
     use egui::{Rect, Stroke, pos2, vec2};
     let width = ui.available_width().clamp(120., 220.);
     let (rect, _) = ui.allocate_exact_size(vec2(width, width * 0.5), egui::Sense::hover());
@@ -931,13 +953,52 @@ fn band_edge_diagram(ui: &mut egui::Ui, edges: &mut [bool; 4]) -> bool {
         2.,
         egui::Color32::from_rgb(196, 154, 108).gamma_multiply(0.55),
     );
+    let grain_stroke = Stroke::new(1., egui::Color32::from_rgb(120, 86, 52));
+    let lines = 7;
+    match grain {
+        GrainAxis::U => {
+            for i in 1..lines {
+                let y = face.top() + face.height() * i as f32 / lines as f32;
+                painter.line_segment(
+                    [pos2(face.left() + 4., y), pos2(face.right() - 4., y)],
+                    grain_stroke,
+                );
+            }
+        }
+        GrainAxis::V => {
+            for i in 1..(2 * lines) {
+                let x = face.left() + face.width() * i as f32 / (2 * lines) as f32;
+                painter.line_segment(
+                    [pos2(x, face.top() + 4.), pos2(x, face.bottom() - 4.)],
+                    grain_stroke,
+                );
+            }
+        }
+        GrainAxis::Free => {}
+    }
+    painter.text(
+        face.center(),
+        egui::Align2::CENTER_CENTER,
+        match grain {
+            GrainAxis::U => "Grain ⟷",
+            GrainAxis::V => "Grain ↕",
+            GrainAxis::Free => "Grain: any",
+        },
+        egui::FontId::proportional(11.),
+        ui.visuals().strong_text_color(),
+    );
     let accent = ui.visuals().selection.bg_fill;
     let mut changed = false;
     for (i, target) in targets.into_iter().enumerate() {
+        let sense = if banding {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
+        };
         let response = ui
-            .interact(target, ui.id().with(("band-edge", i)), egui::Sense::click())
+            .interact(target, ui.id().with(("band-edge", i)), sense)
             .on_hover_text(format!("{}: {}", BAND_EDGES[i].0, BAND_EDGES[i].1));
-        if response.clicked() {
+        if banding && response.clicked() {
             edges[i] = !edges[i];
             changed = true;
         }
@@ -947,7 +1008,7 @@ fn band_edge_diagram(ui: &mut egui::Ui, edges: &mut [bool; 4]) -> bool {
             2 => (face.left_bottom(), face.right_bottom()),
             _ => (face.left_top(), face.right_top()),
         };
-        let stroke = if edges[i] {
+        let stroke = if banding && edges[i] {
             Stroke::new(5., accent)
         } else if response.hovered() {
             Stroke::new(2., ui.visuals().strong_text_color())
@@ -1114,7 +1175,11 @@ mod tests {
                 .iter()
                 .any(|(t, ..)| t.contains("ending") && !t.contains("not bending"))
         );
-        assert!(has("Banded edges") && has("Edge strip thickness (mm)") && has("Strip trim allowance (mm)"));
+        assert!(
+            has("Banded edges")
+                && has("Edge strip thickness (mm)")
+                && has("Strip trim allowance (mm)")
+        );
         assert!(has(
             "Click an edge in the diagram or tick it to add a strip."
         ));
@@ -1165,6 +1230,54 @@ mod tests {
             .drop_without_applying_deltas();
         }
         assert_eq!(form.edges, [false, false, true, false]);
+    }
+
+    #[test]
+    fn new_panels_default_to_any_grain_and_show_the_chosen_direction_on_the_face() {
+        let mut s = session();
+        let mut form = CabinetPanel::panel(s.document(), "Shelf".into());
+        assert_eq!(form.grain, GrainAxis::Free);
+        let ctx = egui::Context::default();
+        crate::theme::configure(&ctx);
+        let texts = |form: &mut CabinetPanel| -> Vec<String> {
+            let output = inspector_frame(&ctx, form, &s, vec![]);
+            let t = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+            output.drop_without_applying_deltas();
+            t
+        };
+        for _ in 0..2 {
+            texts(&mut form);
+        }
+        let shown = texts(&mut form);
+        assert!(shown.iter().any(|t| t == "Grain direction (this panel)"));
+        assert!(shown.iter().any(|t| t == "Grain: any"));
+        inspector_click(&ctx, &mut form, &s, "Along width");
+        assert_eq!(form.grain, GrainAxis::V);
+        assert!(texts(&mut form).iter().any(|t| t == "Grain ↕"));
+        inspector_click(&ctx, &mut form, &s, "Any");
+        assert_eq!(form.grain, GrainAxis::Free);
+        // Committing and reopening keep Any.
+        let command = form.request(s.document(), true).unwrap();
+        let prepared = command.prepare(&s, Actor::local(Channel::Ui)).unwrap();
+        let feature = prepared.outputs[0].feature;
+        s.commit(prepared.prepared).unwrap();
+        assert_eq!(
+            multicad_core::model::read_panel(s.document(), feature)
+                .unwrap()
+                .grain,
+            GrainAxis::Free
+        );
+        assert_eq!(
+            CabinetPanel::existing(s.document(), feature).unwrap().grain,
+            GrainAxis::Free
+        );
     }
 
     #[test]

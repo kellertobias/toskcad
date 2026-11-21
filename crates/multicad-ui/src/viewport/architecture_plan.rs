@@ -89,6 +89,7 @@ impl ArchitecturePlan {
                 match vector.role {
                     VectorRole::Section => egui::Color32::from_gray(235),
                     VectorRole::Hatch => egui::Color32::from_gray(155),
+                    VectorRole::Grain => egui::Color32::from_gray(120),
                     VectorRole::Visible => egui::Color32::from_gray(225),
                     VectorRole::Hidden => egui::Color32::from_gray(150),
                 }

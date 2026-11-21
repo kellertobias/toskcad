@@ -16,6 +16,8 @@ pub enum Layer {
     Hidden,
     Section,
     Hatch,
+    /// Display-only panel wood grain.
+    Grain,
     Dimension,
     Note,
     Leader,
@@ -34,6 +36,7 @@ impl Layer {
             Self::Hidden => "hidden",
             Self::Section => "section",
             Self::Hatch => "hatch",
+            Self::Grain => "grain",
             Self::Dimension => "dimension",
             Self::Note => "note",
             Self::Leader => "leader",
@@ -269,6 +272,7 @@ pub fn render_page(
                     VectorRole::Hidden => Layer::Hidden,
                     VectorRole::Section => Layer::Section,
                     VectorRole::Hatch => Layer::Hatch,
+                    VectorRole::Grain => Layer::Grain,
                 },
                 points: vector
                     .preview_mm

@@ -216,7 +216,7 @@ impl Output {
             VectorRole::Visible => Some(0),
             VectorRole::Hidden => Some(1),
             VectorRole::Section => Some(2),
-            VectorRole::Hatch => None,
+            VectorRole::Hatch | VectorRole::Grain => None,
         };
         let mut lines: Vec<(usize, usize, [P2; 2])> = Vec::new();
         let mut rest = Vec::new();
@@ -315,7 +315,7 @@ impl Output {
                     VectorRole::Visible => 0,
                     VectorRole::Hidden => 1,
                     VectorRole::Section => 2,
-                    VectorRole::Hatch => 3,
+                    VectorRole::Hatch | VectorRole::Grain => 3,
                 },
             )
         });
