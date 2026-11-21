@@ -302,7 +302,7 @@ mod tests {
             .find(|(_, name, _)| name == "Ply 6")
             .unwrap()
             .0;
-        form.select_stock(thin);
+        form.select_stock(thin, s.document());
         near(size(&form, &s).0, [800., 400., 6.]);
         assert!(form.thickness_note(&s).unwrap().contains("6 mm"));
         assert!(form.thickness_note(&s).unwrap().contains("Ply 6"));

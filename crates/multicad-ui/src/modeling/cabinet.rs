@@ -8,6 +8,8 @@ use super::{
     form::{self, FormAction, ModelEvent, ModelRequest},
 };
 mod fields;
+#[cfg(test)]
+mod naming_tests;
 mod points;
 mod viewport;
 use crate::{controls, egui};
@@ -114,6 +116,41 @@ fn field(value: f64, unit: &'static str) -> DimensionField {
 fn of(d: &Dimension, unit: &'static str) -> Result<DimensionField, String> {
     DimensionField::from_dimension(d, unit)
 }
+/// Default names the stock editor gives new stock; they do not identify it.
+const PLACEHOLDER_STOCK_NAMES: [&str; 1] = ["New panel stock"];
+
+/// The generated name prefix for a panel cut from `stock`: the stock's own
+/// display name, its material name when the stock still has the editor's
+/// placeholder name, or `Panel` without stock.
+fn panel_name_prefix(document: &Document, stock: Option<EntityId>) -> Option<String> {
+    let entity = document.get(stock?)?;
+    let name = entity.name.trim();
+    if !name.is_empty()
+        && !PLACEHOLDER_STOCK_NAMES
+            .iter()
+            .any(|placeholder| placeholder.eq_ignore_ascii_case(name))
+    {
+        return Some(name.to_owned());
+    }
+    match materials::read(entity).ok().flatten() {
+        Some(LibraryDefinition::Stock(s)) => document
+            .get(s.material)
+            .map(|material| material.name.trim().to_owned())
+            .filter(|name| !name.is_empty()),
+        _ => None,
+    }
+}
+
+/// `MPX 6 - 1`, `MPX 6 - 2`, … skipping names any entity already uses,
+/// including the producer feature label; `Panel 1` without a stock name.
+pub(super) fn generated_panel_name(document: &Document, stock: Option<EntityId>) -> String {
+    let mut names = super::names::GeneratedNames::new(document);
+    match panel_name_prefix(document, stock) {
+        Some(prefix) => names.numbered_with(&prefix, " - ", " feature"),
+        None => names.numbered("Panel", " feature"),
+    }
+}
+
 /// Panel stock entries: (stock, name, thickness).
 fn panel_stocks(document: &Document) -> Vec<(EntityId, String, f64)> {
     document
@@ -205,6 +242,9 @@ pub(super) struct CabinetPanel {
     // Point-to-point placement of the panel draft (CAD-375).
     point_pick: Option<points::PanelPointPick>,
     alignment: Option<points::PanelAlignment>,
+    /// The name was generated from the stock and follows stock changes until
+    /// the user types their own (CAD-377).
+    name_generated: bool,
 }
 impl CabinetPanel {
     pub fn new(document: &Document, name: String) -> Self {
@@ -261,6 +301,7 @@ impl CabinetPanel {
             last_shape: None,
             point_pick: None,
             alignment: None,
+            name_generated: false,
         }
     }
     pub fn cabinet(document: &Document, name: String) -> Self {
@@ -277,11 +318,25 @@ impl CabinetPanel {
         form.kind = Kind::Panel;
         form
     }
-    pub(super) fn select_stock(&mut self, id: EntityId) {
+    /// A new rectangular panel named from its selected stock (CAD-377).
+    pub fn generated_panel(document: &Document) -> Self {
+        let mut form = Self::panel(document, String::new());
+        form.name_generated = true;
+        form.name = generated_panel_name(document, form.stock);
+        form
+    }
+    pub(super) fn select_stock(&mut self, id: EntityId, document: &Document) {
         self.stock = Some(id);
+        self.stock_changed(document);
         self.stamp.changed();
         self.error = None;
         self.guide = None;
+    }
+    /// A generated name follows the newly chosen stock; a typed name stays.
+    fn stock_changed(&mut self, document: &Document) {
+        if self.name_generated && self.kind == Kind::Panel && self.existing.is_none() {
+            self.name = generated_panel_name(document, self.stock);
+        }
     }
     /// Viewport dimensions of the carcass being drafted, planned exactly as
     /// Apply would plan it; `None` for panels or an invalid draft.
@@ -544,12 +599,17 @@ impl CabinetPanel {
             (Kind::Panel, _) => "A rectangular panel from panel stock. Drag the blue corners or click one to type Length and Width in the viewport. Thickness comes from the stock; banding and oversize change the core cut size.",
         });
         ui.label("Name");
-        changed |= ui
+        let typed = ui
             .add_enabled(
                 self.existing.is_none(),
                 egui::TextEdit::singleline(&mut self.name).desired_width(ui.available_width()),
             )
             .changed();
+        self.name_generated &= !typed;
+        changed |= typed;
+        if self.name_generated {
+            ui.small("Named from the panel stock; type to choose your own name.");
+        }
         let stocks = panel_stocks(document);
         if stocks.is_empty() {
             ui.colored_label(
@@ -565,6 +625,9 @@ impl CabinetPanel {
         let (selected, create) = stock_combo(ui, "cabinet-stock", &stocks, &mut self.stock, true);
         if create {
             return Some(ModelEvent::CreateStock(crate::materials::ToolStock::Panel));
+        }
+        if selected {
+            self.stock_changed(document);
         }
         changed |= selected;
         ui.separator();

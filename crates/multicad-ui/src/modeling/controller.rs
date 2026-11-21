@@ -1169,14 +1169,12 @@ impl ModelToolController {
         resources: &ProjectResources,
         channel: Channel,
     ) -> Result<(), String> {
-        let name = GeneratedNames::new(session.document()).numbered("Panel", "");
         self.begin_form(
             session,
             resources,
             channel,
-            ModelForm::Cabinet(Box::new(super::cabinet::CabinetPanel::panel(
+            ModelForm::Cabinet(Box::new(super::cabinet::CabinetPanel::generated_panel(
                 session.document(),
-                name,
             ))),
         )?;
         if let Some(ModelForm::Cabinet(form)) = &mut self.form {
