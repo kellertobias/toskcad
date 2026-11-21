@@ -103,6 +103,73 @@ impl Solid {
     }
 }
 
+impl Solid {
+    /// Orthogonal stock whose every stock cell box is separated from, or
+    /// only touches, the enclosing box of the other operand. Cuts only
+    /// remove stock, so the cells, in any placement, enclose the material;
+    /// no common interior remains for an intersection or a difference.
+    pub(in crate::geometry) fn cellwise_separated_boolean(
+        &self,
+        other: &Self,
+        operation: BooleanOperation,
+        policy: GeometryPolicy,
+    ) -> Option<Result<Option<Self>, GeometryError>> {
+        if operation == BooleanOperation::Union
+            || policy.boolean_fuzzy_mm != 0.
+            || self.policy != policy
+            || other.policy != policy
+        {
+            return None;
+        }
+        let (stock, probe) = match (self.orthogonal_body(), other.orthogonal_body()) {
+            (Some(_), _) => (self, other),
+            (None, Some(_)) if operation == BooleanOperation::Intersect => (other, self),
+            _ => return None,
+        };
+        if !has_enclosing_bounds(probe) {
+            return None;
+        }
+        let (body, placement) = stock.orthogonal_body()?;
+        let probe_bounds = match probe.bounds() {
+            Ok(bounds) => bounds,
+            Err(error) => return Some(Err(error)),
+        };
+        let cells = body.geometry.cells();
+        if cells.is_empty() {
+            return None;
+        }
+        for cell in cells.iter() {
+            let corners = (0..8).map(|n: usize| {
+                crate::rust_prism_topology::position(
+                    placement,
+                    std::array::from_fn(|i| {
+                        if n >> i & 1 == 0 {
+                            cell.min[i]
+                        } else {
+                            cell.max[i]
+                        }
+                    }),
+                )
+            });
+            let mut bounds = Bounds {
+                min: [f64::INFINITY; 3],
+                max: [f64::NEG_INFINITY; 3],
+            };
+            for corner in corners {
+                for (i, value) in corner.into_iter().enumerate() {
+                    bounds.min[i] = bounds.min[i].min(value);
+                    bounds.max[i] = bounds.max[i].max(value);
+                }
+            }
+            separation(bounds, probe_bounds, policy)?;
+        }
+        Some(match operation {
+            BooleanOperation::Intersect => Ok(None),
+            _ => self.share().map(Some),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
