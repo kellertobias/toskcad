@@ -1,0 +1,24 @@
+Run at b0708b0a (2026-11-21): fmt OK, clippy -D warnings OK, 632 test binaries ok, 11 failing tests:
+test all_three_engineered_hardware_forms_have_actual_helices_independent_mass_material_and_step ... FAILED
+test both_primary_khk_shifted_helical_worked_candidates_have_real_native_bodies_and_step ... FAILED
+test compatible_pairs_have_no_sampled_interference_and_wrong_phase_is_detected ... FAILED
+test paired_end_connection_machines_only_the_host_and_survives_reopen_and_undo ... FAILED
+test profiles::smooth_planar_loft_keeps_the_intermediate_station_attachment ... FAILED
+test round_nested_hardware_exposes_common_pd_and_distinct_internal_material_and_cutter_circles ... FAILED
+test rust_mcp_round_trips_a_step_body_and_refuses_an_unsupported_shape ... FAILED
+test rust_stdio_creates_drives_reopens_and_exports_a_za_worm_pair ... FAILED
+test rust_worm_pairs_certify_saved_edited_motion_and_refuse_wrong_poses ... FAILED
+test sourced_npt_pairs_have_native_clearance_step_print_and_independent_reopen ... FAILED
+test sourced_r_rc_pairs_have_native_clearance_step_print_and_independent_reopen ... FAILED
+
+error: test failed, to rerun pass `-p multicad-app --test mcp_worm`
+error: test failed, to rerun pass `-p multicad-kernel --test gears`
+error: test failed, to rerun pass `-p multicad-mcp --test imports`
+error: test failed, to rerun pass `-p multicad-mcp --test rounded_threads`
+error: test failed, to rerun pass `-p multicad-model --test advanced`
+error: test failed, to rerun pass `-p multicad-model --test custom_connection_hardware`
+error: test failed, to rerun pass `-p multicad-model --test npt_threads`
+error: test failed, to rerun pass `-p multicad-model --test pipe_threads`
+error: test failed, to rerun pass `-p multicad-model --test profile_connections`
+error: test failed, to rerun pass `-p multicad-model --test rust_worm_gears`
+error: test failed, to rerun pass `-p multicad-model --test shifted_helical_coverage`
