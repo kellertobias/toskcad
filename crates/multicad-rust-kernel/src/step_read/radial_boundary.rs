@@ -213,121 +213,159 @@ pub(super) fn read_member(shell: &mut Shell<'_, '_>, id: u32) -> Result<radial::
     if faces.len() < 5 {
         return Err(ReadError::Unsupported);
     }
-    let mut surface_ids = BTreeMap::<u32, usize>::new();
-    let mut curve_ids = BTreeMap::<u32, usize>::new();
-    let mut edge_ids = BTreeMap::<u32, usize>::new();
-    let mut vertex_ids = BTreeMap::<u32, usize>::new();
-    let mut input = radial::BoundaryInput {
-        vertices: vec![],
-        curves: vec![],
-        edges: vec![],
-        surfaces: vec![],
-        faces: vec![],
-    };
-    let mut logical_controls = 0usize;
-    let mut curve_controls = 0usize;
+    let mut decoder = Decoder::default();
     for id in faces {
         let (surface_id, forward, bounds) = face(shell, id)?;
         let [bound] = bounds[..] else {
             return Err(ReadError::Unsupported);
         };
-        let surface = if let Some(&index) = surface_ids.get(&surface_id) {
-            index
-        } else {
-            // Count logical grid entries before copying their point values.
-            if shell.simple(surface_id)?.name == "B_SPLINE_SURFACE_WITH_KNOTS" {
-                let args = shell.args(surface_id, "B_SPLINE_SURFACE_WITH_KNOTS")?;
-                let Some(Value::List(rows)) = args.get(3) else {
+        let edges = ring(shell, bound, true)?;
+        decoder.push(shell, surface_id, forward, &edges)?;
+    }
+    radial::BoundaryOwnership::new(decoder.input, shell.tolerance, None).map_err(failure)
+}
+
+/// Actual source tables decoded by first use, with the same entity and
+/// control ceilings for every caller. No coordinate is changed.
+struct Decoder {
+    surface_ids: BTreeMap<u32, usize>,
+    curve_ids: BTreeMap<u32, usize>,
+    edge_ids: BTreeMap<u32, usize>,
+    vertex_ids: BTreeMap<u32, usize>,
+    input: radial::BoundaryInput,
+    logical_controls: usize,
+    curve_controls: usize,
+}
+impl Default for Decoder {
+    fn default() -> Self {
+        Self {
+            surface_ids: BTreeMap::new(),
+            curve_ids: BTreeMap::new(),
+            edge_ids: BTreeMap::new(),
+            vertex_ids: BTreeMap::new(),
+            input: radial::BoundaryInput {
+                vertices: vec![],
+                curves: vec![],
+                edges: vec![],
+                surfaces: vec![],
+                faces: vec![],
+            },
+            logical_controls: 0,
+            curve_controls: 0,
+        }
+    }
+}
+impl Decoder {
+    fn surface(&mut self, shell: &Shell<'_, '_>, surface_id: u32) -> Result<usize> {
+        if let Some(&index) = self.surface_ids.get(&surface_id) {
+            return Ok(index);
+        }
+        // Count logical grid entries before copying their point values.
+        if shell.simple(surface_id)?.name == "B_SPLINE_SURFACE_WITH_KNOTS" {
+            let args = shell.args(surface_id, "B_SPLINE_SURFACE_WITH_KNOTS")?;
+            let Some(Value::List(rows)) = args.get(3) else {
+                return Err(ReadError::Invalid);
+            };
+            for row in rows {
+                let Value::List(row) = row else {
                     return Err(ReadError::Invalid);
                 };
-                for row in rows {
-                    let Value::List(row) = row else {
-                        return Err(ReadError::Invalid);
-                    };
-                    logical_controls = logical_controls
-                        .checked_add(row.len())
-                        .ok_or(ReadError::Limit)?;
+                self.logical_controls = self
+                    .logical_controls
+                    .checked_add(row.len())
+                    .ok_or(ReadError::Limit)?;
+            }
+            if self.logical_controls > 524288
+                || self.logical_controls.saturating_add(self.curve_controls) > 1_048_576
+            {
+                return Err(ReadError::Limit);
+            }
+        }
+        let surface = surface(shell, surface_id)?;
+        let index = self.input.surfaces.len();
+        self.input.surfaces.push(surface);
+        self.surface_ids.insert(surface_id, index);
+        Ok(index)
+    }
+    fn edge(&mut self, shell: &mut Shell<'_, '_>, id: u32) -> Result<usize> {
+        if let Some(&index) = self.edge_ids.get(&id) {
+            return Ok(index);
+        }
+        let [Value::String(_), a, b, c, fwd] = shell.args(id, "EDGE_CURVE")? else {
+            return Err(ReadError::Invalid);
+        };
+        let [a, b, c] = [reference(a)?, reference(b)?, reference(c)?];
+        let fwd = sense(fwd)?;
+        let mut ends = [0; 2];
+        for (end, id) in [a, b].into_iter().enumerate() {
+            ends[end] = if let Some(&i) = self.vertex_ids.get(&id) {
+                i
+            } else {
+                if self.input.vertices.len() == 80 {
+                    return Err(ReadError::Limit);
                 }
-                if logical_controls > 524288
-                    || logical_controls.saturating_add(curve_controls) > 1_048_576
-                {
+                let p = shell.vertex(id)?;
+                let i = self.input.vertices.len();
+                self.input.vertices.push(p);
+                self.vertex_ids.insert(id, i);
+                i
+            };
+        }
+        let geometry = if let Some(&i) = self.curve_ids.get(&c) {
+            i
+        } else {
+            if shell.simple(c)?.name == "B_SPLINE_CURVE_WITH_KNOTS" {
+                let args = shell.args(c, "B_SPLINE_CURVE_WITH_KNOTS")?;
+                let Some(Value::List(poles)) = args.get(2) else {
+                    return Err(ReadError::Invalid);
+                };
+                self.curve_controls = self
+                    .curve_controls
+                    .checked_add(poles.len())
+                    .ok_or(ReadError::Limit)?;
+                if self.logical_controls.saturating_add(self.curve_controls) > 1_048_576 {
                     return Err(ReadError::Limit);
                 }
             }
-            let surface = surface(shell, surface_id)?;
-            let index = input.surfaces.len();
-            input.surfaces.push(surface);
-            surface_ids.insert(surface_id, index);
-            index
+            let geometry = curve(shell, c)?;
+            let i = self.input.curves.len();
+            self.input.curves.push(geometry);
+            self.curve_ids.insert(c, i);
+            i
         };
-        let mut outer = Vec::new();
-        for (id, direction) in ring(shell, bound, true)? {
-            let edge = if let Some(&index) = edge_ids.get(&id) {
-                index
-            } else {
-                let [Value::String(_), a, b, c, fwd] = shell.args(id, "EDGE_CURVE")? else {
-                    return Err(ReadError::Invalid);
-                };
-                let [a, b, c] = [reference(a)?, reference(b)?, reference(c)?];
-                let fwd = sense(fwd)?;
-                let mut ends = [0; 2];
-                for (end, id) in [a, b].into_iter().enumerate() {
-                    ends[end] = if let Some(&i) = vertex_ids.get(&id) {
-                        i
-                    } else {
-                        if input.vertices.len() == 80 {
-                            return Err(ReadError::Limit);
-                        }
-                        let p = shell.vertex(id)?;
-                        let i = input.vertices.len();
-                        input.vertices.push(p);
-                        vertex_ids.insert(id, i);
-                        i
-                    };
-                }
-                let geometry = if let Some(&i) = curve_ids.get(&c) {
-                    i
-                } else {
-                    if shell.simple(c)?.name == "B_SPLINE_CURVE_WITH_KNOTS" {
-                        let args = shell.args(c, "B_SPLINE_CURVE_WITH_KNOTS")?;
-                        let Some(Value::List(poles)) = args.get(2) else {
-                            return Err(ReadError::Invalid);
-                        };
-                        curve_controls = curve_controls
-                            .checked_add(poles.len())
-                            .ok_or(ReadError::Limit)?;
-                        if logical_controls.saturating_add(curve_controls) > 1_048_576 {
-                            return Err(ReadError::Limit);
-                        }
-                    }
-                    let geometry = curve(shell, c)?;
-                    let i = input.curves.len();
-                    input.curves.push(geometry);
-                    curve_ids.insert(c, i);
-                    i
-                };
-                if input.edges.len() == 112 {
-                    return Err(ReadError::Limit);
-                }
-                let i = input.edges.len();
-                input.edges.push(radial::Edge {
-                    vertices: ends,
-                    curve: geometry,
-                    forward: fwd,
-                });
-                edge_ids.insert(id, i);
-                i
-            };
-            outer.push((edge, direction));
+        if self.input.edges.len() == 112 {
+            return Err(ReadError::Limit);
         }
-        input.faces.push(radial::Face {
+        let i = self.input.edges.len();
+        self.input.edges.push(radial::Edge {
+            vertices: ends,
+            curve: geometry,
+            forward: fwd,
+        });
+        self.edge_ids.insert(id, i);
+        Ok(i)
+    }
+    fn push(
+        &mut self,
+        shell: &mut Shell<'_, '_>,
+        surface_id: u32,
+        forward: bool,
+        edges: &[(u32, bool)],
+    ) -> Result<()> {
+        let surface = self.surface(shell, surface_id)?;
+        let mut outer = Vec::with_capacity(edges.len());
+        for &(id, direction) in edges {
+            outer.push((self.edge(shell, id)?, direction));
+        }
+        self.input.faces.push(radial::Face {
             surface,
             outer,
             forward,
         });
+        Ok(())
     }
-    radial::BoundaryOwnership::new(input, shell.tolerance, None).map_err(failure)
 }
+pub mod sleeve;
 
 #[cfg(test)]
 mod tests {
