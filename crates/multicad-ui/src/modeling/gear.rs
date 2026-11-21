@@ -1,5 +1,9 @@
 //! Gear controls share canonical intent and native candidate receipts with MCP.
 mod pair;
+mod visual;
+#[cfg(test)]
+mod visual_tests;
+use super::diagram::{self, Choice, DiagramLink, Key};
 use super::{
     FormStamp, PreviewState,
     dimension::DimensionField,
@@ -160,6 +164,7 @@ pub(super) struct GearPanel {
     stamp: FormStamp,
     editing: bool,
     pair: Option<Box<pair::GearPairPanel>>,
+    link: DiagramLink,
 }
 impl GearPanel {
     pub fn new(
@@ -286,6 +291,7 @@ impl GearPanel {
             stamp: FormStamp::new(),
             editing,
             pair: None,
+            link: DiagramLink::default(),
             request,
         })
     }
@@ -499,6 +505,125 @@ impl GearPanel {
                     .expect("rack has no bore");
         }
     }
+    /// Linked fields that the current family shows, in display order.
+    fn linked_fields(&self, paired: bool) -> Vec<(Key, &DimensionField)> {
+        let f = &self.fields;
+        let mut out: Vec<(Key, &DimensionField)> = vec![
+            (visual::FIELDS[0], &f[0]),
+            (visual::FIELDS[1], &f[1]),
+            (visual::FIELDS[2], &f[2]),
+            (visual::FIELDS[3], &f[3]),
+        ];
+        match self.family {
+            GearFamily::Worm => {
+                if !paired {
+                    out.push((visual::WORM_MATE, &self.worm_mate));
+                }
+                out.push((visual::QUOTIENT, &self.worm_quotient));
+            }
+            GearFamily::Bevel => {
+                if !paired {
+                    out.push((visual::BEVEL_MATE, &self.bevel_mate));
+                }
+                out.push((visual::SHAFT, &self.bevel_shaft));
+            }
+            GearFamily::Helical | GearFamily::Herringbone => out.push((visual::FIELDS[4], &f[4])),
+            GearFamily::DoubleHelical => {
+                out.push((visual::FIELDS[4], &f[4]));
+                out.push((visual::FIELDS[5], &f[5]));
+            }
+            _ => {}
+        }
+        if !matches!(self.family, GearFamily::InternalRing | GearFamily::Rack) {
+            out.push((visual::FIELDS[6], &f[6]));
+        }
+        for (i, (key, field)) in visual::FIELDS.into_iter().zip(f).enumerate().skip(7) {
+            if i == 9 && self.family == GearFamily::Worm {
+                continue;
+            }
+            out.push((key, field));
+        }
+        match self.family {
+            GearFamily::Rack => out.push((visual::BACKING, &self.rack_backing)),
+            GearFamily::InternalRing => out.push((visual::OUTSIDE, &self.outside)),
+            _ => {}
+        }
+        if !paired {
+            out.extend(visual::ORIGIN.into_iter().zip(self.origin.iter()));
+        }
+        out
+    }
+    /// The selected family's schematic with the staged values; callouts exist
+    /// only for fields this family and role actually show.
+    fn schematic(&self, paired: bool) -> diagram::Diagram {
+        let document = &self.parameters.document;
+        let number = |f: &DimensionField| diagram::value_of(f, document, &self.parameters);
+        let module = if self.pitch_input == GearPitchInput::DiametralPitch {
+            self.fields[0]
+                .text
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .filter(|dp| *dp > 0.)
+                .map(|dp| 25.4 / dp)
+        } else {
+            number(&self.fields[0])
+        };
+        let values = visual::Values {
+            module,
+            teeth: number(&self.fields[1]),
+            face: number(&self.fields[3]),
+            helix: number(&self.fields[4]),
+            gap: number(&self.fields[5]),
+            bore: number(&self.fields[6]),
+            outside: number(&self.outside),
+            backing: number(&self.rack_backing),
+            mate: number(if self.family == GearFamily::Worm {
+                &self.worm_mate
+            } else {
+                &self.bevel_mate
+            }),
+        };
+        let mut schematic = visual::diagram(
+            &visual::Variant {
+                family: self.family,
+                hand: self.hand,
+                pitch_input: self.pitch_input,
+                worm_role: self.worm_role,
+            },
+            &values,
+        );
+        let visible: Vec<Key> = self
+            .linked_fields(paired)
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
+        schematic.callouts.retain(|c| visible.contains(&c.key));
+        schematic
+    }
+    fn show_diagram(&mut self, ui: &mut egui::Ui, paired: bool) {
+        let schematic = self.schematic(paired);
+        let fields: Vec<(Key, String)> = self
+            .linked_fields(paired)
+            .into_iter()
+            .map(|(k, f)| (k, diagram::field_value(f)))
+            .collect();
+        self.link.invalid =
+            diagram::first_invalid(&self.parameters.document, self.linked_fields(paired));
+        let value = |key: Key| {
+            fields
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map_or_else(String::new, |(_, v)| v.clone())
+        };
+        self.link.diagram(
+            ui,
+            (self.request.feature, "gear-diagram"),
+            &schematic,
+            170.,
+            &value,
+        );
+    }
     fn geometry_controls(&mut self, ui: &mut egui::Ui) -> bool {
         self.geometry_controls_with_family(ui, true, false)
     }
@@ -511,25 +636,30 @@ impl GearPanel {
         let mut changed = false;
         if choose_family {
             ui.label("Gear family");
-            controls::inspector_combo(ui, "gear-family")
-                .selected_text(self.family.label())
-                .show_ui(ui, |ui| {
-                    for family in GearFamily::ALL {
-                        if ui
-                            .add_enabled(
-                                family.supported(),
-                                egui::Button::selectable(self.family == family, family.label()),
-                            )
-                            .on_disabled_hover_text("Family geometry is not implemented")
-                            .clicked()
-                            && self.family != family
-                        {
-                            self.select_family(family);
-                            changed = true;
-                        }
-                    }
-                });
+            let choices: Vec<Choice<'_, GearFamily>> = GearFamily::ALL
+                .into_iter()
+                .filter(|family| family.supported())
+                .map(|family| Choice {
+                    value: family,
+                    label: family.label(),
+                    hint: family.source(),
+                    art: visual::art(family),
+                })
+                .collect();
+            let mut family = self.family;
+            diagram::choice_grid(
+                ui,
+                (self.request.feature, "gear-family"),
+                &mut family,
+                &choices,
+                true,
+            );
+            if family != self.family {
+                self.select_family(family);
+                changed = true;
+            }
         }
+        self.show_diagram(ui, paired);
         if self.family == GearFamily::Worm {
             ui.small("ZA axial-straight worm / generated wheel · axial module 0.5–2 mm · NORMAL pressure 20° · one right-hand start · diameter quotient 10.");
             ui.small("Worm length 16–32 × module; wheel face width 0.5–2 × module; wheel 32–64 teeth. Total thinning ≤ 0.1 × module. No load, fit or accuracy certification.");
@@ -598,10 +728,12 @@ impl GearPanel {
                     }
                 });
             if !paired {
-                changed|=self.worm_mate.show_named(ui,(self.request.feature,"worm-mate"),if self.worm_role==WormMember::Worm {"Mating wheel teeth"} else {"Mating worm starts"},"Original typed mate count; the supported worm has one start and its wheel has 32–64 teeth");
+                changed|=self.link.field(ui,visual::WORM_MATE,&mut self.worm_mate,(self.request.feature,"worm-mate"),if self.worm_role==WormMember::Worm {"Mating wheel teeth"} else {"Mating worm starts"},"Original typed mate count; the supported worm has one start and its wheel has 32–64 teeth");
             }
-            changed |= self.worm_quotient.show_named(
+            changed |= self.link.field(
                 ui,
+                visual::QUOTIENT,
+                &mut self.worm_quotient,
                 (self.request.feature, "worm-quotient"),
                 "Diameter quotient",
                 "Only 10 is supported; pitch diameter = quotient × axial module",
@@ -618,9 +750,9 @@ impl GearPanel {
                     }
                 });
             if !paired {
-                changed |= self.bevel_mate.show_named(ui, (self.request.feature, "bevel-mate-teeth"), "Mating gear teeth", "The explicit mate tooth count determines this gear's pitch-cone angle; preserved as a typed project expression");
+                changed |= self.link.field(ui, visual::BEVEL_MATE, &mut self.bevel_mate, (self.request.feature, "bevel-mate-teeth"), "Mating gear teeth", "The explicit mate tooth count determines this gear's pitch-cone angle; preserved as a typed project expression");
             }
-            changed |= self.bevel_shaft.show_named(ui, (self.request.feature, "bevel-shaft-angle"), "Shared shaft angle", "Only 90° intersecting shafts are supported. A pair shares this same authored dimension.");
+            changed |= self.link.field(ui, visual::SHAFT, &mut self.bevel_shaft, (self.request.feature, "bevel-shaft-angle"), "Shared shaft angle", "Only 90° intersecting shafts are supported. A pair shares this same authored dimension.");
         } else if self.family == GearFamily::Rack {
             ui.small("Straight basic rack · custom circular root fillets, not generated cutter runout. 4–64 complete pitch cells; 14.5–35° pressure; root radius/module 0.01–0.2. No accuracy or strength certification.");
             ui.small("Centered local X length = cells × π × module. Pitch line Y = 0; teeth point toward +Y; face width follows +Z. Zero helix, bore, center gap and profile shift.");
@@ -740,8 +872,10 @@ impl GearPanel {
                 },
             ),
         ] {
-            changed |= self.fields[i].show_named(
+            changed |= self.link.field(
                 ui,
+                visual::FIELDS[i],
+                &mut self.fields[i],
                 (self.request.feature, "gear-dimension", i),
                 label,
                 help,
@@ -755,8 +889,10 @@ impl GearPanel {
                 | GearFamily::Bevel
                 | GearFamily::Worm
         ) {
-            changed |= self.fields[4].show_named(
+            changed |= self.link.field(
                 ui,
+                visual::FIELDS[4],
+                &mut self.fields[4],
                 (self.request.feature, "gear-dimension", 4_usize),
                 "Helix angle",
                 "Positive reference-cylinder angle; hand is separate",
@@ -779,74 +915,97 @@ impl GearPanel {
             }
         }
         if self.family == GearFamily::DoubleHelical {
-            changed |= self.fields[5].show_named(
+            changed |= self.link.field(
                 ui,
+                visual::FIELDS[5],
+                &mut self.fields[5],
                 (self.request.feature, "gear-dimension", 5_usize),
                 "Center gap",
                 "Root-cylinder band between opposite-handed tooth bands",
             );
         }
-        for (i, label, help) in [
-            (
-                6,
+        if !matches!(self.family, GearFamily::InternalRing | GearFamily::Rack) {
+            changed |= self.link.field(
+                ui,
+                visual::FIELDS[6],
+                &mut self.fields[6],
+                (self.request.feature, "gear-dimension", 6_usize),
                 "Bore diameter",
                 "Through bore; zero makes a solid center",
-            ),
-            (
-                7,
-                "Design backlash per gear",
-                "Tangential tooth-thickness reduction at the reference circle",
-            ),
-            (
-                8,
-                "Additional fabrication clearance",
-                "Additional tangential thinning, separate from design backlash",
-            ),
-            (
-                9,
-                "Root fillet / module",
-                if self.family == GearFamily::Bevel {
-                    "Custom tangent small-circle radius on the outer reference sphere divided by outer module; not a cutter-generated root"
-                } else {
-                    "Custom circular fillet radius divided by the selected module"
-                },
-            ),
-            (
-                10,
-                "Minimum root wall",
-                if self.family == GearFamily::Bevel {
-                    "Minimum bore wall checked against the toe root envelope"
-                } else {
-                    "Minimum radial material between bore and tooth roots"
-                },
-            ),
-        ] {
-            if i == 9 && self.family == GearFamily::Worm {
-                continue;
-            }
-            if i == 6 && matches!(self.family, GearFamily::InternalRing | GearFamily::Rack) {
-                continue;
-            }
-            if i == 10 && self.family == GearFamily::Rack {
-                changed |= self.fields[i].show_named(ui, (self.request.feature, "gear-dimension", i), "Minimum backing wall", "Minimum material below the rack tooth roots; backing must be at least this thick");
-                continue;
-            }
-            if i == 10 && self.family == GearFamily::InternalRing {
-                changed |= self.fields[i].show_named(
-                    ui,
-                    (self.request.feature, "gear-dimension", i),
-                    "Minimum rim wall",
-                    "Minimum radial material beyond the outward tooth roots",
-                );
-                continue;
-            }
-            changed |= self.fields[i].show_named(
-                ui,
-                (self.request.feature, "gear-dimension", i),
-                label,
-                help,
             );
         }
+        let title = format!(
+            "Backlash, clearance and root · backlash {}",
+            diagram::field_value(&self.fields[7])
+        );
+        let reveal = self.link.reveals(&visual::TOLERANCES);
+        let mut tolerance_changed = false;
+        diagram::section(
+            ui,
+            (self.request.feature, "gear-tolerances"),
+            &title,
+            reveal,
+            |ui| {
+                for (i, label, help) in [
+                    (
+                        7,
+                        "Design backlash per gear",
+                        "Tangential tooth-thickness reduction at the reference circle",
+                    ),
+                    (
+                        8,
+                        "Additional fabrication clearance",
+                        "Additional tangential thinning, separate from design backlash",
+                    ),
+                    (
+                        9,
+                        "Root fillet / module",
+                        if self.family == GearFamily::Bevel {
+                            "Custom tangent small-circle radius on the outer reference sphere divided by outer module; not a cutter-generated root"
+                        } else {
+                            "Custom circular fillet radius divided by the selected module"
+                        },
+                    ),
+                    (
+                        10,
+                        "Minimum root wall",
+                        if self.family == GearFamily::Bevel {
+                            "Minimum bore wall checked against the toe root envelope"
+                        } else {
+                            "Minimum radial material between bore and tooth roots"
+                        },
+                    ),
+                ] {
+                    if i == 9 && self.family == GearFamily::Worm {
+                        continue;
+                    }
+                    if i == 10 && self.family == GearFamily::Rack {
+                        tolerance_changed |= self.link.field(ui, visual::FIELDS[i], &mut self.fields[i], (self.request.feature, "gear-dimension", i), "Minimum backing wall", "Minimum material below the rack tooth roots; backing must be at least this thick");
+                        continue;
+                    }
+                    if i == 10 && self.family == GearFamily::InternalRing {
+                        tolerance_changed |= self.link.field(
+                            ui,
+                            visual::FIELDS[i],
+                            &mut self.fields[i],
+                            (self.request.feature, "gear-dimension", i),
+                            "Minimum rim wall",
+                            "Minimum radial material beyond the outward tooth roots",
+                        );
+                        continue;
+                    }
+                    tolerance_changed |= self.link.field(
+                        ui,
+                        visual::FIELDS[i],
+                        &mut self.fields[i],
+                        (self.request.feature, "gear-dimension", i),
+                        label,
+                        help,
+                    );
+                }
+            },
+        );
+        changed |= tolerance_changed;
         changed |= self.hub.show(
             ui,
             self.request.feature,
@@ -904,10 +1063,10 @@ impl GearPanel {
             }
         }
         if self.family == GearFamily::Rack {
-            changed |= self.rack_backing.show_named(ui, (self.request.feature, "gear-backing"), "Rack backing thickness", "Material below the tooth root line, excluding the 1.25-module dedendum and one-module addendum");
+            changed |= self.link.field(ui, visual::BACKING, &mut self.rack_backing, (self.request.feature, "gear-backing"), "Rack backing thickness", "Material below the tooth root line, excluding the 1.25-module dedendum and one-module addendum");
         }
         if self.family == GearFamily::InternalRing {
-            changed |= self.outside.show_named(ui, (self.request.feature, "gear-outside"), "Ring outside diameter", "Explicit outside diameter; minimum radial wall is measured beyond the outward tooth roots");
+            changed |= self.link.field(ui, visual::OUTSIDE, &mut self.outside, (self.request.feature, "gear-outside"), "Ring outside diameter", "Explicit outside diameter; minimum radial wall is measured beyond the outward tooth roots");
             ui.small("48 or 60 teeth · 20° spur · derived inward opening · compatible 24-tooth pinion. Custom root circles are not a generated cutter trochoid.");
         }
         changed
@@ -973,8 +1132,10 @@ impl GearPanel {
             })
             .enumerate()
         {
-            changed |= field.show_named(
+            changed |= self.link.field(
                 ui,
+                visual::ORIGIN[index],
+                field,
                 (self.request.feature, "gear-origin", index),
                 label,
                 if self.family == GearFamily::Bevel {
