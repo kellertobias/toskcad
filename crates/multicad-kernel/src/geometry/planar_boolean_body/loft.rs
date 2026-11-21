@@ -224,8 +224,9 @@ impl Solid {
                                 "Model evaluation superseded",
                             ),
                             Error::Invalid | Error::Unresolved => unsupported(
-                                "Rust smooth polygon loft requires increasing stations whose \
-                             intermediate sections stay strictly convex",
+                                "Rust smooth polygon loft requires all stations on the same \
+                                 straight transition, or increasing stations whose intermediate \
+                                 sections stay strictly convex",
                             ),
                         })?;
                     return Self::from_smooth_loft(
