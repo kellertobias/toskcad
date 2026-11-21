@@ -502,14 +502,23 @@ pub(crate) fn show(
             (rect.top() + 1. - label.top()).max(0.) + (rect.bottom() - 1. - label.bottom()).min(0.);
         label = label.translate(Vec2::new(dx, dy));
         placed.push(label);
+        // The label is the focusable target. An axis-aligned dimension line
+        // is also clickable along a thin strip, never its bounding box, so
+        // neighbouring callouts keep their own hit areas.
         let response = ui
-            .interact(
-                label.union(Rect::from_two_pos(hit_line[0], hit_line[1]).expand(3.)),
-                id.with(index),
-                Sense::click(),
-            )
+            .interact(label, id.with(index), Sense::click())
             .on_hover_text(format!("Edit {}", callout.name))
             .on_hover_cursor(egui::CursorIcon::PointingHand);
+        let line = Rect::from_two_pos(hit_line[0], hit_line[1]);
+        let line_clicked = if callout.placement != Placement::Leader
+            && (line.width() < 1. || line.height() < 1.)
+        {
+            ui.interact(line.expand(3.), id.with((index, "line")), Sense::CLICK)
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+        } else {
+            false
+        };
         response.widget_info(|| {
             egui::WidgetInfo::labeled(
                 egui::WidgetType::Button,
@@ -529,7 +538,7 @@ pub(crate) fn show(
             egui::StrokeKind::Inside,
         );
         painter.galley(label.min + Vec2::new(3., 1.), galley, color);
-        if response.clicked() {
+        if response.clicked() || line_clicked {
             painted.clicked = Some(callout.key);
         }
         if hot {
