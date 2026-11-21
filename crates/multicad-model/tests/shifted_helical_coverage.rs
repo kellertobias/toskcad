@@ -300,9 +300,23 @@ fn all_shifted_helical_families_in_both_planes_have_native_mating_complete_volum
 }
 #[test]
 fn both_primary_khk_shifted_helical_worked_candidates_have_real_native_bodies_and_step() {
+    // User decision 2026-11-21: the native worked candidates are the KHK pairs
+    // with 0.05 mm transverse thinning; the unthinned source pairs touch at
+    // every drive angle and must be refused.
     let data = data();
-    for fixture in data["source_examples"].as_array().unwrap() {
-        eprintln!("KHK native worked candidate: {}", fixture["selected_plane"]);
+    let worked = data["worked_example_native_candidate_fixtures"]
+        .as_array()
+        .unwrap();
+    assert!(!worked.is_empty());
+    for fixture in worked {
+        eprintln!("KHK native worked candidate: {}", fixture["name"]);
+        assert!(
+            fixture["members"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|member| n(member, "transverse_thinning_mm") > 0.)
+        );
         let session = Session::new(Document::new("KHK worked helical").unwrap()).unwrap();
         let request = request(fixture);
         let prepared = prepare_gear_pair(&session, 0, actor(), &request).unwrap();
@@ -316,5 +330,28 @@ fn both_primary_khk_shifted_helical_worked_candidates_have_real_native_bodies_an
         check_native_and_step(&candidate, &request, fixture);
         assert_eq!(session.revision(), 0);
         assert!(!session.can_undo());
+    }
+    for fixture in data["source_examples"].as_array().unwrap() {
+        eprintln!("KHK unthinned source pair: {}", fixture["selected_plane"]);
+        assert!(
+            fixture["members"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|member| n(member, "transverse_thinning_mm") == 0.)
+        );
+        let session = Session::new(Document::new("KHK unthinned helical").unwrap()).unwrap();
+        let request = request(fixture);
+        let prepared = prepare_gear_pair(&session, 0, actor(), &request).unwrap();
+        let error = compiler()
+            .compile(prepared.prepared.document(), 1)
+            .err()
+            .expect("A touching unthinned pair must be refused");
+        let message = error.to_string();
+        assert!(
+            message.contains("certified positive clearance"),
+            "{message}"
+        );
+        assert_eq!(session.revision(), 0);
     }
 }
