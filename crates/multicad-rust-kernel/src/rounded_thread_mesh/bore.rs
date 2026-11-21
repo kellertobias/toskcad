@@ -69,7 +69,7 @@ fn prove_outer_polygon(radius: f64, length: f64, inner: f64, steps: usize) -> Re
     }
     Ok(())
 }
-fn closed_sweep(actual: [usize; 2], expected: [usize; 2]) -> Result<(), Error> {
+pub(super) fn closed_sweep(actual: [usize; 2], expected: [usize; 2]) -> Result<(), Error> {
     if actual != expected {
         return Err(MeshError::UnresolvedBoundary.into());
     }
@@ -127,7 +127,7 @@ impl Builder<'_, '_> {
         }
         Ok(())
     }
-    fn bore_triangle(
+    pub(super) fn bore_triangle(
         &mut self,
         triangle: [u32; 3],
         face: u32,
@@ -226,14 +226,14 @@ impl Builder<'_, '_> {
     }
 }
 #[derive(Default)]
-struct CapProof {
+pub(super) struct CapProof {
     edges: HashMap<[u32; 2], (u8, i8)>,
 }
 fn edge_key([a, b]: [u32; 2]) -> ([u32; 2], i8) {
     if a < b { ([a, b], 1) } else { ([b, a], -1) }
 }
 impl CapProof {
-    fn add(&mut self, triangle: [u32; 3], work: &mut Work<'_>) -> Result<(), Error> {
+    pub(super) fn add(&mut self, triangle: [u32; 3], work: &mut Work<'_>) -> Result<(), Error> {
         work.charge(3)?;
         for edge in [
             [triangle[0], triangle[1]],
@@ -250,7 +250,7 @@ impl CapProof {
         }
         Ok(())
     }
-    fn finish(
+    pub(super) fn finish(
         mut self,
         boundary: impl Iterator<Item = [u32; 2]>,
         work: &mut Work<'_>,

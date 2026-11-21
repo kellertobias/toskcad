@@ -420,19 +420,16 @@ pub(crate) fn build_rust_with_pipe_factory(
             multicad_core::model::ThreadFamily::Npt | multicad_core::model::ThreadFamily::Bspt
         )
     {
-        if matches!(
+        // Double-rounded families build their own hex closures below.
+        if !matches!(
             thread.family,
             multicad_core::model::ThreadFamily::Round
                 | multicad_core::model::ThreadFamily::Bsw
                 | multicad_core::model::ThreadFamily::Bsf
                 | multicad_core::model::ThreadFamily::Bspp
         ) {
-            return Err(error(
-                Some(feature),
-                "Rust machine screws and hex nuts have no double-rounded (Round, BSW, BSF, BSPP) thread body yet",
-            ));
+            crate::threads::validate_rust_family(feature, thread.family)?;
         }
-        crate::threads::validate_rust_family(feature, thread.family)?;
     }
     let resolved = source
         .parameters
@@ -492,6 +489,18 @@ fn build_rust_resolved_with_pipe_factory(
                     thread.major_radius_mm - thread.profile.depth_mm,
                     thread.length_mm,
                     thread.minimum_wall_mm + thread.profile.depth_mm,
+                    feature,
+                    frame,
+                    policy,
+                )
+                .map_err(|cause| error(Some(feature), cause));
+            }
+            if rounded(&thread) {
+                let (spec, frame) = rounded_modeled(feature, &thread)?;
+                return Solid::rust_rounded_hex_nut(
+                    spec,
+                    across_flats_mm,
+                    thread.minimum_wall_mm,
                     feature,
                     frame,
                     policy,
@@ -654,6 +663,17 @@ fn rust_machine_screw(
         )
         .map_err(|cause| error(Some(feature), cause));
     }
+    if rounded(thread) {
+        return rust_rounded_machine_screw(
+            feature,
+            underhead_length_mm,
+            shank_radius_mm,
+            &head,
+            &drive,
+            thread,
+            policy,
+        );
+    }
     if let Some(solid) = profiled_heads::build(
         feature,
         underhead_length_mm,
@@ -687,6 +707,67 @@ fn rust_machine_screw(
     .map_err(|cause| error(Some(feature), cause))
 }
 
+/// Round (DIN 405), BSW, BSF and BSPP threads carry a circular crest/root
+/// profile that the trapezoidal helical bodies do not represent.
+fn rounded(thread: &ResolvedThread) -> bool {
+    thread.round.is_some() || thread.profile.rounding_radius_mm.is_some()
+}
+fn rounded_modeled(
+    feature: EntityId,
+    thread: &ResolvedThread,
+) -> Result<
+    (
+        multicad_kernel::rust_kernel::rounded_thread::Spec,
+        PlaneFrame,
+    ),
+    ModelError,
+> {
+    if thread.representation != ThreadRepresentation::Modeled {
+        return Err(error(
+            Some(feature),
+            "Rust double-rounded hardware currently requires the Modeled representation",
+        ));
+    }
+    crate::threads::rounded_spec(feature, thread)
+}
+/// A fully threaded double-rounded screw seated on an external hex head.
+fn rust_rounded_machine_screw(
+    feature: EntityId,
+    underhead_length_mm: f64,
+    shank_radius_mm: f64,
+    head: &ResolvedScrewHead,
+    drive: &ResolvedScrewDrive,
+    thread: &ResolvedThread,
+    policy: GeometryPolicy,
+) -> Result<Solid, ModelError> {
+    let fail = |message| error(Some(feature), message);
+    let (
+        ResolvedScrewHead::ExternalHex {
+            across_flats_mm,
+            height_mm,
+        },
+        ResolvedScrewDrive::ExternalHex,
+    ) = (head, drive)
+    else {
+        return Err(fail(
+            "Rust double-rounded machine screws support an external hex head",
+        ));
+    };
+    let tolerance = policy.linear_tolerance_mm;
+    if (underhead_length_mm - thread.length_mm).abs() > tolerance {
+        return Err(fail(
+            "Rust double-rounded machine screws require a fully threaded shank (thread length equal to the underhead length)",
+        ));
+    }
+    if shank_radius_mm < thread.major_radius_mm - tolerance {
+        return Err(fail(
+            "The screw shank is smaller than the rounded thread's major diameter",
+        ));
+    }
+    let (spec, frame) = rounded_modeled(feature, thread)?;
+    Solid::rust_rounded_hex_head_screw(spec, *across_flats_mm, *height_mm, feature, frame, policy)
+        .map_err(|cause| error(Some(feature), cause))
+}
 fn rust_legacy_head(head: &ResolvedScrewHead, drive: &ResolvedScrewDrive) -> Option<ScrewHead> {
     Some(match (head, drive) {
         (

@@ -7,10 +7,12 @@ mod blind;
 mod bore;
 mod classify;
 mod clearance;
+mod hex;
 mod metrics;
 mod support;
 pub use blind::BlindBore;
 pub use bore::ThroughBore;
+pub use hex::{HexForm, HexStock};
 pub use metrics::Properties;
 #[cfg(test)]
 mod tests;

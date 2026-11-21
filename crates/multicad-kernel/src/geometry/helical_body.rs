@@ -819,6 +819,9 @@ impl Solid {
         if let Some((body, frame)) = self.rounded_thread_bore_body() {
             return Ok(body.contains(frame, point_mm));
         }
+        if let Some((body, frame)) = self.rounded_hex_body() {
+            return Ok(body.contains(frame, point_mm));
+        }
         if let Some((body, frame)) = self.rounded_thread_body() {
             return Ok(body.contains(frame, point_mm));
         }

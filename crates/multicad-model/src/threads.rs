@@ -163,43 +163,7 @@ pub(crate) fn build_rust(
                 "Rust double-rounded external receiving closures are not certified",
             ));
         }
-        if thread.profile.radial_taper != 0. || thread.starts != 1 {
-            return Err(fail(
-                "Rust double-rounded threads require a straight single-start profile",
-            ));
-        }
-        if thread
-            .end_treatments
-            .as_ref()
-            .is_some_and(|e| e.start_chamfer_radial_depth_mm != 0. || e.end_relief_length_mm != 0.)
-        {
-            return Err(fail("Rounded thread end treatments are not yet certified"));
-        }
-        let (crest, root) = if let Some(round) = &thread.round {
-            (round.cutter_crest_radius_mm, round.cutter_root_radius_mm)
-        } else {
-            let radius = thread
-                .profile
-                .rounding_radius_mm
-                .ok_or_else(|| fail("Canonical rounded thread has no circular profile"))?;
-            (radius, radius)
-        };
-        let spec = multicad_kernel::rust_kernel::rounded_thread::Spec {
-            major_radius_mm: thread.major_radius_mm,
-            pitch_mm: thread.pitch_mm,
-            length_mm: thread.length_mm,
-            depth_mm: thread.profile.depth_mm,
-            crest_radius_mm: crest,
-            root_radius_mm: root,
-            flank_angle_deg: thread.profile.lower_flank_deg,
-            starts: thread.starts,
-            left_hand: thread.hand == ThreadHand::Left,
-        };
-        let frame = PlaneFrame {
-            origin: thread.frame.origin,
-            u: thread.frame.u,
-            v: thread.frame.v,
-        };
+        let (spec, frame) = rounded_spec(feature, &thread)?;
         return if source.mode == ThreadMode::CutInternal {
             let target = receiving_target(feature, source, solids)?
                 .ok_or_else(|| fail("Receiving rounded thread has no target predecessor"))?;
@@ -430,6 +394,59 @@ pub fn rust_thread_mode_supported(family: ThreadFamily, mode: ThreadMode) -> boo
             && matches!(family, ThreadFamily::Npt | ThreadFamily::Bspt))
         || (matches!(mode, ThreadMode::NewExternal | ThreadMode::CutInternal)
             && rounded_family(family))
+}
+
+/// The literal double-rounded cutter or shaft spec of a resolved Round,
+/// BSW, BSF or BSPP thread, in its own thread frame.
+pub(crate) fn rounded_spec(
+    feature: EntityId,
+    thread: &ResolvedThread,
+) -> Result<
+    (
+        multicad_kernel::rust_kernel::rounded_thread::Spec,
+        PlaneFrame,
+    ),
+    ModelError,
+> {
+    let fail = |message| error(Some(feature), message);
+    if thread.profile.radial_taper != 0. || thread.starts != 1 {
+        return Err(fail(
+            "Rust double-rounded threads require a straight single-start profile",
+        ));
+    }
+    if thread
+        .end_treatments
+        .as_ref()
+        .is_some_and(|e| e.start_chamfer_radial_depth_mm != 0. || e.end_relief_length_mm != 0.)
+    {
+        return Err(fail("Rounded thread end treatments are not yet certified"));
+    }
+    let (crest, root) = if let Some(round) = &thread.round {
+        (round.cutter_crest_radius_mm, round.cutter_root_radius_mm)
+    } else {
+        let radius = thread
+            .profile
+            .rounding_radius_mm
+            .ok_or_else(|| fail("Canonical rounded thread has no circular profile"))?;
+        (radius, radius)
+    };
+    let spec = multicad_kernel::rust_kernel::rounded_thread::Spec {
+        major_radius_mm: thread.major_radius_mm,
+        pitch_mm: thread.pitch_mm,
+        length_mm: thread.length_mm,
+        depth_mm: thread.profile.depth_mm,
+        crest_radius_mm: crest,
+        root_radius_mm: root,
+        flank_angle_deg: thread.profile.lower_flank_deg,
+        starts: thread.starts,
+        left_hand: thread.hand == ThreadHand::Left,
+    };
+    let frame = PlaneFrame {
+        origin: thread.frame.origin,
+        u: thread.frame.u,
+        v: thread.frame.v,
+    };
+    Ok((spec, frame))
 }
 
 pub(crate) fn validate_rust_family(
