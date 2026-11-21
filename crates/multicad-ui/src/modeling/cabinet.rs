@@ -8,6 +8,7 @@ use super::{
     form::{self, FormAction, ModelEvent, ModelRequest},
 };
 mod fields;
+mod viewport;
 use crate::{controls, egui};
 use fields::CabinetFields;
 use multicad_core::{
@@ -195,6 +196,10 @@ pub(super) struct CabinetPanel {
     error: Option<String>,
     /// Display-only envelope guide for (stamp, source revision).
     guide: Option<(FormStamp, u64, Option<CabinetGuide>)>,
+    // Panel viewport draft (CAD-374).
+    resize: super::primitive::gizmo::ResizeGizmo,
+    corner_inputs: super::primitive::corner_inputs::CornerInputs,
+    last_shape: Option<model::ResolvedPrimitive>,
 }
 impl CabinetPanel {
     pub fn new(document: &Document, name: String) -> Self {
@@ -246,6 +251,9 @@ impl CabinetPanel {
             oversize: field(0., "mm"),
             error: None,
             guide: None,
+            resize: super::primitive::gizmo::ResizeGizmo::locked(viewport::LOCKED),
+            corner_inputs: Default::default(),
+            last_shape: None,
         }
     }
     pub fn cabinet(document: &Document, name: String) -> Self {
@@ -522,7 +530,7 @@ impl CabinetPanel {
         ui.small(match (self.kind, self.existing.is_some()) {
             (Kind::Carcass, false) => "Sides, top, bottom, back and shelves from an outside envelope. Each panel is a named Part you can select.",
             (Kind::Carcass, true) => "Edit the carcass. Panels whose role remains keep their Parts; shelves and backs are added or removed.",
-            (Kind::Panel, _) => "A rectangular panel from panel stock. Thickness comes from the stock; banding and oversize change the core cut size.",
+            (Kind::Panel, _) => "A rectangular panel from panel stock. Drag the blue corners or click one to type Length and Width in the viewport. Thickness comes from the stock; banding and oversize change the core cut size.",
         });
         ui.label("Name");
         changed |= ui
@@ -863,7 +871,7 @@ impl CabinetPanel {
 }
 
 #[cfg(test)]
-mod tests {
+pub(in crate::modeling) mod tests {
     use super::*;
     use multicad_core::{
         commands::{Actor, Channel},
@@ -872,7 +880,7 @@ mod tests {
     };
     use multicad_model::Compiler;
 
-    fn session() -> Session {
+    pub(in crate::modeling) fn session() -> Session {
         let mut s = Session::new(Document::new("Cabinet form").unwrap()).unwrap();
         let birch = Entity::new(
             "Birch",

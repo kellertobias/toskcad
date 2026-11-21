@@ -708,6 +708,9 @@ impl ModelToolController {
             channel,
             ModelForm::Primitive(Box::new(PrimitivePanel::new(request)?)),
         )?;
+        if let Some(ModelForm::Primitive(panel)) = &mut self.form {
+            panel.open_dimension_inputs();
+        }
         // The form remains open if the preview provider reports an error.
         let _ = self.preview(session, resources, channel);
         Ok(())
@@ -1175,7 +1178,11 @@ impl ModelToolController {
                 session.document(),
                 name,
             ))),
-        )
+        )?;
+        if let Some(ModelForm::Cabinet(form)) = &mut self.form {
+            form.open_dimension_inputs();
+        }
+        Ok(())
     }
     /// Envelope dimensions of the open Panel / carcass form, for the viewport.
     pub fn cabinet_guide(
@@ -2370,6 +2377,7 @@ impl ModelToolController {
         self.placement_interaction.active()
             || self.scale_interaction.active()
             || matches!(&self.form, Some(ModelForm::Primitive(panel)) if panel.dragging())
+            || matches!(&self.form, Some(ModelForm::Cabinet(form)) if form.dragging())
     }
 
     pub(crate) fn arm_confirmation(
@@ -2536,15 +2544,31 @@ impl ModelToolController {
         }
     }
 
+    /// The live draft envelope of a primitive or rectangular panel form.
     pub(crate) fn primitive_envelope(&self, session: &Session) -> Option<[[f64; 3]; 8]> {
         match self.form.as_ref()? {
             ModelForm::Primitive(panel) => panel.envelope(session),
+            ModelForm::Cabinet(form) => form.envelope(session),
             _ => None,
         }
     }
 
+    /// Whether a viewport dimension input owned keyboard focus last frame.
+    pub(crate) fn primitive_corner_input_focused(&self) -> bool {
+        match &self.form {
+            Some(ModelForm::Primitive(panel)) => panel.corner_input_focused(),
+            Some(ModelForm::Cabinet(form)) => form.corner_input_focused(),
+            _ => false,
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn primitive_corner_input_active(&self) -> bool {
-        matches!(&self.form, Some(ModelForm::Primitive(panel)) if panel.corner_input_active())
+        match &self.form {
+            Some(ModelForm::Primitive(panel)) => panel.corner_input_active(),
+            Some(ModelForm::Cabinet(form)) => form.corner_input_active(),
+            _ => false,
+        }
     }
 
     pub fn primitive_viewport(
@@ -2556,17 +2580,24 @@ impl ModelToolController {
         rect: egui::Rect,
         start_allowed: bool,
     ) -> bool {
-        if !matches!(self.form, Some(ModelForm::Primitive(_)))
-            || self.current(session, resources, false).is_err()
+        if !matches!(
+            self.form,
+            Some(ModelForm::Primitive(_) | ModelForm::Cabinet(_))
+        ) || self.current(session, resources, false).is_err()
         {
             return false;
         }
         let guide = !self.preview_visible(session, resources);
         let start_allowed = start_allowed && ui.is_enabled();
-        let Some(ModelForm::Primitive(panel)) = &mut self.form else {
-            unreachable!()
+        let result = match &mut self.form {
+            Some(ModelForm::Primitive(panel)) => {
+                panel.viewport(ui, session, camera, rect, start_allowed, guide)
+            }
+            Some(ModelForm::Cabinet(form)) => {
+                form.viewport(ui, session, camera, rect, start_allowed, guide)
+            }
+            _ => unreachable!(),
         };
-        let result = panel.viewport(ui, session, camera, rect, start_allowed, guide);
         if result.changed {
             self.schedule_auto_preview(ui, self.stamp().expect("active primitive form"));
         }
