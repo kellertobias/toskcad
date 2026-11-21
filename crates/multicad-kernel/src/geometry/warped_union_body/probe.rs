@@ -18,12 +18,12 @@ use multicad_rust_kernel::helical_thread::BoxClassification;
 use multicad_rust_kernel::warped_union::SectionEdge;
 use std::f64::consts::TAU;
 
-const SECTION_SEGMENTS: usize = 1 << 14;
+pub(super) const SECTION_SEGMENTS: usize = 1 << 14;
 const ARC_STEPS: usize = 1 << 16;
 
 /// A conservative lower bound of the distance from the box to a cylinder
 /// support, or `None` when the support may touch it.
-fn cylinder_clearance(support: Support, local: [B; 3], margin: f64) -> Option<f64> {
+pub(super) fn cylinder_clearance(support: Support, local: [B; 3], margin: f64) -> Option<f64> {
     match support {
         Support::Plane { .. } => None,
         Support::Cylinder {
@@ -76,7 +76,12 @@ fn cylinder_clearance(support: Support, local: [B; 3], margin: f64) -> Option<f6
     }
 }
 
-fn plane_clearance(normal: Point, point: Point, local: [B; 3], margin: f64) -> Option<f64> {
+pub(super) fn plane_clearance(
+    normal: Point,
+    point: Point,
+    local: [B; 3],
+    margin: f64,
+) -> Option<f64> {
     let distance = (0..3).fold(B::ZERO, |sum, i| {
         sum + B::point(normal[i]) * (local[i] - B::point(point[i]))
     });
@@ -102,7 +107,7 @@ fn plane_clearance(normal: Point, point: Point, local: [B; 3], margin: f64) -> O
 /// The gap between the box and a planar face's own extent. A planar region
 /// lies within the box of its outer loop, so a face whose infinite support
 /// crosses the probe can still clear it.
-fn face_box_gap(
+pub(super) fn face_box_gap(
     shell: &Shell,
     face: &warped_union::Face,
     local: [B; 3],
@@ -143,7 +148,7 @@ fn face_box_gap(
 /// The gap along the axis between the box and a cylindrical face. The axial
 /// coordinate is linear on the unrolled patch, so its range over the patch
 /// is its range over the patch boundary.
-fn cylinder_axial_gap(
+pub(super) fn cylinder_axial_gap(
     shell: &Shell,
     face: &warped_union::Face,
     local: [B; 3],
@@ -383,7 +388,7 @@ fn loop_polyline(
 /// outer loop. The polyline stays within its sagitta of the loop, so a
 /// projection that clears the polyline by more than the sagitta clears the
 /// loop and has the same winding number about it.
-fn loop_clearance(
+pub(super) fn loop_clearance(
     shell: &Shell,
     face: &warped_union::Face,
     normal: Point,
