@@ -4666,6 +4666,11 @@ impl SketchEditor {
             {
                 solid.highlight_reference(Some(highlight));
             }
+            // CAD-381: plane picking shows the ordinary face highlight under
+            // the pointer, even though the solid itself is not selectable.
+            if self.picking && sketch_mode && !self.measurement.active() {
+                solid.highlight_reference(self.plane_picker.hovered_face());
+            }
             solid.show(
                 ui,
                 &response,

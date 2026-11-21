@@ -274,3 +274,96 @@ fn cancelling_an_existing_or_edited_sketch_keeps_it_and_only_drops_pending_work(
     assert_eq!(session.document(), &drawn);
     assert_eq!(session.revision(), revision);
 }
+
+#[test]
+fn hovering_a_face_while_picking_shows_the_ordinary_face_highlight() {
+    let panel = Panel::new();
+    let mut session = Session::new(panel.document.clone()).unwrap();
+    let top = panel.pose.vector([0., 0., 1.]);
+    let mut editor = panel.editor(0, top);
+    editor.begin();
+    let point = panel.screen(&editor, [30., 20., 18.]);
+    let ctx = egui::Context::default();
+    for events in [vec![], vec![egui::Event::PointerMoved(point)], vec![]] {
+        ctx.run_ui(input(events), |ui| {
+            editor.canvas(ui, &mut session, true, Some(panel.scene(0)), true)
+        })
+        .drop_without_applying_deltas();
+    }
+    assert!(
+        matches!(
+            editor.solid.reference_highlight(),
+            Some(crate::viewport::Selection::Face { instance, .. }) if *instance == panel.instance
+        ),
+        "hovered face is highlighted"
+    );
+    assert!(editor.picking && !editor.editing);
+    assert_eq!(session.document(), &panel.document);
+    // Away from the part nothing is highlighted.
+    let empty = Pos2::new(5., 5.);
+    for events in [vec![egui::Event::PointerMoved(empty)], vec![]] {
+        ctx.run_ui(input(events), |ui| {
+            editor.canvas(ui, &mut session, true, Some(panel.scene(0)), true)
+        })
+        .drop_without_applying_deltas();
+    }
+    assert!(editor.solid.reference_highlight().is_none());
+}
+
+#[test]
+fn datum_planes_still_need_use_plane_and_invalid_faces_change_nothing() {
+    let panel = Panel::new();
+    let mut session = Session::new(panel.document.clone()).unwrap();
+    let mut editor = SketchEditor {
+        display_scene: Some(panel.scene(0)),
+        ..Default::default()
+    };
+    editor.camera.target = [0., 0., 0.];
+    editor.camera.pitch = std::f32::consts::FRAC_PI_2;
+    editor.camera.yaw = 0.;
+    editor.begin();
+    let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(1000., 700.));
+    let p = editor.camera.project([10., 10., 0.], rect);
+    click(
+        &mut editor,
+        &mut session,
+        panel.scene(0),
+        true,
+        Pos2::new(p[0], p[1]),
+    );
+    assert!(editor.picking && !editor.editing);
+    assert!(editor.message.contains("Use plane"), "{}", editor.message);
+    assert_eq!(session.document(), &panel.document);
+    assert_eq!(session.revision(), 0);
+    // A face that cannot host a sketch reports why and leaves the source alone.
+    let EntityData::Feature {
+        definition, inputs, ..
+    } = panel.document.get(panel.producer).unwrap().data.clone()
+    else {
+        unreachable!()
+    };
+    let mut suppressed = panel.document.get(panel.producer).unwrap().clone();
+    suppressed.data = EntityData::Feature {
+        definition,
+        inputs,
+        suppressed: true,
+    };
+    let document = panel
+        .document
+        .edited(&[Mutation::Replace(suppressed)])
+        .unwrap();
+    let mut session = Session::new(document.clone()).unwrap();
+    let top = panel.pose.vector([0., 0., 1.]);
+    let mut editor = panel.editor(0, top);
+    editor.begin();
+    let point = panel.screen(&editor, [30., 20., 18.]);
+    click(&mut editor, &mut session, panel.scene(0), true, point);
+    assert!(editor.picking && !editor.editing);
+    assert!(
+        editor.message.contains("active modeling feature"),
+        "{}",
+        editor.message
+    );
+    assert_eq!(session.document(), &document);
+    assert_eq!(session.revision(), 0);
+}
