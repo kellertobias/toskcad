@@ -3,7 +3,9 @@
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 mod classify;
+mod common;
 pub use classify::BoxClassification;
+pub use common::{CommonError, Lens, MeridianPiece};
 mod profile_containment;
 pub use profile_containment::{
     ProfileContainment, ProfileContainmentError, ProfileContainmentOptions,
