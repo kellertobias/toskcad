@@ -16,9 +16,9 @@ use multicad_core::{
     references::{AnalyticGeometry, Origin, ReferenceFrame, TopologySnapshot},
 };
 use multicad_kernel::{
-    BooleanOperation, CircularPocketTool, CurvedEdge2d, CurvedProfile, EdgeTreatment,
+    BooleanOperation, BoreStep, CircularPocketTool, CurvedEdge2d, CurvedProfile, EdgeTreatment,
     GeometryPolicy, Line8NutCut, OrthogonalCountersink, PlaneFrame, RevolutionAxis, RigidTransform,
-    Solid, TreatmentEdge,
+    Solid, TransverseBoreTool, TreatmentEdge,
 };
 use std::{collections::BTreeMap, f64::consts::TAU};
 
@@ -31,6 +31,11 @@ const PLATE_PITCH_MM: f64 = 40.;
 const PLATE_WIDTH_MM: f64 = 80.;
 const PLATE_DEPTH_MM: f64 = 40.;
 const HARDWARE_CLEARANCE_VOLUME_MM3: f64 = 0.001;
+// The universal fastener's screw passage and head seat meet at the barrel axis.
+const BARREL_PASSAGE_RADIUS_MM: f64 = 4.1;
+const BARREL_SEAT_RADIUS_MM: f64 = 7.04;
+const BARREL_PASSAGE_LENGTH_MM: f64 = 12.0;
+const BARREL_PASSAGE_OVERTRAVEL_MM: f64 = 0.02;
 // Assembly engineering clearance, independent of catalog and ISO fit classes.
 const THREAD_RADIAL_CLEARANCE_MM: f64 = 0.08;
 const THREAD_AXIAL_CLEARANCE_MM: f64 = 0.04;
@@ -113,6 +118,9 @@ pub(crate) struct Inputs<'a> {
 #[derive(Clone, Copy)]
 enum ReceivingHardware {
     Nut,
+    /// A profiled screw or cross-bored barrel against members that may be
+    /// cut by transverse access bores.
+    Round,
     Screw,
     SeatedStock,
 }
@@ -535,6 +543,108 @@ impl Builder<'_> {
         Ok(result)
     }
 
+    /// One coaxial cutter for both entries: each a counterbore over a
+    /// deeper pilot, started just outside its face.
+    fn rust_stepped_bores(
+        &self,
+        stock: &Solid,
+        frames: [ReferenceFrame; 2],
+    ) -> Result<Solid, ModelError> {
+        let outside = 0.02;
+        let axis = frames[0].normal();
+        let origin = frames[0].origin_mm;
+        let mut steps = Vec::new();
+        for frame in frames {
+            let normal = frame.normal();
+            let along = dot(normal, axis);
+            let offset = sub(frame.origin_mm, origin);
+            let station = dot(offset, axis);
+            let across = magnitude(sub(offset, scale(axis, station)));
+            if (along.abs() - 1.).abs() > 1e-12 || across > self.inputs.policy.linear_tolerance_mm {
+                return Err(
+                    self.fail("Both access bores must share one axis through the receiving member")
+                );
+            }
+            for (radius_mm, depth) in [
+                (PROFILE_ACCESS_RADIUS_MM, PROFILE_BARREL_DEPTH_MM),
+                (PROFILE_PILOT_RADIUS_MM, PROFILE_PILOT_DEPTH_MM),
+            ] {
+                let [start_mm, end_mm] = if along > 0. {
+                    [station - outside, station + depth]
+                } else {
+                    [station - depth, station + outside]
+                };
+                steps.push(BoreStep {
+                    start_mm,
+                    end_mm,
+                    radius_mm,
+                });
+            }
+        }
+        let tool = TransverseBoreTool {
+            origin_mm: origin,
+            axis,
+            steps,
+            wall: Origin {
+                source: self.feature,
+                role: "access_bore.wall".into(),
+            },
+            shoulder: Origin {
+                source: self.feature,
+                role: "access_bore.shoulder".into(),
+            },
+        };
+        let before = self.checked(stock.volume_mm3())?;
+        let result = self.checked(stock.rust_transverse_bore(&tool, self.inputs.policy))?;
+        if self.checked(result.solid_count())? != 1 || self.checked(result.volume_mm3())? >= before
+        {
+            return Err(self.fail(
+                "Stepped access bores must remove material and preserve one receiving solid",
+            ));
+        }
+        Ok(result)
+    }
+
+    /// The universal fastener barrel with its screw passage and head seat
+    /// crossing at the barrel axis.
+    fn rust_barrel(
+        &self,
+        access: ReferenceFrame,
+        screw: ReferenceFrame,
+    ) -> Result<Solid, ModelError> {
+        let barrel = self.cylinder(
+            shift(access, 0.01),
+            PROFILE_ACCESS_RADIUS_MM - 0.02,
+            PROFILE_BARREL_DEPTH_MM - 0.02,
+        )?;
+        let station = shift(screw, -PROFILE_ACCESS_FROM_END_MM);
+        let tool = TransverseBoreTool {
+            origin_mm: station.origin_mm,
+            axis: station.normal(),
+            steps: vec![
+                BoreStep {
+                    start_mm: -BARREL_PASSAGE_OVERTRAVEL_MM,
+                    end_mm: BARREL_PASSAGE_LENGTH_MM - BARREL_PASSAGE_OVERTRAVEL_MM,
+                    radius_mm: BARREL_PASSAGE_RADIUS_MM,
+                },
+                BoreStep {
+                    start_mm: -BARREL_PASSAGE_LENGTH_MM,
+                    end_mm: 0.,
+                    radius_mm: BARREL_SEAT_RADIUS_MM,
+                },
+            ],
+            wall: Origin {
+                source: self.feature,
+                role: "universal_fastener.passage".into(),
+            },
+            shoulder: Origin {
+                source: self.feature,
+                role: "universal_fastener.seat".into(),
+            },
+        };
+        self.checked(barrel.rust_transverse_bore(&tool, self.inputs.policy))
+    }
+
     fn barrel(&self, access: ReferenceFrame, screw: ReferenceFrame) -> Result<Solid, ModelError> {
         let barrel = self.cylinder(
             shift(access, 0.01),
@@ -542,8 +652,16 @@ impl Builder<'_> {
             PROFILE_BARREL_DEPTH_MM - 0.02,
         )?;
         let station = shift(screw, -PROFILE_ACCESS_FROM_END_MM);
-        let passage = self.cylinder(shift(station, -0.02), 4.1, 12.0)?;
-        let drive = self.cylinder(shift(station, -12.0), 7.04, 12.0)?;
+        let passage = self.cylinder(
+            shift(station, -BARREL_PASSAGE_OVERTRAVEL_MM),
+            BARREL_PASSAGE_RADIUS_MM,
+            BARREL_PASSAGE_LENGTH_MM,
+        )?;
+        let drive = self.cylinder(
+            shift(station, -BARREL_PASSAGE_LENGTH_MM),
+            BARREL_SEAT_RADIUS_MM,
+            BARREL_PASSAGE_LENGTH_MM,
+        )?;
         let body = self.subtract(
             &barrel,
             &passage,
@@ -828,6 +946,14 @@ impl Builder<'_> {
                         None,
                     ))?;
                 }
+                ReceivingHardware::Round => {
+                    self.checked(hardware.rust_round_hardware_receiver_clearance(
+                        self.solid(producer)?,
+                        occurrence,
+                        HARDWARE_CLEARANCE_VOLUME_MM3,
+                        None,
+                    ))?;
+                }
                 ReceivingHardware::SeatedStock => {
                     self.checked(hardware.rust_seated_stock_receiver_clearance(
                         self.solid(producer)?,
@@ -877,31 +1003,65 @@ pub(crate) fn build(
     ))?;
     if backend == GeometryBackend::Rust {
         return match output.geometry {
-            ProfileOutputKind::AccessBores { .. } => Err(builder.fail(
-                "Rust profile connections do not yet support stepped access bores across interrupted stock",
-            )),
+            ProfileOutputKind::AccessBores { target } => {
+                let access = frames.access.ok_or_else(|| {
+                    builder.fail("The end connection lost its access bore datums")
+                })?;
+                builder.rust_stepped_bores(builder.solid(target.producer)?, access)
+            }
             ProfileOutputKind::Part { index } => match request.kind.roles()[index] {
                 ProfilePartRole::Connector(_) => match request.kind {
                     ProfileConnectionKind::JoiningPlate => builder.rust_joining_plate(frames),
                     ProfileConnectionKind::AngleBracket => {
-                        let bracket=builder.rust_angle_bracket(frames)?;
-                        builder.rust_hardware_receivers(&bracket,ReceivingHardware::SeatedStock,&request,output.access_bores)?;
+                        let bracket = builder.rust_angle_bracket(frames)?;
+                        builder.rust_hardware_receivers(
+                            &bracket,
+                            ReceivingHardware::SeatedStock,
+                            &request,
+                            output.access_bores,
+                        )?;
                         Ok(bracket)
-                    },
-                    ProfileConnectionKind::UniversalEnd => Err(builder.fail(
-                        "Rust profile connections do not yet support the intersecting barrel screw passage and head seat",
-                    )),
+                    }
+                    ProfileConnectionKind::UniversalEnd => {
+                        let ProfilePartRole::Connector(i) = request.kind.roles()[index] else {
+                            unreachable!("a connector role")
+                        };
+                        let access = frames.access.ok_or_else(|| {
+                            builder.fail("The end connection lost its access bore datums")
+                        })?;
+                        let barrel = builder.rust_barrel(access[i], frames.fasteners[i])?;
+                        builder.rust_hardware_receivers(
+                            &barrel,
+                            ReceivingHardware::Round,
+                            &request,
+                            output.access_bores,
+                        )?;
+                        Ok(barrel)
+                    }
                 },
                 ProfilePartRole::Screw(index) => {
-                    let screw = builder.screw(request.kind, frames.fasteners[index], backend)?.0;
-                    builder.rust_hardware_receivers(&screw, ReceivingHardware::Screw, &request, output.access_bores)?;
+                    let screw = builder
+                        .screw(request.kind, frames.fasteners[index], backend)?
+                        .0;
+                    let kind = if output.access_bores.is_some() {
+                        ReceivingHardware::Round
+                    } else {
+                        ReceivingHardware::Screw
+                    };
+                    builder.rust_hardware_receivers(&screw, kind, &request, output.access_bores)?;
                     Ok(screw)
-                },
+                }
                 ProfilePartRole::Nut(index) => {
-                    let nut=builder.nut(request.kind,request.nut,frames.fasteners[index],backend)?;
-                    builder.rust_hardware_receivers(&nut,ReceivingHardware::Nut,&request,output.access_bores)?;
+                    let nut =
+                        builder.nut(request.kind, request.nut, frames.fasteners[index], backend)?;
+                    builder.rust_hardware_receivers(
+                        &nut,
+                        ReceivingHardware::Nut,
+                        &request,
+                        output.access_bores,
+                    )?;
                     Ok(nut)
-                },
+                }
             },
         };
     }
