@@ -1244,3 +1244,51 @@ fn delete_standalone_sketch_sweeps_keeps_the_sketch_and_plane() {
     assert!(session.document().get(group.id).is_none());
     assert_eq!(session.document(), &document);
 }
+#[test]
+fn rename_accepts_parts_and_containers_but_refuses_blank_names_and_other_entities() {
+    let part = body("Panel 1");
+    let sketch = Entity::new(
+        "Plane",
+        EntityData::Plane {
+            origin_mm: [0.; 3],
+            normal: [0., 0., 1.],
+            anchor: None,
+        },
+    );
+    let document = Document::new("Rename")
+        .unwrap()
+        .edited(&[
+            Mutation::Insert(part.clone()),
+            Mutation::Insert(sketch.clone()),
+        ])
+        .unwrap();
+    let mut session = Session::new(document.clone()).unwrap();
+    let rename = |session: &Session, id, name: &str| {
+        hierarchy::prepare(
+            session,
+            session.revision(),
+            Actor::local(Channel::Mcp),
+            Action::Rename {
+                id,
+                name: name.into(),
+            },
+        )
+    };
+    for blank in ["", "   "] {
+        assert!(
+            rename(&session, part.id, blank)
+                .unwrap_err()
+                .to_string()
+                .contains("cannot be empty")
+        );
+    }
+    assert!(rename(&session, part.id, &"x".repeat(1025)).is_err());
+    assert!(rename(&session, sketch.id, "Plane").is_err());
+    assert_eq!(session.document(), &document);
+    let prepared = rename(&session, part.id, "MPX 6 shelf").unwrap();
+    session.commit(prepared.prepared).unwrap();
+    let renamed = session.document().get(part.id).unwrap();
+    assert_eq!(renamed.name, "MPX 6 shelf");
+    assert_eq!(renamed.data, part.data);
+    assert_eq!(session.activity().last().unwrap().label, "Rename part");
+}
