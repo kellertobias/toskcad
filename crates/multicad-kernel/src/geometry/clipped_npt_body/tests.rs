@@ -467,6 +467,9 @@ fn native_source_cancel_pose_input_and_mesh_limits_fail_before_publication() {
             .kind,
         GeometryErrorKind::Input
     );
+    // User decision 2026-11-21: the dedicated law mesher meets requests the
+    // former cell-plan mesher refused. A one-triangle frontier and the
+    // finest admitted quality under a tighter triangle budget still refuse.
     for q in [
         MeshOptions {
             linear_deflection_mm: 0.1,
@@ -476,7 +479,7 @@ fn native_source_cancel_pose_input_and_mesh_limits_fail_before_publication() {
         MeshOptions {
             linear_deflection_mm: 0.001,
             angular_deflection_rad: 0.01,
-            maximum_triangles: 1_000_000,
+            maximum_triangles: 20_000,
         },
     ] {
         assert_eq!(
@@ -484,6 +487,14 @@ fn native_source_cancel_pose_input_and_mesh_limits_fail_before_publication() {
             GeometryErrorKind::Limit
         );
     }
+    assert_print_quality(
+        &solid,
+        MeshOptions {
+            linear_deflection_mm: 0.001,
+            angular_deflection_rad: 0.01,
+            maximum_triangles: 1_000_000,
+        },
+    );
     assert_eq!(
         solid
             .mesh(MeshOptions {
@@ -584,17 +595,58 @@ fn source_edge_sampler_enforces_its_actual_numeric_and_storage_contract() {
         MeshError::UnresolvedBoundary
     );
     assert!(solid.sample_non_analytic_edge(0, q).unwrap().is_ok());
-    assert_eq!(
-        solid
-            .manufacturing_mesh(MeshOptions {
-                linear_deflection_mm: 0.003,
-                angular_deflection_rad: 0.1,
-                maximum_triangles: 1_000_000
-            })
-            .unwrap_err()
-            .kind,
-        GeometryErrorKind::Limit
+    // User decision 2026-11-21: this request is now met, not refused.
+    assert_print_quality(
+        &solid,
+        MeshOptions {
+            linear_deflection_mm: 0.003,
+            angular_deflection_rad: 0.1,
+            maximum_triangles: 1_000_000,
+        },
     );
+}
+
+/// The manufacturing mesh is one closed shell, the law tessellation behind
+/// it proves a deviation within the request, and every emitted lateral
+/// vertex lies within that deviation of the source's own radial enclosure.
+fn assert_print_quality(solid: &Solid, q: MeshOptions) {
+    use multicad_rust_kernel::axial_pipe_thread::authored::LawClosure;
+    let mesh = solid.manufacturing_mesh_with_receipt(q).unwrap();
+    let triangles = mesh.mesh.indices.len() / 3;
+    assert!(triangles > 0 && triangles <= q.maximum_triangles as usize);
+    assert_eq!(mesh.edge_pairs as usize, 3 * triangles / 2);
+    let source = solid.rust_clipped_npt_source().unwrap().source();
+    let law = source
+        .tessellate_law(
+            Tessellation {
+                deflection: q.linear_deflection_mm,
+                angle: q.angular_deflection_rad,
+                triangle_limit: q.maximum_triangles as usize,
+            },
+            LawClosure::Solid,
+            None,
+        )
+        .unwrap();
+    assert!(law.deviation_mm <= q.linear_deflection_mm);
+    assert!(law.normal_angle_rad <= q.angular_deflection_rad);
+    assert_eq!(law.mesh.face_indices.len(), triangles);
+    let spec = source.spec();
+    let omega = std::f64::consts::TAU / spec.pitch_mm;
+    for v in mesh.mesh.vertices.as_chunks::<3>().0 {
+        let r = v[0].hypot(v[1]);
+        if r < 1e-9 {
+            continue; // Cap fan centre.
+        }
+        let theta = v[1].atan2(v[0]);
+        let phase = (v[2] - theta / omega).rem_euclid(spec.pitch_mm);
+        let [lo, hi] = source
+            .radial_bounds([phase, phase], [v[2].clamp(0., spec.length_mm); 2])
+            .unwrap();
+        assert!(
+            r >= lo - law.deviation_mm && r <= hi + law.deviation_mm,
+            "{r} not in [{lo}, {hi}]"
+        );
+    }
 }
 
 #[test]
