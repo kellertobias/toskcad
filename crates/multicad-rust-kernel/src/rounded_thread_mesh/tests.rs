@@ -503,3 +503,74 @@ fn radial_volume_envelope_refuses_missing_inner_domain_and_numeric_overflow() {
             .is_finite()
     );
 }
+#[test]
+fn hex_nut_and_head_close_one_certified_shell_with_exact_planar_stock() {
+    use crate::rounded_thread::{HexForm, HexStock};
+    for (internal, form) in [
+        (true, HexForm::Nut),
+        (false, HexForm::Head { height_mm: 3. }),
+    ] {
+        for left in [false, true] {
+            let t = rd(internal, left);
+            let stock = HexStock::new(t, 30., form).unwrap();
+            let o = options();
+            let mesh = tessellate_hex(&stock, o).unwrap();
+            let proof = crate::manufacturing::certify(&mesh).unwrap();
+            let bound = hex_volume_error_bound(&stock, o).unwrap();
+            assert!(
+                (proof.signed_volume_mm3 - stock.volume_mm3()).abs() <= bound,
+                "{form:?} {left} {} {} {bound}",
+                proof.signed_volume_mm3,
+                stock.volume_mm3()
+            );
+            assert_eq!(proof.edge_pairs as usize * 2, mesh.indices.len());
+            // One shell: a through nut is a torus, a headed screw a sphere.
+            let euler = if matches!(form, HexForm::Nut) { 0 } else { 2 };
+            assert_eq!(
+                mesh.vertices.len() / 3 + mesh.indices.len() / 3,
+                proof.edge_pairs as usize + euler
+            );
+            assert_eq!(
+                mesh.face_indices.iter().copied().collect::<BTreeSet<_>>(),
+                (0..stock.face_count() as u32).collect()
+            );
+            // Hex wall vertices lie exactly on their flats; the six corners
+            // are emitted, so the planar stock adds no deflection.
+            let triangles = mesh.indices.as_chunks::<3>().0;
+            let vertices = mesh.vertices.as_chunks::<3>().0;
+            for (triangle, &face) in triangles.iter().zip(&mesh.face_indices) {
+                if (7..13).contains(&face) {
+                    let side = (face - 7) as f64;
+                    let angle = PI / 3. * (side + 1.);
+                    for &v in triangle {
+                        let [x, y, _] = vertices[v as usize];
+                        let distance = x * angle.cos() + y * angle.sin();
+                        assert!((distance - 15.).abs() < 1e-12, "{face} {distance}");
+                    }
+                }
+            }
+            let corners = crate::headed_screw::hex_vertices(30.);
+            for [x, y] in corners {
+                assert!(vertices.iter().any(|v| v[0] == x && v[1] == y));
+            }
+        }
+    }
+    // The flats must clear the thread; budgets and cancellation still refuse.
+    let t = rd(true, false);
+    assert!(HexStock::new(t, 20., HexForm::Nut).is_err());
+    let stock = HexStock::new(t, 30., HexForm::Nut).unwrap();
+    assert!(
+        tessellate_hex(
+            &stock,
+            Tessellation {
+                triangle_limit: 100,
+                ..options()
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(
+        tessellate_hex_with_interrupt(&stock, options(), Some(&|| true)),
+        Err(Error::Cancelled)
+    );
+}

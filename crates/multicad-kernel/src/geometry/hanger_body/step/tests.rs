@@ -218,3 +218,95 @@ fn placed_hanger_step_holds_the_local_qualified_records_through_one_map() {
         .unwrap_err();
     assert_eq!(refusal.kind, GeometryErrorKind::Unsupported);
 }
+#[test]
+fn written_local_and_placed_hangers_read_back_with_their_healed_volume() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = solid(false, false);
+    let (body, frame) = source.hanger_body().unwrap();
+    let qualified = body.qualified_step(frame, source.policy, None).unwrap();
+    let [lo, hi] = qualified.healed_volume_bounds_mm3();
+    let rotation = [[0., 0., 1.], [1., 0., 0.], [0., 1., 0.]];
+    for (name, transform) in [
+        ("local", None),
+        (
+            "placed",
+            Some(RigidTransform {
+                rotation,
+                translation_mm: [20., -7., 9.],
+            }),
+        ),
+    ] {
+        let shape = match transform {
+            Some(t) => source.transformed(t).unwrap(),
+            None => source.share().unwrap(),
+        };
+        let path = dir.path().join(format!("{name}.step"));
+        shape.write_step(&path).unwrap();
+        let back = Solid::read_step(&path, Default::default()).unwrap();
+        assert_eq!(back.solid_count().unwrap(), 1);
+        // The independent readback earns the same healed interval the
+        // qualified export proved on its own bytes, in any declared pose.
+        let (bounds, sewing) = back.healed_import_proof().unwrap();
+        assert_eq!(bounds, [lo, hi]);
+        assert!(sewing <= source.policy.linear_tolerance_mm);
+        let volume = back.volume_mm3().unwrap();
+        assert!(lo <= volume && volume <= hi && hi - lo <= 1e-6);
+        // The radial envelope encloses the placed source material.
+        let expected = shape.bounds().unwrap();
+        let actual = back.bounds().unwrap();
+        for i in 0..3 {
+            assert!(
+                actual.min[i] <= expected.min[i] + 1e-9,
+                "{name} {actual:?} {expected:?}"
+            );
+            assert!(
+                actual.max[i] >= expected.max[i] - 1e-9,
+                "{name} {actual:?} {expected:?}"
+            );
+            let width = |b: &Bounds| b.max[i] - b.min[i];
+            assert!(
+                width(&actual) <= width(&expected) * 1.1 + 1e-9,
+                "{name} {actual:?} {expected:?}"
+            );
+        }
+        let moved = back
+            .transformed(RigidTransform {
+                translation_mm: [1., 2., 3.],
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(moved.volume_mm3().unwrap(), volume);
+        assert!((moved.bounds().unwrap().min[2] - actual.min[2] - 3.).abs() < 1e-9);
+        // No boundary is rebuilt: display, faces and re-export stay refusals.
+        assert_eq!(
+            back.mesh(Default::default()).err().unwrap().kind,
+            GeometryErrorKind::Unsupported
+        );
+        assert!(back.faces().is_err());
+        assert!(!back.supports_step_export());
+    }
+    // Only the declared rigid unit-scale map is read; any other operator is
+    // refused with the original trim refusal rather than a guessed pose.
+    let placed = std::fs::read_to_string(dir.path().join("placed.step")).unwrap();
+    for tampered in [
+        placed.replacen(
+            ",1.)CARTESIAN_TRANSFORMATION_OPERATOR_3D",
+            ",2.)CARTESIAN_TRANSFORMATION_OPERATOR_3D",
+            1,
+        ),
+        placed.replacen("MAPPED_ITEM('',", "MAPPED_ITEM('',#999999999,", 1),
+    ] {
+        assert_ne!(tampered, placed);
+        assert!(Solid::import_rust_step(&tampered, EntityId::new(), Default::default()).is_err());
+    }
+    let scaled = placed.replacen(
+        ",1.)CARTESIAN_TRANSFORMATION_OPERATOR_3D",
+        ",2.)CARTESIAN_TRANSFORMATION_OPERATOR_3D",
+        1,
+    );
+    let refusal = Solid::import_rust_step(&scaled, EntityId::new(), Default::default())
+        .err()
+        .unwrap();
+    assert_eq!(refusal.kind, GeometryErrorKind::Unsupported);
+    assert!(refusal.message.contains("trim agreement"), "{refusal:?}");
+}

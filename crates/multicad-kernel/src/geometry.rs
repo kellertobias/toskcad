@@ -95,9 +95,11 @@ pub use repaired_phillips_body::{
     RepairedPhillipsQuery, RepairedPhillipsQueryOptions,
 };
 mod enclosed_clearance;
+mod healed_import_body;
 mod revolution_body;
 mod rounded_blind_bore_body;
 mod rounded_cylinder_body;
+mod rounded_hex_body;
 mod rounded_slot_body;
 mod rounded_thread_body;
 mod rounded_thread_bore_body;
@@ -158,6 +160,7 @@ use rounded_slot_body::RoundedSlotBody;
 use rounded_thread_body::RoundedThreadBody;
 pub use rounded_thread_body::{RoundedThreadData, RoundedThreadMassProperties};
 mod internal_thread_treatment_body;
+pub(crate) use healed_import_body::HealedImportBody;
 use imported_brep_body::ImportedBrepBody;
 pub use imported_brep_body::{AssemblyOccurrence, CopedTube, CopedTubeNames};
 use internal_thread_treatment_body::InternalThreadTreatmentBody;
@@ -168,6 +171,7 @@ use rounded_blind_bore_body::RoundedBlindBoreBody;
 pub use rounded_blind_bore_body::{
     RoundedBlindBoreData, RoundedBlindMeshBudget, RoundedBlindMeshReceipt,
 };
+use rounded_hex_body::RoundedHexBody;
 use rounded_thread_bore_body::RoundedThreadBoreBody;
 pub use rounded_thread_bore_body::RoundedThreadBoreData;
 use rust_compound::RustCompound;
@@ -798,6 +802,7 @@ enum SolidBody {
     RoundedThread(Rc<RoundedThreadBody>, PlaneFrame),
     EntryChamfer(Rc<EntryChamferBody>, PlaneFrame),
     RoundedThreadBore(Rc<RoundedThreadBoreBody>, PlaneFrame),
+    RoundedHex(Rc<RoundedHexBody>, PlaneFrame),
     RoundedBlindBore(Rc<RoundedBlindBoreBody>, PlaneFrame),
     InternalThreadTreatment(Rc<InternalThreadTreatmentBody>, PlaneFrame),
     RepairedPhillips(Rc<RepairedPhillipsBody>, PlaneFrame),
@@ -820,6 +825,7 @@ enum SolidBody {
     Bevel(Rc<BevelBody>, PlaneFrame),
     Worm(Rc<WormBody>, PlaneFrame),
     WormInterference(Rc<WormInterferenceBody>),
+    HealedImport(Rc<HealedImportBody>, PlaneFrame),
     Sphere(Rc<SphereBody>, PlaneFrame),
     Torus(Rc<TorusBody>, PlaneFrame),
     ObliqueBore(Rc<ObliqueBoreBody>, PlaneFrame),
@@ -1294,6 +1300,7 @@ impl Solid {
                 SolidBody::EntryChamfer(Rc::clone(body), *frame)
             }
             SolidBody::Helical(body, frame) => SolidBody::Helical(Rc::clone(body), *frame),
+            SolidBody::RoundedHex(body, frame) => SolidBody::RoundedHex(Rc::clone(body), *frame),
             SolidBody::RoundedThreadBore(body, frame) => {
                 SolidBody::RoundedThreadBore(Rc::clone(body), *frame)
             }
@@ -1336,6 +1343,9 @@ impl Solid {
             SolidBody::Bevel(body, frame) => SolidBody::Bevel(Rc::clone(body), *frame),
             SolidBody::Worm(body, frame) => SolidBody::Worm(Rc::clone(body), *frame),
             SolidBody::WormInterference(body) => SolidBody::WormInterference(Rc::clone(body)),
+            SolidBody::HealedImport(body, frame) => {
+                SolidBody::HealedImport(Rc::clone(body), *frame)
+            }
             SolidBody::Sphere(body, frame) => SolidBody::Sphere(Rc::clone(body), *frame),
             SolidBody::ImportedBrep(body) => SolidBody::ImportedBrep(Rc::clone(body)),
             SolidBody::Torus(body, frame) => SolidBody::Torus(Rc::clone(body), *frame),
@@ -1830,6 +1840,10 @@ impl Solid {
                     body.validate_frame(frame, self.policy)?;
                     SolidBody::RoundedBlindBore(Rc::clone(body), frame)
                 }
+                SolidBody::RoundedHex(body, frame) => SolidBody::RoundedHex(
+                    Rc::clone(body),
+                    body.transformed_frame(transform.frame(*frame), self.policy)?,
+                ),
                 SolidBody::RoundedThreadBore(body, frame) => {
                     let frame = transform.frame(*frame);
                     frame.checked_metric_extent(
@@ -1938,6 +1952,9 @@ impl Solid {
                 }
                 SolidBody::WormInterference(body) => {
                     SolidBody::WormInterference(Rc::new(body.transformed(transform)))
+                }
+                SolidBody::HealedImport(body, frame) => {
+                    SolidBody::HealedImport(Rc::clone(body), transform.frame(*frame))
                 }
                 SolidBody::Sphere(body, frame) => {
                     let frame = transform.frame(*frame);
@@ -2111,6 +2128,9 @@ impl Solid {
         if let Some(body) = self.worm_interference_body() {
             return Ok(body.volume_mm3());
         }
+        if let Some((body, _)) = self.healed_import_body() {
+            return Ok(body.volume_mm3());
+        }
         if let Some((body, _)) = self.warped_union_body() {
             return Ok(body.volume_mm3());
         }
@@ -2189,6 +2209,9 @@ impl Solid {
         if let Some((body, _)) = self.rounded_thread_bore_body() {
             return Ok(body.geometry.volume_mm3());
         }
+        if let Some((body, _)) = self.rounded_hex_body() {
+            return Ok(body.volume_mm3());
+        }
         if let Some((body, _)) = self.rounded_thread_body() {
             return Ok(body.geometry.volume_mm3());
         }
@@ -2245,6 +2268,9 @@ impl Solid {
     pub fn bounds(&self) -> Result<Bounds, GeometryError> {
         if let Some(body) = self.worm_interference_body() {
             return Ok(body.bounds());
+        }
+        if let Some((body, frame)) = self.healed_import_body() {
+            return Ok(body.bounds(frame));
         }
         if let Some(body) = self.pipe_hardware_body() {
             return body.bounds();
@@ -2373,6 +2399,9 @@ impl Solid {
             return body.bounds(frame);
         }
         if let Some((body, frame)) = self.rounded_thread_bore_body() {
+            return body.bounds(frame);
+        }
+        if let Some((body, frame)) = self.rounded_hex_body() {
             return body.bounds(frame);
         }
         if let Some((body, frame)) = self.rounded_thread_body() {
@@ -2610,6 +2639,9 @@ impl Solid {
         if let Some((body, frame)) = self.rounded_thread_bore_body() {
             return body.faces(frame);
         }
+        if let Some((body, frame)) = self.rounded_hex_body() {
+            return body.faces(frame);
+        }
         if let Some((body, frame)) = self.rounded_thread_body() {
             return body.faces(frame);
         }
@@ -2742,6 +2774,7 @@ impl Solid {
             ),
             SolidBody::Helical(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::RoundedThreadBore(body, frame) => body.mesh(*frame, rust_options),
+            SolidBody::RoundedHex(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::RoundedBlindBore(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::RoundedThread(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::HelicalTubeCut(body, frame) => {
@@ -2811,6 +2844,7 @@ impl Solid {
             SolidBody::Bevel(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::Worm(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::WormInterference(_) => Err(WormInterferenceBody::unsupported("mesh")),
+            SolidBody::HealedImport(..) => Err(HealedImportBody::unsupported("mesh")),
             SolidBody::ImportedBrep(body) => body.mesh(rust_options),
             SolidBody::Sphere(body, frame) => {
                 crate::rust_display::placed_mesh(body.geometry.mesh(rust_options), *frame, false)
@@ -3031,6 +3065,8 @@ impl Solid {
         }
         let chord_error = if let Some((body, _)) = self.rounded_thread_bore_body() {
             body.volume_error_bound(Self::rust_mesh_options(options))?
+        } else if let Some((body, _)) = self.rounded_hex_body() {
+            body.volume_error_bound(Self::rust_mesh_options(options))?
         } else if let Some((body, _)) = self.rounded_thread_body() {
             body.volume_error_bound(Self::rust_mesh_options(options))?
         } else if let Some((body, _)) = self.helical_body() {
@@ -3126,6 +3162,8 @@ impl Solid {
                     body.display_edges(frame, deflection)?
                 } else if let Some((body, frame)) = self.rounded_thread_bore_body() {
                     body.display_edges(frame, deflection)?
+                } else if let Some((body, frame)) = self.rounded_hex_body() {
+                    body.display_edges(frame, deflection)?
                 } else if let Some((body, frame)) = self.rounded_thread_body() {
                     body.display_edges(frame, deflection)?
                 } else if let Some((body, frame)) = self.entry_chamfer_body() {
@@ -3183,6 +3221,9 @@ impl Solid {
             return body.display_edges(frame, deflection_mm);
         }
         if let Some((body, frame)) = self.rounded_thread_bore_body() {
+            return body.display_edges(frame, deflection_mm);
+        }
+        if let Some((body, frame)) = self.rounded_hex_body() {
             return body.display_edges(frame, deflection_mm);
         }
         if let Some((body, frame)) = self.rounded_thread_body() {
@@ -3349,6 +3390,7 @@ impl Solid {
             SolidBody::Hanger(body, _) => body.feature,
             SolidBody::Helical(body, _) => body.feature,
             SolidBody::RoundedThreadBore(body, _) => body.feature,
+            SolidBody::RoundedHex(body, _) => body.feature,
             SolidBody::RoundedBlindBore(body, _) => body.feature,
             SolidBody::RoundedThread(body, _) => body.feature,
             SolidBody::HelicalTubeCut(body, _) => body.feature,
@@ -3376,6 +3418,7 @@ impl Solid {
             SolidBody::Bevel(body, _) => body.feature,
             SolidBody::Worm(body, _) => body.feature,
             SolidBody::WormInterference(body) => body.feature,
+            SolidBody::HealedImport(body, _) => body.feature,
             SolidBody::Sphere(body, _) => body.feature,
             SolidBody::ImportedBrep(body) => body.feature,
             SolidBody::Torus(body, _) => body.feature,
@@ -3434,7 +3477,9 @@ impl Solid {
             SolidBody::Herringbone(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::Bevel(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::Worm(body, frame) => body.supports_step(*frame, self.policy),
-            SolidBody::WormInterference(_) => false,
+            SolidBody::WormInterference(_)
+            | SolidBody::HealedImport(..)
+            | SolidBody::RoundedHex(..) => false,
             SolidBody::HelicalTubeCut(body, frame) => {
                 multicad_rust_kernel::step::supports_helical_tube_cut(
                     body.cut,
@@ -3622,7 +3667,9 @@ impl Solid {
             SolidBody::Herringbone(body, frame) => body.append_step(writer, *frame, self.policy),
             SolidBody::Bevel(body, frame) => body.append_step(writer, *frame, self.policy),
             SolidBody::Worm(body, frame) => body.append_step(writer, *frame, self.policy),
-            SolidBody::WormInterference(_) => Err(step::StepError::Unsupported),
+            SolidBody::WormInterference(_)
+            | SolidBody::HealedImport(..)
+            | SolidBody::RoundedHex(..) => Err(step::StepError::Unsupported),
             SolidBody::SpurGear(body, frame) => writer.append_spur_gear(
                 &body.profile,
                 frame.origin,
@@ -3882,6 +3929,7 @@ impl Solid {
             SolidBody::RoundedThread(..) => "RoundedThread",
             SolidBody::EntryChamfer(..) => "EntryChamfer",
             SolidBody::RoundedThreadBore(..) => "RoundedThreadBore",
+            SolidBody::RoundedHex(..) => "RoundedHex",
             SolidBody::RoundedBlindBore(..) => "RoundedBlindBore",
             SolidBody::InternalThreadTreatment(..) => "InternalThreadTreatment",
             SolidBody::RepairedPhillips(..) => "RepairedPhillips",
@@ -3904,6 +3952,7 @@ impl Solid {
             SolidBody::Bevel(..) => "Bevel",
             SolidBody::Worm(..) => "Worm",
             SolidBody::WormInterference(..) => "Worm interference",
+            SolidBody::HealedImport(..) => "Healed STEP import",
             SolidBody::Sphere(..) => "Sphere",
             SolidBody::Torus(..) => "Torus",
             SolidBody::ObliqueBore(..) => "ObliqueBore",

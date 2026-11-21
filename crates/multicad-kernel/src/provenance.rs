@@ -921,6 +921,12 @@ impl Solid {
     /// Anonymous constructors have geometry, but no authored persistent names.
     /// Keep that metadata separate from the body's private construction IDs.
     pub(crate) fn without_authored_provenance(mut self) -> Result<Self, GeometryError> {
+        if self.healed_import_body().is_some() {
+            // No boundary is rebuilt, so there is no topology to anonymise.
+            self.provenance.clear();
+            self.rust_origins.clear();
+            return Ok(self);
+        }
         let snapshot = self.topology_snapshot(EntityId::new(), 0)?;
         self.provenance = snapshot
             .elements
@@ -1052,6 +1058,9 @@ impl Solid {
         owner: EntityId,
         revision: u64,
     ) -> Result<TopologySnapshot, GeometryError> {
+        if self.healed_import_body().is_some() {
+            return Err(crate::geometry::HealedImportBody::unsupported("topology"));
+        }
         if self.uses_rust_geometry() {
             let mut snapshot = if let Some(body) = self.pipe_hardware_body() {
                 body.topology(owner, revision, self.geometry_policy())?
@@ -1070,6 +1079,8 @@ impl Solid {
             } else if let Some((body, frame)) = self.rounded_blind_bore_body() {
                 body.topology(frame, owner, revision)?
             } else if let Some((body, frame)) = self.rounded_thread_bore_body() {
+                body.topology(frame, owner, revision)?
+            } else if let Some((body, frame)) = self.rounded_hex_body() {
                 body.topology(frame, owner, revision)?
             } else if let Some((body, frame)) = self.rounded_thread_body() {
                 body.topology(frame, owner, revision)?

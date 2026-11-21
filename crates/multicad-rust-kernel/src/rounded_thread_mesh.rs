@@ -6,9 +6,11 @@ use crate::{
 use std::{collections::HashMap, f64::consts::TAU};
 mod bore;
 mod certificate;
+mod hex;
 mod sampling;
 pub use bore::blind::tessellate_blind_bore_with_interrupt;
 pub use bore::{bore_volume_error_bound, tessellate_bore, tessellate_bore_with_interrupt};
+pub use hex::{hex_volume_error_bound, tessellate_hex, tessellate_hex_with_interrupt};
 use sampling::{Receipt, phase_strips};
 #[cfg(test)]
 mod tests;
@@ -49,6 +51,7 @@ fn tessellate_shape<'a>(
     let max_angle = match bore {
         Some(Receiver::Through(bore)) => bore::max_angle(bore, options, max_angle)?,
         Some(Receiver::Blind(bore)) => bore::blind::max_angle(bore, options, max_angle)?,
+        Some(Receiver::Hex(stock)) => hex::max_angle(stock, options, max_angle)?,
         None => max_angle,
     };
     let count = (TAU / max_angle).ceil();
@@ -76,6 +79,7 @@ fn tessellate_shape<'a>(
 enum Receiver<'a> {
     Through(&'a crate::rounded_thread::ThroughBore),
     Blind(&'a crate::rounded_thread::BlindBore),
+    Hex(&'a crate::rounded_thread::HexStock),
 }
 
 /// Bound signed-volume error of a successfully emitted closed radial graph.
@@ -266,6 +270,7 @@ impl<'a, 'b> Builder<'a, 'b> {
             match bore {
                 Receiver::Through(bore) => self.add_bore(bore.radius_mm())?,
                 Receiver::Blind(bore) => self.add_blind_bore(bore)?,
+                Receiver::Hex(stock) => self.add_hex(stock)?,
             }
         } else {
             let caps = std::mem::take(&mut self.caps);
