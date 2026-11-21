@@ -15,7 +15,7 @@ use multicad_rust_kernel::{
 };
 use std::collections::BTreeSet;
 
-mod clearance;
+pub(super) mod clearance;
 pub(in crate::geometry) use clearance::aligned_chart;
 mod metrics;
 

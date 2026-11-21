@@ -671,6 +671,70 @@ fn compatible_pairs_have_no_sampled_interference_and_wrong_phase_is_detected() {
 }
 
 #[test]
+fn twisted_interference_solid_is_enclosed_moves_rigidly_and_refuses_boundary_queries() {
+    use multicad_kernel::GeometryErrorKind;
+    let policy = GeometryPolicy::default();
+    for sweep in [GearSweep::Helical, GearSweep::Chevron] {
+        let beta = 20_f64.to_radians();
+        let (a, b) = (normal(20, beta, sweep), normal(30, -beta, sweep));
+        let one = build(a);
+        let two = rotated(&build(b), PI, a.pitch_radius_mm + b.pitch_radius_mm);
+        let common = one
+            .boolean(&two, BooleanOperation::Intersect, policy)
+            .unwrap()
+            .unwrap();
+        let swapped = two
+            .boolean(&one, BooleanOperation::Intersect, policy)
+            .unwrap()
+            .unwrap();
+        let volume = common.volume_mm3().unwrap();
+        let [low, high] = common.certified_volume_bounds_mm3().unwrap();
+        assert!(
+            1. < low && low <= volume && volume <= high,
+            "{low} {volume} {high}"
+        );
+        assert!((swapped.volume_mm3().unwrap() - volume).abs() < 1e-6);
+        // Tooth tips meet head on where every section turns least, so the
+        // common material is far less than either tooth band.
+        assert!(volume < one.volume_mm3().unwrap() / 20., "{volume}");
+        let bounds = common.bounds().unwrap();
+        for member in [&one, &two] {
+            let m = member.bounds().unwrap();
+            for i in 0..3 {
+                assert!(bounds.min[i] >= m.min[i] && bounds.max[i] <= m.max[i]);
+            }
+        }
+        let moved = common
+            .transformed(RigidTransform {
+                rotation: [[0., -1., 0.], [1., 0., 0.], [0., 0., 1.]],
+                translation_mm: [4., -2., 7.],
+            })
+            .unwrap();
+        assert_eq!(moved.volume_mm3().unwrap(), volume);
+        assert_eq!(moved.certified_volume_bounds_mm3(), Some([low, high]));
+        assert!((moved.bounds().unwrap().min[2] - bounds.min[2] - 7.).abs() < 1e-9);
+        let kind = |result: Result<(), multicad_kernel::GeometryError>| result.unwrap_err().kind;
+        assert_eq!(
+            kind(common.mesh(MeshOptions::default()).map(drop)),
+            GeometryErrorKind::Unsupported
+        );
+        assert_eq!(
+            kind(common.solid_count().map(drop)),
+            GeometryErrorKind::Unsupported
+        );
+        assert!(!common.supports_step_export());
+        // A difference of interfering curved gears stays a typed refusal.
+        assert_eq!(
+            kind(
+                one.boolean(&two, BooleanOperation::Subtract, policy)
+                    .map(drop)
+            ),
+            GeometryErrorKind::Unsupported
+        );
+    }
+}
+
+#[test]
 fn larger_teeth_root_fillets_and_helical_step_roundtrip_keep_manufacturing_geometry() {
     let large = build(normal(60, 0., GearSweep::Spur));
     assert_eq!(large.solid_count().unwrap(), 1);
