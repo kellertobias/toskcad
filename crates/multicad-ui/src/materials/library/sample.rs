@@ -72,8 +72,13 @@ pub(super) fn show(ui: &mut egui::Ui, document: &Document, draft: Option<&Draft>
                     .as_ref()
                     .filter(|entity| entity.id == stock.material)
             });
-            let color = material
-                .and_then(material_color)
+            // Committed materials resolve canonically (linked appearance
+            // included), exactly as the model view does.
+            let color = Resolver::new(document)
+                .and_then(|r| r.resolve_material(stock.material))
+                .map(|p| p.appearance.color_rgba)
+                .ok()
+                .or_else(|| material.and_then(material_color))
                 .map_or(Color32::GRAY, to_color);
             stock_sample(ui, &painter, bounds, &stock, color);
             if let Some(material) = material {

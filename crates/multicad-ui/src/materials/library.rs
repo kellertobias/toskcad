@@ -302,7 +302,9 @@ impl LibraryEditor {
         ui.strong(kind.label().trim_end_matches('…'));
         ui.small("Save a shared Project definition and select it in the current Model tool.");
         if let Some(draft) = &mut self.draft {
-            ui.push_id(draft.entity.id, |ui| edit_draft(ui, s, draft, Some(kind)));
+            ui.push_id(draft.entity.id, |ui| {
+                edit_draft(ui, s, draft, Some(kind), false)
+            });
         }
         if let Some(error) = &self.error {
             ui.colored_label(Color32::LIGHT_RED, error);
@@ -622,6 +624,8 @@ impl LibraryEditor {
         }
     }
     fn show_definition_editor(&mut self, ui: &mut egui::Ui, s: &Session, editable: bool) {
+        let can_open = editable && !self.dirty() && self.original.is_some();
+        let mut open = None;
         ui.add_enabled_ui(editable, |ui| {
             if let Some(draft) = &mut self.draft {
                 // The draft notice and compact/roomy layouts change the parent
@@ -631,13 +635,18 @@ impl LibraryEditor {
                     s.document().id(),
                     draft.entity.id,
                 ));
-                ui.scope_builder(egui::UiBuilder::new().id(id), |ui| {
-                    edit_draft(ui, s, draft, None)
-                });
+                open = ui
+                    .scope_builder(egui::UiBuilder::new().id(id), |ui| {
+                        edit_draft(ui, s, draft, None, can_open)
+                    })
+                    .inner;
             } else {
                 ui.label("Choose or create a reusable definition.");
             }
         });
+        if let Some(entity) = open.and_then(|id| s.document().get(id)) {
+            self.select(s, entity.clone());
+        }
     }
 }
 fn definition_row(
@@ -721,7 +730,16 @@ fn row_detail(
     None
 }
 
-fn edit_draft(ui: &mut egui::Ui, s: &Session, d: &mut Draft, model_stock: Option<ToolStock>) {
+/// Edits a draft in place. Returns a committed material to open when the user
+/// follows a stock's "Edit material color" route (CAD-379).
+fn edit_draft(
+    ui: &mut egui::Ui,
+    s: &Session,
+    d: &mut Draft,
+    model_stock: Option<ToolStock>,
+    can_open_material: bool,
+) -> Option<EntityId> {
+    let mut open = None;
     let name = ui.label("Name");
     ui.add(egui::TextEdit::singleline(&mut d.entity.name).desired_width(f32::INFINITY))
         .labelled_by(name.id)
@@ -750,8 +768,42 @@ fn edit_draft(ui: &mut egui::Ui, s: &Session, d: &mut Draft, model_stock: Option
         if let Some(v) = density_kg_m3 {
             number(ui, "Density", v, " kg/m³");
         }
-        ui.label("Base color");
-        ui.color_edit_button_srgba_unmultiplied(color_rgba);
+        // The canonical material color: Model display, stock previews and
+        // tree swatches all resolve it (CAD-379).
+        ui.add_space(4.);
+        ui.strong("Appearance color");
+        let [r, g, b, alpha] = *color_rgba;
+        let mut rgb = [r, g, b];
+        ui.push_id("material-color", |ui| rgb_fields(ui, &mut rgb));
+        *color_rgba = [rgb[0], rgb[1], rgb[2], alpha];
+        let users = s
+            .document()
+            .entities()
+            .filter(|e| stock_material(e) == Some(d.entity.id))
+            .count();
+        let parts = s
+            .document()
+            .entities()
+            .filter(|e| matches!(e.data, EntityData::Part { material: Some(m), .. } if m == d.entity.id))
+            .count();
+        if users + parts > 0 {
+            ui.small(shared_effect(users, parts));
+        }
+        if let Some(linked) = d
+            .style
+            .as_ref()
+            .and_then(|(_, style)| style.appearance.as_ref())
+            .and_then(|link| s.document().get(link.id))
+        {
+            ui.colored_label(
+                Color32::LIGHT_YELLOW,
+                format!(
+                    "Model display uses the linked appearance '{}'. Set Default appearance to \
+                     Inherit / none to show this color.",
+                    linked.name
+                ),
+            );
+        }
         let mut appearance = d
             .style
             .as_ref()
@@ -822,6 +874,14 @@ fn edit_draft(ui: &mut egui::Ui, s: &Session, d: &mut Draft, model_stock: Option
                     ui.small(
                         "No manufacturing material exists yet. Applying creates this material and the stock together.",
                     );
+                    if let EntityData::Material { color_rgba, .. } = &mut material.data {
+                        ui.label("Material color");
+                        let [r, g, b, alpha] = *color_rgba;
+                        let mut rgb = [r, g, b];
+                        ui.push_id("companion-color", |ui| rgb_fields(ui, &mut rgb));
+                        *color_rgba = [rgb[0], rgb[1], rgb[2], alpha];
+                        ui.small("Stock has no color of its own; it shows its material's color.");
+                    }
                 }
                 if has_existing || d.companion.is_none() {
                     let mut material = Some(stock.material);
@@ -834,6 +894,19 @@ fn edit_draft(ui: &mut egui::Ui, s: &Session, d: &mut Draft, model_stock: Option
                     if let Some(id) = material {
                         stock.material = id;
                     }
+                }
+                if let Some(material) = s
+                    .document()
+                    .get(stock.material)
+                    .filter(|m| matches!(m.data, EntityData::Material { .. }))
+                {
+                    open = material_color_route(
+                        ui,
+                        s,
+                        material,
+                        model_stock.is_none(),
+                        can_open_material,
+                    );
                 }
                 if model_stock.is_none() {
                     let mut kind = stock_index(&stock.specification);
@@ -875,6 +948,69 @@ fn edit_draft(ui: &mut egui::Ui, s: &Session, d: &mut Draft, model_stock: Option
             *inputs = definition.links();
         }
     }
+    open
+}
+
+/// "Used by …" text explaining that a material color is shared.
+fn shared_effect(stocks: usize, parts: usize) -> String {
+    let plural =
+        |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    let mut users = vec![];
+    if stocks > 0 {
+        users.push(plural(stocks, "stock definition", "stock definitions"));
+    }
+    if parts > 0 {
+        users.push(plural(parts, "part", "parts"));
+    }
+    format!(
+        "Shared: changing this color updates {} that use this material.",
+        users.join(" and ")
+    )
+}
+
+/// Shows a stock's material color (resolved canonically) and, in Project, a
+/// direct route to edit that material. Stock never stores its own color.
+fn material_color_route(
+    ui: &mut egui::Ui,
+    s: &Session,
+    material: &Entity,
+    project: bool,
+    can_open: bool,
+) -> Option<EntityId> {
+    let color = Resolver::new(s.document())
+        .and_then(|r| r.resolve_material(material.id))
+        .map(|p| p.appearance.color_rgba)
+        .ok();
+    let mut open = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Color (from material)");
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(18., 18.), egui::Sense::hover());
+        match color {
+            Some(color) => {
+                sample::paint_color(ui.painter(), rect, color);
+                let [r, g, b, _] = color;
+                ui.monospace(format!("#{r:02X}{g:02X}{b:02X}"));
+            }
+            None => sample::paint_missing(ui.painter(), rect),
+        }
+    });
+    if project {
+        let response = ui
+            .add_enabled(
+                can_open,
+                egui::Button::new(format!("Edit material color: {}", material.name)),
+            )
+            .on_hover_text(
+                "Open the shared material; its color applies to every stock and part using it",
+            )
+            .on_disabled_hover_text("Apply or discard this stock edit first");
+        if response.clicked() {
+            open = Some(material.id);
+        }
+    } else {
+        ui.small("Edit this color on the material in Project → Materials.");
+    }
+    open
 }
 fn new_material(name: &str) -> Entity {
     Entity::new(
