@@ -70,6 +70,19 @@ pub(in crate::step_read) fn recognize(
         return Ok(None);
     };
     let (surface, outward, bounds) = face(shell, wall)?;
+    // Sleeve stock has one outward periodic wall with one seam loop. An
+    // inward cylinder (a drilled hole through a box, say) or another wall
+    // topology is not a sleeve, so its own readers decide it.
+    let [bound] = bounds[..] else {
+        return Ok(None);
+    };
+    if !outward {
+        return Ok(None);
+    }
+    let wall_edges = ring(shell, bound, true)?;
+    if wall_edges.len() != 4 {
+        return Ok(None);
+    }
     let [Value::String(_), placement, Value::Number(radius)] =
         shell.args(surface, "CYLINDRICAL_SURFACE")?
     else {
@@ -77,12 +90,7 @@ pub(in crate::step_read) fn recognize(
     };
     let radius = *radius;
     let stock_axis = axis(shell, reference(placement)?)?;
-    check(outward && radius.is_finite() && radius > 0.)?;
-    let [bound] = bounds[..] else {
-        return Err(ReadError::Unsupported);
-    };
-    let wall_edges = ring(shell, bound, true)?;
-    check(wall_edges.len() == 4)?;
+    check(radius.is_finite() && radius > 0.)?;
     let mut rims = Vec::with_capacity(2);
     for &(edge, _) in &wall_edges {
         let [Value::String(_), _, _, curve_id, _] = shell.args(edge, "EDGE_CURVE")? else {
