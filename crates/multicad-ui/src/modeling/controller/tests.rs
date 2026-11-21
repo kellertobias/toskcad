@@ -700,8 +700,10 @@ fn primitive_drag_replaces_the_native_preview_with_current_dimensions() {
     assert!(controller.can_apply(&session, &resources));
 
     let origin = project([0.; 3]);
-    let place_handle = origin + egui::vec2(75., 0.);
-    let placed = place_handle + egui::vec2(25., 0.);
+    // The move handle lies 75 px from the origin along the projected +X axis.
+    let x_axis = (project([1., 0., 0.]) - origin).normalized();
+    let place_handle = origin + x_axis * 75.;
+    let placed = place_handle + x_axis * 25.;
     assert!(frame(
         &mut controller,
         vec![

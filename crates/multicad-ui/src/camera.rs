@@ -21,18 +21,39 @@ impl Default for Camera {
     }
 }
 impl Camera {
+    /// Yaw at which a straight top-down view shows +X to the right and +Y up
+    /// (and a bottom-up view +X right, +Y down), as in a standard plan view.
+    pub const PLAN_YAW: f32 = std::f32::consts::PI;
+    /// Screen right, up and toward-the-eye directions in world space. The
+    /// basis is right-handed (right × up = toward the eye), so the image is
+    /// never a mirror of the model (CAD-382).
+    pub fn basis(&self) -> [[f32; 3]; 3] {
+        // Axis headings (0, ±π/2, π) are exact, so plan views map model
+        // coordinates without f32 rounding of sin(π) and friends.
+        let exact = |(s, c): (f32, f32)| {
+            if s.abs() < 1e-6 {
+                (0., c.signum())
+            } else if c.abs() < 1e-6 {
+                (s.signum(), 0.)
+            } else {
+                (s, c)
+            }
+        };
+        let (s, c) = exact(self.yaw.portable_sin_cos());
+        let (sp, cp) = exact(self.pitch.portable_sin_cos());
+        [[-c, s, 0.], [-sp * s, -sp * c, cp], [cp * s, cp * c, sp]]
+    }
     pub fn orbit(&mut self, delta: Vec2) {
-        self.yaw -= delta.x * 0.01;
+        self.yaw += delta.x * 0.01;
         self.pitch = (self.pitch + delta.y * 0.01).clamp(-1.57, 1.57);
     }
     pub fn pan(&mut self, delta: Vec2) {
-        let (s, c) = self.yaw.portable_sin_cos();
-        let (sp, cp) = self.pitch.portable_sin_cos();
+        let [right, up_axis, _] = self.basis();
         let x = delta.x / self.scale;
         let up = -delta.y / self.scale;
-        self.target[0] -= c * x - s * sp * up;
-        self.target[1] -= -s * x + c * (-sp * up);
-        self.target[2] -= cp * up;
+        for i in 0..3 {
+            self.target[i] -= right[i] * x + up_axis[i] * up;
+        }
     }
     /// Keyboard panning uses screen units per second, independent of frame rate.
     pub fn pan_keyboard(&mut self, direction: Vec2, seconds: f32) -> bool {
@@ -55,12 +76,10 @@ impl Camera {
         self.scale = (self.scale * (scroll * 0.002).portable_exp()).clamp(0.02, 100.0);
     }
     pub fn project(&self, point: [f32; 3], rect: Rect) -> [f32; 3] {
-        let [x, y, z] = std::array::from_fn(|i| point[i] - self.target[i]);
-        let (s, c) = self.yaw.portable_sin_cos();
-        let (sp, cp) = self.pitch.portable_sin_cos();
-        let right = c * x - s * y;
-        let up = cp * z - sp * (s * x + c * y);
-        let depth = cp * (s * x + c * y) + sp * z;
+        let relative: [f32; 3] = std::array::from_fn(|i| point[i] - self.target[i]);
+        let [right, up, depth] = self
+            .basis()
+            .map(|axis| (0..3).map(|i| axis[i] * relative[i]).sum::<f32>());
         let distance = rect.height().max(1.0) / self.scale * 2.0;
         let z = distance - depth;
         let factor = if self.perspective {
@@ -76,11 +95,7 @@ impl Camera {
         if !self.scale.is_finite() || self.scale <= 0. || !point.is_finite() || !rect.is_finite() {
             return None;
         }
-        let (s, c) = self.yaw.portable_sin_cos();
-        let (sp, cp) = self.pitch.portable_sin_cos();
-        let right = [c as f64, -s as f64, 0.];
-        let up = [(-sp * s) as f64, (-sp * c) as f64, cp as f64];
-        let forward = [(cp * s) as f64, (cp * c) as f64, sp as f64];
+        let [right, up, forward] = self.basis().map(|axis| axis.map(f64::from));
         let x = ((point.x - rect.center().x) / self.scale) as f64;
         let y = ((rect.center().y - point.y) / self.scale) as f64;
         let d = (rect.height().max(1.) / self.scale * 2.) as f64;
@@ -228,6 +243,46 @@ mod tests {
                 assert!(rect().contains(Pos2::new(q[0], q[1])));
             }
         }
+    }
+}
+#[cfg(test)]
+mod handedness_tests {
+    use super::*;
+    #[test]
+    fn every_view_is_right_handed_so_the_model_is_never_mirrored() {
+        let cross = |a: [f32; 3], b: [f32; 3]| {
+            [
+                a[1] * b[2] - a[2] * b[1],
+                a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0],
+            ]
+        };
+        for yaw in [-3.0, -0.6, 0.0, 0.4, Camera::PLAN_YAW] {
+            for pitch in [-1.5707964, -0.6, 0.0, 0.6, 1.5707964] {
+                let camera = Camera {
+                    yaw,
+                    pitch,
+                    ..Default::default()
+                };
+                let [right, up, toward_eye] = camera.basis();
+                let normal = cross(right, up);
+                for i in 0..3 {
+                    assert!((normal[i] - toward_eye[i]).abs() < 1e-5, "{yaw} {pitch}");
+                }
+            }
+        }
+        // A plan view shows +X right and +Y up.
+        let rect = Rect::from_min_size(eframe::egui::Pos2::ZERO, Vec2::new(800., 600.));
+        let mut top = Camera {
+            target: [0.; 3],
+            ..Default::default()
+        };
+        top.orient(crate::navigation::AxisView::PositiveZ);
+        let origin = top.project([0.; 3], rect);
+        let x = top.project([10., 0., 0.], rect);
+        let y = top.project([0., 10., 0.], rect);
+        assert!(x[0] > origin[0] && (x[1] - origin[1]).abs() < 1e-3);
+        assert!(y[1] < origin[1] && (y[0] - origin[0]).abs() < 1e-3);
     }
 }
 #[cfg(test)]

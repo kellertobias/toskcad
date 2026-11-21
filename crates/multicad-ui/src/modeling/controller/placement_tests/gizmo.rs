@@ -758,8 +758,14 @@ fn top_view_host_drag(basis: GizmoBasis, coalesced: bool) {
         .drop_without_applying_deltas();
         (result.unwrap(), hovered, dragged)
     };
-    let start = Pos2::new(897., 567.5);
-    let end = Pos2::new(897., 645.);
+    // The pivot's vertical-axis handle and a point 77.5 px further along it,
+    // derived from the camera instead of fixed screen pixels.
+    let at = |world: [f32; 3]| {
+        let p = camera.project(world, rect);
+        Pos2::new(p[0], p[1])
+    };
+    let start = at([368.77097, 30. + 64.75 / 1.3374, 31.]);
+    let end = at([368.77097, 30. + 142.25 / 1.3374, 31.]);
     frame(vec![]).0.unwrap();
     for _ in 0..180 {
         frame(vec![Event::PointerMoved(start)]).0.unwrap();

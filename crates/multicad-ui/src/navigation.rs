@@ -91,7 +91,7 @@ impl Camera {
     pub fn orient(&mut self, view: AxisView) {
         let [x, y, z] = view.vector();
         if z != 0.0 {
-            self.yaw = 0.0;
+            self.yaw = Camera::PLAN_YAW;
             self.pitch = z * std::f32::consts::FRAC_PI_2;
         } else {
             self.pitch = 0.0;

@@ -1791,7 +1791,7 @@ impl SketchEditor {
             )
         }) {
             self.camera = Camera {
-                yaw: 0.,
+                yaw: Camera::PLAN_YAW,
                 pitch: std::f32::consts::FRAC_PI_2,
                 scale: 0.05,
                 target: [0.; 3],
@@ -1852,7 +1852,7 @@ impl SketchEditor {
             )
         }) {
             self.camera = Camera {
-                yaw: 0.,
+                yaw: Camera::PLAN_YAW,
                 pitch: std::f32::consts::FRAC_PI_2,
                 scale: 0.05,
                 target: [0.; 3],
@@ -2272,9 +2272,17 @@ impl SketchEditor {
             "Sketch ready. Choose Line or Rectangle; coordinates are millimeters.".into();
         Ok(())
     }
+    /// Look at the sketch plane from its positive-normal (outward) side. When
+    /// the normal is vertical the heading is free, so it is chosen to put the
+    /// sketch U axis to the right and V up (CAD-382).
     fn orient_to(&mut self, frame: Frame) {
         self.architecture.set_enabled(false, &mut self.camera);
-        self.camera.yaw = frame.n[0].portable_atan2(frame.n[1]) as f32;
+        let horizontal = (frame.n[0] * frame.n[0] + frame.n[1] * frame.n[1]).sqrt();
+        self.camera.yaw = if horizontal < 1e-6 {
+            frame.u[1].portable_atan2(-frame.u[0]) as f32
+        } else {
+            frame.n[0].portable_atan2(frame.n[1]) as f32
+        };
         self.camera.pitch = frame.n[2].clamp(-1., 1.).portable_asin() as f32;
         self.camera.target = frame.origin.map(|v| v as f32);
     }
@@ -4369,8 +4377,9 @@ impl SketchEditor {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.viewport_rect = Some(rect);
         if developed_view {
-            self.camera.yaw = 0.;
-            self.camera.pitch = -std::f32::consts::FRAC_PI_2;
+            // Flat patterns read in plan: +X right, +Y up, seen from above.
+            self.camera.yaw = Camera::PLAN_YAW;
+            self.camera.pitch = std::f32::consts::FRAC_PI_2;
             self.camera.perspective = false;
             let home = std::mem::take(&mut self.home_requested);
             if (home || self.fit_requested)

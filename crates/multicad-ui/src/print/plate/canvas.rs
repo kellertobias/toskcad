@@ -259,8 +259,9 @@ impl View {
             .min((rect.height() - 54.).max(10.) / dimensions[1]);
         let scale = (fit * self.zoom.unwrap_or(1.)).clamp(0.00001, 300.);
         Camera {
-            yaw: 0.,
-            pitch: -std::f32::consts::FRAC_PI_2,
+            // Seen from above with +X right and +Y up, like the bed itself.
+            yaw: Camera::PLAN_YAW,
+            pitch: std::f32::consts::FRAC_PI_2,
             scale,
             target: [
                 dimensions[0] * 0.5 - self.pan.x / scale,
