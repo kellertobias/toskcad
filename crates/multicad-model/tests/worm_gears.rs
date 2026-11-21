@@ -309,7 +309,7 @@ fn wheel_first_drive_reuses_actual_geometry_and_atomic_edit_history_reopen() {
 }
 
 #[test]
-fn zero_thinning_pair_preserves_strict_native_no_overlap_over_full_turn() {
+fn zero_thinning_pair_is_refused_without_certified_positive_clearance() {
     let session = Session::new(Document::new("Zero thinning ZA pair").unwrap()).unwrap();
     let mut parameters = recipes(false);
     for recipe in &mut parameters {
@@ -322,17 +322,13 @@ fn zero_thinning_pair_preserves_strict_native_no_overlap_over_full_turn() {
     );
     let before = session.document().clone();
     let candidate = prepare_gear_pair(&session, 0, actor(), &request).unwrap();
-    let native = compiler()
-        .compile(candidate.prepared.document(), 1)
-        .unwrap();
-    assert_eq!(session.document(), &before);
-    let check = &native.gear_pair_checks()[&request.pair];
-    assert_eq!(check.cycle_drive_angles_rad.len(), 9);
-    near(check.cycle_drive_angles_rad[8], TAU, 1e-12);
-    assert!(check.current_pose_checked);
-    assert_eq!(check.maximum_overlap_volume_mm3, 0.);
+    // Touching conjugate flanks are not clearance (user decision 2026-11-21).
+    let Err(failure) = compiler().compile(candidate.prepared.document(), 1) else {
+        panic!("zero-thinning worm pair must not be certified");
+    };
     assert!(
-        check.current_engagement.as_ref().unwrap().distance_mm
-            <= GeometryPolicy::default().linear_tolerance_mm * 10.
+        failure.to_string().contains("certified positive clearance"),
+        "{failure}"
     );
+    assert_eq!(session.document(), &before);
 }
