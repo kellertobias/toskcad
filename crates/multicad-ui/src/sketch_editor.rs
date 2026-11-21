@@ -1074,6 +1074,21 @@ impl SketchEditor {
         self.message = "Boolean · choose explicit targets and tools".into();
         Ok(())
     }
+    /// Route a path-drawing key to the active wall, fence or slab outline.
+    /// Returns the status text, or `None` when no path takes the key.
+    pub(crate) fn model_outline_key(
+        &mut self,
+        key: crate::modeling::OutlineKey,
+    ) -> Option<&'static str> {
+        self.model.outline_key(key)?;
+        let message = match key {
+            crate::modeling::OutlineKey::Finish => "Path finished · Preview or Apply builds it",
+            crate::modeling::OutlineKey::Cancel => "Path drawing cancelled · previous path kept",
+            crate::modeling::OutlineKey::RemoveLast => "Last corner removed",
+        };
+        self.message = message.into();
+        Some(message)
+    }
     pub(crate) fn operation_handles_enter(&self) -> bool {
         self.model.operation_entry_active()
     }

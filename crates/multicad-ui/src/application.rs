@@ -2541,6 +2541,47 @@ impl Application {
             });
         }
         let context = self.shortcut_context(ctx);
+        // While a wall, fence or slab path is drawn, Enter finishes the path,
+        // Escape cancels only the drawing and Backspace removes the last
+        // corner; none of them applies or discards the whole form.
+        if self.mode == Mode::Model
+            && !context.blocked
+            && !context.text_input
+            && !self.text_input_was_focused
+            && self.current().sketch.model_active()
+        {
+            for (key, gesture) in [
+                (egui::Key::Enter, crate::modeling::OutlineKey::Finish),
+                (egui::Key::Escape, crate::modeling::OutlineKey::Cancel),
+                (
+                    egui::Key::Backspace,
+                    crate::modeling::OutlineKey::RemoveLast,
+                ),
+            ] {
+                let pressed = ctx.input(|input| {
+                    input.events.iter().any(|event| {
+                        matches!(
+                            event,
+                            egui::Event::Key {
+                                key: k,
+                                pressed: true,
+                                repeat: false,
+                                modifiers: egui::Modifiers::NONE,
+                                ..
+                            } if *k == key
+                        )
+                    })
+                });
+                if pressed
+                    && let Some(message) = self.current_mut().sketch.model_outline_key(gesture)
+                {
+                    ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, key));
+                    self.message = message.into();
+                    self.message_error = false;
+                    ctx.request_repaint();
+                }
+            }
+        }
         if self.mode == Mode::Model
             && !context.blocked
             && !context.text_input

@@ -503,6 +503,17 @@ impl ArchitecturePanel {
         )
     }
     /// Draw and edit the outline on the plan; returns whether inputs changed.
+    pub(super) fn outline_key(&mut self, key: super::outline::OutlineKey) -> Option<bool> {
+        if !self.outlines() {
+            return None;
+        }
+        let changed = self.outline.key(key)?;
+        if changed {
+            self.stamp.changed();
+            self.error = None;
+        }
+        Some(changed)
+    }
     pub fn viewport(
         &mut self,
         document: &Document,
