@@ -1,6 +1,8 @@
 use super::*;
 use crate::normal_sweep::{CertifiedPiercing, Edge, Sweep};
 
+pub(super) mod stepped_pocket;
+
 /// Write a mixed profile sweep as planar and partial cylindrical faces.
 pub fn write_normal_sweep(
     sweep: &Sweep,

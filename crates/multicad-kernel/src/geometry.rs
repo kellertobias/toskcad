@@ -170,8 +170,8 @@ pub use rounded_thread_bore_body::RoundedThreadBoreData;
 use rust_compound::RustCompound;
 use sphere_body::SphereBody;
 use spline_cap_relief_body::SplineCapReliefBody;
-use spline_sweep_body::SplineSweepBody;
 pub(crate) use spline_sweep_body::RimSpan;
+use spline_sweep_body::SplineSweepBody;
 pub use spur_gear_body::GearFlankWitness;
 use spur_gear_body::SpurGearBody;
 use torus_body::TorusBody;
@@ -1621,6 +1621,7 @@ impl Solid {
                     .or_else(|| self.profile_clearance(other, operation, policy))
                     .or_else(|| self.cell_clearance(other, operation, policy))
                     .or_else(|| self.enclosed_clearance_boolean(other, operation, policy))
+                    .or_else(|| self.stepped_pocket_cut(other, operation, policy))
                     .or_else(|| self.subtract_machining_tool(other, operation, policy))
                     .or_else(|| self.coaxial_counterbore_cut(other, operation, policy))
                     .or_else(|| self.through_profile_cut(other, operation, policy))

@@ -65,15 +65,15 @@ fn disk_inside(outline: &[Edge], p: [f64; 2], radius: f64, margin: f64) -> bool 
 /// A profile point in the frame of a rectangle: distance along its axis
 /// from its base, and signed distance from its center line.
 #[derive(Clone, Copy)]
-struct Rectangle {
-    base: [f64; 2],
-    axis: [f64; 2],
-    length: f64,
-    half_width: f64,
+pub(super) struct Rectangle {
+    pub(super) base: [f64; 2],
+    pub(super) axis: [f64; 2],
+    pub(super) length: f64,
+    pub(super) half_width: f64,
 }
 
 impl Rectangle {
-    fn local(&self, p: [f64; 2]) -> [f64; 2] {
+    pub(super) fn local(&self, p: [f64; 2]) -> [f64; 2] {
         let d = [p[0] - self.base[0], p[1] - self.base[1]];
         [
             d[0] * self.axis[0] + d[1] * self.axis[1],
@@ -184,7 +184,7 @@ impl Rectangle {
             .any(|x| turn(x) <= span + slack || turn(x) >= std::f64::consts::TAU - slack)
     }
 
-    fn meets(&self, edge: &Edge) -> bool {
+    pub(super) fn meets(&self, edge: &Edge) -> bool {
         match *edge {
             Edge::Line { a, b } => self.meets_segment(a, b),
             Edge::Arc {

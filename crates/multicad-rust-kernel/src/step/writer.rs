@@ -662,6 +662,38 @@ impl Writer {
         self.append(|file| normal_sweep::encode(file, sweep, &[], placement, reverse_sweep))
     }
 
+    /// Append a normal sweep with one straight pocket entering a cap: a
+    /// clockwise line ring `pocket` in profile coordinates, down to the
+    /// placement level `floor` from the upper cap when `top`, else from the
+    /// lower one. `enclosed[i]` marks hole ring `i + 1` as inside the pocket.
+    #[allow(clippy::too_many_arguments)]
+    pub fn append_stepped_pocket_sweep(
+        &mut self,
+        sweep: &crate::normal_sweep::Sweep,
+        pocket: &[crate::normal_sweep::Edge],
+        enclosed: &[bool],
+        floor: f64,
+        top: bool,
+        origin: Point,
+        u: Point,
+        v: Point,
+        reverse_sweep: bool,
+    ) -> Result<(), StepError> {
+        let placement = Placement::new(origin, u, v)?;
+        self.append(|file| {
+            normal_sweep::stepped_pocket::encode(
+                file,
+                sweep,
+                pocket,
+                enclosed,
+                floor,
+                top,
+                placement,
+                reverse_sweep,
+            )
+        })
+    }
+
     /// Append the single shared shell of certified normal cap relief.
     pub fn append_normal_relief(
         &mut self,
