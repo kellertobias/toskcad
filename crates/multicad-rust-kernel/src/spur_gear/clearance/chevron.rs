@@ -32,8 +32,6 @@ pub fn certify_herringbone(
     {
         return Err(Error::Invalid);
     }
-    let rate = gears.map(Herringbone::twist_rad_per_mm);
-    let radial_speed = std::array::from_fn::<_, 2, _>(|i| gears[i].tip_radius_mm() * rate[i].abs());
 
     // Two chevrons repeat their lower sections in exact reverse order.
     // A single-hand sweep requires the full width. The absolute twist
@@ -50,20 +48,7 @@ pub fn certify_herringbone(
         remaining = remaining.checked_sub(1).ok_or(Error::Limit)?;
         let half = (end - start) / 2.;
         let midpoint = start + half;
-        let placed = std::array::from_fn(|i| {
-            let base = placements[i];
-            let [u, v] = base.axes;
-            let (sin, cos) = gears[i].phase_at(midpoint).sin_cos();
-            Placement {
-                center_mm: base.center_mm,
-                axes: [
-                    add(scale(u, cos), scale(v, sin)),
-                    add(scale(u, -sin), scale(v, cos)),
-                ],
-                // Circle displacement is no greater than arc length.
-                uncertainty_mm: base.uncertainty_mm + radial_speed[i] * half,
-            }
-        });
+        let placed = placed_at(gears, placements, midpoint, half);
         if placed
             .iter()
             .all(|p| p.uncertainty_mm <= MAX_TWIST_UNCERTAINTY_MM)
@@ -86,6 +71,31 @@ pub fn certify_herringbone(
         pending.extend([[start, midpoint], [midpoint, end]]);
     }
     Ok(ResultKind::Clear)
+}
+
+/// Both transverse sections at height `z_mm`, turned by their own phases.
+/// Each uncertainty also encloses every section within `half_mm` of
+/// `z_mm`: a circle displacement is no greater than its arc length.
+pub(super) fn placed_at(
+    gears: [&Herringbone; 2],
+    placements: [Placement; 2],
+    z_mm: f64,
+    half_mm: f64,
+) -> [Placement; 2] {
+    std::array::from_fn(|i| {
+        let base = placements[i];
+        let [u, v] = base.axes;
+        let (sin, cos) = gears[i].phase_at(z_mm).sin_cos();
+        let radial_speed = gears[i].tip_radius_mm() * gears[i].twist_rad_per_mm().abs();
+        Placement {
+            center_mm: base.center_mm,
+            axes: [
+                add(scale(u, cos), scale(v, sin)),
+                add(scale(u, -sin), scale(v, cos)),
+            ],
+            uncertainty_mm: base.uncertainty_mm + radial_speed * half_mm,
+        }
+    })
 }
 
 #[cfg(test)]
