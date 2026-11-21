@@ -89,6 +89,43 @@ pub(crate) fn boxes(path: &Path, parts: &[([f64; 3], [f64; 3])]) {
     }
     all.unwrap().write_step(path).unwrap();
 }
+/// The exact solid embedded for one imported Part.
+pub(crate) fn embedded(geometry: &str) -> Solid {
+    Solid::import_rust_step(
+        geometry,
+        multicad_core::document::EntityId::new(),
+        GeometryPolicy::default(),
+    )
+    .unwrap()
+}
+/// One solid of a Part, identified by its own exact geometry: the material
+/// of `part` in a box 1 mm larger than `size` at `at` is exactly that box,
+/// or nothing when `size` is `None`.
+pub(crate) fn assert_member(part: &Solid, at: [f64; 3], size: [f64; 3], present: bool) {
+    let policy = GeometryPolicy::default();
+    let probe = Solid::box_solid(size.map(|s| s + 2.), policy)
+        .unwrap()
+        .transformed(RigidTransform {
+            translation_mm: at.map(|a| a - 1.),
+            ..Default::default()
+        })
+        .unwrap();
+    let common = part
+        .boolean(&probe, BooleanOperation::Intersect, policy)
+        .unwrap();
+    let Some(common) = common.filter(|_| present) else {
+        assert!(!present, "no material where {size:?} at {at:?} should be");
+        return;
+    };
+    assert_eq!(common.solid_count().unwrap(), 1);
+    let volume = size.iter().product::<f64>();
+    assert!((common.volume_mm3().unwrap() - volume).abs() < 1e-6 * volume);
+    let bounds = common.bounds().unwrap();
+    for i in 0..3 {
+        assert!((bounds.min[i] - at[i]).abs() < 1e-9);
+        assert!((bounds.max[i] - at[i] - size[i]).abs() < 1e-9);
+    }
+}
 pub(crate) fn fixture(name: &str) -> PathBuf {
     PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -145,20 +182,30 @@ fn step_preview_lists_solids_and_apply_is_one_undoable_transaction() {
     let Some(ReadFile::Step(file)) = import.file() else {
         panic!("{:?}", import.error())
     };
-    let mut volumes: Vec<_> = file
-        .solids
-        .iter()
-        .map(|(_, _, sig)| sig.volume_mm3)
-        .collect();
-    volumes.sort_by(f64::total_cmp);
-    assert!((volumes[0] - 125.).abs() < 1e-3 && (volumes[1] - 6000.).abs() < 1e-3);
-    assert_eq!(import.report(), Some(&Report::StepNew { parts: 2 }));
+    // One Part per STEP file: the file's two solids are one entry whose
+    // signature covers both, and whose exact geometry holds each of them.
+    let [(_, geometry, signature)] = file.solids.as_slice() else {
+        panic!("one Part per STEP file, got {}", file.solids.len())
+    };
+    assert!((signature.volume_mm3 - 6125.).abs() < 1e-3);
+    assert_eq!((signature.min, signature.max), ([0.; 3], [105., 20., 30.]));
+    let part = embedded(geometry);
+    assert_eq!(part.solid_count().unwrap(), 2);
+    assert_member(&part, [0.; 3], [10., 20., 30.], true);
+    assert_member(&part, [100., 0., 0.], [5., 5., 5.], true);
+    assert_eq!(import.report(), Some(&Report::StepNew { parts: 1 }));
     assert_eq!(s.revision(), 0, "preview leaves the document unchanged");
-    assert_eq!(applied(&mut import, &mut s), "2 Parts");
+    assert_eq!(applied(&mut import, &mut s), "1 Part");
     assert!(!import.active());
     assert_eq!(s.revision(), 1);
     assert_eq!(imports::step_sources(s.document()).count(), 1);
-    assert_eq!(imports::step_bodies(s.document()).count(), 2);
+    assert_eq!(imports::step_bodies(s.document()).count(), 1);
+    let source = imports::step_sources(s.document()).next().unwrap().id;
+    let stored = imports::read_step_source(s.document(), source).unwrap();
+    let [solid] = stored.solids.as_slice() else {
+        panic!("one stored solid per file")
+    };
+    assert_eq!(embedded(&solid.brep).solid_count().unwrap(), 2);
     s.undo(1, Actor::local(Channel::Ui)).unwrap();
     assert_eq!(imports::step_sources(s.document()).count(), 0);
     assert_eq!(imports::step_bodies(s.document()).count(), 0);
@@ -179,7 +226,13 @@ fn step_update_shows_the_plan_and_keeps_missing_solids() {
     let mut import = start(&s, SourceKind::Step, first, Target::New);
     applied(&mut import, &mut s);
     let source = imports::step_sources(s.document()).next().unwrap().id;
-    let parts = imports::step_bodies(s.document()).count();
+    let parts: Vec<_> = imports::step_bodies(s.document()).map(|e| e.id).collect();
+    assert_eq!(parts.len(), 1, "one Part per STEP file");
+    let first_id = imports::read_step_source(s.document(), source)
+        .unwrap()
+        .solids[0]
+        .id
+        .clone();
     let second = dir.0.join("bracket-rev2.step");
     boxes(
         &second,
@@ -197,18 +250,29 @@ fn step_update_shows_the_plan_and_keeps_missing_solids() {
     else {
         panic!("{:?}", update.checked())
     };
-    assert_eq!((matched.len(), added.len(), missing.len()), (1, 1, 1));
-    assert!(!matched[0].2, "the unchanged box keeps its geometry");
+    // The file's one Part is matched and its geometry changed: one box
+    // stays, one is gone and one is new, all inside that Part.
+    assert_eq!((matched.len(), added.len(), missing.len()), (1, 0, 0));
+    assert!(matched[0].2, "the Part's geometry changed");
     assert_eq!(s.revision(), 1, "the plan is shown before Apply");
     assert_eq!(
         applied(&mut update, &mut s),
-        "1 matched, 1 new, 1 missing (kept)"
+        "1 matched, 0 new, 0 missing (kept)"
     );
     assert_eq!(s.revision(), 2);
     let stored = imports::read_step_source(s.document(), source).unwrap();
-    assert_eq!(stored.solids.len(), 3);
-    assert_eq!(stored.solids.iter().filter(|s| s.missing).count(), 1);
-    assert_eq!(imports::step_bodies(s.document()).count(), parts + 1);
+    let [solid] = stored.solids.as_slice() else {
+        panic!("one stored solid per file")
+    };
+    assert!(!solid.missing);
+    assert_eq!(solid.id, first_id, "the Part keeps its solid identity");
+    let part = embedded(&solid.brep);
+    assert_eq!(part.solid_count().unwrap(), 2);
+    assert_member(&part, [0.; 3], [10., 20., 30.], true);
+    assert_member(&part, [-50., 0., 0.], [7., 7., 7.], true);
+    assert_member(&part, [100., 0., 0.], [5., 5., 5.], false);
+    let after: Vec<_> = imports::step_bodies(s.document()).map(|e| e.id).collect();
+    assert_eq!(after, parts, "the same Part, updated in place");
 }
 
 #[test]

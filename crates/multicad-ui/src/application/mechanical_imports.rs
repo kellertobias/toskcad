@@ -88,7 +88,9 @@ mod tests {
     use super::*;
     use crate::{
         file_picker::{FilePicker, Kind, Reply, Request as PickerRequest},
-        mechanical_import::tests::{Scratch, backend, boxes, fixture, settle},
+        mechanical_import::tests::{
+            Scratch, assert_member, backend, boxes, embedded, fixture, settle,
+        },
     };
     use std::sync::{Arc, Mutex};
     struct Storage;
@@ -205,8 +207,24 @@ mod tests {
         assert_eq!(app.current().session.revision(), 1);
         assert!(!app.current().sketch.mechanical_import_active());
         assert!(app.current().session.can_undo());
-        let parts = multicad_core::model::imports::step_bodies(app.current().session.document());
-        assert_eq!(parts.count(), 2);
+        // One Part per STEP file, holding both of the file's solids.
+        let document = app.current().session.document();
+        assert_eq!(
+            multicad_core::model::imports::step_bodies(document).count(),
+            1
+        );
+        let source = multicad_core::model::imports::step_sources(document)
+            .next()
+            .unwrap()
+            .id;
+        let stored = multicad_core::model::imports::read_step_source(document, source).unwrap();
+        let [solid] = stored.solids.as_slice() else {
+            panic!("one stored solid per file")
+        };
+        let part = embedded(&solid.brep);
+        assert_eq!(part.solid_count().unwrap(), 2);
+        assert_member(&part, [0.; 3], [10., 20., 30.], true);
+        assert_member(&part, [100., 0., 0.], [5., 5., 5.], true);
     }
 
     #[test]
