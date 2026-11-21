@@ -1616,6 +1616,7 @@ impl Solid {
                 Err(error) if error.kind == GeometryErrorKind::Unsupported => self
                     .separated_boolean(other, operation, policy)
                     .or_else(|| self.through_bore_clearance(other, operation, policy))
+                    .or_else(|| self.drilled_box_intersection(other, operation, policy))
                     .or_else(|| self.cellwise_separated_boolean(other, operation, policy))
                     .or_else(|| self.opening_clearance(other, operation, policy))
                     .or_else(|| self.profile_clearance(other, operation, policy))
