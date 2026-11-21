@@ -168,6 +168,61 @@ pub(super) fn product(a: Poly, b: Poly, budget: &mut Budget<'_>) -> Result<Poly>
         Err(ReadError::Unsupported)
     }
 }
+/// `K` products `a[k] * b` of equal-degree factors sharing one weight table.
+/// Each pair forms its weight `C(m,i)C(n,j)/C(m+n,i+j) * b_j` once, then
+/// contributes one multiply-add per factor: the same enclosure terms as
+/// [`product`], with the shared work charged once.
+pub(super) fn product_many<const K: usize>(
+    a: [Poly; K],
+    b: Poly,
+    budget: &mut Budget<'_>,
+) -> Result<[Poly; K]> {
+    let m = a.first().ok_or(ReadError::Unsupported)?.degree;
+    if a.iter().any(|p| p.degree != m) {
+        return Err(ReadError::Unsupported);
+    }
+    let degree = m.checked_add(b.degree).ok_or(ReadError::Unsupported)?;
+    budget.charge(
+        (m + 1)
+            .saturating_mul(b.degree + 1)
+            .saturating_mul(16 + 4 * K)
+            .saturating_add((degree + 1).saturating_mul(8 * K))
+            .saturating_add(512),
+    )?;
+    let mut out = [Poly::zero(degree)?; K];
+    let ar = binomial_row(m, budget)?;
+    let br = binomial_row(b.degree, budget)?;
+    let cr = binomial_row(degree, budget)?;
+    for i in 0..=m {
+        for j in 0..=b.degree {
+            let weight = ar[i] * br[j] / cr[i + j] * b.c[j];
+            for (p, f) in out.iter_mut().zip(&a) {
+                p.c[i + j] = p.c[i + j] + weight * f.c[i];
+            }
+        }
+    }
+    if out.iter().all(|p| p.valid()) {
+        Ok(out)
+    } else {
+        Err(ReadError::Unsupported)
+    }
+}
+/// [`Poly::elevate`] of `K` equal-degree polynomials sharing one weight table.
+pub(super) fn elevate_many<const K: usize>(
+    a: [Poly; K],
+    degree: usize,
+    budget: &mut Budget<'_>,
+) -> Result<[Poly; K]> {
+    let m = a.first().ok_or(ReadError::Unsupported)?.degree;
+    if degree < m || a.iter().any(|p| p.degree != m) {
+        return Err(ReadError::Unsupported);
+    }
+    if degree == m {
+        budget.charge(512)?;
+        return Ok(a);
+    }
+    product_many(a, Poly::constant(degree - m, I::point(1.), budget)?, budget)
+}
 pub(super) fn dot_polynomial(a: [Poly; 3], b: [Poly; 3], budget: &mut Budget<'_>) -> Result<Poly> {
     product(a[0], b[0], budget)?
         .add(product(a[1], b[1], budget)?, false, budget)?

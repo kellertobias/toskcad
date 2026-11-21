@@ -84,18 +84,32 @@ fn q_cmp(a: &BigRational, b: &BigRational, work: &mut Budget<'_>) -> Result<std:
     ))?;
     Ok(a.cmp(b))
 }
-fn normalized(
-    q: &BigRational,
-    ends: &[BigRational; 2],
-    work: &mut Budget<'_>,
-) -> Result<BigRational> {
-    let d = q_op(q, &ends[0], false, work)?;
+/// The positive width of `ends`, shared by every normalization against them.
+fn width(ends: &[BigRational; 2], work: &mut Budget<'_>) -> Result<BigRational> {
     let w = q_op(&ends[1], &ends[0], false, work)?;
     check(
         w > BigRational::from_integer(0.into()),
         ReadError::Unsupported,
     )?;
-    q_op(&d, &w, true, work)
+    Ok(w)
+}
+/// `(q - start) / w` for a width from [`width`].
+fn normalized_by(
+    q: &BigRational,
+    start: &BigRational,
+    w: &BigRational,
+    work: &mut Budget<'_>,
+) -> Result<BigRational> {
+    let d = q_op(q, start, false, work)?;
+    q_op(&d, w, true, work)
+}
+fn normalized(
+    q: &BigRational,
+    ends: &[BigRational; 2],
+    work: &mut Budget<'_>,
+) -> Result<BigRational> {
+    let w = width(ends, work)?;
+    normalized_by(q, &ends[0], &w, work)
 }
 fn raw_knots(
     source: &Source<'_>,
@@ -369,7 +383,21 @@ fn prepare(
         .map_err(|_| ReadError::Limit)?;
     let mut maximum = [0_f64; 2];
     let mut second_max = 0_f64;
-    let mut held = patches.capacity() * std::mem::size_of::<Prepared>();
+    let widths = [width(&ends[0], work)?, width(&ends[1], work)?];
+    let mut normalized_knots_cache: [Vec<Option<I>>; 2] = [Vec::new(), Vec::new()];
+    for (cache, values) in normalized_knots_cache.iter_mut().zip(knots) {
+        check(values.len() <= 257, ReadError::Unsupported)?;
+        work.charge(values.len() * 16 + 64)?;
+        cache
+            .try_reserve_exact(values.len())
+            .map_err(|_| ReadError::Limit)?;
+        cache.resize(values.len(), None);
+    }
+    let mut held = patches.capacity() * std::mem::size_of::<Prepared>()
+        + normalized_knots_cache
+            .iter()
+            .map(|c| c.capacity() * std::mem::size_of::<Option<I>>())
+            .sum::<usize>();
     for (ordinal, patch) in data.patches().iter().enumerate() {
         work.charge(patch.controls().len() * 64 + 1024)?;
         let indices = patch.knot_indices();
@@ -390,10 +418,23 @@ fn prepare(
         let mut domain = [[I::point(0.); 2]; 2];
         for axis in 0..2 {
             for end in 0..2 {
-                let q = knots[axis]
-                    .get(indices[axis][end])
+                let index = indices[axis][end];
+                let q = knots[axis].get(index).ok_or(ReadError::Unsupported)?;
+                // Adjacent patches share knots: each is normalized once.
+                let slot = normalized_knots_cache[axis]
+                    .get_mut(index)
                     .ok_or(ReadError::Unsupported)?;
-                domain[axis][end] = enclose(&normalized(q, &ends[axis], work)?, work)?;
+                domain[axis][end] = match *slot {
+                    Some(value) => value,
+                    None => {
+                        let value = enclose(
+                            &normalized_by(q, &ends[axis][0], &widths[axis], work)?,
+                            work,
+                        )?;
+                        *slot = Some(value);
+                        value
+                    }
+                };
             }
         }
         let mut values = Vec::new();
@@ -737,31 +778,38 @@ fn power_contract<const ROWS: usize>(
         (1..=2).contains(&ROWS) && (1..=12).contains(&length),
         ReadError::Unsupported,
     )?;
-    let degree = (length - 1) * variable.degree;
     work.charge(4096)?;
-    let mut result = [[Poly::zero(degree)?; 3]; ROWS];
+    // Horner over the centered power basis: r = c[n-1], r = r*w + c[k].
+    // All 3*ROWS coordinate chains multiply by the SAME scalar argument, so
+    // each step is one shared-weight product; adding a constant to a
+    // Bernstein form adds it to every control. No elevation is needed.
+    let mut flat = [Poly::zero(0)?; 6];
     for row in 0..ROWS {
         for j in 0..3 {
-            result[row][j] = Poly::constant(degree, coefficients[row][0][j], work)?;
+            flat[row * 3 + j] = Poly::constant(0, coefficients[row][length - 1][j], work)?;
         }
     }
-    let mut power = Poly::constant(0, I::point(1.), work)?;
-    for k in 1..length {
-        // ONE scalar power is shared by all three coordinates and BOTH
-        // rows. No six repeated Horner/product chains are executed.
-        power = poly::product(power, variable, work)?;
-        let raised = power.elevate(degree, work)?;
-        // Per coefficient:12 I multiply/adds plus bounded table loads,
-        // stores/indexing/loops. The fixed tail covers all six validity scans.
-        work.charge((degree + 1) * 24 * ROWS + 2048)?;
-        for i in 0..=degree {
-            for (out, coefficient) in result.iter_mut().zip(coefficients) {
-                for (p, c) in out.iter_mut().zip(coefficient[k]) {
-                    p.c[i] = p.c[i] + raised.c[i] * c;
+    for k in (0..length - 1).rev() {
+        let mut next = if ROWS == 1 {
+            let [a, b, c] = poly::product_many([flat[0], flat[1], flat[2]], variable, work)?;
+            [a, b, c, a, b, c]
+        } else {
+            poly::product_many(flat, variable, work)?
+        };
+        let degree = next[0].degree;
+        work.charge((degree + 1) * 4 * 3 * ROWS + 512)?;
+        for row in 0..ROWS {
+            for j in 0..3 {
+                let p = &mut next[row * 3 + j];
+                for c in &mut p.c[..=degree] {
+                    *c = *c + coefficients[row][k][j];
                 }
             }
         }
+        flat = next;
     }
+    let result: [[Poly; 3]; ROWS] =
+        std::array::from_fn(|row| std::array::from_fn(|j| flat[row * 3 + j]));
     check(
         result.iter().flatten().all(|p| p.valid()),
         ReadError::Unsupported,
@@ -814,11 +862,12 @@ fn compose_local(
     }
     let [a, b] = power_contract(&[a, delta], grid.shape[1], variables[1], work)?;
     let mut result = [Poly::zero(a[0].degree + variables[0].degree)?; 3];
+    // The three coordinates share the u argument and the elevation, so each
+    // is one shared-weight product.
+    let contribution = poly::product_many(b, variables[0], work)?;
+    let elevated = poly::elevate_many(a, a[0].degree + variables[0].degree, work)?;
     for j in 0..3 {
-        let contribution = poly::product(variables[0], b[j], work)?;
-        result[j] = a[j]
-            .elevate(contribution.degree, work)?
-            .add(contribution, false, work)?;
+        result[j] = elevated[j].add(contribution[j], false, work)?;
     }
     // This is the exact identity A(v)+u*(B(v)-A(v)). Centered power
     // conversion uses all original coefficients; no Taylor term is dropped.
@@ -1135,8 +1184,9 @@ fn normalized_knots(values: &[BigRational], work: &mut Budget<'_>) -> Result<Vec
         .try_reserve_exact(values.len())
         .map_err(|_| ReadError::Limit)?;
     check(result.capacity() * 4096 <= NUMERIC_BYTES, ReadError::Limit)?;
+    let w = width(&ends, work)?;
     for value in values {
-        result.push(normalized(value, &ends, work)?);
+        result.push(normalized_by(value, &ends[0], &w, work)?);
     }
     Ok(result)
 }
@@ -1206,9 +1256,10 @@ fn restriction_indices(
         ReadError::Unsupported,
     )?;
     let ends = [values[*index].clone(), values[*index + 1].clone()];
+    let w = width(&ends, work)?;
     Ok([
-        normalized(low, &ends, work)?,
-        normalized(high, &ends, work)?,
+        normalized_by(low, &ends[0], &w, work)?,
+        normalized_by(high, &ends[0], &w, work)?,
     ])
 }
 fn affine_q(
@@ -1506,10 +1557,10 @@ fn mapped_cell(
                     target_position(&target[ti], &current.target, allowed, work)?;
                 let degree = a[0].degree.max(b[0].degree);
                 let mut difference = [Poly::zero(degree)?; 3];
+                let a = poly::elevate_many(a, degree, work)?;
+                let b = poly::elevate_many(b, degree, work)?;
                 for j in 0..3 {
-                    difference[j] =
-                        a[j].elevate(degree, work)?
-                            .add(b[j].elevate(degree, work)?, true, work)?;
+                    difference[j] = a[j].add(b[j], true, work)?;
                 }
                 let proxy_allowance =
                     (I::point(allowed) - I::point(proxy_error) - I::point(target_proxy_error)).lo;
