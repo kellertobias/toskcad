@@ -79,7 +79,9 @@ pub use thread_entry_chamfer::{
 };
 mod torus;
 mod twisted_region;
-pub use radial_boundary::write_radial_boundary;
+#[cfg(test)]
+pub(crate) use radial_boundary::tests as radial_boundary_tests;
+pub use radial_boundary::{supports_pipe_sleeve, write_pipe_sleeve, write_radial_boundary};
 pub use rounded_cylinder::write_rounded_cylinder;
 pub use tapered_thread::write_tapered_thread;
 mod oblique_bore;

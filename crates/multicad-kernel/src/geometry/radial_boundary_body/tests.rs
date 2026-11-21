@@ -581,3 +581,29 @@ fn interrupted_cold_volume_queries_never_publish_a_partial_cache() {
         );
     }
 }
+
+#[test]
+fn face_query_measures_only_face_integrands_and_reuses_completed_mass_properties() {
+    let cold = fixture();
+    let (body, frame) = cold.radial_boundary_body().unwrap();
+    let placement = body.placement(frame, None).unwrap();
+    let faces = cold.faces().unwrap();
+    // Area and centroid alone: no volume moments or centroidal inertia.
+    assert!(placement.faces.borrow().is_some());
+    assert!(placement.properties.borrow().is_none());
+    assert_eq!(cold.faces().unwrap(), faces);
+    let warm = fixture();
+    let full = warm.rust_radial_boundary_properties(None).unwrap();
+    let (body, frame) = warm.radial_boundary_body().unwrap();
+    let placement = body.placement(frame, None).unwrap();
+    let reused = warm.faces().unwrap();
+    assert!(placement.faces.borrow().is_none());
+    assert_eq!(reused.len(), full.faces.len());
+    for ((a, b), source) in faces.iter().zip(&reused).zip(&full.faces) {
+        assert_eq!(a.index, b.index);
+        // Both are midpoints of valid enclosures of the same actual face.
+        let width = source.area_mm2[1] - source.area_mm2[0];
+        assert!((a.area_mm2 - b.area_mm2).abs() <= width + 1e-4 * b.area_mm2);
+        assert!(source.area_mm2[0] <= b.area_mm2 && b.area_mm2 <= source.area_mm2[1]);
+    }
+}

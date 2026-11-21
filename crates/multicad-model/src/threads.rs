@@ -211,7 +211,14 @@ pub(crate) fn build_rust(
     {
         let target = receiving_target(feature, source, solids)?
             .ok_or_else(|| fail("Internal pipe thread has no target predecessor"))?;
-        return pipe::internal_receiver(feature, &thread, target, policy);
+        return pipe::internal_receiver(
+            feature,
+            source.parameters.family,
+            &thread,
+            target,
+            policy,
+            interrupt,
+        );
     }
     validate_rust_family(feature, source.parameters.family)?;
     if thread.representation == ThreadRepresentation::CosmeticEnvelope

@@ -421,6 +421,9 @@ fn actual_literal_export_worker_keeps_decoded_mass_intervals_and_atomic_publicat
                 multicad_kernel::rust_kernel::step_read::SourceImport::LiteralNpt(_) => "literal",
                 multicad_kernel::rust_kernel::step_read::SourceImport::Analytic(_) => "analytic",
                 multicad_kernel::rust_kernel::step_read::SourceImport::Radial(_) => "radial",
+                multicad_kernel::rust_kernel::step_read::SourceImport::PipeSleeve(_) => {
+                    "pipe_sleeve"
+                }
                 multicad_kernel::rust_kernel::step_read::SourceImport::PeriodicPhillips(_) => {
                     "periodic_phillips"
                 }

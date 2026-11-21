@@ -1,8 +1,9 @@
 //! Re-export the retained finite boundary, without a reconstructed recipe.
 use super::*;
 use crate::radial_tensor::{Axis, BoundaryInput, Curve, RadialBoundary, Surface};
+use crate::step_read::SleeveStock;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 impl Writer {
     /// Append one already qualified finite boundary, preserving every actual
@@ -123,7 +124,11 @@ fn knot_data(spans: usize) -> (String, String) {
         .join(",");
     (multiplicities, knots)
 }
-fn encode(file: &mut StepFile, input: &BoundaryInput) -> Result<Entity, StepError> {
+struct Tables {
+    surfaces: Vec<Entity>,
+    edges: Vec<Entity>,
+}
+fn tables(file: &mut StepFile, input: &BoundaryInput) -> Tables {
     let vertices = input
         .vertices
         .iter()
@@ -148,6 +153,10 @@ fn encode(file: &mut StepFile, input: &BoundaryInput) -> Result<Entity, StepErro
             file.entity(format_args!("EDGE_CURVE('',{a},{b},{c},{sense})"))
         })
         .collect::<Vec<_>>();
+    Tables { surfaces, edges }
+}
+fn encode(file: &mut StepFile, input: &BoundaryInput) -> Result<Entity, StepError> {
+    let Tables { surfaces, edges } = tables(file, input);
     let faces = input
         .faces
         .iter()
@@ -161,5 +170,126 @@ fn encode(file: &mut StepFile, input: &BoundaryInput) -> Result<Entity, StepErro
             file.face_on(&[bound], surfaces[f.surface], f.forward)
         })
         .collect::<Vec<_>>();
+    Ok(file.solid(&faces))
+}
+
+impl Writer {
+    /// Append cylindrical stock minus one already qualified through cavity,
+    /// preserving every actual cavity value. Rejected appends are transactional.
+    pub fn append_pipe_sleeve(
+        &mut self,
+        cavity: &RadialBoundary,
+        stock: SleeveStock,
+        tolerance: f64,
+    ) -> Result<(), StepError> {
+        let input = canonical(cavity.input());
+        // Prove the candidate member alone before the transactional append.
+        let mut candidate = StepFile::new();
+        let solid = encode_sleeve(&mut candidate, &input, stock, tolerance)?;
+        candidate.finish(vec![solid]);
+        verify_sleeve(&candidate.data, cavity, stock, tolerance)?;
+        self.append(|file| encode_sleeve(file, &input, stock, tolerance))
+    }
+}
+pub fn write_pipe_sleeve(
+    cavity: &RadialBoundary,
+    stock: SleeveStock,
+    tolerance: f64,
+) -> Result<String, StepError> {
+    super::writer::write_one(|writer| writer.append_pipe_sleeve(cavity, stock, tolerance))
+}
+pub fn supports_pipe_sleeve(cavity: &RadialBoundary, stock: SleeveStock, tolerance: f64) -> bool {
+    write_pipe_sleeve(cavity, stock, tolerance).is_ok()
+}
+fn verify_sleeve(
+    text: &str,
+    expected: &RadialBoundary,
+    stock: SleeveStock,
+    tolerance: f64,
+) -> Result<(), StepError> {
+    let imported = crate::step_read::read_pipe_sleeve(text, tolerance).map_err(|e| {
+        if e == crate::step_read::ReadError::Limit {
+            StepError::Limit
+        } else {
+            StepError::Unsupported
+        }
+    })?;
+    // Exact cavity tables and every stock value survive the file.
+    if canonical(imported.cavity.input()) != canonical(expected.input()) || imported.stock != stock
+    {
+        return Err(StepError::Unsupported);
+    }
+    Ok(())
+}
+fn encode_sleeve(
+    file: &mut StepFile,
+    input: &BoundaryInput,
+    stock: SleeveStock,
+    tolerance: f64,
+) -> Result<Entity, StepError> {
+    let SleeveStock {
+        origin,
+        normal,
+        reference,
+        radius_mm,
+        height_mm,
+    } = stock;
+    if !tolerance.is_finite()
+        || tolerance <= 0.
+        || !radius_mm.is_finite()
+        || radius_mm <= 0.
+        || !height_mm.is_finite()
+        || height_mm <= tolerance
+        || origin
+            .into_iter()
+            .chain(normal)
+            .chain(reference)
+            .any(|v| !v.is_finite())
+    {
+        return Err(StepError::InvalidGeometry);
+    }
+    let height = |p: [f64; 3]| (0..3).map(|i| (p[i] - origin[i]) * normal[i]).sum::<f64>();
+    // The cavity's two planar caps become the stock's annular caps.
+    let mut ends = [None; 2];
+    for (index, face) in input.faces.iter().enumerate() {
+        if let Surface::Plane(a) = input.surfaces[face.surface] {
+            let h = height(a.origin);
+            let end = if h.abs() <= tolerance {
+                0
+            } else if (h - height_mm).abs() <= tolerance {
+                1
+            } else {
+                return Err(StepError::InvalidGeometry);
+            };
+            if ends[end].replace(index).is_some() {
+                return Err(StepError::InvalidGeometry);
+            }
+        }
+    }
+    let [Some(bottom), Some(top)] = ends else {
+        return Err(StepError::InvalidGeometry);
+    };
+    let Tables { surfaces, edges } = tables(file, input);
+    let top_centre = std::array::from_fn(|i| origin[i] + height_mm * normal[i]);
+    let cylinder = CylindricalTrim::new(file, [origin, top_centre], normal, reference, radius_mm)?;
+    let mut faces = Vec::with_capacity(input.faces.len() + 1);
+    for (index, f) in input.faces.iter().enumerate() {
+        // Stock material is outside the cavity: each cavity wire is reversed.
+        let reversed = f
+            .outer
+            .iter()
+            .rev()
+            .map(|&(e, d)| file.oriented_edge(edges[e], !d))
+            .collect::<Vec<_>>();
+        if index == bottom || index == top {
+            let rim = cylinder.cap_bound(file, index == top, true);
+            let hole = file.bound(&reversed, false);
+            faces.push(file.face_on(&[rim, hole], surfaces[f.surface], f.forward));
+        } else {
+            let bound = file.bound(&reversed, true);
+            faces.push(file.face_on(&[bound], surfaces[f.surface], !f.forward));
+        }
+    }
+    faces.push(cylinder.wall(file, true));
     Ok(file.solid(&faces))
 }

@@ -103,6 +103,7 @@ pub use tapered_thread::verify_tapered_thread;
 mod radial_boundary;
 pub use radial_boundary::pipe_hardware;
 pub use radial_boundary::read_radial_boundary;
+pub use radial_boundary::sleeve::{ImportedPipeSleeve, SleeveStock, read_pipe_sleeve};
 mod source;
 pub use compound::ownership::{
     DocumentOwnership, DocumentOwnershipError, DocumentOwnershipOptions,

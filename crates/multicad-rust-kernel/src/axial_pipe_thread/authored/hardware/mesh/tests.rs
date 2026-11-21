@@ -301,3 +301,78 @@ fn actual_join_refuses_contact_precision_and_budgets_without_mutating_original_m
     assert_eq!(trace.candidate().mesh(), &original);
     assert!(join(source, kind, options(), None).is_ok());
 }
+
+#[test]
+fn through_bore_joins_to_closed_cylindrical_stock_with_exact_annular_caps() {
+    use crate::display::Tessellation;
+    let cavity = crate::step::radial_boundary_tests::internal_npt_cavity();
+    let tessellation = Tessellation {
+        deflection: 0.05,
+        angle: 0.3,
+        triangle_limit: 1_000_000,
+    };
+    let trace = cavity
+        .tessellate_with_cap_trace(tessellation, Default::default(), None)
+        .unwrap();
+    let options = MeshOptions {
+        tessellation,
+        maximum_work: 512_000_000,
+        maximum_bytes: 64 * 1024 * 1024,
+        additional_resident_bytes: 0,
+    };
+    let radius = 7.;
+    let joined = join_sleeve(&trace, radius, options, None).unwrap();
+    let mesh = joined.mesh();
+    let n = sleeve_segments(radius, tessellation).unwrap();
+    assert_eq!(
+        mesh.face_indices.len(),
+        trace.mesh().face_indices.len() + 4 * n
+    );
+    // Closed, consistently oriented and positive: stock minus bore.
+    let proof = crate::manufacturing::certify(mesh).unwrap();
+    let bore = cavity.volume_with_interrupt(1e-6, None).unwrap().volume_mm3;
+    let polygon = 0.5 * n as f64 * radius * radius * (std::f64::consts::TAU / n as f64).sin();
+    let expected = polygon * 8. - (bore[0] + bore[1]) / 2.;
+    let source_area: f64 = cavity
+        .face_properties_with_interrupt(1e-4, None)
+        .unwrap()
+        .iter()
+        .map(|f| f.area_mm2[1])
+        .sum();
+    assert!(
+        (proof.signed_volume_mm3 - expected).abs() <= tessellation.deflection * source_area,
+        "{} {expected}",
+        proof.signed_volume_mm3
+    );
+    // Wall vertices lie on the stock circle, at the cap heights only.
+    let wall = trace.mesh().face_indices.iter().max().unwrap() + 1;
+    for (t, &face) in mesh
+        .indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(&mesh.face_indices)
+    {
+        if face == wall {
+            for &v in t {
+                let p = &mesh.vertices[3 * v as usize..3 * v as usize + 3];
+                assert!((p[0].hypot(p[1]) - radius).abs() < 1e-12);
+                assert!(p[2] == 0. || p[2] == 8.);
+            }
+        }
+    }
+    assert!(joined.source_distance_mm() <= tessellation.deflection);
+    // Stock that does not clear the bore, and invalid stock, are refused.
+    assert_eq!(
+        join_sleeve(&trace, 4.9, options, None).err(),
+        Some(Error::Unsupported)
+    );
+    assert_eq!(
+        join_sleeve(&trace, f64::NAN, options, None).err(),
+        Some(Error::Invalid)
+    );
+    assert_eq!(
+        join_sleeve(&trace, radius, options, Some(&|| true)).err(),
+        Some(Error::Cancelled)
+    );
+}

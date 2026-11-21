@@ -27,6 +27,7 @@ fn sibling(source: &Rc<Placement>) -> Rc<Placement> {
     Rc::new(Placement {
         boundary: Rc::clone(&source.boundary),
         properties: RefCell::new(None),
+        faces: RefCell::new(None),
         volume: RefCell::new(None),
         bounds: RefCell::new(None),
     })

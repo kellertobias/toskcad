@@ -13,6 +13,8 @@ pub enum SourceImport {
     PeriodicPhillips(Box<super::PhillipsOwnedPeriodicMaterial>),
     Analytic(Box<(Readback, ImportSolid)>),
     Radial(Box<crate::radial_tensor::BoundaryOwnership>),
+    /// Cylindrical stock around one through radial cavity, both uncertified.
+    PipeSleeve(Box<super::ImportedPipeSleeve>),
     LiteralNpt(Box<super::npt_stock::OwnedMaterial>),
     ActualMappedHead(std::sync::Arc<super::npt_stock::full_head::transport::MappedActualHead>),
 }
@@ -59,6 +61,11 @@ pub(super) fn ordinary_member(
     } else {
         Vec::new()
     };
+    if !faces.is_empty()
+        && let Some(sleeve) = radial_boundary::sleeve::recognize(shell, id)?
+    {
+        return Ok(SourceImport::PipeSleeve(Box::new(sleeve)));
+    }
     let mut literal = false;
     for face in faces {
         let surface = helical::face(shell, face)?.0;

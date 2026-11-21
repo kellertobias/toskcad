@@ -580,6 +580,13 @@ pub(super) fn rebuild(
                     Qualified::LiteralNpt(source),
                 )
             }
+            step_read::SourceImport::PipeSleeve(_) => {
+                return Err(error(
+                    IMPORT,
+                    GeometryErrorKind::Unsupported,
+                    "A cylindrical pipe sleeve is imported only as a single STEP solid",
+                ));
+            }
             step_read::SourceImport::Radial(owned) => {
                 let boundary = Solid::qualify_imported_radial(*owned, policy)?;
                 (
