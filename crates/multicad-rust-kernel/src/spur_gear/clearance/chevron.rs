@@ -178,13 +178,13 @@ mod tests {
             certify_herringbone([&reflected_a, &chevron_b], placement, tolerance, None),
             Ok(ResultKind::Clear)
         );
+        // The pitch witness lies in B's gap, but the pair collides: a tooth
+        // tip lies strictly in both real outlines. The independent point
+        // below confirms the collision at the far cap.
         assert_eq!(
             certify_herringbone([&linear_a, &chevron_b], placement, tolerance, None),
-            Ok(ResultKind::Unresolved)
+            Ok(ResultKind::CommonInterior)
         );
-        // The fixed pitch witness lies in B's gap. An independent point
-        // above it lies strictly in both real outlines at the far cap.
-        // The slab proof must preserve uncertainty about this collision.
         let (sin, cos) = linear_a.phase_at(spec_a.face_width_mm).sin_cos();
         let end_a = Placement {
             axes: [[cos, sin], [-sin, cos]],
@@ -200,6 +200,59 @@ mod tests {
             Rim::build(chevron_b.profile(), placement[1], 1e-3, None)
                 .unwrap()
                 .contains_strictly(witness)
+        );
+    }
+
+    #[test]
+    fn a_wide_helical_pair_turned_half_a_tooth_has_common_interior_off_the_centre_line() {
+        // KHK normal-system 20/30 pair, mn = 2, beta = 20 deg, 8 mm wide:
+        // the drive phase advances by almost half a pitch over the face,
+        // so at many heights the pitch witness lies in both gaps while
+        // neighbouring tips still collide.
+        let beta = 20_f64.to_radians();
+        let pressure = (20_f64.to_radians().tan() / beta.cos()).atan();
+        let gear = |teeth: u32, hand: f64| {
+            let pitch = 2. * f64::from(teeth) / (2. * beta.cos());
+            let spec = crate::spur_gear::Spec {
+                teeth,
+                pitch_radius_mm: pitch,
+                base_radius_mm: pitch * pressure.cos(),
+                tip_radius_mm: pitch + 2.,
+                root_radius_mm: pitch - 2.5,
+                root_fillet_radius_mm: 0.4,
+                half_base_angle_rad: std::f64::consts::PI / (2. * f64::from(teeth))
+                    + pressure.tan()
+                    - pressure
+                    - 0.05 / (2. * pitch),
+                face_width_mm: 8.,
+                bore_radius_mm: 2.,
+            };
+            let twist = hand * beta.tan() / pitch;
+            (
+                Herringbone::new_helical(spec, twist, 1e-5, 1e7).unwrap(),
+                pitch,
+            )
+        };
+        let ((a, ra), (b, rb)) = (gear(20, 1.), gear(30, -1.));
+        let at_phase = |phase: f64| {
+            let (sin, cos) = phase.sin_cos();
+            [
+                Placement::default(),
+                Placement {
+                    center_mm: [ra + rb, 0.],
+                    axes: [[cos, sin], [-sin, cos]],
+                    uncertainty_mm: 0.,
+                },
+            ]
+        };
+        use std::f64::consts::PI;
+        assert_eq!(
+            certify_herringbone([&a, &b], at_phase(PI + PI / 30.), 1e-7, None),
+            Ok(ResultKind::Clear)
+        );
+        assert_eq!(
+            certify_herringbone([&a, &b], at_phase(PI), 1e-7, None),
+            Ok(ResultKind::CommonInterior)
         );
     }
 

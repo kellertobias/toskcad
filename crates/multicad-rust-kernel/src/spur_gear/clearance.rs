@@ -349,6 +349,30 @@ fn pitch_witness(a: &Profile, b: &Profile, placements: [Placement; 2]) -> Point 
     add(centers[0], scale(delta, offset / distance))
 }
 
+/// Candidate interior points: the pitch witness, then the centre of every
+/// tooth tip of either gear, a tenth of the tooth depth inside the tip. A
+/// misphased pose whose teeth meet away from the line of centres has its
+/// common interior at such a tip. Membership is still decided by the
+/// certified winding tests alone.
+fn interior_candidates(a: &Profile, b: &Profile, placements: [Placement; 2]) -> Vec<Point> {
+    let mut candidates = vec![pitch_witness(a, b, placements)];
+    for (profile, placement) in [a, b].into_iter().zip(placements) {
+        let tip = tip_radius(profile);
+        let inset = 0.1 * (tip - profile.root_radius_mm);
+        for edge in profile.outline() {
+            if edge.role != super::ToothRole::Tip {
+                continue;
+            }
+            let middle = edge.edge.point(0.5);
+            let radius = length(middle);
+            if radius > inset {
+                candidates.push(placement.point(scale(middle, (radius - inset) / radius)));
+            }
+        }
+    }
+    candidates
+}
+
 fn tip_radius(profile: &Profile) -> f64 {
     profile
         .outline()
@@ -383,7 +407,7 @@ fn certify_with_uncertainty(
     {
         return Err(Error::Invalid);
     }
-    let witness = pitch_witness(a, b, placements);
+    let candidates = interior_candidates(a, b, placements);
     let mut deflection = (a.root_radius_mm.min(b.root_radius_mm) * 2e-4).clamp(tolerance_mm, 0.01);
     for _ in 0..MAX_REFINEMENTS {
         checkpoint(interrupt)?;
@@ -392,7 +416,10 @@ fn certify_with_uncertainty(
         if boundaries_clear(&first, &second, MAX_PAIR_TESTS, interrupt)? {
             return Ok(ResultKind::Clear);
         }
-        if first.contains_strictly(witness) && second.contains_strictly(witness) {
+        if candidates
+            .iter()
+            .any(|&point| first.contains_strictly(point) && second.contains_strictly(point))
+        {
             return Ok(ResultKind::CommonInterior);
         }
         deflection *= 0.25;
