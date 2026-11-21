@@ -197,7 +197,7 @@ fn tessellate_with_connectivity(
         return Err("Tessellation returned an invalid mesh".into());
     }
     let vertices: Vec<_> = mesh.vertices.as_chunks::<3>().0.to_vec();
-    let mut triangles: Vec<_> = mesh.indices.as_chunks::<3>().0.to_vec();
+    let triangles: Vec<_> = mesh.indices.as_chunks::<3>().0.to_vec();
     if triangles
         .iter()
         .flatten()
@@ -205,38 +205,63 @@ fn tessellate_with_connectivity(
     {
         return Err("Tessellation referenced a missing vertex".into());
     }
-    if normalize_exact_zero_triangles {
-        let original_faces: BTreeSet<_> = mesh.face_indices.iter().copied().collect();
-        let mut retained_faces = BTreeSet::new();
-        let original_count = triangles.len();
-        let mut ordinal = 0;
-        triangles.retain(|triangle| {
-            let face = mesh.face_indices[ordinal];
-            ordinal += 1;
-            let [a, b, c] = triangle.map(|index| vertices[index as usize]);
-            // Exact numeric equality includes signed zeros. Such a triangle
-            // has precisely zero area and volume, without an epsilon or a
-            // rounded cross-product test. This applies only to native-derived
-            // manufacturing meshes; arbitrary writer input stays strict.
-            if a == b || b == c || c == a {
-                false
-            } else {
-                retained_faces.insert(face);
-                true
-            }
-        });
-        if original_faces != retained_faces || triangles.is_empty() {
-            return Err(format!(
-                "Removing {} exact zero-area native triangles would erase a native face",
-                original_count - triangles.len()
-            ));
-        }
-    }
-    Ok(MeshObject {
+    let object = MeshObject {
         name: name.into(),
         vertices,
         triangles,
-    })
+    };
+    if normalize_exact_zero_triangles {
+        return omit_exact_zero_triangles(object, &mesh.face_indices).map(|(object, _)| object);
+    }
+    Ok(object)
+}
+
+/// Omit triangles with two exactly equal corner positions from a
+/// native-derived manufacturing mesh, keeping every survivor's position,
+/// order and winding. `face_indices` names each triangle's native face; the
+/// omission is refused if it would erase a face. Returns the number removed.
+/// Arbitrary writer input stays strict; this is not a repair for it.
+pub fn omit_exact_zero_triangles(
+    mut object: MeshObject,
+    face_indices: &[u32],
+) -> Result<(MeshObject, usize), String> {
+    if face_indices.len() != object.triangles.len() {
+        return Err("Each triangle needs exactly one native face".into());
+    }
+    let original_faces: BTreeSet<_> = face_indices.iter().copied().collect();
+    let mut retained_faces = BTreeSet::new();
+    let original_count = object.triangles.len();
+    let vertices = &object.vertices;
+    let mut ordinal = 0;
+    let mut missing = false;
+    object.triangles.retain(|triangle| {
+        let face = face_indices[ordinal];
+        ordinal += 1;
+        let corner = |i: usize| vertices.get(triangle[i] as usize);
+        let (Some(a), Some(b), Some(c)) = (corner(0), corner(1), corner(2)) else {
+            missing = true;
+            return true;
+        };
+        // Exact numeric equality includes signed zeros. Such a triangle
+        // has precisely zero area and volume, without an epsilon or a
+        // rounded cross-product test.
+        if a == b || b == c || c == a {
+            false
+        } else {
+            retained_faces.insert(face);
+            true
+        }
+    });
+    if missing {
+        return Err("Tessellation referenced a missing vertex".into());
+    }
+    let removed = original_count - object.triangles.len();
+    if original_faces != retained_faces || object.triangles.is_empty() {
+        return Err(format!(
+            "Removing {removed} exact zero-area native triangles would erase a native face"
+        ));
+    }
+    Ok((object, removed))
 }
 
 /// Enclosed volume by the divergence theorem, in cubic millimeters.

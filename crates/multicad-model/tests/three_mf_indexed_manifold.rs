@@ -664,7 +664,8 @@ fn transformed_fused_plate_and_blind_cross_holes_use_proven_native_seams_without
 }
 
 #[test]
-fn actual_positive_load_right_hand_buttress_omits_only_exact_duplicate_native_xyz_triangles() {
+fn actual_positive_load_right_hand_buttress_has_no_duplicate_native_xyz_triangles_and_exports_exactly()
+ {
     use multicad_core::model::{ButtressLoadFlankSide, ThreadHand, ThreadRequest};
     use multicad_kernel::{GeometryPolicy, MeshOptions};
     let mut session =
@@ -720,9 +721,11 @@ fn actual_positive_load_right_hand_buttress_omits_only_exact_duplicate_native_xy
         "buttress_positive_right_exact_xyz_triangles_removed={removed}; observed_native_faces={}",
         original_faces.len()
     );
-    assert!(
-        removed > 0,
-        "fixture must reproduce actual exact duplicate XYZ, not a near-equal or small-area triangle"
+    // The Rust native tessellation has no exact duplicate XYZ triangle; the
+    // omission path is covered by an explicit defective fixture below.
+    assert_eq!(
+        removed, 0,
+        "the Rust native buttress mesh must not contain exact duplicate XYZ triangles"
     );
     assert_eq!(
         retained_faces, original_faces,
@@ -730,15 +733,16 @@ fn actual_positive_load_right_hand_buttress_omits_only_exact_duplicate_native_xy
     );
     let raw_object = mesh::tessellate(shape, &quality, "Unfiltered native buttress").unwrap();
     assert_eq!(raw_object.triangles.len(), raw.indices.len() / 3);
-    assert!(
-        mesh::three_mf(
-            &[raw_object],
+    let direct = parse(
+        &mesh::three_mf(
+            std::slice::from_ref(&raw_object),
             &[BuildItem::identity(0)],
-            LengthUnit::Millimeter
+            LengthUnit::Millimeter,
         )
-        .is_err(),
-        "the direct writer remains strict for arbitrary mesh input"
+        .expect("the strict direct writer accepts the clean Rust native mesh"),
     );
+    assert_eq!(manifold(&direct.objects[0]), 1);
+    assert_preserved(&raw_object, &direct.objects[0]);
     let manufacturing =
         mesh::tessellate_manufacturing(shape, &quality, "Manufacturing buttress").unwrap();
     let actual = manufacturing
@@ -799,7 +803,7 @@ fn actual_positive_load_right_hand_buttress_omits_only_exact_duplicate_native_xy
 }
 
 #[test]
-fn actual_positive_load_left_hand_buttress_retriangulates_detached_internal_constraints_only() {
+fn actual_positive_load_left_hand_buttress_needs_no_internal_constraint_remesh() {
     use multicad_core::model::{ButtressLoadFlankSide, ThreadHand, ThreadRequest};
     let mut session =
         Session::new(Document::new("Positive left buttress manufacturing").unwrap()).unwrap();
@@ -838,15 +842,16 @@ fn actual_positive_load_left_hand_buttress_retriangulates_detached_internal_cons
     let bounds = shape.bounds().unwrap();
     let volume = shape.volume_mm3().unwrap();
     let raw_object = mesh::tessellate(shape, &quality, "Raw left buttress").unwrap();
-    assert!(
-        mesh::three_mf(
-            &[raw_object],
+    let direct = parse(
+        &mesh::three_mf(
+            std::slice::from_ref(&raw_object),
             &[BuildItem::identity(0)],
-            LengthUnit::Millimeter
+            LengthUnit::Millimeter,
         )
-        .is_err(),
-        "original raw mesh must reproduce indexed closure refusal"
+        .expect("the strict direct writer accepts the closed Rust native mesh"),
     );
+    assert_eq!(manifold(&direct.objects[0]), 1);
+    assert_preserved(&raw_object, &direct.objects[0]);
     let native = shape.manufacturing_mesh_with_receipt(options).unwrap();
     assert!(
         shape.exact_text().unwrap() == before,
@@ -859,9 +864,17 @@ fn actual_positive_load_left_hand_buttress_retriangulates_detached_internal_cons
         native.mesh.indices.len() / 3,
         native.maximum_displacement_mm
     );
-    assert!(native.remeshed_without_internal_constraints);
-    assert!(native.removed_meshing_internal_edges > 0);
-    assert!(native.removed_meshing_constraint_wire_containers > 0);
+    // The Rust native mesh has no detached internal meshing constraint, so
+    // the manufacturing receipt keeps the raw tessellation unchanged. The
+    // strict refusal of such constraints is covered by a fixture below.
+    assert!(!native.remeshed_without_internal_constraints);
+    assert_eq!(native.removed_meshing_internal_edges, 0);
+    assert_eq!(native.removed_meshing_constraint_wire_containers, 0);
+    assert_eq!(native.removed_meshing_internal_vertices, 0);
+    assert_eq!(native.maximum_displacement_mm, 0.);
+    assert_eq!(native.mesh.vertices, raw.vertices);
+    assert_eq!(native.mesh.indices, raw.indices);
+    assert_eq!(native.mesh.face_indices, raw.face_indices);
     assert_eq!(
         native
             .mesh
@@ -1004,6 +1017,93 @@ fn actual_positive_load_left_hand_buttress_retriangulates_detached_internal_cons
     assert_eq!(shape.volume_mm3().unwrap(), volume);
     assert_eq!(session.document(), &source);
     assert_eq!(session.revision(), 1);
+}
+/// The OCCT-era buttress tessellation (931cf7a9) carried exact duplicate XYZ
+/// triangles; the Rust one does not. Keep the omission path covered with a
+/// deliberately defective native-derived mesh.
+#[test]
+fn defective_fixture_omits_only_exact_duplicate_xyz_triangles_and_stays_strict() {
+    let clean = tetra([[0., 0., 0.], [2., 0., 0.], [0., 2., 0.], [0., 0., 2.]]);
+    // Face-fragmented, as the native per-face tessellation was: every
+    // triangle owns its corner vertices, so seams close only through exact
+    // coordinates. Two slivers repeat an existing corner exactly (one with a
+    // signed zero) and lie on an existing edge with zero area.
+    let triangles = [
+        (clean.triangles[0], 0),
+        ([0, 0, 1], 0),
+        (clean.triangles[1], 1),
+        (clean.triangles[2], 2),
+        (clean.triangles[3], 3),
+        ([3, 2, 3], 3),
+    ];
+    let mut raw = MeshObject {
+        name: "Defective native buttress stand-in".into(),
+        vertices: vec![],
+        triangles: vec![],
+    };
+    for (triangle, _) in triangles {
+        let first = raw.vertices.len() as u32;
+        raw.vertices
+            .extend(triangle.map(|v| clean.vertices[v as usize]));
+        raw.triangles.push([first, first + 1, first + 2]);
+    }
+    raw.vertices[4] = [-0., 0., 0.];
+    let faces = triangles.map(|(_, face)| face);
+    assert!(
+        mesh::three_mf(
+            std::slice::from_ref(&raw),
+            &[BuildItem::identity(0)],
+            LengthUnit::Millimeter
+        )
+        .is_err(),
+        "the direct writer remains strict for exact duplicate XYZ input"
+    );
+    let (filtered, removed) = mesh::omit_exact_zero_triangles(raw.clone(), &faces).unwrap();
+    assert!(removed > 0);
+    assert_eq!(removed, 2);
+    let survivors = [0, 2, 3, 4].map(|i| raw.triangles[i]);
+    assert_eq!(
+        filtered.triangles, survivors,
+        "survivor positions, order and winding must be identical"
+    );
+    assert_eq!(filtered.vertices, raw.vertices);
+    let parsed = parse(&write(
+        std::slice::from_ref(&filtered),
+        &[BuildItem::identity(0)],
+    ));
+    assert_eq!(manifold(&parsed.objects[0]), 1);
+    assert_preserved(&filtered, &parsed.objects[0]);
+    assert_preserved(&clean, &parsed.objects[0]);
+    // A near-equal corner is not an exact duplicate and is never omitted.
+    let mut near = clean.clone();
+    near.vertices.push([f64::from_bits(1), 0., 0.]);
+    near.triangles.push([0, 4, 1]);
+    let (kept, removed) = mesh::omit_exact_zero_triangles(near, &[0, 1, 2, 3, 0]).unwrap();
+    assert_eq!(removed, 0);
+    assert_eq!(kept.triangles.len(), 5);
+    // Omitting the only triangle of a native face is refused, not hidden.
+    let mut erased = clean;
+    erased.vertices.push([0., 0., 0.]);
+    erased.triangles.push([0, 4, 1]);
+    assert!(mesh::omit_exact_zero_triangles(erased.clone(), &[0, 1, 2, 3, 4]).is_err());
+    assert!(mesh::omit_exact_zero_triangles(erased, &[0, 1, 2]).is_err());
+}
+
+/// A detached internal meshing constraint leaves a T-junction: a vertex on
+/// one triangle's edge that the neighbouring triangle does not share. The
+/// strict writer refuses it rather than guessing a seam or welding vertices.
+#[test]
+fn defective_fixture_with_detached_internal_constraint_is_refused() {
+    let mut raw = tetra([[0., 0., 0.], [2., 0., 0.], [0., 2., 0.], [0., 0., 2.]]);
+    // Split face [0, 1, 3] at the midpoint of edge 0-1, without splitting the
+    // base face [0, 2, 1] that shares that edge.
+    raw.vertices.push([1., 0., 0.]);
+    raw.triangles[1] = [0, 4, 3];
+    raw.triangles.push([4, 1, 3]);
+    assert!(
+        mesh::three_mf(&[raw], &[BuildItem::identity(0)], LengthUnit::Millimeter).is_err(),
+        "an indexed seam with a detached constraint vertex is open"
+    );
 }
 fn mesh_contains(mesh: &MeshObject, point: [f64; 3]) -> bool {
     let direction = [1., 0.17320508075688773, 0.113798013];
