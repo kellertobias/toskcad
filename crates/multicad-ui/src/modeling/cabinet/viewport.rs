@@ -171,6 +171,7 @@ impl CabinetPanel {
             self.error = None;
             self.guide = None;
         }
+        self.paint_alignment(session, &ui.painter_at(rect), camera, rect);
         result
     }
 

@@ -2259,6 +2259,11 @@ impl ModelToolController {
                     "Choose the Move target point or cancel point-to-point before applying".into(),
                 );
             }
+            if self.panel_point_picking() {
+                return Err(
+                    "Choose the panel target point or cancel Place by point before applying".into(),
+                );
+            }
             self.current(session, resources, true)?;
             if let Some(blocked) = self.candidate.as_ref().and_then(|c| c.blocked.clone()) {
                 return Err(blocked);
@@ -2391,6 +2396,7 @@ impl ModelToolController {
         if self.preview_waits_for_input()
             || self.transform_dragging()
             || self.placement_point_picking()
+            || self.panel_point_picking()
             || !(self.can_apply(session, resources)
                 || self.current(session, resources, false).is_ok()
                     && (self
@@ -2588,7 +2594,7 @@ impl ModelToolController {
             return false;
         }
         let guide = !self.preview_visible(session, resources);
-        let start_allowed = start_allowed && ui.is_enabled();
+        let start_allowed = start_allowed && ui.is_enabled() && !self.panel_point_picking();
         let result = match &mut self.form {
             Some(ModelForm::Primitive(panel)) => {
                 panel.viewport(ui, session, camera, rect, start_allowed, guide)
@@ -2766,7 +2772,10 @@ impl ModelToolController {
             .as_mut()
             .ok_or("Start a modeling tool first")?
             .show(ui, session.document(), capabilities, preview);
-        if self.scale_origin_picking() || self.placement_point_picking() {
+        if self.scale_origin_picking()
+            || self.placement_point_picking()
+            || self.panel_point_picking()
+        {
             self.keyboard_confirm = None;
         }
         let result = match event {
@@ -2830,6 +2839,7 @@ mod groups;
 mod legacy;
 mod operation_interaction;
 mod operations;
+mod panel_points;
 mod placement_interaction;
 mod preparation;
 mod stock;
@@ -2853,6 +2863,8 @@ mod tests;
 #[cfg(test)]
 mod wood_box_tests;
 
+#[cfg(test)]
+mod panel_points_tests;
 #[cfg(test)]
 mod placement_tests;
 

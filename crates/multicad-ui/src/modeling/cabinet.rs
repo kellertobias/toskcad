@@ -8,6 +8,7 @@ use super::{
     form::{self, FormAction, ModelEvent, ModelRequest},
 };
 mod fields;
+mod points;
 mod viewport;
 use crate::{controls, egui};
 use fields::CabinetFields;
@@ -22,6 +23,7 @@ use multicad_core::{
         ShelfLayout, Shelves, angle, length,
     },
 };
+pub(in crate::modeling) use points::PanelPointPick;
 
 /// The typed intent sent to native preview and Apply.
 #[derive(Clone, Debug)]
@@ -200,6 +202,9 @@ pub(super) struct CabinetPanel {
     resize: super::primitive::gizmo::ResizeGizmo,
     corner_inputs: super::primitive::corner_inputs::CornerInputs,
     last_shape: Option<model::ResolvedPrimitive>,
+    // Point-to-point placement of the panel draft (CAD-375).
+    point_pick: Option<points::PanelPointPick>,
+    alignment: Option<points::PanelAlignment>,
 }
 impl CabinetPanel {
     pub fn new(document: &Document, name: String) -> Self {
@@ -254,6 +259,8 @@ impl CabinetPanel {
             resize: super::primitive::gizmo::ResizeGizmo::locked(viewport::LOCKED),
             corner_inputs: Default::default(),
             last_shape: None,
+            point_pick: None,
+            alignment: None,
         }
     }
     pub fn cabinet(document: &Document, name: String) -> Self {
@@ -395,6 +402,10 @@ impl CabinetPanel {
     }
     pub fn stamp(&self) -> FormStamp {
         self.stamp
+    }
+    /// The panel body this draft creates or edits.
+    pub(in crate::modeling) fn body(&self) -> EntityId {
+        self.body
     }
     pub fn label(&self) -> &'static str {
         match self.kind {
@@ -808,6 +819,42 @@ impl CabinetPanel {
         }
         changed
     }
+    /// Place the draft by moving one of its points onto other geometry.
+    fn show_point_placement(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label("Place by point");
+            let label = if self.point_pick.is_some() {
+                "Cancel Points"
+            } else {
+                "Choose Points"
+            };
+            if ui
+                .button(label)
+                .on_hover_text("Click a corner or edge midpoint of the new panel, then a vertex or edge midpoint on another part, or the world origin. Only the origin changes; plane, size and thickness stay.")
+                .clicked()
+            {
+                self.toggle_point_pick();
+            }
+        });
+        match self.point_pick {
+            Some(points::PanelPointPick::Source) => {
+                ui.small("1 · Click a source point on the panel draft (orange square).");
+            }
+            Some(points::PanelPointPick::Target { .. }) => {
+                ui.small(
+                    "2 · Click a target point on other geometry or the world origin (green ring).",
+                );
+            }
+            None => {
+                if let Some(alignment) = self.alignment {
+                    ui.small(format!(
+                        "Placed on {} · Enter applies, Escape cancels",
+                        alignment.target_label.to_lowercase()
+                    ));
+                }
+            }
+        }
+    }
     fn show_panel(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
         ui.label("Plane");
@@ -837,6 +884,7 @@ impl CabinetPanel {
             "Finished size along the plane's second axis",
         );
         changed |= self.show_origin(ui, "World position of the panel's minimum corner");
+        self.show_point_placement(ui);
         ui.label("Grain");
         ui.horizontal(|ui| {
             changed |= ui
