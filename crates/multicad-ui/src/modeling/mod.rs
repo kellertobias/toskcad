@@ -10,6 +10,7 @@ mod cabinet;
 pub mod cabinet_edit;
 mod compound_cutout;
 mod controller;
+pub(crate) mod diagram;
 pub(crate) mod dimension;
 mod edge_treatment;
 mod equipment;
