@@ -298,3 +298,51 @@ impl AuthoredPipe {
         }]);
     }
 }
+
+impl Solid {
+    /// Print mesh of an authored pipe thread from its dedicated law
+    /// tessellation: facets within the request of the authored law, plus the
+    /// recorded law-to-boundary bound of this retained body.
+    pub(in crate::geometry) fn authored_pipe_manufacturing(
+        &self,
+        options: MeshOptions,
+    ) -> Option<Result<crate::ManufacturingMesh, GeometryError>> {
+        use multicad_rust_kernel::axial_pipe_thread::authored::LawClosure;
+        let (source, occurrence) = self.rust_authored_axial_pipe_thread_source()?;
+        let (body, at) = self.radial_boundary_body()?;
+        Some((|| {
+            let boundary = body.placed_boundary(at)?;
+            let error = (source.local_source_error_mm + boundary.boundary_error_mm()).next_up();
+            let q = Self::rust_mesh_options(options);
+            let law = source
+                .transport
+                .tessellate_law(q, LawClosure::Solid, None)
+                .map_err(super::super::law_print::failure)?;
+            super::super::law_print::admit(law.deviation_mm, error, q.deflection)?;
+            let faces = super::super::pipe_sleeve_body::law_faces(source, usize::MAX)?;
+            let distance = law.deviation_mm + error;
+            let mut mesh = Mesh {
+                vertices: law.mesh.vertices,
+                indices: law.mesh.indices,
+                face_indices: law.mesh.face_indices,
+            };
+            faces.remap(&mut mesh.face_indices)?;
+            let o = occurrence;
+            let c = source.construction_frame;
+            let rotate = |f: PlaneFrame, d: [f64; 3]| -> [f64; 3] {
+                let n = f.normal();
+                std::array::from_fn(|i| f.u[i] * d[0] + f.v[i] * d[1] + n[i] * d[2])
+            };
+            let world = PlaneFrame {
+                origin: crate::rust_prism_topology::position(o, c.origin),
+                u: rotate(o, c.u),
+                v: rotate(o, c.v),
+            };
+            for p in mesh.vertices.as_chunks_mut::<3>().0 {
+                *p = crate::rust_prism_topology::position(world, *p);
+            }
+            let volume = body.volume_properties(at, None)?.volume_mm3;
+            super::super::law_print::receipt(mesh, volume, distance)
+        })())
+    }
+}

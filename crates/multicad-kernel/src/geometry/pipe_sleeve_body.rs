@@ -36,6 +36,8 @@ fn pi() -> I {
 pub(crate) struct CavityLaw {
     pub(crate) transport: AuthoredThread,
     pub(crate) error_mm: f64,
+    /// Sleeve face of every law role; the extra role is the stock wall.
+    pub(crate) faces: super::law_print::LawFaces,
 }
 
 pub(crate) struct PipeSleeveBody {
@@ -94,9 +96,11 @@ impl Solid {
             .radial_boundary_body()
             .expect("authored radial cavity");
         let boundary = body.placed_boundary(at)?;
+        let faces = law_faces(source, boundary.input().faces.len())?;
         let law = CavityLaw {
             transport: source.transport,
             error_mm: (source.local_source_error_mm + boundary.boundary_error_mm()).next_up(),
+            faces,
         };
         let caps = source.cap_faces;
         Self::pipe_sleeve(
@@ -296,6 +300,36 @@ impl Solid {
     }
 }
 
+/// Face of every law role of a retained authored pipe source.
+pub(super) fn law_faces(
+    source: &super::radial_boundary_body::RetainedAxialPipeThreadSource,
+    extra: usize,
+) -> Result<super::law_print::LawFaces, GeometryError> {
+    let bad = || {
+        failure(
+            GeometryErrorKind::InvalidResult,
+            "The retained pipe source has no face for a law role",
+        )
+    };
+    let band_count = source.band_faces.len();
+    if band_count > 5 || band_count != source.transport.band_count() {
+        return Err(bad());
+    }
+    let mut bands = [u32::MAX; 5];
+    for (b, &f) in source.band_faces.iter().enumerate() {
+        bands[b] = f as u32;
+    }
+    let root = *source.root_faces.first().ok_or_else(bad)? as u32;
+    Ok(super::law_print::LawFaces {
+        band_count: band_count as u32,
+        bands,
+        root,
+        // No crest limit: a stock cylinder role never occurs.
+        clip: u32::MAX,
+        caps: source.cap_faces.map(|f| f as u32),
+        extra: extra as u32,
+    })
+}
 fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [
         a[1] * b[2] - a[2] * b[1],
@@ -417,6 +451,9 @@ impl PipeSleeveBody {
         frame: PlaneFrame,
         options: multicad_rust_kernel::display::Tessellation,
     ) -> Result<Mesh, GeometryError> {
+        if let Some(law) = self.law {
+            return self.law_mesh(law, frame, options);
+        }
         let boundary = self.boundary()?;
         let mesh_failure = |what: &str, cause: String| {
             failure(
@@ -446,6 +483,45 @@ impl PipeSleeveBody {
         )
         .map_err(|e| mesh_failure("Stock join", format!("{e:?}")))?;
         crate::rust_display::placed_mesh(Ok(joined.into_mesh()), frame, false)
+    }
+    /// Dedicated authored-law bore joined to the stock cylinder. Its facet
+    /// bound plus the cavity's own law-to-boundary bound meets the request.
+    fn law_mesh(
+        &self,
+        law: CavityLaw,
+        frame: PlaneFrame,
+        options: multicad_rust_kernel::display::Tessellation,
+    ) -> Result<Mesh, GeometryError> {
+        use multicad_rust_kernel::axial_pipe_thread::authored::{
+            LawClosure, LawRole, hardware::mesh::join_sleeve_law,
+        };
+        let bore = law
+            .transport
+            .tessellate_law(options, LawClosure::Bore, None)
+            .map_err(super::law_print::failure)?;
+        let roles = [
+            bore.role_index(LawRole::StartCap),
+            bore.role_index(LawRole::EndCap),
+            law.faces.extra_role(),
+        ];
+        let (mesh, _, distance) = join_sleeve_law(
+            bore,
+            [0., self.height_mm],
+            roles,
+            self.radius_mm,
+            JoinOptions {
+                tessellation: options,
+                maximum_work: 512_000_000,
+                maximum_bytes: 64 * 1024 * 1024,
+                additional_resident_bytes: 0,
+            },
+            None,
+        )
+        .map_err(super::law_print::failure)?;
+        super::law_print::admit(distance, law.error_mm, options.deflection)?;
+        let mut mesh = mesh;
+        law.faces.remap(&mut mesh.face_indices)?;
+        crate::rust_display::placed_mesh(Ok(mesh), frame, false)
     }
     fn stock(&self, frame: PlaneFrame) -> SleeveStock {
         SleeveStock {

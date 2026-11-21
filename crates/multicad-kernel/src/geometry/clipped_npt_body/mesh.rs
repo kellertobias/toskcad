@@ -65,7 +65,52 @@ impl ClippedNptBody {
     pub(in crate::geometry) fn mesh(&self, q: Tessellation) -> Result<Mesh, GeometryError> {
         self.proved(q, None).map(|x| x.0)
     }
+    /// Print mesh from the dedicated law tessellation of the unchanged
+    /// authored source, whose stock-clipped law is this body's material.
     pub(in crate::geometry) fn manufacturing(
+        &self,
+        q: Tessellation,
+    ) -> Result<crate::ManufacturingMesh, GeometryError> {
+        use crate::geometry::law_print::{LawFaces, admit, failure as law_failure, receipt};
+        use multicad_rust_kernel::axial_pipe_thread::authored::LawClosure;
+        let law = self
+            .source
+            .source()
+            .tessellate_law(q, LawClosure::Solid, None)
+            .map_err(law_failure)?;
+        admit(law.deviation_mm, 0., q.deflection)?;
+        // Physical faces: lower, natural crest, stock cylinder, upper, root,
+        // start cap, end cap; law bands are lower, crest, upper.
+        let faces = LawFaces {
+            band_count: 3,
+            bands: [0, 1, 3, u32::MAX, u32::MAX],
+            root: 4,
+            clip: 2,
+            caps: [5, 6],
+            extra: u32::MAX,
+        };
+        let distance = law.deviation_mm;
+        let mut mesh = Mesh {
+            vertices: law.mesh.vertices,
+            indices: law.mesh.indices,
+            face_indices: law.mesh.face_indices,
+        };
+        faces.remap(&mut mesh.face_indices)?;
+        let r = self.pose.rotation;
+        let t = self.pose.translation_mm;
+        if self.pose != RigidTransform::default() {
+            for p in mesh.vertices.as_chunks_mut::<3>().0 {
+                let v = *p;
+                *p = std::array::from_fn(|i| {
+                    r[i][0] * v[0] + r[i][1] * v[1] + r[i][2] * v[2] + t[i]
+                });
+            }
+        }
+        receipt(mesh, self.volume, distance)
+    }
+    /// The certified cell-plan mesh, kept for display and its own tests.
+    #[allow(dead_code)]
+    pub(in crate::geometry) fn cell_plan_manufacturing(
         &self,
         q: Tessellation,
     ) -> Result<crate::ManufacturingMesh, GeometryError> {
