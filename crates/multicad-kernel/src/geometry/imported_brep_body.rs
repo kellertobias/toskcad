@@ -14,8 +14,11 @@ use std::collections::BTreeMap;
 mod affine;
 mod coped_tube;
 mod rounded_box;
+mod transverse_bore;
 
 pub use coped_tube::{CopedTube, CopedTubeNames};
+pub(crate) use transverse_bore::TransverseRecord;
+pub use transverse_bore::{BoreStep, TransverseBoreTool};
 
 const OPERATION: &str = "imported boundary";
 
@@ -30,6 +33,8 @@ pub(crate) struct ImportedBrepBody {
     parity: std::cell::RefCell<Vec<(f64, Rc<brep::mesh::Mesh>)>>,
     /// A proved outside cylinder: the material lies outside it.
     excluded: Option<coped_tube::ExcludedCylinder>,
+    /// The original prism and stepped tool of a transverse bore.
+    pub(super) transverse: Option<Rc<transverse_bore::TransverseRecord>>,
 }
 
 /// How a retained boundary names its topology.
@@ -299,6 +304,7 @@ impl Solid {
                 names,
                 parity: Default::default(),
                 excluded: None,
+                transverse: None,
             })),
             policy,
             provenance: vec![],
@@ -425,6 +431,10 @@ impl ImportedBrepBody {
                 axis: linear(cylinder.axis),
                 radius_mm: cylinder.radius_mm,
             }),
+            transverse: match &self.transverse {
+                Some(record) => Some(Rc::new(record.transformed(transform)?)),
+                None => None,
+            },
         })
     }
 

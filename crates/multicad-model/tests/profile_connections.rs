@@ -470,7 +470,7 @@ fn paired_end_connection_machines_only_the_host_and_survives_reopen_and_undo() {
     let host = members[0].member.output.body;
     let cut = native.snapshot().bodies[&host];
     assert_ne!(cut, members[0].feature);
-    let error = Compiler::default()
+    let rust = Compiler::default()
         .compile_sources_with_backend(
             draft.prepared.document(),
             session.revision() + 1,
@@ -478,11 +478,16 @@ fn paired_end_connection_machines_only_the_host_and_survives_reopen_and_undo() {
             GeometryBackend::Rust,
             None,
         )
-        .err()
         .unwrap();
+    let rust_cut = rust.solid(cut).unwrap();
+    assert_eq!(rust_cut.solid_count().unwrap(), 1);
     assert!(
-        error.to_string().contains("stepped access bores"),
-        "{error}"
+        rust.solid(members[0].feature)
+            .unwrap()
+            .volume_mm3()
+            .unwrap()
+            - rust_cut.volume_mm3().unwrap()
+            > 100.
     );
     assert_eq!(native.solid(cut).unwrap().solid_count().unwrap(), 1);
     let volume = |feature| native.solid(feature).unwrap().volume_mm3().unwrap();

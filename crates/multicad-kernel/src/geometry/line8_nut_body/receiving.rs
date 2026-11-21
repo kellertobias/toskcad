@@ -1,8 +1,28 @@
 //! Receiving stock clearance is independent of screw/nut mating.
 use super::*;
+mod round;
 mod screw;
 use multicad_rust_kernel::wood_thread_contact as source;
 impl Solid {
+    /// The original unpierced sweep a receiving member keeps, its placement
+    /// and the transverse tool that cut it, if any. A cut member's material
+    /// is a subset of its original sweep, so original-sweep clearance bounds
+    /// remain bounds for it.
+    pub(crate) fn receiving_sweep(
+        &self,
+    ) -> Option<(
+        &super::super::normal_sweep_body::NormalSweepBody,
+        PlaneFrame,
+        Option<&super::super::imported_brep_body::TransverseRecord>,
+    )> {
+        if let Some((body, frame)) = self.normal_sweep_body() {
+            return Some((body, frame, None));
+        }
+        let record = self.transverse_record()?;
+        let (body, frame) = record.source.normal_sweep_body()?;
+        Some((body, frame, Some(record)))
+    }
+
     /// Bound occupied overlap with ONE actual receiving member in its original
     /// occurrence pose. Call for every receiving member before admitting hardware.
     pub fn rust_line8_receiver_clearance<'a>(
@@ -31,7 +51,7 @@ impl Solid {
         let SolidBody::Line8Nut(nut) = &self.body else {
             return Err(unsupported());
         };
-        let (member, placed) = receiver.normal_sweep_body().ok_or_else(unsupported)?;
+        let (member, placed, _) = receiver.receiving_sweep().ok_or_else(unsupported)?;
         let (sweep, reverse) = member.line8_receiving_source().ok_or_else(unsupported)?;
         let literal = |matrix: [[f64; 3]; 3], origin_mm: Point| source::Frame {
             origin_mm,

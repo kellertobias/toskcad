@@ -2,10 +2,15 @@
 //! Exterior cells are earned from original boundary owners, never family names.
 use super::*;
 use crate::normal_sweep::{Edge, Sweep};
+mod bored;
 mod cells;
 mod screw;
 mod seated_stock;
 mod stock;
+pub use bored::{
+    BoredReceiverClearance, HardwarePiece, ReceivingBore, ToolBand, certify_round_pieces_clearance,
+    profiled_screw_pieces,
+};
 use cells::Cell;
 pub use screw::{
     ProfiledScrewPlacement, ProfiledScrewReceiverClearance,

@@ -151,6 +151,79 @@ impl StockEnvelope {
             jacobian,
         })
     }
+    /// The exact map of `frame` coordinates into the receiving sweep's own
+    /// coordinates, prepared once for many source boxes.
+    pub(super) fn placement(
+        frame: Frame,
+        receiver: ReceivingSweep<'_>,
+        work: &mut Work<'_>,
+    ) -> R<([Q; 3], [[Q; 3]; 3], Q)> {
+        work.charge(2048)?;
+        scale(frame)?;
+        scale(receiver.frame)?;
+        scale(receiver.occurrence)?;
+        let (a, ac) = affine(receiver.occurrence, frame, work.interrupt)?;
+        let (b, bc) = affine(receiver.frame, identity(), work.interrupt)?;
+        let origin = apply(&b, &bc, &a, work)?;
+        let mut columns = std::array::from_fn(|_| std::array::from_fn(|_| Q::zero()));
+        for j in 0..3 {
+            columns[j] = linear(&bc, &ac[j], work)?;
+        }
+        let jacobian = determinant(frame)?;
+        if jacobian <= Q::zero() {
+            return Err(Error::Unsupported);
+        }
+        Ok((origin, columns, jacobian))
+    }
+    /// A point or vector of the receiver's body coordinates in the sweep's
+    /// own coordinates.
+    pub(super) fn receiver_local(
+        receiver: ReceivingSweep<'_>,
+        value: [f64; 3],
+        point: bool,
+        work: &mut Work<'_>,
+    ) -> R<[Q; 3]> {
+        let (b, bc) = affine(receiver.frame, identity(), work.interrupt)?;
+        if point {
+            apply(&b, &bc, &vector(value)?, work)
+        } else {
+            linear(&bc, &vector(value)?, work)
+        }
+    }
+    /// The envelope of a source box under a prepared placement.
+    pub(super) fn placed_box(
+        (origin, columns, jacobian): &([Q; 3], [[Q; 3]; 3], Q),
+        bounds: [[Q; 2]; 3],
+        work: &mut Work<'_>,
+    ) -> R<Self> {
+        let mut points = Vec::with_capacity(8);
+        let mut caches = Vec::with_capacity(8);
+        for bits in 0..8 {
+            let p = std::array::from_fn(|i| bounds[i][(bits >> i) & 1].clone());
+            let p = apply(origin, columns, &p, work)?;
+            work.charge(48)?;
+            caches.push([cache(&p[0])?, cache(&p[1])?, cache(&p[2])?]);
+            points.push(p);
+        }
+        let spans = [
+            bounded(&bounds[0][1] - &bounds[0][0])?,
+            bounded(&bounds[1][1] - &bounds[1][0])?,
+            bounded(&bounds[2][1] - &bounds[2][0])?,
+        ];
+        if spans.iter().any(|x| x < &Q::zero()) {
+            return Err(Error::Unsupported);
+        }
+        Ok(Self {
+            columns: columns.clone(),
+            points,
+            caches,
+            spans,
+            jacobian: jacobian.clone(),
+        })
+    }
+    pub(super) fn corners(&self) -> &[[Q; 3]] {
+        &self.points
+    }
     pub fn projected_ranges(&self, work: &mut Work<'_>) -> R<[[Q; 2]; 2]> {
         work.charge(self.points.len() * 4)?;
         Ok(std::array::from_fn(|i| {
