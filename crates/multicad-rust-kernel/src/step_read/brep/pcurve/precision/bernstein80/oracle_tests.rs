@@ -170,3 +170,89 @@ fn actual_numerical_work_frontiers_observed_cancellation_and_unchanged_retry() {
         Err(ReadError::Unsupported)
     ));
 }
+/// Exact `k`th Bernstein control of `polynomial(m, 64, a) * polynomial(n, 128, b)`.
+fn exact_coefficient(m: usize, n: usize, [a, b]: [usize; 2], k: usize) -> BigRational {
+    let choose = pascal(m + n);
+    let mut numerator = BigInt::from(0);
+    for i in k.saturating_sub(n)..=k.min(m) {
+        numerator += &choose[m][i]
+            * &choose[n][k - i]
+            * BigInt::from(integer_control(i, a))
+            * BigInt::from(integer_control(k - i, b));
+    }
+    BigRational::new(numerator, &choose[m + n][k] * BigInt::from(8192))
+}
+#[test]
+fn shared_weight_products_and_elevations_enclose_every_factor_exactly() {
+    let (m, n) = (39, 41);
+    let factors = [0, 5, 11].map(|offset| polynomial(m, 64, offset));
+    let b = polynomial(n, 128, 9);
+    let mut work = Budget::new(512_000_000, None);
+    let products = product_many(factors, b, &mut work).unwrap();
+    let used = work.used();
+    for (p, offset) in products.iter().zip([0, 5, 11]) {
+        assert_eq!(p.degree, m + n);
+        for k in 0..=m + n {
+            encloses(p.c[k], &exact_coefficient(m, n, [offset, 9], k));
+            assert!(p.c[k].width() < 1e-10, "lost signed-control precision");
+        }
+    }
+    // The batch is cheaper than three separate products of the same pairs.
+    let mut separate = Budget::new(512_000_000, None);
+    for f in factors {
+        product(f, b, &mut separate).unwrap();
+    }
+    assert!(used < separate.used());
+    // Its work frontier is exact and a refused attempt keeps no partial result.
+    assert!(matches!(
+        product_many(factors, b, &mut Budget::new(used - 1, None)),
+        Err(ReadError::Limit)
+    ));
+    let mut exact = Budget::new(used, None);
+    product_many(factors, b, &mut exact).unwrap();
+    assert_eq!(exact.remaining, 0);
+
+    let low = [polynomial(5, 64, 7), polynomial(5, 64, 2)];
+    let elevated = elevate_many(low, 80, &mut Budget::new(512_000_000, None)).unwrap();
+    let choose = pascal(80);
+    for (p, offset) in elevated.iter().zip([7, 2]) {
+        for i in 0usize..=80 {
+            let mut numerator = BigInt::from(0);
+            for j in i.saturating_sub(75)..=i.min(5) {
+                numerator +=
+                    &choose[5][j] * &choose[75][i - j] * BigInt::from(integer_control(j, offset));
+            }
+            encloses(
+                p.c[i],
+                &BigRational::new(numerator, &choose[80][i] * BigInt::from(64)),
+            );
+        }
+    }
+    let same = elevate_many(low, 5, &mut Budget::new(512_000_000, None)).unwrap();
+    assert!(same.iter().zip(&low).all(|(a, b)| {
+        a.degree == 5
+            && a.c
+                .iter()
+                .zip(&b.c)
+                .all(|(x, y)| x.lo == y.lo && x.hi == y.hi)
+    }));
+    // Mixed degrees, lowering and degrees past the arena are refused.
+    let mixed = [polynomial(5, 64, 0), polynomial(6, 64, 0)];
+    let mut work = Budget::new(512_000_000, None);
+    assert!(matches!(
+        product_many(mixed, b, &mut work),
+        Err(ReadError::Unsupported)
+    ));
+    assert!(matches!(
+        elevate_many(mixed, 80, &mut work),
+        Err(ReadError::Unsupported)
+    ));
+    assert!(matches!(
+        elevate_many(low, 4, &mut work),
+        Err(ReadError::Unsupported)
+    ));
+    assert!(matches!(
+        product_many([polynomial(40, 64, 0)], polynomial(41, 64, 0), &mut work),
+        Err(ReadError::Unsupported)
+    ));
+}

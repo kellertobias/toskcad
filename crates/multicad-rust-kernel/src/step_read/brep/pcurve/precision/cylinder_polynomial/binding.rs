@@ -183,6 +183,7 @@ fn restrict(
                     .all(|h| h[3].lo == 1. && h[3].hi == 1.),
             ReadError::Unsupported,
         )?;
+        let whole_right = compare(to, c, b)?.is_eq();
         for axis in 0..3 {
             let mut values = [I::point(0.); 17];
             for (i, h) in cell.controls().iter().enumerate() {
@@ -190,7 +191,7 @@ fn restrict(
                 values[i] = h[axis];
             }
             let p = P::new(&values[..=data.degree()], b)?;
-            let p = if compare(to, c, b)?.is_eq() {
+            let p = if whole_right {
                 p
             } else {
                 p.split(right_i, b)?[0]
@@ -395,7 +396,21 @@ pub(in super::super) fn certify(
         ReadError::Unsupported,
     )?;
     let reserve = I::point(window.speed()) * phase + I::point(window.numeric_reserve());
+    // The scan below keeps the restricted cells it already extracted, so the
+    // proof reuses those exact restrictions instead of repeating them.
+    let mut restricted = Vec::new();
     if !legacy {
+        let count = points.len().saturating_sub(1);
+        restricted
+            .try_reserve_exact(count)
+            .map_err(|_| ReadError::Limit)?;
+        check(
+            restricted.capacity() <= MAX_UNION
+                && resident.saturating_add(
+                    restricted.capacity() * std::mem::size_of::<([P; 3], [P; 3])>(),
+                ) <= 8 * 1024 * 1024,
+            ReadError::Limit,
+        )?;
         // Refusal-only scan of EVERY common cell first, so a pair whose
         // actual deviation already exceeds `tol` spends no proof work.
         let (mut source_cursor, mut target_cursor) = (0usize, 0usize);
@@ -406,14 +421,20 @@ pub(in super::super) fn certify(
             if !analytic_polynomial::scan(&support, &[p[0], p[1]], &q, tol, b)? {
                 return Ok(Some(Proof::Unsupported));
             }
+            restricted.push((p, q));
         }
     }
     let mut maximum = 0f64;
     let (mut source_cursor, mut target_cursor) = (0usize, 0usize);
-    for pair in points.windows(2) {
+    for (index, pair) in points.windows(2).enumerate() {
         b.charge(4096)?;
-        let p = restrict(&a, &ka, &pair[0], &pair[1], &mut source_cursor, b)?;
-        let q = restrict(&c, &kc, &pair[0], &pair[1], &mut target_cursor, b)?;
+        let (p, q) = match restricted.get(index) {
+            Some(&cell) => cell,
+            None => (
+                restrict(&a, &ka, &pair[0], &pair[1], &mut source_cursor, b)?,
+                restrict(&c, &kc, &pair[0], &pair[1], &mut target_cursor, b)?,
+            ),
+        };
         let span = enclose(&operation(&pair[1], &pair[0], false, b)?, b)?;
         let shifted = I::point(window.acceleration()) * phase * span
             + I::point(window.speed()) * span * ratio;

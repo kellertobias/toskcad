@@ -902,13 +902,19 @@ fn unsupported_downstream_operations_refuse_explicitly() {
     let cut = subtract(&stock, &cylinder([3., 4., -2.], [0.2, 0.1, 1.], 1., 20.));
     let volume = cut.volume_mm3().unwrap();
 
-    // Exchange: no STEP encoding is claimed for this boundary.
-    assert!(!cut.supports_step_export());
+    // Exchange: the retained boundary is written exactly and reads back
+    // independently with the same volume.
+    assert!(cut.supports_step_export());
     let scratch = tempfile::tempdir().unwrap();
     let path = scratch.path().join("oblique.step");
-    let error = cut.write_step(&path).err().unwrap();
-    assert_eq!(error.kind, GeometryErrorKind::Unsupported);
-    assert!(!path.exists());
+    cut.write_step(&path).unwrap();
+    let back = Solid::import_rust_step(
+        &std::fs::read_to_string(&path).unwrap(),
+        EntityId::new(),
+        policy(),
+    )
+    .unwrap();
+    assert!((back.volume_mm3().unwrap() - volume).abs() <= 1e-9 * volume);
 
     // Further Booleans in either role.
     let block = Solid::box_solid([2.; 3], policy()).unwrap();
@@ -972,11 +978,13 @@ fn unsupported_downstream_operations_refuse_explicitly() {
             .err(),
         cut.mirrored_named(PlaneFrame::default(), EntityId::new(), policy())
             .err(),
-        cut.to_brep().err(),
     ];
     for refusal in refusals {
         assert_eq!(refusal.unwrap().kind, GeometryErrorKind::Unsupported);
     }
+    // Exact text is the Rust STEP encoding and rebuilds the same volume.
+    let text = Solid::from_brep(&cut.to_brep().unwrap(), policy()).unwrap();
+    assert!((text.volume_mm3().unwrap() - volume).abs() <= 1e-9 * volume);
     for face in 0..7 {
         let plane = frame([0.; 3], [0., 0., 1.]);
         assert!(cut.planar_face_contours(face, plane).is_err());
@@ -1006,7 +1014,17 @@ fn unsupported_downstream_operations_refuse_explicitly() {
     let members = [&cut, &far];
     let compound = Solid::compound_named(&members, EntityId::new(), policy()).unwrap();
     assert!((compound.volume_mm3().unwrap() - volume - 8.).abs() < 1e-9);
-    assert!(!compound.supports_step_export());
+    assert!(compound.supports_step_export());
+    let path = scratch.path().join("compound.step");
+    compound.write_step(&path).unwrap();
+    let back = Solid::import_rust_step(
+        &std::fs::read_to_string(&path).unwrap(),
+        EntityId::new(),
+        policy(),
+    )
+    .unwrap();
+    assert_eq!(back.solid_count().unwrap(), 2);
+    assert!((back.volume_mm3().unwrap() - volume - 8.).abs() < 1e-9);
     assert!(compound.manufacturing_mesh(OPTIONS).is_ok());
     // Nothing above changed the cut.
     assert_eq!(cut.volume_mm3().unwrap(), volume);

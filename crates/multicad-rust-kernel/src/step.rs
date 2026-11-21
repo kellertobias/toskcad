@@ -82,6 +82,7 @@ mod twisted_region;
 pub use radial_boundary::write_radial_boundary;
 pub use rounded_cylinder::write_rounded_cylinder;
 pub use tapered_thread::write_tapered_thread;
+mod oblique_bore;
 mod warped_union;
 mod writer;
 pub use assembly::write_assembly;
@@ -100,6 +101,7 @@ pub use helical::{
 pub use nonplanar_loft::write_nonplanar_loft;
 pub use normal_relief::write_normal_relief;
 pub use normal_sweep::write_normal_sweep;
+pub use oblique_bore::{supports_oblique_bore, write_oblique_bore};
 pub use pierced_sweep::write_pierced_normal_sweep;
 pub use planar_union::{supports_planar_union, write_planar_union};
 pub use smooth_loft::write_smooth_loft;

@@ -158,12 +158,23 @@ fn rust_mcp_round_trips_a_step_body_and_refuses_an_unsupported_shape() {
         policy,
     )
     .unwrap();
-    write_pocket(
-        &stock,
-        &oblique_tool,
-        &dir.path().join("oblique-blind-pocket.step"),
-        policy,
-    );
+    let oblique = stock
+        .boolean(&oblique_tool, BooleanOperation::Subtract, policy)
+        .unwrap()
+        .unwrap();
+    oblique
+        .write_step(&dir.path().join("oblique-blind-pocket.step"))
+        .unwrap();
+    // A box whose top face lies on an OFFSET_SURFACE: a surface family the
+    // Rust reader does not admit.
+    std::fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/offset-top-box.step"
+        ),
+        dir.path().join("offset-top-box.step"),
+    )
+    .unwrap();
     let workspace = || Workspace::new(Document::new("STEP backend").unwrap()).unwrap();
     let native = Headless::new(workspace(), Some(dir.path().to_path_buf()), false);
     let rust = Headless::with_geometry_backend(
@@ -185,19 +196,11 @@ fn rust_mcp_round_trips_a_step_body_and_refuses_an_unsupported_shape() {
             json!({"source": source_feature, "kind": "face"}),
         ),
     ];
-    let rust_with_legacy_source = Headless::with_geometry_backend(
-        Workspace::new(native.document()).unwrap(),
-        None,
-        false,
-        GeometryBackend::Rust,
-    );
     for (name, args) in tools {
         dispatch(&native, &call(), name, args.clone()).unwrap();
-        let error = dispatch(&rust_with_legacy_source, &call(), name, args).unwrap_err();
-        assert_eq!(error.code, "model_failed");
-        assert!(error.message.contains("embedded OpenCascade"), "{error}");
     }
-    for (host, name) in [(&native, "opencascade"), (&rust, "rust")] {
+    // The default headless host is the Rust kernel, like the explicit one.
+    for (host, name) in [(&native, "rust"), (&rust, "rust")] {
         let info = dispatch(host, &call(), "document_info", json!({})).unwrap();
         assert_eq!(info["geometry_backend"], name);
         assert_eq!(info["scope"]["mode"], "headless");
@@ -207,12 +210,45 @@ fn rust_mcp_round_trips_a_step_body_and_refuses_an_unsupported_shape() {
         &rust,
         &call(),
         "import_step",
-        json!({ "expected_revision": 0, "file_name": "oblique-blind-pocket.step" }),
+        json!({ "expected_revision": 0, "file_name": "offset-top-box.step" }),
     )
     .unwrap_err();
     assert_eq!(refused.code, "model_failed");
-    assert!(refused.message.contains("Rust STEP import"), "{refused}");
+    assert!(
+        refused
+            .message
+            .contains("Rust STEP import requires a supported analytic solid in millimeters"),
+        "{refused}"
+    );
     assert_eq!(rust.document(), before);
+
+    // The oblique blind pocket round-trips with its exact volume and bounds.
+    let rust_oblique = Headless::with_geometry_backend(
+        workspace(),
+        Some(dir.path().to_path_buf()),
+        false,
+        GeometryBackend::Rust,
+    );
+    let imported_oblique = dispatch(
+        &rust_oblique,
+        &call(),
+        "import_step",
+        json!({ "expected_revision": 0, "file_name": "oblique-blind-pocket.step" }),
+    )
+    .unwrap();
+    assert_eq!(imported_oblique["revision"], 1);
+    assert_eq!(imported_oblique["parts"].as_array().unwrap().len(), 1);
+    let model = dispatch(&rust_oblique, &call(), "evaluate_model", json!({})).unwrap();
+    let part = &model["parts"][0];
+    let volume = oblique.volume_mm3().unwrap();
+    assert!((part["volume_mm3"].as_f64().unwrap() - volume).abs() <= 1e-9 * volume);
+    let bounds = oblique.bounds().unwrap();
+    for (key, expected) in [("min", bounds.min), ("max", bounds.max)] {
+        let actual = &part["bounds_mm"][key];
+        for (i, value) in expected.iter().enumerate() {
+            assert!((actual[i].as_f64().unwrap() - value).abs() < 1e-9, "{key}");
+        }
+    }
 
     let rust_round = Headless::with_geometry_backend(
         workspace(),
