@@ -371,8 +371,11 @@ impl Surface {
                 let square = tangents
                     .iter()
                     .all(|t| dot(offset, *t).abs() <= 1e-6 * norm(offset) * norm(*t));
-                let near = 1e-6 * (1. + norm(point));
-                if d <= 1e-9 * (1. + norm(point)) || (square && d <= near) {
+                // Both thresholds are geometric lengths plus the rounding of
+                // the coordinates, so a translated copy decides alike.
+                let rounding = 64. * f64::EPSILON * norm(point);
+                let near = 1e-6 + rounding;
+                if d <= 1e-9 + rounding || (square && d <= near) {
                     return local;
                 }
                 let (other, uv) = global();

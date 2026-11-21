@@ -3294,3 +3294,73 @@ fn affine_images_keep_exact_volume_and_turn_circles_into_ellipses() {
         );
     }
 }
+
+#[test]
+fn an_edge_whose_end_control_repeats_up_to_rounding_samples_within_its_deflection() {
+    // The second control point differs from the first only by rounding, so
+    // the end derivative has rounding size and an arbitrary direction, as
+    // in an exchanged spherical bevel flank.
+    let cubic = NurbsCurve::new(
+        3,
+        vec![
+            [9.380588902361167, -0.7816240357049885, 10.586903575959017],
+            [9.380588902361165, -0.7816240357049885, 10.586903575959015],
+            [10., 1., 9.],
+            [12., 0., 8.],
+        ],
+        None,
+        vec![0., 1.],
+        vec![4, 4],
+    )
+    .unwrap();
+    let curve = Curve::nurbs(cubic, TOLERANCE);
+    let (_, start) = curve.evaluate(0.);
+    assert!(norm(start) < 1e-12);
+    for deflection in [0.2, 0.01, 1e-4] {
+        let samples = curve.sample(0., 1., deflection, 0.5).unwrap();
+        // Every chord still lies within the deflection of the curve.
+        for pair in samples.windows(2) {
+            let middle = curve.evaluate(0.5 * (pair[0] + pair[1])).0;
+            let chord = scale(
+                add(curve.evaluate(pair[0]).0, curve.evaluate(pair[1]).0),
+                0.5,
+            );
+            assert!(distance(chord, middle) <= deflection);
+        }
+    }
+}
+
+#[test]
+fn a_seeded_inversion_decides_alike_for_a_translated_copy() {
+    // A hairpin whose two legs lie 0.03 mm apart, extruded 1 mm along z.
+    // Seeded on the far leg, Newton settles squarely on that leg's foot; only
+    // the global search finds the nearer one. A copy moved tens of metres
+    // away must not keep the far foot merely because its coordinates grew.
+    let hairpin = |t: Point| {
+        let controls = [[0., 0.], [1., 0.], [1., 0.03], [0., 0.03]];
+        let points = controls
+            .iter()
+            .flat_map(|[x, y]| [0., 1.].map(|z| [x + t[0], y + t[1], z + t[2]]))
+            .collect();
+        let net = NurbsSurface::new(
+            [3, 1],
+            [4, 2],
+            points,
+            None,
+            [vec![0., 1.], vec![0., 1.]],
+            [vec![4, 4], vec![2, 2]],
+        )
+        .unwrap();
+        Surface::nurbs(net, TOLERANCE)
+    };
+    for shift in [[0., 0., 0.], [30000., -20000., 10000.]] {
+        let surface = hairpin(shift);
+        let point = [0.3 + shift[0], 0.012 + shift[1], 0.5 + shift[2]];
+        let found = surface.invert(point, Some([0.89, 0.5]));
+        let gap = distance(surface.evaluate(found).0, point);
+        // The near leg lies about 0.011 mm below the point, the far one
+        // about 0.017 mm above it.
+        assert!(gap < 0.0125, "{shift:?}: {gap}");
+        assert!(found[0] < 0.5, "{shift:?}: {found:?}");
+    }
+}
