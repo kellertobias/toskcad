@@ -8,6 +8,8 @@ use multicad_core::{
 };
 use multicad_kernel::{DrawingHatch, DrawingProjection, DrawingSolid, PlaneFrame, Solid};
 use std::collections::{BTreeMap, BTreeSet};
+mod grain;
+pub use grain::{GRAIN_LINE_MM, GRAIN_RGB, GRAIN_SPACING_MM};
 
 pub enum DrawingShape<'a> {
     Borrowed(&'a Solid),
@@ -785,16 +787,27 @@ impl Model {
         let mut exhausted = false;
         for id in books(document) {
             let book = read(document, id).map_err(|e| error(Some(id), e))?;
-            for view in book
+            for (page, view) in book
                 .pages
                 .iter()
                 .filter(|p| selected_page.is_none_or(|id| p.id == id))
-                .flat_map(|p| &p.views)
+                .flat_map(|p| p.views.iter().map(move |v| (p, v)))
             {
                 let mut evaluation = if exhausted || views.len() >= budget.views {
                     ViewEvaluation::Unresolved{message:"Drawing publication budget exceeded; reduce the number or complexity of views".into()}
                 } else {
                     self.project_drawing_view(document, revision, view, providers)
+                        .and_then(|mut evaluation| {
+                            // Display-only grain draws first, beneath outlines.
+                            if page.settings.panel_grain
+                                && let ViewEvaluation::Ready { vectors, .. } = &mut evaluation
+                            {
+                                let mut grain = self.grain_vectors(document, view, providers)?;
+                                grain.append(vectors);
+                                *vectors = grain;
+                            }
+                            Ok(evaluation)
+                        })
                         .unwrap_or_else(|e| ViewEvaluation::Unresolved {
                             message: e.to_string(),
                         })

@@ -514,3 +514,571 @@ fn hollow_section_widget_can_author_a_real_solid_bar_without_replacing_stock_or_
     assert!((volume - 120000.).abs() < 1e-5);
     assert!(fixture.session.document().get(fixture.stocks[2]).is_some());
 }
+
+/// Render the inline editor once and return (accessible labels, unclipped
+/// painted texts with their rects, focused accessible label).
+fn render(
+    ctx: &egui::Context,
+    editor: &mut LibraryEditor,
+    s: &mut Session,
+    size: egui::Vec2,
+    events: Vec<egui::Event>,
+) -> (Vec<String>, Vec<(String, egui::Rect)>, Option<String>) {
+    let output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+            events,
+            focused: true,
+            ..Default::default()
+        },
+        |ui| editor.show_inline(ui, s, &Default::default(), true),
+    );
+    let update = output.platform_output.accesskit_update.as_ref().unwrap();
+    let labels = update
+        .nodes
+        .iter()
+        .filter_map(|(_, node)| node.label().map(str::to_owned))
+        .collect();
+    let focused = update
+        .nodes
+        .iter()
+        .find(|(id, _)| *id == update.focus)
+        .and_then(|(_, node)| node.label().map(str::to_owned));
+    let texts = output
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) => {
+                let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
+                (shape.clip_rect.contains_rect(rect)
+                    && egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(rect))
+                .then(|| (text.galley.text().to_owned(), rect))
+            }
+            _ => None,
+        })
+        .collect();
+    output.drop_without_applying_deltas();
+    (labels, texts, focused)
+}
+
+#[test]
+fn materials_tree_groups_stock_with_its_material_and_says_metal_sheet_stock() {
+    let mut fixture = shared_fixture::fixture().unwrap();
+    let before = fixture.session.document().clone();
+    let mut editor = editor(&fixture.session);
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    crate::theme::configure(&ctx);
+    // A narrow window: the tree keeps its minimum width and wraps rows.
+    let size = egui::vec2(640., 560.);
+    let sheet = fixture
+        .session
+        .document()
+        .get(fixture.stocks[1])
+        .unwrap()
+        .clone();
+    editor.select(&fixture.session, sheet);
+    let mut out = Default::default();
+    for _ in 0..3 {
+        out = render(&ctx, &mut editor, &mut fixture.session, size, vec![]);
+    }
+    let (labels, texts, _) = out;
+    for heading in [
+        "Materials",
+        "Panel stock",
+        "Metal sheet stock",
+        "Profile stock",
+        "Print stock",
+        "Appearances",
+        "Hatches",
+    ] {
+        assert!(labels.iter().any(|l| l == heading), "missing {heading}");
+    }
+    assert!(!labels.iter().any(|l| l == "Sheet stock"));
+    let painted = |needle: &str| texts.iter().find(|(t, _)| t == needle).map(|(_, r)| *r);
+    let tree = size.x * 0.24 + 1.;
+    for text in [
+        "Stock definitions",
+        "Appearance and drawing",
+        "Metal sheet stock",
+        "Steel sheet 2",
+        "Material: Shared steel",
+        "Used by 2 stock definitions",
+        "Used by 1 stock definition",
+    ] {
+        let rect = painted(text).unwrap_or_else(|| panic!("{text} not painted unclipped"));
+        assert!(rect.left() < tree, "{text} belongs in the tree");
+    }
+    // The stock editor uses the same wording for its kind.
+    assert!(
+        texts
+            .iter()
+            .any(|(t, r)| t == "Metal sheet" && r.left() > tree)
+    );
+    assert_eq!(fixture.session.document(), &before, "navigation only");
+}
+
+#[test]
+fn keyboard_tab_and_enter_select_a_tree_definition() {
+    let mut fixture = shared_fixture::fixture().unwrap();
+    let mut editor = editor(&fixture.session);
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    crate::theme::configure(&ctx);
+    let size = egui::vec2(900., 640.);
+    for _ in 0..3 {
+        render(&ctx, &mut editor, &mut fixture.session, size, vec![]);
+    }
+    let key = |key| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    };
+    let mut reached = false;
+    for _ in 0..12 {
+        let (_, _, focused) = render(
+            &ctx,
+            &mut editor,
+            &mut fixture.session,
+            size,
+            vec![key(egui::Key::Tab)],
+        );
+        if focused.as_deref() == Some("Birch") {
+            reached = true;
+            break;
+        }
+    }
+    assert!(reached, "Tab reaches the Birch material row");
+    render(
+        &ctx,
+        &mut editor,
+        &mut fixture.session,
+        size,
+        vec![key(egui::Key::Enter)],
+    );
+    assert_eq!(
+        editor.draft.as_ref().map(|d| d.entity.name.as_str()),
+        Some("Birch")
+    );
+}
+
+#[test]
+fn draft_stock_rows_name_a_new_companion_and_broken_links_as_missing() {
+    let s = Session::new(Document::new("Rows").unwrap()).unwrap();
+    let mut editor = editor(&s);
+    editor.create_stock(&s, 1);
+    let draft = &editor.draft.as_ref().unwrap().entity;
+    assert_eq!(draft.name, "New metal sheet stock");
+    assert_eq!(
+        row_detail(s.document(), &BTreeMap::new(), draft).as_deref(),
+        Some("Material: new (applied with this stock)")
+    );
+    let committed = BTreeMap::from([(draft.id, stock_material(draft).unwrap())]);
+    assert_eq!(
+        row_detail(s.document(), &committed, draft).as_deref(),
+        Some("Material: missing")
+    );
+    assert_eq!(ToolStock::Sheet.label(), "Create metal sheet stock…");
+}
+
+fn click_label(
+    ctx: &egui::Context,
+    editor: &mut LibraryEditor,
+    s: &mut Session,
+    size: egui::Vec2,
+    label: &str,
+) {
+    let output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+            focused: true,
+            ..Default::default()
+        },
+        |ui| editor.show_inline(ui, s, &Default::default(), true),
+    );
+    let bounds = output
+        .platform_output
+        .accesskit_update
+        .as_ref()
+        .unwrap()
+        .nodes
+        .iter()
+        .find_map(|(_, node)| {
+            (node.label() == Some(label))
+                .then(|| node.bounds())
+                .flatten()
+        })
+        .unwrap_or_else(|| panic!("no control {label}"));
+    output.drop_without_applying_deltas();
+    let pos = egui::pos2(
+        ((bounds.x0 + bounds.x1) / 2.) as f32,
+        ((bounds.y0 + bounds.y1) / 2.) as f32,
+    );
+    for pressed in [true, false] {
+        render(
+            ctx,
+            editor,
+            s,
+            size,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                },
+            ],
+        );
+    }
+}
+
+#[test]
+fn stock_routes_to_its_material_color_which_drives_preview_swatch_and_model_and_round_trips() {
+    use multicad_core::project_file::{self, ProjectFile};
+    let mut fixture = shared_fixture::fixture().unwrap();
+    let s = &mut fixture.session;
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    crate::theme::configure(&ctx);
+    let size = egui::vec2(1100., 800.);
+    let mut editor = editor(s);
+    let panel = s.document().get(fixture.stocks[0]).unwrap().clone();
+    let birch = stock_material(&panel).unwrap();
+    editor.select(s, panel);
+    for _ in 0..3 {
+        render(&ctx, &mut editor, s, size, vec![]);
+    }
+    let (labels, texts, _) = render(&ctx, &mut editor, s, size, vec![]);
+    assert!(texts.iter().any(|(t, _)| t == "Color (from material)"));
+    assert!(
+        texts.iter().any(|(t, _)| t == "#D2AD78"),
+        "Birch color shown on stock"
+    );
+    assert!(labels.iter().any(|l| l == "Edit material color: Birch"));
+    // A dirty stock draft cannot jump away and lose its edits.
+    editor.draft.as_mut().unwrap().entity.name = "Renamed panel".into();
+    click_label(&ctx, &mut editor, s, size, "Edit material color: Birch");
+    assert_eq!(editor.draft.as_ref().unwrap().entity.name, "Renamed panel");
+    editor.discard(s);
+    click_label(&ctx, &mut editor, s, size, "Edit material color: Birch");
+    assert_eq!(editor.draft.as_ref().unwrap().entity.id, birch);
+    let (labels, texts, _) = render(&ctx, &mut editor, s, size, vec![]);
+    assert!(texts.iter().any(|(t, _)| t == "Appearance color"));
+    assert!(labels.iter().any(|l| l == "Hex") && labels.iter().any(|l| l == "RGB"));
+    assert!(
+        texts
+            .iter()
+            .any(|(t, _)| t.starts_with("Shared: changing this color updates 1 stock definition")),
+        "shared effect is explained"
+    );
+    // Edit the color and preview it natively before Apply.
+    let new_color = [40, 120, 60, 255];
+    if let EntityData::Material { color_rgba, .. } = &mut editor.draft.as_mut().unwrap().entity.data
+    {
+        *color_rgba = new_color;
+    }
+    let before = s.document().clone();
+    preview(&mut editor, s).unwrap();
+    assert!(editor.preview_scene(s, &Default::default()).is_some());
+    assert_eq!(s.document(), &before);
+    editor.apply(s, &Default::default(), Channel::Ui).unwrap();
+    // The model scene colors each Part with `Resolver::resolve(part)`
+    // (multicad-app scene publication); the Birch panel part follows.
+    assert_eq!(
+        resolve(s.document(), fixture.parts[0])
+            .unwrap()
+            .appearance
+            .color_rgba,
+        new_color
+    );
+    // Swatch and stock preview resolve the same color; stock has no own color.
+    editor.open(s);
+    render(&ctx, &mut editor, s, size, vec![]);
+    assert_eq!(editor.swatches.get(&birch), Some(&new_color));
+    let Some(LibraryDefinition::Stock(stock)) =
+        read(s.document().get(fixture.stocks[0]).unwrap()).unwrap()
+    else {
+        panic!("stock")
+    };
+    assert_eq!(stock.material, birch);
+    let applied = s.document().clone();
+    s.undo(s.revision(), Actor::local(Channel::Ui)).unwrap();
+    assert_eq!(s.document(), &before);
+    s.redo(s.revision(), Actor::local(Channel::Ui)).unwrap();
+    assert_eq!(s.document(), &applied);
+    let mut bytes = vec![];
+    project_file::write(
+        &ProjectFile::new(applied.clone()).unwrap(),
+        &mut bytes,
+        Default::default(),
+    )
+    .unwrap();
+    let opened = project_file::read(
+        &mut std::io::Cursor::new(bytes),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap();
+    assert!(matches!(
+        opened.project.document.get(birch).unwrap().data,
+        EntityData::Material { color_rgba, .. } if color_rgba == new_color
+    ));
+}
+
+#[test]
+fn linked_appearance_overrides_are_named_and_shown_in_stock_color() {
+    let mut s = Session::new(Document::new("Linked appearance").unwrap()).unwrap();
+    let mut editor = editor(&s);
+    editor.create(&s, 2);
+    if let EntityData::Extension { definition, .. } =
+        &mut editor.draft.as_mut().unwrap().entity.data
+    {
+        definition.data = serde_json::to_value(LibraryDefinition::Appearance(Appearance {
+            color_rgba: [10, 20, 30, 255],
+            ..Appearance::default()
+        }))
+        .unwrap();
+    }
+    editor.draft.as_mut().unwrap().entity.name = "Lacquer".into();
+    let appearance = editor.draft.as_ref().unwrap().entity.id;
+    apply(&mut editor, &mut s).unwrap();
+    editor.create(&s, 0);
+    let material = editor.draft.as_ref().unwrap().entity.id;
+    editor.draft.as_mut().unwrap().style = Some((
+        EntityId::new(),
+        MaterialStyle {
+            material,
+            appearance: Some(LibraryRef::capture(s.document(), appearance).unwrap()),
+            hatch: None,
+        },
+    ));
+    apply(&mut editor, &mut s).unwrap();
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    crate::theme::configure(&ctx);
+    let size = egui::vec2(1100., 800.);
+    editor.select(&s, s.document().get(material).unwrap().clone());
+    for _ in 0..2 {
+        render(&ctx, &mut editor, &mut s, size, vec![]);
+    }
+    let (_, texts, _) = render(&ctx, &mut editor, &mut s, size, vec![]);
+    assert!(
+        texts
+            .iter()
+            .any(|(t, _)| t.contains("linked appearance 'Lacquer'")),
+        "the override is not silent"
+    );
+    assert_eq!(editor.swatches.get(&material), Some(&[10, 20, 30, 255]));
+    editor.create_stock(&s, 0);
+    apply(&mut editor, &mut s).unwrap();
+    let (_, texts, _) = render(&ctx, &mut editor, &mut s, size, vec![]);
+    assert!(
+        texts.iter().any(|(t, _)| t == "#0A141E"),
+        "stock shows the canonical color"
+    );
+}
+
+fn part_of(document: &Document) -> EntityId {
+    document
+        .entities()
+        .find(|e| matches!(e.data, EntityData::Part { .. }))
+        .unwrap()
+        .id
+}
+
+#[test]
+fn new_panel_stock_drafts_a_wood_material_that_panels_preview_and_reopen_share() {
+    use multicad_core::{
+        model::{
+            self, BodyOutput, GrainAxis, PanelDefinition, PanelEdges, PanelPlane, PanelRequest,
+            PanelSource, length,
+        },
+        project_file::{self, ProjectFile},
+    };
+    // Both entry points: Project "New panel stock" and Model "Create panel stock…".
+    let empty = Session::new(Document::new("Wood").unwrap()).unwrap();
+    let model_form = LibraryEditor::for_model_stock(&empty, ToolStock::Panel);
+    let companion = model_form
+        .draft
+        .as_ref()
+        .unwrap()
+        .companion
+        .as_ref()
+        .unwrap();
+    assert_eq!(companion.name, "Wood");
+    assert!(
+        matches!(companion.data, EntityData::Material { color_rgba, .. } if color_rgba == WOOD_COLOR)
+    );
+    // Other stock kinds keep the neutral companion.
+    let sheet = LibraryEditor::for_model_stock(&empty, ToolStock::Sheet);
+    let neutral = sheet.draft.as_ref().unwrap().companion.as_ref().unwrap();
+    assert!(
+        matches!(neutral.data, EntityData::Material { color_rgba, .. } if color_rgba != WOOD_COLOR)
+    );
+
+    let mut s = empty;
+    let mut editor = editor(&s);
+    editor.create_stock(&s, 0);
+    let stock = editor.draft.as_ref().unwrap().entity.id;
+    let material = editor
+        .draft
+        .as_ref()
+        .unwrap()
+        .companion
+        .as_ref()
+        .unwrap()
+        .id;
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    crate::theme::configure(&ctx);
+    let size = egui::vec2(1100., 800.);
+    // The draft preview already shows the wood tone before Apply.
+    let (_, texts, _) = render(&ctx, &mut editor, &mut s, size, vec![]);
+    assert!(
+        texts
+            .iter()
+            .any(|(t, _)| t == "Material: new (applied with this stock)")
+    );
+    apply(&mut editor, &mut s).unwrap();
+    editor.select(&s, s.document().get(stock).unwrap().clone());
+    for _ in 0..2 {
+        render(&ctx, &mut editor, &mut s, size, vec![]);
+    }
+    let (_, texts, _) = render(&ctx, &mut editor, &mut s, size, vec![]);
+    assert!(
+        texts.iter().any(|(t, _)| t == "#C49A6C"),
+        "stock shows wood"
+    );
+    assert!(texts.iter().any(|(t, _)| t == "Material: Wood"));
+    assert_eq!(editor.swatches.get(&material), Some(&WOOD_COLOR));
+
+    let request = PanelRequest::new(
+        "Shelf",
+        PanelDefinition {
+            output: BodyOutput {
+                body: EntityId::new(),
+            },
+            source: PanelSource::Rectangle {
+                stock,
+                plane: PanelPlane::Xy,
+                origin: [length(0.), length(0.), length(0.)],
+                length: length(600.),
+                width: length(300.),
+            },
+            grain: GrainAxis::Free,
+            edges: PanelEdges::default(),
+            oversize: None,
+        },
+    );
+    let p = model::prepare_panel(&s, s.revision(), Actor::local(Channel::Ui), &request).unwrap();
+    s.commit(p.prepared).unwrap();
+    let part = part_of(s.document());
+    assert_eq!(
+        resolve(s.document(), part).unwrap().appearance.color_rgba,
+        WOOD_COLOR
+    );
+
+    let mut bytes = vec![];
+    project_file::write(
+        &ProjectFile::new(s.document().clone()).unwrap(),
+        &mut bytes,
+        Default::default(),
+    )
+    .unwrap();
+    let opened = project_file::read(
+        &mut std::io::Cursor::new(bytes),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap();
+    assert_eq!(
+        resolve(&opened.project.document, part)
+            .unwrap()
+            .appearance
+            .color_rgba,
+        WOOD_COLOR
+    );
+
+    // Editing the shared material recolors the panel and the stock together.
+    let mut s = Session::new(opened.project.document).unwrap();
+    let mut editor = self::editor(&s);
+    editor.select(&s, s.document().get(material).unwrap().clone());
+    let walnut = [92, 64, 45, 255];
+    if let EntityData::Material { color_rgba, .. } = &mut editor.draft.as_mut().unwrap().entity.data
+    {
+        *color_rgba = walnut;
+    }
+    apply(&mut editor, &mut s).unwrap();
+    assert_eq!(
+        resolve(s.document(), part).unwrap().appearance.color_rgba,
+        walnut
+    );
+    editor.select(&s, s.document().get(stock).unwrap().clone());
+    for _ in 0..2 {
+        render(&ctx, &mut editor, &mut s, size, vec![]);
+    }
+    let (_, texts, _) = render(&ctx, &mut editor, &mut s, size, vec![]);
+    assert!(texts.iter().any(|(t, _)| t == "#5C402D"));
+}
+
+#[test]
+fn panel_stock_on_an_explicit_material_and_old_projects_keep_their_colors() {
+    let (s, part) = crate::modeling::panel_fixture::flat_panel();
+    let before = s.document().clone();
+    let original = resolve(s.document(), part_of(s.document()))
+        .unwrap()
+        .appearance
+        .color_rgba;
+    let mut editor = editor(&s);
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let mut s = s;
+    for _ in 0..2 {
+        render(&ctx, &mut editor, &mut s, egui::vec2(900., 640.), vec![]);
+    }
+    assert_eq!(s.document(), &before, "opening never recolors");
+    assert!(s.document().get(part).is_some());
+    let painted = Entity::new(
+        "Painted MDF",
+        EntityData::Material {
+            density_kg_m3: None,
+            color_rgba: [30, 60, 200, 255],
+            section_hatch: None,
+        },
+    );
+    let mut fresh = Session::new(Document::new("Painted").unwrap()).unwrap();
+    fresh
+        .commit(
+            prepare_library(
+                &fresh,
+                0,
+                Actor::local(Channel::Ui),
+                std::slice::from_ref(&painted),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut editor = self::editor(&fresh);
+    editor.create_stock(&fresh, 0);
+    let draft = editor.draft.as_ref().unwrap();
+    assert!(
+        draft.companion.is_none(),
+        "an existing material is used, not replaced"
+    );
+    assert_eq!(stock_material(&draft.entity), Some(painted.id));
+    apply(&mut editor, &mut fresh).unwrap();
+    assert!(matches!(
+        fresh.document().get(painted.id).unwrap().data,
+        EntityData::Material {
+            color_rgba: [30, 60, 200, 255],
+            ..
+        }
+    ));
+    assert_ne!(
+        original, WOOD_COLOR,
+        "the fixture's explicit Birch color stays"
+    );
+}

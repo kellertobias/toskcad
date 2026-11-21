@@ -39,6 +39,7 @@ pub fn layer(layer: Layer) -> (&'static str, &'static str, u8) {
         Layer::Hidden => ("VIEW_HIDDEN", "DASHED", 8),
         Layer::Section => ("VIEW_SECTION", "CONTINUOUS", 1),
         Layer::Hatch => ("VIEW_HATCH", "CONTINUOUS", 9),
+        Layer::Grain => ("VIEW_GRAIN", "CONTINUOUS", 9),
         Layer::Dimension => ("DIMENSIONS", "CONTINUOUS", 3),
         Layer::Note => ("NOTES", "CONTINUOUS", 2),
         Layer::Leader => ("LEADERS", "CONTINUOUS", 2),
@@ -137,8 +138,15 @@ pub fn render_dxf(page: &PageRender, scale: f64, insunits: u16) -> String {
     pair(0, "ENDTAB");
     pair(0, "TABLE");
     pair(2, "LAYER");
-    pair(70, &ALL.len().to_string());
-    for role in ALL {
+    // The grain layer is declared only when used, so pages without grain
+    // keep their exact layer table.
+    let grain = page.polylines.iter().any(|p| p.layer == Layer::Grain);
+    let layers: Vec<_> = ALL
+        .into_iter()
+        .chain(grain.then_some(Layer::Grain))
+        .collect();
+    pair(70, &layers.len().to_string());
+    for role in layers {
         let (name, linetype, color) = layer(role);
         pair(0, "LAYER");
         pair(2, name);

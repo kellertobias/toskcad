@@ -475,7 +475,7 @@ impl SheetPanel {
         }
         let stock = self
             .stock
-            .ok_or("Choose or create sheet stock from the stock dropdown")?;
+            .ok_or("Choose or create metal sheet stock from the stock dropdown")?;
         let base = match &self.kept_base {
             Some(base) => base.clone(),
             None => SheetBase::Rectangle {
@@ -572,14 +572,14 @@ impl SheetPanel {
                 )
                 .changed();
             let stocks = sheet_stocks(document);
-            ui.label("Sheet stock");
+            ui.label("Metal sheet stock");
             let describe = |s: &(EntityId, String, f64, f64, f64)| {
                 format!("{} · {} mm · r {} · K {}", s.1, s.2, s.3, s.4)
             };
             let selected = self
                 .stock
                 .and_then(|v| stocks.iter().find(|s| s.0 == v))
-                .map_or("Choose sheet stock".into(), describe);
+                .map_or("Choose metal sheet stock".into(), describe);
             let create = controls::inspector_combo(ui, "sheet-stock")
                 .selected_text(selected)
                 .show_ui(ui, |ui| {

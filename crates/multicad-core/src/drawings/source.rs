@@ -61,6 +61,11 @@ pub struct PageSettings {
     /// pages that keep the default stay readable by older versions.
     #[serde(default = "shown", skip_serializing_if = "is_shown")]
     pub app_logo: bool,
+    /// Draw faint gray wood grain on panel faces seen face-on, along each
+    /// panel's canonical grain (CAD-365). Display only; omitted while off so
+    /// existing pages stay readable by older versions.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub panel_grain: bool,
 }
 fn shown() -> bool {
     true
@@ -72,6 +77,11 @@ fn is_shown(value: &bool) -> bool {
 pub const TITLE_LOGO_CAPABILITY: &str = "drawings.title_logo.1";
 pub fn hides_app_logo(book: &DrawingBook) -> bool {
     book.pages.iter().any(|p| !p.settings.app_logo)
+}
+/// Pages that show panel grain store `panel_grain: true`.
+pub const PANEL_GRAIN_CAPABILITY: &str = "drawings.panel_grain.1";
+pub fn shows_panel_grain(book: &DrawingBook) -> bool {
+    book.pages.iter().any(|p| p.settings.panel_grain)
 }
 impl Default for PageSettings {
     fn default() -> Self {
@@ -86,6 +96,7 @@ impl Default for PageSettings {
             margin_mm: 10.,
             title_block: true,
             app_logo: true,
+            panel_grain: false,
         }
     }
 }

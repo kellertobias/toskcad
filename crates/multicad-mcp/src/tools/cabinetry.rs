@@ -154,7 +154,7 @@ pub struct PanelArgs {
     pub length: Quantity,
     /// Size along v.
     pub width: Quantity,
-    /// The panel axis the grain runs along (default u).
+    /// The panel axis the grain runs along (default free: either orientation).
     #[serde(default)]
     pub grain: Option<GrainAxisArg>,
     #[serde(default)]
@@ -404,10 +404,12 @@ pub(super) fn create_panel(host: &dyn Host, call: &Request, args: PanelArgs) -> 
             length: q(&args.length, d, e)?,
             width: q(&args.width, d, e)?,
         },
+        // A new panel without an explicit grain choice may be cut either
+        // way (CAD-365), matching the native panel form.
         grain: match args.grain {
+            Some(GrainAxisArg::U) => GrainAxis::U,
             Some(GrainAxisArg::V) => GrainAxis::V,
-            Some(GrainAxisArg::Free) => GrainAxis::Free,
-            _ => GrainAxis::U,
+            Some(GrainAxisArg::Free) | None => GrainAxis::Free,
         },
         edges: PanelEdges {
             u_start: band(&args.band_u_start, d, e)?,

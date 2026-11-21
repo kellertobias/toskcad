@@ -33,11 +33,20 @@ impl Category {
         match self {
             Self::Materials => "Materials",
             Self::PanelStock => "Panel stock",
-            Self::SheetStock => "Sheet stock",
+            Self::SheetStock => "Metal sheet stock",
             Self::ProfileStock => "Profile stock",
             Self::PrintStock => "Print stock",
             Self::Appearances => "Appearances",
             Self::Hatches => "Hatches",
+        }
+    }
+
+    /// Group heading shown above the first category of each group.
+    fn group(self) -> Option<&'static str> {
+        match self {
+            Self::PanelStock => Some("Stock definitions"),
+            Self::Appearances => Some("Appearance and drawing"),
+            _ => None,
         }
     }
 
@@ -69,7 +78,7 @@ impl ToolStock {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Panel => "Create panel stock…",
-            Self::Sheet => "Create sheet stock…",
+            Self::Sheet => "Create metal sheet stock…",
             Self::Profile => "Create tube or profile stock…",
             Self::Batten => "Create solid rectangular stock…",
         }
@@ -97,6 +106,8 @@ pub struct LibraryEditor {
     reveal_category: Option<Category>,
     catalog: Option<(SessionStamp, [Vec<EntityId>; Category::ALL.len()])>,
     swatches: BTreeMap<EntityId, [u8; 4]>,
+    /// Committed stock → material links for the tree relationship lines.
+    stock_materials: BTreeMap<EntityId, EntityId>,
 }
 impl LibraryEditor {
     pub fn cancel(&mut self) {
@@ -244,7 +255,7 @@ impl LibraryEditor {
             s,
             [
                 "New panel stock",
-                "New sheet stock",
+                "New metal sheet stock",
                 "New profile stock",
                 "New print stock",
             ][kind],
@@ -252,6 +263,7 @@ impl LibraryEditor {
         );
     }
     fn create_stock_from(&mut self, s: &Session, name: &str, specification: StockKind) {
+        let wood = matches!(specification, StockKind::Panel { .. });
         self.create(s, 1);
         let draft = self.draft.as_mut().expect("created stock");
         let material = stock_material(&draft.entity).expect("stock material");
@@ -264,6 +276,15 @@ impl LibraryEditor {
             *inputs = stock.links();
         }
         draft.entity.name = name.into();
+        // A panel stock's companion material is wood (CAD-372). Existing
+        // materials, and colors already chosen, are never recolored.
+        if wood
+            && let Some(material) = draft.companion.as_mut()
+            && let EntityData::Material { color_rgba, .. } = &mut material.data
+        {
+            material.name = "Wood".into();
+            *color_rgba = WOOD_COLOR;
+        }
         self.reveal_category = Category::for_entity(&draft.entity);
     }
     pub(crate) fn for_model_stock(s: &Session, kind: ToolStock) -> Self {
@@ -291,7 +312,9 @@ impl LibraryEditor {
         ui.strong(kind.label().trim_end_matches('…'));
         ui.small("Save a shared Project definition and select it in the current Model tool.");
         if let Some(draft) = &mut self.draft {
-            ui.push_id(draft.entity.id, |ui| edit_draft(ui, s, draft, Some(kind)));
+            ui.push_id(draft.entity.id, |ui| {
+                edit_draft(ui, s, draft, Some(kind), false)
+            });
         }
         if let Some(error) = &self.error {
             ui.colored_label(Color32::LIGHT_RED, error);
@@ -358,7 +381,7 @@ impl LibraryEditor {
             for (label, icon, kind) in [
                 ("New material", Icon::Filled, 0),
                 ("New panel stock", Icon::Rectangle, 1),
-                ("New sheet stock", Icon::Page, 2),
+                ("New metal sheet stock", Icon::Page, 2),
                 ("New profile stock", Icon::Extrude, 3),
                 ("New print stock", Icon::PrintPlate, 4),
                 ("New appearance", Icon::VisibleEdges, 5),
@@ -502,21 +525,23 @@ impl LibraryEditor {
                 entries.sort_unstable_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
                 entries.into_iter().map(|entry| entry.id).collect()
             });
+            // Swatches use the same canonical resolution as the model view:
+            // the material base color unless a Material style links an
+            // Appearance (CAD-379).
+            let resolver = Resolver::new(s.document()).ok();
             self.swatches = s
                 .document()
                 .entities()
+                .filter(|entry| matches!(entry.data, EntityData::Material { .. }))
                 .filter_map(|entry| {
-                    let Some(LibraryDefinition::MaterialStyle(style)) = read(entry).ok().flatten()
-                    else {
-                        return None;
-                    };
-                    let Some(LibraryDefinition::Appearance(appearance)) =
-                        read(s.document().get(style.appearance?.id)?).ok().flatten()
-                    else {
-                        return None;
-                    };
-                    Some((style.material, appearance.color_rgba))
+                    let resolved = resolver.as_ref()?.resolve_material(entry.id).ok()?;
+                    Some((entry.id, resolved.appearance.color_rgba))
                 })
+                .collect();
+            self.stock_materials = s
+                .document()
+                .entities()
+                .filter_map(|entry| Some((entry.id, stock_material(entry)?)))
                 .collect();
             self.catalog = Some((s.stamp(), catalog));
         }
@@ -527,13 +552,20 @@ impl LibraryEditor {
         let can_select = editable && !self.dirty();
         let reveal = self.reveal_category.take();
         let mut selection = None;
-        ui.strong("Shared definitions");
+        ui.strong("Materials and stock");
+        ui.small("Shared Project definitions. Stock rows name the material they use.");
         ui.add_space(8.);
+        let stock_materials = &self.stock_materials;
+        let swatches = &self.swatches;
         egui::ScrollArea::vertical()
             .id_salt("project-material-tree-scroll")
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 for (category, entries) in Category::ALL.into_iter().zip(catalog) {
+                    if let Some(group) = category.group() {
+                        ui.add_space(6.);
+                        ui.label(egui::RichText::new(group).small().strong().weak());
+                    }
                     egui::CollapsingHeader::new(category.label())
                         .id_salt(category as usize)
                         .default_open(category == Category::Materials)
@@ -546,7 +578,9 @@ impl LibraryEditor {
                             for entry in entries.iter().filter_map(|&id| s.document().get(id)) {
                                 let response = definition_row(
                                     ui,
-                                    self.swatches.get(&entry.id).copied(),
+                                    s.document(),
+                                    swatches,
+                                    stock_materials,
                                     entry,
                                     selected == Some(entry.id),
                                     can_select,
@@ -559,7 +593,15 @@ impl LibraryEditor {
                                 }
                             }
                             if let Some(draft) = new_draft {
-                                definition_row(ui, None, &draft.entity, true, false);
+                                definition_row(
+                                    ui,
+                                    s.document(),
+                                    swatches,
+                                    stock_materials,
+                                    &draft.entity,
+                                    true,
+                                    false,
+                                );
                             }
                         });
                 }
@@ -592,6 +634,8 @@ impl LibraryEditor {
         }
     }
     fn show_definition_editor(&mut self, ui: &mut egui::Ui, s: &Session, editable: bool) {
+        let can_open = editable && !self.dirty() && self.original.is_some();
+        let mut open = None;
         ui.add_enabled_ui(editable, |ui| {
             if let Some(draft) = &mut self.draft {
                 // The draft notice and compact/roomy layouts change the parent
@@ -601,42 +645,111 @@ impl LibraryEditor {
                     s.document().id(),
                     draft.entity.id,
                 ));
-                ui.scope_builder(egui::UiBuilder::new().id(id), |ui| {
-                    edit_draft(ui, s, draft, None)
-                });
+                open = ui
+                    .scope_builder(egui::UiBuilder::new().id(id), |ui| {
+                        edit_draft(ui, s, draft, None, can_open)
+                    })
+                    .inner;
             } else {
                 ui.label("Choose or create a reusable definition.");
             }
         });
+        if let Some(entity) = open.and_then(|id| s.document().get(id)) {
+            self.select(s, entity.clone());
+        }
     }
 }
 fn definition_row(
     ui: &mut egui::Ui,
-    material_override: Option<[u8; 4]>,
+    document: &multicad_core::document::Document,
+    swatches: &BTreeMap<EntityId, [u8; 4]>,
+    stock_materials: &BTreeMap<EntityId, EntityId>,
     entry: &Entity,
     selected: bool,
     enabled: bool,
 ) -> egui::Response {
-    ui.horizontal(|ui| {
-        let category = Category::for_entity(entry);
-        if matches!(
-            category,
-            Some(Category::Materials | Category::Hatches | Category::Appearances)
-        ) {
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(18., 18.), egui::Sense::hover());
-            sample::paint_swatch(ui.painter(), rect, material_override, entry);
+    let category = Category::for_entity(entry);
+    let material = stock_material(entry);
+    let detail = row_detail(document, stock_materials, entry);
+    ui.vertical(|ui| {
+        let response = ui
+            .horizontal(|ui| {
+                let swatch = match category {
+                    Some(Category::Materials) => Some(swatches.get(&entry.id).copied()),
+                    Some(Category::Hatches | Category::Appearances) => Some(None),
+                    // Stock shows its material's canonical appearance.
+                    _ => material.map(|m| swatches.get(&m).copied()),
+                };
+                if let Some(color) = swatch {
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(18., 18.), egui::Sense::hover());
+                    match (category, color) {
+                        (
+                            Some(Category::Materials | Category::Hatches | Category::Appearances),
+                            _,
+                        ) => sample::paint_swatch(ui.painter(), rect, color, entry),
+                        (_, Some(color)) => sample::paint_color(ui.painter(), rect, color),
+                        (_, None) => sample::paint_missing(ui.painter(), rect),
+                    }
+                }
+                ui.add_enabled(
+                    enabled,
+                    egui::Button::selectable(selected, &entry.name)
+                        .min_size(egui::vec2(ui.available_width(), 26.))
+                        .wrap(),
+                )
+            })
+            .inner;
+        if let Some(detail) = &detail {
+            ui.horizontal_wrapped(|ui| {
+                ui.add_space(22.);
+                ui.label(egui::RichText::new(detail).small().weak());
+            });
         }
-        ui.add_enabled(
-            enabled,
-            egui::Button::selectable(selected, &entry.name)
-                .min_size(egui::vec2(ui.available_width(), 26.))
-                .wrap(),
-        )
+        match detail {
+            Some(detail) => response.on_hover_text(detail),
+            None => response,
+        }
     })
     .inner
 }
 
-fn edit_draft(ui: &mut egui::Ui, s: &Session, d: &mut Draft, model_stock: Option<ToolStock>) {
+/// The relationship line under a tree row: stock names its material, and a
+/// material says how many stock definitions use it (CAD-378).
+fn row_detail(
+    document: &multicad_core::document::Document,
+    stock_materials: &BTreeMap<EntityId, EntityId>,
+    entry: &Entity,
+) -> Option<String> {
+    if let Some(material) = stock_material(entry) {
+        return Some(match document.get(material) {
+            Some(m) if matches!(m.data, EntityData::Material { .. }) => {
+                format!("Material: {}", m.name)
+            }
+            Some(_) | None if stock_materials.contains_key(&entry.id) => "Material: missing".into(),
+            _ => "Material: new (applied with this stock)".into(),
+        });
+    }
+    if matches!(entry.data, EntityData::Material { .. }) {
+        let users = stock_materials.values().filter(|&&m| m == entry.id).count();
+        return (users > 0).then(|| match users {
+            1 => "Used by 1 stock definition".into(),
+            n => format!("Used by {n} stock definitions"),
+        });
+    }
+    None
+}
+
+/// Edits a draft in place. Returns a committed material to open when the user
+/// follows a stock's "Edit material color" route (CAD-379).
+fn edit_draft(
+    ui: &mut egui::Ui,
+    s: &Session,
+    d: &mut Draft,
+    model_stock: Option<ToolStock>,
+    can_open_material: bool,
+) -> Option<EntityId> {
+    let mut open = None;
     let name = ui.label("Name");
     ui.add(egui::TextEdit::singleline(&mut d.entity.name).desired_width(f32::INFINITY))
         .labelled_by(name.id)
@@ -665,8 +778,42 @@ fn edit_draft(ui: &mut egui::Ui, s: &Session, d: &mut Draft, model_stock: Option
         if let Some(v) = density_kg_m3 {
             number(ui, "Density", v, " kg/m³");
         }
-        ui.label("Base color");
-        ui.color_edit_button_srgba_unmultiplied(color_rgba);
+        // The canonical material color: Model display, stock previews and
+        // tree swatches all resolve it (CAD-379).
+        ui.add_space(4.);
+        ui.strong("Appearance color");
+        let [r, g, b, alpha] = *color_rgba;
+        let mut rgb = [r, g, b];
+        ui.push_id("material-color", |ui| rgb_fields(ui, &mut rgb));
+        *color_rgba = [rgb[0], rgb[1], rgb[2], alpha];
+        let users = s
+            .document()
+            .entities()
+            .filter(|e| stock_material(e) == Some(d.entity.id))
+            .count();
+        let parts = s
+            .document()
+            .entities()
+            .filter(|e| matches!(e.data, EntityData::Part { material: Some(m), .. } if m == d.entity.id))
+            .count();
+        if users + parts > 0 {
+            ui.small(shared_effect(users, parts));
+        }
+        if let Some(linked) = d
+            .style
+            .as_ref()
+            .and_then(|(_, style)| style.appearance.as_ref())
+            .and_then(|link| s.document().get(link.id))
+        {
+            ui.colored_label(
+                Color32::LIGHT_YELLOW,
+                format!(
+                    "Model display uses the linked appearance '{}'. Set Default appearance to \
+                     Inherit / none to show this color.",
+                    linked.name
+                ),
+            );
+        }
         let mut appearance = d
             .style
             .as_ref()
@@ -737,6 +884,14 @@ fn edit_draft(ui: &mut egui::Ui, s: &Session, d: &mut Draft, model_stock: Option
                     ui.small(
                         "No manufacturing material exists yet. Applying creates this material and the stock together.",
                     );
+                    if let EntityData::Material { color_rgba, .. } = &mut material.data {
+                        ui.label("Material color");
+                        let [r, g, b, alpha] = *color_rgba;
+                        let mut rgb = [r, g, b];
+                        ui.push_id("companion-color", |ui| rgb_fields(ui, &mut rgb));
+                        *color_rgba = [rgb[0], rgb[1], rgb[2], alpha];
+                        ui.small("Stock has no color of its own; it shows its material's color.");
+                    }
                 }
                 if has_existing || d.companion.is_none() {
                     let mut material = Some(stock.material);
@@ -750,15 +905,28 @@ fn edit_draft(ui: &mut egui::Ui, s: &Session, d: &mut Draft, model_stock: Option
                         stock.material = id;
                     }
                 }
+                if let Some(material) = s
+                    .document()
+                    .get(stock.material)
+                    .filter(|m| matches!(m.data, EntityData::Material { .. }))
+                {
+                    open = material_color_route(
+                        ui,
+                        s,
+                        material,
+                        model_stock.is_none(),
+                        can_open_material,
+                    );
+                }
                 if model_stock.is_none() {
                     let mut kind = stock_index(&stock.specification);
                     let old = kind;
                     egui::ComboBox::from_id_salt("stock-kind")
                         .selected_text(
-                            ["Panel", "Sheet metal", "Profile", "Printed material"][kind],
+                            ["Panel", "Metal sheet", "Profile", "Printed material"][kind],
                         )
                         .show_ui(ui, |ui| {
-                            for (i, n) in ["Panel", "Sheet metal", "Profile", "Printed material"]
+                            for (i, n) in ["Panel", "Metal sheet", "Profile", "Printed material"]
                                 .into_iter()
                                 .enumerate()
                             {
@@ -790,7 +958,74 @@ fn edit_draft(ui: &mut egui::Ui, s: &Session, d: &mut Draft, model_stock: Option
             *inputs = definition.links();
         }
     }
+    open
 }
+
+/// "Used by …" text explaining that a material color is shared.
+fn shared_effect(stocks: usize, parts: usize) -> String {
+    let plural =
+        |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    let mut users = vec![];
+    if stocks > 0 {
+        users.push(plural(stocks, "stock definition", "stock definitions"));
+    }
+    if parts > 0 {
+        users.push(plural(parts, "part", "parts"));
+    }
+    format!(
+        "Shared: changing this color updates {} that use this material.",
+        users.join(" and ")
+    )
+}
+
+/// Shows a stock's material color (resolved canonically) and, in Project, a
+/// direct route to edit that material. Stock never stores its own color.
+fn material_color_route(
+    ui: &mut egui::Ui,
+    s: &Session,
+    material: &Entity,
+    project: bool,
+    can_open: bool,
+) -> Option<EntityId> {
+    let color = Resolver::new(s.document())
+        .and_then(|r| r.resolve_material(material.id))
+        .map(|p| p.appearance.color_rgba)
+        .ok();
+    let mut open = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Color (from material)");
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(18., 18.), egui::Sense::hover());
+        match color {
+            Some(color) => {
+                sample::paint_color(ui.painter(), rect, color);
+                let [r, g, b, _] = color;
+                ui.monospace(format!("#{r:02X}{g:02X}{b:02X}"));
+            }
+            None => sample::paint_missing(ui.painter(), rect),
+        }
+    });
+    if project {
+        let response = ui
+            .add_enabled(
+                can_open,
+                egui::Button::new(format!("Edit material color: {}", material.name)),
+            )
+            .on_hover_text(
+                "Open the shared material; its color applies to every stock and part using it",
+            )
+            .on_disabled_hover_text("Apply or discard this stock edit first");
+        if response.clicked() {
+            open = Some(material.id);
+        }
+    } else {
+        ui.small("Edit this color on the material in Project → Materials.");
+    }
+    open
+}
+/// Default appearance for the wood material drafted with new panel stock:
+/// a light oak tone.
+pub(crate) const WOOD_COLOR: [u8; 4] = [196, 154, 108, 255];
+
 fn new_material(name: &str) -> Entity {
     Entity::new(
         name,

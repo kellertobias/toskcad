@@ -155,6 +155,8 @@ impl DrawingEditor {
             egui::Checkbox::new(&mut page.settings.app_logo, "Show app logo in title block"),
         )
         .on_hover_text("Print the ToskCAD logo beside the project name; when off, the project field uses the full width. Saved with this page");
+        ui.checkbox(&mut page.settings.panel_grain, "Show panel wood grain")
+            .on_hover_text("Draw faint gray grain lines on wood panels seen face-on, along each panel's grain direction and clipped at holes and cutouts. Display only: panel geometry and cut-list grain are unchanged. Panels with grain Any show none. Saved with this page");
         ui.separator();
         ui.strong("Drawing information");
         for (label, value) in [

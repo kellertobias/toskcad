@@ -284,6 +284,9 @@ pub enum VectorRole {
     Hidden,
     Section,
     Hatch,
+    /// Faint display-only wood grain on face-on panel faces (CAD-365),
+    /// independent of section hatching.
+    Grain,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

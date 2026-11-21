@@ -246,7 +246,9 @@ impl CabinetPanel {
             plane: PanelPlane::Xy,
             length: field(800., "mm"),
             panel_width: field(400., "mm"),
-            grain: GrainAxis::U,
+            // New panels default to Grain: Any (CAD-365); reopening keeps
+            // the saved choice.
+            grain: GrainAxis::Free,
             edges: [false; 4],
             oversize: field(0., "mm"),
             error: None,
@@ -528,7 +530,7 @@ impl CabinetPanel {
         ui.small(match (self.kind, self.existing.is_some()) {
             (Kind::Carcass, false) => "Sides, top, bottom, back and shelves from an outside envelope. Each panel is a named Part you can select.",
             (Kind::Carcass, true) => "Edit the carcass. Panels whose role remains keep their Parts; shelves and backs are added or removed.",
-            (Kind::Panel, _) => "A rectangular panel from panel stock. Thickness comes from the stock; banding and oversize change the core cut size.",
+            (Kind::Panel, _) => "A rectangular panel from panel stock. Thickness comes from the stock; edge banding strips and oversize change the core cut size.",
         });
         if self.kind == Kind::Carcass {
             // What an edit keeps, adds or removes comes first, before the
@@ -642,13 +644,13 @@ impl CabinetPanel {
     fn show_band(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = self.band.show(
             ui,
-            "Band thickness",
-            "Outside the core; the finished size includes it",
+            "Edge strip thickness",
+            "Thickness of the glued strip. The finished size includes it, so the core is cut smaller by this amount per banded edge",
         );
         changed |= self.allowance.show(
             ui,
-            "Band allowance",
-            "Extra core per banded edge, trimmed flush after banding",
+            "Strip trim allowance",
+            "Extra core per banded edge, trimmed flush after the strip is applied",
         );
         changed
     }
@@ -982,7 +984,8 @@ impl CabinetPanel {
             reveal,
             |ui| {
                 changed |= ui
-                    .checkbox(&mut self.banded, "Band the front edges")
+                    .checkbox(&mut self.banded, "Edge-band the front edges")
+                    .on_hover_text(EDGE_BANDING_HELP)
                     .changed();
                 if self.banded {
                     changed |= link.field(
@@ -990,16 +993,16 @@ impl CabinetPanel {
                         visual::BAND[0],
                         &mut self.band,
                         "cabinet-band",
-                        "Band thickness",
-                        "Outside the core; the finished size includes it",
+                        "Edge strip thickness",
+                        "Thickness of the glued strip. The finished size includes it, so the core is cut smaller by this amount per banded edge",
                     );
                     changed |= link.field(
                         ui,
                         visual::BAND[1],
                         &mut self.allowance,
                         "cabinet-band-allowance",
-                        "Band allowance",
-                        "Extra core per banded edge, trimmed flush after banding",
+                        "Strip trim allowance",
+                        "Extra core per banded edge, trimmed flush after the strip is applied",
                     );
                 }
             },
@@ -1083,28 +1086,52 @@ impl CabinetPanel {
             "Finished size along the plane's second axis",
         );
         changed |= self.show_origin(ui, "World position of the panel's minimum corner");
-        ui.label("Grain");
-        ui.horizontal(|ui| {
-            changed |= ui
-                .radio_value(&mut self.grain, GrainAxis::U, "Along length")
-                .changed();
-            changed |= ui
-                .radio_value(&mut self.grain, GrainAxis::V, "Along width")
-                .changed();
-            changed |= ui
-                .radio_value(&mut self.grain, GrainAxis::Free, "Any")
-                .changed();
+        ui.label("Grain direction (this panel)");
+        ui.horizontal_wrapped(|ui| {
+            for (axis, label, help) in [
+                (
+                    GrainAxis::U,
+                    "Along length",
+                    "Grain runs along the panel's length (u)",
+                ),
+                (
+                    GrainAxis::V,
+                    "Along width",
+                    "Grain runs along the panel's width (v)",
+                ),
+                (
+                    GrainAxis::Free,
+                    "Any",
+                    "No fixed grain: the cut may be turned either way",
+                ),
+            ] {
+                changed |= ui
+                    .radio_value(&mut self.grain, axis, label)
+                    .on_hover_text(help)
+                    .changed();
+            }
         });
-        changed |= ui.checkbox(&mut self.banded, "Edge banding").changed();
+        ui.small("Saved on this panel; panels sharing a stock keep their own grain.");
+        changed |= panel_face_diagram(ui, &mut self.edges, self.banded, self.grain);
+        ui.separator();
+        changed |= ui
+            .checkbox(&mut self.banded, EDGE_BANDING)
+            .on_hover_text(EDGE_BANDING_HELP)
+            .changed();
+        ui.small(EDGE_BANDING_HELP);
         if self.banded {
+            ui.label("Banded edges");
             ui.horizontal_wrapped(|ui| {
-                for (i, label) in ["Length start", "Length end", "Width start", "Width end"]
-                    .into_iter()
-                    .enumerate()
-                {
-                    changed |= ui.checkbox(&mut self.edges[i], label).changed();
+                for (i, (label, help)) in BAND_EDGES.into_iter().enumerate() {
+                    changed |= ui
+                        .checkbox(&mut self.edges[i], label)
+                        .on_hover_text(help)
+                        .changed();
                 }
             });
+            if !self.edges.contains(&true) {
+                ui.small("Click an edge in the diagram or tick it to add a strip.");
+            }
             changed |= self.show_band(ui);
         }
         changed |= self.oversize.show(
@@ -1114,6 +1141,153 @@ impl CabinetPanel {
         );
         changed
     }
+}
+
+/// Wood-panel edge banding: a glued strip on a panel edge (CAD-373). Never
+/// sheet-metal bending, which lives in the Sheet metal tool.
+pub(super) const EDGE_BANDING: &str = "Edge banding (glued edge strip)";
+pub(super) const EDGE_BANDING_HELP: &str = "Glues a thin veneer, ABS or PVC strip onto the chosen panel edges to cover the core. The finished size includes the strip; the core is cut smaller. This is wood-panel edge banding, not bending.";
+/// Same order as `PanelEdges::bands` and the machining edge names.
+pub(super) const BAND_EDGES: [(&str, &str); 4] = [
+    (
+        "Length start",
+        "The end edge at length 0, running across the width",
+    ),
+    (
+        "Length end",
+        "The end edge at full length, running across the width",
+    ),
+    (
+        "Width start",
+        "The long side at width 0, running along the length",
+    ),
+    (
+        "Width end",
+        "The long side at full width, running along the length",
+    ),
+];
+
+/// A top view of the panel face: length runs left to right, width bottom to
+/// top. Faint lines show the grain direction (CAD-365); banded edges are drawn
+/// as thick strips and, while banding is on, clicking an edge toggles it
+/// (CAD-373). Returns whether an edge changed.
+fn panel_face_diagram(
+    ui: &mut egui::Ui,
+    edges: &mut [bool; 4],
+    banding: bool,
+    grain: GrainAxis,
+) -> bool {
+    use egui::{Rect, Stroke, pos2, vec2};
+    let width = ui.available_width().clamp(120., 220.);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, width * 0.5), egui::Sense::hover());
+    let face = rect.shrink2(vec2(22., 14.));
+    let strip = 7.;
+    // u_start (left), u_end (right), v_start (bottom), v_end (top).
+    let targets = [
+        Rect::from_min_max(
+            pos2(face.left() - strip, face.top()),
+            pos2(face.left() + strip, face.bottom()),
+        ),
+        Rect::from_min_max(
+            pos2(face.right() - strip, face.top()),
+            pos2(face.right() + strip, face.bottom()),
+        ),
+        Rect::from_min_max(
+            pos2(face.left(), face.bottom() - strip),
+            pos2(face.right(), face.bottom() + strip),
+        ),
+        Rect::from_min_max(
+            pos2(face.left(), face.top() - strip),
+            pos2(face.right(), face.top() + strip),
+        ),
+    ];
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(
+        face,
+        2.,
+        egui::Color32::from_rgb(196, 154, 108).gamma_multiply(0.55),
+    );
+    let grain_stroke = Stroke::new(1., egui::Color32::from_rgb(120, 86, 52));
+    let lines = 7;
+    match grain {
+        GrainAxis::U => {
+            for i in 1..lines {
+                let y = face.top() + face.height() * i as f32 / lines as f32;
+                painter.line_segment(
+                    [pos2(face.left() + 4., y), pos2(face.right() - 4., y)],
+                    grain_stroke,
+                );
+            }
+        }
+        GrainAxis::V => {
+            for i in 1..(2 * lines) {
+                let x = face.left() + face.width() * i as f32 / (2 * lines) as f32;
+                painter.line_segment(
+                    [pos2(x, face.top() + 4.), pos2(x, face.bottom() - 4.)],
+                    grain_stroke,
+                );
+            }
+        }
+        GrainAxis::Free => {}
+    }
+    painter.text(
+        face.center(),
+        egui::Align2::CENTER_CENTER,
+        match grain {
+            GrainAxis::U => "Grain ⟷",
+            GrainAxis::V => "Grain ↕",
+            GrainAxis::Free => "Grain: any",
+        },
+        egui::FontId::proportional(11.),
+        ui.visuals().strong_text_color(),
+    );
+    let accent = ui.visuals().selection.bg_fill;
+    let mut changed = false;
+    for (i, target) in targets.into_iter().enumerate() {
+        let sense = if banding {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
+        };
+        let response = ui
+            .interact(target, ui.id().with(("band-edge", i)), sense)
+            .on_hover_text(format!("{}: {}", BAND_EDGES[i].0, BAND_EDGES[i].1));
+        if banding && response.clicked() {
+            edges[i] = !edges[i];
+            changed = true;
+        }
+        let (a, b) = match i {
+            0 => (face.left_top(), face.left_bottom()),
+            1 => (face.right_top(), face.right_bottom()),
+            2 => (face.left_bottom(), face.right_bottom()),
+            _ => (face.left_top(), face.right_top()),
+        };
+        let stroke = if banding && edges[i] {
+            Stroke::new(5., accent)
+        } else if response.hovered() {
+            Stroke::new(2., ui.visuals().strong_text_color())
+        } else {
+            Stroke::new(1., egui::Color32::GRAY)
+        };
+        painter.line_segment([a, b], stroke);
+    }
+    let text = ui.visuals().weak_text_color();
+    let font = egui::FontId::proportional(10.);
+    painter.text(
+        pos2(face.center().x, rect.bottom() - 1.),
+        egui::Align2::CENTER_BOTTOM,
+        "Length →",
+        font.clone(),
+        text,
+    );
+    painter.text(
+        pos2(rect.left() + 1., face.center().y),
+        egui::Align2::LEFT_CENTER,
+        "W",
+        font,
+        text,
+    );
+    changed
 }
 
 #[cfg(test)]
@@ -1225,6 +1399,167 @@ mod tests {
         assert_eq!(command.edit_id(), Some(feature));
         let prepared = command.prepare(&s, Actor::local(Channel::Ui)).unwrap();
         assert_eq!(prepared.outputs[0].feature, feature);
+    }
+
+    #[test]
+    fn edge_banding_is_named_explained_and_toggled_from_the_edge_diagram() {
+        let s = session();
+        let mut form = CabinetPanel::panel(s.document(), "Shelf board".into());
+        let ctx = egui::Context::default();
+        crate::theme::configure(&ctx);
+        for _ in 0..3 {
+            inspector_frame(&ctx, &mut form, &s, vec![]).drop_without_applying_deltas();
+        }
+        let output = inspector_frame(&ctx, &mut form, &s, vec![]);
+        let texts: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => {
+                    Some((text.galley.text().to_owned(), text.pos, text.galley.size()))
+                }
+                _ => None,
+            })
+            .collect();
+        output.drop_without_applying_deltas();
+        let has = |t: &str| texts.iter().any(|(text, ..)| text == t);
+        assert!(has(EDGE_BANDING) && has(EDGE_BANDING_HELP));
+        assert!(
+            !texts
+                .iter()
+                .any(|(t, ..)| t.contains("ending") && !t.contains("not bending"))
+        );
+        assert!(
+            has("Banded edges")
+                && has("Edge strip thickness (mm)")
+                && has("Strip trim allowance (mm)")
+        );
+        assert!(has(
+            "Click an edge in the diagram or tick it to add a strip."
+        ));
+        // Click the left (length start) edge in the diagram.
+        let (_, w, size) = texts.iter().find(|(t, ..)| t == "W").unwrap().clone();
+        let at = egui::pos2(w.x - 1. + 22., w.y + size.y * 0.5);
+        for pressed in [true, false] {
+            inspector_frame(
+                &ctx,
+                &mut form,
+                &s,
+                vec![
+                    egui::Event::PointerMoved(at),
+                    egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            )
+            .drop_without_applying_deltas();
+        }
+        assert_eq!(form.edges, [true, false, false, false]);
+        inspector_click(&ctx, &mut form, &s, "Width start");
+        assert_eq!(form.edges, [true, false, true, false]);
+        let Ok(CabinetCommand::Panel { panel, .. }) = form.request(s.document(), true) else {
+            panic!("panel request")
+        };
+        let [u_start, u_end, v_start, v_end] = panel.edges.bands();
+        assert!(u_start.is_some() && v_start.is_some() && u_end.is_none() && v_end.is_none());
+        // Clicking the edge again removes its strip.
+        for pressed in [true, false] {
+            inspector_frame(
+                &ctx,
+                &mut form,
+                &s,
+                vec![
+                    egui::Event::PointerMoved(at),
+                    egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            )
+            .drop_without_applying_deltas();
+        }
+        assert_eq!(form.edges, [false, false, true, false]);
+    }
+
+    #[test]
+    fn new_panels_default_to_any_grain_and_show_the_chosen_direction_on_the_face() {
+        let mut s = session();
+        let mut form = CabinetPanel::panel(s.document(), "Shelf".into());
+        assert_eq!(form.grain, GrainAxis::Free);
+        let ctx = egui::Context::default();
+        crate::theme::configure(&ctx);
+        let texts = |form: &mut CabinetPanel| -> Vec<String> {
+            let output = inspector_frame(&ctx, form, &s, vec![]);
+            let t = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+            output.drop_without_applying_deltas();
+            t
+        };
+        for _ in 0..2 {
+            texts(&mut form);
+        }
+        let shown = texts(&mut form);
+        assert!(shown.iter().any(|t| t == "Grain direction (this panel)"));
+        assert!(shown.iter().any(|t| t == "Grain: any"));
+        inspector_click(&ctx, &mut form, &s, "Along width");
+        assert_eq!(form.grain, GrainAxis::V);
+        assert!(texts(&mut form).iter().any(|t| t == "Grain ↕"));
+        inspector_click(&ctx, &mut form, &s, "Any");
+        assert_eq!(form.grain, GrainAxis::Free);
+        // Committing and reopening keep Any.
+        let command = form.request(s.document(), true).unwrap();
+        let prepared = command.prepare(&s, Actor::local(Channel::Ui)).unwrap();
+        let feature = prepared.outputs[0].feature;
+        s.commit(prepared.prepared).unwrap();
+        assert_eq!(
+            multicad_core::model::read_panel(s.document(), feature)
+                .unwrap()
+                .grain,
+            GrainAxis::Free
+        );
+        assert_eq!(
+            CabinetPanel::existing(s.document(), feature).unwrap().grain,
+            GrainAxis::Free
+        );
+    }
+
+    #[test]
+    fn reopening_a_banded_panel_keeps_its_saved_banding_and_grain() {
+        let mut s = session();
+        let mut form = CabinetPanel::panel(s.document(), "Side".into());
+        form.edges = [true, false, false, true];
+        form.grain = GrainAxis::V;
+        let command = form.request(s.document(), true).unwrap();
+        let CabinetCommand::Panel { panel: saved, .. } = &command else {
+            panic!("panel")
+        };
+        let saved = saved.clone();
+        let prepared = command.prepare(&s, Actor::local(Channel::Ui)).unwrap();
+        let feature = prepared.outputs[0].feature;
+        s.commit(prepared.prepared).unwrap();
+        let before = s.document().clone();
+        let mut edit = CabinetPanel::existing(s.document(), feature).unwrap();
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            inspector_frame(&ctx, &mut edit, &s, vec![]).drop_without_applying_deltas();
+        }
+        assert_eq!(s.document(), &before);
+        let Ok(CabinetCommand::Panel { panel, .. }) = edit.request(s.document(), true) else {
+            panic!("panel")
+        };
+        assert_eq!(panel.edges, saved.edges);
+        assert_eq!(panel.grain, GrainAxis::V);
     }
 
     fn ui() -> Actor {
