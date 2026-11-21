@@ -162,7 +162,9 @@ pub use rounded_thread_body::{RoundedThreadData, RoundedThreadMassProperties};
 mod internal_thread_treatment_body;
 pub(crate) use healed_import_body::HealedImportBody;
 use imported_brep_body::ImportedBrepBody;
-pub use imported_brep_body::{AssemblyOccurrence, CopedTube, CopedTubeNames};
+pub use imported_brep_body::{
+    AssemblyOccurrence, BoreStep, CopedTube, CopedTubeNames, TransverseBoreTool,
+};
 use interference_volume_body::InterferenceVolumeBody;
 use internal_thread_treatment_body::InternalThreadTreatmentBody;
 pub use internal_thread_treatment_body::{
