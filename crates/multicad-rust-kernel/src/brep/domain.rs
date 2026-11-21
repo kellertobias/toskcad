@@ -552,18 +552,22 @@ pub(crate) fn orientation(
             winding.push(unrolled);
         }
     }
+    // Two opposed winding loops bound an annular face: every contractible
+    // loop on it is a hole, so the pair decides even when a hole is larger
+    // than any other contractible loop.
+    let above = |low: &UvLoop, high: &UvLoop| low.winding[0] > 0 && low.mean(1) < high.mean(1);
+    if let [a, b] = winding.as_slice()
+        && a.winding[0] + b.winding[0] == 0
+        && face.surface.periods()[1].is_none()
+    {
+        return Ok(Some(above(a, b) || above(b, a)));
+    }
     // The sign of an area within the tolerance is rounding: it may confirm
     // the stated sense, but never overturn it.
     if outer != 0. && !(narrow && winding.is_empty() && (outer > 0.) != face.same_sense) {
         return Ok(Some(outer > 0.));
     }
-    let above = |low: &UvLoop, high: &UvLoop| low.winding[0] > 0 && low.mean(1) < high.mean(1);
-    Ok(match winding.as_slice() {
-        [a, b] if a.winding[0] + b.winding[0] == 0 && face.surface.periods()[1].is_none() => {
-            Some(above(a, b) || above(b, a))
-        }
-        _ => None,
-    })
+    Ok(None)
 }
 
 #[cfg(test)]
