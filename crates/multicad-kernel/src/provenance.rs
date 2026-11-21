@@ -1082,6 +1082,8 @@ impl Solid {
                 body.topology(frame, owner, revision)?
             } else if let Some((body, frame)) = self.rounded_hex_body() {
                 body.topology(frame, owner, revision)?
+            } else if let Some((body, frame)) = self.pipe_sleeve_body() {
+                body.topology(frame, owner, revision)?
             } else if let Some((body, frame)) = self.rounded_thread_body() {
                 body.topology(frame, owner, revision)?
             } else if let Some((body, frame)) = self.entry_chamfer_body() {

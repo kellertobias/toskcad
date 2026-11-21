@@ -47,13 +47,16 @@ pub(super) fn cut_external_stock(
 /// Tapered internal pipe threads (NPT, BSPT Rc) cut into a coaxial
 /// cylindrical blank. The receiving wall is checked first, at the entrance
 /// and along the full tapered depth: the cavity reaches the thread's major
-/// radius `major + taper * z` at every station `z` of its length. The exact
-/// receiving body is not yet built, which stays a typed refusal.
+/// radius `major + taper * z` at every station `z` of its length. A blank
+/// spanning exactly the thread length becomes exact cylindrical stock minus
+/// the retained authored cavity; other blank spans stay a typed refusal.
 pub(super) fn internal_receiver(
     feature: EntityId,
+    family: ThreadFamily,
     thread: &ResolvedThread,
     target: &Solid,
     policy: GeometryPolicy,
+    interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<Solid, ModelError> {
     let fail = |message: &str| error(Some(feature), message);
     let (base, axis, radius, height) = target
@@ -93,9 +96,24 @@ pub(super) fn internal_receiver(
             "Internal receiving body has insufficient minimum wall at the tapered thread entrance or along its full depth",
         ));
     }
-    Err(fail(
-        "Rust internal tapered pipe threads (NPT, BSPT Rc) have no exact receiving body yet",
-    ))
+    if lo.abs() > tolerance || (hi - height).abs() > tolerance {
+        return Err(fail(
+            "Rust internal tapered pipe threads require a through blank of exactly the thread length",
+        ));
+    }
+    Solid::rust_tapered_pipe_sleeve_with_interrupt(
+        authored_spec(feature, family, thread)?,
+        radius,
+        feature,
+        PlaneFrame {
+            origin: thread.frame.origin,
+            u: thread.frame.u,
+            v: thread.frame.v,
+        },
+        policy,
+        interrupt,
+    )
+    .map_err(|e| pipe_error(feature, e))
 }
 
 fn pipe_error(feature: EntityId, cause: multicad_kernel::GeometryError) -> ModelError {

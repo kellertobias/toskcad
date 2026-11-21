@@ -293,6 +293,9 @@ impl Solid {
                     let boundary = Self::qualify_imported_radial(*owned, policy)?;
                     Self::from_rust_radial_boundary(boundary, feature, policy)
                 }
+                step_read::SourceImport::PipeSleeve(sleeve) => {
+                    Self::import_pipe_sleeve(*sleeve, feature, policy)
+                }
             };
         }
         compound::rebuild(members, feature, policy)

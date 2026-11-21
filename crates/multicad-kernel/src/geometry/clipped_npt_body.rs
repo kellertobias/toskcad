@@ -229,6 +229,16 @@ fn face_tag(face: StockClipFace) -> &'static str {
     }
 }
 impl ClippedNptBody {
+    /// The unchanged authored source law and the occurrence pose of its
+    /// local chart. The occupied material is exactly the plan predicate.
+    pub(crate) fn authored_law(
+        &self,
+    ) -> (
+        multicad_rust_kernel::axial_pipe_thread::authored::AuthoredThread,
+        RigidTransform,
+    ) {
+        (*self.source.source(), self.pose)
+    }
     pub(super) fn volume_mm3(&self) -> f64 {
         let volume = self.placed_volume();
         volume[0].midpoint(volume[1])
