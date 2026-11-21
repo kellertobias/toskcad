@@ -1095,6 +1095,8 @@ impl Solid {
                 body.topology(frame, owner, revision)
             } else if let Some(body) = self.cosmetic_phillips_body() {
                 body.topology(owner, revision)?
+            } else if let Some(body) = self.bored_thread_body() {
+                body.topology(owner, revision)?
             } else if let Some((body, frame)) = self.cosmetic_fastener_body() {
                 body.topology(frame, owner, revision)?
             } else if let Some((body, frame)) = self.linear_body() {

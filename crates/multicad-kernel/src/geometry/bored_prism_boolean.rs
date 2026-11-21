@@ -86,6 +86,41 @@ impl Solid {
             Err(error) if error.kind == GeometryErrorKind::Unsupported => return None,
             Err(error) => return Some(Err(error)),
         };
+        Some(cut.redrill_prism_bores(prism, frame, policy).map(Some))
+    }
+
+    /// The same rectangular bored prism as orthogonal stock whose through
+    /// bores keep their original source identities and exact circles.
+    pub(super) fn bored_prism_orthogonal_stock(&self) -> Option<Result<Self, GeometryError>> {
+        let (prism, frame) = self.rust_prism_frame()?;
+        if prism.rounded_end().is_some() || prism.inner_loops().len() == 0 {
+            return None;
+        }
+        let plain = Self {
+            body: SolidBody::Prism(
+                Rc::new(Prism::rectangular(prism.feature(), prism.dimensions()).ok()?),
+                frame,
+            ),
+            policy: self.policy,
+            provenance: vec![],
+            rust_origins: vec![],
+            retained_placement: None,
+        };
+        Some(
+            plain
+                .orthogonal_stock()
+                .and_then(|stock| stock.redrill_prism_bores(prism, frame, self.policy)),
+        )
+    }
+
+    fn redrill_prism_bores(
+        &self,
+        prism: &Prism,
+        frame: PlaneFrame,
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        let height = prism.dimensions()[2];
+        let bores: Vec<_> = prism.inner_loops().collect();
         // Drill each bore from one unit below the bottom cap to one unit
         // above the top cap, along the prism normal.
         let normal = frame.normal();
@@ -107,10 +142,7 @@ impl Solid {
                 },
             })
             .collect();
-        Some(
-            cut.rust_drill_circular_machining(&drills, &vec![true; drills.len()], policy)
-                .map(Some),
-        )
+        self.rust_drill_circular_machining(&drills, &vec![true; drills.len()], policy)
     }
 }
 

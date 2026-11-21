@@ -566,3 +566,144 @@ fn blind_tap_reuses_indexed_mouth_and_closes_the_exact_helical_floor() {
         MeshError::BudgetExceeded
     );
 }
+
+#[test]
+fn buried_thread_in_an_existing_bore_closes_collars_steps_and_helical_wall() {
+    use crate::{
+        helical_thread::{Spec, Thread},
+        orthogonal::{Box3, Operation, boolean},
+        orthogonal_boundary::build,
+        orthogonal_pockets::{identify_through_bore, volume_with_through_bores_mm3},
+    };
+    use std::collections::BTreeSet;
+    let stock = boolean(
+        &[Box3 {
+            min: [0.; 3],
+            max: [20., 16., 10.],
+        }],
+        &[],
+        Operation::Union,
+        1e-7,
+    )
+    .unwrap()
+    .unwrap();
+    let boundary = build(stock.quads()).unwrap();
+    let thread = Thread::new(Spec {
+        major_radius_mm: 1.5,
+        pitch_mm: 0.5,
+        length_mm: 3.5,
+        depth_mm: 0.27,
+        crest_width_mm: 0.08,
+        lower_flank_deg: 30.,
+        upper_flank_deg: 30.,
+        starts: 1,
+        left_hand: false,
+        root_radius_mm: None,
+    })
+    .unwrap();
+    let radius = 1.15;
+    assert!(radius < thread.root_radius_mm());
+    let bore = |from, to, radius| {
+        identify_through_bore(&stock, &boundary, from, to, radius, 1e-7, 1e-5).unwrap()
+    };
+    let bores = [
+        bore([6., 5., 11.], [6., 5., -1.], radius),
+        bore([-1., 12., 7.], [21., 12., 7.], 1.5),
+    ];
+    let detailed = Tessellation {
+        triangle_limit: 400_000,
+        ..options()
+    };
+    let faces = boundary.faces.len() as u32;
+    // Both tool orientations: cap 0 toward the bore entry and toward its exit.
+    for (origin, axes) in [
+        ([6., 5., 2.], [[0.8, 0.6, 0.], [-0.6, 0.8, 0.]]),
+        ([6., 5., 8.], [[0.8, 0.6, 0.], [0.6, -0.8, 0.]]),
+    ] {
+        let threaded = ThreadedThroughBore {
+            bore: 0,
+            wall: BandWall::Thread(&thread),
+            origin,
+            axes,
+        };
+        let mesh = threaded_bored_orthogonal(&boundary, &[], &bores, threaded, detailed).unwrap();
+        let proof = certify(&mesh).unwrap();
+        assert_eq!(proof.edge_pairs as usize * 2, mesh.indices.len());
+        // Inscribed bore polygons leave exactly this much extra material.
+        let deficit = |radius: f64, length: f64| {
+            let count = detailed.arc_segments(radius, TAU).unwrap() as f64;
+            length * radius * radius * (PI - 0.5 * count * (TAU / count).sin())
+        };
+        let expected = volume_with_through_bores_mm3(&stock, &[], &bores)
+            - (thread.volume_mm3() - PI * radius * radius * 3.5)
+            + deficit(radius, 10. - 3.5)
+            + deficit(1.5, 20.);
+        let bound = crate::helical_thread_mesh::volume_error_bound(&thread, detailed);
+        assert!(
+            (proof.signed_volume_mm3 - expected).abs() <= bound,
+            "{} {expected} {bound}",
+            proof.signed_volume_mm3
+        );
+        let used: BTreeSet<u32> = mesh.face_indices.iter().copied().collect();
+        assert_eq!(used, (0..faces + 2 + 3 + 4).collect());
+        let levels = |face: u32| -> BTreeSet<u64> {
+            mesh.indices
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .zip(&mesh.face_indices)
+                .filter(|(_, id)| **id == face)
+                .flat_map(|(t, _)| {
+                    t.iter()
+                        .map(|&v| mesh.vertices[3 * v as usize + 2].to_bits())
+                })
+                .collect()
+        };
+        let [start, end] = if origin[2] == 2. {
+            [2., 5.5]
+        } else {
+            [8., 4.5]
+        };
+        assert_eq!(levels(faces + 3), BTreeSet::from([f64::to_bits(start)]));
+        assert_eq!(levels(faces + 4), BTreeSet::from([f64::to_bits(end)]));
+    }
+    // A smooth display band closes the same way with one wall face.
+    let crest = thread.root_radius_mm();
+    let smooth = ThreadedThroughBore {
+        bore: 0,
+        wall: BandWall::Cylinder {
+            radius_mm: crest,
+            length_mm: 3.5,
+        },
+        origin: [6., 5., 8.],
+        axes: [[0.8, 0.6, 0.], [0.6, -0.8, 0.]],
+    };
+    let mesh = threaded_bored_orthogonal(&boundary, &[], &bores, smooth, detailed).unwrap();
+    let proof = certify(&mesh).unwrap();
+    let polygon = |radius: f64, length: f64| {
+        let count = detailed.arc_segments(radius, TAU).unwrap() as f64;
+        0.5 * count * (TAU / count).sin() * radius * radius * length
+    };
+    let expected =
+        stock.volume_mm3() - polygon(radius, 10. - 3.5) - polygon(crest, 3.5) - polygon(1.5, 20.);
+    assert!(
+        (proof.signed_volume_mm3 - expected).abs() < 1e-9 * expected,
+        "{} {expected}",
+        proof.signed_volume_mm3
+    );
+    let used: BTreeSet<u32> = mesh.face_indices.iter().copied().collect();
+    assert_eq!(used, (0..faces + 2 + 3 + 1).collect());
+    // The bore must lie inside the tool root and the band inside the bore.
+    for (origin, bore) in [([6., 5., 2.], 1), ([6., 5., 7.], 0), ([6.2, 5., 2.], 0)] {
+        let threaded = ThreadedThroughBore {
+            bore,
+            wall: BandWall::Thread(&thread),
+            origin,
+            axes: [[1., 0., 0.], [0., 1., 0.]],
+        };
+        assert_eq!(
+            threaded_bored_orthogonal(&boundary, &[], &bores, threaded, detailed).unwrap_err(),
+            MeshError::UnresolvedBoundary
+        );
+    }
+}

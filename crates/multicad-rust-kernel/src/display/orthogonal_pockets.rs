@@ -33,7 +33,7 @@ pub fn slotted_orthogonal(
     slots: &[OrthogonalSlot],
     options: Tessellation,
 ) -> Result<DisplayMesh, MeshError> {
-    machined_orthogonal(boundary, pockets, slots, &[], options)
+    machined_orthogonal(boundary, pockets, slots, &[], None, options)
 }
 
 /// Tessellate orthogonal stock with blind pockets and paired through bores.
@@ -44,7 +44,87 @@ pub fn bored_orthogonal(
     through: &[OrthogonalThroughBore],
     options: Tessellation,
 ) -> Result<DisplayMesh, MeshError> {
-    machined_orthogonal(boundary, pockets, &[], through, options)
+    machined_orthogonal(boundary, pockets, &[], through, None, options)
+}
+
+/// One certified through bore whose middle interval is replaced by an exact
+/// internal helical wall. `origin` and `axes` place the thread tool in stock
+/// coordinates; its axis is `axes[0] x axes[1]` and must be the bore axis.
+#[derive(Clone, Copy)]
+pub struct ThreadedThroughBore<'a> {
+    pub bore: usize,
+    pub wall: BandWall<'a>,
+    pub origin: Point,
+    pub axes: [Point; 2],
+}
+
+/// The wall that replaces a bore's middle interval: the exact helical
+/// thread, or a display-only smooth cylinder of the same tool length.
+#[derive(Clone, Copy)]
+pub enum BandWall<'a> {
+    Thread(&'a Thread),
+    Cylinder { radius_mm: f64, length_mm: f64 },
+}
+impl BandWall<'_> {
+    fn length_mm(self) -> f64 {
+        match self {
+            Self::Thread(thread) => thread.spec().length_mm,
+            Self::Cylinder { length_mm, .. } => length_mm,
+        }
+    }
+    fn inner_radius_mm(self) -> f64 {
+        match self {
+            Self::Thread(thread) => thread.root_radius_mm(),
+            Self::Cylinder { radius_mm, .. } => radius_mm,
+        }
+    }
+    /// Outward wall in tool coordinates with counterclockwise rims at z=0
+    /// and z=length; faces are numbered from 2 like the thread envelope.
+    fn open(self, options: Tessellation) -> Result<(DisplayMesh, [Vec<u32>; 2]), MeshError> {
+        let (radius, length) = match self {
+            Self::Thread(thread) => return crate::helical_thread_mesh::open_wall(thread, options),
+            Self::Cylinder {
+                radius_mm,
+                length_mm,
+            } => (radius_mm, length_mm),
+        };
+        if !(radius.is_finite() && radius > 0. && length.is_finite() && length > 0.) {
+            return Err(MeshError::UnresolvedBoundary);
+        }
+        let count = options.arc_segments(radius, TAU)?;
+        let mut mesh = DisplayMesh {
+            vertices: Vec::with_capacity(6 * count),
+            indices: Vec::with_capacity(6 * count),
+            face_indices: Vec::with_capacity(2 * count),
+        };
+        for z in [0., length] {
+            for i in 0..count {
+                let (sin, cos) = (TAU * i as f64 / count as f64).sin_cos();
+                mesh.vertices.extend([radius * cos, radius * sin, z]);
+            }
+        }
+        for i in 0..count {
+            let next = (i + 1) % count;
+            mesh.triangle([i, next, count + i], 2);
+            mesh.triangle([next, count + next, count + i], 2);
+        }
+        let ring = |base: usize| (0..count).map(|i| (base + i) as u32).collect();
+        Ok((mesh, [ring(0), ring(count)]))
+    }
+}
+
+/// Tessellate bored orthogonal stock where one bore carries a buried thread
+/// band. Face IDs follow [`bored_orthogonal`]; the threaded bore's own wall ID
+/// is its entry collar. Then follow its exit collar, the steps at thread
+/// tool caps 0 and 1, and the helical bands in thread face order from 2.
+pub fn threaded_bored_orthogonal(
+    boundary: &Boundary,
+    pockets: &[OrthogonalPocket],
+    through: &[OrthogonalThroughBore],
+    threaded: ThreadedThroughBore<'_>,
+    options: Tessellation,
+) -> Result<DisplayMesh, MeshError> {
+    machined_orthogonal(boundary, pockets, &[], through, Some(threaded), options)
 }
 
 /// Stock ordinals in a blind tap shell. The mouth keeps face zero so the
@@ -188,10 +268,11 @@ fn machined_orthogonal(
     pockets: &[OrthogonalPocket],
     slots: &[OrthogonalSlot],
     through: &[OrthogonalThroughBore],
+    threaded: Option<ThreadedThroughBore<'_>>,
     options: Tessellation,
 ) -> Result<DisplayMesh, MeshError> {
     options.check()?;
-    if boundary.faces.is_empty() {
+    if boundary.faces.is_empty() || threaded.is_some_and(|t| t.bore >= through.len()) {
         return Err(MeshError::UnresolvedBoundary);
     }
     if pockets
@@ -367,9 +448,21 @@ fn machined_orthogonal(
         )?;
     }
     let first_bore_face = first_slot_face + 5 * slots.len();
+    let first_thread_face = (first_bore_face + through.len()) as u32;
     for (index, [mouth, exit]) in bore_mouths.into_iter().enumerate() {
         let count = mouth.len();
         let face = (first_bore_face + index) as u32;
+        if let Some(threaded) = threaded.filter(|t| t.bore == index) {
+            threaded_wall(
+                &mut mesh,
+                [mouth, exit],
+                through[index],
+                threaded,
+                [face, first_thread_face],
+                options,
+            )?;
+            continue;
+        }
         for i in 0..count {
             let next = (i + 1) % count;
             let near = [i, next].map(|j| mouth.start + j);
@@ -378,6 +471,152 @@ fn machined_orthogonal(
         }
     }
     Ok(mesh)
+}
+
+/// Entry collar, planar step, inward helical wall, step and exit collar.
+/// Collar rings repeat the mouth samples along the exact bore axis; steps
+/// share the bore rings and the helical rims vertex for vertex.
+fn threaded_wall(
+    mesh: &mut DisplayMesh,
+    [mouth, exit]: [Range<usize>; 2],
+    bore: OrthogonalThroughBore,
+    threaded: ThreadedThroughBore<'_>,
+    [entry_face, first]: [u32; 2],
+    options: Tessellation,
+) -> Result<(), MeshError> {
+    let invalid = MeshError::UnresolvedBoundary;
+    let dot = |a: Point, b: Point| a.into_iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
+    let [c0, c1] = bore.centers_mm;
+    let depth = bore.depth_mm();
+    let d: Point = std::array::from_fn(|i| (c1[i] - c0[i]) / depth);
+    let axis = d.iter().position(|x| x.abs() == 1.).ok_or(invalid)?;
+    let [u, v] = threaded.axes;
+    let n = [
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+    ];
+    let along = dot(n, d);
+    let length = threaded.wall.length_mm();
+    let offset: Point = std::array::from_fn(|i| threaded.origin[i] - c0[i]);
+    let start = dot(offset, d);
+    let radial = std::array::from_fn::<f64, 3, _>(|i| offset[i] - start * d[i]);
+    let end = start + along * length;
+    let [low, high] = [start.min(end), start.max(end)];
+    if ![dot(u, u) - 1., dot(v, v) - 1., dot(u, v), along.abs() - 1.]
+        .into_iter()
+        .all(|x| x.abs() <= 1e-10)
+        || dot(radial, radial).sqrt() > 1e-9 * (1. + depth)
+        || low <= 0.
+        || high >= depth
+        || bore.radius_mm >= threaded.wall.inner_radius_mm()
+    {
+        return Err(invalid);
+    }
+    let count = mouth.len();
+    let level = |s: f64| c0[axis] + d[axis] * s;
+    // Ring vertex j shares the angular sample of mouth vertex j.
+    let ring = |mesh: &mut DisplayMesh, s: f64| {
+        let first = mesh.vertices.len() / 3;
+        for j in 0..count {
+            let mut point: Point =
+                std::array::from_fn(|i| mesh.vertices[3 * (mouth.start + j) + i]);
+            point[axis] = level(s);
+            mesh.vertices.extend(point);
+        }
+        first
+    };
+    let lower = ring(mesh, low);
+    let upper = ring(mesh, high);
+    for i in 0..count {
+        let next = (i + 1) % count;
+        let pair = |base: usize| [base + i, base + next];
+        wall(mesh, pair(lower), pair(mouth.start), entry_face);
+        let far = [i, next].map(|j| exit.start + (count - j) % count);
+        wall(mesh, far, pair(upper), first);
+    }
+    let (wall_mesh, rims) = threaded.wall.open(options)?;
+    if mesh
+        .face_indices
+        .len()
+        .saturating_add(wall_mesh.face_indices.len())
+        > options.triangle_limit
+    {
+        return Err(MeshError::BudgetExceeded);
+    }
+    let base = mesh.vertices.len() / 3;
+    for point in wall_mesh.vertices.as_chunks::<3>().0 {
+        let [x, y, z] = *point;
+        mesh.vertices.extend::<[f64; 3]>(std::array::from_fn(|i| {
+            threaded.origin[i] + u[i] * x + v[i] * y + n[i] * z
+        }));
+    }
+    for (triangle, &face) in wall_mesh
+        .indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(&wall_mesh.face_indices)
+    {
+        let face = face.checked_sub(2).ok_or(invalid)?;
+        // The cut wall faces the bore axis, opposite to the external wall.
+        let [a, b, c] = triangle.map(|i| base + i as usize);
+        mesh.triangle([a, c, b], first + 3 + face);
+    }
+    // Each step faces into the tool: +n at cap 0, -n at cap 1.
+    for (cap, rim) in rims.iter().enumerate() {
+        let s = if cap == 0 { start } else { end };
+        let outward = if cap == 0 { along } else { -along };
+        let plane = FacePlane {
+            axis,
+            sign: outward * d[axis],
+            level: level(s),
+        };
+        let collar = if s == low { lower } else { upper };
+        let mut region = FaceRegion::default();
+        let signed = |points: &[([f64; 2], usize)]| {
+            (0..points.len())
+                .map(|i| {
+                    let [a, b] = [points[i].0, points[(i + 1) % points.len()].0];
+                    a[0] * b[1] - a[1] * b[0]
+                })
+                .sum::<f64>()
+        };
+        let mut outer: Vec<_> = rim
+            .iter()
+            .map(|&i| {
+                let index = base + i as usize;
+                let point = std::array::from_fn(|k| mesh.vertices[3 * index + k]);
+                (plane.project(point), index)
+            })
+            .collect();
+        let mut inner: Vec<_> = (0..count)
+            .map(|j| {
+                let index = collar + j;
+                let point = std::array::from_fn(|k| mesh.vertices[3 * index + k]);
+                (plane.project(point), index)
+            })
+            .collect();
+        if signed(&outer) < 0. {
+            outer.reverse();
+        }
+        if signed(&inner) > 0. {
+            inner.reverse();
+        }
+        region.ring(outer.into_iter());
+        region.ring(inner.into_iter());
+        let triangles = triangulate_region(region.points, &region.edges, 1)?.triangles;
+        if mesh.face_indices.len().saturating_add(triangles.len()) > options.triangle_limit {
+            return Err(MeshError::BudgetExceeded);
+        }
+        for triangle in triangles {
+            mesh.triangle(
+                triangle.map(|vertex| region.indices[vertex]),
+                first + 1 + cap as u32,
+            );
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Default)]

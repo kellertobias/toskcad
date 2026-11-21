@@ -24,6 +24,21 @@ pub(super) fn build(
         }
         Err(cause) => cause,
     };
+    // A thread band buried in an existing coaxial analytic through bore.
+    match target.rust_cut_internal_thread_in_bore(
+        profile,
+        root,
+        thread.minimum_wall_mm,
+        feature,
+        requested,
+        policy,
+    ) {
+        Ok(solid) => return Ok(solid),
+        Err(cause) if cause.kind != GeometryErrorKind::Unsupported => {
+            return Err(error(Some(feature), cause));
+        }
+        Err(_) => {}
+    }
     if family != ThreadFamily::IsoMetric || root.is_some() {
         return Err(error(Some(feature), original));
     }

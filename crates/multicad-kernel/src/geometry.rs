@@ -41,9 +41,11 @@ use external_npt_stock_body::ExternalNptStockBody;
 pub use external_npt_stock_body::ExternalNptStockTransfer;
 use line8_nut_body::Line8NutBody;
 pub use line8_nut_body::{Line8NutCut, Line8NutTransfer};
+mod bored_thread_body;
 pub(crate) mod construction;
 mod cosmetic_fastener_body;
 mod cosmetic_phillips_body;
+use bored_thread_body::BoredThreadBody;
 mod cosmetic_profiled_body;
 use clipped_npt_body::ClippedNptBody;
 use cosmetic_phillips_body::CosmeticPhillipsBody;
@@ -170,8 +172,8 @@ pub use rounded_thread_bore_body::RoundedThreadBoreData;
 use rust_compound::RustCompound;
 use sphere_body::SphereBody;
 use spline_cap_relief_body::SplineCapReliefBody;
-use spline_sweep_body::SplineSweepBody;
 pub(crate) use spline_sweep_body::RimSpan;
+use spline_sweep_body::SplineSweepBody;
 pub use spur_gear_body::GearFlankWitness;
 use spur_gear_body::SpurGearBody;
 use torus_body::TorusBody;
@@ -783,6 +785,7 @@ enum SolidBody {
     CosmeticFastener(Rc<CosmeticFastenerBody>, PlaneFrame),
     CosmeticProfiled(Rc<CosmeticProfiledBody>, PlaneFrame),
     CosmeticPhillips(Rc<CosmeticPhillipsBody>),
+    BoredThread(Rc<BoredThreadBody>),
     ClippedNpt(Rc<ClippedNptBody>),
     PipeHardware(Rc<PipeHardwareBody>),
     LiteralNpt(Rc<LiteralNptBody>),
@@ -1283,6 +1286,7 @@ impl Solid {
                 SolidBody::CosmeticProfiled(Rc::clone(body), *frame)
             }
             SolidBody::CosmeticPhillips(body) => SolidBody::CosmeticPhillips(Rc::clone(body)),
+            SolidBody::BoredThread(body) => SolidBody::BoredThread(Rc::clone(body)),
             SolidBody::EntryChamfer(body, frame) => {
                 SolidBody::EntryChamfer(Rc::clone(body), *frame)
             }
@@ -1865,6 +1869,9 @@ impl Solid {
                     frame.checked_metric_bounds(body.bounds(PlaneFrame::default()), self.policy)?;
                     SolidBody::CosmeticProfiled(Rc::clone(body), frame)
                 }
+                SolidBody::BoredThread(body) => {
+                    SolidBody::BoredThread(Rc::new(body.transformed(transform)?))
+                }
                 SolidBody::CosmeticPhillips(body) => {
                     SolidBody::CosmeticPhillips(Rc::new(body.transformed(transform)?))
                 }
@@ -2145,6 +2152,9 @@ impl Solid {
         if let Some(body) = self.cosmetic_phillips_body() {
             return Ok(body.volume_mm3());
         }
+        if let Some(body) = self.bored_thread_body() {
+            return body.volume_mm3();
+        }
         if let Some((body, _)) = self.cosmetic_fastener_body() {
             return Ok(body.geometry.volume_mm3());
         }
@@ -2321,6 +2331,9 @@ impl Solid {
         }
         if let Some(body) = self.cosmetic_phillips_body() {
             return Ok(body.bounds());
+        }
+        if let Some(body) = self.bored_thread_body() {
+            return body.bounds();
         }
         if let Some((body, frame)) = self.cosmetic_fastener_body() {
             return Ok(body.bounds(frame));
@@ -2554,6 +2567,9 @@ impl Solid {
         if let Some(body) = self.cosmetic_phillips_body() {
             return body.faces();
         }
+        if let Some(body) = self.bored_thread_body() {
+            return body.faces();
+        }
         if let Some((body, frame)) = self.cosmetic_fastener_body() {
             return Ok(body.faces(frame));
         }
@@ -2727,6 +2743,16 @@ impl Solid {
                     "Cosmetic thread envelopes require modeled thread geometry for manufacturing",
                 )),
             },
+            SolidBody::BoredThread(body)
+                if usage == MeshUse::Manufacturing && body.is_cosmetic() =>
+            {
+                Err(error(
+                    "manufacturing mesh",
+                    GeometryErrorKind::Unsupported,
+                    "Cosmetic thread envelopes require modeled thread geometry for manufacturing",
+                ))
+            }
+            SolidBody::BoredThread(body) => body.mesh(rust_options),
             SolidBody::CosmeticPhillips(body) => match usage {
                 MeshUse::Display => body.mesh(rust_options),
                 MeshUse::Manufacturing => Err(error(
@@ -3309,6 +3335,7 @@ impl Solid {
             SolidBody::CosmeticFastener(body, _) => body.feature,
             SolidBody::CosmeticProfiled(body, _) => body.feature,
             SolidBody::CosmeticPhillips(body) => body.feature,
+            SolidBody::BoredThread(body) => body.feature,
             SolidBody::ClippedNpt(body) => body.feature,
             SolidBody::PipeHardware(body) => body.feature,
             SolidBody::LiteralNpt(body) => body.feature,
@@ -3408,6 +3435,7 @@ impl Solid {
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
             | SolidBody::CosmeticPhillips(..)
+            | SolidBody::BoredThread(..)
             | SolidBody::InternalThreadTreatment(..)
             | SolidBody::ObliqueBore(..)
             | SolidBody::CrossBore(..) => false,
@@ -3686,6 +3714,7 @@ impl Solid {
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
             | SolidBody::CosmeticPhillips(..)
+            | SolidBody::BoredThread(..)
             | SolidBody::InternalThreadTreatment(..)
             | SolidBody::ObliqueBore(..)
             | SolidBody::CrossBore(..) => Err(step::StepError::Unsupported),
@@ -3815,6 +3844,7 @@ impl Solid {
             SolidBody::CosmeticFastener(..) => "CosmeticFastener",
             SolidBody::CosmeticProfiled(..) => "CosmeticProfiled",
             SolidBody::CosmeticPhillips(..) => "CosmeticPhillips",
+            SolidBody::BoredThread(..) => "BoredThread",
             SolidBody::ClippedNpt(..) => "ClippedNpt",
             SolidBody::PipeHardware(..) => "PipeHardware",
             SolidBody::LiteralNpt(..) => "LiteralNpt",

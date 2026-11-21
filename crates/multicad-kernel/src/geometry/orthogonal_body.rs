@@ -1240,6 +1240,27 @@ impl OrthogonalBody {
         }
     }
 
+    /// Certified round cuts in their published face order, with the origin
+    /// of each through bore. Slots are reported only by count.
+    pub(in crate::geometry) fn round_cuts(
+        &self,
+    ) -> (
+        &[OrthogonalPocket],
+        &[OrthogonalThroughBore],
+        &[Origin],
+        usize,
+    ) {
+        (
+            &self.pockets,
+            &self.through_bores,
+            &self.through_origins,
+            self.slots.len(),
+        )
+    }
+    pub(in crate::geometry) fn is_imported(&self) -> bool {
+        self.imported_roundoff_mm.is_some()
+    }
+
     pub(crate) fn has_curved_cuts(&self) -> bool {
         !self.pockets.is_empty() || !self.through_bores.is_empty() || !self.slots.is_empty()
     }

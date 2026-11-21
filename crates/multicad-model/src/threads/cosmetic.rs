@@ -103,6 +103,54 @@ pub(super) fn shaft(
         .map_err(|cause| error(Some(feature), cause))
 }
 
+/// Display-only receiving envelope: the internal crest radius, removed over
+/// the authored interval by an exact Boolean. Never modeled thread material.
+pub(super) fn bore(
+    feature: EntityId,
+    thread: &ResolvedThread,
+    target: &Solid,
+    policy: GeometryPolicy,
+) -> Result<Solid, ModelError> {
+    if thread.profile.radial_taper != 0. {
+        return Err(error(
+            Some(feature),
+            "Rust cosmetic receiving envelopes require an untapered thread",
+        ));
+    }
+    let crest = thread.major_radius_mm - thread.profile.depth_mm;
+    let frame = PlaneFrame {
+        origin: thread.frame.origin,
+        u: thread.frame.u,
+        v: thread.frame.v,
+    };
+    // Buried in an existing coaxial through bore: a dedicated exact body.
+    match target.rust_cut_cosmetic_internal_thread_in_bore(
+        crest,
+        thread.major_radius_mm,
+        thread.length_mm,
+        thread.minimum_wall_mm,
+        feature,
+        frame,
+        policy,
+    ) {
+        Ok(solid) => return Ok(solid),
+        Err(cause) if cause.kind != multicad_kernel::GeometryErrorKind::Unsupported => {
+            return Err(error(Some(feature), cause));
+        }
+        Err(_) => {}
+    }
+    let tool = cylinder(feature, crest, thread, policy)?;
+    target
+        .boolean(&tool, multicad_kernel::BooleanOperation::Subtract, policy)
+        .map_err(|cause| error(Some(feature), cause))?
+        .ok_or_else(|| {
+            error(
+                Some(feature),
+                "The cosmetic receiving envelope removes all receiving material",
+            )
+        })
+}
+
 fn cylinder(
     feature: EntityId,
     radius: f64,
