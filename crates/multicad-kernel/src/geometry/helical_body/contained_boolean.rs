@@ -4,6 +4,7 @@ use super::*;
 use crate::geometry::coaxial::Coaxial;
 use crate::geometry::internal_thread_treatment_body::interval::Interval as B;
 use multicad_rust_kernel::helical_thread::{BoxClassification, ProfileContainmentError};
+mod common;
 mod headed;
 
 fn exact(value: Rational) -> B {
@@ -139,33 +140,56 @@ impl Solid {
         // entire shaft in its void's interval; a through nut has no stock
         // beyond its thread; a nut on a headed screw must sit wholly on the
         // threaded length, away from the shank and head.
-        let (shaft, frame, cavity, cavity_frame, rule) = match (&a.form, &b.form) {
+        let (shaft, frame, cavity, cavity_frame, rule, nut) = match (&a.form, &b.form) {
             (HelicalForm::Shaft, HelicalForm::Bore(_)) => {
-                (&a.geometry, af, &b.geometry, bf, Span::ShaftInCavity)
+                (&a.geometry, af, &b.geometry, bf, Span::ShaftInCavity, None)
             }
             (HelicalForm::Bore(_), HelicalForm::Shaft) => {
-                (&b.geometry, bf, &a.geometry, af, Span::ShaftInCavity)
+                (&b.geometry, bf, &a.geometry, af, Span::ShaftInCavity, None)
             }
-            (HelicalForm::Shaft, HelicalForm::Nut(_)) => {
-                (&a.geometry, af, &b.geometry, bf, Span::Unbounded)
-            }
-            (HelicalForm::Nut(_), HelicalForm::Shaft) => {
-                (&b.geometry, bf, &a.geometry, af, Span::Unbounded)
-            }
-            (HelicalForm::Screw(screw), HelicalForm::Nut(nut)) => {
-                (screw.thread(), af, nut.thread(), bf, Span::CavityInShaft)
-            }
-            (HelicalForm::Nut(nut), HelicalForm::Screw(screw)) => {
-                (screw.thread(), bf, nut.thread(), af, Span::CavityInShaft)
-            }
+            (HelicalForm::Shaft, HelicalForm::Nut(nut)) => (
+                &a.geometry,
+                af,
+                &b.geometry,
+                bf,
+                Span::Unbounded,
+                Some(nut.across_flats_mm()),
+            ),
+            (HelicalForm::Nut(nut), HelicalForm::Shaft) => (
+                &b.geometry,
+                bf,
+                &a.geometry,
+                af,
+                Span::Unbounded,
+                Some(nut.across_flats_mm()),
+            ),
+            (HelicalForm::Screw(screw), HelicalForm::Nut(nut)) => (
+                screw.thread(),
+                af,
+                nut.thread(),
+                bf,
+                Span::CavityInShaft,
+                Some(nut.across_flats_mm()),
+            ),
+            (HelicalForm::Nut(nut), HelicalForm::Screw(screw)) => (
+                screw.thread(),
+                bf,
+                nut.thread(),
+                af,
+                Span::CavityInShaft,
+                Some(nut.across_flats_mm()),
+            ),
             _ => return None,
         };
         let [shaft_length, cavity_length] = [shaft, cavity].map(|thread| thread.spec().length_mm);
-        let proof = if frame == cavity_frame {
+        let (proof, shift, axial) = if frame == cavity_frame {
             if !rule.admits(0., 0., shaft_length, cavity_length) {
                 return None;
             }
-            shaft.prove_profile_containment(cavity, Default::default(), None)
+            let proof = shaft
+                .prove_profile_containment(cavity, Default::default(), None)
+                .map(|_| ());
+            (proof, [0.; 2], 0.)
         } else {
             // A cavity rotated about or moved along the common axis is the
             // same profile law at a certified phase shift.
@@ -179,13 +203,33 @@ impl Solid {
                 return None;
             }
             let shift = placement.phase_shift(cavity.helical_rate(), cavity.root_radius_mm())?;
-            shaft
+            let proof = shaft
                 .prove_shifted_profile_containment(cavity, shift, Default::default(), None)
                 .ok()
                 .filter(|proof| proof.minimum_gap_mm() >= placement.radial_mm)
-                .ok_or(ProfileContainmentError::Unresolved)
+                .map(|_| ())
+                .ok_or(ProfileContainmentError::Unresolved);
+            (proof, shift, placement.axial_mm)
         };
-        proof.ok()?;
+        if proof.is_err() {
+            // Overlapping laws: only an intersection with a through nut,
+            // whose material is its hex less the threaded void over its
+            // own length, has a constructed common material. The external
+            // crest must stay inside the hex's inscribed circle.
+            let across_flats = nut?;
+            if retain_left || shaft.spec().major_radius_mm >= across_flats / 2. {
+                return None;
+            }
+            let span = [axial.max(0.), (axial + cavity_length).min(shaft_length)];
+            return Self::coaxial_thread_common(
+                shaft,
+                frame,
+                cavity,
+                shift[0].midpoint(shift[1]),
+                span,
+                self.policy,
+            );
+        }
         // A nonnegative whole-profile gap proves no common INTERIOR. Exact
         // coincident boundary contact cannot produce a three-dimensional solid.
         Some(if retain_left {

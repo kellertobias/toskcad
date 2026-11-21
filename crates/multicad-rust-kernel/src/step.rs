@@ -78,6 +78,7 @@ pub use thread_entry_chamfer::{
     write_thread_entry_chamfer_with_interrupt,
 };
 mod torus;
+mod twisted_region;
 pub use radial_boundary::write_radial_boundary;
 pub use rounded_cylinder::write_rounded_cylinder;
 pub use tapered_thread::write_tapered_thread;
@@ -107,6 +108,7 @@ pub use spline_sweep::write_spline_sweep;
 pub use spur_gear::{SPUR_STEP_MAX_ERROR_MM, write_internal_ring, write_spur_gear};
 use stadium::StadiumTrim;
 pub use stadium::write_stadium_prism;
+pub use twisted_region::{Spiral, write_twisted_spirals};
 pub use warped_union::{supports_warped_union, write_warped_union};
 use writer::write_one;
 pub use writer::{MAX_COMPOUND_SOLIDS, Writer};

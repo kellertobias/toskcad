@@ -1,6 +1,7 @@
 //! Intersections and cuts of axial bodies proved empty by coaxial cylinders.
 //!
-//! A placed fastener or a polygonal revolution lies inside a stack of
+//! A placed fastener, a modeled machine screw or a polygonal revolution
+//! lies inside a stack of
 //! closed cylindrical slabs about its own axis: between two consecutive
 //! meridian heights, every boundary point lies on a non-horizontal surface
 //! or meridian edge crossing that open interval, whose endpoints bound its
@@ -63,6 +64,50 @@ fn fastener_edges(surfaces: impl Iterator<Item = Surface>) -> Vec<([f64; 2], [f6
         .collect()
 }
 
+/// A modeled machine screw in its thread chart: the thread within its
+/// crest cylinder over `[0, L]`, the plain shank over `[-s, 0]` and the head
+/// within its round rim or hex corners over `[-s - h, -s]`. A socket only
+/// removes head material.
+fn screw_slabs(screw: &multicad_rust_kernel::headed_screw::Screw) -> Option<Vec<Slab>> {
+    use multicad_rust_kernel::headed_screw::ScrewHead;
+    let thread = screw.thread().spec();
+    let spec = screw.spec();
+    let head = match spec.head {
+        ScrewHead::SocketCap { radius_mm, .. } => radius_mm,
+        ScrewHead::ExternalHex {
+            across_flats_mm, ..
+        } => across_flats_mm / 3_f64.sqrt(),
+    };
+    let seat = screw.head_seat_z();
+    let mut slabs = vec![Slab {
+        low: screw.head_top_z(),
+        high: seat,
+        radius: head,
+    }];
+    if spec.shank_length_mm > 0. {
+        slabs.push(Slab {
+            low: seat,
+            high: 0.,
+            radius: spec.shank_radius_mm,
+        });
+    }
+    slabs.push(Slab {
+        low: 0.,
+        high: thread.length_mm,
+        radius: thread.major_radius_mm,
+    });
+    slabs
+        .iter()
+        .all(|slab| {
+            [slab.low, slab.high, slab.radius]
+                .iter()
+                .all(|v| v.is_finite())
+                && slab.low < slab.high
+                && slab.radius > 0.
+        })
+        .then_some(slabs)
+}
+
 impl Solid {
     /// The axis frame and covering slabs of an axial body.
     fn enclosing_slabs(&self) -> Option<(PlaneFrame, Vec<Slab>)> {
@@ -81,7 +126,10 @@ impl Solid {
                     .collect();
                 Some((*frame, slabs(&edges)?))
             }
-            _ => None,
+            _ => {
+                let (screw, frame) = self.rust_machine_screw_geometry()?;
+                Some((frame, screw_slabs(screw)?))
+            }
         }
     }
 
@@ -153,6 +201,79 @@ impl Solid {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn machine_screws_lie_in_their_thread_shank_and_head_cylinders() {
+        use multicad_rust_kernel::headed_screw::{Screw, ScrewHead, ScrewSpec};
+        use multicad_rust_kernel::helical_thread::{Spec, Thread};
+        let thread = Thread::new(Spec {
+            major_radius_mm: 1.5,
+            pitch_mm: 0.5,
+            length_mm: 8.,
+            depth_mm: 0.27,
+            crest_width_mm: 0.06,
+            lower_flank_deg: 30.,
+            upper_flank_deg: 30.,
+            starts: 1,
+            left_hand: false,
+            root_radius_mm: None,
+        })
+        .unwrap();
+        let socket = ScrewHead::SocketCap {
+            radius_mm: 2.75,
+            height_mm: 3.,
+            socket_across_flats_mm: 2.5,
+            socket_depth_mm: 1.3,
+        };
+        let hex = ScrewHead::ExternalHex {
+            across_flats_mm: 5.5,
+            height_mm: 2.,
+        };
+        let cap = Screw::new(
+            thread,
+            ScrewSpec {
+                head: socket,
+                shank_length_mm: 2.,
+                shank_radius_mm: 1.5,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            screw_slabs(&cap).unwrap(),
+            [
+                Slab {
+                    low: -5.,
+                    high: -2.,
+                    radius: 2.75
+                },
+                Slab {
+                    low: -2.,
+                    high: 0.,
+                    radius: 1.5
+                },
+                Slab {
+                    low: 0.,
+                    high: 8.,
+                    radius: 1.5
+                },
+            ]
+        );
+        // Without a shank the head sits on the thread; hex corners bound it.
+        let flush = Screw::new(
+            thread,
+            ScrewSpec {
+                head: hex,
+                shank_length_mm: 0.,
+                shank_radius_mm: 1.5,
+            },
+        )
+        .unwrap();
+        let slabs = screw_slabs(&flush).unwrap();
+        assert_eq!(slabs.len(), 2);
+        assert_eq!([slabs[0].low, slabs[0].high], [-2., 0.]);
+        assert!((slabs[0].radius - 5.5 / 3_f64.sqrt()).abs() < 1e-15);
+        assert_eq!(slabs[1].radius, 1.5);
+    }
 
     #[test]
     fn slabs_take_the_largest_endpoint_radius_of_every_edge_they_meet() {
