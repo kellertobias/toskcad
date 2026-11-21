@@ -1,8 +1,12 @@
 //! Generic hardware forms share canonical geometry and thread recipe controls.
 mod screw_shape;
+mod visual;
+#[cfg(test)]
+mod visual_tests;
 mod wood;
 use super::{
     FormStamp, PreviewState,
+    diagram::{self, Choice, DiagramLink, Key},
     dimension::DimensionField,
     form::{self, FormAction, ModelEvent, ModelRequest},
     thread::ThreadPanel,
@@ -19,7 +23,7 @@ use multicad_core::{
     sketch::Datum,
 };
 use screw_shape::ScrewShapeForm;
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Kind {
     Washer,
     HexNut,
@@ -28,6 +32,22 @@ enum Kind {
     BearingEnvelope,
 }
 impl Kind {
+    const ALL: [Self; 5] = [
+        Self::Washer,
+        Self::HexNut,
+        Self::MachineScrew,
+        Self::WoodScrew,
+        Self::BearingEnvelope,
+    ];
+    fn hint(self) -> &'static str {
+        match self {
+            Self::Washer => "Flat ring: bore, outside diameter and thickness",
+            Self::HexNut => "Hexagon with an internal thread: across flats, thread and height",
+            Self::MachineScrew => "Head, shank and external thread with a chosen length convention",
+            Self::WoodScrew => "Simplified hex-head envelope; thread and point are not modeled",
+            Self::BearingEnvelope => "Mounting envelope only: bore, outside diameter and width",
+        }
+    }
     fn label(self) -> &'static str {
         match self {
             Self::Washer => "Plain washer",
@@ -55,7 +75,9 @@ pub(super) struct MechanicalPartPanel {
     plane: Option<Datum>,
     stamp: FormStamp,
     editing: bool,
+    link: DiagramLink,
 }
+const ORIGIN: [Key; 3] = ["hardware.x", "hardware.y", "hardware.z"];
 impl MechanicalPartPanel {
     pub fn new(
         request: MechanicalPartRequest,
@@ -209,6 +231,7 @@ impl MechanicalPartPanel {
             request,
             stamp: FormStamp::new(),
             editing,
+            link: DiagramLink::default(),
         })
     }
     fn default_thread() -> ThreadParameters {
@@ -346,6 +369,75 @@ impl MechanicalPartPanel {
             field.set_literal(value, "mm");
         }
     }
+    /// Every linked field of the selected family in display order, for
+    /// validation targeting and section reveal.
+    fn linked_fields(&self) -> Vec<(Key, &DimensionField)> {
+        let mut fields: Vec<(Key, &DimensionField)> = match self.kind {
+            Kind::Washer => visual::WASHER.into_iter().zip(self.fields.iter()).collect(),
+            Kind::BearingEnvelope => visual::BEARING
+                .into_iter()
+                .zip(self.fields.iter())
+                .collect(),
+            Kind::HexNut => {
+                let mut f = vec![(visual::NUT_FLATS, &self.fields[0])];
+                f.extend(self.thread.linked_fields());
+                f
+            }
+            Kind::MachineScrew => {
+                let mut f = vec![
+                    (visual::SCREW_LENGTH, &self.screw_fields[0]),
+                    (visual::SCREW_SHANK, &self.screw_fields[1]),
+                ];
+                f.extend(self.screw_shape.linked_fields());
+                f.extend(self.thread.linked_fields());
+                f
+            }
+            Kind::WoodScrew => self.wood.linked_fields(),
+        };
+        fields.extend(ORIGIN.into_iter().zip(self.origin.iter()));
+        fields
+    }
+    fn callout_value(&self, key: Key) -> String {
+        self.linked_fields()
+            .into_iter()
+            .find(|(k, _)| *k == key)
+            .map_or_else(String::new, |(_, field)| diagram::field_value(field))
+    }
+    /// The selected family's dimension diagram with the staged values.
+    fn schematic(&self, document: &Document) -> diagram::Diagram {
+        let value = |f: &DimensionField| diagram::value_of(f, document, &self.parameters);
+        let thread = self.thread.diagram_values(document);
+        let (head_size, head_height) = self.screw_shape.head_fields();
+        let mut values = visual::Values {
+            a: value(&self.fields[0]),
+            b: value(&self.fields[1]),
+            c: value(&self.fields[2]),
+            length: value(&self.screw_fields[0]),
+            shank: value(&self.screw_fields[1]),
+            thread_diameter: thread.diameter,
+            thread_length: thread.length,
+            head_size: head_size.and_then(value),
+            head_height: head_height.and_then(value),
+        };
+        let mut shape = visual::ScrewShape {
+            head: self.screw_shape.head,
+            convention: self.screw_length_convention,
+            wood: false,
+        };
+        if self.kind == Kind::WoodScrew {
+            shape = visual::ScrewShape {
+                head: screw_shape::HeadKind::ExternalHex,
+                convention: self.wood.convention(),
+                wood: true,
+            };
+            values.length = value(self.wood.field(0));
+            values.shank = value(self.wood.field(1));
+            values.head_size = value(self.wood.field(2));
+            values.head_height = value(self.wood.field(3));
+            values.thread_length = value(self.wood.field(7));
+        }
+        visual::family(self.kind, &shape, &values)
+    }
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -371,27 +463,55 @@ impl MechanicalPartPanel {
             )
             .changed();
         let mut selected = self.kind;
-        ui.add_enabled_ui(!self.editing, |ui| {
-            controls::inspector_combo(ui, "mechanical-kind")
-                .selected_text(self.kind.label())
-                .show_ui(ui, |ui| {
-                    for kind in [
-                        Kind::Washer,
-                        Kind::HexNut,
-                        Kind::MachineScrew,
-                        Kind::WoodScrew,
-                        Kind::BearingEnvelope,
-                    ] {
-                        ui.selectable_value(&mut selected, kind, kind.label());
-                    }
-                });
+        ui.label(if self.editing {
+            "Hardware family (fixed for an existing part)"
+        } else {
+            "Hardware family"
         });
+        let choices: Vec<Choice<'_, Kind>> = Kind::ALL
+            .into_iter()
+            .map(|kind| Choice {
+                value: kind,
+                label: kind.label(),
+                hint: kind.hint(),
+                art: visual::art(kind),
+            })
+            .collect();
+        diagram::choice_grid(
+            ui,
+            "mechanical-kind",
+            &mut selected,
+            &choices,
+            !self.editing,
+        );
         if selected != self.kind {
             self.change_kind(selected);
             changed = true;
         }
+        self.link.invalid = diagram::first_invalid(document, self.linked_fields());
+        let schematic = self.schematic(document);
+        let values: Vec<(Key, String)> = schematic
+            .keys()
+            .into_iter()
+            .map(|key| (key, self.callout_value(key)))
+            .collect();
+        let value = |key: Key| {
+            values
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map_or_else(String::new, |(_, v)| v.clone())
+        };
+        self.link.diagram(
+            ui,
+            ("hardware", self.request.feature),
+            &schematic,
+            240.,
+            &value,
+        );
+        ui.small("Schematic · click a dimension to edit it");
+        let feature = self.request.feature;
         if self.kind == Kind::WoodScrew {
-            changed |= self.wood.show(ui, self.request.feature);
+            changed |= self.wood.show_linked(ui, feature, &mut self.link);
         } else if self.kind == Kind::MachineScrew {
             egui::ComboBox::from_id_salt("screw_length_convention")
                 .selected_text(match self.screw_length_convention {
@@ -412,38 +532,65 @@ impl MechanicalPartPanel {
                         }
                     }
                 });
-            for (index, label) in ["Length", "Shank diameter"].into_iter().enumerate() {
-                changed |= self.screw_fields[index].show_named(ui,(self.request.feature,"screw",index),label,"Retained millimeters or a bound expression; the selected length convention is explicit.");
+            for (index, (key, label)) in [
+                (visual::SCREW_LENGTH, "Length"),
+                (visual::SCREW_SHANK, "Shank diameter"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                changed |= self.link.field(ui, key, &mut self.screw_fields[index], (feature, "screw", index), label, "Retained millimeters or a bound expression; the selected length convention is explicit.");
             }
-            changed |= self.screw_shape.show(ui, self.request.feature);
+            changed |= self.screw_shape.show_linked(ui, feature, &mut self.link);
             ui.small("The head extends behind the neck datum. Overall length includes its actual height; underhead length runs from the neck datum to the tip. Thread length is independent and ends at the tip. Changing convention retains the authored value or expression.");
-            changed |=
-                self.thread
-                    .recipe_controls(ui, ThreadMode::NewExternal, "Thread length", false);
-        } else if self.kind == Kind::HexNut {
-            changed |= self.fields[0].show(
+            changed |= self.thread.recipe_controls_linked(
                 ui,
+                ThreadMode::NewExternal,
+                "Thread length",
+                false,
+                &mut self.link,
+            );
+        } else if self.kind == Kind::HexNut {
+            changed |= self.link.field(
+                ui,
+                visual::NUT_FLATS,
+                &mut self.fields[0],
+                (feature, "nut-flats"),
                 "Across flats",
                 "Nut height and axis are retained once in the thread recipe",
             );
-            changed |= self.thread.recipe_controls(
+            changed |= self.thread.recipe_controls_linked(
                 ui,
                 ThreadMode::CutInternal,
                 "Nut height / thread length",
                 false,
+                &mut self.link,
             );
         } else {
-            for (field, label) in self.fields.iter_mut().zip([
-                "Bore diameter",
-                "Outside diameter",
-                if self.kind == Kind::Washer {
-                    "Thickness"
-                } else {
-                    "Width"
-                },
-            ]) {
-                changed |= field.show(
+            let keys = if self.kind == Kind::Washer {
+                visual::WASHER
+            } else {
+                visual::BEARING
+            };
+            for (index, (field, label)) in self
+                .fields
+                .iter_mut()
+                .zip([
+                    "Bore diameter",
+                    "Outside diameter",
+                    if self.kind == Kind::Washer {
+                        "Thickness"
+                    } else {
+                        "Width"
+                    },
+                ])
+                .enumerate()
+            {
+                changed |= self.link.field(
                     ui,
+                    keys[index],
+                    field,
+                    (feature, "ring", index),
                     label,
                     "Positive dimensions; outside diameter must exceed the bore",
                 );
@@ -455,31 +602,51 @@ impl MechanicalPartPanel {
             }
         }
         ui.separator();
-        ui.strong("Part axis");
-        controls::inspector_combo(ui, "mechanical-plane")
-            .selected_text(self.plane.map_or("Stored orientation", Datum::label))
-            .show_ui(ui, |ui| {
-                for datum in Datum::ALL {
-                    changed |= ui
-                        .selectable_value(&mut self.plane, Some(datum), datum.label())
-                        .changed();
+        let placement = format!(
+            "Placement · {} · base center {}, {}, {}",
+            self.plane.map_or("Stored orientation", Datum::label),
+            diagram::field_value(&self.origin[0]),
+            diagram::field_value(&self.origin[1]),
+            diagram::field_value(&self.origin[2]),
+        );
+        let reveal = self.link.reveals(&ORIGIN);
+        let screw = matches!(self.kind, Kind::MachineScrew | Kind::WoodScrew);
+        diagram::section(
+            ui,
+            (feature, "hardware-placement"),
+            &placement,
+            reveal,
+            |ui| {
+                ui.label("Part axis");
+                controls::inspector_combo(ui, "mechanical-plane")
+                    .selected_text(self.plane.map_or("Stored orientation", Datum::label))
+                    .show_ui(ui, |ui| {
+                        for datum in Datum::ALL {
+                            changed |= ui
+                                .selectable_value(&mut self.plane, Some(datum), datum.label())
+                                .changed();
+                        }
+                    });
+                for ((key, field), label) in ORIGIN.into_iter().zip(self.origin.iter_mut()).zip([
+                    "Base center X",
+                    "Base center Y",
+                    "Base center Z",
+                ]) {
+                    changed |= self.link.field(
+                        ui,
+                        key,
+                        field,
+                        key,
+                        label,
+                        if screw {
+                            "Underhead center; shaft extends along the normal and head behind it"
+                        } else {
+                            "The part extends along the plane normal from this base center"
+                        },
+                    );
                 }
-            });
-        for (field, label) in
-            self.origin
-                .iter_mut()
-                .zip(["Base center X", "Base center Y", "Base center Z"])
-        {
-            changed |= field.show(
-                ui,
-                label,
-                if matches!(self.kind, Kind::MachineScrew | Kind::WoodScrew) {
-                    "Underhead center; shaft extends along the normal and head behind it"
-                } else {
-                    "The part extends along the plane normal from this base center"
-                },
-            );
-        }
+            },
+        );
         let validation = self.request(document, enabled);
         match &validation {
             Ok(request) => {

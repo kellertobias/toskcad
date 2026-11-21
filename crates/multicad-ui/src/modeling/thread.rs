@@ -1,7 +1,11 @@
 //! Thread controls keep one canonical request; native candidate receipts gate Apply.
+pub(super) mod visual;
+#[cfg(test)]
+mod visual_tests;
 use super::{
     FormStamp, PreviewState,
     body_choices::BodyChoice,
+    diagram::{self, DiagramLink, Key},
     dimension::DimensionField,
     form::{self, FormAction, ModelEvent, ModelRequest},
 };
@@ -53,6 +57,8 @@ pub(super) struct ThreadPanel {
     plane: Option<Datum>,
     editing: bool,
     error: Option<String>,
+    /// Diagram ↔ field linking for the standalone Thread form.
+    link: DiagramLink,
 }
 impl ThreadPanel {
     pub fn new(
@@ -144,6 +150,7 @@ impl ThreadPanel {
                 .find(|d| d.frame().u == p.frame.u && d.frame().v == p.frame.v),
             editing,
             error: None,
+            link: DiagramLink::default(),
             request,
         })
     }
@@ -283,6 +290,81 @@ impl ThreadPanel {
         mode: ThreadMode,
         length_label: &str,
         show_frame: bool,
+    ) -> bool {
+        let mut link = std::mem::take(&mut self.link);
+        let changed = self.recipe_controls_linked(ui, mode, length_label, show_frame, &mut link);
+        self.link = link;
+        changed
+    }
+    /// Every linked recipe field in display order, for validation targeting.
+    pub(super) fn linked_fields(&self) -> Vec<(Key, &DimensionField)> {
+        let mut fields = vec![
+            (visual::DIAMETER, &self.diameter),
+            (visual::PITCH, &self.pitch),
+            (visual::LENGTH, &self.length),
+        ];
+        if self.family == ThreadFamily::Custom {
+            fields.extend(visual::CUSTOM.into_iter().zip(self.custom.iter()));
+        }
+        if self.engagement_basis == model::MetricFitEngagementBasis::IntendedLength {
+            fields.push((visual::ENGAGEMENT, &self.engagement_length));
+        }
+        fields.extend([
+            (visual::ALLOWANCE[0], &self.radial),
+            (visual::ALLOWANCE[1], &self.axial),
+        ]);
+        if self.mode == ThreadMode::CutInternal {
+            fields.push((visual::ALLOWANCE[2], &self.wall));
+        }
+        if self.end_treatments_enabled {
+            if self.start_chamfer {
+                fields.push((visual::START_DEPTH, &self.start_depth));
+            }
+            if self.end_relief {
+                fields.push((visual::RELIEF_LENGTH, &self.end_length));
+                fields.push((visual::RELIEF_DEPTH, &self.end_depth));
+            }
+        }
+        fields
+    }
+    /// Values for the thread schematic from the staged fields.
+    pub(super) fn diagram_values(&self, document: &Document) -> visual::Values {
+        let value = |f: &DimensionField| diagram::value_of(f, document, &self.parameters);
+        let custom = (self.family == ThreadFamily::Custom).then(|| {
+            let v = |i: usize| value(&self.custom[i]).unwrap_or([0.5, 0.2, 30., 30., 0.][i]);
+            [v(0), v(1), v(2), v(3), v(4)]
+        });
+        visual::Values {
+            diameter: value(&self.diameter),
+            pitch: value(&self.pitch),
+            length: value(&self.length),
+            custom,
+            start_chamfer: self.end_treatments_enabled && self.start_chamfer,
+            end_relief: self.end_treatments_enabled && self.end_relief,
+        }
+    }
+    pub(super) fn variant(&self, mode: ThreadMode) -> visual::Variant {
+        visual::Variant {
+            family: self.family,
+            mode,
+            hand: self.hand,
+            starts: self.starts,
+        }
+    }
+    /// The staged text a thread callout shows.
+    pub(super) fn callout_value(&self, key: Key) -> Option<String> {
+        self.linked_fields()
+            .into_iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, f)| diagram::field_value(f))
+    }
+    pub(super) fn recipe_controls_linked(
+        &mut self,
+        ui: &mut egui::Ui,
+        mode: ThreadMode,
+        length_label: &str,
+        show_frame: bool,
+        link: &mut DiagramLink,
     ) -> bool {
         let mut changed = false;
         ui.separator();
@@ -459,18 +541,27 @@ impl ThreadPanel {
                 }
             });
         }
-        changed |= self.diameter.show(
+        changed |= link.field(
             ui,
+            visual::DIAMETER,
+            &mut self.diameter,
+            "thread-diameter",
             "Nominal major diameter",
             "Basic crest diameter at the base plane, before fabrication allowance",
         );
-        changed |= self.pitch.show(
+        changed |= link.field(
             ui,
+            visual::PITCH,
+            &mut self.pitch,
+            "thread-pitch",
             "Pitch",
             "Axial spacing of adjacent threads; lead = pitch × starts",
         );
-        let length_changed = self.length.show(
+        let length_changed = link.field(
             ui,
+            visual::LENGTH,
+            &mut self.length,
+            "thread-length",
             length_label,
             "Complete receiving length from the base plane; at least one pitch",
         );
@@ -510,15 +601,20 @@ impl ThreadPanel {
             }
         });
         if self.family == ThreadFamily::Custom {
-            for (field, label) in self.custom.iter_mut().zip([
-                "Radial thread depth",
-                "Axial crest width",
-                "Lower flank from radial (deg)",
-                "Upper flank from radial (deg)",
-                "Radius taper (mm/mm)",
-            ]) {
-                changed |= field.show(
+            for ((key, field), label) in
+                visual::CUSTOM.into_iter().zip(self.custom.iter_mut()).zip([
+                    "Radial thread depth",
+                    "Axial crest width",
+                    "Lower flank from radial (deg)",
+                    "Upper flank from radial (deg)",
+                    "Radius taper (mm/mm)",
+                ])
+            {
+                changed |= link.field(
                     ui,
+                    key,
+                    field,
+                    key,
                     label,
                     "Explicit custom axial profile; diameter taper is twice radius taper",
                 );
@@ -549,8 +645,11 @@ impl ThreadPanel {
                     .changed();
             }
             if self.engagement_basis == model::MetricFitEngagementBasis::IntendedLength {
-                changed |= self.engagement_length.show(
+                changed |= link.field(
                     ui,
+                    visual::ENGAGEMENT,
+                    &mut self.engagement_length,
+                    visual::ENGAGEMENT,
                     "Intended engagement",
                     "Mating length inside the complete thread profile; does not shorten the screw",
                 );
@@ -558,33 +657,49 @@ impl ThreadPanel {
             ui.small("Fit intent does not verify assembled engagement, strength or blind-hole clearance.");
         }
         ui.separator();
-        ui.strong("Fabrication allowance");
-        ui.small("Separate from the nominal basic profile. Positive clearance shrinks external material or enlarges an internal cut.");
-        changed |= self.radial.show(
-            ui,
-            "Radial clearance",
-            "Millimetres on radius; not an ISO tolerance class",
+        let allowance_title = format!(
+            "Fabrication allowance · radial {} · axial {}",
+            diagram::field_value(&self.radial),
+            diagram::field_value(&self.axial)
         );
-        changed |= self.axial.show(
-            ui,
-            "Axial clearance",
-            "Total tooth-width allowance in millimetres",
-        );
-        if self.family.is_rounded() || self.family == ThreadFamily::Bspt {
-            ui.small("Rounded profiles currently require zero axial clearance; radial clearance must remain within the selected fit limits.");
-        }
-        if self.family == ThreadFamily::Npt {
-            ui.small(
-                "NPT requires zero axial clearance and radial clearance from zero to pitch / 32.",
-            );
-        }
-        if mode == ThreadMode::CutInternal {
-            changed |= self.wall.show(
+        let reveal = link.reveals(&visual::ALLOWANCE);
+        diagram::section(ui, "thread-allowance", &allowance_title, reveal, |ui| {
+            ui.small("Separate from the nominal basic profile. Positive clearance shrinks external material or enlarges an internal cut.");
+            changed |= link.field(
                 ui,
-                "Minimum receiving wall",
-                "Required material around the complete thread, beyond the major radius",
+                visual::ALLOWANCE[0],
+                &mut self.radial,
+                visual::ALLOWANCE[0],
+                "Radial clearance",
+                "Millimetres on radius; not an ISO tolerance class",
             );
-        }
+            changed |= link.field(
+                ui,
+                visual::ALLOWANCE[1],
+                &mut self.axial,
+                visual::ALLOWANCE[1],
+                "Axial clearance",
+                "Total tooth-width allowance in millimetres",
+            );
+            if self.family.is_rounded() || self.family == ThreadFamily::Bspt {
+                ui.small("Rounded profiles currently require zero axial clearance; radial clearance must remain within the selected fit limits.");
+            }
+            if self.family == ThreadFamily::Npt {
+                ui.small(
+                    "NPT requires zero axial clearance and radial clearance from zero to pitch / 32.",
+                );
+            }
+            if mode == ThreadMode::CutInternal {
+                changed |= link.field(
+                    ui,
+                    visual::ALLOWANCE[2],
+                    &mut self.wall,
+                    visual::ALLOWANCE[2],
+                    "Minimum receiving wall",
+                    "Required material around the complete thread, beyond the major radius",
+                );
+            }
+        });
         changed |= self.representation_controls(ui);
         if show_frame && self.family == ThreadFamily::IsoMetric {
             changed |= ui
@@ -599,8 +714,11 @@ impl ThreadPanel {
                     .checkbox(&mut self.start_chamfer, "45° entry chamfer at z = 0")
                     .changed();
                 if self.start_chamfer {
-                    changed |= self.start_depth.show(
+                    changed |= link.field(
                         ui,
+                        visual::START_DEPTH,
+                        &mut self.start_depth,
+                        visual::START_DEPTH,
                         "Entry radial depth",
                         "Authored millimetres on radius; axial extent equals radial depth",
                     );
@@ -609,13 +727,19 @@ impl ThreadPanel {
                     .checkbox(&mut self.end_relief, "Cylindrical relief at z = length")
                     .changed();
                 if self.end_relief {
-                    changed |= self.end_length.show(
+                    changed |= link.field(
                         ui,
+                        visual::RELIEF_LENGTH,
+                        &mut self.end_length,
+                        visual::RELIEF_LENGTH,
                         "Relief axial length",
                         "Consumes the end of the authored length",
                     );
-                    changed |= self.end_depth.show(
+                    changed |= link.field(
                         ui,
+                        visual::RELIEF_DEPTH,
+                        &mut self.end_depth,
+                        visual::RELIEF_DEPTH,
                         "Relief radial depth",
                         "Beyond the external root or internal major radius",
                     );
@@ -625,28 +749,38 @@ impl ThreadPanel {
         }
         if show_frame {
             ui.separator();
-            ui.label("Axis plane");
-            controls::inspector_combo(ui, "thread-plane")
-                .selected_text(self.plane.map_or("Stored orientation", Datum::label))
-                .show_ui(ui, |ui| {
-                    for datum in Datum::ALL {
-                        changed |= ui
-                            .selectable_value(&mut self.plane, Some(datum), datum.label())
-                            .changed();
-                    }
-                });
-            ui.small("The thread axis follows the plane normal. Origin is the base center in project coordinates.");
-            for (field, label) in
-                self.origin
-                    .iter_mut()
+            let title = format!(
+                "Axis placement · {}",
+                self.plane.map_or("Stored orientation", Datum::label)
+            );
+            let reveal = link.reveals(&visual::ORIGIN);
+            diagram::section(ui, "thread-placement", &title, reveal, |ui| {
+                ui.label("Axis plane");
+                controls::inspector_combo(ui, "thread-plane")
+                    .selected_text(self.plane.map_or("Stored orientation", Datum::label))
+                    .show_ui(ui, |ui| {
+                        for datum in Datum::ALL {
+                            changed |= ui
+                                .selectable_value(&mut self.plane, Some(datum), datum.label())
+                                .changed();
+                        }
+                    });
+                ui.small("The thread axis follows the plane normal. Origin is the base center in project coordinates.");
+                for ((key, field), label) in visual::ORIGIN
+                    .into_iter()
+                    .zip(self.origin.iter_mut())
                     .zip(["Base center X", "Base center Y", "Base center Z"])
-            {
-                changed |= field.show(
-                    ui,
-                    label,
-                    "Explicit axis placement; formulas may reference $parameters",
-                );
-            }
+                {
+                    changed |= link.field(
+                        ui,
+                        key,
+                        field,
+                        key,
+                        label,
+                        "Explicit axis placement; formulas may reference $parameters",
+                    );
+                }
+            });
         }
         changed
     }
@@ -1262,6 +1396,28 @@ impl ThreadPanel {
                     .map_or("Missing Part", |e| e.name.as_str())
             ));
         }
+        let mut fields = self.linked_fields();
+        fields.extend(visual::ORIGIN.into_iter().zip(self.origin.iter()));
+        self.link.invalid = diagram::first_invalid(document, fields);
+        let schematic = visual::diagram(&self.variant(self.mode), &self.diagram_values(document));
+        let values: Vec<(Key, String)> = schematic
+            .keys()
+            .into_iter()
+            .map(|k| (k, self.callout_value(k).unwrap_or_default()))
+            .collect();
+        let value = |key: Key| {
+            values
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map_or_else(String::new, |(_, v)| v.clone())
+        };
+        self.link.diagram(
+            ui,
+            ("thread", self.request.feature),
+            &schematic,
+            190.,
+            &value,
+        );
         changed |= self.recipe_controls(ui, self.mode, "Thread length", true);
         let validation = self.request(document, enabled);
         match &validation {

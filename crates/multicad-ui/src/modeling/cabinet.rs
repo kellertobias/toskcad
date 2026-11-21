@@ -4,10 +4,14 @@
 use super::{
     FormStamp, PreviewState,
     cabinet_edit::{self, CabinetGuide},
+    diagram::{self, Choice, DiagramLink, Key},
     dimension::DimensionField,
     form::{self, FormAction, ModelEvent, ModelRequest},
 };
 mod fields;
+mod visual;
+#[cfg(test)]
+mod visual_tests;
 use crate::{controls, egui};
 use fields::CabinetFields;
 use multicad_core::{
@@ -195,6 +199,7 @@ pub(super) struct CabinetPanel {
     error: Option<String>,
     /// Display-only envelope guide for (stamp, source revision).
     guide: Option<(FormStamp, u64, Option<CabinetGuide>)>,
+    link: DiagramLink,
 }
 impl CabinetPanel {
     pub fn new(document: &Document, name: String) -> Self {
@@ -246,6 +251,7 @@ impl CabinetPanel {
             oversize: field(0., "mm"),
             error: None,
             guide: None,
+            link: DiagramLink::default(),
         }
     }
     pub fn cabinet(document: &Document, name: String) -> Self {
@@ -524,6 +530,11 @@ impl CabinetPanel {
             (Kind::Carcass, true) => "Edit the carcass. Panels whose role remains keep their Parts; shelves and backs are added or removed.",
             (Kind::Panel, _) => "A rectangular panel from panel stock. Thickness comes from the stock; banding and oversize change the core cut size.",
         });
+        if self.kind == Kind::Carcass {
+            // What an edit keeps, adds or removes comes first, before the
+            // choices that change it.
+            self.show_role_changes(ui, document, enabled);
+        }
         ui.label("Name");
         changed |= ui
             .add_enabled(
@@ -555,7 +566,6 @@ impl CabinetPanel {
         }
         ui.separator();
         if self.kind == Kind::Carcass {
-            self.show_role_changes(ui, document, enabled);
             ui.small("The viewport shows the envelope dimensions and shelf heights of this draft.");
         }
         form::preview_status(ui, self.stamp, preview);
@@ -642,6 +652,74 @@ impl CabinetPanel {
         );
         changed
     }
+    /// Carcass fields linked to the diagram, in display order.
+    fn linked_fields(&self) -> Vec<(Key, &DimensionField)> {
+        let mut out = vec![
+            (visual::WIDTH, &self.width),
+            (visual::HEIGHT, &self.height),
+            (visual::DEPTH, &self.depth),
+        ];
+        if let Some(options) = &self.options {
+            out.extend(options.linked_fields());
+        }
+        if self.back == BackKind::Inset {
+            out.push((visual::RECESS, &self.recess));
+        }
+        out.push((visual::SETBACK, &self.setback));
+        out.push((visual::CLEARANCE, &self.clearance));
+        if self.banded {
+            out.push((visual::BAND[0], &self.band));
+            out.push((visual::BAND[1], &self.allowance));
+        }
+        out.extend(
+            visual::PLACEMENT
+                .into_iter()
+                .zip(self.origin.iter().chain([&self.rotation])),
+        );
+        out
+    }
+    fn schematic(
+        &self,
+        document: &Document,
+        stocks: &[(EntityId, String, f64)],
+    ) -> diagram::Diagram {
+        let parameters = multicad_core::parameters::evaluate(document).ok();
+        let value = |f: &DimensionField| {
+            parameters
+                .as_ref()
+                .and_then(|p| diagram::value_of(f, document, p))
+        };
+        let thickness = |id: Option<EntityId>| {
+            stocks
+                .iter()
+                .find(|(s, ..)| Some(*s) == id)
+                .map(|(_, _, t)| *t)
+        };
+        let body = thickness(self.stock);
+        let values = visual::Values {
+            width: value(&self.width),
+            height: value(&self.height),
+            depth: value(&self.depth),
+            toe: self.options.as_ref().and_then(|o| value(&o.toe)),
+            body,
+            back: thickness(self.back_stock),
+            recess: value(&self.recess),
+            setback: value(&self.setback),
+            shelves: self
+                .options
+                .as_ref()
+                .map(|o| o.shelf_marks(document, body))
+                .unwrap_or_default(),
+            explicit: self.options.is_some(),
+        };
+        visual::carcass(
+            &visual::Choices {
+                construction: self.construction,
+                back: self.back,
+            },
+            &values,
+        )
+    }
     fn show_carcass(
         &mut self,
         ui: &mut egui::Ui,
@@ -649,9 +727,42 @@ impl CabinetPanel {
         stocks: &[(EntityId, String, f64)],
     ) -> bool {
         let mut changed = false;
-        changed |= self.width.show(ui, "Width", "Outside width");
-        changed |= self.height.show(
+        let mut link = std::mem::take(&mut self.link);
+        link.invalid = diagram::first_invalid(document, self.linked_fields());
+        let schematic = self.schematic(document, stocks);
+        let values: Vec<(Key, String)> = self
+            .linked_fields()
+            .into_iter()
+            .map(|(k, f)| (k, diagram::field_value(f)))
+            .collect();
+        let value = |key: Key| {
+            values
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map_or_else(String::new, |(_, v)| v.clone())
+        };
+        link.diagram(
             ui,
+            ("cabinet-diagram", self.feature),
+            &schematic,
+            260.,
+            &value,
+        );
+        ui.small("Schematic of this draft · click a dimension to edit it");
+        ui.strong("Size");
+        changed |= link.field(
+            ui,
+            visual::WIDTH,
+            &mut self.width,
+            "cabinet-width",
+            "Width",
+            "Outside width",
+        );
+        changed |= link.field(
+            ui,
+            visual::HEIGHT,
+            &mut self.height,
+            "cabinet-height",
             if self.options.is_some() {
                 "Floor-to-top height"
             } else {
@@ -659,55 +770,88 @@ impl CabinetPanel {
             },
             "Outside height measured from the local floor datum",
         );
-        changed |= self.depth.show(ui, "Depth", "Outside depth, back included");
+        changed |= link.field(
+            ui,
+            visual::DEPTH,
+            &mut self.depth,
+            "cabinet-depth",
+            "Depth",
+            "Outside depth, back included",
+        );
         if let Some(options) = &mut self.options {
-            changed |= options.toe.show(
+            changed |= link.field(
                 ui,
+                visual::TOE,
+                &mut options.toe,
+                "cabinet-toe",
                 "Toe-kick clearance",
                 "Local floor to the bottom panel underside; no front recess is implied",
             );
-            egui::CollapsingHeader::new("Placement").show(ui, |ui| {
-                changed |= self.show_origin(ui, "World position of the local floor datum");
-                changed |=
-                    self.rotation
-                        .show(ui, "Rotation", "About +Z through the local floor datum");
-            });
-        } else {
-            changed |= self.show_origin(ui, "World position of the front-left-bottom corner");
-            changed |= self.rotation.show(
-                ui,
-                "Rotation",
-                "About +Z through the origin; unrotated, the front faces −Y",
-            );
         }
-        ui.label("Construction");
-        changed |= ui
-            .radio_value(
-                &mut self.construction,
+        ui.separator();
+        ui.strong("Construction");
+        let constructions = [
+            (
                 Construction::SidesFullHeight,
                 "Full-height sides",
-            )
-            .changed();
-        changed |= ui
-            .radio_value(
-                &mut self.construction,
+                "Sides run floor to top; the top and bottom fit between them. Side edges show on top.",
+            ),
+            (
                 Construction::TopBottomFullWidth,
                 "Full-width top and bottom",
-            )
-            .changed();
-        ui.separator();
-        ui.label("Back");
-        ui.horizontal(|ui| {
-            changed |= ui
-                .radio_value(&mut self.back, BackKind::None, "None")
-                .changed();
-            changed |= ui
-                .radio_value(&mut self.back, BackKind::Inset, "Inset")
-                .changed();
-            changed |= ui
-                .radio_value(&mut self.back, BackKind::Overlay, "Overlay")
-                .changed();
-        });
+                "Top and bottom span the full width; the sides fit between them. Top edges show at the sides.",
+            ),
+        ];
+        let choices: Vec<Choice<'_, Construction>> = constructions
+            .iter()
+            .map(|(value, label, hint)| Choice {
+                value: *value,
+                label,
+                hint,
+                art: visual::construction_art(*value),
+            })
+            .collect();
+        changed |= diagram::choice_grid(
+            ui,
+            "cabinet-construction",
+            &mut self.construction,
+            &choices,
+            true,
+        );
+        if let Some((.., hint)) = constructions.iter().find(|c| c.0 == self.construction) {
+            ui.small(*hint);
+        }
+        ui.strong("Back");
+        let backs = [
+            (
+                BackKind::None,
+                "No back",
+                "Open rear; the depth is the sides alone.",
+            ),
+            (
+                BackKind::Inset,
+                "Inset back",
+                "A back panel set into the carcass, the recess in from the rear edges.",
+            ),
+            (
+                BackKind::Overlay,
+                "Overlay back",
+                "A back panel over the rear edges; it is included in the outside depth.",
+            ),
+        ];
+        let choices: Vec<Choice<'_, BackKind>> = backs
+            .iter()
+            .map(|(value, label, hint)| Choice {
+                value: *value,
+                label,
+                hint,
+                art: visual::back_art(*value),
+            })
+            .collect();
+        changed |= diagram::choice_grid(ui, "cabinet-back", &mut self.back, &choices, true);
+        if let Some((.., hint)) = backs.iter().find(|c| c.0 == self.back) {
+            ui.small(*hint);
+        }
         if self.back != BackKind::None {
             ui.label("Back material / stock");
             changed |= stock_combo(
@@ -720,9 +864,14 @@ impl CabinetPanel {
             .0;
         }
         if self.back == BackKind::Inset {
-            changed |= self
-                .recess
-                .show(ui, "Back recess", "Distance in from the rear edges");
+            changed |= link.field(
+                ui,
+                visual::RECESS,
+                &mut self.recess,
+                "cabinet-recess",
+                "Back recess",
+                "Distance in from the rear edges",
+            );
         }
         ui.separator();
         if self.options.is_none() {
@@ -751,15 +900,35 @@ impl CabinetPanel {
                 });
             }
         }
-        changed |= self.setback.show(
-            ui,
-            "Shelf setback",
-            "From the cabinet front to the shelf front",
+        let fit_title = format!(
+            "Shelf setback and end clearance · {} · {}",
+            diagram::field_value(&self.setback),
+            diagram::field_value(&self.clearance)
         );
-        changed |= self.clearance.show(
+        let reveal = link.reveals(&[visual::SETBACK, visual::CLEARANCE]);
+        diagram::section(
             ui,
-            "Adjustable shelf clearance",
-            "Gap at each adjustable shelf end; fixed shelves meet their receiving sides",
+            ("cabinet-shelf-fit", self.feature),
+            &fit_title,
+            reveal,
+            |ui| {
+                changed |= link.field(
+                    ui,
+                    visual::SETBACK,
+                    &mut self.setback,
+                    "cabinet-setback",
+                    "Shelf setback",
+                    "From the cabinet front to the shelf front",
+                );
+                changed |= link.field(
+                    ui,
+                    visual::CLEARANCE,
+                    &mut self.clearance,
+                    "cabinet-clearance",
+                    "Adjustable shelf clearance",
+                    "Gap at each adjustable shelf end; fixed shelves meet their receiving sides",
+                );
+            },
         );
         let parameters = multicad_core::parameters::evaluate(document).ok();
         let numeric = |f: &DimensionField| {
@@ -786,18 +955,103 @@ impl CabinetPanel {
         });
         let height = numeric(&self.height);
         if let Some(options) = &mut self.options {
-            changed |= options.show(ui, document, stocks, body_t, height, available_depth);
+            changed |= options.show(
+                ui,
+                document,
+                stocks,
+                body_t,
+                height,
+                available_depth,
+                &mut link,
+            );
         }
         ui.separator();
-        changed |= ui
-            .checkbox(&mut self.banded, "Band the front edges")
-            .changed();
-        if self.banded {
-            changed |= self.show_band(ui);
-        }
+        let band_title = if self.banded {
+            format!(
+                "Edge banding · front edges {}",
+                diagram::field_value(&self.band)
+            )
+        } else {
+            "Edge banding · none".to_owned()
+        };
+        let reveal = link.reveals(&visual::BAND);
+        diagram::section(
+            ui,
+            ("cabinet-banding", self.feature),
+            &band_title,
+            reveal,
+            |ui| {
+                changed |= ui
+                    .checkbox(&mut self.banded, "Band the front edges")
+                    .changed();
+                if self.banded {
+                    changed |= link.field(
+                        ui,
+                        visual::BAND[0],
+                        &mut self.band,
+                        "cabinet-band",
+                        "Band thickness",
+                        "Outside the core; the finished size includes it",
+                    );
+                    changed |= link.field(
+                        ui,
+                        visual::BAND[1],
+                        &mut self.allowance,
+                        "cabinet-band-allowance",
+                        "Band allowance",
+                        "Extra core per banded edge, trimmed flush after banding",
+                    );
+                }
+            },
+        );
+        let placement_title = format!(
+            "Placement · origin {}, {}, {} · rotation {}",
+            diagram::field_value(&self.origin[0]),
+            diagram::field_value(&self.origin[1]),
+            diagram::field_value(&self.origin[2]),
+            diagram::field_value(&self.rotation)
+        );
+        let reveal = link.reveals(&visual::PLACEMENT);
+        let explicit = self.options.is_some();
+        diagram::section(
+            ui,
+            ("cabinet-placement", self.feature),
+            &placement_title,
+            reveal,
+            |ui| {
+                let help = if explicit {
+                    "World position of the local floor datum"
+                } else {
+                    "World position of the front-left-bottom corner"
+                };
+                for (index, axis) in ["X", "Y", "Z"].into_iter().enumerate() {
+                    changed |= link.field(
+                        ui,
+                        visual::PLACEMENT[index],
+                        &mut self.origin[index],
+                        ("cabinet-origin", index),
+                        &format!("Origin {axis}"),
+                        help,
+                    );
+                }
+                changed |= link.field(
+                    ui,
+                    visual::PLACEMENT[3],
+                    &mut self.rotation,
+                    "cabinet-rotation",
+                    "Rotation",
+                    if explicit {
+                        "About +Z through the local floor datum"
+                    } else {
+                        "About +Z through the origin; unrotated, the front faces −Y"
+                    },
+                );
+            },
+        );
         if self.existing.is_none() {
             changed |= ui.checkbox(&mut self.group, "Group the panels").changed();
         }
+        self.link = link;
         changed
     }
     fn show_panel(&mut self, ui: &mut egui::Ui) -> bool {
