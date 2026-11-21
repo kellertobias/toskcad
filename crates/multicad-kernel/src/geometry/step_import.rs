@@ -1260,6 +1260,26 @@ impl Solid {
     }
 }
 
+fn arc_edge(frame: ReferenceFrame, radius_mm: f64, start_rad: f64, sweep_rad: f64) -> ArcEdge {
+    let radial = |angle: f64| {
+        let (s, c) = angle.sin_cos();
+        std::array::from_fn(|i| c.mul_add(frame.u[i], s * frame.v[i]))
+    };
+    let (start, end) = if sweep_rad > 0. {
+        (start_rad, start_rad + sweep_rad)
+    } else {
+        (start_rad + sweep_rad, start_rad)
+    };
+    ArcEdge {
+        center_mm: frame.origin_mm,
+        normal: frame.normal(),
+        radius_mm,
+        radial_start: radial(start),
+        radial_end: radial(end),
+        sweep_rad: sweep_rad.abs(),
+    }
+}
+
 fn compare_topology<'a>(
     elements: impl IntoIterator<Item = &'a TopologyElement>,
     readback: &Readback,
@@ -1321,24 +1341,22 @@ fn compare_topology<'a>(
                     start_rad,
                     sweep_rad,
                 }),
-            ) => {
-                let radial = |angle: f64| {
-                    let (s, c) = angle.sin_cos();
-                    std::array::from_fn(|i| c.mul_add(frame.u[i], s * frame.v[i]))
-                };
-                let (start, end) = if sweep_rad > 0. {
-                    (start_rad, start_rad + sweep_rad)
-                } else {
-                    (start_rad + sweep_rad, start_rad)
-                };
-                arcs.push(ArcEdge {
-                    center_mm: frame.origin_mm,
-                    normal: frame.normal(),
-                    radius_mm,
-                    radial_start: radial(start),
-                    radial_end: radial(end),
-                    sweep_rad: sweep_rad.abs(),
-                });
+            ) => arcs.push(arc_edge(frame, radius_mm, start_rad, sweep_rad)),
+            // An arc whose semiaxes agree within the tolerance is the
+            // circular arc a reader classifies from the exact file values.
+            (
+                TopologyKind::Edge,
+                Some(AnalyticGeometry::EllipticArc {
+                    frame,
+                    semiaxes_mm: [major, minor],
+                    start_rad,
+                    sweep_rad,
+                }),
+            ) if (major - minor).abs() <= tolerance
+                && (sweep_rad.abs() - TAU).abs() >= 1e-9
+                && (sweep_rad.abs() - PI).abs() >= 1e-9 =>
+            {
+                arcs.push(arc_edge(frame, 0.5 * (major + minor), start_rad, sweep_rad))
             }
             (
                 TopologyKind::Edge,
