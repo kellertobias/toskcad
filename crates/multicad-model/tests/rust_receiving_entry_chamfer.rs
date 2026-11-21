@@ -378,10 +378,12 @@ fn unsupported_receiving_families_and_internal_entry_do_not_change_the_document(
         .compile(q.prepared.document(), s.revision() + 1)
         .err()
         .unwrap();
+        // A 0.2 mm chamfer on the M6x1 6H minor radius still starts inside
+        // the thread cutter, so the receiving entry is refused for that reason.
         assert!(
-            error
-                .to_string()
-                .contains("modeled ISO metric external material"),
+            error.to_string().contains(
+                "The receiving entry chamfer circle (radius 2.7175000000000002 mm) lies inside the thread cutter (maximum radius 3 mm)"
+            ),
             "{error}"
         );
         assert_eq!(s.document(), &saved);

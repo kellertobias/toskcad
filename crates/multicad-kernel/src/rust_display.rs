@@ -274,6 +274,9 @@ pub(crate) fn planar_loops(solid: &Solid, face: u32) -> Vec<Vec<(u32, bool)>> {
     if let Some((body, _)) = solid.orthogonal_body() {
         return body.loops(face);
     }
+    if let Some(body) = solid.bored_thread_body() {
+        return body.planar_loops(face);
+    }
     if let Some(compound) = solid.rust_compound() {
         let Some((child, local_face, offset)) = compound.face_source(face) else {
             return vec![];

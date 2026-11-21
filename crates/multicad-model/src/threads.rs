@@ -251,6 +251,17 @@ pub(crate) fn build_rust(
     }
     validate_rust_family(feature, source.parameters.family)?;
     if thread.representation == ThreadRepresentation::CosmeticEnvelope
+        && source.mode == ThreadMode::CutInternal
+        && thread
+            .end_treatments
+            .as_ref()
+            .is_none_or(|e| e.start_chamfer_radial_depth_mm == 0. && e.end_relief_length_mm == 0.)
+    {
+        let target = receiving_target(feature, source, solids)?
+            .ok_or_else(|| fail("Receiving thread has no target predecessor"))?;
+        return cosmetic::bore(feature, &thread, target, policy);
+    }
+    if thread.representation == ThreadRepresentation::CosmeticEnvelope
         && source.mode == ThreadMode::CutExternal
     {
         return Err(fail(
