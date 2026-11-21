@@ -61,11 +61,6 @@ pub(super) fn ordinary_member(
     } else {
         Vec::new()
     };
-    if !faces.is_empty()
-        && let Some(sleeve) = radial_boundary::sleeve::recognize(shell, id)?
-    {
-        return Ok(SourceImport::PipeSleeve(Box::new(sleeve)));
-    }
     let mut literal = false;
     for face in faces {
         let surface = helical::face(shell, face)?.0;
@@ -81,6 +76,12 @@ pub(super) fn ordinary_member(
             if matches!(args.get(1),Some(Value::Number(d)) if *d==9.)
                 && matches!(args.get(2),Some(Value::Number(d)) if *d==9.)
             {
+                // Degree-9 retained tensors only: a cylindrical stock with two
+                // annular caps is a pipe sleeve, never a helical receiver
+                // (those keep their degree-11 analytic routes below).
+                if let Some(sleeve) = radial_boundary::sleeve::recognize(shell, id)? {
+                    return Ok(SourceImport::PipeSleeve(Box::new(sleeve)));
+                }
                 return radial_boundary::read_member(shell, id)
                     .map(|body| SourceImport::Radial(Box::new(body)));
             }

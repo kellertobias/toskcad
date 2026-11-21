@@ -299,3 +299,20 @@ fn large_outer_circle_normal_is_proved_over_its_entire_curve() {
     assert!(read_rounded_thread_bore(&damaged, 1e-7).is_err());
     assert!(read_rounded_thread_bore(&file, 1e-7).is_ok());
 }
+
+#[test]
+fn degree_eleven_receiving_stock_is_not_dispatched_as_a_pipe_sleeve() {
+    // One cylinder and two annular caps, like a pipe sleeve, but its
+    // helical supports are degree eleven. The sleeve decoder refuses it;
+    // that refusal must not pre-empt the source reader's analytic route.
+    let bore = ThroughBore::new(thread(1.), 5.).unwrap();
+    let text =
+        crate::step::write_rounded_thread_bore(&bore, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7)
+            .unwrap();
+    assert!(crate::step_read::read_pipe_sleeve(&text, 1e-7).is_err());
+    let members = crate::step_read::read_source_compound(&text, 1e-7).unwrap();
+    assert!(matches!(
+        members[..],
+        [crate::step_read::SourceImport::Analytic(_)]
+    ));
+}
