@@ -367,3 +367,121 @@ fn datum_planes_still_need_use_plane_and_invalid_faces_change_nothing() {
     assert_eq!(session.document(), &document);
     assert_eq!(session.revision(), 0);
 }
+
+fn toward_eye(camera: &crate::camera::Camera) -> [f64; 3] {
+    let (s, c) = (camera.yaw as f64).sin_cos();
+    let (sp, cp) = (camera.pitch as f64).sin_cos();
+    [cp * s, cp * c, sp]
+}
+fn near(a: [f64; 3], b: [f64; 3], tolerance: f64) -> bool {
+    (0..3).all(|i| (a[i] - b[i]).abs() < tolerance)
+}
+
+#[test]
+fn face_sketches_look_at_their_face_from_outside_on_a_moved_and_rotated_part() {
+    // Top and two sides of a translated, quarter-turned box. The bottom
+    // (prism start cap) is not listed: its kernel reference frame normal
+    // points into the part, an open CAD-382 decision.
+    for (local_point, local_normal) in [
+        ([30., 20., 18.], [0., 0., 1.]),
+        ([100., 30., 9.], [1., 0., 0.]),
+        ([50., 0., 9.], [0., -1., 0.]),
+    ] {
+        let panel = Panel::new();
+        let mut session = Session::new(panel.document.clone()).unwrap();
+        let normal = panel.pose.vector(local_normal);
+        let mut editor = panel.editor(0, normal);
+        let point = panel.screen(&editor, local_point);
+        click(&mut editor, &mut session, panel.scene(0), false, point);
+        let hit = editor.solid.selected_hit().cloned().expect("face hit");
+        assert_eq!(hit.instance, panel.instance);
+        editor
+            .begin_model_sketch(&mut session, Channel::Ui)
+            .unwrap();
+        assert!(editor.editing, "{local_normal:?}: {}", editor.message);
+        // The view looks along the face normal from the outward side.
+        assert!(
+            near(toward_eye(&editor.camera), normal, 1e-6),
+            "{local_normal:?}: eye {:?} vs {normal:?}",
+            toward_eye(&editor.camera)
+        );
+        let id = editor.selected.unwrap();
+        let revision = session.revision();
+        let (_, world, _) = editor
+            .read_source(session.document(), id, revision)
+            .map(|(s, frame, plane)| (s, editor.display_frame(id, frame), plane))
+            .unwrap();
+        // The authored plane is the selected face in world space.
+        assert!(
+            near(world.n, normal, 1e-9),
+            "{local_normal:?}: {:?}",
+            world.n
+        );
+        let face_point = panel.pose.point(local_point);
+        let offset: f64 = (0..3)
+            .map(|i| (world.origin[i] - face_point[i]) * normal[i])
+            .sum();
+        assert!(
+            offset.abs() < 1e-9,
+            "{local_normal:?}: plane offset {offset}"
+        );
+        // Reopening restores the same view of the same face.
+        let entered = editor.camera;
+        editor.finish().unwrap();
+        editor.camera = Default::default();
+        editor
+            .open_at(session.document(), id, session.revision())
+            .unwrap();
+        assert!(
+            near(toward_eye(&editor.camera), toward_eye(&entered), 1e-6),
+            "{local_normal:?}: reopened view differs"
+        );
+        // Sketch coordinates land on that face, inside its outline.
+        editor
+            .add(
+                &mut session,
+                DrawTool::Rectangle,
+                [1., 1.],
+                [3., 2.],
+                Channel::Ui,
+            )
+            .unwrap();
+        // The quarter-turned box stays axis aligned, so its world bounds are
+        // exact; the drawn corner sits on the face, inside the part outline.
+        let corners: Vec<[f64; 3]> = (0..8)
+            .map(|k| {
+                panel.pose.point(std::array::from_fn(|i| {
+                    if k & (1 << i) == 0 {
+                        0.
+                    } else {
+                        [100., 60., 18.][i]
+                    }
+                }))
+            })
+            .collect();
+        let corner = world.point([3., 2.]);
+        let on_face: f64 = (0..3)
+            .map(|i| (corner[i] - face_point[i]) * normal[i])
+            .sum();
+        assert!(on_face.abs() < 1e-9, "{local_normal:?}: {on_face}");
+        for axis in 0..3 {
+            let low = corners
+                .iter()
+                .map(|c| c[axis])
+                .fold(f64::INFINITY, f64::min);
+            let high = corners
+                .iter()
+                .map(|c| c[axis])
+                .fold(f64::NEG_INFINITY, f64::max);
+            assert!(
+                corner[axis] > low - 1e-9 && corner[axis] < high + 1e-9,
+                "{local_normal:?}: {corner:?}"
+            );
+        }
+        // Entering, reopening and drawing never move the part.
+        assert_eq!(
+            session.document().get(panel.instance),
+            panel.document.get(panel.instance)
+        );
+    }
+}
