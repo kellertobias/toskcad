@@ -511,17 +511,21 @@ impl Wheel {
     /// Radial material margin of a local point in module units, from the
     /// space boundary at its own section.
     pub(super) fn space_margin(&self, x: f64, y: f64, v: f64) -> f64 {
+        self.section_space_margin(&self.section(v), x, y)
+    }
+
+    /// `space_margin` at an already trimmed section.
+    pub(super) fn section_space_margin(&self, section: &Section, x: f64, y: f64) -> f64 {
         let theta = y.atan2(x);
         let pitch = 2. * self.span;
         let local = theta - (theta / pitch).round() * pitch;
         let radius = x.hypot(y);
-        let section = self.section(v);
         let [low, high] = section.exit;
         if local <= low || local >= high {
             return self.blank() - radius;
         }
         let angle = |piece: Piece, u: f64| {
-            let [x, y] = self.piece_point(&section, piece, u);
+            let [x, y] = self.piece_point(section, piece, u);
             y.atan2(x)
         };
         // The exit angle bounds the last piece.
@@ -539,7 +543,7 @@ impl Wheel {
                     hi = mid;
                 }
             }
-            let [px, py] = self.piece_point(&section, piece, (lo + hi) / 2.);
+            let [px, py] = self.piece_point(section, piece, (lo + hi) / 2.);
             px.hypot(py) - radius
         }
     }
