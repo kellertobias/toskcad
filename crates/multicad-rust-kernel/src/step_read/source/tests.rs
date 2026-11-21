@@ -225,3 +225,34 @@ fn retained_volume_only_verification_keeps_geometry_identity_and_interval_author
     let changed = input.replace("ADVANCED_FACE(", "INVALID_FACE(");
     assert!(verify_authored_compound(&changed, &expected, 1e-7).is_err());
 }
+
+/// A box drilled straight through has one cylinder and two holed planes, the
+/// sleeve discovery premise, but its cylinder faces inward: it is no pipe
+/// sleeve, so the sleeve reader declines it and the other readers decide.
+#[test]
+fn drilled_box_is_not_a_pipe_sleeve_and_keeps_its_own_refusal() {
+    const DRILLED: &str =
+        include_str!("../../../../multicad-app/tests/fixtures/exchange/freecad-drilled-box.step");
+    let members =
+        super::super::compound::read_members_by(DRILLED, 1e-7, true, true, |shell, id, _| {
+            radial_boundary::sleeve::recognize(shell, id)
+        })
+        .unwrap();
+    assert!(members.iter().all(Option::is_none));
+    assert!(matches!(
+        read_pipe_sleeve(DRILLED, 1e-7),
+        Err(ReadError::Unsupported)
+    ));
+    // A finite coordinate far outside the numeric budget stays a budget
+    // refusal; the sleeve discovery must not turn it into an unsupported one.
+    let huge = DRILLED.replacen(
+        "#23 = CARTESIAN_POINT('',(13.,",
+        "#23 = CARTESIAN_POINT('',(1.E300,",
+        1,
+    );
+    assert_ne!(huge, DRILLED);
+    assert!(matches!(
+        read_source_compound(&huge, 1e-7),
+        Err(ReadError::Limit)
+    ));
+}
