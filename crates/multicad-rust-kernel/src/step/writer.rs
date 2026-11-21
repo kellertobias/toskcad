@@ -1020,6 +1020,20 @@ impl Writer {
         self.append(|file| warped_union::encode(file, placement, shell))
     }
 
+    pub fn append_oblique_bore(
+        &mut self,
+        bore: &crate::oblique_bore::ObliqueBore,
+        origin: Point,
+        u: Point,
+        v: Point,
+    ) -> Result<(), StepError> {
+        if !supports_oblique_bore(bore) {
+            return Err(StepError::Unsupported);
+        }
+        let placement = Placement::new(origin, u, v)?;
+        self.append(|file| oblique_bore::encode(file, placement, bore))
+    }
+
     pub fn append_box(
         &mut self,
         size: [Rational; 3],

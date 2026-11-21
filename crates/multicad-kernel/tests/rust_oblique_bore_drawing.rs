@@ -97,10 +97,11 @@ fn cut(stock: &Solid, tool: &Solid) -> Solid {
         .boolean(tool, BooleanOperation::Subtract, GeometryPolicy::default())
         .unwrap()
         .unwrap();
-    assert!(
-        !result.supports_step_export(),
-        "the oblique-bore solid keeps its explicit exchange refusal"
-    );
+    // The oblique-bore solid now exchanges exactly: its Rust STEP text reads
+    // back independently with the same volume.
+    let text = Solid::from_brep(&result.to_brep().unwrap(), GeometryPolicy::default()).unwrap();
+    let volume = result.volume_mm3().unwrap();
+    assert!((text.volume_mm3().unwrap() - volume).abs() <= 1e-9 * volume);
     result
 }
 

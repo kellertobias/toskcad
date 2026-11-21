@@ -3459,8 +3459,10 @@ impl Solid {
             | SolidBody::CosmeticPhillips(..)
             | SolidBody::BoredThread(..)
             | SolidBody::InternalThreadTreatment(..)
-            | SolidBody::ObliqueBore(..)
             | SolidBody::CrossBore(..) => false,
+            SolidBody::ObliqueBore(body, _) => {
+                multicad_rust_kernel::step::supports_oblique_bore(&body.geometry)
+            }
             SolidBody::WarpedUnion(body, _) => {
                 multicad_rust_kernel::step::supports_warped_union(&body.geometry)
             }
@@ -3739,8 +3741,10 @@ impl Solid {
             | SolidBody::CosmeticPhillips(..)
             | SolidBody::BoredThread(..)
             | SolidBody::InternalThreadTreatment(..)
-            | SolidBody::ObliqueBore(..)
             | SolidBody::CrossBore(..) => Err(step::StepError::Unsupported),
+            SolidBody::ObliqueBore(body, frame) => {
+                writer.append_oblique_bore(&body.geometry, frame.origin, frame.u, frame.v)
+            }
             SolidBody::Orthogonal(body, frame) => body.append_step(writer, *frame),
             SolidBody::Occt(_) => unreachable!("native STEP dispatched above"),
         }
