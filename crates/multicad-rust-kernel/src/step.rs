@@ -54,6 +54,7 @@ mod normal_relief;
 mod normal_sweep;
 pub(crate) mod phillips_cutter;
 mod pierced_sweep;
+mod smooth_loft;
 pub use phillips_cutter::{
     Error as PhillipsStepError, write_phillips_cutter, write_phillips_cutter_with_interrupt,
 };
@@ -100,6 +101,7 @@ pub use normal_relief::write_normal_relief;
 pub use normal_sweep::write_normal_sweep;
 pub use pierced_sweep::write_pierced_normal_sweep;
 pub use planar_union::{supports_planar_union, write_planar_union};
+pub use smooth_loft::write_smooth_loft;
 pub use spline_cap_relief::write_spline_cap_relief;
 pub use spline_sweep::write_spline_sweep;
 pub use spur_gear::{SPUR_STEP_MAX_ERROR_MM, write_internal_ring, write_spur_gear};

@@ -131,6 +131,9 @@ pub enum ImportProfile {
     NonplanarLoft {
         geometry: crate::planar_boolean::NonplanarLoft,
     },
+    SmoothLoft {
+        geometry: crate::planar_boolean::SmoothLoft,
+    },
     PiercedNormalSweep {
         sweep: normal_sweep::PiercedSweep,
     },
@@ -307,6 +310,28 @@ pub(super) fn recognize_nonplanar_loft(
             v,
             height_mm: geometry.rings()[1][0][2],
             profile: ImportProfile::NonplanarLoft { geometry },
+        },
+    )
+}
+
+pub(super) fn recognize_smooth_loft(
+    readback: Readback,
+    imported: super::ImportedSmoothLoft,
+) -> (Readback, ImportSolid) {
+    let super::ImportedSmoothLoft {
+        geometry,
+        origin_mm,
+        u,
+        v,
+    } = imported;
+    (
+        readback,
+        ImportSolid {
+            origin_mm,
+            u,
+            v,
+            height_mm: geometry.height(),
+            profile: ImportProfile::SmoothLoft { geometry },
         },
     )
 }

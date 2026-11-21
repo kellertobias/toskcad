@@ -19,6 +19,7 @@ mod miter_sweep;
 mod nonplanar_loft;
 mod shell;
 mod slab;
+mod smooth_loft;
 mod straight_profile;
 mod travel_cap;
 mod verify_boundary;
@@ -33,6 +34,7 @@ pub use nonplanar_loft::{
 };
 pub type MiterCell = ProfileCell;
 pub use slab::Slab;
+pub use smooth_loft::SmoothLoft;
 pub use straight_profile::straight_profile;
 pub use travel_cap::TravelCap;
 pub use vertical_profile::{ProfileFace, ProfilePiece};

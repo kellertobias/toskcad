@@ -47,6 +47,9 @@ pub(super) fn read_import_member(
     if let Some((proof, loft)) = nonplanar_loft::read_member(shell, &face_ids)? {
         return Ok(import::recognize_nonplanar_loft(proof, loft));
     }
+    if let Some((proof, loft)) = smooth_loft::read_member(shell, &face_ids)? {
+        return Ok(import::recognize_smooth_loft(proof, loft));
+    }
     if face_ids
         .iter()
         .any(|&face| spline_sweep::has_extrusion_support(shell, face))
@@ -125,6 +128,9 @@ pub(super) fn read_analytic_member(
         return Ok((proof, Some(cut)));
     }
     if let Some((proof, _)) = nonplanar_loft::read_member(shell, &faces)? {
+        return Ok((proof, None));
+    }
+    if let Some((proof, _)) = smooth_loft::read_member(shell, &faces)? {
         return Ok((proof, None));
     }
     if faces

@@ -923,6 +923,17 @@ impl Writer {
         self.append(|file| nonplanar_loft::encode(file, &placement, loft))
     }
 
+    pub fn append_smooth_loft(
+        &mut self,
+        loft: &crate::planar_boolean::SmoothLoft,
+        origin: Point,
+        u: Point,
+        v: Point,
+    ) -> Result<(), StepError> {
+        let placement = Placement::new(origin, u, v)?;
+        self.append(|file| smooth_loft::encode(file, &placement, loft))
+    }
+
     pub fn append_planar_union(
         &mut self,
         union: &crate::planar_boolean::Union,
