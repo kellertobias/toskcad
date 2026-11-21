@@ -204,7 +204,7 @@ fn essentials_first_advanced_groups_collapsed_with_retained_values() {
                 "{essential} unclipped at {width}"
             );
         }
-        for advanced in ["Band thickness (mm)", "Origin X (mm)", "Shelf setback (mm)"] {
+        for advanced in ["Edge strip thickness (mm)", "Origin X (mm)", "Shelf setback (mm)"] {
             assert!(
                 find(&painted, advanced).is_none(),
                 "{advanced} starts collapsed"
@@ -292,7 +292,7 @@ fn validation_identifies_and_reveals_the_affected_group() {
     form.band.text = "=".into();
     let painted = settle(&ctx, &mut form, &s, 320.);
     assert_eq!(form.link.invalid, Some(visual::BAND[0]));
-    assert!(find(&painted, "Band thickness (mm)").is_some());
+    assert!(find(&painted, "Edge strip thickness (mm)").is_some());
     assert!(form.request(s.document(), true).is_err());
     form.band.text = "2".into();
     form.origin[1].text = "=".into();

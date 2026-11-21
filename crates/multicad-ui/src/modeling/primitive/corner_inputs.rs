@@ -2,43 +2,50 @@ use crate::{camera::Camera, egui, modeling::dimension::DimensionField};
 use multicad_core::{commands::Session, document::EntityId, parameters::Unit};
 
 #[derive(Default)]
-pub(super) struct CornerInputs {
+pub(in crate::modeling) struct CornerInputs {
     corner: Option<usize>,
     focus_first: bool,
     bounds: Option<egui::Rect>,
+    /// One of these inputs owned keyboard focus in the last shown frame, so
+    /// Escape belongs to this editor rather than to an Inspector field.
+    focused: bool,
 }
 
-pub(super) struct CornerField<'a> {
+pub(in crate::modeling) struct CornerField<'a> {
     pub label: &'static str,
     pub value: &'a mut DimensionField,
 }
 
 #[derive(Default)]
-pub(super) struct CornerEdit {
+pub(in crate::modeling) struct CornerEdit {
     pub changed: bool,
     pub confirm: bool,
 }
 
 impl CornerInputs {
-    pub(super) fn open(&mut self, corner: usize) {
+    pub(in crate::modeling) fn open(&mut self, corner: usize) {
         self.corner = Some(corner);
         self.focus_first = true;
     }
 
-    pub(super) fn active(&self) -> bool {
+    pub(in crate::modeling) fn active(&self) -> bool {
         self.corner.is_some()
     }
 
-    pub(super) fn close(&mut self) {
+    pub(in crate::modeling) fn focused(&self) -> bool {
+        self.corner.is_some() && self.focused
+    }
+
+    pub(in crate::modeling) fn close(&mut self) {
         *self = Self::default();
     }
 
-    pub(super) fn contains_pointer(&self, position: egui::Pos2) -> bool {
+    pub(in crate::modeling) fn contains_pointer(&self, position: egui::Pos2) -> bool {
         self.bounds.is_some_and(|bounds| bounds.contains(position))
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn show(
+    pub(in crate::modeling) fn show(
         &mut self,
         ui: &mut egui::Ui,
         body: EntityId,
@@ -47,6 +54,7 @@ impl CornerInputs {
         corners: [[f64; 3]; 8],
         session: &Session,
         fields: &mut [CornerField<'_>],
+        notes: &[String],
     ) -> CornerEdit {
         let Some(corner) = self.corner.and_then(|index| corners.get(index)) else {
             return CornerEdit::default();
@@ -128,6 +136,13 @@ impl CornerInputs {
                                         );
                                     }
                                 }
+                                // Read-only values say where they are controlled.
+                                for note in notes {
+                                    ui.add(
+                                        egui::Label::new(egui::RichText::new(note).small().weak())
+                                            .wrap(),
+                                    );
+                                }
                             });
                         if let Some(index) = selected {
                             focus_field(ui, id, &fields[index]);
@@ -136,6 +151,11 @@ impl CornerInputs {
                     });
             });
         self.bounds = Some(popup.response.rect.intersect(bounds));
+        self.focused = ui.memory(|memory| {
+            fields
+                .iter()
+                .any(|field| memory.has_focus(id.with(field.label)))
+        });
         if done {
             self.close();
         }

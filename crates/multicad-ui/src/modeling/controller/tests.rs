@@ -1167,3 +1167,116 @@ fn split_requires_both_native_outputs_and_original_input_consumption_before_atom
         assert_eq!(session.document(), &candidate);
     }
 }
+
+#[test]
+fn new_panel_opens_viewport_dimensions_and_drag_works_while_an_inspector_field_has_focus() {
+    let session = super::super::cabinet::tests::session();
+    let before = session.document().clone();
+    let resources = ProjectResources::default();
+    let state = Arc::new(Mutex::new(State::default()));
+    let mut controller = ModelToolController::default();
+    controller.set_backend(Box::new(ScriptedBackend(state.clone())));
+    controller
+        .begin_panel(&session, &resources, Channel::Ui)
+        .unwrap();
+    assert!(
+        controller.primitive_corner_input_active(),
+        "new panels open their viewport dimension inputs"
+    );
+    let corners = controller.primitive_envelope(&session).unwrap();
+    assert_eq!(corners[0], [0.; 3]);
+    assert_eq!(corners[7], [800., 400., 18.]);
+
+    let context = egui::Context::default();
+    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024., 700.));
+    let camera = crate::camera::Camera {
+        yaw: 0.,
+        pitch: std::f32::consts::FRAC_PI_2,
+        scale: 0.8,
+        target: [400., 200., 0.],
+        perspective: false,
+    };
+    let project = |point: [f64; 3]| {
+        let [x, y, _] = camera.project(point.map(|value| value as f32), rect);
+        egui::pos2(x, y)
+    };
+    let inspector_field = egui::Id::new("inspector-length-field");
+    let frame = |controller: &mut ModelToolController, events| {
+        let mut owned = false;
+        context
+            .run_ui(
+                egui::RawInput {
+                    screen_rect: Some(rect),
+                    events,
+                    focused: true,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.interact(
+                        rect,
+                        ui.id().with("viewport"),
+                        egui::Sense::click_and_drag(),
+                    );
+                    owned =
+                        controller.primitive_viewport(ui, &session, &resources, camera, rect, true);
+                },
+            )
+            .drop_without_applying_deltas();
+        owned
+    };
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        pressed,
+        button: egui::PointerButton::Primary,
+        modifiers: egui::Modifiers::NONE,
+    };
+    frame(&mut controller, vec![]);
+    // An Inspector field owns keyboard focus; viewport handles still work.
+    context.memory_mut(|memory| memory.request_focus(inspector_field));
+    let handle = project([0., 400., 18.]);
+    let target = project([-100., 500., 18.]);
+    assert!(frame(
+        &mut controller,
+        vec![egui::Event::PointerMoved(handle), button(handle, true)]
+    ));
+    assert!(frame(
+        &mut controller,
+        vec![egui::Event::PointerMoved(target)]
+    ));
+    assert!(frame(&mut controller, vec![button(target, false)]));
+    let corners = controller.primitive_envelope(&session).unwrap();
+    for (actual, expected) in corners[0].into_iter().zip([-100., 0., 0.]) {
+        assert!((actual - expected).abs() < 1e-4, "{corners:?}");
+    }
+    for (actual, expected) in corners[7].into_iter().zip([800., 500., 18.]) {
+        assert!((actual - expected).abs() < 1e-4, "{corners:?}");
+    }
+    assert!(
+        !state.lock().unwrap().requests.is_empty(),
+        "release flushes an automatic preview of the dragged draft"
+    );
+    assert_eq!(session.document(), &before);
+    controller.cancel();
+    assert!(!controller.primitive_corner_input_active());
+    assert!(controller.primitive_envelope(&session).is_none());
+}
+
+#[test]
+fn new_primitives_open_viewport_dimension_inputs_but_reopened_edits_do_not() {
+    for kind in [
+        ModelingTool::Box,
+        ModelingTool::Cylinder,
+        ModelingTool::Sphere,
+    ] {
+        let session = Session::new(Document::new("Primitive inputs").unwrap()).unwrap();
+        let mut controller = ModelToolController::default();
+        controller.set_backend(Box::new(ScriptedBackend(Default::default())));
+        controller
+            .begin_primitive(&session, &Default::default(), kind, Channel::Ui)
+            .unwrap();
+        assert!(controller.primitive_corner_input_active(), "{kind:?}");
+        assert!(controller.primitive_envelope(&session).is_some());
+        controller.cancel();
+        assert!(!controller.primitive_corner_input_active());
+    }
+}

@@ -11,6 +11,8 @@ use multicad_core::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 mod presentation;
+#[cfg(test)]
+mod rename_tests;
 use presentation::{Catalog, Presentation};
 #[derive(Clone, Copy)]
 pub struct TreeOptions {
@@ -417,6 +419,60 @@ pub struct ModelTree {
     history_selection: Option<(EntityId, EntityId)>,
     selected_references: BTreeSet<EntityId>,
     scroll_to_source: Option<EntityId>,
+    inline: Option<InlineRename>,
+}
+/// In-place name editing of one tree row (CAD-376).
+#[derive(Clone)]
+struct InlineRename {
+    document: EntityId,
+    revision: u64,
+    id: EntityId,
+    text: String,
+    focus: bool,
+}
+/// Show the inline name editor in place of a row label. Enter returns the
+/// edit to commit; Escape or leaving the field cancels it.
+fn inline_editor(
+    ui: &mut egui::Ui,
+    salt: egui::Id,
+    slot: &mut Option<InlineRename>,
+    width: f32,
+    events: &mut TreeEvents,
+) -> Option<InlineRename> {
+    let inline = slot.as_mut()?;
+    let id = salt.with(("inline-rename", inline.id));
+    let response = ui.add(
+        egui::TextEdit::singleline(&mut inline.text)
+            .id(id)
+            .desired_width(width)
+            .hint_text("Name"),
+    );
+    response.widget_info(|| egui::WidgetInfo::text_edit(true, "", &inline.text, "Rename"));
+    if std::mem::take(&mut inline.focus) {
+        response.request_focus();
+        let mut state = egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(0),
+                egui::text::CCursor::new(inline.text.chars().count()),
+            )));
+        egui::TextEdit::store_state(ui.ctx(), id, state);
+        return None;
+    }
+    if !response.lost_focus() {
+        return None;
+    }
+    let commit = ui.input(|input| input.key_pressed(egui::Key::Enter));
+    let edit = slot.take();
+    if !commit {
+        events.message = Some("Rename cancelled · name unchanged".into());
+    }
+    edit.filter(|_| commit)
+}
+/// Rows whose name can be edited in place: Parts, components and groups.
+fn inline_renamable(kind: NodeKind) -> bool {
+    matches!(kind, NodeKind::Body | NodeKind::Component | NodeKind::Group)
 }
 impl Default for ModelTree {
     fn default() -> Self {
@@ -431,6 +487,7 @@ impl Default for ModelTree {
             history_selection: None,
             selected_references: BTreeSet::new(),
             scroll_to_source: None,
+            inline: None,
         }
     }
 }
@@ -464,8 +521,10 @@ impl ModelTree {
             .document()
             .get(id)
             .ok_or("The selected container no longer exists")?;
-        if hierarchy::container_kind(&entity.data).is_none() {
-            return Err("Rename a component or group".into());
+        if hierarchy::container_kind(&entity.data).is_none()
+            && !matches!(entity.data, EntityData::Part { .. })
+        {
+            return Err("Rename a part, component or group".into());
         }
         self.tool = Some(Tool::Rename {
             document: session.document().id(),
@@ -474,6 +533,60 @@ impl ModelTree {
             name: entity.name.clone(),
         });
         Ok(())
+    }
+    /// Start editing a Part, component or group name in its tree row.
+    pub fn begin_inline_rename(&mut self, session: &Session, id: EntityId) -> Result<(), String> {
+        let entity = session
+            .document()
+            .get(id)
+            .ok_or("The selected entry no longer exists")?;
+        if kind(&entity.data).is_none_or(|kind| !inline_renamable(kind)) {
+            return Err("Rename a part, component or group".into());
+        }
+        self.inline = Some(InlineRename {
+            document: session.document().id(),
+            revision: session.revision(),
+            id,
+            text: entity.name.clone(),
+            focus: true,
+        });
+        Ok(())
+    }
+    pub fn inline_renaming(&self) -> Option<EntityId> {
+        self.inline.as_ref().map(|inline| inline.id)
+    }
+    /// Commit an inline rename that its editor confirmed with Enter. An
+    /// invalid name keeps the editor open with the typed text.
+    fn commit_inline_rename(&mut self, session: &mut Session, inline: InlineRename) -> TreeEvents {
+        if inline.document != session.document().id() {
+            self.inline = None;
+            return TreeEvents {
+                error: Some("This rename belongs to another document".into()),
+                ..Default::default()
+            };
+        }
+        if session
+            .document()
+            .get(inline.id)
+            .is_some_and(|entity| entity.name == inline.text)
+        {
+            self.inline = None;
+            return TreeEvents::default();
+        }
+        let result = self.execute(
+            session,
+            inline.revision,
+            Action::Rename {
+                id: inline.id,
+                name: inline.text.clone(),
+            },
+        );
+        self.inline = result.error.is_some().then(|| InlineRename {
+            focus: true,
+            revision: session.revision(),
+            ..inline
+        });
+        result
     }
     fn ensure_view(&mut self, session: &Session) -> Result<(), String> {
         let stamp = (session.document().id(), session.revision());
@@ -593,7 +706,13 @@ impl ModelTree {
         let mut events = TreeEvents::default();
         let mut action = None;
         let mut create = None;
-        let mut rename = None;
+        let mut inline_start = None;
+        let mut inline_commit = None;
+        let salt = self.salt;
+        let mut inline = self.inline.take().filter(|inline| {
+            inline.document == session.document().id()
+                && session.document().get(inline.id).is_some()
+        });
         let mut drop = None;
         let mut toggle = None;
         ui.horizontal(|ui| {
@@ -684,6 +803,15 @@ impl ModelTree {
                                 else { row.name.clone() };
                             let color = if row.effective_visible { ui.visuals().text_color() } else { Color32::GRAY };
                             let draggable = mutations_enabled && row.movable;
+                            if row.history_of.is_none()
+                                && inline.as_ref().is_some_and(|inline| inline.id == row.id)
+                            {
+                                if let Some(edit) = inline_editor(ui, salt, &mut inline, width, &mut events) {
+                                    inline_commit = Some(edit);
+                                }
+                                ui.add_space(trailing);
+                                return;
+                            }
                             let response = flat_row_label(ui, width, &label, options.enabled && row.available, selected.contains(&row.id) || represented.contains(&row.id), color, draggable);
                             if draggable && response.drag_started_by(egui::PointerButton::Primary) {
                                 let entries = if selected.contains(&row.id) {
@@ -731,7 +859,10 @@ impl ModelTree {
                             if response.double_clicked() && mutations_enabled {
                                 if row.kind == NodeKind::Sketch && options.allow_open_sketch {
                                     events.open_sketch = Some(row.id);
-                                } else if matches!(row.kind, NodeKind::Component | NodeKind::Root) {
+                                } else if row.history_of.is_none() && inline_renamable(row.kind) && row.available {
+                                    // Activation stays in the context menu and Inspector.
+                                    inline_start = Some(row.id);
+                                } else if row.kind == NodeKind::Root {
                                     action = Some(Action::SetActive { component: if row.kind == NodeKind::Root { None } else { Some(row.id) } });
                                 }
                             }
@@ -773,8 +904,8 @@ impl ModelTree {
                                             }
                                         }
                                     }
-                                    if matches!(row.kind, NodeKind::Component | NodeKind::Group) && ui.button("Rename").clicked() {
-                                        rename = Some(row.id);
+                                    if inline_renamable(row.kind) && ui.button("Rename").clicked() {
+                                        inline_start = Some(row.id);
                                         ui.close();
                                     }
                                     if row.kind == NodeKind::Sketch && options.allow_open_sketch && ui.button("Open sketch").clicked() {
@@ -819,10 +950,20 @@ impl ModelTree {
         if let Some((kind, parent)) = create {
             self.begin_create(session, kind, parent);
         }
-        if let Some(id) = rename
-            && let Err(error) = self.begin_rename(session, id)
+        // A renamed row scrolled out of view keeps its edit; a deleted or
+        // foreign one was dropped above.
+        self.inline = inline;
+        if let Some(id) = inline_start
+            && let Err(error) = self.begin_inline_rename(session, id)
         {
             events.error = Some(error);
+        }
+        if let Some(edit) = inline_commit {
+            let mut result = self.commit_inline_rename(session, edit);
+            if result.selection.is_none() {
+                result.selection = events.selection;
+            }
+            return result;
         }
         if let Some((row, target, payload)) = drop {
             return self.drop_entries(session, &payload, row, target);
@@ -1054,7 +1195,7 @@ impl ModelTree {
                             component: (!root).then_some(id),
                         });
                     }
-                    if matches!(node_kind, NodeKind::Component | NodeKind::Group) {
+                    if inline_renamable(node_kind) {
                         rename = ui.button("Rename…").clicked();
                     }
                     if node_kind == NodeKind::Sketch

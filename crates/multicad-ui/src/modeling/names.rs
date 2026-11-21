@@ -14,8 +14,17 @@ impl GeneratedNames {
     /// Only generated defaults use this allocator. Deliberately entered names
     /// remain editable and may duplicate another canonical entity's name.
     pub fn numbered(&mut self, prefix: &str, producer_suffix: &str) -> String {
+        self.numbered_with(prefix, " ", producer_suffix)
+    }
+    /// Like [`Self::numbered`] with an explicit separator, e.g. `MPX 6 - 1`.
+    pub fn numbered_with(
+        &mut self,
+        prefix: &str,
+        separator: &str,
+        producer_suffix: &str,
+    ) -> String {
         for number in 1.. {
-            let name = format!("{prefix} {number}");
+            let name = format!("{prefix}{separator}{number}");
             let producer = format!("{name}{producer_suffix}");
             if !self.0.contains(&name) && !self.0.contains(&producer) {
                 self.0.extend([name.clone(), producer]);

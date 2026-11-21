@@ -1300,8 +1300,8 @@ impl SketchEditor {
     pub(crate) fn cancel_model_stock(&mut self) -> bool {
         self.model.cancel_stock_editor()
     }
-    pub(crate) fn primitive_corner_input_active(&self) -> bool {
-        self.model.primitive_corner_input_active()
+    pub(crate) fn primitive_corner_input_focused(&self) -> bool {
+        self.model.primitive_corner_input_focused()
     }
     pub fn cancel_model(&mut self) {
         self.acquisition = None;
@@ -1313,19 +1313,8 @@ impl SketchEditor {
         self.model.cancel();
         self.message = "Modeling cancelled · document unchanged".into();
     }
-    pub fn begin_primitive(
-        &mut self,
-        session: &Session,
-        resources: &multicad_core::project_file::ProjectResources,
-        kind: crate::modeling::ModelingTool,
-        channel: Channel,
-    ) -> Result<(), String> {
-        if !self.primitive_ready() {
-            return Err("Install native modeling and apply or cancel pending edits before creating a primitive".into());
-        }
-        self.finish()?;
-        self.model
-            .begin_primitive(session, resources, kind, channel)?;
+    /// Keep a new primitive or panel draft envelope visible with its handles.
+    fn frame_draft_envelope(&mut self, session: &Session) {
         if let Some(rect) = self
             .viewport_rect
             .filter(|rect| rect.is_finite() && rect.size().min_elem() >= 64.)
@@ -1347,8 +1336,23 @@ impl SketchEditor {
                 self.initial_fit.settle();
             }
         }
+    }
+    pub fn begin_primitive(
+        &mut self,
+        session: &Session,
+        resources: &multicad_core::project_file::ProjectResources,
+        kind: crate::modeling::ModelingTool,
+        channel: Channel,
+    ) -> Result<(), String> {
+        if !self.primitive_ready() {
+            return Err("Install native modeling and apply or cancel pending edits before creating a primitive".into());
+        }
+        self.finish()?;
+        self.model
+            .begin_primitive(session, resources, kind, channel)?;
+        self.frame_draft_envelope(session);
         self.message = format!(
-            "{} · drag a corner to resize or use the origin gizmo to move and rotate",
+            "{} · type dimensions beside the draft, drag a corner to resize, or use the origin gizmo to move and rotate",
             kind.label()
         );
         Ok(())
@@ -1608,7 +1612,8 @@ impl SketchEditor {
         }
         self.finish()?;
         self.model.begin_panel(session, resources, channel)?;
-        self.message = "Panel · choose stock, size and placement in the Inspector".into();
+        self.frame_draft_envelope(session);
+        self.message = "Panel · drag the corners or type Length and Width in the viewport; thickness comes from the stock".into();
         Ok(())
     }
     pub fn begin_sheet(
@@ -4834,6 +4839,36 @@ impl SketchEditor {
                     },
                 ) {
                     Ok(Some(snap)) => self.message = format!("Scale origin placed · {snap}"),
+                    Ok(None) => {}
+                    Err(error) => self.message = error,
+                }
+            } else if self.model.panel_point_picking() {
+                // Panel point clicks never change selection or the draft size.
+                owned = true;
+                let canonical_scene = context
+                    .feed
+                    .visible()
+                    .filter(|_| {
+                        context
+                            .feed
+                            .is_current(session.document().id(), session.revision())
+                    })
+                    .map(|s| s.as_ref());
+                match self.model.panel_point_viewport(
+                    session,
+                    context.resources,
+                    crate::modeling::TerminationViewport {
+                        scene: canonical_scene,
+                        report: None,
+                        camera: self.camera,
+                        rect,
+                        pointer: response.hover_pos(),
+                        clicked: response.clicked(),
+                        painter: &painter,
+                        section: self.modeling_section(),
+                    },
+                ) {
+                    Ok(Some(message)) => self.message = message,
                     Ok(None) => {}
                     Err(error) => self.message = error,
                 }
