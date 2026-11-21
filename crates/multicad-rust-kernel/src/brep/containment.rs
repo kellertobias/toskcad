@@ -146,7 +146,10 @@ fn patch_clearance(
         *budget = budget.checked_sub(1)?;
         let (lo, hi) = hull_box(&patch.control)?;
         let distance = probe.box_gap(lo, hi);
-        if distance > margin {
+        // A hull no wider than a quarter of its gap bounds the true distance
+        // within a quarter; wider hulls are halved while depth remains.
+        let tight = 4. * norm(sub(hi, lo)) <= distance;
+        if distance > margin && (tight || depth >= MAX_DEPTH) {
             least = least.min(distance);
             continue;
         }
@@ -223,7 +226,8 @@ fn extrusion_clearance(
         let distance = (0..2)
             .map(|i| gap(probe2[i], [range[i][0] - guard, range[i][1] + guard]))
             .fold(0., f64::hypot);
-        if distance > margin {
+        let width = (range[0][1] - range[0][0]).hypot(range[1][1] - range[1][0]);
+        if distance > margin && (4. * width <= distance || depth >= MAX_DEPTH) {
             least = least.min(distance);
             continue;
         }
@@ -235,6 +239,108 @@ fn extrusion_clearance(
         }
     }
     Some(least)
+}
+
+/// The box of a whole ellipse, with a rounding guard.
+fn conic_box(frame: &super::Frame, [a, b]: [f64; 2]) -> (Point, Point) {
+    let reach: Point = std::array::from_fn(|i| (a * frame.x[i]).hypot(b * frame.y[i]));
+    let scale = frame
+        .origin
+        .iter()
+        .chain(&reach)
+        .map(|v| v.abs())
+        .fold(1., f64::max);
+    let guard = 64. * f64::EPSILON * scale;
+    (
+        std::array::from_fn(|i| frame.origin[i] - reach[i] - guard),
+        std::array::from_fn(|i| frame.origin[i] + reach[i] + guard),
+    )
+}
+
+/// An enclosing box of one edge curve over its whole range.
+fn edge_box(edge: &super::Edge) -> Option<(Point, Point)> {
+    let [a, b] = edge.range;
+    match &edge.curve {
+        Curve::Line { origin, direction } => {
+            let ends: [Point; 2] =
+                [a, b].map(|t| std::array::from_fn(|i| origin[i] + direction[i] * t));
+            Some((
+                std::array::from_fn(|i: usize| ends[0][i].min(ends[1][i])),
+                std::array::from_fn(|i: usize| ends[0][i].max(ends[1][i])),
+            ))
+        }
+        // origin + a cos t x + b sin t y reaches a * x_i, b * y_i along axis i.
+        Curve::Circle { frame, radius } => Some(conic_box(frame, [*radius; 2])),
+        Curve::Ellipse { frame, semiaxes } => Some(conic_box(frame, *semiaxes)),
+        Curve::Nurbs { curve, .. } => {
+            let control: Vec<Homogeneous> = curve
+                .points()
+                .iter()
+                .map(|p| [p[0], p[1], p[2], 1.])
+                .collect();
+            hull_box(&control)
+        }
+        Curve::Hyperbola { .. } | Curve::Parabola { .. } => None,
+    }
+}
+
+/// A box enclosing every boundary curve and vertex of one face.
+fn loop_box(solid: &Solid, face: &super::Face) -> Option<(Point, Point)> {
+    let boundary = solid.boundary();
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
+    let mut include = |a: Point, b: Point| {
+        for i in 0..3 {
+            lo[i] = lo[i].min(a[i]);
+            hi[i] = hi[i].max(b[i]);
+        }
+    };
+    for path in &face.loops {
+        if let Some(vertex) = path.vertex {
+            let p = boundary.vertices[vertex];
+            include(p, p);
+        }
+        for &(edge, _) in &path.uses {
+            let (a, b) = edge_box(&boundary.edges[edge])?;
+            include(a, b);
+        }
+    }
+    let scale = lo.iter().chain(&hi).map(|v| v.abs()).fold(1., f64::max);
+    let guard = 64. * f64::EPSILON * scale;
+    lo.iter()
+        .all(|v| v.is_finite())
+        .then(|| (lo.map(|v| v - guard), hi.map(|v| v + guard)))
+}
+
+/// A lower bound of the gap between the probe and the trimmed face itself,
+/// from the extent of its boundary. A planar face lies in the convex hull
+/// of its boundary. The axial coordinate of a cylinder, a cone away from
+/// its apex, or an extrusion has no interior extremum, so such a face lies
+/// in the axial slab of its boundary.
+fn extent_clearance(solid: &Solid, face: &super::Face, probe: &Probe) -> Option<f64> {
+    let (lo, hi) = loop_box(solid, face)?;
+    let slab = |axis: Point| {
+        let length = norm(axis);
+        if length.is_nan() || length <= 0. {
+            return None;
+        }
+        let along = |p: Point| dot(p, axis) / length;
+        let span = |a: Point, b: Point| {
+            (0..8).fold([f64::INFINITY, f64::NEG_INFINITY], |[low, high], k| {
+                let corner: Point =
+                    std::array::from_fn(|i| if k >> i & 1 == 1 { b[i] } else { a[i] });
+                let v = along(corner);
+                [low.min(v), high.max(v)]
+            })
+        };
+        Some(gap(span(probe.lo, probe.hi), span(lo, hi)))
+    };
+    match &face.surface {
+        Surface::Plane(_) => Some(probe.box_gap(lo, hi)),
+        Surface::Cylinder { frame, .. } | Surface::Cone { frame, .. } => slab(frame.z),
+        Surface::Extrusion { direction, .. } => slab(*direction),
+        _ => None,
+    }
 }
 
 /// A lower bound of the gap between the probe and one support surface.
@@ -314,10 +420,22 @@ impl Solid {
     /// support comes within `margin` or cannot be bounded.
     pub fn box_clearance(
         &self,
-        [lo, hi]: [Point; 2],
+        bounds: [Point; 2],
         margin: f64,
         interrupt: Interrupt<'_>,
     ) -> Result<Option<f64>> {
+        Ok(self
+            .nearest_face(bounds, margin, interrupt)?
+            .map(|(clearance, _)| clearance))
+    }
+
+    /// The certified clearance and the face that limits it.
+    fn nearest_face(
+        &self,
+        [lo, hi]: [Point; 2],
+        margin: f64,
+        interrupt: Interrupt<'_>,
+    ) -> Result<Option<(f64, usize)>> {
         if (0..3).any(|i| !(lo[i].is_finite() && hi[i].is_finite() && lo[i] <= hi[i]))
             || !(margin.is_finite() && margin >= 0.)
         {
@@ -337,20 +455,138 @@ impl Solid {
             reach: norm(half) * (1. + 1e-12) + 64. * f64::EPSILON * scale,
         };
         let mut budget = MAX_HULLS;
-        let mut least = f64::INFINITY;
-        for face in &self.boundary().faces {
+        let mut least = (f64::INFINITY, 0);
+        for (index, face) in self.boundary().faces.iter().enumerate() {
             checkpoint(interrupt)?;
-            match surface_clearance(&face.surface, &probe, margin, &mut budget) {
-                Some(distance) if distance > margin => least = least.min(distance),
-                _ => {
-                    if budget == 0 {
-                        return Err(super::Error::Limit);
+            // The trimmed face may clear the probe where its support does not.
+            let extent = extent_clearance(self, face, &probe).unwrap_or(f64::NEG_INFINITY);
+            // Analytic supports cost one distance evaluation: keep the larger
+            // of both lower bounds.
+            let analytic = !matches!(
+                face.surface,
+                Surface::Nurbs { .. }
+                    | Surface::Extrusion {
+                        curve: Curve::Nurbs { .. },
+                        ..
                     }
-                    return Ok(None);
+            );
+            let distance = if extent > margin && analytic {
+                surface_clearance(&face.surface, &probe, margin, &mut budget)
+                    .map_or(extent, |support| support.max(extent))
+            } else if extent > margin {
+                extent
+            } else {
+                match surface_clearance(&face.surface, &probe, margin, &mut budget) {
+                    Some(distance) if distance > margin => distance,
+                    _ => {
+                        if budget == 0 {
+                            return Err(super::Error::Limit);
+                        }
+                        return Ok(None);
+                    }
                 }
+            };
+            if distance < least.0 {
+                least = (distance, index);
             }
         }
         Ok(Some(least))
+    }
+
+    /// A point on the same side as `start` with the largest certified
+    /// clearance found, stopping once it reaches `wanted`. The open ball of a
+    /// point's clearance meets no face support, so a step shorter than that
+    /// clearance never crosses the boundary; each step re-certifies the
+    /// clearance of its new point. The caller compares the returned
+    /// clearance with what it needs.
+    pub fn escape(
+        &self,
+        start: Point,
+        clearance: f64,
+        wanted: f64,
+        margin: f64,
+        interrupt: Interrupt<'_>,
+    ) -> Result<(Point, f64)> {
+        if clearance >= wanted {
+            return Ok((start, clearance));
+        }
+        // First walk away from the foot point on the face that limits the
+        // clearance, the gradient of the distance to the boundary. Every step
+        // stays inside the certified ball whatever its direction.
+        let (mut point, mut free) = (start, clearance);
+        let mut best = (start, clearance);
+        let mut limiting = self.nearest_face([start, start], margin, interrupt)?;
+        for _ in 0..64 {
+            checkpoint(interrupt)?;
+            let Some((_, face)) = limiting else {
+                break;
+            };
+            let surface = &self.boundary().faces[face].surface;
+            let foot = surface.evaluate(surface.invert(point, None)).0;
+            let away = sub(point, foot);
+            let length = norm(away);
+            if length.is_nan() || length <= 0. {
+                break;
+            }
+            let next: Point = std::array::from_fn(|i| point[i] + away[i] / length * free * 0.5);
+            limiting = self.nearest_face([next, next], margin, interrupt)?;
+            let Some((found, _)) = limiting else {
+                break;
+            };
+            (point, free) = (next, found);
+            if free > best.1 {
+                best = (point, free);
+            }
+            if free >= wanted {
+                return Ok((point, free));
+            }
+        }
+        let (start, clearance) = best;
+        let s = std::f64::consts::FRAC_1_SQRT_2;
+        let t = 1. / 3_f64.sqrt();
+        let directions: [Point; 18] = [
+            [1., 0., 0.],
+            [-1., 0., 0.],
+            [0., 1., 0.],
+            [0., -1., 0.],
+            [0., 0., 1.],
+            [0., 0., -1.],
+            [s, s, 0.],
+            [-s, -s, 0.],
+            [s, -s, 0.],
+            [-s, s, 0.],
+            [s, 0., s],
+            [-s, 0., -s],
+            [0., s, s],
+            [0., -s, -s],
+            [t, t, t],
+            [-t, -t, -t],
+            [t, -t, t],
+            [-t, t, -t],
+        ];
+        for direction in directions {
+            let (mut point, mut free) = (start, clearance);
+            for _ in 0..64 {
+                checkpoint(interrupt)?;
+                // Half the clearance keeps the step strictly inside the ball.
+                let next = std::array::from_fn(|i| point[i] + direction[i] * free * 0.5);
+                let Some(found) = self.box_clearance([next, next], margin, interrupt)? else {
+                    break;
+                };
+                (point, free) = (next, found);
+                if free > best.1 {
+                    best = (point, free);
+                }
+                if free >= wanted {
+                    return Ok((point, free));
+                }
+                // A direction that loses half the clearance leads nowhere.
+                if free < 0.5 * clearance {
+                    break;
+                }
+            }
+        }
+        Ok(best)
     }
 
     /// The side of a whole axis-aligned box whose certified `clearance`

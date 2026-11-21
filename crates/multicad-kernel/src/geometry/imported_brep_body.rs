@@ -23,7 +23,7 @@ pub(crate) struct ImportedBrepBody {
     pub(super) solid: brep::Solid,
     pub(super) feature: EntityId,
     names: Names,
-    /// Parity tessellations of this boundary, finest last.
+    /// Parity tessellations of this boundary by deflection, built on use.
     parity: std::cell::RefCell<Vec<(f64, Rc<brep::mesh::Mesh>)>>,
 }
 
@@ -425,56 +425,79 @@ impl ImportedBrepBody {
         &self,
         bounds: [[f64; 3]; 2],
         deviation_mm: f64,
-    ) -> Result<brep::BoxSide, brep::Error> {
+    ) -> Result<brep::BoxSide, GeometryError> {
+        let budget = |stage: &'static str| {
+            move |cause: brep::Error| match cause {
+                brep::Error::Limit => error(
+                    "Boolean",
+                    GeometryErrorKind::Limit,
+                    format!("Rust imported-boundary containment exceeded its {stage} budget"),
+                ),
+                other => failure(other),
+            }
+        };
         let margin = self.solid.tolerance() + deviation_mm;
         let [low, high] = self.solid.bounds_mm();
         let [lo, hi] = bounds;
         if (0..3).any(|i| hi[i] < low[i] - margin || lo[i] > high[i] + margin) {
             return Ok(brep::BoxSide::Outside);
         }
-        let Some(clearance) = self.solid.box_clearance(bounds, margin, None)? else {
+        let Some(clearance) = self
+            .solid
+            .box_clearance(bounds, margin, None)
+            .map_err(budget("hull"))?
+        else {
             return Ok(brep::BoxSide::Unresolved);
         };
-        // The coarsest cached or new tessellation whose deflection is a
-        // quarter of the clearance or less.
+        // Parity comes from the coarsest of four halving tessellations whose
+        // deflection the clearance clears four times over. A box nearer the
+        // boundary first walks its centre away within certified clearance
+        // balls, which never cross the boundary.
         let diagonal = (0..3).map(|i| high[i] - low[i]).fold(0., f64::hypot);
-        let floor = (diagonal * 1e-6).max(10. * margin);
-        let wanted = clearance / 4.;
-        if wanted < floor {
+        let coarse = (diagonal * 1.25e-4).max(10. * margin);
+        let levels = [1., 0.5, 0.25, 0.125].map(|f| (coarse * f).max(10. * margin));
+        let (point, free) = if clearance >= 4. * coarse {
+            (std::array::from_fn(|i| 0.5 * (lo[i] + hi[i])), clearance)
+        } else {
+            let center = std::array::from_fn(|i| 0.5 * (lo[i] + hi[i]));
+            self.solid
+                .escape(center, clearance, 4. * coarse, margin, None)
+                .map_err(budget("escape"))?
+        };
+        let Some(&deflection) = levels.iter().find(|&&d| free >= 4. * d) else {
             return Ok(brep::BoxSide::Unresolved);
-        }
+        };
         let cached = self
             .parity
             .borrow()
             .iter()
-            .find(|(deflection, _)| *deflection <= wanted)
-            .cloned();
-        let (deflection, mesh) = match cached {
-            Some(found) => found,
+            .find(|(d, _)| *d == deflection)
+            .map(|(_, mesh)| Rc::clone(mesh));
+        let mesh = match cached {
+            Some(mesh) => mesh,
             None => {
-                // Halve from a hundredth of the diagonal so that probes of
-                // similar clearance share one tessellation.
-                let mut deflection = diagonal * 1e-2;
-                while deflection > wanted {
-                    deflection *= 0.5;
-                }
-                let mesh = brep::mesh::tessellate(
-                    &self.solid,
-                    brep::mesh::Options {
-                        deflection_mm: deflection,
-                        angle_rad: 0.5,
-                        triangle_limit: 4_000_000,
-                    },
-                    None,
-                )?;
-                let entry = (deflection, Rc::new(mesh));
-                let mut cache = self.parity.borrow_mut();
-                cache.push(entry.clone());
-                cache.sort_by(|a, b| b.0.total_cmp(&a.0));
-                entry
+                let mesh = Rc::new(
+                    brep::mesh::tessellate(
+                        &self.solid,
+                        brep::mesh::Options {
+                            deflection_mm: deflection,
+                            angle_rad: 0.5,
+                            triangle_limit: 4_000_000,
+                        },
+                        None,
+                    )
+                    .map_err(budget("tessellation"))?,
+                );
+                self.parity
+                    .borrow_mut()
+                    .push((deflection, Rc::clone(&mesh)));
+                mesh
             }
         };
-        Ok(self.solid.box_parity(bounds, clearance, &mesh, deflection))
+        // The box centre's clearance is at least the box's own.
+        Ok(self
+            .solid
+            .box_parity([point, point], free, &mesh, deflection))
     }
 
     /// Authored face names, when this kernel constructed the boundary.
@@ -737,24 +760,46 @@ impl Solid {
         if policy.boolean_fuzzy_mm != 0. || self.policy != policy || other.policy != policy {
             return None;
         }
-        let (probe, source_is_left, body) = match (&self.body, &other.body) {
-            (SolidBody::ImportedBrep(body), _) => (other, true, body),
-            (_, SolidBody::ImportedBrep(body)) => (self, false, body),
+        // A retained boundary in world coordinates, or a bevel's verified
+        // encoding in its local frame with the probe box charted into it.
+        let retained = |solid: &Self| -> Option<(Rc<Self>, PlaneFrame)> {
+            let (body, frame) = solid.bevel_body()?;
+            Some((body.retained(policy)?, frame))
+        };
+        let (probe, source_is_left, proxy) = match (&self.body, &other.body) {
+            (SolidBody::ImportedBrep(_), _) => (other, true, None),
+            (_, SolidBody::ImportedBrep(_)) => (self, false, None),
+            (SolidBody::Bevel(..), _) => (other, true, Some(retained(self)?)),
+            (_, SolidBody::Bevel(..)) => (self, false, Some(retained(other)?)),
             _ => return None,
         };
         let world = probe_bounds(probe)?;
-        let bounds = [world.map(|b| b.lo), world.map(|b| b.hi)];
-        let relation = match body.classify_box(bounds, 0.) {
+        let source = if source_is_left { self } else { other };
+        let (boundary, bounds, deviation) = match &proxy {
+            None => (source, [world.map(|b| b.lo), world.map(|b| b.hi)], 0.),
+            Some((retained, frame)) => {
+                let local = super::helical_body::contained_boolean::chart_bounds(
+                    world,
+                    frame.origin,
+                    [frame.u, frame.v, frame.normal()],
+                );
+                // The verified encoding lies within the tolerance of the
+                // exact bevel.
+                (
+                    retained.as_ref(),
+                    [local.map(|[lo, _]| lo), local.map(|[_, hi]| hi)],
+                    policy.linear_tolerance_mm,
+                )
+            }
+        };
+        let SolidBody::ImportedBrep(body) = &boundary.body else {
+            return None;
+        };
+        let relation = match body.classify_box(bounds, deviation) {
             Ok(brep::BoxSide::Inside) => BoxClassification::Inside,
             Ok(brep::BoxSide::Outside) => BoxClassification::Outside,
             Ok(brep::BoxSide::Unresolved) => return None,
-            Err(brep::Error::Limit) => {
-                return Some(Err(error(
-                    "Boolean",
-                    GeometryErrorKind::Limit,
-                    "Rust imported-boundary containment exceeded its budget",
-                )));
-            }
+            Err(error) if error.kind == GeometryErrorKind::Limit => return Some(Err(error)),
             Err(_) => return None,
         };
         whole_operand_result(self, other, source_is_left, relation, operation)

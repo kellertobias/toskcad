@@ -22,6 +22,9 @@ pub(crate) struct BevelBody {
     pub(crate) geometry: Bevel,
     pub(super) feature: EntityId,
     topology: Topology,
+    /// The verified retained boundary of this gear's own STEP encoding in
+    /// its local frame, built on first use for containment proofs.
+    retained: std::cell::OnceCell<Option<Rc<Solid>>>,
 }
 
 impl Solid {
@@ -68,6 +71,7 @@ impl Solid {
                     geometry,
                     feature,
                     topology,
+                    retained: Default::default(),
                 }),
                 PlaneFrame::default(),
             ),
@@ -240,6 +244,45 @@ impl Solid {
 }
 
 impl BevelBody {
+    /// The retained boundary of this gear's STEP encoding in its local
+    /// frame, admitted only when the bevel decoder verifies it against this
+    /// exact source. `None` when no verified encoding exists.
+    pub(super) fn retained(&self, policy: GeometryPolicy) -> Option<Rc<Solid>> {
+        self.retained
+            .get_or_init(|| {
+                let tolerance = policy.linear_tolerance_mm;
+                let (origin, u, v) = ([0.; 3], [1., 0., 0.], [0., 1., 0.]);
+                let text = multicad_rust_kernel::step::write_bevel(
+                    &self.geometry,
+                    origin,
+                    u,
+                    v,
+                    tolerance,
+                )
+                .ok()?;
+                multicad_rust_kernel::step_read::verify_bevel(
+                    &text,
+                    &self.geometry,
+                    origin,
+                    u,
+                    v,
+                    tolerance,
+                )
+                .ok()?;
+                let mut solids =
+                    multicad_rust_kernel::step_read::brep::read_solids(&text, tolerance, None)
+                        .ok()?;
+                if solids.len() != 1 {
+                    return None;
+                }
+                let solid = solids.pop()?;
+                Solid::from_assembled_brep(solid, self.feature, policy)
+                    .ok()
+                    .map(Rc::new)
+            })
+            .clone()
+    }
+
     pub(super) fn supports_step(&self, frame: PlaneFrame, policy: GeometryPolicy) -> bool {
         multicad_rust_kernel::step::supports_bevel(
             &self.geometry,

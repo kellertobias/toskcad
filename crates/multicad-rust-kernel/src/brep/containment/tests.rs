@@ -53,6 +53,12 @@ fn analytic_supports_settle_boxes_by_their_exact_distance() {
     assert_eq!(side(&cylinder, [x + 5.9, y, z], 0.01), BoxSide::Inside);
     assert_eq!(side(&cylinder, [x + 6.1, y, z], 0.01), BoxSide::Outside);
     assert_eq!(side(&cylinder, [x, y, hi[2] + 0.2], 0.01), BoxSide::Outside);
+    // On the wall's infinite support but beyond the trimmed side face: the
+    // face's own axial slab settles it.
+    assert_eq!(
+        side(&cylinder, [x + 6., y, hi[2] + 0.5], 0.01),
+        BoxSide::Outside
+    );
     // A box across the wall or a cap is never settled.
     assert_eq!(side(&cylinder, [x + 6., y, z], 0.01), BoxSide::Unresolved);
     assert_eq!(side(&cylinder, [x, y, hi[2]], 0.01), BoxSide::Unresolved);
@@ -110,4 +116,56 @@ fn voids_and_invalid_boxes() {
         hollow.box_clearance(cube(middle, 0.1), TOLERANCE, Some(&stop)),
         Err(super::super::Error::Cancelled)
     );
+}
+
+#[test]
+fn a_box_near_the_boundary_escapes_within_clearance_balls_to_coarse_parity() {
+    let prism = solid(fixture!("corpus/occt-spline-prism.step"));
+    let coarse = 0.25;
+    let tessellation = mesh::tessellate(
+        &prism,
+        mesh::Options {
+            deflection_mm: coarse,
+            angle_rad: 0.5,
+            triangle_limit: 100_000,
+        },
+        None,
+    )
+    .unwrap();
+    for (center, expected) in [
+        ([10., 8.95, 3.], BoxSide::Inside),
+        ([10., 9.05, 3.], BoxSide::Outside),
+        ([10., 0.04, 3.], BoxSide::Inside),
+    ] {
+        let bounds = cube(center, 0.01);
+        let clearance = prism
+            .box_clearance(bounds, TOLERANCE, None)
+            .unwrap()
+            .unwrap();
+        // Too close for the coarse tessellation at the box itself.
+        assert!(clearance < 4. * coarse);
+        assert_eq!(
+            prism.box_parity(bounds, clearance, &tessellation, coarse),
+            BoxSide::Unresolved
+        );
+        let (point, free) = prism
+            .escape(center, clearance, 4. * coarse, TOLERANCE, None)
+            .unwrap();
+        assert!(free >= 4. * coarse);
+        assert_eq!(
+            prism.box_parity([point, point], free, &tessellation, coarse),
+            expected,
+            "{center:?} -> {point:?}"
+        );
+    }
+    // A point boxed in by a thin wall never reaches the wanted clearance.
+    let bounds = cube([10., 4.5, 3.], 0.01);
+    let clearance = prism
+        .box_clearance(bounds, TOLERANCE, None)
+        .unwrap()
+        .unwrap();
+    let (_, free) = prism
+        .escape([10., 4.5, 3.], clearance, 100., TOLERANCE, None)
+        .unwrap();
+    assert!(free >= clearance && free < 4.5, "{free}");
 }
