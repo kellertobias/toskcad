@@ -8,7 +8,7 @@ use crate::{
     radial_tensor::TracedMesh,
 };
 mod sleeve;
-pub use sleeve::{join_sleeve, sleeve_segments};
+pub use sleeve::{join_sleeve, join_sleeve_law, sleeve_segments};
 
 #[derive(Clone, Copy)]
 pub enum ThreadBoundaryMesh<'a, 's> {

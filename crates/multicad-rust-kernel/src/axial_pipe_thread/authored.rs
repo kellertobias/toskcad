@@ -6,6 +6,8 @@ use std::f64::consts::PI;
 mod boundary;
 mod classify;
 pub mod hardware;
+mod law_mesh;
+pub use law_mesh::{LawClosure, LawMesh, LawRole};
 mod stock_clip;
 pub use boundary::RawAuthoredBoundary;
 pub use classify::AuthoredBoxRelation;

@@ -97,6 +97,7 @@ pub use repaired_phillips_body::{
 mod enclosed_clearance;
 mod healed_import_body;
 mod interference_volume_body;
+mod law_print;
 mod pipe_sleeve_body;
 mod revolution_body;
 mod rounded_blind_bore_body;
@@ -3001,6 +3002,9 @@ impl Solid {
         }
         if let Some(body) = self.clipped_npt_body() {
             return body.manufacturing(Self::rust_mesh_options(options));
+        }
+        if let Some(result) = self.authored_pipe_manufacturing(options) {
+            return result;
         }
         if let Some((body, frame)) = self.repaired_phillips_body() {
             // This provider carries its fresh actual-world manifold proof and
