@@ -53,6 +53,8 @@ mod profile_connection_host;
 mod scale_host_tests;
 #[path = "sketch_screw_connection_host.rs"]
 mod screw_connection_host;
+#[cfg(test)]
+mod sketch_entry_tests;
 #[path = "sketch_snap.rs"]
 mod snap;
 #[path = "sketch_snap_host.rs"]
@@ -242,6 +244,10 @@ pub struct SketchEditor {
     repair_set: crate::reference_repair_set::RepairSetPanel,
     evaluated: Option<multicad_core::references::ReferenceReport>,
     creation_evaluation: Option<(EntityId, multicad_core::references::ReferenceReport)>,
+    /// A sketch this editor just created and the revision its creation
+    /// produced. While the source still sits at that revision, cancelling
+    /// withdraws the creation instead of keeping an empty sketch (CAD-380).
+    fresh_sketch: Option<(EntityId, u64)>,
     pub viewport_rect: Option<Rect>,
     plane_picker: PlanePicker,
     occurrence: Option<EntityId>,
@@ -351,6 +357,7 @@ impl Default for SketchEditor {
             repair_set: Default::default(),
             evaluated: None,
             creation_evaluation: None,
+            fresh_sketch: None,
             viewport_rect: None,
             plane_picker: Default::default(),
             occurrence: None,
@@ -2223,6 +2230,7 @@ impl SketchEditor {
         }
         self.refresh_contexts(session.document(), session.revision());
         self.orient_to(preview.world_frame);
+        self.fresh_sketch = Some((id, session.revision()));
         self.message =
             "Sketch ready. Choose Line or Rectangle; coordinates are millimeters.".into();
         Ok(())
@@ -2633,6 +2641,7 @@ impl SketchEditor {
             return Err("Apply or discard pending edits before opening a sketch".into());
         }
         self.cancel();
+        self.fresh_sketch = None;
         self.selected = Some(id);
         self.whole_sketch = None;
         self.tree_selection = std::collections::BTreeSet::from([id]);
@@ -2646,6 +2655,7 @@ impl SketchEditor {
             return Err("Apply or discard pending sketch edits before finishing".into());
         }
         self.cancel();
+        self.fresh_sketch = None;
         self.editing = false;
         self.moving = false;
         self.message = if self.developed_viewport.is_some() {
@@ -2657,8 +2667,10 @@ impl SketchEditor {
     }
     /// Leave sketch editing and drop only what is not yet in the document:
     /// the active tool, unapplied constraint values, previews and pending
-    /// controls. Committed sketch edits stay; Undo removes them.
-    pub fn abort(&mut self) -> Result<(), String> {
+    /// controls. Committed sketch edits stay; Undo removes them. A sketch
+    /// created by this session and still untouched is withdrawn entirely,
+    /// leaving neither the sketch nor an Undo entry behind (CAD-380).
+    pub fn abort(&mut self, session: &mut Session, channel: Channel) -> Result<(), String> {
         if !self.editing && !self.picking {
             return Err("No sketch is being edited".into());
         }
@@ -2670,10 +2682,32 @@ impl SketchEditor {
         if self.has_pending_edits() {
             return Err("Apply or discard the pending sketch controls before aborting".into());
         }
+        let fresh = self
+            .fresh_sketch
+            .take()
+            .filter(|(id, revision)| {
+                self.editing && self.selected == Some(*id) && session.revision() == *revision
+            })
+            .map(|(id, revision)| (id, session.retract(revision, Actor::local(channel))));
         self.editing = false;
         self.moving = false;
-        self.message =
-            "Sketch editing aborted · unapplied changes discarded, committed edits kept".into();
+        self.message = match fresh {
+            Some((id, Ok(_))) => {
+                self.selected = None;
+                self.whole_sketch = None;
+                self.element = None;
+                self.tree_selection.remove(&id);
+                self.sketch_occurrences.remove(&id);
+                self.creation_evaluation = None;
+                "New sketch cancelled · nothing was added to the document".into()
+            }
+            Some((_, Err(error))) => format!(
+                "Sketch editing aborted · the new sketch was kept because it could not be withdrawn: {error}"
+            ),
+            None => {
+                "Sketch editing aborted · unapplied changes discarded, committed edits kept".into()
+            }
+        };
         Ok(())
     }
     pub fn set_tool(&mut self, tool: DrawTool) -> Result<(), String> {

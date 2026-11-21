@@ -1357,7 +1357,8 @@ impl Application {
                     return Err("No sketch is being edited".into());
                 }
                 let p = self.current_mut();
-                p.sketch.abort()?;
+                p.sketch.abort(&mut p.session, channel)?;
+                p.editor.reload(&p.session);
                 p.sheet_pattern.set_authoring(false);
                 self.mode = Mode::Model;
                 self.tab = 0;
@@ -3401,6 +3402,22 @@ mod tests {
             .unwrap();
         assert!(!app.enabled(Command::Engraving));
         assert!(app.invoke(Command::Engraving, &[], Channel::Ui).is_err());
+    }
+    #[test]
+    fn abort_command_withdraws_an_untouched_new_sketch_and_its_history() {
+        let mut app = Application::new(Box::new(MemoryStorage)).unwrap();
+        let source = app.current().session.document().clone();
+        let undo = app.current().session.can_undo();
+        app.invoke(Command::NewSketch, &["xy"], Channel::Ui)
+            .unwrap();
+        assert_ne!(app.current().session.document(), &source);
+        assert!(app.enabled(Command::AbortSketch));
+        app.invoke(Command::AbortSketch, &[], Channel::Ui).unwrap();
+        assert_eq!(app.mode, Mode::Model);
+        assert_eq!(app.current().session.document(), &source);
+        assert_eq!(app.current().session.can_undo(), undo);
+        assert!(!app.current().session.can_redo());
+        assert!(app.enabled(Command::NewSketch));
     }
     #[test]
     fn abort_discards_the_active_tool_but_keeps_committed_sketch_edits() {
