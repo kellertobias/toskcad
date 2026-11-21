@@ -24,6 +24,21 @@ The lowest class within its distance wins. Within a class, the nearest target wi
 
 Grid rounding (the "Snap sketch points to grid spacing" option) applies only when no geometry target is indicated. A nearby grid point never displaces a geometry target, and along an assistive line the free coordinate is not grid-rounded. Geometry snapping has its own toggle, "Snap to geometry and assistive lines" (default on). It is independent of the grid option.
 
+## Target feedback
+
+The shown target always has a marker at its exact position, so snapped placement never looks like placement in empty space (CAD-383):
+
+| Marker | Targets | Cursor |
+| --- | --- | --- |
+| Filled square, highlight color | Existing sketch points (corners, vertices, poles) and acquired references | Crosshair |
+| Ring with dot | Circle, arc and shape centers | Crosshair |
+| Triangle | Line midpoints and the midpoint of two references | Crosshair |
+| Cross | Guide intersections, guide on line, perpendicular feet, tangent points | Crosshair |
+| Small ring | A point on an existing line, circle or arc | Cell |
+| None (dotted guide only) | Horizontal or vertical alignment | Unchanged |
+
+The label is drawn in the marker's color. Without a target the cursor is unchanged.
+
 ## Perpendicular and tangent targets
 
 While the Line tool (or the current Polyline segment) has a start point, the curves offer extra point targets relative to that start:

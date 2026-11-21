@@ -368,6 +368,17 @@ impl PlanePicker {
     pub fn cancel(&mut self) {
         *self = Self::default();
     }
+    /// The planar face under the pointer, as a viewport face selection, so the
+    /// host can paint the ordinary face highlight while a plane is picked.
+    pub fn hovered_face(&self) -> Option<crate::viewport::Selection> {
+        match &self.hovered {
+            Some(PlaneChoice::Face(face)) => Some(crate::viewport::Selection::Face {
+                instance: face.occurrence,
+                ordinal: face.display_key.ordinal,
+            }),
+            _ => None,
+        }
+    }
     pub fn take_cancel_requested(&mut self) -> bool {
         std::mem::take(&mut self.cancel_requested)
     }

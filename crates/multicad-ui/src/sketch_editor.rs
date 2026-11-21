@@ -42,6 +42,11 @@ mod face_profiles;
 mod face_region_preselection;
 #[cfg(test)]
 mod face_region_preselection_tests;
+#[path = "sketch_inline_input.rs"]
+mod inline_input;
+#[cfg(test)]
+#[path = "sketch_inline_input_tests.rs"]
+mod inline_input_tests;
 #[path = "sketch_mechanical_import_host.rs"]
 mod mechanical_import_host;
 #[path = "model_target_selection.rs"]
@@ -53,6 +58,8 @@ mod profile_connection_host;
 mod scale_host_tests;
 #[path = "sketch_screw_connection_host.rs"]
 mod screw_connection_host;
+#[cfg(test)]
+mod sketch_entry_tests;
 #[path = "sketch_snap.rs"]
 mod snap;
 #[path = "sketch_snap_host.rs"]
@@ -164,6 +171,8 @@ pub struct SketchEditor {
     polyline_segments: usize,
     spline_poles: Vec<([f64; 2], Option<EntityId>)>,
     last_draw_line: Option<[(EntityId, [f64; 2]); 2]>,
+    /// Creation-time X/Y and size fields beside the preview (CAD-384).
+    inline: inline_input::InlineInput,
     construction: bool,
     /// Fillet radius or chamfer setback for the corner tools, in mm.
     corner_size_mm: f64,
@@ -242,6 +251,10 @@ pub struct SketchEditor {
     repair_set: crate::reference_repair_set::RepairSetPanel,
     evaluated: Option<multicad_core::references::ReferenceReport>,
     creation_evaluation: Option<(EntityId, multicad_core::references::ReferenceReport)>,
+    /// A sketch this editor just created and the revision its creation
+    /// produced. While the source still sits at that revision, cancelling
+    /// withdraws the creation instead of keeping an empty sketch (CAD-380).
+    fresh_sketch: Option<(EntityId, u64)>,
     pub viewport_rect: Option<Rect>,
     plane_picker: PlanePicker,
     occurrence: Option<EntityId>,
@@ -274,6 +287,7 @@ impl Default for SketchEditor {
             polyline_segments: 0,
             spline_poles: vec![],
             last_draw_line: None,
+            inline: Default::default(),
             construction: false,
             corner_size_mm: 2.,
             text_tool: Default::default(),
@@ -351,6 +365,7 @@ impl Default for SketchEditor {
             repair_set: Default::default(),
             evaluated: None,
             creation_evaluation: None,
+            fresh_sketch: None,
             viewport_rect: None,
             plane_picker: Default::default(),
             occurrence: None,
@@ -2238,6 +2253,7 @@ impl SketchEditor {
         }
         self.refresh_contexts(session.document(), session.revision());
         self.orient_to(preview.world_frame);
+        self.fresh_sketch = Some((id, session.revision()));
         self.message =
             "Sketch ready. Choose Line or Rectangle; coordinates are millimeters.".into();
         Ok(())
@@ -2648,6 +2664,7 @@ impl SketchEditor {
             return Err("Apply or discard pending edits before opening a sketch".into());
         }
         self.cancel();
+        self.fresh_sketch = None;
         self.selected = Some(id);
         self.whole_sketch = None;
         self.tree_selection = std::collections::BTreeSet::from([id]);
@@ -2661,6 +2678,7 @@ impl SketchEditor {
             return Err("Apply or discard pending sketch edits before finishing".into());
         }
         self.cancel();
+        self.fresh_sketch = None;
         self.editing = false;
         self.moving = false;
         self.message = if self.developed_viewport.is_some() {
@@ -2672,8 +2690,10 @@ impl SketchEditor {
     }
     /// Leave sketch editing and drop only what is not yet in the document:
     /// the active tool, unapplied constraint values, previews and pending
-    /// controls. Committed sketch edits stay; Undo removes them.
-    pub fn abort(&mut self) -> Result<(), String> {
+    /// controls. Committed sketch edits stay; Undo removes them. A sketch
+    /// created by this session and still untouched is withdrawn entirely,
+    /// leaving neither the sketch nor an Undo entry behind (CAD-380).
+    pub fn abort(&mut self, session: &mut Session, channel: Channel) -> Result<(), String> {
         if !self.editing && !self.picking {
             return Err("No sketch is being edited".into());
         }
@@ -2685,10 +2705,32 @@ impl SketchEditor {
         if self.has_pending_edits() {
             return Err("Apply or discard the pending sketch controls before aborting".into());
         }
+        let fresh = self
+            .fresh_sketch
+            .take()
+            .filter(|(id, revision)| {
+                self.editing && self.selected == Some(*id) && session.revision() == *revision
+            })
+            .map(|(id, revision)| (id, session.retract(revision, Actor::local(channel))));
         self.editing = false;
         self.moving = false;
-        self.message =
-            "Sketch editing aborted · unapplied changes discarded, committed edits kept".into();
+        self.message = match fresh {
+            Some((id, Ok(_))) => {
+                self.selected = None;
+                self.whole_sketch = None;
+                self.element = None;
+                self.tree_selection.remove(&id);
+                self.sketch_occurrences.remove(&id);
+                self.creation_evaluation = None;
+                "New sketch cancelled · nothing was added to the document".into()
+            }
+            Some((_, Err(error))) => format!(
+                "Sketch editing aborted · the new sketch was kept because it could not be withdrawn: {error}"
+            ),
+            None => {
+                "Sketch editing aborted · unapplied changes discarded, committed edits kept".into()
+            }
+        };
         Ok(())
     }
     pub fn set_tool(&mut self, tool: DrawTool) -> Result<(), String> {
@@ -4647,6 +4689,11 @@ impl SketchEditor {
             {
                 solid.highlight_reference(Some(highlight));
             }
+            // CAD-381: plane picking shows the ordinary face highlight under
+            // the pointer, even though the solid itself is not selectable.
+            if self.picking && sketch_mode && !self.measurement.active() {
+                solid.highlight_reference(self.plane_picker.hovered_face());
+            }
             solid.show(
                 ui,
                 &response,
@@ -5178,16 +5225,25 @@ impl SketchEditor {
             }
         }
         self.begin_snap_frame();
+        self.sync_inline_input();
+        // Enter in an inline field commits the last shown placement, as if the
+        // pointer clicked where it last was (CAD-384).
+        let inline_commit = std::mem::take(&mut self.inline.commit_requested);
+        let hovered = response.hover_pos();
+        if let Some(pointer) = hovered {
+            self.inline.last_pointer = Some(pointer);
+        }
         if sketch_mode
             && self.editing
             && !self.has_pending_edits()
             && !self.moving
             && let (Some(id), Some(tool)) = (self.selected, self.tool)
             && let Ok((_, frame, _)) = self.read_sketch(session.document(), id, session.revision())
-            && let Some(pointer) = response.hover_pos()
+            && let Some(pointer) = hovered.or(self.inline.last_pointer.filter(|_| inline_commit))
             && let Some(raw) = self.camera.on_plane(pointer, rect, frame)
         {
             use multicad_core::sketch_draw::{DrawInput, DrawRequest, PointInput};
+            let clicked = response.clicked() || inline_commit;
             // Geometry targets and assistive lines win over the optional grid.
             let (mut p, mut anchor) = self.snap_pointer(ui, session, id, frame, rect, pointer, raw);
             // Closing a chain is an explicit vertex target, independent of the
@@ -5224,6 +5280,14 @@ impl SketchEditor {
                     }
                     p = std::array::from_fn(|i| center[i] + direction[i] * radius / length);
                 }
+            }
+            if !inline_input::fields(tool, self.first.is_some()).is_empty() {
+                let entered = self.inline_constrain(session, tool, p);
+                if entered != p {
+                    anchor = None;
+                    p = entered;
+                }
+                self.inline.last_point = Some(p);
             }
             self.snap_assist.settle(p);
             let cursor = project(frame.point(p), &self.camera);
@@ -5326,7 +5390,9 @@ impl SketchEditor {
                         }
                     }
                 }
-                if response.clicked() {
+                if clicked && let Some(error) = self.inline_invalid() {
+                    self.message = format!("{error}; nothing was placed");
+                } else if clicked {
                     if let Some(a) = self.first {
                         if tool == DrawTool::Arc && self.arc_start.is_none() {
                             if (p[0] - a[0]).hypot(p[1] - a[1]) >= 1e-7 {
@@ -5377,12 +5443,13 @@ impl SketchEditor {
                             if closing && segments < 2 {
                                 self.message =
                                     "A closed polyline needs at least three vertices".into();
-                            } else if let Err(error) = self.draw(
+                            } else if let Err(error) = self.draw_dimensioned(
                                 session,
                                 &DrawRequest {
                                     input,
                                     construction: self.construction,
                                 },
+                                tool,
                                 Channel::Ui,
                             ) {
                                 self.message = error;
@@ -5406,6 +5473,50 @@ impl SketchEditor {
                     }
                 }
             }
+        }
+        if sketch_mode
+            && self.editing
+            && !self.has_pending_edits()
+            && let (Some(id), Some(tool)) = (self.selected, self.tool)
+            && self.inline_stage().is_some()
+            && let Ok((_, frame, _)) = self.read_sketch(session.document(), id, session.revision())
+        {
+            let point = match self.inline.last_point {
+                Some(point) => point,
+                None => self.first.unwrap_or([0.; 2]),
+            };
+            // Over a field the canvas is not hovered; keep the same preview.
+            if hovered.is_none()
+                && let Some(a) = self.first
+            {
+                let point = self.inline_constrain(session, tool, point);
+                let ghost = match tool {
+                    DrawTool::Rectangle => Geometry::Rectangle {
+                        id: self.draw_preview_id,
+                        a,
+                        b: point,
+                    },
+                    DrawTool::Circle => Geometry::Circle {
+                        id: self.draw_preview_id,
+                        center: a,
+                        radius_mm: (point[0] - a[0]).hypot(point[1] - a[1]),
+                    },
+                    _ => Geometry::Line {
+                        id: self.draw_preview_id,
+                        a,
+                        b: point,
+                    },
+                };
+                for [a, b] in ghost.segments() {
+                    if let Some(segment) = self.camera.segment(frame.point(a), frame.point(b), rect)
+                    {
+                        painter.line_segment(segment, Stroke::new(1., Color32::LIGHT_YELLOW));
+                    }
+                }
+            }
+            self.inline_fields_ui(ui, frame, rect, point);
+        } else {
+            self.inline_fields_ui_hidden();
         }
         if sketch_mode
             && self.editing

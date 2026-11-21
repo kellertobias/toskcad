@@ -144,6 +144,39 @@ impl TargetKind {
     }
 }
 
+/// How a shown target is marked on the canvas (CAD-383), so that a snapped
+/// placement never looks like placement in empty space.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Marker {
+    /// A corner or vertex: an existing point or an acquired reference.
+    Vertex,
+    /// A circle, arc or shape center.
+    Center,
+    /// The midpoint of a line or of two references.
+    Midpoint,
+    /// A constructed point: guide intersections, perpendicular feet and
+    /// tangent points.
+    Construction,
+    /// A point on an existing line, circle or arc.
+    Edge,
+    /// Alignment with a reference only; the dotted guide is the feedback.
+    Alignment,
+}
+impl TargetKind {
+    pub fn marker(self) -> Marker {
+        match self {
+            Self::Endpoint | Self::Reference => Marker::Vertex,
+            Self::Center | Self::ShapeCenter(_) => Marker::Center,
+            Self::LineMidpoint | Self::ReferenceMidpoint => Marker::Midpoint,
+            Self::GuideIntersection | Self::GuideOnLine | Self::Perpendicular | Self::Tangent => {
+                Marker::Construction
+            }
+            Self::OnCurve => Marker::Edge,
+            Self::Guide(_) => Marker::Alignment,
+        }
+    }
+}
+
 /// A dotted assistive line from an acquired reference through the target.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GuideLine {
