@@ -357,53 +357,25 @@ fn direction(
     }
     Ok(())
 }
-fn active(arena: &Arena<'_>, b: &mut Budget<'_>) -> Result<(u32, u32, Vec<u32>), Error> {
-    let mut shape = arena
-        .values()
-        .flat_map(|v| v.iter())
-        .filter(|e| e.name == "SHAPE_DEFINITION_REPRESENTATION");
-    let link = shape.next().ok_or(Error::Unsupported)?;
-    if shape.next().is_some() || link.args.len() != 2 {
+fn identity_axis(arena: &Arena<'_>, id: u32, b: &mut Budget<'_>) -> Result<(), Error> {
+    let axis = one(arena, id, "AXIS2_PLACEMENT_3D")?;
+    if axis.args.len() != 4 {
         return Err(Error::Unsupported);
     }
-    let definition = one(arena, reference(&link.args[0])?, "PRODUCT_DEFINITION_SHAPE")?;
-    if definition.args.len() != 3 {
-        return Err(Error::Invalid);
-    }
-    one(arena, reference(&definition.args[2])?, "PRODUCT_DEFINITION")?;
-    let rep = one(
-        arena,
-        reference(&link.args[1])?,
-        "ADVANCED_BREP_SHAPE_REPRESENTATION",
-    )?;
-    if rep.args.len() != 3 {
-        return Err(Error::Invalid);
-    }
-    let items = refs(&rep.args[1])?;
-    let mut solids = Vec::new();
-    for id in items {
-        let entity = arena.get(&id).ok_or(Error::Invalid)?;
-        if entity.len() == 1 && entity[0].name == "MANIFOLD_SOLID_BREP" {
-            solids.push(id);
-            continue;
-        }
-        let axis = one(arena, id, "AXIS2_PLACEMENT_3D")?;
-        if axis.args.len() != 4 {
-            return Err(Error::Unsupported);
-        }
-        let p = one(arena, reference(&axis.args[1])?, "CARTESIAN_POINT")?;
-        let coordinates = numeric(p, b)?;
-        if coordinates.len() != 3 || coordinates.iter().any(|v| !v.is_zero()) {
-            return Err(Error::Unsupported);
-        }
-        for (position, expected) in [(2, [false, false, true]), (3, [true, false, false])] {
-            direction(arena, reference(&axis.args[position])?, expected, b)?;
-        }
-    }
-    if solids.len() != 1 {
+    let p = one(arena, reference(&axis.args[1])?, "CARTESIAN_POINT")?;
+    let coordinates = numeric(p, b)?;
+    if coordinates.len() != 3 || coordinates.iter().any(|v| !v.is_zero()) {
         return Err(Error::Unsupported);
     }
-    let context = arena.get(&reference(&rep.args[2])?).ok_or(Error::Invalid)?;
+    for (position, expected) in [(2, [false, false, true]), (3, [true, false, false])] {
+        direction(arena, reference(&axis.args[position])?, expected, b)?;
+    }
+    Ok(())
+}
+/// One three-dimensional millimetre context; radians and steradians stay
+/// the only angular units because no angular datum is read.
+fn millimetre_context(arena: &Arena<'_>, id: u32, b: &mut Budget<'_>) -> Result<(), Error> {
+    let context = arena.get(&id).ok_or(Error::Invalid)?;
     let dim = numeric(component(context, "GEOMETRIC_REPRESENTATION_CONTEXT")?, b)?;
     if dim.len() != 1 || nat(dim[0])? != 3 {
         return Err(Error::Unsupported);
@@ -427,6 +399,118 @@ fn active(arena: &Arena<'_>, b: &mut Budget<'_>) -> Result<(u32, u32, Vec<u32>),
     if millimetre != 1 {
         return Err(Error::Invalid);
     }
+    Ok(())
+}
+fn vector(arena: &Arena<'_>, id: u32, name: &str, b: &mut Budget<'_>) -> Result<[f64; 3], Error> {
+    let e = one(arena, id, name)?;
+    if e.args.len() != 2 || number_list(&e.args[1])?.len() != 3 {
+        return Err(Error::Invalid);
+    }
+    let values = numeric(e, b)?;
+    if values.len() != 3 {
+        return Err(Error::Invalid);
+    }
+    Ok([values[0].value, values[1].value, values[2].value])
+}
+/// The single declared `MAPPED_ITEM` of a placed local body: an identity
+/// source placement and a unit-scale 3D Cartesian operator. The local records
+/// are read unchanged; only this rigid map is returned.
+fn mapped(arena: &Arena<'_>, id: u32, b: &mut Budget<'_>) -> Result<(u32, Placement), Error> {
+    let item = one(arena, id, "MAPPED_ITEM")?;
+    if item.args.len() != 3 {
+        return Err(Error::Invalid);
+    }
+    let map = one(arena, reference(&item.args[1])?, "REPRESENTATION_MAP")?;
+    if map.args.len() != 2 {
+        return Err(Error::Invalid);
+    }
+    let source_axis = reference(&map.args[0])?;
+    identity_axis(arena, source_axis, b)?;
+    let local = one(arena, reference(&map.args[1])?, "SHAPE_REPRESENTATION")?;
+    if local.args.len() != 3 {
+        return Err(Error::Invalid);
+    }
+    let mut solids = Vec::new();
+    for id in refs(&local.args[1])? {
+        let entity = arena.get(&id).ok_or(Error::Invalid)?;
+        if entity.len() == 1 && entity[0].name == "MANIFOLD_SOLID_BREP" {
+            solids.push(id);
+        } else if id != source_axis {
+            identity_axis(arena, id, b)?;
+        }
+    }
+    if solids.len() != 1 {
+        return Err(Error::Unsupported);
+    }
+    millimetre_context(arena, reference(&local.args[2])?, b)?;
+    let target = arena
+        .get(&reference(&item.args[2])?)
+        .ok_or(Error::Invalid)?;
+    let operator = component(target, "CARTESIAN_TRANSFORMATION_OPERATOR")?;
+    let operator3 = component(target, "CARTESIAN_TRANSFORMATION_OPERATOR_3D")?;
+    if operator.args.len() != 4 || operator3.args.len() != 1 {
+        return Err(Error::Unsupported);
+    }
+    let scale = match &operator.args[3] {
+        Value::Number(_) => numeric(operator, b)?,
+        _ => return Err(Error::Unsupported),
+    };
+    if scale.len() != 1 || !scale[0].is_one() {
+        return Err(Error::Unsupported);
+    }
+    let axis = |v: &Value<'_>, b: &mut Budget<'_>| vector(arena, reference(v)?, "DIRECTION", b);
+    let raw = [
+        axis(&operator.args[0], b)?,
+        axis(&operator.args[1], b)?,
+        axis(&operator3.args[0], b)?,
+    ];
+    let origin = vector(arena, reference(&operator.args[2])?, "CARTESIAN_POINT", b)?;
+    Ok((solids[0], Placement::new(origin, raw)?))
+}
+type Active = (u32, u32, Vec<u32>, Option<Placement>);
+fn active(arena: &Arena<'_>, b: &mut Budget<'_>) -> Result<Active, Error> {
+    let mut shape = arena
+        .values()
+        .flat_map(|v| v.iter())
+        .filter(|e| e.name == "SHAPE_DEFINITION_REPRESENTATION");
+    let link = shape.next().ok_or(Error::Unsupported)?;
+    if shape.next().is_some() || link.args.len() != 2 {
+        return Err(Error::Unsupported);
+    }
+    let definition = one(arena, reference(&link.args[0])?, "PRODUCT_DEFINITION_SHAPE")?;
+    if definition.args.len() != 3 {
+        return Err(Error::Invalid);
+    }
+    one(arena, reference(&definition.args[2])?, "PRODUCT_DEFINITION")?;
+    let rep = one(
+        arena,
+        reference(&link.args[1])?,
+        "ADVANCED_BREP_SHAPE_REPRESENTATION",
+    )?;
+    if rep.args.len() != 3 {
+        return Err(Error::Invalid);
+    }
+    let items = refs(&rep.args[1])?;
+    let mut solids = Vec::new();
+    let mut placements = Vec::new();
+    for id in items {
+        let entity = arena.get(&id).ok_or(Error::Invalid)?;
+        if entity.len() == 1 && entity[0].name == "MANIFOLD_SOLID_BREP" {
+            solids.push(id);
+            continue;
+        }
+        if entity.len() == 1 && entity[0].name == "MAPPED_ITEM" {
+            let (solid, placement) = mapped(arena, id, b)?;
+            solids.push(solid);
+            placements.push(placement);
+            continue;
+        }
+        identity_axis(arena, id, b)?;
+    }
+    if solids.len() != 1 {
+        return Err(Error::Unsupported);
+    }
+    millimetre_context(arena, reference(&rep.args[2])?, b)?;
     let solid = solids[0];
     let body = one(arena, solid, "MANIFOLD_SOLID_BREP")?;
     let shell = reference(body.args.get(1).ok_or(Error::Invalid)?)?;
@@ -435,7 +519,7 @@ fn active(arena: &Arena<'_>, b: &mut Budget<'_>) -> Result<(u32, u32, Vec<u32>),
     if faces.is_empty() {
         return Err(Error::Invalid);
     }
-    Ok((solid, shell, faces))
+    Ok((solid, shell, faces, placements.pop()))
 }
 fn pcurve(arena: &Arena<'_>, id: u32, b: &mut Budget<'_>) -> Result<Pcurve, Error> {
     let e = one(arena, id, "PCURVE")?;
@@ -528,7 +612,7 @@ pub(super) fn read<'i>(
         }
     }
     let arena_bytes = b.bytes - before_arena;
-    let (solid, shell, face_ids) = active(&arena, &mut b)?;
+    let (solid, shell, face_ids, placement) = active(&arena, &mut b)?;
     b.retain(576 + 1280 + 384 + 192 + 448 + 224 + 576)?;
     let mut points = BTreeMap::new();
     let mut curves = BTreeMap::new();
@@ -765,6 +849,7 @@ pub(super) fn read<'i>(
         vertices,
         solid,
         shell,
+        placement,
         work: b.work,
         bytes: b.bytes,
     })

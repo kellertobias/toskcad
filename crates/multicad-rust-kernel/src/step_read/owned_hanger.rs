@@ -319,8 +319,51 @@ pub struct Decoded<'i> {
     vertices: BTreeMap<u32, u32>,
     solid: u32,
     shell: u32,
+    placement: Option<Placement>,
     work: usize,
     bytes: usize,
+}
+/// The rigid map of one declared `MAPPED_ITEM`. STEP derives the operator's
+/// orthonormal basis from its stated axes; this reader additionally requires
+/// the stated axes to be that basis to a few rounding units and right-handed,
+/// so the decoded local material keeps its volume exactly under the map.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Placement {
+    origin: [f64; 3],
+    axes: [[f64; 3]; 3],
+}
+impl Placement {
+    pub(super) fn new(origin: [f64; 3], axes: [[f64; 3]; 3]) -> Result<Self, Error> {
+        let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        const EPSILON: f64 = 1e-12;
+        let [u, v, n] = axes;
+        let cross = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        if origin
+            .iter()
+            .chain(axes.iter().flatten())
+            .any(|x| !x.is_finite())
+            || origin.iter().any(|x| x.abs() > 1e7)
+            || (dot(u, u) - 1.).abs() > EPSILON
+            || (dot(v, v) - 1.).abs() > EPSILON
+            || (dot(n, n) - 1.).abs() > EPSILON
+            || dot(u, v).abs() > EPSILON
+            || (0..3).any(|i| (cross[i] - n[i]).abs() > 4. * EPSILON)
+        {
+            return Err(Error::Unsupported);
+        }
+        Ok(Self { origin, axes })
+    }
+    pub fn origin_mm(&self) -> [f64; 3] {
+        self.origin
+    }
+    /// Images of the local x, y and z axes.
+    pub fn axes(&self) -> [[f64; 3]; 3] {
+        self.axes
+    }
 }
 impl<'i> Decoded<'i> {
     pub fn literal_input(&self) -> &'i str {
@@ -352,6 +395,11 @@ impl<'i> Decoded<'i> {
     }
     pub fn shell_entity(&self) -> u32 {
         self.shell
+    }
+    /// The declared placement of a mapped local body; `None` when the solid
+    /// is an item of the product representation itself.
+    pub fn placement(&self) -> Option<Placement> {
+        self.placement
     }
     pub fn work_used(&self) -> usize {
         self.work

@@ -178,7 +178,19 @@ impl Solid {
         // An immutable input-bound certificate checks every stated trim before
         // either family admission or retained-boundary fallback. Reuse this
         // same earned certificate; no repeated geometric verification.
-        let verified_trims = pcurve_validation::validate(input, policy)?;
+        let verified_trims = match pcurve_validation::validate(input, policy) {
+            Ok(verified) => verified,
+            // Rational helical tensor trims are outside the generic pcurve
+            // families. A single literal radial-graph tensor solid proves its
+            // own whole edge lifts, sewing and healed volume instead.
+            Err(refusal) if refusal.kind == GeometryErrorKind::Unsupported => {
+                return match Self::import_healed_tensor_step(input, feature, policy)? {
+                    Some(solid) => Ok(solid),
+                    None => Err(refusal),
+                };
+            }
+            Err(refusal) => return Err(refusal),
+        };
         // Discovery only: this bounded borrowed body/header view grants no
         // material admission. Drop its arena before the independent owned
         // reader. Unknown families keep the existing analytic/import routes

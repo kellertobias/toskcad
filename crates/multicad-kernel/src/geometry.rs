@@ -95,6 +95,7 @@ pub use repaired_phillips_body::{
     RepairedPhillipsQuery, RepairedPhillipsQueryOptions,
 };
 mod enclosed_clearance;
+mod healed_import_body;
 mod revolution_body;
 mod rounded_blind_bore_body;
 mod rounded_cylinder_body;
@@ -158,6 +159,7 @@ use rounded_slot_body::RoundedSlotBody;
 use rounded_thread_body::RoundedThreadBody;
 pub use rounded_thread_body::{RoundedThreadData, RoundedThreadMassProperties};
 mod internal_thread_treatment_body;
+pub(crate) use healed_import_body::HealedImportBody;
 use imported_brep_body::ImportedBrepBody;
 pub use imported_brep_body::{AssemblyOccurrence, CopedTube, CopedTubeNames};
 use internal_thread_treatment_body::InternalThreadTreatmentBody;
@@ -820,6 +822,7 @@ enum SolidBody {
     Bevel(Rc<BevelBody>, PlaneFrame),
     Worm(Rc<WormBody>, PlaneFrame),
     WormInterference(Rc<WormInterferenceBody>),
+    HealedImport(Rc<HealedImportBody>, PlaneFrame),
     Sphere(Rc<SphereBody>, PlaneFrame),
     Torus(Rc<TorusBody>, PlaneFrame),
     ObliqueBore(Rc<ObliqueBoreBody>, PlaneFrame),
@@ -1336,6 +1339,9 @@ impl Solid {
             SolidBody::Bevel(body, frame) => SolidBody::Bevel(Rc::clone(body), *frame),
             SolidBody::Worm(body, frame) => SolidBody::Worm(Rc::clone(body), *frame),
             SolidBody::WormInterference(body) => SolidBody::WormInterference(Rc::clone(body)),
+            SolidBody::HealedImport(body, frame) => {
+                SolidBody::HealedImport(Rc::clone(body), *frame)
+            }
             SolidBody::Sphere(body, frame) => SolidBody::Sphere(Rc::clone(body), *frame),
             SolidBody::ImportedBrep(body) => SolidBody::ImportedBrep(Rc::clone(body)),
             SolidBody::Torus(body, frame) => SolidBody::Torus(Rc::clone(body), *frame),
@@ -1939,6 +1945,9 @@ impl Solid {
                 SolidBody::WormInterference(body) => {
                     SolidBody::WormInterference(Rc::new(body.transformed(transform)))
                 }
+                SolidBody::HealedImport(body, frame) => {
+                    SolidBody::HealedImport(Rc::clone(body), transform.frame(*frame))
+                }
                 SolidBody::Sphere(body, frame) => {
                     let frame = transform.frame(*frame);
                     frame.checked_metric_extent([body.geometry.radius_mm(); 3], self.policy)?;
@@ -2111,6 +2120,9 @@ impl Solid {
         if let Some(body) = self.worm_interference_body() {
             return Ok(body.volume_mm3());
         }
+        if let Some((body, _)) = self.healed_import_body() {
+            return Ok(body.volume_mm3());
+        }
         if let Some((body, _)) = self.warped_union_body() {
             return Ok(body.volume_mm3());
         }
@@ -2245,6 +2257,9 @@ impl Solid {
     pub fn bounds(&self) -> Result<Bounds, GeometryError> {
         if let Some(body) = self.worm_interference_body() {
             return Ok(body.bounds());
+        }
+        if let Some((body, frame)) = self.healed_import_body() {
+            return Ok(body.bounds(frame));
         }
         if let Some(body) = self.pipe_hardware_body() {
             return body.bounds();
@@ -2811,6 +2826,7 @@ impl Solid {
             SolidBody::Bevel(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::Worm(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::WormInterference(_) => Err(WormInterferenceBody::unsupported("mesh")),
+            SolidBody::HealedImport(..) => Err(HealedImportBody::unsupported("mesh")),
             SolidBody::ImportedBrep(body) => body.mesh(rust_options),
             SolidBody::Sphere(body, frame) => {
                 crate::rust_display::placed_mesh(body.geometry.mesh(rust_options), *frame, false)
@@ -3376,6 +3392,7 @@ impl Solid {
             SolidBody::Bevel(body, _) => body.feature,
             SolidBody::Worm(body, _) => body.feature,
             SolidBody::WormInterference(body) => body.feature,
+            SolidBody::HealedImport(body, _) => body.feature,
             SolidBody::Sphere(body, _) => body.feature,
             SolidBody::ImportedBrep(body) => body.feature,
             SolidBody::Torus(body, _) => body.feature,
@@ -3434,7 +3451,7 @@ impl Solid {
             SolidBody::Herringbone(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::Bevel(body, frame) => body.supports_step(*frame, self.policy),
             SolidBody::Worm(body, frame) => body.supports_step(*frame, self.policy),
-            SolidBody::WormInterference(_) => false,
+            SolidBody::WormInterference(_) | SolidBody::HealedImport(..) => false,
             SolidBody::HelicalTubeCut(body, frame) => {
                 multicad_rust_kernel::step::supports_helical_tube_cut(
                     body.cut,
@@ -3620,7 +3637,9 @@ impl Solid {
             SolidBody::Herringbone(body, frame) => body.append_step(writer, *frame, self.policy),
             SolidBody::Bevel(body, frame) => body.append_step(writer, *frame, self.policy),
             SolidBody::Worm(body, frame) => body.append_step(writer, *frame, self.policy),
-            SolidBody::WormInterference(_) => Err(step::StepError::Unsupported),
+            SolidBody::WormInterference(_) | SolidBody::HealedImport(..) => {
+                Err(step::StepError::Unsupported)
+            }
             SolidBody::SpurGear(body, frame) => writer.append_spur_gear(
                 &body.profile,
                 frame.origin,
@@ -3900,6 +3919,7 @@ impl Solid {
             SolidBody::Bevel(..) => "Bevel",
             SolidBody::Worm(..) => "Worm",
             SolidBody::WormInterference(..) => "Worm interference",
+            SolidBody::HealedImport(..) => "Healed STEP import",
             SolidBody::Sphere(..) => "Sphere",
             SolidBody::Torus(..) => "Torus",
             SolidBody::ObliqueBore(..) => "ObliqueBore",
