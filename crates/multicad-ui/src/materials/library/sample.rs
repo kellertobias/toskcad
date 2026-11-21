@@ -137,6 +137,17 @@ pub(super) fn paint_swatch(
     }
 }
 
+/// A plain color chip, used for stock rows showing their material color.
+pub(super) fn paint_color(painter: &egui::Painter, rect: Rect, color: [u8; 4]) {
+    painter.rect_filled(rect, 2., to_color(color));
+    painter.rect_stroke(rect, 2., Stroke::new(1., Color32::GRAY), StrokeKind::Inside);
+}
+
+/// An outlined empty chip for stock whose material is not committed yet.
+pub(super) fn paint_missing(painter: &egui::Painter, rect: Rect) {
+    painter.rect_stroke(rect, 2., Stroke::new(1., Color32::GRAY), StrokeKind::Inside);
+}
+
 pub(super) fn hatch_picker(ui: &mut egui::Ui, hatch: &mut HatchStyle) {
     ui.horizontal_wrapped(|ui| {
         for pattern in HatchPattern::ALL {

@@ -514,3 +514,171 @@ fn hollow_section_widget_can_author_a_real_solid_bar_without_replacing_stock_or_
     assert!((volume - 120000.).abs() < 1e-5);
     assert!(fixture.session.document().get(fixture.stocks[2]).is_some());
 }
+
+/// Render the inline editor once and return (accessible labels, unclipped
+/// painted texts with their rects, focused accessible label).
+fn render(
+    ctx: &egui::Context,
+    editor: &mut LibraryEditor,
+    s: &mut Session,
+    size: egui::Vec2,
+    events: Vec<egui::Event>,
+) -> (Vec<String>, Vec<(String, egui::Rect)>, Option<String>) {
+    let output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+            events,
+            focused: true,
+            ..Default::default()
+        },
+        |ui| editor.show_inline(ui, s, &Default::default(), true),
+    );
+    let update = output.platform_output.accesskit_update.as_ref().unwrap();
+    let labels = update
+        .nodes
+        .iter()
+        .filter_map(|(_, node)| node.label().map(str::to_owned))
+        .collect();
+    let focused = update
+        .nodes
+        .iter()
+        .find(|(id, _)| *id == update.focus)
+        .and_then(|(_, node)| node.label().map(str::to_owned));
+    let texts = output
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) => {
+                let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
+                (shape.clip_rect.contains_rect(rect)
+                    && egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(rect))
+                .then(|| (text.galley.text().to_owned(), rect))
+            }
+            _ => None,
+        })
+        .collect();
+    output.drop_without_applying_deltas();
+    (labels, texts, focused)
+}
+
+#[test]
+fn materials_tree_groups_stock_with_its_material_and_says_metal_sheet_stock() {
+    let mut fixture = shared_fixture::fixture().unwrap();
+    let before = fixture.session.document().clone();
+    let mut editor = editor(&fixture.session);
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    crate::theme::configure(&ctx);
+    // A narrow window: the tree keeps its minimum width and wraps rows.
+    let size = egui::vec2(640., 560.);
+    let sheet = fixture
+        .session
+        .document()
+        .get(fixture.stocks[1])
+        .unwrap()
+        .clone();
+    editor.select(&fixture.session, sheet);
+    let mut out = Default::default();
+    for _ in 0..3 {
+        out = render(&ctx, &mut editor, &mut fixture.session, size, vec![]);
+    }
+    let (labels, texts, _) = out;
+    for heading in [
+        "Materials",
+        "Panel stock",
+        "Metal sheet stock",
+        "Profile stock",
+        "Print stock",
+        "Appearances",
+        "Hatches",
+    ] {
+        assert!(labels.iter().any(|l| l == heading), "missing {heading}");
+    }
+    assert!(!labels.iter().any(|l| l == "Sheet stock"));
+    let painted = |needle: &str| texts.iter().find(|(t, _)| t == needle).map(|(_, r)| *r);
+    let tree = size.x * 0.24 + 1.;
+    for text in [
+        "Stock definitions",
+        "Appearance and drawing",
+        "Metal sheet stock",
+        "Steel sheet 2",
+        "Material: Shared steel",
+        "Used by 2 stock definitions",
+        "Used by 1 stock definition",
+    ] {
+        let rect = painted(text).unwrap_or_else(|| panic!("{text} not painted unclipped"));
+        assert!(rect.left() < tree, "{text} belongs in the tree");
+    }
+    // The stock editor uses the same wording for its kind.
+    assert!(
+        texts
+            .iter()
+            .any(|(t, r)| t == "Metal sheet" && r.left() > tree)
+    );
+    assert_eq!(fixture.session.document(), &before, "navigation only");
+}
+
+#[test]
+fn keyboard_tab_and_enter_select_a_tree_definition() {
+    let mut fixture = shared_fixture::fixture().unwrap();
+    let mut editor = editor(&fixture.session);
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    crate::theme::configure(&ctx);
+    let size = egui::vec2(900., 640.);
+    for _ in 0..3 {
+        render(&ctx, &mut editor, &mut fixture.session, size, vec![]);
+    }
+    let key = |key| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    };
+    let mut reached = false;
+    for _ in 0..12 {
+        let (_, _, focused) = render(
+            &ctx,
+            &mut editor,
+            &mut fixture.session,
+            size,
+            vec![key(egui::Key::Tab)],
+        );
+        if focused.as_deref() == Some("Birch") {
+            reached = true;
+            break;
+        }
+    }
+    assert!(reached, "Tab reaches the Birch material row");
+    render(
+        &ctx,
+        &mut editor,
+        &mut fixture.session,
+        size,
+        vec![key(egui::Key::Enter)],
+    );
+    assert_eq!(
+        editor.draft.as_ref().map(|d| d.entity.name.as_str()),
+        Some("Birch")
+    );
+}
+
+#[test]
+fn draft_stock_rows_name_a_new_companion_and_broken_links_as_missing() {
+    let s = Session::new(Document::new("Rows").unwrap()).unwrap();
+    let mut editor = editor(&s);
+    editor.create_stock(&s, 1);
+    let draft = &editor.draft.as_ref().unwrap().entity;
+    assert_eq!(draft.name, "New metal sheet stock");
+    assert_eq!(
+        row_detail(s.document(), &BTreeMap::new(), draft).as_deref(),
+        Some("Material: new (applied with this stock)")
+    );
+    let committed = BTreeMap::from([(draft.id, stock_material(draft).unwrap())]);
+    assert_eq!(
+        row_detail(s.document(), &committed, draft).as_deref(),
+        Some("Material: missing")
+    );
+    assert_eq!(ToolStock::Sheet.label(), "Create metal sheet stock…");
+}
