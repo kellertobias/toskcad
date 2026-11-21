@@ -169,7 +169,7 @@ fn sampled_area(edges: &[Edge]) -> f64 {
 }
 
 /// Directed loops of a section: positive outer loops, negative holes.
-fn loops(section: Section<'_>) -> Result<Vec<Vec<Edge>>, Error> {
+pub(super) fn loops(section: Section<'_>) -> Result<Vec<Vec<Edge>>, Error> {
     let (outer, hole): (Vec<Edge>, Option<Vec<Edge>>) = match section {
         Section::Spur(profile) => (
             profile.outline().iter().map(|item| item.edge).collect(),
