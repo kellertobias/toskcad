@@ -450,3 +450,18 @@ fn actual_traced_retry_cancels_before_its_angular_table_allocation() {
         Err(Error::Cancelled)
     ));
 }
+
+#[test]
+fn only_edges_far_below_facet_scale_propose_another_chart() {
+    // The rail/row near-coincidence at a mouth: about 1e-15 mm at r = 1.63.
+    let a = [-1.1521364980995048, -1.1521364980995044, 0.];
+    let b = [-1.1521364980995041, -1.1521364980995048, 0.];
+    assert!(conditioning_edge([a, b]));
+    assert!(conditioning_edge([a, a]));
+    // A micrometre edge, far below any print deflection, is still a facet.
+    assert!(!conditioning_edge([a, [a[0] + 1e-6, a[1], a[2]]]));
+    // The bound scales with the coordinates, not with an absolute length.
+    let far = [1e6, 0., 0.];
+    assert!(conditioning_edge([far, [1e6 + 1e-10, 0., 0.]]));
+    assert!(!conditioning_edge([[0., 0., 0.], [1e-10, 0., 0.]]));
+}

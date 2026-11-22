@@ -248,6 +248,20 @@ fn build(
                             // Simple positive convex clipping has at most
                             // two distinct vertices on each physical support.
                             let [a, b] = [positions[0], positions[1]];
+                            // A positive station edge far below any facet
+                            // scale (a rail crossing a station within ulps of
+                            // a row) cannot close a resolvable cap or stock
+                            // annulus. Propose another sampling chart; this
+                            // never welds, erases or certifies source points.
+                            if ids[a] != ids[b]
+                                && sampling::conditioning_edge(
+                                    [ids[a], ids[b]].map(|i| {
+                                        mesh.vertices[3 * i..3 * i + 3].try_into().unwrap()
+                                    }),
+                                )
+                            {
+                                return Ok(Attempt::Repartition);
+                            }
                             let edge = Edge {
                                 vertices: [ids[a], ids[b]],
                                 v: [
