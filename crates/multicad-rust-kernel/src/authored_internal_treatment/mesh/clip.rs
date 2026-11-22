@@ -109,10 +109,14 @@ pub(super) fn polygon(
             break;
         }
         let mut out = Vec::with_capacity(6);
+        // One exact side per vertex: the closing edge reuses the last one.
+        let mut sides = Vec::with_capacity(points.len());
+        for point in &points {
+            sides.push(lines[index].value(point, w)?);
+        }
         let mut previous = points.last().unwrap().clone();
-        let mut before = lines[index].value(&previous, w)?;
-        for mut current in points {
-            let after = lines[index].value(&current, w)?;
+        let mut before = *sides.last().unwrap();
+        for (mut current, after) in points.into_iter().zip(sides) {
             // The positive side (including its exact boundary) is retained.
             if (before == Ordering::Less && after == Ordering::Greater)
                 || (before == Ordering::Greater && after == Ordering::Less)
@@ -151,6 +155,11 @@ pub(super) fn polygon(
 }
 fn mark(p: &mut Point, lines: &[Line], w: &mut Work<'_>) -> Result<(), Error> {
     for (i, line) in lines.iter().enumerate() {
+        // Every set bit is already an exact incidence; only the unknown
+        // lines need their exact side.
+        if p.active & (1 << i) != 0 {
+            continue;
+        }
         if line.value(p, w)? == Ordering::Equal {
             p.active |= 1 << i;
         }
@@ -160,14 +169,14 @@ fn mark(p: &mut Point, lines: &[Line], w: &mut Work<'_>) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn work() -> Work<'static> {
+    pub(super) fn work() -> Work<'static> {
         Work {
             remaining: 16_000_000,
             used: 0,
             interrupt: None,
         }
     }
-    fn q(v: f64, w: &mut Work<'_>) -> Q {
+    pub(super) fn q(v: f64, w: &mut Work<'_>) -> Q {
         Q::float(v, w).unwrap()
     }
     #[test]
@@ -225,6 +234,7 @@ mod tests {
 }
 #[cfg(test)]
 mod degenerate_tests {
+    use super::tests::{q, work};
     use super::*;
     #[test]
     fn exact_tangent_cell_has_no_area_after_further_clipping() {
@@ -269,5 +279,45 @@ mod degenerate_tests {
             ),
             Err(Error::Limit)
         ));
+    }
+    /// Known incidences are exact already: re-marking them spends nothing,
+    /// and a cut through two corners keeps exactly the incidences a full
+    /// re-evaluation of every line at every vertex finds.
+    #[test]
+    fn known_incidences_are_not_reevaluated_and_corner_cuts_keep_exact_marks() {
+        let w = &mut work();
+        let rect = [q(0., w), q(1., w), q(0., w), q(1., w)];
+        // q+v>=1 passes exactly through the corners (1,0) and (0,1).
+        let cut = Line::new(q(1., w), q(1., w), q(-1., w), w).unwrap();
+        let (points, lines) = polygon(rect, std::slice::from_ref(&cut), w).unwrap();
+        assert_eq!(points.len(), 3);
+        for vertex in &points {
+            let mut full = 0;
+            for (i, line) in lines.iter().enumerate() {
+                if line.value(vertex, w).unwrap() == Ordering::Equal {
+                    full |= 1 << i;
+                }
+            }
+            assert_eq!(vertex.active, full);
+            let mut again = vertex.clone();
+            again.active = (1 << lines.len()) - 1;
+            let before = w.used;
+            mark(&mut again, &lines, w).unwrap();
+            assert_eq!(w.used, before);
+        }
+        // The two corner vertices on the cut were proved once, not twice.
+        let mut naive = work();
+        for vertex in &points {
+            let mut copy = vertex.clone();
+            copy.active = 0;
+            mark(&mut copy, &lines, &mut naive).unwrap();
+            assert_eq!(copy.active, vertex.active);
+        }
+        let mut marked = work();
+        for vertex in &points {
+            let mut copy = vertex.clone();
+            mark(&mut copy, &lines, &mut marked).unwrap();
+        }
+        assert!(marked.used < naive.used);
     }
 }
