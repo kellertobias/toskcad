@@ -1,6 +1,5 @@
 use super::*;
 use crate::authored_flat_thread::{AuthoredThread, SourceOptions};
-use multicad_precision::PortableMath as _;
 fn source(nonbinary: bool) -> Cavity {
     let thread = AuthoredThread::new(
         crate::helical_thread::Spec {

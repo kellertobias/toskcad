@@ -1,5 +1,4 @@
 use super::*;
-use multicad_precision::PortableMath as _;
 use std::{cell::Cell, collections::BTreeMap};
 fn source(wood: bool, left: bool, starts: u32) -> AuthoredThread {
     if !wood {

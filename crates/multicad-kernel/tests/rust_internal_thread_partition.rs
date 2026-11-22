@@ -417,7 +417,7 @@ fn deep_terminal_cap_candidate_is_a_closed_literally_embedded_cavity() {
     // Closed and consistently oriented: every directed edge occurs once and
     // its reverse occurs once.
     let mut edges = std::collections::HashMap::new();
-    for t in mesh.indices.chunks_exact(3) {
+    for t in mesh.indices.as_chunks::<3>().0 {
         for k in 0..3 {
             *edges.entry((t[k], t[(k + 1) % 3])).or_insert(0usize) += 1;
         }
@@ -434,7 +434,9 @@ fn deep_terminal_cap_candidate_is_a_closed_literally_embedded_cavity() {
     };
     let volume = mesh
         .indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|t| {
             let [a, b, c] = [p(t[0]), p(t[1]), p(t[2])];
             a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
