@@ -36,6 +36,9 @@ jobs:
             timeout_minutes: 180
     env:
       CARGO_BUILD_JOBS: "4"
+      # Full dev debug info for every workspace target exhausted the macOS
+      # runner disk while linking; line tables still give backtrace locations.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: "1"
     defaults:
