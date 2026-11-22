@@ -413,8 +413,8 @@ fn actual_shift_fallback_cancels_before_and_during_new_source_sampling() {
     }
 }
 
-#[test]
-fn actual_extreme_terminal_cap_requests_angular_refinement_and_keeps_real_work_limit() {
+/// The nominal-pitch source with a terminal cap of the given radial depth.
+fn extreme_cap(radial_depth_mm: f64) -> Cavity {
     let base = source(false);
     let thread = AuthoredThread::new(
         crate::helical_thread::Spec {
@@ -428,17 +428,26 @@ fn actual_extreme_terminal_cap_requests_angular_refinement_and_keeps_real_work_l
         },
     )
     .unwrap();
-    let body = Cavity::new(
+    Cavity::new(
         thread,
         Intent {
             terminal: Some(Terminal {
                 width_mm: 0.5,
-                radial_depth_mm: 100.,
+                radial_depth_mm,
             }),
             ..base.intent()
         },
     )
-    .unwrap();
+    .unwrap()
+}
+
+#[test]
+fn actual_extreme_terminal_cap_requests_angular_refinement_and_keeps_real_work_limit() {
+    // About twice the deepest cap that fits the fixed 16 M ledger (depth 100
+    // uses about 14.7 M, depth 110 already exceeds it): refinement is
+    // requested and the real work limit refuses, with no dependence on the
+    // last-bit rounding of the source evaluation.
+    let body = extreme_cap(200.);
     let unchanged = body;
     let mut w = work();
     let Attempt::Complete(shell) = chart::shell_attempt(&body, quality(), 1, 64, &mut w).unwrap()
@@ -454,6 +463,37 @@ fn actual_extreme_terminal_cap_requests_angular_refinement_and_keeps_real_work_l
         tessellate_candidate(&body, quality(), None).unwrap_err(),
         Error::Limit
     );
+    assert_eq!(body, unchanged);
+}
+
+#[test]
+fn deep_terminal_cap_within_the_real_work_limit_qualifies_every_facet() {
+    // The same refinement path at half that depth completes inside the fixed
+    // ledger; literal closure and embedding are proved by the kernel tests.
+    let body = extreme_cap(100.);
+    let unchanged = body;
+    let mut w = work();
+    let Attempt::Complete(shell) = chart::shell_attempt(&body, quality(), 1, 64, &mut w).unwrap()
+    else {
+        panic!("actual side should qualify");
+    };
+    assert!(
+        close::close(shell, &body, quality(), &mut w)
+            .unwrap()
+            .is_none()
+    );
+    let candidate = tessellate_candidate(&body, quality(), None).unwrap();
+    assert!(candidate.work_used > w.used && candidate.work_used <= 16_000_000);
+    assert!(candidate.source_chord_bound_mm <= quality().deflection);
+    assert!(candidate.source_normal_angle_bound_rad <= quality().angle);
+    let r = body.terminal_radius_mm().unwrap();
+    let reach = candidate
+        .mesh
+        .vertices
+        .chunks(3)
+        .map(|p| p[0].portable_hypot(p[1]))
+        .fold(0., f64::max);
+    assert!((reach - r).abs() <= quality().deflection && reach <= r + 1e-9);
     assert_eq!(body, unchanged);
 }
 

@@ -362,3 +362,90 @@ fn actual_wider_stock_keeps_inner_source_and_passes_literal_manufacturing_embedd
         );
     }
 }
+
+#[test]
+fn deep_terminal_cap_candidate_is_a_closed_literally_embedded_cavity() {
+    use multicad_kernel::rust_kernel::{
+        authored_flat_thread::{AuthoredThread, SourceOptions},
+        authored_internal_treatment::{Cavity, tessellate_candidate},
+        display::Tessellation,
+        helical_thread::Spec,
+    };
+    let thread = AuthoredThread::new(
+        Spec {
+            major_radius_mm: 1.5,
+            pitch_mm: 0.5,
+            length_mm: 4.,
+            depth_mm: 0.25,
+            crest_width_mm: 0.125,
+            lower_flank_deg: 30.,
+            upper_flank_deg: 30.,
+            starts: 1,
+            left_hand: false,
+            root_radius_mm: None,
+        },
+        SourceOptions {
+            position_limit_mm: 1e-7,
+            normal_angle_limit_rad: 1e-7,
+        },
+    )
+    .unwrap();
+    let cavity = Cavity::new(
+        thread,
+        Intent {
+            entry_depth_mm: Some(0.5),
+            terminal: Some(Terminal {
+                width_mm: 0.5,
+                radial_depth_mm: 100.,
+            }),
+        },
+    )
+    .unwrap();
+    let options = Tessellation {
+        deflection: 0.1,
+        angle: 0.3,
+        triangle_limit: 1_000_000,
+    };
+    let candidate = tessellate_candidate(&cavity, options, None).unwrap();
+    assert!(candidate.work_used <= 16_000_000);
+    let mesh = multicad_kernel::Mesh {
+        vertices: candidate.mesh.vertices,
+        indices: candidate.mesh.indices,
+        face_indices: candidate.mesh.face_indices,
+    };
+    unique(&mesh);
+    // Closed and consistently oriented: every directed edge occurs once and
+    // its reverse occurs once.
+    let mut edges = std::collections::HashMap::new();
+    for t in mesh.indices.chunks_exact(3) {
+        for k in 0..3 {
+            *edges.entry((t[k], t[(k + 1) % 3])).or_insert(0usize) += 1;
+        }
+    }
+    for (&(a, b), &n) in &edges {
+        assert_eq!(n, 1);
+        assert_eq!(edges.get(&(b, a)), Some(&1));
+    }
+    // The enclosed volume is the terminal relief disc plus the threaded bore,
+    // bounded by the two full cylinders of the major and terminal radii.
+    let p = |i: u32| {
+        let i = 3 * i as usize;
+        [mesh.vertices[i], mesh.vertices[i + 1], mesh.vertices[i + 2]]
+    };
+    let volume = mesh
+        .indices
+        .chunks_exact(3)
+        .map(|t| {
+            let [a, b, c] = [p(t[0]), p(t[1]), p(t[2])];
+            a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                + a[2] * (b[0] * c[1] - b[1] * c[0])
+        })
+        .sum::<f64>()
+        / 6.;
+    let r = cavity.terminal_radius_mm().unwrap();
+    let pi = std::f64::consts::PI;
+    let disc = pi * r * r * 0.5;
+    assert!(volume > disc && volume < disc + pi * 1.5 * 1.5 * cavity.full_length_mm());
+    let proof = mesh.prove_literal_embedding(64_000_000, None).unwrap();
+    assert!(proof.pairs() > 0);
+}
