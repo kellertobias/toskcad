@@ -445,10 +445,12 @@ fn frozen_original_curve_control_nets_survive_shared_surface_extraction() {
                 }
             }
         }
+        // Re-recorded under portable libm (bc7d6efc). Curve, knot and pole
+        // counts are identical to the original macOS-libm capture.
         let expected = match (left, starts) {
-            (false, 1) => 0x4b8441fc4c4f93f2,
-            (true, 1) => 0x51834d10d9f9a7d1,
-            _ => 0xb3c5152fd6b4cff1,
+            (false, 1) => 0x18c8c29a431750bd,
+            (true, 1) => 0x759d8621cfa42cde,
+            _ => 0x6acf3276ccc4c32c,
         };
         assert_eq!(hash, expected);
     }

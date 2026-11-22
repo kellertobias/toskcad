@@ -278,18 +278,19 @@ fn shared_step_outer_preserves_frozen_existing_head_file_bytes() {
             fingerprints.push((text.len(), hash));
         }
     }
-    // Captured from the unrefactored source at291514ca with the pinned
-    // arm64 macOS toolchain. Cross-platform behavior has independent geometry
-    // readback controls; platform transcendental rounding need not be equal.
+    // Originally captured from the unrefactored source at 291514ca with arm64
+    // macOS libm; re-recorded under portable libm (bc7d6efc), which makes the
+    // bytes platform-independent. Lengths, entity counts and entity-type
+    // histograms are identical to that capture; only last-bit values moved.
     assert_eq!(
         fingerprints,
         vec![
-            (212947, 12384164169844171353),
-            (268920, 10569167352034862003),
-            (213716, 17712331813652097306),
-            (269663, 17769957927807670706),
-            (477654, 5975792124410495725),
-            (528452, 12947489326318806268),
+            (212947, 7476927886357933247),
+            (268920, 17772868346038900681),
+            (213716, 3572376456004548541),
+            (269663, 6020934884373759846),
+            (477654, 3071344165414149994),
+            (528452, 5152688237193650915),
         ]
     );
 }
