@@ -1181,7 +1181,6 @@ fn thread_core_recesses_keep_actual_rounded_roots_and_physical_step() {
 }
 
 #[test]
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn outer_shell_refactor_preserves_frozen_hex_and_torx_mesh_bytes() {
     use crate::hexalobular_drive::{Cone, Drive, TangentSpec};
     let mut fingerprints = Vec::new();
@@ -1248,18 +1247,18 @@ fn outer_shell_refactor_preserves_frozen_hex_and_torx_mesh_bytes() {
             fingerprints.push((mesh.vertices.len(), mesh.indices.len(), hash));
         }
     }
-    // Captured from the unrefactored production source at 6fe77455 on the
-    // pinned arm64 macOS toolchain. Other platforms retain geometric controls
-    // rather than assuming identical platform transcendental rounding.
+    // Captured from the unrefactored production source at 6fe77455 and
+    // re-recorded (user-approved) once transcendental maths moved to the
+    // portable libm, so every platform produces these exact bytes.
     assert_eq!(
         fingerprints,
         vec![
-            (26256, 52500, 4775075664380762383),
-            (25857, 51702, 3765674040374272986),
-            (28107, 56202, 13800335858148611555),
-            (27675, 55338, 6322295958705583023),
-            (89202, 178392, 12729986422886773511),
-            (87669, 175326, 6232386977902650541),
+            (26256, 52500, 15241776682191108949),
+            (25857, 51702, 15732902114379895046),
+            (28107, 56202, 2436692544317674780),
+            (27675, 55338, 4856257075521110562),
+            (89202, 178392, 10632410501016982768),
+            (87669, 175326, 14641626896236273680),
         ]
     );
 }

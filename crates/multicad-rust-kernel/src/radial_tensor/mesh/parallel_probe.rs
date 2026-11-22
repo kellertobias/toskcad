@@ -160,7 +160,7 @@ fn paired_parallel_bspt_preserves_every_emitted_bit_and_callback_thread() {
     // Width-cohort planning adds valid equal-class subdivisions. Both paths
     // independently pass all source/facet and embedding gates before this
     // new deterministic literal mesh golden is frozen.
-    assert_eq!(hash(&meshes[0]), 0x11756b273029d41c);
+    assert_eq!(hash(&meshes[0]), 0x52e0dc490b3773b7);
     assert_eq!(body.input(), &original);
     assert!(*callbacks.borrow() > 0);
 }
@@ -398,7 +398,7 @@ fn actual_bspt_per_owner_static_cache_eligibility_keeps_certified_mesh() {
             .signed_volume_mm3
             > 0.
     );
-    assert_eq!(hash(&mesh), 0x11756b273029d41c);
+    assert_eq!(hash(&mesh), 0x52e0dc490b3773b7);
 }
 
 fn spline_poles(curve: &Curve) -> Option<&[Point]> {
