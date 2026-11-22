@@ -14,6 +14,9 @@ const git = (cwd, args) => execFileSync('git', args, {cwd, encoding:'utf8', stdi
 function preview(sourceRoot) {
   // semantic-release hooks stdout; isolate it from node:test's worker protocol.
   const environment={...process.env};delete environment.NODE_TEST_CONTEXT;
+  // The fixture is its own repository on main. Hide the runner's CI identity
+  // so a test run on a feature branch does not read that branch as the target.
+  for(const key of Object.keys(environment))if(key==='CI'||key.startsWith('GITHUB_'))delete environment[key];
   const program=`import { Writable } from 'node:stream';
     import { runRelease } from ${JSON.stringify(new URL('./run-semantic-release.mjs',import.meta.url).href)};
     const sink=new Writable({write(_chunk,_encoding,done){done();}});
