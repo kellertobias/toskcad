@@ -1,5 +1,6 @@
 use super::*;
 use crate::authored_flat_thread::{AuthoredThread, SourceOptions};
+use multicad_precision::PortableMath as _;
 fn source(nonbinary: bool) -> Cavity {
     let thread = AuthoredThread::new(
         crate::helical_thread::Spec {
@@ -50,8 +51,27 @@ fn work() -> Work<'static> {
 fn real_nominal_partition_rejects_then_retiles_without_altering_original_source() {
     let body = source(false);
     let original = body;
-    assert_eq!(body.thread.bands()[1].phase_mm[1], 0.18749999999999994);
-    assert_eq!(body.thread.bands()[2].phase_mm[1], 0.31250000000000006);
+    // The flank knots are the source law itself, half + depth tan(30 deg) and
+    // pitch - half - depth tan(30 deg). The depth is 0.15625 sqrt 3, so both
+    // lie within ulps of rows 24 and 40 of the 64-row chart; the upper knot
+    // must miss its row, which is what forces the 64-row repartition below.
+    let spec = body.thread.spec();
+    let flank = |deg: f64| spec.depth_mm * deg.to_radians().portable_tan();
+    let half = spec.crest_width_mm * 0.5;
+    let knots = [
+        half + flank(spec.upper_flank_deg),
+        (spec.pitch_mm - half) - flank(spec.lower_flank_deg),
+    ];
+    for (band, row, knot) in [(1, 24., knots[0]), (2, 40., knots[1])] {
+        let phase = body.thread.bands()[band].phase_mm[1];
+        assert_eq!(phase, knot);
+        let exact = spec.pitch_mm * row / 64.;
+        assert!((phase - exact).abs() <= 4. * f64::EPSILON * exact);
+    }
+    assert_ne!(
+        body.thread.bands()[1].phase_mm[1],
+        spec.pitch_mm * 24. / 64.
+    );
     let mut w = work();
     assert!(matches!(
         chart::shell_attempt(&body, quality(), 1, 64, &mut w),

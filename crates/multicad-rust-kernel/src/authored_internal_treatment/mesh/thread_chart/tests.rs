@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 use std::{cell::Cell, collections::BTreeMap};
 fn source(wood: bool, left: bool, starts: u32) -> AuthoredThread {
     if !wood {
@@ -204,7 +205,24 @@ fn real_nominal_source_repartitions_without_changing_phase_or_admitting_noop_tre
         },
     )
     .unwrap();
-    assert_eq!(thread.bands()[2].phase_mm[1], 0.31250000000000006);
+    // The lower flank knot is pitch - half - depth tan(30 deg), with depth
+    // 0.15625 sqrt 3: the source law itself, within ulps of row 40 of the
+    // 64-row chart. The upper knot sits within ulps of row 24 and misses it,
+    // which forces the 64-row repartition asserted below.
+    let spec = thread.spec();
+    let flank = |deg: f64| spec.depth_mm * deg.to_radians().portable_tan();
+    let half = spec.crest_width_mm * 0.5;
+    let bands = thread.bands();
+    assert_eq!(bands[1].phase_mm[1], half + flank(spec.upper_flank_deg));
+    assert_eq!(
+        bands[2].phase_mm[1],
+        (spec.pitch_mm - half) - flank(spec.lower_flank_deg)
+    );
+    for (band, row) in [(1, 24.), (2, 40.)] {
+        let exact = spec.pitch_mm * row / 64.;
+        assert!((bands[band].phase_mm[1] - exact).abs() <= 4. * f64::EPSILON * exact);
+    }
+    assert_ne!(bands[1].phase_mm[1], spec.pitch_mm * 24. / 64.);
     assert!(
         Cavity::new(
             thread,
@@ -234,6 +252,10 @@ fn real_nominal_source_repartitions_without_changing_phase_or_admitting_noop_tre
         .tessellate_shell(options(), 16_000_000, None)
         .unwrap();
     assert_eq!(*candidate.source(), thread);
+    // Neither the refused treatment, the rejected chart nor the retiled shell
+    // changes a source phase.
+    assert_eq!(thread.bands(), bands);
+    assert_eq!(candidate.source().bands(), bands);
     assert!(candidate.source_chord_bound_mm() <= options().deflection);
     assert!(candidate.source_normal_angle_bound_rad() <= options().angle);
     assert!(candidate.rim_count(ShellEnd::Start) > 2 && candidate.rim_count(ShellEnd::End) > 2);
